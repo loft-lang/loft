@@ -2821,7 +2821,9 @@ twice(c)                          // one type: the inferred instance is the name
 - `Box<integer>` and `Box<integer?>` are two instances, as are `Box<integer>` and `Box<u8>`.
 - A type variable is a type only inside its own header.
 - A generic function takes an instance (`fn get<T>(b: Box<T>) -> T { b.v }`), builds one
-  (`fn wrap<T>(x: T) -> Box<T> { Box { v: x } }`) and binds `T` through it; methods work as
+  (`fn wrap<T>(x: T) -> Box<T> { Box { v: x } }`) and binds `T` through it — and a variable
+  no argument binds may be bound by a callback's result: `map_grid<T, U>(g: Grid<T>, f: fn(T)
+  -> U) -> Grid<U>` called as `map_grid(tiles, |t| { t.height })` is a `Grid<integer>`; methods work as
   on any struct (`fn at<T>(self: Grid<T>, i: integer) -> T?`), and a concrete method on one
   instance beside the generic one takes that instance.
 - A struct may name itself at its own variables through a collection or a pointer

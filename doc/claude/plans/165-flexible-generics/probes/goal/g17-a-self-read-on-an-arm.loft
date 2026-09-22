@@ -1,0 +1,9 @@
+// D11 — a self-reading text assignment on an if arm and in a loop, in an instance.
+// @EXPECT: a-b-c|x
+fn joined<T>(v: vector<T>, sep: T, f: fn(T, T) -> T) -> T { acc = v[0]; for i in 1..len(v) { acc = if i > 0 { f(f(acc, sep), v[i]) } else { acc }; } acc }
+fn keep<T: Printable>(x: T, g: fn(T) -> T) -> T { r = x; if len("{r}") > 5 { r = g(r); } r }
+fn main() {
+  a = joined(["a", "b", "c"], "-", |p, q| { "{p}{q}" });
+  b = keep("x", |s| { "{s}{s}" });
+  println("{a}|{b}");
+}

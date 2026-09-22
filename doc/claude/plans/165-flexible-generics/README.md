@@ -12,11 +12,10 @@ Tracker: [loft-lang/plans#165](https://github.com/loft-lang/plans/issues/165) (@
 **Phase 0 DONE (loft#1536–#1539, on `main`).  Arcs A and B BUILT on branch
 `tuxedo-165-generics` (2026-09-21): A0–A7, B1–B7 and the added B3b, each measured against the
 previous step's binary over the corpus; `G-Select` is in `formal/interfaces.md`.  Arc C
-BUILT too (C1–C4; `G-Key` written).  Arc D in progress: D1–D10 built (a generic struct is
-declared, named as an instance, a literal infers its instance, a generic function takes
-one, it has methods, it may name itself or a generic struct declared below it; an enum
-may be generic too, a type may declare several variables, and a library's generic types
-cross `use` whole).**
+BUILT too (C1–C4; `G-Key` written).  Arc D BUILT (D1–D11; `G-Type` and `G-Regular`
+written): a generic struct or enum, its instances, methods, self-reference and several
+variables, across a library boundary, and the goal program — `map_grid<T, U>` with a short
+lambda whose return binds `U`.**
 The design is [DESIGN.md](DESIGN.md) and the ordered work is [STEPS.md](STEPS.md); both were
 written against `9f5cf6a96` with every claim about today's compiler run, and the programs are
 in [`probes/`](probes/), each with the answer it gave at the top.
@@ -27,7 +26,7 @@ in [`probes/`](probes/), each with the answer it gave at the top.
 | **A** groundwork | one key decoder, one home for a template's variables, an instance key of its own, a lambda typed under its bindings | BUILT | no |
 | **B** overload sets | a generic beside concrete definitions of its name, ranked | BUILT | no |
 | **C** several variables | a variable in any parameter; `<T, U>` | BUILT | **all of it** |
-| **D** generic types | `struct Grid<T>`, `enum Shape<T>`, methods, the goal program | D1–D10 BUILT; D11 open | D9 (several variables on a type) and D11 only |
+| **D** generic types | `struct Grid<T>`, `enum Shape<T>`, methods, the goal program | BUILT | D9 (several variables on a type) and D11 only |
 | **E** built-ins | `insert` / `sort` / `reverse` / `reserve` / `filter`, then `map` / `reduce`, as library generics | designed | E6–E7 only (`map`, `reduce`) |
 
 Every arc can start: step C0 is done.  The owner revised C110 as
@@ -111,5 +110,5 @@ A6), and the method that captures a generic's call
   `Disp-Ambiguous`, and the principle *refuse rather than choose* that every decision here
   takes from it.
 - [`../../formal/interfaces.md`](../../formal/interfaces.md) — `G-Gen`, `G-Mono`, `G-Sat`;
-  `G-Key` and `G-Select` join it as their arcs close.
+  `G-Select` (arc B), `G-Key` (arc C), `G-Type` and `G-Regular` (arc D) joined it.
 - [`../../DESIGN_DECISIONS.md`](../../DESIGN_DECISIONS.md) C110 and C126, which revises it.

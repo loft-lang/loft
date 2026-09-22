@@ -96,6 +96,35 @@ method it is allowed to call on a `T`. Multiple bounds combine with `+`.
 step feeding one shared IR to both backends, generics behave identically under `--interpret` and
 `--native` — the two cannot drift. This is static monomorphization, like Rust's, not a v-table.
 
+### Generic types — an instance is an ordinary type
+
+```
+  (G-Type)   a struct or enum declared with type variables (`struct Grid<T> { … }`, `enum
+             Slot<T> { … }`) is a TEMPLATE, never a type: `Grid<C₁ … Cₙ>` names an INSTANCE —
+             an ordinary struct (enum) whose fields (variants) are the template's with every
+             [Tᵢ ↦ Cᵢ] applied at once, laid out and behaving exactly as its hand-written twin.
+             Inside a template, `Grid<T>` at the template's own variables is an OPEN instance:
+             it has no layout, and each monomorph reads the instance its bindings close it to —
+             its fields, its variants, its element width, the records it builds (G-Mono).
+             A literal takes its instance from the type expected of it (an annotation, a
+             parameter), or else binds each variable from the field values that name it; a
+             variable bound nowhere — or only by `null` — is refused naming it.  A call binds a
+             variable through an instance's arguments as through any other former, and through
+             a callback's RETURN when no argument binds it earlier (`map_grid<T, U>(g, f: fn(T) ->
+             U)` with `|t| { t.height }` is `U = integer`).
+  (G-Regular) a template may name itself in its fields only at its own variables, unchanged:
+             `Tree<T>` inside `Tree<T>` (through a collection or a pointer) — `Bad<vector<T>>`
+             inside `Bad<T>` has no finite set of instances and is refused at the declaration.
+```
+
+**In words.** `struct Grid<T> { w: integer, cells: vector<T> }` declares no type until it is
+given arguments: `Grid<integer>` is a struct that answers exactly what `struct GridInteger { w:
+integer, cells: vector<integer> }` would, on both backends, and `Grid<text>` is another.  A generic
+function over `Grid<T>` sees the open instance `Grid<T>` while its body is typed, and each of its
+instances reads its own `Grid<integer>`.  A generic enum's variants are its instance's (`Slot<integer>`
+has its own `Full`).  A struct naming itself at other arguments would need `Bad<vector<vector<…>>>`
+without end, so it is refused where it is declared rather than where it is first used.
+
 ### Satisfaction is checked at instantiation — a miss does not compile
 
 ```
@@ -197,6 +226,13 @@ deviations, are in the companion [interfaces-history.md](interfaces-history.md).
   `a-set-member-reached-in-an-instance-returns-what-the-body-was-typed-with`,
   `a-concrete-set-is-not-called-at-a-type-variable`, `a-variant-decision-reaches-a-generic-at-the-variant`
   (`tests/scripts/`), and the `Disp-Match-Equiv` pair `tests/oracle/36-dispatch-set-with-a-generic*`.
+- **A generic type's instance is its twin (`G-Type`)** — `a-literal-infers-its-instance-from-its-field-values`,
+  `a-generic-function-takes-an-instance-of-a-generic-struct`, `a-generic-enum-is-an-enum-per-instance`,
+  `a-generic-function-over-a-generic-enum-equals-its-twin`, `a-generic-struct-declares-several-type-variables`,
+  `a-library-carries-generic-types-across-the-boundary`, `the-goal-program-of-flexible-generics`
+  (`tests/scripts/`).
+- **A template names itself regularly (`G-Regular`)** — `a-generic-struct-names-itself-regularly`,
+  `a-generic-struct-that-names-itself-irregularly-is-refused` (`tests/scripts/`).
 - **Bounded generic dispatch (`G-Gen` / `G-Mono`)** — `fn total<T: Sizable>(xs: vector<T>) ->
   integer { s=0; for x in xs { s += x.size() } s }` over `[Box{2,3}, Box{4,5}]` is `26`, identical
   on both backends.

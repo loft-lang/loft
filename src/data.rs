@@ -7825,7 +7825,18 @@ impl Data {
             }
             Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
             // A tuple keeps its synthetic struct's name (`__tuple<integer,text>`), the one
-            // spelling a boxed and an unboxed tuple share.
+            // spelling a boxed and an unboxed tuple share — computed as `tuple_def` names it,
+            // whether or not that struct is registered yet: read off the registry, a key
+            // spelled `(integer, text)` before the struct existed and `__tuple<…>` after,
+            // and one type minted two instances (@PLN165 D11).
+            Type::Tuple(elems) => format!(
+                "__tuple<{}>",
+                elems
+                    .iter()
+                    .map(|t| t.name(self))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
             Type::Function(params, ret, _, consts) => {
                 let p: Vec<String> = params
                     .iter()
@@ -9156,9 +9167,9 @@ impl Data {
     /// pass-2 call mints it with final arguments (F11); REGISTERED for every source.  The
     /// instance records `(template, args)` on its definition (`instance_of`,
     /// `instance_args`).  `u32::MAX` too for an argument count the template does not take;
-    /// the caller reports that.
+    /// the caller reports that.  An instance is an ordinary type: @FR-G-Type.
     pub fn instance_def(&mut self, lexer: &mut Lexer, template: u32, args: &[Type]) -> u32 {
-        // A template refused at its declaration (`D-Regular`) has no instances to mint.
+        // A template refused at its declaration (`D-Regular`, @FR-G-Regular) has no instances to mint.
         if self.refused_type_templates.contains(&template) {
             return u32::MAX;
         }
@@ -9777,6 +9788,21 @@ impl Data {
         self.definitions[v_nr as usize].known_type = vec_tp;
         v_nr
     }
+    /// The tuple a synthetic `__tuple<…>` record stands for — the box a lifetime-bearing
+    /// tuple return is delivered in (loft#1349) — or `None` for any other definition.
+    #[must_use]
+    pub fn boxed_tuple(&self, d: u32) -> Option<Type> {
+        let def = self.definitions.get(d as usize)?;
+        let group = def.tuple_group()?;
+        Some(Type::Tuple(
+            group
+                .field_indices
+                .iter()
+                .map(|&i| def.attributes[i as usize].typedef.clone())
+                .collect(),
+        ))
+    }
+
     /// The stdlib `type` alias that declares exactly this narrow integer (`u8` for
     /// `integer limit(0, 255) size(1)`), read off the declarations themselves.
     #[must_use]
@@ -9809,7 +9835,7 @@ impl Data {
     /// only inside that template: never laid out, and a monomorph substitutes the concrete
     /// instance its bindings name ([`Data::open_instance_bindings`]).  A VARIANT of an open
     /// enum instance is one too (@PLN165 D8): its payload is typed by the same variable, and
-    /// a monomorph reads the variant of that name in its own instance.
+    /// a monomorph reads the variant of that name in its own instance (@FR-G-Type).
     #[must_use]
     pub fn is_open_instance(&self, d_nr: u32) -> bool {
         let Some(d) = self.definitions.get(d_nr as usize) else {

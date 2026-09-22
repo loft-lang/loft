@@ -1,0 +1,14 @@
+// D11 — a named function as the callback: `U` from its declared return.
+// @EXPECT: 2|3
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn size_of(s: text) -> integer { len(s) }
+fn main() {
+  g = Grid { w: 1, cells: ["ab", "cde"] };
+  d = map_grid(g, size_of);
+  println("{d.cells[0]}|{d.cells[1]}");
+}

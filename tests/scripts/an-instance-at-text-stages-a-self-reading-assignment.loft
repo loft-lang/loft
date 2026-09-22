@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D11 — the interpreter's text `Set` clears its destination before it evaluates the
+// value, so the parse stages an assignment that READS its destination through a work text
+// (P223).  A template's `acc: T` is no text variable, so an instance at `text` assigned
+// `acc = f(acc)` directly and handed `f` the cleared value: `fold(["a", "b", "c"], "", …)`
+// answered `c` on the interpreter and `abc` on native.  Each instance where a variable
+// BECAME text now stages it the parse's own way — and an `if` value delivers per arm first,
+// as the parse binds a branch.
+//
+// @falsified-at: cd2605b78 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/an-instance-at-text-stages-a-self-reading-assignment.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: assertions on the interpreter; exit on native.
+//   ARMED: nothing.
+//   WITNESS: on the control the fold answers `c` and the step `b` on the interpreter; native
+//     refuses the `if`-arm instance, "`if` and `else` have incompatible types" (`String`
+//     against `&String`): the branch was assigned whole, where it is delivered per arm now.
+//   HOLDS: nothing else.
+
+fn fold<T, U>(v: vector<T>, init: U, f: fn(U, T) -> U) -> U { acc = init; for x in v { acc = f(acc, x); } acc }
+fn step<T>(init: T, f: fn(T) -> T) -> T { acc = init; acc = f(acc); acc = f(acc); acc }
+fn keep_first<T>(a: T, b: T) -> T { a }
+fn again<T>(x: T, y: T) -> T { r = x; r = keep_first(r, y); r }
+
+fn joined<T>(v: vector<T>, sep: T, f: fn(T, T) -> T) -> T {
+  acc = v[0];
+  for i in 1..len(v) { acc = if i > 0 { f(f(acc, sep), v[i]) } else { acc }; }
+  acc
+}
+
+fn test_a_self_read_on_an_arm() {
+  a = joined(["a", "b", "c"], "-", |p, q| { "{p}{q}" });
+  assert(a == "a-b-c", a);
+}
+
+fn test_a_fold_at_text() {
+  a = fold(["a", "b", "c"], "", |s, x| { "{s}{x}" });
+  b = fold(["a", "b"], "", fn(s: text, x: text) -> text { "{s}{x}" });
+  n = fold([1, 2, 3], 0, |s, x| { s + x });
+  assert(a == "abc" && b == "ab" && n == 6, "{a} {b} {n}");
+}
+
+fn test_a_step_and_a_generic_call_at_text() {
+  s = step("a", |t| { "{t}b" });
+  r = again("x", "y");
+  assert(s == "abb" && r == "x", "{s} {r}");
+}

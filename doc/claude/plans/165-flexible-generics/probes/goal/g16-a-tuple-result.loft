@@ -1,0 +1,14 @@
+// D11 — a callback answering a tuple: U is (integer, text).
+// @EXPECT: 3:a|5:b
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn main() {
+  g = Grid { w: 1, cells: [3, 5] };
+  names = ["a", "b"];
+  r = map_grid(g, |x| { (x, if x == 3 { "a" } else { "b" }) });
+  println("{r.cells[0].0}:{r.cells[0].1}|{r.cells[1].0}:{r.cells[1].1}");
+}

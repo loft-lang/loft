@@ -908,6 +908,45 @@ README.md § Goal as ONE guard in `tests/scripts/`: `struct Grid<T>`, a two-vari
 `map_grid<T, U>` called with a short lambda, and a generic `show` beside a concrete one —
 every arc in one file.  Closes the plan.
 
+- **Built** (2026-09-22).  [goal/](probes/goal/) g01–g12, green on both backends; the guard is
+  `the-goal-program-of-flexible-generics`.  The goal program was refused — "expected U, got
+  integer on return from block": the callback's hint (`callee_param_hint`) handed the short
+  lambda `fn(Tile) -> U` with `U` bound by no argument yet.  A return naming such a variable
+  is left open now, so the body declares it (loft#945's rule for `map`'s callback) and the
+  call binds `U` from the lambda's type; the hint is also closed (`close_open`), so a
+  callback typed by the generic struct itself (`fn(Grid<T>) -> integer`) is handed the call's
+  instance — it "bound T to T".  The cells found two more:
+  - an instance at `text` answered WRONG on the interpreter: `acc = f(acc)` in `fold<T, U>`
+    at `U = text` gave `c` for `abc` (native `abc`), since A6 let a short lambda reach a
+    generic.  The parse stages an assignment that reads its destination through a work text
+    when the variable is text (P223); a template's `acc: T` is not, so each instance where a
+    variable BECAME text now stages it (`stage_text_self_reads`) — guard
+    `an-instance-at-text-stages-a-self-reading-assignment`.
+  - a lambda answering only `null` bound `U` to `null` and died minting `Grid<null>` (an ICE).
+    `null`, `void` and a poisoned value bind nothing in a call either, as in a literal (D4);
+    the refusal names the variable ("`map_grid` cannot tell what U is") and the clash check
+    no longer reads an unbound variable's parameter as a clash on another — probe
+    [goal-refused/](probes/goal-refused/) x01, a `parse_errors` test.
+  The axes the guards held fixed (`matrix_axes.py`: nullable, narrow integer, enum, tuple,
+  an `if` arm) were crossed in g13–g17 and found three more, two of them on main:
+  - a template building a `vector<T>` (a literal `[x]` or an append) at `T = integer?` or at a
+    tuple kept the template's record copy at the variable's row — a SIGSEGV, a store panic or
+    an internal error on both backends, on main too.  The element write peels its binding
+    (`τ?` is `τ`'s shape, @FR-N-Shape) and writes a tuple member by member through the
+    concrete append's own `emit_tuple_set_ops`, lowered in the instance's frame
+    (`TV_TUPLE_ELEM`) — guard `a-generic-builds-a-vector-of-a-nullable-or-a-tuple`.
+  - a tuple's instance key read the registry: spelled `(integer, text)` before its
+    `__tuple<…>` struct existed and by that name after, so one type minted two
+    `Grid<(integer, text)>` and the binding "changed type" to itself.  `identity_spelling`
+    names a tuple as `tuple_def` will, registered or not.
+  - a self-reading `acc = if … { f(acc) } else { acc }` at a text instance was assigned whole:
+    native met `String` against `&String` (E0308, before any staging too), and staging it
+    appended the whole `if`.  A branch now delivers per arm first, as the parse binds one
+    (`try_branch_text_bind`), and each arm is staged on its own.
+  Corpus against D10: IDENTICAL.  Arc D closes here: `G-Type` (an instance is an ordinary
+  type, an open instance is re-read per monomorph, how a literal and a call bind) and
+  `G-Regular` are written into `formal/interfaces.md` and cited at their sites.
+
 ---
 
 ## Arc E — the by-name built-ins become library generics
@@ -945,6 +984,26 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   written.
 - Each step also runs `make surface-gen`: a new builtin renumbers
   `index/target_surface.json`.
+- **E1 measured, not built — blocked on a design decision** (2026-09-22).  `pub fn reverse<T>(v:
+  vector<T>) { reverse(v) }` in `default/` (its body reaches the special form, which the stdlib
+  never pre-empts) behind `LOFT_BUILTIN_GENERICS=reverse`, with a call to an instance of a stdlib
+  generic whose body is one op inlined in the IR (native's `@FR-R-Wrapper`, done for both
+  backends): every corpus CALL SITE is identical on both backends; what differs is the instances
+  themselves, minted and emitted but never called.  But the step cannot land: a standard-library
+  FREE function's name is RESERVED (`redefinition_text`, loft#863/C95 — *"a program cannot define
+  its own `reverse`"*), so declaring `reverse<T>` in `default/` refuses every program that
+  defines its own `reverse` — `a-builtin-call-name-never-hides-a-programs-own-function` among
+  them, the guard of the special-names half this arc stands on (*"never limit what a user can
+  define"*, 2026-09-15).  Arc E as written reserves exactly the names that half freed.  The
+  choice is the owner's: (a) a built-in's stdlib generic does not reserve its name — a
+  program's definition joins the set and outranks it, as it outranks the special form today;
+  (b) no stdlib free name is reserved any more — every program definition beside a stdlib one
+  is a member of the set (`G-Select`), the program's ranking first on a tie; (c) the special
+  forms stay.  The measured code is [probes/e1-library-reverse.patch](probes/e1-library-reverse.patch)
+  (the switch, the IR inline, `Data::instance_template`, `one_op_wrapper` taking an instance of
+  a stdlib template).  Measuring note: every binary reads `default/` from the tree, so a corpus diff
+  of a `default/` change needs the OLD `default/` on the before side — two step binaries over
+  one tree read the same stdlib and reported IDENTICAL while the guard above was refused.
 
 ---
 

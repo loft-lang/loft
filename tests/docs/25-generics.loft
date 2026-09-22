@@ -195,6 +195,27 @@ fn test_generic_struct() {
   assert(twice(b) == 42, "an inferred Box<integer> is the one the parameter names");
   assert(t.v == "hi" && len(s.items) == 2, "Box<text> and Stack<float>");
 }
+// ## Two type variables and a callback
+// A generic may declare several variables, and one no argument binds may be bound by a
+// callback's RESULT: `map_grid` below turns a `Grid<T>` into a `Grid<U>`, and the short
+// lambda's body decides what `U` is — `|t| { t.height }` makes it an `integer`.  A
+// generic beside a concrete function of the same name is one overload set: the concrete
+// `show` takes a `Grid<Tile>`, the bounded generic every other `Grid` it can print.
+struct Tile { height: integer, name: text }
+fn to_text(self: Tile) -> text { self.name }
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn show<T: Printable>(g: Grid<T>) -> text { r = ""; for c in g.cells { r += "[{c.to_text()}]"; } r }
+fn show(g: Grid<Tile>) -> text { "tiles:{len(g.cells)}" }
+fn test_two_variables() {
+  tiles = Grid { w: 2, cells: [Tile { height: 3, name: "a" }, Tile { height: 5, name: "b" }] };
+  heights = map_grid(tiles, |t| { t.height });
+  assert(show(tiles) == "tiles:2" && show(heights) == "[3][5]", "{show(heights)}");
+}
 // ## Disallowed operations
 // The compiler rejects operations the bound does not cover, and it says which:
 //   `x + y` on unbounded T   — "generic type T: operator '+' requires a concrete type"
@@ -210,4 +231,5 @@ fn main() {
   test_user_type_bounds();
   test_walkable();
   test_generic_struct();
+  test_two_variables();
 }

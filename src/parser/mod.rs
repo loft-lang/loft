@@ -7618,6 +7618,10 @@ impl Parser {
     /// the conversion once `T` is concrete.  The block's `result` is the target type,
     /// which substitution rewrites to the concrete one.
     pub(crate) const TV_NULL_BLOCK: &'static str = "tvnull";
+    /// A `vector<T>` element write at a TUPLE `T` (`[element, value]`, `result` the tuple):
+    /// lowered in the monomorph's frame through `emit_tuple_set_ops`, the concrete append's
+    /// own member-by-member write.
+    pub(crate) const TV_TUPLE_ELEM: &'static str = "tvtupleelem";
     /// The value [`Parser::null_value`] answers for a type still a TYPE VARIABLE — a `match`
     /// join's fallback, a branch with nothing to yield — asked again of the concrete type by
     /// each monomorph.  Apart from [`Self::TV_NULL_BLOCK`] because every type has this one:
@@ -7858,11 +7862,20 @@ impl Parser {
         }
         if var_bindings.iter().any(|(_, b)| b.is_unknown()) {
             if !self.first_pass {
+                let unbound: Vec<String> = var_bindings
+                    .iter()
+                    .filter(|(_, b)| b.is_unknown())
+                    .map(|(v, _)| Data::type_var_spelling(self.data.def(*v).name()).to_string())
+                    .collect();
                 diagnostic!(
                     self.lexer,
                     Level::Error,
-                    "Cannot resolve generic type parameter from argument type"
+                    "`{name}` cannot tell what {} is — no argument's type names it (a `null`, \
+                     or a lambda that answers only `null`, names none)",
+                    unbound.join(" and ")
                 );
+                // Refused at the binding, as a clash is: nothing further to say.
+                self.reported_binding_clash = true;
             }
             return u32::MAX;
         }
@@ -8140,6 +8153,15 @@ impl Parser {
                 continue;
             };
             for &i in &binders[1..] {
+                // A parameter that also names a variable no argument binds cannot be judged
+                // here: that variable's refusal is the one to give (`|x| { null }` for
+                // `f: fn(T) -> U` read as a clash on `T`).
+                if var_bindings
+                    .iter()
+                    .any(|(u, b)| b.is_unknown() && self.data.type_mentions(&params[i].1, *u))
+                {
+                    continue;
+                }
                 // Closed: `b: Grid<T>` at `T = text` is `Grid<text>`, where a plain substitution
                 // leaves the open instance `Grid<T>`, which no argument converts to.
                 let expected = self.close_open(&params[i].1, var_bindings);
@@ -8365,6 +8387,54 @@ impl Parser {
     /// run exactly the same steps once the template's own pass-2 body exists.  The
     /// SIGNATURE is not re-derived: attributes and the return type come from the
     /// template's declaration, which pass 1 already has — only the body was ever stale.
+    /// P223 in a monomorph (@PLN165 D11): the interpreter's text `Set` clears its destination
+    /// before it evaluates the value, so an assignment whose value READS its destination is
+    /// staged through a work text — `acc = f(acc)` otherwise hands `f` the cleared `acc`.  The
+    /// parse decides that where it sees a text variable; a template's `acc: T` is not one, so
+    /// each instance where a variable BECAME text decides it here, the parse's own way.
+    fn stage_text_self_reads(&mut self, code: &mut Value, tmpl_vars: &Function) {
+        let became_text: Vec<u16> = (0..self.vars.count())
+            .filter(|&v| {
+                matches!(self.vars.tp(v).base(), Type::Text(_))
+                    && (v as usize) < tmpl_vars.count() as usize
+                    && !matches!(tmpl_vars.tp(v).base(), Type::Text(_))
+            })
+            .collect();
+        if became_text.is_empty() {
+            return;
+        }
+        code.map_nodes(&mut |n| {
+            let Value::Set(v, value) = n else {
+                return;
+            };
+            if !became_text.contains(v) || !value.reads_var(*v) {
+                return;
+            }
+            // A branch delivers per ARM into the destination, as the parse binds one
+            // (`try_branch_text_bind`); each arm's assignment is then staged on its own if it
+            // reads the destination — the walk visits them next.  Appended whole, the two
+            // arms' values met as `String` and `&String` in the native emission.
+            if let Value::If(..) = value.unspan() {
+                let v = *v;
+                let Value::If(c, t, e) = std::mem::replace(value.as_mut(), Value::Null)
+                    .unspan()
+                    .clone()
+                else {
+                    return;
+                };
+                *n = Value::If(c, Box::new(v_set(v, *t)), Box::new(v_set(v, *e)));
+                return;
+            }
+            let (v, value) = (*v, std::mem::replace(value.as_mut(), Value::Null));
+            let work = self.vars.work_text_p2(&mut self.lexer);
+            *n = Value::Insert(vec![
+                self.cl("OpClearText", &[Value::Var(work)]),
+                self.cl("OpAppendText", &[Value::Var(work), value]),
+                v_set(v, Value::Var(work)),
+            ]);
+        });
+    }
+
     fn fill_monomorph_body(
         &mut self,
         d_nr: u32,
@@ -8414,6 +8484,7 @@ impl Parser {
         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
         let mut code = self.rewrite_generic_type_defaults(code);
         self.settle_parametric_yield_copies(&mut code);
+        self.stage_text_self_reads(&mut code, tmpl_vars);
         let set_call_refs = std::mem::replace(&mut self.set_call_refs, outer_set_call_refs);
         self.instance_bindings = outer_bindings;
         self.closure_param = outer_closure_param;
@@ -9184,7 +9255,7 @@ impl Parser {
     /// types from this, so `my_map(a, |x| { x * 10 })` hands `x` the element type of `a`, as
     /// the built-in `map` and a concrete twin do; a variable no earlier argument binds stays
     /// as declared, and the lambda says it cannot infer it.
-    pub(crate) fn callee_param_hint(&self, d_nr: u32, arg: usize, types: &[Type]) -> Type {
+    pub(crate) fn callee_param_hint(&mut self, d_nr: u32, arg: usize, types: &[Type]) -> Type {
         let declared = self.data.attr_type(d_nr, arg);
         if self.data.def_type(d_nr) != DefType::Generic {
             return declared;
@@ -9196,7 +9267,28 @@ impl Parser {
             .into_iter()
             .filter(|(_, b)| !b.is_unknown())
             .collect();
-        Self::substitute_all(declared, &known)
+        // Closed: `f: fn(Grid<T>) -> integer` at `T = integer` hands the lambda the call's
+        // `Grid<integer>`, where a plain substitution left the open `Grid<T>` (@PLN165 D11).
+        let hint = self.close_open(&declared, &known);
+        // A callback's RETURN naming a variable no argument has bound yet — `U` in
+        // `map_grid<T, U>(g: Grid<T>, f: fn(T) -> U)` — is the lambda's to declare: the hint
+        // leaves it open, a short lambda's body gives it (loft#945, as for `map`'s callback),
+        // and the call binds `U` from the lambda's type.
+        if let Type::Function(params, ret, deps, consts) = hint.base() {
+            let unbound: Vec<u32> = Self::template_vars(&self.data, d_nr)
+                .into_iter()
+                .filter(|v| !known.iter().any(|(h, _)| h == v))
+                .collect();
+            if unbound.iter().any(|v| self.data.type_mentions(ret, *v)) {
+                return Type::Function(
+                    params.clone(),
+                    Box::new(Type::Unknown(0)),
+                    deps.clone(),
+                    *consts,
+                );
+            }
+        }
+        hint
     }
 
     /// The type variables of the template `g_nr`: the distinct placeholders its declared
@@ -9294,6 +9386,18 @@ impl Parser {
             // frees the fresh store the method's `__retbuf` delivered (one
             // record leaked per call).
             Type::Reference(d, _) if *d == tv_nr => match concrete_tp {
+                // `null`, a call answering nothing and a value poisoned by its own report
+                // (@P376) name no type: they bind nothing, as in a literal's fields (D4).  A
+                // short lambda answering only `null` bound `U` to `null` and minted
+                // `Grid<null>`, whose element had no layout (@PLN165 D11).
+                Type::Null | Type::Void | Type::Never => Type::Unknown(0),
+                // A tuple a callback returns is delivered boxed (loft#1349); the variable is
+                // the TUPLE the author wrote, whichever form the argument arrives in —
+                // bound to the box on one pass and the tuple on the other, it minted two
+                // `Grid<(integer, text)>` (@PLN165 D11).
+                Type::Reference(cd, _) if data.boxed_tuple(*cd).is_some() => {
+                    data.boxed_tuple(*cd).unwrap_or(Type::Unknown(0))
+                }
                 Type::Reference(cd, _) => Type::Reference(*cd, crate::data::Deps::none()),
                 Type::Vector(inner, _) => Type::Vector(inner.clone(), crate::data::Deps::none()),
                 Type::Enum(cd, mixed, _) => Type::Enum(*cd, *mixed, crate::data::Deps::none()),
@@ -10554,6 +10658,16 @@ impl Parser {
 
     fn rewrite_generic_type_defaults(&mut self, val: Value) -> Value {
         match val {
+            Value::Block(bl) if bl.name == Self::TV_TUPLE_ELEM && bl.operators.len() == 2 => {
+                let mut bl = *bl;
+                let src = self.rewrite_generic_type_defaults(bl.operators.remove(1));
+                let elm = bl.operators.remove(0);
+                let Type::Tuple(elems) = bl.result.base().clone() else {
+                    return Value::Null;
+                };
+                let ops = self.emit_tuple_set_ops(&elm, 0, &elems, src);
+                v_block(ops, Type::Void, "tuple_elem_set")
+            }
             // loft#1020 — the deferred `== null` / `!= null`.  `bl.result` came through
             // type substitution, so it is the CONCRETE operand type by now, and
             // `null_test` is the same dispatch the parse site uses.  `None` is the
@@ -11067,7 +11181,8 @@ impl Parser {
     /// difference is whether OpCopyRecord is replaced (primitive) or kept
     /// with patched type-id args (struct).
     pub(crate) fn is_rewritable_vector_element_target(tp: &Type) -> bool {
-        Self::is_primitive_vector_element_target(tp) || matches!(tp, Type::Reference(_, _))
+        Self::is_primitive_vector_element_target(tp)
+            || matches!(tp, Type::Reference(_, _) | Type::Tuple(_))
     }
 
     /// P241 fix slice 3 — build the per-type primitive setter Call
@@ -11333,10 +11448,12 @@ impl Parser {
             // by keeping OpCopyRecord and patching its tp arg.  The element type is the
             // binding of the variable this triplet was lowered for — never the template's
             // first variable by default.
+            // A `τ?` element is `τ`'s shape with a nullability bit (@FR-N-Shape): written as
+            // `τ` — at `integer?` the triplet stayed a record copy and the write crashed.
             let site = matched.as_ref().and_then(|(_, _, _, copy_tp)| {
                 Self::element_write_binding(*copy_tp, bindings, data)
-                    .filter(|bound| Self::is_rewritable_vector_element_target(bound))
-                    .cloned()
+                    .map(|bound| bound.base().clone())
+                    .filter(Self::is_rewritable_vector_element_target)
             });
             if let (Some((elm_var, out_var, src_value, _)), Some(concrete)) = (matched, site) {
                 buf.drain(0..3);
@@ -11431,7 +11548,18 @@ impl Parser {
                 //      from the parametric T's known_type to the concrete
                 //      struct's known_type so `state::copy_record` reads
                 //      the correct record size.
-                if is_struct_target {
+                if let Type::Tuple(_) = concrete.base() {
+                    // A tuple element is written member by member, as the concrete append
+                    // writes it (`emit_tuple_set_ops`) — which mints a tuple temporary, so it
+                    // is lowered in the monomorph's own frame (`TV_TUPLE_ELEM`).  As a record
+                    // copy at the template's row it read a stack tuple as a `DbRef` and the
+                    // store panicked.
+                    out.push(v_block(
+                        vec![Value::Var(elm_var), src_value],
+                        concrete.clone(),
+                        Self::TV_TUPLE_ELEM,
+                    ));
+                } else if is_struct_target {
                     let known_tp = if (content_def_nr as usize) < data.definitions.len() {
                         i32::from(data.def(content_def_nr).known_type())
                     } else {

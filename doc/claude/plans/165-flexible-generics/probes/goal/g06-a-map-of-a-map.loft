@@ -1,0 +1,13 @@
+// D11 — one map's result mapped again inside one expression.
+// @EXPECT: 7|11
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn main() {
+  g = Grid { w: 1, cells: ["abc", "abcde"] };
+  r = map_grid(map_grid(g, |s| { len(s) }), |n| { n * 2 + 1 });
+  println("{r.cells[0]}|{r.cells[1]}");
+}

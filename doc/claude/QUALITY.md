@@ -2773,12 +2773,18 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **326** |
+| **325** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-23, the join of `157-native-4x` (@PLN158 W2) and `tuxedo-165-generics` (@PLN165 D11, E1)
+into ../loft2 @ 67abc26d5, re-measured at its end: **927 · 597 · 5 · 325**, and `--check-ratchet`
+pinned lower at opaque 325, opaque tests 1310.  The sides read 326 · 1311 (../loft2) and
+329 · 1313 (the generics line); the join is below both, as each line peeled shapes in bodies
+the other also touched.)
 
 (2026-09-23, loft#1585 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ 1a75b86e4 and
 re-measured at its end: **920 · 589 · 5 · 326**, and `--check-ratchet` pinned lower at opaque 326,
@@ -2807,6 +2813,10 @@ opaque 332, opaque tests 1313.  The sides read 333 (../loft2) and 334 (the 157 l
 generics line), each true of its own base.  The joined tree read 333 · 1314 with
 `output_coroutine`'s closure test bare, as loft#1586 brought it in; it peels, because a nullable
 fn-ref still captures, and the join reads 332 · 1313.)
+
+(2026-09-22, @PLN165 D11 on `tuxedo-165-generics`: **885 · 551 · 5 · 329**, re-pinned at opaque
+329, opaque tests 1313 — the generic vector-element write peels its binding (a `τ?` element is
+`τ`'s shape) and names the tuple case; one existing function moved to the seeing side.)
 
 (2026-09-22, @PLN165 D10 on `tuxedo-165-generics`: **882 · 547 · 5 · 330**, re-pinned at opaque
 330, opaque tests 1313 — the variable table's substitution names the `Optional` arm its

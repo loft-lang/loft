@@ -5667,7 +5667,7 @@ impl Parser {
     /// One home for both field-type branches of `parse_field`.  Answers whether a check
     /// was consumed, so the identifier branch can keep using it as the head of its
     /// if-chain while the tuple branch, which ends the field itself, calls it directly.
-    /// @PLN165 D7 — `D-Regular`: a generic struct may name itself in its fields only at its
+    /// @PLN165 D7 — `D-Regular` (@FR-G-Regular): a generic struct may name itself in its fields only at its
     /// own type variables, unchanged (`kids: vector<Tree<T>>`), for then every instance is a
     /// finite type.  At other arguments (`Bad<vector<T>>` inside `Bad<T>`) it has no finite
     /// set of instances: refused here, on the pass that parses it first, and marked so no

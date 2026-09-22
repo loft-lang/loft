@@ -1,0 +1,14 @@
+// D11 — a narrow element (u8) mapped to text and back to a width.
+// @EXPECT: 7!|200!|2
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn main() {
+  g: Grid<u8> = Grid { w: 1, cells: [7, 200] };
+  t = map_grid(g, |b| { "{b}!" });
+  n = map_grid(t, |s| { len(s) });
+  println("{t.cells[0]}|{t.cells[1]}|{n.cells[0]}");
+}
