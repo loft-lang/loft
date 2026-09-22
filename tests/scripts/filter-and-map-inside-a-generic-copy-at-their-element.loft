@@ -1,0 +1,64 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-G-Mono — `filter`, `map` and a comprehension inside a GENERIC build their result at the
+// INSTANCE's element type, as their hand-written twins do.  The template wrote each element
+// through a field read of a record — its element is the type variable's placeholder — and
+// the per-instance rewrite of an element write did not match that shape, so every scalar
+// instance kept a RECORD copy: the interpreter panicked ("DbRef store_nr … out of range"; a
+// `text` element SIGSEGV) and `--native` did not compile (E0610, `OpCopyRecord` on an `i64`).
+// A struct element was right.  With that fixed, a NESTED vector element showed two more:
+// the append rewrite had no arm for a vector element (a handle zeroed, then a deep copy), and
+// the post-substitution copy of a vector bind (`@FR-B-Copy`, `s = x`) also took the
+// comprehension's slot for the loop element — a declared borrow (`@FR-B-View`) — and copied
+// into a vector no store had been made for.  A plain bind still copies (the last cell).
+// Found measuring @PLN165 E5–E6.
+//
+// @falsified-at: 42b763761 — interpret exit 134 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/filter-and-map-inside-a-generic-copy-at-their-element.patch — interpret exit 134 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the interpreter aborts (the store panic), native does
+//     not compile (E0610).
+//   ARMED: nothing.
+//   HOLDS: the struct cells, and the plain bind (`cp`) that copies.
+
+struct Pt { x: integer, y: integer }
+
+fn keep<T>(v: vector<T>, f: fn(T) -> boolean) -> vector<T> { filter(v, f) }
+fn conv<T, U>(v: vector<T>, f: fn(T) -> U) -> vector<U> { map(v, f) }
+fn same<T>(v: vector<T>) -> vector<T> { [for x in v { x }] }
+fn cp<T>(x: T) -> T { s = x; s }
+
+fn test_filter_at_each_element() {
+  a = keep([3, 1, 2], |x| { x > 1 });
+  b: vector<u8> = [9, 7];
+  bk = keep(b, |x| { x > 8 });
+  t = keep(["p", "qq"], |s| { len(s) > 1 });
+  f = keep([1.5, 2.5], |x| { x > 2.0 });
+  p = keep([Pt { x: 1, y: 2 }, Pt { x: 5, y: 6 }], |e| { e.x > 2 });
+  n: vector<integer?> = [1, null, 3];
+  nk = keep(n, |x| { x != null });
+  vv = keep([[1], [2, 3]], |w| { len(w) > 1 });
+  tv = keep([(1, 2), (3, 4)], |q| { q.0 > 1 });
+  assert("{a}|{bk}|{t}|{f}|{p[0].x},{len(p)}|{nk}|{vv}|{tv[0].0},{len(tv)}" ==
+    "[3,2]|[9]|[\"qq\"]|[2.5]|5,1|[1,3]|[[2,3]]|3,1", "{a}|{bk}|{t}|{f}|{nk}|{vv}");
+}
+
+fn test_map_at_each_element() {
+  a = conv([3, 1], |x| { x * 2 });
+  b: vector<u8> = [9, 7];
+  bt = conv(b, |x| { "{x}" });
+  p = conv([Pt { x: 1, y: 2 }], |e| { e.x + e.y });
+  q = conv([1, 2], |x| { Pt { x: x, y: 0 } });
+  w = conv([[1], [2, 3]], |v| { len(v) });
+  assert("{a}|{bt}|{p}|{q[1].x}|{w}" == "[6,2]|[\"9\",\"7\"]|[3]|2|[1,2]", "{a}|{bt}|{p}|{w}");
+}
+
+fn test_a_comprehension_and_a_plain_bind() {
+  n: vector<integer?> = [1, null];
+  assert("{same([4, 5])}|{same([\"a\"])}|{same(n)}|{same([[1], [2]])}" == "[4,5]|[\"a\"]|[1,null]|[[1],[2]]",
+    "{same(n)}");
+  v = [1, 2];
+  w = cp(v);
+  w += [3];
+  assert("{v}|{w}" == "[1,2]|[1,2,3]", "{v}|{w}");
+}

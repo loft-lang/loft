@@ -3566,6 +3566,20 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 "OpCopyRecord",
                 &[Value::Var(comp_var), Value::Var(elm), type_nr],
             ));
+        } else if self.is_type_var_element(in_t) {
+            // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
+            // `v += [x]` writes it, which each monomorph re-lowers at its concrete element
+            // (`rewrite_vector_write_triplets`); `set_field` below wraps the destination in a
+            // field read the rewrite does not match.  So `filter(v, f)` and `map(v, f)` inside a
+            // generic kept a RECORD copy per element at every scalar instance: the interpreter
+            // panicked ("DbRef store_nr … out of range", `text`: SIGSEGV) and `--native` did
+            // not compile (E0610).  The slice materialisation had the same fault.
+            let row = i32::from(self.data.def(ed_nr).known_type())
+                | i32::from(crate::keys::COPY_FRESH_DEST);
+            lp.push(self.cl(
+                "OpCopyRecord",
+                &[Value::Var(comp_var), Value::Var(elm), Value::Int(row)],
+            ));
         } else if let Some(op) = self.narrow_elm_set(in_t, elm, &Value::Var(comp_var)) {
             // A NARROW element gets the store op for its own width — the third site
             // `narrow_elm_set` exists for, beside the `+=` append and the slice.

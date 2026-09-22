@@ -12212,6 +12212,13 @@ impl Parser {
                     && tv_typed(*v, &self.vars)
                     && (*u as usize) < self.vars.count() as usize
                     && !self.vars.is_argument(*v)
+                    // A target DECLARED a borrow of its source is a view bind (`@FR-B-View`),
+                    // not the whole-value copy `@FR-B-Copy` asks of a plain `s = x`: the
+                    // comprehension's slot for a `filter` body is one (`_comp` depends on the
+                    // loop element).  Copied, it went into a vector local no store had been
+                    // made for — `filter(vv, f)` inside a generic panicked at
+                    // `vector<vector<integer>>` — where the concrete twin aliases.
+                    && !self.vars.tp(*v).depend().contains(u)
                     && let Type::Vector(elm, _) = self.vars.tp(*u).base().clone()
                 {
                     let (v, u) = (*v, *u);

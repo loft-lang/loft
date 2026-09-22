@@ -7638,6 +7638,12 @@ impl Parser {
     /// lowered in the monomorph's frame through `emit_tuple_set_ops`, the concrete append's
     /// own member-by-member write.
     pub(crate) const TV_TUPLE_ELEM: &'static str = "tvtupleelem";
+    /// An element READ of a `vector<T>` whose `T` is bound to a TUPLE: the template read a
+    /// reference to the stored element, and every consumer of the value — a callback, a
+    /// return, a local — expects the stack tuple the concrete twin unboxes it into.  The
+    /// substitution cannot mint the unboxing temp (it has no frame), so it stamps the read and
+    /// the monomorph lowers it through `unbox_tuple_from_dbref`.
+    pub(crate) const TV_TUPLE_READ: &'static str = "tvtupleread";
     /// The value [`Parser::null_value`] answers for a type still a TYPE VARIABLE — a `match`
     /// join's fallback, a branch with nothing to yield — asked again of the concrete type by
     /// each monomorph.  Apart from [`Self::TV_NULL_BLOCK`] because every type has this one:
@@ -10689,6 +10695,14 @@ impl Parser {
 
     fn rewrite_generic_type_defaults(&mut self, val: Value) -> Value {
         match val {
+            Value::Block(bl) if bl.name == Self::TV_TUPLE_READ && bl.operators.len() == 1 => {
+                let mut bl = *bl;
+                let read = self.rewrite_generic_type_defaults(bl.operators.remove(0));
+                let Type::Tuple(elems) = bl.result.base().clone() else {
+                    return read;
+                };
+                self.unbox_tuple_from_dbref(read, &elems)
+            }
             Value::Block(bl) if bl.name == Self::TV_TUPLE_ELEM && bl.operators.len() == 2 => {
                 let mut bl = *bl;
                 let src = self.rewrite_generic_type_defaults(bl.operators.remove(1));
@@ -11245,6 +11259,15 @@ impl Parser {
             || matches!(tp, Type::Reference(_, _) | Type::Tuple(_))
     }
 
+    /// The targets an APPEND's triplet is rewritten for: every element-write target, and a
+    /// nested vector — an appended element that is itself a vector takes a zeroed handle and
+    /// a deep copy, as the concrete append does.  An INDEXED write of a vector element is the
+    /// clear-and-append lowering, not a record copy, so it stays out of
+    /// [`Self::is_rewritable_vector_element_target`].
+    fn is_rewritable_append_target(tp: &Type) -> bool {
+        Self::is_rewritable_vector_element_target(tp) || matches!(tp, Type::Vector(_, _))
+    }
+
     /// P241 fix slice 3 — build the per-type primitive setter Call
     /// for the rewritten triplet's middle op.  Mirrors the parse-time
     /// concrete-T dispatch in `parser/vectors.rs:1560-1599`.
@@ -11513,7 +11536,7 @@ impl Parser {
             let site = matched.as_ref().and_then(|(_, _, _, copy_tp)| {
                 Self::element_write_binding(*copy_tp, bindings, data)
                     .map(|bound| bound.base().clone())
-                    .filter(Self::is_rewritable_vector_element_target)
+                    .filter(Self::is_rewritable_append_target)
             });
             if let (Some((elm_var, out_var, src_value, _)), Some(concrete)) = (matched, site) {
                 buf.drain(0..3);
@@ -11546,6 +11569,7 @@ impl Parser {
         (new_record_d, copy_record_d, finish_record_d, pre_alloc_d): (u32, u32, u32, u32),
     ) {
         let is_struct_target = matches!(concrete, Type::Reference(_, _));
+        let is_vector_target = matches!(concrete, Type::Vector(_, _));
         // Look up the concrete vector-element record type-id.
         // Mirrors `vectors.rs:1532-1535` — `database.vector(content_db_type)`
         // returns the synthetic vector<concrete> type id (registers
@@ -11578,9 +11602,15 @@ impl Parser {
                 // `self.vars.depend(elm, vec)` so elm doesn't outlive the
                 // backing store.
                 let content_def_nr = data.type_def_nr(concrete);
+                // A nested vector's element is typed as the vector it is, as `unique_elm_var`
+                // types it for the concrete append.
                 vars.set_type(
                     elm_var,
-                    Type::Reference(content_def_nr, Deps::frame1(out_var)),
+                    if let Type::Vector(inner, _) = concrete {
+                        Type::Vector(inner.clone(), Deps::frame1(out_var))
+                    } else {
+                        Type::Reference(content_def_nr, Deps::frame1(out_var))
+                    },
                 );
                 // 1. OpPreAllocVector(Var(out_var), Int(1), Int(elem_size))
                 //    Mirrors `vectors.rs:1161-1178` for perf parity with
@@ -11618,6 +11648,26 @@ impl Parser {
                         vec![Value::Var(elm_var), src_value],
                         concrete.clone(),
                         Self::TV_TUPLE_ELEM,
+                    ));
+                } else if is_vector_target {
+                    // @FR-G-Mono — a vector element is a 4-byte handle to a record of its own:
+                    // zeroed, then the source vector deep-copied in at the element's row, as
+                    // the concrete append writes it (`build_comprehension_code`).  Left a record
+                    // copy at the template's row, `filter(vv, f)` inside a generic panicked at
+                    // `vector<vector<integer>>` ("the vector handle … points at record 3,
+                    // whose size word is -1").
+                    let set_int4_d = data.def_nr("OpSetInt4");
+                    out.push(Value::Call(
+                        set_int4_d,
+                        vec![Value::Var(elm_var), Value::Int(0), Value::Int(0)],
+                    ));
+                    out.push(Value::Call(
+                        copy_record_d,
+                        vec![
+                            src_value,
+                            Value::Var(elm_var),
+                            Value::Int(i32::from(content_db_type)),
+                        ],
                     ));
                 } else if is_struct_target {
                     let known_tp = if (content_def_nr as usize) < data.definitions.len() {
@@ -11739,6 +11789,14 @@ impl Parser {
     /// zero offset — keeps this from having to carry a second copy of the op list that
     /// `wrap_vector_get_val` already owns.
     fn element_write_destination(dest: &Value, data: &Data) -> Option<Value> {
+        // A tuple element's read is stamped for unboxing (`TV_TUPLE_READ`); as a write
+        // destination it is the element reference inside.
+        if let Value::Block(bl) = dest.unspan()
+            && bl.name == Self::TV_TUPLE_READ
+            && let [inner] = bl.operators.as_slice()
+        {
+            return Self::element_write_destination(inner, data);
+        }
         let is_element_read = |v: &Value| {
             matches!(v.unspan(), Value::Call(d, _)
                 if *d != u32::MAX
@@ -11887,9 +11945,14 @@ impl Parser {
             | Type::Function(..)
             | Type::Routine(_)
             | Type::RefVar(_) => return code,
-            // A tuple element is read field by field by its consumer (`TupleGet`), so
-            // there is no single value to unpack here.
-            Type::Tuple(_) => return code,
+            // @FR-G-Mono — a tuple element is the stack tuple its twin unboxes (`v[i]`, `for x
+            // in v`): stamped here, lowered in the monomorph's frame (`TV_TUPLE_READ`).  Left a
+            // reference to the stored element, a callback over `vector<T>` at `(integer,
+            // integer)` read the reference's bytes as the tuple's (`137438953478`) and native
+            // did not compile.
+            Type::Tuple(_) => {
+                return crate::data::v_block(vec![code], tp.base().clone(), Self::TV_TUPLE_READ);
+            }
             // Not element types: `Unknown`/`Null`/`Void`/`Never` carry no storage,
             // `Keys` describes a key list, and `Rewritten` is an append form that has
             // already been lowered.  `Optional` cannot appear — `base()` peeled it.
