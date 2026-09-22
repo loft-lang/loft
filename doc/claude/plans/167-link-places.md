@@ -250,6 +250,20 @@ recorded here with the phase that must carry it as a cell, so none depends on me
 3. **Which cure for the `&text` parameter when only ONE kind is ever passed** — none: one
    instance, as today.  Instantiation is triggered by the second kind at a call site.
 
+## Where the text kind can ride (for C1, measured 2026-09-22)
+
+`Type::RefVar(Box<Type>)` is matched at **328** sites, 77 of them for text, so a second field
+on `RefVar` would touch every one.  The precedent for a fact that must travel with a type
+without changing its shape is `ConstParams` (`data.rs`): *"carried BESIDE the parameter types,
+not as a wrapper on them — plan 40 rules out a `Type::Const`, because `Type` is matched in
+hundreds of places."*  The text kind fits the same slot: `Type::Text(Deps)` already carries a
+side structure that `Type::is_equal` ignores, so a store-kind flag inside the `Deps` of a linked
+`Text` leaves every shape test, every `is_equal` and every `&text` match unchanged, and is
+read only where the kind decides something — the two emitters' read and write arms, the
+re-point refusal, and C3's instantiation key.  To be probed in C1 before it is built: whether
+any site rebuilds a `Text`'s `Deps` from scratch (`Deps::none()`, `depending(v)`), which would
+drop the flag silently.
+
 ## Cross-arc dependencies
 
 - @PLN165 (generics): C3 reuses per-instance substitution; E1 (a stdlib generic reserving a
