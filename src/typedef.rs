@@ -129,6 +129,13 @@ pub fn complete_definition(_lexer: &mut Lexer, data: &mut Data, d_nr: u32) {
         "radix" | "hash" | "reference" | "index" | "sorted" | "spatial" | "trie" => {
             data.set_returned(d_nr, Type::Reference(d_nr, Deps::none()));
         }
+        // A generator handle (loft#1585): the element type a `vector<iterator<T>>` stores.
+        "iterator" => {
+            data.set_returned(
+                d_nr,
+                Type::Iterator(Box::new(Type::Unknown(0)), Box::new(Type::Null)),
+            );
+        }
         "keys_definition" => {
             data.set_returned(d_nr, Type::Keys);
             data.definitions[d_nr as usize].known_type = 8;
@@ -1085,6 +1092,15 @@ fn variant_parent_qualified_name(data: &Data, database: &Stores, d_nr: u32) -> O
 }
 
 pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
+    // A generator handle is stored as the 12-byte `DbRef` it is (loft#1585): the stdlib's
+    // `type iterator` has that row, whichever layout asks for it first.
+    if data.def(d_nr).known_type == u16::MAX
+        && data.def_type(d_nr) == DefType::Type
+        && data.def(d_nr).name == "iterator"
+    {
+        data.definitions[d_nr as usize].known_type = database.dbref();
+        return;
+    }
     // @PLN165 D5 — an OPEN instance (`Box<T>` inside a template) gets a ROW and no layout:
     // its fields are typed by a variable, and laying them out is loft#1536's class (a
     // zero-width `__typevar_T` field).  The row is what the type variable's placeholder has —

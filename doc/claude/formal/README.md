@@ -145,11 +145,12 @@ not duplicate: a deviation entry links to the lens analysis instead of re-explai
 
 ## Areas
 
-**Eight deviations are open, in four chapters:** heap.md 3, operational.md 2, binding.md 2 and
-performance.md 1 (`rule_tags.py registers`, re-measured on the joined tree 2026-09-22, after
-heap.md's `D-heap-26` closed and `D-heap-28` to `D-heap-32`, tuples.md's `D-tup-15` and
-coroutines.md's `D-cor-4` each opened and closed that day, and coroutines.md's `D-cor-3` and
-collections.md's `D-col-5` closed). Every other chapter is at 0, and each zero is a claim to re-measure against the
+**Nine deviations are open, in five chapters:** heap.md 3, operational.md 2, binding.md 2,
+coroutines.md 1 and performance.md 1 (`rule_tags.py registers`, re-measured on the joined tree
+2026-09-22, after heap.md's `D-heap-26` closed and `D-heap-28` to `D-heap-32`, tuples.md's
+`D-tup-15` and coroutines.md's `D-cor-4` each opened and closed that day, coroutines.md's
+`D-cor-3` and collections.md's `D-col-5` closed, and coroutines.md's `D-cor-5` opened with
+`(G-Hold)`). Every other chapter is at 0, and each zero is a claim to re-measure against the
 oracle line its chapter names. The two in operational.md are the **meta** entry,
 `D-op-1`/`D-op-2` — there being no shared operational semantics, the interpreter is the spec and
 a backend divergence is test-caught rather than definition-caught (@PLN89's differential
@@ -185,7 +186,7 @@ chapters do not.
 | [heap.md](heap.md) | store steps — alloc / read / write / **copy** / free / **drop** | **3 open** (D-heap-8 and D-heap-9 — the copy-lease rules `H-Copy-Refuse` / `H-Copy-Lease`, written 2026-09-15 ahead of their implementation, @PLN163; D-heap-15, a value the rules MOVE still copied) — the `DbRef`/`Store` model, the whole-value COPY (C86), `H-Materialise`, the LIFO free discipline whose soundness is ownership.md, the drop hook's one-release-per-resource rule (`H-Drop`: owner's scope end, reassignment, container cascade; a copy moves the responsibility); conformance via the oracle (D-op-1) |
 | [layout.md](layout.md) | the store BYTE layout — `layout(τ)` (widths, offsets, packing, the reference encoding) | **0 open** — `D-layout-1` closed 2026-09-21 (loft#1562): every path that reads an existing image — `store_load`, the bind of an existing file, the whole-image URL loaders and the paged loaders — refuses a store whose `.dschema` records another layout (`L-Sound`). One format (RAM = disk); nullability is a sentinel, not a layout (`L-Null`); register in [layout-history.md](layout-history.md) |
 | [iteration.md](iteration.md) | `for`, ranges, text iteration, the map/filter/reduce/comprehension combinators | **0 own** — index-cursor `for`, deterministic combinator order, fresh result vector; conformance via the oracle; register in [iteration-history.md](iteration-history.md) |
-| [coroutines.md](coroutines.md) | generators — `yield` / `next`, stackful suspension | **1 open** — `D-cor-3` (loft#1586: an endless `while` generator never yields on `--native`); lazy one-value-per-advance; a loop body with a SECOND statement is eager on native (a decided edge, loft#836); conformance via the oracle; register in [coroutines-history.md](coroutines-history.md) |
+| [coroutines.md](coroutines.md) | generators — `yield` / `next`, stackful suspension, a generator held by a record or a collection (`G-Hold`) | **1 open** — `D-cor-5` (loft#1601: a generator held by a record in a keyed collection is never released); lazy one-value-per-advance; a loop body with a SECOND statement is eager on native (a decided edge, loft#836); conformance via the oracle; register in [coroutines-history.md](coroutines-history.md) |
 | [concurrency.md](concurrency.md) | `par` — the one parallel construct | **0 own** — a parallel map consumed in source order; determinism CONDITIONAL on a pure worker; conformance via the oracle |
 | [calls.md](calls.md) | function call & return — args, parameter binding, the frame | **0 open** — args left-to-right; scalar params by value, heap params share (`F-ParamHeap`), `&` writes back; returns independent; a void tail is dropped (`F-Drop`) and a block's value is its tail's (`F-Block`); register in [calls-history.md](calls-history.md) |
 | [matching.md](matching.md) | `match` — enum-variant dispatch + payload binding | **0 own** — an expression; struct-payload patterns bind by name; `_` is the final catch-all; compile-time exhaustiveness |

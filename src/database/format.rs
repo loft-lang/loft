@@ -1474,6 +1474,8 @@ impl ShowDb<'_> {
                     let pos = store.get_u32_raw(self.rec, self.pos + 8);
                     if store_nr == u16::MAX && rec == 0 {
                         s.push_str("null");
+                    } else if is_generator_handle(store_nr) {
+                        s.push_str("iterator");
                     } else {
                         write!(s, "DbRef({store_nr},{rec},{pos})").unwrap();
                     }
@@ -2227,6 +2229,8 @@ impl ShowDb<'_> {
                 let pos = self.store().get_u32_raw(self.rec, self.pos + 8);
                 if rec == 0 {
                     s.push_str("null");
+                } else if is_generator_handle(store_nr as u16) {
+                    s.push_str("iterator");
                 } else {
                     write!(s, "DbRef({store_nr},{rec},{pos})").unwrap();
                 }
@@ -2328,6 +2332,15 @@ impl ShowDb<'_> {
         self.dump_sep(s, indent);
         s.push(']');
     }
+}
+
+/// Is a stored `DbRef` with this store number a generator handle (loft#1585)?  The two
+/// backends number the coroutine table differently — the interpreter's handle carries the null
+/// store number with a slot in `rec`, a native one its own reserved number — so a field or an
+/// element holding one renders as its kind rather than as either backend's numbers.
+fn is_generator_handle(store_nr: u16) -> bool {
+    store_nr == crate::state::COROUTINE_STORE
+        || store_nr == crate::codegen_runtime::NATIVE_COROUTINE_STORE
 }
 
 #[cfg(test)]

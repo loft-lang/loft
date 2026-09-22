@@ -20,6 +20,7 @@ pub mod sql_query;
 pub mod sql_source;
 mod structures;
 mod types;
+pub(crate) use types::DBREF_BORROW;
 
 pub use allocation::{CLEAR_KEYED_VIEW, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};

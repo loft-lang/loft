@@ -1994,6 +1994,10 @@ enum BareIo {
     Radix(u16, Vec<u16>),
     Trie(u16, u16),
     Index(u16, Vec<(u16, bool)>),
+    /// The 12-byte stored `DbRef` shape — `true` for the owned one, `false` for the borrowed
+    /// twin `dbref_shapes` registers beside it.  A field names it inline (`db.dbref()`), and a
+    /// generator-handle collection (loft#1585) names it as its element, so it needs a binding.
+    DbRef(bool),
 }
 
 impl<'a> Output<'a> {
@@ -6516,6 +6520,9 @@ extern crate loft;"
                 crate::database::Parts::Vector(c) => {
                     bare_io.push((tid, BareIo::Vector(*c)));
                 }
+                crate::database::Parts::DbRef => {
+                    bare_io.push((tid, BareIo::DbRef(tp.name != crate::database::DBREF_BORROW)));
+                }
                 // loft#1148 — `Array` is `Vector` AFTER the linked-group conversion:
                 // `finish_type` rewrites a collection whose content struct is shared by
                 // another collection (`linked`) and renames it `array<…>`.  It is the same
@@ -7027,6 +7034,8 @@ extern crate loft;"
                 let c_ref = type_id_ref(*c);
                 writeln!(w, "    let t{tid} = db.vector({c_ref});")?;
             }
+            BareIo::DbRef(true) => writeln!(w, "    let t{tid} = db.dbref();")?,
+            BareIo::DbRef(false) => writeln!(w, "    let t{tid} = db.dbref_borrow();")?,
             BareIo::Sorted(c, keys) => {
                 let c_ref = type_id_ref(*c);
                 let keys_str = keys
@@ -8009,6 +8018,12 @@ extern crate loft;"
         // #682: mirror the ADOPTED / BORROWED split too.  Both shapes are 12
         // bytes, so getting it wrong costs no layout mismatch — it silently
         // gives native the interpreter's old over-free instead.
+        // A generator handle field (loft#1585) is the same 12-byte stored `DbRef`, registered
+        // where the compiler registers it: at the first field that needs it.
+        if let Type::Iterator(_, _) = typedef {
+            emit_db_field(w, s_var, field_name, "dbref", "db.dbref()")?;
+            return Ok(());
+        }
         if let Type::Reference(_, deps) = typedef
             && !deps.is_empty()
         {

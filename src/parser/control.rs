@@ -2021,7 +2021,15 @@ impl Parser {
             // tail-expression spelling of the `return <expr>` this file refuses in
             // `parse_return`; refusing one and not the other would leave the rule asked at
             // one of its two construction sites, which is the shape loft#1006 already was.
-            let is_generator = matches!(result, Type::Iterator(_, _));
+            //
+            // Only a generator's BODY is that: an `if` or `match` arm used as a value whose
+            // tail IS a handle (`h = if c { steps(1) } else { steps(2) }`) is expected to be
+            // an `iterator` too, and it delivers the handle like any other value — refused as
+            // a generator body, a program with no generator in it failed to compile.  A
+            // generator body ending in such an `if` is still refused, at the body's own tail.
+            let delivers_handle =
+                context != "return from block" && matches!(t.base(), Type::Iterator(_, _));
+            let is_generator = matches!(result, Type::Iterator(_, _)) && !delivers_handle;
             if is_generator && !self.first_pass && !matches!(*t, Type::Void | Type::Never) {
                 let msg = "a generator's body produces values only through `yield`, so this \
                            tail value is discarded — `for v in <generator>() { yield v; }` \
@@ -17841,7 +17849,9 @@ impl Parser {
                 // manual `next()` on `iterator<(integer, integer)>` routes
                 // through the legacy text channel (size 16 ≡ `&str`) and
                 // returns a `String` where Rust expected a tuple.
-                if let Type::Iterator(inner, _) = &types[0] {
+                // A nullable handle is one too — an element read with a computed index
+                // (`next(tasks[i])`, loft#1585) — and a null one advances to done.
+                if let Type::Iterator(inner, _) = types[0].base() {
                     let yield_tp = (**inner).clone();
                     let byte_size = i32::from(crate::variables::size(
                         &yield_tp,
@@ -17866,6 +17876,10 @@ impl Parser {
                         args.extend(kinds.iter().map(|k| Value::Int(k.code())));
                     }
                     *val = Value::Call(op, args);
+                    // The advance answers null once the generator is done, whatever the
+                    // argument was: a handle read out of a field (`next(t.g)`, loft#1585) must
+                    // not leave that field's not-null mark for a `??` to call redundant.
+                    self.expr_not_null = false;
                     return yield_tp;
                 }
                 if self.first_pass {

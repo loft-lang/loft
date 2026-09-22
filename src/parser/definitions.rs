@@ -6254,7 +6254,10 @@ impl Parser {
     pub(crate) fn synth_drop_cascades(&mut self) {
         // Cheap exit for the overwhelmingly common program: no `OpDrop` anywhere means no
         // type can own a droppable, so nothing below can fire.
-        if !self.data.any_drop_hook() {
+        // …and a generator handle held by a record or a collection (loft#1585), which its
+        // container releases although the program declares no hook.
+        let generators = self.data.any_generator_member();
+        if !self.data.any_drop_hook() && !generators {
             return;
         }
         let mut targets: Vec<u32> = Vec::new();
@@ -6279,6 +6282,9 @@ impl Parser {
                 // binding holds on native alone.  This one walks `self`, so the same IR
                 // releases on both backends.
                 DefType::Vector => self.collection_elem_cascade(d_nr).is_some(),
+                // The stdlib's `type iterator`: its "cascade" frees the handle a slot holds, so
+                // a field and an element of one release through the same call as any member.
+                DefType::Type => generators && d_nr == self.data.iterator_def(),
                 _ => false,
             };
             if wanted {
@@ -6301,7 +6307,9 @@ impl Parser {
             made.push((t, c_nr));
         }
         for (t, c_nr) in made {
-            if self.data.def_type(t) == DefType::Enum {
+            if t == self.data.iterator_def() {
+                self.fill_handle_release(t, c_nr);
+            } else if self.data.def_type(t) == DefType::Enum {
                 self.fill_enum_drop_cascade(t, c_nr);
             } else {
                 self.fill_drop_cascade(t, c_nr, false);
@@ -6493,6 +6501,12 @@ impl Parser {
                 let td = self.data.type_def_nr(tp);
                 (td != u32::MAX).then(|| (td, Type::Reference(td, crate::data::Deps::none())))
             }
+            // A generator handle (loft#1585) is released through a reference to its SLOT, the
+            // way an inline record is, so `t_8iterator_OpDropAll` reads the handle out of it.
+            Type::Iterator(_, _) => {
+                let it = self.data.iterator_def();
+                (it != u32::MAX).then(|| (it, Type::Reference(it, crate::data::Deps::none())))
+            }
             _ => None,
         }
     }
@@ -6547,11 +6561,9 @@ impl Parser {
             let Type::Vector(elm, _) = a.typedef.base() else {
                 continue;
             };
-            let elm = (**elm).clone();
-            let (Type::Reference(ed, _) | Type::Enum(ed, true, _)) = elm.base() else {
+            let Some((elm, ed)) = self.cascade_element((**elm).clone()) else {
                 continue;
             };
-            let ed = *ed;
             if !self.data.owns_droppable(ed) {
                 continue;
             }
@@ -6655,11 +6667,62 @@ impl Parser {
         let Type::Vector(elm, _) = self.data.def(d_nr).returned().base() else {
             return None;
         };
-        let elm = (**elm).clone();
-        let (Type::Reference(ed, _) | Type::Enum(ed, true, _)) = elm.base() else {
-            return None;
-        };
-        self.data.owns_droppable(*ed).then_some(elm)
+        let (elm, ed) = self.cascade_element((**elm).clone())?;
+        self.data.owns_droppable(ed).then_some(elm)
+    }
+
+    /// A collection element a cascade walks: the type its per-element read takes and the
+    /// definition whose cascade releases it.  A record or struct-enum element is its own; a
+    /// generator handle (loft#1585) is read as a reference to its SLOT and released by
+    /// `t_8iterator_OpDropAll`.
+    fn cascade_element(&self, elm: Type) -> Option<(Type, u32)> {
+        match elm.base() {
+            Type::Reference(ed, _) | Type::Enum(ed, true, _) => {
+                let ed = *ed;
+                Some((elm, ed))
+            }
+            Type::Iterator(_, _) => {
+                let it = self.data.iterator_def();
+                (it != u32::MAX).then(|| (Type::Reference(it, crate::data::Deps::none()), it))
+            }
+            // A tuple element whose only droppables are generator handles, stored in the
+            // element (loft#1585): released through its synthetic record's cascade.  A tuple
+            // holding a RECORD with a hook is left out — that record lives in a store of its
+            // own, which the call that minted it releases, hook and all.
+            Type::Tuple(elems)
+                if elems
+                    .iter()
+                    .any(|e| matches!(e.base(), Type::Iterator(_, _)))
+                    && elems.iter().all(|e| {
+                        matches!(e.base(), Type::Iterator(_, _))
+                            || !self.data.type_owns_droppable_anywhere(e)
+                    }) =>
+            {
+                let td = self.data.type_def_nr(&elm);
+                (td != u32::MAX).then(|| (Type::Reference(td, crate::data::Deps::none()), td))
+            }
+            _ => None,
+        }
+    }
+
+    /// The body of `t_8iterator_OpDropAll(self)` — loft#1585, @FR-G-Hold: `self` is the SLOT a record
+    /// field or a collection element keeps a generator handle in, and the release frees the
+    /// generator that handle names (`OpFreeRef` routes a handle to its coroutine).  A slot
+    /// holding the null handle frees nothing.
+    fn fill_handle_release(&mut self, t: u32, c_nr: u32) {
+        let name = Self::drop_cascade_name(&self.data, t);
+        let file = self.data.def(t).position().file.clone();
+        let mut vars = Function::new(&name, &file);
+        let self_tp = self.cascade_self_type(t);
+        let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
+        vars.become_argument(self_var);
+        vars.defined(self_var);
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = c_nr;
+        let handle = self.cl("OpGetDbRef", &[Value::Var(self_var), Value::Int(0)]);
+        let ops = vec![self.cl("OpFreeRef", &[handle])];
+        self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
     }
 
     fn fill_drop_cascade(&mut self, t: u32, c_nr: u32, with_skip: bool) {

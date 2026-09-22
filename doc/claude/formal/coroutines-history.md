@@ -6,9 +6,22 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** (2026-09-22).  D-cor-4 opened and closed 2026-09-22 (loft#1589); D-cor-3 opened
+OPEN: **1** (2026-09-22) — D-cor-5.  D-cor-4 opened and closed 2026-09-22 (loft#1589); D-cor-3 opened
 2026-09-21 and closed the next day; D-cor-2 opened and
 closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
+
+> **D-cor-5 — OPEN (2026-09-22, loft#1601) — a generator held by a record in a keyed collection is
+> never released.**
+> `(G-Hold)` was written with loft#1585, which made a generator holdable at all: before it, a
+> vector of them and a struct field holding one failed to compile.  A record, a vector, a
+> nested record, a vector field and a tuple member now release every frame they hold, at death
+> and at removal.  A KEYED collection (`hash`, `sorted`, `index`, `spatial`) does not: its
+> records are released without a walk — `(H-Drop-Not)` keeps `OpDrop` hooks out of it — and
+> the store walk cannot reach a frame, which lives in the coroutine table rather than in a
+> store.  So its generators, and every heap local they allocated, stay allocated to program
+> exit, on both backends, reported only by the store census.  A vector of vectors of
+> generators is the same today, through loft#1597: no cascade reaches a vector's vector
+> elements.
 
 > **D-cor-4 — CLOSED (2026-09-22, loft#1589) — nothing said who owns a yielded record, and the
 > two backends answered differently.**

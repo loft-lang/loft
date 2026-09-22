@@ -518,6 +518,14 @@ impl Parser {
             } else {
                 let g = self.create_unique("__gen", is_type);
                 self.vars.defined(g);
+                // A handle read out of a field or an element (loft#1585) is the container's:
+                // the loop advances it in place and leaves the frame to its owner, as it
+                // leaves a variable's.
+                if matches!(code.unspan(), Value::Call(d, _)
+                    if self.data.def(*d).name() == "OpGetDbRef")
+                {
+                    self.vars.set_skip_free(g);
+                }
                 (g, v_set(g, code.clone()))
             };
             *code = setup;
@@ -1483,6 +1491,34 @@ impl Parser {
             };
             return self.cl("OpSetDbRef", &[r, p, v]);
         }
+        // loft#1585, @FR-G-Hold: a generator handle held in a field or an element is its container's, so
+        // a new handle written over it releases the frame the old one owned — the frame is
+        // loft-side data, which the ownership model frees, not a resource `(H-Drop-Not)`
+        // leaves to the author.  The new value is bound first so a right-hand side that reads
+        // the member still meets a live frame; a local given here MOVES (`(H-Move)`), which
+        // the scope pass reads off the `OpSetDbRef` naming it.
+        if matches!(f_type.base(), Type::Iterator(_, _))
+            && op == "="
+            && let Value::Call(d, args) = to.unspan()
+            && self.data.def(*d).name() == "OpGetDbRef"
+            && args.len() == 2
+        {
+            let (r, p) = (args[0].clone(), args[1].clone());
+            let mut ops = Vec::new();
+            let v = match val.unspan() {
+                Value::Null => self.cl("OpNullRefSentinel", &[]),
+                Value::Var(_) => val.clone(),
+                _ => {
+                    let tmp = self.create_unique("gen_set", f_type);
+                    ops.push(v_set(tmp, val.clone()));
+                    Value::Var(tmp)
+                }
+            };
+            let old = self.cl("OpGetDbRef", &[r.clone(), p.clone()]);
+            ops.push(self.cl("OpFreeRef", &[old]));
+            ops.push(self.cl("OpSetDbRef", &[r, p, v]));
+            return Value::Insert(ops);
+        }
         // @PLN25 E2a.5 — `lvalue = null` for a nullable inline struct field / vector element.
         // `build_nullable_set_null` carries the rationale and is shared with the CONSTRUCTION
         // path (`H { maybe: null }`), so the two spellings of "absent" cannot drift.
@@ -2326,6 +2362,30 @@ use #count instead"
                 recorded
             };
             let coll = self.vars.loop_value(index_var).clone();
+            // loft#1585 — the element's generator frames go with it (`element_holds_frames`):
+            // a handle element is the loop variable's value, a record element its reference.
+            // The handle is read out of the element's slot rather than off the loop variable:
+            // that is a view, whose own free the code generator drops.
+            let elem_tp = self.vars.tp(index_var).clone();
+            let release = if self.first_pass || !self.data.type_holds_generator(&elem_tp) {
+                None
+            } else if matches!(elem_tp.base(), Type::Iterator(_, _)) {
+                // Only a vector walks a handle element, and its cursor is the index.
+                let kind = on & 63;
+                if kind == 0 {
+                    let kt = self.data.def(self.data.iterator_def()).known_type();
+                    let size = i32::from(self.database.size(kt));
+                    let slot = self.cl(
+                        "OpGetVector",
+                        &[coll.clone(), Value::Int(size), Value::Var(state_var)],
+                    );
+                    self.element_frame_release(&elem_tp, &slot)
+                } else {
+                    None
+                }
+            } else {
+                self.element_frame_release(&elem_tp, &Value::Var(index_var))
+            };
             let remove = self.cl(
                 "OpRemove",
                 &[
@@ -2336,6 +2396,9 @@ use #count instead"
                 ],
             );
             *code = self.loop_group_remove(&coll, index_var, remove);
+            if let Some(release) = release {
+                *code = Value::Insert(vec![release, code.clone()]);
+            }
             *t = Type::Void;
         } else if self.lexer.has_keyword("lock") {
             // d#lock — read the lock state of the store containing a reference or vector variable.
@@ -2957,6 +3020,13 @@ use #count instead"
             );
             list.push(v_loop(steps, "Append Iter"));
             list.push(self.cl("OpAppendText", &[Value::Var(append), Value::str("]")]));
+        } else {
+            // A generator HANDLE renders as its kind — the text a field or an element holding
+            // one renders (loft#1585) — and is not advanced: it rendered nothing at all.
+            list.push(self.cl(
+                "OpAppendText",
+                &[Value::Var(append), Value::str("iterator")],
+            ));
         }
     }
 
@@ -3074,6 +3144,15 @@ use #count instead"
             self.vars.set_name(src_id, for_var);
         }
         self.vars.defined(for_var);
+        // loft#1585 — a loop over a COLLECTION of generator handles binds each element's
+        // handle, a view of a member: advancing it advances the element's generator, and the
+        // collection releases it.  Freed at the iteration's end, it ended every generator the
+        // loop visited.  A handle a generator YIELDS stays the loop's own (`(G-Own)`).
+        if matches!(var_tp.base(), Type::Iterator(_, _))
+            && !matches!(in_type.base(), Type::Iterator(_, _))
+        {
+            self.vars.set_skip_free(for_var);
+        }
         let if_step = if self.lexer.has_token("if") {
             let mut if_expr = Value::Null;
             self.expression(&mut if_expr);
@@ -3513,6 +3592,12 @@ use #count instead"
                                 let var = self.create_var(name, &bind_tp);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
+                                // A generator handle carries no deps to say so: marked instead
+                                // (loft#1585), as a `for` over a vector of handles marks its
+                                // loop variable.
+                                if matches!(elem_tp.base(), Type::Iterator(_, _)) {
+                                    self.vars.set_skip_free(var);
+                                }
                                 let read = if ref_def_nr == u32::MAX {
                                     Value::TupleGet(for_var, i as u16)
                                 } else {

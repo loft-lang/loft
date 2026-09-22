@@ -322,6 +322,16 @@ struct Scopes<'s> {
     /// different destinations on different arms, and a bare source would then set the flag at
     /// a copy that is not the one it stands for.
     per_path_pairs: HashSet<(u16, u16)>,
+    /// loft#1585 — the generator locals that VIEW a member's handle at one assignment
+    /// (`h = t.g`) and hold a frame of their own at another (`h = steps()`).  The parser marks
+    /// a view never-free, and here that is lifted: the local's [`Self::handed_off`] flag says,
+    /// per path, whether what it holds now is a view, and its releases read the flag.
+    handle_views: HashSet<u16>,
+    /// loft#1585 — the generator-handle members `(tuple local, index)` the tuple OWNS: every
+    /// assignment of the member gives it a fresh handle — a call, a generator's advance, a
+    /// tuple a call returned.  One read out of a member (`OpGetDbRef`) is a VIEW of the frame
+    /// the member's container holds, and so is a local placed there, which keeps its own.
+    owned_handle_members: HashSet<(u16, u16)>,
     /// loft#890 — the lifted temps whose STORE a consuming op already freed, so
     /// `get_free_vars` must not free it again.  Scope-local on purpose: `skip_free` is a
     /// VARIABLE flag both backends read at ALLOCATION time too, so stamping it here made
@@ -3183,13 +3193,18 @@ fn arm_container_handoffs(code: &Value, function: &Function, data: &Data) -> Vec
     }
     let arm = |a: &Value, out: &mut Vec<u16>| {
         a.walk(&mut |m| {
-            if let Value::Call(d, args) = m.unspan()
-                && *d == copy_d
-                && args.len() >= 3
-                && let Some(src) = copy_record_handoff(args, function, data)
+            let Value::Call(d, args) = m.unspan() else {
+                return;
+            };
+            let src = if *d == copy_d && args.len() >= 3 {
+                copy_record_handoff(args, function, data)
+                    .filter(|&src| data.type_owns_droppable_anywhere(function.tp(src)))
+            } else {
+                handle_handoff(*d, args, function, data)
+            };
+            if let Some(src) = src
                 && !function.is_compiler_generated(src)
                 && !function.is_argument(src)
-                && data.type_owns_droppable_anywhere(function.tp(src))
                 && !out.contains(&src)
             {
                 out.push(src);
@@ -3204,6 +3219,169 @@ fn arm_container_handoffs(code: &Value, function: &Function, data: &Data) -> Vec
     });
     out.sort_unstable();
     out
+}
+
+/// Is `rhs` a generator handle read out of a field or an element — a VIEW of a member's handle
+/// (loft#1585), which the parser marks never-free?
+fn is_handle_projection(rhs: &Value, data: &Data) -> bool {
+    matches!(rhs.unspan(), Value::Call(d, _) if data.def(*d).name() == "OpGetDbRef")
+}
+
+/// The values a generator-handle right-hand side can deliver: the tails of a value `if` (a
+/// lowered `match` among them) and of a block, each arm on its own path.
+fn handle_leaves<'v>(rhs: &'v Value, out: &mut Vec<&'v Value>) {
+    match rhs.unspan() {
+        Value::If(_, t, e) => {
+            handle_leaves(t, out);
+            handle_leaves(e, out);
+        }
+        Value::Block(bl) => {
+            if let Some(tail) = bl.operators.last() {
+                handle_leaves(tail, out);
+            }
+        }
+        Value::Insert(ops) => {
+            if let Some(tail) = ops.last() {
+                handle_leaves(tail, out);
+            }
+        }
+        Value::Null => {}
+        other => out.push(other),
+    }
+}
+
+/// Does a generator-handle right-hand side deliver a member's handle on some path, and one of
+/// its own on some path?  `h = t.g` answers `(true, false)`, `h = steps()` `(false, true)`, and
+/// `h = if c { t.g } else { steps() }` both (loft#1585).
+pub(crate) fn handle_rhs_kinds(rhs: &Value, data: &Data) -> (bool, bool) {
+    let mut leaves = Vec::new();
+    handle_leaves(rhs, &mut leaves);
+    let views = leaves
+        .iter()
+        .filter(|l| is_handle_projection(l, data))
+        .count();
+    (views > 0, views < leaves.len())
+}
+
+/// `rhs` with the per-path flag of the handle it is bound to written in every arm that delivers
+/// one — `true` where the arm delivers a member's handle, `false` where it delivers one of its
+/// own — ahead of the arm's value, so the flag says what the local holds on the path that ran.
+fn tag_handle_leaves(rhs: &Value, flag: u16, data: &Data) -> Value {
+    let tag = |leaf: &Value| v_set(flag, Value::Boolean(is_handle_projection(leaf, data)));
+    match rhs {
+        Value::Span(b) => Value::Span(Box::new((b.0.clone(), tag_handle_leaves(&b.1, flag, data)))),
+        Value::If(c, t, e) => Value::If(
+            c.clone(),
+            Box::new(tag_handle_leaves(t, flag, data)),
+            Box::new(tag_handle_leaves(e, flag, data)),
+        ),
+        Value::Block(bl) if !bl.operators.is_empty() => {
+            let mut bl = bl.clone();
+            let last = bl.operators.len() - 1;
+            let tail = bl.operators[last].clone();
+            if matches!(
+                tail.unspan(),
+                Value::If(..) | Value::Block(..) | Value::Insert(..)
+            ) {
+                bl.operators[last] = tag_handle_leaves(&tail, flag, data);
+            } else if !matches!(tail.unspan(), Value::Null) {
+                bl.operators.insert(last, tag(&tail));
+            }
+            Value::Block(bl)
+        }
+        Value::Insert(ops) if !ops.is_empty() => {
+            let mut ops = ops.clone();
+            let last = ops.len() - 1;
+            let tail = ops[last].clone();
+            ops[last] = tag_handle_leaves(&tail, flag, data);
+            Value::Insert(ops)
+        }
+        Value::Null => Value::Null,
+        leaf => Value::Insert(vec![tag(leaf), leaf.clone()]),
+    }
+}
+
+/// [`Scopes::owned_handle_members`], read off every assignment of a tuple local and of its
+/// members.  An assignment that is not a fresh handle makes the member a view for good — a
+/// leak where one path did own it, never a release of a frame somebody else holds.
+fn owned_handle_members(code: &Value, function: &Function, data: &Data) -> HashSet<(u16, u16)> {
+    fn fresh(rhs: &Value, idx: usize, data: &Data) -> bool {
+        match rhs.unspan() {
+            // A tuple a call answers (a generator's advance included) is the caller's whole.
+            Value::Call(d, _) => {
+                let name = data.def(*d).name();
+                !name.starts_with("Op") || name == "OpCoroutineNext"
+            }
+            Value::Tuple(items) => items.get(idx).is_some_and(
+                |m| matches!(m.unspan(), Value::Call(d, _) if data.def(*d).name() != "OpGetDbRef"),
+            ),
+            Value::Block(bl) => bl.operators.last().is_some_and(|t| fresh(t, idx, data)),
+            Value::Insert(ops) => ops.last().is_some_and(|t| fresh(t, idx, data)),
+            _ => false,
+        }
+    }
+    let mut verdict: BTreeMap<(u16, u16), bool> = BTreeMap::new();
+    code.walk(&mut |n| {
+        let (v, rhs, only) = match n.unspan() {
+            Value::Set(v, rhs) => (*v, rhs.as_ref(), None),
+            Value::TuplePut(v, idx, rhs) => (*v, rhs.as_ref(), Some(*idx as usize)),
+            _ => return,
+        };
+        let Type::Tuple(elems) = function.tp(v).base() else {
+            return;
+        };
+        for (i, t) in elems.iter().enumerate() {
+            if !matches!(t.base(), Type::Iterator(_, _)) || only.is_some_and(|o| o != i) {
+                continue;
+            }
+            let ok = match only {
+                Some(_) => matches!(rhs.unspan(), Value::Call(d, _)
+                    if data.def(*d).name() != "OpGetDbRef"),
+                None => fresh(rhs, i, data),
+            };
+            let e = verdict.entry((v, i as u16)).or_insert(true);
+            *e &= ok;
+        }
+    });
+    verdict
+        .into_iter()
+        .filter_map(|(k, owned)| owned.then_some(k))
+        .collect()
+}
+
+/// The generator locals assigned both a member's handle and a value of their own
+/// ([`Scopes::handle_views`]), on two assignments or on two arms of one.  Sorted, so their
+/// flags are minted in one order on every compile.
+fn mixed_handle_views(code: &Value, function: &Function, data: &Data) -> Vec<u16> {
+    let mut views: BTreeSet<u16> = BTreeSet::new();
+    let mut owned: BTreeSet<u16> = BTreeSet::new();
+    code.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && matches!(function.tp(*v).base(), Type::Iterator(_, _))
+            && function.is_skip_free(*v)
+        {
+            let (view, own) = handle_rhs_kinds(rhs, data);
+            if view {
+                views.insert(*v);
+            }
+            if own {
+                owned.insert(*v);
+            }
+        }
+    });
+    views.intersection(&owned).copied().collect()
+}
+
+/// The generator handle an `OpSetDbRef(host, pos, g)` MOVES into a field or an element — `g`
+/// when it is an `iterator` local (loft#1585), `None` for any other store of a pointer.
+fn handle_handoff(d_nr: u32, args: &[Value], function: &Function, data: &Data) -> Option<u16> {
+    if d_nr != data.def_nr("OpSetDbRef") {
+        return None;
+    }
+    let Value::Var(g) = args.get(2)?.unspan() else {
+        return None;
+    };
+    matches!(function.tp(*g).base(), Type::Iterator(_, _)).then_some(*g)
 }
 
 /// The locals that hold the CALLER's record on every path ([`Function::mark_caller_record`]).
@@ -4026,6 +4204,16 @@ fn drop_handoff_node(
     }
     {
         match n {
+            // A generator HANDLE placed into a field or an element (loft#1585) MOVES there
+            // (`(H-Move)`): the container's cascade frees the generator now, so the local that
+            // held it frees nothing at its scope end.  One placed in a branch ARM moves only on
+            // the path that ran it, which its per-path flag records (`arm_container_handoffs`).
+            Value::Call(d, args)
+                if let Some(g) = handle_handoff(*d, args, function, data)
+                    && !pairs.contains(&(u16::MAX, g)) =>
+            {
+                out.insert(g);
+            }
             Value::Call(d, args) if *d == copy_d && args.len() >= 3 => {
                 // A copy written in a branch ARM (`pairs` holds `(u16::MAX, source)`, D-heap-14)
                 // stops its source only on the path that ran it — the source's flag, set right
@@ -5425,6 +5613,8 @@ fn run_scan_phase(
         arm_lift_temps: HashSet::new(),
         handed_off: HashMap::new(),
         per_path_pairs: HashSet::new(),
+        handle_views: HashSet::new(),
+        owned_handle_members: HashSet::new(),
         free_transferred: HashSet::new(),
         fn_defs: None,
         written_out: Vec::new(),
@@ -5556,6 +5746,12 @@ fn run_scan_phase(
     for src in arm_container_handoffs(orig_code, &function, data) {
         scopes.per_path_pairs.insert((u16::MAX, src));
         scopes.mint_handoff_flag(&mut function, src);
+    }
+    scopes.owned_handle_members = owned_handle_members(orig_code, &function, data);
+    for v in mixed_handle_views(orig_code, &function, data) {
+        function.clear_skip_free(v);
+        scopes.mint_handoff_flag(&mut function, v);
+        scopes.handle_views.insert(v);
     }
     // D-heap-23 — the store behind a collection the function owns, whose elements a
     // whole-collection copy moved elsewhere, stops releasing them on the path the copy ran.
@@ -9858,6 +10054,8 @@ impl Scopes<'_> {
             copy_record_handoff(args, function, data)
                 .into_iter()
                 .collect()
+        } else if let Some(g) = handle_handoff(d_nr, args, function, data) {
+            vec![g]
         } else {
             collection_copy_backings(d_nr, args, function, data, &self.vector_backings)
         };
@@ -9891,6 +10089,22 @@ impl Scopes<'_> {
                 None
             }
         })
+    }
+
+    /// The frees of the generator-handle members tuple `v` owns ([`Self::owned_handle_members`]),
+    /// in reverse index order as its other members'.
+    fn tuple_handle_frees(&self, v: u16, function: &Function, data: &Data) -> Vec<Value> {
+        let Type::Tuple(elems) = function.tp(v).base() else {
+            return Vec::new();
+        };
+        if function.is_skip_free(v) {
+            return Vec::new();
+        }
+        (0..elems.len())
+            .rev()
+            .filter(|&i| self.owned_handle_members.contains(&(v, i as u16)))
+            .map(|i| Value::Call(data.def_nr("OpFreeRef"), vec![Value::TupleGet(v, i as u16)]))
+            .collect()
     }
 
     /// The per-path flag of `var` (loft#1515): `false` at function entry, set where a copy that
@@ -10629,6 +10843,18 @@ impl Scopes<'_> {
             }
         }
         let v = *self.var_mapping.get(&ov).unwrap_or(&ov);
+        // A handle view given a member's handle on one arm and one of its own on another
+        // (loft#1585) records which in the arm itself: after the `Set` nothing tells them apart.
+        let tagged;
+        let value = if self.handle_views.contains(&v)
+            && let Some(&flag) = self.handed_off.get(&v)
+            && handle_rhs_kinds(value, data) == (true, true)
+        {
+            tagged = tag_handle_leaves(value, flag, data);
+            &tagged
+        } else {
+            value
+        };
         // A scope copy of a witnessed local (`copy_variable` above) is the same binding under
         // a new id: it keeps the witness and the never-free mark, or its own Sets would go
         // back to the static frees the witness replaced.
@@ -10716,6 +10942,9 @@ impl Scopes<'_> {
         // #316 — capture BEFORE put_scope below: an ownership-transition free
         // only applies to a REassignment.
         let was_in_scope = self.var_scope.contains_key(&v);
+        // Read before the retirement below clears it: a generator handle moved into a
+        // container (loft#1585) is the container's, and its rebind must not free it.
+        let handle_moved = self.drop_transferred.contains(&v);
         // The record this reassignment DISPLACES is released through its hook before the
         // new value lands — read here, while `owned_refs` still describes the previous
         // assignment.
@@ -10779,7 +11008,7 @@ impl Scopes<'_> {
             && !value.reads_var(ov)
         {
             let elems = elems.clone();
-            let frees = tuple_owned_elem_frees(
+            let mut frees = tuple_owned_elem_frees(
                 &elems,
                 v,
                 data,
@@ -10788,9 +11017,31 @@ impl Scopes<'_> {
                 &self.drop_transferred,
                 None,
             );
+            frees.extend(self.tuple_handle_frees(v, function, data));
             if !frees.is_empty() {
                 transition_free = Some(Value::Insert(frees));
             }
+        }
+        // A generator HANDLE owns its frame (@FR-G-Hold), so reassigning one releases the frame it held
+        // — as its scope end would have (loft#835).  Nothing did: `g = steps(1); g =
+        // steps(5)` kept the first frame, and every heap local it owned, to program exit.
+        // Not for a view of a member (`skip_free`), nor for a handle moved into a container
+        // before this line, nor where the right-hand side reads the handle it replaces.  One
+        // moved in a branch arm, or a view (`handle_views`), is released on the paths where
+        // its flag says it owns.
+        if transition_free.is_none()
+            && was_in_scope
+            && matches!(function.tp(v).base(), Type::Iterator(_, _))
+            && !function.is_skip_free(v)
+            && !handle_moved
+            && !value.reads_var(v)
+            && !value.reads_var(ov)
+        {
+            let free = call("OpFreeRef", v, data);
+            transition_free = Some(match self.handed_off.get(&v) {
+                Some(&flag) => v_if(Value::Var(flag), Value::Null, free),
+                None => free,
+            });
         }
         // loft#1126 / @FR-O-Latest — the ownership-transition free for the OTHER
         // reassignment shape: `v = f(…, v, …)` with `v` at `f`'s hidden
@@ -10991,6 +11242,16 @@ impl Scopes<'_> {
         // frees, so a comprehension minted per PASS instead of rebuilding one store —
         // `value_struct_alloc`'s O(1) promise measured it at N cycles).
         let mut handoff_disarm: Vec<Value> = Vec::new();
+        // A handle view's flag says what it holds NOW (`@FR-O-Latest`): a view of a member's
+        // handle, or a frame of its own.  Every other flagged variable is retired to `false`
+        // at its assignment, further down.
+        if self.handle_views.contains(&v)
+            && let Some(&flag) = self.handed_off.get(&v)
+            && let (view, own) = handle_rhs_kinds(value, data)
+            && view != own
+        {
+            handoff_disarm.push(v_set(flag, Value::Boolean(view)));
+        }
         match delivered_work_ref(value, function, data) {
             Some(w) if w != v && !function.proxy_says_owned(v) => {
                 self.construction_backing.insert(v, w);
@@ -12093,6 +12354,7 @@ impl Scopes<'_> {
         // on is the caller's.
         if !stops_target
             && !inherits
+            && !self.handle_views.contains(&v)
             && let Some(&flag) = self.handed_off.get(&v)
         {
             witness_update = Some(match witness_update {
@@ -14759,6 +15021,7 @@ impl Scopes<'_> {
                     &self.drop_transferred,
                     None,
                 ));
+                ls.extend(self.tuple_handle_frees(v, function, data));
                 continue;
             }
             if matches!(function.tp(v).base(), Type::Text(_)) {
@@ -15232,8 +15495,18 @@ impl Scopes<'_> {
             // loop, and a parameter never enters this sweep, so the caller keeps its own.
             // Freeing an already-exhausted handle is safe: the frame carries a generation
             // stamp the free checks, so a stale handle cannot reach a recycled slot.
-            if matches!(function.tp(v).base(), Type::Iterator(_, _)) && !function.is_skip_free(v) {
-                ls.push(call("OpFreeRef", v, data));
+            //
+            // A handle MOVED into a field or an element (loft#1585) is the container's to free.
+            // One moved in a branch arm is freed on the paths that did not move it.
+            if matches!(function.tp(v).base(), Type::Iterator(_, _))
+                && !function.is_skip_free(v)
+                && !self.drop_transferred.contains(&v)
+            {
+                let free = call("OpFreeRef", v, data);
+                ls.push(match self.handed_off.get(&v) {
+                    Some(&flag) => v_if(Value::Var(flag), Value::Null, free),
+                    None => free,
+                });
             }
             // free the closure DbRef embedded at offset+4 in a fn-ref slot.
             // The 16-byte fn-ref stack slot is reclaimed by FreeStack, but the closure

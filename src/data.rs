@@ -3415,7 +3415,10 @@ pub fn element_stack_size(t: &Type) -> usize {
         | Type::Hash(_, _, _)
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
-        | Type::Enum(_, true, _) => std::mem::size_of::<crate::keys::DbRef>(),
+        | Type::Enum(_, true, _)
+        // A generator handle is a `DbRef` naming its frame (loft#1585); sized 0 here, a tuple
+        // member of one overlapped its neighbours.
+        | Type::Iterator(_, _) => std::mem::size_of::<crate::keys::DbRef>(),
         Type::Tuple(elems) => {
             // @PLN114 — the STACK view: one `aligned_stack_step` slot per element,
             // because that is what a push actually advances.  The natural-alignment
@@ -5803,6 +5806,15 @@ pub fn is_dbref(tp: &Type) -> bool {
             | Type::Trie(_, _, _)
             | Type::Enum(_, true, _)
     )
+}
+
+/// [`is_dbref`], or a generator handle: every value a tuple slot moves as one 12-byte `DbRef`.
+/// A handle names a frame in the coroutine table rather than a store, so it answers no store
+/// question and stays out of `is_dbref`; a tuple member of one ended in an internal compiler
+/// error at the first put (loft#1585).
+#[must_use]
+pub fn is_dbref_slot(tp: &Type) -> bool {
+    is_dbref(tp) || matches!(tp, Type::Iterator(_, _))
 }
 
 /// How many HEAP LEAVES a tuple type holds, counting THROUGH nested tuples.
@@ -10133,7 +10145,7 @@ impl Data {
         if !path.insert(d_nr) {
             return false; // already on this path — see the cycle note above
         }
-        if self.drop_hook_nr(d_nr) != u32::MAX {
+        if self.drop_hook_nr(d_nr) != u32::MAX || d_nr == self.iterator_def() {
             return true;
         }
         if self
@@ -10168,6 +10180,40 @@ impl Data {
         self.type_owns_droppable(t, &mut HashSet::new())
     }
 
+    /// Does a value of this TYPE hold a generator handle somewhere inside it — the part of
+    /// [`Self::type_owns_droppable_anywhere`] that is owned DATA rather than a resource with a
+    /// hook (loft#1585): a removal releases it where `(H-Drop-Not)` runs no hook.
+    #[must_use]
+    pub fn type_holds_generator(&self, t: &Type) -> bool {
+        fn walk(data: &Data, t: &Type, path: &mut HashSet<u32>) -> bool {
+            match t {
+                Type::Iterator(_, _) => true,
+                Type::Reference(d, _) | Type::Enum(d, true, _) => {
+                    path.insert(*d)
+                        && (data
+                            .def(*d)
+                            .attributes
+                            .iter()
+                            .any(|a| walk(data, &a.typedef, path))
+                            || data
+                                .children_of(*d)
+                                .filter(|&c| data.def_type(c) == DefType::EnumValue)
+                                .any(|c| {
+                                    data.def(c)
+                                        .attributes
+                                        .iter()
+                                        .any(|a| walk(data, &a.typedef, path))
+                                }))
+                }
+                Type::Vector(e, _) => walk(data, e, path),
+                Type::Optional(i) | Type::RefVar(i) | Type::Rewritten(i) => walk(data, i, path),
+                Type::Tuple(es) => es.iter().any(|e| walk(data, e, path)),
+                _ => false,
+            }
+        }
+        walk(self, t, &mut HashSet::new())
+    }
+
     fn type_owns_droppable(&self, t: &Type, path: &mut HashSet<u32>) -> bool {
         match t {
             Type::Reference(d, _)
@@ -10182,8 +10228,39 @@ impl Data {
                 self.type_owns_droppable(inner, path)
             }
             Type::Tuple(elms) => elms.iter().any(|e| self.type_owns_droppable(e, path)),
+            // A generator handle owns its frame (loft#1585): whatever holds one releases it.
+            Type::Iterator(_, _) => true,
             _ => false,
         }
+    }
+
+    /// The stdlib's `type iterator` — the definition a stored generator handle has
+    /// (loft#1585) — or `u32::MAX` before the stdlib declares it.
+    #[must_use]
+    pub fn iterator_def(&self) -> u32 {
+        self.source_nr(0, "iterator")
+    }
+
+    /// Does any record field or collection element hold a generator handle?  Such a member is
+    /// released by its container's cascade (loft#1585), so the cascade pass has work even in
+    /// a program that declares no `OpDrop`.
+    #[must_use]
+    pub fn any_generator_member(&self) -> bool {
+        fn holds(t: &Type) -> bool {
+            match t {
+                Type::Iterator(_, _) => true,
+                Type::Vector(e, _) => holds(e),
+                Type::Optional(i) | Type::Rewritten(i) => holds(i),
+                Type::Tuple(es) => es.iter().any(holds),
+                _ => false,
+            }
+        }
+        self.definitions.iter().any(|d| {
+            matches!(
+                d.def_type,
+                DefType::Struct | DefType::EnumValue | DefType::Vector
+            ) && (d.attributes.iter().any(|a| holds(&a.typedef)) || holds(&d.returned))
+        })
     }
 
     /// Could this definition be a lazy driver, and must it therefore be checked?
@@ -11306,6 +11383,9 @@ impl Data {
             // so the vector storage path treats fn-ref vectors
             // identically to `vector<i32>`.
             Type::Function(..) => self.def_nr("i32"),
+            // A generator HANDLE — a 12-byte reference to its frame — stored in a field or an
+            // element (loft#1585): the stdlib's `type iterator`, laid out as a stored `DbRef`.
+            Type::Iterator(_, _) => self.source_nr(0, "iterator"),
             _ => u32::MAX,
         }
     }
@@ -11375,6 +11455,8 @@ impl Data {
             // `i32` (4-byte int alias) so vector storage is flat.
             // Same lookup as `type_def_nr`'s Function arm.
             Type::Function(..) => self.def_nr("i32"),
+            // A generator handle element (loft#1585) — see `type_def_nr`.
+            Type::Iterator(_, _) => self.source_nr(0, "iterator"),
             _ => u32::MAX,
         }
     }

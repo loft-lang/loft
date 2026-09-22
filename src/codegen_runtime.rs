@@ -4993,23 +4993,59 @@ pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
     }
 }
 
-/// Advance a native coroutine and return the yielded value as `i64`.
-/// Frees the coroutine slot automatically when it is exhausted.
-pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
+/// The occupant a generator's slot holds while that generator runs: the advance takes the
+/// generator out of the table, so this answers nothing — every method keeps its default.
+struct Advancing;
+impl LoftCoroutine for Advancing {}
+
+/// Run one advance of the generator `gen_ref` names, or answer `dead` where no live generator
+/// has that handle.  `step` answers the value and whether the generator is now exhausted,
+/// which frees its slot (P2-R7 parity).
+///
+/// The generator is taken OUT of the table for the advance, with [`Advancing`] holding its
+/// slot and generation: its body may advance another generator — one it was handed, or one
+/// it made — or allocate one, and each of those borrows the table again.  Advanced under the
+/// table's borrow, a generator that consumed another panicked with "already borrowed".
+fn advance_native<R>(
+    gen_ref: DbRef,
+    stores: &mut Stores,
+    dead: R,
+    step: impl FnOnce(&mut dyn LoftCoroutine, &mut Stores) -> (R, bool),
+) -> R {
+    let taken = NATIVE_COROUTINES.with(|c| {
+        let mut coroutines = c.borrow_mut();
+        if !native_coroutine_live(&coroutines, gen_ref) {
+            return None;
+        }
+        let (_, coro) = coroutines[gen_ref.rec as usize].as_mut()?;
+        Some(std::mem::replace(coro, Box::new(Advancing)))
+    });
+    let Some(mut coro) = taken else {
+        return dead;
+    };
+    let (val, exhausted) = step(coro.as_mut(), stores);
     NATIVE_COROUTINES.with(|c| {
         let mut coroutines = c.borrow_mut();
         let idx = gen_ref.rec as usize;
-        if native_coroutine_live(&coroutines, gen_ref)
-            && let Some((_, coro)) = coroutines[idx].as_mut()
-        {
-            let val = coro.next_i64(stores);
-            if val == COROUTINE_EXHAUSTED {
-                coroutines[idx] = None; // free on exhaustion (P2-R7 parity)
+        // Put back only into the slot it left: a free during the advance empties the slot,
+        // and a later allocation may already hold it under another generation.
+        if native_coroutine_live(&coroutines, gen_ref) {
+            if exhausted {
+                coroutines[idx] = None;
+            } else if let Some((_, slot)) = coroutines[idx].as_mut() {
+                *slot = coro;
             }
-            val
-        } else {
-            COROUTINE_EXHAUSTED
         }
+    });
+    val
+}
+
+/// Advance a native coroutine and return the yielded value as `i64`.
+/// Frees the coroutine slot automatically when it is exhausted.
+pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
+    advance_native(gen_ref, stores, COROUTINE_EXHAUSTED, |coro, stores| {
+        let val = coro.next_i64(stores);
+        (val, val == COROUTINE_EXHAUSTED)
     })
 }
 
@@ -5017,20 +5053,9 @@ pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
 /// (@P327 native).  Writes the yielded value's bytes into `dest` and
 /// returns true; returns false and frees the slot on exhaustion.
 pub fn coroutine_next_into(gen_ref: DbRef, stores: &mut Stores, dest: &mut [i64]) -> bool {
-    NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        let idx = gen_ref.rec as usize;
-        if native_coroutine_live(&coroutines, gen_ref)
-            && let Some((_, coro)) = coroutines[idx].as_mut()
-        {
-            let ok = coro.next_into(stores, dest);
-            if !ok {
-                coroutines[idx] = None;
-            }
-            ok
-        } else {
-            false
-        }
+    advance_native(gen_ref, stores, false, |coro, stores| {
+        let ok = coro.next_into(stores, dest);
+        (ok, !ok)
     })
 }
 
@@ -5039,24 +5064,12 @@ pub fn coroutine_next_into(gen_ref: DbRef, stores: &mut Stores, dest: &mut [i64]
 /// exhausted.  Frees the coroutine slot automatically on exhaustion,
 /// mirroring `coroutine_next_i64` (@P326).
 pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
-    NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        let idx = gen_ref.rec as usize;
-        if native_coroutine_live(&coroutines, gen_ref)
-            && let Some((_, coro)) = coroutines[idx].as_mut()
-        {
-            let val = coro.next_dbref(stores);
-            // Null sentinel matches `vector::null_ref` and `OpNullRefSentinel`:
-            // store_nr == u16::MAX is the universal "no record" indicator.
-            // The for-loop's `OpCoroutineExhausted(gen)` check also flips to
-            // true here because exhaustion frees the slot.
-            if val.store_nr == u16::MAX {
-                coroutines[idx] = None;
-            }
-            val
-        } else {
-            DbRef::NULL
-        }
+    // Null sentinel matches `vector::null_ref` and `OpNullRefSentinel`: store_nr == u16::MAX
+    // is the universal "no record" indicator.  The for-loop's `OpCoroutineExhausted(gen)`
+    // check also flips to true here because exhaustion frees the slot.
+    advance_native(gen_ref, stores, DbRef::NULL, |coro, stores| {
+        let val = coro.next_dbref(stores);
+        (val, val.store_nr == u16::MAX)
     })
 }
 
@@ -5064,21 +5077,16 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
 /// or `STRING_NULL` (`"\0"`) when exhausted.  Frees the coroutine slot
 /// automatically on exhaustion, mirroring `coroutine_next_i64`.
 pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
-    NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        let idx = gen_ref.rec as usize;
-        if native_coroutine_live(&coroutines, gen_ref)
-            && let Some((_, coro)) = coroutines[idx].as_mut()
-        {
+    advance_native(
+        gen_ref,
+        stores,
+        crate::state::STRING_NULL.to_string(),
+        |coro, stores| {
             let val = coro.next_text(stores);
-            if val == crate::state::STRING_NULL {
-                coroutines[idx] = None;
-            }
-            val
-        } else {
-            crate::state::STRING_NULL.to_string()
-        }
-    })
+            let done = val == crate::state::STRING_NULL;
+            (val, done)
+        },
+    )
 }
 
 /// Test whether a native coroutine has been exhausted (its slot freed).

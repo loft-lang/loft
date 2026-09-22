@@ -175,6 +175,10 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   A view of a member that owns a droppable without `OpCopy` never
                   materialises: disturbing its container while the view is used is an error
                   at the disturbance ([heap.md](heap.md) H-View-Drop).
+                  A GENERATOR HANDLE read out of a member (`h = t.g`, `h = tasks[i]`, a
+                  `for` over a collection of handles) is a view on the same terms: it names
+                  the member's frame, and the member releases it ([coroutines.md](coroutines.md)
+                  G-Hold).
   (B-View-Base)   a projection off a BORROWED base is a VIEW at EVERY element type — not only
                   a struct-typed one.  `for b in bv { c = b.vecf; … }` aliases exactly as
                   `c = b.strf` does, and so does a tuple element.  Ownership of the BASE is the

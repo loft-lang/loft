@@ -12261,6 +12261,8 @@ impl Parser {
             // "Undefined type" error already fires from type resolution, so
             // fall through to the diagnostic only there.
             Type::Unknown(_) if self.first_pass => Value::Null,
+            // A generator handle (loft#1585) is stored as the 12-byte `DbRef` it is.
+            Type::Iterator(_, _) => self.cl("OpGetDbRef", &[code, p]),
             _ => {
                 diagnostic!(
                     self.lexer,
@@ -13593,6 +13595,8 @@ impl Parser {
             Type::Float => self.cl("OpSetFloat", &[ref_code, pos_val, val_code]),
             Type::Single => self.cl("OpSetSingle", &[ref_code, pos_val, val_code]),
             Type::Text(_) => self.cl("OpSetText", &[ref_code, pos_val, val_code]),
+            // A generator handle (loft#1585) is stored as the 12-byte `DbRef` it is.
+            Type::Iterator(_, _) => self.cl("OpSetDbRef", &[ref_code, pos_val, val_code]),
             _ => {
                 if self.first_pass {
                     Value::Null

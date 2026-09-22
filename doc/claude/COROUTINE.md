@@ -195,6 +195,42 @@ fn first_positive(v: vector<integer>) -> iterator<integer> {
 Consuming it yields the one value and then stops: `next` answers `5`, the next `next`
 answers null, and `exhausted` is true.
 
+### Holding generators — a scheduler
+
+A generator handle is a value like any other: a struct field, a vector element and a tuple
+member can hold one, and whatever holds it owns the generator (`formal/coroutines.md`
+(G-Hold)).  That is how a set of live behaviours is advanced once per tick:
+
+```loft
+fn patrol(id: integer, n: integer) -> iterator<integer> {
+    for step in 0..n { yield id * 100 + step; }
+}
+
+fn main() {
+    tasks: vector<iterator<integer>> = [];
+    tasks += [patrol(1, 3), patrol(2, 1)];
+    while len(tasks) > 0 {
+        i = 0;
+        while i < len(tasks) {
+            x = next(tasks[i]);
+            if x == null { tasks.remove(i); } else { println("{x}"); i += 1; }
+        }
+    }
+}
+```
+
+The generator is released exactly once, by its holder: a local at its scope end or when it
+is given another generator, a field or an element when it is given another one, and a record
+or a collection when it dies — or, for an element, when it is removed, so removing a task that
+has not finished (`tasks.remove(i)`, `t#remove`) ends it.  Putting a local into a container
+(`tasks += [g]`, `Task { g: g }`) MOVES it there.  Reading one back out — `h = t.g`,
+`h = tasks[i]`, `for t in tasks` — gives a view: advancing `h` advances the generator the
+container holds, and the container keeps it.  A handle prints as `iterator`.
+
+Not yet released (`formal/coroutines.md` D-cor-5): a generator held by a record in a KEYED
+collection (`hash`, `sorted`, `index`, `spatial`), or in a vector of vectors, stays allocated
+until the program ends.
+
 ---
 
 ## Exposed Types

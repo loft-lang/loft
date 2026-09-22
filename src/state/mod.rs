@@ -1970,7 +1970,11 @@ impl State {
         let def = data.definitions.get(d_nr as usize)?;
         match def.returned().base() {
             Type::Iterator(inner, _) => match inner.base() {
-                Type::Tuple(elems) if elems.iter().any(crate::data::holds_dbref) => {
+                Type::Tuple(elems)
+                    if elems.iter().any(|e| {
+                        crate::data::holds_dbref(e) || crate::data::is_dbref_slot(e.base())
+                    }) =>
+                {
                     Some(elems.clone())
                 }
                 _ => None,
@@ -1987,7 +1991,9 @@ impl State {
             let at = base + off as u32;
             match elm.base() {
                 Type::Tuple(inner) => self.null_tuple_refs(at, inner),
-                t if crate::data::is_dbref(t) => {
+                // A generator handle member too (loft#1585): released, a zeroed one names the
+                // stack store.
+                t if crate::data::is_dbref_slot(t) => {
                     let dst = self.database.store_mut(&self.stack_cur).addr_span_mut(
                         self.stack_cur.rec,
                         self.stack_cur.pos + at,
@@ -2008,10 +2014,15 @@ impl State {
     /// (byte size in the low byte, channel tag above it).  A handle — tag 0, a `DbRef`'s
     /// width — answers `DbRef::NULL`, as `--native`'s `next_dbref` does: the consumer OWNS
     /// what an advance produces (`(G-Own)`) and releases it, and releasing the null handle
-    /// is a no-op where releasing a zeroed one names the stack store.
+    /// is a no-op where releasing a zeroed one names the stack store.  So does a GENERATOR
+    /// handle, which has no native channel (`CHANNEL_NONE`): a generator of generators ended
+    /// with the consumer releasing a zeroed handle, which names the stack store too.
     fn push_null_value(&mut self, packed_size: u32) {
         let value_size = packed_size & 0xFF;
-        if packed_size >> 8 == 0 && value_size == size_ref() {
+        let tag = packed_size >> 8;
+        if (tag == 0 || tag == crate::coroutine_layout::CHANNEL_NONE as u32)
+            && value_size == size_ref()
+        {
             self.put_stack(DbRef::NULL);
             return;
         }

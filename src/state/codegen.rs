@@ -1751,7 +1751,7 @@ impl State {
                 // question is [`is_dbref`](crate::data::is_dbref)'s and is asked there —
                 // spelled inline it drifts short by exactly the five keyed collections,
                 // which is what a `hash<S[k]>` tuple element hit here.
-                t if crate::data::is_dbref(t) => stack.add_op("OpPutRef", self),
+                t if crate::data::is_dbref_slot(t) => stack.add_op("OpPutRef", self),
                 other => panic!("Tuple set: unsupported element type {other:?}"),
             }
             self.code_add(pos);
@@ -1786,7 +1786,7 @@ impl State {
                     stack.add_op("OpConstFloat", self);
                     self.code_add(0.0f64);
                 }
-                t if crate::data::is_dbref(t) => {
+                t if crate::data::is_dbref_slot(t) => {
                     // T1.8c: use NullRefSentinel (no store allocation) for tuple
                     // reference elements.  The element will be overwritten by PutRef
                     // or CopyRecord during destructuring; a real store is not needed
@@ -1820,7 +1820,7 @@ impl State {
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
-                t if crate::data::is_dbref(t) => stack.add_op("OpPutRef", self),
+                t if crate::data::is_dbref_slot(t) => stack.add_op("OpPutRef", self),
                 _ => unreachable!(),
             }
             self.code_add(pos);
@@ -3060,7 +3060,7 @@ impl State {
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 // See the sibling note in `emit_tuple_var_pop_put`: the DbRef-shaped set
                 // is [`is_dbref`](crate::data::is_dbref)'s to answer.
-                t if crate::data::is_dbref(t) => stack.add_op("OpPutRef", self),
+                t if crate::data::is_dbref_slot(t) => stack.add_op("OpPutRef", self),
                 Type::Tuple(_) => unreachable!("handled above"),
                 other => panic!("emit_tuple_put_ops: unsupported elem {other:?}"),
             }

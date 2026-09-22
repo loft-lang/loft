@@ -135,13 +135,46 @@ yield is simply handed over; anything the generator keeps using is copied first.
 drop hook cannot be copied, so yielding an existing one is a compile-time error that asks for a
 value built at the yield instead.
 
+### A generator held by a record or a collection is its holder's
+
+```
+  (G-Hold)   an iterator<T> value is a HANDLE: it names its frame (G-Call) and OWNS it — the
+             frame, and every heap local the body allocated, are data the ownership model
+             frees, not a resource with a hook.  A handle is a value like any other: a field,
+             an element and a tuple member can hold one, and whatever holds it releases the
+             frame, ONCE —
+               - a local at its scope end, and at its REBIND the frame it held;
+               - a field or an element given a new handle, the frame the old one named;
+               - a record or a collection at its death, and an element at its REMOVAL
+                 (`v.remove(i)`, `x#remove`), every frame it holds, through its inline
+                 records and its vectors.
+             No `OpDrop` hook runs for a frame, so (H-Drop-Not) does not bound these.
+             A local given to a field, an element or a literal MOVES there (H-Move).  A handle
+             READ out of a member — `h = t.g`, `h = tasks[i]`, a `for` over a collection of
+             handles, a tuple binder — is a VIEW (binding.md B-View): advancing it advances
+             the member's generator, and the member keeps it.
+```
+
+**In words.** A generator can be kept anywhere a value can: in a struct, in a vector, in a
+tuple — which is what a scheduler needs, a set of live behaviours advanced once per tick.  The
+holder owns the generator, and the generator is released exactly once, when its holder stops
+holding it: the holder dies, gives the slot another generator, or the element is removed.
+Reading a generator back out does not take it: it is the same generator, and advancing it
+advances the one the container holds.
+
 ---
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
 
-Every deviation this doc has carried is closed; the record is in the companion
+- **D-cor-5** (loft#1601) — `(G-Hold)`: a generator held by a record in a KEYED collection
+  (`hash`, `sorted`, `index`, `spatial`) is not released when the collection dies or the record
+  is removed; the frame stays allocated to program exit.  A keyed collection's records are
+  released without a walk, and the store walk cannot reach a frame.  A vector of vectors of
+  generators likewise, until loft#1597's cascade reaches a vector's vector elements.
+
+The record, closed entries included, is in the companion
 [coroutines-history.md](coroutines-history.md).
 
 ## Conformance
@@ -165,6 +198,13 @@ Every deviation this doc has carried is closed; the record is in the companion
   loop-body yield, copies of a local, a member, a parameter, a text-holding record and a
   vector, and a tuple copied, drained and kept — values, drop traces and a clean store census
   on both backends.
+- **Holding (`G-Hold`)** — `tests/scripts/1585-a-generator-can-be-held-in-a-field-or-an-element.loft`:
+  a vector, a struct field, a nested record, a vector field and a tuple member holding a
+  generator; the round-robin scheduler; a field, an element and a local given a new generator;
+  a removal by index and by `#remove`, of a handle and of a record holding one; views out of a
+  field, an element and a `for`; a local that views on one path and owns on another; records
+  holding generators yielded and kept — values on both backends, and the leak gate says every
+  frame was released once.
 - **Interchangeable at `for` (`G-For`)** — `for x in gen() { … }` and `for x in vec { … }`
   visit their elements by the same loop; swapping a generator for the equivalent vector changes
   only timing, not the values or their order.

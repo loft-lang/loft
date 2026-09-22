@@ -2773,12 +2773,20 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **328** |
+| **326** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-23, loft#1585 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ 1a75b86e4 and
+re-measured at its end: **920 · 589 · 5 · 326**, and `--check-ratchet` pinned lower at opaque 326,
+opaque tests 1311.  The sides read 328 · 1312 (this line) and 328 · 1311 (../loft2); the join is
+neither, for the reason the note below gives.  Every shape test the generator-handle work added
+peels (`.base()`), because a nullable handle names the same frame; the two it first wrote bare —
+the value-arm test in `block_result` and the loop-source test in `parse_for_iter_setup` — read
+1314 until they did.)
 
 (2026-09-23, the join of `157-native-4x` (@PLN158 E) and `tuxedo-165-generics` (@PLN165 D7-D10)
 into ../loft2, re-measured at its end: **910 · 577 · 5 · 328**, and `--check-ratchet` pinned lower

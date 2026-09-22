@@ -3816,6 +3816,20 @@ use a separate collection or add after the loop"
         {
             self.vars.set_skip_free(var_nr);
         }
+        // loft#1585 — the same for a generator handle read out of a field or an element
+        // (`h = t.g`, `h = tasks[i]`): a VIEW of a member (`(B-View)`, `(H-View-Drop)`), so
+        // advancing it advances the container's generator and the container alone releases
+        // the frame.  Without the mark the local's scope end freed the frame under the
+        // container, whose next advance answered exhausted.  A local given a handle of its
+        // own elsewhere — on another assignment, or on another arm of this one — keeps the
+        // mark here and has it lifted by the scope pass, which tracks it per path.
+        if op == "="
+            && var_nr != u16::MAX
+            && matches!(s_type.base(), Type::Iterator(..))
+            && crate::scopes::handle_rhs_kinds(code, &self.data).0
+        {
+            self.vars.set_skip_free(var_nr);
+        }
         if amp_vector_replace {
             let clear = self.cl("OpClearVector", &[Value::Var(var_nr)]);
             *code = Value::Insert(vec![clear, code.clone()]);
