@@ -1085,7 +1085,17 @@ impl Parser {
                 }
             }
             if let Value::Insert(ls) = n {
+                let spliced = !ls.is_empty();
                 Self::move_insert_elements(&mut l, ls);
+                // The statement's own parts are spliced flat, so mark where it ENDS: a
+                // `Line` marker is the statement boundary the scope pass reads, and without it
+                // `v = [mk(2)]` and `v = []; v += [mk(2)]` on one line lower to the same
+                // statements (`(H-Drop)`'s reassignment clause releases between them).  The
+                // next statement's own marker replaces it when the line advances, and the
+                // block's end drops a trailing one.
+                if spliced && !matches!(l.last(), Some(Value::Line(_))) {
+                    l.push(Value::Line(self.line));
+                }
                 // preserve `Type::Rewritten(_)` when flattening an
                 // Insert.  A first-pass `parse_object` struct literal
                 // returns `Type::Rewritten(Type::Reference(_))` together

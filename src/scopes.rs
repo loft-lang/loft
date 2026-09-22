@@ -66,6 +66,9 @@ struct Scopes<'s> {
     /// Beside each entry of `loops`: the variables its body REFILLS on every pass
     /// ([`loop_body_refills`]).
     loop_refills: Vec<HashSet<u16>>,
+    /// Every literal backing (`__vdb_N`) each vector local is bound to anywhere in the function
+    /// ([`vector_literal_backings`]), keyed by the pre-scan id.
+    vector_backings: HashMap<u16, Vec<u16>>,
     /// Recursion depth counter for `scan`; reset to 0 when scope analysis starts.
     scan_depth: usize,
     /// Counter for `__lift_N` temporary variables created to own inline struct
@@ -3292,6 +3295,52 @@ fn assigns_a_self_stopping_copy(code: &Value, function: &Function, data: &Data, 
 /// accepted, so every block on a tail path is already known to be a value block and is not
 /// tested again here.  Any other node is a tail that is not a variable (a call, `null`), so it
 /// names no source whose release could move.
+/// The literal backings (`__vdb_N`) each vector local is bound to, anywhere in `code`: the
+/// `Set(v, OpGetField(__vdb_N, …))` a vector literal lowers to.  A rebind of `v` displaces
+/// whichever of them it held.
+fn vector_literal_backings(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+) -> HashMap<u16, Vec<u16>> {
+    let mut out: HashMap<u16, Vec<u16>> = HashMap::new();
+    code.walk(&mut |n| {
+        if let Value::Set(v, rhs) = n.unspan()
+            && let Some(b) = literal_backing_of(rhs, function, data)
+        {
+            let list = out.entry(*v).or_default();
+            if !list.contains(&b) {
+                list.push(b);
+            }
+        }
+    });
+    out
+}
+
+/// Is `stmt` the re-mint of a vector literal's backing — `OpDatabase(__vdb_N, …)` — which the
+/// literal's following statements refill?
+fn remints_literal_backing(stmt: &Value, function: &Function, data: &Data) -> bool {
+    matches!(stmt.unspan(), Value::Call(d, args) if *d == data.def_nr("OpDatabase")
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
+            if (*b as usize) < function.count() as usize && function.name(*b).starts_with("__vdb_")))
+}
+
+/// The literal backing a vector local's right-hand side binds it to — `OpGetField(__vdb_N, …)` —
+/// or `None` for any other value.
+fn literal_backing_of(rhs: &Value, function: &Function, data: &Data) -> Option<u16> {
+    let Value::Call(d, args) = rhs.unspan() else {
+        return None;
+    };
+    if *d != data.def_nr("OpGetField") {
+        return None;
+    }
+    let Some(Value::Var(b)) = args.first().map(Value::unspan) else {
+        return None;
+    };
+    ((*b as usize) < function.count() as usize && function.name(*b).starts_with("__vdb_"))
+        .then_some(*b)
+}
+
 /// The variables a loop body assigns on EVERY pass: a `Set` among the loop's own statements, or
 /// the statements of a block that is one of them, so no branch can skip it.  A body with a
 /// `continue` anywhere in it answers none, since a `continue` before the `Set` skips it on that
@@ -5063,6 +5112,7 @@ fn run_scan_phase(
         confined: confined.clone(),
         loops: vec![],
         loop_refills: vec![],
+        vector_backings: vector_literal_backings(orig_code, orig_vars, data),
         scan_depth: 0,
         lift_counter: 0,
         lift_vars: Vec::new(),
@@ -11971,6 +12021,52 @@ impl Scopes<'_> {
     /// nothing; one of a local already in scope is asked the owner question — a first
     /// build after the declaration's null placeholder owns nothing yet, and the snapshot
     /// is null-safe, so a first loop iteration releases nothing either.
+    /// `@FR-H-Drop`, the reassignment clause, for a VECTOR local: the literal backings a rebind
+    /// of `v` displaces, each released through its hook and freed, and set to the sentinel so no
+    /// later sweep reaches it again — or nothing, where the statement is not such a rebind.
+    ///
+    /// Every spelling of a vector rebind (a literal, a call, a copy, `[]`) points `v` at a
+    /// backing of its own and leaves the one it held to its scope-end sweep.  The candidates are
+    /// every literal backing `v` is bound to anywhere ([`vector_literal_backings`]) except the
+    /// new one: the one it holds now is live, and any other is already the sentinel, which the
+    /// guard skips.  A candidate handed off on every path releases nothing here, as at its
+    /// scope end ([`Self::scope_end_drop`]).  The caller places the result at the statement's
+    /// END — after the new value is built, and before anything after the statement runs.
+    fn vector_rebind_release(&self, stmt: &Value, function: &Function, data: &Data) -> Vec<Value> {
+        let Value::Set(ov, rhs) = stmt.unspan() else {
+            return Vec::new();
+        };
+        let v = *self.var_mapping.get(ov).unwrap_or(ov);
+        if !self.var_scope.contains_key(&v)
+            || !matches!(function.tp(v).base(), Type::Vector(_, _))
+            || function.is_argument(v)
+            || function.is_captured(v)
+            || function.is_compiler_generated(v)
+        {
+            return Vec::new();
+        }
+        let Some(candidates) = self.vector_backings.get(ov) else {
+            return Vec::new();
+        };
+        let new_backing = literal_backing_of(rhs, function, data);
+        let mut out = Vec::new();
+        for &b in candidates {
+            if Some(b) == new_backing || !self.var_scope.contains_key(&b) {
+                continue;
+            }
+            let Some(release) = self.scope_end_drop(function, b, data, None) else {
+                continue;
+            };
+            out.push(release);
+            out.push(call("OpFreeRef", b, data));
+            out.push(v_set(
+                b,
+                Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new()),
+            ));
+        }
+        out
+    }
+
     fn in_place_rebuild(
         &mut self,
         stmt: &Value,
@@ -12346,7 +12442,13 @@ impl Scopes<'_> {
         is_return: bool,
     ) -> Vec<Value> {
         let mut ls = Vec::new();
+        // Releases owed at the END of the current statement: a statement's own parts arrive
+        // flat, so they wait for the statement boundary, a `Line` marker or the block's end.
+        let mut at_end: Vec<Value> = Vec::new();
         for (i, v) in bl.operators.iter().enumerate() {
+            if matches!(v.unspan(), Value::Line(_)) {
+                ls.append(&mut at_end);
+            }
             // loft#1156 — a local a LOOP BODY first assigns and something AFTER the loop
             // reads.  Scoped to the body block, its store is freed at the end of every
             // iteration and the later read lands on a freed record: measured, an `A` read
@@ -12388,6 +12490,11 @@ impl Scopes<'_> {
             // released through its hook exactly as a reassigned one is.  The first
             // construction of a local (outside a loop) displaces nothing.
             let rebuilt = self.in_place_rebuild(v, function, data);
+            let rebind_release = self.vector_rebind_release(v, function, data);
+            // A literal's `Set` heads the statements that fill its new backing, so its release
+            // waits for the statement's end; any other rebind is a whole statement already.
+            let rebind_is_group = matches!(v.unspan(), Value::Set(_, rhs)
+                if literal_backing_of(rhs, function, data).is_some());
             let sv = self.scan(v, function, data);
             // Arm the hand-offs this statement makes, AFTER it is scanned: its own displaced
             // release and its retirement read the facts of the assignments before it, and what
@@ -12469,7 +12576,18 @@ impl Scopes<'_> {
                 ls.push(sv);
             }
             if let Some((_, post)) = rebuilt {
-                ls.extend(post);
+                // A vector literal's backing re-minted in place is REFILLED by the statements
+                // after this one, so its snapshot is released at the literal's end.
+                if remints_literal_backing(v, function, data) {
+                    at_end.extend(post);
+                } else {
+                    ls.extend(post);
+                }
+            }
+            if rebind_is_group {
+                at_end.extend(rebind_release);
+            } else {
+                ls.extend(rebind_release);
             }
             // loft#1331 — DETACH an accumulator this statement repointed at a destination the
             // frame does not own, so the scope-exit sweep frees nothing instead of freeing the
@@ -12490,6 +12608,14 @@ impl Scopes<'_> {
                     acc,
                     Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new()),
                 ));
+            }
+        }
+        if !at_end.is_empty() {
+            if bl.result == Type::Void || ls.is_empty() {
+                ls.append(&mut at_end);
+            } else {
+                let tail = ls.len() - 1;
+                ls.splice(tail..tail, at_end);
             }
         }
         let expr = if ls.is_empty() || bl.result == Type::Void {

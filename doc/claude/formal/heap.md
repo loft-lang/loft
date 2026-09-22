@@ -597,7 +597,7 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-26` and `D-heap-28` (`D-heap-28` and
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-28` (`D-heap-26` closed 2026-09-22; `D-heap-28` and
 `D-heap-29` found 2026-09-22 while closing `D-heap-15`'s `p_i2`, the second closed that day; `D-heap-27`, the tuple twin of
 `D-heap-21` and `D-heap-22`, opened and closed 2026-09-22; `D-heap-22` and `D-heap-24`
 closed 2026-09-21, `D-heap-25`, found in D-heap-24's controls, and `D-heap-26`, found in
@@ -762,7 +762,7 @@ CLOSED 2026-09-17, below.
   through itself and its buffer's free is identity-guarded, so a record buffer keeps its place.
   Guard `tests/scripts/a-collection-local-releases-in-declaration-order.loft`.
 
-### D-heap-26 — OPEN (2026-09-21, loft#1582): a vector local reassigned releases the elements it displaces at scope end, or before the new ones are built
+### D-heap-26 — OPENED 2026-09-21, CLOSED 2026-09-22 (loft#1582): a vector local reassigned released the elements it displaces at scope end, or before the new ones were built
 
 - **Violates:** (H-Drop), its reassignment clause — the displaced record is released *"after the
   new value has been computed and before anything after the statement runs"*.
@@ -775,10 +775,26 @@ CLOSED 2026-09-17, below.
   reads, and releases 21 and then 20 at the scope's end.  The rule's order is make 21, release 20,
   read.  The same for a call (`v = mkv(21)`), a copy (`v = w`) and `v = []` followed by an append.
   In a loop the displaced elements go before the new ones are made.  The count is right.
-- **Status:** OPEN — found 2026-09-21 in `D-heap-22`'s guard, whose hoisted-vector control it is.
-- **Removal:** release the displaced elements at the rebind, after the new value — for a new
-  backing, the old one's hook at the `Set`; for a re-mint, after the literal, as `D-heap-25` did
-  for a record.
+- **Status:** CLOSED 2026-09-22 — found 2026-09-21 in `D-heap-22`'s guard, whose hoisted-vector
+  control it is.
+- **Closed:** the scope pass releases the displaced backing at the statement's END.  At a vector
+  rebind, `Scopes::vector_rebind_release` releases every literal backing the local is bound to
+  anywhere except the new one (`vector_literal_backings`).  Each is released through its hook,
+  freed, and set to the sentinel; the one it held is live and the others are already the
+  sentinel.  A literal's `Set` heads the statements that fill its backing, so that release,
+  and a re-minted backing's snapshot (`in_place_rebuild`), wait for the statement's end: a
+  `Line` marker, or the block's end in front of its value.  The parser puts that marker after a
+  statement it spliced flat (`parse_block`).  The spliced statements alone could not say where
+  the statement ended: `v = [mk(2)]` and `v = []; v += [mk(2)]` on one line lowered to the same
+  IR, and the rule orders them differently.  Measured on both backends: a literal, a call, a
+  copy, `[]` then an append, a loop, an `if` arm, two displaced elements, a block's value, and
+  a droppable member.  An element view held across the rebind is refused, as before
+  (`(H-View-Drop)`), so the earlier free cannot be observed through one.  Guard
+  `tests/scripts/1582-a-vector-rebind-releases-what-it-displaces-after-the-new-value.loft`.
+  Three neighbours were found with the matrix and are their own issues: a vector that held a
+  CALL's result loses its release when rebound (loft#1596), a vector of vectors never releases
+  its inner elements (loft#1597), and a vector moved out and then refilled releases the moved
+  elements twice (loft#1598).
 
 ### D-heap-28 — OPEN (2026-09-22, loft#1591): a variable rebound to a `??` chain that holds itself never releases the kept record on `--native`
 
