@@ -2785,7 +2785,7 @@ re-measured at its end: **927 · 598 · 5 · 324**, and `--check-ratchet` pinned
 opaque tests 1310.  `Parser::unique_elm_var` gained a struct-enum arm and peels it, which moved
 that function to the seeing-through side.)
 
-(2026-09-23, the join of `157-native-4x` (@PLN158 W2) and `tuxedo-165-generics` (@PLN165 D11, E1)
+(2026-09-22, the join of `157-native-4x` (@PLN158 W2) and `tuxedo-165-generics` (@PLN165 D11, E1)
 into ../loft2 @ 67abc26d5, re-measured at its end: **927 · 597 · 5 · 325**, and `--check-ratchet`
 pinned lower at opaque 325, opaque tests 1310.  The sides read 326 · 1311 (../loft2) and
 329 · 1313 (the generics line); the join is below both, as each line peeled shapes in bodies
@@ -2799,7 +2799,7 @@ peels (`.base()`), because a nullable handle names the same frame; the two it fi
 the value-arm test in `block_result` and the loop-source test in `parse_for_iter_setup` — read
 1314 until they did.)
 
-(2026-09-23, the join of `157-native-4x` (@PLN158 E) and `tuxedo-165-generics` (@PLN165 D7-D10)
+(2026-09-22, the join of `157-native-4x` (@PLN158 E) and `tuxedo-165-generics` (@PLN165 D7-D10)
 into ../loft2, re-measured at its end: **910 · 577 · 5 · 328**, and `--check-ratchet` pinned lower
 at opaque 328, opaque tests 1311.  The sides read 330 · 1312 (../loft2) and 330 · 1313 (the
 generics line); the joined tree is neither, because the audit classifies FUNCTIONS and both lines

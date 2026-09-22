@@ -10,7 +10,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Open — design settled with the owner 2026-09-22; P0 measured.**  Every measurement
 the design rests on is recorded below and was taken on both backends at
 `tuxedo-quality-2026-09-21` @ `53d8d5d4a`.  Tracker: [@PLN167](https://github.com/loft-lang/plans/issues/167).
-Closes loft#1566 (`D-bind-38`), loft#1567 (`D-bind-39`), loft#1602, loft#1603 and loft#1604.
+Closes loft#1566 (`D-bind-38`), loft#1567 (`D-bind-39`), loft#1602, loft#1603, loft#1604 and loft#1605.
 
 ## Goal
 
@@ -187,17 +187,37 @@ The four *declared* axes are ones `matrix_axes.py` has no vocabulary for, so its
 vouch for them: each guard states, in its head comment, which of their values every cell
 reaches, and the review reads that list against the cells by hand.
 
+## Review cases (loft3-ff, 2026-09-22) — each one is a cell its phase owes
+
+A sibling stream read the plan and sent eleven cases, the first two measured.  Each is
+recorded here with the phase that must carry it as a cell, so none depends on memory.
+
+| # | case | phase | status |
+|---|---|---|---|
+| R0 | **Two `&mut` to one place (loft#1605).**  Native passes a `&τ` argument as `&mut τ`: `add2(x, x)` is E0499 today (loud), and once B1 admits a store place, `add2(p.n, p.n)` or `add2(v[i], v[j])` with `i == j` compiles to two `&mut` from raw addresses — UB under `noalias`.  B2's proposed `&mut *var_c` makes the same aliasing reachable from a link and its target (`add2(c, x)` with `c = &x`).  Cure: a scalar `&τ` parameter is `*mut τ` on native, the type a `&` local link already has — so a link, a local and a place are all passed as one pointer and aliasing is defined.  Cells: the same local twice, the same field twice, `v[i]`/`v[j]` with `i == j` at run time, a link and its target together, `brighten(p.r, p)` reading the place by another route inside the call. | **B0** (new, before B1) | Open |
+| R1 | `limit(lo, hi)` with `lo != 0` is width AND offset: `type Lim = integer limit(1000, 1100)`, `c = &q; c = 1050; c = &o.l; c = 1020`, then read `q` and `o.l` directly; also `limit(-100, 100) size(1)`. | A1–A3 | answered by P0 (the local holds the FIELD encoding); the cell is owed by A3 |
+| R2 | The range promise through a link, which `range_arith`'s `type_range` relies on for plain operators: `fn set(c: &u8, k: integer) { c = k }`, `set(x, 300)`, then `x * 2` in the caller. | A0 | closed by A0: the write is refused at compile time; a compound step takes the slot default |
+| R3 | A store-text read fed into a write to the SAME store in one statement (`t = &o.a`: `o.b = t`, `o.a = t`, `t = t`, `t += t`): the setter's claim can move the store under the `&str` mid-copy, and on native a `&str` from `stores` alive across `store_mut` only borrow-checks if raw.  Copy to a `String` first when the destination text is in the same store, or claim before reading. | C1 | Open |
+| R4 | `(B-Disturb)`'s "overwriting a place is not disturbing it" is wrong for a BORROWED text read: `o.a = "…"` frees the old string record, so a `&str` taken through a store link and still alive (a W2 `text_borrowed` walk, `for c in t { o.a = … }`) dangles.  A write to the linked text place, through the link or directly, ends every borrowed read of it — a `binding.md` clause, not only a check. | C2, D | Open |
+| R5 | Per-kind instantiation holes: (a) a fn-ref `g = app; g(o.s); g(local)` — one fn-ref type, and a `CallRef` cannot pick an instance by kind (refuse, or carry the kind in `fn(&text)`); (b) a library's `pub fn app(t: &text)` in a prebuilt cdylib has only the stack instance (PLACEMENT.md); (c) `__retbuf` stays the stack kind; (d) a recursive `&text` function calling itself with the other kind — the instances close transitively. | C3 | Open |
+| R6 | Cross-kind in forms other than a sequential re-point: a join `t = if c { &a } else { &o.s }`, and a `&text` parameter re-pointed inside the store instance to one of its locals.  Both need the named refusal. | C1 | Open |
+| R7 | Null against empty through a store link: a null text field read as `t == null`, and `t = null` written through the link; can the stack kind (a `String`) hold the distinction?  A parity cell. | C1 | Open |
+| R8 | `u8` against `u8?`: is a `&u8` bound or re-pointed to a `u8?` place one `τ` under `(B-Ref-Repoint)`?  (`u8?` is 1 byte with range `0..=254`, `ByteNullable`; `u8` is `Byte` — same width, different null code.) | A3 | Open |
+| R9 | The context axis lacks a closure capture and a generator frame: A1 changes the capture box's type and a coroutine frame's field types for a narrow local.  Cells: a `u8` captured by a lambda and also linked; a `u8` live across a `yield`. | A1, A2 | Open |
+| R10 | B1 and the callee clause: `bump(v[i], v)` where `bump` appends to `v` must be refused (`(B-Ref-Reshape)` already names `f(v[i], v)`), so the new `&` argument enters `disturbed_params_map` as a plain parameter does; also `bump(v[-1])`, `bump(v[10])` on a length-3 vector (raise parity), and `bump(h[k].n)` with the key absent. | B1 | Open |
+
 ## Sub-arcs
 
 | Item | Source | Verify | Status |
 |---|---|---|---|
 | **P0** — the width probe: hand-edit one emitted program so its linked `u8`/`i8` locals are at width and confirm a byte pointer reads and writes them, min/max/null included; list what the interpreter needs and size A2 | this file | the edited program prints the matrix's edge cells under rustc; the op inventory is written into A2's row | **Done** 2026-09-22 — § P0: the local holds the FIELD encoding; A2 = two fused frame ops |
-| **A0** — loft#1604: the narrowing refusal and the range guard look through a link, so a write through `&u8` (a local link or a parameter) is checked like a write to the `u8` | loft#1604, `(B-Ref-Uniform)` | the issue's cell: `x = x + 10` through a link or parameter refused, `+=` takes the slot's default, both backends; falsified against P0's tip | Open |
+| **A0** — loft#1604: the narrowing refusal and the range guard look through a link, so a write through `&u8` (a local link or a parameter) is checked like a write to the `u8` | loft#1604, `(B-Ref-Uniform)` | the issue's cell: `x = x + 10` through a link or parameter refused, `+=` takes the slot's default, both backends; falsified against P0's tip | **Done** e0cb48964 |
 | **A1** — native: a narrow local's Rust type is its FIELD encoding's storage type (`u8`/`u16`/`i32`/`u32`), decoded at each use, encoded at each write; a narrow by-value parameter re-encoded once at entry | decision 1, § P0 | `--native-emit` diff over `tests/scripts/`: only narrow-local declarations and their uses move; script corpus + bench hashes unchanged; `range_arith` pins unmoved; published-lib gate green | Open |
 | **A2** — interpreter: `OpVarNarrow(pos, min, kind)` / `OpPutNarrow(pos, min, kind)` read and write a narrow local's 8-byte slot in the field encoding through the `Store` getters and setters the field ops call; a narrow by-value parameter re-encoded at entry; the debugger and every other frame reader decode | decision 1, § P0 | value parity of the corpus across backends; `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` unmoved; `LOFT_VERIFY_STACK` sweep clean | Open |
 | **A3** — retire `is_narrow_store_place`; `&u8` to a field or element links | decision 1 | `tests/scripts/167-a-narrow-link-into-a-store.loft`, both backends, falsified against A2's tip; `a-link-to-a-narrow-integer-store-place-is-refused.loft` retired; `D-bind-39` closed | Open |
+| **B0** — loft#1605: a scalar `&τ` parameter is `*mut τ` on native, the type a `&` local link already has; a local argument passes `addr_of_mut!`, a link passes itself, a forwarded parameter passes itself | R0, loft#1605 | the R0 cells on both backends, native compiling each; `add2(x, x)` answers `12` on both; the emitted callee reads and writes through `unsafe { *p }`; falsified against A0's tip | Open |
 | **B1** — a `&` parameter takes a scalar field or element (the bind's lowering at the call; `is_addressable` asks the place set `is_amp_place` asks) | decision 3 | `bump(p.n)`, `bump(v[i])`, `bump(o.inner.k)` write through, both backends; the refusal keeps a literal and a call result out | Open |
-| **B2** — loft#1603: a `&`-bound scalar local passed to a `&` parameter compiles on native (`unsafe { &mut *var_c }`, the tuple arm's form) | loft#1603 | the issue's cell answers `6 11` on both backends; falsified against B1's tip | Open |
+| **B2** — loft#1603: a `&`-bound scalar local passed to a `&` parameter compiles on native — after B0 the link IS the parameter's type and is passed as it is | loft#1603 | the issue's cell answers `6 11` on both backends; falsified against B1's tip | Open |
 | **B3** — loft#1602, the loud stopgap: the `&text` exemption becomes the refusal every other type gets, until C3 makes it link | loft#1602 | `app(o.s)` refused naming the cure; falsified (interpreter answered `cc` silently before) | Open |
 | **C1** — `RefVar(Text)` carries its kind; the bind `t = &o.s` / `t = &v[0]` makes the store kind; reads and writes through it on both backends; cross-kind re-point refused | decision 2 | `tests/scripts/167-a-text-link-into-a-store.loft`, both backends; the stack-kind emission of every text-returning guard byte-identical before/after (`--native-emit` diff); `D-bind-38` closed | Open |
 | **C2** — the store-text slice joins the disturbance check | decision 2 | a cell that dangles under `LOFT_POISON=1` before the check is refused after; growth of another store stays allowed | Open |
@@ -209,7 +229,8 @@ reaches, and the review reads that list against the cells by hand.
 1. P0, because it sizes A2 and can kill decision 1 for the cost of a compile.  Done.
 2. A0 before everything: it is a silent-wrong on `main`, and A1's encode-at-write assumes every
    write to a narrow slot has already been range-checked.
-3. B1 → B2 → B3 next: independent of A, smaller, and B3 stops loft#1602's silent loss.
+3. B0 → B1 → B2 → B3 next: independent of A, smaller, and B3 stops loft#1602's silent loss.
+   B0 comes first because B1 is what makes loft#1605's aliasing compile.
 4. A1 → A2 → A3: native first, since its emission diff is the exact comparison; the
    interpreter follows against parity; the refusal comes off last, when both agree.
 5. C1 → C2 → C3: C1 needs nothing from A; C3 needs the instantiation entry point @PLN165 E

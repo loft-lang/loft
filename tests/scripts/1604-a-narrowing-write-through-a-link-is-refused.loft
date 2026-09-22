@@ -12,6 +12,10 @@
 // compound spelling (`+=`) is not a refusal — it takes the slot's default — and has its own
 // guard, `1604-a-compound-step-through-a-narrow-link-takes-the-slot-default.loft`.
 //
+// @falsified-at: 73ae78232 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1604-a-narrowing-write-through-a-link-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: the expected diagnostics, one per refused write.
 //
 // @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)

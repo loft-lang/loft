@@ -15,6 +15,10 @@
 // a step repeated in a loop; a `??` fallback; a nullable `u8?`; and the full `integer`, which
 // has no range and must keep the stepped value.
 //
+// @falsified-at: 73ae78232 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1604-a-compound-step-through-a-narrow-link-takes-the-slot-default.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: the assertions — each narrow variable's value after the writes through its link.
 
 type Small = integer limit(1, 8);
