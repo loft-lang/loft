@@ -56,15 +56,15 @@ fn body<'a>(rust: &'a str, name: &str) -> &'a str {
     &rest[..end]
 }
 
+/// The depth entry — this rule's half of the prelude.
 fn has_frame(rust: &str, name: &str) -> bool {
-    let b = body(rust, name);
-    let push = b.contains("cr_call_push");
-    let guard = b.contains("FnRefBufGuard");
-    assert_eq!(
-        push, guard,
-        "{name}: the depth entry and the buffer guard go together:\n{b}"
-    );
-    push
+    body(rust, name).contains("cr_call_push")
+}
+
+/// The fn-ref buffer guard — `@FR-R-GuardFree`'s half: a framed function carries it only
+/// where a registrant is reachable, and `LOFT_NO_GUARD_FREE=1` puts it back on every frame.
+fn has_guard(rust: &str, name: &str) -> bool {
+    body(rust, name).contains("FnRefBufGuard")
 }
 
 /// Frameless in the lean tier by the chain rule; framed without it.
@@ -83,6 +83,28 @@ const FRAMED: [&str; 9] = [
     "n_depth_sum",
     "n_use_down",
 ];
+/// The framed functions a fn-ref dispatch is reachable from: the only ones that keep the
+/// buffer guard (`apply` dispatches, `twice` calls it).  `checked`'s `assert` is a
+/// `#rust`-bodied standard function — the body's own work, not a registrant.
+const GUARDED: [&str; 2] = ["n_apply", "n_twice"];
+
+/// Every framed function carries the guard exactly where `@FR-R-GuardFree` says, and no
+/// frameless one carries it at all.
+fn check_guards(label: &str, rust: &str, framed: &[&str], frameless: &[&str]) {
+    for name in framed {
+        assert_eq!(
+            has_guard(rust, name),
+            GUARDED.contains(name),
+            "{label}: {name} keeps its buffer guard iff a registrant is reachable"
+        );
+    }
+    for name in frameless {
+        assert!(
+            !has_guard(rust, name),
+            "{label}: the frameless {name} carries no guard"
+        );
+    }
+}
 
 #[test]
 fn the_lean_tier_elides_a_frameless_tree() {
@@ -97,6 +119,8 @@ fn the_lean_tier_elides_a_frameless_tree() {
     for name in FRAMED {
         assert!(has_frame(&rust, name), "{name} must keep its frame");
     }
+    let frameless: Vec<&str> = CHAIN.iter().chain(LEAVES.iter()).copied().collect();
+    check_guards("the lean tier", &rust, &FRAMED, &frameless);
     let _ = std::fs::remove_file(&out);
 }
 
@@ -127,8 +151,21 @@ fn the_switch_and_the_named_tier_keep_every_non_leaf_frame() {
                 "{label}: the leaf {name} stays frameless"
             );
         }
+        let framed: Vec<&str> = CHAIN.iter().chain(FRAMED.iter()).copied().collect();
+        check_guards(label, &rust, &framed, &LEAVES);
         let _ = std::fs::remove_file(&out);
     }
+    // With `@FR-R-GuardFree` switched off the two halves of the prelude go together again:
+    // every framed function constructs its guard.
+    let out = std::env::temp_dir().join("loft_leaf_chain_guard_off.rs");
+    let rust = emit(&out, &[], &[("LOFT_NO_GUARD_FREE", "1")]);
+    for name in CHAIN.iter().chain(FRAMED.iter()) {
+        assert!(
+            has_frame(&rust, name) && has_guard(&rust, name),
+            "LOFT_NO_GUARD_FREE=1: {name} keeps both the depth entry and the guard"
+        );
+    }
+    let _ = std::fs::remove_file(&out);
 }
 
 #[test]
