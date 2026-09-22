@@ -1,0 +1,136 @@
+// `@FR-R-Range`'s accumulator clause — a local seeded once by a ranged value and stepped
+// only by LITERALS inside a character walk over a text the body never writes is ranged:
+// the walk makes at most `size(T)` trips (a `u32` word), so the accumulator moves by at
+// most `Σ|c| · u32::MAX` per run of the seed's block, and the checked `n + c` — a null
+// test and an overflow test per step — becomes the processor's add on `--native`.  The
+// interpreter is the oracle; every cell hand-computes its value and must answer the same
+// under `LOFT_NO_RANGE_ARITH=1` (every template back) and `LOFT_HOIST_VERIFY=1` (the
+// plain answer compared with the checked one at every operator).  The cells: the bench's
+// shape (a1), a negative step (a2), TWO walks stepping one accumulator (a3), a step under
+// an `if` (a4), the seed's block re-run by an OUTER loop — re-seeded per pass, admitted
+// (a5); and the shapes that must DECLINE and still answer right: the seed OUTSIDE the
+// loop that holds the walk (a6), a step by a non-literal (a7), a walk over a text the body
+// appends to (a8), a second seed (a9), a counted loop instead of a walk (a10), a parameter
+// as the seed (a11).
+//
+// @falsified-at: hand-measured (2026-09-22) — `LOFT_HOIST_VERIFY=1` is the falsifier: with
+// the accumulator's range widened by hand to admit a12's overflow (a step of 2^40 under a
+// walk of 2^24 characters is not constructible here), the checking form of the plain add
+// compares its wrapped answer with the checked template's null at the operator and
+// panics; on the build as shipped every plain add agrees with its template on every cell,
+// and `LOFT_NO_RANGE_ARITH=1` restores the template and the same values.
+
+// a1 — the bench's shape: two literal steps under one walk.
+fn count_marks(src: text) -> integer {
+  n = 0;
+  for c in src {
+    if c == 'a' || c == 'e' || c == 'i' { n += 1; }
+    if c > '9' { n += 2; }
+  }
+  n
+}
+
+fn a1() {
+  r = count_marks("abcdefghij0123456789");
+  assert(r == 3 + 20, "a1 {r}");
+  println("a1 {r}");
+}
+
+// a2 — a negative step, and a seed that is not zero.  (Every walk below is over a text
+// VARIABLE: `(R-CharWalk)` reads only those, and a literal source keeps the written step.)
+fn a2() {
+  t = "xxxxx"; n = 100;
+  for c in t { if c == 'x' { n -= 3; } }
+  assert(n == 85, "a2 {n}");
+  println("a2 {n}");
+}
+
+// a3 — TWO walks, siblings of the seed, stepping one accumulator.
+fn a3() {
+  p = "aaa"; q = "bbbbb"; n = 0;
+  for c in p { n += 1; }
+  for c in q { n += 2; }
+  assert(n == 13, "a3 {n}");
+  println("a3 {n}");
+}
+
+// a4 — the step under an `if` inside the walk, with an `else` step.
+fn a4() {
+  t = "a1b2c3"; n = 0;
+  for c in t { if c >= 'a' { n += 10; } else { n += 1; } }
+  assert(n == 33, "a4 {n}");
+  println("a4 {n}");
+}
+
+// a5 — the seed's block re-run by an OUTER loop: re-seeded per pass, so each pass is bounded.
+fn a5() {
+  out = 0;
+  t = "abcd";
+  for j in 0..3 {
+    n = j;
+    for c in t { n += 1; }
+    out += n;
+  }
+  assert(out == 4 + 5 + 6, "a5 {out}");
+  println("a5 {out}");
+}
+
+// a6 — DECLINES: the seed OUTSIDE the loop that holds the walk (the trips multiply).
+fn a6() {
+  t = "abc"; n = 0;
+  for _j in 0..4 { for c in t { n += 1; } }
+  assert(n == 12, "a6 {n}");
+  println("a6 {n}");
+}
+
+// a7 — DECLINES: a step by a non-literal.
+fn a7() {
+  t = "abc"; n = 0; k = 3;
+  for c in t { n += k; }
+  assert(n == 9, "a7 {n}");
+  println("a7 {n}");
+}
+
+// a8 — DECLINES: a walk over a text the body APPENDS to (the trips are not bounded by the
+// size at entry); the walk reads what it appended: a, b, then four c's — six trips.
+fn a8() {
+  s = "ab"; n = 0;
+  for c in s { n += 1; if n < 5 { s += "c"; } }
+  assert(n == 6 && s == "abcccc", "a8 {n} {s}");
+  println("a8 {n} {s}");
+}
+
+// a9 — DECLINES: a second seed.
+fn a9() {
+  p = "abc"; q = "de"; n = 0;
+  for c in p { n += 1; }
+  n = 50;
+  for c in q { n += 1; }
+  assert(n == 52, "a9 {n}");
+  println("a9 {n}");
+}
+
+// a10 — DECLINES: a counted loop, not a walk (its trips are not a text's size).
+fn a10() {
+  n = 0;
+  for _i in 0..7 { n += 2; }
+  assert(n == 14, "a10 {n}");
+  println("a10 {n}");
+}
+
+// a11 — DECLINES: a parameter as the seed (unranged: it may be the sentinel).
+fn from(seed: integer, src: text) -> integer {
+  n = seed;
+  for c in src { n += 1; }
+  n
+}
+
+fn a11() {
+  nothing: integer? = null as integer?;
+  a = from(10, "abc");
+  b = from(nothing ?? 0, "");
+  assert(a == 13 && b == 0, "a11 {a} {b}");
+  println("a11 {a} {b}");
+}
+
+fn main() { a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9(); a10(); a11(); }
