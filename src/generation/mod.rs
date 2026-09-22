@@ -834,6 +834,10 @@ pub struct Output<'a> {
     /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
     /// the bisect step for a wrong or missing piece out of a loop over a `split`.
     pub lazy_split_disabled: bool,
+    /// The text LOCALS of the function being emitted whose Rust slot is a borrowed `&str`
+    /// rather than an owned `String`; rebuilt per function.  [`Output::text_borrowed`] is
+    /// the one predicate that reads it, beside the text parameters it always answers.
+    pub borrowed_text_locals: HashSet<u16>,
     /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
     /// function that build once per activation ([`hoist::invariant_literals`]): each is
     /// pre-declared at function top and its declaration statement wrapped in an
@@ -2043,6 +2047,7 @@ impl<'a> Output<'a> {
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
             lazy_splits: BTreeMap::new(),
             lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
+            borrowed_text_locals: HashSet::new(),
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
@@ -2375,6 +2380,7 @@ impl Output<'_> {
         } else {
             hoist::lazy_splits(self.data, def_nr)
         };
+        self.borrowed_text_locals.clear();
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
@@ -4484,21 +4490,52 @@ impl Output<'_> {
         self.lazy_splits.contains_key(vec).then_some(*vec)
     }
 
+    /// Is text variable `v` of the function being emitted BORROWED — its Rust slot a `&str` —
+    /// rather than an owned `String`?  A text PARAMETER is: the caller's text arrives
+    /// borrowed.  A text LOCAL is not, unless a rewrite admitted it to borrow what it reads
+    /// (`borrowed_text_locals`).  A by-reference text (`&text`, a `RefVar`) is neither: a
+    /// parameter holds `&mut String` and a local link `*mut String`, and `.base()` peels no
+    /// `RefVar`, so both answer false here.
+    ///
+    /// The ONE home of the question, asked by every site that spells a text variable: the
+    /// bare read (`var_s`) against the owned local's borrow (`&var_s`); the conversion an
+    /// owned slot needs from it (`.to_string()`, where an owned local clones); the exit (a
+    /// borrowed text is returned as it is, an owned local through the scratch buffer); and
+    /// the lazy split's borrow of its source.  Three shipped defects (loft#1004, loft#1006,
+    /// loft#1278) were sites that spelled the question inline and disagreed about the same
+    /// variable, and a fourth class of text slot cannot be added site by site.
+    #[must_use]
+    pub fn text_borrowed(&self, v: u16) -> bool {
+        let vars = self.data.def(self.def_nr).variables();
+        // `@FR-N-Shape` — `.base()`: a `text?` variable is the same slot, its null the sentinel.
+        matches!(vars.tp(v).base(), Type::Text(_))
+            && (vars.is_argument(v) || self.borrowed_text_locals.contains(&v))
+    }
+
+    /// The complement of [`Output::text_borrowed`] over text variables: `v` is a text
+    /// variable holding an owned `String` — reads as `&var_v`, copies with `.clone()`, and
+    /// dies with its frame.
+    #[must_use]
+    pub fn text_owned(&self, v: u16) -> bool {
+        matches!(
+            self.data.def(self.def_nr).variables().tp(v).base(),
+            Type::Text(_)
+        ) && !self.text_borrowed(v)
+    }
+
     /// `@FR-R-LazySplit` — whether the lazy form may BORROW its source text `src` for the
-    /// whole loop: a plain text parameter nothing in the function writes.  Such a parameter
-    /// is a `&str` of the caller's, which no statement of the body can move or change.
-    /// Every other source — a local, a field, a call's result, a by-reference text — is
-    /// iterated as a copy taken where the call stood, which no later write can reach.
+    /// whole loop: a borrowed text ([`Output::text_borrowed`] — a plain text parameter)
+    /// nothing in the function writes.  Such a text is a `&str` of the caller's, which no
+    /// statement of the body can move or change.  Every other source — an owned local, a
+    /// field, a call's result, a by-reference text — is iterated as a copy taken where the
+    /// call stood, which no later write can reach.
     #[must_use]
     pub fn lazy_split_borrows(&self, src: &Value) -> bool {
         let Value::Var(s) = src.unspan() else {
             return false;
         };
         let def = self.data.def(self.def_nr);
-        let vars = def.variables();
-        // `@FR-N-Shape` — `.base()`: a `text?` parameter is the same borrowed text, its null
-        // the sentinel an empty walk answers.  A by-reference text is a `RefVar` and is not.
-        if !vars.is_argument(*s) || !matches!(vars.tp(*s).base(), Type::Text(_)) {
+        if !self.text_borrowed(*s) {
             return false;
         }
         // A write is a `Set`, a by-reference hand-off, or the variable as the DESTINATION
