@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1590, `@FR-T-Cons` — A TUPLE WHOSE FIRST MEMBER HOLDS A STRING BINDS.  An assignment's
+// destination is the accumulator a heap-building right-hand side adopts, and member 0 of `( … )`
+// is parsed before a `,` proves the group a tuple, so the lexer is asked ahead and a tuple's
+// member 0 builds in a temp of its own.  That look-ahead stopped at every string literal and
+// answered "not a tuple", so `t = (["a"], 1)` typed `t` as the member and was refused: "cannot
+// change type from vector<text> to (vector<text>, integer)".  A string without an interpolation
+// hole is now crossed like any other token.  A string that OPENS a hole still stops it, so a
+// vector literal in member 0 holding an interpolated string stays refused (loft#1590 stays open
+// for that half) and is not a cell here.
+//
+// Every expected value is worked out by hand.  The last four cells are controls that were right
+// before: a member 0 with no string, and three parenthesised expressions that are NOT tuples and
+// must keep building in the destination.
+
+struct Tx { id: integer, name: text }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn main() {
+  a = (["a"], 1);
+  ok("a vector of text        ", "{a.0[0]}{a.1}", "a1");
+  b = ([Tx { id: 1, name: "abc" }], 2);
+  ok("b struct with a text    ", "{b.0[0].name}{b.0[0].id}{b.1}", "abc12");
+  k = (["a,b"], 6);
+  ok("k a comma in the string ", "{k.0[0]}{k.1}", "a,b6");
+  l = (["a)", "c"], 7);
+  ok("l a paren in the string ", "{l.0[0]}{l.0[1]}{len(l.0)}{l.1}", "a)c27");
+  m = ([("a", 1)], 8);
+  ok("m a tuple in the vector ", "{m.0[0].0}{m.0[0].1}{m.1}", "a18");
+  x = 7;
+  e = ("x{x}" + "y");
+  ok("c1 text, not a tuple    ", e, "x7y");
+  w = ["b"];
+  p = (["a"] + w);
+  ok("c2 concat, not a tuple  ", "{len(p)}{p[0]}{p[1]}", "2ab");
+  h = ("{x}", "b");
+  ok("c3 a tuple led by text  ", "{h.0}{h.1}", "7b");
+  n = ([1, 2], 9);
+  ok("c4 no string            ", "{len(n.0)}{n.0[1]}{n.1}", "229");
+  println("a tuple whose first member holds a string binds: every cell holds");
+}
