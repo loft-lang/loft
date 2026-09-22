@@ -143,7 +143,7 @@ read plus checked adds), the two 4 096-fills 2.4.  Per appended record the emiss
 `rec_ptr` lookup for the three field writes and a SECOND store lookup for the TAG alone:
 `OpSetEnum` was not a fusable setter.  Made one (`u8`, the byte `set_byte(…, 0, v)` writes;
 `HoistScalar for u8` for the element-write path, on `append_byte`): the build −11 %, the
-row **41.3 → 36.4 µs (−12 %), 4.49× → ~4.0×**.  What remains per record is four
+row **41.3 → 36.0 µs (−13 %), 4.49× → 3.97×** (`stats.py --only 16`, pinned).  What remains per record is four
 `allocations[store]` lookups (the push, the zeroing, the address, the finish) around a
 32-byte zero and five stores — the lever is a record push WINDOW under a branch, the
 `(R-PushFill)` window clause extended from scalars in a counted loop to record mints under
@@ -267,7 +267,7 @@ a subsystem no analysis has entered.  `sum` at 2.16× is the owner's accepted 2�
 
 Built, in this order: W2 (`join` 1.96×, four more text rows to ~1×), W1 (`char_walk` 2.48×,
 `split` 7.8×), the single-row harness (`--names`), `mesh_aabb` attributed and moved
-(2.73×), `enum_match` attributed and moved a step (~4.0×).  **Left, in order: C1+**
+(2.73×), `enum_match` attributed and moved a step (3.97×).  **Left, in order: C1+**
 (`fibonacci`, its CORRECTED condition in `vector-build.md` § C1's condition), **P1**
 (`chunk_lookup`).  Levers this round FOUND and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
