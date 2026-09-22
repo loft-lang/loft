@@ -248,6 +248,42 @@ draft of this note prescribed *"a store handed up through a RECURSIVE function w
 fn-ref"* as the cell that must exist first — that cell was never constructed and, the op
 living in lambda bodies, may not be constructible; do not chase it.
 
+### The cbor library as the consumer for "processor-level" arithmetic (2026-09-22)
+
+Asked whether a file could opt into the processor's arithmetic for crypto-style code (closed
+by C67; C120 keeps only an evidence-licensed release tier), the owner pointed at the `cbor`
+library as the real consumer.  Read (`~/workspace/loft-bench-libs/loft-libs-core/cbor`, 308
+lines) and emitted from a scratch program that `use`s it by path:
+
+- **Its arithmetic is already the PROOF route's shape, not the processor's.**  The encoder
+  writes `((arg / 16777216 % 256) & 255) as u8` — `(R-LitDiv)` twice and a mask, emitted
+  today as one sentinel test each and no fault note; nothing modular, nothing wrapping.  The
+  decoder reassembles `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`.
+- **What is still checked, and why.**  `head`: 10 checked ops, all `major * 32 + k` — `major`
+  is an unranged parameter.  `read_value`: 27 checked ops, the reassembly — emitted as
+  `op_mul_long_nn` and `op_add_int_nullable` although the compiler itself typed both operands
+  `integer(0, 255)` (the emitted join says so).  **`(R-Range)` ranges by SHAPE and never by
+  TYPE**: a literal, a mask, a counter, a `len` — but not a join, a local or a parameter whose
+  static type already carries `[lo, hi]`.  Probed on four shapes (declared `limit(0, 7)`
+  parameters, declared `u8` parameters, the typed join, typed locals): every op stays checked.
+  C120's stated route for libraries — *"a library opts in by declaring the bounded element
+  types it already knows"* — is written and not built.
+- **And the declared half must NOT be built yet: loft#1593.**  A user-written
+  `integer limit(a, b)` is not treated as narrow by the narrowing rules — an out-of-range
+  store, call or checked cast is accepted with no diagnostic and reads a wrong in-range value
+  (`limit(1, 8)` answers 1 for 1000, −9 and the literal 9), where `u8`/`i8` refuse correctly.
+  A range proof that trusted such a declaration would run plain arithmetic on a value the
+  type says cannot exist.  The INFERRED half is sound now (a `u8` element genuinely holds
+  `[0, 255]`, and the compiler refuses every implicit narrowing into the alias).
+
+So the lever is **E, sharpened: `(R-Range)` takes the static type's range as a leaf** — first
+for the compiler's own inferences (the cbor decoder's reassembly needs no change to the
+library), then for declared `limit` types once #1593 makes the declaration a fact (the
+encoder's `major: integer limit(0, 7)`, one line in the library).  Portable, no surface, no
+mode; the cbor decoder is the consumer cell.  Not priced: the library has no bench yet
+(three census rows waiting), and a per-node decoder does its arithmetic outside any hot loop,
+so the row this moves is the library's own, not a suite lane's.
+
 ## Priced negative, or not a clear case
 
 - **`sum` (6.45×) — WAS priced negative; RE-PRICED 2026-09-22 at −69 %, see below.**  The
