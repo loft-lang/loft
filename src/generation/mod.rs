@@ -517,6 +517,19 @@ fn is_free_in_all_but_key(def: &crate::data::Definition) -> bool {
             || Data::split_key(name).is_some_and(|k| k.kind == crate::data::KeyKind::FreeOverload))
 }
 
+/// Is `def` a METHOD — `t_<LEN><receiver>_<name>`, or an instance of one (a method on a
+/// generic struct, `i_<…>_t_<…>`)?  A loft-bodied method is a call frame like any free
+/// function: it can recurse, so it carries the depth cap, and the interpreter names it in
+/// `stack_trace()`.
+fn is_method(def: &crate::data::Definition) -> bool {
+    let mut name = def.name();
+    while let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
+    {
+        name = key.rest;
+    }
+    Data::split_key(name).is_some_and(|k| k.kind == crate::data::KeyKind::Method)
+}
+
 /// Flatten a loft def name into a valid Rust identifier.  Most names already are
 /// (`n_foo`, `t_4Pair_first`), but a generic instantiated over a TUPLE carries the
 /// synthetic tuple struct's schema name verbatim — `t_24__tuple<integer,integer>_first`
@@ -8415,12 +8428,14 @@ extern crate loft;"
                 self.declared.insert(v);
             }
         }
-        // Only instrument user-defined FREE functions (Block body): an `n_` function, and what
-        // is one in all but its key — a free overload member (`f_…`) and an instance of a free
-        // generic (`i_…_n_…`) — so each carries the depth cap and the shadow-stack frame its
-        // `n_` twin carries.
+        // Instrument every loft-bodied function the interpreter gives a frame: an `n_`
+        // function, what is one in all but its key — a free overload member (`f_…`) and an
+        // instance of a free generic (`i_…_n_…`), which carry their `n_` twin's frame — and a
+        // method (`t_…`, or an instance of one), named by its key as the interpreter names it.
+        // Each carries the depth cap and the shadow-stack frame; the leaf and frameless-chain
+        // rules below take them off again wherever the function cannot be re-entered.
         let free = def.name().starts_with("n_") || is_free_in_all_but_key(def);
-        let instrument = matches!(def.code(), Value::Block(_)) && free;
+        let instrument = matches!(def.code(), Value::Block(_)) && (free || is_method(def));
         // The user-visible loft name for the shadow call stack.
         let source_name = def.original_name();
         let loft_name = if def.name().starts_with("n_") || !free {
@@ -8477,6 +8492,8 @@ extern crate loft;"
                 // `&UnsafeCell<Stores>` parameter so templates and inner
                 // emissions see `stores` as a regular `&mut Stores` binding.
                 let escaped_file = loft_file.replace('\\', "\\\\");
+                // A key may carry any spelling a type has (an instance's bound types).
+                let loft_name = loft_name.replace('\\', "\\\\").replace('"', "\\\"");
                 // @PLN18 08-S2 — the live-dispatch entry check precedes even
                 // the `stores` derivation: a flipped fn re-enters the parked
                 // interpreter (which swaps the world out of the cell), so no
@@ -8574,9 +8591,8 @@ extern crate loft;"
                 self.pop_twin_frames();
                 self.call_stack_prefix = None;
             } else {
-                // Non-instrumented user-fn (e.g. `t_…` methods) — still
-                // needs the `&mut Stores` derivation from the UnsafeCell
-                // parameter for templates / inner calls.
+                // Non-instrumented loft-bodied fn — still needs the `&mut Stores`
+                // derivation from the UnsafeCell parameter for templates / inner calls.
                 self.call_stack_prefix = Some(format!(
                     "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};{vdb_prologue}"
                 ));
