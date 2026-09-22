@@ -1853,6 +1853,52 @@ impl Output<'_> {
         }
     }
 
+    /// Open the pre-eval scope of one `if` ARM (loft#1611).
+    ///
+    /// A hoisted node must be evaluated where the node it replaces is — and an arm's node is
+    /// evaluated after the test and only on that arm's path, so its `let _pre_N` lands inside
+    /// the braces the arm already emits rather than in front of the statement.  Answers the
+    /// state [`Self::close_arm_pre_evals`] restores, or `None` when the arm hoists nothing.
+    ///
+    /// The substitution map is EXTENDED, not replaced: the statement's own hoists (the test's)
+    /// are still live inside the arm, and the two cannot collide — both are keyed on the
+    /// node's address.  The counter is wound back before the arm is emitted, exactly as the
+    /// statement site winds it back, so the emit walk regenerates the names the bindings carry.
+    fn open_arm_pre_evals(
+        &mut self,
+        w: &mut dyn Write,
+        arm: &Value,
+    ) -> std::io::Result<Option<(std::collections::HashMap<usize, String>, u32)>> {
+        let counter_before = self.counter;
+        let pre_evals = self.collect_pre_evals(arm)?;
+        if pre_evals.entries.is_empty() {
+            self.counter = counter_before;
+            return Ok(None);
+        }
+        for (name, _, bind_code, _, _) in &pre_evals.entries {
+            write!(w, " let {name} = {bind_code};")?;
+        }
+        let after_collect = self.counter;
+        let mut map = self.active_pre_eval.clone();
+        map.extend(pre_evals.name_map());
+        let saved = std::mem::replace(&mut self.active_pre_eval, map);
+        self.counter = counter_before;
+        Ok(Some((saved, after_collect)))
+    }
+
+    /// Close what [`Self::open_arm_pre_evals`] opened: the statement's map is the active one
+    /// again, and the counter stands where the arm's collection left it, so the sibling arm's
+    /// names continue rather than repeat.
+    fn close_arm_pre_evals(
+        &mut self,
+        state: Option<(std::collections::HashMap<usize, String>, u32)>,
+    ) {
+        if let Some((saved, after_collect)) = state {
+            self.active_pre_eval = saved;
+            self.counter = after_collect;
+        }
+    }
+
     fn output_if_inner(
         &mut self,
         w: &mut dyn Write,
@@ -2003,24 +2049,38 @@ impl Output<'_> {
         // braces for if-arms regardless of inner expression form, so even if
         // the branch is itself a `Block` (which emits its own `{…}`), we wrap
         // the block in `({…}).to_string()` inside an outer `{ … }`.
-        if text_string_unify {
-            write!(w, " {{(")?;
+        // The brace first, then the arm's OWN hoists, then the rest of the opening — a
+        // `let _pre_N` belongs inside the braces and in front of whatever wrapper follows
+        // (loft#1611).  `Block`/`b_true` opens no brace of its own here: its statements
+        // collect their own pre-evals, as every block's do.
+        let open_rest = if text_string_unify {
+            "("
         } else if bool_unify {
             // Block, not parens, around the arm: the arm can be a STATEMENT sequence (a boolean
             // operand that lifted a value-struct-returning call → `<lift>; <predicate>`), so
             // `(( stmt; expr ) as u8)` is invalid Rust. `({ … } as u8)` is valid either way.
-            write!(w, " {{({{")?;
-        } else if stmt_discard {
+            "({"
+        } else if stmt_discard || b_true {
             // An outer block whose single statement is the arm: `{ <arm>; }` yields `()`
             // whatever the arm yields, and a `Block` arm brings its own braces inside it.
-            write!(w, " {{")?;
-        } else if b_true {
-            write!(w, " ")?;
+            ""
         } else if text_unify {
-            write!(w, " {{&*(")?;
+            "&*("
         } else {
+            ""
+        };
+        let true_braced = text_string_unify || bool_unify || stmt_discard || !b_true;
+        if true_braced {
             write!(w, " {{")?;
+        } else {
+            write!(w, " ")?;
         }
+        let true_pre = if true_braced && !b_true {
+            self.open_arm_pre_evals(w, true_v)?
+        } else {
+            None
+        };
+        write!(w, "{open_rest}")?;
         self.indent += u32::from(!b_true || text_string_unify || bool_unify);
         // save/restore fn_ref_context — Call arguments inside the branch
         // must NOT inherit it (OpDatabase int args would be misinterpreted).
@@ -2041,6 +2101,7 @@ impl Output<'_> {
             self.clone_handed_tuple_local = None;
         }
         self.fn_ref_context = saved_ctx;
+        self.close_arm_pre_evals(true_pre);
         self.indent -= u32::from(!b_true || text_string_unify || bool_unify);
         if text_string_unify {
             write!(w, ").to_string()}} else ")?;
@@ -2060,15 +2121,26 @@ impl Output<'_> {
         } else {
             write!(w, "}} else ")?;
         }
-        if text_string_unify {
-            write!(w, "{{(")?;
+        let (false_braced, false_rest) = if text_string_unify {
+            (true, "(")
         } else if text_unify {
-            write!(w, "{{&*(")?;
+            (true, "&*(")
         } else if bool_unify {
-            write!(w, "{{({{")?;
+            (true, "({")
         } else if stmt_discard || !b_false {
+            (true, "")
+        } else {
+            (false, "")
+        };
+        if false_braced {
             write!(w, "{{")?;
         }
+        let false_pre = if false_braced && !b_false {
+            self.open_arm_pre_evals(w, false_v)?
+        } else {
+            None
+        };
+        write!(w, "{false_rest}")?;
         self.indent += u32::from(!b_false || text_string_unify || bool_unify);
         // When the else branch is Null and the true branch returns a value,
         // emit a typed null sentinel instead of () to match the true branch type.
@@ -2081,6 +2153,7 @@ impl Output<'_> {
             self.output_code_inner(w, false_v)?;
             self.clone_handed_tuple_local = None;
         }
+        self.close_arm_pre_evals(false_pre);
         if text_string_unify {
             write!(w, ").to_string()}}")?;
         } else if text_unify {

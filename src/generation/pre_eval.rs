@@ -622,10 +622,17 @@ impl Output<'_> {
         if let Value::Drop(inner) | Value::Return(inner) = v {
             return self.collect_pre_evals_inner(inner, result);
         }
-        if let Value::If(test, true_v, false_v) = v {
-            self.collect_pre_evals_inner(test, result)?;
-            self.collect_pre_evals_inner(true_v, result)?;
-            return self.collect_pre_evals_inner(false_v, result);
+        // loft#1611 — the TEST only.  A hoisted node is evaluated where the `let _pre_N` lands,
+        // which is BEFORE the statement and on every path; an arm's node is evaluated after the
+        // test and only when that arm runs.  `a && b` lowers to `if a { b } else { false }`, so
+        // hoisting out of the arms ran `b`'s work first and unconditionally: `bump(a) == 4 &&
+        // "{a}" == "[1,2,3,4]"` formatted `a` before `bump(a)` (native answered false where the
+        // interpreter answers true), and `true || "{e}" == "{bump(e)}"` RAN `bump(e)`.
+        // `@FR-E-Left` and `@FR-E-And`/`@FR-E-Or`.  An arm keeps its hoists — `output_if_inner` gives
+        // each non-block arm its own pre-eval scope inside the braces it already emits, and a
+        // BLOCK arm's statements collect their own, as every block's do.
+        if let Value::If(test, _, _) = v {
+            return self.collect_pre_evals_inner(test, result);
         }
         // CallRef dispatches to user functions — same hoisting rules as user-defined Call.
         // The closure arg appears once per candidate match arm (all arms receive the same
