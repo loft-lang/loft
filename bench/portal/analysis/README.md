@@ -24,9 +24,11 @@ gh workflow run ci.yml --ref 157-native-4x -f os=ubuntu-latest                  
 
 Green, 21 jobs each, ASan included: R1–R7 (`35654730666`), V1–V3 (`35660794064`, head
 `ccfd90fd2`), F1 (`35663137897`, head `1e458f9f8`) and the bounded sum (`35691737133`, head
-`87089b1fb`).  After that: loft#1593 + the examples index (`d6be1f657`, gate `35696686990`)
-and E (`b2599cbc0`, gate to dispatch once the previous one finishes — a dispatch cancels an
-in-progress run on the same branch, `ci.yml` § concurrency).  ⚠ Read a run's `createdAt` beside `date -u` before calling it slow: a
+`87089b1fb`).  After that: loft#1593 + E + the `i32`-alias follow-up + the ratchet fix — the head
+`43eff5517`, gate `35702651817`, GREEN 21/21.  (The first #1593 gate was red on two tests
+outside the corpus runners — an `error_messages` golden that caught a real regression, and a
+`runtime_logging` test — which is why a PARSER change runs `find_problems.sh --subject parser`
+and `--subject runtime` before its push, not the corpus runners alone.)  ⚠ Read a run's `createdAt` beside `date -u` before calling it slow: a
 healthy six-minute-old run was nearly reported as hung on a wrong sense of elapsed time.
 
 If a new run is red, check these FIRST — each made an earlier run red:
