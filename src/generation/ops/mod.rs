@@ -250,7 +250,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // @PLN157 P4b — scalar element writes fuse against a hoisted header;
     // the same ops fall back to their template for record-field writes and
     // outside hoisted loops.
-    for op in ["OpSetInt", "OpSetSingle", "OpSetFloat"] {
+    for op in ["OpSetInt", "OpSetSingle", "OpSetFloat", "OpSetEnum"] {
         r.insert(op, Box::new(vector_ops::FusedElementWriteEmitter));
     }
     // @PLN157 § V-q — a scalar push goes through the loop's push header; the same ops

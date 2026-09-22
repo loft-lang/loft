@@ -133,7 +133,25 @@ hand-priced form.  The earlier hand-price of "the plain IEEE compare, no change"
 without attribution and with the operand still conditional; that is the number this
 harness exists to correct.
 
-**`enum_match` (4.49×) is attributed next** — not yet read.
+**`enum_match` attributed (4.49×):** its own samples are 75 % of the row and FLAT (nothing
+above 6 %), which is the signature of work spread over every operator; `LOFT_RELEASE_PASS_PROBE`
+moved it only 41 → 34.5 µs, so the checks are not the ceiling.  Timed in four parts in a
+scratch copy: the BUILD of 3 000 struct-enum records **26 µs** (8.8 ns each, linear in the
+count — allocation is not it), the match walk 5.5 (1.8 ns an edit, already the R7 form: tag
+and payload through the element's address, the element write fused), the sum 6.0 (F1's join
+read plus checked adds), the two 4 096-fills 2.4.  Per appended record the emission did one
+`rec_ptr` lookup for the three field writes and a SECOND store lookup for the TAG alone:
+`OpSetEnum` was not a fusable setter.  Made one (`u8`, the byte `set_byte(…, 0, v)` writes;
+`HoistScalar for u8` for the element-write path, on `append_byte`): the build −11 %, the
+row **41.3 → 36.4 µs (−12 %), 4.49× → ~4.0×**.  What remains per record is four
+`allocations[store]` lookups (the push, the zeroing, the address, the finish) around a
+32-byte zero and five stores — the lever is a record push WINDOW under a branch, the
+`(R-PushFill)` window clause extended from scalars in a counted loop to record mints under
+an `if`, unpriced.
+
+**Also found by the harness:** `entity_tick` runs 12 % SLOWER under `LOFT_RELEASE_PASS_PROBE`
+(160 → 178 µs): a build with every check removed made an inlining decision worse.  Not
+chased; noted so the probe is read as a ceiling per row and never as a bound.
 
 ## W1 — a character walk pays for its bookkeeping, not for any one thing
 

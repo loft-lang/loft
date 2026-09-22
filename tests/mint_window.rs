@@ -38,9 +38,9 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_m12", 0, 0),
     ("n_m13", 0, 0),
     // A struct-enum element is a record too (`@FR-R-RecPtr`'s enum clause): two variants,
-    // two windows, their three `integer` fields through the address; the tag keeps its
-    // store write.
-    ("n_m14", 2, 3),
+    // two windows, their three `integer` fields AND their two tags through the address
+    // (`OpSetEnum` is a fusable setter: one byte, the write `set_byte(…, 0, v)` makes).
+    ("n_m14", 2, 5),
 ];
 
 const SWITCHES: [&str; 5] = [

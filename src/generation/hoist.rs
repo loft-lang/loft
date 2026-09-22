@@ -4186,10 +4186,15 @@ fn struct_enum_view(data: &Data, tp: &Type) -> bool {
     !data.def(d).name().starts_with("__nullable<")
 }
 
-const FUSABLE_SETTERS: [(&str, &str); 3] = [
+const FUSABLE_SETTERS: [(&str, &str); 4] = [
     ("OpSetInt", "i64"),
     ("OpSetSingle", "f32"),
     ("OpSetFloat", "f64"),
+    // A struct-enum's TAG (and any value-enum field): one byte, its null 255 — the byte
+    // `set_byte(…, 0, v)` writes for a `u8` operand, so the store through the address is
+    // the same write (`@FR-R-RecPtr`'s enum clause; `enum_match`'s build paid a second
+    // store lookup per element for the tag alone).
+    ("OpSetEnum", "u8"),
 ];
 
 /// An element write the emitter can collapse into ONE store: a scalar setter writing
