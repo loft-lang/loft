@@ -10325,6 +10325,11 @@ impl Scopes<'_> {
             // sources, because the first arm reads that type to decide whether it owns the record
             // it displaces.
             for src in branch_tail_vars(value) {
+                // The identity arm hands nothing over, and the binding does not view itself.
+                if src == v || src == ov {
+                    function.make_independent(v, src);
+                    continue;
+                }
                 let Some(stopped) = per_path_stops(function, data, v, src) else {
                     continue;
                 };
@@ -15785,11 +15790,10 @@ impl Scopes<'_> {
     ) -> Option<Value> {
         fn sinkable(tail: &Value, v: u16, ov: u16, function: &Function) -> bool {
             match tail.unspan() {
+                // The binding itself: written out, that arm is `v = v`, the identity (#330).
+                Value::Var(x) if *x == v || *x == ov => true,
                 Value::Var(x) => {
-                    *x != v
-                        && *x != ov
-                        && (*x as usize) < function.count() as usize
-                        && !function.is_compiler_generated(*x)
+                    (*x as usize) < function.count() as usize && !function.is_compiler_generated(*x)
                 }
                 Value::Null | Value::Call(_, _) | Value::CallRef(_, _) => true,
                 Value::If(_, t, f) => sinkable(t, v, ov, function) && sinkable(f, v, ov, function),
@@ -15859,7 +15863,15 @@ impl Scopes<'_> {
             walk(node, &mut owner, &mut other);
             !owner || !other
         }
-        fn sink(node: &mut Value, ov: u16) {
+        fn sink(node: &mut Value, v: u16, ov: u16) {
+            // An arm that hands back the binding itself keeps the value it already holds: it
+            // moves nothing, displaces nothing and releases nothing (`formal/heap.md` (H-Move)).
+            if let Value::Var(x) = node.unspan()
+                && (*x == v || *x == ov)
+            {
+                *node = Value::Insert(Vec::new());
+                return;
+            }
             if let Value::Block(bl) = node
                 && bl.name == crate::parser::Parser::JOIN_ARM_OWNER
                 && let Some(call) = owner_block_call(bl).cloned()
@@ -15875,22 +15887,22 @@ impl Scopes<'_> {
                 return;
             }
             match node {
-                Value::Span(b) => sink(&mut b.1, ov),
+                Value::Span(b) => sink(&mut b.1, v, ov),
                 Value::If(_, t, f) => {
-                    sink(t, ov);
-                    sink(f, ov);
+                    sink(t, v, ov);
+                    sink(f, v, ov);
                     block_arm(t);
                     block_arm(f);
                 }
                 Value::Block(bl) => {
                     if let Some(last) = bl.operators.last_mut() {
-                        sink(last, ov);
+                        sink(last, v, ov);
                     }
                     bl.result = Type::Void;
                 }
                 Value::Insert(ops) => {
                     if let Some(last) = ops.last_mut() {
-                        sink(last, ov);
+                        sink(last, v, ov);
                     }
                 }
                 tail => {
@@ -15908,7 +15920,7 @@ impl Scopes<'_> {
             return None;
         }
         let mut out = value.clone();
-        sink(&mut out, ov);
+        sink(&mut out, v, ov);
         Some(out)
     }
 

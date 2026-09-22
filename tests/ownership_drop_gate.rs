@@ -1589,7 +1589,9 @@ const CENSUS_BLIND: &[&str] = &[];
 // moved LOST → clean on both backends, and `q_default_param_call_local` with them.
 // `p_o2` left `D-heap-15` 2026-09-22 (loft#1563): a tuple member its own call minted hands its
 // release to the copy when the copy is certain to run, and `c_tuple_tuplem` with it.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v2", "p_i2"])];
+// `p_i2` left it the same day (loft#1563): a rebind written out per arm makes the arm that hands
+// back the binding itself the identity, so the record it keeps is neither displaced nor released.
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v2"])];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix

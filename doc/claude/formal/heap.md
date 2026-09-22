@@ -597,7 +597,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-26` (`D-heap-27`, the tuple twin of
+OPEN: **6** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-26`, `D-heap-28` and `D-heap-29`
+(both found 2026-09-22 while closing `D-heap-15`'s `p_i2`; `D-heap-27`, the tuple twin of
 `D-heap-21` and `D-heap-22`, opened and closed 2026-09-22; `D-heap-22` and `D-heap-24`
 closed 2026-09-21, `D-heap-25`, found in D-heap-24's controls, and `D-heap-26`, found in
 D-heap-22's, both opened that day and the first closed; `D-heap-13`
@@ -778,6 +779,43 @@ CLOSED 2026-09-17, below.
 - **Removal:** release the displaced elements at the rebind, after the new value — for a new
   backing, the old one's hook at the `Set`; for a re-mint, after the literal, as `D-heap-25` did
   for a record.
+
+### D-heap-28 — OPEN (2026-09-22, loft#1591): a variable rebound to a `??` chain that holds itself never releases the kept record on `--native`
+
+- **Violates:** (H-Move), and `@FR-O-NoDiverge` — the two backends disagree.
+- **Where:** `a = a ?? b ?? mk()` is `(a ?? b) ?? mk()`, so the subject `(a ?? b)` is hoisted into a
+  `__ncc_N` temp.  The oracle calls the chain `Own::Join`, which makes the rebind a view, so `a`
+  carries an owner witness (`@FR-O-Witness`).  The chain's one copy sits in a different place on
+  each backend.  The interpreter aliases the hoist (`VarRef a; PutRef __ncc_1`), and native
+  deep-copies it (`OpDatabase` + `OpCopyRecord`, `generation/dispatch.rs`'s record-bind arm).  On
+  native the witness's store-identity test sees a new store and releases the witness without its
+  hook (the hand-off flag is set).  The copy `a` now holds has no owner.
+- **Effect:** measured: `a: H? = mk(17); b: H? = null; a = a ?? b ?? mk(18)` traces `M17 R17 D17`
+  on the interpreter and `M17 R17` on `--native`.  `a = x ?? a ?? mk(3)` behaves the same.  Clean
+  on both backends: the same chain bound to another variable, every chain without the
+  destination, the destination absent, and a single `??` over itself (`D-heap-15`, `p_i2`).
+- **Status:** OPEN — found 2026-09-22 while closing `p_i2`.
+- **Removal:** one copy point for a `??` hoist on both backends.  Either native aliases the hoist
+  and copies at an owning rebind, as the interpreter does, or the interpreter copies at the hoist.
+  The witness's store-identity test then agrees across backends.
+
+### D-heap-29 — OPEN (2026-09-22, loft#1592): in a loop, a join over a source declared outside it, moved on, releases twice
+
+- **Violates:** (H-Move), and `@FR-O-Complete`.
+- **Where:** in a loop, `Scopes::arm_source_outlives_loop` declines to write a first-bind join out
+  per arm and lifts it instead (`lift_join_arm_tails`).  The binding then borrows the per-arm
+  temps, and the minting call's temp owns its store.  The decline stands in for the `(H-Spent)`
+  refusal of a name moved on every pass, and the stand-in does not hold when the body REFILLS
+  the source before the next pass.  `x = a ?? mk(); a = x` copies the borrow into `a`, so both
+  `a` and the temp release the record, and on native both free its store.
+- **Effect:** measured: `a: H? = null; for i in 0..1 { x = a ?? mk(11 + i); a = x }` traces
+  `M11 R11 D11 D11` on both backends.  Two passes trace `M11 R11 D11 R11 D11 D11` on the
+  interpreter and panic on `--native` (`allocation.rs:1622`, store index 65535).  Clean on both
+  backends: the unrolled form, `a` declared in the loop, the join without `a = x`, and a plain
+  `x = mk(); a = x` in the same loop.
+- **Status:** OPEN — found 2026-09-22 while closing `p_i2`.
+- **Removal:** write the join out per arm where the source is refilled on every path through the
+  body, or give the lifted binding a hand-off to the local it is moved into.
 
 ### D-heap-27 — OPENED AND CLOSED (2026-09-22, loft#1588): a tuple's member backings were released at the function's head turn, not the tuple's
 
@@ -1302,6 +1340,24 @@ CLOSED 2026-09-17, below.
   `tests/scripts/1563-a-moved-tuple-releases-a-call-minted-member-once.loft`.  **Open:** `p_v2`
   and `p_i2` (programs `(H-Spent)` and `(H-Copy-Refuse)` refuse, `D-heap-8`'s errors), and that
   tuple move written in an arm.
+- ⚠ **NARROWED again 2026-09-22 — the variable rebound to a join over ITSELF is closed (`p_i2`,
+  loft#1563).**  `p_i2` is not a copy: `a` is a local the function owns, so `(H-Move)` moves it
+  and it owes one release (`PILOT_ONCE`).  A rebind from a value branch is written out per arm
+  (`@FR-O-Complete`), and `sink_set_into_arms` declined an arm whose tail is the binding itself.
+  The value form then ran instead, with two outcomes and both wrong.  For `a = a ?? mk()`, the
+  rebind snapshotted `a` as displaced and released it on the path where the new value IS that
+  record: early, and again at scope end.  For `a = if c { a } else { mk() }`, the join's type
+  named `a`, so `a` read as a borrow of itself and released nothing at all.  Written out, that
+  arm is `a = a`, the identity `(B-Copy)` gives no second structure (#330's elision).  It moves,
+  displaces and releases nothing, and each other arm is the plain rebind the author's own
+  `if c { } else { a = mk() }` makes.  The binding's dep on itself is dropped with the arm.
+  Measured clean on both backends: every arm side of `??` and `if`, each operand present or
+  absent, a local on the other arm (`a = a ?? b`, `a = b ?? a`), in a loop, in an `if` arm, and
+  a record holding a droppable member.  Guard
+  `tests/scripts/1563-a-variable-rebound-to-a-join-over-itself-releases-once.loft`.
+  **Open:** `p_v2` (`(H-Spent)`) and the tuple move written in an arm.  A `??` CHAIN whose
+  hoisted subject names the destination (`a = a ?? b ?? mk()`) is a different defect, a backend
+  split at the hoist, and has its own entry: `D-heap-28`.
 - **Removal:** the copy that makes the second structure, removed wherever the rules move the
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.
