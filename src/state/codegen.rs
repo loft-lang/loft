@@ -1920,7 +1920,12 @@ impl State {
         self.code_add(12i64);
         stack.add_op("OpSetByte", self);
         self.code_add(4u16);
-        self.code_add(0u16);
+        // The `min` bias is FOUR bytes (loft#1620), as `default/01_code.loft` declares it
+        // and `variables::size` reserves it.  Written `0u16` here — the only hand-rolled
+        // emission of a narrow field op in this file, so nothing else in the ladder covers
+        // it — every operand after this one was read two bytes early, and the run died in
+        // `keys.rs` with a `DbRef store_nr` out of range, two subsystems away.
+        self.code_add(0i32);
     }
 
     /// The null-init of a NULLABLE vector local (`vector<T>?`): the slot takes the null
