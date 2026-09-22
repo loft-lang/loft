@@ -670,6 +670,10 @@ impl Output<'_> {
                 // reservation written after them stands in the arm that does not run, and
                 // a window must be one local both copies push through.
                 let window = self.push_reserve(w, lp)?;
+                // `(R-BoundedNest)`'s reduction clause — a loop that is one integer accumulate
+                // of a vector's elements sums what it can PLAIN first, per block under a bound
+                // taken from the data, and the checked loop below resumes where that stopped.
+                self.sum_fast_path(w, lp)?;
                 // `@FR-R-BoundedNest` — a nest whose guard proves its arithmetic cannot
                 // fault runs with plain operators; the checked loop below is its `else` arm.
                 let nested = self.nest_fast_path(w, lp)?;

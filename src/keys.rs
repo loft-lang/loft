@@ -1336,6 +1336,18 @@ pub fn join_read_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_READ"))
 }
 
+/// `(R-BoundedNest)`'s reduction clause: a counted loop that is one integer accumulate of a
+/// scalar vector's elements (`acc = acc + v[i]`, the stdlib `sum`), over a held header and
+/// base, runs its plain block sum first — each block of 1024 admitted by a bound taken from
+/// the data in the same pass — and the checked loop resumes where the first block declines —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_BOUNDED_SUM` (read at GENERATION time): the checked
+/// add on every element again — the first bisect step for a wrong sum out of such a loop on
+/// native.  `LOFT_HOIST_VERIFY=1` re-runs every admitted block through the checked add.
+pub fn bounded_sum_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BOUNDED_SUM"))
+}
+
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
 /// element's record, and a promoted return buffer honours an offered record — **DEFAULT
 /// ON**.  Opt OUT with `LOFT_NO_APPEND_IN_PLACE`: the before-half of the A/B on one binary
