@@ -436,9 +436,13 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         write!(w, "let __ed = ")?;
         self.output_code_inner(w, place)?;
+        // An absent place — an out-of-range element, a field of an absent record — is the
+        // null `DbRef` (`rec == 0`), and its link is the null pointer: reads answer the type's
+        // absent value and writes are dropped, as the interpreter's link to it does.
         write!(
             w,
-            "; stores.store_mut(&__ed).addr_mut::<{base}>(__ed.rec, __ed.pos) as *mut {base}"
+            "; if __ed.rec == 0 {{ std::ptr::null_mut() }} else {{ \
+             stores.store_mut(&__ed).addr_mut::<{base}>(__ed.rec, __ed.pos) as *mut {base} }}"
         )
     }
 
@@ -785,7 +789,15 @@ impl Output<'_> {
                 // Asked through `fn_ref_context` like the parameter write-back, so an
                 // if-VALUED source builds the pair inside each arm (loft#1454).
                 let fn_link = matches!(inner.base(), Type::Function(..));
-                write!(w, "unsafe {{ *var_{name} = ")?;
+                // A scalar link may name an ABSENT place — a null pointer — and a write to it
+                // lands nowhere, as the interpreter's `OpSet*` drops a write to a `rec == 0`
+                // reference.  The value is still computed: it may have effects.
+                let may_be_absent = crate::generation::absent_link_value(inner.base()).is_some();
+                if may_be_absent {
+                    write!(w, "{{ let __lw = ")?;
+                } else {
+                    write!(w, "unsafe {{ *var_{name} = ")?;
+                }
                 if bool_link {
                     write!(w, "u8::from(")?;
                 }
@@ -804,7 +816,14 @@ impl Output<'_> {
                 if text_link {
                     write!(w, ").to_string()")?;
                 }
-                write!(w, " }}")?;
+                if may_be_absent {
+                    write!(
+                        w,
+                        "; if !var_{name}.is_null() {{ unsafe {{ *var_{name} = __lw }} }} }}"
+                    )?;
+                } else {
+                    write!(w, " }}")?;
+                }
             }
             return Ok(());
         }

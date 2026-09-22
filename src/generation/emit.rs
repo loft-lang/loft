@@ -389,13 +389,19 @@ impl Output<'_> {
                     // the storage BYTE (0/1/255), as a `boolean?` local does, so `c == null`
                     // can see the 255: the two-state read would answer `false` for a null.
                     // Only a non-null `&boolean` reads as a `bool` (loft#655).
-                    if !matches!(**inner, Type::Optional(_))
-                        && matches!(inner.base(), Type::Boolean)
-                    {
-                        return write!(w, "unsafe {{ *var_{var_name} == 1 }}");
-                    }
                     if matches!(inner.base(), Type::Text(_)) {
                         return write!(w, "unsafe {{ &*var_{var_name} }}");
+                    }
+                    // A link to an ABSENT scalar place (`&v[10]`, a field of an absent record)
+                    // holds a null pointer and reads the type's absent value — the one the
+                    // interpreter's `OpGet*` answers for a `rec == 0` reference (C80: nothing
+                    // stops a running calculation).  A `&boolean` answers its storage byte, so
+                    // an absent one reads as null here as it does there.
+                    if let Some(absent) = crate::generation::absent_link_value(inner.base()) {
+                        return write!(
+                            w,
+                            "unsafe {{ if var_{var_name}.is_null() {{ {absent} }} else {{ *var_{var_name} }} }}"
+                        );
                     }
                     return write!(w, "unsafe {{ *var_{var_name} }}");
                 } else if let Type::RefVar(inner) = variables.tp(var)

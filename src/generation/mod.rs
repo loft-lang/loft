@@ -1542,6 +1542,24 @@ pub(crate) fn is_raw_tuple_link(vars: &crate::variables::Function, var: u16) -> 
 /// a local, a link and a forwarded parameter all pass as one pointer.  A heap `τ` keeps
 /// `&mut T`: its store place reaches the call through a temporary of its own, so two
 /// arguments never share the memory the reference names.
+/// What a read through a scalar `&` link to an ABSENT place answers on native — the Rust
+/// spelling of the value the interpreter's getter gives a `rec == 0` reference: `OpGetInt`'s
+/// `i64::MIN`, `OpGetFloat`'s / `OpGetSingle`'s NaN, `OpGetCharacter`'s codepoint 0,
+/// `OpGetBoolean`'s storage byte 255 and `OpGetEnum`'s disc 0.  `None` for a link that cannot
+/// name an absent place: a text, a tuple and a fn-ref link only ever link a local.
+#[must_use]
+pub(crate) fn absent_link_value(inner: &Type) -> Option<&'static str> {
+    match inner {
+        Type::Integer(_) => Some("i64::MIN"),
+        Type::Float => Some("f64::NAN"),
+        Type::Single => Some("f32::NAN"),
+        Type::Character => Some("0"),
+        Type::Boolean => Some("255_u8"),
+        Type::Enum(_, false, _) => Some("0_u8"),
+        _ => None,
+    }
+}
+
 #[must_use]
 pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
     matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))

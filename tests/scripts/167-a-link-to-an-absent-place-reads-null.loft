@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` link — a bind or a `&` parameter's argument — to a place that does not exist, an
+// out-of-range element or a field of an absent record element, reads null and drops its
+// writes, and the program keeps running (DESIGN_DECISIONS.md C80: nothing stops a running
+// calculation).  A later read through the same link is still null; the container is
+// untouched.  Re-pointing the link at a place that exists makes it an ordinary link again.
+//
+// The interpreter answered every cell this way before @PLN167 B4.  `--native` panicked in
+// the allocator (`index out of bounds: the len is 1 but the index is 65535`) at the first
+// link to an absent element, for the bind on `main` and for the argument once B1 admitted
+// it: the store pointer was taken from the null reference.  The link is now a null pointer,
+// its read answers the value the interpreter's getter gives a `rec == 0` reference, and its
+// write lands nowhere.
+//
+// Cells: a bind, then a write and a read; an argument to a callee that increments, and to one
+// that writes and reads back; arithmetic on the absent value; a field of an absent record
+// element; a `float`, `boolean`, value-enum and `character` element; a re-point from an absent
+// place to a present one; a loop mixing present and absent indices.
+//
+// CHANNEL: the assertions, on the native build (the control panics there).
+
+enum Col { Red, Blue }
+struct P { n: integer }
+
+fn bump(c: &integer) { c = c + 1; }
+fn set7(c: &integer) -> text { c = 7; "{c}" }
+
+fn absent_bind() -> text { v: vector<integer> = [1, 2, 3]; c = &v[10]; c = 7; "{c} {v}" }
+fn absent_arg() -> text { v: vector<integer> = [1, 2, 3]; bump(v[10]); s = set7(v[10]); "{v} {s}" }
+fn absent_math() -> text { v: vector<integer> = [1, 2, 3]; c = &v[10]; x = c + 1; "{x}" }
+fn absent_record() -> text { es: vector<P> = [P { n: 1 }]; p = es[5]; c = &p.n; c = 9; "{c} {es[0].n}" }
+fn kinds() -> text {
+  f: vector<float> = [1.0];
+  cf = &f[3];
+  cf = 2.0;
+  b: vector<boolean> = [true];
+  cb = &b[3];
+  cb = true;
+  k: vector<Col> = [Col.Red];
+  ck = &k[3];
+  ck = Col.Blue;
+  h: vector<character> = ['a'];
+  ch = &h[3];
+  ch = 'z';
+  "{cf} {cb} {ck} [{ch}] {f} {b} {k} {h}"
+}
+fn repoint() -> text { v: vector<integer> = [1, 2, 3]; c = &v[10]; c = &v[0]; c = 5; "{v}" }
+fn mixed() -> text { v: vector<integer> = [1, 2, 3]; for i in [0, 7, 2, 9] { bump(v[i]); } "{v}" }
+
+fn main() {
+  assert(absent_bind() == "null [1,2,3]", "a bind to an absent element: {absent_bind()}");
+  assert(absent_arg() == "[1,2,3] null", "an absent element as a & argument: {absent_arg()}");
+  assert(absent_math() == "null", "arithmetic through an absent link: {absent_math()}");
+  assert(absent_record() == "null 1", "a field of an absent record element: {absent_record()}");
+  assert(kinds() == "null null null [] [1] [true] [Red] ['a']", "the scalar kinds: {kinds()}");
+  assert(repoint() == "[5,2,3]", "re-pointed from an absent place: {repoint()}");
+  assert(mixed() == "[2,2,4]", "present and absent indices in a loop: {mixed()}");
+  println("a link to an absent place reads null");
+}
