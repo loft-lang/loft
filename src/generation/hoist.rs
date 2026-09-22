@@ -7790,7 +7790,13 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     let every: HashSet<u32> = HashSet::new();
     for d_nr in 0..data.definitions.len() as u32 {
         let def = data.def(d_nr);
-        if matches!(def.code(), Value::Null) {
+        // A generic TEMPLATE is never emitted — only its instances are (`@FR-G-Mono`) — so a
+        // call through a fn-ref inside one dispatches nowhere.  Asked of it anyway, its
+        // `fn(T) -> U` reads `fn(DbRef) -> DbRef` (the placeholder is a record) and declined
+        // every record-to-record function in the program: the stdlib's `map`/`filter`/
+        // `reduce` declarations (@PLN165 E5–E7) turned the value-record return off for a
+        // method as plain as `rdouble(self: RColor) -> RColor`.
+        if matches!(def.code(), Value::Null) || def.def_type() == DefType::Generic {
             continue;
         }
         let vars = def.variables();

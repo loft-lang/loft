@@ -8506,6 +8506,24 @@ pub fn sort < T: Ordered > (self: vector<T>)
 Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `\<` (`Ordered`) — a struct defining `op \<` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.
 
 ```rust
+pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T>
+```
+
+Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.
+
+```rust
+pub fn map < T, U > (self: vector<T>, f: fn(T) -> U) -> vector<U>
+```
+
+What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's element is what `f` returns, so a map can change the element type.
+
+```rust
+pub fn reduce < T, U > (self: vector<T>, init: U, f: fn(U, T) -> U) -> U
+```
+
+Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.
+
+```rust
 pub fn sum_of(v: const vector<integer>) -> integer
 ```
 

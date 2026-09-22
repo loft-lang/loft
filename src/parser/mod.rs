@@ -7675,6 +7675,11 @@ impl Parser {
     /// itself, and to a call of the stdlib declaration's instance otherwise — what the
     /// instance's hand-written twin reaches either way.
     pub(crate) const TV_SORT: &'static str = "tvsort";
+    /// A `reduce(v, init, f)` whose accumulator is still a TYPE VARIABLE (@PLN165 E7): the
+    /// monomorph folds with the special form where the accumulator is a scalar or `text`, and
+    /// calls the declaration's instance otherwise.  The block's result carries the three
+    /// argument types as a tuple, so substitution makes them concrete.
+    pub(crate) const TV_REDUCE: &'static str = "tvreduce";
     /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
     /// template's closure record lays a capture typed by a type variable out at no width, so
     /// the read is re-lowered by NAME against the instance's own record
@@ -8487,6 +8492,7 @@ impl Parser {
         for (holder, bound_to) in bindings {
             vars.substitute_type(*holder, bound_to);
         }
+        vars.drop_scalar_deps();
         // P241 fix (2026-05-11): post-substitution rewrite of the
         // parametric vector-element-write triplet to the primitive
         // shape, plus elm-var type patch.  Runs after both code
@@ -10944,6 +10950,28 @@ impl Parser {
             // substitution, so it is the CONCRETE vector type by now, and the same parse
             // function the concrete spelling uses lowers it — width, row and setter from one
             // home.  A nested generic re-stamps through that call and stays deferred.
+            Value::Block(bl) if bl.name == Self::TV_REDUCE => {
+                let bl = *bl;
+                let list: Vec<Value> = bl
+                    .operators
+                    .into_iter()
+                    .map(|a| self.rewrite_generic_type_defaults(a))
+                    .collect();
+                let Type::Tuple(types) = bl.result.clone() else {
+                    return Value::Null;
+                };
+                if self.reduce_is_special(u16::MAX, &list, &types) {
+                    let mut out = Value::Null;
+                    self.parse_reduce(&mut out, &list, &types);
+                    out
+                } else if let Some(d) = self.builtin_selected(u16::MAX, "reduce", &types) {
+                    // The declaration's template: the nested-generic pass aims the call at its
+                    // instance.
+                    Value::Call(d, list)
+                } else {
+                    Value::Null
+                }
+            }
             Value::Block(bl) if bl.name == Self::TV_SORT => {
                 let bl = *bl;
                 let list: Vec<Value> = bl

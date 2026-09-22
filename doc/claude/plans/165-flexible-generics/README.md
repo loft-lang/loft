@@ -27,7 +27,7 @@ in [`probes/`](probes/), each with the answer it gave at the top.
 | **B** overload sets | a generic beside concrete definitions of its name, ranked | BUILT | no |
 | **C** several variables | a variable in any parameter; `<T, U>` | BUILT | **all of it** |
 | **D** generic types | `struct Grid<T>`, `enum Shape<T>`, methods, the goal program | BUILT | D9 (several variables on a type) and D11 only |
-| **E** built-ins | `insert` / `sort` / `reverse` / `reserve` / `filter`, then `map` / `reduce`, as stdlib `#builtin` methods on `vector` | E1 BUILT | E6–E7 only (`map`, `reduce`) |
+| **E** built-ins | `insert` / `sort` / `reverse` / `reserve` / `filter`, then `map` / `reduce`, as stdlib `#builtin` methods on `vector` | BUILT (E1–E7) | E6–E7 only (`map`, `reduce`) |
 
 Every arc can start: step C0 is done.  The owner revised C110 as
 [C126](../../DESIGN_DECISIONS.md) on 2026-09-21, after DESIGN.md § C110, evaluated measured

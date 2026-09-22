@@ -1487,6 +1487,45 @@ impl Function {
 
     /// Replace all occurrences of `Type::Reference(tv_nr, _)` with `concrete`
     /// in every variable's type definition.  Used when instantiating a generic template.
+    /// @FR-G-Mono — once a template's variables are substituted, a dependency that names
+    /// nothing is dropped.  The template recorded it because a variable was still the type
+    /// variable's placeholder, a record — `acc = f(acc, x)` made `acc` depend on `x`.  At an
+    /// instance binding `x` to a scalar, nothing can be borrowed from it; bound to a `text`,
+    /// only a text can view it.  Kept, the dependency made an owning local read as a borrow:
+    /// `acc` at `vector<integer>` (or `vector<text>`) was given no store of its own, and the
+    /// copy of `init` into it reached a NULL vector, where the twin (`acc` depending on
+    /// itself) folds.
+    pub fn drop_scalar_deps(&mut self) {
+        // What each variable can lend: nothing (a scalar), a text's characters (a text), or a
+        // store (anything else).
+        let lends: Vec<u8> = self
+            .variables
+            .iter()
+            .map(|v| {
+                if crate::data::is_scalar(&v.type_def) {
+                    0
+                } else if matches!(v.type_def.base(), Type::Text(_)) {
+                    1
+                } else {
+                    2
+                }
+            })
+            .collect();
+        for v in &mut self.variables {
+            let is_text = matches!(v.type_def.base(), Type::Text(_));
+            let meaningful = |d: &u16| match lends.get(*d as usize) {
+                Some(0) => false,
+                Some(1) => is_text,
+                _ => true,
+            };
+            let deps = v.type_def.depend();
+            if !deps.iter().all(meaningful) {
+                let kept: Vec<u16> = deps.into_iter().filter(meaningful).collect();
+                v.type_def = v.type_def.with_deps(&crate::data::Deps::frame(kept));
+            }
+        }
+    }
+
     pub fn substitute_type(&mut self, tv_nr: u32, concrete: &Type) {
         let trace_target = crate::log_config::type_timeline_target();
         for (i, v) in self.variables.iter_mut().enumerate() {

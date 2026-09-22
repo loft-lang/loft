@@ -1,0 +1,502 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index df8897341..42c60ac0f 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1966,30 +1966,6 @@ pub fn sort < T: Ordered > (self: vector<T>) {
+ }
+ #builtin
+ 
+-// Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.
+-pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T> {
+-  filter(self, f)
+-}
+-#builtin
+-
+-// What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's
+-// element is what `f` returns, so a map can change the element type.
+-pub fn map < T, U > (self: vector<T>, f: fn(T) -> U) -> vector<U> {
+-  map(self, f)
+-}
+-#builtin
+-
+-// Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or
+-// `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, a vector.
+-pub fn reduce < T, U > (self: vector<T>, init: U, f: fn(U, T) -> U) -> U {
+-  // The runtime folds a scalar or `text` accumulator itself (`#builtin`); this body is the
+-  // fold for every other `U`.
+-  acc = init;
+-  for x in self { acc = f(acc, x); }
+-  acc
+-}
+-#builtin
+-
+ // Sum of all integer elements. Returns 0 for an empty vector.
+ // Superseded by the general `sum(v, init)`; kept as a shim over it
+ // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index 04d0eaa41..8748c9501 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -5691,13 +5691,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
+     let every: HashSet<u32> = HashSet::new();
+     for d_nr in 0..data.definitions.len() as u32 {
+         let def = data.def(d_nr);
+-        // A generic TEMPLATE is never emitted — only its instances are (`@FR-G-Mono`) — so a
+-        // call through a fn-ref inside one dispatches nowhere.  Asked of it anyway, its
+-        // `fn(T) -> U` reads `fn(DbRef) -> DbRef` (the placeholder is a record) and declined
+-        // every record-to-record function in the program: the stdlib's `map`/`filter`/
+-        // `reduce` declarations (@PLN165 E5–E7) turned the value-record return off for a
+-        // method as plain as `rdouble(self: RColor) -> RColor`.
+-        if matches!(def.code(), Value::Null) || def.def_type() == DefType::Generic {
++        if matches!(def.code(), Value::Null) {
+             continue;
+         }
+         let vars = def.variables();
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 45a3b3d54..a3fed8e24 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -6534,46 +6534,6 @@ use #count instead"
+         self.is_type_var_element(elm) && self.builtin_selected(source, "sort", types).is_some()
+     }
+ 
+-    /// @PLN165 E7 — does the special form lower this `reduce` call?  It folds into what the
+-    /// runtime holds in a slot — a scalar or `text` accumulator — and every other `U` is the
+-    /// declaration's to fold, through its body (`reduce<T, U>`: `acc = f(acc, x)` over the
+-    /// elements), where the special form refused ("cannot fold into a … accumulator yet").
+-    /// Inside a template the accumulator is its variable and the site is stamped
+-    /// (`TV_REDUCE`) where the declaration takes the call.  A call the special form cannot
+-    /// read, or one no declaration takes, stays with it for its message.
+-    pub(crate) fn reduce_is_special(
+-        &mut self,
+-        source: u16,
+-        list: &[Value],
+-        types: &[Type],
+-    ) -> bool {
+-        let [_, init, f] = types else {
+-            return true;
+-        };
+-        // The special form calls a function it names at compile time (`Value::Int(d)`); a
+-        // fn-ref VARIABLE or a capturing lambda is the declaration's to call, through its body —
+-        // the special form refused them ("function must be a compile-time constant").
+-        let constant_fn = matches!(list.get(2).map(Value::unspan), Some(Value::Int(_)));
+-        if !constant_fn && self.builtin_selected(source, "reduce", types).is_some() {
+-            return false;
+-        }
+-        let acc = if init.is_unknown()
+-            && let Type::Function(params, ..) = f.base()
+-            && let Some(first) = params.first()
+-        {
+-            first.clone()
+-        } else {
+-            init.clone()
+-        };
+-        if !Self::is_heap_storage(&acc) || matches!(acc.base(), Type::Text(_)) {
+-            return true;
+-        }
+-        // A heap accumulator: the special form keeps a call no declaration takes (its refusal
+-        // names the cure) and a template's variable (stamped); the declaration takes the rest.
+-        let declared = self.builtin_selected(source, "reduce", types).is_some();
+-        !declared || self.is_type_var_element(&acc)
+-    }
+-
+     /// The element types `OpSortVector` compares at runtime.  Not a nullable one: its order is
+     /// `<`'s (`@FR-E-NullArg`), which the declaration's body follows.
+     fn sorts_itself(elm: &Type) -> bool {
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 21fdfc418..d11892993 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -17400,10 +17400,45 @@ impl Parser {
+                 || (!Self::seeds_lambda_hint(&self.expected)
+                     && (self.lexer.peek_token("|") || self.lexer.peek_token("||")));
+             if lambda_unsteered
+-                && let Some(receiver) = list.first()
+-                && let Some(h) = self.special_form_callback_hint(name, arg_idx, &types, receiver)
++                && !types.is_empty()
++                && let Type::Vector(elm, _) = types[0].base()
+             {
+-                self.expected = h;
++                let elem = *elm.clone();
++                // loft#1540 — an element of a const collection is read-only; see the twin in
++                // `parse_vector_method`.
++                let elem_const = self.const_view_place(&list[0], true).is_some();
++                let elem_at = |i: usize| {
++                    crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const))
++                };
++                let hint = match (name, arg_idx) {
++                    // loft#945 — `map` is `fn(T) -> U`: the PARAMETER is the element type,
++                    // the return is free.  See the twin hint in `parse_vector_method`.
++                    ("map", 1) => Some(Type::Function(
++                        vec![elem.clone()],
++                        Box::new(Type::Unknown(0)),
++                        Deps::none(),
++                        elem_at(0),
++                    )),
++                    ("filter" | "any" | "all" | "count_if", 1) => Some(Type::Function(
++                        vec![elem],
++                        Box::new(Type::Boolean),
++                        Deps::none(),
++                        elem_at(0),
++                    )),
++                    ("reduce", 2) => {
++                        let init_tp = types.get(1).cloned().unwrap_or(elem.clone());
++                        Some(Type::Function(
++                            vec![init_tp.clone(), elem],
++                            Box::new(init_tp),
++                            Deps::none(),
++                            elem_at(1),
++                        ))
++                    }
++                    _ => None,
++                };
++                if let Some(h) = hint {
++                    self.expected = h;
++                }
+             }
+             let mut p = Value::Null;
+             // Capture each argument's start so a later type-mismatch diagnostic
+@@ -17724,9 +17759,7 @@ impl Parser {
+             "par_fold" => return self.parse_par_fold(val, list, types),
+             "map" => return self.parse_map(val, list, types),
+             "filter" => return self.parse_filter(val, list, types),
+-            "reduce" if self.reduce_is_special(source, list, types) => {
+-                return self.parse_reduce(val, list, types);
+-            }
++            "reduce" => return self.parse_reduce(val, list, types),
+             "sort" if self.sort_is_special(source, types) => {
+                 return self.parse_sort(val, list, types);
+             }
+@@ -18274,14 +18307,6 @@ impl Parser {
+         // A collection is a different defect with a different shape, not the same one one
+         // size larger, which is why it is still refused after loft#951: the fold has to
+         // hand the callee a buffer per step, and a collection's is not the text one.
+-        // @PLN165 E7 — which lowering a template's accumulator takes is the monomorph's to
+-        // decide: the fold below for a scalar or `text`, the declaration's instance for any
+-        // other `U`.  The three argument types ride in the stamp's result (`TV_REDUCE`).
+-        if self.is_type_var_element(&acc_type) {
+-            let carried = Type::Tuple(vec![types[0].clone(), acc_type.clone(), types[2].clone()]);
+-            *val = v_block(list.to_vec(), carried, Self::TV_REDUCE);
+-            return acc_type;
+-        }
+         if Self::is_heap_storage(&acc_type) && !matches!(acc_type.base(), Type::Text(_)) {
+             diagnostic!(
+                 self.lexer,
+@@ -18603,63 +18628,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// The `fn(…)` hint a vector special form gives its callback argument — `map`'s
+-    /// `fn(T) -> U` with `U` left to the lambda (loft#945), `filter`/`any`/`all`/`count_if`'s
+-    /// `fn(T) -> boolean`, `reduce`'s `fn(U, T) -> U` with the accumulator the INIT's type
+-    /// (loft#1074) — and, the part no declared signature can say, the element parameter
+-    /// `const` exactly when the collection is a const place (loft#1540: an element of a const
+-    /// collection is read-only).  `None` for any other argument or name.
+-    ///
+-    /// One home for both spellings: the bare call asks it where no program definition
+-    /// steers the argument, and a method call asks it where the method is a `#builtin`
+-    /// declaration — whose lowering, and so whose argument hints, are the special form's.
+-    pub(crate) fn special_form_callback_hint(
+-        &self,
+-        name: &str,
+-        arg_idx: usize,
+-        types: &[Type],
+-        receiver: &Value,
+-    ) -> Option<Type> {
+-        let Type::Vector(elm, _) = types.first()?.peel_link().base() else {
+-            return None;
+-        };
+-        let elem = (**elm).clone();
+-        let elem_const = self.const_view_place(receiver, true).is_some();
+-        let elem_at =
+-            |i: usize| crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const));
+-        match (name, arg_idx) {
+-            ("map", 1) => Some(Type::Function(
+-                vec![elem],
+-                Box::new(Type::Unknown(0)),
+-                Deps::none(),
+-                elem_at(0),
+-            )),
+-            ("filter" | "any" | "all" | "count_if", 1) => Some(Type::Function(
+-                vec![elem],
+-                Box::new(Type::Boolean),
+-                Deps::none(),
+-                elem_at(0),
+-            )),
+-            ("reduce", 2) => {
+-                // The init's VALUE type: a struct literal arrives `Rewritten`, the spelling of
+-                // an inline constructor, and a callback parameter typed that way took no return
+-                // buffer where the call reaches the declaration's body.
+-                let acc = types
+-                    .get(1)
+-                    .filter(|t| !t.is_unknown())
+-                    .map(Type::unrewritten)
+-                    .unwrap_or_else(|| elem.clone());
+-                Some(Type::Function(
+-                    vec![acc.clone(), elem],
+-                    Box::new(acc),
+-                    Deps::none(),
+-                    elem_at(1),
+-                ))
+-            }
+-            _ => None,
+-        }
+-    }
+-
+     // <call> ::= [ <expression> { ',' <expression> } ] ')'
+     /// Parse a method call's `(arg, …)` and emit it, the definition FIXED by the caller (a
+     /// bound's stub, an enum variant's method).  See [`Self::parse_method_selecting`].
+@@ -18894,23 +18862,6 @@ impl Parser {
+                     self.expected = expected;
+                 }
+             }
+-            // @PLN165 arc E — a `#builtin` method's lowering is its special form, and so are
+-            // its callback's hints: the element parameter is `const` when the receiver is a
+-            // const collection (loft#1540), which no declared signature can say.  The bare
+-            // spelling asks the same helper, so `v.filter(f)` and `filter(v, f)` type the
+-            // lambda alike.
+-            if hint_nr != u32::MAX
+-                && self.data.def(hint_nr).builtin()
+-                && let Some(receiver) = list.first()
+-                && let Some(h) = self.special_form_callback_hint(
+-                    &Self::method_spelling(self.data.def(hint_nr).name()),
+-                    list.len(),
+-                    &types,
+-                    receiver,
+-                )
+-            {
+-                self.expected = h;
+-            }
+             let mut p = Value::Null;
+             arg_pos.push(self.lexer.peek_pos().clone());
+             let t = self.expression(&mut p);
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index a4663a3a7..11bc01c98 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -435,6 +435,27 @@ impl Parser {
+                     }
+                 }
+             }
++            // map/filter/reduce as method syntax on vectors: `v.map(fn)` → `map(v, fn)`.
++            // Unwrap `&vector<T>` so they work on ref params.
++            //
++            // loft#945 — on BOTH passes.  Pass 1 used to fall through to
++            // `skip_remaining_args` below, so the callback lambda was parsed with no
++            // element-type hint on pass 1 and with one on pass 2 — the two passes
++            // disagreed about the lambda's own signature, which is how `xs.map(…)` and
++            // `map(xs, …)` came to lower differently for the same program.  `parse_map`
++            // and friends already have their own pass-1 arms (type only, no variables
++            // minted), which is what makes running them here safe.
++            let vec_recv = if let Type::RefVar(inner) = &t {
++                inner.as_ref().clone()
++            } else {
++                t.clone()
++            };
++            if matches!(vec_recv, Type::Vector(_, _))
++                && matches!(field.as_str(), "map" | "filter" | "reduce")
++                && self.lexer.has_token("(")
++            {
++                return self.parse_vector_method(code, &vec_recv, &field);
++            }
+             if self.first_pass && self.lexer.has_token("(") {
+                 self.skip_remaining_args();
+             } else if let Type::Enum(enum_d_nr, true, _) = t.base()
+@@ -822,6 +843,94 @@ impl Parser {
+         }
+     }
+ 
++    fn parse_vector_method(&mut self, code: &mut Value, t: &Type, method: &str) -> Type {
++        let mut list = vec![code.clone()];
++        let mut types = vec![t.clone()];
++        let mut m_arg_idx = 1usize;
++        loop {
++            if let Type::Vector(elm, _) = t {
++                let elem = *elm.clone();
++                // loft#1540 — an element of a const collection is read-only, so the callback's
++                // element parameter is hinted `const`: a short lambda's body may not write it,
++                // and a named function whose parameter is plain is reported at the hand-off.
++                let elem_const = self.const_view_place(&list[0], true).is_some();
++                let elem_at = |i: usize| {
++                    crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const))
++                };
++                let hint = match (method, m_arg_idx) {
++                    // loft#945 — `map` is `fn(T) -> U`, so only the PARAMETER is the
++                    // element type; the return is free.  Pinning it to `elem` type-checked
++                    // the lambda's body against `T`, which is why every `U != T` was
++                    // refused inside the user's own lambda ("expected integer, got text").
++                    // `Unknown` leaves the return to `parse_lambda_short`'s body inference.
++                    // `filter`/`reduce` keep their returns: a predicate really is `-> bool`,
++                    // and a fold really answers its accumulator's type.
++                    ("map", 1) => Some(Type::Function(
++                        vec![elem],
++                        Box::new(Type::Unknown(0)),
++                        crate::data::Deps::none(),
++                        elem_at(0),
++                    )),
++                    ("filter", 1) => Some(Type::Function(
++                        vec![elem],
++                        Box::new(Type::Boolean),
++                        crate::data::Deps::none(),
++                        elem_at(0),
++                    )),
++                    // @P288 — `v.reduce(init, |acc, x| {…})`: the lambda is ARG 2 (init is
++                    // arg 1), so the hint goes on m_arg_idx == 2.
++                    //
++                    // The declared signature is `fn(U, T) -> U`, so the ACCUMULATOR is the
++                    // INIT's type and only the second parameter is the element's.  This
++                    // used to hint `elem` for both, on the reasoning that every primitive
++                    // case (sum, max, min, count) keeps acc and elm in one numeric domain
++                    // — true, and it makes `U != T` unusable in the method form: on a
++                    // `vector<(integer, integer)>` with an `integer` init, `acc` was typed
++                    // as the TUPLE and `acc + t.0` was refused with "No matching operator
++                    // '+' on '(integer, integer)' and 'integer'" (loft#1074).
++                    //
++                    // Reading the init's own type costs nothing where the two agree — the
++                    // homogeneous cases hint exactly what they hinted before — and falls
++                    // back to `elem` when the init has not typed (an earlier parse error),
++                    // so a broken program still gets the old hint rather than `Unknown`.
++                    ("reduce", 2) => {
++                        let acc = types
++                            .get(1)
++                            .filter(|it| !matches!(it, Type::Unknown(_)))
++                            .cloned()
++                            .unwrap_or_else(|| elem.clone());
++                        Some(Type::Function(
++                            vec![acc.clone(), elem],
++                            Box::new(acc),
++                            crate::data::Deps::none(),
++                            elem_at(1),
++                        ))
++                    }
++                    _ => None,
++                };
++                if let Some(h) = hint {
++                    self.expected = h;
++                }
++            }
++            let mut p = Value::Null;
++            let pt = self.expression(&mut p);
++            self.expected = Type::Unknown(0);
++            list.push(p);
++            types.push(pt);
++            m_arg_idx += 1;
++            if !self.lexer.has_token(",") {
++                break;
++            }
++        }
++        self.lexer.token(")");
++        match method {
++            "map" => self.parse_map(code, &list, &types),
++            "filter" => self.parse_filter(code, &list, &types),
++            "reduce" => self.parse_reduce(code, &list, &types),
++            _ => unreachable!(),
++        }
++    }
++
+     /// Consume the argument list of a call this pass cannot resolve, leaving the
+     /// cursor after the `)`.
+     ///
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index cf62c4588..96e0cbb87 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7598,11 +7598,6 @@ impl Parser {
+     /// itself, and to a call of the stdlib declaration's instance otherwise — what the
+     /// instance's hand-written twin reaches either way.
+     pub(crate) const TV_SORT: &'static str = "tvsort";
+-    /// A `reduce(v, init, f)` whose accumulator is still a TYPE VARIABLE (@PLN165 E7): the
+-    /// monomorph folds with the special form where the accumulator is a scalar or `text`, and
+-    /// calls the declaration's instance otherwise.  The block's result carries the three
+-    /// argument types as a tuple, so substitution makes them concrete.
+-    pub(crate) const TV_REDUCE: &'static str = "tvreduce";
+     /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
+     /// template's closure record lays a capture typed by a type variable out at no width, so
+     /// the read is re-lowered by NAME against the instance's own record
+@@ -8415,7 +8410,6 @@ impl Parser {
+         for (holder, bound_to) in bindings {
+             vars.substitute_type(*holder, bound_to);
+         }
+-        vars.drop_scalar_deps();
+         // P241 fix (2026-05-11): post-substitution rewrite of the
+         // parametric vector-element-write triplet to the primitive
+         // shape, plus elm-var type patch.  Runs after both code
+@@ -10684,28 +10678,6 @@ impl Parser {
+             // substitution, so it is the CONCRETE vector type by now, and the same parse
+             // function the concrete spelling uses lowers it — width, row and setter from one
+             // home.  A nested generic re-stamps through that call and stays deferred.
+-            Value::Block(bl) if bl.name == Self::TV_REDUCE => {
+-                let bl = *bl;
+-                let list: Vec<Value> = bl
+-                    .operators
+-                    .into_iter()
+-                    .map(|a| self.rewrite_generic_type_defaults(a))
+-                    .collect();
+-                let Type::Tuple(types) = bl.result.clone() else {
+-                    return Value::Null;
+-                };
+-                if self.reduce_is_special(u16::MAX, &list, &types) {
+-                    let mut out = Value::Null;
+-                    self.parse_reduce(&mut out, &list, &types);
+-                    out
+-                } else if let Some(d) = self.builtin_selected(u16::MAX, "reduce", &types) {
+-                    // The declaration's template: the nested-generic pass aims the call at its
+-                    // instance.
+-                    Value::Call(d, list)
+-                } else {
+-                    Value::Null
+-                }
+-            }
+             Value::Block(bl) if bl.name == Self::TV_SORT => {
+                 let bl = *bl;
+                 let list: Vec<Value> = bl
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 16b99907f..64ab24c55 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -924,7 +924,7 @@ impl Parser {
+             // the LHS is free to receive the chain's result, and wrap the (now void,
+             // in-place) build so it YIELDS that local — making a literal receiver behave
+             // exactly like a variable one.  Scoped to a `.` method chain: `.map` /
+-            // `.filter` / `.reduce` route the receiver through their `#builtin` method,
++            // `.filter` / `.reduce` route the receiver through `parse_vector_method`,
+             // and the map/filter cases keep the vector's element type so the LHS's
+             // parsed type stays valid across passes.  (A trailing `[i]` index yields a
+             // SCALAR, so the LHS's parsed vector type would clash with the index result
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 55ba3705c..f659eac92 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -1479,32 +1479,6 @@ impl Function {
+ 
+     /// Replace all occurrences of `Type::Reference(tv_nr, _)` with `concrete`
+     /// in every variable's type definition.  Used when instantiating a generic template.
+-    /// @FR-G-Mono — once a template's variables are substituted, a dependency on a variable
+-    /// whose type is now a SCALAR names nothing: a scalar holds its own copy, so no store can
+-    /// be borrowed from it.  The template recorded it because that variable was still the
+-    /// type variable's placeholder, a record — `acc = f(acc, x)` made `acc` depend on `x`.
+-    /// Kept, it made an owning local read as a borrow at every instance that binds the
+-    /// variable to a scalar: `acc` at `vector<integer>` was given no store of its own, and
+-    /// the copy of `init` into it reached a NULL vector, where the twin (`acc` depending on
+-    /// itself) folds.  A `text` keeps its deps: a text view is a real borrow.
+-    pub fn drop_scalar_deps(&mut self) {
+-        let scalar: Vec<bool> = self
+-            .variables
+-            .iter()
+-            .map(|v| crate::data::is_scalar(&v.type_def))
+-            .collect();
+-        for v in &mut self.variables {
+-            let deps = v.type_def.depend();
+-            if deps.iter().any(|d| scalar.get(*d as usize) == Some(&true)) {
+-                let kept: Vec<u16> = deps
+-                    .into_iter()
+-                    .filter(|d| scalar.get(*d as usize) != Some(&true))
+-                    .collect();
+-                v.type_def = v.type_def.with_deps(&crate::data::Deps::frame(kept));
+-            }
+-        }
+-    }
+-
+     pub fn substitute_type(&mut self, tv_nr: u32, concrete: &Type) {
+         let trace_target = crate::log_config::type_timeline_target();
+         for (i, v) in self.variables.iter_mut().enumerate() {

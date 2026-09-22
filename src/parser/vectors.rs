@@ -924,7 +924,7 @@ impl Parser {
             // the LHS is free to receive the chain's result, and wrap the (now void,
             // in-place) build so it YIELDS that local — making a literal receiver behave
             // exactly like a variable one.  Scoped to a `.` method chain: `.map` /
-            // `.filter` / `.reduce` route the receiver through `parse_vector_method`,
+            // `.filter` / `.reduce` route the receiver through their `#builtin` method,
             // and the map/filter cases keep the vector's element type so the LHS's
             // parsed type stays valid across passes.  (A trailing `[i]` index yields a
             // SCALAR, so the LHS's parsed vector type would clash with the index result

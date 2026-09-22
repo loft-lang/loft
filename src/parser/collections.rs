@@ -6649,6 +6649,49 @@ use #count instead"
         self.is_type_var_element(elm) && self.builtin_selected(source, "sort", types).is_some()
     }
 
+    /// @PLN165 E7 — does the special form lower this `reduce` call?  It folds into what the
+    /// runtime holds in a slot — a scalar or `text` accumulator — and every other `U` is the
+    /// declaration's to fold, through its body (`reduce<T, U>`: `acc = f(acc, x)` over the
+    /// elements), where the special form refused ("cannot fold into a … accumulator yet").
+    /// Inside a template the accumulator is its variable and the site is stamped
+    /// (`TV_REDUCE`) where the declaration takes the call.  A call the special form cannot
+    /// read, or one no declaration takes, stays with it for its message.
+    pub(crate) fn reduce_is_special(
+        &mut self,
+        source: u16,
+        list: &[Value],
+        types: &[Type],
+    ) -> bool {
+        let [_, init, f] = types else {
+            return true;
+        };
+        // The special form calls a function it names at compile time (`Value::Int(d)`); a
+        // fn-ref VARIABLE or a capturing lambda is the declaration's to call, through its body —
+        // the special form refused them ("function must be a compile-time constant").
+        let constant_fn = matches!(list.get(2).map(Value::unspan), Some(Value::Int(_)));
+        if !constant_fn && self.builtin_selected(source, "reduce", types).is_some() {
+            return false;
+        }
+        let acc = if init.is_unknown()
+            && let Type::Function(params, ..) = f.base()
+            && let Some(first) = params.first()
+        {
+            first.clone()
+        } else {
+            init.clone()
+        };
+        if !Self::is_heap_storage(&acc) || matches!(acc.base(), Type::Text(_)) {
+            return true;
+        }
+        // A heap accumulator: the special form keeps a call no declaration takes (its refusal
+        // names the cure) and a template's variable (stamped); the declaration takes the rest.
+        // Asked with the accumulator the FOLD names (loft#956): a bare `[]` init says nothing,
+        // and `c1 = n.reduce([], f)` must answer as `c2 = n.reduce(init, f)` does.
+        let asked = [types[0].clone(), acc.clone(), f.clone()];
+        let declared = self.builtin_selected(source, "reduce", &asked).is_some();
+        !declared || self.is_type_var_element(&acc)
+    }
+
     /// The element types `OpSortVector` compares at runtime.  Not a nullable one: its order is
     /// `<`'s (`@FR-E-NullArg`), which the declaration's body follows.
     fn sorts_itself(elm: &Type) -> bool {

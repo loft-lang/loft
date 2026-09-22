@@ -1085,6 +1085,32 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   `sort-takes-any-ordered-element`, `a-slice-inside-a-generic-is-copied-at-its-element`,
   `a-bounded-generic-at-a-nullable-reaches-its-operator`; the special-names guard's failed-bound
   cell moved from `sort` to `type_name` and gained the reach cell.
+- **E5–E7 Built** (2026-09-22).  `filter<T>`, `map<T, U>` and `reduce<T, U>` + `#builtin`.
+  A `#builtin` method's ARGUMENT HINTS are its special form's too: no declared signature can
+  say "the callback's element is `const` exactly when the collection is" (loft#1540), so both
+  spellings ask one helper (`special_form_callback_hint`) and the method spelling's by-name
+  recognition (`parse_vector_method`) is retired.  `reduce` holds what its signature says:
+  the special form folds a scalar or `text` accumulator through a function it names at
+  compile time, and every other accumulator — a struct, any collection — or a fn-ref VARIABLE or
+  capturing lambda (both refused before: "cannot fold into a … accumulator yet", "function
+  must be a compile-time constant") is the declaration's, folded by its body
+  (`reduce_is_special`; inside a template `TV_REDUCE`, whose stamp carries the three argument
+  types in its result).  Found on the way: filter/map/comprehensions and tuple element reads
+  inside generics (86711c718, 57054818a); a template local assigned from a call depended on
+  the call's ELEMENT argument, so at a scalar instance it read as a borrow with no store
+  (`Function::drop_scalar_deps` after substitution); a struct literal's `Rewritten` type
+  reached `reduce`'s accumulator hint; the value-record gate asked TEMPLATES' fn-ref calls
+  for dispatch arms — `fn(T) -> U` reads `fn(DbRef) -> DbRef` — and the new stdlib templates
+  turned the value-record return off for every record-to-record function in every program;
+  and loft#1611 (native: a formatted string in `&&`'s right operand is evaluated first and
+  unconditionally — on `main`).  Guard `filter-map-and-reduce-are-builtin-methods`.
+  Measuring E7's accumulators beside hand-written twins found three more, each its own
+  commit and guard: a generic `-> T?` at a tuple answered wrong or leaked on every path but
+  the single tail read (b5d82d7a6, with the null-tail freshness defect at ANY `T`); a keyed
+  local rebound from a call that reads it (`a = add(a, x)`) read back EMPTY — on `main`, both
+  backends (4586b6abe); and a bare `[]` at a keyed type variable reached the instance as
+  `null` (the commit after this arc).  A dependency on a `text` argument is kept only by a
+  `text` dependent (`drop_scalar_deps`).
 - **Measured for E3–E7 before they start** — each special form inside a generic against its
   twin, both backends: `insert` and `any`/`all`/`count_if` answer right; **`filter` and `map`
   CRASH** for every scalar element (interpreter: "DbRef store_nr … out of range", `text`:

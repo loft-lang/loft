@@ -1991,6 +1991,30 @@ pub fn sort < T: Ordered > (self: vector<T>) {
 }
 #builtin
 
+// Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.
+pub fn filter < T > (self: vector<T>, f: fn(T) -> boolean) -> vector<T> {
+  filter(self, f)
+}
+#builtin
+
+// What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's
+// element is what `f` returns, so a map can change the element type.
+pub fn map < T, U > (self: vector<T>, f: fn(T) -> U) -> vector<U> {
+  map(self, f)
+}
+#builtin
+
+// Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or
+// `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.
+pub fn reduce < T, U > (self: vector<T>, init: U, f: fn(U, T) -> U) -> U {
+  // The runtime folds a scalar or `text` accumulator itself (`#builtin`); this body is the
+  // fold for every other `U`.
+  acc = init;
+  for x in self { acc = f(acc, x); }
+  acc
+}
+#builtin
+
 // Sum of all integer elements. Returns 0 for an empty vector.
 // Superseded by the general `sum(v, init)`; kept as a shim over it
 // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the

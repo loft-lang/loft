@@ -500,15 +500,15 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">apply_fn</span>(negate_it, <span class="nm">3</span>) == -<span class="nm">3</span>, <span class="st">"fn-ref as arg (negate)"</span>);</code></pre>
 <p>Lambdas with map, filter, and reduce. Use |...| short form — types are inferred from the call site.</p>
 <pre><code>  nums = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>, <span class="nm">5</span>];
-  doubled = <span class="fn-call">map</span>(nums, |x| { x * <span class="nm">2</span> });
+  doubled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(nums, |x| { x * <span class="nm">2</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"lambda map first element"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">4</span>] == <span class="nm">10</span>, <span class="st">"lambda map last element"</span>);</code></pre>
 <p>filter keeps only elements where the lambda returns true.</p>
-<pre><code>  evens = <span class="fn-call">filter</span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
+<pre><code>  evens = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"filter evens first"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">1</span>] == <span class="nm">4</span>, <span class="st">"filter evens second"</span>);</code></pre>
 <p>reduce collapses the whole list into one value. The lambda receives the running total (acc) and the next element (x).</p>
-<pre><code>  total = <span class="fn-call">reduce</span>(nums, <span class="nm">0</span>, |acc, x| { acc + x });
+<pre><code>  total = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(nums, <span class="nm">0</span>, |acc, x| { acc + x });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total == <span class="nm">15</span>, <span class="st">"reduce sum: {total}"</span>);</code></pre>
 <p>Use fn(...) long form when you need explicit types — for example when storing a lambda in a variable or passing it without call-site context.</p>
 <pre><code>  negate = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { -x };
@@ -633,18 +633,18 @@
 <h2 id="higher-order-functions">Higher-order functions</h2>
 <p><code>map</code> applies a function to every element and returns a new vector.</p>
 <pre><code>  nums =[<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>, <span class="nm">5</span>];
-  tripled = <span class="fn-call">map</span>(nums,  triple);
+  tripled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(nums,  triple);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{tripled}"</span> == <span class="st">"[3,6,9,12,15]"</span>, <span class="st">"map triple: {tripled}"</span>);</code></pre>
 <p><code>filter</code> keeps only elements for which the predicate returns true.</p>
-<pre><code>  evens2 = <span class="fn-call">filter</span>(nums,  is_even_n);
+<pre><code>  evens2 = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums,  is_even_n);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{evens2}"</span> == <span class="st">"[2,4]"</span>, <span class="st">"filter evens: {evens2}"</span>);</code></pre>
 <p><code>reduce</code> folds all elements into a single value, starting from an initial accumulator. Argument order: reduce(vector, initial_value, combiner).</p>
-<pre><code>  total = <span class="fn-call">reduce</span>(nums, <span class="nm">0</span>,  sum_acc);
+<pre><code>  total = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(nums, <span class="nm">0</span>,  sum_acc);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total == <span class="nm">15</span>, <span class="st">"reduce sum: {total}"</span>);
-  product = <span class="fn-call">reduce</span>(nums, <span class="nm">1</span>,  mul_acc);
+  product = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(nums, <span class="nm">1</span>,  mul_acc);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(product == <span class="nm">120</span>, <span class="st">"reduce product: {product}"</span>);</code></pre>
 <p>You can chain these calls: filter first, then map, then reduce.</p>
-<pre><code>  result = <span class="fn-call">reduce</span>(<span class="fn-call">map</span>(<span class="fn-call">filter</span>(nums,  is_even_n),  triple), <span class="nm">0</span>,  sum_acc);
+<pre><code>  result = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(<span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(<span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums,  is_even_n),  triple), <span class="nm">0</span>,  sum_acc);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(result == <span class="nm">18</span>, <span class="st">"filter+map+reduce: {result}"</span>);
 }</code></pre>
 </section>
@@ -2550,21 +2550,21 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   scale = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x * factor };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">scale</span>(<span class="nm">5</span>) == <span class="nm">15</span>, <span class="st">"scale(5): {scale(5)}"</span>);</code></pre>
 <p>The same closure passed to map — <code>factor</code> travels with it.</p>
-<pre><code>  scaled = <span class="fn-call">map</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], scale);
+<pre><code>  scaled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], scale);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(scaled[<span class="nm">0</span>] == <span class="nm">3</span>, <span class="st">"scaled[0]: {scaled[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(scaled[<span class="nm">2</span>] == <span class="nm">9</span>, <span class="st">"scaled[2]: {scaled[2]}"</span>);</code></pre>
 <p>A capturing lambda written inline works too, in filter as well as map.</p>
 <pre><code>  <span class="kw">limit</span> = <span class="nm">2</span>;
-  big = <span class="fn-call">filter</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x &gt; <span class="kw">limit</span> });
+  big = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x &gt; <span class="kw">limit</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(big) == <span class="nm">2</span>, <span class="st">"len(big): {len(big)}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(big[<span class="nm">0</span>] == <span class="nm">3</span>, <span class="st">"big[0]: {big[0]}"</span>);</code></pre>
 <h2 id="non-capturing-lambdas-with-higher-order-functions">Non-capturing lambdas with higher-order functions</h2>
 <p>No capture needed here — the lambda uses only its own parameter.</p>
 <pre><code>  nums = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>, <span class="nm">5</span>];
-  doubled = <span class="fn-call">map</span>(nums, |x| { x * <span class="nm">2</span> });
+  doubled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(nums, |x| { x * <span class="nm">2</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"doubled[0]: {doubled[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">4</span>] == <span class="nm">10</span>, <span class="st">"doubled[4]: {doubled[4]}"</span>);</code></pre>
-<pre><code>  evens = <span class="fn-call">filter</span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
+<pre><code>  evens = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"evens[0]: {evens[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">1</span>] == <span class="nm">4</span>, <span class="st">"evens[1]: {evens[1]}"</span>);</code></pre>
 <h2 id="capturing-a-parameter">Capturing a <code>&amp;</code> parameter</h2>
@@ -4516,6 +4516,18 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <div class="item">
 <pre><code>pub fn sort &lt; T: Ordered &gt; (self: vector&lt;T&gt;)</code></pre>
 <p>Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `&lt;` (`Ordered`) — a struct defining `op &lt;` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.</p>
+</div>
+<div class="item">
+<pre><code>pub fn filter &lt; T &gt; (self: vector&lt;T&gt;, f: fn(T) -&gt; boolean) -&gt; vector&lt;T&gt;</code></pre>
+<p>Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn map &lt; T, U &gt; (self: vector&lt;T&gt;, f: fn(T) -&gt; U) -&gt; vector&lt;U&gt;</code></pre>
+<p>What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's element is what `f` returns, so a map can change the element type.</p>
+</div>
+<div class="item">
+<pre><code>pub fn reduce &lt; T, U &gt; (self: vector&lt;T&gt;, init: U, f: fn(U, T) -&gt; U) -&gt; U</code></pre>
+<p>Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.</p>
 </div>
 <div class="item">
 <pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>

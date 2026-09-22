@@ -2780,6 +2780,10 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
+(2026-09-22, @PLN165 E5–E7 on `tuxedo-165-generics`: opaque tests re-pinned at 1309 — the
+method spelling's by-name recognition of `map`/`filter`/`reduce` (`parse_vector_method`) is
+retired, and its bare shape tests with it.)
+
 (2026-09-22, the third line of the same join — `tuxedo-1562-layout-gate` (loft#1597, #1600,
 #1601) — re-measured at its end: **941 · 615 · 4 · 322**, opaque tests 1311, at the pin the two-line
 join set.  That side read 324 · 1310 on its own base; the join adds its six functions to both

@@ -4963,6 +4963,15 @@ fn sort_in_a_generic_needs_the_bound() {
         .error("'T' does not satisfy interface 'Ordered': missing OpLt at sort_in_a_generic_needs_the_bound:1:33");
 }
 
+/// @PLN165 E5 — a `#builtin` method's callback is typed by the special form's hint, in both
+/// spellings: over a const collection the element parameter is `const` (loft#1540), so a
+/// short lambda's write to it is refused in `v.filter(…)` as in `filter(v, …)`.
+#[test]
+fn a_builtin_methods_callback_over_a_const_collection_is_const() {
+    code!("struct Pt { x: integer, y: integer }\nfn f(v: const vector<Pt>) -> integer { len(v.filter(|p| { p.x = 3; true })) }\nfn test() { assert(f([Pt { x: 1, y: 2 }]) == 1, \"\"); }")
+        .error("Cannot modify const parameter 'p'; remove 'const' or use a local copy at a_builtin_methods_callback_over_a_const_collection_is_const:2:67");
+}
+
 /// @PLN165 arc E — `#builtin` sends a call to the compiler's special form of the name; it marks
 /// a standard-library declaration, and a program's function is its own body.
 #[test]

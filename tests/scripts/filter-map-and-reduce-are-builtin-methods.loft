@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 E5–E7 — `filter<T>`, `map<T, U>` and `reduce<T, U>` are stdlib `#builtin` METHODS on
+// `vector`: `filter(v, f)` and `v.filter(f)` are one call, a program adds its own `filter` for
+// its own types, and the special form stays the lowering — including how the callback is
+// typed, since no declared signature can say "the element is `const` exactly when the
+// collection is" (loft#1540).  Both spellings take that hint from one home now; the method
+// spelling used to be recognised by NAME (`parse_vector_method`), which is retired.
+//
+// `reduce` also holds what its signature says.  The special form folds into a scalar or
+// `text` accumulator with a function it names at compile time; any other accumulator — a
+// struct, a vector — and any fn-ref VARIABLE or capturing lambda were refused ("cannot fold
+// into a … accumulator yet", "function must be a compile-time constant").  They are the
+// declaration's now, folded by its body.  Building that showed a generic-instance defect: a
+// local assigned from a call inside a template depended on the call's ELEMENT argument,
+// the type variable's placeholder, and at a scalar instance that dependency made the local
+// read as a borrow with no store (`acc` at `vector<integer>` crashed where the twin folds).
+//
+// @falsified-at: 57054818a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/filter-map-and-reduce-are-builtin-methods.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the file.
+//   ARMED: nothing.
+//   WITNESS: on the control `a.reduce(Pt { … }, …)` is "`reduce` cannot fold into a `Pt`
+//     accumulator yet", and inside `fold<T, U>` "… into a `U` accumulator yet".
+//   HOLDS: `filter` and `map` in both spellings, and `reduce` into a scalar or `text`.
+
+struct Pt { x: integer, y: integer }
+struct Bag { items: vector<integer> }
+
+fn filter(self: Bag, n: integer) -> integer { len(self.items) + n }
+fn keep<T>(v: vector<T>, f: fn(T) -> boolean) -> vector<T> { v.filter(f) }
+fn conv<T, U>(v: vector<T>, f: fn(T) -> U) -> vector<U> { v.map(f) }
+fn fold<T, U>(v: vector<T>, init: U, f: fn(U, T) -> U) -> U { v.reduce(init, f) }
+fn big(v: const vector<Pt>) -> integer { len(v.filter(|p| { p.x > 1 })) }
+fn grow(v: &vector<integer>) -> integer {
+  v += [4];
+  len(v.map(|y| { y * 2 })) + len(v.filter(|y| { y > 1 })) + v.reduce(0, |s, y| { s + y })
+}
+
+fn test_both_spellings_at_each_element() {
+  a = [3, 1, 2];
+  b: vector<u8> = [9, 7];
+  t = ["p", "qq"];
+  p = [Pt { x: 1, y: 2 }, Pt { x: 5, y: 6 }];
+  tv = [(1, 2), (3, 4)];
+  vv = [[1], [2, 3]];
+  n: vector<integer?> = [1, null, 3];
+  assert("{a.filter(|x| { x > 1 })} {filter(b, |x| { x > 8 })} {t.filter(|s| { len(s) > 1 })} {len(p.filter(|e| { e.x > 2 }))} {len(tv.filter(|q| { q.0 > 1 }))} {vv.filter(|w| { len(w) > 1 })} {n.filter(|x| { x != null })}"
+    == "[3,2] [9] [\"qq\"] 1 1 [[2,3]] [1,3]", "filter");
+  assert("{a.map(|x| { \"{x}\" })} {b.map(|x| { x * 2 })} {map(p, |e| { e.x + e.y })} {vv.map(|w| { len(w) })}"
+    == "[\"3\",\"1\",\"2\"] [18,14] [3,11] [1,2]", "map");
+  assert("{a.reduce(0, |s, x| { s + x })} {reduce(t, \"\", |s, x| { s + x })} {p.reduce(0, |s, e| { s + e.x })}"
+    == "6 pqq 6", "reduce");
+}
+
+fn test_reduce_into_any_accumulator() {
+  a = [3, 1, 2];
+  s = a.reduce(Pt { x: 0, y: 0 }, |acc, x| { Pt { x: acc.x + x, y: acc.y + 1 } });
+  w: vector<integer> = [];
+  r = a.reduce(w, |acc, x| { acc += [x * 10]; acc });
+  base = 100;
+  c = a.reduce(0, |acc, x| { acc + x + base });
+  assert("{s.x},{s.y} {r} {c}" == "6,3 [30,10,20] 306", "{s.x},{s.y} {r} {c}");
+}
+
+fn test_inside_a_generic() {
+  a = [3, 1, 2];
+  t = ["p", "qq"];
+  p = [Pt { x: 1, y: 2 }, Pt { x: 5, y: 6 }];
+  f2 = fold(a, Pt { x: 0, y: 0 }, |acc, x| { Pt { x: acc.x + x, y: 0 } });
+  w: vector<integer> = [];
+  f3 = fold(a, w, |acc, x| { acc += [x]; acc });
+  assert("{keep(a, |x| { x > 1 })} {keep(t, |x| { len(x) > 1 })} {conv(a, |x| { x + 1 })} {conv(p, |e| { e.x })} {fold(a, 0, |s, x| { s + x })} {fold(t, \"\", |s, x| { s + x })} {f2.x} {f3}"
+    == "[3,2] [\"qq\"] [4,2,3] [1,5] 6 pqq 6 [3,1,2]", "generic");
+}
+
+fn test_a_const_collection_a_link_and_a_programs_own() {
+  p = [Pt { x: 1, y: 2 }, Pt { x: 5, y: 6 }];
+  a = [1, 2, 3];
+  // Bound first: a formatted string in `&&`'s right operand is evaluated early on native
+  // (loft#1611), and `grow` writes `a`.
+  g = grow(a);
+  shown = "{a}";
+  assert(big(p) == 1 && g == 17 && shown == "[1,2,3,4]", "{big(p)} {g} {shown}");
+  k = Bag { items: [1, 2] };
+  assert(filter(k, 3) == 5 && k.filter(1) == 3, "own");
+}
