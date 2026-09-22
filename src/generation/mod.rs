@@ -6554,7 +6554,7 @@ extern crate loft;"
                 continue;
             }
             let mut d: Vec<u16> = Vec::new();
-            if is_container {
+            if is_container && !self.data.is_open_instance(dnr) {
                 for a in &def.attributes().to_vec() {
                     let c_nr = match &a.typedef {
                         Type::Sorted(c_nr, _, _)
@@ -7047,7 +7047,8 @@ extern crate loft;"
         // available for any recursive emission that reads it as a
         // content type below.
         self.emit_type_creation(w, type_id, dnr)?;
-        if dnr == u32::MAX {
+        // An open instance's row is fieldless, as `fill_database` registers it (@PLN165 D5).
+        if dnr == u32::MAX || self.data.is_open_instance(dnr) {
             return Ok(());
         }
         let def = self.data.def(dnr);
@@ -7333,6 +7334,13 @@ extern crate loft;"
             return Ok(());
         }
         let def = self.data.def(dnr);
+        // @PLN165 D5 — an OPEN instance's row is registered fieldless (`fill_database`), so
+        // it is replayed fieldless: emitting its declared fields would mint types (`vector<T>`
+        // over the placeholder) the compiler never registered, and every id after them drifts
+        // (loft#739's class).
+        if self.data.is_open_instance(dnr) {
+            return Ok(());
+        }
         if matches!(def.def_type(), DefType::Struct)
             || (def.def_type() == DefType::EnumValue && !def.attributes().is_empty())
         {

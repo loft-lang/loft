@@ -650,6 +650,20 @@ impl Diagnostics {
             .count()
     }
 
+    /// Where the entries stand, for [`Self::rewind`].  A construct read once to learn its
+    /// types and then parsed again (@PLN165 D4's literal) reports on the second read; the
+    /// first read's entries are rewound so nothing is said twice.
+    #[must_use]
+    pub fn mark(&self) -> (usize, Level) {
+        (self.entries.len(), self.level)
+    }
+
+    /// Drop every entry added since `mark`, and the level they raised.
+    pub fn rewind(&mut self, mark: (usize, Level)) {
+        self.entries.truncate(mark.0);
+        self.level = mark.1;
+    }
+
     pub fn last_index(&self) -> Option<usize> {
         self.entries.len().checked_sub(1)
     }

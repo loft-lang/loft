@@ -10662,7 +10662,7 @@ impl Scopes<'_> {
         }
         // loft#1588 — which backing each vector member of this value lives in, where the
         // assignment runs in the variable's own scope (a first binding registers it there).
-        if matches!(function.tp(v), Type::Tuple(_)) {
+        if matches!(function.tp(v).base(), Type::Tuple(_)) {
             match tuple_member_backings_of(value, function) {
                 Some(now) if self.var_scope.get(&v).is_none_or(|s| *s == self.scope) => {
                     self.tuple_member_now.insert(v, now);

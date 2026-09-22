@@ -1,0 +1,12 @@
+// D5 — a generic writes the field of the instance it is handed; the caller sees it, as it
+// sees the twin `fn put_int(b: BoxInteger, x: integer) { b.v = x; }` write.
+// @EXPECT: 4|new
+struct Box<T> { v: T }
+fn put<T>(b: Box<T>, x: T) { b.v = x; }
+fn main() {
+  a = Box { v: 1 };
+  put(a, 4);
+  t = Box { v: "old" };
+  put(t, "new");
+  println("{a.v}|{t.v}");
+}

@@ -880,6 +880,11 @@ impl Lexer {
         &self.diagnostics
     }
 
+    /// See [`Diagnostics::rewind`].
+    pub fn rewind_diagnostics(&mut self, mark: (usize, Level)) {
+        self.diagnostics.rewind(mark);
+    }
+
     /// loft#1260 — tell this lexer's diagnostics who the compilation's lints are addressed
     /// to.  See [`Diagnostics::reaches_author`].
     pub fn set_lint_scope_for(&mut self, entry: &str) {

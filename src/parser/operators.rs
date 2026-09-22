@@ -5086,6 +5086,9 @@ enum FaultKind {
 pub(crate) enum VecKey {
     Var(u16),
     Field(u16, i32, i32),
+    /// A field of an OPEN instance (@PLN165 D5), read through a deferred
+    /// `Parser::TV_FIELD`: `(base variable, open instance, field)`.
+    OpenField(u16, i32, i32),
 }
 
 /// `VecKey` of an expression used as a vector — the indexing's first arg
@@ -5105,6 +5108,15 @@ pub(crate) fn vec_key(v: &Value, data: &Data) -> Option<VecKey> {
                 return None;
             };
             Some(VecKey::Field(*base, *off, *tp))
+        }
+        Value::Block(bl) if bl.name == crate::parser::Parser::TV_FIELD => {
+            let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..] else {
+                return None;
+            };
+            let Value::Var(base) = receiver.unspan() else {
+                return None;
+            };
+            Some(VecKey::OpenField(*base, *open, *f_nr))
         }
         _ => None,
     }

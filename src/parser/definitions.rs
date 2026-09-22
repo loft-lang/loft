@@ -1880,7 +1880,11 @@ impl Parser {
             let unnamed: Vec<String> = self
                 .cur_type_vars
                 .iter()
-                .filter(|(_, h)| !arguments.iter().any(|a| a.typedef.contains_def(*h)))
+                .filter(|(_, h)| {
+                    !arguments
+                        .iter()
+                        .any(|a| self.data.type_mentions(&a.typedef, *h))
+                })
                 .map(|(n, _)| crate::data::Data::type_var_spelling(n).to_string())
                 .collect();
             unnamed_var = !unnamed.is_empty();
@@ -3304,7 +3308,7 @@ impl Parser {
             }
             let mut dep = Vec::new();
             self.parse_depended(returned, &mut dep);
-            let inst = self.data.instance_def(&mut self.lexer, tp_nr, &args);
+            let inst = self.instance_def(tp_nr, &args);
             if inst == u32::MAX {
                 // An argument not resolved yet (pass 1), or one that still names a type
                 // variable (an OPEN instance, @PLN165 D5).

@@ -13,9 +13,7 @@
 // declare several variables — `<K: Printable, V: Printable>` — each with its
 // own bounds, each inferred from the parameters that name it.
 //
-// Generic STRUCTS are a separate thing and loft does not have them — `struct
-// Box<T>` is a parse error.  A generic FUNCTION over `vector<T>` covers most of
-// what a generic container would be reached for.
+// A struct may declare type variables too — see Generic structs below.
 fn identity<T>(x: T) -> T { x }
 // ## Calling a generic function
 // No special syntax at the call site — the compiler infers T from the
@@ -178,6 +176,25 @@ fn test_walkable() {
   for node in tree_walk(tree, 10) { seen += "{node.label} "; }
   assert(seen == "root a b ", "Walkable on a user type: {seen}");
 }
+// ## Generic structs
+// A struct may declare type variables: `struct Box<T> { v: T }`.  `Box<integer>`
+// names an INSTANCE — an ordinary struct whose `v` is an `integer`, laid out as a
+// hand-written `struct BoxInteger { v: integer }` would be.  A literal builds the
+// instance its annotation names, or else the one its field values bind:
+// `Box { v: 1 }` is a `Box<integer>`, as `identity(1)` makes T an integer.  A
+// literal with nothing to bind a variable from (`Box {}`, `Box { v: [] }` for a
+// `vector<T>` field) is refused, naming the variable; give the binding its type.
+struct Box<T> { v: T }
+struct Stack<T> { items: vector<T>, name: text }
+fn twice(b: Box<integer>) -> integer { b.v * 2 }
+fn test_generic_struct() {
+  b = Box { v: 21 };
+  t = Box { v: "hi" };
+  s: Stack<float> = Stack { items: [], name: "floats" };
+  s.items += [1.5, 2.5];
+  assert(twice(b) == 42, "an inferred Box<integer> is the one the parameter names");
+  assert(t.v == "hi" && len(s.items) == 2, "Box<text> and Stack<float>");
+}
 // ## Disallowed operations
 // The compiler rejects operations the bound does not cover, and it says which:
 //   `x + y` on unbounded T   — "generic type T: operator '+' requires a concrete type"
@@ -192,4 +209,5 @@ fn main() {
   test_combined_bounds();
   test_user_type_bounds();
   test_walkable();
+  test_generic_struct();
 }

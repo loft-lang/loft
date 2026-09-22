@@ -1,0 +1,10 @@
+// D5 — a generic builds a new instance of its own open type, and a short lambda is typed
+// from the variable the Box argument bound (A6).
+// @EXPECT: 14|ab!
+struct Box<T> { v: T }
+fn map_box<T>(b: Box<T>, f: fn(T) -> T) -> Box<T> { Box { v: f(b.v) } }
+fn main() {
+  a = map_box(Box { v: 7 }, |x| { x * 2 });
+  t = map_box(Box { v: "ab" }, |s| { "{s}!" });
+  println("{a.v}|{t.v}");
+}

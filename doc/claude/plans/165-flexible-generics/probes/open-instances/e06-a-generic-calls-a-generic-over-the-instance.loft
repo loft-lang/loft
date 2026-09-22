@@ -1,0 +1,8 @@
+// D5 — a generic over `Box<T>` calls another at its own variable.
+// @EXPECT: 11|z
+struct Box<T> { v: T }
+fn get<T>(b: Box<T>) -> T { b.v }
+fn outer<T>(b: Box<T>) -> T { get(b) }
+fn main() {
+  println("{outer(Box { v: 11 })}|{outer(Box { v: "z" })}");
+}

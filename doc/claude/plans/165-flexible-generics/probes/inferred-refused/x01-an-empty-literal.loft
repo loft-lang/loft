@@ -1,0 +1,6 @@
+// D4 — `Box {}` with nothing to bind T: refused naming T and the annotation.
+struct Box<T> { v: T }
+fn main() {
+  b = Box {};
+  println("{b.v}");
+}

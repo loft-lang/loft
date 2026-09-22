@@ -1,0 +1,7 @@
+// @CONTROL
+// @EXPECT: 8
+struct Box<T> { v: T }
+fn main() {
+  b = Box { v: 1 };
+  println("{b.v}");
+}

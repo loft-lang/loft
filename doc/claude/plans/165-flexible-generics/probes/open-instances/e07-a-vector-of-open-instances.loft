@@ -1,0 +1,11 @@
+// D5 — `vector<Box<T>>`: iterate and read each element's field.
+// @EXPECT: 3|60|3|abc
+struct Box<T> { v: T }
+fn count<T>(v: vector<Box<T>>) -> integer { len(v) }
+fn sum_int(v: vector<Box<integer>>) -> integer { s = 0; for b in v { s += b.v; } s }
+fn joined<T: Printable>(v: vector<Box<T>>) -> text { s = ""; for b in v { s += "{b.v}"; } s }
+fn main() {
+  n: vector<Box<integer>> = [Box { v: 10 }, Box { v: 20 }, Box { v: 30 }];
+  t: vector<Box<text>> = [Box { v: "a" }, Box { v: "b" }, Box { v: "c" }];
+  println("{count(n)}|{sum_int(n)}|{count(t)}|{joined(t)}");
+}

@@ -1,0 +1,6 @@
+// D4 — `null` names no type: refused as unbound.
+struct Box<T> { v: T }
+fn main() {
+  b = Box { v: null };
+  println("{b.v}");
+}

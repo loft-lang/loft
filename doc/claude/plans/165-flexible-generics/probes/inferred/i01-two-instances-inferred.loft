@@ -1,0 +1,10 @@
+// D4 — each literal builds the instance its field value binds.
+// @EXPECT: 6|ab
+struct Box<T> { v: T }
+fn main() {
+  b = Box { v: 1 };
+  b.v = b.v + 5;
+  t = Box { v: "a" };
+  t.v += "b";
+  println("{b.v}|{t.v}");
+}

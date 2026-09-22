@@ -1949,11 +1949,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
             elm_size_raw.max(4)
         } else if let Type::Reference(tv, _) = elm_type.base()
-            && elm_size_raw == 0
-            && self.data.is_type_var_placeholder(*tv)
+            && ((elm_size_raw == 0 && self.data.is_type_var_placeholder(*tv))
+                || self.data.is_open_instance(*tv))
         {
             // A type variable's element has no width until an instance binds it: the read
-            // names the variable instead (`Parser::type_var_stride`, @PLN165 C2).
+            // names the variable instead (`Parser::type_var_stride`, @PLN165 C2) — and an
+            // open instance's element (`vector<Box<T>>`, D5) names the open instance, which
+            // the monomorph pairs with its concrete instance.
             Self::type_var_stride(*tv)
         } else {
             elm_size_raw
