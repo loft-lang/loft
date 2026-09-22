@@ -521,37 +521,37 @@ fn seed_accumulators(
     fn movement(
         data: &Data,
         walks: &std::collections::BTreeMap<u16, super::hoist::CharWalk>,
-        v: &Value,
-        n: u16,
+        node: &Value,
+        acc: u16,
         depth: u8,
         in_walk: bool,
         steps: &mut usize,
     ) -> Option<i128> {
-        match v.unspan() {
-            Value::Set(x, e) if *x == n => {
-                let c = i128::from(literal_step(data, n, e)?.unsigned_abs());
+        match node.unspan() {
+            Value::Set(target, expr) if *target == acc => {
+                let step = i128::from(literal_step(data, acc, expr)?.unsigned_abs());
                 *steps += 1;
                 match depth {
-                    0 => Some(c),
-                    1 if in_walk => Some(c * i128::from(U32_MAX)),
+                    0 => Some(step),
+                    1 if in_walk => Some(step * i128::from(U32_MAX)),
                     _ => None,
                 }
             }
-            Value::TuplePut(x, _, _) if *x == n => None,
+            Value::TuplePut(target, _, _) if *target == acc => None,
             Value::Loop(lp) => {
                 let walk = walks.get(&lp.scope).is_some_and(|w| w.hoist_null);
                 let mut total: i128 = 0;
                 for op in &lp.operators {
-                    total += movement(data, walks, op, n, depth + 1, walk, steps)?;
+                    total += movement(data, walks, op, acc, depth + 1, walk, steps)?;
                 }
                 Some(total)
             }
             _ => {
                 let mut total: i128 = 0;
                 let mut ok = true;
-                v.for_each_child(&mut |c| {
+                node.for_each_child(&mut |child| {
                     if ok {
-                        match movement(data, walks, c, n, depth, in_walk, steps) {
+                        match movement(data, walks, child, acc, depth, in_walk, steps) {
                             Some(m) => total += m,
                             None => ok = false,
                         }
