@@ -501,6 +501,27 @@ in-place write moves nothing, so no header, aliased or not, can go stale; that i
 why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
 `hoist::blocks_header_hoist`.
+**The text clause of (R-Base)** (2026-09-22, @PLN158 round 4): a TEXT element read —
+`OpGetText(OpGetVector*(P, 4, i), 0)`, a walk's element or an indexed `v[i]` — in a loop
+that holds P's header and element base reads the element's record number through the
+base (one bounds test, one `u32` load) and slices the text off the vector's store's DATA
+SPAN, derived once beside the base (`vector::text_span_of`: the buffer's address and size,
+not a pointer to the `Store` struct, which may move when the slot table grows while the
+buffer cannot).  A text element is a record in the same store as its vector, so every
+element's bytes lie in that span.  Past the end — where a walk's last read lands before
+its length test breaks — is the null text without a call, as `get_vector` answers any
+non-negative index at or beyond the length (a null vector's length is 0); a NEGATIVE index
+counts from the end and takes the unfused path (`text_elem_cold`, outlined: folded in, the
+hot half lost its inline and the walk its registers — 9.0 µs against 6.6 on `join`).
+`LOFT_HOIST_VERIFY=1` re-derives header, base and span at every read.  A twin's input
+base carries no span, and such a read keeps the store-resolving form.  Measured: the
+stdlib `join` 11.0 → **6.6 µs** (−40 %, 2.11× → ~1.15× of its twin), hash `2df9`.  Switch
+`LOFT_NO_TEXT_BASE`; cells `tests/scripts/158-text-base.loft` b1–b8 (falsified by the
+past-the-end arm answering the element before it); pins `tests/text_borrow.rs`.  Sites:
+`Output::fused_text_read`, the span beside each base in `Output::bind_loop_headers` and
+`Output::bind_view_header`, the arm in `LazySplitNextEmitter`, the pre-eval exemption in
+`Output::collect_pre_evals_inner`, `vector::text_elem_at`, `vector::text_at`,
+`vector::text_span_of`, `Store::text_span`.
 **The link clause** (2026-09-22): a hoist's ROOT is loop-invariant only while nothing the
 root LINKS to is rebound — `g = &e` reads whatever `e` holds now, so a rebind of `e` in
 the body repoints every path rooted at `g`, and `g` counts as rebound (`hoist::rebound_vars`

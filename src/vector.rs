@@ -1322,6 +1322,121 @@ pub fn get_elem_hoisted<T: Copy, const VERIFY: bool>(
 /// caller then stayed out of line at every one of its call sites, which on a real workload
 /// cost ~11% of self time for a fast path that is a compare and a load.  Keeping the cold
 /// half behind a call is what lets the hot half be inlined into its callers.
+/// The text record `rec` of the store whose data span is `(ptr, size)` ([`Store::text_span`])
+/// — what [`Store::get_str`] answers for it, computed off the span: the null text for the
+/// null record, for a record number outside the store and for a length past its end; the
+/// record's bytes otherwise.  The span was derived once, so a loop reading text elements
+/// pays no store resolution per element.
+///
+/// # Safety
+/// `(ptr, size)` is the live span of the store `rec` belongs to, unchanged since it was
+/// derived — which a growth-free loop's base proof already guarantees.
+#[inline]
+#[must_use]
+pub unsafe fn text_at(ptr: *const u8, size: u32, rec: u32) -> &'static str {
+    if rec == 0 || rec > i32::MAX as u32 {
+        return crate::state::STRING_NULL;
+    }
+    // SAFETY: the caller's span; `rec` is a record inside it, so its length word is too.
+    let len = unsafe { ptr.add(rec as usize * 8 + 4).cast::<u32>().read_unaligned() };
+    if (len / 8) + rec > size {
+        return crate::state::STRING_NULL;
+    }
+    // SAFETY: the bytes `[rec*8+8, +len)` lie inside the span by the test above, and a text
+    // record's bytes are the UTF-8 the store wrote.
+    unsafe {
+        std::str::from_utf8_unchecked(std::slice::from_raw_parts(
+            ptr.add(rec as usize * 8 + 8),
+            len as usize,
+        ))
+    }
+}
+
+/// `(R-Base)`'s text clause — the data span ([`Store::text_span`]) of the store the vector
+/// `h` describes lives in, derived once beside the vector's element base; the null span for
+/// a null vector.  Every text element of the vector is a record in that store, so a loop
+/// reading text elements slices them off the span with no store resolution per element.
+#[must_use]
+pub fn text_span_of(h: &VecHeader, stores: &[Store]) -> (*const u8, u32) {
+    stores
+        .get(h.store_nr as usize)
+        .map_or((std::ptr::null(), 0), Store::text_span)
+}
+
+/// `(R-Base)`'s text clause — the TEXT element `from` of the vector `h` describes, read
+/// through the held base: the element's record number is one bounds test and one `u32`
+/// load through `base`, and the text is sliced off the store's span `(ptr, size)` derived
+/// once beside the base ([`text_span_of`]) — a text element is a record in the SAME store as
+/// its vector.  Out of range (a negative index, one past the end, a null vector) takes the
+/// path the unfused read takes — `get_vector`, which counts a negative index from the end,
+/// then the record's text, the null text for an absent element — so the two agree on every
+/// index.  Every `&str` a text element answers borrows the store for as long as the element
+/// lives, as `Store::get_str` already grants.
+///
+/// # Safety
+/// `base` is element 0 of a live vector record in a store the loop cannot grow (the
+/// emitter's growth-free proof), `from < len` keeps the read inside the record's claim, and
+/// `(ptr, size)` is that store's span, unchanged since it was derived for the same reason.
+///
+/// # Panics
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header, the base or the span no longer
+/// matches a fresh derivation — a store grew or moved under the loop.
+#[inline]
+pub unsafe fn text_elem_at<const VERIFY: bool>(
+    h: &VecHeader,
+    base: *const u8,
+    (ptr, size): (*const u8, u32),
+    db: &DbRef,
+    from: i64,
+    stores: &[Store],
+) -> &'static str {
+    if from >= 0 && from < i64::from(h.len) {
+        if VERIFY {
+            assert_eq!(
+                *h,
+                vec_header(db, stores),
+                "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+            );
+            assert!(
+                std::ptr::eq(base, vec_base(h, stores)),
+                "hoisted vector base is stale — a store grew or moved under the loop"
+            );
+            assert_eq!(
+                (ptr, size),
+                text_span_of(h, stores),
+                "hoisted text span is stale — the store grew or moved under the loop"
+            );
+        }
+        let rec = unsafe { base.add(from as usize * 4).cast::<u32>().read_unaligned() };
+        return unsafe { text_at(ptr, size, rec) };
+    }
+    // Past the end — where a walk's last read lands, before its length test breaks — is
+    // the null text without a call, exactly as `get_vector` answers any non-negative index
+    // at or beyond the length (a null vector's length is 0); only a NEGATIVE index, which
+    // counts from the end, takes the cold path.  A call in the loop for the common
+    // past-the-end case cost the walk its registers (measured 9.0 µs against 6.9 on the
+    // stdlib `join`).
+    if from >= 0 {
+        return crate::state::STRING_NULL;
+    }
+    text_elem_cold(db, from, stores)
+}
+
+/// The out-of-range half of [`text_elem_at`], behind a call for the reason
+/// [`get_elem_hoisted_cold`] gives: folded in, the hot half — a compare, a load and a slice
+/// — lost its inline and the whole read stayed a call per element (measured: 8.4 µs where
+/// the inlined form prices 6.9 on the stdlib `join`).
+#[inline(never)]
+fn text_elem_cold(db: &DbRef, from: i64, stores: &[Store]) -> &'static str {
+    let elem = get_vector(db, 4, from, stores);
+    if elem.rec == 0 {
+        crate::state::STRING_NULL
+    } else {
+        let store = keys::store(&elem, stores);
+        store.get_str(store.get_u32_raw(elem.rec, elem.pos))
+    }
+}
+
 #[inline(never)]
 fn get_elem_hoisted_cold<T: Copy>(
     db: &DbRef,

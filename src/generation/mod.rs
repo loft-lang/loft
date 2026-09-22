@@ -875,6 +875,10 @@ pub struct Output<'a> {
     /// `LOFT_NO_SPLIT_TABLE=1` — every such bind builds its `vector<text>` again; the
     /// bisect step for a wrong length, piece or walk out of a split bound to a name.
     pub split_table_disabled: bool,
+    /// `LOFT_NO_TEXT_BASE=1` — a text element read in a loop that holds the vector's header
+    /// and base resolves the store per element again (`@FR-R-Base`'s text clause off); the
+    /// bisect step for a wrong or stale text read out of `v[i]` on native.
+    pub text_base_disabled: bool,
     /// `@FR-R-TextBorrow` — the text LOCALS of the function being emitted whose Rust slot
     /// is a borrowed `&str` rather than an owned `String`: the loop variables of the walks
     /// of texts that borrow their element ([`hoist::borrowed_text_walks`]); rebuilt per
@@ -2168,6 +2172,7 @@ impl<'a> Output<'a> {
             split_tables: BTreeMap::new(),
             split_table_aliases: BTreeMap::new(),
             split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
+            text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
@@ -3651,6 +3656,12 @@ impl Output<'_> {
                     lines.push(format!(
                         "let {base}: *const u8 = vector::vec_base(&{held}, &stores.allocations); //@PLN157 § V-ak element base of the held header"
                     ));
+                    // `@FR-R-Base`'s text clause — the store's span beside every base, so a
+                    // text element read slices off it with no resolution per element.
+                    lines.push(format!(
+                        "let {}: (*const u8, u32) = vector::text_span_of(&{held}, &stores.allocations);",
+                        base.replacen("__vb_", "__ts_", 1)
+                    ));
                     base_frame.insert(path.clone(), base);
                 }
                 continue;
@@ -3689,6 +3700,10 @@ impl Output<'_> {
                 let base = format!("__vb_{}", self.hoist_counter);
                 lines.push(format!(
                     "let {base}: *const u8 = vector::vec_base(&{name}, &stores.allocations); //@PLN157 § V-ak element base"
+                ));
+                lines.push(format!(
+                    "let {}: (*const u8, u32) = vector::text_span_of(&{name}, &stores.allocations);",
+                    base.replacen("__vb_", "__ts_", 1)
                 ));
                 base_frame.insert(path.clone(), base);
             }
@@ -3901,6 +3916,12 @@ impl Output<'_> {
             writeln!(
                 w,
                 "let {bname} = {base}; //@FR-R-Base view base for {operand}, shared from the held path"
+            )?;
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let {}: (*const u8, u32) = vector::text_span_of(&{name}, &stores.allocations);",
+                bname.replacen("__vb_", "__ts_", 1)
             )?;
             bases.insert(path.clone(), bname);
         }
@@ -4778,6 +4799,48 @@ impl Output<'_> {
             return None;
         };
         self.split_table_var(*x)
+    }
+
+    /// `@FR-R-Base`'s text clause — the text element read `OpGetText(E, 0)` whose element
+    /// address `E` is `OpGetVector*(P, 4, i)` over a path the loop holds a header AND a base
+    /// for: answers `(header, base, path expression, index)`.  Asked by the pre-evaluation
+    /// collector (which then leaves `E` where it stands) and by the emitter (which folds the
+    /// read into `vector::text_elem_at`), so the two cannot disagree.  A field other than 0,
+    /// an element width other than a text's 4, a path with no base, or the switch: `None`.
+    #[must_use]
+    pub fn fused_text_read<'a>(
+        &self,
+        args: &'a [Value],
+    ) -> Option<(String, String, String, &'a Value, &'a Value)> {
+        if self.text_base_disabled || self.hoist_disabled {
+            return None;
+        }
+        let [elem, fld] = args else { return None };
+        if !matches!(fld.unspan(), Value::Int(0)) {
+            return None;
+        }
+        let Value::Call(d, eargs) = elem.unspan() else {
+            return None;
+        };
+        if !hoist::is_element_address(self.data, *d) {
+            return None;
+        }
+        let [vector, size, index] = &eargs[..] else {
+            return None;
+        };
+        if !matches!(size.unspan(), Value::Int(4)) {
+            return None;
+        }
+        let path = hoist::vector_path(self.data, vector)?;
+        let header = self.active_vec_header(&path)?.to_owned();
+        let base = self.active_vec_base(&path)?.to_owned();
+        // The span is bound beside a FRAME's base (`__vb_N` → `__ts_N`); a twin's input base
+        // (`__ib_k`) carries none, and such a read keeps the store-resolving form.
+        if !base.starts_with("__vb_") {
+            return None;
+        }
+        let span = base.replacen("__vb_", "__ts_", 1);
+        Some((header, base, span, vector, index))
     }
 
     /// The table an element read `elem` reads, with whether the read is the RAISING

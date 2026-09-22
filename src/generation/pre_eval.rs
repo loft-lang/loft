@@ -691,6 +691,14 @@ impl Output<'_> {
             {
                 return Ok(());
             }
+            // `@FR-R-Base`'s text clause — a text element read through a held base folds
+            // its element address away, so that address must not be lifted; the index may
+            // still hold work.  Both sides ask `fused_text_read`.
+            if self.data.def(*d_nr).name() == "OpGetText"
+                && let Some((_, _, _, _, index)) = self.fused_text_read(vals)
+            {
+                return self.collect_pre_evals_inner(index, result);
+            }
             // `@FR-R-SplitTable` — the element read of a table emits as the slice at the
             // index, so its inner `OpGetVectorNullable` must not be lifted either; the
             // index itself may still hold work.
