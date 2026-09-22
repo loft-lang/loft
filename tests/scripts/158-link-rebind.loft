@@ -1,0 +1,92 @@
+// A `&`-bound LINK follows its target's rebinding, and so must every fact a loop hoists
+// off a path rooted at the link.  `g = &e; for i in … { e = h[i]; … g.tags[0] … }` reads
+// `h[i]`'s tags on every pass — the interpreter's answer — and `--native` used to hoist
+// `g.tags`' header before the loop and read `h[0]`'s on every pass: the rebind set the
+// hoists consult named `e` and not `g`, so `g` passed for a loop-invariant root.  The set
+// is now closed over links at its one home (`hoist::rebound_vars`), and the single-root
+// tests (a view's header, a record's address, a mint group's path) ask the same question
+// (`hoist::rebinds_root`).  Every cell hand-computes its value; the interpreter is the
+// oracle, `LOFT_HOIST_VERIFY=1` the falsifier (it re-derives every hoisted header and
+// address at every use).  The cells: the header through a link (l1), a scalar through a
+// link over a `?`-discharged view (l2), a link to a LOCAL vector rebound in the loop (l3),
+// a link to a LINK (l4), the target rebound in a NESTED loop while the outer loop holds the
+// link's path (l5), a link to a view rebound in only ONE arm of an `if` (l6), and the
+// control — a link whose target the loop never rebinds hoists as before (l7).
+//
+// @falsified-at: hand-measured (2026-09-22) — on the build before `rebound_vars` closed
+// over links, native answered `l1 15` for `l1 16` (`h[0]`'s tag three times) and, with the
+// heap-holding discharge buffer admitted (`@FR-R-InPlace`), `l2 30` for `l2 60`; the
+// interpreter answered 16 and 60 throughout, and `LOFT_HOIST_VERIFY=1` panicked on the
+// stale header (`rec: 21` held, `rec: 33` re-derived).  Fixed, every cell is exact on both
+// backends under LOFT_HOIST_VERIFY, LOFT_POISON, LOFT_STRICT_STORES and
+// LOFT_NATIVE_LEAK_CHECK.
+
+struct Hv { a: integer, tags: vector<integer> }
+struct Sc { a: integer, b: integer }
+
+fn three() -> vector<Hv> { [Hv { a: 1, tags: [5] }, Hv { a: 2, tags: [2, 3] }, Hv { a: 3, tags: [9] }] }
+
+// l1 — the header through a link: 5 + 2 + 9.
+fn link_view() -> integer {
+  h = three(); e = h[0]; g = &e; s = 0;
+  for i in 0..3 { e = h[i]; s += g.tags[0] ?? 0; }
+  s
+}
+
+// l2 — a scalar through a link over a `?`-discharged view: 10 + 20 + 30.
+fn link_scalar() -> integer {
+  t: vector<Sc> = [Sc { a: 1, b: 10 }, Sc { a: 2, b: 20 }, Sc { a: 3, b: 30 }];
+  e = t[0]?; g = &e; s = 0;
+  for i in 0..3 { e = t[i]?; s += g.b; }
+  s
+}
+
+// l3 — a link to a local VECTOR rebound in the loop: len 2, 3, 1.
+fn link_vec() -> integer {
+  a = [1, 2]; b = [3, 4, 5]; c = [6];
+  v = a; g = &v; s = 0;
+  for i in 0..3 { if i == 1 { v = b; } else if i == 2 { v = c; } s += len(g); }
+  s
+}
+
+// l4 — a link to a LINK: the rebind of the far target reaches through both.
+fn link_link() -> integer {
+  h = three(); e = h[0]; g = &e; k = &g; s = 0;
+  for i in 0..3 { e = h[i]; s += (k.tags[0] ?? 0) * 10 + k.a; }
+  s
+}
+
+// l5 — the target rebound in a NESTED loop while the OUTER loop reads the link's path:
+// pass j: inner rebinds e to h[0], h[1], h[2] and sums their first tags (16); then the
+// outer read sees the last one (9).  Two passes: 2 × (16 + 9).
+fn link_nested() -> integer {
+  h = three(); e = h[0]; g = &e; s = 0;
+  for _j in 0..2 {
+    for i in 0..3 { e = h[i]; s += g.tags[0] ?? 0; }
+    s += g.tags[0] ?? 0;
+  }
+  s
+}
+
+// l6 — the target rebound in ONE arm only: i = 0 keeps h[0] (5), i = 1 rebinds to h[1]
+// (2), i = 2 keeps h[1] (2).
+fn link_arm() -> integer {
+  h = three(); e = h[0]; g = &e; s = 0;
+  for i in 0..3 { if i == 1 { e = h[1]; } s += g.tags[0] ?? 0; }
+  s
+}
+
+// l7 — the control: the target is never rebound, the link's path hoists and reads h[0]
+// three times: 15.
+fn link_still() -> integer {
+  h = three(); e = h[0]; g = &e; s = 0;
+  for _i in 0..3 { s += g.tags[0] ?? 0; }
+  s
+}
+
+fn main() {
+  a = link_view(); b = link_scalar(); c = link_vec(); d = link_link(); e = link_nested(); f = link_arm(); g = link_still();
+  assert(a == 16, "l1 {a}"); assert(b == 60, "l2 {b}"); assert(c == 6, "l3 {c}");
+  assert(d == 166, "l4 {d}"); assert(e == 50, "l5 {e}"); assert(f == 9, "l6 {f}"); assert(g == 15, "l7 {g}");
+  println("l1 {a} l2 {b} l3 {c} l4 {d} l5 {e} l6 {f} l7 {g}");
+}

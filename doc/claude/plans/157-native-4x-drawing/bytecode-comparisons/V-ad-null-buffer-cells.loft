@@ -19,8 +19,9 @@ fn d1() { t = table(); v = [7, 8, 9]; s = 0; for i in 0..3 { e = t[i]?; s += e.a
 // d2 — the default arm TAKEN: index 3 is absent, the buffer holds the zero record.
 // i in 0..4: a = 1, 2, 3, 0; v[i] = 7, 8, 9, absent→0 → 50 + 0 = 50; e.b of the absent one is 0.
 fn d2() { t = table(); v = [7, 8, 9]; s = 0; last = -1; for i in 0..4 { e = t[i]?; s += e.a * (v[i] ?? 0); last = e.b; } println("d2 {s} {last}"); }
-// d3 — the record OWNS HEAP (a vector field): the buffer's store can host a vector, so the
-// discharge keeps blocking.  Values: 1·7 + 2·8 = 23; the absent one's tags are empty.
+// d3 — the record OWNS HEAP (a vector field): since @PLN158 P1 the discharge no longer
+// blocks (the buffer's store is reachable only through the site's temp, rebound per run),
+// so the loop holds its headers.  Values: 1·7 + 2·8 = 23; the absent one's tags are empty.
 fn d3() {
   h: vector<Hv> = [Hv { a: 1, tags: [1] }, Hv { a: 2, tags: [2, 3] }]; v = [7, 8]; s = 0; n = 0;
   for i in 0..3 { e = h[i]?; s += e.a * (v[i] ?? 0); n += len(e.tags); }
@@ -63,9 +64,12 @@ struct Hd { a: integer, tags: vector<integer> = [4, 5, 6] }
 fn d12() { h: vector<Hd> = [Hd { a: 1, tags: [1] }, Hd { a: 2, tags: [2, 3] }]; e = h[0]?; g = &e; s = 0; for i in 0..3 { e = h[i]?; s += g.tags[0] ?? 0; } println("d12 {s}"); }
 
 // d13 — the FALSIFIER proper: d12's alias shape over a heap-owning record WITHOUT a declared
-// default, so the discharge arm has no growth of its own to block the loop — only the
-// all-scalar condition keeps it blocked.  g follows e: 5 + 2 + 0 (absent, empty tags) = 7;
-// a header for (g, tags) taken at loop entry would read h[0]'s tag three times: 15.
+// default, so the discharge arm has no growth of its own to block the loop.  Until @PLN158
+// P1 the all-scalar condition kept the loop blocked and hid the alias question; now the
+// loop holds `h`'s header and the LINK clause keeps `g.tags` out (`g` links to `e`, which
+// the body rebinds — `158-link-rebind.loft`).  g follows e: 5 + 2 + 0 (absent, empty
+// tags) = 7; a header for (g, tags) taken at loop entry would read h[0]'s tag three
+// times: 15.
 fn d13() { h: vector<Hv> = [Hv { a: 1, tags: [5] }, Hv { a: 2, tags: [2, 3] }]; e = h[0]?; g = &e; s = 0; for i in 0..3 { e = h[i]?; s += g.tags[0] ?? 0; } println("d13 {s}"); }
 
 fn main() { d1(); d2(); d3(); d4(); d5(); d6(); d7(); d8(); d9(); d10(); d11(); d12(); d13(); }

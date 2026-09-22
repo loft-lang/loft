@@ -20,9 +20,10 @@ const CELLS: &str =
 const HEADERS: &[(&str, usize, usize)] = &[
     ("n_d1", 2, 0), // t and v
     ("n_d2", 2, 0), // the default arm taken changes nothing at generation time
-    ("n_d3", 0, 1), // a heap-owning record: the LOOP is blocked (no vector header); the one
-    //                  push header is the literal `h = [Hv {…}, Hv {…}]`'s own group header
-    //                  (`@FR-R-GroupPush`, 2026-09-18 — a heap-owning element takes it too)
+    ("n_d3", 2, 1), // a heap-owning record: since 2026-09-22 (@PLN158 P1) the discharge
+    //                  buffer's mint no longer blocks the loop whatever the record holds —
+    //                  h and v hold their headers; the one push header is the literal
+    //                  `h = [Hv {…}, Hv {…}]`'s own group header (`@FR-R-GroupPush`)
     ("n_d4", 3, 0),  // t and v in the loop, v again in the summing loop
     ("n_d5", 1, 1),  // v read, out pushed; t is a call result and leaves the read list
     ("n_d6", 2, 0),  // derived by the outer loop once
@@ -35,7 +36,10 @@ const HEADERS: &[(&str, usize, usize)] = &[
     // element takes it too), bound before the loop and closed at the literal's last finish.
     ("n_d11", 0, 1), // a heap-owning record: blocked
     ("n_d12", 0, 1), // the alias shape over a record with a default vector: blocked
-    ("n_d13", 0, 1), // the alias falsifier proper: heap-owning, no default, blocked
+    ("n_d13", 1, 1), // the alias falsifier proper: heap-owning, no default — since 2026-09-22
+                     //                  the discharge no longer blocks the loop (P1), and the LINK clause keeps
+                     //                  `g.tags` out (g links to e, which the body rebinds): the one header is
+                     //                  `h`'s, the values test reads 7
 ];
 
 /// The cells whose loop is blocked without the admission: under the switch none derives a

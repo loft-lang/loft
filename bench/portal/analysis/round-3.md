@@ -293,6 +293,17 @@ and the folded joins came together.  Left on the row, unpriced: the range's boun
 `len(m.chunks)` is still a CALL per iteration — `(R-Wrapper)` inlines a one-op wrapper only
 over LEAF arguments (the pre-eval map keys on node addresses), and `m.chunks` is a field
 path; with the header held it should read `__vh_1.len`.
+**What it found on the way** — a pre-existing silent-wrong on native, independent of P1: a
+`&`-bound LINK to a view the loop rebinds passed for a loop-invariant root, so `g = &e; for
+i in … { e = h[i]; … g.tags[0] … }` hoisted `g.tags`' header before the loop and read
+`h[0]`'s tags on every pass (15 for 16 — with every switch on or off; `LOFT_HOIST_VERIFY=1`
+panicked on the stale header).  The all-scalar restriction had hidden the SCALAR twin of it
+(`g.b` over a `?`-discharged view) by declining the whole loop, which is how P1 surfaced it:
+`157-null-buffer-hoist.loft`'s `alias_no_default` answered 15 for 7.  Fixed at the one home
+— `hoist::rebound_vars` closes the rebind set over links (a link to a link included) and
+`hoist::rebinds_root` answers the single-root form for a view's header, a record's address
+and a mint group's path; cells `158-link-rebind.loft` l1–l7, and the `(R-InPlace)` rule
+text carries the link clause.
 
 `map_set` (the `chunk_lookup` row) is `for i in 0..len(m.chunks) { if m.chunks[i]?.cx == cx
 && … { m.chunks[i].hexes[k].h_material = mat; return } }`.  The loop hoists NOTHING: the
