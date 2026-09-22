@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1596, `@FR-H-Drop` — A VECTOR REBOUND AWAY FROM A CALL'S RESULT RELEASES IT.  A call
+// delivers a vector into a return buffer of the caller's, and the local that names the delivered
+// value is what releases its elements.  After a rebind that local names the new value, so nothing
+// ever released the old one: every pass of a loop but the last lost its elements.  In a loop the
+// call is handed the same buffer again, and it cleared the old elements before anything could
+// release them.  The scope pass now takes the displaced value aside before the rebind and
+// releases it after the new value.  A buffer the rebinding call is handed is detached first, so
+// the callee fills a fresh one.  A local promoted onto the return buffer is refilled in place,
+// so its old elements are copied out first.
+//
+// Every expected sequence is worked out by hand: `M<id>` a make, `D<id>` a release, `R<n>` a read.
+// The last cell is a control that was right before: a call's result that is never rebound.  A
+// function that returns such a local after rebinding it in a LOOP releases correctly too, but
+// leaks a store for a reason of its own (loft#1599), so it has no cell here.
+//
+// @falsified-at: 658872e26 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1596-a-vector-rebound-from-a-call-result-releases-it.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — the lost
+//   release is a missing `D<id>` in the trace; the store count is unmoved.
+// ARMED: no instrument — each make, release and read is written to this guard's own trace file.
+// WITNESS: on the control, measured with a print in place of the assertion: `v = mkv(1);
+//   v = mkv(2)` traces `M1,M2,R1,D2`, and the loop `M41,R1,M42,R1,D42`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_vector_call_rebind_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct Ch { id: integer }
+fn OpDrop(self: Ch) { note("D{self.id}"); }
+fn cmk(id: integer) -> Ch { note("M{id}"); Ch { id: id } }
+fn cmkv(id: integer) -> vector<Ch> { [cmk(id)] }
+fn cgrow(w: vector<Ch>, id: integer) -> vector<Ch> { [cmk(id + 10 * len(w))] }
+
+fn g1() { v = cmkv(1); v = cmkv(2); note("R{len(v)}"); }
+fn g2() { v = cmkv(1); v = [cmk(2)]; note("R{len(v)}"); }
+fn g3() { v = cmkv(1); w: vector<Ch> = [cmk(3)]; v = w; note("R{len(v)}"); }
+fn g4() { v = cmkv(1); v = []; note("R{len(v)}"); }
+fn g5() { v = cmkv(1); if len(v) > 0 { v = cmkv(2); } note("R{len(v)}"); }
+fn g6() { v: vector<Ch> = []; for i in 0..2 { v = cmkv(41 + i); note("R{len(v)}"); } }
+fn g7() { v: vector<Ch> = [cmk(40)]; for i in 0..3 { v = cmkv(41 + i); note("R{len(v)}"); } }
+fn g8() { v = cmkv(1); for i in 1..3 { v = cgrow(v, i); note("R{v[0].id}"); } }
+fn p2() -> vector<Ch> { v = cmkv(1); v = [cmk(2)]; v }
+fn p3() -> vector<Ch> { v = cmkv(1); v = []; v }
+fn p4() -> vector<Ch> { v = cmkv(1); v = cmkv(2); v }
+fn g10() { x = p2(); note("R{x[0].id}"); }
+fn g11() { x = p3(); note("R{len(x)}"); }
+fn g12() { x = p4(); note("R{x[0].id}"); }
+fn k1() { v = cmkv(1); note("R{len(v)}"); }
+
+fn check(nm: text, want: text) {
+  got = drain();
+  assert(got == want, "{nm}: {got}");
+}
+
+fn main() {
+  drain();
+  g1(); check("g1 a call              ", "M1,M2,D1,R1,D2");
+  g2(); check("g2 a literal           ", "M1,M2,D1,R1,D2");
+  g3(); check("g3 a copy              ", "M1,M3,D1,R1,D3");
+  g4(); check("g4 []                  ", "M1,D1,R0");
+  g5(); check("g5 in an if arm        ", "M1,M2,D1,R1,D2");
+  g6(); check("g6 in a loop           ", "M41,R1,M42,D41,R1,D42");
+  g7(); check("g7 a literal, then calls", "M40,M41,D40,R1,M42,D41,R1,M43,D42,R1,D43");
+  g8(); check("g8 the call reads it   ", "M1,M11,D1,R11,M12,D11,R12,D12");
+  g10(); check("g10 returned, a literal", "M1,M2,D1,R2,D2");
+  g11(); check("g11 returned, []       ", "M1,D1,R0");
+  g12(); check("g12 returned, a call   ", "M1,M2,D1,R2,D2");
+  k1(); check("k1 control: no rebind  ", "M1,R1,D1");
+  println("a vector rebound from a call result releases it: every cell holds");
+}

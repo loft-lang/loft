@@ -796,6 +796,33 @@ CLOSED 2026-09-17, below.
   its inner elements (loft#1597), and a vector moved out and then refilled releases the moved
   elements twice (loft#1598).
 
+### D-heap-31 — OPENED AND CLOSED (2026-09-22, loft#1596): a vector local rebound away from a call's result never released it
+
+- **Violates:** (H-Drop), its reassignment clause.
+- **Where:** a call delivers a vector into a return buffer of the caller's (`__ref_N`), and the
+  local that names the delivered value is what releases its elements (`drop_hook`'s delivered
+  binding).  After a rebind that local names the new value, so no release was ever emitted for
+  the old one.  In a loop the call is handed the SAME buffer again and cleared the old elements
+  in place, with no hook (`(H-Drop-Not)`).  A local promoted onto the return buffer is that
+  buffer, so a call, a literal or `[]` refilled it in place the same way.
+- **Effect:** measured on both backends, identical: `v = mkv(1); v = mkv(2)` traced
+  `M1 M2 R1 D2`, with 1 never released.  The same for a literal, a copy, `[]`, an `if` arm, and
+  a function returning the local, and every pass of a loop but the last lost its elements.
+- **Status:** CLOSED 2026-09-22 — found the same day with `D-heap-26`'s matrix.
+- **Closed:** `Scopes::vector_call_rebind` takes the displaced value aside before a rebind of a
+  local that may hold a call's result: an alias, where the local's store is one of the call
+  buffers of its type (store identity, since a call that reads its own destination rotates two
+  buffers).  A buffer the rebinding call is handed is detached first, so the callee fills a fresh
+  one, and is handed that store back after the call.  After the new value, the aside's elements
+  are released, every buffer sharing its store is set to the sentinel, and the store is freed.
+  For a local promoted onto the return buffer, `Scopes::promoted_vector_refill` copies the old
+  elements out before a refill (`OpAppendVector` takes their heap along) and releases the copy
+  after.  The first fill displaces nothing: the buffer a caller hands in is emptied at entry and
+  may hold what the caller already released.  Guard
+  `tests/scripts/1596-a-vector-rebound-from-a-call-result-releases-it.loft`.  Found beside it: a
+  function returning such a local rebound in a LOOP re-points it at a buffer of its own, and the
+  caller frees only the one it handed in (loft#1599, a leak).
+
 ### D-heap-28 — OPEN (2026-09-22, loft#1591): a variable rebound to a `??` chain that holds itself never releases the kept record on `--native`
 
 - **Violates:** (H-Move), and `@FR-O-NoDiverge` — the two backends disagree.
