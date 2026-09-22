@@ -1,0 +1,84 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1591, `@FR-H-Move` — A `??` CHAIN THAT HOLDS ITS OWN DESTINATION RELEASES ONCE.  `??` is
+// left-associative, so `a = a ?? b ?? d` hoists its subject `a ?? b` into a temp, and the value
+// `a` already holds reached the binding through that temp rather than as an arm.  The two
+// backends put the chain's one copy in different places, and on `--native` the kept record was
+// never released.  The chain is now rewritten before any analysis reads it.  With the
+// destination at its head it is `if present(a) { } else { a = b ?? d }`; elsewhere it is
+// right-associated, `if present(x) { x } else if present(a) { a } else { d }`.  The value and
+// the order the operands are evaluated in are unchanged.
+//
+// Only releases and reads are traced (`<id>`, `R<id>`, `Q<id>` for a call answering absent), and
+// every expected sequence is worked out by hand.  The last cells are controls that were right
+// before: the same chain bound to another variable, and a chain naming no destination.
+//
+// @falsified-at: 9036e8bdf — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1591-a-coalesce-chain-that-holds-its-destination-releases-once.patch —
+//   native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// CHANNEL: the assertion count and the exit code on `--native`; the interpreter answered right
+//   on both trees, which is the divergence this guard exists for.
+// ARMED: no instrument — each make, release and read is written to this guard's own trace file.
+// WITNESS: on the control's native build, measured with a print in place of the assertion:
+//   `a = a ?? b ?? mk(9)` traces `M1,R1` with no release, and `a = x ?? a ?? mk(9)` `M2,R2`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_coalesce_chain_self_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct Qh { id: integer }
+fn OpDrop(self: Qh) { note("{self.id}"); }
+fn qmk(id: integer) -> Qh { note("M{id}"); return Qh { id: id }; }
+fn qnone(id: integer) -> Qh? { note("Q{id}"); return null; }
+
+fn s1() { a: Qh? = qmk(1); b: Qh? = null; a = a ?? b ?? qmk(9); note("R{a.id}"); }
+fn s2() { a: Qh? = qmk(2); x: Qh? = null; a = x ?? a ?? qmk(9); note("R{a.id}"); }
+fn s3() { a: Qh? = qmk(3); x: Qh? = null; y: Qh? = null; a = a ?? x ?? y ?? qmk(9); note("R{a.id}"); }
+fn s4() { a: Qh? = qmk(4); x: Qh? = null; y: Qh? = null; a = x ?? y ?? a ?? qmk(9); note("R{a.id}"); }
+fn s5() { a: Qh? = qmk(5); x: Qh? = null; y: Qh? = null; a = x ?? y ?? a; note("R{a.id}"); }
+fn s6() { a: Qh? = qmk(6); a = a ?? qnone(7) ?? qmk(9); note("R{a.id}"); }
+fn s7() { a: Qh? = null; x: Qh? = qmk(8); a = a ?? x ?? qmk(9); note("R{a.id}"); }
+fn s8() { a: Qh? = null; b: Qh? = null; a = a ?? b ?? qmk(10); note("R{a.id}"); }
+fn s9() { a: Qh? = null; x: Qh? = null; for i in 0..2 { a = a ?? x ?? qmk(11 + i); note("R{a.id}"); } }
+fn k1() { a: Qh? = qmk(21); b: Qh? = null; x: Qh? = qmk(20); x = a ?? b ?? qmk(9); note("R{x.id}"); }
+fn k2() { a: Qh? = qmk(22); x: Qh? = null; y: Qh? = null; x = y ?? a ?? qmk(9); note("R{x.id}"); }
+
+fn check(nm: text, want: text) {
+  got = drain();
+  assert(got == want, "{nm}: {got}");
+}
+
+fn main() {
+  drain();
+  s1(); check("s1 head, then a local        ", "M1,R1,1");
+  s2(); check("s2 second of three           ", "M2,R2,2");
+  s3(); check("s3 head of four              ", "M3,R3,3");
+  s4(); check("s4 third of four             ", "M4,R4,4");
+  s5(); check("s5 the last default          ", "M5,R5,5");
+  s6(); check("s6 head, a call in the middle", "M6,R6,6");
+  s7(); check("s7 head absent, a local moves", "M8,R8,8");
+  s8(); check("s8 head absent, the default  ", "M10,R10,10");
+  s9(); check("s9 in a loop                 ", "M11,R11,R11,11");
+  k1(); check("k1 control: another binding  ", "M21,M20,20,R21,21");
+  k2(); check("k2 control: another binding  ", "M22,R22,22");
+  println("a coalesce chain that holds its destination releases once: every cell holds");
+}

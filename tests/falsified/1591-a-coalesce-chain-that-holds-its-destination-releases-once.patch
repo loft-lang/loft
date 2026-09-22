@@ -1,0 +1,170 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 1785255ee..3175e8d4c 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -3507,157 +3507,6 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
+ /// (`{ __ref_N = call; __ref_N }`): the store the call mints lives only in the value it answers,
+ /// since the buffer it is handed starts as the null sentinel, and the copy only reads it —
+ /// `v += [a ?? mk(n)]` leaked one store per evaluation for every record type.
+-/// `@FR-H-Move` — a `??` CHAIN rebinding a record local that it names as one of its values,
+-/// rewritten right-associated before any analysis reads the function: `a = a ?? b ?? d` and
+-/// `a = x ?? a ?? d` become `if present(p) { p } else { q ?? d }`.
+-///
+-/// `??` is left-associative, so `(p ?? q) ?? d` hoists its subject `p ?? q` into a `__ncc_N`
+-/// temp, and the local's own value then reaches the binding through that temp rather than as
+-/// an arm.  The per-arm write-out, whose identity arm keeps a record the local already holds
+-/// (`sink_set_into_arms`), could not see it.  Neither could the owner witness the oracle gave
+-/// the local instead, and the two backends put the chain's one copy in different places, so it
+-/// lost the kept record's release on `--native` (D-heap-28).  In `If(present(p), p, q)` only
+-/// the `q` arm can be absent, so `(p ?? q) ?? d` equals `if present(p) { p } else { q ?? d }`,
+-/// with the same value, the same operands evaluated in the same order, and `d` still written
+-/// once.  Only a chain that names its destination is rewritten; every other chain keeps the
+-/// form both backends already agree on.
+-fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data) {
+-    let present = data.def_nr("OpConvBoolFromRef");
+-    if present == u32::MAX {
+-        return;
+-    }
+-    let is_present = |c: &Value, v: u16| matches!(c.unspan(), Value::Call(d, a) if *d == present && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(y) if *y == v)));
+-    fn walk(n: &mut Value, f: &dyn Fn(&Value) -> Option<Value>) {
+-        n.for_each_child_mut(&mut |c| walk(c, f));
+-        if let Some(new) = f(n) {
+-            *n = new;
+-        }
+-    }
+-    // The chain with its head operand removed: the innermost `if present(p) { p } else { q }`
+-    // replaced by `q`, every level above it kept as it is.
+-    fn strip_head(val: &Value) -> Option<Value> {
+-        match val.unspan() {
+-            Value::If(_, _, alt) => Some((**alt).clone()),
+-            Value::Block(bl) if bl.name == "ncc" => {
+-                let [first, tail] = bl.operators.as_slice() else {
+-                    return None;
+-                };
+-                let Value::Set(tmp, subject) = first.unspan() else {
+-                    return None;
+-                };
+-                Some(Value::Block(Box::new(Block {
+-                    name: "ncc",
+-                    operators: vec![v_set(*tmp, strip_head(subject)?), tail.clone()],
+-                    result: bl.result.clone(),
+-                    scope: bl.scope,
+-                    var_size: bl.var_size,
+-                })))
+-            }
+-            _ => None,
+-        }
+-    }
+-    // The operands of a hoisted `??` chain, in order, or `None` where `val` is not one.
+-    // `(p ?? q) ?? r` is `ncc { t = <p ?? q>; if present(t) { t } else { r } }`, and its subject
+-    // is either the base `if present(p) { p } else { q }` or a shorter chain of the same shape.
+-    fn operands(
+-        val: &Value,
+-        is_present: &dyn Fn(&Value, u16) -> bool,
+-        out: &mut Vec<Value>,
+-    ) -> bool {
+-        match val.unspan() {
+-            Value::If(c, head, alt) if matches!(head.unspan(), Value::Var(p) if is_present(c, *p)) =>
+-            {
+-                out.push((**head).clone());
+-                out.push((**alt).clone());
+-                true
+-            }
+-            Value::Block(bl) if bl.name == "ncc" => {
+-                let [first, tail] = bl.operators.as_slice() else {
+-                    return false;
+-                };
+-                let (Value::Set(tmp, subject), Value::If(c, held, rest)) =
+-                    (first.unspan(), tail.unspan())
+-                else {
+-                    return false;
+-                };
+-                if !is_present(c, *tmp) || !matches!(held.unspan(), Value::Var(x) if x == tmp) {
+-                    return false;
+-                }
+-                if !operands(subject, is_present, out) {
+-                    return false;
+-                }
+-                out.push((**rest).clone());
+-                true
+-            }
+-            _ => false,
+-        }
+-    }
+-    let rewrite = |n: &Value| -> Option<Value> {
+-        let Value::Set(dest, val) = n else {
+-            return None;
+-        };
+-        let dest = *dest;
+-        if !matches!(
+-            function.tp(dest).base(),
+-            Type::Reference(_, _) | Type::Enum(_, true, _)
+-        ) {
+-            return None;
+-        }
+-        if !matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc") {
+-            return None;
+-        }
+-        let mut ops = Vec::new();
+-        if !operands(val, &is_present, &mut ops) {
+-            return None;
+-        }
+-        // The destination as the chain's HEAD: `a = a ?? rest` keeps the value `a` holds when it
+-        // is present, so it is `if present(a) { } else { a = rest }`, and `rest` no longer names
+-        // the destination.
+-        // Each arm is a block of its own, as `sink_set_into_arms` writes them: the rebind may
+-        // take a snapshot of the record it displaces, registered at the scope it runs in.
+-        if matches!(ops.first().map(Value::unspan), Some(Value::Var(x)) if *x == dest) {
+-            let arm = |op: Value| {
+-                Value::Block(Box::new(Block {
+-                    name: "sunk arm",
+-                    operators: vec![op],
+-                    result: Type::Void,
+-                    scope: 0,
+-                    var_size: 0,
+-                }))
+-            };
+-            return Some(Value::If(
+-                Box::new(Value::Call(present, vec![Value::Var(dest)])),
+-                Box::new(arm(Value::Insert(Vec::new()))),
+-                Box::new(arm(v_set(dest, strip_head(val)?))),
+-            ));
+-        }
+-        // Right-associated all the way down, so every arm is a variable or the last default: a
+-        // middle operand that is not a variable would need a temp of its own again, and a
+-        // chain that has one keeps its form.
+-        let last = ops.pop()?;
+-        if !ops
+-            .iter()
+-            .any(|o| matches!(o.unspan(), Value::Var(x) if *x == dest))
+-            && !matches!(last.unspan(), Value::Var(x) if *x == dest)
+-        {
+-            return None;
+-        }
+-        let mut acc = last;
+-        for o in ops.into_iter().rev() {
+-            let Value::Var(x) = o.unspan() else {
+-                return None;
+-            };
+-            acc = Value::If(
+-                Box::new(Value::Call(present, vec![Value::Var(*x)])),
+-                Box::new(o),
+-                Box::new(acc),
+-            );
+-        }
+-        Some(v_set(dest, acc))
+-    };
+-    walk(code, &rewrite);
+-}
+-
+ fn write_out_joined_copies(code: &mut Value, function: &Function, data: &Data) {
+     let copy_d = data.def_nr("OpCopyRecord");
+     if copy_d == u32::MAX {
+@@ -8137,7 +7986,6 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+         // A join copied into a container is written out per arm before any analysis reads it,
+         // so each arm's copy hands its own source over (`formal/heap.md` D-heap-15).
+         write_out_joined_copies(&mut orig_code, &orig_vars, data);
+-        reassociate_self_coalesce(&mut orig_code, &orig_vars, data);
+         // Phase 1: the normal scan → apply → set-scope pass.
+         let written_out = run_scan_phase(
+             data,

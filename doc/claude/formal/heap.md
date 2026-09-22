@@ -597,7 +597,7 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-28` (`D-heap-26` closed 2026-09-22;
+OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-15` (`D-heap-26` and `D-heap-28` closed 2026-09-22;
 `D-heap-30`, `D-heap-31` and `D-heap-32` opened and closed 2026-09-22, loft#1594, loft#1596 and
 loft#1598; `D-heap-28` and
 `D-heap-29` found 2026-09-22 while closing `D-heap-15`'s `p_i2`, the second closed that day; `D-heap-27`, the tuple twin of
@@ -844,7 +844,7 @@ CLOSED 2026-09-17, below.
   function returning such a local rebound in a LOOP re-points it at a buffer of its own, and the
   caller frees only the one it handed in (loft#1599, a leak).
 
-### D-heap-28 — OPEN (2026-09-22, loft#1591): a variable rebound to a `??` chain that holds itself never releases the kept record on `--native`
+### D-heap-28 — OPENED AND CLOSED (2026-09-22, loft#1591): a variable rebound to a `??` chain that holds itself never released the kept record on `--native`
 
 - **Violates:** (H-Move), and `@FR-O-NoDiverge` — the two backends disagree.
 - **Where:** `a = a ?? b ?? mk()` is `(a ?? b) ?? mk()`, so the subject `(a ?? b)` is hoisted into a
@@ -858,10 +858,19 @@ CLOSED 2026-09-17, below.
   on the interpreter and `M17 R17` on `--native`.  `a = x ?? a ?? mk(3)` behaves the same.  Clean
   on both backends: the same chain bound to another variable, every chain without the
   destination, the destination absent, and a single `??` over itself (`D-heap-15`, `p_i2`).
-- **Status:** OPEN — found 2026-09-22 while closing `p_i2`.
-- **Removal:** one copy point for a `??` hoist on both backends.  Either native aliases the hoist
-  and copies at an owning rebind, as the interpreter does, or the interpreter copies at the hoist.
-  The witness's store-identity test then agrees across backends.
+- **Status:** CLOSED 2026-09-22 — found the same day while closing `p_i2`.
+- **Closed:** the chain is rewritten before any analysis reads the function
+  (`scopes::reassociate_self_coalesce`), so neither the hoist nor the witness is involved.  In
+  `if present(p) { p } else { q }` only the `q` arm can be absent, so `(p ?? q) ?? d` equals
+  `if present(p) { p } else { q ?? d }`, with the same value and the same evaluation order.
+  With the destination as the HEAD the rebind becomes `if present(a) { } else { a = rest }`, where
+  `rest` is the chain without its head and no longer names `a`.  With the destination further
+  along, and every operand before the last a variable, the chain is right-associated all the
+  way down, so each arm is a variable or the last default and the per-arm write-out takes it,
+  its `a` arm the identity (`D-heap-15`, `p_i2`).  A chain that names no destination keeps its
+  form.  Measured on both backends: the destination first, second, third and last, a call in
+  the middle, the head absent, and in a loop.  Guard
+  `tests/scripts/1591-a-coalesce-chain-that-holds-its-destination-releases-once.loft`.
 
 ### D-heap-29 — OPENED AND CLOSED (2026-09-22, loft#1592): in a loop, a join over a source declared outside it, moved on, released twice
 
