@@ -6286,6 +6286,7 @@ impl Parser {
                     self.data.def(d_nr).known_type() != u16::MAX
                         && (!self.cascade_fields(d_nr).is_empty()
                             || !self.cascade_vectors(d_nr).is_empty()
+                            || !self.cascade_shared_vectors(d_nr).is_empty()
                             || !self.cascade_keyed(d_nr).is_empty())
                 }
                 // An ENUM releases through whichever variant it currently holds.
@@ -6566,6 +6567,14 @@ impl Parser {
             let Some((fd, read_tp)) = self.cascade_field_target(&a.typedef) else {
                 continue;
             };
+            // A shared VECTOR capture wears its element's `Reference` spelling; it is walked by
+            // `cascade_shared_vectors`, never released as one record.
+            if self
+                .closure_shared_vectors
+                .contains_key(&(d_nr, self.data.attr_name(d_nr, a_nr)))
+            {
+                continue;
+            }
             if fd == d_nr || !self.data.owns_droppable(fd) {
                 continue; // a self-field cannot exist inline; skip defensively
             }
@@ -6610,6 +6619,37 @@ impl Parser {
                 continue;
             }
             out.push((off, a.typedef.base().clone(), elm, ed));
+        }
+        out
+    }
+
+    /// A CLOSURE record's shared vector captures (loft#1606): `(byte offset, vector type,
+    /// element type, element definition)` for each attribute [`Parser::closure_shared_vectors`]
+    /// names whose elements own a droppable.  The attribute holds the captured vector's own
+    /// `DbRef`, so the walk reads it with `OpGetDbRef` where [`Self::cascade_vectors`] reads an
+    /// inline field.
+    fn cascade_shared_vectors(&self, d_nr: u32) -> Vec<(u16, Type, Type, u32)> {
+        let kt = self.data.def(d_nr).known_type();
+        let mut out = Vec::new();
+        for a_nr in 0..self.data.def(d_nr).attributes().len() {
+            let name = self.data.attr_name(d_nr, a_nr);
+            let Some(vec_tp) = self.closure_shared_vectors.get(&(d_nr, name.clone())) else {
+                continue;
+            };
+            let Type::Vector(elm, _) = vec_tp.base() else {
+                continue;
+            };
+            let Some((elm, ed)) = self.cascade_element((**elm).clone()) else {
+                continue;
+            };
+            if !self.data.type_owns_droppable_anywhere(&elm) {
+                continue;
+            }
+            let off = self.database.position(kt, &name);
+            if off == u16::MAX {
+                continue;
+            }
+            out.push((off, vec_tp.clone(), elm, ed));
         }
         out
     }
@@ -6898,6 +6938,22 @@ impl Parser {
             );
             let loop_code = self.drop_elements_loop(&field, n, &elem_tp, target);
             ops.push(loop_code);
+        }
+        let inline = self.cascade_vectors(t).len();
+        for (n, (off, _, elem_tp, ed)) in
+            self.cascade_shared_vectors(t).into_iter().enumerate().rev()
+        {
+            let target = self.data.drop_cascade_nr(ed);
+            if target == u32::MAX {
+                continue;
+            }
+            let field = self.cl(
+                "OpGetDbRef",
+                &[Value::Var(self_var), Value::Int(i32::from(off))],
+            );
+            let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
+            let walk = self.drop_elements_loop(&field, inline + n, &elem_tp, target);
+            ops.push(v_if(live, walk, Value::Null));
         }
         // loft#1601 — a keyed field's records release the generator frames they hold, and
         // only those (`(H-Drop-Not)` keeps their hooks out).

@@ -983,6 +983,12 @@ pub struct Parser {
     /// hidden parameter, and the value form assigns the arms' temps into the buffer var.
     /// Keyed by name because a pass rebuilds the variable table; recorded on both passes.
     pub(crate) branch_sunk_vectors: std::collections::HashSet<(u32, String)>,
+    /// The closure-record attributes that SHARE a captured vector, by `(record, attribute)`,
+    /// with the vector's type.  `closure_attr_type` stores such a capture as a 12-byte `DbRef`
+    /// spelled `Reference(element)` — the spelling a shared RECORD capture has too — so the
+    /// drop cascade reads this to walk the vector rather than release one element-typed
+    /// record at the vector's slot (loft#1606).
+    pub(crate) closure_shared_vectors: std::collections::HashMap<(u32, String), Type>,
     /// Variable number of the __closure parameter inside a lambda body (second pass).
     /// `u16::MAX` when not inside a capturing lambda.
     pub(crate) closure_param: u16,
@@ -1602,6 +1608,7 @@ impl Parser {
             rebound_captures: std::collections::HashMap::new(),
             captured_names: Vec::new(),
             branch_sunk_vectors: std::collections::HashSet::new(),
+            closure_shared_vectors: std::collections::HashMap::new(),
             fn_lambdas: std::collections::HashMap::new(),
             closure_param: u16::MAX,
             cur_type_vars: Vec::new(),

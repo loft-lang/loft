@@ -2927,6 +2927,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             ensure_tuple_defs_for_capture(&mut self.data, &mut self.lexer, &ctype);
             let attr_tp = self.closure_attr_type(&ctype);
             self.data.set_attr_type(closure_rec, a_nr, attr_tp);
+            self.note_shared_vector(closure_rec, &name, &ctype);
         }
         if self.data.def(closure_rec).known_type() == u16::MAX
             && !(0..self.data.attributes(closure_rec))
@@ -2935,6 +2936,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             crate::typedef::fill_database(&mut self.data, &mut self.database, closure_rec);
             self.database
                 .lay_out_record(self.data.def(closure_rec).known_type());
+        }
+    }
+
+    /// Record that the closure record `rec`'s attribute `name` shares the captured vector of
+    /// type `tp` — see [`Parser::closure_shared_vectors`].  A `&vector<τ>` capture shares its
+    /// pointee, as `closure_attr_type` stores it.
+    fn note_shared_vector(&mut self, rec: u32, name: &str, tp: &Type) {
+        let tp = tp.peel_link();
+        if matches!(tp, Type::Vector(_, _)) {
+            self.closure_shared_vectors
+                .insert((rec, name.to_string()), tp.clone());
         }
     }
 
@@ -2961,6 +2973,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 let attr_tp = self.closure_attr_type(tp);
                 self.data
                     .add_attribute(&mut self.lexer, record_d_nr, name, attr_tp);
+                self.note_shared_vector(record_d_nr, name, tp);
                 // loft#1540 — a capture of a read-only value is a read-only FIELD of the
                 // record: the body reaches it through `__closure.<name>`, and a write through
                 // a value-const field is refused at the write (`frozen_through`).

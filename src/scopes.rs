@@ -8694,7 +8694,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // rewrite above has settled.  Must run after the loop, not inside it: the
     // verdict is the same `owns` fact `get_free_vars` uses, and that fact is only
     // final once the call-result rewrites (`make_independent`) have run.
-    mark_borrowed_captures(data);
+    mark_borrowed_captures(data, database);
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);
@@ -8723,7 +8723,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
 /// The record is reached through the enclosing frame's `___clos_N` variable
 /// rather than by walking the IR: `emit_lambda_code` always mints one, and it
 /// lives in exactly the frame whose variables decide the verdict.
-fn mark_borrowed_captures(data: &mut Data) {
+fn mark_borrowed_captures(data: &mut Data, database: &crate::database::Stores) {
     let mut borrowed: Vec<(u32, usize)> = Vec::new();
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
@@ -8772,6 +8772,58 @@ fn mark_borrowed_captures(data: &mut Data) {
     }
     for (record, a) in borrowed {
         data.mark_capture_borrowed(record, a);
+        strip_borrowed_capture_walk(data, database, record, a);
+    }
+}
+
+/// `@FR-L-CapOne` for the HOOKS — a record that BORROWS a capture runs no drop over it.
+///
+/// The record's drop cascade was synthesized at parse time, before this pass decided which
+/// record keeps a shared store, so it walks every capture slot.  Two closures over one
+/// store then ran the captured elements' hooks once each (loft#1606).  The free-side
+/// half reads the borrowed marker `mark_capture_borrowed` writes; this is the hook-side
+/// half: every walk the record's cascade (and its Except variant) guards on that slot's
+/// `OpGetDbRef(self, offset)` is removed.
+fn strip_borrowed_capture_walk(
+    data: &mut Data,
+    database: &crate::database::Stores,
+    record: u32,
+    a: usize,
+) {
+    let kt = data.def(record).known_type();
+    let off = database.position(kt, &data.attr_name(record, a));
+    let get_dbref = data.def_nr("OpGetDbRef");
+    if off == u16::MAX || get_dbref == u32::MAX {
+        return;
+    }
+    fn guards_on_slot(cond: &Value, get_dbref: u32, off: u16) -> bool {
+        let mut hit = false;
+        cond.walk(&mut |n| {
+            if let Value::Call(d, args) = n.unspan()
+                && *d == get_dbref
+                && matches!(args.get(1).map(Value::unspan), Some(Value::Int(o)) if *o == i32::from(off))
+            {
+                hit = true;
+            }
+        });
+        hit
+    }
+    // Wherever the guarded walk sits — at the cascade's top, or under the Except variant's
+    // `skip` test — the guard is replaced by nothing.
+    fn scrub(v: &mut Value, get_dbref: u32, off: u16) {
+        if matches!(v.unspan(), Value::If(cond, _, _) if guards_on_slot(cond, get_dbref, off)) {
+            *v = Value::Null;
+            return;
+        }
+        v.for_each_child_mut(&mut |c| scrub(c, get_dbref, off));
+    }
+    for cascade in [
+        data.drop_cascade_nr(record),
+        data.drop_cascade_except_nr(record),
+    ] {
+        if cascade != u32::MAX {
+            scrub(&mut data.definitions[cascade as usize].code, get_dbref, off);
+        }
     }
 }
 
@@ -9039,7 +9091,11 @@ fn capture_store_adopters(
         // mints for it.  A frame that receives the record as an ARGUMENT is the closure BODY
         // (its hidden `__closure` parameter), whose own variable table knows nothing about who
         // owns the captures — reading it flipped the verdict depending on definition order.
-        if function.is_argument(v) {
+        // …and a displaced-record SNAPSHOT (`__disp_N`, `displaced_drop`) is a transient copy
+        // released where it is taken, never an adopter: named one, it became the witness the
+        // frame's conditional release reads, and the frame freed the capture under the live
+        // record (loft#1606).
+        if function.is_argument(v) || function.name(v).starts_with("__disp_") {
             continue;
         }
         let Type::Reference(record, _) = function.tp(v) else {
@@ -13012,8 +13068,20 @@ impl Scopes<'_> {
         let name = format!("__disp_{}", self.lift_counter);
         let disp = function.add_temp_var(&name, &tp);
         function.mark_inline_ref(disp);
-        self.var_scope.insert(disp, self.scope);
+        // A CLOSURE record's snapshot is homed at the FUNCTION body (1), its null-init hoisted
+        // there (`lift_vars`), as `__blk_N` is: the record is rebuilt inside its lambda's
+        // `fn_ref_with_closure` block, whose value is the `FnRef` it ends in, and the sweep's
+        // second visit (a no-op on the sentinel) made at that block's end stood after the value
+        // (loft#1606: `()` on native, a garbage fn-ref on the interpreter).  Every other snapshot
+        // keeps its statement's scope: homed at the function, a generator's would become a heap
+        // temp its TAIL releases when a `match` drains it.
+        let closure_record = function.name(v).starts_with("___clos_");
+        self.var_scope
+            .insert(disp, if closure_record { 1 } else { self.scope });
         self.var_order.push(disp);
+        if closure_record {
+            self.lift_vars.push(disp);
+        }
         let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
         let snapshot = Value::Insert(vec![
             Value::Call(
@@ -13219,13 +13287,25 @@ impl Scopes<'_> {
         // backings — a vector member's `__vdb_N`, a record member a whole-tuple bind copied
         // into a `__ref_N` (loft#1361) — so those take its place too (loft#1588).
         let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
+        // A fn-ref's closure record releases in the fn-ref's turn, just BEFORE it (loft#1606):
+        // the record's release runs its cascade and then frees its store, where the fn-ref's
+        // free alone frees the store with no cascade — so run first, it left the record's
+        // cascade to read a freed record.  The fn-ref's free after it finds the store gone.
+        let fn_ref = matches!(function.tp(v).base(), Type::Function(..));
+        let mut records = Vec::new();
         let mut backings = function.tp(v).depend().clone();
         if let Type::Tuple(elems) = function.tp(v).base() {
             backings.extend(elems.iter().filter_map(|e| member_backing(function, e)));
         }
         for d in backings {
             let name = function.name(d);
-            if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
+            if fn_ref
+                && name.starts_with("___clos_")
+                && let Some(pos) = self.var_order.iter().position(|&x| x == d)
+            {
+                self.var_order.remove(pos);
+                records.push(d);
+            } else if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
                 && let Some(pos) = self.var_order.iter().position(|&x| x == d)
             {
                 self.var_order.remove(pos);
@@ -13233,6 +13313,7 @@ impl Scopes<'_> {
             }
         }
         self.var_order.push(v);
+        self.var_order.extend(records);
     }
 
     /// `@FR-H-Drop`'s scope-end clause for an `if` arm's owner: a local every mention of which,
@@ -15113,7 +15194,11 @@ impl Scopes<'_> {
             // is what keeps the re-mint and the backing's own release from running the hooks a
             // second time — `clear` runs none (`H-Drop-Not`).  The release is the backing's
             // (`scope_end_drop`), so a hand-off that stopped it still stops it.
+            // A CAPTURED local's store is the closure record's to release (`@FR-L-CapOwn`,
+            // `capture_adoption_owns_free`), at every scope's end as at the function's: released
+            // here as well, its hooks ran twice (loft#1606).
             if let Some(backing) = outer_collection_backing(function, v, &exited)
+                && !capture_adoption_owns_free(data, function, &self.capture_build_backing, v)
                 && let Some(hook) = self.scope_end_drop(function, backing, data, None)
             {
                 ls.push(hook);
