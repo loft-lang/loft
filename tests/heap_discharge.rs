@@ -63,9 +63,12 @@ fn a_loop_discharging_a_heap_record_holds_its_header_and_base() {
         f.contains("let __vh_") && f.contains("let __vb_"),
         "find_set: the loop over `m.chunks` holds a header and an element base"
     );
-    // (`len(m.chunks)` in the range's bound is still a CALL per iteration: `(R-Wrapper)`
-    // inlines a one-op wrapper only over leaf arguments, and `m.chunks` is a field path —
-    // a lever of its own, recorded in the round-3 ledger, not this rule's.)
+    // `len(m.chunks)` in the range's bound reads the header too: `(R-Wrapper)` inlines
+    // the wrapper over a pure vector path, so the op's operand is the held path.
+    assert!(
+        !f.contains("t_6vector_len(cell"),
+        "find_set: `len(m.chunks)` reads the header, not a call per iteration"
+    );
     // The three `m.chunks[i]?.<scalar>` joins fold through the base: one range test and
     // one load each, the join's mint written once in the fallback arm.
     assert_eq!(

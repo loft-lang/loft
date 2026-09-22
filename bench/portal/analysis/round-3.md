@@ -442,9 +442,26 @@ Built, in this order: W2 (`join` 1.96×, four more text rows to ~1×), W1 (`char
 7.8× → ~1.15×, § Built), **C1** as `(R-GuardFree)` (`fib` −34 %; the stack-pointer half
 DECLINED — `MAX_CALL_DEPTH` is a cap both backends report identically, D-op-1), **P1** as
 the relaxed hidden-buffer allowance (`chunk_lookup` −54 %, § P1's corrected diagnosis).
-**Left:** the closing `make perf-portal` ALONE on the box, and the levers found on the way —
-`len(<field path>)` under a held header (the wrapper inline over a non-leaf argument;
-`map_set`'s bound), the ones below.  Levers this round FOUND and left unpriced, each with its number: a
+The portal was re-measured at `9496b1622` (median 1.85× every routine, 1.60× shipped, 16
+over 3×).  **Round 4 (2026-09-22, evening)** takes the levers found on the way, smallest
+first: **`len(<field path>)` under a held header** — BUILT: `(R-Wrapper)` now inlines a
+one-op wrapper over a pure vector path (`hoist::vector_path`, no pre-evaluation binding),
+so `for i in 0..len(m.chunks)` reads `__vh_1.len` per iteration instead of calling
+`t_6vector_len` — `chunk_lookup` 816 → 751 µs (−8 %, hash `26d76`), six of the consumer
+bench's seven `len` calls gone; 88 loops in the corpus and the libraries are bounded that
+way.  **What the rebase onto main found**: main's join brought the loft#1575 cells, and P1
+on that tree lost one — a literal handed to a call (`s = me(Bx { v: [i], n: 7 })`) is built
+in a `__ref_p2_` buffer re-minted per pass, the IR spells the re-mint as a bare call, and a
+push header hoisted off the buffer's vector field pushed into the record the previous pass
+claimed (`c3` read `null(oob)` for `1`; `LOFT_NO_NULL_BUFFER_HOIST=1` and
+`LOFT_NO_VECTOR_HOIST=1` were the two switches that cured it).  The allowance's all-scalar
+restriction had hidden it.  Fixed at the one home: a pass-2 buffer's re-mint counts as a
+rebind of the buffer (`hoist::rebound_vars`), so no holder is taken off a path rooted at
+it; the rule text carries the clause, and two pins read P1's admissions (`copy_in_place`
+c8's nested-record write-back loop, `null_buffer_hoist` d13).  Next: a text element read
+through the held base (`join` 2.11×), the trip-count bound
+for a text walk's accumulator (`char_walk` 3.14×), the record push window under a branch
+(`enum_match` 3.98×), the per-iteration call source in `for c in s.trim()`.  Levers this round FOUND and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
 through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
 walk's accumulator (`char_walk`'s 12.9 → 8.3), and the parser's per-iteration evaluation of

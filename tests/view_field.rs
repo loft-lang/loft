@@ -102,8 +102,10 @@ fn a_site_reads_the_leaf_off_the_tuple() {
         src.contains("let mut var_m1: (bool, bool, DbRef) = n_a1(cell, var_s1, 3_i64);"),
         "the site binds the tuple and passes no buffer"
     );
+    // `len(m1.pts)` is its op over the path (`(R-Wrapper)` over a pure vector path, since
+    // @PLN158 round 3), and the path over a value-record local reads the tuple's leaf.
     assert!(
-        src.contains("t_6vector_len(cell, var_m1.2)"),
+        src.contains("vector::length_vector(&(var_m1.2), &stores.allocations)"),
         "a length reads the leaf's reference straight off the tuple"
     );
 }

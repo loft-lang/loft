@@ -360,8 +360,8 @@ pub fn nested_counted_loops<'a>(
 
 /// The variables `body` rebinds anywhere — a `Set`, a `TuplePut`, an `Iter` binding.
 #[must_use]
-pub fn written_vars(body: &Block, vars: &crate::variables::Function) -> HashSet<u16> {
-    let mut w = rebound_vars(body, vars);
+pub fn written_vars(body: &Block, data: &Data, vars: &crate::variables::Function) -> HashSet<u16> {
+    let mut w = rebound_vars(body, data, vars);
     for op in &body.operators {
         op.any_node(&mut |n| {
             if let Value::Iter(v, ..) = n {
@@ -373,17 +373,34 @@ pub fn written_vars(body: &Block, vars: &crate::variables::Function) -> HashSet<
     w
 }
 
-/// The variables `body` rebinds — a `Set` or a `TuplePut` — closed over LINKS: a `&`-bound
-/// local reads whatever its target holds NOW, so a rebind of the target repoints every path
-/// rooted at the link, and the link counts as rebound too ([`close_over_links`]).  The one
-/// home of the question every hoist asks of its root; a site that asks it of a single
-/// variable uses [`rebinds_root`].
-fn rebound_vars(body: &Block, vars: &crate::variables::Function) -> HashSet<u16> {
+/// The variables `body` rebinds — a `Set` or a `TuplePut`, and the RE-MINT of a hidden
+/// pass-2 buffer (`OpDatabase`/`OpDatabaseNP` on a `__ref_p2_N`: a literal handed to a
+/// call, a `?`-discharge's absent record), which the IR spells as a bare call while it
+/// clears the buffer's store and claims a fresh record, so every path rooted at the buffer
+/// names another record after it — closed over LINKS: a `&`-bound local reads whatever its
+/// target holds NOW, so a rebind of the target repoints every path rooted at the link, and
+/// the link counts as rebound too ([`close_over_links`]).  The one home of the question
+/// every hoist asks of its root; a site that asks it of a single variable uses
+/// [`rebinds_root`].  (Measured without the mint clause, once `(R-InPlace)`'s hidden-buffer
+/// allowance took a heap-holding record: a push header hoisted off the literal buffer's
+/// vector field before the loop, the buffer re-minted per pass, the element lost —
+/// `1575-…`'s c3 read `null(oob)` for `1`.)
+fn rebound_vars(body: &Block, data: &Data, vars: &crate::variables::Function) -> HashSet<u16> {
     let mut rebound: HashSet<u16> = HashSet::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
             if let Value::Set(v, _) | Value::TuplePut(v, _, _) = n {
                 rebound.insert(*v);
+            }
+            // A `__ref_p2_` buffer as the first operand of anything but its mint (a field
+            // set, the call it is handed to) is a use, not a rebind.
+            if let Some(args) =
+                call_named(n, data, "OpDatabase").or_else(|| call_named(n, data, "OpDatabaseNP"))
+                && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+                && *b < vars.count()
+                && vars.name(*b).starts_with("__ref_p2_")
+            {
+                rebound.insert(*b);
             }
             false
         });
@@ -451,7 +468,7 @@ fn rebinds_root(n: &Value, root: u16, vars: &crate::variables::Function) -> bool
 /// Enforces `@FR-R-Header`: which paths a loop derives a header for.
 fn vector_candidates(body: &Block, data: &Data, def_nr: u32) -> Vec<(PathKey, Value)> {
     let vars = data.def(def_nr).variables();
-    let rebound = rebound_vars(body, vars);
+    let rebound = rebound_vars(body, data, vars);
     let mut found: Vec<(PathKey, Value)> = Vec::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
@@ -644,7 +661,7 @@ pub fn hoistable(
         growth_free: false,
     };
     let vars = data.def(def_nr).variables();
-    let rebound = rebound_vars(body, vars);
+    let rebound = rebound_vars(body, data, vars);
     // (key, record type, the call) in first-appearance order.
     let mut found: Vec<(ScalarKey, u16, Value)> = Vec::new();
     if tiers.scalars {
@@ -1378,7 +1395,7 @@ fn callee_inputs_inner(
     }
     let vars = def.variables();
     let params = u16::try_from(def.attributes().len()).ok()?;
-    let rebound = rebound_vars(body, vars);
+    let rebound = rebound_vars(body, data, vars);
     // What the body writes, as the caller's gate accounts it (`@FR-R-Callee`): a
     // return-buffer writer (§ V-ac — `brush_sample` answering a `Smp` through its buffer)
     // reaches its buffer's record type WHOLE, which no parameter's field shares; any other
@@ -11011,7 +11028,7 @@ pub fn invariant_chains(
     {
         return Vec::new();
     }
-    let mut banned = rebound_vars(lp, vars);
+    let mut banned = rebound_vars(lp, data, vars);
     for op in &lp.operators {
         super::non_sentinel::collect_escapes(data, op, &mut banned);
     }

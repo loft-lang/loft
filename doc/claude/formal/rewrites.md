@@ -514,7 +514,12 @@ switch on or off); cells `tests/scripts/158-link-rebind.loft` l1–l7.
 allocation takes a store of its own from a null slot or clears the buffer's OWN store,
 and that store is reachable only through the site's `__ncc_N` temp, which the site
 rebinds on every run: no loop-invariant path names anything in it, so no header and no
-base can go stale; the field sets that follow are (R-InPlace) sets and walk on their own,
+base can go stale — and the buffer's own re-mint in a loop body counts as a REBIND of
+the buffer (`hoist::rebound_vars`), so a path rooted at a pass-2 buffer the body re-mints
+takes no holder either: a literal handed to a call (`s = me(Bx { v: [i], n: 7 })`) is
+built in such a buffer and re-minted per pass, and a push header hoisted off its vector
+field would push into the record the previous pass claimed (measured: `1575-…`'s c3
+read `null(oob)` for `1` the moment the allowance took a heap-holding record); the field sets that follow are (R-InPlace) sets and walk on their own,
 and the scalar tier reads the allocation as the record's type whole (R-Scalar).  A growth
 of the buffer's own store from the body — an append to the absent element's vector
 field — is a push through a non-pure path, which the gate declines on its own.  Until
@@ -816,18 +821,25 @@ registry's `NewRecordEmitter`, `Output::write_elem_first_mint`.
 ```
   (R-Wrapper)    a call to a STDLIB function whose whole body is one native op over
                  its own parameters and constants, with leaf arguments (a variable,
-                 a literal) and no text operand or result, is emitted as that op
-                 with the arguments in the operand positions.  A USER function's
-                 call is observable — the live tier may flip it to the interpreter,
-                 and its frame is on the shadow call stack — and stays a call.
+                 a literal) or a PURE VECTOR PATH (constant field projections over a
+                 variable) the pre-evaluation holds no binding for, and no text
+                 operand or result, is emitted as that op with the arguments in the
+                 operand positions.  A USER function's call is observable — the live
+                 tier may flip it to the interpreter, and its frame is on the shadow
+                 call stack — and stays a call.
 ```
 
 **In words.** @PLN157 § V-o.  The wrapper's compiled Rust body IS the op's template,
 so for a frameless, unflippable stdlib method the op is the call; `len(d)` after a
-view binding then reads the header.  Leaf arguments only, because the op's operands
-are emitted from a fresh list the pre-evaluation map (keyed on node addresses)
-cannot see.  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.  Sites:
-`hoist::one_op_wrapper`, `Output::wrapper_op`.
+view binding then reads the header.  Leaf arguments, because the op's operands are
+emitted from a fresh list the pre-evaluation map (keyed on node addresses) cannot see —
+and, since 2026-09-22 (@PLN158 round 3), a pure vector path too: side-effect free and
+never bound by the pre-evaluation, its clone emits what the original would, and as the
+op's operand it is what a held header serves.  Before that `for i in 0..len(m.chunks)`
+kept `len` a CALL per iteration — a store resolution and a length load — beside the
+header the loop already held for `m.chunks` (`map_set`'s bound, and 88 such loops in
+the corpus and the libraries).  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.
+Sites: `hoist::one_op_wrapper`, `Output::wrapper_op`.
 
 ### A callee's invariant inputs cross the call
 
