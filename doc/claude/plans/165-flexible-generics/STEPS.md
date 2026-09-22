@@ -999,7 +999,9 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   program's definition joins the set and outranks it, as it outranks the special form today;
   (b) no stdlib free name is reserved any more — every program definition beside a stdlib one
   is a member of the set (`G-Select`), the program's ranking first on a tie; (c) the special
-  forms stay.  Measuring note: every binary reads `default/` from the tree, so a corpus diff
+  forms stay.  The measured code is [probes/e1-library-reverse.patch](probes/e1-library-reverse.patch)
+  (the switch, the IR inline, `Data::instance_template`, `one_op_wrapper` taking an instance of
+  a stdlib template).  Measuring note: every binary reads `default/` from the tree, so a corpus diff
   of a `default/` change needs the OLD `default/` on the before side — two step binaries over
   one tree read the same stdlib and reported IDENTICAL while the guard above was refused.
 

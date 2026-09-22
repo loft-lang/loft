@@ -1,0 +1,200 @@
+diff --git a/default/01_code.loft b/default/01_code.loft
+index c77eb83ef..91cee2d3f 100644
+--- a/default/01_code.loft
++++ b/default/01_code.loft
+@@ -1905,6 +1905,12 @@ pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T {
+   result
+ }
+ #pure
++// Reverse a vector's elements in place.  The call inside is the compiler's own lowering,
++// one op per instance at the element's width.
++pub fn reverse < T > (v: vector<T>) {
++  reverse(v)
++}
++
+ // Sum of all integer elements. Returns 0 for an empty vector.
+ // Superseded by the general `sum(v, init)`; kept as a shim over it
+ // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the
+diff --git a/src/data.rs b/src/data.rs
+index efde6269c..1641992a4 100644
+--- a/src/data.rs
++++ b/src/data.rs
+@@ -9791,6 +9791,20 @@ impl Data {
+         ))
+     }
+ 
++    /// The template a function INSTANCE was minted from (`i_7integer_n_reverse` → `n_reverse`),
++    /// read through the key's one decoder (@FR-G-Key); `None` for anything else.
++    #[must_use]
++    pub fn instance_template(&self, d: u32) -> Option<u32> {
++        let mut name = self.definitions.get(d as usize)?.name.as_str();
++        let mut found = false;
++        while let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Instance) {
++            name = parts.rest;
++            found = true;
++        }
++        let t = self.def_nr(name);
++        (found && t != u32::MAX).then_some(t)
++    }
++
+     /// The stdlib `type` alias that declares exactly this narrow integer (`u8` for
+     /// `integer limit(0, 255) size(1)`), read off the declarations themselves.
+     #[must_use]
+diff --git a/src/generation/hoist.rs b/src/generation/hoist.rs
+index 8748c9501..a88702c81 100644
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -1667,7 +1667,14 @@ pub fn one_op_wrapper(data: &Data, d_nr: u32) -> Option<(u32, Vec<WrapperOperand
+     // it the op IS the call.  Measured: a one-op user function (`fn reader(w: W) -> integer
+     // { w.a }`) flipped to the interpreter ran compiled, and the wasm live-dispatch probe
+     // counted 0 dispatches where it expected 2.
+-    if def.source() != crate::data::STD_SOURCE {
++    // An INSTANCE of a stdlib generic is the stdlib's as much as its template is: minted
++    // under the caller's source, it has neither a live flip nor a frame of its own (@PLN165
++    // arc E: `reverse<T>` at `integer` is `OpReverseVector` at the element's width).
++    let stdlib = def.source() == crate::data::STD_SOURCE
++        || data
++            .instance_template(d_nr)
++            .is_some_and(|t| data.def(t).source() == crate::data::STD_SOURCE);
++    if !stdlib {
+         return None;
+     }
+     // A text parameter or result takes the CALL's conversions (a `String` result handed to
+diff --git a/src/keys.rs b/src/keys.rs
+index 754c56585..2eb42b63a 100644
+--- a/src/keys.rs
++++ b/src/keys.rs
+@@ -1117,6 +1117,22 @@ pub fn instance_key_enabled() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_INSTANCE_KEY"))
+ }
+ 
++/// @PLN165 arc E — `LOFT_BUILTIN_GENERICS=reverse,sort` (or `all`) sends a program's call of
++/// the named built-ins to the stdlib's GENERIC of that name instead of the compiler's special
++/// form.  **DEFAULT OFF**: each built-in is measured against its special form (the emission
++/// over the corpus, and the suite with the switch set) before its special form may go.
++pub fn builtin_generic_enabled(name: &str) -> bool {
++    static NAMES: OnceLock<Option<Vec<String>>> = OnceLock::new();
++    NAMES
++        .get_or_init(|| {
++            std::env::var("LOFT_BUILTIN_GENERICS")
++                .ok()
++                .map(|v| v.split(',').map(|s| s.trim().to_string()).collect())
++        })
++        .as_ref()
++        .is_some_and(|names| names.iter().any(|n| n == name || n == "all"))
++}
++
+ /// `LOFT_NO_LITERAL_EXIT_BUFFER=1` keeps a mid-body `return S { … }` building its record in
+ /// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
+ /// answers a store other than the buffer it was handed cannot be placed) — the bisect step
+diff --git a/src/parser/control.rs b/src/parser/control.rs
+index 9de96906f..5e5a07d74 100644
+--- a/src/parser/control.rs
++++ b/src/parser/control.rs
+@@ -17550,6 +17550,7 @@ impl Parser {
+         // declarations defer the special form to pass 2, as any later definition is deferred.
+         let special = if self.program_definition_applies(source, name, types)
+             || (self.first_pass && self.file_has_pending_fn(name))
++            || self.library_generic_takes(name, types)
+         {
+             ""
+         } else {
+diff --git a/src/parser/dispatch.rs b/src/parser/dispatch.rs
+index e2e79f2fe..707bf409f 100644
+--- a/src/parser/dispatch.rs
++++ b/src/parser/dispatch.rs
+@@ -331,6 +331,24 @@ impl Parser {
+             && self.definition_ranks(d, &routed).is_some()
+     }
+ 
++    /// @PLN165 arc E — does the stdlib's GENERIC of this name take the call, where
++    /// `LOFT_BUILTIN_GENERICS` names it?  Never from inside the stdlib: the generic's body is
++    /// the special form it stands beside, lowered per instance.
++    pub(crate) fn library_generic_takes(&mut self, name: &str, types: &[Type]) -> bool {
++        if self.default || !crate::keys::builtin_generic_enabled(name) {
++            return false;
++        }
++        let d = self.data.def_nr(&format!("n_{name}"));
++        if d == u32::MAX
++            || self.data.def_type(d) != DefType::Generic
++            || !crate::portable_path::is_stdlib_source(&self.data.def(d).position().file)
++        {
++            return false;
++        }
++        let routed = self.data.routed_types(types);
++        self.definition_ranks(d, &routed).is_some()
++    }
++
+     /// Does the PROGRAM declare a function named `name` at all?  Asked where a special form
+     /// is recognised before its argument is parsed (`sizeof(…)`, `type_name(…)`,
+     /// `typedef(…)`), so the argument cannot yet say which definition the call reaches: a
+diff --git a/src/parser/mod.rs b/src/parser/mod.rs
+index 0a7ecc187..65123abb1 100644
+--- a/src/parser/mod.rs
++++ b/src/parser/mod.rs
+@@ -6573,6 +6573,7 @@ impl Parser {
+                 arg_pos,
+                 Some(name_pos),
+             );
++            self.inline_library_instance(code, d_nr);
+             // @PLN102 Phase 3.5 — constant-in-domain elision ("PI blocks it"): a domain-partial
+             // math fn with a provably in-domain CONSTANT argument cannot be null (`sqrt(4.0)`,
+             // `pow(2.0, 3.0)`, `ln(2.0)`), so peel the `τ?` its decl carries. Only under
+@@ -9154,6 +9155,57 @@ impl Parser {
+         ))
+     }
+ 
++    /// @PLN165 arc E — a call to an INSTANCE of a stdlib generic whose body is one op over its
++    /// parameters (`reverse<T>` at `integer` is `OpReverseVector(v, 8)`) is that op in place,
++    /// on both backends — what native's `@FR-R-Wrapper` does for a stdlib wrapper, done in the
++    /// IR so the interpreter emits it too.  An argument a parameter names twice is inlined only
++    /// when it is a variable or a constant, so nothing is evaluated twice.
++    fn inline_library_instance(&mut self, code: &mut Value, d_nr: u32) {
++        if self.first_pass
++            || !self
++                .data
++                .instance_template(d_nr)
++                .is_some_and(|t| crate::portable_path::is_stdlib_source(&self.data.def(t).position().file))
++        {
++            return;
++        }
++        let Value::Call(callee, args) = code.unspan() else {
++            return;
++        };
++        if *callee != d_nr {
++            return;
++        }
++        let Some((op, operands)) = crate::generation::hoist::one_op_wrapper(&self.data, d_nr) else {
++            return;
++        };
++        let mut uses = vec![0usize; args.len()];
++        for o in &operands {
++            if let crate::generation::hoist::WrapperOperand::Param(p) = o
++                && (*p as usize) < uses.len()
++            {
++                uses[*p as usize] += 1;
++            }
++        }
++        let mut inlined = Vec::with_capacity(operands.len());
++        for o in operands {
++            match o {
++                crate::generation::hoist::WrapperOperand::Param(p) => {
++                    let Some(a) = args.get(p as usize) else {
++                        return;
++                    };
++                    if uses[p as usize] > 1
++                        && !matches!(a.unspan(), Value::Var(_) | Value::Int(_) | Value::Long(_))
++                    {
++                        return;
++                    }
++                    inlined.push(a.clone());
++                }
++                crate::generation::hoist::WrapperOperand::Const(c) => inlined.push(c),
++            }
++        }
++        *code = Value::Call(op, inlined);
++    }
++
+     /// The type a call's argument at `arg` is checked against — the callee's declared
+     /// parameter — with, for a GENERIC callee, every type variable the arguments parsed so far
+     /// (`types`) have bound replaced by what it bound to.  A short lambda takes its parameter
