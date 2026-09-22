@@ -31,6 +31,8 @@
 // eye catches.
 //
 // @falsified-at: dbbcdaa5b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1623-a-returned-join-binding-hands-out-its-arms-temps.patch —
+//   the same channels.
 // CHANNEL: assertion failures, both backends — the callee releases what it handed out.
 // HOLDS: leak and panic are unmoved (clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1` before
 //   and after); `c4`, `c7`, `k1` and `k2` are right before and after.
