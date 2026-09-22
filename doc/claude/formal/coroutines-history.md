@@ -6,8 +6,33 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** (2026-09-22).  D-cor-3 opened 2026-09-21 and closed the next day; D-cor-2 opened and
+OPEN: **0** (2026-09-22).  D-cor-4 opened and closed 2026-09-22 (loft#1589); D-cor-3 opened
+2026-09-21 and closed the next day; D-cor-2 opened and
 closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
+
+> **D-cor-4 — CLOSED (2026-09-22, loft#1589) — nothing said who owns a yielded record, and the
+> two backends answered differently.**
+> `(G-Next)` produces one value, but no rule said whose.  The interpreter kept a yielded record
+> the generator's and released it with the generator, so a record returned past its generator's
+> life read `null`.  `--native` handed a record built in a compiler temp to the consumer, whose
+> `for` variable was a borrow of the generator (loft#481), so a drained `for` released nothing
+> and every yield leaked.  A yielded CALL result leaked on both, because the callee minted a
+> store the generator never learned of.  A consumer's value changed when the generator later
+> wrote the local it had yielded (`p1` read `p5`).  And a `match` over a generator collected
+> into a buffer typed `vector<vector<E>>`, with drop hooks running before the arm read
+> (interpreter) or never (native).
+>
+> **Closed** by writing `(G-Own)` — the reading `(G-Next)` and `(H-Move)` already gave — and
+> making both backends keep it.  The parser copies an existing value at the yield
+> (`Parser::yield_owned_value`) and refuses one whose type owns a droppable; both backends
+> forget the temps a yield hands over (`coroutine_layout::yield_handed_temps`, one home), so
+> neither the generator's tail nor its abandonment releases them; a finished generator answers
+> `DbRef::NULL` for a handle on the interpreter too; a generator's `for` variable and a `yield
+> from` item own what they receive (`coroutine_layout::yield_handed_over`); the `match` buffer
+> is typed by its element and takes each record by a MOVE copy; and the native eager path,
+> whose values share one snapshot store, snapshots a handed record as a move and copies it out
+> to the consumer (`coroutine_snapshot_moved`, `coroutine_hand_out`).  Guard
+> `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`.
 
 > **D-cor-3 — CLOSED (2026-09-22, loft#1586) — an endless `while` generator never yielded on
 > `--native`.**

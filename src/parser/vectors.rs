@@ -6188,6 +6188,150 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         Some(owned_tp)
     }
 
+    /// Make the value a `yield` hands over one the consumer owns — `formal/coroutines.md`
+    /// `(G-Own)`, @FR-G-Own.  What an advance produces is the consumer's, so the generator must
+    /// not still hold it once it is yielded.
+    ///
+    /// A FRESH value — a record built in place, or a call result that views none of the
+    /// generator's variables — is handed over as it is: the temp holding it is the one
+    /// [`yield_handed_temps`](crate::coroutine_layout::yield_handed_temps) names, and the
+    /// generator forgets that temp at the yield.  An EXISTING value — a local, a parameter, a
+    /// member, or a call result that views one — is COPIED into a store of its own first,
+    /// because `(H-Move)` does not list a yield among the positions that move: a later change
+    /// the generator makes must not reach the consumer's value, and the consumer releasing its
+    /// value must not release the generator's.  A type that owns a droppable is refused there
+    /// (`(H-Copy-Refuse)`): the copy would be a second structure releasing the resource again.
+    pub(crate) fn yield_owned_value(&mut self, val: &mut Value, tp: &Type) {
+        if self.first_pass || !crate::coroutine_layout::yield_handed_over(tp) {
+            return;
+        }
+        // A TUPLE hands over each heap member: a literal's members one by one, and a tuple
+        // the generator holds through a literal of its members, which copies each of them.
+        if let Type::Tuple(elems) = tp.base() {
+            if let Value::Var(t) = val.unspan()
+                && *t < self.vars.count()
+                && (self.vars.is_argument(*t) || !self.vars.is_compiler_generated(*t))
+            {
+                let t = *t;
+                *val = Value::Tuple(
+                    (0..elems.len())
+                        .map(|i| Value::TupleGet(t, i as u16))
+                        .collect(),
+                );
+            }
+            if let Value::Tuple(items) = val.unspan_mut() {
+                for (item, elm) in items.iter_mut().zip(elems.clone()) {
+                    self.yield_owned_value(item, &elm);
+                }
+            }
+            return;
+        }
+        if self.yield_is_fresh(val, tp) {
+            return;
+        }
+        let rec = tp.heap_def_nr();
+        if let Some(d_nr) = rec
+            && self.data.owns_droppable(d_nr)
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "cannot yield an existing `{}` here — a yield hands the consumer a copy it owns, \
+                 and `{}` owns a resource, so the copy would release it a second time. Yield a \
+                 value built here instead (a literal, or a call that builds one)",
+                tp.source_name(&self.data),
+                tp.source_name(&self.data)
+            );
+            return;
+        }
+        // The copy's backing is created OWNED: the value's own type may carry the deps of the
+        // place it was read from, and a backing that inherited them would read as a borrow.
+        let owned_create = tp.with_deps(&Deps::none());
+        let src = val.clone();
+        if let Some(d_nr) = rec {
+            let kt = self.data.def(d_nr).known_type();
+            if kt == u16::MAX {
+                return;
+            }
+            // The pass-2-only work-ref sequence, for the reason `tuple_member_owned_copy`
+            // gives: this backing's role is not the return buffer's.
+            let o = self.vars.work_refs_p2(&owned_create, &mut self.lexer);
+            if o == u16::MAX {
+                return;
+            }
+            let db = self.cl("OpDatabase", &[Value::Var(o), Value::Int(i32::from(kt))]);
+            let copy = self.cl(
+                "OpCopyRecord",
+                &[src.clone(), Value::Var(o), Value::Int(i32::from(kt))],
+            );
+            // A null yields null: `OpCopyRecord` alone would turn it into a default record.
+            let fill = if matches!(tp, Type::Optional(_))
+                && let Some(is_null) = self.null_test(src, tp, false)
+            {
+                v_if(
+                    is_null,
+                    Value::Null,
+                    v_block(vec![db, copy], Type::Void, "yield_copy_fill"),
+                )
+            } else {
+                v_block(vec![db, copy], Type::Void, "yield_copy_fill")
+            };
+            let owned_tp = owned_create.depending(o);
+            *val = v_block(
+                vec![v_set(o, Value::Null), fill, Value::Var(o)],
+                owned_tp,
+                "yield_copy",
+            );
+            return;
+        }
+        let Type::Vector(b, _) = tp.base() else {
+            return;
+        };
+        let elm = (**b).clone();
+        let o = self.create_unique("yieldcopy", &owned_create);
+        if o == u16::MAX {
+            return;
+        }
+        self.vars.defined(o);
+        let mut ops = self.vector_db(&elm, o);
+        ops.push(self.cl("OpClearVector", &[Value::Var(o)]));
+        let elem_tp = self.append_elem_tp(&elm);
+        ops.push(self.cl("OpAppendVector", &[Value::Var(o), src, Value::Int(elem_tp)]));
+        ops.push(Value::Var(o));
+        *val = v_block(
+            ops,
+            Type::Vector(Box::new(elm), Deps::frame1(o)),
+            "yield_copy",
+        );
+    }
+
+    /// Is the value a `yield` hands over FRESH — held by nothing of the generator's but the
+    /// compiler temp it was built in?  A record built in place ends in such a temp, and a call
+    /// result is fresh unless its type views one of the generator's own variables or
+    /// parameters.  Anything the author named — a local, a parameter, a member read, a view —
+    /// is an existing value (see [`Self::yield_owned_value`]).
+    fn yield_is_fresh(&self, val: &Value, tp: &Type) -> bool {
+        let named = |v: u16| {
+            v < self.vars.count()
+                && (self.vars.is_argument(v) || !self.vars.is_compiler_generated(v))
+        };
+        if tp.depend().iter().any(|&d| named(d)) {
+            return false;
+        }
+        let mut tail = val.unspan();
+        while let Value::Block(bl) = tail {
+            let Some(last) = bl.operators.last() else {
+                return false;
+            };
+            tail = last.unspan();
+        }
+        match tail {
+            Value::Var(v) => !named(*v),
+            Value::Call(d, _) => !crate::use_analysis::is_projection_op(&self.data, *d),
+            _ => false,
+        }
+    }
+
     /// The heap local a [`Self::tuple_member_owned_copy`] block was built from — `None` for
     /// any other value.
     ///
@@ -6209,9 +6353,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let Value::Block(b) = val.unspan() else {
             return None;
         };
-        if !matches!(b.name, "tuple_member_copy" | "tuple_member_move") {
+        if !matches!(b.name, "tuple_member_copy" | "tuple_member_move" | "yield_copy") {
             return None;
         }
+        // A `yield` copy ([`Self::yield_owned_value`]) has the same shape under its own name.
         // The block ends `OpAppendVector(backing, source, elem_tp); backing` for a VECTOR
         // member, `OpReplaceKeyed(source, backing, tp); backing` for a KEYED one and
         // `OpCopyRecord(source, backing, tp)` (inside the fill block) for a STRUCT one, and the
@@ -6227,7 +6372,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     "OpReplaceKeyed" | "OpCopyRecord" => args.first().cloned(),
                     _ => None,
                 },
-                Value::Block(inner) if inner.name == "tuple_member_copy_fill" => {
+                Value::Block(inner)
+                    if matches!(inner.name, "tuple_member_copy_fill" | "yield_copy_fill") =>
+                {
                     source_in(data, &inner.operators)
                 }
                 Value::If(_, t, f) => source_in(data, std::slice::from_ref(t.as_ref()))

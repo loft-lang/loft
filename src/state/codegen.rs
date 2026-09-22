@@ -618,6 +618,22 @@ impl State {
             ValueType::Yield => {
                 // CO1.3c: emit the yielded expression, then OpCoroutineYield.
                 let t = self.generate_node(node.yield_inner(), stack, false);
+                // `(G-Own)`: the consumer owns what it is handed, so the generator forgets the
+                // temps holding it before it suspends — its tail and `free_coroutine` then find
+                // them null.  The value is already on the stack; the writes below leave it there.
+                let handed = crate::coroutine_layout::yield_handed_temps(
+                    stack.data,
+                    stack.def_nr,
+                    &node.yield_inner().to_owned_value(),
+                );
+                // A raw put, not a `Set`: `generate_set` releases an owned local's old value
+                // before it writes, and that value is the record being handed over.
+                for tmp in handed {
+                    stack.add_op("OpNullRefSentinel", self);
+                    let pos = stack.var_pos(tmp);
+                    stack.add_op("OpPutRef", self);
+                    self.code_add(pos);
+                }
                 let value_size = crate::variables::size(&t, &crate::data::Context::Argument);
                 stack.add_op("OpCoroutineYield", self);
                 self.code_add(value_size);
@@ -1398,8 +1414,10 @@ impl State {
         // CO1.3c: generator functions use OpCoroutineReturn instead of OpReturn.
         if matches!(return_type, Type::Iterator(_, _)) {
             // For generators, `return` means exhaust — push null of the yield type.
+            // The packed operand `OpCoroutineNext` carries, so the null a finished generator
+            // answers is typed by the same channel tag (`State::push_null_value`).
             let yield_size = if let Type::Iterator(inner, _) = return_type {
-                size(inner, &Context::Argument)
+                crate::coroutine_layout::next_operands(inner).0 as u16
             } else {
                 0
             };
@@ -4893,8 +4911,10 @@ impl State {
         let return_type = stack.data.def(stack.def_nr).returned();
         // CO1.3c: generator functions use OpCoroutineReturn.
         if matches!(return_type, Type::Iterator(_, _)) {
+            // The packed operand `OpCoroutineNext` carries, so the null a finished generator
+            // answers is typed by the same channel tag (`State::push_null_value`).
             let yield_size = if let Type::Iterator(inner, _) = return_type {
-                size(inner, &Context::Argument)
+                crate::coroutine_layout::next_operands(inner).0 as u16
             } else {
                 0
             };

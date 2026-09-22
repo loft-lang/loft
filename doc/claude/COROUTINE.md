@@ -148,6 +148,23 @@ tests the frame's `status` field and returns true regardless of whether the
 generator ever yielded a null value (see
 [Known Limitations CL-1](#known-limitations)).
 
+**A yielded value is the consumer's** (`formal/coroutines.md` `(G-Own)`).  A record,
+struct-enum or vector that `next` or a `for` receives belongs to the receiver: it
+outlives the generator, and a `for` releases each one when its iteration ends.  A
+value built at the `yield` is handed over as it is; a value the generator keeps —
+a local, a parameter, a field — is copied, so the generator changing it later does
+not change what the consumer holds:
+
+```loft
+fn totals() -> iterator<Stat> {
+    s = Stat { n: 0 };
+    for x in 1..4 { s.n += x; yield s; }   // each consumer sees 1, 3, 6
+}
+```
+
+A type with a drop hook (`OpDrop`) cannot be copied, so yielding an existing one
+is a compile-time error; yield a value built at the `yield` instead.
+
 ### Generator function with parameters
 
 Parameters are captured into the frame at construction time. They are

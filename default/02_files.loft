@@ -1106,8 +1106,10 @@ fn OpSortVector(r: vector, db_tp: const u16);
 // CO1.2: Coroutine opcodes
 fn OpCoroutineCreate(d_nr: const integer, args_size: const u16, to: const integer);
 #rust"s.coroutine_create(@d_nr as u32, u32::from(@args_size), @to as u32);"
+// `value_size` is packed: the byte size in the low byte, the channel tag above it
+// (`coroutine_layout::next_operands`).  The null a finished generator answers reads the tag.
 fn OpCoroutineNext(value_size: const u16);
-#rust"s.coroutine_next(u32::from(@value_size & 0xFF));"
+#rust"s.coroutine_next(u32::from(@value_size));"
 
 // CO1.3a: Coroutine return — exhaust frame, push null, return to consumer
 fn OpCoroutineReturn(value_size: const u16);

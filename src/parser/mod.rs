@@ -8333,6 +8333,7 @@ impl Parser {
             self.vars.work_texts().into_iter().collect();
         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
         let mut code = self.rewrite_generic_type_defaults(code);
+        self.settle_parametric_yield_copies(&mut code);
         let set_call_refs = std::mem::replace(&mut self.set_call_refs, outer_set_call_refs);
         self.instance_bindings = outer_bindings;
         self.closure_param = outer_closure_param;
@@ -8405,6 +8406,41 @@ impl Parser {
         // loft#1040 — and lower any `par` clause the template could not: it needs the
         // types this body now carries, so it runs after every substitution above.
         self.expand_deferred_par(d_nr);
+    }
+
+    /// `(G-Own)`, @FR-G-Own — decide every `yield` copy the TEMPLATE made again, now that this
+    /// monomorph knows the type it yields.
+    ///
+    /// A template yielding a `T` it holds copied it while `T` was still the type variable, so
+    /// the copy was built for a record and named the variable's own row.  Substitution rewrites
+    /// the types and leaves that choice behind: at `T = integer` the copy allocated a record for
+    /// a scalar (`OpDatabase` of an `i64`).  So each copy is rebuilt from its source against the
+    /// concrete type, through the one decision a non-generic yield takes
+    /// ([`Self::yield_owned_value`]): a scalar or text yield keeps the source, a record or a
+    /// vector gets the copy its kind needs, and a type that owns a droppable is refused.  Runs in
+    /// the monomorph's frame; a work ref the rebuild mints takes the top-level declaration every
+    /// other late work ref takes (`set_call_refs`).
+    fn settle_parametric_yield_copies(&mut self, code: &mut Value) {
+        let first = self.vars.count();
+        code.map_nodes(&mut |v| {
+            let Value::Block(b) = v.unspan() else {
+                return;
+            };
+            if b.name != "yield_copy" {
+                return;
+            }
+            let tp = b.result.clone();
+            let Some(mut src) = self.tuple_member_copy_source(v) else {
+                return;
+            };
+            self.yield_owned_value(&mut src, &tp);
+            *v = src;
+        });
+        for r in first..self.vars.count() {
+            if self.work_ref_takes_preamble(r) {
+                self.set_call_refs.push(r);
+            }
+        }
     }
 
     /// loft#1040 — lower every `par` clause the TEMPLATE deferred, now that this monomorph
