@@ -1529,7 +1529,12 @@ impl Output<'_> {
                         // generator forgets the temps holding it rather than releasing them
                         // at its tail or when it is dropped.
                         let handed = self.handed_yield_fields(val);
-                        if !handed.is_empty() {
+                        if handed.is_empty() {
+                            writeln!(
+                                w,
+                                "                return {wrap_open}{yield_code}{wrap_close};"
+                            )?;
+                        } else {
                             writeln!(
                                 w,
                                 "                let __yv = {wrap_open}{yield_code}{wrap_close};"
@@ -1541,11 +1546,6 @@ impl Output<'_> {
                                 writeln!(w, "                self.var_{field} = DbRef::NULL;")?;
                             }
                             writeln!(w, "                return __yv;")?;
-                        } else {
-                            writeln!(
-                                w,
-                                "                return {wrap_open}{yield_code}{wrap_close};"
-                            )?;
                         }
                     }
                 }
@@ -1737,6 +1737,7 @@ impl Output<'_> {
     /// are forgotten, as the lazy path forgets them, so neither the next iteration nor the
     /// generator's tail touches that store again.
     pub(super) fn eager_snapshot_push(&self, val: &Value, val_code: &str, tp: u16) -> String {
+        use std::fmt::Write as _;
         let yield_tp = match self.data.def(self.def_nr).returned().base() {
             Type::Iterator(inner, _) => (**inner).clone(),
             _ => Type::Void,
@@ -1760,7 +1761,7 @@ impl Output<'_> {
         let vars = self.data.def(self.def_nr).variables();
         for t in crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val) {
             if !inner_scopes.contains(&vars.scope(t)) {
-                out += &format!(" {} = DbRef::NULL;", self.var_place(t));
+                let _ = write!(out, " {} = DbRef::NULL;", self.var_place(t));
             }
         }
         out += " }";

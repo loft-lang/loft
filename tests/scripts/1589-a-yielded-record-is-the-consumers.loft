@@ -6,12 +6,15 @@
 // place or by a call is handed over, and an existing value — a local, a parameter, a member — is
 // copied first, so a later change in the generator does not reach the consumer's value.
 //
+// A tuple of those hands over each member the same way.
+//
 // Before, nothing said who owned a yielded record and the backends disagreed.  The interpreter
 // released it with the generator, so a record returned past its generator's life read `null`;
 // `--native` handed it over and a drained `for` then released nothing, leaking every yield; a
 // yielded call result leaked on both; a consumer's value changed when the generator later wrote
 // the local it had yielded; and a `match` over a generator ran its records' drop hooks before
-// the arm read them (interpreter) or never (native).
+// the arm read them (interpreter) or never (native).  A tuple yield of a local was a second
+// name for it on both backends, and a tuple `for` ran no member's hook.
 //
 // Every expected value, trace and drop order is worked out by hand from the rule.  The drop
 // hook writes a trace FILE, as `139-drop-cascade.loft` does and for its reason.  A loop-body
@@ -19,11 +22,14 @@
 // before the first is read), so those two cells assert what the rule fixes — the values, and
 // one release per record — rather than the interleaving.
 //
-// @falsified-at: PENDING
-// CHANNEL: assertion failures and the leak column, both backends.
-// ARMED: LOFT_STRICT_STORES=1 — the drained `for`, break and `match` cells leaked on the control.
-// HOLDS: the tuple cell (`c14`) is a control, right before and after: `(G-Own)` covers a record,
-//   a struct-enum and a vector.
+// @falsified-at: 516587d5c — interpret exit 1 -> 0, native exit 1 -> 0, native 1 assertion failures
+//   -> 0 (LOFT_STRICT_STORES=1 make falsify …)
+// CHANNEL: interpret — the strict-store census stops the run; native — an assertion.
+// ARMED: LOFT_STRICT_STORES=1.
+// WITNESS: interpret — `USE AFTER FREE (read) store #2 type=main_vector<P>` at c1, the record read
+//   after its generator released it; native — `c2 trace: m1,r1,m2,r2,m3,r3, want
+//   m1,r1,d1,m2,r2,d2,m3,r3,d3`, a drained `for` that released nothing.
+// HOLDS: the tuple cell `c14` is a control, right before and after.
 
 fn trace_path() -> text { return "loft_1589_yield_trace.tmp"; }
 
@@ -126,6 +132,18 @@ fn c13() -> text { c13_run(); "" }
 fn tuple_gen() -> iterator<(integer, P)> { yield (1, P { id: 10 }); yield (2, P { id: 20 }); }
 fn c14() -> text { s = 0; for t in tuple_gen() { s += t.0 + t.1.id; } "{s}" }
 
+// 15 — a TUPLE of a local: its member is copied like the local itself (it read 5 and 5).
+fn tuple_local() -> iterator<(integer, P)> { x = P { id: 1 }; yield (1, x); x.id = 5; yield (2, x); }
+fn c15() -> text { g = tuple_local(); a = next(g); b = next(g); "{a.1.id}{b.1.id}" }
+
+// 16 — a tuple `for`: each member's hook runs when its iteration ends.
+fn tuple_calls() -> iterator<(integer, H)> { yield (1, mk(1)); yield (2, mk(2)); }
+fn c16() -> text { for t in tuple_calls() { note("r{t.1.id}"); } "" }
+
+// 17 — a tuple returned past its generator's life.
+fn c17_take() -> (integer, P) { g = tuple_gen(); a = next(g); a }
+fn c17() -> text { a = c17_take(); junk = [P { id: 77 }, P { id: 88 }]; "{a.1.id}{len(junk)}" }
+
 fn main() {
   drain();
   ok("c1 returned past the generator", c1(), "13");
@@ -152,6 +170,10 @@ fn main() {
   ok("c13 value     ", c13(), "");
   ok("c13 trace     ", drain(), "m1,m2,r2,d2,m3,r3,d3,a1,d1");
   ok("c14 tuples    ", c14(), "33");
+  ok("c15 tuple copy", c15(), "15");
+  ok("c16 value     ", c16(), "");
+  ok("c16 trace     ", drain(), "m1,r1,d1,m2,r2,d2");
+  ok("c17 tuple kept", c17(), "102");
   delete(trace_path());
   println("a yielded record is the consumer's: every cell holds");
 }

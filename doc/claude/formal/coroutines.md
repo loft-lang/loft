@@ -123,7 +123,8 @@ computed lazily, on demand, rather than read from a store.
                  places a COPY (H-Move lists no yield among the positions that move), so a
                  later change the generator makes does not reach the value the consumer holds;
                  for a type that owns a droppable that copy is refused (H-Copy-Refuse).
-             Scope: a record, a struct-enum and a vector.
+             Scope: a record, a struct-enum, a vector, and a tuple whose reference members
+             are those (each member is handed over or copied on its own).
 ```
 
 **In words.** A generator hands out values, not windows into its own state. What `next` answers
@@ -161,8 +162,9 @@ Every deviation this doc has carried is closed; the record is in the companion
   advances stay done (no restart, no fault).
 - **Ownership (`G-Own`)** — `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`: a
   record returned past its generator, a drained and a broken `for`, a `match`, `yield from`, a
-  loop-body yield, and copies of a local, a member, a parameter, a text-holding record and a
-  vector — values, drop traces and a clean store census on both backends.
+  loop-body yield, copies of a local, a member, a parameter, a text-holding record and a
+  vector, and a tuple copied, drained and kept — values, drop traces and a clean store census
+  on both backends.
 - **Interchangeable at `for` (`G-For`)** — `for x in gen() { … }` and `for x in vec { … }`
   visit their elements by the same loop; swapping a generator for the equivalent vector changes
   only timing, not the values or their order.

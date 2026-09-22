@@ -6353,7 +6353,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let Value::Block(b) = val.unspan() else {
             return None;
         };
-        if !matches!(b.name, "tuple_member_copy" | "tuple_member_move" | "yield_copy") {
+        if !matches!(
+            b.name,
+            "tuple_member_copy" | "tuple_member_move" | "yield_copy"
+        ) {
             return None;
         }
         // A `yield` copy ([`Self::yield_owned_value`]) has the same shape under its own name.

@@ -4471,7 +4471,7 @@ fn tuple_owned_elem_frees(
 
 /// loft#1511 — the elements of a tuple-literal RHS that are MINTED by their own initializing
 /// call: element index → the call's hidden return buffer (`None` for a bufferless mint, e.g.
-/// a nullable return).  `Some(map)` whenever the RHS is a tuple literal (so a reassignment
+/// a nullable return).  A tuple a generator's advance produces is minted whole (`(G-Own)`).  `Some(map)` whenever the RHS is a tuple literal (so a reassignment
 /// replaces a stale pairing with an empty one); `None` for any other RHS, telling the caller
 /// to clear what it tracked.
 ///
@@ -4485,6 +4485,18 @@ fn tuple_call_mints(
     function: &Function,
     data: &Data,
 ) -> Option<HashMap<u16, Option<u16>>> {
+    // `formal/coroutines.md` `(G-Own)` — a tuple an ADVANCE produces is the consumer's whole:
+    // every member arrives in a store the generator handed over, so each is its record's only
+    // name and its release runs the type's hook, exactly as for an adopting call.
+    if let Value::Call(d, args) = rhs.unspan()
+        && *d == data.def_nr("OpCoroutineNext")
+        && let Some(Value::Var(g)) = args.first().map(Value::unspan)
+        && let Type::Iterator(inner, _) = function.tp(*g).base()
+        && let Type::Tuple(elems) = inner.base()
+        && crate::coroutine_layout::yield_handed_over(inner)
+    {
+        return Some((0..elems.len() as u16).map(|i| (i, None)).collect());
+    }
     let Value::Tuple(members) = rhs.unspan() else {
         return None;
     };

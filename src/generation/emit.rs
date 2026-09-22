@@ -187,8 +187,11 @@ impl Output<'_> {
                         let mut buf: Vec<u8> = Vec::new();
                         self.output_code_node(&mut buf, node.yield_inner())?;
                         let code = String::from_utf8_lossy(&buf).into_owned();
-                        let push =
-                            self.eager_snapshot_push(&node.yield_inner().to_owned_value(), &code, tp);
+                        let push = self.eager_snapshot_push(
+                            &node.yield_inner().to_owned_value(),
+                            &code,
+                            tp,
+                        );
                         write!(w, "{push}")?;
                     } else {
                         write!(w, "__values.push((")?;

@@ -18,9 +18,10 @@ closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
 > `for` variable was a borrow of the generator (loft#481), so a drained `for` released nothing
 > and every yield leaked.  A yielded CALL result leaked on both, because the callee minted a
 > store the generator never learned of.  A consumer's value changed when the generator later
-> wrote the local it had yielded (`p1` read `p5`).  And a `match` over a generator collected
-> into a buffer typed `vector<vector<E>>`, with drop hooks running before the arm read
-> (interpreter) or never (native).
+> wrote the local it had yielded (`p1` read `p5`), and a tuple yield of a local was a second
+> name for it on both backends.  And a `match` over a generator collected into a buffer typed
+> `vector<vector<E>>`, with drop hooks running before the arm read (interpreter) or never
+> (native).
 >
 > **Closed** by writing `(G-Own)` — the reading `(G-Next)` and `(H-Move)` already gave — and
 > making both backends keep it.  The parser copies an existing value at the yield
@@ -31,7 +32,13 @@ closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
 > from` item own what they receive (`coroutine_layout::yield_handed_over`); the `match` buffer
 > is typed by its element and takes each record by a MOVE copy; and the native eager path,
 > whose values share one snapshot store, snapshots a handed record as a move and copies it out
-> to the consumer (`coroutine_snapshot_moved`, `coroutine_hand_out`).  Guard
+> to the consumer (`coroutine_snapshot_moved`, `coroutine_hand_out`).  A tuple hands over each
+> member; a finished generator's tuple carries the reference null in each reference member
+> (the interpreter types it from the frame, native initialises the transport buffer so), and
+> a tuple an advance produces is its members' sole owner in the scope pass, so a tuple `for`
+> runs each member's hook as its iteration ends.  A generic template's yield copy is decided
+> again per monomorph.  Residual: an advance of an ALREADY finished tuple generator answers a
+> zeroed tuple on the interpreter, whose frame no longer names the type.  Guard
 > `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`.
 
 > **D-cor-3 — CLOSED (2026-09-22, loft#1586) — an endless `while` generator never yielded on

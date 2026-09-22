@@ -278,38 +278,30 @@ pub fn slot_count(kinds: &[YieldSlot]) -> usize {
     kinds.iter().map(|k| k.width()).sum()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn channel_tag_distinguishes_float_kinds_from_same_size_scalars() {
-        // #401 — float/single get their own native channels (`from_bits`); the
-        // other scalars must stay on channel 0.  This is exactly the distinction
-        // `byte_size` alone cannot make (8 = i64 or f64, 1 = bool or u8 enum).
-        assert_eq!(channel_tag(&Type::Float), 3);
-        assert_eq!(channel_tag(&Type::Single), 4);
-        assert_eq!(channel_tag(&Type::Boolean), 0);
-        assert_eq!(channel_tag(&Type::Character), 0);
-    }
-}
-
 /// Is a yield of `tp` HANDED to the consumer (`formal/coroutines.md` `(G-Own)`, @FR-G-Own) —
 /// a record, a struct-enum or a vector, which the generator yields in a store of its own, or a
-/// tuple whose heap members are all such values?  A consumer that binds such a value OWNS it.
-/// A keyed collection is not handed over: it lives inline in its parent and has no store of
-/// its own to hand, so its consumer binding stays a borrow of the generator.
+/// tuple whose reference members are all such values?  A consumer that binds such a value OWNS
+/// it.  A keyed collection is not handed over — it lives inline in its parent and has no store
+/// of its own to hand — and neither is a tuple holding a tuple of references: the tuple literal
+/// already copies a nested member itself, and a consumer's release walks top-level members
+/// only, so a second copy here would be one nobody releases.  Their consumer binding stays a
+/// borrow of the generator.
 #[must_use]
 pub fn yield_handed_over(tp: &Type) -> bool {
+    let member = |e: &Type| {
+        matches!(
+            e.base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+        )
+    };
     match tp.base() {
-        Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _) => true,
         Type::Tuple(elems) => {
             elems.iter().any(crate::data::holds_dbref)
                 && elems
                     .iter()
-                    .all(|e| !crate::data::holds_dbref(e) || yield_handed_over(e))
+                    .all(|e| !crate::data::holds_dbref(e) || member(e))
         }
-        _ => false,
+        _ => member(tp),
     }
 }
 
@@ -380,5 +372,21 @@ fn handed_temps(data: &Data, val: &Value, temp: &impl Fn(u16) -> bool, out: &mut
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn channel_tag_distinguishes_float_kinds_from_same_size_scalars() {
+        // #401 — float/single get their own native channels (`from_bits`); the
+        // other scalars must stay on channel 0.  This is exactly the distinction
+        // `byte_size` alone cannot make (8 = i64 or f64, 1 = bool or u8 enum).
+        assert_eq!(channel_tag(&Type::Float), 3);
+        assert_eq!(channel_tag(&Type::Single), 4);
+        assert_eq!(channel_tag(&Type::Boolean), 0);
+        assert_eq!(channel_tag(&Type::Character), 0);
     }
 }
