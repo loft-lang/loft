@@ -5151,9 +5151,9 @@ A generic function uses a type variable to work with any type. Write the functio
 
 === Declaring a generic function
 
-Place a single type variable in angle brackets after the function name. The type variable must appear in the first parameter (directly or as a container element like vector\<T\>) — a T that appears only later, or only in the return type, is refused with "Type variable T must appear in the first parameter".  ONE type variable: `\<T, U\>` does not parse.
+Place a single type variable in angle brackets after the function name. The type variable must appear in a parameter (directly or as a container element like vector\<T\>) — any parameter; a T that appears only in the return type is refused, since a call infers T from its arguments.  A header may declare several variables — `\<K: Printable, V: Printable\>` — each with its own bounds, each inferred from the parameters that name it.
 
-Generic STRUCTS are a separate thing and loft does not have them — `struct Box\<T\>` is a parse error.  A generic FUNCTION over `vector\<T\>` covers most of what a generic container would be reached for.
+A struct may declare type variables too — see Generic structs below.
 
 ```rust
 fn identity<T>(x: T) -> T { x }
@@ -5161,7 +5161,7 @@ fn identity<T>(x: T) -> T { x }
 
 === Calling a generic function
 
-No special syntax at the call site — the compiler infers T from the first argument's type and creates a specialised copy automatically.
+No special syntax at the call site — the compiler infers T from the arguments' types and creates a specialised copy automatically.
 
 ```rust
 fn test_identity() {
@@ -5345,6 +5345,46 @@ fn test_walkable() {
 }
 ```
 
+=== Generic structs
+
+A struct may declare type variables: `struct Box\<T\> { v: T }`.  `Box\<integer\>` names an INSTANCE — an ordinary struct whose `v` is an `integer`, laid out as a hand-written `struct BoxInteger { v: integer }` would be.  A literal builds the instance its annotation names, or else the one its field values bind: `Box { v: 1 }` is a `Box\<integer\>`, as `identity(1)` makes T an integer.  A literal with nothing to bind a variable from (`Box {}`, `Box { v: \[\] }` for a `vector\<T\>` field) is refused, naming the variable; give the binding its type.
+
+```rust
+struct Box<T> { v: T }
+struct Stack<T> { items: vector<T>, name: text }
+fn twice(b: Box<integer>) -> integer { b.v * 2 }
+fn test_generic_struct() {
+  b = Box { v: 21 };
+  t = Box { v: "hi" };
+  s: Stack<float> = Stack { items: [], name: "floats" };
+  s.items += [1.5, 2.5];
+  assert(twice(b) == 42, "an inferred Box<integer> is the one the parameter names");
+  assert(t.v == "hi" && len(s.items) == 2, "Box<text> and Stack<float>");
+}
+```
+
+=== Two type variables and a callback
+
+A generic may declare several variables, and one no argument binds may be bound by a callback's RESULT: `map\_grid` below turns a `Grid\<T\>` into a `Grid\<U\>`, and the short lambda's body decides what `U` is — `|t| { t.height }` makes it an `integer`.  A generic beside a concrete function of the same name is one overload set: the concrete `show` takes a `Grid\<Tile\>`, the bounded generic every other `Grid` it can print.
+
+```rust
+struct Tile { height: integer, name: text }
+fn to_text(self: Tile) -> text { self.name }
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn show<T: Printable>(g: Grid<T>) -> text { r = ""; for c in g.cells { r += "[{c.to_text()}]"; } r }
+fn show(g: Grid<Tile>) -> text { "tiles:{len(g.cells)}" }
+fn test_two_variables() {
+  tiles = Grid { w: 2, cells: [Tile { height: 3, name: "a" }, Tile { height: 5, name: "b" }] };
+  heights = map_grid(tiles, |t| { t.height });
+  assert(show(tiles) == "tiles:2" && show(heights) == "[3][5]", "{show(heights)}");
+}
+```
+
 === Disallowed operations
 
 The compiler rejects operations the bound does not cover, and it says which:
@@ -5365,6 +5405,8 @@ fn main() {
   test_combined_bounds();
   test_user_type_bounds();
   test_walkable();
+  test_generic_struct();
+  test_two_variables();
 }
 ```
 
@@ -8437,7 +8479,31 @@ Largest element in a vector, or null when the vector is empty (the type is hones
 pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T
 ```
 
-Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0, ""). Example: sum(\[10, 20, 12\], 0) == 42 Example: sum(\[10, 20, 12\]) == 42
+Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0). Example: sum(\[10, 20, 12\], 0) == 42 Example: sum(\[10, 20, 12\]) == 42
+
+```rust
+pub fn reverse < T > (self: vector<T>)
+```
+
+Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on `vector`, so a program may define its own `reverse` for its own types beside it.
+
+```rust
+pub fn reserve < T > (self: vector<T>, n: integer)
+```
+
+Give a vector room for `n` elements, so filling it does not grow it step by step: `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
+
+```rust
+pub fn insert < T > (self: vector<T>, index: integer, elem: T)
+```
+
+Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)` or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element read from the vector itself (`v.insert(0, v\[1\])`) is the one it was.
+
+```rust
+pub fn sort < T: Ordered > (self: vector<T>)
+```
+
+Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `\<` (`Ordered`) — a struct defining `op \<` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.
 
 ```rust
 pub fn sum_of(v: const vector<integer>) -> integer

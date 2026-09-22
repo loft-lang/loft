@@ -716,6 +716,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t80, "instance_of", 0);
     let vec_instance_args = db.vector(t7);
     db.field(t80, "instance_args", vec_instance_args);
+    db.field(t80, "builtin", t4);
     let t120 = db.vector(t76);
     let _ = t120; // may be unused
     let t121 = db.vector(t79);

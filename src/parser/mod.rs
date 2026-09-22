@@ -1296,6 +1296,14 @@ static OPERATORS: &[&[&str]] = &[
     &["as"],
 ];
 
+/// The binary operators that cannot BEGIN an expression, so one that follows an operand
+/// answering nothing belongs to that operand (`parse_operators`).  `-`, `+`, `|` and `&` are
+/// absent: each can open the NEXT statement (`-1`, a lambda, a reference).
+static VOID_LEFT_OPERATORS: [&str; 18] = [
+    "??", "||", "or", "&&", "and", "==", "!=", "<", "<=", ">", ">=", "^", "<<", ">>", "*", "/",
+    "%", "**",
+];
+
 static SKIP_TOKEN: [&str; 8] = ["}", ".", "<", ">", "^", "+", "-", "#"];
 /// Tokens that END a `{x:…}` spec rather than starting its WIDTH expression.  The radix
 /// LETTERS are deliberately absent: [`radix_for`] is their one home, and this list plus
@@ -7643,6 +7651,14 @@ impl Parser {
     /// A `reverse(v)` whose element type is still a TYPE VARIABLE: the width it walks is the
     /// element's, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
     pub(crate) const TV_REVERSE: &'static str = "tvreverse";
+    /// A `reserve(v, n)` whose element type is still a TYPE VARIABLE: the claim is sized in
+    /// the element's width, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
+    pub(crate) const TV_RESERVE: &'static str = "tvreserve";
+    /// A `sort(v)` whose element type is still a TYPE VARIABLE bounded by `Ordered` (@PLN165
+    /// E4): the monomorph lowers it to `OpSortVector` where the runtime compares the element
+    /// itself, and to a call of the stdlib declaration's instance otherwise — what the
+    /// instance's hand-written twin reaches either way.
+    pub(crate) const TV_SORT: &'static str = "tvsort";
     /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
     /// template's closure record lays a capture typed by a type variable out at no width, so
     /// the read is re-lowered by NAME against the instance's own record
@@ -9478,8 +9494,15 @@ impl Parser {
             return d_nr;
         }
         // Resolve the concrete first-arg type by substituting tv_nr in the attribute type.
+        // @FR-N-Shape — a `τ?` has `τ`'s shape, and its operators and methods are `τ`'s: the
+        // concrete `x < y` on two `integer?` IS `OpLtInt`.  Looked up wrapped, `integer?` found
+        // nothing and the bound stub stayed in the instance — `smaller<T: Ordered>(a, b)` at
+        // `integer?` answered its first argument on the interpreter and did not compile on
+        // native, and `min_of` over a `vector<integer?>` read a corrupt reference.
         let concrete_arg =
-            Self::substitute_type(def.attributes()[0].typedef.clone(), tv_nr, concrete);
+            Self::substitute_type(def.attributes()[0].typedef.clone(), tv_nr, concrete)
+                .base()
+                .clone();
         // Extract the user-facing function name from the mangled definition name.
         // Mangled names: "t_<LEN><Type>_<name>" or "n_<name>" or operator names.
         let name = def.name();
@@ -10744,7 +10767,7 @@ impl Parser {
             // substitution, so it is the CONCRETE vector type by now, and the same parse
             // function the concrete spelling uses lowers it — width, row and setter from one
             // home.  A nested generic re-stamps through that call and stays deferred.
-            Value::Block(bl) if bl.name == Self::TV_INSERT || bl.name == Self::TV_REVERSE => {
+            Value::Block(bl) if bl.name == Self::TV_SORT => {
                 let bl = *bl;
                 let list: Vec<Value> = bl
                     .operators
@@ -10752,11 +10775,40 @@ impl Parser {
                     .map(|a| self.rewrite_generic_type_defaults(a))
                     .collect();
                 let types = [bl.result.clone()];
+                if self.sort_is_special(u16::MAX, &types) {
+                    let mut out = Value::Null;
+                    self.parse_sort(&mut out, &list, &types);
+                    out
+                } else if let Some(d) = self.builtin_selected(u16::MAX, "sort", &types) {
+                    // The declaration's template: the monomorph's nested-generic pass aims
+                    // the call at its instance, as it does every call to a template.
+                    Value::Call(d, list)
+                } else {
+                    // The template's bound held where the site was stamped; a concrete type
+                    // that fails it was refused at the instantiation.
+                    Value::Null
+                }
+            }
+            Value::Block(bl)
+                if bl.name == Self::TV_INSERT
+                    || bl.name == Self::TV_REVERSE
+                    || bl.name == Self::TV_RESERVE =>
+            {
+                let bl = *bl;
+                let list: Vec<Value> = bl
+                    .operators
+                    .into_iter()
+                    .map(|a| self.rewrite_generic_type_defaults(a))
+                    .collect();
                 let mut out = Value::Null;
                 if bl.name == Self::TV_INSERT {
-                    self.parse_insert(&mut out, &list, &types);
+                    self.parse_insert(&mut out, &list, std::slice::from_ref(&bl.result));
+                } else if bl.name == Self::TV_REVERSE {
+                    self.parse_reverse(&mut out, &list, std::slice::from_ref(&bl.result));
                 } else {
-                    self.parse_reverse(&mut out, &list, &types);
+                    // The count was checked an integer where the template stamped the site.
+                    let count = Type::Integer(crate::data::IntegerSpec::wide());
+                    self.parse_reserve(&mut out, &list, &[bl.result.clone(), count]);
                 }
                 out
             }
@@ -14730,7 +14782,7 @@ impl Parser {
             // links to it through the lowering the `&` bind uses (`scalar_place_ref`, in
             // `convert`) — except a narrow integer store place, which no link can honour yet
             // (D-bind-39), refused here in the bind's own words.
-            let scalar_place = matches!(&tp, Type::RefVar(inner) if crate::data::is_scalar(inner))
+            let scalar_place = matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
                 && !matches!(actual_code.unspan(), Value::Var(_))
                 && Self::is_amp_place(&actual_code, &self.data);
             // loft#1602 — a `&text` parameter handed a text FIELD or ELEMENT.  A text place is a
@@ -14739,7 +14791,7 @@ impl Parser {
             // `(B-Ref-Reshape)`: refuse a link that cannot be honoured rather than downgrade it
             // to a copy.  A temporary (a literal, a computed text) keeps its work copy: nothing
             // names it, so nothing can miss the write.
-            if matches!(&tp, Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+            if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
                 && self.is_text_place(&actual_code)
             {
                 if !self.first_pass {
@@ -14886,7 +14938,7 @@ impl Parser {
             let linked_place = scalar_place && report && !self.first_pass;
             if linked_place
                 && matches!(actual_type, Type::Optional(_))
-                && matches!(&tp, Type::RefVar(pointee) if !matches!(pointee.as_ref(), Type::Optional(_)))
+                && matches!(tp.base(), Type::RefVar(pointee) if !matches!(pointee.as_ref(), Type::Optional(_)))
             {
                 let msg = diagnostic_format(
                     Level::Warning,

@@ -1544,7 +1544,7 @@ pub(crate) fn is_raw_tuple_link(vars: &crate::variables::Function, var: u16) -> 
 /// arguments never share the memory the reference names.
 #[must_use]
 pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
-    matches!(tp, Type::RefVar(inner) if crate::data::is_scalar(inner))
+    matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
 }
 
 /// True when tuple element `idx` of `var` is TEXT — nullable or not.  The predicate

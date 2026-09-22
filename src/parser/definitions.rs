@@ -2657,6 +2657,20 @@ impl Parser {
                 // expression (`s[i]`) passed DIRECTLY as an argument is not flagged
                 // at the call site (the possible-null is the callee's contract).
                 self.data.definitions[self.context as usize].null_safe = true;
+            } else if id == Some("builtin".to_string()) {
+                // @PLN165 arc E — `#builtin`: the declaration above is a built-in's signature,
+                // and a call selecting it — the method spelling included — lowers through the
+                // compiler's special form of its name.  The standard library's alone: a
+                // program's definition of the name is an ordinary body, reached as one.
+                if self.default {
+                    self.data.definitions[self.context as usize].builtin = true;
+                } else {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "#builtin marks a standard-library declaration the compiler lowers itself; a program's function is its own body"
+                    );
+                }
             } else if id == Some("superseded".to_string()) {
                 // @PLN102 arc C — `#superseded "Y"` marks this callable as
                 // superseded by the successor symbol Y (a bare name, e.g.

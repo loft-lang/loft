@@ -297,7 +297,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 183; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args
+pub(crate) const DEFINITION_STRIDE: u32 = 184; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
@@ -324,6 +324,7 @@ pub(crate) const DEF_SUPERSEDED: u32 = 160; // @PLN102 arc C #superseded "Y"; ""
 pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 180;
 pub(crate) const DEF_PUB_VISIBLE: u32 = 181;
 pub(crate) const DEF_NULL_SAFE: u32 = 182; // @PLN46 W2 #null_safe; false = unannotated
+pub(crate) const DEF_BUILTIN: u32 = 183; // @PLN165 arc E #builtin; false = an ordinary body
 pub(crate) const DEF_C_SYMBOL: u32 = 164; // @PLN24 #c "sym"; "" = not a C binding
 pub(crate) const DEF_C_SIG: u32 = 168; // @PLN24 the declared C signature; "" = none
 pub(crate) const DEF_TYPE_PARAMS: u32 = 172; // @PLN165 D2 vector<integer>, header order
@@ -1506,6 +1507,7 @@ mod tests {
         );
         assert_eq!(pos(ids.definition, "pub_visible"), DEF_PUB_VISIBLE);
         assert_eq!(pos(ids.definition, "null_safe"), DEF_NULL_SAFE);
+        assert_eq!(pos(ids.definition, "builtin"), DEF_BUILTIN);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

@@ -149,7 +149,7 @@ impl Parser {
     /// How far each routed argument is from definition `r`'s parameter, or `None` when `r`
     /// does not take the call (`Disp-Applicable`): more arguments than parameters, a trailing
     /// parameter with no default, or an argument its parameter cannot accept.
-    fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
+    pub(crate) fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
         if self.data.def_type(r) == DefType::Generic {
             return self.template_ranks(r, routed);
         }
@@ -337,8 +337,9 @@ impl Parser {
     /// declared function sends the call down the ordinary path, where
     /// [`Self::program_definition_applies`] decides by the argument's type.
     pub(crate) fn program_declares_fn(&self, name: &str) -> bool {
+        // A GENERIC is as much a definition as a function (`program_definition_applies`).
         self.data.definitions.iter().any(|d| {
-            d.def_type == DefType::Function
+            matches!(d.def_type, DefType::Function | DefType::Generic)
                 && d.original_name().as_str() == name
                 && !crate::portable_path::is_stdlib_source(&d.position().file)
         })

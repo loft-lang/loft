@@ -1918,6 +1918,67 @@ pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T {
   result
 }
 #pure
+// Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on
+// `vector`, so a program may define its own `reverse` for its own types beside it.
+pub fn reverse < T > (self: vector<T>) {
+  reverse(self)
+}
+#builtin
+
+// Give a vector room for `n` elements, so filling it does not grow it step by step:
+// `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count
+// the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
+pub fn reserve < T > (self: vector<T>, n: integer) {
+  reserve(self, n)
+}
+#builtin
+
+// Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)`
+// or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element
+// read from the vector itself (`v.insert(0, v[1])`) is the one it was.
+pub fn insert < T > (self: vector<T>, index: integer, elem: T) {
+  insert(self, index, elem)
+}
+#builtin
+
+// Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `<`
+// (`Ordered`) — a struct defining `op <` sorts by it — and is stable: elements that compare
+// equal keep their order.  A null element sorts first.
+pub fn sort < T: Ordered > (self: vector<T>) {
+  // The runtime sorts integer, float, single and text itself (`#builtin`); this body is the
+  // sort for every other element: a bottom-up merge that moves elements by copy, through `<`.
+  n = len(self);
+  if n < 2 { return; }
+  src: vector<T> = [];
+  src += self;
+  width = 1;
+  while width < n {
+    dst: vector<T> = [];
+    lo = 0;
+    while lo < n {
+      mid = min(lo + width, n);
+      hi = min(lo + 2 * width, n);
+      i = lo;
+      j = mid;
+      while i < mid || j < hi {
+        if j >= hi || (i < mid && !(src[j] < src[i])) {
+          dst += src[i..i + 1];
+          i += 1;
+        } else {
+          dst += src[j..j + 1];
+          j += 1;
+        }
+      }
+      lo = hi;
+    }
+    src = dst;
+    width *= 2;
+  }
+  clear(self);
+  self += src;
+}
+#builtin
+
 // Sum of all integer elements. Returns 0 for an empty vector.
 // Superseded by the general `sum(v, init)`; kept as a shim over it
 // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the

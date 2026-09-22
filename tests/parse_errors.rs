@@ -271,6 +271,21 @@ fn empty_return() {
         .error("Expect expression after return at empty_return:1:53");
 }
 
+/// A binary operator that cannot begin an expression, after an operand that answers
+/// nothing, is that operand's: named once at the operator, with the right-hand side read so
+/// nothing cascades (it reported "Expect token )" and three errors after it).
+#[test]
+fn an_operator_after_a_void_call_names_it() {
+    code!("fn f(n: integer) { assert(n > 0, \"n\"); }\nfn test() { assert(f(1) == 5, \"x\"); }")
+        .error("`==` needs a value on its left, and the expression before it answers nothing at an_operator_after_a_void_call_names_it:2:25");
+}
+
+#[test]
+fn a_coalesce_after_a_void_call_names_it() {
+    code!("fn f(n: integer) { assert(n > 0, \"n\"); }\nfn test() { x = f(1) ?? 3; assert(x == 3, \"x\"); }")
+        .error("`??` needs a value on its left, and the expression before it answers nothing at a_coalesce_after_a_void_call_names_it:2:22");
+}
+
 #[test]
 fn wrong_void() {
     code!("fn rout(a: integer) {if a > 4 {return 12}}\nfn test() {}")
@@ -4907,6 +4922,53 @@ fn a_literal_value_reports_once() {
 fn a_short_lambda_alone_cannot_bind_a_generic_literal() {
     code!("struct Th<T> { f: fn() -> T }\nfn test() { a = Th { f: || { 42 } }; assert(a.f() == 42, \"\"); }")
         .error("`Th { … }` cannot tell what T is — the `|…|` lambda in `f` takes its types from the field; spell it `fn(…) -> <type> { … }`, or give the binding its type, `x: Th<integer> = Th { … }` at a_short_lambda_alone_cannot_bind_a_generic_literal:2:17");
+}
+
+/// @PLN165 E1 — `reverse` is a stdlib METHOD on `vector`: a program's own `reverse` for its own
+/// types is a member of the set, and one for `vector` itself is the one body per receiver type
+/// that is refused — as for any stdlib method (`clear`).
+#[test]
+fn a_programs_own_reverse_for_a_vector_is_refused() {
+    code!("fn reverse<T>(v: vector<T>) -> integer { len(v) }\nfn test() { a = [1, 2]; assert(reverse(a) == 2, \"\"); }")
+        .error("Cannot redefine 'reverse' (already defined at default/01_code.loft) — a name has one body per receiver type, and `x.reverse(…)` and `reverse(x, …)` would reach different functions; declare it once as a `self` method, which takes both spellings, or rename one at a_programs_own_reverse_for_a_vector_is_refused:1:31");
+}
+
+/// @PLN165 E3 — `insert`'s element is a store into the vector's element slot and converts as
+/// every other element write does: a `text` into a `vector<integer>` is refused (it panicked
+/// the interpreter), and an unproven narrowing is refused (`300` into a `vector<u8>` stored 0).
+#[test]
+fn insert_refuses_an_element_of_another_type() {
+    code!("fn test() { v = [1, 2]; insert(v, 0, \"x\"); assert(len(v) == 3, \"\"); }")
+        .error("insert cannot store text in a vector<integer>; cast it explicitly with 'as integer' at insert_refuses_an_element_of_another_type:1:43");
+}
+
+#[test]
+fn insert_refuses_an_implicit_narrowing() {
+    code!("fn test() { v: vector<u8> = [1, 2]; n = 300; insert(v, 1, n); assert(len(v) == 3, \"\"); }")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at insert_refuses_an_implicit_narrowing:1:62");
+}
+
+/// @PLN165 E4 — `sort<T: Ordered>` takes what its bound says, so an element without a `<` is
+/// refused naming the bound (the special form said "sort is not supported for vector<Q>"), and a
+/// generic's unbounded `T` is refused at the call as any bounded generic's is.
+#[test]
+fn sort_refuses_an_element_that_is_not_ordered() {
+    code!("struct Q { x: integer }\nfn test() { q = [Q { x: 2 }, Q { x: 1 }]; q.sort(); assert(len(q) == 2, \"\"); }")
+        .error("'Q' does not satisfy interface 'Ordered': missing OpLt at sort_refuses_an_element_that_is_not_ordered:2:51");
+}
+
+#[test]
+fn sort_in_a_generic_needs_the_bound() {
+    code!("fn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")
+        .error("'T' does not satisfy interface 'Ordered': missing OpLt at sort_in_a_generic_needs_the_bound:1:33");
+}
+
+/// @PLN165 arc E — `#builtin` sends a call to the compiler's special form of the name; it marks
+/// a standard-library declaration, and a program's function is its own body.
+#[test]
+fn a_program_cannot_mark_its_own_function_builtin() {
+    code!("fn twice(v: vector<integer>) -> integer { len(v) * 2 }\n#builtin\nfn test() { assert(twice([1]) == 2, \"\"); }")
+        .error("#builtin marks a standard-library declaration the compiler lowers itself; a program's function is its own body at a_program_cannot_mark_its_own_function_builtin:2:9");
 }
 
 /// @PLN165 D11 — a variable bound only by a callback's return: a `|…|` lambda that answers

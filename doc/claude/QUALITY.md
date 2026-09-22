@@ -2773,12 +2773,20 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **324** |
+| **322** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, the join of `157-native-4x` (@PLN158 W1, R-SplitTable) and `tuxedo-165-generics`
+(@PLN165 E2-E4) into ../loft2 with @PLN167 A0-B3, re-measured at its end: **935 · 609 · 4 · 322**,
+and `--check-ratchet` pinned lower at opaque 322, opaque tests 1311.  The sides read 334 · 1313
+(the 157 line) and 328 · 1312 (the generics line); ../loft2's own @PLN167 work had grown it to
+1318 with eight bare `RefVar` shape tests, each of which now peels (`.base()`, identity on a `&`,
+which is always the outer former), and the one that asks a nullability question — a `&boolean?`
+link reads its storage byte — spells it.)
 
 (2026-09-23, loft#1597 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ dc5bbb3b3 and
 re-measured at its end: **927 · 598 · 5 · 324**, and `--check-ratchet` pinned lower at opaque 324,
@@ -2818,6 +2826,14 @@ opaque 332, opaque tests 1313.  The sides read 333 (../loft2) and 334 (the 157 l
 generics line), each true of its own base.  The joined tree read 333 · 1314 with
 `output_coroutine`'s closure test bare, as loft#1586 brought it in; it peels, because a nullable
 fn-ref still captures, and the join reads 332 · 1313.)
+
+(2026-09-22, @PLN165 E4 on `tuxedo-165-generics`: **888 · 556 · 4 · 328**, opaque tests re-pinned
+at 1312 — `sort`'s special-form test asks its nullability question in words (`!matches!(elm,
+Optional)`) and reads the element through the wrapper.)
+
+(2026-09-22, @PLN165 E3 on `tuxedo-165-generics`: **886 · 553 · 5 · 328**, re-pinned at opaque
+328 — `element_store_size` peels its element to ask for a nested vector's stride, which moved
+it to the seeing side, and `insert`'s argument staging reads through the wrapper.)
 
 (2026-09-22, @PLN165 D11 on `tuxedo-165-generics`: **885 · 551 · 5 · 329**, re-pinned at opaque
 329, opaque tests 1313 — the generic vector-element write peels its binding (a `τ?` element is

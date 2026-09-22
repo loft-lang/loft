@@ -389,7 +389,7 @@ impl Output<'_> {
                     // the storage BYTE (0/1/255), as a `boolean?` local does, so `c == null`
                     // can see the 255: the two-state read would answer `false` for a null.
                     // Only a non-null `&boolean` reads as a `bool` (loft#655).
-                    if matches!(**inner, Type::Boolean) {
+                    if !matches!(**inner, Type::Optional(_)) && matches!(inner.base(), Type::Boolean) {
                         return write!(w, "unsafe {{ *var_{var_name} == 1 }}");
                     }
                     if matches!(inner.base(), Type::Text(_)) {
@@ -1566,12 +1566,12 @@ impl Output<'_> {
             // read has the linked type: a `&boolean?` test needs the same truthiness coercion
             // a `boolean?` local gets.
             ValueType::Var => {
-                let tp = self.data.def(self.def_nr).variables.tp(node.var_nr());
+                let tp = self.data.def(self.def_nr).variables.tp(node.var_nr()).base();
                 Some(match tp {
                     Type::RefVar(inner) if crate::generation::is_raw_scalar_ref(tp) => {
                         inner.base().clone()
                     }
-                    _ => tp.base().clone(),
+                    _ => tp.clone(),
                 })
             }
             ValueType::Call => {

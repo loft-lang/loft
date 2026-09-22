@@ -119,14 +119,14 @@ pub(crate) fn target_holds_null(target: &Type, parent: &Type) -> bool {
 /// Only an integer is peeled, because the range question exists only for an integer; every
 /// other scalar written through a link meets the same type-change check the variable meets.
 pub(crate) fn linked_store_target<'a>(target: &'a Type, source: &Type) -> &'a Type {
-    match target {
+    match target.base() {
         Type::RefVar(inner)
             if matches!(inner.base(), Type::Integer(_))
                 && !matches!(source.base(), Type::RefVar(_)) =>
         {
             inner
         }
-        other => other,
+        _ => target,
     }
 }
 
@@ -9030,6 +9030,20 @@ use a separate collection or add after the loop"
                 lp.push(self.cl(
                     "OpCopyRecord",
                     &[Value::Var(for_var), Value::Var(elm_var), element_id],
+                ));
+            } else if self.is_type_var_element(&elm_tp) {
+                // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
+                // `v += [x]` writes it (`OpCopyRecord(src, elm, row)` on the fresh element),
+                // which each monomorph re-lowers at its concrete element type
+                // (`rewrite_vector_write_triplets`).  `set_field` below wraps the destination
+                // in a field read the rewrite does not match, so every scalar instance kept a
+                // RECORD copy of its integer: `dst += v[i..j]` inside a generic wrote into the
+                // constant store on the interpreter and was E0610 on native.
+                let row = i32::from(self.data.def(ed_nr).known_type())
+                    | i32::from(crate::keys::COPY_FRESH_DEST);
+                lp.push(self.cl(
+                    "OpCopyRecord",
+                    &[Value::Var(for_var), Value::Var(elm_var), Value::Int(row)],
                 ));
             } else if let Some(op) = self.narrow_elm_set(&elm_tp, elm_var, &Value::Var(for_var)) {
                 // #624 — a narrow element needs the WIDTH-matched store op; `set_field`

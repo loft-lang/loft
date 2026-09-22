@@ -332,7 +332,7 @@ impl Output<'_> {
                 self.data.def(*d_nr).name(),
                 "OpGetField" | "OpGetVector" | "OpVectorRef"
             )
-            && let Type::RefVar(inner) = &def_fn.attributes()[idx].typedef
+            && let Type::RefVar(inner) = def_fn.attributes()[idx].typedef.base()
         {
             // A scalar field or element handed to a `&` parameter: the pointer into its store
             // slot, built as a local link to the same place builds it (@FR-B-Ref-Lvalue).

@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 E1 — `reverse` is a stdlib generic METHOD on `vector` (`pub fn reverse<T>(self:
+// vector<T>)`, marked `#builtin`): `reverse(v)` and `v.reverse()` are one call, and a program
+// adds its own `reverse` for its own types — a method or a free function — beside it, one set
+// by receiver type.  A call that selects the stdlib's is the compiler's own lowering, one
+// `OpReverseVector` at the element's width, in either spelling and inside a program's own
+// generic — on both backends.
+//
+// @falsified-at: d01826bb3 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-built-in-is-a-method-a-program-extends-for-its-own-types.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control has no method: "Unknown field
+//     vector<integer>.reverse".
+//   ARMED: nothing.
+//   HOLDS: the free spelling at every width, and the program's own `reverse` for its types.
+
+struct Pt { x: integer, y: integer }
+struct Roster { n: integer }
+struct Deck { cards: vector<integer> }
+
+fn reverse(self: Roster) -> integer { self.n * 3 }
+fn reverse(d: Deck) -> integer { len(d.cards) }
+fn rev<T>(v: vector<T>) -> vector<T> { reverse(v); v }
+fn flip(v: &vector<integer>) { v.reverse(); }
+
+fn test_both_spellings_at_each_element_width() {
+  a = [1, 2, 3];
+  reverse(a);
+  b: vector<u8> = [4, 5, 6];
+  b.reverse();
+  c = ["x", "y"];
+  reverse(c);
+  d = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  d.reverse();
+  e = [1.5, 2.5];
+  reverse(e);
+  assert("{a}|{b}|{c}|{d[0].x}|{e}" == "[3,2,1]|[6,5,4]|[\"y\",\"x\"]|3|[2.5,1.5]", "{a}|{b}|{c}");
+}
+
+fn test_a_programs_own_reverse_for_its_own_types() {
+  r = Roster { n: 2 };
+  k = Deck { cards: [1, 2, 3] };
+  assert(reverse(r) == 6 && r.reverse() == 6 && reverse(k) == 3, "{reverse(r)} {reverse(k)}");
+  v = [1, 2];
+  reverse(v);
+  assert("{v}" == "[2,1]", "{v}");
+}
+
+fn test_inside_a_programs_generic_and_through_a_link() {
+  a = rev([1, 2, 3]);
+  b = rev(["p", "q"]);
+  c = [7, 8, 9];
+  flip(c);
+  assert("{a}|{b}|{c}" == "[3,2,1]|[\"q\",\"p\"]|[9,8,7]", "{a}|{b}|{c}");
+}

@@ -1162,7 +1162,7 @@
 <span id="src-wall-loft-L701">      <span class="kw">if</span> pnr == <span class="nm">1</span> {</span>
 <span id="src-wall-loft-L702">        <span class="kw">break</span>;</span>
 <span id="src-wall-loft-L703">      }</span>
-<span id="src-wall-loft-L704">      <span class="fn-call">reverse</span>(wv, nr, pnr, d);</span>
+<span id="src-wall-loft-L704">      <span class="fn-call"><a href="stdlib-vector-aggregates.html">reverse</a></span>(wv, nr, pnr, d);</span>
 <span id="src-wall-loft-L705">      reversed = <span class="kw">true</span>;</span>
 <span id="src-wall-loft-L706">      s = <span class="en">WallStep</span>::<span class="fn-call">new</span>(</span>
 <span id="src-wall-loft-L707">      ws.pos,</span>
@@ -1180,10 +1180,10 @@
 <span id="src-wall-loft-L719">    <span class="kw">if</span> pnr == <span class="nm">1</span> {</span>
 <span id="src-wall-loft-L720">      nr = <span class="fn-call">get_walk_nr</span>(d, wv);</span>
 <span id="src-wall-loft-L721">      d.wall_nrs.<span class="fn-call">push</span>((wv, nr));</span>
-<span id="src-wall-loft-L722">      d.walls.<span class="fn-call">insert</span>((wv, nr, <span class="nm">0</span>), <span class="fn-call">wall_point</span>(ws));</span>
+<span id="src-wall-loft-L722">      d.walls.<span class="fn-call"><a href="stdlib-vector-aggregates.html">insert</a></span>((wv, nr, <span class="nm">0</span>), <span class="fn-call">wall_point</span>(ws));</span>
 <span id="src-wall-loft-L723">    }</span>
-<span id="src-wall-loft-L724">    d.done.<span class="fn-call">insert</span>(s.pos.<span class="fn-call">corner</span>(), (wv, nr, pnr));</span>
-<span id="src-wall-loft-L725">    d.walls.<span class="fn-call">insert</span>((wv, nr, pnr), <span class="fn-call">wall_point</span>(s));</span>
+<span id="src-wall-loft-L724">    d.done.<span class="fn-call"><a href="stdlib-vector-aggregates.html">insert</a></span>(s.pos.<span class="fn-call">corner</span>(), (wv, nr, pnr));</span>
+<span id="src-wall-loft-L725">    d.walls.<span class="fn-call"><a href="stdlib-vector-aggregates.html">insert</a></span>((wv, nr, pnr), <span class="fn-call">wall_point</span>(s));</span>
 <span id="src-wall-loft-L726">    pnr += <span class="nm">1</span>;</span>
 <span id="src-wall-loft-L727">  }</span>
 <span id="src-wall-loft-L728">  <span class="kw">if</span> pnr &gt; <span class="nm">1</span> {</span>

@@ -246,6 +246,7 @@ struct Definition {
   type_params: vector<integer>, // @PLN165 D2 a type template's variables, in header order
   instance_of: integer, // @PLN165 D3 the type template an instance was minted from; -1 = none
   instance_args: vector<TypeT>, // @PLN165 D3 that instance's type arguments, header order
+  builtin: boolean, // @PLN165 arc E #builtin: a call selecting it lowers through the special form of its name
 }
 
 // One retained import (src/data.rs::AppliedImport).  `rebuild_indices` can
