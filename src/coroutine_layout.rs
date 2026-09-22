@@ -27,7 +27,7 @@
 //! [`CHANNEL_NONE`] for such a type so both ends refuse it instead of
 //! emitting a cast rustc rejects (loft#1132).
 
-use crate::data::Type;
+use crate::data::{Data, Type, Value};
 
 /// One flattened transport slot of a yielded composite value.  Each variant
 /// knows its transport width and is mapped to/from a small integer code so the
@@ -276,6 +276,103 @@ pub fn next_operands(yield_tp: &Type) -> (i32, Vec<i32>) {
 #[must_use]
 pub fn slot_count(kinds: &[YieldSlot]) -> usize {
     kinds.iter().map(|k| k.width()).sum()
+}
+
+/// Is a yield of `tp` HANDED to the consumer (`formal/coroutines.md` `(G-Own)`, @FR-G-Own) —
+/// a record, a struct-enum or a vector, which the generator yields in a store of its own, or a
+/// tuple whose reference members are all such values?  A consumer that binds such a value OWNS
+/// it.  A keyed collection is not handed over — it lives inline in its parent and has no store
+/// of its own to hand — and neither is a tuple holding a tuple of references: the tuple literal
+/// already copies a nested member itself, and a consumer's release walks top-level members
+/// only, so a second copy here would be one nobody releases.  Their consumer binding stays a
+/// borrow of the generator.
+#[must_use]
+pub fn yield_handed_over(tp: &Type) -> bool {
+    let member = |e: &Type| {
+        matches!(
+            e.base(),
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+        )
+    };
+    match tp.base() {
+        Type::Tuple(elems) => {
+            elems.iter().any(crate::data::holds_dbref)
+                && elems
+                    .iter()
+                    .all(|e| !crate::data::holds_dbref(e) || member(e))
+        }
+        _ => member(tp),
+    }
+}
+
+/// The compiler temps a `yield` of `val` HANDS to the consumer — `formal/coroutines.md`
+/// `(G-Own)`, @FR-G-Own.  What an advance produces is the consumer's, so the generator forgets
+/// every temp that holds it, before it suspends: neither the generator's tail nor its
+/// abandonment may then release what the consumer owns.
+///
+/// A yielded record reaches a temp two ways: a record built in place — a literal, or the copy
+/// the parser makes of an existing value — ends in that temp, and a call fills the temp handed
+/// to its hidden return buffer (`__retbuf`).  Any other temp argument of that call is the
+/// generator's own and stays with it.  A tuple hands over what each of its members does, and a
+/// temp that views another temp's store hands over that owner too.  One home, asked by the interpreter's bytecode compiler
+/// and by the native state machine, so the two cannot forget different temps.
+#[must_use]
+pub fn yield_handed_temps(data: &Data, def_nr: u32, val: &Value) -> Vec<u16> {
+    let def = data.def(def_nr);
+    if !matches!(def.returned().base(), Type::Iterator(inner, _) if yield_handed_over(inner)) {
+        return Vec::new();
+    }
+    let vars = def.variables();
+    let temp = |v: u16| {
+        v < vars.count()
+            && !vars.is_argument(v)
+            && vars.is_compiler_generated(v)
+            && crate::data::is_dbref(vars.tp(v).base())
+    };
+    let mut out = Vec::new();
+    handed_temps(data, val, &temp, &mut out);
+    // A temp can be a VIEW of the temp that owns the store — a vector's handle is a field of
+    // its `__vdb_N` record — and handing the view over leaves the owner holding the store.
+    let mut i = 0;
+    while i < out.len() {
+        for d in vars.tp(out[i]).depend() {
+            if temp(d) && !out.contains(&d) {
+                out.push(d);
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
+/// The walk behind [`yield_handed_temps`]: the value's tail, and each member of a tuple.
+fn handed_temps(data: &Data, val: &Value, temp: &impl Fn(u16) -> bool, out: &mut Vec<u16>) {
+    let mut tail = val.unspan();
+    while let Value::Block(bl) = tail {
+        let Some(last) = bl.operators.last() else {
+            return;
+        };
+        tail = last.unspan();
+    }
+    match tail {
+        Value::Var(v) if temp(*v) => out.push(*v),
+        Value::Call(d, args) => {
+            for (a, arg) in data.def(*d).attributes().iter().zip(args) {
+                if let Value::Var(v) = arg.unspan()
+                    && a.name.starts_with("__retbuf")
+                    && temp(*v)
+                {
+                    out.push(*v);
+                }
+            }
+        }
+        Value::Tuple(items) => {
+            for item in items {
+                handed_temps(data, item, temp, out);
+            }
+        }
+        _ => {}
+    }
 }
 
 #[cfg(test)]

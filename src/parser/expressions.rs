@@ -1237,15 +1237,11 @@ impl Parser {
                     let elem_tp = (**inner).clone();
                     let sub_var = self.create_unique("__yf_sub", &sub_type);
                     self.vars.defined(sub_var);
-                    // A yielded handle points INTO the sub-generator's frame store, so the
-                    // item binds as a BORROW of `__yf_sub` — the same dep the streaming
-                    // `for x in g()` gives its loop var (loft#481) — and no scope exit
-                    // frees it: an enclosing `if` arm's did, and released the frame.
-                    let item_tp = if crate::data::holds_dbref(&elem_tp) {
-                        elem_tp.with_deps(&crate::data::Deps::frame1(sub_var))
-                    } else {
-                        elem_tp.clone()
-                    };
+                    // The sub-generator hands each value over (`(G-Own)`), so the item OWNS
+                    // it, and yielding it hands it on: `__yf_item` is the temp the yield
+                    // forgets (`coroutine_layout::yield_handed_temps`), so neither this
+                    // generator nor the item's scope exit releases what the consumer now owns.
+                    let item_tp = elem_tp.clone();
                     let item_var = self.create_unique("__yf_item", &item_tp);
                     self.vars.defined(item_var);
                     let op = self.data.def_nr("OpCoroutineNext");
@@ -1293,7 +1289,7 @@ impl Parser {
                     let elem = (**elem_tp).clone();
                     self.seed_leaving_value_hint(&elem);
                 }
-                self.expression(&mut v);
+                let v_tp = self.expression(&mut v);
                 self.expected = saved_expected;
                 // @P328 — when yielding a NON-CAPTURING closure into an
                 // `iterator<fn(...) -> ...>` generator, the expression
@@ -1335,6 +1331,7 @@ impl Parser {
                         }
                     }
                 }
+                self.yield_owned_value(&mut v, &v_tp);
                 *val = Value::Yield(Box::new(v));
                 Type::Void
             }

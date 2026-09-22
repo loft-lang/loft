@@ -3501,7 +3501,16 @@ use #count instead"
                             .enumerate()
                             .map(|(i, name)| {
                                 let elem_tp = elem_types[i].clone();
-                                let var = self.create_var(name, &elem_tp);
+                                // A binder read off the loop variable's member is a VIEW of
+                                // that variable (`(B-View)`), never a second owner: whoever
+                                // owns the element — the collection, or a generator's loop
+                                // variable (`(G-Own)`) — releases the member, once.
+                                let bind_tp = if crate::data::holds_dbref(&elem_tp) {
+                                    elem_tp.depending(for_var)
+                                } else {
+                                    elem_tp.clone()
+                                };
+                                let var = self.create_var(name, &bind_tp);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
                                 let read = if ref_def_nr == u32::MAX {
@@ -3611,9 +3620,16 @@ use #count instead"
             // variants here was a THIRD copy of the set inside one `if`, and its
             // `other => other` fall-through is silent: the type it cannot spell binds
             // unchanged and the arm reads as taken (@FR-O-Proxy).
+            //
+            // Except the values `(G-Own)` hands over — a record, a struct-enum, a vector: the
+            // generator yields each in a store of its own that it no longer holds
+            // (`Parser::yield_owned_value`), so the loop var OWNS it and the scope machinery's
+            // per-iteration release is exactly right.  A tuple or keyed collection is not
+            // handed over yet and keeps the borrow.
             if gen_var != u16::MAX
                 && matches!(in_type, Type::Iterator(_, _))
                 && crate::data::holds_dbref(&var_tp)
+                && !crate::coroutine_layout::yield_handed_over(&var_tp)
             {
                 let dep_tp = var_tp.with_deps(&crate::data::Deps::frame1(gen_var));
                 self.change_var_type(for_var, &dep_tp);

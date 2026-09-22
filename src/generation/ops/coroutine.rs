@@ -89,9 +89,10 @@ impl OpEmitter for OpCoroutineNextEmitter {
                     return Ok(());
                 }
                 let slots = slot_count(&kinds);
+                let init = crate::generation::coroutine::yield_buf_init(&kinds);
                 write!(
                     ctx.w,
-                    "{{ let mut _loft_yield_buf: [i64; {slots}] = [0; {slots}]; \
+                    "{{ let mut _loft_yield_buf: [i64; {slots}] = {init}; \
                      loft::codegen_runtime::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
                      ("
                 )?;

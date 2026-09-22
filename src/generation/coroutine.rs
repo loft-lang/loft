@@ -72,6 +72,23 @@ pub(crate) fn yield_slot_i64(kind: YieldSlot, expr: &str) -> Option<String> {
 /// tuple element of kind `kind` from the `_loft_yield_buf` transport buffer at
 /// `slot`.
 #[must_use]
+/// The initial value of the consumer's `next_into` buffer for a tuple of `kinds`: every slot
+/// zero, except a `Ref`'s store word, which is `u16::MAX` — so the tuple an EXHAUSTED advance
+/// leaves (the generator writes no slot) carries `DbRef::NULL` in each reference member, the
+/// reference null `(H-RefNull)`, and a consumer that owns those members releases nothing.
+pub(crate) fn yield_buf_init(kinds: &[YieldSlot]) -> String {
+    let mut words: Vec<&str> = Vec::new();
+    for &kind in kinds {
+        if kind == YieldSlot::Ref {
+            words.push("65535");
+            words.push("0");
+        } else {
+            words.extend(std::iter::repeat_n("0", kind.width()));
+        }
+    }
+    format!("[{}]", words.join(", "))
+}
+
 pub(crate) fn yield_slot_read(kind: YieldSlot, slot: usize) -> String {
     let s1 = slot + 1;
     match kind {
@@ -1258,7 +1275,20 @@ impl Output<'_> {
                     writeln!(w, "            let v = self.__values[self.__idx];")?;
                 }
                 writeln!(w, "            self.__idx += 1;")?;
-                writeln!(w, "            return v;")?;
+                // `(G-Own)`: a handle leaves in a store of the consumer's own, since the
+                // snapshot store it was collected into stays the generator's.
+                if let Some(tp) = is_dbref
+                    .then(|| snapshot_type_id(self.data, yield_tp))
+                    .flatten()
+                    .filter(|_| crate::coroutine_layout::yield_handed_over(yield_tp))
+                {
+                    writeln!(
+                        w,
+                        "            return loft::codegen_runtime::coroutine_hand_out(cell, v, {tp});"
+                    )?;
+                } else {
+                    writeln!(w, "            return v;")?;
+                }
             }
             writeln!(w, "        }}")?;
             if is_dbref {
@@ -1447,6 +1477,10 @@ impl Output<'_> {
                                 slot += kind.width();
                             }
                         }
+                        // `(G-Own)`: the members' temps are handed over with the tuple.
+                        for field in self.handed_yield_fields(val) {
+                            writeln!(w, "                self.var_{field} = DbRef::NULL;")?;
+                        }
                         writeln!(w, "                return true;")?;
                     } else if is_fnref_into {
                         // @P328 native — pack the fn-ref `(u32, DbRef)`
@@ -1491,13 +1525,16 @@ impl Output<'_> {
                         writeln!(w, "                return true;")?;
                     } else {
                         let yield_code = self.generate_expr_buf(val)?;
-                        // A record built in a compiler temp and yielded is HANDED to the
-                        // consumer: `first = next(g)` owns it, so the generator forgets the
-                        // temp after the hand-over rather than releasing it at its tail or
-                        // when it is dropped.  The temp was a per-advance local before it
-                        // became a field, and forgetting is what that local did; releasing it
-                        // instead made a record returned past the generator's life read null.
-                        if let Some(field) = self.handed_yield_field(val) {
+                        // `(G-Own)`: a yielded record is HANDED to the consumer, so the
+                        // generator forgets the temps holding it rather than releasing them
+                        // at its tail or when it is dropped.
+                        let handed = self.handed_yield_fields(val);
+                        if handed.is_empty() {
+                            writeln!(
+                                w,
+                                "                return {wrap_open}{yield_code}{wrap_close};"
+                            )?;
+                        } else {
                             writeln!(
                                 w,
                                 "                let __yv = {wrap_open}{yield_code}{wrap_close};"
@@ -1505,13 +1542,10 @@ impl Output<'_> {
                             // The WHOLE field, not only its store number: the tail's drop
                             // hook is guarded on `rec != 0`, and a field that kept its record
                             // number there read the null store (index 65535).
-                            writeln!(w, "                self.var_{field} = DbRef::NULL;")?;
+                            for field in handed {
+                                writeln!(w, "                self.var_{field} = DbRef::NULL;")?;
+                            }
                             writeln!(w, "                return __yv;")?;
-                        } else {
-                            writeln!(
-                                w,
-                                "                return {wrap_open}{yield_code}{wrap_close};"
-                            )?;
                         }
                     }
                 }
@@ -1696,22 +1730,53 @@ impl Output<'_> {
         writeln!(w, "    }}")
     }
 
-    /// The struct field of the compiler temp a straight-line `yield` hands over — the local
-    /// its value ends in, when that is a persistent `__`-prefixed DbRef temp — or `None`.
-    fn handed_yield_field(&self, val: &Value) -> Option<String> {
-        fn tail(v: &Value) -> Option<u16> {
-            match v.unspan() {
-                Value::Var(nr) => Some(*nr),
-                Value::Block(bl) => bl.operators.last().and_then(tail),
-                _ => None,
+    /// The statement an eager factory pushes a handle yield with: a snapshot of the value in
+    /// the generator's one snapshot store (`coroutine_snapshot`).  Where the yield is handed
+    /// over (`(G-Own)`) the value is FRESH — the parser copied anything else — so the snapshot
+    /// is a move: the value's own store is released right after, and the temps that held it
+    /// are forgotten, as the lazy path forgets them, so neither the next iteration nor the
+    /// generator's tail touches that store again.
+    pub(super) fn eager_snapshot_push(&self, val: &Value, val_code: &str, tp: u16) -> String {
+        use std::fmt::Write as _;
+        let yield_tp = match self.data.def(self.def_nr).returned().base() {
+            Type::Iterator(inner, _) => (**inner).clone(),
+            _ => Type::Void,
+        };
+        if !crate::coroutine_layout::yield_handed_over(&yield_tp) {
+            return format!(
+                "__values.push(loft::codegen_runtime::coroutine_snapshot(cell, &mut __snap, ({val_code}), {tp}))"
+            );
+        }
+        let mut out = format!(
+            "{{ let __yv = ({val_code}); __values.push(loft::codegen_runtime::coroutine_snapshot_moved(cell, &mut __snap, __yv, {tp}));"
+        );
+        // A temp scoped to a block INSIDE the value is declared there and ends with it; only
+        // one that outlives the value is still in scope here, and still able to be released.
+        let mut inner_scopes = std::collections::HashSet::new();
+        val.walk(&mut |n| {
+            if let Value::Block(b) = n {
+                inner_scopes.insert(b.scope);
+            }
+        });
+        let vars = self.data.def(self.def_nr).variables();
+        for t in crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val) {
+            if !inner_scopes.contains(&vars.scope(t)) {
+                let _ = write!(out, " {} = DbRef::NULL;", self.var_place(t));
             }
         }
-        let v = tail(val)?;
-        let vars = self.data.def(self.def_nr).variables();
-        if !vars.name(v).starts_with("__") || rust_type(vars.tp(v), &Context::Variable) != "DbRef" {
-            return None;
-        }
-        self.coroutine_persistent_fields.get(&v).cloned()
+        out += " }";
+        out
+    }
+
+    /// The struct fields of the compiler temps a straight-line `yield` hands over — the ones
+    /// [`yield_handed_temps`](crate::coroutine_layout::yield_handed_temps) names, the
+    /// interpreter's answer too, that live across states.  A temp local to one state ends with
+    /// the `return` that yields it, so nothing releases it and it needs no forgetting.
+    fn handed_yield_fields(&self, val: &Value) -> Vec<String> {
+        crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val)
+            .into_iter()
+            .filter_map(|v| self.coroutine_persistent_fields.get(&v).cloned())
+            .collect()
     }
 
     /// Emit a loft generator function as a Rust state-machine struct.
@@ -2141,11 +2206,8 @@ impl Output<'_> {
                         // A straight-line handle yield is snapshotted too: the record
                         // may be rewritten between this yield and the next, and the
                         // buffer is read only after the whole factory has run.
-                        writeln!(
-                            w,
-                            "    __values.push(loft::codegen_runtime::coroutine_snapshot(\
-                             cell, &mut __snap, {val_code}, {tp}));"
-                        )?;
+                        let push = self.eager_snapshot_push(val, &val_code, tp);
+                        writeln!(w, "    {push};")?;
                     } else {
                         writeln!(
                             w,
@@ -2166,12 +2228,18 @@ impl Output<'_> {
                     writeln!(w, "            let v = __sub.{sub_advance}(stores);")?;
                     writeln!(w, "            if v == {sub_exhaust} {{ break; }}")?;
                     if let Some(tp) = snapshot_tp {
-                        // The sub-generator owns what it yields and frees it when it
-                        // is exhausted, which happens right here — so this buffer
-                        // keeps its own copy.
+                        // The sub-generator hands each value over (`(G-Own)`), so this
+                        // buffer snapshots it and releases the handed store; a type not
+                        // handed over stays the sub-generator's, which frees it when it is
+                        // exhausted — right here — so the buffer keeps its own copy.
+                        let snap = if crate::coroutine_layout::yield_handed_over(yield_tp) {
+                            "coroutine_snapshot_moved"
+                        } else {
+                            "coroutine_snapshot"
+                        };
                         writeln!(
                             w,
-                            "            __values.push(loft::codegen_runtime::coroutine_snapshot(\
+                            "            __values.push(loft::codegen_runtime::{snap}(\
                              cell, &mut __snap, v, {tp}));"
                         )?;
                     } else {

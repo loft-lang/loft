@@ -4932,6 +4932,39 @@ pub fn coroutine_snapshot(
     r
 }
 
+/// [`coroutine_snapshot`] of a value the generator HANDS over (`(G-Own)`): a fresh record in
+/// a store of its own that nothing else holds, so the snapshot is a move and that store is
+/// released here.  Its resource travels with the snapshot, so no drop hook runs.
+pub fn coroutine_snapshot_moved(
+    cell: &std::cell::UnsafeCell<Stores>,
+    snap: &mut DbRef,
+    src: DbRef,
+    tp: i32,
+) -> DbRef {
+    let r = coroutine_snapshot(cell, snap, src, tp);
+    if src.store_nr != u16::MAX {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        if (src.store_nr as usize) < stores.allocations.len() {
+            stores.free_named(&src, "__yield");
+        }
+    }
+    r
+}
+
+/// Hand the consumer an eagerly-collected value of its own — `formal/coroutines.md`
+/// `(G-Own)`: what an advance produces is the consumer's, which releases it, while an eager
+/// factory keeps every value in ONE snapshot store the generator releases.  So each value
+/// leaves in a fresh store: a copy of its snapshot record, typed `tp` as
+/// [`coroutine_snapshot`] typed it.  A null stays null.
+pub fn coroutine_hand_out(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, tp: i32) -> DbRef {
+    if src.store_nr == u16::MAX {
+        return src;
+    }
+    let own = OpDatabase(cell, DbRef::NULL, tp);
+    OpCopyRecord(cell, src, own, tp);
+    own
+}
+
 /// Release a generator's snapshot store (see [`coroutine_snapshot`]) — at exhaustion,
 /// and from `drop_stores` when the generator is abandoned.  Idempotent.
 pub fn coroutine_release_snapshots(stores: &mut Stores, snap: &mut DbRef) {

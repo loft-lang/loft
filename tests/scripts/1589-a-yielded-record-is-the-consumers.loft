@@ -1,0 +1,179 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1589, `@FR-G-Own` — WHAT AN ADVANCE PRODUCES IS THE CONSUMER'S.  `next(g)` is a call, and a
+// call's result is fresh (`formal/heap.md` `(H-Move)`), so a yielded record, struct-enum or
+// vector moves into whatever binds it and the generator keeps no hold on it: a record built in
+// place or by a call is handed over, and an existing value — a local, a parameter, a member — is
+// copied first, so a later change in the generator does not reach the consumer's value.
+//
+// A tuple of those hands over each member the same way.
+//
+// Before, nothing said who owned a yielded record and the backends disagreed.  The interpreter
+// released it with the generator, so a record returned past its generator's life read `null`;
+// `--native` handed it over and a drained `for` then released nothing, leaking every yield; a
+// yielded call result leaked on both; a consumer's value changed when the generator later wrote
+// the local it had yielded; and a `match` over a generator ran its records' drop hooks before
+// the arm read them (interpreter) or never (native).  A tuple yield of a local was a second
+// name for it on both backends, and a tuple `for` ran no member's hook.
+//
+// Every expected value, trace and drop order is worked out by hand from the rule.  The drop
+// hook writes a trace FILE, as `139-drop-cascade.loft` does and for its reason.  A loop-body
+// yield and a `yield from` run EAGERLY on `--native` (COROUTINE.md CL-9: every value is made
+// before the first is read), so those two cells assert what the rule fixes — the values, and
+// one release per record — rather than the interleaving.
+//
+// @falsified-at: 516587d5c — interpret exit 1 -> 0, native exit 1 -> 0, native 1 assertion failures
+//   -> 0 (LOFT_STRICT_STORES=1 make falsify …)
+// CHANNEL: interpret — the strict-store census stops the run; native — an assertion.
+// ARMED: LOFT_STRICT_STORES=1.
+// WITNESS: interpret — `USE AFTER FREE (read) store #2 type=main_vector<P>` at c1, the record read
+//   after its generator released it; native — `c2 trace: m1,r1,m2,r2,m3,r3, want
+//   m1,r1,d1,m2,r2,d2,m3,r3,d3`, a drained `for` that released nothing.
+// HOLDS: the tuple cell `c14` is a control, right before and after.
+
+fn trace_path() -> text { return "loft_1589_yield_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+struct H { id: integer }
+fn OpDrop(self: H) { note("d{self.id}"); }
+fn mk(id: integer) -> H { note("m{id}"); return H { id: id }; }
+
+struct P { id: integer }
+struct T { id: integer, name: text }
+struct S { p: P, k: integer }
+enum E { A { h: H }, B }
+
+// 1 — a record returned past its generator's life (the interpreter read `null`).
+fn e_gen() -> iterator<E> { yield A { h: H { id: 1 } }; yield A { h: H { id: 2 } }; yield B; }
+fn c1_take() -> E {
+  g = e_gen();
+  first = next(g) ?? B;
+  first
+}
+fn c1() -> text {
+  first = c1_take();
+  junk = [P { id: 77 }, P { id: 88 }, P { id: 99 }];
+  got = match first { A { h } => h.id, B => -1 };
+  "{got}{len(junk)}"
+}
+
+// 2 — a drained `for` over call results: each record is released when ITS iteration ends.
+fn calls() -> iterator<H> { yield mk(1); yield mk(2); yield mk(3); }
+fn c2() -> text { n = 0; for e in calls() { note("r{e.id}"); n += 1; } "{n}" }
+
+// 3 — a `break`: what was read is released; nothing is made after it.
+fn c3() -> text { for e in calls() { note("r{e.id}"); if e.id == 2 { break; } } "" }
+
+// 4 — a `match` over a generator collects it first: the buffer owns the records, so the hooks
+//     run after the arm reads, once each, when the buffer goes.
+fn c4_m() -> integer { match e_gen() { [A { h }, ..] => { note("read"); h.id }, _ => 0 } }
+fn c4() -> text { "{c4_m()}" }
+
+// 5 — a yielded LOCAL is copied: the generator's later write does not reach the consumer.
+fn local_gen() -> iterator<P> { x = P { id: 1 }; yield x; x.id = 5; yield x; }
+fn c5() -> text { g = local_gen(); p = next(g) ?? P { id: 0 }; q = next(g) ?? P { id: 0 }; "{p.id}{q.id}" }
+
+// 6 — a yielded MEMBER is copied the same way.
+fn member_gen() -> iterator<P> { s = S { p: P { id: 6 }, k: 1 }; yield s.p; s.p.id = 7; yield s.p; }
+fn c6() -> text { g = member_gen(); a = next(g) ?? P { id: 0 }; b = next(g) ?? P { id: 0 }; "{a.id}{b.id}" }
+
+// 7 — a yielded PARAMETER is copied: the consumer's write does not reach the caller's value.
+fn param_gen(p: P) -> iterator<P> { yield p; yield p; }
+fn c7() -> text { h = P { id: 4 }; s = 0; for e in param_gen(h) { s += e.id; e.id = 99; } "{s}{h.id}" }
+
+// 8 — two results live at once, released in reverse order of binding.
+fn two() -> iterator<H> { yield mk(1); yield mk(2); }
+fn c8_run() { g = two(); a = next(g) ?? H { id: 0 }; b = next(g) ?? H { id: 0 }; note("r{a.id}{b.id}"); }
+fn c8() -> text { c8_run(); "" }
+
+// 9 — a loop-body yield (eager on --native): the values, one release each.
+fn looped() -> iterator<H> { for i in 1..4 { yield mk(i); } }
+fn c9() -> text { s = 0; for e in looped() { s += e.id; } "{s}" }
+
+// 10 — `yield from` hands each of the inner generator's values on (eager on --native).
+fn inner() -> iterator<H> { yield mk(21); yield mk(22); }
+fn outer() -> iterator<H> { yield mk(20); yield from inner(); yield mk(23); }
+fn c10() -> text { s = 0; for e in outer() { s += e.id; } "{s}" }
+
+// 11 — a record holding a TEXT: the copy is deep.
+fn text_gen() -> iterator<T> { x = T { id: 1, name: "one" }; yield x; x.name = "uno"; yield x; yield T { id: 3, name: "tres{x.id}" }; }
+fn c11() -> text { out = ""; for e in text_gen() { out += "{e.id}{e.name},"; } out }
+
+// 12 — a VECTOR yield: the local is copied, the literal handed over.
+fn vec_gen() -> iterator<vector<integer>> { v = [1, 2]; yield v; v += [3]; yield v; yield [7, 8, 9, 10]; }
+fn c12() -> text { g = vec_gen(); a = next(g); b = next(g); c = next(g); "{len(a)}{len(b)}{len(c)}{a[0]}{c[3]}" }
+
+// 13 — a stored handle advanced by `next` and then drained by a `for`.
+fn c13_run() { g = calls(); a = next(g) ?? H { id: 0 }; for e in g { note("r{e.id}"); } note("a{a.id}"); }
+fn c13() -> text { c13_run(); "" }
+
+// 14 — CONTROL: a tuple of a fresh record, right before and after.
+fn tuple_gen() -> iterator<(integer, P)> { yield (1, P { id: 10 }); yield (2, P { id: 20 }); }
+fn c14() -> text { s = 0; for t in tuple_gen() { s += t.0 + t.1.id; } "{s}" }
+
+// 15 — a TUPLE of a local: its member is copied like the local itself (it read 5 and 5).
+fn tuple_local() -> iterator<(integer, P)> { x = P { id: 1 }; yield (1, x); x.id = 5; yield (2, x); }
+fn c15() -> text { g = tuple_local(); a = next(g); b = next(g); "{a.1.id}{b.1.id}" }
+
+// 16 — a tuple `for`: each member's hook runs when its iteration ends.
+fn tuple_calls() -> iterator<(integer, H)> { yield (1, mk(1)); yield (2, mk(2)); }
+fn c16() -> text { for t in tuple_calls() { note("r{t.1.id}"); } "" }
+
+// 17 — a tuple returned past its generator's life.
+fn c17_take() -> (integer, P) { g = tuple_gen(); a = next(g); a }
+fn c17() -> text { a = c17_take(); junk = [P { id: 77 }, P { id: 88 }]; "{a.1.id}{len(junk)}" }
+
+fn main() {
+  drain();
+  ok("c1 returned past the generator", c1(), "13");
+  ok("c1 trace      ", drain(), "d1");
+  ok("c2 value      ", c2(), "3");
+  ok("c2 trace      ", drain(), "m1,r1,d1,m2,r2,d2,m3,r3,d3");
+  ok("c3 value      ", c3(), "");
+  ok("c3 trace      ", drain(), "m1,r1,d1,m2,r2,d2");
+  ok("c4 value      ", c4(), "1");
+  ok("c4 trace      ", drain(), "read,d1,d2");
+  ok("c5 local copy ", c5(), "15");
+  ok("c6 member copy", c6(), "67");
+  ok("c7 param copy ", c7(), "84");
+  ok("c8 value      ", c8(), "");
+  ok("c8 trace      ", drain(), "m1,m2,r12,d2,d1");
+  ok("c9 loop yield ", c9(), "6");
+  t9 = drain();
+  ok("c9 one release", "{len(t9)}", "17");
+  ok("c10 yield from", c10(), "86");
+  t10 = drain();
+  ok("c10 one release", "{len(t10)}", "31");
+  ok("c11 text copy ", c11(), "1one,1uno,3tres1,");
+  ok("c12 vectors   ", c12(), "234110");
+  ok("c13 value     ", c13(), "");
+  ok("c13 trace     ", drain(), "m1,m2,r2,d2,m3,r3,d3,a1,d1");
+  ok("c14 tuples    ", c14(), "33");
+  ok("c15 tuple copy", c15(), "15");
+  ok("c16 value     ", c16(), "");
+  ok("c16 trace     ", drain(), "m1,r1,d1,m2,r2,d2");
+  ok("c17 tuple kept", c17(), "102");
+  delete(trace_path());
+  println("a yielded record is the consumer's: every cell holds");
+}

@@ -7260,7 +7260,9 @@ impl Parser {
         }));
         let fld = Value::Int(i32::from(u16::MAX));
 
-        let mut setup: Vec<Value> = self.vector_db(&vec_tp, buf);
+        // `vector_db` takes the ELEMENT type: handed `vec_tp`, the buffer's store was typed
+        // `vector<vector<E>>`, and its release could not see the records it holds.
+        let mut setup: Vec<Value> = self.vector_db(elm_tp, buf);
         setup.push(v_set(gen_var, subject));
         setup.push(v_set(done, Value::Boolean(false)));
 
@@ -7278,6 +7280,21 @@ impl Parser {
             "OpFinishRecord",
             &[Value::Var(buf), Value::Var(elm), known, fld],
         );
+        // `(G-Own)`: a record the generator hands over is `x`'s own, so the append MOVES it
+        // into the buffer — the copy frees `x`'s store (`COPY_FREE_SOURCE`) and runs no drop
+        // hook, since the resource went with the copy the buffer releases.  `x` stays
+        // `skip_free`: nothing is left for its scope end to release.
+        let mut set_val = set_val;
+        if crate::coroutine_layout::yield_handed_over(elm_tp) {
+            let copy_d = self.data.def_nr("OpCopyRecord");
+            if let Value::Call(d, args) = set_val.unspan_mut()
+                && *d == copy_d
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == x)
+                && let Some(Value::Int(tp)) = args.get_mut(2).map(Value::unspan_mut)
+            {
+                *tp |= i32::from(crate::keys::COPY_FREE_SOURCE);
+            }
+        }
         let append = v_block(
             vec![v_set(elm, new_rec), set_val, finish],
             Type::Void,

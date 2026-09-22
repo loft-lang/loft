@@ -110,6 +110,31 @@ with `next(fr)` as the cursor's `next` and `done` as the stop signal. So a gener
 interchangeable with a vector at the `for` site — the difference is only that its elements are
 computed lazily, on demand, rather than read from a store.
 
+### What an advance produces is the consumer's
+
+```
+  (G-Own)    the value an advance produces is the CONSUMER's: `next(fr)` is a call and a call's
+             result is FRESH (heap.md H-Move), so it moves into whatever binds it — a variable,
+             a `for` variable (released when its iteration ends), the buffer a `match` over the
+             generator collects into — and the generator keeps no hold on it.
+               - `yield e` of a FRESH e — a literal, a constructor, a call result that views
+                 none of the generator's variables — HANDS e over;
+               - `yield e` of an EXISTING value — a local, a parameter, a member, a view —
+                 places a COPY (H-Move lists no yield among the positions that move), so a
+                 later change the generator makes does not reach the value the consumer holds;
+                 for a type that owns a droppable that copy is refused (H-Copy-Refuse).
+             Scope: a record, a struct-enum, a vector, and a tuple whose reference members
+             are those (each member is handed over or copied on its own).
+```
+
+**In words.** A generator hands out values, not windows into its own state. What `next` answers
+belongs to whoever received it: a record returned past the generator's life still reads, a
+drained `for` releases each record once its iteration is done, and a value the consumer holds
+does not change when the generator later rewrites the local it came from. A record built at the
+yield is simply handed over; anything the generator keeps using is copied first. A type with a
+drop hook cannot be copied, so yielding an existing one is a compile-time error that asks for a
+value built at the yield instead.
+
 ---
 
 ## Deviations
@@ -135,6 +160,11 @@ Every deviation this doc has carried is closed; the record is in the companion
   the value and resumes correctly past the helper — the same sequence on both backends.
 - **Exhaustion (`G-Done`)** — a finite generator produces its sequence then reports done; further
   advances stay done (no restart, no fault).
+- **Ownership (`G-Own`)** — `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`: a
+  record returned past its generator, a drained and a broken `for`, a `match`, `yield from`, a
+  loop-body yield, copies of a local, a member, a parameter, a text-holding record and a
+  vector, and a tuple copied, drained and kept — values, drop traces and a clean store census
+  on both backends.
 - **Interchangeable at `for` (`G-For`)** — `for x in gen() { … }` and `for x in vec { … }`
   visit their elements by the same loop; swapping a generator for the equivalent vector changes
   only timing, not the values or their order.

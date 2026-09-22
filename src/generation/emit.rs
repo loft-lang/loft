@@ -184,12 +184,15 @@ impl Output<'_> {
                     // which is the value at the yield, as the interpreter's lazy
                     // suspension hands out.  COROUTINE.md § Design: lazy loop yields.
                     if let Some(tp) = self.yield_collect_snapshot_tp {
-                        write!(
-                            w,
-                            "__values.push(loft::codegen_runtime::coroutine_snapshot(cell, &mut __snap, ("
-                        )?;
-                        self.output_code_node(w, node.yield_inner())?;
-                        write!(w, "), {tp}))")?;
+                        let mut buf: Vec<u8> = Vec::new();
+                        self.output_code_node(&mut buf, node.yield_inner())?;
+                        let code = String::from_utf8_lossy(&buf).into_owned();
+                        let push = self.eager_snapshot_push(
+                            &node.yield_inner().to_owned_value(),
+                            &code,
+                            tp,
+                        );
+                        write!(w, "{push}")?;
                     } else {
                         write!(w, "__values.push((")?;
                         self.output_code_node(w, node.yield_inner())?;

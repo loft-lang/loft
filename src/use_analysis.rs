@@ -542,6 +542,10 @@ struct Uses {
     /// to). Back-edges break the position↔execution correspondence, so Tier 1
     /// refuses any copy whose fill sits at depth > 0.
     loop_depth: u32,
+    /// Inside a `yield`'s value.  A record copy there is the one `formal/coroutines.md`
+    /// `(G-Own)` requires of an existing value — no restructuring of the source turns it into
+    /// a move — so it is not a copy the notice can offer to avoid.
+    in_yield: bool,
     /// @PLN90 item 2 — track source locations for the report. Only ON when
     /// `LOFT_COPY_SURVIVAL` is set (positions are needed only for the survival report), so the
     /// default hot path pays no `Position` clone and stays byte-identical.
@@ -744,6 +748,11 @@ impl Uses {
                     *e = (*e).max(pos);
                 }
             }
+            Value::Yield(inner) => {
+                let outer = std::mem::replace(&mut self.in_yield, true);
+                self.visit(inner, Ctx::Other);
+                self.in_yield = outer;
+            }
             // A loop body's back-edge can re-execute a write after a read, so the
             // pre-order position no longer tracks execution order inside it — bump
             // the depth so Tier 1 can refuse copies filled here.
@@ -888,7 +897,7 @@ impl Uses {
                 // `OpCopyRecord` carries no span, so borrow the nearest enclosing one. The row's
                 // target/name is the DEST; the classified var is the SOURCE (`src`). `loop_surv`
                 // (item 4) = the source outlives the enclosing loop (copied every iteration).
-                if record {
+                if record && !self.in_yield {
                     let loop_surv = self.loop_survives(src);
                     self.record_copy
                         .push((dest, src, self.pos, loop_surv, self.cur_pos.clone()));
@@ -947,6 +956,7 @@ fn collect_uses(code: &Value, data: &Data, survival_on: bool) -> Uses {
         append_expr: HashMap::new(),
         pos: 0,
         loop_depth: 0,
+        in_yield: false,
         track_pos: survival_on,
         cur_pos: None,
         mut_max_pos: HashMap::new(),

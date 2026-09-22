@@ -597,7 +597,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-28` (`D-heap-26` closed 2026-09-22; `D-heap-28` and
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-28` (`D-heap-26` closed 2026-09-22;
+`D-heap-30`, `D-heap-31` and `D-heap-32` opened and closed 2026-09-22, loft#1594, loft#1596 and
+loft#1598; `D-heap-28` and
 `D-heap-29` found 2026-09-22 while closing `D-heap-15`'s `p_i2`, the second closed that day; `D-heap-27`, the tuple twin of
 `D-heap-21` and `D-heap-22`, opened and closed 2026-09-22; `D-heap-22` and `D-heap-24`
 closed 2026-09-21, `D-heap-25`, found in D-heap-24's controls, and `D-heap-26`, found in
@@ -885,6 +887,35 @@ CLOSED 2026-09-17, below.
   refilled inside, a `break` after the refill, `while`, and the `if` spelling.  A source spent on
   every pass (a program `(H-Spent)` refuses) keeps the lift.  Guard
   `tests/scripts/1592-a-join-in-a-loop-over-a-refilled-source-releases-once.loft`.
+
+### D-heap-30 — OPENED AND CLOSED (2026-09-22, loft#1594): a tuple member's hook ran twice — a returned tuple local, and a destructuring `for`
+
+- **Violates:** (H-Drop) — one hook per structure holding a lease — and (H-Move)'s return
+  clause.
+- **Where:** two shapes, one member release (`scopes::tuple_owned_elem_frees`).
+  - A returned tuple local.  `a = (1, mk(1)); a` copies each member into the return record
+    (`synthetic_tuple_return`), and `a`'s scope end released the member again.  The copy read
+    the member through a stash (`emit_tuple_set_ops`), so the hand-off the scan records stopped
+    the stash and not `a`.  A nullable member was copied through a stash of its own, under its
+    own null test.  A member with no claimant to disarm (a bufferless call, a generator's
+    advance) had no buffer to mark at all.
+  - A destructuring `for (i, hh) in v` over a `vector<(integer, H)>`.  Each binder was created
+    as an OWNER and released its member as its iteration ended, and `v` released it again.
+- **Effect:** measured identically on both backends, before loft#1589 as after: a returned
+  local traced `m1 d1 B b1:1 … d1`, and a destructuring loop `d5 d6` per pass and again at `v`'s
+  end.
+- **Status:** CLOSED 2026-09-22 — found while closing loft#1589, whose generator tuple `for`
+  variable reached the same release.
+- **Closed:** a tuple VARIABLE is read in place by `emit_tuple_set_ops`, so each member copy
+  names it.  The scan honours a returned tuple's copies as it does a whole-tuple bind's
+  (`synthetic_tuple_return` beside `tuple_member_move`).  A copy into a place whose container
+  releases it (`copy_hands_off`) hands a member off like one into a buffer.  A stash names the
+  member it holds, and a nullable member's own null test is entered (`walk_member_writes`).  A
+  member with no claimant drops its pairing, keeping its free and losing its hook.  A binder
+  read off a loop variable's member is a view of that variable (`(B-View)`).  Measured clean on
+  both backends: one and two heap members, a nullable member present and absent, a bind then a
+  return, the destructuring loop, and the controls, a returned literal and a plain `for`.  Guard
+  `tests/scripts/1594-a-tuple-member-is-released-once.loft`.
 
 ### D-heap-27 — OPENED AND CLOSED (2026-09-22, loft#1588): a tuple's member backings were released at the function's head turn, not the tuple's
 

@@ -3760,6 +3760,25 @@ fn collect_drop_transferred(
     out
 }
 
+/// [`walk_unconditional`] inside a tuple's member-write block, which also enters an `if` whose
+/// test reads one of the block's member `stash`es: that `if` is a nullable member's own null
+/// test, and the path it skips holds no record, so a copy in its arm runs on every path that
+/// has one to release.
+fn walk_member_writes(v: &Value, stash: &HashMap<u16, (u16, u16)>, f: &mut impl FnMut(&Value)) {
+    f(v);
+    match v.unspan() {
+        Value::If(test, then, els) => {
+            walk_member_writes(test, stash, f);
+            if stash.keys().any(|t| test.reads_var(*t)) {
+                walk_member_writes(then, stash, f);
+                walk_member_writes(els, stash, f);
+            }
+        }
+        Value::Loop(_) => {}
+        other => other.for_each_child(&mut |c| walk_member_writes(c, stash, f)),
+    }
+}
+
 /// Visit every node of `v` that runs whenever `v` does: not an `if`'s arms and not a loop's body.
 fn walk_unconditional(v: &Value, f: &mut impl FnMut(&Value)) {
     f(v);
@@ -3780,22 +3799,22 @@ fn walk_unconditional(v: &Value, f: &mut impl FnMut(&Value)) {
 /// `tuple_call_mint`.  Without this the copy moved nothing, and both the copy and the member
 /// ran the hook (loft#1563).
 fn call_minted_member_handoff(
-    args: &[Value],
+    (base, idx): (u16, u16),
+    dest: &Value,
     function: &Function,
     data: &Data,
     call_mints: &HashMap<u16, HashMap<u16, Option<u16>>>,
 ) -> Option<u16> {
-    let Value::TupleGet(base, idx) = args.first()?.unspan() else {
-        return None;
-    };
-    let buf = (*call_mints.get(base)?.get(idx)?)?;
-    let Value::Var(dst) = args.get(1)?.unspan() else {
-        return None;
-    };
-    if !function.name(*dst).starts_with("__ref") {
-        return None;
+    let buf = (*call_mints.get(&base)?.get(&idx)?)?;
+    match dest.unspan() {
+        Value::Var(target) if function.name(*target).starts_with("__ref") => {
+            copy_moves_drop_from(function, data, *target, buf, true)
+        }
+        // A PLACE whose container releases what it holds — the return record's field a
+        // returned tuple is copied into (`synthetic_tuple_return`) — takes the release too.
+        dest if copy_hands_off(dest, function, data) => Some(buf),
+        _ => None,
     }
-    copy_moves_drop_from(function, data, *dst, buf, true)
 }
 
 /// The variable whose RELEASE a whole-value `OpCopyRecord(src, dest, tp)` hands over, or `None`
@@ -4603,7 +4622,7 @@ fn tuple_owned_elem_frees(
 
 /// loft#1511 — the elements of a tuple-literal RHS that are MINTED by their own initializing
 /// call: element index → the call's hidden return buffer (`None` for a bufferless mint, e.g.
-/// a nullable return).  `Some(map)` whenever the RHS is a tuple literal (so a reassignment
+/// a nullable return).  A tuple a generator's advance produces is minted whole (`(G-Own)`).  `Some(map)` whenever the RHS is a tuple literal (so a reassignment
 /// replaces a stale pairing with an empty one); `None` for any other RHS, telling the caller
 /// to clear what it tracked.
 ///
@@ -4617,6 +4636,18 @@ fn tuple_call_mints(
     function: &Function,
     data: &Data,
 ) -> Option<HashMap<u16, Option<u16>>> {
+    // `formal/coroutines.md` `(G-Own)` — a tuple an ADVANCE produces is the consumer's whole:
+    // every member arrives in a store the generator handed over, so each is its record's only
+    // name and its release runs the type's hook, exactly as for an adopting call.
+    if let Value::Call(d, args) = rhs.unspan()
+        && *d == data.def_nr("OpCoroutineNext")
+        && let Some(Value::Var(g)) = args.first().map(Value::unspan)
+        && let Type::Iterator(inner, _) = function.tp(*g).base()
+        && let Type::Tuple(elems) = inner.base()
+        && crate::coroutine_layout::yield_handed_over(inner)
+    {
+        return Some((0..elems.len() as u16).map(|i| (i, None)).collect());
+    }
     let Value::Tuple(members) = rhs.unspan() else {
         return None;
     };
@@ -12795,7 +12826,8 @@ impl Scopes<'_> {
                 // a loop body below this statement.  A copy that only some runs perform would
                 // move the release on the path that skips it too, and lose it there; that case
                 // keeps the release with both sides (D-heap-15 records it).  Only the whole-tuple
-                // bind's copies move (`tuple_member_move`): `(t.0, 2)` spells a copy of a member
+                // bind's copies move (`tuple_member_move`), and a returned tuple's
+                // (`synthetic_tuple_return`): `(t.0, 2)` spells a copy of a member
                 // of a container, which `(H-Copy-Refuse)` refuses, and it keeps both releases.
                 let certain: HashMap<u16, HashMap<u16, Option<u16>>> = tuple_call_mint
                     .iter()
@@ -12804,19 +12836,53 @@ impl Scopes<'_> {
                     .collect();
                 let copy_d = data.def_nr("OpCopyRecord");
                 let append_d = data.def_nr("OpAppendVector");
+                // A member whose record has NO claimant (a sole-owner mint: a bufferless call,
+                // a generator's advance) has no buffer to mark as handed off.  Its moved
+                // release is the bare free: the pairing is dropped, so the member keeps its
+                // free and loses its hook, as a buffered member does through the buffer.
+                let mut sole_moved: Vec<(u16, u16)> = Vec::new();
                 walk_unconditional(v, &mut |n| {
                     let Value::Block(b) = n else { return };
-                    if b.name != "tuple_member_move" {
+                    // The whole-tuple bind, and a returned tuple: `(H-Move)` moves a variable
+                    // this function owns when it is returned, member by member into the
+                    // return record.
+                    if !matches!(b.name, "tuple_member_move" | "synthetic_tuple_return") {
                         return;
                     }
-                    walk_unconditional(n, &mut |c| {
+                    // A NULLABLE member is written through a stash (`__ref_2 = a.1`) and copied
+                    // under its own null test; the stash names the member it holds.
+                    let mut stash: HashMap<u16, (u16, u16)> = HashMap::new();
+                    n.walk(&mut |c| {
+                        if let Value::Set(t, rhs) = c
+                            && function.is_compiler_generated(*t)
+                            && let Value::TupleGet(base, idx) = rhs.unspan()
+                        {
+                            stash.insert(*t, (*base, *idx));
+                        }
+                    });
+                    walk_member_writes(n, &stash, &mut |c| {
                         let Value::Call(d, args) = c else { return };
+                        let member = match args.first().map(Value::unspan) {
+                            Some(Value::TupleGet(base, idx)) => Some((*base, *idx)),
+                            Some(Value::Var(t)) => stash.get(t).copied(),
+                            _ => None,
+                        };
                         if *d == copy_d
                             && args.len() >= 3
-                            && let Some(b) =
-                                call_minted_member_handoff(args, function, data, &certain)
+                            && let Some(member) = member
                         {
-                            drop_transferred.insert(b);
+                            if let Some(b) = call_minted_member_handoff(
+                                member, &args[1], function, data, &certain,
+                            ) {
+                                drop_transferred.insert(b);
+                            }
+                            if certain.get(&member.0).and_then(|m| m.get(&member.1)) == Some(&None)
+                                && (matches!(args[1].unspan(),
+                                        Value::Var(dst) if function.name(*dst).starts_with("__ref"))
+                                    || copy_hands_off(&args[1], function, data))
+                            {
+                                sole_moved.push(member);
+                            }
                         }
                         // A VECTOR member is copied by an append into the copy's own backing, and
                         // its elements' release moves from the member's backing the same way
@@ -12832,6 +12898,11 @@ impl Scopes<'_> {
                         }
                     });
                 });
+                for (base, idx) in sole_moved {
+                    if let Some(m) = tuple_call_mint.get_mut(&base) {
+                        m.remove(&idx);
+                    }
+                }
             }
             if let Some((pre, _)) = &rebuilt {
                 ls.extend(pre.iter().cloned());

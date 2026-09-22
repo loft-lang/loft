@@ -1,7 +1,7 @@
-diff --git b/src/lexer.rs a/src/lexer.rs
+diff --git a/src/lexer.rs b/src/lexer.rs
 index 8be047748..3cb03a1e2 100644
---- b/src/lexer.rs
-+++ a/src/lexer.rs
+--- a/src/lexer.rs
++++ b/src/lexer.rs
 @@ -2372,6 +2372,80 @@ impl Lexer {
          }
      }
@@ -83,11 +83,11 @@ index 8be047748..3cb03a1e2 100644
      /// Shorthand test if the current element is a specific token and skip it if found.
      pub fn has_token(&mut self, token: &'static str) -> bool {
          if self.peek_token(token) {
-diff --git b/src/parser/objects.rs a/src/parser/objects.rs
-index 55939bb79..a961b8e05 100644
---- b/src/parser/objects.rs
-+++ a/src/parser/objects.rs
-@@ -3080,148 +3080,6 @@ impl Parser {
+diff --git a/src/parser/objects.rs b/src/parser/objects.rs
+index 0c393137d..a961b8e05 100644
+--- a/src/parser/objects.rs
++++ b/src/parser/objects.rs
+@@ -3080,152 +3080,6 @@ impl Parser {
          }
      }
  
@@ -165,7 +165,9 @@ index 55939bb79..a961b8e05 100644
 -                    break;
 -                }
 -            }
--            if self.lexer.peek_token("(") || self.lexer.peek_token("[") || self.lexer.peek_token("{")
+-            if self.lexer.peek_token("(")
+-                || self.lexer.peek_token("[")
+-                || self.lexer.peek_token("{")
 -            {
 -                depth += 1;
 -            } else if self.lexer.peek_token(")")
@@ -217,7 +219,9 @@ index 55939bb79..a961b8e05 100644
 -                LexItem::CString(_) if !width => return,
 -                _ => {}
 -            }
--            if self.lexer.peek_token("(") || self.lexer.peek_token("[") || self.lexer.peek_token("{")
+-            if self.lexer.peek_token("(")
+-                || self.lexer.peek_token("[")
+-                || self.lexer.peek_token("{")
 -            {
 -                depth += 1;
 -            } else if self.lexer.peek_token(")")
@@ -236,10 +240,10 @@ index 55939bb79..a961b8e05 100644
      // Iterator for
      // <for> ::= <identifier> 'in' <range> '{' <block>
      pub(crate) fn iter_for(&mut self, val: &mut Value, append_value: &mut u16) -> Type {
-diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+diff --git a/src/parser/vectors.rs b/src/parser/vectors.rs
 index 68b6d3e69..da55b8fc8 100644
---- b/src/parser/vectors.rs
-+++ a/src/parser/vectors.rs
+--- a/src/parser/vectors.rs
++++ b/src/parser/vectors.rs
 @@ -719,7 +719,7 @@ impl Parser {
              // null with no diagnostic at all (`t = (x + y, 9)`).  Ask the lexer first and
              // give a member its own temp; the built value returns on the normal channel, so

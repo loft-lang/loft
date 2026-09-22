@@ -10,7 +10,8 @@ OPEN: **0**. `D-fmt-2` and `D-fmt-3` were closed on 2026-08-29 by the compositio
 `formatting.md` now states as a rule; this file carried them as open until 2026-09-01 because
 the commit that split it out of the rules doc replayed the list from before that fix.
 `D-fmt-4` was opened and closed the same day by the `@FR-E-NullArg` walk, and `D-fmt-5` on
-2026-09-01 by the reference review of the Formatting chapter.
+2026-09-01 by the reference review of the Formatting chapter.  `D-fmt-6` opened and closed on
+2026-09-22 (below).
 
 ⚠ **This doc read `OPEN: 0` for its whole life, and the walk that first asked found four
 defects.** The line was never a measurement: it said *"a rules doc adds no code deviation"*,
@@ -26,6 +27,18 @@ ran — the pad on a float, the case of `X`, a width before `b`. The lesson is n
 first walk was careless: a rule walk asks *does the code do what the rule says*, and a
 reference walk asks *does the code do what we PROMISED*, which is a larger set because the
 prose promises more than the rules state.
+
+### D-fmt-6 — OPENED AND CLOSED (2026-09-22): a hole that opened with whitespace was refused
+
+`(F-Interp)` says a hole holds an expression parsed at full language level, where whitespace
+around it means nothing, and LOFT.md writes `"{ build("p{n}q") }"` in its own reference.  Both
+backends refused every such hole as *"Formatter error"*, followed by a cascade.  A hole's first
+token is read in the string's mode, where whitespace is a token because a spec's fill may be a
+space; `parse_string` switched the hole to code only after that token, so a space after the `{`
+reached the expression parser.  Closed by skipping whitespace at that switch (`Lexer::whitespace`,
+which nothing called before).  A space after the `:` is still the fill.  Found while closing
+D-tup-15 (loft#1590), whose look-ahead reads holes the same way.  Guard
+`tests/scripts/a-format-hole-may-open-with-whitespace.loft`.
 
 ### D-fmt-1 — OPENED AND CLOSED (2026-08-29): four ways a spec did not reach its renderer
 
