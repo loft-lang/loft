@@ -6440,7 +6440,18 @@ use #count instead"
     }
 
     /// Compute the in-store byte size of a vector element type.
-    pub(crate) fn element_store_size(&self, elm: &Type) -> i32 {
+    pub(crate) fn element_store_size(&mut self, elm: &Type) -> i32 {
+        // @FR-H-Stride — a NESTED vector element is the inner vector's handle, the row
+        // `vector_element_type` registers the outer storage with (`append_elem_tp` asks it
+        // too).  `type_elm` below collapses a level — `vector<integer>` → `integer` — and
+        // answered the INNER element's 8: `reverse` on a `vector<vector<integer>>` emptied
+        // all but one element, `[a, .., z]` read `z` as `[]`, and `insert` slid the
+        // elements past each other.
+        if matches!(elm.base(), Type::Vector(..))
+            && let Some(row) = self.data.vector_element_type(elm, &mut self.database)
+        {
+            return i32::from(self.database.size(row));
+        }
         let elm_td = self.data.type_elm(elm);
         // @FR-H-Stride — a narrow element (`u8`/`i16`/`u32`/…) is one, two or four bytes wide,
         // and the width is the declared TYPE's.  Must run before the generic
@@ -6569,9 +6580,38 @@ use #count instead"
             *val = v_block(list.to_vec(), types[0].clone(), Self::TV_INSERT);
             return Type::Void;
         }
+        // The element is a STORE into the vector's element slot, and takes what every other
+        // element write takes (`v += [x]`, `v[i] = x`): the conversion (`2` into a
+        // `vector<float>` is `2.0`), the narrowing refusal (@FR-I-Narrow) and a declared
+        // range's guard.  Unconverted, `insert(v, 0, "x")` on a `vector<integer>` wrote a text
+        // handle into an integer slot (an interpreter panic, a native compile error),
+        // `insert(w, 0, 2)` on a `vector<float>` the integer's bits, and `insert(b, 0, 300)`
+        // on a `vector<u8>` a silent 0.  A monomorph lowers a template's site with the element
+        // already its type (`TV_INSERT` passes the vector alone).
+        let mut elem = list[2].clone();
+        let elem_given = types.get(2).cloned().unwrap_or_else(|| elm_tp.clone());
+        if !self.convert_store(
+            &mut elem,
+            &elem_given,
+            &elm_tp,
+            "the element `insert` stores",
+            None,
+        ) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "insert cannot store {} in a vector<{}>; cast it explicitly with 'as {}'",
+                elem_given.source_name(&self.data),
+                elm_tp.source_name(&self.data),
+                elm_tp.source_name(&self.data)
+            );
+            return Type::Void;
+        }
         let elm_size = Value::Int(self.element_store_size(&elm_tp));
         let db_tp = self.type_info(&elm_tp);
         let ed_nr = self.data.type_def_nr(&elm_tp);
+        let (mut steps, index, elem) =
+            self.stage_insert_arguments(&list[0], &list[1], elem, &elm_tp);
         // Create a temp var with dependency on the vector to prevent premature free
         let ref_tp = Type::Reference(ed_nr, crate::data::Deps::frame(types[0].depend()));
         let tmp = self.create_unique("ins", &ref_tp);
@@ -6581,11 +6621,105 @@ use #count instead"
         // tmp = OpInsertVector(v, elem_size, idx, db_tp)
         let insert_call = self.cl(
             "OpInsertVector",
-            &[list[0].clone(), elm_size, list[1].clone(), db_tp],
+            &[list[0].clone(), elm_size, index, db_tp.clone()],
         );
-        let set_val = self.set_element(&elm_tp, 0, Value::Var(tmp), list[2].clone());
-        *val = v_block(vec![v_set(tmp, insert_call), set_val], Type::Void, "insert");
+        let set_val = if let Type::Vector(inner, _) = &elm_tp {
+            // A vector element is a vector FIELD at offset 0 of the fresh slot, and a vector
+            // value is copied into it element by element — the lowering `vv[i] = w` has, with
+            // nothing to clear.  `set_element` wrote the source's handle as an integer: an
+            // interpreter "Store access out of bounds", a native compile error.
+            let inner_row = Value::Int(self.append_elem_tp(inner));
+            let field = self.cl("OpGetField", &[Value::Var(tmp), Value::Int(0), db_tp]);
+            self.cl("OpAppendVector", &[field, elem, inner_row])
+        } else {
+            self.set_element(&elm_tp, 0, Value::Var(tmp), elem)
+        };
+        steps.push(v_set(tmp, insert_call));
+        steps.push(set_val);
+        *val = v_block(steps, Type::Void, "insert");
         Type::Void
+    }
+
+    /// @FR-F-Args — `insert(v, i, e)` is a call, so `i` and then `e` are VALUES before the
+    /// vector grows.  The lowering reads `e` after `OpInsertVector` has made room, so an
+    /// element that reads the vector itself saw the grown one: `insert(v, 0, v[0])` stored
+    /// the fresh slot's null, `insert(p, 0, p[1])` copied the element the slide had moved
+    /// into index 1, and `"{len(v)}"` counted the new element.  Where the element reads the
+    /// container's root, both arguments are evaluated first, in order: a scalar or `text`
+    /// into a temp, a record COPIED into a store of its own — a view of `p[1]` names a slot
+    /// the insertion moves (and may reallocate), so only a copy is the value.  Every other
+    /// insert is untouched: an element that does not read its container cannot see the
+    /// growth.  The rule the append of a literal follows (`stage_append_fields`, loft#1548).
+    fn stage_insert_arguments(
+        &mut self,
+        container: &Value,
+        index: &Value,
+        elem: Value,
+        elm_tp: &Type,
+    ) -> (Vec<Value>, Value, Value) {
+        let root = match container.unspan() {
+            Value::Var(v) => Some(*v),
+            other => {
+                crate::use_analysis::projection_container_place(&self.data, other).map(|p| p.0)
+            }
+        };
+        let Some(root) = root else {
+            return (Vec::new(), index.clone(), elem);
+        };
+        if !elem.reads_var(root) {
+            return (Vec::new(), index.clone(), elem);
+        }
+        let mut steps = Vec::new();
+        let index = if matches!(
+            index.unspan(),
+            Value::Int(_) | Value::Long(_) | Value::Var(_)
+        ) {
+            index.clone()
+        } else {
+            let tp = Type::Integer(crate::data::IntegerSpec::wide());
+            let t = self.vars.work_refs(&tp, &mut self.lexer);
+            self.change_var_type(t, &tp);
+            steps.push(v_set(t, index.clone()));
+            Value::Var(t)
+        };
+        let elem = match elm_tp.base() {
+            // A value: a scalar, a `text`, a tuple.
+            tp if crate::data::is_scalar(tp) || matches!(tp, Type::Text(_) | Type::Tuple(_)) => {
+                let t = self.create_unique("ins_val", elm_tp);
+                self.vars.defined(t);
+                steps.push(v_set(t, elem));
+                Value::Var(t)
+            }
+            // A record — a struct or a struct-enum — copied into a store of its own.
+            Type::Reference(d, _) | Type::Enum(d, true, _)
+                if matches!(self.data.def_type(*d), DefType::Struct | DefType::Enum) =>
+            {
+                let d = *d;
+                let rec_tp = if matches!(elm_tp.base(), Type::Enum(..)) {
+                    Type::Enum(d, true, crate::data::Deps::none())
+                } else {
+                    Type::Reference(d, crate::data::Deps::none())
+                };
+                let w = self.vars.work_refs(&rec_tp, &mut self.lexer);
+                let kt = i32::from(self.data.def(d).known_type());
+                steps.push(v_set(w, Value::Null));
+                steps.push(self.cl("OpDatabase", &[Value::Var(w), Value::Int(kt)]));
+                steps.push(self.set_element(elm_tp, 0, Value::Var(w), elem));
+                Value::Var(w)
+            }
+            // A vector, copied into a vector of its own (the borrowed-source arm of `vv[i] =
+            // w`): the element it names is in the array the insertion moves.
+            Type::Vector(inner, _) => {
+                let rec_tp = Value::Int(self.append_elem_tp(inner));
+                let owned = Type::Vector(inner.clone(), crate::data::Deps::none());
+                let t = self.vars.unique("_ins_src", &owned, &mut self.lexer);
+                steps.push(v_set(t, Value::Null));
+                steps.push(self.cl("OpAppendVector", &[Value::Var(t), elem, rec_tp]));
+                Value::Var(t)
+            }
+            _ => elem,
+        };
+        (steps, index, elem)
     }
 
     /// Compiler special-case for `reserve(v: vector<T>, n: integer)` (loft#710).

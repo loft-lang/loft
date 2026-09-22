@@ -8420,6 +8420,12 @@ pub fn reserve < T > (self: vector<T>, n: integer)
 Give a vector room for `n` elements, so filling it does not grow it step by step: `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
 
 ```rust
+pub fn insert < T > (self: vector<T>, index: integer, elem: T)
+```
+
+Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)` or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element read from the vector itself (`v.insert(0, v\[1\])`) is the one it was.
+
+```rust
 pub fn sum_of(v: const vector<integer>) -> integer
 ```
 

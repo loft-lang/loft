@@ -1920,6 +1920,14 @@ pub fn reserve < T > (self: vector<T>, n: integer) {
 }
 #builtin
 
+// Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)`
+// or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element
+// read from the vector itself (`v.insert(0, v[1])`) is the one it was.
+pub fn insert < T > (self: vector<T>, index: integer, elem: T) {
+  insert(self, index, elem)
+}
+#builtin
+
 // Sum of all integer elements. Returns 0 for an empty vector.
 // Superseded by the general `sum(v, init)`; kept as a shim over it
 // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the

@@ -1043,6 +1043,24 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   claim off `store_memory()` at seven element types (one `main`: a test binary running several
   functions recycles stores, and a recycled store keeps its old capacity), falsified at
   `b12b98eb3`.  The special-names guard's arity cell moved from `reserve` to `all`.
+- **E3 Built** (2026-09-22).  `pub fn insert<T>(self: vector<T>, index: integer, elem: T)` +
+  `#builtin`.  Declaring it as a function made the special form answer to `(F-Args)`, and it
+  did not, on `main`, silently: the element was read AFTER `OpInsertVector` had made room, so
+  `insert(v, 0, v[0])` stored the fresh slot's null, `insert(p, 0, p[1])` copied the element
+  the slide had moved, and `"{len(t)}"` counted the new one.  `stage_insert_arguments` makes
+  the index and then the element values first wherever the element reads the container's root
+  (a scalar, `text` or tuple into a temp; a struct or struct-enum COPIED into a store of its
+  own, since a view names a slot the insertion moves; a vector into a vector of its own) — the
+  rule `stage_append_fields` follows for an append (loft#1548).  The element was also never
+  converted: `insert(w, 0, 2)` on a `vector<float>` stored the integer's bits, `text` into a
+  `vector<integer>` panicked the interpreter, `300` into a `vector<u8>` was a silent 0 —
+  `convert_store` now takes it, the refusals as `v += [x]` has them (`parse_errors`).  And a
+  nested vector element could not be inserted at all: `element_store_size` answered the INNER
+  element's width for a `vector<vector<τ>>` (`type_elm` collapses a level), so `reverse`
+  emptied all but one element and `[a, .., z]` read `z` as `[]` — it asks
+  `vector_element_type` now (`@FR-H-Stride`, loft#1420's class), and the insert writes the
+  slot's vector field as `vv[i] = w` does.  Guard `insert-takes-its-arguments-before-the-
+  vector-grows`, falsified at `8bb33678e`.
 - **Measured for E3–E7 before they start** — each special form inside a generic against its
   twin, both backends: `insert` and `any`/`all`/`count_if` answer right; **`filter` and `map`
   CRASH** for every scalar element (interpreter: "DbRef store_nr … out of range", `text`:

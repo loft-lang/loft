@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 E3 — `insert` is a stdlib `#builtin` METHOD on `vector`: `insert(v, i, x)` and
+// `v.insert(i, x)` are one call, and a program adds its own `insert` for its own types.
+//
+// Making it one showed what the compiler's lowering did with its arguments, none of which
+// a call does (@FR-F-Args: the arguments are values, left to right, before the body runs):
+//   - the ELEMENT was read after the vector had grown.  `insert(v, 0, v[0])` stored the
+//     fresh slot's null, `insert(p, 0, p[1])` copied the element the slide had moved into
+//     index 1, and `"{len(t)}"` counted the new element — silent, on both backends.
+//   - the element was never CONVERTED to the vector's element type: `insert(w, 0, 2)` on a
+//     `vector<float>` stored the integer's bits, a `text` into a `vector<integer>` panicked
+//     the interpreter, and `300` into a `vector<u8>` was a silent 0 (now refused as every
+//     other narrowing store is, @FR-I-Narrow — `parse_errors` pins it).
+//   - a NESTED vector element could not be inserted at all, and every stride over one was
+//     the inner element's (@FR-H-Stride): `reverse` of `[[1, 2], [3], [4, 5, 6]]` answered
+//     `[[], [], [4, 5, 6]]`, and `[a, .., z]` read `z` as `[]`.
+//
+// @falsified-at: 8bb33678e — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/insert-takes-its-arguments-before-the-vector-grows.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control has no method (`p.insert(…)`).
+//   ARMED: nothing.
+//   WITNESS: the bare spellings alone on the control, both backends: `v`, `p`, `t` read
+//     `[null,7,8]|1,2|["a","b2"]`; `reverse` of the nested vector `[[],[],[4,5,6]]` and the
+//     slice `[1][]`; `insert(w, 0, 2)` reads `w[0] == 2.0` false on the interpreter and is
+//     E0308 on native.
+//   HOLDS: an element that does not read its vector; struct and struct-enum literals.
+
+struct Pt { x: integer, y: integer }
+enum Sh { Circle { r: integer }, Sq { s: integer } }
+struct Deck { cards: vector<integer> }
+struct Roster { n: integer }
+struct Log { at: vector<text> }
+
+fn insert(self: Roster, extra: integer) -> integer { self.n + extra }
+fn area(s: Sh) -> integer { match s { Circle { r } => r * 100, Sq { s } => s } }
+fn pos(l: &Log, i: integer) -> integer { l.at += ["i"]; i }
+fn val(l: &Log, x: integer) -> integer { l.at += ["e"]; x }
+fn front(v: &vector<integer>) { v.insert(0, v[0] * 2) }
+fn last_first<T>(v: vector<T>) -> vector<T> { insert(v, 0, v[len(v) - 1]); v }
+
+fn test_an_element_read_from_the_vector_is_the_one_it_was() {
+  v = [7, 8];
+  insert(v, 0, v[0]);
+  t = ["a"];
+  t.insert(1, "b{len(t)}");
+  u = ["q", "r"];
+  insert(u, 0, u[0]);
+  assert("{v}|{t}|{u}" == "[7,7,8]|[\"a\",\"b1\"]|[\"q\",\"q\",\"r\"]", "{v}|{t}|{u}");
+  p = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  p.insert(0, p[1]);
+  q = [Pt { x: 1, y: 2 }];
+  insert(q, 1, Pt { x: q[0].x + 10, y: len(q) });
+  assert("{p[0].x},{p[0].y},{p[1].x},{p[2].x},{len(p)}|{q[1].x},{q[1].y}" == "3,4,1,3,3|11,1",
+    "{p[0].x},{p[0].y},{p[1].x} {q[1].x},{q[1].y}");
+  sv = [Circle { r: 1 }, Sq { s: 2 }];
+  insert(sv, 0, sv[1]);
+  tv = [(1, 2), (3, 4)];
+  insert(tv, 0, tv[1]);
+  vv = [[1, 2], [3]];
+  vv.insert(0, vv[1]);
+  assert("{area(sv[0])},{area(sv[1])},{area(sv[2])}|{tv[0].0},{tv[0].1},{len(tv)}|{vv}" ==
+    "2,100,2|3,4,3|[[3],[1,2],[3]]", "{area(sv[0])} {tv[0].0} {vv}");
+}
+
+fn test_the_index_is_a_value_before_the_element() {
+  l = Log { at: [] };
+  v = [7, 8];
+  insert(v, pos(l, 0), val(l, v[1]));
+  w = [1];
+  insert(w, pos(l, 1), val(l, 5));
+  assert("{v}|{w}|{l.at}" == "[8,7,8]|[1,5]|[\"i\",\"e\",\"i\",\"e\"]", "{v}|{w}|{l.at}");
+}
+
+fn test_each_element_kind_and_its_conversion() {
+  w = [1.5];
+  insert(w, 0, 2);
+  b: vector<u8> = [1, 2];
+  b.insert(1, 200);
+  n: vector<integer?> = [1];
+  insert(n, 0, null);
+  vv = [[1, 2], [3]];
+  insert(vv, 1, [9]);
+  assert("{w[0] == 2.0}|{b}|{n}|{vv}" == "true|[1,200,2]|[null,1]|[[1,2],[9],[3]]", "{w}|{b}|{n}|{vv}");
+}
+
+fn test_a_field_a_link_and_a_generic() {
+  k = Deck { cards: [1, 2] };
+  insert(k.cards, 0, k.cards[1]);
+  k.cards.insert(3, k.cards[0] + 10);
+  c = [5, 6];
+  front(c);
+  a = last_first([7, 8]);
+  s = last_first(["x", "y"]);
+  ps = last_first([Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }]);
+  assert("{k.cards}|{c}|{a}|{s}|{ps[0].x},{len(ps)}" == "[2,1,2,12]|[10,5,6]|[8,7,8]|[\"y\",\"x\",\"y\"]|3,3",
+    "{k.cards}|{c}|{a}|{s}|{ps[0].x}");
+}
+
+fn test_nested_vectors_keep_their_stride() {
+  vv = [[1, 2], [3], [4, 5, 6]];
+  reverse(vv);
+  ww = [[1], [2], [3], [4]];
+  x = match ww { [a, .., z] => "{a}{z}", _ => "none" };
+  assert("{vv}|{x}" == "[[4,5,6],[3],[1,2]]|[1][4]", "{vv}|{x}");
+}
+
+fn test_a_programs_own_insert_for_its_own_type() {
+  r = Roster { n: 2 };
+  assert(insert(r, 3) == 5 && r.insert(4) == 6, "{insert(r, 3)} {r.insert(4)}");
+}
+
+// Staged once per pass: the copy a record read from the vector takes is freed each time.
+fn test_in_a_loop() {
+  p = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  for _ in 0..5 { insert(p, 0, p[1]); }
+  xs = "";
+  for e in p { xs += "{e.x}"; }
+  t = ["a"];
+  for i in 0..3 { t.insert(0, "{t[0]}{i}"); }
+  assert("{xs}|{t}" == "3131313|[\"a012\",\"a01\",\"a0\",\"a\"]", "{xs}|{t}");
+}

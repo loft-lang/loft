@@ -4694,6 +4694,21 @@ fn a_programs_own_reverse_for_a_vector_is_refused() {
         .error("Cannot redefine 'reverse' (already defined at default/01_code.loft) — a name has one body per receiver type, and `x.reverse(…)` and `reverse(x, …)` would reach different functions; declare it once as a `self` method, which takes both spellings, or rename one at a_programs_own_reverse_for_a_vector_is_refused:1:31");
 }
 
+/// @PLN165 E3 — `insert`'s element is a store into the vector's element slot and converts as
+/// every other element write does: a `text` into a `vector<integer>` is refused (it panicked
+/// the interpreter), and an unproven narrowing is refused (`300` into a `vector<u8>` stored 0).
+#[test]
+fn insert_refuses_an_element_of_another_type() {
+    code!("fn test() { v = [1, 2]; insert(v, 0, \"x\"); assert(len(v) == 3, \"\"); }")
+        .error("insert cannot store text in a vector<integer>; cast it explicitly with 'as integer' at insert_refuses_an_element_of_another_type:1:43");
+}
+
+#[test]
+fn insert_refuses_an_implicit_narrowing() {
+    code!("fn test() { v: vector<u8> = [1, 2]; n = 300; insert(v, 1, n); assert(len(v) == 3, \"\"); }")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at insert_refuses_an_implicit_narrowing:1:62");
+}
+
 /// @PLN165 arc E — `#builtin` sends a call to the compiler's special form of the name; it marks
 /// a standard-library declaration, and a program's function is its own body.
 #[test]

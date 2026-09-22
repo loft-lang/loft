@@ -2127,11 +2127,15 @@ v[..end]                    // open-start slice from 0 to end (exclusive)
 **A vector can also be taken apart by `match`** — `[first, ..rest]`, `[a, .., z]` and the other
 slice patterns are in [§ Slice patterns](#slice-patterns-matching-a-vector).
 
-**`reverse` and `reserve` are stdlib methods on `vector`** — `reverse(v)` and `v.reverse()` are
-one call (as are `reserve(v, n)` and `v.reserve(n)`), and a program defines its own `reverse`
-for its own types beside it (`fn reverse(self: Roster)`), one definition per receiver type; one
-for `vector` itself is refused, as for any stdlib method.  The other vector built-ins (`sort`,
-`insert`, `map`, `filter`, `reduce`) follow as @PLN165 arc E moves them.
+**`reverse`, `reserve` and `insert` are stdlib methods on `vector`** — `reverse(v)` and
+`v.reverse()` are one call (as are `reserve(v, n)` / `v.reserve(n)` and `insert(v, i, x)` /
+`v.insert(i, x)`), and a program defines its own `reverse` for its own types beside it
+(`fn reverse(self: Roster)`), one definition per receiver type; one for `vector` itself is
+refused, as for any stdlib method.  They are calls in every respect: `insert`'s index and
+element are values before the vector grows, so `v.insert(0, v[1])` inserts the element that
+was at index 1, and the element converts as any element store does (`2` into a
+`vector<float>` is `2.0`; `300` into a `vector<u8>` is refused).  The other vector built-ins
+(`sort`, `map`, `filter`, `reduce`) follow as @PLN165 arc E moves them.
 
 **Slices are iterators, materialised on assignment.**  `v[lo..hi]` can
 be used in `for x in v[lo..hi] { … }` and wherever an iterator is

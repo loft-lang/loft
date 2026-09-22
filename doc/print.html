@@ -4461,6 +4461,10 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <p>Give a vector room for `n` elements, so filling it does not grow it step by step: `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.</p>
 </div>
 <div class="item">
+<pre><code>pub fn insert &lt; T &gt; (self: vector&lt;T&gt;, index: integer, elem: T)</code></pre>
+<p>Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)` or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element read from the vector itself (`v.insert(0, v[1])`) is the one it was.</p>
+</div>
+<div class="item">
 <pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>
 <p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.</p>
 </div>
