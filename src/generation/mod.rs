@@ -709,6 +709,9 @@ pub struct Output<'a> {
     pub plain_nest: u32,
     /// `LOFT_NO_BOUNDED_NEST=1` — no nest is guarded and run plain.
     pub bounded_nest_disabled: bool,
+    /// `LOFT_NO_BOUNDED_SUM=1` — no reduction runs its plain block sum first
+    /// (`(R-BoundedNest)`'s reduction clause).
+    pub bounded_sum_disabled: bool,
     /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of every
     /// `+ - *`/negation node inside a chain its guard bounds, and the guard's name: those ops
     /// emit the plain operator under the guard and the template otherwise
@@ -2021,6 +2024,7 @@ impl<'a> Output<'a> {
             vec_bounds: Vec::new(),
             plain_nest: 0,
             bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
+            bounded_sum_disabled: !crate::keys::bounded_sum_enabled(),
             in_coroutine_body: false,
             plain_chains: Vec::new(),
             chains_suspended: 0,
@@ -3254,6 +3258,67 @@ impl Output<'_> {
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
         Ok(Some((win, hdr, vec)))
+    }
+
+    /// `(R-BoundedNest)`'s reduction clause — when `lp` is one integer accumulate of a
+    /// vector's elements ([`hoist::bounded_sum`]) over a path this loop holds a header AND
+    /// a base for, emit the plain block sum BEFORE the loop: `vector::sum_blocks_i64` takes
+    /// the accumulator and the range and answers the total and the first index it did not
+    /// sum, the `#index` is advanced to one below it, and the checked loop that follows —
+    /// emitted unchanged, guards and all — resumes there.  Every block the helper admits
+    /// is one no prefix can overflow in, so the loop's own answer is unchanged on every
+    /// input; a vector of large elements, or a null one, is what the resumed loop is for.
+    fn sum_fast_path(&mut self, w: &mut dyn Write, lp: &crate::data::Block) -> std::io::Result<()> {
+        if self.bounded_sum_disabled || self.hoist_disabled || self.in_coroutine_body {
+            return Ok(());
+        }
+        let bs = match hoist::bounded_sum(lp, self.data) {
+            Ok(bs) => bs,
+            Err(why) => {
+                if self.nest_trace && lp.name == "For loop" && why != "not a for loop" {
+                    eprintln!(
+                        "sum: {} loop {} declined — {why}",
+                        self.data.def(self.def_nr).name(),
+                        lp.scope
+                    );
+                }
+                return Ok(());
+            }
+        };
+        let (Some(header), Some(base)) = (
+            self.active_vec_header(&bs.path).map(str::to_owned),
+            self.active_vec_base(&bs.path).map(str::to_owned),
+        ) else {
+            if self.nest_trace {
+                eprintln!(
+                    "sum: {} loop {} declined — the loop holds no header and base for the vector",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope
+                );
+            }
+            return Ok(());
+        };
+        let variables = self.data.def(self.def_nr).variables();
+        let acc = format!("var_{}", sanitize(variables.name(bs.acc)));
+        let idx = format!("var_{}", sanitize(variables.name(bs.index)));
+        let hi = self.expr_string(bs.hi)?;
+        let verify = if self.hoist_verify { "true" } else { "false" };
+        if self.nest_trace {
+            eprintln!(
+                "sum: {} loop {} admitted — the plain block sum runs first",
+                self.data.def(self.def_nr).name(),
+                lp.scope
+            );
+        }
+        self.indent(w)?;
+        // The single-counter form seeds `#index` one below the start, so the plain part
+        // begins at `#index + 1` and leaves `#index` one below the first index it did not
+        // sum — exactly where the loop's own step picks up.
+        writeln!(
+            w,
+            "{{ let (__sa, __sat) = unsafe {{ vector::sum_blocks_i64::<{verify}>({base}, {header}.len, ({idx}).wrapping_add(1_i64), ({hi}), {acc}) }}; {acc} = __sa; {idx} = __sat.wrapping_sub(1_i64); }} //@FR-R-BoundedNest reduction"
+        )?;
+        Ok(())
     }
 
     /// Close the window [`Self::push_reserve`] opened, after the loop and every guarded
@@ -4630,6 +4695,7 @@ impl Output<'_> {
         } else {
             let map = std::rc::Rc::new(range::range_vars(
                 self.data,
+                self.data.def(self.def_nr).variables(),
                 self.data.def(self.def_nr).code(),
                 &nn,
             ));

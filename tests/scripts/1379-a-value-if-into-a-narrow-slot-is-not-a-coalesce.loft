@@ -67,10 +67,17 @@ fn test_the_condition_of_a_value_if_is_the_authors() {
 }
 
 fn test_the_limit_spelling_keeps_its_default_through_an_if() {
+  // Since loft#1593 the `limit(…)` spelling is refused for an unranged arm exactly as `u8`
+  // is (`o + p` is a plain `integer`), so the out-of-range value reaches the slot the one
+  // way the alias also leaves open: the slot's OWN arithmetic (`+=`, C85's overflow seam).
+  // The claim is unchanged — a value that does not fit takes the type's default, never a
+  // wrapped one — and the in-range arm is itself.
   o: integer limit(10,20) = 15; p: integer limit(10,20) = 15; t = true;
-  q: integer limit(10,20) = if t { o + p } else { o };
+  q: integer limit(10,20) = if t { o } else { 12 };
+  if t { q += p; }
   assert(q == 10, "an out-of-range value reaching a limit(10,20) slot through an if takes the type's default, got {q}");
-  r: integer limit(10,20) = if t { o } else { o + p };
+  r: integer limit(10,20) = if t { o } else { 12 };
+  if !t { r += p; }
   assert(r == 15, "and the taken in-range arm is itself, got {r}");
 }
 

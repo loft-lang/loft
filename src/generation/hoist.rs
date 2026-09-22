@@ -2775,6 +2775,102 @@ pub fn bounded_nest<'a>(lp: &'a Block, data: &Data) -> Result<BoundedNest<'a>, S
     Ok(nest)
 }
 
+/// `(R-BoundedNest)`'s reduction clause — a counted loop that is ONE integer accumulate of a
+/// scalar vector's elements, `acc = acc + v[i]` (the stdlib `sum`'s loop): the accumulator,
+/// the vector's path and operand, the range's end, and the loop's `#index`.
+pub struct BoundedSum<'a> {
+    pub acc: u16,
+    pub path: PathKey,
+    pub vector: &'a Value,
+    pub index: u16,
+    pub hi: &'a Value,
+}
+
+/// Recognise the reduction: a counted, EXCLUSIVE range in the single-counter form (its
+/// `#index` seeded one below a literal start, so the prelude can advance that one counter
+/// and the checked loop resumes from it), whose body is exactly `Set(acc, OpAddInt(Var(acc),
+/// read))` — or the operands the other way round — where `read` is an 8-byte `OpGetInt` at
+/// field 0 of `v[i]` over a pure path with `i` the loop variable.  Shape only: the emitter
+/// confirms the loop holds the path's header AND base, since the block sum reads through the
+/// base.  A `?`-discharged read is not this shape (its operand is a join), a float accumulate
+/// is not (a float `+` mints no null and would need reassociation to vectorise at all), and a
+/// second statement, a computed index or a start the two-counter form carries all answer
+/// `Err` — the loop keeps its checked form, which costs the block sum and never a value.
+///
+/// # Errors
+///
+/// The reason the loop is not the reduction — what `LOFT_TRACE_NEST=1` prints.
+pub fn bounded_sum<'a>(lp: &'a Block, data: &Data) -> Result<BoundedSum<'a>, String> {
+    if lp.name != "For loop" {
+        return Err("not a for loop".to_string());
+    }
+    let rc = range_counters(lp, data)?;
+    if rc.inclusive {
+        return Err("an inclusive range".to_string());
+    }
+    if rc.next.is_some() {
+        return Err("a computed start (the two-counter form)".to_string());
+    }
+    let Some(body) = plain_for_body(lp) else {
+        return Err("the loop is not `[iterator, body block]`".to_string());
+    };
+    let stmts: Vec<&Value> = body
+        .operators
+        .iter()
+        .map(Value::unspan)
+        .filter(|v| !matches!(v, Value::Line(_)))
+        .collect();
+    let [stmt] = stmts[..] else {
+        return Err(format!("the body has {} statements, not one", stmts.len()));
+    };
+    let Value::Set(acc, rhs) = stmt else {
+        return Err("the body is not an assignment".to_string());
+    };
+    if *acc == rc.loop_var || *acc == rc.index {
+        return Err("the accumulator is a counter".to_string());
+    }
+    let Value::Call(d, args) = rhs.unspan() else {
+        return Err("the assignment is not an add".to_string());
+    };
+    if data.def(*d).name() != "OpAddInt" || args.len() != 2 {
+        return Err("the assignment is not an integer add".to_string());
+    }
+    let is_acc = |v: &Value| matches!(v.unspan(), Value::Var(a) if a == acc);
+    let read = if is_acc(&args[0]) {
+        &args[1]
+    } else if is_acc(&args[1]) {
+        &args[0]
+    } else {
+        return Err("neither operand is the accumulator".to_string());
+    };
+    let Value::Call(g, gargs) = read.unspan() else {
+        return Err("the term is not a read".to_string());
+    };
+    let Some(fused) = fused_element_read(data, data.def(*g).name(), gargs) else {
+        return Err("the term is not a fused element read".to_string());
+    };
+    if fused.rust_type != "i64" {
+        return Err("the element is not an integer".to_string());
+    }
+    if !matches!(fused.size.unspan(), Value::Int(8)) || !matches!(fused.fld.unspan(), Value::Int(0))
+    {
+        return Err("the element is not an 8-byte scalar at field 0".to_string());
+    }
+    if !matches!(fused.index.unspan(), Value::Var(i) if *i == rc.loop_var) {
+        return Err("the index is not the loop variable".to_string());
+    }
+    if fused.path.0 == *acc {
+        return Err("the vector is the accumulator".to_string());
+    }
+    Ok(BoundedSum {
+        acc: *acc,
+        path: fused.path,
+        vector: fused.vector,
+        index: rc.index,
+        hi: rc.hi,
+    })
+}
+
 /// How many times `v` names one of the loop's counters.
 fn counter_mentions(v: &Value, counters: &[u16]) -> usize {
     let mut n = 0;

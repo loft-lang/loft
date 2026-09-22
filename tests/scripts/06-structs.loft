@@ -33,7 +33,7 @@ fn value(self: Point) -> integer {
 }
 
 fn dimmed(self: Point) -> Point {
-  Point { r: self.r / 2, g: self.g / 2, b: self.b / 2 }
+  Point { r: self.r / 2 ?? 0, g: self.g / 2 ?? 0, b: self.b / 2 ?? 0 }
 }
 
 struct Object {

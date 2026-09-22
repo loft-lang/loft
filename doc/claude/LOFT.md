@@ -178,6 +178,14 @@ integer limit(-128, 127)   // fits in a byte
 integer limit(0, 65535)    // fits in a short
 ```
 
+A `limit` type is a narrow integer exactly as `u8` is: a value the compiler cannot prove in
+range is refused at the store, the call and the literal, and the refusal names the cure —
+write what the value becomes when it does not fit, `x ?? 0`, or take the checked cast
+`x as integer limit(0, 7)?`, which is `null` when it does not fit.  The one way an
+out-of-range value reaches such a slot at run time is the slot's own arithmetic stepping past
+its range (`b += 253`), and then it takes the type's default — the value nearest zero in the
+range — never a wrapped one.
+
 The default library also defines convenient width-specific aliases:
 ```
 u8    // integer limit(0, 255)              — 1 byte unsigned

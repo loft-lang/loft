@@ -248,13 +248,109 @@ draft of this note prescribed *"a store handed up through a RECURSIVE function w
 fn-ref"* as the cell that must exist first — that cell was never constructed and, the op
 living in lambda bodies, may not be constructible; do not chase it.
 
+### The cbor library as the consumer for "processor-level" arithmetic (2026-09-22)
+
+Asked whether a file could opt into the processor's arithmetic for crypto-style code (closed
+by C67; C120 keeps only an evidence-licensed release tier), the owner pointed at the `cbor`
+library as the real consumer.  Read (`~/workspace/loft-bench-libs/loft-libs-core/cbor`, 308
+lines) and emitted from a scratch program that `use`s it by path:
+
+- **Its arithmetic is already the PROOF route's shape, not the processor's.**  The encoder
+  writes `((arg / 16777216 % 256) & 255) as u8` — `(R-LitDiv)` twice and a mask, emitted
+  today as one sentinel test each and no fault note; nothing modular, nothing wrapping.  The
+  decoder reassembles `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`.
+- **What is still checked, and why.**  `head`: 10 checked ops, all `major * 32 + k` — `major`
+  is an unranged parameter.  `read_value`: 27 checked ops, the reassembly — emitted as
+  `op_mul_long_nn` and `op_add_int_nullable` although the compiler itself typed both operands
+  `integer(0, 255)` (the emitted join says so).  **`(R-Range)` ranges by SHAPE and never by
+  TYPE**: a literal, a mask, a counter, a `len` — but not a join, a local or a parameter whose
+  static type already carries `[lo, hi]`.  Probed on four shapes (declared `limit(0, 7)`
+  parameters, declared `u8` parameters, the typed join, typed locals): every op stays checked.
+  C120's stated route for libraries — *"a library opts in by declaring the bounded element
+  types it already knows"* — is written and not built.
+- **And the declared half must NOT be built yet: loft#1593.**  A user-written
+  `integer limit(a, b)` is not treated as narrow by the narrowing rules — an out-of-range
+  store, call or checked cast is accepted with no diagnostic and reads a wrong in-range value
+  (`limit(1, 8)` answers 1 for 1000, −9 and the literal 9), where `u8`/`i8` refuse correctly.
+  A range proof that trusted such a declaration would run plain arithmetic on a value the
+  type says cannot exist.  The INFERRED half is sound now (a `u8` element genuinely holds
+  `[0, 255]`, and the compiler refuses every implicit narrowing into the alias).
+
+So the lever is **E, sharpened: `(R-Range)` takes the static type's range as a leaf** — first
+for the compiler's own inferences (the cbor decoder's reassembly needs no change to the
+library), then for declared `limit` types once #1593 makes the declaration a fact (the
+encoder's `major: integer limit(0, 7)`, one line in the library).  Portable, no surface, no
+mode; the cbor decoder is the consumer cell.  Not priced: the library has no bench yet
+(three census rows waiting), and a per-node decoder does its arithmetic outside any hot loop,
+so the row this moves is the library's own, not a suite lane's.
+
+**BUILT 2026-09-22, both halves, after loft#1593 (fixed the same day, `2ac19e9c6`):**
+`(R-Range)`'s type clause, `range::type_range` at the proof's two homes.  The cbor decoder's
+reassembly is plain with no change to the library (+8 plain ops in `read_value`); its encoder's
+`major * 32 + k` went plain in **cbor 0.1.6** (published 2026-09-22 at the owner's ask:
+`major: integer limit(0, 7)`, `head` 10 checked ops → 1; suite and guide byte-identical on
+interpret / native / wasm before and after; registry index signed bound to `cbor@0.1.6`).
+The census row's O(n³) note was stale — 0.1.5 already encodes each key once — and is
+corrected.  Still open on OUR side: a `text.bytes() -> vector<u8>` in the stdlib, which is
+what cbor's byte-at-a-time text append (`buf += [value.byte_at(i) & 255 as u8]`) is missing.  What building it
+found: the clause could not be sound before #1593; the `i32` cell written to falsify the
+spare-code exclusion could not fail (the template clause excludes it first), and the spec the
+exclusion actually decides is a signed library alias with a spare bottom code, which does hold
+the sentinel after an overflow and reads garbage plain; a boxed capture is read through its
+box, not its variable, so the type is not consulted there (a refinement, measured).  Cells c1–c8
+in `157-range-arith.loft`.  Not measured on a row: cbor has no bench (three census rows
+waiting), and a per-node decoder's arithmetic is outside any hot loop.
+
 ## Priced negative, or not a clear case
 
-- **`sum` (6.62×) — NEGATIVE.**  Its loop is already a plain counter and a base read; what
-  is left is the null-aware checked add, which cannot vectorise.  The admissible route — one
-  pass for the element bound (`vector::abs_bound_i64`), then plain adds — measured
-  **13.4 → 21.2 µs, slower**: for a single reduction the bound pass IS the cost.  The gap is
-  the language's semantics (an overflow's null propagates, C85) against a twin that wraps.
+- **`sum` (6.45×) — WAS priced negative; RE-PRICED 2026-09-22 at −69 %, see below.**  The
+  original price (13.4 → 21.2 µs, slower) had three faults: the bound was a SEPARATE pass; it
+  was a CHECKED pass (`abs_bound_i64`: a null test and a checked abs per element, no more
+  vectorisable than the sum); and the function edited was `t_7integer_sum`, while the row
+  runs the callee twin `t_7integer_sum__inv` — as the re-price's own first two attempts did
+  again, measuring nothing.  "The gap is the language's semantics" was the wrong conclusion
+  drawn from a wrong measurement.
+
+### `sum` re-priced: the bound in the SAME pass, per block, in SSE2 ops (2026-09-22)
+
+The correct problem is not which overflow semantics `sum` has — the i128 form that raised
+that question is rejected on principle (slower on many targets) and unnecessary.  It is that
+the per-element checked add cannot vectorise, and the codebase already has the answer for
+that: `(R-BoundedNest)` proves from a MAGNITUDE BOUND that the checked answer equals the
+plain one, then runs plain.  Applied per block of 1024 with the bound taken from the data:
+if every element of the block lies in `[−2^40, 2^40)` and the running total is more than
+`1024·2^40` from the i64 edge, no prefix inside the block can overflow, so the plain block
+sum IS the checked answer on every input — the silly ones included; a block that fails the
+test runs today's checked loop from where it stands.  C120 holds: no value changes after a
+fault, because the plain path runs only where no fault can occur.  Nothing for the owner to
+decide.
+
+Two things decide whether it vectorises, and the first attempt got both wrong: rustc's
+baseline x86-64 is SSE2, which has a packed 64-bit ADD (`paddq`) but no packed 64-bit signed
+COMPARE, so `x >= -B && x <= B` keeps the loop scalar (11.9 → 12.0 µs, no gain).  The bound
+has to be spelled in add / shift / or: an element is in range iff
+`(x.wrapping_add(B) as u64) >> 41 == 0`, OR-accumulated across the block — a null element
+(`MIN`) fails it too and takes the checked loop.  Priced on the twin, `sum` row, three runs,
+hash `3b99b7c6` throughout: **11.9 → 3.7 µs (−69 %), 6.45× → ~2.05× of Rust.**  The remaining
+2× is the op count: add + shift + or + add per element against the twin's add.
+
+Where it belongs: a clause of `(R-BoundedNest)` for a one-term REDUCTION over a held
+header and base (`acc = acc + v[i]`, the stdlib `sum`'s shape) with a run-time per-block bound
+instead of a static one.  `min_of` / `max_of` need no proof (a compare cannot overflow);
+`product` is multiplicative and is not this; a dot product (`acc += a[i] * b[i]`) is the same
+clause with a tighter element bound (`2^20`) and is the next candidate once `sum` is built.
+**BUILT 2026-09-22** as `(R-BoundedNest)`'s reduction clause, switch `LOFT_NO_BOUNDED_SUM`,
+cells `tests/scripts/158-bounded-sum.loft` s1–s9 (the `[MAX, 1, −1]` pair stays null, a null
+element mid-vector, elements at exactly `±2^40`, a total within `2^50` of MAX, empty, one
+element, shorter than a block, the hand-written loop, the operands reversed, and the five
+shapes that must keep the checked loop), pins `tests/bounded_sum.rs`.  Built form 3.65–3.73
+µs against the hand-price's 3.66–3.74; pinned 6.45× → **2.06×** (lane 14 median 1.78×, its
+worst row now `grid` at 2.76×).  Sabotage: each clause has a cell that fails without
+it (room → s5 wrapped garbage; bound → s2 `MAX` for null), and `LOFT_HOIST_VERIFY=1` catches
+both, since its check IS the proof re-run.  Three expectations in the cell file were written
+by hand and were wrong — the same lesson as the record shapes, and the fix is the same:
+compute every number.
+
 - **`split` (12.27×)** collects `vector<text>`: one owned text per piece against the twin's
   `Vec<&str>`, which allocates nothing.  A representation question (text slices as views),
   one row, and the walked form is already `(R-LazySplit)`'s — a design item, not a lever.

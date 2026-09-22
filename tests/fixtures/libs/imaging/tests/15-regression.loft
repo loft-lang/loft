@@ -22,7 +22,7 @@ fn make_test_image(name: text, w: integer, h: integer) -> Image {
   img = Image { name: name, width: w, height: h, data: [] };
   for mty in 0..h {
     for mtx in 0..w {
-      img.data += [Pixel{r: mtx % 256, g: mty % 256, b: (mtx + mty) % 256}];
+      img.data += [Pixel{r: mtx % 256 ?? 0, g: mty % 256 ?? 0, b: (mtx + mty) % 256 ?? 0}];
     }
   }
   img
@@ -122,7 +122,7 @@ fn test_pixel_index_addressing() {
   img = Image { name: "addr.png", width: 3, height: 2, data: [] };
   for pay in 0..2 {
     for pax in 0..3 {
-      img.data += [Pixel{r: pax * 10, g: pay * 10, b: 0}];
+      img.data += [Pixel{r: pax * 10 ?? 0, g: pay * 10 ?? 0, b: 0}];
     }
   }
   ok = img.save_png("_tmp_addr.png");

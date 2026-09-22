@@ -20,6 +20,28 @@
 // is plain, their product (2^64) is not; a9 the mask of a NULL read stays null: the mask
 // rule requires a non-sentinel operand, and the fallback is the checked template.
 //
+// Predictions for the TYPE clause (loft#1593's other half, 2026-09-22): c1 declared `u8`
+// parameters and c2 declared `limit(lo, hi)` parameters are ranged by their type — every op
+// plain; c3 the cbor decoder's join `bytes[p] ?? 0`, typed integer(0, 255) by the compiler,
+// ranges its `* 256` and `+` while the index `p + 1` over a plain integer stays checked; c4 a
+// narrow local stepped past its range by `+=` takes the in-range default, so the plain product
+// after it is right; c5 the specs that are NOT facts stay checked — an `i32` (the signed-32
+// template, whose overflow writes the sentinel: `big` and every read after it null), a
+// nullable `u8?` (its bare `??` lowers to an `if` over the nullable parameter), a plain
+// `integer`; c6 a `u8` written through the checked cast's fallback; c7 a captured narrow
+// local — the value is right and the arithmetic stays CHECKED, measured: a box is read
+// through a record field no type ranges; c8 the one spec the third exclusion decides.
+//
+// @falsified-at (type clause): hand-measured (sabotage, 2026-09-22) — the exclusion of a
+// spec that reserves a sentinel removed (`reserves_sentinel_unconditionally` no longer
+// consulted): c8's `after = x + 5` answers `-9223372036854775803` on --native for null —
+// the plain add over the sentinel the overflow wrote, C120's own example — and
+// LOFT_HOIST_VERIFY=1 panics at the operator (src/ops.rs range_verify).  `y * 3` stays null
+// under the sabotage by coincidence (MIN * 3 wraps onto the sentinel), which is why `after`
+// is the line that decides.  The first cell written for this (an `i32`) could not fail: i32
+// is excluded a clause earlier as the signed-32 template, so the sabotage never reached it.
+// Restored byte-identically; interpret / native / LOFT_NO_RANGE_ARITH / LOFT_HOIST_VERIFY green.
+//
 // @falsified-at: hand-measured (sabotage, 2026-09-20) — the mask rule's non-sentinel
 // requirement removed turns a9 red on --native (`null` → `-9223372036854775807`: the mask
 // template still answers the sentinel for a null, and the plain `+ 1` the wrong proof admits
@@ -216,6 +238,95 @@ fn b6() {
   assert(acc == 18, "b6");
 }
 
+// ── The TYPE clause (loft#1593's other half): a static type that is a FACT is a leaf ─────
+// c1 — declared `u8` parameters: `b0 * 256 + b1` is [0, 65535], both ops plain.
+fn c1_join(b0: u8, b1: u8) -> integer { b0 * 256 + b1 }
+fn c1() { println("c1 {c1_join(1, 2)} {c1_join(255, 255)}"); assert(c1_join(1, 2) == 258 && c1_join(255, 255) == 65535, "c1"); }
+
+// c2 — declared `limit(lo, hi)` parameters, the cbor encoder's `major * 32 + k`: plain.
+fn c2_head(major: integer limit(0, 7), k: integer limit(24, 27)) -> integer { major * 32 + k }
+fn c2() { println("c2 {c2_head(3, 24)} {c2_head(7, 27)}"); assert(c2_head(3, 24) == 120 && c2_head(7, 27) == 251, "c2"); }
+
+// c3 — the cbor DECODER's reassembly: the join `bytes[p] ?? 0` over a `u8` vector is typed
+// integer(0, 255) by the compiler, so `* 256` and the `+` of two are plain; the index
+// arithmetic `p + 1` is over a plain integer and stays checked.
+fn c3_read(bytes: const vector<u8>, p: integer) -> integer { (bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0) }
+fn c3() {
+  v: vector<u8> = [1, 2, 3, 255];
+  println("c3 {c3_read(v, 0)} {c3_read(v, 2)} {c3_read(v, 3)}");
+  assert(c3_read(v, 0) == 258 && c3_read(v, 2) == 1023 && c3_read(v, 3) == 65280, "c3");
+}
+
+// c4 — a narrow LOCAL stepped past its range by its own arithmetic: the slot takes its
+// default (0), which is in range, so the plain product after it answers what the checked
+// one does.  200 + 100 does not fit a byte -> 0; 0 * 1000 = 0.
+fn c4() {
+  x: u8 = 200;
+  x += 100;
+  y = x * 1000;
+  z: u8 = 7;
+  z += 8;
+  println("c4 {x} {y} {z * 3}");
+  assert(x == 0 && y == 0 && z * 3 == 45, "c4");
+}
+
+// c5 — NOT facts, each for its own reason: an `i32` keeps a code for null that an overflow
+// writes, a nullable `u8?` can hold null (its bare `??` lowers to an `if` whose then arm is
+// the nullable parameter, so the join ranges nothing), and a plain `integer` reports a range
+// it does not hold.  All three stay checked, and the i32 overflow answers null on both
+// backends — as does every read of the slot after it.
+fn c5_i32(a: i32, b: i32) -> integer { a * 2 + b }
+fn c5_opt(a: u8?, b: u8?) -> integer { (a ?? 0) * 2 + (b ?? 0) }
+fn c5() {
+  big: i32 = 2147483647;
+  big += 1;
+  // The slot now HOLDS the sentinel, and every read of it must propagate null: a proof that
+  // trusted `i32`'s declared range would add 5 to the sentinel plain and answer a number.
+  after = big + 5;
+  println("c5 {c5_i32(3, 4)} {big} {after} {c5_opt(3, null)} {c5_opt(null, 5)}");
+  assert(c5_i32(3, 4) == 10 && big == null && after == null && c5_opt(3, null) == 6 && c5_opt(null, 5) == 5, "c5");
+}
+
+// c6 — a `u8` local written only through the checked cast's fallback stays a fact.
+fn c6(v: integer) -> integer {
+  b: u8 = (v as u8?) ?? 255;
+  b * 3 + 1
+}
+fn c6_run() { println("c6 {c6(10)} {c6(1000)}"); assert(c6(10) == 31 && c6(1000) == 766, "c6"); }
+
+// c7 — a captured (boxed) narrow local written past its range inside a closure: the box
+// holds the type's default and the arithmetic on it is right — and stays CHECKED, measured:
+// a boxed capture is read through its box, a record field no type ranges.  (A refinement,
+// not a defect: the value is the language's either way.)
+fn c7_call(f: fn(integer), d: integer) { f(d); }
+fn c7() {
+  a: u8 = 1;
+  f = fn(d: integer) { a += 199; };
+  c7_call(f, 0);
+  g: u8 = 1;
+  h = fn(d: integer) { g += 255; };   // 256 does not fit: the box takes the default
+  c7_call(h, 0);
+  println("c7 {a} {a * 5 + 3} {g} {g * 5 + 3}");
+  assert(a == 200 && a * 5 + 3 == 1003 && g == 0 && g * 5 + 3 == 3, "c7");
+}
+
+// c8 — the one spec the third exclusion decides: a SIGNED narrow alias whose range leaves a
+// spare bottom code (`limit(-100, 100) size(1)`: 201 values in 256 codes).  An overflow
+// writes that code — the sentinel — into the non-null slot (C85), so the slot reads null and
+// every read after it must propagate null.  `i32` is the same shape but is the signed-32
+// template, excluded a clause earlier; `i8`/`i16` fill their width and have no spare code.
+type Spare8 = integer limit(-100, 100) size(1);
+type Spare16 = integer limit(-1000, 1000) size(2);
+fn c8() {
+  x: Spare8 = 100;
+  x += 50;
+  after = x + 5;
+  y: Spare16 = -1000;
+  y -= 1;
+  println("c8 {x} {after} {y} {y * 3}");
+  assert(x == null && after == null && y == null && y * 3 == null, "c8");
+}
+
 fn main() {
   a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9();
   b1(); b2(); b3(); b4();
@@ -223,5 +334,6 @@ fn main() {
   println("b5 {r5}");
   assert(r5 == 15, "b5");
   b6();
+  c1(); c2(); c3(); c4(); c5(); c6_run(); c7(); c8();
   println("range arith ok");
 }

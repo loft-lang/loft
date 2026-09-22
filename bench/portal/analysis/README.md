@@ -9,6 +9,7 @@ The files here say WHY, price what could be done about it, and record what was b
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
 | `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found) |
 | `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); C1 priced, not built — the next work, ON ITS CORRECTED CONDITION ("no `CallRef` reachable" is not sufficient: `OpFreeRefOrHandUp`, in a capturing lambda's body, registers a store too — list every registrant as a blocker); T1 priced (−45 %) but RE-SIZED: it needs the "text variable is a `&str`" notion given one home first (six inline sites, three shipped bugs) |
+| `round-3.md` | after the five units — text walks, the call frame, a nested in-place write; two rows measured UNATTRIBUTABLE | **PRICED, NOTHING BUILT** — W1 −65 %, W2 −75 %, C1+ −39 %, P1 −30 %; the single-row harness is the instrument this round lacked |
 
 ## Where to resume (2026-09-22, branch `157-native-4x`)
 
@@ -23,8 +24,12 @@ gh workflow run ci.yml --ref 157-native-4x -f os=ubuntu-latest                  
 ```
 
 Green, 21 jobs each, ASan included: R1–R7 (`35654730666`), V1–V3 (`35660794064`, head
-`ccfd90fd2`) and F1 (`35663137897`, head `1e458f9f8`).  The commits after `1e458f9f8` are
-analysis docs only.  ⚠ Read a run's `createdAt` beside `date -u` before calling it slow: a
+`ccfd90fd2`), F1 (`35663137897`, head `1e458f9f8`) and the bounded sum (`35691737133`, head
+`87089b1fb`).  After that: loft#1593 + E + the `i32`-alias follow-up + the ratchet fix — the head
+`43eff5517`, gate `35702651817`, GREEN 21/21.  (The first #1593 gate was red on two tests
+outside the corpus runners — an `error_messages` golden that caught a real regression, and a
+`runtime_logging` test — which is why a PARSER change runs `find_problems.sh --subject parser`
+and `--subject runtime` before its push, not the corpus runners alone.)  ⚠ Read a run's `createdAt` beside `date -u` before calling it slow: a
 healthy six-minute-old run was nearly reported as hung on a wrong sense of elapsed time.
 
 If a new run is red, check these FIRST — each made an earlier run red:
@@ -48,16 +53,18 @@ If a new run is red, check these FIRST — each made an earlier run red:
 - `browser_kernel_one_script_differential` failed ONCE on a first try and passed on retry
   in that run; treat a single first-try failure there as a flake, a repeated one as real.
 
-**2. Then the rest of `vector-build.md`: C1 on its CORRECTED condition, then T1 (a
-one-predicate refactor first), then one full `make perf-portal` run alone on the box — the
-generated `doc/claude/PERF_PORTAL.md` is stale against V1–V3 and F1, and a partial re-render
-mixes sessions.**  V1–V3 and F1 are built.  Build
+**2. Then `round-3.md`, in its own order: W1 + W2 (the text walks; W2 carries T1's
+refactor), the single-row harness, then C1+ and P1.**  The portal was re-measured at
+`8009e8c5b` after all five units (every routine 1.85×, shipped 1.63×).  V1–V3, F1, the bounded sum and E are built; loft#1593 is fixed
+on the way (a tightening — the `imaging` library's own tests owe seven `?? 0` cures, its src
+none; reported in `types-history.md` D-Narrow-Limit, not edited there).  Build
 each as the record-shapes levers were built — a clause of an existing rule, a switch, cells
 (`tests/scripts/158-*.loft`), emission pins (`tests/*.rs`), a sabotage whose result is
 written into the cell file as MEASURED.
 
-**3. Not work** (priced negative or a design question; do not re-derive): a guarded plain
-`sum` is slower; `split`'s collected pieces are a text-representation question; `keyed`'s
+**3. Not work** (priced negative or a design question; do not re-derive): ~~a guarded plain
+`sum` is slower~~ — RE-PRICED at −69 % and BUILT 2026-09-22 (`(R-BoundedNest)`'s reduction
+clause, `LOFT_NO_BOUNDED_SUM`; the first price was a separate checked pass on the wrong function); `split`'s collected pieces are a text-representation question; `keyed`'s
 remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
 
 ## What this arc learned, that the next one should start from
@@ -86,6 +93,16 @@ remainder is structural; `mesh_aabb`'s rest is the null-aware float compare.
   measured the same in the same sitting (`git archive <commit> | tar -x -C <dir on DISK>`,
   `CARGO_TARGET_DIR=<dir>/target cargo build --release --lib --bin loft`, then
   `bench/stats.py --only N --loft <dir>/target/release/loft --lib-dir <dir>/target/release`).
+- **A row that reads slower on a function the change did not touch: compare the MACHINE CODE,
+  not only the emission.**  `entity_tick` read +6 % after the push window, reproducibly, on
+  one core, interleaved, on a same-build pair — with its emitted Rust byte-identical.  `nm -S`
+  + `objdump` on both binaries: same size, same 990 instructions, same 26 loops, a different
+  base address, every loop head shifted by 16 mod 64 (the hottest, 9 back-edges, from 16 to
+  32 mod 64).  Code alignment, exposed by three OTHER functions changing size — not the
+  rewrite's doing, and not a regression to chase in it.  Between-session drift is the other
+  class (keyed +8–11 % on native with FLAT ratios: the Rust lane moved with it, and the lane's
+  emission was byte-identical under the new switches).  Separate the two before explaining
+  either: a flat ratio says machine, an identical function at a new address says layout.
 - **The measuring laptop runs ONE heavy job at a time**, and `/tmp` is RAM: a build tree
   there is memory.  `scripts/find_problems.sh --changed` falls back to the long curated set
   while `loft-ffi/Cargo.lock` sits untracked in the tree; run named test binaries instead.

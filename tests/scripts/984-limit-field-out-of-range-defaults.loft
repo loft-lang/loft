@@ -32,8 +32,18 @@
 // range on one went unenforced entirely.
 //
 // The guard is emitted only where the value is not PROVABLY in range, so in-range code
-// pays nothing; and only for the `limit(...)` spelling, since a narrow alias (`u8`, `i16`)
-// is already refused at compile time and does not want a silent default on top.
+// pays nothing.
+//
+// Since loft#1593 the `limit(...)` spelling is refused at compile time exactly as a narrow
+// alias (`u8`, `i16`) is: a plain store, call, literal or checked cast of a value not
+// provably in range does not compile (`(I-Narrow)`, `(I-Lit)`, `(N-Cast?)`), and the cure
+// is written at the site (`?? 0`, `as τ?`).  What still REACHES the guard at run time is the
+// one seam the alias also leaves open — a field or variable stepped past its range by its
+// OWN arithmetic (`+=`, C85's overflow edge) — so every out-of-range arrival below is
+// spelled as `+=` from a known value.  The three regressions this cell was written against
+// (aliasing, dropping, wrapping) live in the store layer, which that seam reaches unchanged.
+// The plain-store forms are pinned as refusals in
+// `tests/scripts/1593-a-limit-slot-refuses-the-narrowing-the-alias-refuses.loft`.
 
 struct L984 {
   b: integer limit(0, 255),
@@ -66,16 +76,16 @@ fn main() {
 
   // ── Out of range: the DEFAULT, never a wrapped, aliased or stale value ────────────
   x.b = 200;
-  x.b = 256;
+  x.b += 56;   // 256
   assert(x.b == 0, "one past the byte range takes the default, not `min` by aliasing: {x.b}");
   x.b = 200;
-  x.b = 260;
+  x.b += 60;   // 260
   assert(x.b == 0, "further out takes the default, and is NOT dropped: {x.b}");
   x.b = 200;
-  x.b = -1;
+  x.b -= 201;  // -1
   assert(x.b == 0, "below the range takes the default: {x.b}");
   x.s = 1234;
-  x.s = 70000;
+  x.s += 68766; // 70000
   assert(x.s == 0, "a 2-byte overflow takes the default rather than WRAPPING to 4464: {x.s}");
 
   // ── The span encoding: the width follows `hi - lo`, not the magnitude ─────────────
@@ -86,7 +96,7 @@ fn main() {
   assert(sp.hi == 350, "and the middle: {sp.hi}");
   sp.hi = 300;
   assert(sp.hi == 300, "and its bottom: {sp.hi}");
-  sp.hi = 299;
+  sp.hi -= 1;  // 299
   assert(sp.hi == 300, "below the range takes the default — 0 is outside limit(300,400), so the bound nearest it: {sp.hi}");
 
   sp.lo = 0;
@@ -95,7 +105,7 @@ fn main() {
   assert(sp.lo == -100, "and a negative middle: {sp.lo}");
   sp.lo = -200;
   assert(sp.lo == -200, "and its negative bottom: {sp.lo}");
-  sp.lo = -300;
+  sp.lo -= 100; // -300
   // (E-Uncomp-NN): the DEFAULT, which for a range spanning zero is zero — not the floor.
   // This cell read -200 until 2026-08-31, when the floor stopped standing in for it.
   assert(sp.lo == 0, "below it takes the type's default, 0: {sp.lo}");
@@ -112,37 +122,41 @@ fn main() {
   // 500 into a limit(300, 400) byte encodes to 200 and fits — the store layer cannot see
   // that it is out of range, so the value is guarded on its way in instead.
   sp.hi = 350;
-  sp.hi = 500;
+  sp.hi += 150; // 500
   assert(sp.hi == 300, "above the declared hi takes the default: {sp.hi}");
   sp.lo = -100;
-  sp.lo = 5;
+  sp.lo += 105; // 5
   assert(sp.lo == 0, "and above its top, the same default — not the floor: {sp.lo}");
 
   // A value the compiler cannot see through — not a literal — takes the same route.
-  runtime984 = 777;
+  runtime984 = 427;
   sp.hi = 350;
-  sp.hi = runtime984;
+  sp.hi += runtime984; // 777
   assert(sp.hi == 300, "a runtime value out of range takes the default: {sp.hi}");
 
-  // The CONSTRUCTOR path, which the assignment seam does not reach.
-  ctor = Span984 { hi: 500, lo: 5 };
-  assert(ctor.hi == 300, "a struct literal's out-of-range field defaults: {ctor.hi}");
-  assert(ctor.lo == 0, "both of them — and this range spans zero, so 0: {ctor.lo}");
+  // The CONSTRUCTOR path has no `+=` seam: a literal out of range is refused at compile
+  // time (cell 1593), and the author's `??` is the only route to a value there.
+  ctor_hi = 500;
+  ctor = Span984 { hi: ctor_hi ?? 300, lo: 5 ?? 0 };
+  assert(ctor.hi == 300, "a struct literal's out-of-range field takes the fallback written: {ctor.hi}");
+  assert(ctor.lo == 0, "both of them: {ctor.lo}");
 
   // ── VARIABLES, which had no enforcement of any kind ───────────────────────────────
   v984: integer limit(0, 255) = 7;
-  v984 = 256;
+  v984 += 249;  // 256
   assert(v984 == 0, "a variable's declared range is enforced: {v984}");
-  v984 = 300;
+  v984 = 200;
+  v984 += 100;  // 300
   assert(v984 == 0, "further out too: {v984}");
-  v984 = -1;
+  v984 = 200;
+  v984 -= 201;  // -1
   assert(v984 == 0, "and below: {v984}");
   v984 = 200;
   assert(v984 == 200, "while an in-range value is untouched: {v984}");
 
   // The default is the LOWEST VALUE IN RANGE, which is not the same as zero.
   w984: integer limit(10, 20) = 12;
-  w984 = 99;
+  w984 += 87;   // 99
   assert(w984 == 10, "0 is outside this range, so the default is the bound nearest zero: {w984}");
   w984 = 15;
   assert(w984 == 15, "in range, untouched: {w984}");
@@ -155,4 +169,13 @@ fn main() {
   assert(n984 == 42, "in range, untouched: {n984}");
 
   print("984 limit field OK\n");
+
+  // ── loft#1593: the CHECKED CAST on the limit spelling checks ─────────────────────
+  // `e as τ?` is "the value when it fits, null when it does not" (N-Cast?) — it answered
+  // the unchecked value for a `limit` type while the alias's cast checked.
+  big984 = 1000;
+  small984 = 5;
+  assert((big984 as integer limit(0, 7)?) == null, "a checked cast out of range is null");
+  assert(((big984 as integer limit(0, 7)?) ?? -1) == -1, "and `??` recovers it: {(big984 as integer limit(0, 7)?) ?? -1}");
+  assert(((small984 as integer limit(0, 7)?) ?? -1) == 5, "in range, the value: {(small984 as integer limit(0, 7)?) ?? -1}");
 }

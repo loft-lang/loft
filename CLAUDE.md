@@ -1010,6 +1010,20 @@ wrong accumulate or index out of such a loop on native; `LOFT_HOIST_VERIFY=1` co
 plain operator's answer with the checked template's and every raw read with the checked read,
 panicking on a disagreement; `LOFT_TRACE_NEST=1` names every admission and decline and whether
 the reads are raw.
+**`LOFT_NO_BOUNDED_SUM=1`** (`@FR-R-BoundedNest`'s reduction clause, default-ON, generation
+time, `--native` only) makes `acc = acc + v[i]` over an integer vector pay the checked add on
+every element again — with it off, a counted loop that is one such accumulate over a held
+header and base sums what it can PLAIN first, a block of 1024 at a time, admitted when every
+element lies in `[−2^40, 2^40)` and the running total is more than `2^50` from the i64 edge
+(the nest's magnitude-bound proof, taken from the data per block in the same pass, so no
+prefix in the block can overflow and the plain sum IS the checked answer), and the checked
+loop resumes where the first block declines (the stdlib `sum` 11.9 → 3.7 µs, 6.45× → 2.06× of
+Rust, pinned; no answer changes on any input, a null element and a large element take the checked
+loop) — and is the first bisect step for a wrong sum out of such a loop on native.
+`LOFT_HOIST_VERIFY=1` re-runs every admitted block through the checked add and panics on a
+disagreement — the proof itself, so it has no blind spot.  The bound test is spelled in
+add / shift / or on purpose: baseline x86-64 is SSE2, with a packed 64-bit add and no packed
+64-bit signed compare, and written as two compares the loop stays scalar and gains nothing.
 **`LOFT_NO_RANGE_ARITH=1`** (`@FR-R-Range`, default-ON, generation time, `--native` only)
 makes every integer operator keep its checked template again — with it off, an operator
 whose RESULT provably fits the type (a literal, a mask of a non-sentinel value, `len`/`size`
@@ -1024,6 +1038,12 @@ the counter's seed INSIDE the loop and the parser emits it as the statement befo
 counted loop was ever ranged.  Nothing showed it, because the pin that should have
 (`range_arith` a4) was recording a plain form the CHAIN GUARD supplied — a pin can borrow
 another rewrite's evidence and read as proof of its own clause.
+Since 2026-09-22 the proof also reads the STATIC TYPE (`range::type_range`): a non-nullable
+`u8`/`i8`/`u16`/`i16` or user `limit(lo, hi)` parameter, local or compiler-typed join (the
+cbor decoder's `(bytes[p] ?? 0) * 256`) carries its type's range — a fact since loft#1593 made
+every store into such a slot refuse an unprovable value; `i32`/`u32` (the templates) and a
+signed alias with a spare bottom code (`limit(-100, 100) size(1)`, whose overflow writes the
+sentinel) stay unranged, and a boxed capture is read through its box and stays checked.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
 only) makes a counted loop's index chains keep their checked operators — with it off, chains
 of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals

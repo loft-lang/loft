@@ -4054,6 +4054,11 @@ impl Parser {
     pub(crate) fn parse_type_limit(&mut self, min: &mut i32, max: &mut u32) -> bool {
         if self.lexer.has_keyword("limit") {
             self.lexer.token("(");
+            // A bound the type cannot carry is refused, and the declaration then RECOVERS as
+            // the plain `integer` its message recommends: answering `true` with a defaulted
+            // bound made the slot `integer(0, 2147483647)` — narrow since loft#1593 — and the
+            // author's in-range initialiser drew a second error about a type never written.
+            let mut refused = false;
             let min_neg = self.lexer.has_token("-");
             if let Some(nr) = self.lexer.has_integer() {
                 *min = if min_neg { -(nr as i32) } else { nr as i32 };
@@ -4069,6 +4074,7 @@ impl Parser {
                 // one.  The bound is read (and truncated) on both passes either way, and
                 // pass 2 is where the program stops.
                 let sign = if min_neg { "-" } else { "" };
+                refused = true;
                 if !self.first_pass {
                     diagnostic!(
                         self.lexer,
@@ -4106,7 +4112,7 @@ impl Parser {
                     .has_integer()
                     .or_else(|| self.lexer.has_long().and_then(|n| u32::try_from(n).ok()));
                 self.lexer.token(")");
-                return true;
+                return false;
             }
             // C54.A incremental 2a — accept both Integer and Long literals.
             // Values > i32::MAX tokenise as Long, so u32-range bounds like
@@ -4116,7 +4122,10 @@ impl Parser {
             } else if let Some(nr) = self.lexer.has_long() {
                 if let Ok(fits) = u32::try_from(nr) {
                     *max = fits;
-                } else if !self.first_pass {
+                } else {
+                    refused = true;
+                }
+                if u32::try_from(nr).is_err() && !self.first_pass {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -4128,7 +4137,7 @@ impl Parser {
                 }
             }
             self.lexer.token(")");
-            true
+            !refused
         } else {
             false
         }

@@ -433,9 +433,10 @@ fn test_which_field_modifiers_constrain() {
   assert(acct.level == 0, "and the bottom, got {acct.level}");
 
   // The clamp is the caller's to write — this is the line @IMG-004 says the imaging
-  // library's own pixel maths is missing.
+  // library's own pixel maths is missing.  `min(…, 255)` bounds the top but not the
+  // bottom, so the slot still asks what a negative would become: `?? 0`.
   bright947 = 200;
-  acct.level = min(bright947 * 2, 255);
+  acct.level = min(bright947 * 2, 255) ?? 0;
   assert(acct.level == 255, "clamped at the call site it saturates, got {acct.level}");
 
   // `not null` changes nothing: the field behaves exactly like a plain one.

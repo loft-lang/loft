@@ -1114,9 +1114,51 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  emits the processor's operator (`wrapping_*`, bare `/` `%`): no
                  operation can fault, so the plain answer IS the checked template's.
                  A range implies non-sentinel: the sentinel is never inside one, and
-                 a parameter or a record/element read is never ranged (C80).  The
-                 fallback is the checked template, always right.
+                 a parameter or a record/element read is never ranged BY SHAPE
+                 (C80).  THE TYPE CLAUSE: a value whose STATIC TYPE is a fact carries
+                 that type's range as a leaf — a non-nullable `Integer[lo, hi]` whose
+                 range fills its width (`u8`, `i8`, `u16`, `i16`, every user-written
+                 `limit(lo, hi)`), whether it is a parameter, a local the compiler
+                 typed so, or a block the compiler typed so (the join `v[i] ?? 0`
+                 over a `vector<u8>` is `integer(0, 255)`).  It is a fact because,
+                 since loft#1593, every store, call and literal into such a slot is
+                 refused unless provably in range, a `?? d` fallback lands in
+                 range, and the one run-time arrival — the slot's own arithmetic
+                 stepping past the range — answers the type's default, in range.
+                 Three specs are NOT facts and stay unranged: the two full-integer
+                 templates (the plain `integer` reports a range it does not hold),
+                 and a spec that keeps a code back for null which an overflow WRITES
+                 — a signed narrow alias whose range leaves a spare bottom code
+                 (`limit(-100, 100) size(1)`; `i32` is the same shape and is the
+                 template) — because the slot then holds the sentinel and a plain
+                 add over it answers a number for null.  A nullable `τ?` and a `&`
+                 link are not facts either.  The fallback is the checked template,
+                 always right.
 ```
+
+**The type clause, in words.** 2026-09-22, the C67/C120 discussion with the `cbor` library as
+the consumer (`bench/portal/analysis/vector-build.md` § The cbor library).  The proof ranged by
+SHAPE and never by TYPE, so the cbor decoder's `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`
+was emitted checked although the compiler itself typed both joins `integer(0, 255)`, and a
+library that declared `major: integer limit(0, 7)` — C120's own stated route, *"a library opts
+in by declaring the bounded element types it already knows"* — got nothing for it.  Probed on
+four shapes: every op checked.  The clause could not be built until the declaration WAS a fact
+(loft#1593: a user `limit` accepted an out-of-range store and read a wrong in-range number —
+a proof trusting it would have run plain on a value the type says cannot exist), so that fix
+came first, and this clause reads `Parser::is_narrowing_int`'s complement: what the narrowing
+rules make true, the range proof may assume.  One helper (`range::type_range`) at the two
+homes a fact is read from — `range_vars` seeds every variable of such a type before its
+fixpoint, and `range()`'s block leaf reads `Block::result` before the tail.  Measured: r1/r4
+(declared `limit` and `u8` parameters) fully plain, the join's `* 256` and `+` plain with the
+index `p + 1` over a plain integer rightly checked, cbor's `read_value` +8 plain ops, values
+unchanged.  Switch `LOFT_NO_RANGE_ARITH` (one rule); falsifier `LOFT_HOIST_VERIFY=1`.
+Sabotage, measured: the spare-code exclusion removed, c8's `after = x + 5` on an overflowed
+`limit(-100, 100) size(1)` answers `-9223372036854775803` for null and the verifier panics —
+the first cell written for it (an `i32`) could not fail, because `i32` is the signed-32
+template and excluded a clause earlier.  A boxed capture is read through its box and stays
+checked (c7, measured, a refinement not a defect); a bare-variable `??` over a nullable
+parameter lowers to an `if` whose then arm is the parameter and stays checked (c5).  Cells
+`tests/scripts/157-range-arith.loft` c1–c8, pins `tests/range_arith.rs`.
 
 **In words.** 2026-09-20.  C120 declined the CLOSURE of the non-sentinel proof over
 arithmetic — an overflow's null must propagate on both backends — and named the admissible
@@ -1496,7 +1538,28 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  for every read; then each read is one load through the held
                  base with no bounds test and no null select — the element
                  bound has already ruled out a stored null.  A read outside the
-                 range at either end declines the nest whole.
+                 range at either end declines the nest whole.  THE REDUCTION
+                 CLAUSE: a counted, exclusive, literal-start loop that is ONE
+                 integer accumulate of a scalar vector's elements — `acc = acc +
+                 v[i]` (or the operands the other way round), an 8-byte `OpGetInt`
+                 at field 0 over a pure path with `i` the loop variable, the
+                 stdlib `sum`'s loop — in a loop that holds the path's header and
+                 base, sums what it can PLAIN before the loop: a block of 1024
+                 elements at a time, admitted when every element lies in
+                 `[−2^40, 2^40)` and the running total is more than `2^50` from
+                 the i64 edge — the magnitude-bound proof above, taken from the
+                 DATA per block in the same pass — so no prefix inside the block
+                 can leave the type and the plain block sum is the checked
+                 answer; the first block that fails ends the plain part, the
+                 `#index` is advanced to one below the first element not summed,
+                 and the checked loop, emitted unchanged, resumes there (a null
+                 element fails the bound and is left to it, which propagates
+                 it).  Every answer is the loop's own on every input.  The bound
+                 test is spelled `(x + B) as u64 >> 41`, OR-accumulated, and the
+                 sum `wrapping_add`, because the baseline target has a packed
+                 64-bit add and no packed 64-bit signed compare.  A float
+                 accumulate, a `?`-discharged read, a second statement, a computed
+                 index or a computed start keeps the checked loop.
 ```
 
 **In words.**  @PLN157's guarded plain nest, the admissible successor C120 names: the
@@ -1523,6 +1586,37 @@ with the checked read); trace `LOFT_TRACE_NEST=1`.  Sites: `hoist::bounded_nest`
 `hoist::nest_read_paths`, `Output::nest_fast_path`, `nest_bound_expr`, `nest_chain_at`,
 `ops::int_arith::nest_form`, `ops::vector_ops` (the raw read), `Output::output_if_inner` (the
 select), `vector::abs_bound_i64`.
+
+**The reduction clause, in words.**  2026-09-22, @PLN158 (`bench/portal/analysis/vector-build.md`
+§ `sum` re-priced).  The stdlib `sum` was 6.45× its Rust twin: every element paid the checked,
+null-propagating add — a sentinel test on each operand and a `checked_add` — which cannot
+vectorise, against a twin's wrapping add that runs 2-wide on SSE2.  The ledger had the row as
+"priced negative, the gap is the language's semantics" from an attempt that made the bound a
+SEPARATE, CHECKED pass and edited `t_7integer_sum` while the row runs its callee twin; and an
+i128 accumulator that would have closed the gap by CHANGING the answer for a prefix overflow
+that later cancels was rejected by the owner on principle (slower on many targets) — and is
+unnecessary.  The correct problem is the per-element check, and the answer is this rule's
+own: prove from a bound that the checked answer is the plain one, then run plain — per block,
+at run time, in the same pass.  Priced on the emitted twin before any emitter code, then
+built: `sum` 11.9 → 3.7 µs, hash unchanged, pinned **6.45× → 2.06×** of Rust (range
+2.06–2.08); the built form matches the price to the microsecond.  The remaining 2× is the op count (add, shift, or, add per element against
+the twin's add), and the owner has said 2× is fine for a routine an optimised program caches
+the result of.  Switch `LOFT_NO_BOUNDED_SUM` (and `LOFT_NO_VECTOR_BASE` /
+`LOFT_NO_VECTOR_HOIST`, one rule); trace `LOFT_TRACE_NEST=1` names each reduction admitted
+and each counted loop declined with why; falsifier `LOFT_HOIST_VERIFY=1` re-runs every
+admitted block through the checked add and panics on a disagreement — the proof itself,
+re-run, so unlike the join clause's verifier it has no blind spot here: sabotaged on the ROOM
+test, s5 answers `−9223372036854773861` for null (wrapped garbage, exactly what C85 forbids)
+and the verifier panics; sabotaged on the element BOUND, s2 answers `MAX` for null (the
+`MAX + 1` prefix overflow summed plain and cancelled) and the verifier panics.  Three of the
+cells' expectations were first written by hand and were wrong; every number stands as
+computed, and the interpreter agreed with the computation each time.  Sites:
+`hoist::bounded_sum` (the shape), `Output::sum_fast_path` (the prelude, emitted before the
+guards so both copies of a guarded loop resume from the advanced counter),
+`vector::sum_blocks_i64` with `SUM_BLOCK` / `SUM_BOUND`.  Cells
+`tests/scripts/158-bounded-sum.loft` s1–s9, pins `tests/bounded_sum.rs`.  Next of the same
+clause, not built: a dot product (`acc += a[i] * b[i]`, bound `2^20`); `min_of` / `max_of`
+need no proof, and `product` is multiplicative and is not this.
 
 ### A witnessed buffer is allocated once, not minted per call
 

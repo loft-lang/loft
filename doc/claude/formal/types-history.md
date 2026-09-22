@@ -25,6 +25,55 @@ exactly like integer `/`/`%`.  Every DN1–DN6 + DN3-Float entry is CLOSED, reta
 record.  Per-situation mitigation catalogue:
 [../plans/25-nullable-sequences/DN1-MITIGATION.md](../plans/25-nullable-sequences/DN1-MITIGATION.md).
 
+### D-Narrow-Limit — OPENED AND CLOSED (2026-09-22, loft#1593): a user-written `limit(a, b)` was outside all three narrowing rules
+
+`(I-Narrow)`, `(I-Lit)` and `(N-Cast?)` are stated over ANY `Integer[a, b]`, and the stdlib's
+width aliases (`u8`, `i8`, `u16`, `i16`, `u32`) obeyed all three: a store, call or literal not
+provably in range refused at compile time with the cure named, the checked cast answering
+null.  A user-written `integer limit(a, b)` obeyed none: the narrowing predicate keyed
+"narrow" on the alias's `forced_size`, and a `limit` sets none, so every such slot read as the
+FULL integer to the rules — while the runtime range guard (`OpRangeDefault`, loft#984) then
+answered a legal in-range DEFAULT that an ordinary run never prints.  Measured over seven
+types on both backends: `limit(1, 8)` read 1 for 1000, for −9 and for the literal 9;
+`limit(−5, 5)` read 0 for all three; `1000 as integer limit(0, 7)?` read 1000.  The
+language's own documentation test (`tests/docs/08-struct.loft`) taught the hole: *"a value
+outside the range takes the type's default rather than being rejected."*
+
+**Where the unsound step was.**  One predicate, `Parser::is_narrowing_int`, whose doc said
+*"a `dst` with no `forced_size` is the FULL integer"*.  The full integer has two bound
+encodings the spec already names (`is_signed32_template`, `is_wide_template`), and
+`source_name` reads exactly those; keying on them instead makes every other spec — alias or
+`limit` — a narrow target, and all three rules follow from the one predicate: the literal
+exemption tests fit against the range, and the checked cast is built where the predicate
+says a narrowing stands.  A cascade closed with it: a `limit` bound the type cannot CARRY
+(loft#1037) is refused and then RECOVERS as the plain `integer` its own message recommends,
+where before the defaulted bound left `integer(0, 2147483647)` — narrow, and a second
+error about a type never written.  And the `redundant-coalesce` lint, which fired on the
+very `?? d` the refusal names as the cure (`c.b = over ?? 0` on a `u8` — pre-existing on
+the alias, and now the cure every `limit` slot is sent to), is asked through the same
+predicate, so lint and refusal cannot disagree about which stores are narrowings.
+
+**What loft#984 keeps.**  Its three regressions — an aliased, a dropped and a wrapped store
+in the store layer — are still guarded, on the one seam the alias also leaves open: a slot
+stepped past its range by its OWN arithmetic (`+=`, C85's overflow edge, `(E-Uncomp-NN)`).
+Cells 984, 1009, 1379 and the boxed-capture cell re-spell every out-of-range arrival as `+=`
+from a known value, so the same value reaches the same setter; the plain-store forms are
+pinned as refusals in `tests/scripts/1593-a-limit-slot-refuses-the-narrowing-the-alias-refuses.loft`,
+and the checked cast in 984's nullable section.
+
+**The cost, and the policy that licenses it.**  Nine files of our own corpus and the
+`imaging` library's tests (seven sites, three of them the worked example that TEACHES the
+default) are refused until each writes its fallback — `Pixel{r: hi.r * 2 ?? 0}`, which stores
+exactly the 0 the library documents, with the intent at the site.  COMPATIBILITY.md § The
+error surface: a silent-wrong is a missing-error finding, contract 0 is the one time an error
+can be added, and *"convert the programs it catches"* is the rest of the work.  `hex_world`,
+the other library that spells `limit`, is untouched.  The type-inferred `integer(0, 255)`
+(a `u8` element read `?? 0`) reaches the same rule and is sound: the compiler refuses every
+implicit narrowing into the alias, so a `u8` slot genuinely holds `[0, 255]`.
+
+Falsifier: the refusal cell above fails (five lines accepted, `0 0 0 0 0` printed) on the
+parent build 87089b1fb.
+
 ### D-Opt-Value — OPENED AND CLOSED (2026-09-08, loft#1471, owner ruling): a `value struct` was refused a `τ?` it could represent
 
 `(N-Opt)` licenses `τ?` for a τ with a value to spend on absence, and names TWO representations:

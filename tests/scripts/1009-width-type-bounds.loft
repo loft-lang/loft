@@ -67,13 +67,15 @@ fn main() {
   assert(size(bytes) == 3, "one byte each, got {size(bytes)} bytes for 3 elements");
   assert(bytes[2] == 250, "element value survives, got {bytes[2]}");
 
-  // A FIELD refuses a write it cannot hold and keeps the type's default (loft#984).  Both
-  // spellings of the same type agree, which is what that issue bought.
+  // A FIELD stepped past its range by its OWN arithmetic (`+=`, C85's overflow seam) keeps
+  // the type's default (loft#984).  Both spellings of the same type agree on that seam —
+  // and both REFUSE a plain store of an unranged value at compile time (loft#1593), which
+  // is why the out-of-range value arrives through `+=` here.
   u = U1009 { a: 7, b: 0, c: 0 };
   u.a += 253;
   assert(u.a == 0, "a u8 FIELD written out of range reads its default, got {u.a}");
   l = L1009 { b: 7 };
-  l.b = 260;
+  l.b += 253;
   assert(l.b == 0, "the limit() spelling agrees, got {l.b}");
 
   // And since loft#1009, a LOCAL agrees with it.  These cells were written when it did not —
