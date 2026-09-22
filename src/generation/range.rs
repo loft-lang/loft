@@ -587,18 +587,13 @@ fn seed_accumulators(
                 false
             });
             let mut steps = 0usize;
-            let mut bound: i128 = 0;
-            let mut ok = true;
-            for later in &bl.operators[k + 1..] {
-                match movement(data, walks, later, n, 0, false, &mut steps) {
-                    Some(m) => bound += m,
-                    None => {
-                        ok = false;
-                        break;
-                    }
-                }
-            }
-            if !ok || steps == 0 || writes != steps + 1 {
+            let bound: Option<i128> = bl.operators[k + 1..]
+                .iter()
+                .try_fold(0i128, |total, later| {
+                    Some(total + movement(data, walks, later, n, 0, false, &mut steps)?)
+                });
+            let Some(bound) = bound else { continue };
+            if steps == 0 || writes != steps + 1 {
                 continue;
             }
             if let Some(r) = fits(i128::from(seed.0) - bound, i128::from(seed.1) + bound) {
