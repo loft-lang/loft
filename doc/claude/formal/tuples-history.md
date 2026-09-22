@@ -12,13 +12,33 @@ stays in the chapter next door, where it was worked, with the measurements the r
 on.  This line read `OPEN: 0` from 2026-09-05 until
 2026-09-10 while D-tup-10 and D-tup-11 were live in [tuples.md](tuples.md) — a register's
 headline is a claim about the chapter beside it, and it decayed the moment an entry was opened
-somewhere else.  D-tup-14 opened and closed 2026-09-14 (below).  D-tup-12 opened and closed 2026-09-10 (below).  D-tup-9 opened and closed 2026-09-05 (loft#1365 — below: the record and scalar bindings by @PLN153 phase 1, the collection half by the @FR-F-Ret join).  (D-tup-8 opened and closed 2026-09-04, loft#1361 — below; D-tup-7 opened and closed 2026-09-04, loft#1350 — below; D-tup-4's KEYED half CLOSED 2026-08-31, loft#1230); D-tup-5 and D-tup-6 opened and closed
+somewhere else.  D-tup-15 opened and closed 2026-09-22 (loft#1590, below).  D-tup-14 opened and closed 2026-09-14 (below).  D-tup-12 opened and closed 2026-09-10 (below).  D-tup-9 opened and closed 2026-09-05 (loft#1365 — below: the record and scalar bindings by @PLN153 phase 1, the collection half by the @FR-F-Ret join).  (D-tup-8 opened and closed 2026-09-04, loft#1361 — below; D-tup-7 opened and closed 2026-09-04, loft#1350 — below; D-tup-4's KEYED half CLOSED 2026-08-31, loft#1230); D-tup-5 and D-tup-6 opened and closed
 2026-08-28; D-tup-3 opened and closed 2026-08-26; D-tup-2 closed the day the
 rule it needed was written down.  Bounded by the oracle note below — **and D-tup-3 is what that
 note was warning about**: it was found by giving an element a HEAP type, which this doc's
 all-`(integer, integer)` oracle cannot express, so the zero above never covered it.  D-tup-5 and
 D-tup-6 are two more from the same blind spot, one axis further: a NULLABLE element, which the
 all-`(integer, integer)` oracle cannot express either.
+
+### D-tup-15 — OPENED AND CLOSED (2026-09-22): a tuple whose member 0 held a string was refused
+
+`(T-Cons)` constructs a tuple from any members, and `t = (["a"], 1)` was refused on both backends:
+*"Variable 't' cannot change type from vector<text> to (vector<text>, integer)"*.  An
+assignment's destination is the accumulator a heap-building right-hand side adopts, and member 0
+of `( … )` is parsed before a `,` proves the group a tuple, so a look-ahead asks first and a
+tuple's member 0 gets a temp of its own.  That walk stopped at every string literal and answered
+"not a tuple", so member 0 adopted the destination and typed it as the member.
+
+Closed in two halves, both on 2026-09-22.  A string without a hole is crossed like any other
+token, once every remembered token carried the scanner's hole state (`ScanState`).  A string that
+OPENS a hole is followed the way `parse_string` follows it, because every token the look-ahead
+reads is replayed to the real parse rather than scanned again: the hole's first token in the
+string's mode, the hole's expression as code, the `}` resuming the string through `set_mode`,
+and a spec's fill and flags in `Formatting` mode and its width as code
+(`Parser::peek_tuple_literal`, `skip_format_spec_ahead`).  Answering "tuple" at every hole
+instead would have refused `v = (["{x}"] + w)`, which needs the destination.  Guards
+`tests/scripts/1590-a-tuple-whose-first-member-holds-a-string-binds.loft` and
+`tests/scripts/1590-a-tuple-member-string-may-open-a-hole.loft`.
 
 ### D-tup-14 — OPENED AND CLOSED (2026-09-14): a tuple with an enum member linked as a record
 

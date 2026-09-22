@@ -1909,10 +1909,14 @@ caret then lands short. The bound is the fix — stop at a depth-0 `;`, so the s
 statement-local and the drift cannot leave the statement. Then the suite found the second one: a
 string may carry an interpolation HOLE, and `in_format_expr` / `open_strings` / the backtick
 dedent stack are not restored either, so crossing one and coming back left the lexer describing a
-string it was no longer inside and the enclosing group never closed. Stop BEFORE a string and
-answer "not a tuple" — a text member does not adopt the destination, so that answer costs
-nothing. **A look-ahead over this lexer is safe only while it stays inside one statement and out
-of a string**, which is now written on `peek_tuple_literal` where the next caller will read it.
+string it was no longer inside and the enclosing group never closed. Stopping BEFORE a string
+and answering "not a tuple" looked free — a text member does not adopt the destination — and was
+not: a `vector<text>` member does, and was refused (loft#1590). Every remembered token now
+carries the scanner's hole state, and the walk (moved to `Parser::peek_tuple_literal`) follows a
+hole the way `parse_string` does. **A look-ahead over this lexer is safe only while it stays
+inside one statement and reads every token in the mode the real parse will** — the tokens it
+reads are the ones the parse replays — which is written on `peek_tuple_literal` where the next
+caller will read it.
 
 ##### The carve-out comment was the map, again
 

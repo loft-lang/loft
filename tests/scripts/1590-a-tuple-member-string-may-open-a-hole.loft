@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1590, `@FR-T-Cons`, `@FR-F-Interp` — A TUPLE'S FIRST MEMBER MAY HOLD AN INTERPOLATED
+// STRING.  Member 0 of `( … )` is parsed before a `,` proves the group a tuple, so the parser
+// reads ahead first and gives a tuple's member 0 a temp of its own instead of the assignment's
+// destination.  Every token that look-ahead reads is replayed to the real parse, so it must read
+// a string's `{…}` hole the way `parse_string` does: the hole as code, the closing `}` resuming
+// the string, a spec's fill and flags in `Formatting` mode and its width as code.  It stopped at
+// the first string that opened a hole instead and answered "not a tuple", so member 0 adopted the
+// destination and typed it as the member: "Variable 'a' cannot change type from vector<text> to
+// (vector<text>, integer)".  (A string WITHOUT a hole is
+// `1590-a-tuple-whose-first-member-holds-a-string-binds.loft`.)
+//
+// Every expected value is worked out by hand.  The `u`/`p`/`q`/`r` cells are controls that were
+// right before: a tuple written inside a hole (value position, no destination to adopt), a
+// parenthesised concatenation that must keep building in its destination, a parenthesised
+// text, and a tuple whose member 0 IS the string.
+//
+// @falsified-at: e34709a81 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1590-a-tuple-member-string-may-open-a-hole.patch —
+//   interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the exit code, identically on both backends — the control REFUSES the file at compile
+//   time, so no assertion runs; the assertions hold the values once it compiles.
+// WITNESS: on the control the fourteen fault cells are the fourteen errors, "Variable 'a' cannot
+//   change type from vector<text> to (vector<text>, integer)" through 'k' and 'sc', and the four
+//   controls raise none.
+// HOLDS: leak, panic and expectations are unmoved; the refusals are the channel.
+
+struct Tx { id: integer, name: text }
+struct P { x: integer }
+
+fn wrap(s: text) -> text { "<{s}>" }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn main() {
+  x = 7;
+  w = ["q"];
+  a = (["{x}"], 1);
+  ok("a one hole              ", "{a.0[0]}{a.1}", "71");
+  b = (["a{x}b{x + 1}c"], 2);
+  ok("b two holes             ", "{b.0[0]}{b.1}", "a7b8c2");
+  c = ([Tx { id: 3, name: "n{x}" }], 3);
+  ok("c a struct's text field ", "{c.0[0].name}{c.0[0].id}{c.1}", "n733");
+  d = ([wrap("{x}")], 4);
+  ok("d a call's argument     ", "{d.0[0]}{d.1}", "<7>4");
+  e = (["{wrap("i{x}")}"], 5);
+  ok("e a hole in a hole      ", "{e.0[0]}{e.1}", "<i7>5");
+  g = (["{P { x: 9 }.x}"], 6);
+  ok("g braces in the hole    ", "{g.0[0]}{g.1}", "96");
+  h = (["{if x > 3 { "big" } else { "small" }}"], 7);
+  ok("h an if in the hole     ", "{h.0[0]}{h.1}", "big7");
+  s = (["{x}", "{x}{x}"], 9);
+  ok("s two strings           ", "{s.0[0]}{s.0[1]}{len(s.0)}{s.1}", "77729");
+  t = ([`b{x}`], 10);
+  ok("t a backtick string     ", "{t.0[0]}{t.1}", "b710");
+  f = (["{for y in 1..4 {y*2}:02}"], 11);
+  ok("f a for hole with a spec", "{f.0[0]}{f.1}", "[02,04,06]11");
+  sa = (["{x:>3}"], 12);
+  ok("sa a width              ", "{sa.0[0]}{sa.1}", "  712");
+  sb = (["{x:03}|{x: >4}|{x:5 }"], 13);
+  ok("sb a zero, a space fill ", "{sb.0[0]}{sb.1}", "007|   7|    713");
+  sc = (["{x:x}{x:b}", "{x:+}", "{x:#x}"], 14);
+  ok("sc radixes and flags    ", "{sc.0[0]}{sc.0[1]}{sc.0[2]}{sc.1}", "7111+70x714");
+  k = ((["{x}"], 1), 15);
+  ok("k a nested tuple        ", "{k.0.0[0]}{k.0.1}{k.1}", "7115");
+  u = "{(["{x}"], 1).1}|{(["{x}", "z"], 2).0[1]}";
+  ok("u a tuple in a hole     ", u, "1|z");
+  p = (["{x:>3}"] + ["{x}"] + w);
+  ok("p concat, not a tuple   ", "{len(p)}{p[0]}{p[1]}{p[2]}", "3  77q");
+  q = ("{x}" + "y");
+  ok("q text, not a tuple     ", q, "7y");
+  r = ("{x}", "b");
+  ok("r a tuple led by text   ", "{r.0}{r.1}", "7b");
+  println("a tuple member string may open a hole: every cell holds");
+}

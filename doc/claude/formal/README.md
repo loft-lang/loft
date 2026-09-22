@@ -145,10 +145,10 @@ not duplicate: a deviation entry links to the lens analysis instead of re-explai
 
 ## Areas
 
-**Ten deviations are open, in five chapters:** heap.md 4, operational.md 2, binding.md 2,
-performance.md 1 and tuples.md 1 (`rule_tags.py registers`, re-measured on the joined tree
-2026-09-22, after coroutines.md's `D-cor-3` and collections.md's `D-col-5` closed and tuples.md's
-`D-tup-15` opened). Every other chapter is at 0, and each zero is a claim to re-measure against the
+**Nine deviations are open, in four chapters:** heap.md 4, operational.md 2, binding.md 2 and
+performance.md 1 (`rule_tags.py registers`, re-measured 2026-09-22 after tuples.md's `D-tup-15`
+opened and closed the same day, and coroutines.md's `D-cor-3` and collections.md's `D-col-5`
+closed). Every other chapter is at 0, and each zero is a claim to re-measure against the
 oracle line its chapter names. The two in operational.md are the **meta** entry,
 `D-op-1`/`D-op-2` — there being no shared operational semantics, the interpreter is the spec and
 a backend divergence is test-caught rather than definition-caught (@PLN89's differential

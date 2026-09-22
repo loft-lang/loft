@@ -719,7 +719,7 @@ impl Parser {
             // null with no diagnostic at all (`t = (x + y, 9)`).  Ask the lexer first and
             // give a member its own temp; the built value returns on the normal channel, so
             // everything downstream is unchanged.
-            let divert = matches!(val, Value::Var(_)) && self.lexer.peek_tuple_literal();
+            let divert = matches!(val, Value::Var(_)) && self.peek_tuple_literal();
             let mut member0 = Value::Null;
             let t = if divert {
                 let t = self.expression(&mut member0);
