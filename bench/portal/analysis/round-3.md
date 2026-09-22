@@ -466,7 +466,9 @@ Three prices on the way, each a lesson: the helper resolving the store per eleme
 cold half folded in, 8.4, and OUTLINED, 9.0 — the past-the-end read a walk makes on its
 last pass was a CALL in the loop either way; answering it as the null text without a call
 (what `get_vector` answers for any non-negative index past the length) gave 6.6, under the
-hand price.  Next: the trip-count bound
+hand price.  `bench/stats.py --only 13` pins it: **`join` 6,032 ns vs 5,716, 1.06× (range
+1.05–1.06)**; the text lane's median is 1.19×, nine of its ten rows within 2× and only
+`char_walk` (3.14×) over.  Next: the trip-count bound
 for a text walk's accumulator (`char_walk` 3.14×), the record push window under a branch
 (`enum_match` 3.98×), the per-iteration call source in `for c in s.trim()`.  Levers this round FOUND and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
