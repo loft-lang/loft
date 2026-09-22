@@ -434,7 +434,10 @@ fn close_over_links(rebound: &mut HashSet<u16>, vars: &crate::variables::Functio
 /// Does statement node `n` rebind `root` — or a variable `root` links to?  The
 /// single-variable form of [`rebound_vars`]'s question.
 fn rebinds_root(n: &Value, root: u16, vars: &crate::variables::Function) -> bool {
-    match n {
+    // `unspan`, as every shape test over a statement must: a rebind the parser wrapped for its
+    // source position is the same rebind, and a `Span` that hid it would leave a stale header
+    // on the very shape this predicate exists to decline.
+    match n.unspan() {
         Value::Set(v, _) | Value::TuplePut(v, _, _) => {
             *v == root || link_targets(vars, root).contains(v)
         }
