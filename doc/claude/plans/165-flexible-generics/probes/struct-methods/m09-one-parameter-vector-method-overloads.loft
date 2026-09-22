@@ -1,0 +1,8 @@
+// The `get_fn` change reaches `vector`: a one-parameter method template beside a concrete
+// one on `vector<integer>` — each call reaches its own.
+// @EXPECT: int 4|any 1
+fn head(self: vector<integer>) -> text { "int {self[0]}" }
+fn head<T>(self: vector<T>) -> text { "any {len(self)}" }
+fn main() {
+  println("{[4, 5].head()}|{["a"].head()}");
+}

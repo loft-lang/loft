@@ -1,0 +1,10 @@
+// D6 — `g.at(i)` and `at(g, i)` answer alike, at two instances, the out-of-range read
+// included (null, as the twin's `vector` read answers).
+// @EXPECT: 2|2|b|b|null|null
+struct Grid<T> { cells: vector<T>, w: integer }
+fn at<T>(self: Grid<T>, i: integer) -> T? { self.cells[i] }
+fn main() {
+  g = Grid { cells: [1, 2, 3], w: 3 };
+  t = Grid { cells: ["a", "b"], w: 2 };
+  println("{g.at(1)}|{at(g, 1)}|{t.at(1)}|{at(t, 1)}|{g.at(7)}|{at(t, 9)}");
+}

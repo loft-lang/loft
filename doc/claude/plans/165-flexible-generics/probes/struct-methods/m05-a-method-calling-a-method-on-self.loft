@@ -1,0 +1,8 @@
+// D6 — a generic method calls another generic method of its receiver.
+// @EXPECT: 3|c
+struct Grid<T> { cells: vector<T>, w: integer }
+fn at<T>(self: Grid<T>, i: integer) -> T? { self.cells[i] }
+fn last<T>(self: Grid<T>) -> T? { self.at(len(self.cells) - 1) }
+fn main() {
+  println("{Grid { cells: [1, 2, 3], w: 3 }.last()}|{Grid { cells: ["a", "c"], w: 2 }.last()}");
+}

@@ -716,6 +716,22 @@ name, `t_4Grid_at` — loft#1539's mechanism with `Grid` where `vector` stood.
 
 - **Red on its own:** `g.at(2)` and `at(g, 2)` answer alike and equal the twin's, the
   out-of-range read included.
+- **Built** (2026-09-22).  Three homes answered "which receiver is this?" and each named the
+  instance: the KEY (`key_type_name` — now the template's name for any instance, as every
+  `vector<τ>` keys on `vector`), MEMBERSHIP (`add_fn` put the method's `Routine` attribute on
+  the open instance; now on the template, `Data::method_family`, and a field lookup on an
+  instance falls back to its template's method members — an instance minted before the
+  method is declared has no copy), and the loft#850 foreign-receiver check
+  (`method_receives`, which rejected the concrete instance against the open one; now one
+  family).  A concrete method on one instance beside the template shares the key and forms
+  one overload set; its pass-2 lookup tried the full-spelling key only for two or more
+  parameters ("with one parameter the two keys are one"), which is false once a key names a
+  family — so the template re-parsed as the concrete member.  Asked whenever the two differ,
+  which also fixed one-parameter `vector` method overloads (`fn head(self: vector<integer>)`
+  beside `fn head<T>(self: vector<T>)`), broken the same way on this branch and refused on
+  main.  Twins: `at` and `widen` are byte-identical to `GridInteger`'s.  Cells
+  [struct-methods/](probes/struct-methods/) m01–m09 green on both backends under
+  `LOFT_STRICT_STORES` + `LOFT_POISON`; corpus against D5 IDENTICAL.
 
 ### D7 — a template that mentions itself  ·  S
 
