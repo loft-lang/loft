@@ -556,9 +556,13 @@ mod tests {
         // result the range proof bounds (or a chain the guard admits) emits plain there too.
         // `@FR-R-LazySplit` adds one, `LazySplitNextEmitter` for `OpGetText`: the element
         // read of a loop over a lazy split is the iterator's next piece, and every other
-        // `OpGetText` falls through to the template unchanged.
+        // `OpGetText` falls through to the template unchanged.  `@FR-R-RecPtr`'s enum clause
+        // adds one, `FusedElementWriteEmitter` for `OpSetEnum`: a struct-enum's tag and a
+        // value-enum field are one byte, written through the record's address like the
+        // three scalar kinds (`enum_match`'s build −11 %); every other `OpSetEnum` falls
+        // through to the template.
         assert!(
-            count <= 122,
+            count <= 123,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );
