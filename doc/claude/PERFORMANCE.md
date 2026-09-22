@@ -175,6 +175,37 @@ runs (nothing to sample — no dispatch loop) and `LOFT_ALLOC_SITES` (it ranks a
 *process-wide* peak by bytecode position, and a suite's peak may have been reached in any
 of its runs, so those positions have no single `Data` to resolve against).
 
+### Attributing a bench ROW — `--names` on the native build (@PLN158)
+
+`perf` names `n_<yours>` only while the function still exists as a symbol.  A shipped
+build (`--native-release`) is lean and fully optimised, and rustc INLINES a small routine
+into the loop that calls it — a bench lane's `main` — so `perf annotate` shows the lane's
+float math with no way to say which row's it is.  Two rows of the consumer lane
+(`mesh_aabb`, `enum_match`) were measured unattributable that way (`round-3.md`), and the
+whole record class sat behind them.
+
+`loft --native-release --names` is the instrument: every generated loft function carries
+`#[inline(never)]` (loft#954's attribute, which the browser build uses so a trap's frames
+resolve), so each row has a symbol and `perf` attributes its samples to it.  A MEASUREMENT
+build, never one that ships — the attribute costs exactly the inlining it names.  The
+recipe, on one core:
+
+```bash
+loft --native-release --names --native-emit /tmp/lane.rs bench/16_consumer_shapes/bench.loft
+bench/portal/hand_price.sh /tmp/lane.rs /tmp/lane          # the shipped flags
+perf record -F 15000 -e cycles:u -o /tmp/lane.data -- taskset -c 0 /tmp/lane --n 200
+perf report -i /tmp/lane.data --stdio --sort symbol | grep n_c_mesh_aabb   # the row's share
+perf annotate -i /tmp/lane.data --stdio -s consumer::n_c_mesh_aabb__inv    # its instructions
+```
+
+Read the row's TWIN when one exists (`n_<row>__inv`, `@FR-R-Callee`): the lane calls the
+twin, and the plain function carries no samples.  Check first that the named build times
+the row the same as the plain one (it did, both rows, to 0.3 %) — an attribute that moved
+the row would be measuring something else.  What it found on its first use: `mesh_aabb`'s
+5.3 ns a vertex was six null-aware float compares spelled as four NaN tests and a
+short-circuit each, which LLVM cannot make branchless; respelled as one null test over
+operands bound first (`OpLtFloat`'s template), the row went 38.7 → 20.9 µs, 4.81× → 2.73×.
+
 ### The two ways a profile can lie, and what it now says instead
 
 Both were found by pointing the sampler at a real consumer (moros), and both matter more
