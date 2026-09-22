@@ -19,6 +19,7 @@ Fixed items have been removed from this file; their resolutions are in CHANGELOG
 - [18. `#break` Reuses the `#attribute` Syntax for a Control-Flow Statement](#18-break-reuses-the-attribute-syntax-for-a-control-flow-statement)
 - [26. Match Exhaustiveness Ignores Guarded Arms](#26-match-exhaustiveness-ignores-guarded-arms)
 - [27. `break` Keyword and `x#break` Attribute Are Two Mechanisms for the Same Action](#27-break-keyword-and-xbreak-attribute-are-two-mechanisms-for-the-same-action)
+- [28. A Tuple Has No Rendering, and a Documented JSON Form](#28-a-tuple-has-no-rendering-and-a-documented-json-form)
 - [Summary by Severity](#summary-by-severity)
 
 ---
@@ -204,6 +205,36 @@ bare- from labelled-continue and pins the labelled result (106).
 Earlier writeup here claimed silent-miscompile behaviour; that was a
 misreading from a reproducer whose sum happened to be the same under
 both semantics.
+
+---
+
+## 28. A Tuple Has No Rendering, and a Documented JSON Form
+
+**Severity: Low** — recorded 2026-09-22, for the owner rather than settled here.
+
+Two homes answer one question differently, and both are deliberate:
+
+- `formal/formatting.md` states the tuple row is ABSENT **by decision** — `"{t}"` on a
+  `(integer, integer)` is `error: Cannot format type (integer, integer)` — and
+  [TUPLES.md § Non-goals](TUPLES.md) declares whole-tuple formatting a compile error, with
+  the cure named.  `(T-Absent)`'s reason is *"a tuple has no faithful document form anyway"*.
+- The JSON chapter ([24-json](../24-json.html), `tests/docs/24-json.loft`) documents one:
+  *"a tuple is an object with `_0`, `_1` … keys, not a JSON array"*, with an assertion
+  pinning `{"p":{"_0":7,"_1":"seven"}}`.
+
+Until 2026-09-22 the refusal was asked of the FORMATTED type alone, so everything that
+reached a tuple THROUGH an aggregate rendered it as the synthetic `__tuple` record: a vector
+of tuples printed `[{_0:1,_1:"a"}]`, and so did a struct with a tuple field — an internal
+spelling in front of a reader, which is the half nothing documents.  That is now refused,
+naming the tuple it reached and the cure.
+
+What is NOT settled: `:j` keeps the documented object form, because the JSON chapter defines
+it as a serialisation — `_0` there is a key, not a name shown to a reader.  A reader can
+therefore serialise a tuple and not print one.  Either the formal reason wants narrowing (it
+is about the RENDERED form, and JSON is a document with its own row) or the JSON chapter's
+tuple row wants retiring; both are surface decisions, and the second breaks a documented,
+tested form.  Measured over all 7 206 `.loft` files in the repo: the new refusal reaches ONE
+(an archived plan probe, whose assert message named the whole vector).
 
 ---
 

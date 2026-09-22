@@ -2692,6 +2692,38 @@ use #count instead"
         v
     }
 
+    /// The TUPLE a rendering of `tp` would reach, if any — a vector's element, a struct's
+    /// field, or one of those nested — with the type itself excluded, since a bare tuple is
+    /// refused by `append_data`'s own `_` arm and has its own pinned message.
+    ///
+    /// A record type may name itself (a linked node), so the walk carries what it has seen.
+    fn rendered_tuple_within(&self, tp: &Type) -> Option<Type> {
+        fn walk(
+            data: &crate::data::Data,
+            tp: &Type,
+            seen: &mut Vec<u32>,
+            top: bool,
+        ) -> Option<Type> {
+            match tp.base() {
+                Type::Tuple(_) if !top => Some(tp.base().clone()),
+                Type::Tuple(elems) => elems.iter().find_map(|e| walk(data, e, seen, false)),
+                Type::Vector(elm, _) => walk(data, elm, seen, false),
+                Type::Reference(d_nr, _) | Type::Enum(d_nr, _, _) => {
+                    if seen.contains(d_nr) {
+                        return None;
+                    }
+                    seen.push(*d_nr);
+                    data.def(*d_nr)
+                        .attributes
+                        .iter()
+                        .find_map(|a| walk(data, &a.typedef, seen, false))
+                }
+                _ => None,
+            }
+        }
+        walk(&self.data, tp, &mut Vec::new(), true)
+    }
+
     pub(crate) fn append_data(
         &mut self,
         tp: Type,
@@ -2709,6 +2741,35 @@ use #count instead"
             Type::Optional(inner) => *inner,
             other => other,
         };
+        // `@FR-F-Render` — a tuple has no rendering, and that answer holds wherever the walk
+        // REACHES one.  The refusal below is the `_` arm of the match on this type, so it
+        // caught `"{t}"` and nothing else: a vector of tuples, a tuple FIELD of a struct and a
+        // nested vector all took the record walker instead, which renders a record's members
+        // by name — and a tuple's members are the synthetic `__tuple`'s, so the reader got
+        // `[{_0:1,_1:"a"}]`, an internal spelling the language does not have.
+        //
+        // The JSON spec is the exception, and it is one the documentation MAKES: the JSON
+        // chapter states that *"a tuple is an object with `_0`, `_1` … keys, not a JSON
+        // array"*, with a page and a doc test (`tests/docs/24-json.loft`).  That is a
+        // serialisation, where `_0` is a key rather than a name shown to a reader, so it
+        // stays as documented — and the tension with `(T-Absent)`'s *"a tuple has no faithful
+        // document form anyway"* is recorded in INCONSISTENCIES.md for the owner rather than
+        // settled here.
+        if !self.first_pass
+            && state.radix >= 0
+            && let Some(inner) = self.rendered_tuple_within(&tp)
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot format type {} — it reaches the tuple {}, and a tuple has no \
+                 rendering; format the members you want (`.0`, `.1`) or give that tuple a \
+                 named struct",
+                tp.source_name(&self.data),
+                inner.source_name(&self.data),
+            );
+            return;
+        }
         let var = Value::Var(append);
         let start = if matches!(self.vars.tp(append), Type::RefVar(_)) {
             "OpFormatStack"

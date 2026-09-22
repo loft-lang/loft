@@ -1993,6 +1993,35 @@ fn op_drop_takes_only_self() {
     );
 }
 
+/// `@FR-F-Render` — a rendering that REACHES a tuple is refused, not only a bare one.
+///
+/// Asked of the formatted type alone, `"{v}"` over a vector of tuples took the record walker
+/// and printed the synthetic `__tuple`'s member names — `[{_0:1,_1:"a"}]`, an internal
+/// spelling the language does not have.  `:j` keeps the object the JSON chapter documents
+/// (`tests/docs/24-json.loft` pins it), so these pins are the PLAIN form.
+#[test]
+fn formatting_a_vector_of_tuples_is_refused() {
+    code!("fn test() { v = [(1, \"a\")]; print(\"{v}\"); }").error(
+        "Cannot format type vector<(integer, text)> \u{2014} it reaches the tuple \
+         (integer, text), and a tuple has no rendering; format the members you want (`.0`, \
+         `.1`) or give that tuple a named struct at formatting_a_vector_of_tuples_is_refused:1:40",
+    );
+}
+
+/// The same one level in: a struct whose FIELD is a tuple.
+#[test]
+fn formatting_a_struct_with_a_tuple_field_is_refused() {
+    code!(
+        "struct Holder { t: (integer, text) }
+fn test() { h = Holder { t: (1, \"a\") }; print(\"{h}\"); }"
+    )
+    .error(
+        "Cannot format type Holder \u{2014} it reaches the tuple (integer, text), and a tuple \
+         has no rendering; format the members you want (`.0`, `.1`) or give that tuple a \
+         named struct at formatting_a_struct_with_a_tuple_field_is_refused:2:52",
+    );
+}
+
 /// loft#845: `"{v}"` on an UNBOUNDED type variable is refused, and the message
 /// names the bound that renders it.
 ///

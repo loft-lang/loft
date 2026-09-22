@@ -119,6 +119,19 @@ is a compact `{field:value}` form, and the `:j` spec switches it to JSON with qu
 > `(T-Absent)` gives the reason a tuple is the type that keeps meeting this: *"a tuple has no
 > faithful document form anyway"*, which is the same argument one level down. A tuple's
 > MEMBERS render by their own rows, so `"{t.0}"` is the supported spelling.
+>
+> **The refusal reaches a tuple through an AGGREGATE too (2026-09-22).** It used to be asked
+> of the formatted type alone, so `"{v}"` over a `vector<(integer, text)>`, and a struct with
+> a tuple FIELD, took the record walker instead and rendered the synthetic `__tuple`'s member
+> names: `[{_0:1,_1:"a"}]`, an internal spelling the language does not have. A rendering that
+> reaches a tuple at any depth is refused, naming the tuple and the cure.
+>
+> ⚠ **`:j` is the exception, and it is one the documentation makes**: the JSON chapter states
+> that *"a tuple is an object with `_0`, `_1` … keys, not a JSON array"* and pins it
+> (`tests/docs/24-json.loft`). There `_0` is a key in a serialisation rather than a name shown
+> to a reader, so it stays. That leaves this row's *"no faithful document form"* in tension
+> with a documented document form — recorded as INCONSISTENCIES.md § 28 for the owner rather
+> than settled by the code.
 
 ### Format spec — width, alignment, padding, precision, radix, sign
 
