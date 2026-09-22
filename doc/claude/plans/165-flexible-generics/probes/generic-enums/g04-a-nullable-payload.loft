@@ -1,0 +1,12 @@
+// D8 — a payload field typed `T?`, and a nullable instance.
+// @EXPECT: none|5|absent
+enum Maybe<T> { Has { v: T? }, Nothing }
+fn get(m: Maybe<integer>) -> text {
+  match m { Has { v } => if v == null { "none" } else { "{v}" }, Nothing => "nothing" }
+}
+fn main() {
+  a: Maybe<integer> = Has { v: null };
+  b = Has { v: 5 };
+  c: Maybe<integer>? = null;
+  println("{get(a)}|{get(b)}|{if c == null { "absent" } else { "present" }}");
+}

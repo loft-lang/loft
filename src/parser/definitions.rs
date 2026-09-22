@@ -924,7 +924,13 @@ impl Parser {
                 "Expect enum definitions to be in camel case style"
             );
         }
-        self.refuse_type_var_header("an enum", &type_name);
+        // @PLN165 D8 — an enum may declare type variables, as a struct may (D2).
+        let header = if self.lexer.peek_token("<") && crate::keys::generic_types_enabled() {
+            self.parse_type_var_header()
+        } else {
+            self.refuse_type_var_header("an enum", &type_name);
+            Vec::new()
+        };
         let mut d_nr = self.data.def_nr(&type_name);
         // @PLN22 Phase 2 — shadow a prelude/import name of the same key.
         if self.prelude_shadowed(&type_name) {
@@ -956,6 +962,12 @@ impl Parser {
         if self.first_pass && !conflict {
             self.data
                 .set_returned(d_nr, Type::Enum(d_nr, false, crate::data::Deps::none()));
+        }
+        // `D-Template` — an enum with a header is a template: its instances are the enums
+        // (`Shape<integer>`, variants and all); the template itself is laid out nowhere.
+        self.context_type_template = d_nr;
+        if !header.is_empty() && !conflict && self.bind_type_header(&header) {
+            self.data.definitions[d_nr as usize].def_type = DefType::TypeTemplate;
         }
         if !self.lexer.token("{") {
             return false;
@@ -3328,13 +3340,40 @@ impl Parser {
                 }
                 return Some(Type::Never);
             }
+            // `Shape<integer>::Dot` — a VARIANT of an enum instance as a type (@PLN165 D8), found
+            // in the instance: a bare `Dot` names the template's own variant.
+            let variant = if self.lexer.has_token("::") {
+                self.lexer.has_identifier()
+            } else {
+                None
+            };
             let mut dep = Vec::new();
             self.parse_depended(returned, &mut dep);
             let inst = self.instance_def(tp_nr, &args);
+            if let Some(vname) = variant
+                && inst != u32::MAX
+            {
+                let v = self.data.variant_of(inst, &vname);
+                if v == u32::MAX {
+                    if !self.first_pass {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "`{type_name}` has no variant `{vname}`"
+                        );
+                    }
+                    return Some(Type::Never);
+                }
+                return Some(Type::Reference(v, crate::data::Deps::unknown(dep)));
+            }
             if inst == u32::MAX {
                 // An argument not resolved yet (pass 1), or one that still names a type
                 // variable (an OPEN instance, @PLN165 D5).
                 return Some(Type::Unknown(0));
+            }
+            // An enum instance (@PLN165 D8) is spelled as its enum is: `Enum(inst, mixed)`.
+            if let Type::Enum(e, mixed, _) = self.data.def(inst).returned().base() {
+                return Some(Type::Enum(*e, *mixed, crate::data::Deps::unknown(dep)));
             }
             return Some(Type::Reference(inst, crate::data::Deps::unknown(dep)));
         }

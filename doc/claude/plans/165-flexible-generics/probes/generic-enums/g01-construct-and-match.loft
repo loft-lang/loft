@@ -1,0 +1,14 @@
+// D8 — a variant literal builds the instance its payload binds; `match` reads it back.
+// @EXPECT: dot 1|line a-b
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T }, Empty }
+fn show_int(s: Shape<integer>) -> text {
+  match s { Dot { at } => "dot {at}", Line { from, to } => "line {from}-{to}", Empty => "empty" }
+}
+fn show_text(s: Shape<text>) -> text {
+  match s { Dot { at } => "dot {at}", Line { from, to } => "line {from}-{to}", Empty => "empty" }
+}
+fn main() {
+  a = Dot { at: 1 };
+  b = Line { from: "a", to: "b" };
+  println("{show_int(a)}|{show_text(b)}");
+}

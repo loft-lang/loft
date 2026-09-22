@@ -1,0 +1,13 @@
+// D8 — `vector<Shape<integer>>`: built, walked, matched.
+// @EXPECT: 3|1+2+3=6
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T }, Empty }
+fn weight(s: Shape<integer>) -> integer {
+  match s { Dot { at } => at, Line { from, to } => to - from, Empty => 0 }
+}
+fn main() {
+  v: vector<Shape<integer>> = [Dot { at: 1 }, Line { from: 3, to: 5 }, Dot { at: 3 }, Empty];
+  total = 0;
+  s = "";
+  for x in v { w = weight(x); if w > 0 { if s != "" { s += "+"; } s += "{w}"; total += w; } }
+  println("{len(v) - 1}|{s}={total}");
+}

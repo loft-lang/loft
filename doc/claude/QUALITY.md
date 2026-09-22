@@ -2769,12 +2769,15 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **332** |
+| **331** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, @PLN165 D8 on `tuxedo-165-generics`: **876 · 540 · 5 · 331**, re-pinned at opaque 331 —
+D8's enum-instance tests peel what they read, and one existing function now does too.)
 
 (2026-09-22, @PLN165 D7 on `tuxedo-165-generics`: **875 · 538 · 5 · 332**, re-pinned at opaque 332,
 opaque tests 1314 — `Type::substitute` gained an `Optional` arm for a pointer's bound, which

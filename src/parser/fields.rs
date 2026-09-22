@@ -409,8 +409,9 @@ impl Parser {
             if let Type::Reference(child_d, _) = &t {
                 let parent_d = self.data.def(*child_d).parent();
                 if parent_d != u32::MAX && matches!(self.data.def_type(parent_d), DefType::Enum) {
-                    let parent_name = self.data.def(parent_d).name().to_string();
-                    let stub_name = crate::data::Data::mangle_method(&parent_name, &field);
+                    // Keyed as every method is (`method_key`): a generic enum's instance keys
+                    // on its template (@PLN165 D6/D8).
+                    let stub_name = self.data.method_key(parent_d, &field, 0);
                     let md_nr = self.data.def_nr(&stub_name);
                     // Only fire when `t_<Parent>_<field>` is the
                     // user's direct declaration on the enum, NOT the

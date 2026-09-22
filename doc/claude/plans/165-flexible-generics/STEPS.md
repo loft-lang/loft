@@ -777,6 +777,28 @@ variants (B7).
 
 - **Red on its own:** construct, match, a `vector<Shape<integer>>`, a nullable payload; twin;
   an oracle twin for the dispatcher.
+- **Built** (2026-09-22).  `parse_enum` reads a header as `parse_struct` does and makes the
+  enum a `TypeTemplate`; its variants are template parts (`Data::is_template_part`), never laid
+  out, wrapped or cycle-checked.  `instance_def` on an enum template mints the enum and each
+  variant together (`fill_enum_instance`): the variant list with its discriminants, and one
+  variant definition per template variant with its payload closed to the instance — the
+  variants keep their bare names first-wins, as every `__nullable<S>`'s `Null` and `Some` do,
+  and are reached through their enum.  In type position an enum instance is `Enum(inst, …)`,
+  and `Shape<integer>::Dot` names an instance's variant (a bare `Dot` is the template's).  A
+  variant literal takes its instance from an expected `Enum(instance)` or infers it from its
+  payload (D4's reader, generalised to fields of one def and variables of another), then
+  builds the instance's own variant; a unit variant resolves through its expected instance
+  as any variant in context does.  `match`, vectors and a nullable payload needed nothing
+  further.  Found on the way and fixed (on main): a method on an enum answered `v.m()` for a
+  variant-typed `v` but not `m(v)` — `Data::candidates` now falls back from a variant that
+  declares no `m` (in either nullability spelling — asked of the dense one alone, an enum's
+  generated dispatcher called itself, which the corpus diff caught on `1427b`) to its enum.
+  Twins: `show`/`mk`/`main` over `Shape<integer>` are identical to `ShapeI`'s with type ids
+  masked.  The `Disp-Match-Equiv` pair `tests/oracle/37-dispatch-over-a-generic-enums-variants*`
+  agrees across the interpreter, native and wasm.  Cells [generic-enums/](probes/generic-enums/)
+  g01–g06 green on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`.  D2's guard that
+  refused an enum's variables is replaced by `a-generic-enum-is-an-enum-per-instance`.  Corpus
+  against D7: only the two new guards differ.
 
 ### D9 — several variables on a type  ·  S  (waits for C0 and C2)
 

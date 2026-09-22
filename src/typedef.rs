@@ -519,6 +519,7 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         // An open instance (@PLN165 D5) is never laid out, so it has no size to be infinite.
         if matches!(data.def_type(d_nr), DefType::Struct | DefType::Enum)
             && !data.is_open_instance(d_nr)
+            && !data.is_template_part(d_nr)
         {
             let mut visiting = std::collections::HashSet::new();
             if data.has_value_cycle(d_nr, &mut visiting) {
@@ -649,6 +650,7 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         if ((matches!(data.def_type(d_nr), DefType::EnumValue) && data.attributes(d_nr) > 0)
             || matches!(data.def_type(d_nr), DefType::Struct))
             && data.def(d_nr).known_type == u16::MAX
+            && !data.is_template_part(d_nr)
             && !layout_blocked(data, d_nr, &mut Vec::new())
         {
             fill_database(data, database, d_nr);
@@ -851,8 +853,9 @@ fn synth_nullable_struct_fields(data: &mut Data, database: &mut Stores, lexer: &
                 continue;
             }
             // An open instance (@PLN165 D5) is never laid out, so its fields need no wrapper —
-            // one over it would embed a fieldless row, which has no layout either.
-            if data.is_open_instance(host) {
+            // one over it would embed a fieldless row, which has no layout either.  Nor is a
+            // generic enum's own variant (D8).
+            if data.is_open_instance(host) || data.is_template_part(host) {
                 continue;
             }
             if !(matches!(data.def_type(host), DefType::Struct)

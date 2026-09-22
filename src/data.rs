@@ -8592,10 +8592,27 @@ impl Data {
             Type::RefVar(inner) => inner.as_ref(),
             other => other,
         };
-        let type_nr = self.type_def_nr(tp);
+        let mut type_nr = self.type_def_nr(tp);
         if type_nr == u32::MAX {
             // No method dispatch for types like Function; fall back to n_ global.
             return free();
+        }
+        // @FR-F-Recv — a VARIANT's value is a value of its enum, so a method declared on the
+        // enum answers `m(v)` as it answers `v.m()` (the field path's Plan-19 fallback): where
+        // the variant declares no `m` of its own, its enum is the receiver.  Asked only here,
+        // the free spelling reported an unknown function the method spelling reached.
+        // "Its own" in either nullability spelling (`m(self: Tri?)` is the variant's too), which
+        // is what the spelling loop below tries — asked of the dense one alone, an enum's
+        // generated dispatcher reached ITSELF for such a variant.
+        if self.def_type(type_nr) == DefType::EnumValue {
+            let parent = self.definitions[type_nr as usize].parent;
+            let base = self.key_type_name(type_nr);
+            let declares_own = [base.clone(), format!("{base}?")]
+                .iter()
+                .any(|sp| self.source_nr(source, &Self::mangle_method(sp, fn_name)) != u32::MAX);
+            if parent != u32::MAX && self.def_type(parent) == DefType::Enum && !declares_own {
+                type_nr = parent;
+            }
         }
         // A bound HOLDER's stubs are keyed per SIGNATURE (loft#1275), and this entry point has
         // no arity to offer, so every arity the language admits is probed — `Walkable::children`
@@ -9122,17 +9139,87 @@ impl Data {
             return u32::MAX;
         }
         let position = self.definitions[template as usize].position.clone();
-        let d = self.add_def(&name, &position, DefType::Struct);
+        let enum_mixed = match self.definitions[template as usize].returned.base() {
+            Type::Enum(_, mixed, _) => Some(*mixed),
+            _ => None,
+        };
+        let kind = if enum_mixed.is_some() {
+            DefType::Enum
+        } else {
+            DefType::Struct
+        };
+        let d = self.add_def(&name, &position, kind);
         self.def_names.entry((name, STD_SOURCE)).or_insert(d);
         self.definitions[d as usize].source = STD_SOURCE;
-        self.definitions[d as usize].returned = Type::Reference(d, Deps::none());
+        self.definitions[d as usize].returned = match enum_mixed {
+            Some(mixed) => Type::Enum(d, mixed, Deps::none()),
+            None => Type::Reference(d, Deps::none()),
+        };
         self.definitions[d as usize].instance_of = template;
         self.definitions[d as usize].instance_args.clone_from(&args);
         let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+        if enum_mixed.is_some() {
+            self.fill_enum_instance(lexer, template, d, &bindings);
+            return d;
+        }
         for f in &self.template_fields(template) {
             self.copy_instance_field(lexer, d, f, &bindings);
         }
         d
+    }
+
+    /// An instance of a generic ENUM (@PLN165 D8) is the enum and each of its variants, minted
+    /// together: the variant list (`Dot`, `Line`, … with their discriminants, as
+    /// `parse_enum_values` records it) and one variant definition per template variant, its
+    /// payload fields closed to the instance.  The variants keep their bare names — first-wins,
+    /// as every `__nullable<S>` has its own `Null` and `Some` — and are found through their
+    /// enum (`variant_of`), which is how a variant in context resolves.
+    fn fill_enum_instance(
+        &mut self,
+        lexer: &mut Lexer,
+        template: u32,
+        d: u32,
+        bindings: &[(u32, Type)],
+    ) {
+        let list = self.definitions[template as usize].attributes.clone();
+        for a in list
+            .iter()
+            .filter(|a| matches!(a.typedef.base(), Type::Enum(e, _, _) if *e == template))
+        {
+            let Type::Enum(_, variant_mixed, _) = *a.typedef.base() else {
+                continue;
+            };
+            let a_nr = self.add_attribute(
+                lexer,
+                d,
+                &a.name,
+                Type::Enum(d, variant_mixed, Deps::none()),
+            );
+            self.definitions[d as usize].attributes[a_nr].constant = true;
+            self.definitions[d as usize].attributes[a_nr].value = a.value.clone();
+        }
+        let variants: Vec<u32> = self
+            .children_of(template)
+            .filter(|&c| self.def_type(c) == DefType::EnumValue)
+            .collect();
+        let position = self.definitions[d as usize].position.clone();
+        for v in variants {
+            let vname = self.definitions[v as usize].name.clone();
+            let vd = self.add_def(&vname, &position, DefType::EnumValue);
+            self.definitions[vd as usize].source = STD_SOURCE;
+            self.definitions[vd as usize].parent = d;
+            // As its template variant says: a payload variant is `Enum(_, true)`, and a unit
+            // variant of a mixed enum takes its parent's form (`parse_enum_values`).
+            let variant_mixed = matches!(
+                self.definitions[v as usize].returned.base(),
+                Type::Enum(_, true, _)
+            );
+            self.definitions[vd as usize].returned = Type::Enum(d, variant_mixed, Deps::none());
+            let fields = self.definitions[v as usize].attributes.clone();
+            for f in &fields {
+                self.copy_instance_field(lexer, vd, f, bindings);
+            }
+        }
     }
 
     /// A generic struct's FIELDS, which each instance copies — not its method members, which
@@ -9656,6 +9743,19 @@ impl Data {
             return false;
         };
         d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+    }
+
+    /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
+    /// variant of a generic enum, whose payload is typed by the template's variables — each
+    /// instance has variants of its own.
+    #[must_use]
+    pub fn is_template_part(&self, d_nr: u32) -> bool {
+        let Some(d) = self.definitions.get(d_nr as usize) else {
+            return false;
+        };
+        d.def_type == DefType::EnumValue
+            && (d.parent as usize) < self.definitions.len()
+            && self.definitions[d.parent as usize].def_type == DefType::TypeTemplate
     }
 
     /// Does `tp` mention the definition `d` — directly, or through an open instance's

@@ -2811,7 +2811,21 @@ twice(c)                          // one type: the inferred instance is the name
 - The bare template name is not a type: `b: Box` is refused — name the arguments, `Box<integer>`.
   The argument count must match the header's.
 - `Box<integer>` and `Box<integer?>` are two instances, as are `Box<integer>` and `Box<u8>`.
-- A type variable is a type only inside its own header; enums declare none.
+- A type variable is a type only inside its own header.
+- A generic function takes an instance (`fn get<T>(b: Box<T>) -> T { b.v }`), builds one
+  (`fn wrap<T>(x: T) -> Box<T> { Box { v: x } }`) and binds `T` through it; methods work as
+  on any struct (`fn at<T>(self: Grid<T>, i: integer) -> T?`), and a concrete method on one
+  instance beside the generic one takes that instance.
+- A struct may name itself at its own variables through a collection or a pointer
+  (`kids: vector<Tree<T>>`, `next: reference<Node<T>>?`); an inline `next: Node<T>?` is
+  refused as its twin's is, and a mention at other arguments (`Bad<vector<T>>` inside
+  `Bad<T>`) is refused at the declaration.  A generic struct may be named above its
+  declaration, as any struct may.
+- An `enum` may declare type variables too: `enum Shape<T> { Dot { at: T }, Empty }`.
+  `Shape<integer>` is an enum with its own variants; a variant literal takes its instance
+  from its payload or its annotation (a unit variant only from the annotation:
+  `e: Shape<integer> = Empty`), `match` reads it, and `Shape<integer>::Dot` names one of the
+  instance's variants as a type — a set over those dispatches on the variant.
 
 ---
 

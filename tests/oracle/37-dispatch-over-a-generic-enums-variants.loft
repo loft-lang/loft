@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D8 (@PLN89 differential-oracle corpus) — AXIS: `Disp-Match-Equiv` over the VARIANTS
+// of a generic enum's instance.  The set's members take `Shape<integer>::Dot`,
+// `Shape<integer>::Line` and `Shape<integer>::Empty`; a call held at the instance decides by
+// variant at run time.  `37-dispatch-over-a-generic-enums-variants-as-match.loft` is the
+// `match` written by hand.  Cells: a static site at each variant, a dynamic site over a
+// `vector<Shape<integer>>`, and a second instance (`Shape<text>`) whose set is its own.
+// @ORACLE_TWIN: 37-dispatch-over-a-generic-enums-variants-as-match.loft
+
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T }, Empty }
+
+fn area(x: Shape<integer>::Dot) -> integer { x.at * 0 + 1 }
+fn area(x: Shape<integer>::Line) -> integer { x.to - x.from }
+fn area(_x: Shape<integer>::Empty) -> integer { 0 }
+
+fn name(x: Shape<text>::Dot) -> text { "dot {x.at}" }
+fn name(x: Shape<text>::Line) -> text { "line {x.from}{x.to}" }
+fn name(_x: Shape<text>::Empty) -> text { "empty" }
+
+fn main() {
+  s = "{area(Dot { at: 9 })},{area(Line { from: 2, to: 7 })}";
+  v: vector<Shape<integer>> = [Dot { at: 1 }, Line { from: 2, to: 7 }, Empty];
+  for x in v { s += ",{area(x)}"; }
+  w: vector<Shape<text>> = [Line { from: "a", to: "b" }, Empty, Dot { at: "c" }];
+  for x in w { s += ",{name(x)}"; }
+  assert(s == "1,5,1,5,0,line ab,empty,dot c", "got {s}");
+  println(s);
+}

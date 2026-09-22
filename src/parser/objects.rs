@@ -2077,18 +2077,28 @@ impl Parser {
         // the expected type (a binding's annotation, a parameter) is, as `v: vector<integer> =
         // []` takes its element type from the annotation, or else the one its field values
         // bind.
-        if d_nr != u32::MAX
-            && self.data.def_type(d_nr) == DefType::TypeTemplate
-            && self.lexer.peek_token("{")
-        {
+        // The template a literal of `d_nr` is an instance of: a generic struct's own, or — for
+        // a VARIANT of a generic enum (@PLN165 D8) — its enum's, the payload being the
+        // variant's fields.
+        let literal_template = if d_nr == u32::MAX {
+            u32::MAX
+        } else if self.data.def_type(d_nr) == DefType::TypeTemplate {
+            d_nr
+        } else if self.data.is_template_part(d_nr) {
+            self.data.def(d_nr).parent
+        } else {
+            u32::MAX
+        };
+        if literal_template != u32::MAX && self.lexer.peek_token("{") {
+            let template = literal_template;
             // An OPEN expected instance (`Box<T>`) is the literal's own only inside the
             // template that names it; a call's argument reaching a generic `f(b: Box<T>)` is
             // expected as the parameter's open instance, and infers from its values instead.
             let in_template =
                 self.context != u32::MAX && self.data.def_type(self.context) == DefType::Generic;
             let expected = match self.expected.base() {
-                Type::Reference(inst, _)
-                    if self.data.def(*inst).instance_of == d_nr
+                Type::Reference(inst, _) | Type::Enum(inst, _, _)
+                    if self.data.def(*inst).instance_of == template
                         && (in_template || !self.data.is_open_instance(*inst)) =>
                 {
                     *inst
@@ -2096,7 +2106,7 @@ impl Parser {
                 _ => u32::MAX,
             };
             let inst = if expected == u32::MAX {
-                self.literal_instance(d_nr, name_pos)
+                self.literal_instance(d_nr, template, name_pos)
             } else {
                 Some(expected)
             };
@@ -2116,7 +2126,15 @@ impl Parser {
             // The expected instance never passed `instance_def` here; one whose layout waited
             // for pass 2 (a field naming a generic struct declared below) is laid out now.
             self.lay_out_instance(inst);
-            d_nr = inst;
+            d_nr = if template == d_nr {
+                inst
+            } else {
+                // The instance's own variant of that name.
+                for v in self.data.children_of(inst).collect::<Vec<_>>() {
+                    self.lay_out_instance(v);
+                }
+                self.data.variant_of(inst, name)
+            };
         }
         if d_nr != u32::MAX {
             self.data.def_used(d_nr);
@@ -4214,7 +4232,7 @@ impl Parser {
     /// read.  `None` when a variable stays unbound or two fields bind it to two types — on
     /// pass 2 reported, naming the variable and the annotation that cures it, unless a value
     /// already reported (@P376: the site is poisoned, not explained twice).
-    fn literal_instance(&mut self, template: u32, at: &Position) -> Option<u32> {
+    fn literal_instance(&mut self, fields_of: u32, template: u32, at: &Position) -> Option<u32> {
         let link = self.lexer.link();
         let work = self.vars.work_ref();
         let work_p2 = self.vars.work_ref_p2();
@@ -4246,15 +4264,15 @@ impl Parser {
         self.lexer.revert(link);
         self.vars.clean_work_refs(work);
         self.vars.clean_work_refs_p2(work_p2);
-        let name = self.data.def(template).name().to_string();
+        let name = self.data.def(fields_of).name().to_string();
         // (field, its declared type, its value's type) — an unknown field is the second
         // read's to report.
         let fields: Vec<(String, Type, Type)> = values
             .into_iter()
             .filter_map(|(f, value)| {
-                let nr = self.data.attr(template, &f);
+                let nr = self.data.attr(fields_of, &f);
                 (nr != usize::MAX).then(|| {
-                    let declared = self.data.attr_type(template, nr);
+                    let declared = self.data.attr_type(fields_of, nr);
                     (f, declared, value)
                 })
             })
