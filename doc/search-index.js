@@ -330,7 +330,6 @@ const SEARCH_INDEX=[
 {name:"assets::layout_descriptor",kind:"fn",url:"lib-assets-api.html"},
 {name:"assets::layout_fingerprint",kind:"fn",url:"lib-assets-api.html"},
 {name:"cbor",kind:"library",url:"lib-cbor.html"},
-{name:"cbor guide",kind:"guide",url:"lib-cbor-guide.html"},
 {name:"cbor::CborValue",kind:"enum",url:"lib-cbor-api.html"},
 {name:"cbor::CborEntry",kind:"struct",url:"lib-cbor-api.html"},
 {name:"cbor::encode",kind:"fn",url:"lib-cbor-api.html"},

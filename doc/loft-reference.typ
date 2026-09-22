@@ -639,7 +639,7 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
 
 Upside Field access is checked at compile time — typos in field names are caught before any code runs. Struct memory layout is fixed and unboxed; integer and float fields live directly in memory with no heap allocation overhead. Methods are ordinary named functions — they can be added from any file, at any time, without modifying the struct definition.
 
-Downside No inheritance, no properties or descriptors. Printing needs no \_\_repr\_\_ — "{p}" renders every field — and a struct can overload operators by defining them (OpAdd for +, OpEq for ==, OpLt for \<). But == on a struct compares identity until it defines OpEq, where Python's \@dataclass generates a field-by-field \_\_eq\_\_ for you. Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.
+Downside No inheritance, no properties or descriptors. Printing needs no \_\_repr\_\_ — "{p}" renders every field — and a struct can overload operators by defining them (OpAdd for +, OpEq for ==, OpLt for \<). But == on a struct compares identity until it defines OpEq, where Python's \@dataclass generates a field-by-field \_\_eq\_\_ for you; a value struct compares its fields without one. Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.
 
 === while loop — yes, and while true; no while ... else
 
@@ -2191,7 +2191,7 @@ A method can also return a completely new struct value. Write '-\> StructName' a
 
 ```rust
 fn dimmed(self: Colour) -> Colour {
-  Colour {r: self.r / 2, g: self.g / 2, b: self.b / 2 }
+  Colour {r: self.r / 2 ?? 0, g: self.g / 2 ?? 0, b: self.b / 2 ?? 0 }
 }
 ```
 
@@ -2314,12 +2314,12 @@ Zero is a real value in a limited field — pure black needs nothing extra.
   assert(black.r == 0 and black.g == 0 and black.b == 0, "pure black reads back as zeros");
 ```
 
-A value outside the range takes the type's default rather than being rejected.
+A value the compiler cannot prove in range is REFUSED unless you say what it becomes: `?? 0` makes the fallback explicit, and 300 does not fit, so the fallback is stored.
 
 ```rust
   over = 300;
-  black.r = over;
-  assert(black.r == 0, "out of range takes the default: {black.r}");
+  black.r = over ?? 0;
+  assert(black.r == 0, "out of range takes the fallback you wrote: {black.r}");
 ```
 
 Formatting a struct shows all fields compactly.
@@ -8385,7 +8385,7 @@ Number of elements in a hash collection.
 pub fn size(self: const hash) -> integer
 ```
 
-The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.
+The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.
 
 == Output and Diagnostics
 
@@ -8480,30 +8480,6 @@ pub fn sum < T: Addable > (v: const vector<T>, init: T? = null) -> T
 ```
 
 Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0). Example: sum(\[10, 20, 12\], 0) == 42 Example: sum(\[10, 20, 12\]) == 42
-
-```rust
-pub fn reverse < T > (self: vector<T>)
-```
-
-Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on `vector`, so a program may define its own `reverse` for its own types beside it.
-
-```rust
-pub fn reserve < T > (self: vector<T>, n: integer)
-```
-
-Give a vector room for `n` elements, so filling it does not grow it step by step: `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
-
-```rust
-pub fn insert < T > (self: vector<T>, index: integer, elem: T)
-```
-
-Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)` or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element read from the vector itself (`v.insert(0, v\[1\])`) is the one it was.
-
-```rust
-pub fn sort < T: Ordered > (self: vector<T>)
-```
-
-Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `\<` (`Ordered`) — a struct defining `op \<` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.
 
 ```rust
 pub fn sum_of(v: const vector<integer>) -> integer
@@ -9028,7 +9004,7 @@ Returns all environment variables as a vector of EnvVariable records (fields: na
 pub fn env_variable(name: text) -> text env#read
 ```
 
-Returns the value of the environment variable `name`, or `""` when it is not set. An unset variable and one set to the empty string give the same answer, so this cannot tell them apart. Use to read configuration from the shell environment.
+Returns the value of the environment variable `name`, or `null` when it is not set. A variable set to the empty string answers `""`, so `== null` tells the two apart. Use to read configuration from the shell environment.
 
 ```rust
 pub fn arguments() -> vector<text>

@@ -44,7 +44,7 @@
 }</code></pre>
 <p>A method can also return a completely new struct value. Write <code>-&gt; StructName</code> as the return type and construct the value in the body. The original struct is not modified — the caller gets a brand-new copy.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">dimmed</span>(self: <span class="en">Colour</span>) -&gt; <span class="en">Colour</span> {
-  <span class="en">Colour</span> {r: self.r / <span class="nm">2</span>, g: self.g / <span class="nm">2</span>, b: self.b / <span class="nm">2</span> }
+  <span class="en">Colour</span> {r: self.r / <span class="nm">2</span> ?? <span class="nm">0</span>, g: self.g / <span class="nm">2</span> ?? <span class="nm">0</span>, b: self.b / <span class="nm">2</span> ?? <span class="nm">0</span> }
 }</code></pre>
 <h2 id="defaults-and-computed-fields">Defaults and Computed Fields</h2>
 <p>Write <code>= expression</code> after the type to set a stored default, filled at construction. Use <code>computed(expression)</code> for a field that recalculates every time you read it — it takes no space in the record and always reflects the current state. Inside both, <code>$</code> refers to the struct.</p>
@@ -97,10 +97,10 @@
 <p>Zero is a real value in a limited field — pure black needs nothing extra.</p>
 <pre><code>  black = <span class="en">Colour</span> {r: <span class="nm">0</span>, g: <span class="nm">0</span>, b: <span class="nm">0</span> };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span> <span class="kw">and</span> black.g == <span class="nm">0</span> <span class="kw">and</span> black.b == <span class="nm">0</span>, <span class="st">"pure black reads back as zeros"</span>);</code></pre>
-<p>A value outside the range takes the type's default rather than being rejected.</p>
+<p>A value the compiler cannot prove in range is REFUSED unless you say what it becomes: <code>?? 0</code> makes the fallback explicit, and 300 does not fit, so the fallback is stored.</p>
 <pre><code>  over = <span class="nm">300</span>;
-  black.r = over;
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span>, <span class="st">"out of range takes the default: {black.r}"</span>);</code></pre>
+  black.r = over ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span>, <span class="st">"out of range takes the fallback you wrote: {black.r}"</span>);</code></pre>
 <p>Formatting a struct shows all fields compactly.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{col}"</span> == <span class="st">"{{r:128,g:0,b:128}}"</span>, <span class="st">"Struct compact formatting"</span>);</code></pre>
 <p><code>:j</code> produces JSON output — a text format used by many web APIs and config tools.</p>
@@ -225,7 +225,7 @@ fn to_hex(self: Colour) -&gt; integer {
 // The original struct is not modified — the caller gets a brand-new copy.
 
 fn dimmed(self: Colour) -&gt; Colour {
-  Colour {r: self.r / 2, g: self.g / 2, b: self.b / 2 }
+  Colour {r: self.r / 2 ?? 0, g: self.g / 2 ?? 0, b: self.b / 2 ?? 0 }
 }
 // ## Defaults and Computed Fields
 // Write '= expression' after the type to set a stored default, filled at construction.
@@ -312,10 +312,11 @@ fn main() {
   // Zero is a real value in a limited field — pure black needs nothing extra.
   black = Colour {r: 0, g: 0, b: 0 };
   assert(black.r == 0 and black.g == 0 and black.b == 0, "pure black reads back as zeros");
-  // A value outside the range takes the type's default rather than being rejected.
+  // A value the compiler cannot prove in range is REFUSED unless you say what it becomes:
+  // `?? 0` makes the fallback explicit, and 300 does not fit, so the fallback is stored.
   over = 300;
-  black.r = over;
-  assert(black.r == 0, "out of range takes the default: {black.r}");
+  black.r = over ?? 0;
+  assert(black.r == 0, "out of range takes the fallback you wrote: {black.r}");
   // Formatting a struct shows all fields compactly.
   assert("{col}" == "{{r:128,g:0,b:128}}", "Struct compact formatting");
   // ':j' produces JSON output — a text format used by many web APIs and config tools.

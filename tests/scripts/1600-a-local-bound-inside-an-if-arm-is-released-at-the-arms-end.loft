@@ -149,7 +149,7 @@ fn main() {
   k3(true);
   ok("k3 control, literal   ", drain(), "m50,m52,r1,d52,x,d50");
   // OPT-IN — an arm's local released at the arm's end (`LOFT_ARM_SCOPE=1`, D-heap-36).
-  // `env_variable` answers null for an unset variable, where its doc says `""` (loft#1609).
+  // `env_variable` answers null for an unset variable (loft#1302).
   arm = env_variable("LOFT_ARM_SCOPE");
   if arm != null && arm != "" {
     a1(true);

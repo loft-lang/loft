@@ -671,7 +671,7 @@
 }</code></pre>
 <p>A method can also return a completely new struct value. Write <code>-&gt; StructName</code> as the return type and construct the value in the body. The original struct is not modified — the caller gets a brand-new copy.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">dimmed</span>(self: <span class="en">Colour</span>) -&gt; <span class="en">Colour</span> {
-  <span class="en">Colour</span> {r: self.r / <span class="nm">2</span>, g: self.g / <span class="nm">2</span>, b: self.b / <span class="nm">2</span> }
+  <span class="en">Colour</span> {r: self.r / <span class="nm">2</span> ?? <span class="nm">0</span>, g: self.g / <span class="nm">2</span> ?? <span class="nm">0</span>, b: self.b / <span class="nm">2</span> ?? <span class="nm">0</span> }
 }</code></pre>
 <h2 id="defaults-and-computed-fields">Defaults and Computed Fields</h2>
 <p>Write <code>= expression</code> after the type to set a stored default, filled at construction. Use <code>computed(expression)</code> for a field that recalculates every time you read it — it takes no space in the record and always reflects the current state. Inside both, <code>$</code> refers to the struct.</p>
@@ -724,10 +724,10 @@
 <p>Zero is a real value in a limited field — pure black needs nothing extra.</p>
 <pre><code>  black = <span class="en">Colour</span> {r: <span class="nm">0</span>, g: <span class="nm">0</span>, b: <span class="nm">0</span> };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span> <span class="kw">and</span> black.g == <span class="nm">0</span> <span class="kw">and</span> black.b == <span class="nm">0</span>, <span class="st">"pure black reads back as zeros"</span>);</code></pre>
-<p>A value outside the range takes the type's default rather than being rejected.</p>
+<p>A value the compiler cannot prove in range is REFUSED unless you say what it becomes: <code>?? 0</code> makes the fallback explicit, and 300 does not fit, so the fallback is stored.</p>
 <pre><code>  over = <span class="nm">300</span>;
-  black.r = over;
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span>, <span class="st">"out of range takes the default: {black.r}"</span>);</code></pre>
+  black.r = over ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span>, <span class="st">"out of range takes the fallback you wrote: {black.r}"</span>);</code></pre>
 <p>Formatting a struct shows all fields compactly.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{col}"</span> == <span class="st">"{{r:128,g:0,b:128}}"</span>, <span class="st">"Struct compact formatting"</span>);</code></pre>
 <p><code>:j</code> produces JSON output — a text format used by many web APIs and config tools.</p>
@@ -2427,7 +2427,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="kw">for</span> c <span class="kw">in</span> g.cells { out += [<span class="fn-call">f</span>(c)]; }
   <span class="en">Grid</span> { w: g.w, cells: out }
 }
-<span class="kw">fn</span> show&lt;<span class="en">T</span>: <span class="en">Printable</span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { r = <span class="st">""</span>; <span class="kw">for</span> c <span class="kw">in</span> g.cells { r += <span class="st">"[{c.to_text()}]"</span>; } r }
+<span class="kw">fn</span> show&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Printable</a></span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { r = <span class="st">""</span>; <span class="kw">for</span> c <span class="kw">in</span> g.cells { r += <span class="st">"[{c.to_text()}]"</span>; } r }
 <span class="kw">fn</span> <span class="fn-call">show</span>(g: <span class="en">Grid</span>&lt;<span class="en">Tile</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"tiles:{len(g.cells)}"</span> }
 <span class="kw">fn</span> <span class="fn-call">test_two_variables</span>() {
   tiles = <span class="en">Grid</span> { w: <span class="nm">2</span>, cells: [<span class="en">Tile</span> { height: <span class="nm">3</span>, name: <span class="st">"a"</span> }, <span class="en">Tile</span> { height: <span class="nm">5</span>, name: <span class="st">"b"</span> }] };
@@ -4437,7 +4437,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub fn size(self: const hash) -&gt; integer</code></pre>
-<p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.</p>
+<p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.</p>
 </div>
 <h2 id="stdlib-output-and-diagnostics">Output and Diagnostics</h2>
 <div class="item">
@@ -4500,22 +4500,6 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <div class="item">
 <pre><code>pub fn sum &lt; T: Addable &gt; (v: const vector&lt;T&gt;, init: T? = null) -&gt; T</code></pre>
 <p>Sum of vector elements.  Works on any Addable type.  `init` is the identity to start from; leave it out and the element type's own zero is used (0, 0.0). Example: sum([10, 20, 12], 0) == 42 Example: sum([10, 20, 12]) == 42</p>
-</div>
-<div class="item">
-<pre><code>pub fn reverse &lt; T &gt; (self: vector&lt;T&gt;)</code></pre>
-<p>Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on `vector`, so a program may define its own `reverse` for its own types beside it.</p>
-</div>
-<div class="item">
-<pre><code>pub fn reserve &lt; T &gt; (self: vector&lt;T&gt;, n: integer)</code></pre>
-<p>Give a vector room for `n` elements, so filling it does not grow it step by step: `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.</p>
-</div>
-<div class="item">
-<pre><code>pub fn insert &lt; T &gt; (self: vector&lt;T&gt;, index: integer, elem: T)</code></pre>
-<p>Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)` or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element read from the vector itself (`v.insert(0, v[1])`) is the one it was.</p>
-</div>
-<div class="item">
-<pre><code>pub fn sort &lt; T: Ordered &gt; (self: vector&lt;T&gt;)</code></pre>
-<p>Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `&lt;` (`Ordered`) — a struct defining `op &lt;` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.</p>
 </div>
 <div class="item">
 <pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>
@@ -4899,7 +4883,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub fn env_variable(name: text) -&gt; text env#read</code></pre>
-<p>Returns the value of the environment variable `name`, or `&quot;&quot;` when it is not set. An unset variable and one set to the empty string give the same answer, so this cannot tell them apart. Use to read configuration from the shell environment.</p>
+<p>Returns the value of the environment variable `name`, or `null` when it is not set. A variable set to the empty string answers `&quot;&quot;`, so `== null` tells the two apart. Use to read configuration from the shell environment.</p>
 </div>
 <div class="item">
 <pre><code>pub fn arguments() -&gt; vector&lt;text&gt;</code></pre>
