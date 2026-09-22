@@ -17387,13 +17387,35 @@ impl Scopes<'_> {
         );
         // Each `__lift_N = a` is a whole-value copy the collector never saw when it first ran
         // (the lift is built after it), so the drop moves here by the same rule — and PER PATH
-        // by construction, since these temps are one per arm.  [`handoff_target`] is the one
-        // home for that direction; recording the temps is what lets the collector reach the
-        // same answer when it meets these copies later, from inside the arm.
+        // by construction, since these temps are one per arm.  Recording the temps is what lets
+        // the collector reach the same answer when it meets these copies later, from inside the
+        // arm.
+        //
+        // `@FR-H-Move` / `@FR-H-Drop` (loft#1617) — the lift holds the STRUCTURE on the path
+        // that copied, so the lift is what releases it and the source is what stops.  The
+        // copy is a move of a value this frame owns, and the hook belongs to the record the
+        // new owner holds; stopping the LIFT instead left the hook on the source's record,
+        // which the binding that views the lift has since written (`x.id = 7` read back as the
+        // source's old value in the hook).  The count was right either way, which is why only
+        // a cell that separates the two records sees it.  Per path, because the arm may not
+        // run: the flag is `false` where it did not, and there the source still owes its
+        // release.  Off a PARAMETER the copy stops itself, as before — the caller owns that
+        // record, so neither the lift nor a flag may release it (`@FR-H-Drop`'s closing
+        // clause).
         for &(src, tmp) in &copied {
             self.arm_lift_temps.insert(tmp);
-            if let Some(moved) = handoff_target(function, data, tmp, src, true, true) {
-                self.drop_transferred.insert(moved);
+            let Some(stopped) = copy_moves_drop_from(function, data, tmp, src, true) else {
+                continue;
+            };
+            // A source that OUTLIVES the loop keeps its release: the lift is per ITERATION, so
+            // running the hook there releases one record once a pass — `(H-Spent)`, the same
+            // reason the per-arm write-out declines such a branch
+            // ([`Self::source_outlives_loop`]).
+            if stopped == src && !self.source_outlives_loop(src, function) {
+                self.per_path_pairs.insert((tmp, src));
+                self.mint_handoff_flag(function, src);
+            } else {
+                self.drop_transferred.insert(tmp);
             }
         }
         if bound == u16::MAX || (copied.is_empty() && viewed.is_empty()) {
@@ -17448,18 +17470,34 @@ impl Scopes<'_> {
     /// loop's body refills on every pass (`x = a ?? mk(); a = x`): the next pass reads the new
     /// value, so that move is the one-pass move the written-out arms already decide.
     fn arm_source_outlives_loop(&self, value: &Value, function: &Function) -> bool {
+        branch_tail_vars(value)
+            .iter()
+            .any(|&src| self.source_outlives_loop(src, function))
+    }
+
+    /// Is `src` a variable declared OUTSIDE the innermost loop this statement runs in — or a
+    /// parameter, which every loop is inside?
+    ///
+    /// The per-source half of [`Self::arm_source_outlives_loop`], and ONE home for it, because
+    /// the two deciders that read it must agree: the per-arm write-out declines such a branch,
+    /// and [`Self::lift_join_arm_tails`] keeps the release with the source for the same reason.
+    /// A `(H-Spent)` name may be moved once, and a source outside the loop is moved once per
+    /// ITERATION — so the second pass reads a name already spent, and whichever side the
+    /// release is put on it runs once per pass over ONE record.  Keeping it with the source is
+    /// the answer that releases once; moving it to the per-iteration lift doubles it
+    /// (`ownership_drop_gate`'s `p_l1`).  Until the rules' error exists, this is the fallback
+    /// both sites take.
+    fn source_outlives_loop(&self, src: u16, function: &Function) -> bool {
         !self.loops.is_empty()
-            && branch_tail_vars(value).iter().any(|&src| {
-                !function.is_compiler_generated(src)
-                    && self
-                        .var_scope
-                        .get(&src)
-                        .is_none_or(|&home| self.loop_depth_at(home) < self.loops.len())
-                    && !self
-                        .loop_refills
-                        .last()
-                        .is_some_and(|refilled| refilled.contains(&src))
-            })
+            && !function.is_compiler_generated(src)
+            && self
+                .var_scope
+                .get(&src)
+                .is_none_or(|&home| self.loop_depth_at(home) < self.loops.len())
+            && !self
+                .loop_refills
+                .last()
+                .is_some_and(|refilled| refilled.contains(&src))
     }
 
     /// Give every arm tail that is a bare call MINTING a record a `__lift_N` temp of its own —

@@ -2773,7 +2773,7 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **322** |
+| **320** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
@@ -2786,6 +2786,14 @@ opaque tests 1309 — the method spelling's by-name recognition of `map`/`filter
 (`parse_vector_method`) is retired, and its bare shape tests with it.  The two the arc added
 peel: the tuple result's own test reads `bl.result.base()`, and the keyed bind asks
 `is_keyed`, which peels.)
+(2026-09-22, loft#1617 / loft#1622 on `tuxedo-1562-layout-gate`, re-measured at their end:
+**943 · 619 · 4 · 320**, opaque tests 1309, and `--check-ratchet` re-pinned DOWN on both counts.
+The fall is the drop-cascade key moving to one home: three inline rebuilds in `data.rs` became
+one call, and the two that discriminated went with them.  The row is re-measured here rather
+than carried, which is the rule a derived count owes every tree it lands on.)
+
+(2026-09-23, both of the above joined here — the row is RE-MEASURED on this tree below,
+because neither side's count describes it: a derived row cannot be cherry-picked.)
 
 (2026-09-22, the third line of the same join — `tuxedo-1562-layout-gate` (loft#1597, #1600,
 #1601) — re-measured at its end: **941 · 615 · 4 · 322**, opaque tests 1311, at the pin the two-line

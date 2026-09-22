@@ -22,6 +22,11 @@
 //   right before and after, which is what says the delivery and not the answer was missing.
 //   Run as a program, `--native` is clean and the interpreter is not, so the same defect is
 //   also an `(O-NoDiverge)` asymmetry from that direction.
+// ARMED: `LOFT_NATIVE_LEAK_CHECK=1`, which `scripts/falsify.sh` arms on every run of its own
+//   accord — no extra instrument is owed here.  The interpreter's store census prints
+//   unconditionally at exit and `LOFT_STRICT_STORES=1` only changes its prefix, so both legs
+//   report the leak without being asked; that is why this receipt's `@falsified-at` line
+//   carries no env prefix where a use-after-free guard's would.
 // HOLDS: exit, assertions and panic are unmoved; `k1`–`k3` are the controls beside it.
 // WITNESS: on the control, `Warning: N stores not freed at program exit:
 //   kt=32 main_vector<integer>` after the run's output.
