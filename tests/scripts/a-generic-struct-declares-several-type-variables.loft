@@ -1,0 +1,43 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D9 — a struct may declare several type variables, as a function may (C2).
+// `instance_def` takes an argument LIST: `Pair { k: 1, v: "a" }` names `Pair<integer, text>`,
+// and `swap` answers `Pair<V, K>` — a DIFFERENT instance — in both spellings, byte-identical
+// to its twin over `PairIT` / `PairTI` with numbers masked.  Argument order is part of the
+// key: `Pair<integer, integer>` and `Pair<text, integer>` are two instances.  Every home
+// D3–D6 built already read the list; what the cells found was a literal RECEIVER
+// (`Pair { k: 1, v: "a" }.swap()`) taking its statement's expected type — the method's result
+// — as its own instance.
+//
+// @falsified-at: d96212796 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-struct-declares-several-type-variables.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends.
+//   ARMED: nothing.
+//   WITNESS: on the control `s = Pair { k: 1, v: "a" }.swap()` builds the receiver as
+//     `Pair<text,integer>` ("Cannot assign integer to field Pair<text,integer>.k").
+//   HOLDS: nothing else.
+
+struct Pair<K, V> { k: K, v: V }
+
+fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }
+fn second<K, V>(p: Pair<K, V>) -> V { p.v }
+
+fn test_a_literal_binds_both() {
+  p = Pair { k: 1, v: "a" };
+  q: Pair<text, float> = Pair { k: "b", v: 2.5 };
+  assert(p.k == 1 && p.v == "a" && q.k == "b" && q.v == 2.5, "binding");
+}
+
+fn test_swap_answers_another_instance() {
+  s = Pair { k: 1, v: "a" }.swap();
+  t = swap(Pair { k: 2.5, v: "x" });
+  assert(s.k == "a" && s.v == 1 && t.k == "x" && t.v == 2.5, "swap");
+}
+
+fn test_generic_over_both_and_in_a_vector() {
+  v: vector<Pair<integer, text>> = [Pair { k: 1, v: "a" }, Pair { k: 2, v: "b" }];
+  n = Pair { k: "x", v: 3 };
+  a = Pair { k: 1, v: 2 };
+  assert(second(n) == 3 && second(v[1]) == "b" && v[1].k == 2 && a.k + a.v == 3, "second");
+}

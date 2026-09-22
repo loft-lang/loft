@@ -813,6 +813,19 @@ step is cells and whatever they find.
 - **Why it is in:** no consumer asks for it — a tuple already covers `Pair` (DESIGN.md §
   C110, evaluated).  It is here because stopping at the second variable would be a
   restriction no reader could derive.
+- **Built** (2026-09-22).  The cells found no one-argument assumption in D3–D6.  They found a
+  literal RECEIVER taking its statement's expected type: in `s = Pair { k: 1, v: "a" }.swap()`
+  the expected type is `swap`'s result (`Pair<text, integer>`, from pass 1) and the literal
+  was built as that — loft#1304's postfix class, for the instance a literal chooses.  A
+  literal followed by `.` or `[` now infers from its payload (`literal_is_a_receiver`, one
+  balanced look-ahead the literal's own parse then re-walks).  `swap` is its twin over
+  `PairIT`/`PairTI` with numbers masked.  Cells [several-on-a-type/](probes/several-on-a-type/)
+  p01–p05 green on both backends.  Corpus against D8: the new guard, and D6's guard, whose
+  receiver literal `Grid { cells: ["a"], w: 1 }.with_w(20)` now infers — through D4's
+  discovery read, which leaves a dead temporary behind for a collection value (declared null,
+  freed, never read).  That is a difference in FORM from the twin, not in value; its cure is
+  a variable-table rollback for a discarded read, which touches every side map keyed by a
+  variable number.
 
 ### D10 — across the boundary  ·  S
 

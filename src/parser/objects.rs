@@ -2096,9 +2096,15 @@ impl Parser {
             // expected as the parameter's open instance, and infers from its values instead.
             let in_template =
                 self.context != u32::MAX && self.data.def_type(self.context) == DefType::Generic;
+            // The expected type is the literal's own only when the literal IS the value: one
+            // followed by `.` or `[` is a RECEIVER (`Pair { k: 1, v: "a" }.swap()`), and the
+            // expected type is its method's result — taken, it built `Pair<text, integer>` for
+            // that literal (loft#1304's postfix class, for the instance a literal builds).
+            let receiver = self.literal_is_a_receiver();
             let expected = match self.expected.base() {
                 Type::Reference(inst, _) | Type::Enum(inst, _, _)
-                    if self.data.def(*inst).instance_of == template
+                    if !receiver
+                        && self.data.def(*inst).instance_of == template
                         && (in_template || !self.data.is_open_instance(*inst)) =>
                 {
                     *inst
@@ -4486,6 +4492,17 @@ impl Parser {
             }
         });
         code
+    }
+
+    /// Is the `{ … }` literal at the cursor followed by `.` or `[` — the receiver of a postfix,
+    /// not the whole value?  One balanced look-ahead, put back: the literal is parsed right
+    /// after over the same tokens, so the lexer's position ends where that parse leaves it.
+    fn literal_is_a_receiver(&mut self) -> bool {
+        let link = self.lexer.link();
+        self.skip_braced();
+        let receiver = self.lexer.peek_token(".") || self.lexer.peek_token("[");
+        self.lexer.revert(link);
+        receiver
     }
 
     /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —

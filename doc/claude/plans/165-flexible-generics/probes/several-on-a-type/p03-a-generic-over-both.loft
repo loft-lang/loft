@@ -1,0 +1,9 @@
+// D9 — a generic function over both variables, and a vector of an instance.
+// @EXPECT: 3|k2=b
+struct Pair<K, V> { k: K, v: V }
+fn second<K, V>(p: Pair<K, V>) -> V { p.v }
+fn main() {
+  v: vector<Pair<integer, text>> = [Pair { k: 1, v: "a" }, Pair { k: 2, v: "b" }];
+  n = Pair { k: "x", v: 3 };
+  println("{second(n)}|k{v[1].k}={second(v[1])}");
+}

@@ -1,0 +1,8 @@
+// D9 — `Pair { k: 1, v: "a" }` names `Pair<integer, text>`; an annotation names another.
+// @EXPECT: 1|a|b|2.5
+struct Pair<K, V> { k: K, v: V }
+fn main() {
+  p = Pair { k: 1, v: "a" };
+  q: Pair<text, float> = Pair { k: "b", v: 2.5 };
+  println("{p.k}|{p.v}|{q.k}|{q.v}");
+}
