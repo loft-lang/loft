@@ -1060,6 +1060,10 @@ pub struct Output<'a> {
     leaf_cache: HashMap<u32, bool>,
     /// Per-definition verdict of [`Output::is_frameless_chain`].
     chain_cache: HashMap<u32, bool>,
+    /// Per-definition verdict of [`Output::is_guard_free`], and of its per-body half
+    /// ([`Output::registers_buffers`]).
+    guard_free_cache: HashMap<u32, bool>,
+    registers_cache: HashMap<u32, bool>,
     /// `LOFT_NATIVE_CHECKPOINTS=count|time` — emit a per-OPERATOR checkpoint into the
     /// generated Rust, so a native run attributes its own time without `perf`, without
     /// symbols, and identically under wasm.  This is a SUPPLEMENTARY instrument: the
@@ -1092,6 +1096,10 @@ pub struct Output<'a> {
     /// (`@FR-R-LeafChain`).  The bisect step one finer than
     /// `LOFT_NO_LEAF_PRELUDE`.
     pub leaf_chain_disabled: bool,
+    /// `LOFT_NO_GUARD_FREE=1` — every non-leaf frame constructs its fn-ref buffer guard
+    /// again, as before `@FR-R-GuardFree`; the bisect step for a leaked or doubly-freed
+    /// fn-ref return buffer in a program with recursion.
+    pub guard_free_disabled: bool,
     /// The `--lean` tier (@PLN157): the frame push demotes to the depth-only
     /// `cr_call_push_lean`.  Keyed on the FLAG, not on `emit_live`: a default
     /// `--html` build also has `emit_live == false` (debug is opt-in there)
@@ -2197,12 +2205,15 @@ impl<'a> Output<'a> {
             range_suspended: 0,
             leaf_cache: HashMap::new(),
             chain_cache: HashMap::new(),
+            guard_free_cache: HashMap::new(),
+            registers_cache: HashMap::new(),
             checkpoints: CkptMode::from_env(),
             ckpt_filter: ckpt_filter_from_env(),
             ckpt_sites: Vec::new(),
             ckpt_cur_line: 0,
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
+            guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
             lean_tier: false,
             write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
             next_format_count: 0,
@@ -4990,6 +5001,87 @@ impl Output<'_> {
         on_path.remove(&def_nr);
         self.chain_cache.insert(def_nr, chain);
         chain
+    }
+
+    /// Does this definition's OWN body register a store against the running frame's
+    /// fn-ref buffer list, or run something whose registrations are not visible here?  The
+    /// three pushers are the fn-ref dispatch (`cr_fnref_buf`, `cr_fnref_minted`, both under
+    /// a `CallRef`) and the op `OpFreeRefOrHandUp`; a `parallel` body and a `yield` are
+    /// opaque and count as registering, and so is a callee with NO loft body that is not the
+    /// standard library's (a user's native function) or that takes a fn-ref (it may call
+    /// back into user code).  A `#rust`-bodied stdlib function is the body's own work,
+    /// as `is_elidable_leaf` reads an op.
+    fn registers_buffers(&mut self, def_nr: u32) -> bool {
+        if let Some(&v) = self.registers_cache.get(&def_nr) {
+            return v;
+        }
+        let data = self.data;
+        let registers = data.def(def_nr).code().any_node(&mut |v| match v {
+            Value::Call(d, _) => {
+                let callee = data.def(*d);
+                let name = callee.name();
+                let user_fn = name.starts_with("n_") || name.starts_with("t_");
+                let opaque = user_fn
+                    && !matches!(callee.code(), Value::Block(_))
+                    && (!crate::portable_path::is_stdlib_source(&callee.position.file)
+                        || callee
+                            .attributes()
+                            .iter()
+                            .any(|a| matches!(a.typedef.base(), Type::Function(..))));
+                name == "OpFreeRefOrHandUp" || opaque
+            }
+            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+            _ => false,
+        });
+        self.registers_cache.insert(def_nr, registers);
+        registers
+    }
+
+    /// Is NOTHING that registers a fn-ref buffer reachable from this definition — over the
+    /// closure of its call graph, cycles included?  Then no entry can ever stand above the
+    /// mark its buffer guard would take, its drop is empty every time, and the frame carries
+    /// no guard.  Unlike [`Output::is_frameless_chain`] a cycle does not block: the guard
+    /// never depended on acyclicity, only the depth count does.
+    /// Decides `@FR-R-GuardFree`.
+    fn is_guard_free(&mut self, def_nr: u32) -> bool {
+        if let Some(&v) = self.guard_free_cache.get(&def_nr) {
+            return v;
+        }
+        let data = self.data;
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut todo: Vec<u32> = vec![def_nr];
+        let mut free = true;
+        while let Some(d) = todo.pop() {
+            if !seen.insert(d) {
+                continue;
+            }
+            if self.registers_buffers(d) {
+                if std::env::var("LOFT_TRACE_GUARD_FREE").is_ok() {
+                    eprintln!(
+                        "[guard-free] {}: keeps its guard — `{}` registers",
+                        data.def(def_nr).name(),
+                        data.def(d).name()
+                    );
+                }
+                free = false;
+                break;
+            }
+            data.def(d).code().any_node(&mut |v| {
+                if let Value::Call(c, _) = v {
+                    let callee = data.def(*c);
+                    let name = callee.name();
+                    if (name.starts_with("n_") || name.starts_with("t_"))
+                        && matches!(callee.code(), Value::Block(_))
+                        && !seen.contains(c)
+                    {
+                        todo.push(*c);
+                    }
+                }
+                false
+            });
+        }
+        self.guard_free_cache.insert(def_nr, free);
+        free
     }
 
     /// @PLN18 08-S2 — build the live-dispatch entry check for a user fn, or
@@ -8846,7 +8938,17 @@ extern crate loft;"
                 // Measured on the hash row (100 000 leaf calls): the guard's two `Cell`
                 // reads and its drop were a third of the row (553–584k → 370–396k
                 // ns/op with the guard line removed from the emitted leaf).
-                let fnref_guard = if leaf { String::new() } else { fnref_guard };
+                //
+                // `@FR-R-GuardFree` — nor does a function from which NOTHING that registers
+                // a buffer is reachable, cycles included (`fib`): the guard's drop would find
+                // nothing above its mark, every time.  The depth count stays: it is the
+                // recursion cap both backends share.
+                let guard_free = leaf || (!self.guard_free_disabled && self.is_guard_free(def_nr));
+                let fnref_guard = if guard_free {
+                    String::new()
+                } else {
+                    fnref_guard
+                };
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {

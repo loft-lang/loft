@@ -1,0 +1,49 @@
+// @PLN150's borrowed-return marker is consumed by the FIRST record copy after the fn-ref
+// call, match or not — on `--native` as `State::take_fnref_borrowed_return` already does.
+//
+// A lambda whose tail hands back its CAPTURE leaves the marker naming the capture's store;
+// the marker exists so the bind that follows declines its source-free (the store is the
+// caller's, not the callee's temporary).  Taken only when it MATCHED, the marker stayed
+// armed past an unrelated copy — and store slots are reused, so once the capture's store
+// was freed the same slot number was minted again for a later function's fresh record
+// temporary, whose copy then read the stale marker as "borrowed", declined its
+// source-free, and leaked one record per program.  Scored on the LEAK channel: every value
+// agrees on both backends, before and after.
+//
+// @falsified-at: hand-measured (2026-09-22) — with `cr_take_fnref_borrowed` taking the
+// marker only on a match (the form before this cell): `LOFT_NATIVE_LEAK_CHECK=1` reports
+// `1 stores not freed at program exit: kt=85 Big×1` for m1 followed by m2, and nothing for
+// m2 followed by m1 (no stale marker yet); taken unconditionally, both orders are clean.
+// The interpreter is clean either way.
+
+struct Big { xs: vector<integer>, tag: text }
+
+fn fresh(n: integer) -> Big {
+  if n == 0 { return Big { xs: [0], tag: "e" }; }
+  b = fresh(n - 1);
+  b.xs += [n];
+  b
+}
+
+// m1 — the lambda hands back its capture: the marker is armed and names the capture.
+fn m1() {
+  held: Big? = Big { xs: [7, 8], tag: "h" };
+  d = fn(n: integer) -> Big { held ?? Big { xs: [n], tag: "fresh" } };
+  a = d(1);
+  assert(a.tag == "h" && len(a.xs) == 2, "m1 {a.tag} {len(a.xs)}");
+  println("m1 {a.tag} {len(a.xs)}");
+}
+
+// m2 — an unrelated record temporary in a later function, copied out of its buffer: the
+// copy must consume the marker and free its source, whatever slot number it was minted in.
+fn m2() {
+  s = len(fresh(0).xs) + len(fresh(2).xs);
+  assert(s == 4, "m2 {s}");
+  println("m2 {s}");
+}
+
+fn main() {
+  m1(); m2();
+  m2(); m1();
+  for _ in 0..50 { m1(); m2(); }
+}

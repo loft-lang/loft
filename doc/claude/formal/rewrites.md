@@ -1835,6 +1835,45 @@ why the rule is lean-only: in a named tier the frame is also what `stack_trace()
 panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
 `LOFT_NO_LEAF_PRELUDE`).  Site: `Output::is_frameless_chain`.
 
+### A frame no registrant can reach carries no buffer guard
+
+```
+  (R-GuardFree)  a function from which NOTHING that registers a fn-ref return buffer
+                 is reachable — over the closure of its call graph, cycles INCLUDED:
+                 no fn-ref call, no `parallel`, no `yield`, no `OpFreeRefOrHandUp`,
+                 no callee without a loft body that is a user's native function or
+                 takes a fn-ref — constructs no `FnRefBufGuard`, in every tier.  The
+                 depth count stays: it is the recursion cap both backends share.
+```
+
+**In words.**  @PLN158 round 3, C1.  A `--native` frame entered with a `FnRefBufGuard`
+whose drop releases the fn-ref return buffers registered above its mark; three sites
+register — the fn-ref dispatch (`cr_fnref_buf`, `cr_fnref_minted`, both under a `CallRef`)
+and the op `OpFreeRefOrHandUp` (a capturing lambda's join tail) — and a `parallel` body, a
+`yield` and a native callee are opaque.  Where none of those is reachable no entry can ever
+stand above the mark, so the drop is empty every time and the guard is two `Cell` reads paid
+for nothing: `fib`'s frame was 27 % of its row.  `(R-LeafChain)` already elides it — with the
+whole prelude — for an ACYCLIC chain in the lean tier; the guard never depended on
+acyclicity (only the depth count does), so this rule reaches the recursive function in every
+tier, and keeps its depth push.  The predicate is a breadth-first closure with the
+per-body half cached (`Output::registers_buffers`); a `#rust`-bodied standard function is
+the body's own work, as `(R-Leaf)` reads an op, and a stdlib function taking a fn-ref would
+be opaque (none does today).  Measured on `fib(30)`: 11.3 → 7.4 ms (−34 %), 4.1× → ~2.5× of
+its Rust twin, hash `cb228`.  The stack-pointer overflow check the round priced beside it
+(a further −15 %) is DECLINED: `MAX_CALL_DEPTH` is a cap both backends share and report
+identically (`runtime_errors.rs`, `native.rs` pin "exceeded 10000 stack frames"), and a check
+against the machine's stack would fault at a machine-dependent depth — the disagreement
+`formal/operational.md` D-op-1 forbids.  Switch `LOFT_NO_GUARD_FREE`; trace
+`LOFT_TRACE_GUARD_FREE` (each frame that keeps its guard, naming the registrant); scored on
+the LEAK channel — cells `tests/scripts/158-guard-free.loft` g1–g9 under
+`LOFT_NATIVE_LEAK_CHECK=1` / `LOFT_STRICT_STORES=1` (falsified by answering `true` for every
+frame: g5's three delivered buffers leak), pins `tests/guard_free.rs`.  The cells also found
+a leak of their own, unrelated to the rule: @PLN150's borrowed-return marker taken only on a
+MATCH stayed armed past an unrelated copy and matched a reused slot number later
+(`158-fnref-borrowed-marker.loft`); it is now taken by the first copy after the call, as the
+interpreter's is.  Sites: `Output::registers_buffers`, `Output::is_guard_free`, the guard
+line in `Output::output_function`'s prelude.
+
 ### A fast path inlines; its cold half is outlined
 
 ```
