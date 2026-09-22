@@ -3097,12 +3097,8 @@ fn collection_copy_handoff(
     function: &Function,
     data: &Data,
 ) -> Option<u16> {
-    if d_nr != data.def_nr("OpAppendVector") && d_nr != data.def_nr("OpReplaceVector") {
-        return None;
-    }
-    let (Value::Var(dst), Value::Var(src)) = (args.first()?.unspan(), args.get(1)?.unspan()) else {
-        return None;
-    };
+    let (dst, src) = collection_copy_ends(d_nr, args, function, data)?;
+    let (dst, src) = (&dst, &src);
     if dst == src || function.is_argument(*src) || function.is_compiler_generated(*src) {
         return None;
     }
@@ -3114,6 +3110,33 @@ fn collection_copy_handoff(
             && b != *dst
     })?;
     drop_hook(function, backing, data).map(|_| backing)
+}
+
+/// The `(destination, source)` locals of a whole-collection copy: `OpAppendVector(d, v)`,
+/// `OpReplaceVector(buffer, v)`, and — loft#1597, @FR-H-Move — a collection copied into the new element of
+/// a vector of vectors (`OpCopyRecord(v, _elm_N, …)`, `outer += [v]`), which the outer
+/// vector's cascade now releases.
+fn collection_copy_ends(
+    d_nr: u32,
+    args: &[Value],
+    function: &Function,
+    data: &Data,
+) -> Option<(u16, u16)> {
+    if d_nr == data.def_nr("OpAppendVector") || d_nr == data.def_nr("OpReplaceVector") {
+        let (Value::Var(dst), Value::Var(src)) = (args.first()?.unspan(), args.get(1)?.unspan())
+        else {
+            return None;
+        };
+        return Some((*dst, *src));
+    }
+    if d_nr == data.def_nr("OpCopyRecord")
+        && let (Value::Var(src), Value::Var(dst)) = (args.first()?.unspan(), args.get(1)?.unspan())
+        && function.name(*dst).starts_with("_elm_")
+        && matches!(function.tp(*dst).base(), Type::Vector(_, _))
+    {
+        return Some((*dst, *src));
+    }
+    None
 }
 
 /// Every store a whole-collection copy may move its elements out of: the one
@@ -3133,12 +3156,10 @@ fn collection_copy_backings(
         return Vec::new();
     };
     let mut out = vec![first];
-    let (Some(Value::Var(dst)), Some(Value::Var(src))) = (
-        args.first().map(Value::unspan),
-        args.get(1).map(Value::unspan),
-    ) else {
+    let Some((dst, src)) = collection_copy_ends(d_nr, args, function, data) else {
         return out;
     };
+    let (dst, src) = (&dst, &src);
     let dst_deps = function.tp(*dst).depend();
     for &b in backings.get(src).map(Vec::as_slice).unwrap_or_default() {
         if b != *dst
@@ -10051,9 +10072,11 @@ impl Scopes<'_> {
         data: &Data,
     ) -> Vec<u16> {
         let stopped = if d_nr == data.def_nr("OpCopyRecord") && args.len() >= 3 {
-            copy_record_handoff(args, function, data)
-                .into_iter()
-                .collect()
+            match copy_record_handoff(args, function, data) {
+                Some(s) => vec![s],
+                // A collection copied into a vector-of-vectors element (loft#1597).
+                None => collection_copy_backings(d_nr, args, function, data, &self.vector_backings),
+            }
         } else if let Some(g) = handle_handoff(d_nr, args, function, data) {
             vec![g]
         } else {

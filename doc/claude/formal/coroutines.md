@@ -171,8 +171,7 @@ advances the one the container holds.
 - **D-cor-5** (loft#1601) — `(G-Hold)`: a generator held by a record in a KEYED collection
   (`hash`, `sorted`, `index`, `spatial`) is not released when the collection dies or the record
   is removed; the frame stays allocated to program exit.  A keyed collection's records are
-  released without a walk, and the store walk cannot reach a frame.  A vector of vectors of
-  generators likewise, until loft#1597's cascade reaches a vector's vector elements.
+  released without a walk, and the store walk cannot reach a frame.
 
 The record, closed entries included, is in the companion
 [coroutines-history.md](coroutines-history.md).
@@ -204,7 +203,8 @@ The record, closed entries included, is in the companion
   a removal by index and by `#remove`, of a handle and of a record holding one; views out of a
   field, an element and a `for`; a local that views on one path and owns on another; records
   holding generators yielded and kept — values on both backends, and the leak gate says every
-  frame was released once.
+  frame was released once.  A vector of vectors of them, at death and with a row removed:
+  `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c12`.
 - **Interchangeable at `for` (`G-For`)** — `for x in gen() { … }` and `for x in vec { … }`
   visit their elements by the same loop; swapping a generator for the equivalent vector changes
   only timing, not the values or their order.

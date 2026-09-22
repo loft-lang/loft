@@ -20,8 +20,8 @@ closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
 > the store walk cannot reach a frame, which lives in the coroutine table rather than in a
 > store.  So its generators, and every heap local they allocated, stay allocated to program
 > exit, on both backends, reported only by the store census.  A vector of vectors of
-> generators is the same today, through loft#1597: no cascade reaches a vector's vector
-> elements.
+> generators was the same until loft#1597 made a vector's cascade walk its vector elements
+> (2026-09-23).
 
 > **D-cor-4 — CLOSED (2026-09-22, loft#1589) — nothing said who owns a yielded record, and the
 > two backends answered differently.**

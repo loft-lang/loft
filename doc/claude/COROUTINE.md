@@ -228,8 +228,7 @@ has not finished (`tasks.remove(i)`, `t#remove`) ends it.  Putting a local into 
 container holds, and the container keeps it.  A handle prints as `iterator`.
 
 Not yet released (`formal/coroutines.md` D-cor-5): a generator held by a record in a KEYED
-collection (`hash`, `sorted`, `index`, `spatial`), or in a vector of vectors, stays allocated
-until the program ends.
+collection (`hash`, `sorted`, `index`, `spatial`) stays allocated until the program ends.
 
 ---
 

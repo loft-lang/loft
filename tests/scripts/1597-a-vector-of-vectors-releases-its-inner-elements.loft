@@ -1,0 +1,163 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1597, `@FR-H-Drop` — A VECTOR OF VECTORS RELEASES ITS INNER ELEMENTS.  A container's death
+// releases what it holds, through the synthesized cascade (C111), and a vector's elements are
+// what it holds — a vector's vector elements too.  The cascade walked a vector's RECORD
+// elements and stopped there: `vector<vector<H>>`, a struct field of that type and every deeper
+// nesting released nothing, with no diagnostic, on both backends.  A local vector moved into
+// such an element (`outer += [inner]`) is the element's to release from then on (`(H-Move)`),
+// on the paths that moved it.
+//
+// Found beside it and fixed here, cell `c10`: a struct-enum vector released a unit variant's
+// literal twice.  `B` is built in a work-ref and copied into the element, and the element
+// variable was typed off a placeholder def, so the scope pass could not see the copy hand the
+// release to the vector; the work-ref released it as well.
+//
+// A generator held in a vector of vectors (`formal/coroutines.md` `(G-Hold)`) is released
+// through the same cascade, and one removed with its inner vector goes with it (`c12`).
+//
+// Every expected trace is worked out by hand.  The drop hook writes a trace FILE, as
+// `139-drop-cascade.loft` does and for its reason.
+//
+// @falsified-at: 67abc26d5 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1597-a-vector-of-vectors-releases-its-inner-elements.patch — the
+//   same channels.
+// CHANNEL: assertion failures, both backends — the traces are missing the inner releases.
+// HOLDS: leak and panic are unmoved; `c11` (a vector of records holding a vector) is the
+//   control, right before and after.
+// WITNESS: on the control, `c1 local: m50,m52,r2, want m50,m52,r2,d50,d52` — neither element
+//   released.
+
+fn trace_path() -> text { return "loft_1597_nested_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+struct H { id: integer }
+fn OpDrop(self: H) { note("d{self.id}"); }
+fn mk(id: integer) -> H { note("m{id}"); return H { id: id }; }
+
+// 1 — a local vector of vectors.
+fn c1() { v: vector<vector<H>> = [[mk(50)], [mk(52)]]; note("r{len(v)}"); }
+
+// 2 — a struct field of that type, two elements in one inner vector.
+struct Row { hs: vector<vector<H>>, n: integer }
+fn c2() { r = Row { hs: [[mk(60), mk(61)], [mk(62)]], n: 1 }; note("r{len(r.hs)}"); }
+
+// 3 — three levels.
+fn c3() { v: vector<vector<vector<H>>> = [[[mk(70)]], [[mk(71)], [mk(72)]]]; note("r{len(v)}"); }
+
+// 4 — a rebind releases the displaced value after the new one lands (`D-heap-26`).
+fn c4() { v: vector<vector<H>> = [[mk(90)]]; v = [[mk(91)]]; note("r{len(v)}"); }
+
+// 5 — an inner vector taken out is not released by the language (`(H-Drop-Not)`).
+fn c5() { v: vector<vector<H>> = [[mk(80)], [mk(81)]]; v.remove(0); note("r{len(v)}"); }
+
+// 6 — returned from a function: moved, released once, by the caller.
+fn grid() -> vector<vector<H>> { [[mk(1), mk(2)], [mk(3)]] }
+fn c6() { g = grid(); note("r{len(g)}"); }
+
+// 7 — a local vector moved into an element, on the path that moves it.
+fn c7(moved: boolean) {
+  v: vector<vector<H>> = [];
+  inner = [mk(4)];
+  if moved { v += [inner]; }
+  note("r{len(v)}");
+}
+
+// 8 — one inner vector per pass of a loop.
+fn c8() { v: vector<vector<H>> = []; for i in 0..2 { inner = [mk(i)]; v += [inner]; } note("r{len(v)}"); }
+
+// 9 — walked with nested `for` loops: views, released at the vector's death alone.
+fn c9() {
+  v: vector<vector<H>> = [[mk(1)], [mk(2), mk(3)]];
+  s = 0;
+  for row in v { for h in row { s += h.id; } }
+  note("s{s}");
+}
+
+// 10 — a struct-enum vector: a unit variant's literal, in a local, appended, in a field, and
+//      nested.
+enum E { A { id: integer }, B }
+fn OpDrop(self: E) { match self { A { id } => note("da{id}"), B => note("db") } }
+struct S { es: vector<E>, n: integer }
+fn c10() {
+  v: vector<E> = [A { id: 1 }, B, A { id: 2 }];
+  w: vector<E> = [];
+  w += [B];
+  s = S { es: [B, A { id: 4 }], n: 1 };
+  vv: vector<vector<E>> = [[A { id: 5 }, B]];
+  note("r{len(v) + len(w) + len(s.es) + len(vv)}");
+}
+
+// 11 — CONTROL: a vector of records holding a vector, right before and after.
+struct Hold { hs: vector<H> }
+fn c11() { v = [Hold { hs: [mk(40)] }, Hold { hs: [mk(41)] }]; note("r{len(v)}"); }
+
+// 12 — generators in a vector of vectors: released at its death, and with a removed row.
+fn patrol(id: integer, n: integer) -> iterator<integer> {
+  steps = [0, 1, 2, 3, 4];
+  for s in steps {
+    if s >= n { break; }
+    yield id * 100 + s;
+  }
+}
+fn c12() -> text {
+  vv = [[patrol(1, 3)], [patrol(2, 3), patrol(3, 3)]];
+  a = next(vv[0][0]) ?? -1;
+  b = next(vv[1][1]) ?? -1;
+  vv.remove(0);
+  c = next(vv[0][0]) ?? -1;
+  "{a} {b} {c} {len(vv)}"
+}
+
+fn main() {
+  drain();
+  c1();
+  ok("c1 local            ", drain(), "m50,m52,r2,d50,d52");
+  c2();
+  ok("c2 field            ", drain(), "m60,m61,m62,r2,d60,d61,d62");
+  c3();
+  ok("c3 three levels     ", drain(), "m70,m71,m72,r2,d70,d71,d72");
+  c4();
+  ok("c4 rebind           ", drain(), "m90,m91,d90,r1,d91");
+  c5();
+  ok("c5 remove           ", drain(), "m80,m81,r1,d81");
+  c6();
+  ok("c6 returned         ", drain(), "m1,m2,m3,r2,d1,d2,d3");
+  c7(true);
+  ok("c7 moved            ", drain(), "m4,r1,d4");
+  c7(false);
+  ok("c7 kept             ", drain(), "m4,r0,d4");
+  c8();
+  ok("c8 loop             ", drain(), "m0,m1,r2,d0,d1");
+  c9();
+  ok("c9 walked           ", drain(), "m1,m2,m3,s6,d1,d2,d3");
+  c10();
+  ok("c10 unit variants   ", drain(), "r7,da5,db,db,da4,db,da1,db,da2");
+  c11();
+  ok("c11 control         ", drain(), "m40,m41,r2,d40,d41");
+  ok("c12 generators      ", c12(), "100 300 200 1");
+  delete(trace_path());
+  println("a vector of vectors releases its inner elements: every cell holds");
+}

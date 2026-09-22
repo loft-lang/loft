@@ -150,7 +150,8 @@ coroutines.md 1 and performance.md 1 (`rule_tags.py registers`, re-measured on t
 2026-09-22, after heap.md's `D-heap-26` closed and `D-heap-28` to `D-heap-32`, tuples.md's
 `D-tup-15` and coroutines.md's `D-cor-4` each opened and closed that day, coroutines.md's
 `D-cor-3` and collections.md's `D-col-5` closed, and coroutines.md's `D-cor-5` opened with
-`(G-Hold)`). Every other chapter is at 0, and each zero is a claim to re-measure against the
+`(G-Hold)`; re-measured again 2026-09-23, after heap.md's `D-heap-34` and `D-heap-35` opened and
+closed with loft#1597). Every other chapter is at 0, and each zero is a claim to re-measure against the
 oracle line its chapter names. The two in operational.md are the **meta** entry,
 `D-op-1`/`D-op-2` — there being no shared operational semantics, the interpreter is the spec and
 a backend divergence is test-caught rather than definition-caught (@PLN89's differential

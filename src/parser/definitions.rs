@@ -6564,7 +6564,7 @@ impl Parser {
             let Some((elm, ed)) = self.cascade_element((**elm).clone()) else {
                 continue;
             };
-            if !self.data.owns_droppable(ed) {
+            if !self.data.type_owns_droppable_anywhere(&elm) {
                 continue;
             }
             let name = self.data.attr_name(d_nr, a_nr);
@@ -6663,12 +6663,14 @@ impl Parser {
     /// `@FR-H-Drop` / D-heap-13 — the element type of the `vector<T>` def `d_nr`, when that element owns a
     /// droppable and so gives the collection something to release.  `None` for every other
     /// def, which is what keeps a `vector<integer>` from earning a cascade.
-    fn collection_elem_cascade(&self, d_nr: u32) -> Option<Type> {
+    fn collection_elem_cascade(&self, d_nr: u32) -> Option<(Type, u32)> {
         let Type::Vector(elm, _) = self.data.def(d_nr).returned().base() else {
             return None;
         };
         let (elm, ed) = self.cascade_element((**elm).clone())?;
-        self.data.owns_droppable(ed).then_some(elm)
+        self.data
+            .type_owns_droppable_anywhere(&elm)
+            .then_some((elm, ed))
     }
 
     /// A collection element a cascade walks: the type its per-element read takes and the
@@ -6700,6 +6702,13 @@ impl Parser {
             {
                 let td = self.data.type_def_nr(&elm);
                 (td != u32::MAX).then(|| (Type::Reference(td, crate::data::Deps::none()), td))
+            }
+            // A VECTOR element (loft#1597, @FR-H-Drop): released through its own collection's cascade —
+            // the `vector<T>` def's walk of its elements — read as the vector the element's
+            // slot holds, as `v[i]` reads it.  A vector of vectors released nothing.
+            Type::Vector(inner, _) if self.data.type_owns_droppable_anywhere(inner) => {
+                let cd = self.data.collection_def_nr(inner);
+                (cd != u32::MAX).then(|| (elm.clone(), cd))
             }
             _ => None,
         }
@@ -6763,11 +6772,7 @@ impl Parser {
         // D-heap-13 — a COLLECTION's cascade is one walk of `self`: no own hook (a vector
         // type declares none), no fields, and the element read starts from the collection
         // rather than from a field of a record.
-        if let Some(elem_tp) = self.collection_elem_cascade(t) {
-            let ed = match elem_tp.base() {
-                Type::Reference(ed, _) | Type::Enum(ed, true, _) => *ed,
-                _ => u32::MAX,
-            };
+        if let Some((elem_tp, ed)) = self.collection_elem_cascade(t) {
             let target = self.data.drop_cascade_nr(ed);
             if target != u32::MAX {
                 ops.push(self.drop_elements_loop(&Value::Var(self_var), 0, &elem_tp, target));

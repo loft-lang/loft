@@ -2773,12 +2773,17 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **325** |
+| **324** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-23, loft#1597 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ dc5bbb3b3 and
+re-measured at its end: **927 · 598 · 5 · 324**, and `--check-ratchet` pinned lower at opaque 324,
+opaque tests 1310.  `Parser::unique_elm_var` gained a struct-enum arm and peels it, which moved
+that function to the seeing-through side.)
 
 (2026-09-23, the join of `157-native-4x` (@PLN158 W2) and `tuxedo-165-generics` (@PLN165 D11, E1)
 into ../loft2 @ 67abc26d5, re-measured at its end: **927 · 597 · 5 · 325**, and `--check-ratchet`

@@ -1281,10 +1281,57 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     return None;
                 }
             }
+            // A vector element (loft#1597): the slot holds the vector, read as `v[i]` reads it.
+            Type::Vector(content, _) => {
+                let content = (**content).clone();
+                let db_vec = self
+                    .data
+                    .vector_element_type(elem_tp.base(), &mut self.database)?;
+                if !self.vector_frame_release(elem, &content, db_vec, &mut ops) {
+                    return None;
+                }
+            }
             _ => return None,
         }
         let present = self.cl("OpConvBoolFromRef", std::slice::from_ref(elem));
         Some(v_if(present, Value::Insert(ops), Value::Null))
+    }
+
+    /// The walk of the vector `vec` (of database type `db_vec`, elements `elm`) that releases
+    /// every generator frame its elements hold — `false` where an element cannot be walked.
+    fn vector_frame_release(
+        &mut self,
+        vec: &Value,
+        elm: &Type,
+        db_vec: u16,
+        ops: &mut Vec<Value>,
+    ) -> bool {
+        let db_elm = self.database.content(db_vec);
+        if db_elm == u16::MAX || self.database.is_linked(db_elm) {
+            return false;
+        }
+        let size = i32::from(self.database.size(db_elm));
+        let i = self.create_unique("rel_i", &I32);
+        let item = self.cl(
+            "OpGetVector",
+            &[vec.clone(), Value::Int(size), Value::Var(i)],
+        );
+        let Some(release) = self.element_frame_release(elm, &item) else {
+            return false;
+        };
+        let len = self.cl("OpLengthVector", std::slice::from_ref(vec));
+        let done = self.cl("OpLeInt", &[len, Value::Var(i)]);
+        let step = self.cl("OpAddInt", &[Value::Var(i), Value::Int(1)]);
+        ops.push(v_set(i, Value::Int(0)));
+        ops.push(crate::data::v_loop(
+            vec![
+                v_if(done, Value::Break(0), Value::Null),
+                release,
+                v_set(i, step),
+            ],
+            "release frames",
+        ));
+        true
     }
 
     /// The releases of the generator handles a `d_nr` record at `rec` (offset `base`) holds —
@@ -1326,12 +1373,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                     }
                 }
                 Type::Vector(elm, _) => {
-                    let elm = (**elm).clone();
-                    let db_elm = self.database.content(content);
-                    if self.database.is_linked(db_elm) {
-                        return false;
-                    }
-                    let size = i32::from(self.database.size(db_elm));
                     let field = self.cl(
                         "OpGetField",
                         &[
@@ -1340,26 +1381,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                             Value::Int(i32::from(content)),
                         ],
                     );
-                    let i = self.create_unique("rel_i", &I32);
-                    let item = self.cl(
-                        "OpGetVector",
-                        &[field.clone(), Value::Int(size), Value::Var(i)],
-                    );
-                    let Some(release) = self.element_frame_release(&elm, &item) else {
+                    if !self.vector_frame_release(&field, &elm.clone(), content, ops) {
                         return false;
-                    };
-                    let len = self.cl("OpLengthVector", &[field]);
-                    let done = self.cl("OpLeInt", &[len, Value::Var(i)]);
-                    let step = self.cl("OpAddInt", &[Value::Var(i), Value::Int(1)]);
-                    ops.push(v_set(i, Value::Int(0)));
-                    ops.push(crate::data::v_loop(
-                        vec![
-                            v_if(done, Value::Break(0), Value::Null),
-                            release,
-                            v_set(i, step),
-                        ],
-                        "release frames",
-                    ));
+                    }
                 }
                 _ => return false,
             }

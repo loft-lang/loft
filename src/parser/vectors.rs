@@ -4736,6 +4736,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.data.variant_of(*syn, "Some"),
                 Deps::frame(parent_tp.depend()),
             )
+        } else if let Type::Enum(e, true, _) = assign_tp.base() {
+            // A struct-enum element is a record of its enum, typed as its enum — `was` collapsed it
+            // to a placeholder def whenever the container's content did not resolve (a vector
+            // FIELD of a literal among them), and the scope pass then could not see that
+            // appending a unit variant's literal (`B`, built in a work-ref and copied in) hands
+            // its release to the container: both released it.
+            Type::Enum(*e, true, Deps::frame(parent_tp.depend()))
         } else if let Type::Vector(inner, _) = assign_tp {
             // #555 — a `vector<T>` element keeps its SPECIFIC type.  `was` routes through
             // `type_def_nr(vector<T>)`, which collapses EVERY vector to the one generic `vector`

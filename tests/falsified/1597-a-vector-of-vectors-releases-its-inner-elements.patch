@@ -1,0 +1,264 @@
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 1455c83a9..ed8a060eb 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -6564,7 +6564,7 @@ impl Parser {
+             let Some((elm, ed)) = self.cascade_element((**elm).clone()) else {
+                 continue;
+             };
+-            if !self.data.type_owns_droppable_anywhere(&elm) {
++            if !self.data.owns_droppable(ed) {
+                 continue;
+             }
+             let name = self.data.attr_name(d_nr, a_nr);
+@@ -6663,14 +6663,12 @@ impl Parser {
+     /// `@FR-H-Drop` / D-heap-13 — the element type of the `vector<T>` def `d_nr`, when that element owns a
+     /// droppable and so gives the collection something to release.  `None` for every other
+     /// def, which is what keeps a `vector<integer>` from earning a cascade.
+-    fn collection_elem_cascade(&self, d_nr: u32) -> Option<(Type, u32)> {
++    fn collection_elem_cascade(&self, d_nr: u32) -> Option<Type> {
+         let Type::Vector(elm, _) = self.data.def(d_nr).returned().base() else {
+             return None;
+         };
+         let (elm, ed) = self.cascade_element((**elm).clone())?;
+-        self.data
+-            .type_owns_droppable_anywhere(&elm)
+-            .then_some((elm, ed))
++        self.data.owns_droppable(ed).then_some(elm)
+     }
+ 
+     /// A collection element a cascade walks: the type its per-element read takes and the
+@@ -6703,13 +6701,6 @@ impl Parser {
+                 let td = self.data.type_def_nr(&elm);
+                 (td != u32::MAX).then(|| (Type::Reference(td, crate::data::Deps::none()), td))
+             }
+-            // A VECTOR element (loft#1597, @FR-H-Drop): released through its own collection's cascade —
+-            // the `vector<T>` def's walk of its elements — read as the vector the element's
+-            // slot holds, as `v[i]` reads it.  A vector of vectors released nothing.
+-            Type::Vector(inner, _) if self.data.type_owns_droppable_anywhere(inner) => {
+-                let cd = self.data.collection_def_nr(inner);
+-                (cd != u32::MAX).then(|| (elm.clone(), cd))
+-            }
+             _ => None,
+         }
+     }
+@@ -6772,7 +6763,11 @@ impl Parser {
+         // D-heap-13 — a COLLECTION's cascade is one walk of `self`: no own hook (a vector
+         // type declares none), no fields, and the element read starts from the collection
+         // rather than from a field of a record.
+-        if let Some((elem_tp, ed)) = self.collection_elem_cascade(t) {
++        if let Some(elem_tp) = self.collection_elem_cascade(t) {
++            let ed = match elem_tp.base() {
++                Type::Reference(ed, _) | Type::Enum(ed, true, _) => *ed,
++                _ => u32::MAX,
++            };
+             let target = self.data.drop_cascade_nr(ed);
+             if target != u32::MAX {
+                 ops.push(self.drop_elements_loop(&Value::Var(self_var), 0, &elem_tp, target));
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index 097d7f9c1..2de0cc064 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -1281,59 +1281,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+                     return None;
+                 }
+             }
+-            // A vector element (loft#1597): the slot holds the vector, read as `v[i]` reads it.
+-            Type::Vector(content, _) => {
+-                let content = (**content).clone();
+-                let db_vec = self
+-                    .data
+-                    .vector_element_type(elem_tp.base(), &mut self.database)?;
+-                if !self.vector_frame_release(elem, &content, db_vec, &mut ops) {
+-                    return None;
+-                }
+-            }
+             _ => return None,
+         }
+         let present = self.cl("OpConvBoolFromRef", std::slice::from_ref(elem));
+         Some(v_if(present, Value::Insert(ops), Value::Null))
+     }
+ 
+-    /// The walk of the vector `vec` (of database type `db_vec`, elements `elm`) that releases
+-    /// every generator frame its elements hold — `false` where an element cannot be walked.
+-    fn vector_frame_release(
+-        &mut self,
+-        vec: &Value,
+-        elm: &Type,
+-        db_vec: u16,
+-        ops: &mut Vec<Value>,
+-    ) -> bool {
+-        let db_elm = self.database.content(db_vec);
+-        if db_elm == u16::MAX || self.database.is_linked(db_elm) {
+-            return false;
+-        }
+-        let size = i32::from(self.database.size(db_elm));
+-        let i = self.create_unique("rel_i", &I32);
+-        let item = self.cl(
+-            "OpGetVector",
+-            &[vec.clone(), Value::Int(size), Value::Var(i)],
+-        );
+-        let Some(release) = self.element_frame_release(elm, &item) else {
+-            return false;
+-        };
+-        let len = self.cl("OpLengthVector", std::slice::from_ref(vec));
+-        let done = self.cl("OpLeInt", &[len, Value::Var(i)]);
+-        let step = self.cl("OpAddInt", &[Value::Var(i), Value::Int(1)]);
+-        ops.push(v_set(i, Value::Int(0)));
+-        ops.push(crate::data::v_loop(
+-            vec![
+-                v_if(done, Value::Break(0), Value::Null),
+-                release,
+-                v_set(i, step),
+-            ],
+-            "release frames",
+-        ));
+-        true
+-    }
+-
+     /// The releases of the generator handles a `d_nr` record at `rec` (offset `base`) holds —
+     /// `false` where one sits somewhere this does not walk.
+     fn record_frame_release(
+@@ -1373,6 +1326,12 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+                     }
+                 }
+                 Type::Vector(elm, _) => {
++                    let elm = (**elm).clone();
++                    let db_elm = self.database.content(content);
++                    if self.database.is_linked(db_elm) {
++                        return false;
++                    }
++                    let size = i32::from(self.database.size(db_elm));
+                     let field = self.cl(
+                         "OpGetField",
+                         &[
+@@ -1381,9 +1340,26 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+                             Value::Int(i32::from(content)),
+                         ],
+                     );
+-                    if !self.vector_frame_release(&field, &elm.clone(), content, ops) {
++                    let i = self.create_unique("rel_i", &I32);
++                    let item = self.cl(
++                        "OpGetVector",
++                        &[field.clone(), Value::Int(size), Value::Var(i)],
++                    );
++                    let Some(release) = self.element_frame_release(&elm, &item) else {
+                         return false;
+-                    }
++                    };
++                    let len = self.cl("OpLengthVector", &[field]);
++                    let done = self.cl("OpLeInt", &[len, Value::Var(i)]);
++                    let step = self.cl("OpAddInt", &[Value::Var(i), Value::Int(1)]);
++                    ops.push(v_set(i, Value::Int(0)));
++                    ops.push(crate::data::v_loop(
++                        vec![
++                            v_if(done, Value::Break(0), Value::Null),
++                            release,
++                            v_set(i, step),
++                        ],
++                        "release frames",
++                    ));
+                 }
+                 _ => return false,
+             }
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 8a7cd88ba..8ee62e0c4 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -4736,13 +4736,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 self.data.variant_of(*syn, "Some"),
+                 Deps::frame(parent_tp.depend()),
+             )
+-        } else if let Type::Enum(e, true, _) = assign_tp.base() {
+-            // A struct-enum element is a record of its enum, typed as one — `was` collapsed it
+-            // to a placeholder def whenever the container's content did not resolve (a vector
+-            // FIELD of a literal among them), and the scope pass then could not see that
+-            // appending a unit variant's literal (`B`, built in a work-ref and copied in) hands
+-            // its release to the container: both released it.
+-            Type::Reference(*e, Deps::frame(parent_tp.depend()))
+         } else if let Type::Vector(inner, _) = assign_tp {
+             // #555 — a `vector<T>` element keeps its SPECIFIC type.  `was` routes through
+             // `type_def_nr(vector<T>)`, which collapses EVERY vector to the one generic `vector`
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 553268ac3..104214e3d 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -3097,8 +3097,12 @@ fn collection_copy_handoff(
+     function: &Function,
+     data: &Data,
+ ) -> Option<u16> {
+-    let (dst, src) = collection_copy_ends(d_nr, args, function, data)?;
+-    let (dst, src) = (&dst, &src);
++    if d_nr != data.def_nr("OpAppendVector") && d_nr != data.def_nr("OpReplaceVector") {
++        return None;
++    }
++    let (Value::Var(dst), Value::Var(src)) = (args.first()?.unspan(), args.get(1)?.unspan()) else {
++        return None;
++    };
+     if dst == src || function.is_argument(*src) || function.is_compiler_generated(*src) {
+         return None;
+     }
+@@ -3112,33 +3116,6 @@ fn collection_copy_handoff(
+     drop_hook(function, backing, data).map(|_| backing)
+ }
+ 
+-/// The `(destination, source)` locals of a whole-collection copy: `OpAppendVector(d, v)`,
+-/// `OpReplaceVector(buffer, v)`, and — loft#1597, @FR-H-Move — a collection copied into the new element of
+-/// a vector of vectors (`OpCopyRecord(v, _elm_N, …)`, `outer += [v]`), which the outer
+-/// vector's cascade now releases.
+-fn collection_copy_ends(
+-    d_nr: u32,
+-    args: &[Value],
+-    function: &Function,
+-    data: &Data,
+-) -> Option<(u16, u16)> {
+-    if d_nr == data.def_nr("OpAppendVector") || d_nr == data.def_nr("OpReplaceVector") {
+-        let (Value::Var(dst), Value::Var(src)) = (args.first()?.unspan(), args.get(1)?.unspan())
+-        else {
+-            return None;
+-        };
+-        return Some((*dst, *src));
+-    }
+-    if d_nr == data.def_nr("OpCopyRecord")
+-        && let (Value::Var(src), Value::Var(dst)) = (args.first()?.unspan(), args.get(1)?.unspan())
+-        && function.name(*dst).starts_with("_elm_")
+-        && matches!(function.tp(*dst).base(), Type::Vector(_, _))
+-    {
+-        return Some((*dst, *src));
+-    }
+-    None
+-}
+-
+ /// Every store a whole-collection copy may move its elements out of: the one
+ /// [`collection_copy_handoff`] names, and every other literal backing its source is bound to
+ /// (`backings`, [`vector_literal_backings`]) whose elements carry a hook.  A source's type names
+@@ -3156,10 +3133,12 @@ fn collection_copy_backings(
+         return Vec::new();
+     };
+     let mut out = vec![first];
+-    let Some((dst, src)) = collection_copy_ends(d_nr, args, function, data) else {
++    let (Some(Value::Var(dst)), Some(Value::Var(src))) = (
++        args.first().map(Value::unspan),
++        args.get(1).map(Value::unspan),
++    ) else {
+         return out;
+     };
+-    let (dst, src) = (&dst, &src);
+     let dst_deps = function.tp(*dst).depend();
+     for &b in backings.get(src).map(Vec::as_slice).unwrap_or_default() {
+         if b != *dst
+@@ -10072,11 +10051,9 @@ impl Scopes<'_> {
+         data: &Data,
+     ) -> Vec<u16> {
+         let stopped = if d_nr == data.def_nr("OpCopyRecord") && args.len() >= 3 {
+-            match copy_record_handoff(args, function, data) {
+-                Some(s) => vec![s],
+-                // A collection copied into a vector-of-vectors element (loft#1597).
+-                None => collection_copy_backings(d_nr, args, function, data, &self.vector_backings),
+-            }
++            copy_record_handoff(args, function, data)
++                .into_iter()
++                .collect()
+         } else if let Some(g) = handle_handoff(d_nr, args, function, data) {
+             vec![g]
+         } else {
