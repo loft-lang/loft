@@ -185,6 +185,12 @@ pub(crate) fn synth_nullable_target(data: &Data, struct_d: u32) -> bool {
 }
 
 fn copy_unknown_fields(data: &mut Data, d: u32) {
+    // An instance of a generic struct takes its fields from its template, closed per instance
+    // (`Data::refresh_instances`, @PLN165 D7): a forward stub resolved here would name the
+    // bare TEMPLATE (`b: B` for `b: B<integer>`), which then reached layout.
+    if data.def(d).instance_of != u32::MAX {
+        return;
+    }
     for nr in 0..data.attributes(d) {
         // `Unknown(was)` names the forward-referenced type's STUB def — except for
         // `Unknown(0)`, which is the codebase-wide "no type known" sentinel and names
@@ -484,7 +490,10 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
     // has no finite size either, and with no struct anywhere in it nothing else would ask.
     let mut found_cycle = false;
     for d_nr in start_def..data.definitions() {
-        if matches!(data.def_type(d_nr), DefType::Struct | DefType::Enum) {
+        // An open instance (@PLN165 D5) is never laid out, so it has no size to be infinite.
+        if matches!(data.def_type(d_nr), DefType::Struct | DefType::Enum)
+            && !data.is_open_instance(d_nr)
+        {
             let mut visiting = std::collections::HashSet::new();
             if data.has_value_cycle(d_nr, &mut visiting) {
                 // Whether or not this def is one to REPORT, its layout is now unreachable —
@@ -504,13 +513,14 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
                 } else {
                     "Struct"
                 };
+                // An instance of a generic struct is named as the reader writes it
+                // (`Node<integer>`, not its key), which is what its twin's report names.
+                let shown = Type::Reference(d_nr, Deps::none()).source_name(data);
                 lexer.pos_diagnostic(
                     Level::Error,
                     &data.def(d_nr).position,
                     &format!(
-                        "{noun} '{}' contains itself (directly or indirectly) — use reference<{}> to break the cycle",
-                        data.def(d_nr).name,
-                        data.def(d_nr).name,
+                        "{noun} '{shown}' contains itself (directly or indirectly) — use reference<{shown}> to break the cycle",
                     ),
                 );
             }
@@ -812,6 +822,11 @@ fn synth_nullable_struct_fields(data: &mut Data, database: &mut Stores, lexer: &
             // field.  Adding the skip would be a behaviour change with no measured case
             // asking for it.
             if data.def(host).synthetic.is_some() {
+                continue;
+            }
+            // An open instance (@PLN165 D5) is never laid out, so its fields need no wrapper —
+            // one over it would embed a fieldless row, which has no layout either.
+            if data.is_open_instance(host) {
                 continue;
             }
             if !(matches!(data.def_type(host), DefType::Struct)

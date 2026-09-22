@@ -1,0 +1,9 @@
+// D7 — a template mentioning itself at its own variable, through a collection: every
+// instance is a finite type, built, read and counted like its twin.
+// @EXPECT: 1|2|3|2|root|b
+struct Tree<T> { v: T, kids: vector<Tree<T>> }
+fn main() {
+  t = Tree { v: 1, kids: [Tree { v: 2, kids: [] }, Tree { v: 3, kids: [] }] };
+  s: Tree<text> = Tree { v: "root", kids: [Tree { v: "a", kids: [] }, Tree { v: "b", kids: [] }] };
+  println("{t.v}|{t.kids[0].v}|{t.kids[1].v}|{len(t.kids)}|{s.v}|{s.kids[1].v}");
+}

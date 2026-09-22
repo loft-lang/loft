@@ -1,0 +1,8 @@
+// D7 — `A<T>` holds a `B<T>?` inline and `B<T>` an `A<T>?`: each instance contains itself
+// through the other, reported in the instance's words as the twin pair's is.
+struct A<T> { v: T, b: B<T>? }
+struct B<T> { w: T, a: A<T>? }
+fn main() {
+  x = A { v: 1 };
+  println("{x.v}");
+}

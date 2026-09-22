@@ -4274,7 +4274,10 @@ impl Parser {
                 match &bound {
                     None => bound = Some((f.clone(), got)),
                     Some((first, b)) => {
-                        let expected = declared.clone().substitute(v, b);
+                        // Closed: `vector<Tree<T>>` at `T = integer` is `vector<Tree<integer>>`.
+                        let expected =
+                            self.data
+                                .close_open(&mut self.lexer, declared, &[(v, b.clone())]);
                         let mut trial = Value::Null;
                         if refusal.is_none()
                             && !self.convert_admitting(&mut trial, value, &expected)
@@ -4379,6 +4382,26 @@ impl Parser {
 
     fn lay_out_instance(&mut self, inst: u32) {
         if !self.first_pass && inst != u32::MAX && self.data.def(inst).known_type() == u16::MAX {
+            // A record that contains itself has no layout: the check `fill_all` makes at the end
+            // of pass 1, made here for an instance first laid out on pass 2 (one whose field
+            // named a generic struct declared below), and reported as its twin would be.
+            let mut visiting = std::collections::HashSet::new();
+            if !self.data.is_open_instance(inst) && self.data.has_value_cycle(inst, &mut visiting) {
+                if self.cyclic_instances.insert(inst) {
+                    let shown =
+                        Type::Reference(inst, crate::data::Deps::none()).source_name(&self.data);
+                    let at = self.data.def(inst).position().clone();
+                    self.lexer.pos_diagnostic(
+                        Level::Error,
+                        &at,
+                        &format!(
+                            "Struct '{shown}' contains itself (directly or indirectly) — use \
+                             reference<{shown}> to break the cycle"
+                        ),
+                    );
+                }
+                return;
+            }
             crate::typedef::fill_database(&mut self.data, &mut self.database, inst);
             self.database
                 .lay_out_record(self.data.def(inst).known_type());

@@ -2331,6 +2331,13 @@ impl Type {
     #[must_use]
     pub fn substitute(self, holder: u32, bound: &Type) -> Type {
         match self {
+            // `reference<X>` at a substituted `X` stays a POINTER: the marker lives in the
+            // replaced reference's deps, and a record bound in its place keeps it — without
+            // it `reference<Node<T>>?` in `Node<integer>` became an inline self field.
+            Type::Reference(d, deps) if d == holder && deps.is_pointer_marker() => match bound {
+                Type::Reference(b, _) => Type::Reference(*b, deps),
+                other => other.clone(),
+            },
             Type::Reference(d, _) if d == holder => bound.clone(),
             other => other.map_children(&mut |c| c.clone().substitute(holder, bound)),
         }
@@ -5522,6 +5529,10 @@ pub struct Data {
     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
     /// serialize) consulted by the few value-semantics chokepoints.
     pub value_structs: HashSet<u32>,
+    /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
+    /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
+    /// forever.  A refused program does not run, so this needs no place in the image.
+    pub refused_type_templates: HashSet<u32>,
     /// @PLN165 B2 — the bound set each type-variable placeholder stands for, as its sorted
     /// interface names joined with `+` (`"Ordered+Printable"`; `""` unbounded).  A placeholder
     /// is minted per (spelling, bound set), so this is what tells two variables of one bound set
@@ -6120,6 +6131,7 @@ impl Data {
             adopted_stubs: Vec::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
+            refused_type_templates: HashSet::new(),
             type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
             used_attributes: HashSet::new(),
@@ -9070,6 +9082,10 @@ impl Data {
     /// `instance_args`).  `u32::MAX` too for an argument count the template does not take;
     /// the caller reports that.
     pub fn instance_def(&mut self, lexer: &mut Lexer, template: u32, args: &[Type]) -> u32 {
+        // A template refused at its declaration (`D-Regular`) has no instances to mint.
+        if self.refused_type_templates.contains(&template) {
+            return u32::MAX;
+        }
         let params = self.definitions[template as usize].type_params.clone();
         // `never` is a poisoned site's type (@P376), not an argument: no instance holds one.
         // An argument mentioning a type variable mints an OPEN instance (@PLN165 D5,
@@ -9090,6 +9106,13 @@ impl Data {
         if let Some(&nr) = self.def_names.get(&(name.clone(), STD_SOURCE)) {
             return nr;
         }
+        // Termination (@PLN165 D7): a template mentioning itself IRREGULARLY
+        // (`Bad<vector<T>>` inside `Bad<T>`) has no finite set of instances, and closing its
+        // fields would mint deeper ones forever.  The declaration refuses it (`D-Regular`);
+        // this bound is what keeps the compiler finite until that report is read.
+        if name.matches('<').count() > Self::MAX_INSTANCE_NESTING {
+            return u32::MAX;
+        }
         let position = self.definitions[template as usize].position.clone();
         let d = self.add_def(&name, &position, DefType::Struct);
         self.def_names.entry((name, STD_SOURCE)).or_insert(d);
@@ -9098,27 +9121,130 @@ impl Data {
         self.definitions[d as usize].instance_of = template;
         self.definitions[d as usize].instance_args.clone_from(&args);
         let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
-        let fields = self.definitions[template as usize].attributes.clone();
-        for f in fields {
-            let a_nr = self.add_attribute(
-                lexer,
-                d,
-                &f.name,
-                f.typedef.clone().substitute_all(&bindings),
-            );
-            let a = &mut self.definitions[d as usize].attributes[a_nr];
-            a.mutable = f.mutable;
-            a.constant = f.constant;
-            a.const_field = f.const_field;
-            a.value_const = f.value_const;
-            a.init = f.init;
-            a.nullable = f.nullable;
-            a.hidden = f.hidden;
-            a.value = f.value;
-            a.check = f.check;
-            a.check_message = f.check_message;
+        for f in &self.template_fields(template) {
+            self.copy_instance_field(lexer, d, f, &bindings);
         }
         d
+    }
+
+    /// A generic struct's FIELDS, which each instance copies — not its method members, which
+    /// stay on the template, where a method call on any instance finds them (@PLN165 D6).
+    fn template_fields(&self, template: u32) -> Vec<Attribute> {
+        self.definitions[template as usize]
+            .attributes
+            .iter()
+            .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
+            .cloned()
+            .collect()
+    }
+
+    /// Deeper than this an instance's arguments stop being spelled — the bound behind
+    /// `D-Regular` (see [`Data::instance_def`]).
+    const MAX_INSTANCE_NESTING: usize = 48;
+
+    /// Give instance `d` the template field `f`: its type with the instance's bindings applied
+    /// and every open instance in it closed ([`Data::close_open`]), and the field's flags.
+    fn copy_instance_field(
+        &mut self,
+        lexer: &mut Lexer,
+        d: u32,
+        f: &Attribute,
+        bindings: &[(u32, Type)],
+    ) {
+        let tp = self.close_open(lexer, &f.typedef, bindings);
+        let a_nr = self.add_attribute(lexer, d, &f.name, tp);
+        let a = &mut self.definitions[d as usize].attributes[a_nr];
+        a.mutable = f.mutable;
+        a.constant = f.constant;
+        a.const_field = f.const_field;
+        a.value_const = f.value_const;
+        a.init = f.init;
+        a.nullable = f.nullable;
+        a.hidden = f.hidden;
+        a.value = f.value.clone();
+        a.check = f.check.clone();
+        a.check_message = f.check_message.clone();
+    }
+
+    /// `tp` with `bindings` applied and every OPEN instance in it closed — replaced by the
+    /// instance its arguments name once the bindings decide them (@PLN165 D7).  An instance's
+    /// fields are its template's through this: `Tree<text>`'s `kids: vector<Tree<T>>` is
+    /// `vector<Tree<text>>`.  Regular recursion ends because `instance_def` registers a name
+    /// before it fills the fields, so `Tree<text>` inside `Tree<text>` finds itself.  An
+    /// argument still mentioning a variable afterwards keeps an open instance.
+    pub fn close_open(&mut self, lexer: &mut Lexer, tp: &Type, bindings: &[(u32, Type)]) -> Type {
+        // The open instances the type WRITES — collected before the bindings apply, because
+        // one a binding brings in (`T ↦ Box<T>` for `Box<Box<T>>`'s field `v: T`) is already
+        // the answer: closing it again under the same bindings recursed without end.
+        let tp = tp.clone();
+        let mut opens: Vec<u32> = Vec::new();
+        tp.any_node(&mut |t| {
+            if let Type::Reference(r, _) = t.base()
+                && self.is_open_instance(*r)
+                && !opens.contains(r)
+            {
+                opens.push(*r);
+            }
+            false
+        });
+        let mut pairs: Vec<(u32, Type)> = Vec::new();
+        for o in opens {
+            let template = self.definitions[o as usize].instance_of;
+            let args: Vec<Type> = self.definitions[o as usize]
+                .instance_args
+                .clone()
+                .iter()
+                .map(|a| self.close_open(lexer, a, bindings))
+                .collect();
+            let closed = self.instance_def(lexer, template, &args);
+            if closed != u32::MAX && closed != o {
+                pairs.push((o, Type::Reference(closed, Deps::none())));
+            }
+        }
+        tp.substitute_all(&pairs).substitute_all(bindings)
+    }
+
+    /// Does `tp` still name something unresolved — a forward stub, or a generic struct's bare
+    /// TEMPLATE, which is never a type (a stub inside `reference<…>` is adopted as the
+    /// template before its arguments can be read, @PLN165 D7)?
+    #[must_use]
+    pub fn names_unresolved(&self, tp: &Type) -> bool {
+        tp.any_node(&mut |t| match t {
+            Type::Unknown(_) => true,
+            Type::Reference(d, _) => {
+                (*d as usize) < self.definitions.len()
+                    && self.definitions[*d as usize].def_type == DefType::TypeTemplate
+            }
+            _ => false,
+        })
+    }
+
+    /// Give every instance of `template` the fields the template gained after it was minted —
+    /// an instance its OWN declaration mints (`Tree<T>` in `kids: vector<Tree<T>>`) copied
+    /// only the fields parsed before that mention — and re-close a field that was a forward
+    /// stub when it was copied (@PLN165 D7).
+    pub fn refresh_instances(&mut self, lexer: &mut Lexer, template: u32) {
+        let fields = self.template_fields(template);
+        let params = self.definitions[template as usize].type_params.clone();
+        for d in 0..self.definitions() {
+            if self.definitions[d as usize].instance_of != template {
+                continue;
+            }
+            let args = self.definitions[d as usize].instance_args.clone();
+            let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+            for f in &fields {
+                let a = self.attr(d, &f.name);
+                if a == usize::MAX {
+                    self.copy_instance_field(lexer, d, f, &bindings);
+                } else if self.names_unresolved(&self.definitions[d as usize].attributes[a].typedef)
+                {
+                    // A field whose template type was a forward stub when the instance was
+                    // minted: closed again from the template's resolved field.
+                    let tp = self.close_open(lexer, &f.typedef, &bindings);
+                    self.definitions[d as usize].attributes[a].typedef = tp;
+                }
+            }
+        }
     }
 
     pub fn tuple_def(&mut self, lexer: &mut Lexer, types: &[Type]) -> u32 {

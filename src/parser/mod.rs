@@ -990,6 +990,12 @@ pub struct Parser {
     /// the return buffers of the calls it made, which [`Parser::fill_monomorph_body`] declares
     /// at the instance's top level as the function parse declares its own (@PLN165 B3b).
     pub(crate) set_call_refs: Vec<u16>,
+    /// @PLN165 D7 — instances of generic structs found to contain themselves when first laid
+    /// out on pass 2, each reported once.
+    pub(crate) cyclic_instances: std::collections::HashSet<u32>,
+    /// A forward reference to a generic struct just had its `<…>` read and set aside
+    /// (`skip_forward_type_args`); read by the `reference<…>` arm.
+    pub(crate) forward_template_args: bool,
     /// The variables a `struct` / `enum` header wrote where the language refuses one: its
     /// fields may name them, and the header's refusal already covers that.
     pub(crate) refused_header_vars: Vec<String>,
@@ -1560,6 +1566,8 @@ impl Parser {
             cur_type_vars: Vec::new(),
             instance_bindings: Vec::new(),
             set_call_refs: Vec::new(),
+            cyclic_instances: std::collections::HashSet::new(),
+            forward_template_args: false,
             refused_header_vars: Vec::new(),
             context_type_template: u32::MAX,
             type_var_holders: std::collections::HashMap::new(),
