@@ -257,6 +257,19 @@ KILLED with the sender named, instead of a verdict-less `result.txt`.  Two more 
 journal, `systemd-oomd` and `systemd-tmpfiles` all clean) — the pattern is the harness's
 process tree, not the box, and `ci-run.sh start` is the launcher that survives it.
 
+**A SECOND gate on the box turns native tests RED, not slow (2026-09-22).** With
+`LOFT_GATE_PARALLEL=1`, or with a sibling checkout's gate live while yours starts, the two
+storms of `rustc` meet and the LINKER is what gives: a native cell fails with `native compile:
+error: linking with `cc` failed: exit status: 1`, the harness reports it as a failed test, and
+the verdict names a subject nothing is wrong with. Measured over four runs of one tree on one
+night: `keyed_fast_paths::the_general_paths_give_the_same_answers_on_native` failed in the two
+gates that overlapped another gate (all 14 cells, every one a link failure — one of those
+windows also killed the sibling's own gate with `3227/5263 tests were not run due to signal`),
+and PASSED in the two that did not, while passing standalone at load 37 in between. So a lone
+native red in a loaded gate is a claim to re-run before it is a defect to chase; the
+discriminator is a gate on a quiet box, and it costs one run. The load average at the START of
+your gate is what predicts it — `uptime` before `ci-run.sh start`.
+
 **A gate that reports `QUEUED behind another gate` may be queued behind NOTHING (2026-09-10).**
 `make ci` serialises with `exec 9>/tmp/loft-gate.lock` followed by `flock 9`, and fd 9 is
 INHERITED by every process the gate spawns — including the long-lived `loft` server children some
