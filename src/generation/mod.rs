@@ -5894,6 +5894,14 @@ extern crate loft;"
         writeln!(w, "use loft::tree;")?;
         writeln!(w, "use loft::codegen_runtime;")?;
         writeln!(w, "use loft::codegen_runtime::*;")?;
+        // A `#rust` template names a loft module as `crate::<m>::…` so the INTERPRETER's
+        // `fill.rs` compiles, where `crate` IS loft.  In generated code `crate` is the
+        // program, and a root `use loft::<m>;` is what makes `crate::<m>::…` resolve there
+        // — which is why `crate::codegen_runtime::` needs no rewrite while
+        // `crate::state::` / `crate::store::` / `crate::rpc::` / `crate::runtime_error::`
+        // are rewritten by hand in two places.  `narrow` joins the imported half
+        // (`generated_template_modules` is the gate that keeps the two halves total).
+        writeln!(w, "use loft::narrow;")?;
 
         // @PLN24 arc C — one typed `extern "C"` declaration per `#c` symbol.
         //
@@ -10257,6 +10265,67 @@ mod scrub_tests {
     fn clean_source_is_unchanged() {
         let src = b"fn n_main(cell: &Cell) { loft::rpc::ok(); }";
         assert_eq!(scrub_generated_crate_refs(src), src.to_vec());
+    }
+
+    /// Every `crate::<module>::` a `#rust` template names must have an answer in generated
+    /// code, where `crate` is the PROGRAM and not loft.  There are exactly three, and a
+    /// module in none of them compiles in the interpreter and fails in generated Rust with
+    /// `error[E0433]: cannot find <m> in crate` — which is how `crate::narrow::` arrived
+    /// (loft#1615): it was added to a template and neither imported nor rewritten, so the
+    /// interpreter was right and every native program that read such a field would not
+    /// build.  Nothing else asks this question, so a new template module is silent until a
+    /// program happens to reach it.
+    #[test]
+    fn every_template_crate_module_is_imported_or_rewritten() {
+        /// Reachable in generated code through a root `use loft::<m>;` in the preamble
+        /// (`Output::emit_preamble`), which is what makes `crate::<m>::…` resolve there.
+        const IMPORTED: &[&str] = &["codegen_runtime", "narrow"];
+        /// Rewritten to `loft::<m>::` by `scrub_generated_crate_refs` and by
+        /// `calls.rs`'s per-template substitution.
+        const REWRITTEN: &[&str] = &["rpc", "store", "state", "runtime_error"];
+        /// The generated crate's OWN item, so `crate::` is already right for it.
+        const GENERATED_OWN: &[&str] = &["wasm"];
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("default");
+        let mut seen: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(&root).expect("default/ is readable") {
+            let path = entry.expect("a readable entry").path();
+            if path.extension().is_none_or(|e| e != "loft") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a readable .loft file");
+            for (i, _) in text.match_indices("crate::") {
+                let rest = &text[i + "crate::".len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_lowercase() || *c == '_')
+                    .collect();
+                // `crate::loft_host_print(…)` is a free function, not a module path.
+                if name.is_empty() || !rest[name.len()..].starts_with("::") {
+                    continue;
+                }
+                assert!(
+                    IMPORTED.contains(&name.as_str())
+                        || REWRITTEN.contains(&name.as_str())
+                        || GENERATED_OWN.contains(&name.as_str()),
+                    "`crate::{name}::` is named by a #rust template in {} but is neither \
+                     imported by the generated preamble, rewritten to `loft::{name}::`, nor \
+                     an item of the generated crate — a native program reaching that \
+                     template will fail with `cannot find {name} in crate`",
+                    path.display()
+                );
+                seen.push(name);
+            }
+        }
+        // The lists describe templates that EXIST: a name left in one after its last
+        // template went away is a stale entry, and this is the only thing that says so.
+        for m in IMPORTED.iter().chain(REWRITTEN).chain(GENERATED_OWN) {
+            assert!(
+                seen.iter().any(|s| s == m),
+                "`{m}` is listed here but no #rust template in default/*.loft names \
+                 `crate::{m}::` any more — drop it"
+            );
+        }
     }
 }
 

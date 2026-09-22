@@ -1106,7 +1106,12 @@ impl Parser {
             // `vector<u16>`/`vector<i16>` failed to compile ("Cannot assign to attribute
             // on type 'OpGetShortRaw'") while the same write to a `u16` struct FIELD —
             // which reads through `OpGetShort`/`OpGetShortFull` — compiled fine.
-            "OpGetShortFull" | "OpGetShortRaw" => self.cl(
+            // `OpGetShortSpare` is the fourth reader of that one store (loft#1615): a
+            // non-null two-byte type that kept a top code decodes it as null, and writes
+            // `(val - min)` like the other three — `data::NarrowSlot::set_op` says the same
+            // thing on the emission side, and leaving it out of this arm reproduces the
+            // defect the comment above documents, as `s.y -= 1` on such a field.
+            "OpGetShortFull" | "OpGetShortRaw" | "OpGetShortSpare" => self.cl(
                 "OpSetShortRaw",
                 &[args[0].clone(), args[1].clone(), args[2].clone(), code],
             ),

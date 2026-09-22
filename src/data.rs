@@ -6018,6 +6018,58 @@ pub struct NarrowSlot {
 }
 
 impl NarrowSlot {
+    /// The slot a STORE PLACE of this spec takes: a struct field, a vector element, a keyed
+    /// collection's element field — the one home for which read and write ops that place's
+    /// bytes pass through, and for the `min` they are handed.
+    ///
+    /// `width` is the caller's, because a field's width comes from the alias's `forced_size`
+    /// before the spec's own range (loft#1036), and `narrow_vec` says the place is a
+    /// narrow-vector ELEMENT, whose stride/value contract is the raw one rather than the
+    /// field-sentinel one.
+    ///
+    /// `spare` is a NON-nullable 1- or 2-byte type that kept a top code
+    /// (`IntegerSpec::reserves_sentinel_unconditionally`): C85 says an overflow writes that
+    /// code and the slot then reads null, which is what a LOCAL of the type answers — so the
+    /// place reads and writes through the op that maps the code to null (loft#1615).  It is
+    /// never a narrow-vector element: the only spelling of such a type is a `type` ALIAS
+    /// (`integer limit(-100, 100) size(1)` does not parse inline), and `narrow_vec` requires
+    /// no alias — so the two are mutually exclusive by construction, and the `debug_assert`
+    /// below is what says so if that ever stops being true.
+    ///
+    /// A width of 8 is the wide `integer`, which answers [`NarrowIntKind::Int`] and takes no
+    /// `min`: the two store-place callers pass every supported width here, so this is total
+    /// rather than an `Option` (`of_type`, which asks about a LOCAL, keeps its own `None`).
+    #[must_use]
+    pub fn of_slot(
+        width: u8,
+        nullable: bool,
+        narrow_vec: bool,
+        spec: &crate::data::IntegerSpec,
+    ) -> Self {
+        let kind = NarrowIntKind::of(width, nullable, narrow_vec, spec.unsigned_wide());
+        let min = if kind.takes_min() {
+            spec.usable_min(kind.reserves_sentinel())
+        } else {
+            0
+        };
+        let spare = !nullable && matches!(width, 1 | 2) && spec.reserves_sentinel_unconditionally();
+        debug_assert!(
+            !(spare && narrow_vec),
+            "a spare-code type reached a narrow-vector element — only a `type` alias can \
+             spell one, and a narrow vector has no alias; the two op families would now \
+             disagree about the same type"
+        );
+        Self {
+            kind,
+            min,
+            width,
+            spare,
+        }
+    }
+
+    /// The slot a narrow integer LOCAL of this type takes — a slot like a field, never a
+    /// narrow-vector element, so [`Self::of_slot`] answers it with the type's own width.
+    /// `None` for the wide `integer`, which keeps the 8-byte slot every local has.
     #[must_use]
     pub fn of_type(tp: &Type) -> Option<Self> {
         let nullable = matches!(tp, Type::Optional(_));
@@ -6028,19 +6080,7 @@ impl NarrowSlot {
         if width >= 8 {
             return None;
         }
-        let kind = NarrowIntKind::of(width, nullable, false, spec.unsigned_wide());
-        let min = if kind.takes_min() {
-            spec.usable_min(kind.reserves_sentinel())
-        } else {
-            0
-        };
-        let spare = !nullable && matches!(width, 1 | 2) && spec.reserves_sentinel_unconditionally();
-        Some(Self {
-            kind,
-            min,
-            width,
-            spare,
-        })
+        Some(Self::of_slot(width, nullable, false, spec))
     }
 
     /// The kind as the interpreter's op operand spells it.

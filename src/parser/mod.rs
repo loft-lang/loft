@@ -12578,8 +12578,12 @@ impl Parser {
                 // a narrow-vector element keeps the raw direct encoding (its
                 // stride/value contract is the narrow-vector one, not the
                 // field-sentinel one) — `narrow_vec` selects that.
-                let kind =
-                    crate::data::NarrowIntKind::of(s, nullable, narrow_vec, spec.unsigned_wide());
+                // loft#1615: `NarrowSlot` is the one home for a store place's ops, so a
+                // NON-nullable type that kept a top code reads that code as null (C85) here
+                // exactly as a LOCAL of the type does — `kind.get_op()` alone decodes every
+                // code as a value, which read the overflow's `u16::MAX` back as `64535`.
+                let slot = crate::data::NarrowSlot::of_slot(s, nullable, narrow_vec, spec);
+                let kind = slot.kind;
                 if kind.takes_min() {
                     // H6: a sentinel-reserving kind (`ByteNullable`/`Short` — a
                     // nullable narrow FIELD *or* vector element) shrinks its usable
@@ -12587,10 +12591,9 @@ impl Parser {
                     // raw kinds keep the full `min`.  Deriving from the KIND (not a
                     // re-computed `nullable && !narrow_vec`) keeps this in lockstep
                     // with the write op's `min`.
-                    let mn = spec.usable_min(kind.reserves_sentinel());
-                    self.cl(kind.get_op(), &[code, p, Value::Int(mn)])
+                    self.cl(slot.get_op(), &[code, p, Value::Int(slot.min)])
                 } else {
-                    self.cl(kind.get_op(), &[code, p])
+                    self.cl(slot.get_op(), &[code, p])
                 }
             }
             Type::Enum(_, false, _) => self.cl("OpGetEnum", &[code, p]),
@@ -13766,17 +13769,21 @@ impl Parser {
                 // sentinel); `not null` fields and narrow-vector elements keep the
                 // raw op.
                 let nullable = f_nr != usize::MAX && self.data.attr_nullable(d_nr, f_nr);
-                let kind =
-                    crate::data::NarrowIntKind::of(s, nullable, narrow_vec, spec.unsigned_wide());
+                // loft#1615: the same `NarrowSlot` the READ (`get_val`) asks, so the ops
+                // and the `min` cannot drift.  A NON-nullable byte that kept a top code
+                // writes through the NULLABLE setter: the plain one casts its value
+                // `as i32` before the store sees it, and `i64::MIN as i32` is `0` — a
+                // VALUE — so C85's overflow used to land in the slot as the number zero.
+                let slot = crate::data::NarrowSlot::of_slot(s, nullable, narrow_vec, spec);
                 // H6: the WRITE op encodes against the same `usable_min` the READ
                 // op (`get_val`) decodes against — derived from the KIND so a
                 // sentinel-reserving kind (`ByteNullable`/`Short`) shrinks the
                 // range identically on both sides and raw kinds keep the full `min`.
-                let m = Value::Int(spec.usable_min(kind.reserves_sentinel()));
-                if kind.takes_min() {
-                    self.cl(kind.set_op(), &[ref_code, pos_val, m, val_code])
+                let m = Value::Int(slot.min);
+                if slot.kind.takes_min() {
+                    self.cl(slot.set_op(), &[ref_code, pos_val, m, val_code])
                 } else {
-                    self.cl(kind.set_op(), &[ref_code, pos_val, val_code])
+                    self.cl(slot.set_op(), &[ref_code, pos_val, val_code])
                 }
             }
             Type::Vector(ref content, _)

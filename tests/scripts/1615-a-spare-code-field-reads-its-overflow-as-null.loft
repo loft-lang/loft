@@ -1,0 +1,162 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NON-nullable store place — a struct field, a vector element, a keyed collection's
+// element field — whose type kept a spare top code answers NULL after an overflow, exactly
+// as a LOCAL of the same type does (`DESIGN_DECISIONS.md` C85, `formal/types.md`
+// (E-Uncomp-NN): *"on overflow they write the reserved sentinel into that non-null slot,
+// which then reads as null"*).  `IntegerSpec::reserves_sentinel_unconditionally` names the
+// types: a signed narrow alias whose declared range leaves a code spare —
+// `limit(-100, 100) size(1)` is 201 values in 256 codes, `limit(-1000, 1000) size(2)` is
+// 2001 in 65536.
+//
+// Before loft#1615 the LOCAL was right and the FIELD was not, on both backends:
+//
+//   * the one-byte write lost the code.  The plain setter casts its value `as i32` before
+//     the store sees it and `i64::MIN as i32` is `0`, so C85's overflow landed in the slot
+//     as the NUMBER ZERO — a value inside the declared range, indistinguishable from one the
+//     program wrote.  It now writes through the nullable setter, which maps null to the code.
+//   * the two-byte write was right and the READ was not.  `OpGetShortFull` decodes every one
+//     of the 65536 codes as a value, so the overflow's `u16::MAX` read back as `64535` — a
+//     number 63535 past the type's own maximum.  It now reads through `OpGetShortSpare`.
+//
+// `data::NarrowSlot::of_slot` is the one home for which ops a store place takes, asked by
+// both `Parser::get_val` (the read) and `Parser::set_field_check` (the write), so the pair
+// cannot drift again.  A spare-code type is never a narrow-VECTOR element: `integer
+// limit(lo, hi) size(n)` is spellable only through a `type` alias — it does not parse inline
+// on a field or an element — and a narrow vector requires no alias.
+//
+// Every cell states its expected value by hand.  The cells that can FAIL are the overflow
+// ones; the ones that can catch an OVER-reach are the controls, and they are the reason the
+// fix cannot simply make a narrow read answer null more often:
+//
+//   * `ta`/`tb` — the untouched twin of each overflowed field, at its type's MAX and MIN.
+//     Those are the two codes nearest the spare one, so a fix one code too wide erases them.
+//   * `v1`/`w1` — an element never written past its range.
+//   * `nullables` — the `τ?` spelling of both types, whose sentinel is a DIFFERENT code
+//     (`ByteNullable`'s 255 against `Byte`'s spare 255 at a different bias; `Short`'s `+1`
+//     shift against `ShortFull`'s flat one), so a fix that confused the two would move them.
+//   * `fullwidth` — `u8` and `i16` fill their width and keep NO code back, so C85 has no
+//     sentinel to write and an overflow there is not this question at all.
+//   * `keyed` — a spare-code field as a hash KEY and as a sorted collection's key, neither
+//     overflowed: a wrong decode there loses the record, not just the number.
+//
+// The other cells are the reach: the overflow through `+=`, `-=` and `*=`, a field read
+// through a by-value struct PARAMETER and out of a CALL's return, the read as a condition,
+// as a `??` subject, and repeated in a loop.
+//
+// `matrix_axes.py` reports this file missing `index`, `spatial` and `tuple` containers and
+// the float/boolean/enum element types: those are axes of the CONTAINER idioms, and this is
+// a question about one scalar slot's encoding, which every container reaches through the
+// same two parser sites the fix routes through.
+//
+// CHANNEL: the assertions.
+
+type S8  = integer limit(-100, 100) size(1);
+type S16 = integer limit(-1000, 1000) size(2);
+
+struct F  { a: S8, b: S16 }
+struct N  { a: S8?, b: S16? }
+struct W  { u: u8, i: i16 }
+struct K  { id: S8, b: S16 }
+
+fn show(label: text, v: integer) -> text { "{label}={v}/{v == null}" }
+
+// The answer the field must match: a LOCAL of each type, overflowed, and the two edge
+// values that must stay values.
+fn locals() -> text {
+  x: S8 = 100; x += 50;
+  y: S16 = -1000; y -= 1;
+  p: S8 = 100;
+  q: S16 = -1000;
+  "{show("x", x)} {show("y", y)} {show("p", p)} {show("q", q)}"
+}
+
+fn fields() -> text {
+  s = F { a: 100, b: -1000 };
+  t = F { a: 100, b: -1000 };
+  s.a += 50; s.b -= 1;
+  "{show("a", s.a)} {show("b", s.b)} {show("ta", t.a)} {show("tb", t.b)}"
+}
+
+// The other spellings of a write that leaves the range.  A checked cast is NOT one: it is
+// discharged at the cast and the default lands as a value.
+fn field_forms() -> text {
+  s = F { a: 0, b: 0 };
+  n: integer = 300;
+  s.a = n as S8 ?? -100;
+  u = "{show("cast", s.a)}";
+  s.a = 100; s.a *= 2;
+  s.b = -1000; s.b *= 2;
+  "{u} {show("mul", s.a)} {show("mul16", s.b)}"
+}
+
+fn elements() -> text {
+  v: vector<S8> = [100, 0];
+  w: vector<S16> = [-1000, 0];
+  v[0] += 50; w[0] -= 1;
+  "{show("v0", v[0] ?? 7)} {show("v1", v[1] ?? 7)} {show("w0", w[0] ?? 7)} {show("w1", w[1] ?? 7)}"
+}
+
+fn nullables() -> text {
+  s = N { a: null, b: null };
+  u = "{s.a == null} {s.b == null}";
+  s.a = 100; s.b = -1000;
+  "{u} {show("na", s.a ?? 7)} {show("nb", s.b ?? 7)}"
+}
+
+fn fullwidth() -> text {
+  s = W { u: 255, i: -32768 };
+  "{show("u", s.u)} {show("i", s.i)}"
+}
+
+fn keyed() -> text {
+  h: hash<K[id]> = [];
+  h += [K { id: 100, b: -1000 }];
+  e = h[100];
+  o: text = "miss";
+  if e != null { o = "{show("hid", e.id)} {show("hb", e.b)}"; }
+  srt: sorted<K[id]> = [];
+  srt += [K { id: -100, b: 0 }];
+  f = srt[-100];
+  o2: text = "miss";
+  if f != null { o2 = show("sid", f.id); }
+  "{o} {o2}"
+}
+
+fn take(v: F) -> text { "{show("pa", v.a)} {show("pb", v.b)}" }
+fn make() -> F { g = F { a: 100, b: -1000 }; g.a += 50; g.b -= 1; g }
+fn provenance() -> text { "{take(make())} {show("ra", make().a)}" }
+
+fn contexts() -> text {
+  s = F { a: 100, b: -1000 };
+  s.a += 50; s.b -= 1;
+  c = if s.a == null { "cond-null" } else { "cond-value" };
+  d = s.a ?? -7;
+  acc = "";
+  t = F { a: 0, b: 0 };
+  for i in 0..3 { t.a = 100; t.a += 50 * i; acc += "{t.a == null}"; }
+  "{c} coal={d} loop={acc}"
+}
+
+fn main() {
+  assert(locals() == "x=null/true y=null/true p=100/false q=-1000/false",
+         "the local's answer, which the field must match: {locals()}");
+  assert(fields() == "a=null/true b=null/true ta=100/false tb=-1000/false",
+         "a spare-code field after an overflow: {fields()}");
+  assert(field_forms() == "cast=-100/false mul=null/true mul16=null/true",
+         "the other write spellings: {field_forms()}");
+  assert(elements() == "v0=7/false v1=0/false w0=7/false w1=0/false",
+         "a spare-code element after an overflow: {elements()}");
+  assert(nullables() == "true true na=100/false nb=-1000/false",
+         "the nullable spelling is unmoved: {nullables()}");
+  assert(fullwidth() == "u=255/false i=-32768/false",
+         "a type that kept no spare code is unmoved: {fullwidth()}");
+  assert(keyed() == "hid=100/false hb=-1000/false sid=-100/false",
+         "a spare-code key and element field: {keyed()}");
+  assert(provenance() == "pa=null/true pb=null/true ra=null/true",
+         "through a by-value parameter and a call's return: {provenance()}");
+  assert(contexts() == "cond-null coal=-7 loop=falsetruetrue",
+         "as a condition, a coalesce subject and in a loop: {contexts()}");
+  println("a spare-code field reads its overflow as null");
+}
