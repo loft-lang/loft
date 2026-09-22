@@ -4943,8 +4943,16 @@ impl Parser {
             // spelling was accidentally leak-free only because the work-ref road it was pushed
             // onto frees correctly, and converging it inherits the dense road's defect.  The
             // peel lands once loft#1483 is closed, not before.
-            let type_matches =
-                var_tp.is_unknown() || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr);
+            // A variant literal matches an ELEMENT slot typed as its enum: the slot is a record
+            // of the enum `OpNewRecord` carved out, and the literal writes every field the
+            // variant has and its tag, so it is built there as a struct literal is — rather
+            // than in a work-ref copied in, which also costs the append its push header.
+            let variant_into_element = self.vars.is_inline_ref(*v_nr)
+                && self.data.def_type(td_nr) == DefType::EnumValue
+                && matches!(var_tp.base(), Type::Reference(d, _) if *d == self.data.def(td_nr).parent);
+            let type_matches = var_tp.is_unknown()
+                || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr)
+                || variant_into_element;
             // loft#660 — a vector-literal ELEMENT alias is never an in-place
             // allocation target.  Its storage is the slot `OpNewRecord` already
             // carved out of the container, so re-allocating it here (`OpDatabase`)

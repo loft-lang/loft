@@ -812,7 +812,12 @@ CLOSED 2026-09-17, below.
   ran B's hook twice, from the vector's cascade and from the work-ref; appended (`v += [B]`)
   and in a struct field's literal the same.
 - **Status:** CLOSED 2026-09-23.
-- **Closed:** a struct-enum element variable is typed as a record of its enum.  Guard
+- **Closed:** a struct-enum element variable is typed as a record of its enum.  A literal of one
+  of its variants is still built INTO that element, as it was against the placeholder: a
+  variant literal matches an inline element slot typed as its enum (`Parser`'s object-literal
+  `type_matches`).  Otherwise every `v += [A { … }]` goes through a work-ref and a copy and
+  loses its push header — measured on the `enum_record`, `mint_window` and `copy_in_place`
+  emission pins.  Guard
   `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c10`.
 
 ### D-heap-34 — OPENED AND CLOSED (2026-09-23, loft#1597): a vector of vectors never released its inner elements
