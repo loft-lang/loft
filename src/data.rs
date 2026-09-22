@@ -5387,7 +5387,12 @@ impl Definition {
 
     #[must_use]
     pub fn original_name(&self) -> String {
-        if self.def_type == DefType::Function {
+        // A GENERIC is keyed as a function is (`n_<name>`, `t_<LEN><type>_<name>`), and the
+        // name its author wrote is decoded the same way.  Answered raw, `n_type_name` never
+        // equalled `type_name`: a program's generic of a special form's name was not counted
+        // as a declaration, so `type_name(c)` answered the special form's `Cat` in silence
+        // where the program's `type_name<T: Named>` should have taken it.
+        if matches!(self.def_type, DefType::Function | DefType::Generic) {
             Self::source_name_of_key(&self.name)
         } else {
             self.name.clone()

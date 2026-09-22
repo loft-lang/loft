@@ -1061,6 +1061,30 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   `vector_element_type` now (`@FR-H-Stride`, loft#1420's class), and the insert writes the
   slot's vector field as `vv[i] = w` does.  Guard `insert-takes-its-arguments-before-the-
   vector-grows`, falsified at `8bb33678e`.
+- **E4 Built** (2026-09-22).  `pub fn sort<T: Ordered>(self: vector<T>)` + `#builtin`, and the
+  declaration holds what its bound says: the special form still sorts the elements the runtime
+  compares itself (`integer` at any width, `float`, `single`, `text`: one `OpSortVector`), and
+  every other `Ordered` element — a struct defining `op <`, a nullable scalar — is sorted by
+  the declaration's BODY, a stable bottom-up merge through `<` that moves elements by copy.  So
+  `#builtin` means *the special form where it takes the call, the declaration otherwise*:
+  `sort_is_special` declines, the call takes the ordinary path to the declaration, and an
+  element that is not `Ordered` is refused naming the bound (the special form said "not
+  supported for vector<Q>").  Inside a template the special form stamps `TV_SORT` when the
+  declaration takes the call (asked through the ladder, `builtin_selected`, since a template's
+  own argument is `NotDecidable` in the set); each monomorph then emits `OpSortVector` or a
+  call of the declaration's instance, what its twin reaches — an unbounded `T` is refused at
+  the call.  Three defects on `main` were in the way and are fixed on their own commits:
+  a slice materialised inside a generic copied every scalar element as a record (interpreter
+  "Write to read-only store", native E0610 — `materialize_iterator` now writes a type
+  variable's element in the append's shape, which the monomorph re-lowers); a
+  `<T: Ordered|Equatable|Addable>` generic at a NULLABLE scalar kept its bound's stub
+  (`re_resolve_call` looked the operator up on the wrapped type — `smaller(4, 2)` over
+  `integer?` answered 4, silently); and a program's GENERIC named like a special form
+  (`type_name<T: Named>`) was never reached — `Definition::original_name` answered a generic's
+  raw key `n_type_name`, so it was not counted as declared.  Guards
+  `sort-takes-any-ordered-element`, `a-slice-inside-a-generic-is-copied-at-its-element`,
+  `a-bounded-generic-at-a-nullable-reaches-its-operator`; the special-names guard's failed-bound
+  cell moved from `sort` to `type_name` and gained the reach cell.
 - **Measured for E3–E7 before they start** — each special form inside a generic against its
   twin, both backends: `insert` and `any`/`all`/`count_if` answer right; **`filter` and `map`
   CRASH** for every scalar element (interpreter: "DbRef store_nr … out of range", `text`:

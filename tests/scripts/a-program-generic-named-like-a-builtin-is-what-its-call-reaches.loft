@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// A compiler special case for a call name (`any`, `sort`, `all`, …) is a candidate of
+// A compiler special case for a call name (`any`, `all`, `type_name`, …) is a candidate of
 // last resort, taken only when no definition the program declares takes the call — and a
 // program's GENERIC is such a definition, as its function is.  The gate accepted only a
 // `Function`, so a program's `fn any<T>(v: vector<T>, f: fn(T) -> boolean) -> boolean` never
@@ -25,13 +25,16 @@
 
 interface Named { fn tag(self: Self) -> text }
 
-// (`reverse` and `reserve` were shapes here; each is a stdlib METHOD on `vector` since @PLN165
-// E1/E2, so a program's own is for its own types — `a-built-in-is-a-method-a-program-extends-
-// for-its-own-types`, `a-generic-reserves-at-its-elements-width`.)
+// (`reverse`, `reserve` and `sort` were shapes here; each is a stdlib METHOD on `vector` since
+// @PLN165 E1/E2/E4, so a program's own is for its own types — `a-built-in-is-a-method-a-
+// program-extends-for-its-own-types`, `a-generic-reserves-at-its-elements-width`.)
 fn any<T>(v: vector<T>, f: fn(T) -> boolean) -> boolean { false }
 fn all<U>(v: vector<U>) -> integer { len(v) * 10 }
 fn count_if<T>(a: T, b: T, c: T) -> integer { 7 }
-fn sort<T: Named>(v: vector<T>) -> text { "mine" }
+fn type_name<T: Named>(v: T) -> text { "mine {v.tag()}" }
+
+struct Cat { n: integer }
+fn tag(self: Cat) -> text { "cat" }
 
 fn test_a_call_reaches_the_program() {
   a: vector<integer> = [1, 2];
@@ -47,8 +50,10 @@ fn test_in_interpolation() {
 
 fn test_where_the_program_generic_does_not_take_the_call() {
   v: vector<integer> = [3, 1, 2];
-  sort(v);
-  assert("{v}" == "[1,2,3]", "{v}");
+  // A bound the program's `type_name<T: Named>` does not hold: the builtin answers — and where
+  // it holds, the program's generic does (a generic's name was never counted as declared).
+  c = Cat { n: 1 };
+  assert(type_name(v) == "vector<integer>" && type_name(c) == "mine cat", "{type_name(v)} {type_name(c)}");
   // An arity the program's `all<U>(v)` does not take: the builtin answers.
   assert(all(v, |x| { x > 0 }) && all(v) == 30, "{all(v)}");
   // A lambda argument where the program's `count_if` has no `fn(…)` parameter: the builtin's

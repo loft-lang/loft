@@ -2776,6 +2776,10 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
+(2026-09-22, @PLN165 E4 on `tuxedo-165-generics`: **888 · 556 · 4 · 328**, opaque tests re-pinned
+at 1312 — `sort`'s special-form test asks its nullability question in words (`!matches!(elm,
+Optional)`) and reads the element through the wrapper.)
+
 (2026-09-22, @PLN165 E3 on `tuxedo-165-generics`: **886 · 553 · 5 · 328**, re-pinned at opaque
 328 — `element_store_size` peels its element to ask for a nested vector's stride, which moved
 it to the seeing side, and `insert`'s argument staging reads through the wrapper.)

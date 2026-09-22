@@ -1928,6 +1928,44 @@ pub fn insert < T > (self: vector<T>, index: integer, elem: T) {
 }
 #builtin
 
+// Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `<`
+// (`Ordered`) — a struct defining `op <` sorts by it — and is stable: elements that compare
+// equal keep their order.  A null element sorts first.
+pub fn sort < T: Ordered > (self: vector<T>) {
+  // The runtime sorts integer, float, single and text itself (`#builtin`); this body is the
+  // sort for every other element: a bottom-up merge that moves elements by copy, through `<`.
+  n = len(self);
+  if n < 2 { return; }
+  src: vector<T> = [];
+  src += self;
+  width = 1;
+  while width < n {
+    dst: vector<T> = [];
+    lo = 0;
+    while lo < n {
+      mid = min(lo + width, n);
+      hi = min(lo + 2 * width, n);
+      i = lo;
+      j = mid;
+      while i < mid || j < hi {
+        if j >= hi || (i < mid && !(src[j] < src[i])) {
+          dst += src[i..i + 1];
+          i += 1;
+        } else {
+          dst += src[j..j + 1];
+          j += 1;
+        }
+      }
+      lo = hi;
+    }
+    src = dst;
+    width *= 2;
+  }
+  clear(self);
+  self += src;
+}
+#builtin
+
 // Sum of all integer elements. Returns 0 for an empty vector.
 // Superseded by the general `sum(v, init)`; kept as a shim over it
 // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the

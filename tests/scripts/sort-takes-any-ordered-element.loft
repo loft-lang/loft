@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 E4 — `sort` is a stdlib `#builtin` METHOD on `vector`, `pub fn sort<T: Ordered>(self:
+// vector<T>)`: `sort(v)` and `v.sort()` are one call, and it takes what its bound says — any
+// element with a `<`.  The runtime still sorts `integer`, `float`, `single` and `text` itself
+// (one `OpSortVector`, as before); every other `Ordered` element — a struct defining `op <`, a
+// nullable scalar — is sorted by the declaration's body, a stable merge through `<`.  Before,
+// the compiler's special form refused any other element ("sort is not supported for
+// vector<Pt>; use integer, long, float, single, or text") and refused every `sort` inside a
+// generic ("… for vector<T>").  An element that is not `Ordered` is refused naming the bound;
+// a program's own `sort` for its own type sits beside it.  Inside a generic each instance
+// takes what its hand-written twin takes: `OpSortVector` at `integer`, the body at `Pt`.
+//
+// @falsified-at: 215ce13fd — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/sort-takes-any-ordered-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the file.
+//   ARMED: nothing.
+//   WITNESS: on the control, bare `sort(p)` over `vector<Pt>` is "sort is not supported for
+//     vector<Pt>; use integer, long, float, single, or text", and the same for `vector<T>`
+//     inside `srt<T: Ordered>` and for `vector<integer?>`.
+//   HOLDS: the runtime's own elements in the bare spelling; a program's own `sort(r)`.
+
+struct Pt { x: integer, y: integer }
+fn OpLt(self: Pt, other: Pt) -> boolean { self.x < other.x }
+struct Roster { n: integer }
+fn sort(self: Roster) -> integer { self.n * 2 }
+
+fn srt<T: Ordered>(v: vector<T>) -> vector<T> { sort(v); v }
+fn srt_m<T: Ordered>(v: vector<T>) -> vector<T> { v.sort(); v }
+
+fn pts(p: vector<Pt>) -> text {
+  s = "";
+  for e in p { s += "{e.x}{e.y} "; }
+  s
+}
+
+fn test_the_runtimes_own_elements_in_both_spellings() {
+  a = [3, 1, 2];
+  sort(a);
+  f = [2.5, 0.5];
+  f.sort();
+  g = [2.5f, 0.5f];
+  sort(g);
+  t = ["b", "c", "a"];
+  t.sort();
+  b: vector<u8> = [9, 7, 8];
+  b.sort();
+  assert("{a} {f} {g} {t} {b}" == "[1,2,3] [0.5,2.5] [0.5,2.5] [\"a\",\"b\",\"c\"] [7,8,9]",
+    "{a} {f} {g} {t} {b}");
+}
+
+fn test_a_record_with_its_own_less_than_sorts_stably() {
+  p = [Pt { x: 3, y: 1 }, Pt { x: 1, y: 2 }, Pt { x: 3, y: 3 }, Pt { x: 1, y: 4 }];
+  p.sort();
+  q = [Pt { x: 2, y: 0 }, Pt { x: 1, y: 0 }];
+  sort(q);
+  one = [Pt { x: 5, y: 5 }];
+  one.sort();
+  none: vector<Pt> = [];
+  sort(none);
+  assert("{pts(p)}|{pts(q)}|{pts(one)}|{len(none)}" == "12 14 31 33 |10 20 |55 |0",
+    "{pts(p)}|{pts(q)}");
+}
+
+fn test_many_records_in_order_and_stable() {
+  p: vector<Pt> = [];
+  for i in 0..50 { p += [Pt { x: (i * 7) % 10, y: i }]; }
+  p.sort();
+  ok = len(p) == 50;
+  for i in 1..len(p) {
+    a = p[i - 1];
+    b = p[i];
+    if a.x > b.x || (a.x == b.x && a.y > b.y) { ok = false; }
+  }
+  assert(ok && p[0].x == 0 && p[49].x == 9, "{p[0].x} {p[49].x}");
+}
+
+fn test_a_null_sorts_first() {
+  n: vector<integer?> = [3, null, 1, null];
+  n.sort();
+  assert("{n}" == "[null,null,1,3]", "{n}");
+}
+
+fn test_inside_a_generic_as_its_twin() {
+  a = srt([5, 4]);
+  t = srt_m(["z", "y"]);
+  p = srt([Pt { x: 9, y: 0 }, Pt { x: 8, y: 0 }]);
+  assert("{a} {t} {pts(p)}" == "[4,5] [\"y\",\"z\"] 80 90 ", "{a} {t} {pts(p)}");
+}
+
+fn test_a_programs_own_sort_for_its_own_type() {
+  r = Roster { n: 3 };
+  v = [2, 1];
+  sort(v);
+  assert(sort(r) == 6 && r.sort() == 6 && "{v}" == "[1,2]", "{sort(r)} {v}");
+}

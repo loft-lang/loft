@@ -4709,6 +4709,21 @@ fn insert_refuses_an_implicit_narrowing() {
         .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at insert_refuses_an_implicit_narrowing:1:62");
 }
 
+/// @PLN165 E4 — `sort<T: Ordered>` takes what its bound says, so an element without a `<` is
+/// refused naming the bound (the special form said "sort is not supported for vector<Q>"), and a
+/// generic's unbounded `T` is refused at the call as any bounded generic's is.
+#[test]
+fn sort_refuses_an_element_that_is_not_ordered() {
+    code!("struct Q { x: integer }\nfn test() { q = [Q { x: 2 }, Q { x: 1 }]; q.sort(); assert(len(q) == 2, \"\"); }")
+        .error("'Q' does not satisfy interface 'Ordered': missing OpLt at sort_refuses_an_element_that_is_not_ordered:2:51");
+}
+
+#[test]
+fn sort_in_a_generic_needs_the_bound() {
+    code!("fn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")
+        .error("'T' does not satisfy interface 'Ordered': missing OpLt at sort_in_a_generic_needs_the_bound:1:33");
+}
+
 /// @PLN165 arc E — `#builtin` sends a call to the compiler's special form of the name; it marks
 /// a standard-library declaration, and a program's function is its own body.
 #[test]

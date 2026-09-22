@@ -148,6 +148,7 @@ const SEARCH_INDEX=[
 {name:"reverse",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"reserve",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"insert",kind:"fn",url:"stdlib-vector-aggregates.html"},
+{name:"sort",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"sum_of",kind:"fn",url:"stdlib-vector-aggregates.html"},
 {name:"interface",kind:"interface",url:"stdlib-vector-aggregates.html"},
 {name:"tree_walk",kind:"fn",url:"stdlib-vector-aggregates.html"},

@@ -8426,6 +8426,12 @@ pub fn insert < T > (self: vector<T>, index: integer, elem: T)
 Insert `elem` at `index`, moving the elements from there one place up: `insert(v, i, x)` or `v.insert(i, x)`.  Both arguments are values before the vector grows, so an element read from the vector itself (`v.insert(0, v\[1\])`) is the one it was.
 
 ```rust
+pub fn sort < T: Ordered > (self: vector<T>)
+```
+
+Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `\<` (`Ordered`) — a struct defining `op \<` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.
+
+```rust
 pub fn sum_of(v: const vector<integer>) -> integer
 ```
 

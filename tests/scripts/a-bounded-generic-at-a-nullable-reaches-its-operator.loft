@@ -15,7 +15,9 @@
 //   CHANNEL: the ASSERTIONS on the interpreter (the stub answered, silently), exit on native
 //     (E0308 at the bound stub `t_4T_g2_OpLt`).
 //   ARMED: nothing.
-//   WITNESS: on the control `smaller(x, y)` over `integer?` answered 4.
+//   WITNESS: on the control every `smaller` answered its FIRST argument — `4 null 2 1.5 b`
+//     for `(x, y) (z, y) (y, z) (f, g) (s, r)` — and `same`/`plus` panicked the interpreter.
+//   HOLDS: `smaller(z, y)` alone, whose right answer is its first argument.
 
 fn smaller<T: Ordered>(a: T, b: T) -> T { if b < a { b } else { a } }
 fn same<T: Equatable>(a: T, b: T) -> boolean { a == b }

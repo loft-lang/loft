@@ -6537,25 +6537,34 @@ use #count instead"
     /// The element types `OpSortVector` compares at runtime.  Not a nullable one: its order is
     /// `<`'s (`@FR-E-NullArg`), which the declaration's body follows.
     fn sorts_itself(elm: &Type) -> bool {
-        matches!(
-            elm,
-            Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
-        )
+        !matches!(elm, Type::Optional(_))
+            && matches!(
+                elm.base(),
+                Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
+            )
     }
 
     /// The `#builtin` stdlib declaration a call of `name` with these argument types selects,
     /// if that is what it selects (`@FR-G-Select`).
+    ///
+    /// Asked the way `program_definition_applies` asks: the set first, and where an argument is
+    /// still a type variable (`NotDecidable` — a template's own call) the ladder, with the
+    /// definition's variables binding and its bounds holding (`definition_ranks`).
     pub(crate) fn builtin_selected(
         &mut self,
         source: u16,
         name: &str,
         types: &[Type],
     ) -> Option<u32> {
+        use crate::parser::dispatch::Selection;
         let routed = self.data.routed_types(types);
-        match self.select_overload(source, name, &routed) {
-            crate::parser::dispatch::Selection::One(d) if self.data.def(d).builtin() => Some(d),
-            _ => None,
-        }
+        let d = match self.select_overload(source, name, &routed) {
+            Selection::One(d) => d,
+            Selection::NotDecidable => self.data.select_fn(source, name, types),
+            Selection::Ambiguous(_) | Selection::NoneApplicable => return None,
+        };
+        (d != u32::MAX && self.data.def(d).builtin() && self.definition_ranks(d, &routed).is_some())
+            .then_some(d)
     }
 
     /// Compiler special-case for `sort(v: vector<T>)`.
