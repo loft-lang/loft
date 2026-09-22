@@ -334,7 +334,7 @@ impl Output<'_> {
     /// `let __ed = <place>; stores…addr_mut::<T>(…) as *mut T`.  A local link and a `&` parameter
     /// both link to a place this way; the caller supplies the enclosing `unsafe` block and what it
     /// makes of the pointer.
-    fn output_place_pointer(
+    pub(super) fn output_place_pointer(
         &mut self,
         w: &mut dyn Write,
         place: &Value,
@@ -407,6 +407,7 @@ impl Output<'_> {
         }
         if variables.is_argument(var)
             && let Type::RefVar(inner) = variables.tp(var)
+            && !crate::generation::is_raw_scalar_ref(variables.tp(var))
         {
             if to != &Value::Null {
                 let name = sanitize(variables.name(var));
@@ -557,7 +558,9 @@ impl Output<'_> {
         // the slot's own sentinel.  Asked bare, `Optional` matched no arm, the bind emitted
         // no right-hand side at all (`let mut var_q: … =  as …;`) and rustc reported it —
         // which is why @FR-B-Ref-Intro's `&τ` for every τ had to be declined here too.
-        if !variables.is_argument(var)
+        // A scalar `&` PARAMETER is the same raw pointer (`is_raw_scalar_ref`, loft#1605), so it
+        // takes this branch too, as a variable that is already declared.
+        if (!variables.is_argument(var) || crate::generation::is_raw_scalar_ref(variables.tp(var)))
             && let Type::RefVar(inner) = variables.tp(var)
             && matches!(
                 inner.base(),
@@ -582,6 +585,10 @@ impl Output<'_> {
             )
         {
             let name = sanitize(variables.name(var));
+            // A parameter is bound by the signature, so every bind below is a re-point.
+            if variables.is_argument(var) {
+                self.declared.insert(var);
+            }
             // A RAW pointer (`*mut T`), not `&mut T`: the source local stays usable
             // and assignable while the link is alive (loft allows the aliasing that
             // Rust's borrow checker forbids), matching the interpreter and loft's
@@ -638,9 +645,12 @@ impl Output<'_> {
                 && let Value::Var(src) = src_arg.unspan()
             {
                 // `c = &b`, `b` itself a link: `c` takes the pointer `b` holds.  A local link
-                // already is a `*mut T`; a `&` parameter is a `&mut T`, re-borrowed raw.
+                // and a scalar `&` parameter already are a `*mut T`; any other `&` parameter
+                // is a `&mut T`, re-borrowed raw.
                 let src_name = sanitize(variables.name(*src));
-                let ptr = if variables.is_argument(*src) {
+                let ptr = if variables.is_argument(*src)
+                    && !crate::generation::is_raw_scalar_ref(variables.tp(*src))
+                {
                     format!("(&mut *var_{src_name}) as *mut {base}")
                 } else {
                     format!("var_{src_name}")

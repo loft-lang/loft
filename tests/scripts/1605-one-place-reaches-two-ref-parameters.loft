@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// One place may reach a call through two `&` parameters, and a `&` link may be handed to a
+// `&` parameter as it is (`binding.md (B-Ref-Write)`, `(B-Ref-Intro)`): every write lands in
+// the place, in order.  `add2(x, x)` with `a += 1; b += 10` leaves `x == 12`.
+//
+// On `--native` a scalar `&` parameter was a `&mut T`, so the same local passed twice was
+// rustc E0499 (loft#1605), and a `&`-bound local passed on was E0308, a `&mut *mut T`
+// (loft#1603).  A scalar `&` parameter is now the raw `*mut T` a local link already is, so a
+// local, a link and a forwarded parameter all pass as one pointer and may alias.  The
+// interpreter answered every cell right before and after: this guard's channel is the
+// native build.
+//
+// Found beside it, and fixed with it: a `&boolean?` read two ways on native.  A local link
+// read the two-state `bool`, so `l == null` was never true and the write that should have
+// followed was lost in silence; a `&boolean?` parameter read the storage byte, and an `if b`
+// or `b && …` on it did not compile.  Both now read the byte and meet the truthiness
+// coercion a `boolean?` local meets.
+//
+// Cells: the same local twice; a link and its target together; a link to a field and a link to
+// a local handed on (loft#1603's own cell); a parameter forwarded twice; `float`, `single`,
+// `boolean`, `character`, a value enum and `u8` parameters; a re-point inside the callee; a
+// `&integer?` and a `&boolean?` written null and read back.
+//
+// CHANNEL: the assertions, on the native build (the control does not compile there).
+
+struct P { n: integer }
+enum Col { Red, Blue, Green }
+
+fn add2(a: &integer, b: &integer) { a += 1; b += 10; }
+fn bump(c: &integer) { c = c + 1; }
+fn fwd(c: &integer) { bump(c); bump(c); }
+fn scale(f: &float) { f = f * 2.0; }
+fn grow(s: &single, t: &single) { s = s + 1.0f; t = t * 2.0f; }
+fn flip(b: &boolean) { b = !b; }
+fn to_z(c: &character) { c = 'z'; }
+fn paint(a: &Col, b: &Col) { a = Col.Blue; b = Col.Green; }
+fn set200(u: &u8) { u = 200; }
+fn repoint(c: &integer, v: vector<integer>) { c = &v[1]; c = 42; }
+fn clear(c: &integer?) { c = null; }
+fn cycle(b: &boolean?) { if b == null { b = true; } else { b = null; } }
+fn test_and_clear(b: &boolean?) -> text { r = if b { "T" } else { "F" }; b = null; r }
+
+fn same_local_twice() -> text { x = 1; add2(x, x); "{x}" }
+fn link_and_target() -> text { y = 5; d = &y; add2(y, d); "{y}" }
+fn issue_1603() -> text {
+  x = 5;
+  p = P { n: 10 };
+  c = &p.n;
+  bump(c);
+  d = &x;
+  bump(d);
+  "{x} {p.n}"
+}
+fn forwarded() -> text { y = 3; fwd(y); "{y}" }
+fn other_scalars() -> text {
+  g = 2.5;
+  scale(g);
+  s: single = 1.5f;
+  grow(s, s);
+  fl = true;
+  flip(fl);
+  ch = 'a';
+  to_z(ch);
+  k = Col.Red;
+  paint(k, k);
+  u: u8 = 9;
+  lu = &u;
+  set200(lu);
+  "{g} {s} {fl} {ch} {k} {u}"
+}
+fn repointed() -> text { v: vector<integer> = [1, 2, 3]; z = 0; repoint(z, v); "{v} {z}" }
+fn nullable() -> text {
+  m: integer? = 5;
+  clear(m);
+  bb: boolean? = null;
+  cycle(bb);
+  first = bb;
+  cycle(bb);
+  cc: boolean? = null;
+  l = &cc;
+  if l == null { l = true; }
+  tf = test_and_clear(l);
+  "{m} {first} {bb} {tf} {cc}"
+}
+
+fn main() {
+  assert(same_local_twice() == "12", "one local through two & parameters: {same_local_twice()}");
+  assert(link_and_target() == "16", "a link and its target through two & parameters: {link_and_target()}");
+  assert(issue_1603() == "6 11", "a link handed to a & parameter: {issue_1603()}");
+  assert(forwarded() == "5", "a & parameter forwarded twice: {forwarded()}");
+  assert(other_scalars() == "5 5 false z Green 200", "the other scalar & parameters: {other_scalars()}");
+  assert(repointed() == "[1,42,3] 0", "a & parameter re-pointed to an element: {repointed()}");
+  assert(nullable() == "null true null T null", "nullable & parameters and links: {nullable()}");
+  println("scalar & parameters alias correctly");
+}

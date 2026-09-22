@@ -315,9 +315,31 @@ impl Output<'_> {
         idx: usize,
         v: &Value,
     ) -> std::io::Result<()> {
+        // A scalar `&` parameter is a raw `*mut T` (`is_raw_scalar_ref`, loft#1605): a local
+        // passes its address, and a link or a `&` parameter passes the pointer it holds.
+        let raw_param = idx < def_fn.attributes().len()
+            && crate::generation::is_raw_scalar_ref(&def_fn.attributes()[idx].typedef);
         if let Some(vr) = self.create_stack_var(v) {
             let name = sanitize(self.data.def(self.def_nr).variables().name(vr));
-            write!(w, "&mut var_{name}")?;
+            if raw_param {
+                write!(w, "std::ptr::addr_of_mut!(var_{name})")?;
+            } else {
+                write!(w, "&mut var_{name}")?;
+            }
+        } else if raw_param
+            && let Value::Call(d_nr, _) = v.unspan()
+            && matches!(
+                self.data.def(*d_nr).name(),
+                "OpGetField" | "OpGetVector" | "OpVectorRef"
+            )
+            && let Type::RefVar(inner) = &def_fn.attributes()[idx].typedef
+        {
+            // A scalar field or element handed to a `&` parameter: the pointer into its store
+            // slot, built as a local link to the same place builds it (@FR-B-Ref-Lvalue).
+            let base = rust_type(inner.base(), &Context::Variable);
+            write!(w, "unsafe {{ ")?;
+            self.output_place_pointer(w, v, &base)?;
+            write!(w, " }}")?;
         // OpCreateStack wrapping an addressable expression
         // (e.g. v[i] as & param).  Emit a temporary + &mut so the
         // callee can write through the DbRef into the store.
@@ -339,7 +361,10 @@ impl Output<'_> {
             // forwarding a & parameter to another & parameter.
             let caller_vars = self.data.def(self.def_nr).variables();
             let name = sanitize(caller_vars.name(*nr));
-            if caller_vars.is_argument(*nr) {
+            if raw_param {
+                // A scalar link and a scalar `&` parameter both hold the `*mut T` the callee takes.
+                write!(w, "var_{name}")?;
+            } else if caller_vars.is_argument(*nr) {
                 // An argument RefVar is already &mut DbRef — pass it
                 // directly instead of dereferencing with *var_name.
                 write!(w, "var_{name}")?;

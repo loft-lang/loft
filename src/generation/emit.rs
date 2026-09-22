@@ -341,7 +341,11 @@ impl Output<'_> {
                 } else if self.text_borrowed(var) {
                     // A borrowed text reads as the `&str` it holds.
                     return write!(w, "var_{var_name}");
-                } else if variables.is_argument(var) {
+                } else if variables.is_argument(var)
+                    && !crate::generation::is_raw_scalar_ref(variables.tp(var))
+                {
+                    // A scalar `&` parameter is a raw pointer, read below exactly as a local
+                    // link is (`is_raw_scalar_ref`, loft#1605).
                     if let Type::RefVar(inner) = variables.tp(var) {
                         // By-ref argument: holds &mut T — dereference to read.
                         if matches!(**inner, Type::Text(_)) {
@@ -381,8 +385,11 @@ impl Output<'_> {
                     // to read the linked source's current value.  loft#1371 — a local
                     // `&text` link holds `*mut String` and reads as a borrow of it, the
                     // same shape the `&text` PARAMETER reads through.
-                    // loft#1372 — the read side asks the SLOT too.
-                    if matches!(inner.base(), Type::Boolean) {
+                    // loft#1372 — the read side asks the SLOT too.  A `&boolean?` link reads
+                    // the storage BYTE (0/1/255), as a `boolean?` local does, so `c == null`
+                    // can see the 255: the two-state read would answer `false` for a null.
+                    // Only a non-null `&boolean` reads as a `bool` (loft#655).
+                    if matches!(**inner, Type::Boolean) {
                         return write!(w, "unsafe {{ *var_{var_name} == 1 }}");
                     }
                     if matches!(inner.base(), Type::Text(_)) {
@@ -1511,14 +1518,19 @@ impl Output<'_> {
             // null sentinel is a VALUE, not a separate codegen type) — peel so every
             // infer_type-based decision (text/bool branch unification, typed-null, predicate
             // coercion, …) sees through nullability. Gate-OFF inert (Optional never built).
-            ValueType::Var => Some(
-                self.data
-                    .def(self.def_nr)
-                    .variables
-                    .tp(node.var_nr())
-                    .base()
-                    .clone(),
-            ),
+            // A scalar link — a local one or a `&` parameter, both a raw pointer
+            // (`is_raw_scalar_ref`) — is read as the value behind it (`@FR-B-Ref-Read`), so its
+            // read has the linked type: a `&boolean?` test needs the same truthiness coercion
+            // a `boolean?` local gets.
+            ValueType::Var => {
+                let tp = self.data.def(self.def_nr).variables.tp(node.var_nr());
+                Some(match tp {
+                    Type::RefVar(inner) if crate::generation::is_raw_scalar_ref(tp) => {
+                        inner.base().clone()
+                    }
+                    _ => tp.base().clone(),
+                })
+            }
             ValueType::Call => {
                 let ret = self.data.def(node.call_to()).returned();
                 (*ret != Type::Void).then(|| ret.base().clone())
