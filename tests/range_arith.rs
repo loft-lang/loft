@@ -57,6 +57,19 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     ("n_b3", [1, 0, 0, 0, 0, 0, 0, 0, 0, 1]),
     // b4 stops at 9, `9 * 1e18` is exactly 9e18 and fits, so the multiply is ADMITTED.
     ("n_b4", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
+    // The TYPE clause (loft#1593's other half): declared `u8` / `limit` parameters and the
+    // compiler-typed join are ranged; a plain-integer index, an `i32`, a nullable, a boxed
+    // capture and a spare-code alias are not.
+    ("n_c1_join", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
+    ("n_c2_head", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
+    ("n_c3_read", [1, 0, 1, 0, 1, 0, 0, 0, 0, 0]),
+    ("n_c4", [2, 0, 3, 0, 0, 0, 0, 0, 0, 0]),
+    ("n_c5_i32", [0, 0, 0, 0, 1, 1, 0, 0, 0, 0]),
+    ("n_c5_opt", [0, 0, 0, 0, 1, 0, 0, 0, 0, 0]),
+    ("n_c5", [0, 0, 0, 0, 2, 0, 0, 0, 0, 0]),
+    ("n_c6", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
+    ("n_c7", [0, 0, 0, 0, 2, 2, 0, 0, 0, 2]),
+    ("n_c8", [0, 0, 0, 1, 2, 1, 0, 0, 0, 1]),
     // b5: an end that is a `size`, ranged at seed time — `k + 1` is plain beside the
     // counter's step (two), while `acc + …` self-steps and stays checked.
     ("n_b5", [2, 0, 0, 0, 1, 0, 0, 0, 0, 0]),

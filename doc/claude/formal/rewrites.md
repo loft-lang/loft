@@ -1114,9 +1114,51 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  emits the processor's operator (`wrapping_*`, bare `/` `%`): no
                  operation can fault, so the plain answer IS the checked template's.
                  A range implies non-sentinel: the sentinel is never inside one, and
-                 a parameter or a record/element read is never ranged (C80).  The
-                 fallback is the checked template, always right.
+                 a parameter or a record/element read is never ranged BY SHAPE
+                 (C80).  THE TYPE CLAUSE: a value whose STATIC TYPE is a fact carries
+                 that type's range as a leaf — a non-nullable `Integer[lo, hi]` whose
+                 range fills its width (`u8`, `i8`, `u16`, `i16`, every user-written
+                 `limit(lo, hi)`), whether it is a parameter, a local the compiler
+                 typed so, or a block the compiler typed so (the join `v[i] ?? 0`
+                 over a `vector<u8>` is `integer(0, 255)`).  It is a fact because,
+                 since loft#1593, every store, call and literal into such a slot is
+                 refused unless provably in range, a `?? d` fallback lands in
+                 range, and the one run-time arrival — the slot's own arithmetic
+                 stepping past the range — answers the type's default, in range.
+                 Three specs are NOT facts and stay unranged: the two full-integer
+                 templates (the plain `integer` reports a range it does not hold),
+                 and a spec that keeps a code back for null which an overflow WRITES
+                 — a signed narrow alias whose range leaves a spare bottom code
+                 (`limit(-100, 100) size(1)`; `i32` is the same shape and is the
+                 template) — because the slot then holds the sentinel and a plain
+                 add over it answers a number for null.  A nullable `τ?` and a `&`
+                 link are not facts either.  The fallback is the checked template,
+                 always right.
 ```
+
+**The type clause, in words.** 2026-09-22, the C67/C120 discussion with the `cbor` library as
+the consumer (`bench/portal/analysis/vector-build.md` § The cbor library).  The proof ranged by
+SHAPE and never by TYPE, so the cbor decoder's `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`
+was emitted checked although the compiler itself typed both joins `integer(0, 255)`, and a
+library that declared `major: integer limit(0, 7)` — C120's own stated route, *"a library opts
+in by declaring the bounded element types it already knows"* — got nothing for it.  Probed on
+four shapes: every op checked.  The clause could not be built until the declaration WAS a fact
+(loft#1593: a user `limit` accepted an out-of-range store and read a wrong in-range number —
+a proof trusting it would have run plain on a value the type says cannot exist), so that fix
+came first, and this clause reads `Parser::is_narrowing_int`'s complement: what the narrowing
+rules make true, the range proof may assume.  One helper (`range::type_range`) at the two
+homes a fact is read from — `range_vars` seeds every variable of such a type before its
+fixpoint, and `range()`'s block leaf reads `Block::result` before the tail.  Measured: r1/r4
+(declared `limit` and `u8` parameters) fully plain, the join's `* 256` and `+` plain with the
+index `p + 1` over a plain integer rightly checked, cbor's `read_value` +8 plain ops, values
+unchanged.  Switch `LOFT_NO_RANGE_ARITH` (one rule); falsifier `LOFT_HOIST_VERIFY=1`.
+Sabotage, measured: the spare-code exclusion removed, c8's `after = x + 5` on an overflowed
+`limit(-100, 100) size(1)` answers `-9223372036854775803` for null and the verifier panics —
+the first cell written for it (an `i32`) could not fail, because `i32` is the signed-32
+template and excluded a clause earlier.  A boxed capture is read through its box and stays
+checked (c7, measured, a refinement not a defect); a bare-variable `??` over a nullable
+parameter lowers to an `if` whose then arm is the parameter and stays checked (c5).  Cells
+`tests/scripts/157-range-arith.loft` c1–c8, pins `tests/range_arith.rs`.
 
 **In words.** 2026-09-20.  C120 declined the CLOSURE of the non-sentinel proof over
 arithmetic — an overflow's null must propagate on both backends — and named the admissible

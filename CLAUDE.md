@@ -1036,6 +1036,12 @@ the counter's seed INSIDE the loop and the parser emits it as the statement befo
 counted loop was ever ranged.  Nothing showed it, because the pin that should have
 (`range_arith` a4) was recording a plain form the CHAIN GUARD supplied — a pin can borrow
 another rewrite's evidence and read as proof of its own clause.
+Since 2026-09-22 the proof also reads the STATIC TYPE (`range::type_range`): a non-nullable
+`u8`/`i8`/`u16`/`i16` or user `limit(lo, hi)` parameter, local or compiler-typed join (the
+cbor decoder's `(bytes[p] ?? 0) * 256`) carries its type's range — a fact since loft#1593 made
+every store into such a slot refuse an unprovable value; `i32`/`u32` (the templates) and a
+signed alias with a spare bottom code (`limit(-100, 100) size(1)`, whose overflow writes the
+sentinel) stay unranged, and a boxed capture is read through its box and stays checked.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
 only) makes a counted loop's index chains keep their checked operators — with it off, chains
 of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals

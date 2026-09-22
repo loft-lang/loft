@@ -284,6 +284,19 @@ mode; the cbor decoder is the consumer cell.  Not priced: the library has no ben
 (three census rows waiting), and a per-node decoder does its arithmetic outside any hot loop,
 so the row this moves is the library's own, not a suite lane's.
 
+**BUILT 2026-09-22, both halves, after loft#1593 (fixed the same day, `2ac19e9c6`):**
+`(R-Range)`'s type clause, `range::type_range` at the proof's two homes.  The cbor decoder's
+reassembly is plain with no change to the library (+8 plain ops in `read_value`); its encoder's
+`major * 32 + k` becomes plain the day the library writes `major: integer limit(0, 7)` — one
+line, theirs (reported here, not edited there), and cell c2 shows it fires.  What building it
+found: the clause could not be sound before #1593; the `i32` cell written to falsify the
+spare-code exclusion could not fail (the template clause excludes it first), and the spec the
+exclusion actually decides is a signed library alias with a spare bottom code, which does hold
+the sentinel after an overflow and reads garbage plain; a boxed capture is read through its
+box, not its variable, so the type is not consulted there (a refinement, measured).  Cells c1–c8
+in `157-range-arith.loft`.  Not measured on a row: cbor has no bench (three census rows
+waiting), and a per-node decoder's arithmetic is outside any hot loop.
+
 ## Priced negative, or not a clear case
 
 - **`sum` (6.45×) — WAS priced negative; RE-PRICED 2026-09-22 at −69 %, see below.**  The

@@ -20,6 +20,28 @@
 // is plain, their product (2^64) is not; a9 the mask of a NULL read stays null: the mask
 // rule requires a non-sentinel operand, and the fallback is the checked template.
 //
+// Predictions for the TYPE clause (loft#1593's other half, 2026-09-22): c1 declared `u8`
+// parameters and c2 declared `limit(lo, hi)` parameters are ranged by their type — every op
+// plain; c3 the cbor decoder's join `bytes[p] ?? 0`, typed integer(0, 255) by the compiler,
+// ranges its `* 256` and `+` while the index `p + 1` over a plain integer stays checked; c4 a
+// narrow local stepped past its range by `+=` takes the in-range default, so the plain product
+// after it is right; c5 the specs that are NOT facts stay checked — an `i32` (the signed-32
+// template, whose overflow writes the sentinel: `big` and every read after it null), a
+// nullable `u8?` (its bare `??` lowers to an `if` over the nullable parameter), a plain
+// `integer`; c6 a `u8` written through the checked cast's fallback; c7 a captured narrow
+// local — the value is right and the arithmetic stays CHECKED, measured: a box is read
+// through a record field no type ranges; c8 the one spec the third exclusion decides.
+//
+// @falsified-at (type clause): hand-measured (sabotage, 2026-09-22) — the exclusion of a
+// spec that reserves a sentinel removed (`reserves_sentinel_unconditionally` no longer
+// consulted): c8's `after = x + 5` answers `-9223372036854775803` on --native for null —
+// the plain add over the sentinel the overflow wrote, C120's own example — and
+// LOFT_HOIST_VERIFY=1 panics at the operator (src/ops.rs range_verify).  `y * 3` stays null
+// under the sabotage by coincidence (MIN * 3 wraps onto the sentinel), which is why `after`
+// is the line that decides.  The first cell written for this (an `i32`) could not fail: i32
+// is excluded a clause earlier as the signed-32 template, so the sabotage never reached it.
+// Restored byte-identically; interpret / native / LOFT_NO_RANGE_ARITH / LOFT_HOIST_VERIFY green.
+//
 // @falsified-at: hand-measured (sabotage, 2026-09-20) — the mask rule's non-sentinel
 // requirement removed turns a9 red on --native (`null` → `-9223372036854775807`: the mask
 // template still answers the sentinel for a null, and the plain `+ 1` the wrong proof admits
@@ -288,6 +310,23 @@ fn c7() {
   assert(a == 200 && a * 5 + 3 == 1003 && g == 0 && g * 5 + 3 == 3, "c7");
 }
 
+// c8 — the one spec the third exclusion decides: a SIGNED narrow alias whose range leaves a
+// spare bottom code (`limit(-100, 100) size(1)`: 201 values in 256 codes).  An overflow
+// writes that code — the sentinel — into the non-null slot (C85), so the slot reads null and
+// every read after it must propagate null.  `i32` is the same shape but is the signed-32
+// template, excluded a clause earlier; `i8`/`i16` fill their width and have no spare code.
+type Spare8 = integer limit(-100, 100) size(1);
+type Spare16 = integer limit(-1000, 1000) size(2);
+fn c8() {
+  x: Spare8 = 100;
+  x += 50;
+  after = x + 5;
+  y: Spare16 = -1000;
+  y -= 1;
+  println("c8 {x} {after} {y} {y * 3}");
+  assert(x == null && after == null && y == null && y * 3 == null, "c8");
+}
+
 fn main() {
   a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9();
   b1(); b2(); b3(); b4();
@@ -295,6 +334,6 @@ fn main() {
   println("b5 {r5}");
   assert(r5 == 15, "b5");
   b6();
-  c1(); c2(); c3(); c4(); c5(); c6_run(); c7();
+  c1(); c2(); c3(); c4(); c5(); c6_run(); c7(); c8();
   println("range arith ok");
 }
