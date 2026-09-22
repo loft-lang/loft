@@ -1,0 +1,13 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md B1.  No generic anywhere: two overloads that differ only in a vector's
+// ELEMENT type.  Measured 9f5cf6a96: `Cannot redefine 'first'` — the overload key
+// spells every `vector<τ>` as `vector`, so the two definitions have ONE key.
+// Expected after B1: `ints|texts`.
+fn first(v: vector<integer>) -> text { return "ints"; }
+fn first(v: vector<text>) -> text { return "texts"; }
+fn main() {
+  a: vector<integer> = [1, 2];
+  b: vector<text> = ["p"];
+  print("{first(a)}|{first(b)}");
+}

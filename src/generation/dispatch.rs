@@ -45,6 +45,128 @@ impl Output<'_> {
                 "let mut var_{name}: {tp_str} = {{ if var_{buf}.store_nr == u16::MAX || var_{buf}.rec == 0 {{ var_{buf} = OpDatabase(cell, var_{buf}, {db_tp}_i32); }} else {{ stores.clear_vector_release(&var_{buf}); }} var_{buf} }}"
             );
         }
+        // `@FR-R-LazySplit` — the bind of a lazy split's vector is the iterator's: the
+        // source text is evaluated here, once, exactly where the call stood.  A parameter
+        // nothing writes is borrowed; any other source is iterated as a copy, so no write
+        // in the loop body can reach what is being walked.  `__ls_done_N` is what the
+        // loop's length test reads once the element read has run out of pieces.
+        if !self.in_coroutine_body
+            && let Some(ls) = self.lazy_splits.get(&var).cloned()
+            && let Value::Call(_, cargs) = to.unspan()
+            && let Some(src) = cargs.first()
+        {
+            let sep = ls.separator;
+            if self.lazy_split_borrows(src) {
+                write!(
+                    w,
+                    "let mut __ls_{var} = loft::codegen_runtime::lazy_split(&*("
+                )?;
+                self.output_code_inner(w, src)?;
+                write!(w, "), {sep:?})")?;
+            } else {
+                write!(w, "let __ls_src_{var}: String = (")?;
+                self.output_code_inner(w, src)?;
+                write!(
+                    w,
+                    ").to_string(); let mut __ls_{var} = loft::codegen_runtime::lazy_split(&__ls_src_{var}, {sep:?})"
+                )?;
+            }
+            return write!(w, "; let mut __ls_done_{var} = false /* @FR-R-LazySplit */");
+        }
+        // `@FR-R-SplitTable` — the bind of a table's local records the pieces of its source
+        // as slices, once, exactly where the call stood: a parameter nothing writes is
+        // borrowed for the block; any other source is copied here, so no later write can
+        // reach what the slices point into.  The walk's alias binds nothing: its readers
+        // answer from the table.
+        if !self.in_coroutine_body
+            && let Some(st) = self.split_tables.get(&var).cloned()
+            && let Value::Call(_, cargs) = to.unspan()
+            && let Some(src) = cargs.first()
+        {
+            let sep = st.separator;
+            if self.lazy_split_borrows(src) {
+                write!(
+                    w,
+                    "let __st_{var}: Vec<&str> = loft::codegen_runtime::lazy_split(&*("
+                )?;
+                self.output_code_inner(w, src)?;
+                write!(w, "), {sep:?}).collect()")?;
+            } else {
+                write!(w, "let __st_src_{var}: String = (")?;
+                self.output_code_inner(w, src)?;
+                write!(
+                    w,
+                    ").to_string(); let __st_{var}: Vec<&str> = loft::codegen_runtime::lazy_split(&__st_src_{var}, {sep:?}).collect()"
+                )?;
+            }
+            return write!(w, " /* @FR-R-SplitTable */");
+        }
+        if !self.in_coroutine_body
+            && self.split_table_aliases.contains_key(&var)
+            && matches!(to.unspan(), Value::Var(t) if self.split_tables.contains_key(t))
+        {
+            return write!(w, "() /* @FR-R-SplitTable walk of the table */");
+        }
+        // `@FR-R-TextBorrow`'s discharge clause — the `?` / `??` temp of a table's element
+        // read binds the slice the read answers and reads bare (`text_borrowed`); its
+        // block's value is then that slice, not a copy of it.
+        if !self.in_coroutine_body
+            && !self.declared.contains(&var)
+            && self.borrowed_text_locals.contains_key(&var)
+            && matches!(to.unspan(), Value::Call(..))
+        {
+            let name = sanitize(self.data.def(self.def_nr).variables().name(var));
+            self.declared.insert(var);
+            write!(w, "let var_{name}: &str = ")?;
+            return self.output_code_inner(w, to);
+        }
+        // `@FR-R-CharWalk` — the step of `for c in T` takes an ASCII byte other than NUL in
+        // one move: `c` is the byte, `#index` the byte's offset, `#next` one past it — what
+        // the step as written answers for such a byte (the character read, width 1, a
+        // checked add that cannot fault, a guard that cannot fire, no fault note).  Every
+        // other byte and an index at or past the end take the step as written, in the
+        // `else` arm.  The checking form runs the written step in the fast arm too and
+        // compares the three values it leaves.
+        if let Some(walk) = self.char_walk_binds.get(&var).cloned()
+            && let Value::Block(b) = to
+            && b.name == "for text next"
+        {
+            let variables = self.data.def(self.def_nr).variables();
+            let name = sanitize(variables.name(var));
+            let index = sanitize(variables.name(walk.index));
+            let next = sanitize(variables.name(walk.next));
+            if self.declared.contains(&var) {
+                write!(w, "var_{name} = ")?;
+            } else {
+                self.declared.insert(var);
+                write!(w, "let mut var_{name}: i32 = ")?;
+            }
+            // The written step is emitted ONCE (its `let`s are declaration state) and
+            // written into both arms under the checking form.
+            let written = {
+                let mut buf: Vec<u8> = Vec::new();
+                self.output_code_inner(&mut buf, to)?;
+                String::from_utf8_lossy(&buf).into_owned()
+            };
+            write!(w, "{{ let __tb = (")?;
+            self.output_code_inner(w, &Value::Var(walk.src))?;
+            write!(
+                w,
+                ").as_bytes(); let __ti = var_{next} as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F {{ "
+            )?;
+            if self.hoist_verify {
+                write!(
+                    w,
+                    "let __cw_fast = (var_{next}, var_{next} + 1, i32::from(__tb[__ti])); let __cw_c: i32 = {written}; vector::char_walk_verify(__cw_fast, (var_{index}, var_{next}, __cw_c)); __cw_c "
+                )?;
+            } else {
+                write!(
+                    w,
+                    "var_{index} = var_{next}; var_{next} = var_{next} + 1; i32::from(__tb[__ti]) "
+                )?;
+            }
+            return write!(w, "}} else {written} }} /*@FR-R-CharWalk*/");
+        }
         if crate::keys::join_own_enabled() && self.witness_vars.contains(&var) {
             return self.output_set_witnessed(w, var, to);
         }
@@ -306,7 +428,7 @@ impl Output<'_> {
     /// `let __ed = <place>; stores…addr_mut::<T>(…) as *mut T`.  A local link and a `&` parameter
     /// both link to a place this way; the caller supplies the enclosing `unsafe` block and what it
     /// makes of the pointer.
-    fn output_place_pointer(
+    pub(super) fn output_place_pointer(
         &mut self,
         w: &mut dyn Write,
         place: &Value,
@@ -353,18 +475,33 @@ impl Output<'_> {
             // @PLN25: a `text?` var stores as `String` like plain `text` — peel so the literal→String
             // `.to_string()` conversion fires for an Optional(Text) local.
             let needs_to_string = matches!(variables.tp(var).base(), Type::Text(_));
+            // @PLN17 — a boolean's storage form is `u8`, on the struct field as in a local, and
+            // the right-hand side may be a compound `bool` expression (`!b` → `(..) != 1`), so
+            // the ` as u8` wraps the WHOLE of it, as the local path below does.
+            let wrap_bool = matches!(variables.tp(var).base(), Type::Boolean);
+            // A fn-ref field holds the `(definition, closure)` pair, so a bare definition
+            // number — a non-capturing lambda, or an arm of an `if` — emits as that pair, the
+            // channel the local path below uses (loft#1587).
+            let prev_fn_ref_ctx = self.fn_ref_context;
+            if matches!(variables.tp(var).base(), Type::Function(..)) {
+                self.fn_ref_context = true;
+            }
             write!(w, "self.var_{name} = ")?;
-            if needs_to_string {
+            if needs_to_string || wrap_bool {
                 write!(w, "(")?;
             }
             self.output_code_inner(w, to)?;
+            self.fn_ref_context = prev_fn_ref_ctx;
             if needs_to_string {
                 write!(w, ").to_string()")?;
+            } else if wrap_bool {
+                write!(w, ") as u8")?;
             }
             return Ok(());
         }
         if variables.is_argument(var)
             && let Type::RefVar(inner) = variables.tp(var)
+            && !crate::generation::is_raw_scalar_ref(variables.tp(var))
         {
             if to != &Value::Null {
                 let name = sanitize(variables.name(var));
@@ -515,7 +652,9 @@ impl Output<'_> {
         // the slot's own sentinel.  Asked bare, `Optional` matched no arm, the bind emitted
         // no right-hand side at all (`let mut var_q: … =  as …;`) and rustc reported it —
         // which is why @FR-B-Ref-Intro's `&τ` for every τ had to be declined here too.
-        if !variables.is_argument(var)
+        // A scalar `&` PARAMETER is the same raw pointer (`is_raw_scalar_ref`, loft#1605), so it
+        // takes this branch too, as a variable that is already declared.
+        if (!variables.is_argument(var) || crate::generation::is_raw_scalar_ref(variables.tp(var)))
             && let Type::RefVar(inner) = variables.tp(var)
             && matches!(
                 inner.base(),
@@ -540,6 +679,10 @@ impl Output<'_> {
             )
         {
             let name = sanitize(variables.name(var));
+            // A parameter is bound by the signature, so every bind below is a re-point.
+            if variables.is_argument(var) {
+                self.declared.insert(var);
+            }
             // A RAW pointer (`*mut T`), not `&mut T`: the source local stays usable
             // and assignable while the link is alive (loft allows the aliasing that
             // Rust's borrow checker forbids), matching the interpreter and loft's
@@ -596,9 +739,12 @@ impl Output<'_> {
                 && let Value::Var(src) = src_arg.unspan()
             {
                 // `c = &b`, `b` itself a link: `c` takes the pointer `b` holds.  A local link
-                // already is a `*mut T`; a `&` parameter is a `&mut T`, re-borrowed raw.
+                // and a scalar `&` parameter already are a `*mut T`; any other `&` parameter
+                // is a `&mut T`, re-borrowed raw.
                 let src_name = sanitize(variables.name(*src));
-                let ptr = if variables.is_argument(*src) {
+                let ptr = if variables.is_argument(*src)
+                    && !crate::generation::is_raw_scalar_ref(variables.tp(*src))
+                {
                     format!("(&mut *var_{src_name}) as *mut {base}")
                 } else {
                     format!("var_{src_name}")
@@ -1368,6 +1514,15 @@ impl Output<'_> {
             // @PLN25: peel `Optional(Text)` — a `text?` block-assigned local is `String`-typed.
             if matches!(var_tp.base(), Type::Text(_)) {
                 self.declared.insert(var);
+                // `@FR-R-TextBorrow` — a walk's loop variable admitted to borrow its
+                // element binds the `&str` the element read answers, and every read of it
+                // reads bare (`text_borrowed`).  The block is the parser's iterator: the
+                // index step and the element read, nothing that could own the text.
+                if self.text_borrowed(var) {
+                    write!(w, "let var_{name}: &str = ")?;
+                    self.output_code_inner(w, to)?;
+                    return Ok(());
+                }
                 write!(w, "let mut var_{name} = ")?;
                 self.output_code_inner(w, to)?;
                 if needs_to_string {
@@ -1672,14 +1827,11 @@ impl Output<'_> {
                 // Detect this case and emit `.clone()` on the owned String directly.
                 // Unspan the RHS so the detection fires for Span-wrapped Var
                 // (the common case for assignment RHS — same shape as P228).
-                let text_local_clone = needs_to_string
-                    && matches!(to.unspan(), Value::Var(v) if {
-                        let vars = self.data.def(self.def_nr).variables();
-                        // @PLN25 slice (c): `.base()` — a `text?` local source is a `String`
-                        // just like plain `text`, so it must emit `var.clone()` here. Without
-                        // the peel it fell through to `&var.to_string()` (E0308: `&String`).
-                        !vars.is_argument(*v) && matches!(vars.tp(*v).base(), Type::Text(_))
-                    });
+                // @PLN25 slice (c): `text_owned` peels — a `text?` local source is a
+                // `String` just like plain `text`, so it must emit `var.clone()` here.
+                // Without the peel it fell through to `&var.to_string()` (E0308: `&String`).
+                let text_local_clone =
+                    needs_to_string && matches!(to.unspan(), Value::Var(v) if self.text_owned(*v));
                 // @P283 — source is a `RefVar(Text)` argument (`&mut String`).
                 // `output_code_inner` for `Value::Var` in this case emits
                 // `&*var_X` (emit.rs:141); appending `.to_string()` then parses
@@ -1911,6 +2063,24 @@ impl Output<'_> {
         // the destination's `__vdb` does not exist yet at this declaration.  The
         // `null_named` slot the ordinary path mints would be orphaned by the placement.
         if self.move_pairs.contains_key(&var) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
+        // `@FR-R-LazySplit` — the buffer of a `split` whose loop takes its pieces from the
+        // text is handed to no call: it stays the null sentinel, and its frees release
+        // nothing.
+        if self.lazy_splits.values().any(|ls| ls.dead_buf == Some(var)) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
+        // `@FR-R-SplitTable` — the same for a table's buffer; and the table's own local
+        // and its walk's alias, which are never a vector, bind nothing here either.
+        if self
+            .split_tables
+            .values()
+            .any(|st| st.dead_buf == Some(var))
+            || self.split_table_var(var).is_some()
+        {
             write!(w, "DbRef::NULL")?;
             return Ok(());
         }

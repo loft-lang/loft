@@ -271,6 +271,21 @@ fn empty_return() {
         .error("Expect expression after return at empty_return:1:53");
 }
 
+/// A binary operator that cannot begin an expression, after an operand that answers
+/// nothing, is that operand's: named once at the operator, with the right-hand side read so
+/// nothing cascades (it reported "Expect token )" and three errors after it).
+#[test]
+fn an_operator_after_a_void_call_names_it() {
+    code!("fn f(n: integer) { assert(n > 0, \"n\"); }\nfn test() { assert(f(1) == 5, \"x\"); }")
+        .error("`==` needs a value on its left, and the expression before it answers nothing at an_operator_after_a_void_call_names_it:2:25");
+}
+
+#[test]
+fn a_coalesce_after_a_void_call_names_it() {
+    code!("fn f(n: integer) { assert(n > 0, \"n\"); }\nfn test() { x = f(1) ?? 3; assert(x == 3, \"x\"); }")
+        .error("`??` needs a value on its left, and the expression before it answers nothing at a_coalesce_after_a_void_call_names_it:2:22");
+}
+
 #[test]
 fn wrong_void() {
     code!("fn rout(a: integer) {if a > 4 {return 12}}\nfn test() {}")
@@ -3048,14 +3063,14 @@ fn scalar_rep_nonliteral_tail() {
 #[test]
 fn field_capture_nonscalar_deferred() {
     code!("enum Box { B { items: vector<integer> } }\nfn f(v: vector<Box>) -> integer { match v { [ ( B { items } )* ] => 1, _ => -1 } }")
-        .error("per-iteration capture of the non-scalar field `items` is not yet supported (only scalar/text fields project into a vector) at field_capture_nonscalar_deferred:2:63");
+        .error("per-iteration capture of the non-scalar field `items` is not yet supported (only scalar/text fields project into a vector) at field_capture_nonscalar_deferred:2:60");
 }
 
 // @PLN35 slice 2 — a `{ field }` naming something that is not a field of the run variant.
 #[test]
 fn field_capture_unknown_field() {
     code!("enum Tok { Num { n: integer } }\nfn f(v: vector<Tok>) -> integer { match v { [ ( Num { nope } )* ] => 1, _ => -1 } }")
-        .error("`nope` is not a field of Num at field_capture_unknown_field:2:64");
+        .error("`nope` is not a field of Num at field_capture_unknown_field:2:61");
 }
 
 // @PLN35 slice 3 — a fixed (non-`..rest`) tail after a repetition and a `..rest` are still
@@ -3852,6 +3867,245 @@ fn b_ref_reshape_callee_local_removal_still_compiles() {
     .result(Value::Int(154));
 }
 
+/// loft#1554 — the CALL-SITE half of `(B-Ref-Reshape)` reads the callee's DISTURBANCE
+/// (@PLN164 C3's fact), not only a removal through a bare `&vector` parameter.  The rule names
+/// four events and exempts no parameter spelling: *"A plain PARAMETER is NOT exempt"*.  Each
+/// cell below compiled and read or wrote the element that moved, on both backends, with nothing
+/// said.  (1) a PLAIN vector container.
+#[test]
+fn b_ref_reshape_call_site_removal_through_a_plain_vector_is_error() {
+    code!(
+        "struct Box { n: integer } \
+         fn shift(target: Box, all: vector<Box>) { all.remove(0); target.n = 99; } \
+         fn test() { v = [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }]; \
+           shift(v[2], v); print(\"{v[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_removal_through_a_plain_vector_is_error:1:1",
+    );
+}
+
+/// loft#1554 (2) — the container is a FIELD of a struct parameter.
+#[test]
+fn b_ref_reshape_call_site_removal_from_a_field_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn shift(target: Box, bag: Bag) { bag.items.remove(0); target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }] }; \
+           shift(b.items[2], b); print(\"{b.items[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `shift` — `shift` removes from `bag`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_removal_from_a_field_is_error:1:1",
+    );
+}
+
+/// loft#1554 (3) — a GROWTH, one of `(B-Disturb)`'s four events: a container that outgrows its
+/// allocation moves every element, so the reference names freed space.
+#[test]
+fn b_ref_reshape_call_site_growth_of_a_field_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn stash(target: Box, bag: Bag) { bag.items += [Box { n: 44 }]; target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }] }; \
+           stash(b.items[0], b); print(\"{b.items[0].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `stash` — `stash` grows `bag`, and a \
+         container that outgrows its allocation moves every element while `target` still \
+         references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the growth at b_ref_reshape_call_site_growth_of_a_field_is_error:1:1",
+    );
+}
+
+/// loft#1554 (4) — the growth TWO frames down, through a plain vector parameter.
+#[test]
+fn b_ref_reshape_call_site_growth_two_frames_down_is_error() {
+    code!(
+        "struct Box { n: integer } \
+         fn more(all: vector<Box>) { all += [Box { n: 44 }]; } \
+         fn stash(target: Box, all: vector<Box>) { more(all); target.n = 99; } \
+         fn test() { v = [Box { n: 11 }, Box { n: 22 }]; \
+           stash(v[1], v); print(\"{v[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `stash` — `stash` grows `all`, and a \
+         container that outgrows its allocation moves every element while `target` still \
+         references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the growth at b_ref_reshape_call_site_growth_two_frames_down_is_error:1:1",
+    );
+}
+
+/// loft#1554 (5) — the CALL CONTEXT: inside a format string the element argument stays a
+/// NULLABLE read (`OpGetVectorNullable`), the second spelling of the projection.  Refused as a
+/// statement and as a binding before, this one printed the moved element's stale bytes.
+#[test]
+fn b_ref_reshape_call_site_inside_a_format_string_is_error() {
+    code!(
+        "struct Box { n: integer } \
+         fn shift(target: Box, all: &vector<Box>) -> integer { all.remove(0); target.n } \
+         fn test() { v = [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }]; \
+           print(\"{shift(v[2], v)}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_inside_a_format_string_is_error:1:1",
+    );
+}
+
+/// loft#1554 (6) — a `?`-DISCHARGED element argument is the same projection: its present arm
+/// hands the callee the element.
+#[test]
+fn b_ref_reshape_call_site_discharged_element_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn shift(target: Box, bag: Bag) { bag.items.remove(0); target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }] }; \
+           shift(b.items[2]?, b); print(\"{b.items[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `shift` — `shift` removes from `bag`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_discharged_element_is_error:1:1",
+    );
+}
+
+/// loft#1554 (7) — the element BOUND EARLIER to a plain local: the local's deps name only the
+/// variable, so its own binding says which field it views.
+#[test]
+fn b_ref_reshape_call_site_element_bound_earlier_from_a_field_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn shift(target: Box, bag: Bag) { bag.items.remove(0); target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }] }; \
+           t = b.items[2]; shift(t, b); print(\"{b.items[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `shift` — `shift` removes from `bag`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_element_bound_earlier_from_a_field_is_error:1:1",
+    );
+}
+
+/// loft#1554 (8) — the FIELD itself handed in as the container, beside an element of it.
+#[test]
+fn b_ref_reshape_call_site_field_passed_as_the_container_is_error() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn shift(target: Box, all: vector<Box>) { all.remove(0); target.n = 99; } \
+         fn test() { b = Bag { items: [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }] }; \
+           shift(b.items[2], b.items); print(\"{b.items[1].n}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `b` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_field_passed_as_the_container_is_error:1:1",
+    );
+}
+
+/// loft#1554 (9) — a reference INTO an element (a struct field of it) is a place inside the
+/// container as much as the element is.
+#[test]
+fn b_ref_reshape_call_site_reference_into_an_element_is_error() {
+    code!(
+        "struct In { k: integer } struct Out { inner: In, n: integer } \
+         fn shift(target: In, all: vector<Out>) { all.remove(0); target.k = 99; } \
+         fn test() { v = [Out { inner: In { k: 1 }, n: 11 }, Out { inner: In { k: 2 }, n: 22 }]; \
+           shift(v[1].inner, v); print(\"{v[0].inner.k}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_reference_into_an_element_is_error:1:1",
+    );
+}
+
+/// loft#1554 (10) — a STRUCT-ENUM element aliases its record exactly as a struct does.
+#[test]
+fn b_ref_reshape_call_site_struct_enum_element_is_error() {
+    code!(
+        "enum Shape { Dot { r: integer }, Bar { w: integer, h: integer } } \
+         fn shift(target: Shape, all: vector<Shape>) -> integer { all.remove(0); \
+           match target { Dot { r } => r, Bar { w, h } => w + h } } \
+         fn test() { v = [Dot { r: 1 }, Bar { w: 2, h: 3 }, Dot { r: 7 }]; \
+           print(\"{shift(v[2], v)}\\n\"); }"
+    )
+    .error(
+        "cannot pass both `v` and a reference into it to `shift` — `shift` removes from `all`, \
+         which renumbers the remaining elements while `target` still references one, so a write \
+         through `target` would be lost. Pass the INDEX instead and read the element again \
+         after the removal at b_ref_reshape_call_site_struct_enum_element_is_error:1:1",
+    );
+}
+
+/// loft#1554 — what the wider refusal must NOT take.  A callee growing a SIBLING field moves
+/// nothing the element argument names: the call compiles and writes through.
+#[test]
+fn b_ref_reshape_call_site_growth_of_a_sibling_field_compiles() {
+    code!(
+        "struct Box { n: integer } struct Bag { items: vector<Box>, spare: vector<Box> } \
+         fn stash(target: Box, bag: Bag) { bag.spare += [Box { n: 44 }]; target.n = 99; } \
+         fn check() -> integer { b = Bag { items: [Box { n: 11 }, Box { n: 22 }] }; \
+           stash(b.items[1], b); b.items[1].n + len(b.spare) }"
+    )
+    .expr("check()")
+    .result(Value::Int(100));
+}
+
+/// loft#1554 — …nor a callee that disturbs a DIFFERENT container parameter than the one the
+/// element lives in…
+#[test]
+fn b_ref_reshape_call_site_another_parameter_disturbed_compiles() {
+    code!(
+        "struct Box { n: integer } \
+         fn stash(target: Box, a: vector<Box>, b: vector<Box>) { b += [Box { n: 5 }]; \
+           target.n = 90 + len(a); } \
+         fn check() -> integer { v = [Box { n: 11 }, Box { n: 22 }]; w = [Box { n: 1 }]; \
+           stash(v[0], v, w); v[0].n + len(w) }"
+    )
+    .expr("check()")
+    .result(Value::Int(94));
+}
+
+/// loft#1554 — …nor a SCALAR read out of an element, which copies and names no place…
+#[test]
+fn b_ref_reshape_call_site_scalar_of_an_element_compiles() {
+    code!(
+        "struct Box { n: integer } \
+         fn shift(n: integer, all: vector<Box>) -> integer { all.remove(0); n } \
+         fn check() -> integer { v = [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }]; \
+           shift(v[2].n, v) + len(v) }"
+    )
+    .expr("check()")
+    .result(Value::Int(35));
+}
+
+/// loft#1554 — …nor an element of ANOTHER container, whatever the callee does to this one.
+#[test]
+fn b_ref_reshape_call_site_element_of_another_container_compiles() {
+    code!(
+        "struct Box { n: integer } \
+         fn shift(target: Box, all: vector<Box>) { all.remove(0); target.n = 99; } \
+         fn check() -> integer { v = [Box { n: 11 }, Box { n: 22 }, Box { n: 33 }]; \
+           w = [Box { n: 1 }]; shift(w[0], v); w[0].n + v[0].n + len(v) }"
+    )
+    .expr("check()")
+    .result(Value::Int(123));
+}
+
 /// The POSITIVE cell the refusal must not swallow: a link that is DEAD before the removal is
 /// no conflict.  Liveness is the condition, not existence — the rustc rule.
 ///
@@ -4350,18 +4604,23 @@ fn a_generic_refuses_field_access() {
     );
 }
 
-/// The type variable has to be reachable from the FIRST argument, because that is what the
-/// call site infers it from.
+/// `D-Every-Var` (@PLN165 C1): every type variable has to be named by SOME parameter, because
+/// the call infers it from its arguments.  The first parameter is not special — the binding
+/// reads every one — so a variable in a later parameter compiles.
 #[test]
-fn a_type_variable_must_reach_the_first_parameter() {
-    code!("fn probe<T>(tag: text, x: T) -> T { x }\nfn test() { }")
-        .error(
-            "Type variable T must appear in the first parameter — move T to the first parameter \
-         position at a_type_variable_must_reach_the_first_parameter:1:32",
-        )
-        .warning(
-            "Parameter tag is never read at a_type_variable_must_reach_the_first_parameter:1:36",
-        );
+fn a_type_variable_must_reach_a_parameter() {
+    code!("fn probe<T>(n: integer) -> integer { n }\nfn test() { }").error(
+        "type variable T of `probe` appears in no parameter — a call infers a type variable from \
+         its arguments, so each must name one (`fn probe<T>(x: T, …)`) at \
+         a_type_variable_must_reach_a_parameter:1:27",
+    );
+}
+
+#[test]
+fn a_type_variable_in_a_later_parameter_binds() {
+    code!(
+        "fn probe<T: Printable>(tag: text, x: T) -> text { \"{tag}{x}\" }\nfn test() { assert(probe(\"t\", 4) == \"t4\", \"\"); }"
+    );
 }
 
 /// A user type that has not defined the bound's operator is refused at the CALL, which is
@@ -4588,4 +4847,143 @@ fn b_ref_reshape_a_computed_removal_key_is_still_refused() {
          `c`, or bind without `&` to work on a copy at \
          b_ref_reshape_a_computed_removal_key_is_still_refused:1:1",
     );
+}
+
+// ── A name read as a value is checked wherever the value is parsed ─────────────────────
+//
+// A struct field's value and a vector literal's element are parsed straight through
+// `parse_operators`, which never met `expression()`'s check that a name READ resolves.  A
+// bare unknown name there was reported as "Cannot assign unknown(0)" (a scalar field),
+// "`main_vector<unknown>` never resolved" (an element) or NOTHING at all (a collection
+// field, whose in-place append then reached codegen with the unresolved variable: an
+// internal compiler error).  Each is now the one "Unknown variable", and the value is
+// poisoned (@P376) so nothing after it reports the same name again.
+
+#[test]
+fn an_unknown_name_as_a_collection_field_value_is_reported() {
+    code!("struct V { f: vector<integer> }\nfn test() { w = V { f: undefined_x }; assert(len(w.f) == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at an_unknown_name_as_a_collection_field_value_is_reported:2:24");
+}
+
+#[test]
+fn an_unknown_name_as_a_scalar_field_value_is_reported_once() {
+    code!("struct Q { k: integer }\nfn test() { q = Q { k: undefined_x }; assert(q.k == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at an_unknown_name_as_a_scalar_field_value_is_reported_once:2:24");
+}
+
+#[test]
+fn an_unknown_name_as_a_vector_element_is_reported_once() {
+    code!("fn test() { v = [1, undefined_x]; w = [[1], [undefined_y]]; assert(len(v) + len(w) == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at an_unknown_name_as_a_vector_element_is_reported_once:1:21")
+        .error("Unknown variable 'undefined_y' at an_unknown_name_as_a_vector_element_is_reported_once:1:46");
+}
+
+#[test]
+fn an_unknown_name_assigned_to_a_vector_field_is_reported_once() {
+    code!("struct V { f: vector<integer> }\nfn test() { w = V { f: [] }; w.f = undefined_x; w.f += undefined_y; assert(len(w.f) == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at an_unknown_name_assigned_to_a_vector_field_is_reported_once:2:36")
+        .error("Unknown variable 'undefined_y' at an_unknown_name_assigned_to_a_vector_field_is_reported_once:2:56");
+}
+
+#[test]
+fn a_call_on_a_binding_that_failed_reports_nothing_more() {
+    code!("fn test() { x: vector<integer> = undefined_x; assert(len(x) == 0, \"\"); }")
+        .error("Unknown variable 'undefined_x' at a_call_on_a_binding_that_failed_reports_nothing_more:1:34");
+}
+
+// ── @PLN165 D4: a literal of a generic struct infers its instance ──────────────────────
+
+#[test]
+fn a_literal_with_nothing_to_bind_is_refused_naming_the_variable() {
+    code!("struct Box<T> { v: T }\nstruct Stack<T> { items: vector<T> }\nfn test() { b = Box {}; s = Stack { items: [] }; c = Box { v: null }; assert(len(s.items) == 0 && b.v == c.v, \"\"); }")
+        .error("`Box { … }` cannot tell what T is — no field value names it; give the binding its type, `x: Box<integer> = Box { … }` at a_literal_with_nothing_to_bind_is_refused_naming_the_variable:3:17")
+        .error("`Stack { … }` cannot tell what T is — no field value names it; give the binding its type, `x: Stack<integer> = Stack { … }` at a_literal_with_nothing_to_bind_is_refused_naming_the_variable:3:29")
+        .error("`Box { … }` cannot tell what T is — no field value names it; give the binding its type, `x: Box<integer> = Box { … }` at a_literal_with_nothing_to_bind_is_refused_naming_the_variable:3:54");
+}
+
+#[test]
+fn a_literal_binding_one_variable_to_two_types_is_refused() {
+    code!("struct Pair<T> { a: T, b: T }\nfn test() { p = Pair { a: 1, b: \"x\" }; assert(p.a == 1, \"\"); }")
+        .error("`Pair { … }` binds T to integer through `a` and to text through `b` — a type variable is one type in a literal; give `b` a value of the same type, or give the two fields a variable each at a_literal_binding_one_variable_to_two_types_is_refused:2:17");
+}
+
+/// The literal's values are read once to learn their types and then parsed again: what a
+/// value reports is said once, and a value that errored adds no refusal of its own.
+#[test]
+fn a_literal_value_reports_once() {
+    code!("struct Box<T> { v: T }\nfn test() { b = Box { v: 1 / 0 }; c = Box { v: undefined_name }; assert(b.v == null && c.v == 0, \"\"); }")
+        .warning("Division by constant zero — result is always null at a_literal_value_reports_once:2:33")
+        .error("Unknown variable 'undefined_name' at a_literal_value_reports_once:2:48");
+}
+
+/// A `|…|` lambda takes its parameter types from where it stands, which the literal has not
+/// decided yet: alone it binds nothing, and the refusal names it and both cures.
+#[test]
+fn a_short_lambda_alone_cannot_bind_a_generic_literal() {
+    code!("struct Th<T> { f: fn() -> T }\nfn test() { a = Th { f: || { 42 } }; assert(a.f() == 42, \"\"); }")
+        .error("`Th { … }` cannot tell what T is — the `|…|` lambda in `f` takes its types from the field; spell it `fn(…) -> <type> { … }`, or give the binding its type, `x: Th<integer> = Th { … }` at a_short_lambda_alone_cannot_bind_a_generic_literal:2:17");
+}
+
+/// @PLN165 E1 — `reverse` is a stdlib METHOD on `vector`: a program's own `reverse` for its own
+/// types is a member of the set, and one for `vector` itself is the one body per receiver type
+/// that is refused — as for any stdlib method (`clear`).
+#[test]
+fn a_programs_own_reverse_for_a_vector_is_refused() {
+    code!("fn reverse<T>(v: vector<T>) -> integer { len(v) }\nfn test() { a = [1, 2]; assert(reverse(a) == 2, \"\"); }")
+        .error("Cannot redefine 'reverse' (already defined at default/01_code.loft) — a name has one body per receiver type, and `x.reverse(…)` and `reverse(x, …)` would reach different functions; declare it once as a `self` method, which takes both spellings, or rename one at a_programs_own_reverse_for_a_vector_is_refused:1:31");
+}
+
+/// @PLN165 E3 — `insert`'s element is a store into the vector's element slot and converts as
+/// every other element write does: a `text` into a `vector<integer>` is refused (it panicked
+/// the interpreter), and an unproven narrowing is refused (`300` into a `vector<u8>` stored 0).
+#[test]
+fn insert_refuses_an_element_of_another_type() {
+    code!("fn test() { v = [1, 2]; insert(v, 0, \"x\"); assert(len(v) == 3, \"\"); }")
+        .error("insert cannot store text in a vector<integer>; cast it explicitly with 'as integer' at insert_refuses_an_element_of_another_type:1:43");
+}
+
+#[test]
+fn insert_refuses_an_implicit_narrowing() {
+    code!("fn test() { v: vector<u8> = [1, 2]; n = 300; insert(v, 1, n); assert(len(v) == 3, \"\"); }")
+        .error("cannot implicitly narrow integer to u8 (may lose data) — give it a fallback with `?? <value>`, take the checked cast `as u8?` (value or null), or make the value provably fit (a mask, or an `if` range check) at insert_refuses_an_implicit_narrowing:1:62");
+}
+
+/// @PLN165 E4 — `sort<T: Ordered>` takes what its bound says, so an element without a `<` is
+/// refused naming the bound (the special form said "sort is not supported for vector<Q>"), and a
+/// generic's unbounded `T` is refused at the call as any bounded generic's is.
+#[test]
+fn sort_refuses_an_element_that_is_not_ordered() {
+    code!("struct Q { x: integer }\nfn test() { q = [Q { x: 2 }, Q { x: 1 }]; q.sort(); assert(len(q) == 2, \"\"); }")
+        .error("'Q' does not satisfy interface 'Ordered': missing OpLt at sort_refuses_an_element_that_is_not_ordered:2:51");
+}
+
+#[test]
+fn sort_in_a_generic_needs_the_bound() {
+    code!("fn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")
+        .error("'T' does not satisfy interface 'Ordered': missing OpLt at sort_in_a_generic_needs_the_bound:1:33");
+}
+
+/// @PLN165 arc E — `#builtin` sends a call to the compiler's special form of the name; it marks
+/// a standard-library declaration, and a program's function is its own body.
+#[test]
+fn a_program_cannot_mark_its_own_function_builtin() {
+    code!("fn twice(v: vector<integer>) -> integer { len(v) * 2 }\n#builtin\nfn test() { assert(twice([1]) == 2, \"\"); }")
+        .error("#builtin marks a standard-library declaration the compiler lowers itself; a program's function is its own body at a_program_cannot_mark_its_own_function_builtin:2:9");
+}
+
+/// @PLN165 D11 — a variable bound only by a callback's return: a `|…|` lambda that answers
+/// only `null` names no type, so the call is refused naming the variable (it bound `U` to
+/// `null` and minted a `Grid<null>` with no layout).
+#[test]
+fn a_callback_answering_only_null_binds_no_variable() {
+    code!("struct Grid<T> { w: integer, cells: vector<T> }\nfn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> { out: vector<U> = []; for c in g.cells { out += [f(c)]; } Grid { w: g.w, cells: out } }\nfn test() { g = Grid { w: 1, cells: [3] }; r = map_grid(g, |x| { null }); assert(len(r.cells) == 1, \"\"); }")
+        .error("`map_grid` cannot tell what U is — no argument's type names it (a `null`, or a lambda that answers only `null`, names none) at a_callback_answering_only_null_binds_no_variable:3:74");
+}
+
+/// What a value reports points where its hand-written twin's does: the literal's second read
+/// replays the first read's cursor, not the place the first read stopped (after `};`).
+#[test]
+fn a_generic_literal_reports_where_its_twin_does() {
+    code!("struct Box<T> { v: T, w: integer }\nfn test() {\n  b = Box { v: 1,\n            w: \"x\" };\n  assert(b.v == 1, \"\");\n}")
+        .error("Cannot assign text to field Box<integer>.w of type integer at a_generic_literal_reports_where_its_twin_does:4:21");
 }

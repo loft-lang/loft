@@ -1,0 +1,12 @@
+// A lambda written inside a template, no capture, instance at integer.
+// @EXPECT: [1,2,3]
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn same<T>(v: vector<T>) -> vector<T> { my_map(v, |x| { x }) }
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  println("{same(a)}");
+}

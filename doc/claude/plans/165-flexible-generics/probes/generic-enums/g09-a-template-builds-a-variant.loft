@@ -1,0 +1,17 @@
+// D8 — a generic function builds a variant of the generic enum it returns: a payload variant
+// and a unit one, chosen in the template.
+// @EXPECT: 4|y|hole|2.5
+enum Slot<T> { Full { v: T }, Hole }
+fn wrap<T>(x: T) -> Slot<T> { Full { v: x } }
+fn pick<T>(x: T, full: boolean) -> Slot<T> { if full { Full { v: x } } else { Hole } }
+fn main() {
+  a = wrap(4);
+  b = wrap("y");
+  c = pick(1.5, false);
+  d = pick(2.5, true);
+  sa = match a { Full { v } => "{v}", Hole => "hole" };
+  sb = match b { Full { v } => v, Hole => "hole" };
+  sc = match c { Full { v } => "{v}", Hole => "hole" };
+  sd = match d { Full { v } => "{v}", Hole => "hole" };
+  println("{sa}|{sb}|{sc}|{sd}");
+}

@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// DESIGN.md § Decisions, D-Infer.  A type argument in EXPRESSION position.
+// Measured 9f5cf6a96: `comparison operators do not chain` — it is read as `first < integer > (a)`.
+// Expected: still refused, in words that name the cure (annotate the binding).
+fn first<T>(v: vector<T>) -> T { return v[0]; }
+fn main() {
+  a: vector<integer> = [1, 2];
+  print("{first<integer>(a)}");
+}

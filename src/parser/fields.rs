@@ -169,6 +169,13 @@ impl Parser {
             t = inner.as_ref().clone();
         }
         let enr = self.data.type_elm(&t);
+        // Pass 1 may hold a receiver typed by a forward reference it cannot resolve yet — a
+        // generic struct declared below reads `Unknown` until pass 2 names its instance
+        // (@PLN165 D7) — which is the unknown receiver the early return above stays quiet on,
+        // behind a `?`.
+        if enr == u32::MAX && self.first_pass && self.data.names_unresolved(&t) {
+            return Type::Unknown(0);
+        }
         if enr == u32::MAX {
             let shown = t.show(&self.data, &self.vars);
             if let Some(s) = self.suggest_type_name(&shown) {
@@ -220,11 +227,23 @@ impl Parser {
         // `fn(integer, integer) -> integer` whose type-change diagnostic three lines away
         // spells it in full (loft#1500, loft#1498's class).  Use it to LOOK THINGS UP; render
         // `t` for anything a person reads.
-        let dnr = self.data.type_def_nr(&t);
+        let mut dnr = self.data.type_def_nr(&t);
         if matches!(t, Type::Vector(_, _)) && self.vector_operations(code, &field, e_tp, &t) {
             return Type::Boolean;
         }
-        let fnr = self.data.attr(dnr, &field);
+        let mut fnr = self.data.attr(dnr, &field);
+        // A method of a generic struct is a member of its TEMPLATE (@PLN165 D6); an instance
+        // minted before the method was declared has no copy of the member.
+        if fnr == usize::MAX && dnr != u32::MAX {
+            let family = self.data.method_family(dnr);
+            let member = self.data.attr(family, &field);
+            if family != dnr
+                && member != usize::MAX
+                && matches!(self.data.attr_type(family, member).base(), Type::Routine(_))
+            {
+                (dnr, fnr) = (family, member);
+            }
+        }
         // @PLN86 P6.4 (F4) — record a sandboxed READ of a host field that carries a
         // `#read` capability link, so admission can gate it.  Reads are default-allow,
         // so only a `#read`-linked field is ever recorded.  Second pass only (the base
@@ -390,8 +409,9 @@ impl Parser {
             if let Type::Reference(child_d, _) = &t {
                 let parent_d = self.data.def(*child_d).parent();
                 if parent_d != u32::MAX && matches!(self.data.def_type(parent_d), DefType::Enum) {
-                    let parent_name = self.data.def(parent_d).name().to_string();
-                    let stub_name = crate::data::Data::mangle_method(&parent_name, &field);
+                    // Keyed as every method is (`method_key`): a generic enum's instance keys
+                    // on its template (@PLN165 D6/D8).
+                    let stub_name = self.data.method_key(parent_d, &field, 0);
                     let md_nr = self.data.def_nr(&stub_name);
                     // Only fire when `t_<Parent>_<field>` is the
                     // user's direct declaration on the enum, NOT the
@@ -1204,6 +1224,29 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 p.cl("OpRemoveVector", &[coll.clone(), Value::Int(e_tp), idx])
             }) {
                 *code = v_block(ops, Type::Boolean, "group_elem_remove");
+            } else if !self.first_pass
+                && self.data.type_holds_generator(&elem_tp)
+                && let at = self.create_unique("rm_at", &I32)
+                // The element read `v[i]` makes: a linked record through its pointer, an
+                // inline one — a handle included — at its stride.  The index is bound once:
+                // the element's release and its removal both read it.
+                && let elem = if self.database.is_linked(e_tp as u16) {
+                    self.cl("OpVectorRef", &[code.clone(), Value::Var(at)])
+                } else {
+                    let size = i32::from(self.database.size(e_tp as u16));
+                    self.cl("OpGetVector", &[code.clone(), Value::Int(size), Value::Var(at)])
+                }
+                && let Some(release) = self.element_frame_release(&elem_tp, &elem)
+            {
+                let remove = self.cl(
+                    "OpRemoveVector",
+                    &[code.clone(), Value::Int(e_tp), Value::Var(at)],
+                );
+                *code = v_block(
+                    vec![v_set(at, cd), release, remove],
+                    Type::Boolean,
+                    "frame_remove",
+                );
             } else {
                 *code = self.cl("OpRemoveVector", &[code.clone(), Value::Int(e_tp), cd]);
             }
@@ -1211,6 +1254,230 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         } else {
             false
         }
+    }
+
+    /// @FR-G-Hold — the release of the generator frames the element `elem` holds, run before it is removed —
+    /// or `None` where it holds none this can reach.  loft#1585: removing an element releases
+    /// what it owned (`@FR-Col-RemoveDense`, `Stores::remove_vector_at`), and a generator's
+    /// frame is owned data, but the store walk cannot reach one — a frame lives in the
+    /// coroutine table, not in a store.  So the handles are read out here: the element's own
+    /// (`elem` is its SLOT), a record's handle fields, and those of its inline records, its
+    /// vectors' elements and its keyed collections' records (`Self::keyed_frame_release`).
+    /// Only the handles: an `OpDrop` hook beside them stays the author's (`(H-Drop-Not)`).
+    /// Everything runs under a presence test of the element, so an index past the end
+    /// releases nothing.
+    pub(crate) fn element_frame_release(&mut self, elem_tp: &Type, elem: &Value) -> Option<Value> {
+        if !self.data.type_holds_generator(elem_tp) {
+            return None;
+        }
+        let mut ops = Vec::new();
+        match elem_tp.base() {
+            Type::Iterator(_, _) => {
+                let handle = self.cl("OpGetDbRef", &[elem.clone(), Value::Int(0)]);
+                ops.push(self.cl("OpFreeRef", &[handle]));
+            }
+            Type::Reference(d, _) => {
+                if !self.record_frame_release(*d, elem, 0, &mut ops) {
+                    return None;
+                }
+            }
+            // A vector element (loft#1597): the slot holds the vector, read as `v[i]` reads it.
+            Type::Vector(content, _) => {
+                let content = (**content).clone();
+                let db_vec = self
+                    .data
+                    .vector_element_type(elem_tp.base(), &mut self.database)?;
+                if !self.vector_frame_release(elem, &content, db_vec, &mut ops) {
+                    return None;
+                }
+            }
+            _ => return None,
+        }
+        let present = self.cl("OpConvBoolFromRef", std::slice::from_ref(elem));
+        Some(v_if(present, Value::Insert(ops), Value::Null))
+    }
+
+    /// The walk of the vector `vec` (of database type `db_vec`, elements `elm`) that releases
+    /// every generator frame its elements hold — `false` where an element cannot be walked.
+    fn vector_frame_release(
+        &mut self,
+        vec: &Value,
+        elm: &Type,
+        db_vec: u16,
+        ops: &mut Vec<Value>,
+    ) -> bool {
+        let db_elm = self.database.content(db_vec);
+        if db_elm == u16::MAX || self.database.is_linked(db_elm) {
+            return false;
+        }
+        let size = i32::from(self.database.size(db_elm));
+        let i = self.create_unique("rel_i", &I32);
+        let item = self.cl(
+            "OpGetVector",
+            &[vec.clone(), Value::Int(size), Value::Var(i)],
+        );
+        let Some(release) = self.element_frame_release(elm, &item) else {
+            return false;
+        };
+        let len = self.cl("OpLengthVector", std::slice::from_ref(vec));
+        let done = self.cl("OpLeInt", &[len, Value::Var(i)]);
+        let step = self.cl("OpAddInt", &[Value::Var(i), Value::Int(1)]);
+        ops.push(v_set(i, Value::Int(0)));
+        ops.push(crate::data::v_loop(
+            vec![
+                v_if(done, Value::Break(0), Value::Null),
+                release,
+                v_set(i, step),
+            ],
+            "release frames",
+        ));
+        true
+    }
+
+    /// loft#1601, @FR-G-Hold — the walk of every record of the KEYED collection `coll` (of type
+    /// `coll_tp`) that releases the generator frames the records hold, and nothing else: a
+    /// keyed collection's records run no hook (`(H-Drop-Not)`).  A `hash`, `spatial` or
+    /// `trie` is walked through the unsorted snapshot of its record numbers a `for` over one
+    /// takes (`n_hash_unsorted`, `n_radix_sorted`), freed after the walk; a `sorted` and an
+    /// `index` through their own cursor.  `false` where a record cannot be walked.
+    pub(crate) fn keyed_frame_release(
+        &mut self,
+        coll: &Value,
+        coll_tp: &Type,
+        ops: &mut Vec<Value>,
+    ) -> bool {
+        let (content, snapshot) = match coll_tp.base() {
+            Type::Sorted(c, _, _) | Type::Index(c, _, _) => (*c, None),
+            Type::Hash(c, _, _) => (*c, Some("n_hash_unsorted")),
+            Type::Radix(c, _, _) | Type::Trie(c, _, _) => (*c, Some("n_radix_sorted")),
+            _ => return false,
+        };
+        let elem_tp = Type::Reference(content, crate::data::Deps::none());
+        let tp_id = self.get_type(coll_tp.base());
+        if tp_id == u16::MAX {
+            return false;
+        }
+        let mut walked = coll.clone();
+        let mut scratch = None;
+        if let Some(name) = snapshot {
+            let build = self.data.def_nr(name);
+            if build == u32::MAX {
+                return false;
+            }
+            // Named as a `for`'s snapshot is, which the scope pass releases with
+            // `OpFreeScratch` rather than as a record of the element type.
+            let s = self.create_unique("hash_scratch", &elem_tp);
+            ops.push(v_set(
+                s,
+                Value::Call(build, vec![coll.clone(), Value::Int(i32::from(tp_id))]),
+            ));
+            walked = Value::Var(s);
+            scratch = Some(s);
+        }
+        let e = self.create_unique("rel_rec", &elem_tp);
+        self.vars.set_skip_free(e);
+        let Some(release) = self.element_frame_release(&elem_tp, &Value::Var(e)) else {
+            return false;
+        };
+        let state = self.create_unique("rel_state", &crate::data::I64);
+        let mut start = Vec::new();
+        self.fill_iter(&mut start, &mut walked.clone(), coll_tp.base(), true, true);
+        start.push(Value::Int(0));
+        start.push(Value::Int(0));
+        let mut step = vec![Value::Var(state)];
+        self.fill_iter(&mut step, &mut walked.clone(), coll_tp.base(), false, true);
+        let live = self.cl("OpConvBoolFromRef", &[Value::Var(e)]);
+        ops.push(v_set(state, self.cl("OpIterate", &start)));
+        ops.push(crate::data::v_loop(
+            vec![
+                v_set(e, self.cl("OpStep", &step)),
+                v_if(
+                    live,
+                    release,
+                    v_block(vec![Value::Break(0)], Type::Void, "break"),
+                ),
+            ],
+            "release frames",
+        ));
+        if let Some(s) = scratch {
+            ops.push(self.cl("OpFreeScratch", &[Value::Var(s)]));
+            ops.push(v_set(s, Value::Null));
+        }
+        true
+    }
+
+    /// The releases of the generator handles a `d_nr` record at `rec` (offset `base`) holds —
+    /// `false` where one sits somewhere this does not walk.
+    fn record_frame_release(
+        &mut self,
+        d_nr: u32,
+        rec: &Value,
+        base: u16,
+        ops: &mut Vec<Value>,
+    ) -> bool {
+        let kt = self.data.def(d_nr).known_type();
+        let attrs: Vec<(String, Type)> = self
+            .data
+            .def(d_nr)
+            .attributes
+            .iter()
+            .filter(|a| self.data.type_holds_generator(&a.typedef))
+            .map(|a| (a.name.clone(), a.typedef.clone()))
+            .collect();
+        for (name, tp) in attrs {
+            let pos = self.database.position(kt, &name);
+            let content = match &self.database.types[kt as usize].parts {
+                Parts::Struct(fs) => fs.iter().find(|f| f.name == name).map(|f| f.content),
+                _ => None,
+            };
+            let (Some(content), true) = (content, pos != u16::MAX) else {
+                return false;
+            };
+            let at = base + pos;
+            match tp.base() {
+                Type::Iterator(_, _) => {
+                    let handle = self.cl("OpGetDbRef", &[rec.clone(), Value::Int(i32::from(at))]);
+                    ops.push(self.cl("OpFreeRef", &[handle]));
+                }
+                Type::Reference(sub, _) if self.database.is_struct(content) => {
+                    if !self.record_frame_release(*sub, rec, at, ops) {
+                        return false;
+                    }
+                }
+                Type::Vector(elm, _) => {
+                    let field = self.cl(
+                        "OpGetField",
+                        &[
+                            rec.clone(),
+                            Value::Int(i32::from(at)),
+                            Value::Int(i32::from(content)),
+                        ],
+                    );
+                    if !self.vector_frame_release(&field, &elm.clone(), content, ops) {
+                        return false;
+                    }
+                }
+                // A keyed collection field (loft#1601): walked here, as its type's frames walk
+                // walks it — that function is made after the parse, which a removal written
+                // in the program precedes.
+                keyed if self.data.keyed_holds_generator(keyed) => {
+                    let field = self.cl(
+                        "OpGetField",
+                        &[
+                            rec.clone(),
+                            Value::Int(i32::from(at)),
+                            Value::Int(i32::from(content)),
+                        ],
+                    );
+                    let keyed = keyed.clone();
+                    if !self.keyed_frame_release(&field, &keyed, ops) {
+                        return false;
+                    }
+                }
+                _ => return false,
+            }
+        }
+        true
     }
 
     pub(crate) fn parse_index(&mut self, code: &mut Value, tp: &Type) -> Type {
@@ -1948,6 +2215,15 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         // change (`known` / is_base / is_linked / deref type are untouched).
         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
             elm_size_raw.max(4)
+        } else if let Type::Reference(tv, _) | Type::Enum(tv, _, _) = elm_type.base()
+            && ((elm_size_raw == 0 && self.data.is_type_var_placeholder(*tv))
+                || self.data.is_open_instance(*tv))
+        {
+            // A type variable's element has no width until an instance binds it: the read
+            // names the variable instead (`Parser::type_var_stride`, @PLN165 C2) — and an
+            // open instance's element (`vector<Box<T>>`, D5) names the open instance, which
+            // the monomorph pairs with its concrete instance.
+            Self::type_var_stride(*tv)
         } else {
             elm_size_raw
         };
@@ -2068,6 +2344,9 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
                 );
             } else if let Type::Tuple(elems) = etp {
                 *code = self.unbox_tuple_from_dbref(code.clone(), elems);
+            } else if matches!(etp.base(), Type::Iterator(_, _)) {
+                // A generator handle element (loft#1585): the slot holds the handle.
+                *code = self.get_val(etp, false, 0, code.clone(), u32::MAX);
             } else if matches!(etp, Type::Function(..)) {
                 // P214: vector elements of `fn(...) -> ...` type are
                 // stored as 4-byte d_nr only (non-capturing — capturing

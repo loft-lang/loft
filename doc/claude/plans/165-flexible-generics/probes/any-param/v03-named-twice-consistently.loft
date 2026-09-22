@@ -1,0 +1,6 @@
+// C1 — c3's passing half: a variable named by two parameters, bound consistently.
+// @EXPECT: 12|ab
+fn same<T: Printable>(a: T, b: T) -> text { "{a}{b}" }
+fn main() {
+  println("{same(1, 2)}|{same("a", "b")}");
+}

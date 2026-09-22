@@ -24,6 +24,15 @@
 // the branch that makes the copy conditional is no longer in view.  That is why the fact is
 // CARRIED (`Scopes::arm_lift_temps`) rather than read back off the IR.
 //
+// Since 2026-09-21 a droppable's first bind no longer takes the lift: it is written out to
+// c_shared's statement form, so the binding OWNS what its arm moved and releases it at its own
+// death, as `(H-Move)` says (`formal/heap.md` D-heap-18 — kept with the source, a binding placed
+// again released twice).  Every count below is unchanged; the ORDER moved in ten cells,
+// because the binding is declared after the locals it took from and so dies first.  c_rebound
+// is the one worth reading: the old trace released 111 at `a`'s reassignment, before `t` read
+// it, where now the reassignment refills a spent name and 111 is released with `t`.  The lift
+// still carries a join whose source outlives the loop the bind runs in.
+//
 // ⚠ c_shared is the SECOND shape and it takes the opposite cure, which is why it is here.
 // Where the arms assign one SHARED local (`if c { x = a } else { x = b }`) the destination
 // genuinely owns what it took on the path that ran, so stopping IT would lose that release
@@ -45,14 +54,14 @@
 //   author's release, which only an assertion on the hook's own trace can see.
 // ARMED: no instrument.  The guard writes each hook call to its own trace file and asserts the
 //   string, so an ordinary run on either backend reports it.
-// WITNESS: on the control c_if drains `V11,11` where the fix drains `V11,12,11` — two
+// WITNESS: on the control c_if drains `V11,11` where the fix drains `V11,11,12` — two
 //   resources and one hook.  It is the first cell, so the run stops there; the rest were
 //   measured by scoring the file with the assertions replaced by prints rather than assumed.
 //   TWELVE of the 19 cells move.  The ones worth reading: c_three on the M path reads
-//   `V33,33` against `V33,32,31,33`, so the fresh arm loses BOTH locals and a fix that
+//   `V33,33` against `V33,33,32,31`, so the fresh arm loses BOTH locals and a fix that
 //   recovered one hand-off would still fail it; c_loop reads `V40,40,V41,41` against
-//   `V40,50,40,V41,51,41`, one lost release per ITERATION; and c_two_fields reads
-//   `V61,62,61` against `V61,72,71,62,61` — the not-taken arm's record loses both of its
+//   `V40,40,50,V41,41,51`, one lost release per ITERATION; and c_two_fields reads
+//   `V61,62,61` against `V61,62,61,72,71` — the not-taken arm's record loses both of its
 //   fields, which is what a whole-cascade cure would have hidden on a one-field record.
 // HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
 //   both backends.  SEVEN cells hold and each is here to hold: c_mixed on the path that takes
@@ -140,39 +149,39 @@ fn main() {
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 
   c_if(true); got = drain();
-  assert(got == "V11,12,11", "a value if releases both arms' sources (true): {got}");
+  assert(got == "V11,11,12", "a value if releases both arms' sources (true): {got}");
   c_if(false); got = drain();
   assert(got == "V12,12,11", "a value if releases both arms' sources (false): {got}");
 
   c_match(true); got = drain();
-  assert(got == "V21,22,21", "the match spelling releases both: {got}");
+  assert(got == "V21,21,22", "the match spelling releases both: {got}");
 
   c_three(L); got = drain();
-  assert(got == "V31,32,31", "three arms, the L path: {got}");
+  assert(got == "V31,31,32", "three arms, the L path: {got}");
   c_three(R); got = drain();
   assert(got == "V32,32,31", "three arms, the R path: {got}");
   c_three(M); got = drain();
-  assert(got == "V33,32,31,33", "three arms, the FRESH path releases both locals: {got}");
+  assert(got == "V33,33,32,31", "three arms, the FRESH path releases both locals: {got}");
 
   c_loop(true); got = drain();
-  assert(got == "V40,50,40,V41,51,41", "a loop releases both per ITERATION: {got}");
+  assert(got == "V40,40,50,V41,41,51", "a loop releases both per ITERATION: {got}");
 
   c_two_fields(true); got = drain();
-  assert(got == "V61,72,71,62,61", "two droppable fields, the not-taken arm keeps both: {got}");
+  assert(got == "V61,62,61,72,71", "two droppable fields, the not-taken arm keeps both: {got}");
 
   c_mixed(true); got = drain();
   assert(got == "V81,81", "a copying arm and a fresh arm (copying taken): {got}");
   c_mixed(false); got = drain();
-  assert(got == "V82,81,82", "a copying arm and a fresh arm (fresh taken): {got}");
+  assert(got == "V82,82,81", "a copying arm and a fresh arm (fresh taken): {got}");
 
   c_nested(true); got = drain();
-  assert(got == "V91,93,92,91", "a branch nested inside an arm: {got}");
+  assert(got == "V91,91,93,92", "a branch nested inside an arm: {got}");
 
   c_read_after(true); got = drain();
-  assert(got == "V101101102,102,101", "both locals read after the branch: {got}");
+  assert(got == "V101101102,101,102", "both locals read after the branch: {got}");
 
   c_rebound(true); got = drain();
-  assert(got == "111,V111113,112,113", "a source reassigned after the branch: {got}");
+  assert(got == "V111113,111,112,113", "a source reassigned after the branch: {got}");
 
   c_one_local(true); got = drain();
   assert(got == "V121,121", "CONTROL both arms name one local: {got}");

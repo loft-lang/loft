@@ -1,0 +1,8 @@
+// @CONTROL
+// @EXPECT: 99
+struct Grid<T> { cells: vector<T>, w: integer }
+fn at<T>(self: Grid<T>, i: integer) -> T? { self.cells[i] }
+fn main() {
+  g = Grid { cells: [1, 2, 3], w: 3 };
+  println("{g.at(1)}");
+}

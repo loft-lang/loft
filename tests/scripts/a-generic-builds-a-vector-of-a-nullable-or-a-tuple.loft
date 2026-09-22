@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A template that builds a `vector<T>` — a literal `[x]` or an append — at a `T` the
+// monomorph's element write did not know: `integer?` (@FR-N-Shape: `τ?` is `τ`'s shape with a
+// nullability bit, written as `τ`) and a tuple (written member by member, as the concrete
+// append writes one).  Both kept the template's record copy at the variable's row: a
+// SIGSEGV, a store panic or an internal error on both backends — on main as well — where the
+// hand-written twin over `vector<integer?>` / `vector<(integer, text)>` answers.
+//
+// @falsified-at: cd2605b78 — interpret exit 1 -> 0, native exit 101 -> 0
+// @falsified-by: tests/falsified/a-generic-builds-a-vector-of-a-nullable-or-a-tuple.patch — interpret exit 1 -> 0, native exit 101 -> 0
+//   CHANNEL: exit on both backends — the control crashes building the vector.
+//   ARMED: nothing.
+//   WITNESS: on the control the append at `integer?` panics in the store
+//     (`allocation.rs`, index out of bounds) and the literal at a tuple dies the same way.
+//   HOLDS: nothing else.
+
+fn maybe(x: integer) -> integer? { if x > 1 { x } else { null } }
+fn one<T>(x: T) -> vector<T> { [x] }
+fn app<T>(x: T, y: T) -> vector<T> { out: vector<T> = []; out += [x]; out += [y]; out }
+
+fn test_at_a_nullable() {
+  a = one(maybe(1));
+  b = app(maybe(1), maybe(2));
+  assert(a[0] == null && len(a) == 1, "one");
+  assert(b[0] == null && b[1] == 2 && len(b) == 2, "{b[1]} {len(b)}");
+}
+
+fn test_at_a_tuple() {
+  a = app((3, "q"), (4, "r"));
+  b = one((7, 8));
+  assert(a[0].0 == 3 && a[1].1 == "r" && len(a) == 2, "{a[1].1}");
+  assert(b[0].1 == 8 && len(b) == 1, "{b[0].1}");
+}

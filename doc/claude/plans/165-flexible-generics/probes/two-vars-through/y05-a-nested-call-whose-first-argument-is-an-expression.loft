@@ -1,0 +1,9 @@
+// C3 — the nested call's first argument is an EXPRESSION of the second variable's type,
+// not a plain variable.
+// @EXPECT: z/7
+fn inner<P: Printable, Q: Printable>(p: P, q: Q) -> text { "{p}/{q}" }
+fn outer<A: Printable, B: Printable>(a: A, bs: vector<B>) -> text { inner(bs[len(bs) - 1], a) }
+fn main() {
+  v: vector<text> = ["y", "z"];
+  println(outer(7, v));
+}

@@ -7,6 +7,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
+> **2026-09-21 — that verdict is about the 1 M-entry regime, and only that one.**  At
+> 5,000 entries — cache-resident, which is where the keyed routines of every surveyed
+> consumer run — a lookup is bound by PATH LENGTH (924 instructions against a Rust
+> `HashMap`'s 177), not by the two memory accesses this plan ends on.  That regime was
+> analysed and four levers built under @PLN158: `bench/portal/analysis/keyed.md`.
+> Nothing below is withdrawn; it measures a different question.
+
 **CLOSED (2026-08-10) — arcs A, B, C, Q2 and H all shipped, and nothing further is
 worth building.** H is in the tree and measured, and the measurement corrects this
 plan's central prediction: see

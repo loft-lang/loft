@@ -147,6 +147,19 @@ collection returned wild values (`510277628`) that a consumer then iterated. Now
 `store_load` returns `false` and names what differs. Rebuild the store with the new
 program, or read it with the version that wrote it.
 
+Every path that reads an EXISTING image through the program's types takes this gate
+(`@FR-L-Sound`): `store_load`, `store_load_untrusted`, `store_persist_bind` on an
+existing file, the whole-image URL loaders `store_load_url` / `store_load_url_trusted`
+(the sidecar is `<url>.dschema`, over the same transport, and a missing one is not
+checked), and the working-set loaders above. Each refusal names its own builtin. A
+refused bind leaves the file, its `.dschema` and the collection as they were. That
+matters because the bind WRITES the sidecar with the binding program's layout when it
+succeeds — so a bind that accepted a mismatched file would also relabel it, and every
+later load would then read the misread store as matching (loft#1562). The whole-image
+paths share one verdict, `Stores::layout_verdict_ok`, and a new whole-image loader asks
+it rather than growing its own; the working-set loaders refuse through `refuse_paged`,
+so the program can read their refusal back.
+
 #### What the file's SIZE and BYTES mean (loft#710)
 
 A persisted store used to be the arena's whole **capacity**, so its size said how
@@ -839,6 +852,28 @@ Zero-copy string reference into store memory. Lifetime is tied to the store; no 
 | `store(db_ref) -> &Store` | Resolve a `DbRef` to a `&Store` (shared borrow) |
 | `mut_store(db_ref) -> &mut Store` | Resolve a `DbRef` to a `&mut Store` |
 
+### The key resolved once: `FastKey` and `FastOrder`
+
+`key_compare` and `compare` decide a key's KIND per call — a `(Content, type_nr)` match, a
+bounds-checked store lookup, a validated read: 90–100 instructions for what is one load and
+one compare.  A search asks about the same key every step, so the keyed searches resolve it
+once and compare with a read:
+
+| Form | Asks | Used by |
+|---|---|---|
+| `fast_key(keys, key) -> Option<FastKey>` | equal or not (`matches`) | the `hash::find` probe loop (@PLN135 arc B) |
+| `fast_key_of(rec, stores, keys)` | the same, for a RECORD's own key | `hash::probe_for_insert` |
+| `fast_order(keys, key) -> Option<FastOrder>` | how it ORDERS (`compare`), direction applied once (@FR-Col-Order-Sign) | `tree::find`, `tree::find_exact`, `vector::sorted_find`, `vector::ordered_find` |
+| `fast_order_of(rec, stores, keys)` | the same, for a record's own key | `tree::add`, `sorted_finish`, `ordered_finish` |
+
+All four answer `None` for a compound or partial key and for a width they do not list
+(`u8`, `u16`, `single`, `float`), and the search then takes the general comparator
+unchanged.  Every search calls ONE of `keys::order_key` / `keys::order_record`, which is
+also where `LOFT_KEYED_VERIFY=1` checks the fast answer against the general one.  A text
+key cannot be held across `tree::put` (it rebalances the store the text lives in), so
+`FastOrder::detached` drops it there and a text-keyed `index` INSERT orders generally.
+`LOFT_NO_FAST_ORDER=1` makes the order forms answer `None` everywhere.
+
 ---
 
 ## Vector Operations (`src/vector.rs`)
@@ -981,8 +1016,9 @@ Maximum tree depth of 30 is sufficient for up to ~2^15 nodes in a balanced red-b
 
 | Function | Description |
 |---|---|
-| `find(store, root, keys, vals) -> (u32, bool)` | Search; returns (rec, found) |
-| `add(store, root, rec, keys) -> u32` | Insert `rec`; rebalances; returns new root |
+| `find(data, before, fields, stores, keys, key) -> u32` | The BOUNDARY below / above `key`: never stops at an equal key, so it serves a range's ends and a partial key |
+| `find_exact(data, fields, stores, keys, key) -> u32` | The point lookup for a FULL key: the descent stops at the equal node (a full key matches at most one record — an insert displaces its duplicate) |
+| `add(data, rec, fields, stores, keys) -> u32` | Insert `rec` and rebalance; answers 0, or the record that already carries `rec`'s key with the tree UNCHANGED — so the caller displaces it and adds again, and no insert looks its key up first |
 | `remove(store, root, rec, keys) -> u32` | Delete `rec`; rebalances; returns new root |
 | `first(store, root) -> u32` | Leftmost node (minimum key) |
 | `last(store, root) -> u32` | Rightmost node (maximum key) |
@@ -1017,6 +1053,41 @@ byte 32: BUCKET0    — slots, 4 bytes each (0 = empty)
 ```
 
 `elms = (room - RESERVED_WORDS) * 2`, with `RESERVED_WORDS = 4`.
+
+### An insert is one hash and one probe walk
+
+`Stores::insert_record` asks `hash::probe_for_insert` two things at once: is the record's
+key already here (@FR-Col-Insert — the latest insert displaces it), and if not, which
+bucket takes it.  Both answers lie on the walk from the key's home bucket to the first
+empty one, so the insert hashes once and files the entry with `hash::add_at`.  It used to
+look the duplicate up first (`dedup_keyed`: the key copied into a `Vec<Content>`, hashed,
+probed) and then run `hash::add`, which hashed the key again and walked again.  A found
+duplicate, a table not yet created and a record that is already filed all take that
+two-walk form still — it owns those answers — and `LOFT_NO_ONE_PROBE_INSERT=1` restores it
+for every insert.  Measured on 5,000 integer keys: a fill −37 %
+(`bench/portal/analysis/keyed.md`).
+
+### What a walk over the buckets holds, and what it does not
+
+* **`Entries`** — the loop-invariant half of decoding a bucket slot (the arena's directory,
+  its capacity, the stride), read once per walk by `find`, `probe_for_insert`,
+  `rehash_into` and `remove`.  Valid while nothing appends a chunk, which none of them does.
+* **`probe`** — the walk for a pre-resolved key, compiled once per key KIND
+  (`find_fast`, `find_long`): inside one arm the comparison is a read and a compare.
+  `FastKey::matches` / `order` are `#[inline(always)]` because as hints they were declined,
+  and an out-of-line comparator re-dispatched on the kind per bucket.
+* **`home_bucket`** — the ONE place a digest becomes a bucket number, `digest % count`.
+  It is a 64-bit division on every lookup's critical path, priced at 7–10 % of a
+  cache-resident lookup, and it stays: a multiply-shift reduction would move every entry
+  of every stored hash, and an exact reciprocal needs a per-table number the header has no
+  word for.  Both are a format break (`crate::placement::HASH`).
+* **A removal** recognises its entry by DECODING the slots on its chain (`Entries::names`)
+  and answers the bucket value that named it, which `free_slot` releases — so it never
+  maps a record back to an arena index (`arena::index_of`, a directory scan it used to
+  make twice).  Its back-shift computes round-the-table distances with a compare and an
+  add where it had three `%` per entry walked, and `Stores::remove` reads a `Copy` kind off
+  the type row instead of cloning the row and the key descriptors (three allocations per
+  removal, a quarter of its instructions).
 
 ### Entries live in a chunked arena, not one record each (@PLN135 arc H)
 
@@ -1345,13 +1416,20 @@ written without meaning a group; there is no diagnostic for it yet (loft#926).
 
 ### Probing and Load Factor
 
-Collision resolution is **linear probing**: on collision, advance slot index by 1 (wrapping). The load factor threshold is:
+Collision resolution is **linear probing**: on collision, advance slot index by 1 (wrapping). The load factor threshold is (`hash::is_full`):
 
 ```rust
-(length * 2 / 3) + RESERVED_WORDS >= room
+length + RESERVED_WORDS >= room
 ```
 
-which is `length >= 0.75 * elms`. When it is met after an insertion, the table is rehashed
+which is `length >= elms / 2` — a table is rebuilt at HALF full.  It was three quarters
+(`length * 2 / 3` in the same test) until 2026-09-21.  A probe here is a dependent read of
+the entry, with no fingerprint to reject on, and a miss walks to the first empty bucket:
+8.5 buckets at 0.75 against 2.5 at 0.5 — a table just under the old threshold measured
+2.30 key compares a hit and 5.36 a miss.  The price is the bucket array, 4 bytes a slot:
+~10.7 bytes an entry averaged over a doubling instead of ~7.1.  It is a WRITER's policy:
+no reader assumes a load, so stores written under either rule read under both, and
+`LOFT_NO_HALF_LOAD=1` restores the old one.  When it is met after an insertion, the table is rehashed
 into a new record with doubled capacity, and the arena's four fields travel with it —
 leaving them behind would strand every chunk and hand out index 1 again on top of a live
 entry. `reserve(h, n)` sizes the table so this never fires while filling to `n`; it claims

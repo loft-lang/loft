@@ -1,0 +1,22 @@
+// A0 — the variable under two collection formers: `vector<vector<T>>`.
+// @EXPECT: 6=6|3=3
+fn total_len<T>(vv: vector<vector<T>>) -> integer {
+  n = 0;
+  for v in vv { n += len(v) };
+  n
+}
+fn total_len_i(vv: vector<vector<integer>>) -> integer {
+  n = 0;
+  for v in vv { n += len(v) };
+  n
+}
+fn total_len_t(vv: vector<vector<text>>) -> integer {
+  n = 0;
+  for v in vv { n += len(v) };
+  n
+}
+fn main() {
+  a: vector<vector<integer>> = [[1, 2], [3], [4, 5, 6]];
+  b: vector<vector<text>> = [["p"], ["q", "r"]];
+  println("{total_len(a)}={total_len_i(a)}|{total_len(b)}={total_len_t(b)}");
+}

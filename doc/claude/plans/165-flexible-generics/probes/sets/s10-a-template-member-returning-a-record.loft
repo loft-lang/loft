@@ -1,0 +1,11 @@
+// B3 — a template member whose result is a RECORD (a return buffer, ownership): the
+// instance returns what its concrete twin would, and nothing leaks.
+// @EXPECT: 3 4|0 0
+struct Pt { x: integer, y: integer }
+fn keep<T>(v: T) -> T { v }
+fn keep(v: integer) -> Pt { Pt { x: 0, y: 0 } }
+fn main() {
+  p = keep(Pt { x: 3, y: 4 });
+  q = keep(7);
+  println("{p.x} {p.y}|{q.x} {q.y}");
+}

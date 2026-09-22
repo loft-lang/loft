@@ -1085,7 +1085,17 @@ impl Parser {
                 }
             }
             if let Value::Insert(ls) = n {
+                let spliced = !ls.is_empty();
                 Self::move_insert_elements(&mut l, ls);
+                // The statement's own parts are spliced flat, so mark where it ENDS: a
+                // `Line` marker is the statement boundary the scope pass reads, and without it
+                // `v = [mk(2)]` and `v = []; v += [mk(2)]` on one line lower to the same
+                // statements (`(H-Drop)`'s reassignment clause releases between them).  The
+                // next statement's own marker replaces it when the line advances, and the
+                // block's end drops a trailing one.
+                if spliced && !matches!(l.last(), Some(Value::Line(_))) {
+                    l.push(Value::Line(self.line));
+                }
                 // preserve `Type::Rewritten(_)` when flattening an
                 // Insert.  A first-pass `parse_object` struct literal
                 // returns `Type::Rewritten(Type::Reference(_))` together
@@ -2011,7 +2021,15 @@ impl Parser {
             // tail-expression spelling of the `return <expr>` this file refuses in
             // `parse_return`; refusing one and not the other would leave the rule asked at
             // one of its two construction sites, which is the shape loft#1006 already was.
-            let is_generator = matches!(result, Type::Iterator(_, _));
+            //
+            // Only a generator's BODY is that: an `if` or `match` arm used as a value whose
+            // tail IS a handle (`h = if c { steps(1) } else { steps(2) }`) is expected to be
+            // an `iterator` too, and it delivers the handle like any other value — refused as
+            // a generator body, a program with no generator in it failed to compile.  A
+            // generator body ending in such an `if` is still refused, at the body's own tail.
+            let delivers_handle =
+                context != "return from block" && matches!(t.base(), Type::Iterator(_, _));
+            let is_generator = matches!(result, Type::Iterator(_, _)) && !delivers_handle;
             if is_generator && !self.first_pass && !matches!(*t, Type::Void | Type::Never) {
                 let msg = "a generator's body produces values only through `yield`, so this \
                            tail value is discarded — `for v in <generator>() { yield v; }` \
@@ -7250,7 +7268,9 @@ impl Parser {
         }));
         let fld = Value::Int(i32::from(u16::MAX));
 
-        let mut setup: Vec<Value> = self.vector_db(&vec_tp, buf);
+        // `vector_db` takes the ELEMENT type: handed `vec_tp`, the buffer's store was typed
+        // `vector<vector<E>>`, and its release could not see the records it holds.
+        let mut setup: Vec<Value> = self.vector_db(elm_tp, buf);
         setup.push(v_set(gen_var, subject));
         setup.push(v_set(done, Value::Boolean(false)));
 
@@ -7268,6 +7288,21 @@ impl Parser {
             "OpFinishRecord",
             &[Value::Var(buf), Value::Var(elm), known, fld],
         );
+        // `(G-Own)`: a record the generator hands over is `x`'s own, so the append MOVES it
+        // into the buffer — the copy frees `x`'s store (`COPY_FREE_SOURCE`) and runs no drop
+        // hook, since the resource went with the copy the buffer releases.  `x` stays
+        // `skip_free`: nothing is left for its scope end to release.
+        let mut set_val = set_val;
+        if crate::coroutine_layout::yield_handed_over(elm_tp) {
+            let copy_d = self.data.def_nr("OpCopyRecord");
+            if let Value::Call(d, args) = set_val.unspan_mut()
+                && *d == copy_d
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == x)
+                && let Some(Value::Int(tp)) = args.get_mut(2).map(Value::unspan_mut)
+            {
+                *tp |= i32::from(crate::keys::COPY_FREE_SOURCE);
+            }
+        }
         let append = v_block(
             vec![v_set(elm, new_rec), set_val, finish],
             Type::Void,
@@ -12451,6 +12486,48 @@ impl Parser {
             _ => {}
         }
     }
+    /// @PLN165 D5 — a template returning an OPEN instance (`-> Box<T>`) declares the
+    /// `__retbuf` its twin has (a record whatever `T` becomes), but its literal tail was a
+    /// deferred `TV_OBJECT` the template's own parse could not deliver.  Lowered, it is the
+    /// `"Object"` block the twin's tail is, so the delivery the twin's parse chose runs here
+    /// on the instance — the literal builds into the caller's buffer (`BuildIntoBuffer`),
+    /// and so do its literal mid-body exits.  `from_open` is the instance the return's open
+    /// instance became; only such a return is touched.
+    pub(crate) fn promote_monomorph_record_return(&mut self, d_nr: u32, from_open: bool) {
+        let ret = self.data.definitions[d_nr as usize].returned.clone();
+        let Some(td) = ret.base().heap_def_nr() else {
+            return;
+        };
+        if !from_open {
+            return;
+        }
+        let saved_ctx = self.context;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = d_nr;
+        let mut code =
+            std::mem::replace(&mut self.data.definitions[d_nr as usize].code, Value::Null);
+        if let Value::Block(bl) = &mut code
+            && !bl.operators.is_empty()
+        {
+            let l = &mut bl.operators;
+            let delivery =
+                self.classify_reference_delivery(&ret.base().depend(), l, "return from block");
+            if matches!(delivery, RefDelivery::BuildIntoBuffer { .. }) {
+                self.dispatch_reference_delivery(delivery, td, l);
+            }
+            self.literal_exits_into_buffer(l);
+        }
+        self.data.definitions[d_nr as usize].code = code;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d_nr as usize].variables,
+        );
+        self.context = saved_ctx;
+    }
+
     pub(crate) fn promote_monomorph_text_return(&mut self, d_nr: u32) {
         // Only plain `text` / `text?` returns (tuple-of-text is a separate arc).
         if !matches!(
@@ -13059,6 +13136,38 @@ impl Parser {
     /// hidden buffer argument, so a verdict that differed would move the ABI between them.
     /// `match` lowers to nested `If`, so one shape covers both spellings.  (loft#1081,
     /// D-own-8 in `formal/ownership.md`.)
+    /// Is the vector local `v` rebound, inside a LOOP or a BRANCH, from a call handed a return
+    /// buffer of its own (`v = f(…, __ref_N)`)?  Such a rebind points `v` at that buffer's store
+    /// instead of filling `v`'s, and the collapse that hands the call `v` itself fires only for
+    /// a rebind on the straight line.  So a local renamed onto the return buffer would answer a
+    /// store its caller never handed in, and the caller, freeing only its own buffer, leaks it
+    /// (loft#1599).  A literal, a copy and `[]` refill the buffer in place and are not asked.
+    fn var_call_rebound_nested(&self, l: &[Value], v: u16) -> bool {
+        fn own_buffer(a: &Value, this: &Parser) -> bool {
+            let Value::Var(b) = a.unspan() else {
+                return false;
+            };
+            let vector = matches!(this.vars.tp(*b).base(), Type::Vector(_, _));
+            vector && this.vars.name(*b).starts_with("__ref_")
+        }
+        fn walk(op: &Value, v: u16, nested: bool, this: &Parser) -> bool {
+            match op.unspan() {
+                Value::Set(w, rhs) if *w == v && nested => {
+                    let Value::Call(_, args) = rhs.unspan() else {
+                        return false;
+                    };
+                    args.iter().any(|a| own_buffer(a, this))
+                }
+                Value::Loop(bl) => bl.operators.iter().any(|o| walk(o, v, true, this)),
+                Value::If(_, t, f) => walk(t, v, true, this) || walk(f, v, true, this),
+                Value::Block(bl) => bl.operators.iter().any(|o| walk(o, v, nested, this)),
+                Value::Insert(ops) => ops.iter().any(|o| walk(o, v, nested, this)),
+                _ => false,
+            }
+        }
+        l.iter().any(|op| walk(op, v, false, self))
+    }
+
     fn var_bound_to_branch(l: &[Value], v: u16) -> bool {
         fn rhs_is_branch(node: &Value) -> bool {
             match node.unspan() {
@@ -14345,6 +14454,16 @@ impl Parser {
     fn backward_ref_defnr(&self, op: u32) -> u32 {
         if (op as usize) < self.data.definitions.len() {
             let def = self.data.def(op);
+            // `D-Key` — an instance's key names its template outright.
+            if def.def_type() == DefType::Function
+                && let Some(key) = crate::data::Data::split_key(def.name())
+                    .filter(|k| k.kind == crate::data::KeyKind::Instance)
+            {
+                let tmpl = self.data.def_nr(key.rest);
+                if tmpl != u32::MAX && self.data.def_type(tmpl) == DefType::Generic {
+                    return tmpl;
+                }
+            }
             if def.def_type() == DefType::Function && def.name().starts_with("t_") {
                 let tmpl = self.data.def_nr(&format!("n_{}", def.original_name()));
                 if tmpl != u32::MAX && self.data.def_type(tmpl) == DefType::Generic {
@@ -15742,6 +15861,7 @@ impl Parser {
         // has nothing to abandon there.
         let bound_to_vector_join = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
             && (Self::var_bound_to_branch(body, v)
+                || self.var_call_rebound_nested(body, v)
                 || self
                     .branch_sunk_vectors
                     .contains(&(self.context, n.to_string())));
@@ -15827,9 +15947,21 @@ impl Parser {
         ) && !is_literal_backing
             && !self.vars.tp(v).base().is_unknown()
             && !self.vars.tp(v).base().is_equal(ctx.ret.ret_promo_base());
+        // A local DECLARED in a loop body is a new structure on every pass, and each pass's
+        // record dies at that pass's end (`(H-Drop)`, its scope-end clause) — except on the
+        // one path that returns it.  Renamed onto the return buffer it is a parameter by slot,
+        // which the scope end never releases, and every pass refills the same buffer: a search
+        // loop that returned on its third pass, or never, lost every other pass's record, on
+        // both backends.  Unrenamed it is an ordinary loop-body local, released at each pass's
+        // end, and its `return` takes the `Bind` rung below, which copies it into the buffer.
+        // A local declared BEFORE the loop and rebound in it keeps the rename: its rebinds
+        // release what they displace.  A work-ref's lifetime is the buffer pool's to decide,
+        // so only a local the program declared is asked.
+        let declared_in_loop = !is_work_ref && self.vars.created_in_loop(v) != u16::MAX;
         let allow_rename = !(bound_already
             || wrong_shape_for_buffer
             || reassigned
+            || declared_in_loop
             || returns_own_field
             || bound_to_vector_join
             || views_local
@@ -17203,17 +17335,18 @@ impl Parser {
                 // #432 — a named vector-literal argument (`f(v: [10, 255, 20])`)
                 // builds at the parameter's element width too.  Map the name to its
                 // parameter to seed the hint, then clear it after parsing.
-                let hint_d_nr = self.data.def_nr(&format!("n_{name}"));
+                let hint_d_nr = self.free_call_hint(name, &types);
                 if hint_d_nr != u32::MAX {
                     for a in 0..self.data.attributes(hint_d_nr) {
                         if self.data.attr_name(hint_d_nr, a) == arg_name {
-                            let expected = self.data.attr_type(hint_d_nr, a);
+                            let expected = self.callee_param_hint(hint_d_nr, a, &types);
                             // loft#1067 — `takes(f: |x| { x * 2 })` names the same
                             // parameter the positional form does, so it must infer the
                             // same way; the spelling of the argument is not the axis.
                             if Self::seeds_collection_hint(&expected)
                                 || self.interpolation_target(&expected) != u32::MAX
                                 || Self::seeds_lambda_hint(&expected)
+                                || self.seeds_instance_hint(&expected)
                             {
                                 self.expected = expected;
                             } else if let Some(tuple) = self.tuple_hint_type(&expected) {
@@ -17272,9 +17405,9 @@ impl Parser {
                 // IDENTICAL declared parameter type, with a message whose cure ("give the
                 // target an enum type") the target already satisfied (loft#1280).  It is
                 // the fn-ref call-site position of loft#1122's family.
-                let hint_d_nr = self.data.def_nr(&format!("n_{name}"));
+                let hint_d_nr = self.free_call_hint(name, &types);
                 let hinted = if hint_d_nr != u32::MAX && arg_idx < self.data.attributes(hint_d_nr) {
-                    Some(self.data.attr_type(hint_d_nr, arg_idx))
+                    Some(self.callee_param_hint(hint_d_nr, arg_idx, &types))
                 } else {
                     self.fnref_param_hint(name, arg_idx)
                 };
@@ -17292,7 +17425,7 @@ impl Parser {
                         // binding in the native emitter, and the `CallRef` arm in the
                         // reachability walk — the refusal has nothing left to protect.
                         self.expected = expected;
-                    } else if self.enum_context(&expected) {
+                    } else if self.enum_context(&expected) || self.seeds_instance_hint(&expected) {
                         self.expected = expected;
                     } else if Self::seeds_collection_hint(&expected) {
                         // #432 — seed a bare vector-literal argument's element width
@@ -17331,7 +17464,15 @@ impl Parser {
             // parameter 'e'"*, *"Unknown variable 'e'"*, *"Field of unknown variable"*, and only
             // then *"map: first argument must be a vector"*.  The author was sent to annotate a
             // parameter the dense spelling infers fine (loft#1453).
-            if fn_def_nr.is_none()
+            // A program definition of the name steers the argument where it has a `fn(…)`
+            // parameter here.  Where it has none — it takes another arity, or another type at
+            // this position — and the argument IS a lambda, the program's definition cannot be
+            // what the call reaches with it, so the builtin's hint stands: withholding it
+            // refused `count_if(v, |x| …)` beside an unrelated three-parameter `count_if`.
+            let lambda_unsteered = fn_def_nr.is_none()
+                || (!Self::seeds_lambda_hint(&self.expected)
+                    && (self.lexer.peek_token("|") || self.lexer.peek_token("||")));
+            if lambda_unsteered
                 && !types.is_empty()
                 && let Type::Vector(elm, _) = types[0].base()
             {
@@ -17625,7 +17766,9 @@ impl Parser {
                 // rather than an error, which is the silent under-delivery this
                 // API exists to avoid. Say so where the author can see it.
                 if let Some(tv) = self.generic_type_name(&types[0]) {
-                    let tv = tv.to_string();
+                    // The spelling the header wrote, not the placeholder's key (`T#4` where
+                    // a prepared stdlib already holds a `T`).
+                    let tv = crate::data::Data::type_var_spelling(tv).to_string();
                     diagnostic!(
                         self.lexer,
                         Level::Error,
@@ -17690,7 +17833,9 @@ impl Parser {
             "map" => return self.parse_map(val, list, types),
             "filter" => return self.parse_filter(val, list, types),
             "reduce" => return self.parse_reduce(val, list, types),
-            "sort" => return self.parse_sort(val, list, types),
+            "sort" if self.sort_is_special(source, types) => {
+                return self.parse_sort(val, list, types);
+            }
             "insert" => return self.parse_insert(val, list, types),
             "reverse" => return self.parse_reverse(val, list, types),
             "reserve" => return self.parse_reserve(val, list, types),
@@ -17706,7 +17851,9 @@ impl Parser {
                 // manual `next()` on `iterator<(integer, integer)>` routes
                 // through the legacy text channel (size 16 ≡ `&str`) and
                 // returns a `String` where Rust expected a tuple.
-                if let Type::Iterator(inner, _) = &types[0] {
+                // A nullable handle is one too — an element read with a computed index
+                // (`next(tasks[i])`, loft#1585) — and a null one advances to done.
+                if let Type::Iterator(inner, _) = types[0].base() {
                     let yield_tp = (**inner).clone();
                     let byte_size = i32::from(crate::variables::size(
                         &yield_tp,
@@ -17731,6 +17878,10 @@ impl Parser {
                         args.extend(kinds.iter().map(|k| Value::Int(k.code())));
                     }
                     *val = Value::Call(op, args);
+                    // The advance answers null once the generator is done, whatever the
+                    // argument was: a handle read out of a field (`next(t.g)`, loft#1585) must
+                    // not leave that field's not-null mark for a `??` to call redundant.
+                    self.expr_not_null = false;
                     return yield_tp;
                 }
                 if self.first_pass {
@@ -18018,7 +18169,7 @@ impl Parser {
             {
                 let f_nr = self.data.attr(closure_rec_d, name);
                 if f_nr != usize::MAX {
-                    let load = self.get_field(closure_rec_d, f_nr, Value::Var(self.closure_param));
+                    let load = self.closure_capture_read(closure_rec_d, f_nr);
                     *val = v_block(
                         vec![crate::data::v_set(v_nr, load), call_ir],
                         *ret_type.clone(),
@@ -18538,6 +18689,24 @@ impl Parser {
         Self::seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
     }
 
+    /// The definition a FREE call's arguments parse under: the free function `n_<name>`, or
+    /// — for the free spelling of a method (`m(x, …)`, `@FR-F-Recv`) — the one method of
+    /// that name at the first argument's type, the candidate the dot spelling parses under
+    /// (`Disp-Hint`).  `u32::MAX` when neither names one definition.
+    pub(crate) fn free_call_hint(&self, name: &str, types: &[Type]) -> u32 {
+        let free = self.data.def_nr(&format!("n_{name}"));
+        if free != u32::MAX {
+            return free;
+        }
+        let Some(receiver) = types.first().filter(|t| !t.is_unknown()) else {
+            return u32::MAX;
+        };
+        match self.data.candidates(u16::MAX, name, receiver).as_slice() {
+            [one] if self.data.def(*one).name().starts_with("t_") => *one,
+            _ => u32::MAX,
+        }
+    }
+
     // <call> ::= [ <expression> { ',' <expression> } ] ')'
     /// Parse a method call's `(arg, …)` and emit it, the definition FIXED by the caller (a
     /// bound's stub, an enum variant's method).  See [`Self::parse_method_selecting`].
@@ -18625,16 +18794,48 @@ impl Parser {
         Err(if inst == u32::MAX { md_nr } else { inst })
     }
 
+    /// @PLN165 arc E — a method call that selected a `#builtin` declaration (`v.reverse()`
+    /// reaching the stdlib's `reverse<T>(self: vector<T>)`) is the call its bare spelling is:
+    /// `reverse(v)`, lowered by the compiler's special form of the name, on both passes.  The
+    /// declaration gives the method spelling, its place in the name's set and its signature;
+    /// the lowering stays the one the bare call has always had, so the two spellings cannot
+    /// emit differently.  `None` for any other selection.
+    fn builtin_method_call(
+        &mut self,
+        val: &mut Value,
+        selected: u32,
+        list: &[Value],
+        types: &[Type],
+        named_args: &[(String, Value, Type)],
+        arg_pos: &[Position],
+    ) -> Option<Type> {
+        if selected == u32::MAX || !self.data.def(selected).builtin() {
+            return None;
+        }
+        let name = Self::method_spelling(self.data.def(selected).name());
+        let at = arg_pos
+            .first()
+            .cloned()
+            .unwrap_or_else(|| self.lexer.peek_pos().clone());
+        Some(self.dispatch_call(
+            val,
+            u16::MAX,
+            &name,
+            list,
+            types,
+            named_args,
+            &at,
+            arg_pos,
+            &at,
+        ))
+    }
+
     /// The method a `t_<LEN><type>_<method>` key names — the spelling a call wrote.  A key of
     /// any other shape is answered whole.
     pub(crate) fn method_spelling(key: &str) -> String {
-        key.strip_prefix("t_")
-            .and_then(|rest| {
-                let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-                let len: usize = rest[..digits].parse().ok()?;
-                rest.get(digits + len + 1..)
-            })
-            .map_or_else(|| key.to_string(), str::to_string)
+        crate::data::Data::split_key(key)
+            .filter(|k| k.kind == crate::data::KeyKind::Method)
+            .map_or_else(|| key.to_string(), |k| k.rest.to_string())
     }
 
     /// Parse a method call's `(arg, …)` and emit it.  `hint_nr` steers how the arguments
@@ -18669,6 +18870,11 @@ impl Parser {
         let mut in_named = false;
         if self.lexer.has_token(")") {
             let selected = self.select_method_def(select, &types);
+            if let Some(tp) =
+                self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
+            {
+                return tp;
+            }
             let md_nr = match self.generic_method_call(val, selected, &types) {
                 Ok(predicted) => return predicted,
                 Err(md_nr) => md_nr,
@@ -18687,9 +18893,11 @@ impl Parser {
                 if hint_nr != u32::MAX {
                     let a = self.data.attr(hint_nr, &arg_name);
                     if a != usize::MAX {
-                        let expected = self.data.attr_type(hint_nr, a);
+                        let expected = self.callee_param_hint(hint_nr, a, &types);
                         if Self::seeds_collection_hint(&expected)
                             || self.interpolation_target(&expected) != u32::MAX
+                            || Self::seeds_lambda_hint(&expected)
+                            || self.seeds_instance_hint(&expected)
                         {
                             self.expected = expected;
                         }
@@ -18720,12 +18928,15 @@ impl Parser {
             // so a nested call does not inherit the enclosing one's expectation.
             self.expected = Type::Unknown(0);
             if hint_nr != u32::MAX && list.len() < self.data.attributes(hint_nr) {
-                let expected = self.data.attr_type(hint_nr, list.len());
+                let expected = self.callee_param_hint(hint_nr, list.len(), &types);
                 // @PLN124 — a format-string argument to a METHOD builds the
                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
-                // library API actually presents.
+                // library API actually presents.  A `fn(…)` parameter types a short
+                // lambda, as it does for the free spelling of the same call.
                 if Self::seeds_collection_hint(&expected)
                     || self.interpolation_target(&expected) != u32::MAX
+                    || Self::seeds_lambda_hint(&expected)
+                    || self.seeds_instance_hint(&expected)
                 {
                     self.expected = expected;
                 }
@@ -18742,6 +18953,11 @@ impl Parser {
         }
         self.lexer.token(")");
         let selected = self.select_method_def(select, &types);
+        if let Some(tp) =
+            self.builtin_method_call(val, selected, &list, &types, &named_args, &arg_pos)
+        {
+            return tp;
+        }
         let md_nr = match self.generic_method_call(val, selected, &types) {
             Ok(predicted) => return predicted,
             Err(md_nr) => md_nr,

@@ -130,8 +130,11 @@ fn each_cell_pairs_exactly_the_loops_predicted() {
 /// either order (measured: 2 hashes in 8 runs).  Both orders null and release the same
 /// records, so no value could show it — only the text, which `introspect_diff.sh` and a
 /// reproducible build read.  Each run is a fresh process and so a fresh hash seed: every
-/// run must emit the same bytes, and c22 must name its buffers in declaration order, which
-/// one run of the old walk already missed half the time.
+/// run must emit the same bytes.  At the host's death c22 releases its buffers in REVERSE
+/// declaration order — the second loop's before the first's — which is `(H-Drop)`'s scope-end
+/// order: each buffer holds the collection one loop iterates, and takes its turn in the sweep
+/// where that collection is bound (`formal/heap.md` D-heap-21).  The re-arm at the host's
+/// `OpDatabase` nulls them in declaration order.
 #[test]
 fn two_runs_emit_the_same_text() {
     const RUNS: usize = 8;
@@ -162,8 +165,8 @@ fn two_runs_emit_the_same_text() {
         let death_1 = c22.find("free_record_in(&(var___ref_1)");
         let death_2 = c22.find("free_record_in(&(var___ref_2)");
         assert!(
-            death_1.is_some() && death_1 < death_2,
-            "run {i}: n_c22's host death does not release __ref_1 before __ref_2"
+            death_2.is_some() && death_2 < death_1,
+            "run {i}: n_c22's host death does not release __ref_2 before __ref_1"
         );
         assert!(
             c22.contains("var___ref_1 = DbRef::NULL; var___ref_2 = DbRef::NULL;")

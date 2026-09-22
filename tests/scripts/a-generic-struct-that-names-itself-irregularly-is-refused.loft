@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D7 — `D-Regular`: a generic struct naming itself at arguments other than its own
+// variables has no finite set of instances — each would need a deeper one — so it is refused
+// at the declaration, and the compiler terminates.
+//
+// @falsified-at: f5db133f1 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-generic-struct-that-names-itself-irregularly-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the control never names the irregular mention.
+//   ARMED: nothing.
+//   WITNESS: none recorded beyond the channel.
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: `Bad<vector<T>>` inside `Bad<T>` has no finite set of instances
+// @EXPECT_ERROR: `Wide<(T, T)>` inside `Wide<T>` has no finite set of instances
+
+struct Bad<T> { v: T, n: reference<Bad<vector<T>>>? }
+struct Wide<T> { v: T, kids: vector<Wide<(T, T)>> }
+
+fn main() {
+  println("ok");
+}

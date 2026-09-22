@@ -1,0 +1,6 @@
+// @CONTROL
+// @EXPECT: 1:b
+fn pair_up<K: Printable, V: Printable>(k: K, v: V) -> text { "{k}:{v}" }
+fn main() {
+  println("{pair_up(1, "a")}");
+}

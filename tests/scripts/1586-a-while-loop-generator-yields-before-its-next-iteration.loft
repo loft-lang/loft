@@ -1,0 +1,124 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1586 — a `while` loop generator hands out each value BEFORE its next iteration runs, on
+// --native as on the interpreter (`formal/coroutines.md` (G-Next)).
+//
+// --native lowered only a `for` whose body ENDS in its `yield` one iteration per advance; every
+// `while` ran to its end first and served a buffer.  So an endless `while true { …; yield x; }`
+// — the usual shape of a behaviour — never handed out a value: it filled the buffer until the
+// process ran out of memory.  The loop is now lowered lazily, and statements AFTER the yield run
+// at the start of the next advance (the loop is rotated), for `while` and `for` alike.
+//
+// Every cell here is FINITE on purpose: an eager regression then fails an ORDER assertion instead
+// of exhausting the machine.  As in `836-lazy-loop-yields.loft`, the generator stamps digits into
+// a shared log through a `reference<Log>` — `1` before its yield, `3` after it — and the consumer
+// stamps `2`, so `123123` reads "produced, consumed, resumed" twice, and an eager lowering reads
+// `131322`.  Values alone cannot tell the two apart.
+//
+// Axes this file MOVES:  the loop (`while`, `for`), where the yield sits (last, first with
+//                        statements after it, before a `break`), the yielded kind (integer,
+//                        text), a record built by a call per iteration (drained, abandoned), and
+//                        a closure in the loop (values only here; its order is loft#1587's
+//                        guard, `1587-a-generator-holds-a-lambda-across-a-yield`).
+// Axes it HOLDS FIXED:   two or three iterations, one yield per iteration, every value
+//                        hand-computed.
+//
+// @falsified-at: 5b20e0478 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move).
+//   CHANNEL: exit, native — on the control rustc refuses `built_for1586` (E0425 `var_p`, the
+//   distinct-free's bare reset), so the file fails before it runs.  The ORDER channel was scored
+//   separately on the same control with that one cell removed: native exit 1 on the first
+//   assertion, `a while ending in its yield interleaves: 1122 / 3` — the eager signature.
+//   WITNESS: `1122` where the fix answers `1212`.
+//   HOLDS: leak, panic and free-refusal are equal on both trees on the interpreter.
+// @falsified-by: tests/falsified/1586-a-while-loop-generator-yields-before-its-next-iteration.patch —
+//   the same channels.
+
+struct Log { n: integer }
+struct Pt1586 { x: integer, y: integer }
+
+fn pt1586(n: integer) -> Pt1586 { Pt1586 { x: n * 2, y: n + 1 } }
+
+fn yield_last1586(lg: reference<Log>) -> iterator<integer> {
+  i = 0;
+  while i < 2 { i += 1; lg.n = lg.n * 10 + 1; yield i; }
+}
+
+fn yield_first1586(lg: reference<Log>) -> iterator<integer> {
+  i = 0;
+  while i < 2 { lg.n = lg.n * 10 + 1; yield i; lg.n = lg.n * 10 + 3; i += 1; }
+}
+
+fn break_after1586(lg: reference<Log>) -> iterator<integer> {
+  n = 0;
+  while true { n += 1; lg.n = lg.n * 10 + 1; yield n; if n >= 2 { break; } }
+  lg.n = lg.n * 10 + 4;
+}
+
+fn for_first1586(lg: reference<Log>) -> iterator<integer> {
+  for i in 0..2 { lg.n = lg.n * 10 + 1; yield i; lg.n = lg.n * 10 + 3; }
+}
+
+fn words1586(lg: reference<Log>) -> iterator<text> {
+  w = "a";
+  while len(w) < 3 { lg.n = lg.n * 10 + 1; yield w; w += "b"; }
+}
+
+fn built1586(lg: reference<Log>) -> iterator<integer> {
+  n = 0;
+  while n < 3 { p = pt1586(n); lg.n = lg.n * 10 + 1; yield p.x; n += p.y; }
+}
+
+fn built_for1586() -> iterator<integer> {
+  for i in 0..3 { p = pt1586(i); t = p.x; yield t; }
+}
+
+fn closure1586() -> iterator<integer> {
+  n = 0;
+  while n < 3 { k = n * 10; f = fn(x: integer) -> integer { x + k }; yield f(1); n += 1; }
+}
+
+fn main() {
+  a = Log { n: 0 };
+  sa = 0;
+  for x in yield_last1586(a) { a.n = a.n * 10 + 2; sa += x; }
+  assert(a.n == 1212 && sa == 3, "a while ending in its yield interleaves: {a.n} / {sa}");
+
+  b = Log { n: 0 };
+  sb = "";
+  for x in yield_first1586(b) { b.n = b.n * 10 + 2; sb += "{x}"; }
+  assert(b.n == 123123 && sb == "01", "statements after the yield run on the next advance: {b.n} / {sb}");
+
+  c = Log { n: 0 };
+  sc = "";
+  for x in break_after1586(c) { c.n = c.n * 10 + 2; sc += "{x}"; }
+  assert(c.n == 12124 && sc == "12", "a break after the yield ends the loop, then the tail runs: {c.n} / {sc}");
+
+  d = Log { n: 0 };
+  for x in for_first1586(d) { d.n = d.n * 10 + 2; }
+  assert(d.n == 123123, "a for with statements after its yield interleaves: {d.n}");
+
+  e = Log { n: 0 };
+  se = "";
+  for w in words1586(e) { e.n = e.n * 10 + 2; se += "{w} "; }
+  assert(e.n == 1212 && se == "a ab ", "a text yield with a statement after it: {e.n} / {se}");
+
+  f = Log { n: 0 };
+  sf = "";
+  for x in built1586(f) { f.n = f.n * 10 + 2; sf += "{x} "; }
+  assert(f.n == 1212 && sf == "0 2 ", "a record built by a call each iteration: {f.n} / {sf}");
+
+  g = Log { n: 0 };
+  sg = "";
+  for x in built1586(g) { g.n = g.n * 10 + 2; sg += "{x} "; break; }
+  assert(g.n == 12 && sg == "0 ", "the same generator abandoned after one value: {g.n} / {sg}");
+
+  sh = "";
+  for x in built_for1586() { sh += "{x} "; }
+  assert(sh == "0 2 4 ", "a for building a record by a call: {sh}");
+
+  si = "";
+  for x in closure1586() { si += "{x} "; }
+  assert(si == "1 11 21 ", "a closure in the loop: {si}");
+}

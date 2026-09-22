@@ -184,12 +184,15 @@ impl Output<'_> {
                     // which is the value at the yield, as the interpreter's lazy
                     // suspension hands out.  COROUTINE.md § Design: lazy loop yields.
                     if let Some(tp) = self.yield_collect_snapshot_tp {
-                        write!(
-                            w,
-                            "__values.push(loft::codegen_runtime::coroutine_snapshot(cell, &mut __snap, ("
-                        )?;
-                        self.output_code_node(w, node.yield_inner())?;
-                        write!(w, "), {tp}))")?;
+                        let mut buf: Vec<u8> = Vec::new();
+                        self.output_code_node(&mut buf, node.yield_inner())?;
+                        let code = String::from_utf8_lossy(&buf).into_owned();
+                        let push = self.eager_snapshot_push(
+                            &node.yield_inner().to_owned_value(),
+                            &code,
+                            tp,
+                        );
+                        write!(w, "{push}")?;
                     } else {
                         write!(w, "__values.push((")?;
                         self.output_code_node(w, node.yield_inner())?;
@@ -220,15 +223,11 @@ impl Output<'_> {
             // a null sentinel when non-capturing.
             ValueType::FnRef => {
                 let clos_var = node.fnref_clos_var();
-                let clos_name = if clos_var == u16::MAX {
-                    None
-                } else {
-                    let variables = self.data.def(self.def_nr).variables();
-                    Some(sanitize(variables.name(clos_var)))
-                };
                 let d_nr = node.fnref_dnr();
-                if let Some(name) = clos_name {
-                    return write!(w, "({d_nr}_u32, var_{name})");
+                if clos_var != u16::MAX {
+                    // The closure record's PLACE — a struct field in a generator (loft#1587).
+                    let place = self.var_place(clos_var);
+                    return write!(w, "({d_nr}_u32, {place})");
                 }
                 return write!(w, "({d_nr}_u32, loft::keys::DbRef::NULL)");
             }
@@ -298,14 +297,10 @@ impl Output<'_> {
                 return write!(w, "])");
             }
             ValueType::FnRefDnr => {
-                // P215: project the d_nr from a fn-ref var's (u32, DbRef) tuple.
-                let var_name = sanitize(
-                    self.data
-                        .def(self.def_nr)
-                        .variables
-                        .name(node.fnref_dnr_var()),
-                );
-                return write!(w, "(var_{var_name}.0 as i64)");
+                // P215: project the d_nr from a fn-ref var's (u32, DbRef) tuple — through
+                // the slot's place, which is a struct field in a generator (loft#1587).
+                let place = self.var_place(node.fnref_dnr_var());
+                return write!(w, "({place}.0 as i64)");
             }
             // Plan-07 — Span is transparent in native emit.
             ValueType::Span => return self.output_code_node(w, node.span_inner()),
@@ -343,7 +338,14 @@ impl Output<'_> {
                         return write!(w, "&self.var_{field}");
                     }
                     return write!(w, "self.var_{field}");
-                } else if variables.is_argument(var) {
+                } else if self.text_borrowed(var) {
+                    // A borrowed text reads as the `&str` it holds.
+                    return write!(w, "var_{var_name}");
+                } else if variables.is_argument(var)
+                    && !crate::generation::is_raw_scalar_ref(variables.tp(var))
+                {
+                    // A scalar `&` parameter is a raw pointer, read below exactly as a local
+                    // link is (`is_raw_scalar_ref`, loft#1605).
                     if let Type::RefVar(inner) = variables.tp(var) {
                         // By-ref argument: holds &mut T — dereference to read.
                         if matches!(**inner, Type::Text(_)) {
@@ -383,8 +385,13 @@ impl Output<'_> {
                     // to read the linked source's current value.  loft#1371 — a local
                     // `&text` link holds `*mut String` and reads as a borrow of it, the
                     // same shape the `&text` PARAMETER reads through.
-                    // loft#1372 — the read side asks the SLOT too.
-                    if matches!(inner.base(), Type::Boolean) {
+                    // loft#1372 — the read side asks the SLOT too.  A `&boolean?` link reads
+                    // the storage BYTE (0/1/255), as a `boolean?` local does, so `c == null`
+                    // can see the 255: the two-state read would answer `false` for a null.
+                    // Only a non-null `&boolean` reads as a `bool` (loft#655).
+                    if !matches!(**inner, Type::Optional(_))
+                        && matches!(inner.base(), Type::Boolean)
+                    {
                         return write!(w, "unsafe {{ *var_{var_name} == 1 }}");
                     }
                     if matches!(inner.base(), Type::Text(_)) {
@@ -601,11 +608,8 @@ impl Output<'_> {
                 // (loft#1278).  The tuple LITERAL arm has always converted a `Var` here;
                 // only this arm carved it out, so the two spellings of the same write
                 // disagreed about the same source.
-                let borrowed_var_src = matches!(node.tupleput_inner().kind(), ValueType::Var) && {
-                    let v = node.tupleput_inner().var_nr();
-                    let vars = self.data.def(self.def_nr).variables();
-                    vars.is_argument(v) && matches!(vars.tp(v).base(), Type::Text(_))
-                };
+                let borrowed_var_src = matches!(node.tupleput_inner().kind(), ValueType::Var)
+                    && self.text_borrowed(node.tupleput_inner().var_nr());
                 if elem_is_text
                     && (!matches!(node.tupleput_inner().kind(), ValueType::Var) || borrowed_var_src)
                 {
@@ -663,6 +667,38 @@ impl Output<'_> {
                         self.declared.insert(v);
                     }
                 }
+                // `@FR-R-CharWalk` — a character walk over a text nothing in the loop
+                // writes asks its null test ONCE, here, and the loop skips the statement;
+                // the checking form keeps the statement as an assertion.  Opened before
+                // every guarded copy of the loop and closed after the loop's frees, inside
+                // the hoist block `begin_vector_hoist` opened.
+                let char_walk = self
+                    .char_walks
+                    .get(&lp.scope)
+                    .filter(|cw| cw.hoist_null)
+                    .cloned();
+                if let Some(cw) = &char_walk
+                    && let Value::If(test, _, _) = lp.operators[cw.null_test].unspan()
+                {
+                    self.indent(w)?;
+                    write!(w, "if ((")?;
+                    self.output_code_inner(w, test)?;
+                    writeln!(
+                        w,
+                        ") as u8) != 1 {{ //@FR-R-CharWalk the null test, asked once"
+                    )?;
+                }
+                // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
+                // pushes times its trip count first, and where its body reaches the vector
+                // through those pushes alone it opens a push window.  BEFORE the guards
+                // below: each emits a whole copy of the loop ahead of its `else`, so a
+                // reservation written after them stands in the arm that does not run, and
+                // a window must be one local both copies push through.
+                let window = self.push_reserve(w, lp)?;
+                // `(R-BoundedNest)`'s reduction clause — a loop that is one integer accumulate
+                // of a vector's elements sums what it can PLAIN first, per block under a bound
+                // taken from the data, and the checked loop below resumes where that stopped.
+                self.sum_fast_path(w, lp)?;
                 // `@FR-R-BoundedNest` — a nest whose guard proves its arithmetic cannot
                 // fault runs with plain operators; the checked loop below is its `else` arm.
                 let nested = self.nest_fast_path(w, lp)?;
@@ -683,8 +719,7 @@ impl Output<'_> {
                     self.indent(w)?;
                     writeln!(w, "if !__fill_{} {{", lp.scope)?;
                 }
-                // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
-                // pushes times its trip count first; one push of an invariant is one fill
+                // @PLN157 § V-am (`@FR-R-PushFill`) — one push of an invariant is one fill
                 // of the tail, the per-element loop its fallback exactly as the fill's.
                 let pushed = self.push_fast_path(w, lp)?;
                 if pushed {
@@ -699,12 +734,29 @@ impl Output<'_> {
                 // and its address serves the body once per iteration.
                 let mut ptr_frames = 0usize;
                 for (at, v) in lp.operators.iter().enumerate() {
+                    if let Some(cw) = &char_walk
+                        && at == cw.null_test
+                    {
+                        // Asked once above.  The checking form asserts it still holds.
+                        if self.hoist_verify
+                            && let Value::If(test, _, _) = v.unspan()
+                        {
+                            self.indent(w)?;
+                            write!(w, "assert!(((")?;
+                            self.output_code_inner(w, test)?;
+                            writeln!(
+                                w,
+                                ") as u8) != 1, \"@FR-R-CharWalk: the text became null inside the walk\");"
+                            )?;
+                        }
+                        continue;
+                    }
                     self.indent(w)?;
                     self.indent += 1;
                     self.output_code_inner(w, v)?;
                     self.indent -= 1;
                     writeln!(w, ";")?;
-                    if self.bind_record_ptr(w, &lp.operators, at)? {
+                    if self.bind_record_ptr(w, &lp.operators, at, None)? {
                         ptr_frames += 1;
                     }
                 }
@@ -732,6 +784,11 @@ impl Output<'_> {
                     }
                     super::ChainGuard::None => {}
                 }
+                // The window closes after EVERY copy of the loop: the record's length is
+                // written once, whichever arm ran.
+                if let Some(window) = &window {
+                    self.push_window_close(w, window)?;
+                }
                 for &v in &loop_recs {
                     let name = sanitize(self.data.def(self.def_nr).variables().name(v));
                     writeln!(w, ";")?;
@@ -740,6 +797,11 @@ impl Output<'_> {
                         w,
                         "OpFreeRef(cell,var_{name}, \"var_{name}\"); var_{name}.store_nr = u16::MAX /*@FR-R-LoopRecord freed after the loop*/"
                     )?;
+                }
+                if char_walk.is_some() {
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    write!(w, "}} /*@FR-R-CharWalk*/")?;
                 }
                 self.end_vector_hoist(w, hoisted)?;
             }
@@ -936,9 +998,8 @@ impl Output<'_> {
                         // back `Str::new(&var___ret_N)` into a dropped String
                         // (loft#740).  Non-null `text` was unaffected, which is
                         // why it stayed hidden.
-                        let returns_local_text = matches!((**val).unspan(), Value::Var(v)
-                            if matches!(def.variables().tp(*v).base(), Type::Text(_))
-                                && !def.variables().is_argument(*v));
+                        let returns_local_text =
+                            matches!((**val).unspan(), Value::Var(v) if self.text_owned(*v));
                         // @PLAN52 cluster VI (2026-05-30): closures returning text
                         // have a `__work_ret: &mut String` parameter but the
                         // closure body's `??` value-block doesn't write into it —
@@ -1131,6 +1192,10 @@ impl Output<'_> {
     ) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
         let var_name = sanitize(variables.name(v_nr));
+        // The slot's PLACE: `self.var_<field>` for a generator's persistent fn-ref, which has
+        // no local of its own — spelling the local named a Rust identifier no state declared
+        // (loft#1587).  Outside a coroutine this is the bare local, as before.
+        let place = self.var_place(v_nr);
         let fn_type = variables.tp(v_nr).clone();
         let (param_types, ret_type) = if let Type::Function(p, r, ..) = &fn_type {
             (p.clone(), *r.clone())
@@ -1260,7 +1325,7 @@ impl Output<'_> {
         // loft#1443's ten cells, all pinned to a non-capturing initial value, never moved it
         // (`D-bind-29`).
         let _ = closure_var_nr;
-        let closure_expr: String = format!("var_{var_name}.1");
+        let closure_expr: String = format!("{place}.1");
         let work_buf_expr: String = if let Some(idx) = work_buf_idx {
             format!("_farg_{idx}")
         } else {
@@ -1309,7 +1374,7 @@ impl Output<'_> {
         if heap_return {
             write!(w, "let __vc_out = ")?;
         }
-        write!(w, "match var_{var_name}.0 {{")?;
+        write!(w, "match {place}.0 {{")?;
         for super::fnref::Arm {
             d_nr, has_closure, ..
         } in &candidates
@@ -1459,7 +1524,7 @@ impl Output<'_> {
         }
         write!(
             w,
-            " _ => unreachable!(\"invalid fn-ref: {{}} in {var_name}\", var_{var_name}.0) }}"
+            " _ => unreachable!(\"invalid fn-ref: {{}} in {var_name}\", {place}.0) }}"
         )?;
         if heap_return {
             // The match is the block's value; bind it so the store can be asked about, then
@@ -1498,14 +1563,24 @@ impl Output<'_> {
             // null sentinel is a VALUE, not a separate codegen type) — peel so every
             // infer_type-based decision (text/bool branch unification, typed-null, predicate
             // coercion, …) sees through nullability. Gate-OFF inert (Optional never built).
-            ValueType::Var => Some(
-                self.data
+            // A scalar link — a local one or a `&` parameter, both a raw pointer
+            // (`is_raw_scalar_ref`) — is read as the value behind it (`@FR-B-Ref-Read`), so its
+            // read has the linked type: a `&boolean?` test needs the same truthiness coercion
+            // a `boolean?` local gets.
+            ValueType::Var => {
+                let tp = self
+                    .data
                     .def(self.def_nr)
                     .variables
                     .tp(node.var_nr())
-                    .base()
-                    .clone(),
-            ),
+                    .base();
+                Some(match tp {
+                    Type::RefVar(inner) if crate::generation::is_raw_scalar_ref(tp) => {
+                        inner.base().clone()
+                    }
+                    _ => tp.clone(),
+                })
+            }
             ValueType::Call => {
                 let ret = self.data.def(node.call_to()).returned();
                 (*ret != Type::Void).then(|| ret.base().clone())
@@ -2593,7 +2668,8 @@ impl Output<'_> {
         // body block — without the patch, native codegen emits the Call as a
         // discarded statement and returns STRING_NULL.
         let fn_name = self.data.def(self.def_nr).name();
-        let is_t_stub_text_body = matches!(bl.result, Type::Text(_)) && fn_name.starts_with("t_");
+        let specialised = fn_name.starts_with("t_") || self.data.def(self.def_nr).is_instance();
+        let is_t_stub_text_body = matches!(bl.result, Type::Text(_)) && specialised;
         // P240 fix (2026-05-11): bounded-generic T-stubs that return a
         // stack-passed tuple — `t_<len><Type>_<method>` returning
         // `Type::Tuple(...)` — go through the same hoisted-return
@@ -2607,7 +2683,7 @@ impl Output<'_> {
         // the text branch above; same hoist logic applies because
         // both shapes have a `Return(Null)` tail with the actual
         // value as a preceding statement.
-        let is_t_stub_tuple_body = matches!(bl.result, Type::Tuple(_)) && fn_name.starts_with("t_");
+        let is_t_stub_tuple_body = matches!(bl.result, Type::Tuple(_)) && specialised;
         // Any text-returning block whose body contains the B5-L3
         // `Set(__ret_N, call); ...; Return(Var(__ret_N))` temp-transfer
         // pattern must also go through `patch_hoisted_returns` so the
@@ -2700,6 +2776,7 @@ impl Output<'_> {
         let block_serial = self.block_serial;
         for (vnr, v) in operators.iter().enumerate() {
             self.close_groups_before(w, block_serial, vnr)?;
+            self.close_ptr_windows_before(block_serial, vnr);
             // DX-source-map: surface line comments at the
             // statement-list level so rustc errors map back to .loft
             // source.  Without this, only Value::Line nodes inside an
@@ -3269,12 +3346,13 @@ impl Output<'_> {
             if self.bind_view_header(w, operators, vnr)? {
                 view_frames += 1;
             }
-            if self.bind_record_ptr(w, operators, vnr)? {
+            if self.bind_record_ptr(w, operators, vnr, Some(block_serial))? {
                 ptr_frames += 1;
             }
             self.bind_group_push(w, operators, vnr, block_serial)?;
         }
         self.close_groups_before(w, block_serial, usize::MAX)?;
+        self.close_ptr_windows_before(block_serial, usize::MAX);
         if flat_lit_open.is_some() {
             self.indent -= 1;
             self.indent(w)?;
@@ -3292,15 +3370,25 @@ impl Output<'_> {
             if is_text_result {
                 writeln!(w, "Str::new(_ret)")?;
             } else if matches!(bl.result, Type::Text(_)) {
-                // @P321e / @P323 — a TEXT value-block's `_ret` is typically a
-                // `&str` borrowing a block-local (the `??`/#ncc block's inner
-                // `_ncc` String; a format-string work buffer; etc.).  Yielding
-                // the borrow lets the consumer's `.to_string()` run AFTER the
-                // local drops at the block's `}` — rustc E0597 ("does not live
-                // long enough"), or a dangling raw ptr at runtime.  Materialise
-                // to an OWNED String inside the block (where the local is still
-                // alive); `.to_string()` accepts &str / String / Str alike.
-                writeln!(w, "_ret.to_string()")?;
+                // `@FR-R-TextBorrow`'s discharge clause — an `#ncc` block whose temp
+                // BORROWS a split table's slice yields the slice: it points into the
+                // table's source, which outlives the block and the statement.
+                let borrowed_discharge = bl.name.starts_with("ncc")
+                    && matches!(bl.operators.first().map(Value::unspan), Some(Value::Set(v, _))
+                        if self.borrowed_text_locals.contains_key(v));
+                if borrowed_discharge {
+                    writeln!(w, "_ret")?;
+                } else {
+                    // @P321e / @P323 — a TEXT value-block's `_ret` is typically a
+                    // `&str` borrowing a block-local (the `??`/#ncc block's inner
+                    // `_ncc` String; a format-string work buffer; etc.).  Yielding
+                    // the borrow lets the consumer's `.to_string()` run AFTER the
+                    // local drops at the block's `}` — rustc E0597 ("does not live
+                    // long enough"), or a dangling raw ptr at runtime.  Materialise
+                    // to an OWNED String inside the block (where the local is still
+                    // alive); `.to_string()` accepts &str / String / Str alike.
+                    writeln!(w, "_ret.to_string()")?;
+                }
             } else if let Some(cast) = block_tail_cast(&bl.result, is_fn_body) {
                 writeln!(w, "_ret as {cast}")?;
             } else {
@@ -3367,25 +3455,30 @@ impl Output<'_> {
         let (size, tp, fld) = (pair.prealloc_size, pair.out_tp, pair.out_fld);
         self.indent(w)?;
         // `@FR-R-PushRec` — the early mint emits through the record-push header an enclosing
-        // loop holds for the container, exactly as the append site's mint would have.
-        if fld == 65535
-            && !self.record_push_disabled
-            && let Some(header) = self
-                .active_mint_push(&(pair.out, Vec::new()))
-                .map(str::to_owned)
+        // loop holds for the container, exactly as the append site's mint would have.  The
+        // header is looked up the way the append site's FINISH looks it up — `mint_target`
+        // over the mint's own operands, either spelling — so the two halves of one element
+        // cannot land on different holders.
+        let mint_args = [Value::Var(pair.out), Value::Int(tp), Value::Int(fld)];
+        if !self.record_push_disabled
+            && let Some(target) =
+                super::hoist::mint_target(self.data, self.stores, "OpNewRecord", &mint_args, dvars)
+            && let Some(header) = self.active_mint_push(&target.path).map(str::to_owned)
         {
-            let ptp = u16::try_from(tp).unwrap_or(u16::MAX);
-            let elem = self.stores.content(ptp);
+            let elem = self.stores.content(target.vector_tp);
             let esize = self.stores.size(elem);
-            let zero = if self.stores.owns_heap(elem) {
+            let zero = if self.stores.owns_heap(elem) || !self.stores.is_struct(elem) {
                 "_zero"
             } else {
                 ""
             };
             let verify = if self.hoist_verify { "true" } else { "false" };
+            let mut operand: Vec<u8> = Vec::new();
+            self.output_code_inner(&mut operand, &target.vector)?;
+            let operand = String::from_utf8_lossy(&operand).into_owned();
             return writeln!(
                 w,
-                "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &(var_{outn}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
+                "var_{elmn} = stores.push_record_hoisted{zero}::<{verify}>(&mut {header}, &({operand}), {esize}); //@PLN157 § V-z element minted at the declaration, through the held header"
             );
         }
         if fld == 65535 {

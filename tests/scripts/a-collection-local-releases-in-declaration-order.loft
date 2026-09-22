@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// At a scope's end the resources are released in REVERSE declaration order, and a collection
+// local takes its turn like any other.
+//
+// `formal/heap.md (H-Drop)` fixes the order because a later structure may hold a lease on an
+// earlier one's resource — cursors kept in a vector must close before the connection declared
+// ahead of them.  A collection local is a view of the store that holds its elements, and that
+// store was registered at the head of the function, so its elements were released after every
+// other local whatever the order of declaration (D-heap-21).  A loop body's collection is a
+// further case with a guard of its own (loft#1565), so no cell here declares one in a loop.
+//
+// The trace file is this guard's own.
+
+// @falsified-at: 2f98b6730 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-collection-local-releases-in-declaration-order.patch — interpret exit
+//   1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — the order of
+//   two hooks is visible only on their trace; every count is right on both trees.
+// ARMED: no instrument — each hook call is written to this guard's own trace file.
+// WITNESS: on the control every collection declared after another local released LAST, on both
+//   backends, scored with the assertions replaced by prints: `ro_after` `L1,1,2`, `ro_push`
+//   `L1,5,6`, `ro_two` `L2,7,8`, `ro_struct` `L1,9,10`, `ro_block` `L1,11,12,after`, `ro_call`
+//   `L1,13,14` and `ro_three` `L2,15,16,17` — seven of the nine cells.
+// HOLDS: the two CONTROLs, a collection declared first (`L1,4,3`) and a struct holding one
+//   (`L1,19,18`), answer the same on both trees; leak, panic, free-refusal and expectations are
+//   unmoved.
+
+fn trace_path() -> text { return "loft_release_order_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct RoH { id: integer }
+fn OpDrop(self: RoH) { note("{self.id}"); }
+fn ro_mk(id: integer) -> RoH { return RoH { id: id }; }
+fn ro_mkv(id: integer) -> vector<RoH> { r: vector<RoH> = [ro_mk(id)]; return r; }
+struct RoHold { h: RoH }
+struct RoBag { v: vector<RoH>, tag: integer }
+
+fn ro_after() { b = ro_mk(1); v: vector<RoH> = [ro_mk(2)]; note("L{len(v)}"); }
+fn ro_first() { v: vector<RoH> = [ro_mk(3)]; b = ro_mk(4); note("L{len(v)}"); }
+fn ro_push() { b = ro_mk(5); v: vector<RoH> = []; v += [ro_mk(6)]; note("L{len(v)}"); }
+fn ro_two() { v1: vector<RoH> = [ro_mk(7)]; v2: vector<RoH> = [ro_mk(8)]; note("L{len(v1) + len(v2)}"); }
+fn ro_struct() { c = RoHold { h: ro_mk(9) }; v: vector<RoH> = [ro_mk(10)]; note("L{len(v)}"); }
+fn ro_block() { { b = ro_mk(11); v: vector<RoH> = [ro_mk(12)]; note("L{len(v)}"); } note("after"); }
+fn ro_call() { b = ro_mk(13); d = ro_mkv(14); note("L{len(d)}"); }
+fn ro_three() { b = ro_mk(15); v: vector<RoH> = [ro_mk(16)]; w: vector<RoH> = [ro_mk(17)]; note("L{len(v) + len(w)}"); }
+fn ro_bag() { b = ro_mk(18); g = RoBag { v: [ro_mk(19)], tag: 1 }; note("L{len(g.v)}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  ro_after(); got = drain();
+  assert(got == "L1,2,1", "a vector declared after a local releases first: {got}");
+
+  ro_first(); got = drain();
+  assert(got == "L1,4,3", "CONTROL a vector declared first releases last: {got}");
+
+  ro_push(); got = drain();
+  assert(got == "L1,6,5", "a vector filled after its declaration: {got}");
+
+  ro_two(); got = drain();
+  assert(got == "L2,8,7", "two vectors, the later first: {got}");
+
+  ro_struct(); got = drain();
+  assert(got == "L1,10,9", "a vector after a struct: {got}");
+
+  ro_block(); got = drain();
+  assert(got == "L1,12,11,after", "an inner block's scope end: {got}");
+
+  ro_call(); got = drain();
+  assert(got == "L1,14,13", "a vector a call answered: {got}");
+
+  ro_three(); got = drain();
+  assert(got == "L2,17,16,15", "three locals, each in its turn: {got}");
+
+  ro_bag(); got = drain();
+  assert(got == "L1,19,18", "CONTROL a struct holding a vector: {got}");
+}

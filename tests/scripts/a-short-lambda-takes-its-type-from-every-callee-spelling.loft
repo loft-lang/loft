@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A short lambda takes its parameter types from the parameter it is handed to, whichever
+// spelling the call uses and whether the callee is generic (`closures.md`, @PLN165 A6).
+//
+// Two holes, one rule.  A GENERIC callee handed the lambda its template's own `fn(T) -> T`
+// — the variable, not what the earlier arguments had bound it to — so `my_map(a, |x| { x *
+// 10 })` was refused "No matching operator '*' on 'T' and 'integer'" where the built-in `map`
+// and a concrete twin both answer `[10,20,30]`.  And the METHOD spelling seeded no lambda at
+// all, for a concrete method too: `a.apply_i(|x| { x * 10 })` was "Cannot infer type for
+// lambda parameter 'x'" while `apply_i(a, |x| { x * 10 })` compiled — and the free spelling of
+// a method (`apply_i(a, …)`, `@FR-F-Recv`) looked only for a free function of that name.
+// Each spelling now hints the parameter its callee declares, with the generic's variables
+// bound by the arguments before it.
+//
+// @falsified-at: 04d23b5ed — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-short-lambda-takes-its-type-from-every-callee-spelling.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — every refused spelling stops the file at the parse.
+//   ARMED: nothing.
+//   WITNESS: on the control `my_map(a, |x| { x * 10 })` is "No matching operator '*' on 'T'
+//     and 'integer'" and `b.apply_i(|x| { x * 5 })` is "Cannot infer type for lambda
+//     parameter 'x'".
+//   HOLDS: the concrete free spelling, which always typed its lambda.
+
+struct Pt { x: integer, y: integer }
+
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+
+fn apply<T>(self: vector<T>, f: fn(T) -> T) -> vector<T> { my_map(self, f) }
+
+fn apply_i(self: vector<integer>, f: fn(integer) -> integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for x in self { out += [f(x)]; }
+  out
+}
+
+fn test_a_generic_free_call() {
+  a: vector<integer> = [1, 2, 3];
+  assert("{my_map(a, |x| { x * 10 })}" == "[10,20,30]", "integer: {my_map(a, |x| { x * 10 })}");
+  t: vector<text> = ["a", "b"];
+  assert("{my_map(t, |s| { s + "!" })}" == "[\"a!\",\"b!\"]", "text: {my_map(t, |s| { s + "!" })}");
+  ps = [Pt { x: 1, y: 7 }, Pt { x: 2, y: 8 }];
+  qs = my_map(ps, |p| { Pt { x: p.x * 2, y: p.y } });
+  assert(len(qs) == 2 && qs[0].x == 2 && qs[1].x == 4 && qs[1].y == 8, "record: {qs[1].x}");
+  assert("{my_map(a, f: |x| { x + 1 })}" == "[2,3,4]", "named: {my_map(a, f: |x| { x + 1 })}");
+}
+
+fn test_a_generic_method_both_spellings() {
+  b: vector<integer> = [1, 2];
+  assert("{b.apply(|x| { x * 5 })}" == "[5,10]", "dot: {b.apply(|x| { x * 5 })}");
+  assert("{apply(b, |x| { x * 5 })}" == "[5,10]", "free: {apply(b, |x| { x * 5 })}");
+}
+
+fn test_a_concrete_method_both_spellings() {
+  b: vector<integer> = [1, 2];
+  assert("{b.apply_i(|x| { x * 5 })}" == "[5,10]", "dot: {b.apply_i(|x| { x * 5 })}");
+  assert("{apply_i(b, |x| { x * 5 })}" == "[5,10]", "free: {apply_i(b, |x| { x * 5 })}");
+}

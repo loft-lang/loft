@@ -1,0 +1,13 @@
+// D10 — a library's generic enum, built by the consumer and read by the library, and
+// instantiated at the consumer's own type.
+// @EXPECT: 2|7|hole
+use gridlib;
+struct Mine { n: integer }
+fn main() {
+  v: vector<Slot<integer>> = [Full { v: 1 }, Hole, Full { v: 3 }];
+  c: Slot<Mine> = Full { v: Mine { n: 7 } };
+  h: Slot<Mine> = Hole;
+  a = match c { Full { v } => "{v.n}", Hole => "hole" };
+  b = match h { Full { v } => "{v.n}", Hole => "hole" };
+  println("{full_count(v)}|{a}|{b}");
+}

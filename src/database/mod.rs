@@ -20,6 +20,7 @@ pub mod sql_query;
 pub mod sql_source;
 mod structures;
 mod types;
+pub(crate) use types::DBREF_BORROW;
 
 pub use allocation::{CLEAR_KEYED_VIEW, timeline_summary};
 pub use descriptor::{BaseKind, Iterated, LayoutDesc, LayoutField, LayoutNode};
@@ -351,6 +352,12 @@ pub const TYPEVAR_ROW_PREFIX: &str = "__typevar_";
 pub struct Stores {
     pub types: Vec<Type>,
     pub names: HashMap<String, u16>,
+    /// @PLN165 D10 — the name the loft-literal form writes for a type whose schema name is
+    /// a KEY: an instance of a generic type is keyed `Box<integer(0, 255)s1>`, which no
+    /// parser reads back, and written `Box` — its template, which a literal infers from its
+    /// values or takes from an annotation.  Filled from `Data` when bytecode is generated
+    /// (`compile::byte_code_from`), read only by that form; not part of the schema.
+    pub shown: HashMap<u16, String>,
     pub allocations: Vec<Store>,
     /// #306 — true when slot 0 holds the interpreter's eval-stack store
     /// (set by `State::new`).  `free_named` then refuses a whole-store free
@@ -686,6 +693,7 @@ impl Clone for Stores {
         Self {
             types: self.types.clone(),
             names: self.names.clone(),
+            shown: self.shown.clone(),
             allocations: Vec::new(),
             stack_store_at_zero: self.stack_store_at_zero,
             lazy_sources: HashMap::new(),
@@ -1438,6 +1446,7 @@ impl Stores {
         let mut result = Stores {
             types: Vec::new(),
             names: HashMap::new(),
+            shown: HashMap::new(),
             allocations: Vec::new(),
             stack_store_at_zero: false,
             lazy_sources: HashMap::new(),
@@ -2176,6 +2185,125 @@ impl Stores {
         *p = crate::vector::push_header(db, &self.allocations);
     }
 
+    /// `@FR-R-PushFill`'s window clause — ONE push through an open
+    /// [`crate::vector::PushWindow`]: when the element fits, a comparison, one store through
+    /// the held base and a bump of the window's length; the record's own length is written
+    /// by [`Self::push_window_close`], or by the growth arm before it appends.  `p` stays
+    /// the header as of the last of those, so it keeps describing the record exactly.
+    ///
+    /// # Safety
+    ///
+    /// `w` must be [`crate::vector::push_window`] of `p` with no store reallocated since,
+    /// and nothing but these pushes may read or write the vector while the window is open
+    /// — the emitter's proof (`hoist::push_window_ok`).
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes `db` or
+    /// the window's base and capacity are not what a fresh derivation answers.  Never in
+    /// the emitted default.
+    #[allow(clippy::inline_always)] // as `push_hoisted`: the body is a test, a store and a bump
+    #[inline(always)]
+    pub unsafe fn push_windowed<T: crate::vector::HoistScalar, const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        w: &mut crate::vector::PushWindow,
+        db: &crate::keys::DbRef,
+        size: u32,
+        val: T,
+    ) {
+        if w.len < w.cap {
+            if VERIFY {
+                self.push_window_verify(p, *w, db, size);
+            }
+            // SAFETY: `len < cap` elements of `size` bytes fit the record the base was
+            // derived from, and the caller's contract keeps that record where it is; the
+            // pointer carries the store buffer's own provenance, as `vec_set_at`'s does.
+            unsafe {
+                w.base
+                    .add(w.len as usize * size as usize)
+                    .cast::<T>()
+                    .write_unaligned(val);
+            }
+            w.len += 1;
+        } else {
+            *w = self.push_window_grow::<T>(p, w.len, db, size, val);
+        }
+    }
+
+    /// The growth arm of [`Self::push_windowed`], outlined (`@FR-R-Cold`).  The window's
+    /// length comes in BY VALUE and the fresh window goes out by value: a window whose
+    /// address reached this call would live in memory for the whole loop.
+    #[cold]
+    #[inline(never)]
+    fn push_window_grow<T: crate::vector::HoistScalar>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        len: u32,
+        db: &crate::keys::DbRef,
+        size: u32,
+        val: T,
+    ) -> crate::vector::PushWindow {
+        // The record's length first: the runtime's append reads it to find the next slot.
+        self.push_window_sync(p, len);
+        T::append_in(self, db, val);
+        *p = crate::vector::push_header(db, &self.allocations);
+        crate::vector::push_window(p, size, &self.allocations)
+    }
+
+    /// Close a [`crate::vector::PushWindow`]: the length the loop reached is written to
+    /// the header and to the record.  Takes the length by value for the reason
+    /// [`Self::push_window_grow`] does.
+    ///
+    /// # Panics
+    ///
+    /// Under `VERIFY`, when the closed header is not what a fresh derivation answers.
+    pub fn push_window_close<const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        len: u32,
+        db: &crate::keys::DbRef,
+    ) {
+        self.push_window_sync(p, len);
+        if VERIFY {
+            assert_eq!(
+                *p,
+                crate::vector::push_header(db, &self.allocations),
+                "push window closed on a header that no longer describes its vector"
+            );
+        }
+    }
+
+    #[inline]
+    fn push_window_sync(&mut self, p: &mut crate::vector::PushHeader, len: u32) {
+        p.h.len = len;
+        if p.h.rec != 0 {
+            self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, len);
+        }
+    }
+
+    /// The `LOFT_HOIST_VERIFY=1` half of [`Self::push_windowed`]: while a window is open
+    /// the header is frozen at its last sync and so is the record, so the two must still
+    /// agree — and the base and capacity must be what that header answers.
+    fn push_window_verify(
+        &self,
+        p: &crate::vector::PushHeader,
+        w: crate::vector::PushWindow,
+        db: &crate::keys::DbRef,
+        size: u32,
+    ) {
+        assert_eq!(
+            *p,
+            crate::vector::push_header(db, &self.allocations),
+            "push window's header is stale — something else wrote the vector it pushes to"
+        );
+        let fresh = crate::vector::push_window(p, size, &self.allocations);
+        assert!(
+            std::ptr::eq(w.base, fresh.base) && w.cap == fresh.cap && w.len >= fresh.len,
+            "push window is stale — a store grew or moved under the loop"
+        );
+    }
+
     /// @PLN157 § V-t — a RECORD append's slot through a hoisted [`crate::vector::PushHeader`]
     /// (`@FR-R-PushRec`): when the element fits, the slot is the header's next position —
     /// no `record_new` dispatch and no default prefill, because the group that follows
@@ -2257,6 +2385,14 @@ impl Stores {
                 crate::vector::push_header(db, &self.allocations),
                 "hoisted record-push header is stale at the finish — the element's builder moved the vector"
             );
+        }
+        // An ABSENT owner — the append answered the null element, because the record that
+        // holds the vector field is itself null (`m.ps += […]` through a null `m`) — has no
+        // length to bump: `vector_finish` returns on it, and so does this.  A header whose
+        // record is 0 here can be nothing else, since a growth step that claimed a record
+        // re-derived the header with it.
+        if p.h.rec == 0 {
+            return;
         }
         p.h.len += 1;
         self.allocations[p.h.store_nr as usize].write::<u32>(p.h.rec, 4, p.h.len);

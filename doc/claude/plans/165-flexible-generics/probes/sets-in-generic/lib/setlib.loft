@@ -1,0 +1,8 @@
+pub interface Named { fn tag(self: Self) -> text }
+pub struct Cat { n: integer }
+pub struct Dog { n: integer }
+pub fn tag(self: Cat) -> text { "cat {self.n}" }
+pub fn tag(self: Dog) -> text { "dog {self.n}" }
+pub fn show<T: Named>(x: T) -> text { "any {x.tag()}" }
+pub fn show(x: Cat) -> text { "special {x.tag()}" }
+pub fn wrap<U: Named>(x: U) -> text { show(x) }

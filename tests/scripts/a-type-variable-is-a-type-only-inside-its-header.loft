@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Scope` (@PLN165 D1): a type variable is a type only inside the definition whose header
+// declares it.  `T` declared by `idf`'s header is not a type in `g`'s signature: its
+// placeholder is a global definition, so `g` compiled and every call was then refused
+// "expected T, got Keep" — the author told about a call, not about the declaration.  Refused
+// where the name is written.
+//
+// @falsified-at: 775a94d8e — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-type-variable-is-a-type-only-inside-its-header.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — refused on both trees; the site and the words move.
+//   ARMED: nothing.
+//   WITNESS: on the control `g` compiles and `g(k)` is "expected T, got Keep".
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: `T` is not a type here — a type variable is a type only inside the definition whose header declares it
+
+fn idf<T>(x: T) -> T { x }
+struct Keep { v: integer }
+fn g(x: T) -> integer { 7 }
+
+fn main() {
+  k = Keep { v: 1 };
+  println("{idf(3)} {g(k)}");
+}

@@ -1,0 +1,10 @@
+// B4 — m01 with the method declared FIRST.
+// @EXPECT: some square 1|SQUARE 1 x3
+interface Shape { fn kind(self: Self) -> text }
+struct Sq { s: integer }
+fn kind(self: Sq) -> text { "square {self.s}" }
+fn describe(self: Sq, n: integer) -> text { "SQUARE {self.s} x{n}" }
+fn describe<T: Shape>(x: T) -> text { "some {x.kind()}" }
+fn main() {
+  println("{describe(Sq{s:1})}|{describe(Sq{s:1}, 3)}");
+}

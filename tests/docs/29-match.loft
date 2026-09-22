@@ -20,6 +20,10 @@ enum Shape {
   Rect { w: integer, h: integer },
 }
 
+// A variant whose field is itself an enum.
+enum Paint { Solid { rgb: integer }, Clear }
+enum Tile { Painted { paint: Paint, n: integer }, Bare }
+
 fn direction_name(d: Direction) -> text {
   match d {
     North => "north",
@@ -61,6 +65,22 @@ fn main() {
     Rect { w, h }     => w * h,
   };
   assert(shape_area == 12, "struct-enum destructure: {shape_area}");
+
+  // ## Patterns inside a field
+  // A field can take a pattern instead of a name.  A literal matches only that
+  // value, and when the field is itself an enum, a variant matches only that
+  // variant and binds its own fields in turn.  A field the arm does not name is
+  // simply not tested.  An arm with a pattern inside a field covers only part of
+  // its variant, so the match still needs `_` (or an arm that binds the fields
+  // plainly) to cover the rest.
+  tile = Painted { paint: Solid { rgb: 255 }, n: 2 };
+  what = match tile {
+    Painted { paint: Clear, n } => "clear x{n}",
+    Painted { paint: Solid { rgb: 0 }, n } => "black x{n}",
+    Painted { paint: Solid { rgb }, n } => "colour {rgb} x{n}",
+    _ => "bare",
+  };
+  assert(what == "colour 255 x2", "a pattern inside a field: {what}");
   // ## Guards
   // Add `if condition` after a pattern to restrict when the arm matches.
   // A guard can reject, so a guarded arm never counts towards covering an enum:
@@ -156,6 +176,17 @@ fn main() {
   };
   assert(where == "two-b", "tuple pattern: {where}");
 
+  // An element can be an enum variant with its fields bound, so one arm reads both
+  // sides at once, and a guard can compare them.
+  a: Shape = Rect { w: 2, h: 3 };
+  b: Shape = Circle { radius: 5 };
+  bigger = match (a, b) {
+    (Rect { w, h }, Circle { radius }) if w * h > radius => "rect",
+    (Rect { w, h }, Circle { radius }) => "circle",
+    _ => "other",
+  };
+  assert(bigger == "rect", "variants inside a tuple pattern: {bigger}");
+
   // ## When nothing matches
   // This match names no `_`, and 7 is none of its arms.  On an enum that would
   // not compile; on a scalar there is no finite set to check, so the match
@@ -168,8 +199,9 @@ fn main() {
   assert(unmatched == null, "a scalar match that selects no arm answers null");
   assert((unmatched ?? "none") == "none", "so give it a fallback");
 
-  // ## Nested match
-  // Match can appear inside other expressions, including other match arms.
+  // ## Match inside an arm
+  // Match is an expression, so it can appear inside other expressions, including
+  // another match's arm.
   n = 15;
   result = match n % 2 == 0 {
     true  => "even",

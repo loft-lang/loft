@@ -1,0 +1,11 @@
+// B4 — a method whose second parameter has a default takes a one-argument call EXACT, and
+// outranks the generic.
+// @EXPECT: SQUARE 1 x2|SQUARE 1 x5
+interface Shape { fn kind(self: Self) -> text }
+struct Sq { s: integer }
+fn kind(self: Sq) -> text { "square {self.s}" }
+fn describe<T: Shape>(x: T) -> text { "some {x.kind()}" }
+fn describe(self: Sq, n: integer = 2) -> text { "SQUARE {self.s} x{n}" }
+fn main() {
+  println("{describe(Sq{s:1})}|{describe(Sq{s:1}, 5)}");
+}

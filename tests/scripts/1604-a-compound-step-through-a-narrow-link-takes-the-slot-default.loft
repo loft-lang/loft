@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A value written through a `&` link or a `&` parameter is stored into the linked slot, so it
+// meets the checks a write to that slot meets (`binding.md (B-Ref-Uniform)`): a compound step
+// past a narrow slot's range takes the slot's default, as `y += 100` on the variable does
+// (loft#984's overflow seam); a `??` fallback answers for a value that does not fit; a nullable
+// narrow slot takes the checked narrowing and holds null.  Before loft#1604 every one of these
+// stored the unchecked value — an `i8` held 220, a `u8` held 260.
+//
+// The plain-assignment spelling (`c = c + 10`) is a compile-time refusal and has its own guard,
+// `1604-a-narrowing-write-through-a-link-is-refused.loft`.
+//
+// Cells: a local link and a `&` parameter; `u8`, `i8` and a user `limit(1, 8)`; `+=` and `-=`;
+// a step repeated in a loop; a `??` fallback; a nullable `u8?`; and the full `integer`, which
+// has no range and must keep the stepped value.
+//
+// @falsified-at: 73ae78232 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1604-a-compound-step-through-a-narrow-link-takes-the-slot-default.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions — each narrow variable's value after the writes through its link.
+
+type Small = integer limit(1, 8);
+
+fn up_small(x: &Small) { x += 100; }
+fn down_u8(x: &u8) { x -= 251; }
+
+fn small_parameter() -> text { s: Small = 3; up_small(s); "{s}" }
+fn u8_parameter() -> text { z: u8 = 250; down_u8(z); "{z}" }
+fn i8_local_link() -> text { y: i8 = 120; c = &y; c += 100; "{y}" }
+fn i8_link_in_a_loop() -> text {
+  y: i8 = 20;
+  c = &y;
+  seen = "";
+  for _ in 0..3 { c += 50; seen += "{y};"; }
+  seen
+}
+fn u8_fallback() -> text { w: u8 = 250; d = &w; d = 7; d = (d + 300) ?? 9; "{w}" }
+fn nullable_u8() -> text { q: u8? = 5; e = &q; e = e + 300; "{q}" }
+fn in_range_step() -> text { w: u8 = 200; d = &w; d += 55; "{w}" }
+fn full_integer() -> text { m: integer = 5; f = &m; f = f + 1000; f += 1; "{m}" }
+
+fn main() {
+  assert(small_parameter() == "1", "a limit(1, 8) stepped past 8 through a & parameter: {small_parameter()}");
+  assert(u8_parameter() == "0", "a u8 stepped below 0 through a & parameter: {u8_parameter()}");
+  assert(i8_local_link() == "0", "an i8 stepped past 127 through a local link: {i8_local_link()}");
+  assert(i8_link_in_a_loop() == "70;120;0;", "an i8 stepped through a link in a loop: {i8_link_in_a_loop()}");
+  assert(u8_fallback() == "9", "a ?? fallback through a u8 link: {u8_fallback()}");
+  assert(nullable_u8() == "null", "a u8? written a value that does not fit, through a link: {nullable_u8()}");
+  assert(in_range_step() == "255", "an in-range step through a u8 link keeps its value: {in_range_step()}");
+  assert(full_integer() == "1006", "a full integer through a link has no range: {full_integer()}");
+  println("narrow link writes are range-checked");
+}

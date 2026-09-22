@@ -534,3 +534,62 @@ fn a_trailing_defaulted_parameter_is_additive_and_nothing_else_is() {
         "a changed type is a break even beside a legal addition:\n{out}"
     );
 }
+
+/// @PLN165 D10 — a library's generic types are listed as their author wrote them: the
+/// TEMPLATE (`Grid<T>`, `Slot<T>` as an enum), its methods as methods, and every signature
+/// spelling its variables (`T`, never the placeholder key `T#4`).  The compiler's own defs —
+/// the variable placeholders, each instance (the template stands for it), and the
+/// `main_vector<τ>` wrapper a vector parameter registers — are nobody's surface.
+#[test]
+fn a_generic_library_lists_its_templates_not_its_instances() {
+    let out = api_surface(
+        "pub struct Grid<T> { cells: vector<T>, w: integer }\n\
+         pub fn grid<T>(cells: vector<T>, w: integer) -> Grid<T> { Grid { cells: cells, w: w } }\n\
+         pub fn at<T>(self: Grid<T>, i: integer) -> T? { self.cells[i] }\n\
+         pub enum Slot<T> { Full { v: T }, Hole }\n\
+         pub fn fulls(v: vector<Slot<integer>>) -> integer { len(v) }\n\
+         pub struct Pair<K, V> { k: K, v: V }\n\
+         pub fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }\n",
+    );
+    assert_eq!(
+        out,
+        "Grid.at · method · public · (self: Grid<T>, i: integer) -> T?\n\
+         Grid<T> · struct · public · { cells: vector<T>, w: integer }\n\
+         Pair.swap · method · public · (self: Pair<K, V>) -> Pair<V, K>\n\
+         Pair<K, V> · struct · public · { k: K, v: V }\n\
+         Slot<T> · enum · public · { Full { v: T }, Hole }\n\
+         fulls · fn · public · (v: vector<Slot<integer>>) -> integer\n\
+         grid · fn · public · (cells: vector<T>, w: integer) -> Grid<T>\n"
+    );
+}
+
+/// The wrapper a `vector<τ>` parameter registers is the compiler's, generic or not: it was
+/// listed as a public struct of every library with such a parameter, so dropping the last one
+/// would have read as removing a type.
+#[test]
+fn a_vector_parameter_lists_no_wrapper_struct() {
+    let out = api_surface(
+        "pub struct Mine { n: integer }\npub fn total(v: vector<Mine>) -> integer { len(v) }\n",
+    );
+    assert!(!out.contains("main_vector"), "{out}");
+    assert!(
+        out.contains("Mine · struct") && out.contains("total · fn"),
+        "{out}"
+    );
+}
+
+/// A generic library's surface round-trips through its baseline: an unchanged library checks
+/// clean, and a second type variable is a break (every `Grid<integer>` a consumer wrote stops
+/// naming the type).
+#[test]
+fn a_generic_librarys_baseline_round_trips() {
+    let lib = "pub struct Grid<T> { cells: vector<T>, w: integer }\n\
+               pub fn grid<T>(cells: vector<T>, w: integer) -> Grid<T> { Grid { cells: cells, w: w } }\n";
+    let (out, code) = emit_and_check(lib, lib);
+    assert_eq!(code, 0, "an unchanged generic library checks clean:\n{out}");
+    let (out, code) = emit_and_check(
+        lib,
+        "pub struct Grid<T, U> { cells: vector<T>, w: integer, u: U }\n",
+    );
+    assert_ne!(code, 0, "a second type variable is a break:\n{out}");
+}

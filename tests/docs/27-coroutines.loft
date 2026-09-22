@@ -124,14 +124,16 @@ fn main() {
   // Its step counter shows the body ran six times, not a thousand — the work
   // for the values nobody asked for was never done.
   //
-  // ⚠ That holds on BOTH backends for the shape written here: a loop whose body
-  // ends in one unconditional 'yield'.  Other shapes — a statement after the
-  // yield, a yield inside an 'if' or 'match', a nested loop, a 'continue' —
-  // still run the whole loop eagerly on --native, so their side effects happen
-  // for values the consumer never asks for (measured: 1000 steps where the
-  // interpreter does 5).  The VALUES are the same either way; it is the side
-  // effects that differ.  Keep the yield last, or do not put observable work in
-  // a generator body.  COROUTINE.md tracks this as CL-9.
+  // ⚠ That holds on BOTH backends for the shape written here: a 'for' or 'while'
+  // loop with one 'yield' on its body's straight line, statements after it
+  // included.  Other shapes — a yield inside an 'if' or 'match', two yields in
+  // one iteration, a nested loop, a 'continue' — still run the whole loop
+  // eagerly on --native, so their side effects happen for values the consumer
+  // never asks for.  The VALUES are the same either way; it is the side effects
+  // that differ.  An ENDLESS eager loop never hands out a value at all: on
+  // --native it runs until memory runs out.  Keep the yield out of an 'if' in a
+  // generator loop, or do not put observable work in a generator body.
+  // COROUTINE.md tracks this as CL-9.
   trace = Trace { steps: 0 };
   seen = 0;
   for n in counted(1000, trace) {

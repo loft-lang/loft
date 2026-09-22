@@ -208,7 +208,7 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 0.**  D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
 
 - **D-tup-10** *(CLOSED 2026-09-16, loft#1423 / loft#1451)* — `(T-Absent)` said no
   `Optional(Tuple)` exists while the code minted one wherever absence is synthesised:

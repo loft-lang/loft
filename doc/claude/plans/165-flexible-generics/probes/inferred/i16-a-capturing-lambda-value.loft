@@ -1,0 +1,10 @@
+// D4 — a capturing long lambda: the read types it from its header; the build makes the one
+// closure, and the next lambda keeps its own number.
+// @EXPECT: 7|q?
+struct Fb<T> { f: fn(T) -> T, v: T }
+fn main() {
+  k = 3;
+  a = Fb { f: fn(x: integer) -> integer { x + k }, v: 4 };
+  g = fn(s: text) -> text { "{s}?" };
+  println("{a.f(a.v)}|{g("q")}");
+}

@@ -6,7 +6,7 @@ use crate::data::{Context, Data, DefType, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
 mod calls;
 mod coroutine;
@@ -84,27 +84,9 @@ const NATIVE_STRICT_STORE_TAIL: &str = "    #[cfg(not(target_arch = \"wasm32\"))
 /// the standard package native path instead of a hardcoded list in the
 /// compiler crate.
 fn is_t_param_stub(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("t_") else {
+    let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Method) else {
         return false;
     };
-    // Parse the leading length digits.
-    let len_end = rest.bytes().position(|b| !b.is_ascii_digit()).unwrap_or(0);
-    if len_end == 0 {
-        return false;
-    }
-    let Ok(type_len) = rest[..len_end].parse::<usize>() else {
-        return false;
-    };
-    let after_len = &rest[len_end..];
-    if after_len.len() < type_len + 1 {
-        return false;
-    }
-    // The next `type_len` chars are the type name; then `_` then method.
-    let type_name = &after_len[..type_len];
-    let after_type = &after_len[type_len..];
-    if !after_type.starts_with('_') {
-        return false;
-    }
     // Heuristic: a generic type variable is a single ASCII identifier
     // (mostly UPPERCASE single letter or short PascalCase).  Concrete
     // builtins use lowercase type names (`text`, `integer`, `single`,
@@ -122,7 +104,7 @@ fn is_t_param_stub(name: &str) -> bool {
     // labeled "T-stub" — but in that case the right behaviour is
     // identical (emit `todo!()` instead of compile_error since the
     // function is genuinely unimplemented).
-    type_name
+    key.spelling
         .chars()
         .next()
         .is_some_and(|c| c.is_ascii_uppercase())
@@ -421,10 +403,20 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
 /// may export the same `pub fn` name — `Data` scopes defs by `(name, source)`,
 /// but emitted Rust is one flat namespace, so such names need a disambiguated
 /// identifier (#305: rustc E0428 "defined multiple times").
+///
+/// # Panics
+/// When two DIFFERENT keys flatten to one Rust identifier — a compiler defect, since the
+/// emitted crate would define one symbol twice.
 #[must_use]
 pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
     let mut seen: HashSet<&str> = HashSet::new();
     let mut dups = HashSet::new();
+    // Two DIFFERENT keys that flatten to one Rust identifier ([`rust_fn_ident`]) would be two
+    // definitions under one symbol — a key keeps its readable characters (`i_15vector<text>_…`,
+    // `f_10Rock#Paper_…`) and this is the one place that makes it an identifier, so it is the
+    // one place that can refuse the collision.  Two definitions of the SAME key from two
+    // modules are the ordinary duplicate, disambiguated below.
+    let mut flat: HashMap<String, &str> = HashMap::new();
     for d in 0..data.definitions() {
         let def = data.def(d);
         if !matches!(def.def_type(), DefType::Function | DefType::Dynamic) {
@@ -432,6 +424,15 @@ pub fn duplicate_fn_names(data: &Data) -> HashSet<String> {
         }
         if !seen.insert(def.name()) {
             dups.insert(def.name().to_string());
+        }
+        let ident = rust_fn_ident(def.name());
+        if let Some(prev) = flat.insert(ident.clone(), def.name()) {
+            assert!(
+                prev == def.name(),
+                "native emission: the definitions `{prev}` and `{}` flatten to one Rust \
+                 identifier `{ident}`",
+                def.name()
+            );
         }
     }
     dups
@@ -499,13 +500,43 @@ pub fn disambiguated_fn_ident(dups: &HashSet<String>, def: &crate::data::Definit
     rust_fn_ident(&base)
 }
 
+/// Is `def` a free function in all but its key — a free overload member (`f_…`, @PLN162) or
+/// an instance of a FREE generic (`i_<…>_n_<name>` / `i_<…>_f_<…>`, @PLN165 `D-Key`)?  Its
+/// `n_` twin is the definition it must behave as.
+fn is_free_in_all_but_key(def: &crate::data::Definition) -> bool {
+    if def.is_free_overload() {
+        return true;
+    }
+    let mut name = def.name();
+    while let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
+    {
+        name = key.rest;
+    }
+    name != def.name()
+        && (name.starts_with("n_")
+            || Data::split_key(name).is_some_and(|k| k.kind == crate::data::KeyKind::FreeOverload))
+}
+
+/// Is `def` a METHOD — `t_<LEN><receiver>_<name>`, or an instance of one (a method on a
+/// generic struct, `i_<…>_t_<…>`)?  A loft-bodied method is a call frame like any free
+/// function: it can recurse, so it carries the depth cap, and the interpreter names it in
+/// `stack_trace()`.
+fn is_method(def: &crate::data::Definition) -> bool {
+    let mut name = def.name();
+    while let Some(key) = Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
+    {
+        name = key.rest;
+    }
+    Data::split_key(name).is_some_and(|k| k.kind == crate::data::KeyKind::Method)
+}
+
 /// Flatten a loft def name into a valid Rust identifier.  Most names already are
 /// (`n_foo`, `t_4Pair_first`), but a generic instantiated over a TUPLE carries the
 /// synthetic tuple struct's schema name verbatim — `t_24__tuple<integer,integer>_first`
 /// — and `<`, `>`, `,`, and spaces are not valid in a Rust identifier (#395).  Every
 /// emission of a fn name (definition AND every call) routes through `fn_ident`, so
 /// flattening at this one chokepoint keeps the definition and its callers in sync.
-fn rust_fn_ident(name: &str) -> String {
+pub(crate) fn rust_fn_ident(name: &str) -> String {
     if name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_') {
         return name.to_string();
     }
@@ -678,6 +709,9 @@ pub struct Output<'a> {
     pub plain_nest: u32,
     /// `LOFT_NO_BOUNDED_NEST=1` — no nest is guarded and run plain.
     pub bounded_nest_disabled: bool,
+    /// `LOFT_NO_BOUNDED_SUM=1` — no reduction runs its plain block sum first
+    /// (`(R-BoundedNest)`'s reduction clause).
+    pub bounded_sum_disabled: bool,
     /// `@FR-R-GuardedChain` — per guarded loop, the argument-slice addresses of every
     /// `+ - *`/negation node inside a chain its guard bounds, and the guard's name: those ops
     /// emit the plain operator under the guard and the template otherwise
@@ -705,9 +739,21 @@ pub struct Output<'a> {
     /// bound in it, keyed by the view variable; a field read or in-place write of that
     /// variable goes through it ([`Self::bind_record_ptr`]).
     pub rec_ptrs: Vec<HashMap<u16, String>>,
+    /// `@FR-R-RecPtr`'s mint clause — the open mint WINDOWS, innermost last: `(block serial,
+    /// the index of the element's finish, the element variable)`.  A window's address frame
+    /// is dropped once the statement at that index has been emitted
+    /// ([`Self::close_ptr_windows_before`]), by the element it serves rather than by
+    /// position, since an ordinary view bound inside the window sits above it.
+    pub ptr_windows: Vec<(usize, usize, u16)>,
+    /// `LOFT_NO_MINT_WINDOW=1` — a minted element's field writes resolve the store again.
+    pub mint_window_disabled: bool,
     /// `LOFT_NO_RECORD_PTR=1` — no record view carries its address; every field read and
     /// write resolves the store again.
     pub record_ptr_disabled: bool,
+    /// `LOFT_NO_BASE_RECPTR=1` — a record view bound from an element of a vector whose BASE
+    /// the loop holds resolves the store for its address again (`@FR-R-RecPtr`'s base
+    /// clause off).
+    pub base_rec_ptr_disabled: bool,
     /// `LOFT_TRACE_RECPTR=1` — name every record view bound to an address and every
     /// declined binding with its reason.
     pub recptr_trace: bool,
@@ -812,6 +858,43 @@ pub struct Output<'a> {
     /// § V-j; the bisect step for a wrong element, a leak or a double free out of a
     /// `for f in call(…) {{ v += [f] }}` loop.
     pub move_append_disabled: bool,
+    /// `@FR-R-LazySplit` — the `for piece in text.split(c)` loops of the function being
+    /// emitted that take their pieces straight from the text, keyed by the hidden vector
+    /// variable the lazy form never declares ([`hoist::lazy_splits`]); rebuilt per function.
+    pub lazy_splits: BTreeMap<u16, hoist::LazySplit>,
+    /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
+    /// the bisect step for a wrong or missing piece out of a loop over a `split`.
+    pub lazy_split_disabled: bool,
+    /// `@FR-R-SplitTable` — the `parts = text.split(c)` binds of the function being
+    /// emitted whose vector is never built, keyed by the local ([`hoist::split_tables`]);
+    /// rebuilt per function.  The table is `__st_<var>: Vec<&str>` at the bind.
+    pub split_tables: BTreeMap<u16, hoist::SplitTable>,
+    /// The hidden `_vector_N` of each `for p in parts` walk over a table, mapped to its
+    /// table — the walk's two readers answer from the table under the alias's name.
+    pub split_table_aliases: BTreeMap<u16, u16>,
+    /// `LOFT_NO_SPLIT_TABLE=1` — every such bind builds its `vector<text>` again; the
+    /// bisect step for a wrong length, piece or walk out of a split bound to a name.
+    pub split_table_disabled: bool,
+    /// `@FR-R-TextBorrow` — the text LOCALS of the function being emitted whose Rust slot
+    /// is a borrowed `&str` rather than an owned `String`: the loop variables of the walks
+    /// of texts that borrow their element ([`hoist::borrowed_text_walks`]); rebuilt per
+    /// function.  [`Output::text_borrowed`] is the one predicate that reads it, beside the
+    /// text parameters it always answers.
+    pub borrowed_text_locals: HashMap<u16, hoist::TextBorrow>,
+    /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
+    /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
+    /// variable of `for p in vector<text>` on native.
+    pub text_borrow_disabled: bool,
+    /// `@FR-R-CharWalk` — the `for c in T` walks of the function being emitted, keyed by
+    /// the loop's scope ([`hoist::char_walks`]); rebuilt per function.
+    pub char_walks: BTreeMap<u16, hoist::CharWalk>,
+    /// The same walks keyed by LOOP VARIABLE, for the bind in `output_set`.
+    pub char_walk_binds: HashMap<u16, hoist::CharWalk>,
+    /// `LOFT_NO_CHAR_WALK=1` — every character walk takes its step as written and asks
+    /// its null test per iteration again, as before `@FR-R-CharWalk`; the bisect step for
+    /// a wrong character, a wrong byte offset or a missed fault out of `for c in text` on
+    /// native.
+    pub char_walk_disabled: bool,
     /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
     /// function that build once per activation ([`hoist::invariant_literals`]): each is
     /// pre-declared at function top and its declaration statement wrapped in an
@@ -876,6 +959,18 @@ pub struct Output<'a> {
     /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
     /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
     pub push_fill_disabled: bool,
+    /// `LOFT_NO_PUSH_WINDOW` (generation time): a reserved counted push loop pushes through
+    /// its push header again, the length written back per push (`@FR-R-PushFill`'s window
+    /// clause).
+    pub push_window_disabled: bool,
+    /// `LOFT_NO_JOIN_READ` (generation time): `v[i]?.f` runs its join on every pass and
+    /// reads the result through the store again (`@FR-R-Base`'s join clause).
+    pub join_read_disabled: bool,
+    /// `@FR-R-PushFill`'s window clause — the push WINDOWS open while a loop's statements
+    /// are emitted: the pushed path and the `vector::PushWindow` local its pushes go
+    /// through.  Opened by [`Self::push_reserve`] before the loop (and before any guarded
+    /// copy of it, so both arms push through the one window) and closed after it.
+    pub push_windows: Vec<(hoist::PathKey, String)>,
     /// @PLN157 § V-u (`@FR-R-RetAdopt`) — the function being emitted whose result local
     /// ADOPTS the hidden return buffer ([`hoist::ret_adopt`]); `None` for every other.
     pub ret_adopt: Option<hoist::RetAdopt>,
@@ -950,6 +1045,10 @@ pub struct Output<'a> {
     /// `@FR-R-Range` — the per-definition range facts ([`range::range_vars`]), computed on
     /// the first integer op a function emits and cached beside the non-sentinel ones.
     range_cache: HashMap<u32, std::rc::Rc<HashMap<u16, range::Range>>>,
+    /// `LOFT_NO_TYPED_KEYED=1` — a lookup in a `hash` with one integer key is emitted as the
+    /// general `OpGetRecord` again instead of `OpGetHashLong` (`@FR-R-TypedKeyed`); the
+    /// bisect step for a wrong or missing record out of such a lookup on native.
+    pub typed_keyed_disabled: bool,
     /// `LOFT_NO_RANGE_ARITH=1` — every integer operator keeps its checked template, as
     /// before `@FR-R-Range`; the bisect step for a wrong integer value on native where the
     /// range proof admitted a plain operator.  `LOFT_HOIST_VERIFY=1` is the falsifier.
@@ -1432,6 +1531,22 @@ pub(crate) fn is_raw_tuple_link(vars: &crate::variables::Function, var: u16) -> 
         && matches!(vars.tp(var), Type::RefVar(inner) if matches!(inner.base(), Type::Tuple(_)))
 }
 
+/// True when a `&τ` of this type is a raw `*mut T` on native as a PARAMETER too, not only
+/// as a local link: `τ` is a scalar (`data::is_scalar`).
+///
+/// `(B-Ref-Write)` lets one place reach a call through two `&` parameters (`add2(x, x)`,
+/// `add2(p.n, p.n)`, `add2(v[i], v[j])` with `i == j`), and a `&mut T` parameter promises
+/// Rust the opposite: two of them to one place is a borrow error for a local and undefined
+/// behaviour for a store place, whose pointer comes from a raw address (loft#1605).  A raw
+/// pointer may alias, so a scalar `&` parameter is the `*mut T` a local link already is, and
+/// a local, a link and a forwarded parameter all pass as one pointer.  A heap `τ` keeps
+/// `&mut T`: its store place reaches the call through a temporary of its own, so two
+/// arguments never share the memory the reference names.
+#[must_use]
+pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
+    matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
+}
+
 /// True when tuple element `idx` of `var` is TEXT — nullable or not.  The predicate
 /// behind [`tuple_elem_type`]'s most-asked question; see it for why the two are one.
 #[must_use]
@@ -1570,6 +1685,9 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
         return result;
     }
     if let Type::RefVar(in_tp) = tp {
+        if is_raw_scalar_ref(tp) {
+            return format!("*mut {}", rust_type(in_tp, &Context::Variable));
+        }
         return format!("&mut {}", rust_type(in_tp, &Context::Variable));
     }
     match tp {
@@ -1925,6 +2043,10 @@ enum BareIo {
     Radix(u16, Vec<u16>),
     Trie(u16, u16),
     Index(u16, Vec<(u16, bool)>),
+    /// The 12-byte stored `DbRef` shape — `true` for the owned one, `false` for the borrowed
+    /// twin `dbref_shapes` registers beside it.  A field names it inline (`db.dbref()`), and a
+    /// generator-handle collection (loft#1585) names it as its element, so it needs a binding.
+    DbRef(bool),
 }
 
 impl<'a> Output<'a> {
@@ -1955,6 +2077,7 @@ impl<'a> Output<'a> {
             vec_bounds: Vec::new(),
             plain_nest: 0,
             bounded_nest_disabled: std::env::var("LOFT_NO_BOUNDED_NEST").is_ok_and(|v| v != "0"),
+            bounded_sum_disabled: !crate::keys::bounded_sum_enabled(),
             in_coroutine_body: false,
             plain_chains: Vec::new(),
             chains_suspended: 0,
@@ -1967,9 +2090,12 @@ impl<'a> Output<'a> {
             twin_base_disabled: std::env::var("LOFT_NO_TWIN_BASE").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
             rec_ptrs: Vec::new(),
+            ptr_windows: Vec::new(),
+            mint_window_disabled: std::env::var("LOFT_NO_MINT_WINDOW").is_ok_and(|v| v != "0"),
             // One rule: `LOFT_NO_VECTOR_BASE` switches its record clause off with it.
             record_ptr_disabled: std::env::var("LOFT_NO_RECORD_PTR").is_ok_and(|v| v != "0")
                 || !crate::keys::vector_base_enabled(),
+            base_rec_ptr_disabled: std::env::var("LOFT_NO_BASE_RECPTR").is_ok_and(|v| v != "0"),
             recptr_trace: std::env::var("LOFT_TRACE_RECPTR").is_ok(),
             scalar_hoists: Vec::new(),
             scalar_write_cache: HashMap::new(),
@@ -1999,6 +2125,16 @@ impl<'a> Output<'a> {
             move_by_loopvar: HashMap::new(),
             active_move_vars: Vec::new(),
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
+            lazy_splits: BTreeMap::new(),
+            lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
+            split_tables: BTreeMap::new(),
+            split_table_aliases: BTreeMap::new(),
+            split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
+            borrowed_text_locals: HashMap::new(),
+            text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
+            char_walks: BTreeMap::new(),
+            char_walk_binds: HashMap::new(),
+            char_walk_disabled: std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0"),
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
@@ -2018,6 +2154,9 @@ impl<'a> Output<'a> {
             loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
+            push_window_disabled: !crate::keys::push_window_enabled(),
+            join_read_disabled: !crate::keys::join_read_enabled(),
+            push_windows: Vec::new(),
             ret_adopt: None,
             retbuf_adopt_disabled: std::env::var("LOFT_NO_RETBUF_ADOPT").is_ok_and(|v| v != "0"),
             in_adopt_delivery: 0,
@@ -2035,6 +2174,7 @@ impl<'a> Output<'a> {
             release_pass_probe: std::env::var("LOFT_RELEASE_PASS_PROBE").is_ok_and(|v| v != "0"),
             nn_cache: HashMap::new(),
             range_cache: HashMap::new(),
+            typed_keyed_disabled: std::env::var("LOFT_NO_TYPED_KEYED").is_ok_and(|v| v != "0"),
             range_arith_disabled: std::env::var("LOFT_NO_RANGE_ARITH").is_ok_and(|v| v != "0"),
             range_suspended: 0,
             leaf_cache: HashMap::new(),
@@ -2322,6 +2462,50 @@ impl Output<'_> {
             .values()
             .map(|p| (p.loop_var, p.clone()))
             .collect();
+        self.lazy_splits = if self.lazy_split_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::lazy_splits(self.data, def_nr)
+        };
+        self.split_tables = if self.split_table_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::split_tables(self.data, def_nr)
+        };
+        self.split_table_aliases = self
+            .split_tables
+            .iter()
+            .flat_map(|(t, st)| st.aliases.iter().map(move |a| (*a, *t)))
+            .collect();
+        // `@FR-R-TextBorrow` — after the lazy splits and the split tables, whose walks
+        // need no store condition: their pieces are slices of a text, never store records.
+        let sliced: BTreeSet<u16> = self
+            .lazy_splits
+            .keys()
+            .chain(self.split_table_aliases.keys())
+            .copied()
+            .collect();
+        self.borrowed_text_locals = if self.text_borrow_disabled {
+            HashMap::new()
+        } else {
+            let mut walks = hoist::borrowed_text_walks(self.data, def_nr, &sliced);
+            walks.extend(hoist::borrowed_discharge_temps(
+                self.data,
+                def_nr,
+                &self.split_tables,
+            ));
+            walks
+        };
+        self.char_walks = if self.char_walk_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::char_walks(self.data, def_nr)
+        };
+        self.char_walk_binds = self
+            .char_walks
+            .values()
+            .map(|w| (w.loop_var, w.clone()))
+            .collect();
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
@@ -2380,6 +2564,7 @@ impl Output<'_> {
         self.scalar_hoists.clear();
         self.push_headers.clear();
         self.mint_push_headers.clear();
+        self.push_windows.clear();
         self.hoist_counter = 0;
     }
 
@@ -3090,14 +3275,185 @@ impl Output<'_> {
         }
     }
 
+    /// The trip count of the counted push loop `p`, as the expression its reservation and
+    /// its fill take: the range's end less its start (the `next` counter's current value,
+    /// § V-ab, or `#index + 1`, P3b), plus one for an inclusive range.
+    fn push_trip_count(&mut self, p: &hoist::PushLoop) -> std::io::Result<String> {
+        let variables = self.data.def(self.def_nr).variables();
+        let idx = format!("var_{}", sanitize(variables.name(p.index_var)));
+        let lo = match p.next_var {
+            Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
+            None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
+            None => format!("ops::op_add_int(({idx}), (1_i64))"),
+        };
+        let hi = self.expr_string(p.hi)?;
+        let incl = if p.inclusive { "1_i64" } else { "0_i64" };
+        Ok(format!(
+            "(({hi}) as i64).saturating_sub(({lo}) as i64).saturating_add({incl})"
+        ))
+    }
+
     /// @PLN157 § V-am (`@FR-R-PushFill`) — when `lp` is a counted push loop over a path a
     /// push header is held for, RESERVE its pushes times its trip count before it runs
-    /// (and re-derive the header, since the reserve may move the record); when the loop
-    /// is one push of an invariant, emit the guarded `let __pf_N = stores.push_fill(…)`
-    /// instead and answer `true` — the caller then emits the per-element loop under
-    /// `if !__pf_N` and [`Self::push_fast_path_tail`] leaves the counters as the loop
-    /// would.  The trip count is the range's end less its start (the `next` counter's
-    /// current value, § V-ab, or `#index + 1`, P3b), plus one for an inclusive range.
+    /// (and re-derive the header, since the reserve may move the record).  Emitted BEFORE
+    /// any guarded copy of the loop (`@FR-R-BoundedNest`, `@FR-R-GuardedChain`): a
+    /// reservation is capacity, observably nothing, and one written after the guard stands
+    /// in its `else` arm — the arm that does not run.
+    ///
+    /// THE WINDOW CLAUSE — where [`hoist::push_window_ok`] admits the loop, a
+    /// `vector::PushWindow` is opened on the reserved header here, every push of the path
+    /// in the loop goes through it ([`Self::active_push_window`]), and the caller closes
+    /// it after the loop with what this answers: the window local, the header it closes
+    /// onto, and the vector operand.
+    fn push_reserve(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<Option<(String, String, String)>> {
+        if self.push_fill_disabled {
+            return Ok(None);
+        }
+        let Some(p) = hoist::push_loop(lp, self.data) else {
+            return Ok(None);
+        };
+        if p.fill.is_some() {
+            return Ok(None);
+        }
+        let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
+            return Ok(None);
+        };
+        let count = self.push_trip_count(&p)?;
+        let vec = self.expr_string(p.vector)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@PLN157 § V-am push reserve",
+            p.pushes, p.size
+        )?;
+        if self.push_window_disabled
+            || self.in_coroutine_body
+            || self.coroutine_persistent_fields.contains_key(&p.path.0)
+        {
+            return Ok(None);
+        }
+        if let Err(why) =
+            hoist::push_window_ok(lp, &p, self.data, self.def_nr, &mut self.hoist_cache)
+        {
+            if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
+                eprintln!(
+                    "push-fill: {} loop {} keeps its header pushes — {why}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope
+                );
+            }
+            return Ok(None);
+        }
+        self.hoist_counter += 1;
+        let win = format!("__pw_{}", self.hoist_counter);
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {win} = vector::push_window(&{hdr}, {}_u32, &stores.allocations); //@FR-R-PushFill push window",
+            p.size
+        )?;
+        self.push_windows.push((p.path.clone(), win.clone()));
+        Ok(Some((win, hdr, vec)))
+    }
+
+    /// `(R-BoundedNest)`'s reduction clause — when `lp` is one integer accumulate of a
+    /// vector's elements ([`hoist::bounded_sum`]) over a path this loop holds a header AND
+    /// a base for, emit the plain block sum BEFORE the loop: `vector::sum_blocks_i64` takes
+    /// the accumulator and the range and answers the total and the first index it did not
+    /// sum, the `#index` is advanced to one below it, and the checked loop that follows —
+    /// emitted unchanged, guards and all — resumes there.  Every block the helper admits
+    /// is one no prefix can overflow in, so the loop's own answer is unchanged on every
+    /// input; a vector of large elements, or a null one, is what the resumed loop is for.
+    fn sum_fast_path(&mut self, w: &mut dyn Write, lp: &crate::data::Block) -> std::io::Result<()> {
+        if self.bounded_sum_disabled || self.hoist_disabled || self.in_coroutine_body {
+            return Ok(());
+        }
+        let bs = match hoist::bounded_sum(lp, self.data) {
+            Ok(bs) => bs,
+            Err(why) => {
+                if self.nest_trace && lp.name == "For loop" && why != "not a for loop" {
+                    eprintln!(
+                        "sum: {} loop {} declined — {why}",
+                        self.data.def(self.def_nr).name(),
+                        lp.scope
+                    );
+                }
+                return Ok(());
+            }
+        };
+        let (Some(header), Some(base)) = (
+            self.active_vec_header(&bs.path).map(str::to_owned),
+            self.active_vec_base(&bs.path).map(str::to_owned),
+        ) else {
+            if self.nest_trace {
+                eprintln!(
+                    "sum: {} loop {} declined — the loop holds no header and base for the vector",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope
+                );
+            }
+            return Ok(());
+        };
+        let variables = self.data.def(self.def_nr).variables();
+        let acc = format!("var_{}", sanitize(variables.name(bs.acc)));
+        let idx = format!("var_{}", sanitize(variables.name(bs.index)));
+        let hi = self.expr_string(bs.hi)?;
+        let verify = if self.hoist_verify { "true" } else { "false" };
+        if self.nest_trace {
+            eprintln!(
+                "sum: {} loop {} admitted — the plain block sum runs first",
+                self.data.def(self.def_nr).name(),
+                lp.scope
+            );
+        }
+        self.indent(w)?;
+        // The single-counter form seeds `#index` one below the start, so the plain part
+        // begins at `#index + 1` and leaves `#index` one below the first index it did not
+        // sum — exactly where the loop's own step picks up.
+        writeln!(
+            w,
+            "{{ let (__sa, __sat) = unsafe {{ vector::sum_blocks_i64::<{verify}>({base}, {header}.len, ({idx}).wrapping_add(1_i64), ({hi}), {acc}) }}; {acc} = __sa; {idx} = __sat.wrapping_sub(1_i64); }} //@FR-R-BoundedNest reduction"
+        )?;
+        Ok(())
+    }
+
+    /// Close the window [`Self::push_reserve`] opened, after the loop and every guarded
+    /// copy of it: the length the loop reached is written to the header and the record.
+    fn push_window_close(
+        &mut self,
+        w: &mut dyn Write,
+        window: &(String, String, String),
+    ) -> std::io::Result<()> {
+        let (win, hdr, vec) = window;
+        let verify = if self.hoist_verify { "true" } else { "false" };
+        self.push_windows.pop();
+        writeln!(w, ";")?;
+        self.indent(w)?;
+        write!(
+            w,
+            "stores.push_window_close::<{verify}>(&mut {hdr}, {win}.len, &({vec})) /*@FR-R-PushFill window closed*/"
+        )
+    }
+
+    /// The window open for `path`, when the loop being emitted pushes through one.
+    #[must_use]
+    pub fn active_push_window(&self, path: &hoist::PathKey) -> Option<&str> {
+        self.push_windows
+            .iter()
+            .rev()
+            .find(|(p, _)| p == path)
+            .map(|(_, w)| w.as_str())
+    }
+
+    /// @PLN157 § V-am (`@FR-R-PushFill`) — when `lp` is ONE push of an invariant over a
+    /// path a push header is held for, emit the guarded `let __pf_N = stores.push_fill(…)`
+    /// and answer `true` — the caller then emits the per-element loop under `if !__pf_N`
+    /// and [`Self::push_fast_path_tail`] leaves the counters as the loop would.  Every
+    /// other counted push loop is [`Self::push_reserve`]'s.
     fn push_fast_path(
         &mut self,
         w: &mut dyn Write,
@@ -3109,37 +3465,23 @@ impl Output<'_> {
         let Some(p) = hoist::push_loop(lp, self.data) else {
             return Ok(false);
         };
+        let Some(val) = p.fill else {
+            return Ok(false);
+        };
         let Some(hdr) = self.active_push_header(&p.path).map(str::to_owned) else {
             return Ok(false);
         };
-        let variables = self.data.def(self.def_nr).variables();
-        let idx = format!("var_{}", sanitize(variables.name(p.index_var)));
-        let lo = match p.next_var {
-            Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
-            None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
-            None => format!("ops::op_add_int(({idx}), (1_i64))"),
-        };
+        let count = self.push_trip_count(&p)?;
         let vec = self.expr_string(p.vector)?;
-        let hi = self.expr_string(p.hi)?;
-        let incl = if p.inclusive { "1_i64" } else { "0_i64" };
-        let count = format!("(({hi}) as i64).saturating_sub(({lo}) as i64).saturating_add({incl})");
+        let val = self.expr_string(val)?;
         let verify = if self.hoist_verify { "true" } else { "false" };
         self.indent(w)?;
-        if let Some(val) = p.fill {
-            let val = self.expr_string(val)?;
-            writeln!(
-                w,
-                "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val})); //@PLN157 § V-am push fill",
-                lp.scope, p.rust_type, p.size
-            )?;
-            return Ok(true);
-        }
         writeln!(
             w,
-            "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@PLN157 § V-am push reserve",
-            p.pushes, p.size
+            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val})); //@PLN157 § V-am push fill",
+            lp.scope, p.rust_type, p.size
         )?;
-        Ok(false)
+        Ok(true)
     }
 
     /// The `else` arm of the push fill's guard — [`Self::range_tail`] over the push loop.
@@ -3276,6 +3618,17 @@ impl Output<'_> {
             // inside its `next` methods. The prelude below spells a plain local, so a
             // vector that moved onto the struct is left alone rather than named wrongly.
             if self.coroutine_persistent_fields.contains_key(&path.0) {
+                continue;
+            }
+            // `@FR-R-LazySplit` — the hidden vector of a lazy split is never declared: the
+            // loop walks the text's pieces, so there is no header to derive.  (Until
+            // `@FR-R-TextBorrow` made `OpGetText` a reader, the element read itself kept
+            // such a loop out of the hoist; now the exclusion is stated.)
+            if self.lazy_splits.contains_key(&path.0) {
+                continue;
+            }
+            // `@FR-R-SplitTable` — a table and its walk's alias have no vector either.
+            if self.split_table_var(path.0).is_some() {
                 continue;
             }
             self.hoist_counter += 1;
@@ -3453,6 +3806,8 @@ impl Output<'_> {
         let path: hoist::PathKey = (d, Vec::new());
         if self.vec_headers.iter().any(|f| f.contains_key(&path))
             || self.coroutine_persistent_fields.contains_key(&d)
+            // `@FR-R-SplitTable` — a walk's alias of a table is no vector: no header.
+            || self.split_table_var(d).is_some()
         {
             return Ok(false);
         }
@@ -3780,6 +4135,7 @@ impl Output<'_> {
         w: &mut dyn Write,
         stmts: &[Value],
         at: usize,
+        block: Option<usize>,
     ) -> std::io::Result<bool> {
         if self.hoist_disabled || self.record_ptr_disabled {
             return Ok(false);
@@ -3825,11 +4181,37 @@ impl Output<'_> {
             stmts,
             at,
             self.data,
+            self.stores,
             self.def_nr,
             &mut self.hoist_cache,
             !self.write_hoist_disabled,
             &twin_params,
         );
+        // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
+        // append grows a store) may still hold its address for its own WINDOW, up to its
+        // finish.  Only in a block whose statements this emitter walks by index.
+        let mut window: Option<usize> = None;
+        let verdict = match (verdict, block) {
+            (Err(_), Some(_)) if !self.mint_window_disabled => {
+                match hoist::mint_window(
+                    stmts,
+                    at,
+                    self.data,
+                    self.stores,
+                    self.def_nr,
+                    &mut self.hoist_cache,
+                    !self.write_hoist_disabled,
+                ) {
+                    Ok((e, finish)) => {
+                        window = Some(finish);
+                        Ok(e)
+                    }
+                    Err("not a mint") => verdict,
+                    Err(why) => Err(why),
+                }
+            }
+            (v, _) => v,
+        };
         let r = match verdict {
             Ok(r) => r,
             Err(why) => {
@@ -3850,10 +4232,26 @@ impl Output<'_> {
         self.output_code_inner(&mut operand, &Value::Var(r))?;
         let operand = String::from_utf8_lossy(&operand).into_owned();
         self.indent(w)?;
-        writeln!(
-            w,
-            "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
-        )?;
+        // `@FR-R-RecPtr`'s base clause — the binding is the head of `for e in v` over a
+        // vector whose header and element BASE this loop holds: the element is at the base
+        // plus index times size, with no `DbRef` consulted and no store resolved; past the
+        // end the element is the null record, whose address is null.
+        if let Some((header, base, index, size, offset)) = self.held_iteration_base(&stmts[at]) {
+            let plus = if offset == 0 {
+                String::new()
+            } else {
+                format!(" + {offset}")
+            };
+            writeln!(
+                w,
+                "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}{plus}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
+            )?;
+        } else {
+            writeln!(
+                w,
+                "let {name}: *const u8 = vector::rec_ptr(&({operand}), &stores.allocations); //@FR-R-RecPtr record view address for {operand}"
+            )?;
+        }
         if self.recptr_trace {
             eprintln!(
                 "recptr: {} binds {name} for `{}`",
@@ -3862,7 +4260,47 @@ impl Output<'_> {
             );
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
+        if let (Some(finish), Some(block)) = (window, block) {
+            // A window's frame is closed at its finish, not with the block: the caller
+            // must not count it among the frames it pops.
+            self.ptr_windows.push((block, finish, r));
+            return Ok(false);
+        }
         Ok(true)
+    }
+
+    /// `@FR-R-RecPtr`'s mint clause — drop the address of every mint window of `block`
+    /// whose finish (statement `end`) has been emitted: `end < at`.  The frame is found by
+    /// the element it serves, since a view bound inside the window sits above it.
+    pub(super) fn close_ptr_windows_before(&mut self, block: usize, at: usize) {
+        while self
+            .ptr_windows
+            .last()
+            .is_some_and(|&(b, end, _)| b == block && end < at)
+        {
+            let (_, _, e) = self.ptr_windows.pop().expect("tested above");
+            if let Some(i) = self.rec_ptrs.iter().rposition(|f| f.contains_key(&e)) {
+                self.rec_ptrs.remove(i);
+            }
+        }
+    }
+
+    /// `@FR-R-RecPtr`'s base clause — for a statement that is the head of a vector iteration
+    /// ([`hoist::iteration_head`]) over a path whose header AND element base an enclosing
+    /// frame holds: those two locals, the index variable's name and the element size.
+    fn held_iteration_base(&self, stmt: &Value) -> Option<(String, String, String, u32, u32)> {
+        if self.base_rec_ptr_disabled {
+            return None;
+        }
+        let it = hoist::iteration_head(stmt, self.data)?;
+        let path = hoist::vector_path(self.data, it.vector)?;
+        let header = self.active_vec_header(&path)?.to_owned();
+        let base = self.active_vec_base(&path)?.to_owned();
+        if self.coroutine_persistent_fields.contains_key(&it.index) {
+            return None;
+        }
+        let index = sanitize(self.data.def(self.def_nr).variables().name(it.index));
+        Some((header, base, index, it.size, it.offset))
     }
 
     /// The tiers the loop hoist runs under, as [`Self::begin_vector_hoist`] passes them —
@@ -4168,6 +4606,126 @@ impl Output<'_> {
         Some(slots)
     }
 
+    /// `@FR-R-LazySplit` — the lazy split whose hidden vector `v` reads through the op
+    /// `reader`, or `None`: `v` must be `reader(Var(vec), …)` with `vec` a vector the
+    /// function's lazy loops replaced.  The two readers are the element read
+    /// (`OpGetVectorNullable`) and the length test (`OpLengthVector`); the analysis proved
+    /// they are the vector's only mentions, so answering them is answering every use.
+    #[must_use]
+    pub fn lazy_split_reader(&self, v: &Value, reader: &str) -> Option<u16> {
+        if self.lazy_splits.is_empty() || self.in_coroutine_body {
+            return None;
+        }
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= self.data.definitions.len() || self.data.def(*d).name() != reader {
+            return None;
+        }
+        let Value::Var(vec) = args.first()?.unspan() else {
+            return None;
+        };
+        self.lazy_splits.contains_key(vec).then_some(*vec)
+    }
+
+    /// Is text variable `v` of the function being emitted BORROWED — its Rust slot a `&str` —
+    /// rather than an owned `String`?  A text PARAMETER is: the caller's text arrives
+    /// borrowed.  A text LOCAL is not, unless a rewrite admitted it to borrow what it reads
+    /// (`borrowed_text_locals`).  A by-reference text (`&text`, a `RefVar`) is neither: a
+    /// parameter holds `&mut String` and a local link `*mut String`, and `.base()` peels no
+    /// `RefVar`, so both answer false here.
+    ///
+    /// The ONE home of the question, asked by every site that spells a text variable: the
+    /// bare read (`var_s`) against the owned local's borrow (`&var_s`); the conversion an
+    /// owned slot needs from it (`.to_string()`, where an owned local clones); the exit (a
+    /// borrowed text is returned as it is, an owned local through the scratch buffer); and
+    /// the lazy split's borrow of its source.  Three shipped defects (loft#1004, loft#1006,
+    /// loft#1278) were sites that spelled the question inline and disagreed about the same
+    /// variable, and a fourth class of text slot cannot be added site by site.
+    #[must_use]
+    pub fn text_borrowed(&self, v: u16) -> bool {
+        let vars = self.data.def(self.def_nr).variables();
+        // `@FR-N-Shape` — `.base()`: a `text?` variable is the same slot, its null the sentinel.
+        matches!(vars.tp(v).base(), Type::Text(_))
+            && (vars.is_argument(v) || self.borrowed_text_locals.contains_key(&v))
+    }
+
+    /// The complement of [`Output::text_borrowed`] over text variables: `v` is a text
+    /// variable holding an owned `String` — reads as `&var_v`, copies with `.clone()`, and
+    /// dies with its frame.
+    #[must_use]
+    pub fn text_owned(&self, v: u16) -> bool {
+        matches!(
+            self.data.def(self.def_nr).variables().tp(v).base(),
+            Type::Text(_)
+        ) && !self.text_borrowed(v)
+    }
+
+    /// `@FR-R-SplitTable` — the split table whose local `v` reads through the op `reader`,
+    /// or `None`: `v` must be `reader(Var(x), …)` with `x` a table of the function being
+    /// emitted or the hidden vector of a walk over one.  Answers the TABLE's variable, whose
+    /// `__st_<var>` the walk's alias shares.  The readers are the element read
+    /// (`OpGetVectorNullable`) and the length (`OpLengthVector`); the analysis proved they
+    /// are the local's only mentions, so answering them is answering every use.
+    #[must_use]
+    pub fn split_table_of(&self, v: &Value, reader: &str) -> Option<u16> {
+        if self.split_tables.is_empty() || self.in_coroutine_body {
+            return None;
+        }
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= self.data.definitions.len() || self.data.def(*d).name() != reader {
+            return None;
+        }
+        let Value::Var(x) = args.first()?.unspan() else {
+            return None;
+        };
+        self.split_table_var(*x)
+    }
+
+    /// The table an element read `elem` reads, with whether the read is the RAISING
+    /// `OpGetVector` (`true`) or the nullable `OpGetVectorNullable` (`false`) — the two
+    /// twins the parser picks between for `v[i]`, which the emitter answers apart.
+    #[must_use]
+    pub fn split_table_read(&self, elem: &Value) -> Option<(u16, bool)> {
+        self.split_table_of(elem, "OpGetVectorNullable")
+            .map(|t| (t, false))
+            .or_else(|| self.split_table_of(elem, "OpGetVector").map(|t| (t, true)))
+    }
+
+    /// The table `x` names — itself, or the one it is a walk's alias of.
+    #[must_use]
+    pub fn split_table_var(&self, x: u16) -> Option<u16> {
+        if self.split_tables.is_empty() || self.in_coroutine_body {
+            None
+        } else if self.split_tables.contains_key(&x) {
+            Some(x)
+        } else {
+            self.split_table_aliases.get(&x).copied()
+        }
+    }
+
+    /// `@FR-R-LazySplit` — whether the lazy form may BORROW its source text `src` for the
+    /// whole loop: a borrowed text ([`Output::text_borrowed`] — a plain text parameter)
+    /// nothing in the function writes.  Such a text is a `&str` of the caller's, which no
+    /// statement of the body can move or change.  Every other source — an owned local, a
+    /// field, a call's result, a by-reference text — is iterated as a copy taken where the
+    /// call stood, which no later write can reach.
+    #[must_use]
+    pub fn lazy_split_borrows(&self, src: &Value) -> bool {
+        let Value::Var(s) = src.unspan() else {
+            return false;
+        };
+        let def = self.data.def(self.def_nr);
+        if !self.text_borrowed(*s) {
+            return false;
+        }
+        // One home for "is this text written?" — `hoist::text_written`, which
+        // `(R-CharWalk)`'s hoisted null test asks too.
+        !hoist::text_written(def.code(), *s, self.data)
+    }
+
     pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {
         if bl.name != "For block" || self.move_pairs.is_empty() {
             return None;
@@ -4235,6 +4793,25 @@ impl Output<'_> {
         Some(fused)
     }
 
+    /// `@FR-R-Base`'s join clause — `v[i]?.f` as one range test and one load: the shape
+    /// qualifies ([`hoist::fused_join_read`]) and the loop holds BOTH a header and an element
+    /// base for the path (the load goes through the base; a loop that grows a store holds
+    /// none, and keeps the join).  Asked by the pre-eval collector and the emitter both.
+    #[must_use]
+    pub fn fused_join_read<'a>(
+        &self,
+        getter: &str,
+        args: &'a [Value],
+    ) -> Option<hoist::JoinRead<'a>> {
+        if self.elem_fuse_disabled || self.join_read_disabled || self.in_coroutine_body {
+            return None;
+        }
+        let join = hoist::fused_join_read(self.data, getter, args)?;
+        self.active_vec_header(&join.path)?;
+        self.active_vec_base(&join.path)?;
+        Some(join)
+    }
+
     /// Whether this call is emitted as ONE fused element WRITE (@PLN157 P4b) — the
     /// shape qualifies, the enclosing loop hoisted a header for the vector, and the
     /// fusion is not switched off by `LOFT_NO_ELEM_FUSE`.  Same one home, same
@@ -4293,6 +4870,7 @@ impl Output<'_> {
         } else {
             let map = std::rc::Rc::new(range::range_vars(
                 self.data,
+                self.data.def(self.def_nr).variables(),
                 self.data.def(self.def_nr).code(),
                 &nn,
             ));
@@ -4328,8 +4906,11 @@ impl Output<'_> {
             Value::Call(d, _) => {
                 let callee = data.def(*d);
                 let name = callee.name();
+                // A free overload member (`f_…`) is a free function in all but its key.
                 name.starts_with("n_")
-                    || (name.starts_with("t_") && matches!(callee.code(), Value::Block(_)))
+                    || callee.is_free_overload()
+                    || ((name.starts_with("t_") || callee.is_instance())
+                        && matches!(callee.code(), Value::Block(_)))
             }
             Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
             _ => false,
@@ -4368,11 +4949,12 @@ impl Output<'_> {
                 let callee = data.def(*d);
                 let name = callee.name();
                 let loft_bodied = matches!(callee.code(), Value::Block(_));
-                if name.starts_with("n_") && !loft_bodied {
+                let free = name.starts_with("n_") || callee.is_free_overload();
+                if free && !loft_bodied {
                     // a native user-level function: what it reaches is not visible here
                     return true;
                 }
-                if (name.starts_with("n_") || name.starts_with("t_"))
+                if (free || name.starts_with("t_") || callee.is_instance())
                     && loft_bodied
                     && !callees.contains(d)
                 {
@@ -6109,6 +6691,9 @@ extern crate loft;"
                 crate::database::Parts::Vector(c) => {
                     bare_io.push((tid, BareIo::Vector(*c)));
                 }
+                crate::database::Parts::DbRef => {
+                    bare_io.push((tid, BareIo::DbRef(tp.name != crate::database::DBREF_BORROW)));
+                }
                 // loft#1148 — `Array` is `Vector` AFTER the linked-group conversion:
                 // `finish_type` rewrites a collection whose content struct is shared by
                 // another collection (`linked`) and renames it `array<…>`.  It is the same
@@ -6226,7 +6811,7 @@ extern crate loft;"
                 continue;
             }
             let mut d: Vec<u16> = Vec::new();
-            if is_container {
+            if is_container && !self.data.is_open_instance(dnr) {
                 for a in &def.attributes().to_vec() {
                     let c_nr = match &a.typedef {
                         Type::Sorted(c_nr, _, _)
@@ -6620,6 +7205,8 @@ extern crate loft;"
                 let c_ref = type_id_ref(*c);
                 writeln!(w, "    let t{tid} = db.vector({c_ref});")?;
             }
+            BareIo::DbRef(true) => writeln!(w, "    let t{tid} = db.dbref();")?,
+            BareIo::DbRef(false) => writeln!(w, "    let t{tid} = db.dbref_borrow();")?,
             BareIo::Sorted(c, keys) => {
                 let c_ref = type_id_ref(*c);
                 let keys_str = keys
@@ -6719,7 +7306,8 @@ extern crate loft;"
         // available for any recursive emission that reads it as a
         // content type below.
         self.emit_type_creation(w, type_id, dnr)?;
-        if dnr == u32::MAX {
+        // An open instance's row is fieldless, as `fill_database` registers it (@PLN165 D5).
+        if dnr == u32::MAX || self.data.is_open_instance(dnr) {
             return Ok(());
         }
         let def = self.data.def(dnr);
@@ -7005,6 +7593,13 @@ extern crate loft;"
             return Ok(());
         }
         let def = self.data.def(dnr);
+        // @PLN165 D5 — an OPEN instance's row is registered fieldless (`fill_database`), so
+        // it is replayed fieldless: emitting its declared fields would mint types (`vector<T>`
+        // over the placeholder) the compiler never registered, and every id after them drifts
+        // (loft#739's class).
+        if self.data.is_open_instance(dnr) {
+            return Ok(());
+        }
         if matches!(def.def_type(), DefType::Struct)
             || (def.def_type() == DefType::EnumValue && !def.attributes().is_empty())
         {
@@ -7594,6 +8189,12 @@ extern crate loft;"
         // #682: mirror the ADOPTED / BORROWED split too.  Both shapes are 12
         // bytes, so getting it wrong costs no layout mismatch — it silently
         // gives native the interpreter's old over-free instead.
+        // A generator handle field (loft#1585) is the same 12-byte stored `DbRef`, registered
+        // where the compiler registers it: at the first field that needs it.
+        if let Type::Iterator(_, _) = typedef {
+            emit_db_field(w, s_var, field_name, "dbref", "db.dbref()")?;
+            return Ok(());
+        }
         if let Type::Reference(_, deps) = typedef
             && !deps.is_empty()
         {
@@ -8087,12 +8688,23 @@ extern crate loft;"
                 self.declared.insert(v);
             }
         }
-        // Determine the user-visible loft name for the shadow call stack.
-        let loft_name = def.name().strip_prefix("n_").unwrap_or(def.name());
+        // Instrument every loft-bodied function the interpreter gives a frame: an `n_`
+        // function, what is one in all but its key — a free overload member (`f_…`) and an
+        // instance of a free generic (`i_…_n_…`), which carry their `n_` twin's frame — and a
+        // method (`t_…`, or an instance of one), named by its key as the interpreter names it.
+        // Each carries the depth cap and the shadow-stack frame; the leaf and frameless-chain
+        // rules below take them off again wherever the function cannot be re-entered.
+        let free = def.name().starts_with("n_") || is_free_in_all_but_key(def);
+        let instrument = matches!(def.code(), Value::Block(_)) && (free || is_method(def));
+        // The user-visible loft name for the shadow call stack.
+        let source_name = def.original_name();
+        let loft_name = if def.name().starts_with("n_") || !free {
+            def.name().strip_prefix("n_").unwrap_or(def.name())
+        } else {
+            source_name.as_str()
+        };
         let loft_file = &def.position().file;
         let loft_line = def.position().line;
-        // Only instrument user-defined functions (Block body, n_ prefix).
-        let instrument = matches!(def.code(), Value::Block(_)) && def.name().starts_with("n_");
         let returns_text = matches!(def.returned(), Type::Text(_));
         if let Value::Block(bl) = def.code() {
             // An empty-body loft function (explicit stub) has no operators and result Void,
@@ -8140,6 +8752,8 @@ extern crate loft;"
                 // `&UnsafeCell<Stores>` parameter so templates and inner
                 // emissions see `stores` as a regular `&mut Stores` binding.
                 let escaped_file = loft_file.replace('\\', "\\\\");
+                // A key may carry any spelling a type has (an instance's bound types).
+                let loft_name = loft_name.replace('\\', "\\\\").replace('"', "\\\"");
                 // @PLN18 08-S2 — the live-dispatch entry check precedes even
                 // the `stores` derivation: a flipped fn re-enters the parked
                 // interpreter (which swaps the world out of the cell), so no
@@ -8237,9 +8851,8 @@ extern crate loft;"
                 self.pop_twin_frames();
                 self.call_stack_prefix = None;
             } else {
-                // Non-instrumented user-fn (e.g. `t_…` methods) — still
-                // needs the `&mut Stores` derivation from the UnsafeCell
-                // parameter for templates / inner calls.
+                // Non-instrumented loft-bodied fn — still needs the `&mut Stores`
+                // derivation from the UnsafeCell parameter for templates / inner calls.
                 self.call_stack_prefix = Some(format!(
                     "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};{vdb_prologue}"
                 ));

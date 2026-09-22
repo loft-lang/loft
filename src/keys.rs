@@ -44,6 +44,7 @@ use std::sync::OnceLock;
 /// bucket → O(N²) insertion / lookup (the 2011/2012 Python / Ruby / PHP /
 /// Java / Node hash-DoS, CVE-2011-4815 et al.).  An attacker cannot
 /// pre-compute collisions without knowing the hash's seed.
+#[inline]
 #[must_use]
 fn seeded_hasher(seed: u64) -> SipHasher13 {
     let mut hasher = SipHasher13::new();
@@ -1048,6 +1049,75 @@ pub fn value_return_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_VALUE_RETURN"))
 }
 
+/// @PLN165 B2/B3 — a generic is a member of its name's overload set, beside concrete
+/// definitions and other generics.  **DEFAULT ON.**  `LOFT_NO_GENERIC_MEMBER=1` restores the
+/// `Function`-only admission (a generic beside a same-named definition is "Cannot redefine") —
+/// the rollback, and the first bisect step for a call that reaches the wrong definition where
+/// a generic shares the name.
+pub fn generic_member_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_GENERIC_MEMBER"))
+}
+
+/// @PLN165 B4 — a free generic beside a same-named `self`/`both` METHOD is one overload set:
+/// both join the name's bare dispatcher, so a call is decided by rank over arity and every
+/// parameter rather than by the receiver's key alone.  **DEFAULT ON.**
+/// `LOFT_NO_METHOD_IN_SET=1` leaves the pair apart, the method found by its receiver key — the
+/// rollback, and the first bisect step for a call that reaches the wrong one of a method and a
+/// generic of one name.
+pub fn method_in_set_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_METHOD_IN_SET"))
+}
+
+/// @PLN165 D2 — a `struct` may declare type variables (`struct Box<T> { v: T }`), which makes
+/// it a TEMPLATE: never laid out, instantiated per argument list.  **DEFAULT ON.**
+/// `LOFT_NO_GENERIC_TYPES=1` refuses a struct header again — the rollback, and the first
+/// bisect step for anything a generic struct changed.
+pub fn generic_types_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_GENERIC_TYPES"))
+}
+
+/// @PLN165 C2 — a generic's header declares a LIST of type variables (`<K, V>`), each with its
+/// own bounds.  **DEFAULT ON.**  `LOFT_NO_SEVERAL_VARS=1` refuses a header with more than one
+/// again and keeps a variable's bounds on its function alone — the rollback, and the first
+/// bisect step for a generic with several variables that binds or checks the wrong one.
+pub fn several_vars_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SEVERAL_VARS"))
+}
+
+/// @PLN165 B3b — a call written inside a generic, whose argument is typed by the generic's own
+/// variable, is lowered again in each instance with the instance's argument types, so it
+/// reaches the member of its name's overload set the instance's concrete twin reaches.
+/// **DEFAULT ON.**  `LOFT_NO_SET_RESELECT=1` refuses such a call again, as naming no member
+/// of the set — the rollback, and the first bisect step for a set call inside a generic that
+/// reaches the wrong definition.
+pub fn set_reselect_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_SET_RESELECT"))
+}
+
+/// @PLN165 B1 — a definition key and an overload's rank read a type's FULL identity: a
+/// collection's element, an integer's width, a `τ?`'s nullability, a function type's
+/// signature.  **DEFAULT ON.**  `LOFT_NO_ELEMENT_KEY=1` restores the spelling that erased them
+/// (`vector` for every vector, `integer` for every width, `i32` for a function) — the rollback,
+/// and the first bisect step for a call that reaches the wrong member of an overload set.
+pub fn element_key_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ELEMENT_KEY"))
+}
+
+/// @PLN165 A5 (`D-Key`) — an instance of a generic is keyed `i_<LEN><bound types>_<template
+/// key>`: its own key kind, naming its template and every bound type.  **DEFAULT ON.**
+/// `LOFT_NO_INSTANCE_KEY=1` mints the method-shaped `t_<LEN><type>_<name>` key again — the
+/// rollback, and the first bisect step for a generic call that reaches the wrong definition.
+pub fn instance_key_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_INSTANCE_KEY"))
+}
+
 /// `LOFT_NO_LITERAL_EXIT_BUFFER=1` keeps a mid-body `return S { … }` building its record in
 /// a store of its own (@PLN164 B2, `@FR-R-Place`'s callee clause: a callee that on some exit
 /// answers a store other than the buffer it was handed cannot be placed) — the bisect step
@@ -1195,6 +1265,17 @@ pub fn adopt_first_bind_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
 }
 
+/// loft#1600 (`@FR-H-Drop`, scope-end clause), OPT-IN: a heap local every mention of which
+/// lies in ONE arm of an `if` is declared in that arm and released at its end, rather than
+/// pre-initialised at the `if`'s scope and released at that scope's end.  Off by default:
+/// which of the two scopes an `if`-arm local has is an open design question (`formal/heap.md`
+/// D-heap-36) — @PLN125 decided the function's (`pln125-b-drop.loft`'s `if_block_local`), and
+/// the value-`if` delivery paths read the pre-init.  `LOFT_ARM_SCOPE=1` turns it on.
+pub fn arm_scope_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_ARM_SCOPE"))
+}
+
 /// @PLN164 B1b (`@FR-O-Buffer`, `@FR-R-Reuse`): the buffer of a call whose result a local
 /// adopts at its first bind is POOLED — minted once per activation and handed to every call,
 /// so a callee that promotes a local onto its buffer fills the caller's store instead of
@@ -1308,6 +1389,43 @@ pub fn loop_buffer_reuse_enabled() -> bool {
 pub fn push_fill_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_FILL"))
+}
+
+/// `@FR-R-PushFill`'s window clause: a reserved counted push loop whose body reaches its
+/// vector through the pushes alone, and grows no other store, pushes through a held
+/// element base and a local length, and writes the record's length once when it ends —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_PUSH_WINDOW` (read at GENERATION time): every
+/// push goes through its push header again, the length written back per push — the first
+/// bisect step for a wrong element or length out of a counted push loop or a
+/// comprehension on native.  `LOFT_HOIST_VERIFY=1` checks the frozen header and the base
+/// at every push and the closed header after the loop.
+pub fn push_window_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_PUSH_WINDOW"))
+}
+
+/// `@FR-R-Base`'s join clause: a scalar field of a `?`-discharged element, `v[i]?.f`, in a
+/// loop that holds the vector's header and element base is one range test and one load
+/// through the base, the join it lowers to run only for an index that test refuses —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_JOIN_READ` (read at GENERATION time): the join
+/// runs on every pass and its result is read through the store again — the first bisect
+/// step for a wrong field out of `v[i]?.f` inside a loop on native.
+/// `LOFT_HOIST_VERIFY=1` re-derives the header and the base at every such read.
+pub fn join_read_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_JOIN_READ"))
+}
+
+/// `(R-BoundedNest)`'s reduction clause: a counted loop that is one integer accumulate of a
+/// scalar vector's elements (`acc = acc + v[i]`, the stdlib `sum`), over a held header and
+/// base, runs its plain block sum first — each block of 1024 admitted by a bound taken from
+/// the data in the same pass — and the checked loop resumes where the first block declines —
+/// **DEFAULT ON**.  Opt OUT with `LOFT_NO_BOUNDED_SUM` (read at GENERATION time): the checked
+/// add on every element again — the first bisect step for a wrong sum out of such a loop on
+/// native.  `LOFT_HOIST_VERIFY=1` re-runs every admitted block through the checked add.
+pub fn bounded_sum_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BOUNDED_SUM"))
 }
 
 /// @PLN157 § V-d: a vector-literal element that is a buffer-returning call is built IN the
@@ -2540,6 +2658,15 @@ impl FastKey<'_> {
     ///
     /// Each arm is the equality half of the identically-numbered arm of
     /// [`compare_key`]; keep them together when either changes.
+    ///
+    /// `#[inline(always)]` so `hash::find_fast` — which builds the variant as a constant per
+    /// arm — folds this to the one read and compare its arm is.  As a hint it was declined
+    /// (the text arm makes the body look large), and the out-of-line copy re-dispatched on
+    /// the kind per bucket at three times the cost of the read.
+    // Measured: as a hint this was declined, and the out-of-line copy re-dispatched on the
+    // key's kind per bucket or per comparison (`bench/portal/analysis/keyed.md`, L5).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
     #[must_use]
     pub fn matches(&self, s: &Store, rec: u32, base: u32) -> bool {
         match self {
@@ -2553,6 +2680,243 @@ impl FastKey<'_> {
             FastKey::Str(pos, v) => s.get_str(s.get_u32_raw(rec, base + pos)) == *v,
         }
     }
+}
+
+impl FastKey<'_> {
+    /// How this key ORDERS against the value at `(rec, base)`, in ascending sense — the
+    /// direction is [`FastOrder`]'s to apply.
+    ///
+    /// Each arm is the identically-numbered arm of [`compare_key`] with its match taken
+    /// outside the search that repeats it; keep the two together when either changes.
+    ///
+    /// `#[inline(always)]`, like [`Self::matches`] and for its reason: as a hint it was
+    /// declined, and a search then paid two calls per comparison (`order_key` → `order`,
+    /// ~50 instructions) for a read and a compare.
+    // Measured: as a hint this was declined, and the out-of-line copy re-dispatched on the
+    // key's kind per bucket or per comparison (`bench/portal/analysis/keyed.md`, L5).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    #[must_use]
+    pub fn order(&self, s: &Store, rec: u32, base: u32) -> Ordering {
+        match self {
+            FastKey::Int(pos, v) => v.cmp(&s.get_int(rec, base + pos)),
+            FastKey::Long(pos, v) => v.cmp(&s.get_long(rec, base + pos)),
+            FastKey::I32(pos, v) => v.cmp(&i64::from(s.get_i32_raw(rec, base + pos))),
+            FastKey::U32(pos, v) => v.cmp(&i64::from(s.get_u32_raw(rec, base + pos))),
+            FastKey::ShortRaw(pos, start, v) => {
+                v.cmp(&i64::from(s.get_short_full(rec, base + pos, *start)))
+            }
+            FastKey::Str(pos, v) => (*v).cmp(s.get_str(s.get_u32_raw(rec, base + pos))),
+        }
+    }
+
+    /// The same key with nothing borrowed, or `None` for a text key — for a walk that
+    /// MUTATES the stores it compares against (`tree::put` rebalances as it unwinds), where
+    /// a `&str` out of a store cannot be held.
+    #[must_use]
+    pub fn detached(&self) -> Option<FastKey<'static>> {
+        Some(match *self {
+            FastKey::Int(p, v) => FastKey::Int(p, v),
+            FastKey::Long(p, v) => FastKey::Long(p, v),
+            FastKey::I32(p, v) => FastKey::I32(p, v),
+            FastKey::U32(p, v) => FastKey::U32(p, v),
+            FastKey::ShortRaw(p, st, v) => FastKey::ShortRaw(p, st, v),
+            FastKey::Str(..) => return None,
+        })
+    }
+}
+
+/// A one-field key whose ORDER test is pre-resolved: [`FastKey`] plus the key's declared
+/// direction (@FR-Col-Order-Sign — direction lives in the comparator and is applied once).
+///
+/// What [`fast_key`] did for a hash probe's equality (@PLN135 arc B), for the searches
+/// that ORDER: a tree descent, a binary search.  [`key_compare`] re-runs its
+/// `(Content, type_nr)` match, a bounds-checked store lookup and a call per comparison —
+/// 90–100 instructions where the comparison itself is a load and a compare, and a third
+/// of an `index` insert-and-find (`bench/portal/analysis/keyed.md`).  Resolved once per
+/// search and inlined into it, the loop body is the read.
+///
+/// `LOFT_NO_FAST_ORDER=1` makes both constructors answer `None`, so every search takes
+/// [`key_compare`] / [`compare`] again; `LOFT_KEYED_VERIFY=1` checks every answer against
+/// them ([`FastOrder::compare`]).
+pub struct FastOrder<'a> {
+    key: FastKey<'a>,
+    descending: bool,
+    /// `LOFT_KEYED_VERIFY`, read once where the comparator is resolved so the search's
+    /// loop tests a field and not a `OnceLock`.
+    verify: bool,
+}
+
+/// `LOFT_NO_FAST_ORDER=1` — the first bisect step for a wrong element, order or lookup
+/// out of a `sorted`, `ordered` or `index` collection: every search uses the general
+/// comparator, an exact `index` lookup takes the boundary descent, and an `index` insert
+/// looks its duplicate up before it descends.
+#[must_use]
+pub fn fast_order_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FAST_ORDER"))
+}
+
+/// `LOFT_NO_ONE_PROBE_INSERT=1` — the first bisect step for a lost, duplicated or
+/// unfindable entry out of a `hash` insert: the insert looks its duplicate up and then
+/// files the entry as two separate hash-and-probe walks again (`Stores::insert_record`).
+#[must_use]
+pub fn one_probe_insert_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_ONE_PROBE_INSERT"))
+}
+
+/// `LOFT_KEYED_VERIFY=1` — the falsifier for the keyed fast paths: every pre-resolved
+/// comparison is checked against the general comparator, every exact `index` lookup
+/// against the boundary descent, and every one-probe `hash` insert against the slot and
+/// the duplicate the two-walk form finds.  A disagreement panics, naming both answers.
+#[must_use]
+pub fn keyed_verify() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_KEYED_VERIFY"))
+}
+
+/// Resolve a lookup key to its [`FastOrder`], or `None` when the search must keep using
+/// [`key_compare`] — a compound or partial key, a width [`fast_key`] does not list.
+#[must_use]
+pub fn fast_order<'a>(keys: &[Key], key: &'a [Content]) -> Option<FastOrder<'a>> {
+    if !fast_order_enabled() {
+        return None;
+    }
+    Some(FastOrder {
+        key: fast_key(keys, key)?,
+        descending: keys[0].type_nr < 0,
+        verify: keyed_verify(),
+    })
+}
+
+/// The [`FastKey`] a RECORD's own key resolves to — what [`get_key`] followed by
+/// [`fast_key`] answers, without the `Vec<Content>` in between (and, for a text key,
+/// without the copy `get_key` makes of it).
+#[must_use]
+pub fn fast_key_of<'a>(rec: &DbRef, stores: &'a [Store], keys: &[Key]) -> Option<FastKey<'a>> {
+    let [k] = keys else { return None };
+    let s = store(rec, stores);
+    let pos = u32::from(k.position);
+    let at = rec.pos + pos;
+    Some(match k.type_nr.abs() {
+        1 => FastKey::Int(pos, s.get_int(rec.rec, at)),
+        2 => FastKey::Long(pos, s.get_long(rec.rec, at)),
+        8 => FastKey::I32(pos, i64::from(s.get_i32_raw(rec.rec, at))),
+        12 => FastKey::U32(pos, i64::from(s.get_u32_raw(rec.rec, at))),
+        11 => FastKey::ShortRaw(
+            pos,
+            k.start,
+            i64::from(s.get_short_full(rec.rec, at, k.start)),
+        ),
+        6 => FastKey::Str(pos, s.get_str(s.get_u32_raw(rec.rec, at))),
+        _ => return None,
+    })
+}
+
+/// [`fast_order`] for a record's own key: the comparator an INSERT searches with.
+#[must_use]
+pub fn fast_order_of<'a>(rec: &DbRef, stores: &'a [Store], keys: &[Key]) -> Option<FastOrder<'a>> {
+    if !fast_order_enabled() {
+        return None;
+    }
+    Some(FastOrder {
+        key: fast_key_of(rec, stores, keys)?,
+        descending: keys[0].type_nr < 0,
+        verify: keyed_verify(),
+    })
+}
+
+impl FastOrder<'_> {
+    /// How the key orders against the record at `(rec, base)` of `s` — the answer
+    /// [`key_compare`] gives for the same pair.
+    // Measured: as a hint this was declined, and the out-of-line copy re-dispatched on the
+    // key's kind per bucket or per comparison (`bench/portal/analysis/keyed.md`, L5).
+    #[allow(clippy::inline_always)]
+    #[inline(always)]
+    #[must_use]
+    pub fn compare(&self, s: &Store, rec: u32, base: u32) -> Ordering {
+        let c = self.key.order(s, rec, base);
+        if self.descending { c.reverse() } else { c }
+    }
+
+    /// The same comparator with nothing borrowed, or `None` for a text key
+    /// ([`FastKey::detached`]).
+    #[must_use]
+    pub fn detached(&self) -> Option<FastOrder<'static>> {
+        Some(FastOrder {
+            key: self.key.detached()?,
+            descending: self.descending,
+            verify: self.verify,
+        })
+    }
+}
+
+/// How lookup `key` orders against `record`: through `fast` where the search resolved one,
+/// through [`key_compare`] otherwise — the ONE comparison a keyed search makes, so the
+/// pre-resolved form and its verification cannot be spelled differently per search.
+// Measured: as a hint this was declined, and a search then paid a call per comparison
+// (`bench/portal/analysis/keyed.md`, L5).
+#[allow(clippy::inline_always)]
+#[inline(always)]
+#[must_use]
+pub fn order_key(
+    fast: Option<&FastOrder>,
+    key: &[Content],
+    record: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+) -> Ordering {
+    let Some(f) = fast else {
+        return key_compare(key, record, stores, keys);
+    };
+    let c = f.compare(store(record, stores), record.rec, record.pos);
+    if f.verify {
+        verify_order(c, key_compare(key, record, stores, keys), record);
+    }
+    c
+}
+
+/// [`order_key`] for an INSERT, whose key is the new record's own: how `rec` orders
+/// against `other`, through `fast` (resolved from `rec` by [`fast_order_of`]) or through
+/// [`compare`].
+// Measured: as a hint this was declined, and a search then paid a call per comparison
+// (`bench/portal/analysis/keyed.md`, L5).
+#[allow(clippy::inline_always)]
+#[inline(always)]
+#[must_use]
+pub fn order_record(
+    fast: Option<&FastOrder>,
+    rec: &DbRef,
+    other: &DbRef,
+    stores: &[Store],
+    keys: &[Key],
+) -> Ordering {
+    let Some(f) = fast else {
+        return compare(rec, other, stores, keys);
+    };
+    let c = f.compare(store(other, stores), other.rec, other.pos);
+    if f.verify {
+        verify_order(c, compare(rec, other, stores, keys), other);
+    }
+    c
+}
+
+/// `LOFT_KEYED_VERIFY`'s check of one pre-resolved comparison: `fast` is what
+/// [`FastOrder::compare`] answered for `record`, `general` what the general comparator
+/// answers for the same pair.
+///
+/// # Panics
+/// When the two disagree — the fast path would have ordered a collection differently.
+pub fn verify_order(fast: Ordering, general: Ordering, record: &DbRef) {
+    assert!(
+        fast == general,
+        "LOFT_KEYED_VERIFY: the pre-resolved comparator answered {fast:?} where the general \
+         one answers {general:?} (record {}:{}+{})",
+        record.store_nr,
+        record.rec,
+        record.pos,
+    );
 }
 
 fn compare_ref(r1: &DbRef, r2: &DbRef, stores: &[Store], key: &Key, p1: u32, p2: u32) -> Ordering {
@@ -2664,6 +3028,7 @@ pub fn get_simple(record: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<Simple>
     result
 }
 
+#[inline]
 #[must_use]
 pub fn hash(rec: &DbRef, stores: &[Store], keys: &[Key], seed: u64) -> u64 {
     let mut hasher = seeded_hasher(seed);
@@ -2674,6 +3039,17 @@ pub fn hash(rec: &DbRef, stores: &[Store], keys: &[Key], seed: u64) -> u64 {
     hasher.finish()
 }
 
+/// [`key_hash`] of a key that is ONE integer value — the same digest, for a caller that
+/// holds the value and not a `Content` of it (`hash::find_long`).
+#[inline]
+#[must_use]
+pub fn long_hash(value: i64, seed: u64) -> u64 {
+    let mut hasher = seeded_hasher(seed);
+    hasher.write_i64(value);
+    hasher.finish()
+}
+
+#[inline]
 #[must_use]
 pub fn key_hash(key: &[Content], seed: u64) -> u64 {
     let mut hasher = seeded_hasher(seed);
@@ -2687,6 +3063,7 @@ pub fn key_hash(key: &[Content], seed: u64) -> u64 {
     hasher.finish()
 }
 
+#[inline]
 fn hash_ref(r: &DbRef, stores: &[Store], key: &Key, p: u32, hasher: &mut SipHasher13) {
     let s = store(r, stores);
     match key.type_nr.abs() {

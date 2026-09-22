@@ -1,0 +1,6 @@
+// D4 — `[]` names no element type: refused as unbound.
+struct Stack<T> { items: vector<T> }
+fn main() {
+  s = Stack { items: [] };
+  println("{len(s.items)}");
+}

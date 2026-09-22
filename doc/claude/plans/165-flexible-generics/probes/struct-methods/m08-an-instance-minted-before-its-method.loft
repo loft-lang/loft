@@ -1,0 +1,9 @@
+// D6 — `Grid<integer>` is minted (by `use_it`'s header) before `size` is declared; the
+// call still finds the method on the template.
+// @EXPECT: 3
+struct Grid<T> { cells: vector<T>, w: integer }
+fn use_it(g: Grid<integer>) -> integer { g.size() }
+fn size<T>(self: Grid<T>) -> integer { len(self.cells) }
+fn main() {
+  println("{use_it(Grid { cells: [7, 8, 9], w: 3 })}");
+}

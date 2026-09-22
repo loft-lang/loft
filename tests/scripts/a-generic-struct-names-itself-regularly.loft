@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D7 — a generic struct may name itself at its own type variables: through a
+// collection (`kids: vector<Tree<T>>`) or a pointer (`next: reference<Node<T>>?`), every
+// instance is a finite type whose fields are the template's with each self-mention closed
+// to the instance (`Tree<text>`'s `kids` is `vector<Tree<text>>`).  A generic function
+// recurses over one at its own variable.  Two templates may name each other, which needs a
+// FORWARD reference to a generic struct: a field, a parameter and a return type may name a
+// generic struct declared below them, each becoming the instance its arguments name.
+//
+// @falsified-at: f5db133f1 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-struct-names-itself-regularly.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends.
+//   ARMED: nothing.
+//   WITNESS: on the control `Tree<text>`'s `kids` keeps the open `vector<Tree<T>>`, and a
+//     generic struct named above its declaration is a syntax error.
+//   HOLDS: nothing else.
+
+struct Tree<T> { v: T, kids: vector<Tree<T>> }
+struct Node<T> { v: T, next: reference<Node<T>>? }
+struct A<T> { v: T, b: reference<B<T>>? }
+struct B<T> { w: T, a: reference<A<T>>? }
+
+fn size<T>(t: Tree<T>) -> integer {
+  n = 1;
+  for k in t.kids { n += size(k); }
+  n
+}
+
+fn first(l: Later<integer>) -> integer { l.v }
+fn mk(n: integer) -> Later<integer> { Later { v: n } }
+struct Holder { h: Later<text>, n: integer }
+struct Later<T> { v: T }
+
+fn test_a_tree_through_a_vector() {
+  t = Tree { v: 1, kids: [Tree { v: 2, kids: [Tree { v: 4, kids: [] }] }, Tree { v: 3, kids: [] }] };
+  s: Tree<text> = Tree { v: "root", kids: [Tree { v: "a", kids: [] }, Tree { v: "b", kids: [] }] };
+  assert(t.kids[0].kids[0].v == 4 && len(t.kids) == 2 && s.kids[1].v == "b", "tree");
+  assert(size(t) == 4 && size(s) == 3, "{size(t)} {size(s)}");
+}
+
+fn test_a_list_through_a_reference() {
+  a = Node { v: 1, next: null };
+  b = Node { v: 2, next: a };
+  c = Node { v: 3, next: b };
+  assert(c.next.v == 2 && c.next.next.v == 1 && c.next.next.next == null, "list");
+}
+
+fn test_a_mutual_pair() {
+  x = A { v: 1, b: null };
+  y = B { w: 2, a: x };
+  z = A { v: 3, b: y };
+  assert(z.b.w == 2 && z.b.a.v == 1, "{z.b.w} {z.b.a.v}");
+}
+
+fn test_forward_references() {
+  h = Holder { h: Later { v: "x" }, n: 2 };
+  assert(first(Later { v: 7 }) == 7 && mk(9).v == 9 && h.h.v == "x" && h.n == 2, "forward");
+}

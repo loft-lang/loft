@@ -1,0 +1,11 @@
+// C3 — methods of both variables' bounds, in one body.
+// @EXPECT: cat 1+dog 2|dog 3+cat 4
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+fn both_tags<K: Named, V: Named>(k: K, v: V) -> text { k.tag() + "+" + v.tag() }
+fn main() {
+  println("{both_tags(Cat{n:1}, Dog{n:2})}|{both_tags(Dog{n:3}, Cat{n:4})}");
+}

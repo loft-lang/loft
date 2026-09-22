@@ -1,0 +1,185 @@
+// Benchmark 14: VECTORS and RECORDS as a program uses them, one row each
+//
+// Building a vector by appending and by comprehension, reading and writing it by index,
+// the stdlib aggregates over it, copying it, removing from its front, a grid of vectors,
+// and the same for a vector of RECORDS: build, walk, update in place.  Every op's input
+// differs by the repetition's salt in VALUE only; the `hash` column is one canonical op's
+// result, which the Rust twin must print the same.
+
+struct P { x: float, y: float, id: integer }
+
+fn make_ints(count: integer, salt: integer) -> vector<integer> {
+  [for i in 0..count { (i * 7919 + salt) % 100003 }]
+}
+
+fn make_points(count: integer, salt: integer) -> vector<P> {
+  out: vector<P> = [];
+  for i in 0..count { out += [P { x: (i % 97) as float * 0.5, y: ((i + salt) % 13) as float, id: i }]; }
+  out
+}
+
+// `v += [x]` from empty.
+fn v_push(count: integer, salt: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..count { v += [i * 3 + salt]; }
+  (v[count / 2] ?? 0) + len(v)
+}
+
+// a comprehension.
+fn v_comprehend(count: integer, salt: integer) -> integer {
+  v = [for i in 0..count { i * i + salt }];
+  (v[count - 1] ?? 0) + len(v)
+}
+
+// indexed READS with a loop-carried result: the cost of `v[i]` itself.
+fn v_read(v: const vector<integer>) -> integer {
+  acc = 0;
+  for i in 0..len(v) { acc = ((acc ^ v[i]?) + (v[i]? & 7)) & 16777215; }
+  acc
+}
+
+// the stdlib aggregate `sum`: a plain sum, which a compiler is free to vectorise.
+fn v_sum(v: const vector<integer>) -> integer {
+  sum(v)
+}
+
+// the generic aggregates.
+fn v_minmax(v: const vector<integer>) -> integer {
+  (max_of(v) ?? 0) - (min_of(v) ?? 0)
+}
+
+// indexed WRITES: every element set from its index.
+fn v_write(v: vector<integer>, salt: integer) -> integer {
+  for i in 0..len(v) { v[i] = (i * 7 + salt) & 1023; }
+  (v[len(v) / 2] ?? 0) + (v[len(v) - 1] ?? 0)
+}
+
+// a whole-vector COPY.
+fn v_copy(v: const vector<integer>, salt: integer) -> integer {
+  w = v;
+  w[0] = salt;
+  len(w) + (w[0] ?? 0) + (w[len(w) - 1] ?? 0)
+}
+
+// removal from the FRONT until empty: a queue drained the expensive way.
+fn v_drain(count: integer, salt: integer) -> integer {
+  v = [for i in 0..count { i + salt }];
+  acc = 0;
+  for _ in 0..count {
+    acc += v[0] ?? 0;
+    v.remove(0);
+  }
+  acc + len(v)
+}
+
+// a GRID: a vector of vectors, built and read back along its diagonal.
+fn v_grid(side: integer, salt: integer) -> integer {
+  g = [for y in 0..side { [for x in 0..side { x * y + salt }] }];
+  acc = 0;
+  for d in 0..side { acc += g[d]?[d] ?? 0; }
+  acc
+}
+
+// records APPENDED.
+fn r_build(count: integer, salt: integer) -> integer {
+  v: vector<P> = [];
+  for i in 0..count { v += [P { x: i as float * 0.5, y: salt as float, id: i }]; }
+  len(v) + (v[count - 1]?.id) + (round(v[count / 2]?.x + v[1]?.y) as integer)
+}
+
+// records WALKED: three fields read per element.
+fn r_walk(v: const vector<P>) -> integer {
+  acc = 0.0;
+  for p in v { acc += p.x * p.y + p.id as float; }
+  round(acc) as integer
+}
+
+// records UPDATED in place, by index.
+fn r_update(v: vector<P>, salt: integer) -> integer {
+  for i in 0..len(v) { v[i].x = v[i]?.y + (i + salt) as float; }
+  round(v[len(v) / 2]?.x + v[len(v) - 1]?.x) as integer
+}
+
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+}
+
+fn main() {
+  n = arg_n(100);
+  count = 20000;
+  ia = make_ints(count, 0);
+  ib = make_ints(count, 1);
+  work = make_ints(count, 0);
+  pa = make_points(count, 0);
+  pb = make_points(count, 1);
+  pw = make_points(count, 0);
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  sink = 0;
+
+  t0 = ticks();
+  for r in 0..n { sink += v_push(count, r & 1); }
+  row("push", n, ticks() - t0, count, v_push(count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += v_comprehend(count, r & 1); }
+  row("comprehension", n, ticks() - t0, count, v_comprehend(count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { v_read(ia) } else { v_read(ib) }; }
+  row("index_read", n, ticks() - t0, count, v_read(ia));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { v_sum(ia) } else { v_sum(ib) }; }
+  row("sum", n, ticks() - t0, count, v_sum(ia));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { v_minmax(ia) } else { v_minmax(ib) }; }
+  row("min_max_of", n, ticks() - t0, count, v_minmax(ia));
+
+  t0 = ticks();
+  for r in 0..n { sink += v_write(work, r & 1); }
+  row("index_write", n, ticks() - t0, count, v_write(work, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += v_copy(ia, r & 1); }
+  row("copy", n, ticks() - t0, count, v_copy(ia, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += v_drain(1024, r & 1); }
+  row("remove_front", n, ticks() - t0, 1024, v_drain(1024, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += v_grid(128, r & 1); }
+  row("grid", n, ticks() - t0, 128 * 128, v_grid(128, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += r_build(count, r & 1); }
+  row("record_append", n, ticks() - t0, count, r_build(count, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { r_walk(pa) } else { r_walk(pb) }; }
+  row("record_walk", n, ticks() - t0, count, r_walk(pa));
+
+  t0 = ticks();
+  for r in 0..n { sink += r_update(pw, r & 1); }
+  row("record_update", n, ticks() - t0, count, r_update(pw, 0));
+
+  println("time: 0ms sink={sink}");
+}

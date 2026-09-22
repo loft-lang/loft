@@ -1,0 +1,14 @@
+// D11 — the lambda's return is a call's result (`len`): `U` from that call's type.
+// @EXPECT: 1|3|true
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn main() {
+  g = Grid { w: 1, cells: ["a", "bcd"] };
+  n = map_grid(g, |s| { len(s) });
+  b = map_grid(n, |k| { k > 0 });
+  println("{n.cells[0]}|{n.cells[1]}|{b.cells[1]}");
+}

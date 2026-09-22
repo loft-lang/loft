@@ -518,6 +518,14 @@ impl Parser {
             } else {
                 let g = self.create_unique("__gen", is_type);
                 self.vars.defined(g);
+                // A handle read out of a field or an element (loft#1585) is the container's:
+                // the loop advances it in place and leaves the frame to its owner, as it
+                // leaves a variable's.
+                if matches!(code.unspan(), Value::Call(d, _)
+                    if self.data.def(*d).name() == "OpGetDbRef")
+                {
+                    self.vars.set_skip_free(g);
+                }
                 (g, v_set(g, code.clone()))
             };
             *code = setup;
@@ -564,6 +572,16 @@ impl Parser {
                     let vec_tp = self.data.type_def_nr(vtp);
                     let db_tp = self.data.def(vec_tp).known_type();
                     let size = self.vector_elem_iter_stride(vtp);
+                    // A type variable's element names its variable (@PLN165 C2).
+                    let stride = match vtp.base() {
+                        Type::Reference(tv, _) | Type::Enum(tv, _, _)
+                            if (size == 0 && self.data.is_type_var_placeholder(*tv))
+                                || self.data.is_open_instance(*tv) =>
+                        {
+                            Self::type_var_stride(*tv)
+                        }
+                        _ => i32::from(size),
+                    };
                     // Plan-07 phase 4 step 4.6 — for-loop iteration uses
                     // the *Nullable* peers; OOB returns a null DbRef which
                     // the loop's pre-body null-check
@@ -572,7 +590,7 @@ impl Parser {
                     // keeps the raising OpGetVector / OpVectorRef.
                     let mut ref_expr = self.cl(
                         "OpGetVectorNullable",
-                        &[code.clone(), Value::Int(i32::from(size)), i.clone()],
+                        &[code.clone(), Value::Int(stride), i.clone()],
                     );
                     // @PLN25 E2 — a `__nullable<S>` element is `Enum(synth,true)`,
                     // not `Reference`, but in a LINKED collection (an array of
@@ -894,6 +912,18 @@ impl Parser {
                 if let Some(group) = self.keyed_group_remove(&get_args[0], db_tp, &get_rec, f_type)
                 {
                     return Some(group);
+                }
+                // loft#1601, @FR-G-Hold — the record taken out releases the generator frames it
+                // holds, and nothing else (`(H-Drop-Not)`).  Looked up where it is used rather
+                // than bound: a binding would be a view of the collection the removal changes.
+                if self.data.type_holds_generator(f_type)
+                    && let Some(release) = self.element_frame_release(f_type, &get_rec)
+                {
+                    let remove = self.cl(
+                        "OpHashRemove",
+                        &[get_args[0].clone(), get_rec, Value::Int(db_tp)],
+                    );
+                    return Some(Value::Insert(vec![release, remove]));
                 }
                 return Some(self.cl(
                     "OpHashRemove",
@@ -1275,6 +1305,24 @@ impl Parser {
                 self.lexer.pos().line
             );
         }
+        // @PLN165 D5 — a field of an OPEN instance: the write is deferred with its read, and
+        // each instance stores it as the twin's write does (`lower_open_field_set`).
+        if let Value::Block(bl) = to.unspan()
+            && bl.name == Self::TV_FIELD
+            && let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..]
+        {
+            return v_block(
+                vec![
+                    Value::Int(*open),
+                    Value::Int(*f_nr),
+                    Value::Text(op.to_string()),
+                    receiver.clone(),
+                    v_block(vec![val.clone()], src_tp.clone(), Self::TV_SELECT_ARG),
+                ],
+                Type::Void,
+                Self::TV_FIELD_SET,
+            );
+        }
         // Intercept `h[key] = null` → remove the key from hash/index/sorted
         if let Some(result) = self.towards_set_hash_remove(to, val, op, f_type) {
             return result;
@@ -1454,6 +1502,34 @@ impl Parser {
                 val.clone()
             };
             return self.cl("OpSetDbRef", &[r, p, v]);
+        }
+        // loft#1585, @FR-G-Hold: a generator handle held in a field or an element is its container's, so
+        // a new handle written over it releases the frame the old one owned — the frame is
+        // loft-side data, which the ownership model frees, not a resource `(H-Drop-Not)`
+        // leaves to the author.  The new value is bound first so a right-hand side that reads
+        // the member still meets a live frame; a local given here MOVES (`(H-Move)`), which
+        // the scope pass reads off the `OpSetDbRef` naming it.
+        if matches!(f_type.base(), Type::Iterator(_, _))
+            && op == "="
+            && let Value::Call(d, args) = to.unspan()
+            && self.data.def(*d).name() == "OpGetDbRef"
+            && args.len() == 2
+        {
+            let (r, p) = (args[0].clone(), args[1].clone());
+            let mut ops = Vec::new();
+            let v = match val.unspan() {
+                Value::Null => self.cl("OpNullRefSentinel", &[]),
+                Value::Var(_) => val.clone(),
+                _ => {
+                    let tmp = self.create_unique("gen_set", f_type);
+                    ops.push(v_set(tmp, val.clone()));
+                    Value::Var(tmp)
+                }
+            };
+            let old = self.cl("OpGetDbRef", &[r.clone(), p.clone()]);
+            ops.push(self.cl("OpFreeRef", &[old]));
+            ops.push(self.cl("OpSetDbRef", &[r, p, v]));
+            return Value::Insert(ops);
         }
         // @PLN25 E2a.5 — `lvalue = null` for a nullable inline struct field / vector element.
         // `build_nullable_set_null` carries the rationale and is shared with the CONSTRUCTION
@@ -1881,6 +1957,8 @@ impl Parser {
         // it is already in range — clamping is idempotent, and `set_byte`'s out-of-range
         // return is discarded, so nothing is judged or reported twice.
         if op != "=" && !self.first_pass {
+            // A compound step through a link steps the linked slot (loft#1604).
+            let f_type = crate::parser::expressions::linked_store_target(f_type, src_tp);
             let holds_null = crate::parser::expressions::target_holds_null(f_type, parent_tp);
             let bounded = self.guard_compound_range(&mut code, f_type, holds_null);
             // `@FR-E-Uncomp-Seen` — offer this store's fit status to an `if !place { … }` that
@@ -2298,6 +2376,30 @@ use #count instead"
                 recorded
             };
             let coll = self.vars.loop_value(index_var).clone();
+            // loft#1585 — the element's generator frames go with it (`element_holds_frames`):
+            // a handle element is the loop variable's value, a record element its reference.
+            // The handle is read out of the element's slot rather than off the loop variable:
+            // that is a view, whose own free the code generator drops.
+            let elem_tp = self.vars.tp(index_var).clone();
+            let release = if self.first_pass || !self.data.type_holds_generator(&elem_tp) {
+                None
+            } else if matches!(elem_tp.base(), Type::Iterator(_, _)) {
+                // Only a vector walks a handle element, and its cursor is the index.
+                let kind = on & 63;
+                if kind == 0 {
+                    let kt = self.data.def(self.data.iterator_def()).known_type();
+                    let size = i32::from(self.database.size(kt));
+                    let slot = self.cl(
+                        "OpGetVector",
+                        &[coll.clone(), Value::Int(size), Value::Var(state_var)],
+                    );
+                    self.element_frame_release(&elem_tp, &slot)
+                } else {
+                    None
+                }
+            } else {
+                self.element_frame_release(&elem_tp, &Value::Var(index_var))
+            };
             let remove = self.cl(
                 "OpRemove",
                 &[
@@ -2308,6 +2410,9 @@ use #count instead"
                 ],
             );
             *code = self.loop_group_remove(&coll, index_var, remove);
+            if let Some(release) = release {
+                *code = Value::Insert(vec![release, code.clone()]);
+            }
             *t = Type::Void;
         } else if self.lexer.has_keyword("lock") {
             // d#lock — read the lock state of the store containing a reference or vector variable.
@@ -2929,6 +3034,13 @@ use #count instead"
             );
             list.push(v_loop(steps, "Append Iter"));
             list.push(self.cl("OpAppendText", &[Value::Var(append), Value::str("]")]));
+        } else {
+            // A generator HANDLE renders as its kind — the text a field or an element holding
+            // one renders (loft#1585) — and is not advanced: it rendered nothing at all.
+            list.push(self.cl(
+                "OpAppendText",
+                &[Value::Var(append), Value::str("iterator")],
+            ));
         }
     }
 
@@ -3046,6 +3158,15 @@ use #count instead"
             self.vars.set_name(src_id, for_var);
         }
         self.vars.defined(for_var);
+        // loft#1585 — a loop over a COLLECTION of generator handles binds each element's
+        // handle, a view of a member: advancing it advances the element's generator, and the
+        // collection releases it.  Freed at the iteration's end, it ended every generator the
+        // loop visited.  A handle a generator YIELDS stays the loop's own (`(G-Own)`).
+        if matches!(var_tp.base(), Type::Iterator(_, _))
+            && !matches!(in_type.base(), Type::Iterator(_, _))
+        {
+            self.vars.set_skip_free(for_var);
+        }
         let if_step = if self.lexer.has_token("if") {
             let mut if_expr = Value::Null;
             self.expression(&mut if_expr);
@@ -3473,9 +3594,24 @@ use #count instead"
                             .enumerate()
                             .map(|(i, name)| {
                                 let elem_tp = elem_types[i].clone();
-                                let var = self.create_var(name, &elem_tp);
+                                // A binder read off the loop variable's member is a VIEW of
+                                // that variable (`(B-View)`), never a second owner: whoever
+                                // owns the element — the collection, or a generator's loop
+                                // variable (`(G-Own)`) — releases the member, once.
+                                let bind_tp = if crate::data::holds_dbref(&elem_tp) {
+                                    elem_tp.depending(for_var)
+                                } else {
+                                    elem_tp.clone()
+                                };
+                                let var = self.create_var(name, &bind_tp);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
+                                // A generator handle carries no deps to say so: marked instead
+                                // (loft#1585), as a `for` over a vector of handles marks its
+                                // loop variable.
+                                if matches!(elem_tp.base(), Type::Iterator(_, _)) {
+                                    self.vars.set_skip_free(var);
+                                }
                                 let read = if ref_def_nr == u32::MAX {
                                     Value::TupleGet(for_var, i as u16)
                                 } else {
@@ -3583,9 +3719,16 @@ use #count instead"
             // variants here was a THIRD copy of the set inside one `if`, and its
             // `other => other` fall-through is silent: the type it cannot spell binds
             // unchanged and the arm reads as taken (@FR-O-Proxy).
+            //
+            // Except the values `(G-Own)` hands over — a record, a struct-enum, a vector: the
+            // generator yields each in a store of its own that it no longer holds
+            // (`Parser::yield_owned_value`), so the loop var OWNS it and the scope machinery's
+            // per-iteration release is exactly right.  A tuple or keyed collection is not
+            // handed over yet and keeps the borrow.
             if gen_var != u16::MAX
                 && matches!(in_type, Type::Iterator(_, _))
                 && crate::data::holds_dbref(&var_tp)
+                && !crate::coroutine_layout::yield_handed_over(&var_tp)
             {
                 let dep_tp = var_tp.with_deps(&crate::data::Deps::frame1(gen_var));
                 self.change_var_type(for_var, &dep_tp);
@@ -4659,16 +4802,11 @@ use #count instead"
         if self.data.def_type(self.context) != DefType::Generic {
             return false;
         }
-        let attrs = self.data.def(self.context).attributes();
-        let tv = attrs
+        Self::template_vars(&self.data, self.context)
             .iter()
-            .map(|a| Self::type_var_of(&self.data, &a.typedef))
-            .find(|t| *t != u32::MAX)
-            .unwrap_or(u32::MAX);
-        if tv == u32::MAX {
-            return false;
-        }
-        ret_type.contains_def(tv) || elem_tp.contains_def(tv)
+            .any(|tv| {
+                self.data.type_mentions(ret_type, *tv) || self.data.type_mentions(elem_tp, *tv)
+            })
     }
 
     /// The definition a deferred `par` marker calls.  It is a placeholder, never emitted:
@@ -6410,14 +6548,25 @@ use #count instead"
 
     /// Is a collection's element type still a TYPE VARIABLE — a template's `T`, whose
     /// placeholder is an attribute-less struct?  A builtin whose lowering is a function of the
-    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE))
-    /// defers itself to the monomorph there.
+    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE),
+    /// [`TV_RESERVE`](Parser::TV_RESERVE)) defers itself to the monomorph there.
     pub(crate) fn is_type_var_element(&self, elm: &Type) -> bool {
         matches!(elm.base(), Type::Reference(d, _) if self.data.is_type_var_placeholder(*d))
     }
 
     /// Compute the in-store byte size of a vector element type.
-    pub(crate) fn element_store_size(&self, elm: &Type) -> i32 {
+    pub(crate) fn element_store_size(&mut self, elm: &Type) -> i32 {
+        // @FR-H-Stride — a NESTED vector element is the inner vector's handle, the row
+        // `vector_element_type` registers the outer storage with (`append_elem_tp` asks it
+        // too).  `type_elm` below collapses a level — `vector<integer>` → `integer` — and
+        // answered the INNER element's 8: `reverse` on a `vector<vector<integer>>` emptied
+        // all but one element, `[a, .., z]` read `z` as `[]`, and `insert` slid the
+        // elements past each other.
+        if matches!(elm.base(), Type::Vector(..))
+            && let Some(row) = self.data.vector_element_type(elm, &mut self.database)
+        {
+            return i32::from(self.database.size(row));
+        }
         let elm_td = self.data.type_elm(elm);
         // @FR-H-Stride — a narrow element (`u8`/`i16`/`u32`/…) is one, two or four bytes wide,
         // and the width is the declared TYPE's.  Must run before the generic
@@ -6478,6 +6627,61 @@ use #count instead"
         }
     }
 
+    /// @PLN165 E4 — does the special form lower this `sort` call?  It sorts the elements the
+    /// runtime compares itself — `integer` at any width, `float`, `single`, `text` — with one
+    /// `OpSortVector`.  Any other element that satisfies `Ordered` is the stdlib declaration's
+    /// to sort, through its body (`sort<T: Ordered>`, stable, by the type's own `<`); the call
+    /// takes the ordinary path to it, which also refuses an element that is not `Ordered`
+    /// naming the bound.  Inside a template the element is its variable, and the site is
+    /// stamped (`TV_SORT`) for the monomorph to decide — where the declaration takes the call;
+    /// a variable without the bound takes the ordinary path and its refusal.  A call the
+    /// special form cannot read (an arity, a non-vector) stays with it for its message.
+    pub(crate) fn sort_is_special(&mut self, source: u16, types: &[Type]) -> bool {
+        let [vec] = types else {
+            return true;
+        };
+        let Type::Vector(elm, _) = vec.peel_link() else {
+            return true;
+        };
+        if Self::sorts_itself(elm) {
+            return true;
+        }
+        self.is_type_var_element(elm) && self.builtin_selected(source, "sort", types).is_some()
+    }
+
+    /// The element types `OpSortVector` compares at runtime.  Not a nullable one: its order is
+    /// `<`'s (`@FR-E-NullArg`), which the declaration's body follows.
+    fn sorts_itself(elm: &Type) -> bool {
+        !matches!(elm, Type::Optional(_))
+            && matches!(
+                elm.base(),
+                Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
+            )
+    }
+
+    /// The `#builtin` stdlib declaration a call of `name` with these argument types selects,
+    /// if that is what it selects (`@FR-G-Select`).
+    ///
+    /// Asked the way `program_definition_applies` asks: the set first, and where an argument is
+    /// still a type variable (`NotDecidable` — a template's own call) the ladder, with the
+    /// definition's variables binding and its bounds holding (`definition_ranks`).
+    pub(crate) fn builtin_selected(
+        &mut self,
+        source: u16,
+        name: &str,
+        types: &[Type],
+    ) -> Option<u32> {
+        use crate::parser::dispatch::Selection;
+        let routed = self.data.routed_types(types);
+        let d = match self.select_overload(source, name, &routed) {
+            Selection::One(d) => d,
+            Selection::NotDecidable => self.data.select_fn(source, name, types),
+            Selection::Ambiguous(_) | Selection::NoneApplicable => return None,
+        };
+        (d != u32::MAX && self.data.def(d).builtin() && self.definition_ranks(d, &routed).is_some())
+            .then_some(d)
+    }
+
     /// Compiler special-case for `sort(v: vector<T>)`.
     /// Emits `OpSortVector(v, db_tp)` which sorts in-place at runtime, dispatching
     /// on the database element type.
@@ -6494,10 +6698,13 @@ use #count instead"
             return Type::Void;
         }
         if let Type::Vector(elm, _) = types[0].peel_link() {
-            if !matches!(
-                elm.as_ref(),
-                Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
-            ) {
+            // Which lowering a template's element takes is the monomorph's to decide: this op
+            // for an element the runtime compares, the declaration's instance otherwise.
+            if self.is_type_var_element(elm) {
+                *val = v_block(list.to_vec(), types[0].clone(), Self::TV_SORT);
+                return Type::Void;
+            }
+            if !Self::sorts_itself(elm) {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
@@ -6546,9 +6753,38 @@ use #count instead"
             *val = v_block(list.to_vec(), types[0].clone(), Self::TV_INSERT);
             return Type::Void;
         }
+        // The element is a STORE into the vector's element slot, and takes what every other
+        // element write takes (`v += [x]`, `v[i] = x`): the conversion (`2` into a
+        // `vector<float>` is `2.0`), the narrowing refusal (@FR-I-Narrow) and a declared
+        // range's guard.  Unconverted, `insert(v, 0, "x")` on a `vector<integer>` wrote a text
+        // handle into an integer slot (an interpreter panic, a native compile error),
+        // `insert(w, 0, 2)` on a `vector<float>` the integer's bits, and `insert(b, 0, 300)`
+        // on a `vector<u8>` a silent 0.  A monomorph lowers a template's site with the element
+        // already its type (`TV_INSERT` passes the vector alone).
+        let mut elem = list[2].clone();
+        let elem_given = types.get(2).cloned().unwrap_or_else(|| elm_tp.clone());
+        if !self.convert_store(
+            &mut elem,
+            &elem_given,
+            &elm_tp,
+            "the element `insert` stores",
+            None,
+        ) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "insert cannot store {} in a vector<{}>; cast it explicitly with 'as {}'",
+                elem_given.source_name(&self.data),
+                elm_tp.source_name(&self.data),
+                elm_tp.source_name(&self.data)
+            );
+            return Type::Void;
+        }
         let elm_size = Value::Int(self.element_store_size(&elm_tp));
         let db_tp = self.type_info(&elm_tp);
         let ed_nr = self.data.type_def_nr(&elm_tp);
+        let (mut steps, index, elem) =
+            self.stage_insert_arguments(&list[0], &list[1], elem, &elm_tp);
         // Create a temp var with dependency on the vector to prevent premature free
         let ref_tp = Type::Reference(ed_nr, crate::data::Deps::frame(types[0].depend()));
         let tmp = self.create_unique("ins", &ref_tp);
@@ -6558,11 +6794,111 @@ use #count instead"
         // tmp = OpInsertVector(v, elem_size, idx, db_tp)
         let insert_call = self.cl(
             "OpInsertVector",
-            &[list[0].clone(), elm_size, list[1].clone(), db_tp],
+            &[list[0].clone(), elm_size, index, db_tp.clone()],
         );
-        let set_val = self.set_element(&elm_tp, 0, Value::Var(tmp), list[2].clone());
-        *val = v_block(vec![v_set(tmp, insert_call), set_val], Type::Void, "insert");
+        let set_val = if let Type::Vector(inner, _) = elm_tp.base() {
+            // A vector element is a vector FIELD at offset 0 of the fresh slot, and a vector
+            // value is copied into it element by element — the lowering `vv[i] = w` has, with
+            // nothing to clear.  `set_element` wrote the source's handle as an integer: an
+            // interpreter "Store access out of bounds", a native compile error.
+            let inner_row = Value::Int(self.append_elem_tp(inner));
+            let field = self.cl("OpGetField", &[Value::Var(tmp), Value::Int(0), db_tp]);
+            self.cl("OpAppendVector", &[field, elem, inner_row])
+        } else {
+            self.set_element(&elm_tp, 0, Value::Var(tmp), elem)
+        };
+        steps.push(v_set(tmp, insert_call));
+        steps.push(set_val);
+        *val = v_block(steps, Type::Void, "insert");
         Type::Void
+    }
+
+    /// @FR-F-Args — `insert(v, i, e)` is a call, so `i` and then `e` are VALUES before the
+    /// vector grows.  The lowering reads `e` after `OpInsertVector` has made room, so an
+    /// element that reads the vector itself saw the grown one: `insert(v, 0, v[0])` stored
+    /// the fresh slot's null, `insert(p, 0, p[1])` copied the element the slide had moved
+    /// into index 1, and `"{len(v)}"` counted the new element.  Where the element reads the
+    /// container's root, both arguments are evaluated first, in order: a scalar or `text`
+    /// into a temp, a record COPIED into a store of its own — a view of `p[1]` names a slot
+    /// the insertion moves (and may reallocate), so only a copy is the value.  Every other
+    /// insert is untouched: an element that does not read its container cannot see the
+    /// growth.  The rule the append of a literal follows (`stage_append_fields`, loft#1548).
+    fn stage_insert_arguments(
+        &mut self,
+        container: &Value,
+        index: &Value,
+        elem: Value,
+        elm_tp: &Type,
+    ) -> (Vec<Value>, Value, Value) {
+        let root = match container.unspan() {
+            Value::Var(v) => Some(*v),
+            other => {
+                crate::use_analysis::projection_container_place(&self.data, other).map(|p| p.0)
+            }
+        };
+        let Some(root) = root else {
+            return (Vec::new(), index.clone(), elem);
+        };
+        if !elem.reads_var(root) {
+            return (Vec::new(), index.clone(), elem);
+        }
+        let mut steps = Vec::new();
+        let index = if matches!(
+            index.unspan(),
+            Value::Int(_) | Value::Long(_) | Value::Var(_)
+        ) {
+            index.clone()
+        } else {
+            let tp = Type::Integer(crate::data::IntegerSpec::wide());
+            let t = self.vars.work_refs(&tp, &mut self.lexer);
+            self.change_var_type(t, &tp);
+            steps.push(v_set(t, index.clone()));
+            Value::Var(t)
+        };
+        let elem = match elm_tp.base() {
+            // A value: a scalar, a `text`, a tuple.
+            Type::Text(_) | Type::Tuple(_) => {
+                let t = self.create_unique("ins_val", elm_tp);
+                self.vars.defined(t);
+                steps.push(v_set(t, elem));
+                Value::Var(t)
+            }
+            scalar if crate::data::is_scalar(scalar) => {
+                let t = self.create_unique("ins_val", elm_tp);
+                self.vars.defined(t);
+                steps.push(v_set(t, elem));
+                Value::Var(t)
+            }
+            // A record — a struct or a struct-enum — copied into a store of its own.
+            Type::Reference(d, _) | Type::Enum(d, true, _)
+                if matches!(self.data.def_type(*d), DefType::Struct | DefType::Enum) =>
+            {
+                let d = *d;
+                let rec_tp = if matches!(elm_tp.base(), Type::Enum(..)) {
+                    Type::Enum(d, true, crate::data::Deps::none())
+                } else {
+                    Type::Reference(d, crate::data::Deps::none())
+                };
+                let w = self.vars.work_refs(&rec_tp, &mut self.lexer);
+                let kt = i32::from(self.data.def(d).known_type());
+                steps.push(v_set(w, Value::Null));
+                steps.push(self.cl("OpDatabase", &[Value::Var(w), Value::Int(kt)]));
+                steps.push(self.set_element(elm_tp, 0, Value::Var(w), elem));
+                Value::Var(w)
+            }
+            // A vector, copied into a vector of its own (the borrowed-source arm of `vv[i] =
+            // w`): the element it names is in the array the insertion moves.
+            Type::Vector(inner, _) => {
+                let rec_tp = Value::Int(self.append_elem_tp(inner));
+                let owned = Type::Vector(inner.clone(), crate::data::Deps::none());
+                let t = self.vars.unique("_ins_src", &owned, &mut self.lexer);
+                steps.push(v_set(t, Value::Null));
+                steps.push(self.cl("OpAppendVector", &[Value::Var(t), elem, rec_tp]));
+                Value::Var(t)
+            }
+            _ => elem,
+        };
+        (steps, index, elem)
     }
 
     /// Compiler special-case for `reserve(v: vector<T>, n: integer)` (loft#710).
@@ -6622,6 +6958,13 @@ use #count instead"
             );
             return Type::Void;
         };
+        // The claim is sized in the element's width, and a type variable has none yet
+        // (@FR-G-Mono): lowered in the template, every instance reserved at the placeholder's
+        // 12 bytes, where its twin reserves at 8, 1 or 16.
+        if self.is_type_var_element(elm) {
+            *val = v_block(list.to_vec(), types[0].clone(), Self::TV_RESERVE);
+            return Type::Void;
+        }
         let elm_size = self.element_store_size(elm);
         *val = self.cl(
             "OpReserveVector",

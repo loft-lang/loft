@@ -52,16 +52,13 @@
   <span class="st">"rect {self.width} by {self.height}"</span>
 }</code></pre>
 <h2 id="enum-methods">Enum methods</h2>
-<p>Plain enum variants can also have methods. The <code>self</code> parameter carries the current direction value, and the method can return any type. Here <code>opposite()</code> flips North↔South and East↔West.</p>
+<p>A plain enum can have methods too. The method is written once, for the whole enum: the <code>self</code> parameter carries the current value, and a <code>match</code> on it picks the case. Here <code>opposite()</code> flips North↔South and East↔West.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">opposite</span>(self: <span class="en">Direction</span>) -&gt; <span class="en">Direction</span> {
-  <span class="kw">if</span> self == <span class="en">North</span> {
-    <span class="en">South</span>
-  } <span class="kw">else</span> <span class="kw">if</span> self == <span class="en">South</span> {
-    <span class="en">North</span>
-  } <span class="kw">else</span> <span class="kw">if</span> self == <span class="en">East</span> {
-    <span class="en">West</span>
-  } <span class="kw">else</span> {
-    <span class="en">East</span>
+  match self {
+    <span class="en">North</span> =&gt; <span class="en">South</span>,
+    <span class="en">South</span> =&gt; <span class="en">North</span>,
+    <span class="en">East</span> =&gt; <span class="en">West</span>,
+    <span class="en">West</span> =&gt; <span class="en">East</span>
   }
 }</code></pre>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {</code></pre>
@@ -199,19 +196,16 @@ fn describe(self: Rect) -&gt; text {
   "rect {self.width} by {self.height}"
 }
 // ## Enum methods
-// Plain enum variants can also have methods. The 'self' parameter carries the
-// current direction value, and the method can return any type.
-// Here 'opposite()' flips North↔South and East↔West.
+// A plain enum can have methods too. The method is written once, for the whole
+// enum: the 'self' parameter carries the current value, and a 'match' on it picks
+// the case. Here 'opposite()' flips North↔South and East↔West.
 
 fn opposite(self: Direction) -&gt; Direction {
-  if self == North {
-    South
-  } else if self == South {
-    North
-  } else if self == East {
-    West
-  } else {
-    East
+  match self {
+    North =&gt; South,
+    South =&gt; North,
+    East =&gt; West,
+    West =&gt; East
   }
 }
 

@@ -1,0 +1,8 @@
+// D11 — `U` bound by an earlier argument (`init`): the callback's hint is closed at it.
+// @EXPECT: 10|abc
+fn fold<T, U>(v: vector<T>, init: U, f: fn(U, T) -> U) -> U { acc = init; for x in v { acc = f(acc, x); } acc }
+fn main() {
+  s = fold([1, 2, 3, 4], 0, |a, x| { a + x });
+  t = fold(["a", "b", "c"], "", |a, x| { "{a}{x}" });
+  println("{s}|{t}");
+}

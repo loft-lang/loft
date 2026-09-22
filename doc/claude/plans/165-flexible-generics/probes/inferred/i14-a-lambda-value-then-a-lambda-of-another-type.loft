@@ -1,0 +1,11 @@
+// D4 — a lambda in the read defines nothing: numbered by the per-pass lambda counter, it
+// shifted every later lambda on pass 2, and `g` met `x: integer` under `s: text`.
+// @EXPECT: 5|hi!|30
+struct Fb<T> { f: fn(T) -> T, v: T }
+fn main() {
+  a = Fb { f: fn(x: integer) -> integer { x + 1 }, v: 4 };
+  g = fn(s: text) -> text { "{s}!" };
+  b = Fb { f: g, v: "hi" };
+  h = fn(n: integer) -> integer { n * 10 };
+  println("{a.f(a.v)}|{b.f(b.v)}|{h(3)}");
+}

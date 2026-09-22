@@ -1,0 +1,6 @@
+// D7 — the same through a collection: `Wide<(T, T)>` inside `Wide<T>`.
+struct Wide<T> { v: T, kids: vector<Wide<(T, T)>> }
+fn main() {
+  w = Wide { v: 1, kids: [] };
+  println("{w.v}");
+}

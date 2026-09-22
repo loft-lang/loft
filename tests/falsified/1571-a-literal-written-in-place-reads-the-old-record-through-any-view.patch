@@ -1,0 +1,199 @@
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index 80d780e73..8748c9501 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -4795,8 +4795,10 @@ fn jumps_out(v: &Value) -> bool {
+ /// once the collection outgrows its allocation.  The scope pass placed its view copies against
+ /// the growth where the IR has it — at the append — so a view read in between would read an
+ /// element that already moved: `e = sc.ops[0]; p = mk(n); x = e.ow; sc.ops += [Op { opts: p }]`
+-/// answered `0` for `100` on the eleventh element.  Which variables can hold such a view is
+-/// [`crate::variables::Function::store_viewers`]'s answer.
++/// answered `0` for `100` on the eleventh element.  Two shapes can hold such a view: a local
++/// whose deps close over a store `out` lives in, and, where one of those stores is a CALLER's,
++/// any heap-typed parameter (and the locals that view one) — a caller may hand an element in
++/// beside its container, and nothing in this frame can tell.
+ ///
+ /// An upper bound on purpose, because a miss reads freed bytes.  One refinement, for a
+ /// destination FIELD at byte `dest`: a local that depends on `out` alone and whose every
+@@ -4814,6 +4816,28 @@ fn destination_views(
+     out: u16,
+     dest: Option<u32>,
+ ) -> HashSet<u16> {
++    let closure = |start: u16| -> HashSet<u16> {
++        let mut seen: HashSet<u16> = HashSet::new();
++        let mut stack = vec![start];
++        while let Some(v) = stack.pop() {
++            for d in vars.tp(v).depend() {
++                if d < vars.count() && seen.insert(d) {
++                    stack.push(d);
++                }
++            }
++        }
++        seen
++    };
++    let mut roots = closure(out);
++    roots.insert(out);
++    let from_caller = roots.iter().any(|r| vars.is_argument(*r));
++    let foreign: HashSet<u16> = if from_caller {
++        (0..vars.count())
++            .filter(|w| *w != out && vars.is_argument(*w) && vars.tp(*w).heap_dep().is_some())
++            .collect()
++    } else {
++        HashSet::new()
++    };
+     let sibling = |w: u16| -> bool {
+         let Some(dest) = dest else { return false };
+         if vars.is_argument(w) || vars.tp(w).depend() != [out] {
+@@ -4841,8 +4865,14 @@ fn destination_views(
+         });
+         bound && other
+     };
+-    vars.store_viewers(out)
+-        .into_iter()
++    (0..vars.count())
++        .filter(|&w| w != out)
++        .filter(|&w| {
++            foreign.contains(&w)
++                || closure(w)
++                    .iter()
++                    .any(|d| roots.contains(d) || foreign.contains(d))
++        })
+         .filter(|&w| !sibling(w))
+         .collect()
+ }
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index bb593abac..f09b948dd 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -3571,43 +3571,45 @@ impl Parser {
+     /// the literal's own field count, and closing it wants the field's declared SPAN rather
+     /// than another list.
+     fn reads_place(&self, value: &Value, root: u16, off: u32) -> bool {
+-        // A view of the destination is a read of it under another name: `e = sc.els[i]?;
+-        // sc.els[i] = El { a: e.b, … }` reads the very slot the literal overwrites, and `e` is
+-        // its own variable.  So is a loop variable over the container, whose deps reach it
+-        // through the iterated copy, and — where the destination is a caller's — a parameter
+-        // the caller may have handed the same place in (`sw(v, v[0])`).  Which variables those
+-        // are is `store_viewers`' answer, shared with `(R-ElemFirst)`'s window, which asks the
+-        // same question of a growth.
+-        let viewers = self.vars.store_viewers(root);
+         // `ANY_FIELD` is the whole variable — the re-init clears the entire record, so no read
+         // of it is disjoint from what is replaced and the spare below must never apply.
+         if off == crate::use_analysis::ANY_FIELD {
+-            return value.reads_var(root) || viewers.iter().any(|&w| value.reads_var(w));
++            return value.reads_var(root);
+         }
+         let mut occurrences = 0usize;
+         let mut disjoint = 0usize;
+         let mut hits_destination = false;
+         value.walk(&mut |n| {
+-            // Every node that NAMES the root or a viewer of it, by the same arms
+-            // `Value::reads_var` uses — a `TupleGet`, a `Set` target, a `CallRef` callee and an
+-            // `Iter` subject carry the variable NUMBER and have no `Value::Var` child, so
+-            // counting only `Var` would leave them unaccounted for and the spare below would
+-            // fire on a read it never saw.  The count is what licenses the spare, so it has to
+-            // be complete: a naming this does not recognise must raise `occurrences`, never sit
+-            // silently at zero.  A viewer is never spared: only a projection of the root itself
+-            // can prove its field disjoint.
+-            let named = match n {
++            // Every node that NAMES the root, by the same arms `Value::reads_var` uses — a
++            // `TupleGet`, a `Set` target, a `CallRef` callee and an `Iter` subject carry the
++            // variable NUMBER and have no `Value::Var` child, so counting only `Var` would
++            // leave them unaccounted for and the spare below would fire on a read it never
++            // saw.  The count is what licenses the spare, so it has to be complete: a naming
++            // this does not recognise must raise `occurrences`, never sit silently at zero.
++            let names_root = match n {
+                 Value::Var(x)
+                 | Value::Set(x, _)
+                 | Value::TupleGet(x, _)
+                 | Value::TuplePut(x, _, _)
+                 | Value::FnRefDnr(x)
+                 | Value::CallRef(x, _)
+-                | Value::Iter(x, _, _, _) => Some(*x),
+-                Value::FnRef(_, w, _) => Some(*w),
+-                _ => None,
++                | Value::Iter(x, _, _, _) => *x == root,
++                Value::FnRef(_, w, _) => *w == root,
++                _ => false,
+             };
+-            if named.is_some_and(|x| x == root || viewers.contains(&x)) {
++            if names_root {
++                occurrences += 1;
++            }
++            // A view of the destination is a read of it under another name: `e =
++            // sc.els[i]?; sc.els[i] = El { a: e.b, … }` reads the very slot the literal
++            // overwrites, and `e` is its own variable.  The deps are what say so — `e` is
++            // typed `ref(El)["sc"]` — and this is `acc_pts`'s own shape, so missing it would
++            // reintroduce the swap the staging exists to stop, one spelling over.
++            if let Value::Var(x) = n
++                && *x != root
++                && self.vars.exists(*x)
++                && self.vars.tp(*x).depend().contains(&root)
++            {
+                 occurrences += 1;
+             }
+             let Value::Call(d, args) = n else { return };
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index afb1324f8..6decc54b6 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -3041,59 +3041,6 @@ impl Function {
+         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].argument
+     }
+ 
+-    /// The variables that may VIEW a store `root` lives in — every variable a read of which
+-    /// can see a write through `root`, or be moved by a growth of it.
+-    ///
+-    /// A rewrite that reorders a write through `root` against a read asks this, and it has two
+-    /// such readers: `(R-InPlaceLiteral)`'s staging, which writes a literal's fields into a
+-    /// place before its later fields are read, and `(R-ElemFirst)`'s window, which grows a
+-    /// collection before the statements that follow read it.  Two shapes hold such a view:
+-    ///
+-    /// - a local whose deps CLOSE over a store `root` lives in — through any number of views,
+-    ///   so a loop variable (`p` → the iterated copy → `v`) counts as well as a direct `p = v[0]`;
+-    /// - where one of those stores is a CALLER's, every heap-typed parameter, and the locals
+-    ///   that view one.  A caller may pass an element in beside its container
+-    ///   (`sw(v, v[0])`), and nothing in this frame can tell.
+-    ///
+-    /// It is an upper bound on purpose.  A variable that is left out costs the VALUE (the read
+-    /// sees the written or moved place), while one that is included costs its reader a stack
+-    /// temp or a declined rewrite.  A local that owns its store (its deps are empty) and is not
+-    /// a parameter is never in the set.  Neither is a `text`, which a bind copies (`B-Copy`).
+-    #[must_use]
+-    pub fn store_viewers(&self, root: u16) -> HashSet<u16> {
+-        let closure = |start: u16| -> HashSet<u16> {
+-            let mut seen: HashSet<u16> = HashSet::new();
+-            let mut stack = vec![start];
+-            while let Some(v) = stack.pop() {
+-                for d in self.tp(v).depend() {
+-                    if d < self.count() && seen.insert(d) {
+-                        stack.push(d);
+-                    }
+-                }
+-            }
+-            seen
+-        };
+-        let mut roots = closure(root);
+-        roots.insert(root);
+-        let from_caller = roots.iter().any(|r| self.is_argument(*r));
+-        let foreign: HashSet<u16> = if from_caller {
+-            (0..self.count())
+-                .filter(|w| *w != root && self.is_argument(*w) && self.tp(*w).heap_dep().is_some())
+-                .collect()
+-        } else {
+-            HashSet::new()
+-        };
+-        (0..self.count())
+-            .filter(|&w| w != root)
+-            .filter(|&w| {
+-                foreign.contains(&w)
+-                    || closure(w)
+-                        .iter()
+-                        .any(|d| roots.contains(d) || foreign.contains(d))
+-            })
+-            .collect()
+-    }
+-
+     /// Mark `var_nr` binding-const (`const` PREFIX): its slot is write-once.
+     pub fn set_const_binding(&mut self, var_nr: u16) {
+         self.variables[var_nr as usize].const_binding = true;

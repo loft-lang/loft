@@ -89,7 +89,7 @@ fn a_discharged_generic_return_delivers_through_the_caller_buffer() {
             "introspect",
             "--all-fns",
             "--fn",
-            "t_4text_g1026m",
+            "i_4text_n_g1026m",
             "--bytecode",
             &path,
         ],
@@ -97,7 +97,7 @@ fn a_discharged_generic_return_delivers_through_the_caller_buffer() {
     );
     let sigs: Vec<&str> = stdout
         .lines()
-        .filter(|l| l.contains("t_4text_g1026m("))
+        .filter(|l| l.contains("i_4text_n_g1026m("))
         .collect();
     assert!(
         sigs.len() >= 2,

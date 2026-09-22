@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A free member of an overload set returns what its free twin returns (`calls.md (F-Ret)`: a
+// returned value is FRESH and independent of the argument it was built from).
+//
+// A member is keyed `f_<LEN><types>_<name>` (@PLN162 `Disp-Key`), and the one fact every
+// backend asks before binding a call's result — is the callee loft-defined, so its own body
+// settles whether the result borrows? (`Definition::is_loft_defined`) — knew the `n_` and `t_`
+// forms only.  So a member handing back its record argument was taken for a foreign callee:
+// `r = pick(p, 0); r.x = 99` wrote through to `p`, and so did the inline `pick(p, 0).x = 99`
+// (the scopes lift gate asked the same question by name), while a member minting a fresh record
+// inline leaked it, one per call — on both backends, with no diagnostic.
+//
+// The free twin (`pick1`) is the oracle in every cell; a vector argument (whose bind already
+// copied) and the method spelling are controls.
+//
+// @falsified-at: c6c54b278 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/an-overload-member-returns-what-its-free-twin-returns.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: asserts on both backends (the native test runner stops at the first).
+//   ARMED: nothing.
+//   WITNESS: on the control `r = pick(p, 0); r.x = 99` leaves `p.x == 99`, the field cell
+//     `o.inner.v == 77`, and the inline write reaches `p`.
+//   HOLDS: the twins, the vector argument and the method spelling.
+
+struct P { x: integer }
+struct Q { y: integer }
+struct In { v: integer }
+struct Out { inner: In }
+
+fn pick(a: P, b: integer) -> P { a }
+fn pick(a: Q, b: integer) -> Q { a }
+fn pick1(a: P, b: integer) -> P { a }
+
+fn part(a: Out, b: integer) -> In { a.inner }
+fn part(a: Q, b: integer) -> In { In { v: a.y } }
+fn part1(a: Out, b: integer) -> In { a.inner }
+
+fn back(a: vector<integer>, b: integer) -> vector<integer> { a }
+fn back(a: Q, b: integer) -> Q { a }
+
+fn make(a: P, n: integer) -> P { P { x: a.x + n } }
+fn make(a: Q, n: integer) -> Q { Q { y: n } }
+
+fn mine(self: P, b: integer) -> P { self }
+
+fn test_a_record_argument_handed_back_is_copied() {
+  p = P { x: 1 };
+  r = pick(p, 0);
+  r.x = 99;
+  s = P { x: 1 };
+  t = pick1(s, 0);
+  t.x = 99;
+  assert(p.x == 1 && r.x == 99, "the member aliased its argument: {p.x} {r.x}");
+  assert(s.x == 1 && t.x == 99, "the twin: {s.x} {t.x}");
+}
+
+fn test_a_field_of_the_argument_handed_back_is_copied() {
+  o = Out { inner: In { v: 5 } };
+  i = part(o, 0);
+  i.v = 77;
+  o2 = Out { inner: In { v: 5 } };
+  j = part1(o2, 0);
+  j.v = 77;
+  assert(o.inner.v == 5 && i.v == 77, "the member aliased the field: {o.inner.v} {i.v}");
+  assert(o2.inner.v == 5 && j.v == 77, "the twin: {o2.inner.v} {j.v}");
+}
+
+fn test_an_inline_write_lands_in_a_copy() {
+  p = P { x: 1 };
+  pick(p, 0).x = 99;
+  s = P { x: 1 };
+  pick1(s, 0).x = 99;
+  assert(p.x == 1 && s.x == 1, "the inline write reached the argument: {p.x} | {s.x}");
+}
+
+fn test_a_fresh_record_read_inline_in_a_loop() {
+  p = P { x: 0 };
+  t = 0;
+  for i in 0..4 { t += make(p, i * 5).x; }
+  assert(t == 30, "fresh records: {t}");
+}
+
+fn test_the_controls() {
+  v = [1, 2];
+  w = back(v, 0);
+  w += [9];
+  assert("{v} {w}" == "[1,2] [1,2,9]", "a vector argument: {v} {w}");
+  m = P { x: 1 };
+  n = m.mine(0);
+  n.x = 99;
+  assert(m.x == 1 && n.x == 99, "the method: {m.x} {n.x}");
+}

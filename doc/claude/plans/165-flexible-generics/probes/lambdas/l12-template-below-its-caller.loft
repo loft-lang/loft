@@ -1,0 +1,12 @@
+// The template with the inner lambda is declared BELOW its caller (loft#1023's order).
+// @EXPECT: [2,4,6]
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  println("{doubled(a)}");
+}
+fn doubled<T: Addable>(v: vector<T>) -> vector<T> { my_map(v, |x| { x + x }) }
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}

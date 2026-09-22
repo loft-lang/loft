@@ -1,0 +1,8 @@
+// D4 — a literal inside a literal: the inner binds first, the outer takes its instance.
+// @EXPECT: 7|x
+struct Box<T> { v: T }
+fn main() {
+  b = Box { v: Box { v: 7 } };
+  c = Box { v: Box { v: "x" } };
+  println("{b.v.v}|{c.v.v}");
+}

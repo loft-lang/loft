@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// What a join hands a local is owned exactly once: the default a call makes, the local placed
+// again, and a local the function returns, reassigned or rebuilt before it goes.
+//
+// `x = a ?? mk()` over a nullable LOCAL is typed as `a`'s own type, so the join reads as owned
+// and the call arm is left for `x` to own.  The scope pass's arm lift then turns `x` into a
+// borrow of per-arm temps, and gave a temp only to the `a` arm: the call's store had no owner.
+// A record type leaked one store per evaluation, on both backends, and a droppable also lost
+// its release (`formal/heap.md` D-heap-16).  The `if` spelling of the same join was clean.
+//
+// Placing such a local again released twice (D-heap-18): the lift keeps each release with the
+// arm's SOURCE, so `y = x`, `S { h: x }`, `v += [x]` and `return x` stopped a binding that
+// released nothing.  A local promoted onto the return buffer is that buffer under the local's
+// name, and a copy into it moved no release (D-heap-19) while a literal rebuilding it released
+// nothing it displaced (D-heap-20).
+//
+// The same missing owner leaked the STORE for every record type; that half fails only through
+// the leak channel, so it has a file of its own, `a-call-default-over-a-local-has-an-owner.loft`.
+// The cells here read a trace file of this guard's own.
+
+// @falsified-at: 9f5cf6a96 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-join-bound-local-owns-what-it-was-handed.patch — interpret exit 1 -> 0,
+//   interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends.  A hook that
+//   runs twice or never is visible only on its own trace; the stores are freed either way.
+// ARMED: no instrument — each hook call is written to this guard's own trace file.
+// WITNESS: on the control jo1 drains `alive1` (minted, read, never released) where the fix
+//   drains `alive1,1`; the run stops there, so every cell was also scored with the assertions
+//   replaced by prints, identically on both backends: jo2 `alive2,alive3`, jo3 `alive4,4,4`,
+//   jo5 `alive7,7,7`, jo6 `8,alive8,8` (released before the caller read it, then again), jo7
+//   `was11,11,10,alive10,10` and jo8 `was12,alive13,13` — seven of the eight move.
+// HOLDS: leak, panic, free-refusal and expectations are unmoved on both trees.  jo4 holds on
+//   the hook channel too (`alive6,6`), and holding is its point: on the control its STORE leaked
+//   while its hook ran once, and the fix's first cut turned exactly that cell into two releases.
+
+fn trace_path() -> text { return "loft_join_owner_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct JoH { id: integer }
+fn OpDrop(self: JoH) { note("{self.id}"); }
+fn jo_mk(id: integer) -> JoH { return JoH { id: id }; }
+struct JoHold { h: JoH }
+
+fn jo1() { a: JoH? = null; x = a ?? jo_mk(1); note("alive{x.id}"); }
+fn jo2() { a: JoH? = null; for i in 0..2 { x = a ?? jo_mk(2 + i); note("alive{x.id}"); } }
+fn jo3() { a: JoH? = jo_mk(4); x = a ?? jo_mk(5); y = x; note("alive{y.id}"); }
+fn jo4() { a: JoH? = null; x = a ?? jo_mk(6); c = JoHold { h: x }; note("alive{c.h.id}"); }
+fn jo5() {
+  a: JoH? = null;
+  x = a ?? JoH { id: 7 };
+  v: vector<JoH> = [];
+  v += [x];
+  note("alive{v[0].id}");
+}
+fn jo6m() -> JoH { a: JoH? = jo_mk(8); x = if a != null { a } else { jo_mk(9) }; return x; }
+fn jo6() { r = jo6m(); note("alive{r.id}"); }
+fn jo7m() -> JoH { a = jo_mk(10); x = jo_mk(11); note("was{x.id}"); x = a; return x; }
+fn jo7() { r = jo7m(); note("alive{r.id}"); }
+fn jo8m() -> JoH { x = jo_mk(12); note("was{x.id}"); x = JoH { id: 13 }; return x; }
+fn jo8() { r = jo8m(); note("alive{r.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  jo1(); got = drain();
+  assert(got == "alive1,1", "jo1 the default a call makes is released once: {got}");
+
+  jo2(); got = drain();
+  assert(got == "alive2,2,alive3,3", "jo2 once per iteration: {got}");
+
+  jo3(); got = drain();
+  assert(got == "alive4,4", "jo3 the present arm, placed again in a local: {got}");
+
+  jo4(); got = drain();
+  assert(got == "alive6,6", "jo4 the default arm, placed again in a field: {got}");
+
+  jo5(); got = drain();
+  assert(got == "alive7,7", "jo5 a literal default, placed again by an append: {got}");
+
+  jo6(); got = drain();
+  assert(got == "alive8,8", "jo6 a value if, returned: {got}");
+
+  jo7(); got = drain();
+  assert(got == "was11,11,alive10,10", "jo7 a copy into a returned local moves the release: {got}");
+
+  jo8(); got = drain();
+  assert(got == "was12,12,alive13,13", "jo8 a literal rebuilding a returned local releases what it displaced: {got}");
+}

@@ -578,6 +578,35 @@ def check_ignored_tests():
     return OK, f"{len(names)} ignored, each with a rationale: " + ", ".join(names)
 
 
+def check_open_deviations():
+    """No deviation a release can close ships in one.
+
+    The formal registers (`doc/claude/formal/`) record where the code disobeys its rules.  The
+    owner's standing is that every such deviation a release CAN resolve is resolved before it
+    ships; the only open entries a release may carry are those whose head says `not resolvable
+    in a release`, with the reason in the entry (D-op-1/2: two backends, no executable semantics
+    linking them).  Read through `rule_tags.open_register`, the same home the `registers` report
+    reads, so the gate and the report cannot disagree about what is open.
+    """
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location(
+        "rule_tags", os.path.join(ROOT, "scripts", "rule_tags.py"))
+    rule_tags = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(rule_tags)
+        live, _drift, _regs = rule_tags.open_register()
+    except Exception as e:  # a parser failure is an unknown, never a pass
+        return UNKNOWN, f"rule_tags.open_register failed: {e}"
+    resolvable = [(f, t, iss) for f, t, iss, unres in live if not unres]
+    if not resolvable:
+        return OK, f"{len(live)} open, all marked not resolvable in a release"
+    shown = ", ".join(
+        f"{t} ({', '.join('loft#' + n for n in iss) if iss else 'NO ISSUE'})"
+        for _f, t, iss in resolvable)
+    return FAIL, f"{len(resolvable)} open deviation(s) a release can resolve: {shown}"
+
+
 def check_prev_release_in_registry(version: str, network: bool):
     """Did the release before this one reach the signed index?
 
@@ -1162,6 +1191,13 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "recorded cycle.  2026.8.0's rescue was this census done by hand, once; "
             "drift surfaces continuously only if it is read per release (@PLN156)",
             cadence="mid pre",
+        ),
+        Item(
+            "A-deviations",
+            "No open formal deviation a release can resolve",
+            "python3 scripts/rule_tags.py registers --issues",
+            check=check_open_deviations,
+            cadence="pre",
         ),
         Item(
             "M-falsify-receipts",

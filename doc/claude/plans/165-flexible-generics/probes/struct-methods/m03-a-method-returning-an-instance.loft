@@ -1,0 +1,10 @@
+// D6 — a method building a new instance of its receiver's type.
+// @EXPECT: 4|20
+struct Grid<T> { cells: vector<T>, w: integer }
+fn with_w<T>(self: Grid<T>, w: integer) -> Grid<T> { Grid { cells: self.cells, w: w } }
+fn main() {
+  g = Grid { cells: [1, 2], w: 3 };
+  h = g.with_w(4);
+  t = Grid { cells: ["a"], w: 1 }.with_w(20);
+  println("{h.w}|{t.w}");
+}

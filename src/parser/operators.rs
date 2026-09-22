@@ -2,8 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 
 use super::{
-    AmpHead, Data, IntegerSpec, Level, OPERATORS, Parser, Position, Type, Value, diagnostic_format,
-    rename, to_default, v_block, v_if, v_set,
+    AmpHead, Data, IntegerSpec, Level, OPERATORS, Parser, Position, Type, VOID_LEFT_OPERATORS,
+    Value, diagnostic_format, rename, to_default, v_block, v_if, v_set,
 };
 
 // Operator parsing and type dispatch.
@@ -1158,10 +1158,10 @@ impl Parser {
                     // separate decision (it needs its own method, and a decision about
                     // whether `x[i] += 1` may then read-modify-write), so this is a
                     // refusal, not a gap left silent.
-                    if let Some(tp) = name.strip_suffix("_OpIndex").and_then(|n| {
-                        n.strip_prefix("t_")
-                            .map(|r| r.trim_start_matches(|c: char| c.is_ascii_digit()))
-                    }) {
+                    if let Some(tp) = crate::data::Data::split_key(name)
+                        .filter(|k| k.kind == crate::data::KeyKind::Method && k.rest == "OpIndex")
+                        .map(|k| k.spelling)
+                    {
                         diagnostic!(
                             self.lexer,
                             Level::Error,
@@ -1313,8 +1313,40 @@ impl Parser {
             // consuming a token that's actually the start of the *next*
             // statement — e.g. `if cond { return 0; }\n -1` where `-1` is
             // the function's tail expression, not `void - 1`.
+            //
+            // An operator that cannot BEGIN an expression is not that ambiguity: after a void
+            // operand it is this operand's, and the program is wrong.  Returning here left the
+            // operator unread, so `assert(f(v) == 5, …)` reported the `)` it then expected
+            // and three errors after it, and never that `f(v)` has no value.  Name it, and
+            // read the right-hand side so the parse stays aligned.
             if matches!(current_type, Type::Void) {
-                return current_type;
+                let at = self.lexer.peek_pos().clone();
+                let Some(op) = OPERATORS[precedence]
+                    .iter()
+                    .copied()
+                    .find(|op| VOID_LEFT_OPERATORS.contains(op) && self.lexer.peek_token(op))
+                else {
+                    return current_type;
+                };
+                self.lexer.has_token(op);
+                if !self.first_pass {
+                    diagnostic_at!(
+                        self.lexer,
+                        &at,
+                        Level::Error,
+                        "`{op}` needs a value on its left, and the expression before it answers nothing"
+                    );
+                }
+                let mut rhs = Value::Null;
+                let mut rhs_parent = Type::Unknown(0);
+                self.parse_operators(&Type::Unknown(0), &mut rhs, &mut rhs_parent, precedence + 1);
+                current_type = if precedence <= 3 && op != "??" {
+                    Type::Boolean
+                } else {
+                    Type::Unknown(0)
+                };
+                *code = Value::Null;
+                continue;
             }
             // Plan-07 phase 1, step 1.B.1 — capture the operator's source
             // position *before* `has_token` consumes it.  `op_pos` is then
@@ -1586,7 +1618,9 @@ impl Parser {
                 // bare name, so naming one where a VALUE is wanted reported that the file's
                 // own function does not exist. Say what it is instead.
                 let receivers = self.method_receivers_named(&name);
-                if receivers.is_empty() {
+                if let Some(msg) = self.generic_value_refusal(&name) {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                } else if receivers.is_empty() {
                     diagnostic!(self.lexer, Level::Error, "Unknown variable '{name}'");
                 } else {
                     let on = receivers.join("`, `");
@@ -2638,9 +2672,17 @@ impl Parser {
         // it describes is about to be rejected outright.  Measured before the refusal existed,
         // the pair was worse than contradictory — `s.t ?? (9, "d")` on a field holding
         // `(null, null)` warned "never used" and then USED the default, answering `9 d`.
+        // `(I-Narrow-Opt)` — into a NARROW integer destination the LHS does not provably fit,
+        // `?? d` is the checked narrowing's fallback, not a null discharge: `c.b = over ?? 0`
+        // on a `u8` field stores 0 for 999, and the refusal it cures NAMES this spelling as
+        // the cure.  Asked through the refusal's own predicate, so lint and refusal cannot
+        // disagree about which stores are narrowings (loft#1593 sends every `limit(…)` slot
+        // through here as well).
+        let narrowing_fallback = Self::is_narrowing_int(ctp.base(), var_tp.base());
         if self.expr_not_null
             && !self.first_pass
             && !matches!(ctp, Type::Optional(_))
+            && !narrowing_fallback
             && !Self::is_existing_tuple(&self.data, ctp)
             && !self.call_declares_nullable(code)
         {
@@ -3981,16 +4023,14 @@ impl Parser {
                 let d_nr = *d_nr;
                 let name =
                     crate::data::Data::type_var_spelling(self.data.def(d_nr).name()).to_string();
-                let saved = (
-                    self.cur_type_var,
-                    std::mem::take(&mut self.cur_type_var_name),
-                );
-                self.cur_type_var = d_nr;
-                self.cur_type_var_name.clone_from(&name);
+                let saved = std::mem::replace(&mut self.cur_type_vars, vec![(name.clone(), d_nr)]);
                 let (v, t) = self.subparse_default(&format!("{name} {{}}"), tp);
-                self.cur_type_var = saved.0;
-                self.cur_type_var_name = saved.1;
-                Some((v_block(vec![v], t.clone(), Self::TV_DEFAULT_BLOCK), t))
+                self.cur_type_vars = saved;
+                // The marker's `result` is the type the default is FOR, which substitution
+                // turns into the concrete type the monomorph answers — the sub-parse's own
+                // type is not that on pass 1, where a template declared below its caller
+                // is first instantiated from (loft#1023).
+                Some((v_block(vec![v], tp.clone(), Self::TV_DEFAULT_BLOCK), t))
             }
             // A record defaults to `S{}` — every field defaulted, exactly the value a
             // bare `S{}` literal builds (`has_default` has already verified each field
@@ -5086,6 +5126,9 @@ enum FaultKind {
 pub(crate) enum VecKey {
     Var(u16),
     Field(u16, i32, i32),
+    /// A field of an OPEN instance (@PLN165 D5), read through a deferred
+    /// `Parser::TV_FIELD`: `(base variable, open instance, field)`.
+    OpenField(u16, i32, i32),
 }
 
 /// `VecKey` of an expression used as a vector — the indexing's first arg
@@ -5105,6 +5148,15 @@ pub(crate) fn vec_key(v: &Value, data: &Data) -> Option<VecKey> {
                 return None;
             };
             Some(VecKey::Field(*base, *off, *tp))
+        }
+        Value::Block(bl) if bl.name == crate::parser::Parser::TV_FIELD => {
+            let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..] else {
+                return None;
+            };
+            let Value::Var(base) = receiver.unspan() else {
+                return None;
+            };
+            Some(VecKey::OpenField(*base, *open, *f_nr))
         }
         _ => None,
     }

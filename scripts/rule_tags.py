@@ -25,8 +25,10 @@
 #   list           every defined rule and the doc that defines it
 #   check          every citation resolves; no rule defined twice   (exit 1 on failure)
 #   sites <tag>    the code sites citing one rule (tag with or without the @FR- prefix)
-#   registers      each chapter's stated `OPEN: n` vs the entries it lists;
-#                  `--issues` also asks whether an open entry's issue has closed
+#   registers      each chapter's stated `OPEN: n` vs the entries it lists, and every open
+#                  entry that names no tracking issue (`loft#N`) and is not marked
+#                  `not resolvable in a release`; `--issues` also asks whether an open
+#                  entry's issue has closed
 #   dups           rules cited from 2+ sites — the duplication question, asked by MEANING
 #                  rather than by code shape (which is what rule_predicate_audit.py does)
 #   coverage       what share of the rules carry a code ANNOTATION and what share carry an
@@ -162,7 +164,7 @@ def defined_deviations():
 
 def _section_bullets(text):
     """(tag, status, issues, date, line) for each bullet entry in a `## Deviations` section."""
-    m = re.search(r"^## Deviations\s*$", text, re.M)
+    m = REG_SECTION.search(text)
     if not m:
         return
     end = re.search(r"^## ", text[m.end():], re.M)
@@ -213,6 +215,10 @@ def _fenced_lines(text):
 # section, and lists the entries below it.  Those are two claims about one number, and
 # `defined_deviations` above reads a THIRD — so the register has three decoders and
 # nothing compared them.  Measured 2026-09-12: they disagreed in five chapters at once.
+# A chapter's register heading.  Most write `## Deviations`; a chapter with numbered sections
+# writes `## 3. Deviations / decided edges` (collections.md), and read as the bare spelling alone
+# its stated `OPEN:` was never checked.  `doc_history_report.py` reads both spellings the same way.
+REG_SECTION = re.compile(r"^## (?:\d+\.\s*)?Deviations\b[^\n]*$", re.M)
 REG_OPEN = re.compile(r"OPEN:\s*\**\s*(\d+)")
 # An entry inside that section, in every spelling the docs use.  The BULLET form is the one
 # `defined_deviations` cannot see (it reads headings and blockquotes only), and it is how
@@ -224,6 +230,8 @@ REG_ENTRY_STRICT = re.compile(
 REG_ENTRY_BULLET = re.compile(
     rf"^[-*]\s+\*\*`?(?P<tag>{DEV_TAG})(?![A-Za-z0-9_'-])", re.M)
 REG_ISSUE = re.compile(r"loft#(\d+)")
+# An open entry that no release can close says so in its head, with its reason in the entry.
+UNRESOLVABLE = "not resolvable in a release"
 
 
 def chapter_registers():
@@ -242,7 +250,7 @@ def chapter_registers():
     out = []
     for path in sorted(glob.glob(FORMAL + "/*.md")):
         text = open(path, encoding="utf-8").read()
-        m = re.search(r"^## Deviations\s*$", text, re.M)
+        m = REG_SECTION.search(text)
         if not m:
             continue
         end = re.search(r"^## ", text[m.end():], re.M)
@@ -263,7 +271,13 @@ def chapter_registers():
 
 
 def _register_entries(body, pattern):
-    """{tag: (tag, status, [issues])} for one scan of one body."""
+    """{tag: (tag, status, [issues], unresolvable)} for one scan of one body.
+
+    `unresolvable` is the head's own word that no release can close the entry — the marker
+    `not resolvable in a release`, which the entry must justify.  Every other open entry owes a
+    tracking issue: an open deviation the tracker does not know about is deferred work nobody
+    was told about.
+    """
     out = {}
     found = list(pattern.finditer(body))
     for i, e in enumerate(found):
@@ -276,8 +290,42 @@ def _register_entries(body, pattern):
         head = REG_OPEN.sub("", body[e.end():stop].split("\n\n")[0][:400])
         out[e.group("tag")] = (e.group("tag"),
                                "CLOSED" if "closed" in head.lower() else "OPEN",
-                               REG_ISSUE.findall(head))
+                               REG_ISSUE.findall(head),
+                               UNRESOLVABLE in " ".join(head.lower().split()))
     return out
+
+
+def open_register():
+    """`(live, drift, regs)` — every OPEN deviation as `(chapter, tag, [issues], unresolvable)`,
+    the chapters whose stated `OPEN: n` disagrees with what they list, and the raw registers.
+
+    The one home for "which deviations are open, and is each tracked?", read by `registers` and
+    by `scripts/release-checklist.py`'s deviation item, so the report and the release gate
+    cannot disagree about what is open.
+
+    Status comes from `defined_deviations`, the ONE home for it: it resolves a tag with several
+    entries by date, which a fresh scan does not — `D-bind-11` and `D-bind-28` each read OPEN in
+    isolation and are closed once their later rows are taken into account.  It also attributes a
+    chapter that keeps its register in the `-history` companion, which is how `types.md` stated
+    `OPEN: 0` over an open `D-Domain-Guard` next door.
+    """
+    regs = chapter_registers()
+    devs = defined_deviations()
+    chapter_open = collections.defaultdict(set)
+    for tag, (files, status) in devs.items():
+        if status != "OPEN":
+            continue
+        for f in set(files):
+            chapter_open[f.replace("-history.md", ".md")].add(tag)
+    drift, live = [], []
+    for f, stated, entries in regs:
+        found = sorted(chapter_open.get(f, ()))
+        if stated is not None and stated != len(found):
+            drift.append((f, stated, len(found), found))
+        issues = {t: iss for t, st, iss, _ in entries}
+        marked = {t for t, st, iss, unres in entries if unres}
+        live += [(f, t, issues.get(t, []), t in marked) for t in found]
+    return live, drift, regs
 
 
 def closed_issues(numbers):
@@ -428,39 +476,28 @@ def main():
         # The three decoders side by side: the chapter's stated `OPEN: n`, the entries it
         # actually lists, and (with --issues) whether each open entry's issue still is.
         want_issues = "--issues" in sys.argv
-        regs = chapter_registers()
-        # Status comes from `defined_deviations`, the ONE home: it resolves a tag with several
-        # entries by date, which a fresh scan does not — `D-bind-11` and `D-bind-28` each read
-        # OPEN in isolation and are closed once their later rows are taken into account.  It
-        # also attributes a chapter that keeps its register in the `-history` companion, which
-        # is how `types.md` stated `OPEN: 0` over an open `D-Domain-Guard` next door.
-        devs = defined_deviations()
-        chapter_open = collections.defaultdict(set)
-        for tag, (files, status) in devs.items():
-            if status != "OPEN":
-                continue
-            for f in set(files):
-                chapter_open[f.replace("-history.md", ".md")].add(tag)
-        drift, live = [], []
-        for f, stated, entries in regs:
-            found = sorted(chapter_open.get(f, ()))
-            if stated is not None and stated != len(found):
-                drift.append((f, stated, len(found), found))
-            issues = {t: iss for t, st, iss in entries}
-            live += [(f, t, issues.get(t, [])) for t in found]
+        live, drift, regs = open_register()
         print(f"{len(regs)} chapters with a Deviations section · "
               f"{len(live)} open entries · {len(drift)} chapter(s) whose count disagrees\n")
         for f, stated, found, tags in drift:
             print(f"  {f}: states OPEN: {stated}, lists {found} "
                   f"({', '.join(tags) if tags else 'none'})")
+        untracked = [(f, t) for f, t, iss, unres in live if not iss and not unres]
+        unresolvable = [(f, t) for f, t, iss, unres in live if unres]
+        print(f"{len(live) - len(untracked) - len(unresolvable)} open entr(y/ies) tracked by an "
+              f"issue · {len(unresolvable)} marked not resolvable in a release · "
+              f"{len(untracked)} with NO tracking issue")
+        for f, t in untracked:
+            print(f"  {f}: {t} is OPEN and names no loft#N — file its issue, or mark it "
+                  f"`{UNRESOLVABLE}` with the reason")
         if want_issues:
-            named = {int(n) for _, _, iss in live for n in iss}
+            named = {int(n) for _, _, iss, _ in live for n in iss}
             done, unreachable = closed_issues(named)
             print(f"\n{len(named)} issue(s) named by an open entry, {len(done)} now CLOSED")
             if unreachable:
                 print(f"  ⚠ {len(unreachable)} could not be asked "
                       f"({', '.join('loft#%d' % n for n in unreachable)}) — unknown, not clean")
-            for f, tag, iss in live:
+            for f, tag, iss, _ in live:
                 hit = [int(n) for n in iss if int(n) in done]
                 if hit:
                     print(f"  {f}: {tag} is OPEN but names "

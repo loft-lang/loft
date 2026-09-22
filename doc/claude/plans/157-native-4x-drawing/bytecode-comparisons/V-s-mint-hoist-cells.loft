@@ -164,8 +164,8 @@ fn mint13() -> float {
 }
 fn c13() { println("c13 {mint13()}"); }
 
-// c14 — the mint lands in a vector reached by a FIELD PATH (`h.pts`): outside this unit's
-// admission (a bare-variable root only), the loop declines, values right.
+// c14 — the mint lands in a vector reached by a FIELD PATH (`h.pts`): admitted since
+// `(R-Mint)`'s field clause (@PLN158 R1), so the loop hoists `a.ptx`; values right.
 fn mint14(a: Pt) -> H {
   h = H { pts: [] };
   for _ in 0..3 { h.pts += [Pt { ptx: a.ptx, pty: 0.0 }]; }

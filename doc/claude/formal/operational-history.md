@@ -6,8 +6,9 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **3** (D-op-1/2, and D-op-5 opened 2026-08-25 — two spellings of a following
-null-check still report, the sibling of a wrapper-list drift fixed the same day; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
+OPEN: **2** (D-op-1/2 — both NOT resolvable in a release, below; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
+spellings of a following null-check still reported, the sibling of a wrapper-list drift fixed the
+same day — CLOSED 2026-09-02; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
 keystone steps 2–3, D-op-6 opened AND closed 2026-08-29 by the first `@FR-E-NullArg` walk,
 and D-op-7/8 opened AND closed 2026-08-31 by loft#1246 — the sized-integer overflow pair.
 Opened 2026-07-10 by the @PLN102 pre-freeze audit —
@@ -125,8 +126,13 @@ only as strong as the rules above it, not only as strong as its oracle.
   `tests/scripts/pln102-cast-collision-guard.loft`; the conversion set was one assertion
   (`inf as integer` saturate → null in `02-floats.loft`).
 
-### D-op-1 — there is no shared operational semantics; the interpreter is the spec
+### D-op-1 — there is no shared operational semantics; the interpreter is the spec (not resolvable in a release)
 - **Violates:** the premise of this doc (a single evaluation relation both backends obey)
+- **Not resolvable in a release:** the interpreter and the native generator are two
+  implementations, and nothing links them into one executable semantics outside the tests
+  that run both.  The differential oracle (@PLN89) turns a divergence into a caught failure
+  over a growing corpus; it narrows the gap and never closes it, so no issue tracks this
+  entry — each divergence the oracle catches is filed on its own.  D-op-2 inherits it.
 - **Where:** `src/state/` (the interpreter) is the de-facto *executable* definition;
   `src/generation/` (native) is a *separate* generator. The rules across this operational
   family — this file's scalar core plus [heap](heap.md) / [iteration](iteration.md) /
@@ -203,7 +209,7 @@ only as strong as the rules above it, not only as strong as its oracle.
   backends conforming to one definition) — switchable to that later; these rules are reused
   either way.*
 
-### D-op-2 — interp/native divergences are test-caught, not definition-caught
+### D-op-2 — interp/native divergences are test-caught, not definition-caught (not resolvable in a release)
 - **Violates:** E-Op / E-Uncomp / the shared-contract premise
 - **Where:** the two backends are kept in agreement by the suite, so a divergence ships
   until a test happens to exercise it. **#433** is the canonical case: a program the
@@ -227,6 +233,37 @@ only as strong as the rules above it, not only as strong as its oracle.
   identical on interp and native, before AND after the fix.  So D-op-1 closing would not have
   found this, and the shared front end needs its own oracle rather than a differential one.
   Related: the reference-route discipline in [DEBUG.md](../DEBUG.md).
+
+### D-op-11 — OPENED AND CLOSED (2026-09-21, loft#1575): a literal passed to a call that returns it, rebound in a loop to the local it reads, read the cleared record
+
+- **Violates:** `(E-Asgn)` — the right-hand side reduces to a value before the store updates
+  the binding.
+- **Where:** a literal handed to a call is built in a work-ref, and a call that returns its
+  parameter hands the binding that work-ref's own store.  On the next pass the work-ref
+  rebuilds that store in place (loft#1513's reuse, which `value_struct_alloc` measures) before
+  the literal's read of the binding runs.  `Scopes::scan_set` gives the reuse up for a
+  construction that reads its binding, but `construction_work_ref` sees only a construction
+  bound DIRECTLY, not one that reaches the binding through a call whose return borrows it.
+- **Effect:** `for i in 0..2 { s = me(Bx { v: [i], n: s.n + 1 }) }` with `fn me(self: Bx) ->
+  Bx { self }` answers `n` = 1 for 7 on both backends, silently; so does the method spelling
+  `Bx { … }.me()`.  Right: the literal bound to a local first, a method returning a fresh
+  record, a literal that does not read `s`, and the same statement outside a loop.
+- **Found:** 2026-09-21 while closing `D-rw-5` (rewrites.md), whose own shape binds the
+  construction directly.
+- **Closed:** `delivered_work_ref` answers the work-ref a value delivers to its binding: a
+  construction bound directly, or one handed to a user function whose body hands that visible
+  PARAMETER back whole (its tail is the parameter, and `def.returned.depend()` names it).  Read
+  wider it was wrong twice, measured: a projection op names its argument in its return deps too,
+  and a function whose promoted local is the hidden return buffer names that buffer — the second
+  disarmed the caller's own buffer and leaked it (`a-return-that-hands-out-one-local-…`, `j15`).
+  Every ownership reader asks it (the drop
+  hand-off, the disarm, the join disarm, `member_mint`, `is_view_of_storage`), so the binding
+  is the store's one claimant and the reuse is given up for a construction that reads its
+  binding.  A variable argument is still copied by the caller's bind, which is what
+  `(H-Drop-Not)`'s *"`return p` … copies"* describes.  For a droppable-owning type such a
+  `return self` is a copy `(H-Copy-Refuse)` refuses (`D-heap-8`); with the refusal off, the
+  construction-argument cells now release once where they released twice.  Guard
+  `tests/scripts/1575-a-literal-handed-to-a-call-that-returns-it-is-computed-from-the-old-record.loft`.
 
 ### D-op-10 — CLOSED (2026-09-17, loft#1548): an appended record literal minted its element before its field expressions ran
 

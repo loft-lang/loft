@@ -84,6 +84,14 @@ EOF
 #   chunk repos ship tags carrying the renumber, drop these lines and bump
 #   PINNED_REFS instead.
 #
+# - imaging/tests/15-regression.loft — loft#1593: a `limit(0, 255)` slot now
+#   refuses a value not provably in range exactly as `u8` does, and the
+#   fixture's two `Pixel{r: <integer expr>}` sites write the `?? 0` the
+#   refusal names (the same 0 the library documents for a value outside the
+#   range).  Test-only divergence; the library's src has no such site.  When
+#   loft-libs-graphics ships an imaging tag carrying the cure, drop this line
+#   and bump PINNED_REFS instead.
+#
 # - shapes/README.md, imaging/README.md, web/README.md — org move
 #   (MOVING.md): the in-repo rewrite of `github.com/jjstwerff/loft` →
 #   `github.com/loft-lang/loft` updated one @PLAN12 link in each committed

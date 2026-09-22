@@ -1748,12 +1748,15 @@ impl State {
     /// # Panics
     /// Panics on re-entrant advance (coroutine already running).
     #[allow(clippy::too_many_lines)] // borrow-checker constraints prevent splitting this function
-    pub fn coroutine_next(&mut self, value_size: u32) {
+    pub fn coroutine_next(&mut self, packed_size: u32) {
+        // `packed_size` is `OpCoroutineNext`'s operand: the byte size in the low byte and the
+        // channel tag above it (`coroutine_layout::next_operands`).  Only the null a finished
+        // generator answers reads it; a live advance moves what the generator yields.
         let gen_ref = self.get_stack::<DbRef>();
 
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             // CO1.6c: push typed null sentinel.
-            self.push_null_value(value_size);
+            self.push_null_value(packed_size);
             return;
         }
         let idx = gen_ref.rec as usize;
@@ -1771,14 +1774,14 @@ impl State {
         // the same answer for the same reason: this handle's frame is gone, and whatever
         // now occupies the slot belongs to somebody else.
         if !self.coroutine_slot_matches(&gen_ref) {
-            self.push_null_value(value_size);
+            self.push_null_value(packed_size);
             return;
         }
         let status = self.coroutine_frame_mut(idx).status;
 
         match status {
             CoroutineStatus::Exhausted => {
-                self.push_null_value(value_size);
+                self.push_null_value(packed_size);
             }
             CoroutineStatus::Running => {
                 panic!("re-entrant advance on coroutine {idx}");
@@ -1957,7 +1960,72 @@ impl State {
     }
 
     // CO1.6c: push a typed null sentinel onto the stack.
-    fn push_null_value(&mut self, value_size: u32) {
+    /// The member types of generator `d_nr`'s yield, when it yields a tuple holding a reference.
+    fn yield_tuple_of(&self, d_nr: u32) -> Option<Vec<Type>> {
+        if self.data_ptr.is_null() {
+            return None;
+        }
+        // SAFETY: the `Data` outlives this `State` — see `data_ptr`.
+        let data = unsafe { &*self.data_ptr };
+        let def = data.definitions.get(d_nr as usize)?;
+        match def.returned().base() {
+            Type::Iterator(inner, _) => match inner.base() {
+                Type::Tuple(elems)
+                    if elems.iter().any(|e| {
+                        crate::data::holds_dbref(e) || crate::data::is_dbref_slot(e.base())
+                    }) =>
+                {
+                    Some(elems.clone())
+                }
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
+    /// Write `DbRef::NULL` over every reference member of the tuple of `elems` whose value
+    /// starts at stack offset `base` — nested tuples included.
+    fn null_tuple_refs(&mut self, base: u32, elems: &[Type]) {
+        let offsets = crate::data::element_stack_offsets(elems);
+        for (elm, off) in elems.iter().zip(offsets) {
+            let at = base + off as u32;
+            match elm.base() {
+                Type::Tuple(inner) => self.null_tuple_refs(at, inner),
+                // A generator handle member too (loft#1585): released, a zeroed one names the
+                // stack store.
+                t if crate::data::is_dbref_slot(t) => {
+                    let dst = self.database.store_mut(&self.stack_cur).addr_span_mut(
+                        self.stack_cur.rec,
+                        self.stack_cur.pos + at,
+                        std::mem::size_of::<DbRef>(),
+                    );
+                    // SAFETY: the span lies inside the value just pushed at `base`.
+                    #[allow(clippy::cast_ptr_alignment)]
+                    unsafe {
+                        std::ptr::write_unaligned(dst.cast::<DbRef>(), DbRef::NULL);
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Push the null a finished generator answers, for a yield of the packed `value_size`
+    /// (byte size in the low byte, channel tag above it).  A handle — tag 0, a `DbRef`'s
+    /// width — answers `DbRef::NULL`, as `--native`'s `next_dbref` does: the consumer OWNS
+    /// what an advance produces (`(G-Own)`) and releases it, and releasing the null handle
+    /// is a no-op where releasing a zeroed one names the stack store.  So does a GENERATOR
+    /// handle, which has no native channel (`CHANNEL_NONE`): a generator of generators ended
+    /// with the consumer releasing a zeroed handle, which names the stack store too.
+    fn push_null_value(&mut self, packed_size: u32) {
+        let value_size = packed_size & 0xFF;
+        let tag = packed_size >> 8;
+        if (tag == 0 || tag == crate::coroutine_layout::CHANNEL_NONE as u32)
+            && value_size == size_ref()
+        {
+            self.put_stack(DbRef::NULL);
+            return;
+        }
         match value_size {
             4 => self.put_stack(i32::MIN), // integer null sentinel
             8 => self.put_stack(i64::MIN), // long null sentinel
@@ -2148,7 +2216,7 @@ impl State {
     /// CO1.3a: exhaust a running coroutine — cleanup and return null to consumer.
     /// # Panics
     /// Panics if no coroutine is currently active.
-    pub fn coroutine_return(&mut self, value_size: u32) {
+    pub fn coroutine_return(&mut self, packed_size: u32) {
         let idx = *self
             .active_coroutines
             .last()
@@ -2162,6 +2230,7 @@ impl State {
         let call_depth = frame.call_depth;
         let stack_base = frame.stack_base;
         let caller_return_pos = frame.caller_return_pos;
+        let d_nr = frame.d_nr;
 
         // Exhaust and immediately free the slot (S26).
         // Setting the slot to None prevents unbounded growth of the coroutines table
@@ -2177,7 +2246,14 @@ impl State {
 
         // Rewind stack to frame base; push typed null.
         self.stack_pos = stack_base;
-        self.push_null_value(value_size);
+        self.push_null_value(packed_size);
+        // A tuple's reference members answer the reference null too — the frame still names
+        // the generator here, so its yield type gives the members' places.  A consumer that
+        // owns what it is handed (`(G-Own)`) releases each member, and a zeroed member names
+        // the stack store.
+        if let Some(elems) = self.yield_tuple_of(d_nr) {
+            self.null_tuple_refs(stack_base, &elems);
+        }
 
         // Return to consumer.
         self.code_pos = caller_return_pos;
@@ -3447,6 +3523,23 @@ impl State {
     ///
     /// `None` for an un-live or unknown local, so the caller keeps its existing
     /// unannotated seed rather than emitting a line it cannot justify.
+    /// A live frame local's source type when it names an INSTANCE of a generic type
+    /// (@PLN165 D10) — `Grid<integer>`, `vector<Box<u8>>`.  Such a value's literal names its
+    /// template (`Stores::shown`), which infers `Box<integer>` where the frame holds a
+    /// `Box<u8>`: a seed and the pause line carry the type beside it.
+    #[must_use]
+    pub fn frame_local_generic_type(&self, name: &str, data: &crate::data::Data) -> Option<String> {
+        if !self.frame_local_is_live(name, data) {
+            return None;
+        }
+        let (_, _, tp, _) = self.frame_slot(name, data)?;
+        tp.any_node(&mut |t| {
+            matches!(t.base(), crate::data::Type::Reference(d, _) | crate::data::Type::Enum(d, _, _)
+                if data.def(*d).instance_of != u32::MAX)
+        })
+        .then(|| tp.source_name(data))
+    }
+
     #[must_use]
     pub fn frame_local_source_type(&self, name: &str, data: &crate::data::Data) -> Option<String> {
         if !self.frame_local_is_live(name, data) {
@@ -4977,7 +5070,13 @@ impl State {
             };
         }
         let raw = data.def(d_nr).name();
-        let function = raw.strip_prefix("n_").unwrap_or(raw).to_string();
+        // An instance of a generic function is the function its author wrote (@FR-G-Key:
+        // the key's one decoder).
+        let function = if data.def(d_nr).is_instance() {
+            data.def(d_nr).original_name()
+        } else {
+            raw.strip_prefix("n_").unwrap_or(raw).to_string()
+        };
         let mut locals = Vec::new();
         let mut unheld = Vec::new();
         for e in self.frame_view(d_nr, pc, data) {

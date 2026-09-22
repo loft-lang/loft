@@ -1,0 +1,5 @@
+// C1 — c3: a variable two parameters bind to two types is refused, naming both.
+fn same<T: Printable>(a: T, b: T) -> text { "{a}{b}" }
+fn main() {
+  println(same(1, "x"));
+}

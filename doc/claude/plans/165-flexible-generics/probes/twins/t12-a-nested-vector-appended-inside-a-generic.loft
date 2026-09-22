@@ -1,0 +1,27 @@
+// A2 — `vector<vector<T>>` copied and appended to inside a generic: the element copy is
+// flagged (`COPY_FRESH_DEST`), and the row retargeting compared the flagged operand whole, so
+// the monomorph kept the template's `vector<__typevar_T>` row and the copy walked the inner
+// vector at the placeholder's width.  Before that, the template's own parse sized a content
+// row that does not exist yet (an internal compiler error).
+// `b`'s copy holds two elements, so `w[2]` reads past its end: null, whose length is 0.
+// @EXPECT: 32=32|20=20
+fn g<T>(vv: vector<vector<T>>) -> integer {
+  w = vv;
+  w += [vv[0]];
+  len(w) * 10 + len(w[2])
+}
+fn g_i(vv: vector<vector<integer>>) -> integer {
+  w = vv;
+  w += [vv[0]];
+  len(w) * 10 + len(w[2])
+}
+fn g_t(vv: vector<vector<text>>) -> integer {
+  w = vv;
+  w += [vv[0]];
+  len(w) * 10 + len(w[2])
+}
+fn main() {
+  a: vector<vector<integer>> = [[1, 2], [3]];
+  b: vector<vector<text>> = [["p"]];
+  println("{g(a)}={g_i(a)}|{g(b)}={g_t(b)}");
+}

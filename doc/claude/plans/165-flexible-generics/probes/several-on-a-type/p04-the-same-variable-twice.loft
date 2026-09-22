@@ -1,0 +1,9 @@
+// D9 — `Pair<integer, integer>` and `Pair<text, integer>` are two instances; argument order
+// matters in the key.
+// @EXPECT: 3|x3
+struct Pair<K, V> { k: K, v: V }
+fn main() {
+  a = Pair { k: 1, v: 2 };
+  b = Pair { k: "x", v: 3 };
+  println("{a.k + a.v}|{b.k}{b.v}");
+}

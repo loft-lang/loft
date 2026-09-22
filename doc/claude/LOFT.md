@@ -178,6 +178,14 @@ integer limit(-128, 127)   // fits in a byte
 integer limit(0, 65535)    // fits in a short
 ```
 
+A `limit` type is a narrow integer exactly as `u8` is: a value the compiler cannot prove in
+range is refused at the store, the call and the literal, and the refusal names the cure —
+write what the value becomes when it does not fit, `x ?? 0`, or take the checked cast
+`x as integer limit(0, 7)?`, which is `null` when it does not fit.  The one way an
+out-of-range value reaches such a slot at run time is the slot's own arithmetic stepping past
+its range (`b += 253`), and then it takes the type's default — the value nearest zero in the
+range — never a wrapped one.
+
 The default library also defines convenient width-specific aliases:
 ```
 u8    // integer limit(0, 255)              — 1 byte unsigned
@@ -2127,6 +2135,17 @@ v[..end]                    // open-start slice from 0 to end (exclusive)
 **A vector can also be taken apart by `match`** — `[first, ..rest]`, `[a, .., z]` and the other
 slice patterns are in [§ Slice patterns](#slice-patterns-matching-a-vector).
 
+**`reverse`, `reserve`, `insert` and `sort` are stdlib methods on `vector`** — `reverse(v)`
+and `v.reverse()` are one call (as are `reserve(v, n)` / `v.reserve(n)`, `insert(v, i, x)` /
+`v.insert(i, x)` and `sort(v)` / `v.sort()`), and a program defines its own `reverse` for its own types beside it
+(`fn reverse(self: Roster)`), one definition per receiver type; one for `vector` itself is
+refused, as for any stdlib method.  They are calls in every respect: `insert`'s index and
+element are values before the vector grows, so `v.insert(0, v[1])` inserts the element that
+was at index 1, and the element converts as any element store does (`2` into a
+`vector<float>` is `2.0`; `300` into a `vector<u8>` is refused).  `sort` takes any element
+with a `<` (`Ordered`): a struct defining `op <` sorts by it, stably, and a null sorts first.
+The other vector built-ins (`map`, `filter`, `reduce`) follow as @PLN165 arc E moves them.
+
 **Slices are iterators, materialised on assignment.**  `v[lo..hi]` can
 be used in `for x in v[lo..hi] { … }` and wherever an iterator is
 accepted, and assigning it to a local (`sub = v[lo..hi]` or
@@ -2763,9 +2782,17 @@ fn pick_second<T>(a: T, b: T) -> T { _x = a; b }
 ```
 
 **Rules:**
-- T must appear in the first parameter (directly or as `vector<T>`, etc.).
-- Only one type variable is allowed.
-- At the call site, T is inferred from the first argument's concrete type.
+- T must appear in a parameter (directly or as `vector<T>`, etc.) — any parameter; one it
+  appears in nowhere is refused, since a call has nothing to infer it from.
+- A header may declare several type variables, each with its own bounds —
+  `fn pair_up<K: Printable, V: Printable>(k: K, v: V) -> text`; each is inferred from the
+  parameters that name it, and each binding is checked against its own variable's bounds.
+- At the call site, T is inferred from the arguments; two parameters naming T must receive
+  one type (`same<T>(a: T, b: T)` called with an integer and a text is refused, naming both).
+- A generic may share its name with other definitions — concrete ones, other generics, a
+  method: a call reaches the most specific one that takes it (a concrete definition over a
+  generic, `vector<T>` over `T`, `<T: A + B>` over `<T: A>`), and two nothing ranks are
+  refused naming both.
 - The compiler creates a specialised copy per concrete type automatically.
 
 **Allowed on T:** assign, return, store in variables.
@@ -2780,6 +2807,55 @@ fn pick_second<T>(a: T, b: T) -> T { _x = a; b }
 identity(42)      // T = integer → returns 42
 identity("hi")    // T = text → returns "hi"
 ```
+
+### Generic structs
+
+A struct may declare type variables, and `Box<integer>` names an **instance** — an ordinary
+struct whose fields are the template's with every variable replaced, laid out and behaving
+exactly as its hand-written twin `struct BoxInteger { v: integer }` would:
+
+```
+struct Box<T> { v: T }
+b: Box<text> = Box { v: "hi" };   // the annotation names the instance
+c = Box { v: 1 };                 // or the field values bind it: a Box<integer>
+fn twice(b: Box<integer>) -> integer { b.v * 2 }
+twice(c)                          // one type: the inferred instance is the named one
+```
+
+- A literal takes its instance from the type expected of it (a binding's annotation, a
+  parameter, a return type) or else binds each variable from the field values whose declared
+  types name it, as a call binds a generic function's.  A variable no value binds (`Box {}`,
+  `Box { v: null }`, an empty `[]` for a `vector<T>` field) is refused naming the variable;
+  one variable given two types by two fields is refused naming both fields.
+- The bare template name is not a type: `b: Box` is refused — name the arguments, `Box<integer>`.
+  The argument count must match the header's.
+- `Box<integer>` and `Box<integer?>` are two instances, as are `Box<integer>` and `Box<u8>`.
+- A type variable is a type only inside its own header.
+- A generic function takes an instance (`fn get<T>(b: Box<T>) -> T { b.v }`), builds one
+  (`fn wrap<T>(x: T) -> Box<T> { Box { v: x } }`) and binds `T` through it — and a variable
+  no argument binds may be bound by a callback's result: `map_grid<T, U>(g: Grid<T>, f: fn(T)
+  -> U) -> Grid<U>` called as `map_grid(tiles, |t| { t.height })` is a `Grid<integer>`; methods work as
+  on any struct (`fn at<T>(self: Grid<T>, i: integer) -> T?`), and a concrete method on one
+  instance beside the generic one takes that instance.
+- A struct may name itself at its own variables through a collection or a pointer
+  (`kids: vector<Tree<T>>`, `next: reference<Node<T>>?`); an inline `next: Node<T>?` is
+  refused as its twin's is, and a mention at other arguments (`Bad<vector<T>>` inside
+  `Bad<T>`) is refused at the declaration.  A generic struct may be named above its
+  declaration, as any struct may.
+- An `enum` may declare type variables too: `enum Shape<T> { Dot { at: T }, Empty }`.
+  `Shape<integer>` is an enum with its own variants; a variant literal takes its instance
+  from its payload or its annotation (a unit variant only from the annotation:
+  `e: Shape<integer> = Empty`), `match` reads it, and `Shape<integer>::Dot` names one of the
+  instance's variants as a type — a set over those dispatches on the variant.  Generic code
+  takes one as it takes a generic struct: `fn get<T>(s: Slot<T>, d: T) -> T { match s {
+  Full { v } => v, Hole => d } }` reads the payload, `fn wrap<T>(x: T) -> Slot<T> { Full {
+  v: x } }` builds a variant, `is` tests one.
+- A library's generic structs and enums cross `use` whole: a consumer instantiates them at the
+  library's types and at its own (`Grid { cells: [Mine { n: 5 }], w: 1 }`), the library's
+  generic functions, methods, field checks and defaults reach every instance, and the
+  consumer's own generics take them.  `loft api-surface` lists the template (`Grid<T>`), not
+  its instances; the debugger shows a local's instance beside a literal that names the
+  template (`g: Grid<integer> = Grid{cells:[1,2],w:1}`).
 
 ---
 
@@ -3240,10 +3316,11 @@ even straight after `c = null` — **test emptiness with `len(c) == 0`**
 `?` makes no difference here: only the SCALAR default flips to non-null, so `vector<T>`
 and `vector<T>?` are one type with one layout and take the same clear.
 
-### Generics: single type variable
+### Generics: type variables
 
-Only one type variable `<T>` is allowed, inferred from the first argument.
-Multiple type variables (`<T, U>`) are not supported.
+A header declares one or more type variables (`<T>`, `<K: Ordered, V: Printable>`), each
+inferred from the parameters that name it — any parameter, not only the first.  A variable no
+parameter names is refused at the declaration.
 
 **Without bounds:** only assign, return, and store are allowed on `T`.
 **With bounds (`<T: Interface>`):** method calls and operators declared

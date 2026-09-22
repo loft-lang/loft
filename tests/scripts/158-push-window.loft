@@ -1,0 +1,334 @@
+// @PLN158 V1-V3 — a counted push loop that cannot grow pushes through a WINDOW
+// (`@FR-R-PushFill`'s window clause), the comprehension is the counted push loop it spells,
+// and the reservation stands in front of the guarded copies of the loop.
+//
+// `for i in 0..n { v += [e] }` and `[for i in 0..n { e }]` build one vector.  Each push went
+// through `Stores::push_hoisted`: a capacity test in bytes, the store resolved through
+// `allocations[store_nr]`, the element written, the length bumped in the header AND written
+// back to the record — 2.3-3.1 ns an element against the Rust twin's 0.3-0.75.  Once the trip
+// count is reserved nothing in the loop can grow that vector, so where the body reaches the
+// vector through the pushes alone the push is one comparison and one store through a held
+// element base, and the record's length is written once when the loop ends.  Hand-priced on
+// the emitted Rust first, then built: `push` 50.3 -> 10-13 us, `comprehension` 62.0 -> 12.3 us,
+// `grid` 69.5 -> 23.9 us, hashes unchanged.
+//
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them, and every expectation below is computed by formula in the cell's comment.
+// `LOFT_NO_PUSH_WINDOW=1`, `LOFT_NO_PUSH_FILL=1`, `LOFT_NO_PUSH_HOIST=1`,
+// `LOFT_NO_GUARDED_CHAIN=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/push_window.rs pins them).  A WINDOW: w1 w2 w3 w4 w5 w6 w7 (the inner
+// loop) w8 w9 (one window, both guarded arms) w10 w11 w12, and d8 / a1-a4 — a result
+// vector that reads a PARAMETER's vector.  The admission reaches and DECLINES, each for its
+// own reason: d1 reads the vector it pushes to, d7 a sibling field of the pushed record
+// (both name the root), d4 reads it through a view taken before the loop, d5 writes another
+// vector in place.  NEVER REACH the admission, so they say nothing about it: d2 (`len(v)`
+// is a stdlib wrapper call, which the counted-push recogniser reads as another write to the
+// path — no reservation either), d3 (a callee handed the pushed vector declines the whole
+// hoist), d5b (two pushed paths), d6 (filtered: a `continue`).
+//
+// a1-a4 and b1-b2 are the aliasing cases, measured because a prediction failed: d8's pushed
+// root is a local whose store witness (`__vdb_1`) is the hidden return buffer the CALLER
+// handed in, which `(R-Alias)`'s ownership test reads as an owned local.  So the window is
+// admitted beside a parameter read, and whether the caller can make the two one store is a
+// question to measure: the result replacing its own source (a2, twice a3, in a loop a4) and
+// the result built in an element slot of the container the source is an element of (b1,
+// and b2 with that store reallocating under the call).  All hold, LOFT_HOIST_VERIFY=1
+// included — the window rests on the body never reading the pushed vector's LENGTH and
+// never growing a store, and neither needs the parameter to live in another store.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — each of the admission's three
+// clauses switched off in turn, on --native:
+//   - "the body names the pushed vector": d1 answers `51 102` for `51 2601` (the read
+//     `v[i]` is bounded by the header's length, frozen while the window is open, so every
+//     element past the first reads absent) and its assert fails.
+//   - "the body names a variable that may view the pushed vector": d4 answers 780 for
+//     2340 (`len(d)` reads the record's length, which lags: 0 on every pass) and its assert
+//     fails.
+//   - "the body writes a store beside its pushes": NOTHING CHANGED, with or without
+//     LOFT_HOIST_VERIFY=1 — every cell stayed green, so no cell here guards that clause
+//     and none is claimed to.  The shape that would need it is a second grower in the
+//     pushed vector's store, and every one that could be built (a push to a parameter
+//     beside the result, `g_mk` in the probe) declines the loop's whole hoist before this
+//     admission is asked: the push header's own gate is the fence, this clause a second
+//     one behind it.  It is kept because it can only decline — it costs a window, never a
+//     value — and it becomes load-bearing the day that first gate admits a grower.
+// Two expectations written by hand before measuring were wrong (d1's 101, and a probe that
+// assumed a push to a by-value parameter reaches the caller's row); the values above are
+// the measured ones.  Restored byte-identically (`git diff` empty against the pre-sabotage
+// commit): interpret / native / every switch / LOFT_HOIST_VERIFY=1 green.
+
+struct Bag { items: vector<integer>, count: integer }
+
+fn tot(v: const vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+fn totf(v: const vector<float>) -> float { t = 0.0; for x in v { t += x; } t }
+fn tots(v: const vector<single>) -> single { t = 0.0f; for x in v { t += x; } t }
+
+// w1 — the statement, from empty.  sum = 3*n(n-1)/2 + n*salt = 3*199990000 + 100000.
+fn w1() {
+  n = 20000; salt = 5;
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * 3 + salt]; }
+  println("w1 {len(v)} {tot(v)} {v[n / 2] ?? 0} {v[n - 1] ?? 0}");
+  assert(len(v) == 20000 && tot(v) == 600070000 && v[n / 2] ?? 0 == 30005 && v[n - 1] ?? 0 == 60002, "w1");
+}
+
+// w2 — the comprehension.  sum i*i for i<1000 = 999*1000*1999/6 = 332833500, + 7*1000.
+fn w2() {
+  n = 1000; salt = 7;
+  v = [for i in 0..n { i * i + salt }];
+  println("w2 {len(v)} {tot(v)} {v[999] ?? 0}");
+  assert(len(v) == 1000 && tot(v) == 332840500 && v[999] ?? 0 == 998008, "w2");
+}
+
+// w3 — float by comprehension (0.5 * 4950), single by statement with THREE pushes a pass
+// (sum t for t<50 = 1225, + 50*1.0 + 50*0.5).
+fn w3() {
+  f = [for i in 0..100 { i as float * 0.5 }];
+  b: vector<single> = [];
+  for t in 0..50 { b += [t as single, 1.0f, 0.5f]; }
+  println("w3 {len(f)} {totf(f)} {len(b)} {tots(b)}");
+  assert(len(f) == 100 && totf(f) == 2475.0 && len(b) == 150 && tots(b) == 1300.0f, "w3");
+}
+
+// w4 — the window opens on a vector that already holds elements.  24 + 4950.
+fn w4() {
+  v = [9, 8, 7];
+  for i in 0..100 { v += [i]; }
+  println("w4 {len(v)} {tot(v)} {v[0] ?? 0} {v[2] ?? 0} {v[3] ?? -1} {v[102] ?? 0}");
+  assert(len(v) == 103 && tot(v) == 4974 && v[0] ?? 0 == 9 && v[2] ?? 0 == 7 && v[3] ?? -1 == 0 && v[102] ?? 0 == 99, "w4");
+}
+
+// w5 — an inclusive range (0..=50: 51 elements, 1275) and a computed start (25..75: 50
+// elements, (25+74)*50/2 = 2475).
+fn w5() {
+  n = 50;
+  a: vector<integer> = [];
+  for i in 0..=n { a += [i]; }
+  lo = n / 2; hi = lo + 50;
+  b: vector<integer> = [];
+  for i in lo..hi { b += [i]; }
+  println("w5 {len(a)} {tot(a)} {len(b)} {tot(b)}");
+  assert(len(a) == 51 && tot(a) == 1275 && len(b) == 50 && tot(b) == 2475, "w5");
+}
+
+// w6 — a range that never runs: nothing reserved, nothing pushed, and the vector still
+// takes a push afterwards.
+fn w6() {
+  z = 0; five = 5; two = 2;
+  v: vector<integer> = [];
+  for i in 0..z { v += [i + 100]; }
+  for i in five..two { v += [i + 200]; }
+  l0 = len(v);
+  v += [42];
+  println("w6 {l0} {len(v)} {v[0] ?? 0}");
+  assert(l0 == 0 && len(v) == 1 && v[0] ?? 0 == 42, "w6");
+}
+
+// w7 — the inner loop of a nest holds the window; the OUTER loop reads the length between
+// windows, so each close must leave the header and the record current.
+// len = 20*6*3; sum = 6*190 + 20*15 + 120*1.0; seen = 18*(1+..+20) = 18*210.
+fn w7() {
+  buf: vector<single> = [];
+  seen = 0;
+  for h in 0..20 {
+    bx = h as single;
+    for t in 0..6 { buf += [bx, t as single, 1.0f]; }
+    seen += len(buf);
+  }
+  println("w7 {len(buf)} {tots(buf)} {seen}");
+  assert(len(buf) == 360 && tots(buf) == 1560.0f && seen == 3780, "w7");
+}
+
+// w8 — the pushed vector is the function's return buffer, by comprehension and by an
+// adopted result local; each called twice, so the second call refills a reused buffer.
+// mk: 2*124750 + 500 = 250000 (salt 1), 250000 + 500 = 250500 (salt 2); mk2: 300*301/2.
+fn w8_mk(n: integer, salt: integer) -> vector<integer> { [for i in 0..n { i * 2 + salt }] }
+fn w8_mk2(n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  for i in 0..n { out += [i + 1]; }
+  out
+}
+fn w8() {
+  a = w8_mk(500, 1); b = w8_mk(500, 2);
+  c = w8_mk2(300); d = w8_mk2(10);
+  println("w8 {len(a)} {tot(a)} {tot(b)} {len(c)} {tot(c)} {len(d)} {tot(d)}");
+  assert(len(a) == 500 && tot(a) == 250000 && tot(b) == 250500 && len(c) == 300 && tot(c) == 45150 && len(d) == 10 && tot(d) == 55, "w8");
+}
+
+// w9 — one window, two arms.  With k = 3 the chain guard holds and the plain arm runs:
+// 3*15 + 6 = 51.  With k = 2^62 the bound does not fit, the CHECKED arm runs, and i*k
+// overflows to null from i = 2 on: 1 + (2^62 + 1) + 4 * -1000 = 4611686018427383906.
+fn w9_run(k: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..6 { v += [i * k + 1]; }
+  t = 0;
+  for x in v { t += x ?? -1000; }
+  t + len(v) * 0
+}
+fn w9() {
+  println("w9 {w9_run(3)} {w9_run(4611686018427387904)}");
+  assert(w9_run(3) == 51 && w9_run(4611686018427387904) == 4611686018427383906, "w9");
+}
+
+// w10 — a store-free callee in the pushed value.  sum i*i for i<200 = 199*200*399/6, + 200.
+fn w10_sq(x: integer) -> integer { x * x + 1 }
+fn w10() {
+  v = [for i in 0..200 { w10_sq(i) }];
+  println("w10 {len(v)} {tot(v)}");
+  assert(len(v) == 200 && tot(v) == 2646900, "w10");
+}
+
+// w11 — the body reads a PARAMETER's vector while the pushed root is an owned local: a
+// parameter cannot name a local's store.  2 * 4950 + 100.
+fn w11_dbl(src: const vector<integer>) -> integer {
+  n = len(src);
+  r: vector<integer> = [];
+  for i in 0..n { r += [(src[i] ?? 0) * 2]; }
+  tot(r) + len(r)
+}
+fn w11() {
+  src = [for i in 0..100 { i }];
+  println("w11 {w11_dbl(src)}");
+  assert(w11_dbl(src) == 10000, "w11");
+}
+
+// w12 — the pushed path is a FIELD of an owned record.  2 * 4950.
+fn w12() {
+  o = Bag { items: [], count: 3 };
+  for i in 0..100 { o.items += [i * 2]; }
+  println("w12 {len(o.items)} {tot(o.items)} {o.count}");
+  assert(len(o.items) == 100 && tot(o.items) == 9900 && o.count == 3, "w12");
+}
+
+// d1 — the body READS the vector it pushes to.  v[k] = 1 + 2k: 51 + 2*1275.
+fn d1() {
+  v = [1];
+  for i in 0..50 { v += [(v[i] ?? 0) + 2]; }
+  println("d1 {len(v)} {tot(v)}");
+  assert(len(v) == 51 && tot(v) == 2601, "d1");
+}
+
+// d2 — the body reads its LENGTH.  v[i] = 2i + i: 3 * 780.
+fn d2() {
+  v: vector<integer> = [];
+  for i in 0..40 { v += [len(v) * 2 + i]; }
+  println("d2 {len(v)} {tot(v)}");
+  assert(len(v) == 40 && tot(v) == 2340, "d2");
+}
+
+// d3 — the body hands the vector to a CALLEE, which reads the record's own length through
+// the runtime.  v[0] = 0, v[i] = v[i-1] + 1 + i = i + i(i+1)/2: sum = 1770 + (70210+1770)/2.
+fn d3_last(v: const vector<integer>) -> integer {
+  if len(v) == 0 { 0 } else { (v[len(v) - 1] ?? 0) + 1 }
+}
+fn d3() {
+  v: vector<integer> = [];
+  for i in 0..60 { v += [d3_last(v) + i]; }
+  println("d3 {len(v)} {tot(v)} {v[59] ?? 0}");
+  assert(len(v) == 60 && tot(v) == 37760 && v[59] ?? 0 == 1829, "d3");
+}
+
+// d5 — an in-place write to ANOTHER vector beside the push; d5b — two pushed paths.
+fn d5() {
+  v: vector<integer> = [];
+  w = [0, 0, 0, 0];
+  for i in 0..4 { v += [i]; w[i] = i * 10; }
+  a: vector<integer> = [];
+  b: vector<integer> = [];
+  for i in 0..30 { a += [i]; b += [i * 2]; }
+  println("d5 {tot(v)} {tot(w)} {len(a)} {tot(a)} {tot(b)}");
+  assert(tot(v) == 6 && tot(w) == 60 && len(a) == 30 && tot(a) == 435 && tot(b) == 870, "d5");
+}
+
+// d6 — a FILTERED comprehension: 0, 3, .., 99 is 34 elements, 3 * 561.
+// d9 — a FILTERED statement whose body carries a chain over the counter: odd i below 100,
+// i*i + i*3 = (4*40425 + 4*1225 + 50) + 3*2500.
+fn d6() {
+  v = [for i in 0..100 if i % 3 == 0 { i }];
+  w: vector<integer> = [];
+  for i in 0..100 if i % 2 == 1 { w += [i * i + i * 3]; }
+  println("d6 {len(v)} {tot(v)} {len(w)} {tot(w)}");
+  assert(len(v) == 34 && tot(v) == 1683 && len(w) == 50 && tot(w) == 174150, "d6");
+}
+
+// d7 — the body reads a SIBLING FIELD of the record whose field it pushes.  3 * 4950.
+fn d7() {
+  o = Bag { items: [], count: 3 };
+  for i in 0..100 { o.items += [i * o.count]; }
+  println("d7 {len(o.items)} {tot(o.items)}");
+  assert(len(o.items) == 100 && tot(o.items) == 14850, "d7");
+}
+
+// d8 — the pushed root is the RETURN BUFFER and the body reads a parameter's vector, which
+// the caller may have offered as that buffer.  Called with a distinct source: 2 * 1225.
+fn d8_mk(src: const vector<integer>, n: integer) -> vector<integer> { [for i in 0..n { (src[i] ?? 0) * 2 }] }
+fn d8() {
+  src = [for i in 0..50 { i }];
+  r = d8_mk(src, 50);
+  println("d8 {len(r)} {tot(r)}");
+  assert(len(r) == 50 && tot(r) == 2450, "d8");
+}
+
+// d4 — a VIEW of the pushed vector, taken before the loop and read inside it: `len(d)`
+// goes through the runtime and must see every push.  v[i] = 2i + i: 3 * 780.
+fn d4() {
+  v: vector<integer> = [];
+  d = &v;
+  for i in 0..40 { v += [len(d) * 2 + i]; }
+  println("d4 {len(v)} {tot(v)}");
+  assert(len(v) == 40 && tot(v) == 2340, "d4");
+}
+
+// a1-a4 — the result of `a_mk` bound fresh (a1), replacing its own source (a2), twice (a3),
+// and in a loop that feeds each result back (a4: doubled 5 times, 32 * 1225).
+fn a_mk(src: const vector<integer>, n: integer) -> vector<integer> { [for i in 0..n { (src[i] ?? 0) * 2 }] }
+fn a1() {
+  x = [for i in 0..50 { i }];
+  r = a_mk(x, 50);
+  y = [for i in 0..50 { i }]; y = a_mk(y, 50);
+  z = [for i in 0..50 { i }]; z = a_mk(z, 50); z = a_mk(z, 50);
+  q = [for i in 0..50 { i }]; for _ in 0..5 { q = a_mk(q, 50); }
+  println("a1 {len(r)} {tot(r)} {tot(x)} a2 {len(y)} {tot(y)} a3 {tot(z)} a4 {len(q)} {tot(q)}");
+  assert(len(r) == 50 && tot(r) == 2450 && tot(x) == 1225, "a1");
+  assert(len(y) == 50 && tot(y) == 2450 && tot(z) == 4900 && len(q) == 50 && tot(q) == 39200, "a2-a4");
+}
+
+// b1 — the result is built in an ELEMENT SLOT of the container its source is an element of;
+// b2 — 40 rows, each the double of the last, so that store reallocates under the call.
+// Row k sums 1225 * 2^k: rows 0..3 are 1225 + 2450 + 4900 + 9800 = 18375.
+fn b1() {
+  g: vector<vector<integer>> = [[for i in 0..50 { i }]];
+  g += [a_mk(g[0]?, 50)];
+  h: vector<vector<integer>> = [[for i in 0..50 { i }]];
+  for k in 0..39 { h += [a_mk(h[k]?, 50)]; }
+  println("b1 {len(g)} {tot(g[0]?)} {len(g[1]?)} {tot(g[1]?)} b2 {len(h)} {tot(h[0]?) + tot(h[1]?) + tot(h[2]?) + tot(h[3]?)}");
+  assert(len(g) == 2 && tot(g[0]?) == 1225 && len(g[1]?) == 50 && tot(g[1]?) == 2450, "b1");
+  assert(len(h) == 40 && tot(h[0]?) + tot(h[1]?) + tot(h[2]?) + tot(h[3]?) == 18375, "b2");
+}
+
+// r1 — `(R-Base)`'s growth condition, found on the way: a loop that appends a VECTOR
+// element (no struct, so its mint keeps the runtime's append and earns no push header)
+// beside a read of a SIBLING field of the same record.  The append grows the record's
+// store; a base bound for the sibling would address the buffer that growth freed.  Before
+// the fix --native answered `null` here, and LOFT_HOIST_VERIFY=1 panicked "hoisted vector
+// base is stale".  vals sums 110 per four passes: 12500 * 110 + 50000.
+struct Grid { rows: vector<vector<integer>>, vals: vector<integer> }
+fn r1() {
+  seed = [7, 8, 9];
+  o = Grid { rows: [], vals: [11, 22, 33, 44] };
+  acc = 0;
+  for i in 0..50000 {
+    o.rows += [seed];
+    acc += o.vals[i % 4]?;
+  }
+  println("r1 {acc} {len(o.rows)} {tot(o.rows[49999]?)}");
+  assert(acc == 1375000 && len(o.rows) == 50000 && tot(o.rows[49999]?) == 24, "r1");
+}
+
+fn main() {
+  w1(); w2(); w3(); w4(); w5(); w6(); w7(); w8(); w9(); w10(); w11(); w12();
+  d1(); d2(); d3(); d4(); d5(); d6(); d7(); d8();
+  a1(); b1(); r1();
+  println("push window ok");
+}

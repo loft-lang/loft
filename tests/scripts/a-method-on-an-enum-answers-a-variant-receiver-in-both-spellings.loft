@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-F-Recv — a variant's value is a value of its enum, so a method declared on the enum
+// answers `m(v)` as it answers `v.m()`.  The method spelling found the enum's method through
+// the variant's parent; the free spelling asked only the variant and reported "Unknown
+// function" — two spellings of one call disagreeing (loft#1432's class), on main.  A method
+// a VARIANT declares itself still wins for that variant.
+//
+// @falsified-at: 0ef466f6a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-method-on-an-enum-answers-a-variant-receiver-in-both-spellings.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends.
+//   ARMED: nothing.
+//   WITNESS: on the control `arity(a)` is "Unknown function arity — did you mean the method
+//     `x.arity(…)` on …Shape?".
+//   HOLDS: nothing else.
+
+enum Shape { Dot { at: integer }, Line { from: integer, to: integer }, Empty }
+
+fn arity(self: Shape) -> integer {
+  match self { Dot { at } => 1, Line { from, to } => 2, Empty => 0 }
+}
+fn label(self: Shape) -> text { if arity(self) >= 0 { "shape" } else { "?" } }
+fn label(self: Dot) -> text { if self.at >= 0 { "dot" } else { "?" } }
+
+fn test_both_spellings_reach_the_enums_method() {
+  a = Dot { at: 7 };
+  b = Line { from: 1, to: 2 };
+  assert(a.arity() == 1 && arity(a) == 1 && b.arity() == 2 && arity(b) == 2, "arity");
+}
+
+fn test_a_variants_own_method_wins() {
+  a = Dot { at: 7 };
+  b = Line { from: 1, to: 2 };
+  assert(label(a) == "dot" && a.label() == "dot", "the variant's own");
+  assert(label(b) == "shape" && b.label() == "shape", "the enum's");
+}

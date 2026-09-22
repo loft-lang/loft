@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 C4 — a `use`d library's generics behave as the same generics written in the
+// program: several type variables (two instances at swapped types, a nested call whose
+// variables cross, a tuple of both), a generic member of an overload set beside a concrete
+// one, and a generic beside a same-named method, all instantiated in the consumer.
+//
+// @falsified-at: 7e1e85c0a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-library-carries-generics-across-the-boundary.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the library's two-variable headers.
+//   ARMED: nothing.
+//   WITNESS: on the control `pair_up` is "declares 2 type variables".
+//   HOLDS: nothing else.
+// @ARGS: --lib tests/lib
+
+use genericlib;
+
+fn several_variables_from_a_library() {
+  assert("{pair_up(1, "a")}|{pair_up("b", 2)}" == "1:a|b:2", "{pair_up(1, "a")}");
+  v: vector<text> = ["y", "z"];
+  assert(swap_last(7, v) == "z:7", "{swap_last(7, v)}");
+  t = keep_both(3, "w");
+  assert("{t.0} {t.1}" == "3 w", "{t.0}");
+}
+
+fn a_library_overload_set_with_a_generic() {
+  assert(show(1, 2) == "int 1 2" && show("x", 2.5) == "gen x 2.5", "{show("x", 2.5)}");
+  c = Cat { n: 1 };
+  assert(describe(c) == "some cat 1" && describe(c, 3) == "CAT 1 x3", "{describe(c)}");
+}
+
+fn main() {
+  several_variables_from_a_library();
+  a_library_overload_set_with_a_generic();
+  println("ok");
+}

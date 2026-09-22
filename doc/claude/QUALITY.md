@@ -480,7 +480,7 @@ rely on the unwrapped shape."* That turns a vague worry into a checkable predica
 
 | sites a `Span` hides the shape from — must not grow |
 |---:|
-| **23** |
+| **22** |
 
 (2026-09-17, `R-BoundedNest`: three sites added, all peeling — the nest's matcher
 `hoist::bounded_nest` and `hoist::nest_chain`, and the guard's bound spelling
@@ -1909,10 +1909,14 @@ caret then lands short. The bound is the fix — stop at a depth-0 `;`, so the s
 statement-local and the drift cannot leave the statement. Then the suite found the second one: a
 string may carry an interpolation HOLE, and `in_format_expr` / `open_strings` / the backtick
 dedent stack are not restored either, so crossing one and coming back left the lexer describing a
-string it was no longer inside and the enclosing group never closed. Stop BEFORE a string and
-answer "not a tuple" — a text member does not adopt the destination, so that answer costs
-nothing. **A look-ahead over this lexer is safe only while it stays inside one statement and out
-of a string**, which is now written on `peek_tuple_literal` where the next caller will read it.
+string it was no longer inside and the enclosing group never closed. Stopping BEFORE a string
+and answering "not a tuple" looked free — a text member does not adopt the destination — and was
+not: a `vector<text>` member does, and was refused (loft#1590). Every remembered token now
+carries the scanner's hole state, and the walk (moved to `Parser::peek_tuple_literal`) follows a
+hole the way `parse_string` does. **A look-ahead over this lexer is safe only while it stays
+inside one statement and reads every token in the mode the real parse will** — the tokens it
+reads are the ones the parse replays — which is written on `peek_tuple_literal` where the next
+caller will read it.
 
 ##### The carve-out comment was the map, again
 
@@ -2769,12 +2773,98 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **334** |
+| **322** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, the third line of the same join — `tuxedo-1562-layout-gate` (loft#1597, #1600,
+#1601) — re-measured at its end: **941 · 615 · 4 · 322**, opaque tests 1311, at the pin the two-line
+join set.  That side read 324 · 1310 on its own base; the join adds its six functions to both
+sides of the count and none to the opaque queue.)
+
+(2026-09-22, the join of `157-native-4x` (@PLN158 W1, R-SplitTable) and `tuxedo-165-generics`
+(@PLN165 E2-E4) into ../loft2 with @PLN167 A0-B3, re-measured at its end: **935 · 609 · 4 · 322**,
+and `--check-ratchet` pinned lower at opaque 322, opaque tests 1311.  The sides read 334 · 1313
+(the 157 line) and 328 · 1312 (the generics line); ../loft2's own @PLN167 work had grown it to
+1318 with eight bare `RefVar` shape tests, each of which now peels (`.base()`, identity on a `&`,
+which is always the outer former), and the one that asks a nullability question — a `&boolean?`
+link reads its storage byte — spells it.)
+
+(2026-09-22, loft#1600 and #1601 on `tuxedo-1562-layout-gate`, re-measured at its end:
+**933 · 604 · 5 · 324**, and `--check-ratchet` pinned at opaque 324, opaque tests 1310 — the
+figures 53d8d5d4a carried.  An intermediate commit had pinned 323 off a spelling of the
+struct-enum element check that was reverted; that check now lives in
+`Parser::variant_fills_element`, and `scopes::leaves_as_value` peels its block's result.)
+
+(2026-09-22, loft#1597 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ dc5bbb3b3 and
+re-measured at its end: **927 · 598 · 5 · 324**, and `--check-ratchet` pinned lower at opaque 324,
+opaque tests 1310.  `Parser::unique_elm_var` gained a struct-enum arm and peels it, which moved
+that function to the seeing-through side.)
+
+(2026-09-22, the join of `157-native-4x` (@PLN158 W2) and `tuxedo-165-generics` (@PLN165 D11, E1)
+into ../loft2 @ 67abc26d5, re-measured at its end: **927 · 597 · 5 · 325**, and `--check-ratchet`
+pinned lower at opaque 325, opaque tests 1310.  The sides read 326 · 1311 (../loft2) and
+329 · 1313 (the generics line); the join is below both, as each line peeled shapes in bodies
+the other also touched.)
+
+(2026-09-22, loft#1585 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ 1a75b86e4 and
+re-measured at its end: **920 · 589 · 5 · 326**, and `--check-ratchet` pinned lower at opaque 326,
+opaque tests 1311.  The sides read 328 · 1312 (this line) and 328 · 1311 (../loft2); the join is
+neither, for the reason the note below gives.  Every shape test the generator-handle work added
+peels (`.base()`), because a nullable handle names the same frame; the two it first wrote bare —
+the value-arm test in `block_result` and the loop-source test in `parse_for_iter_setup` — read
+1314 until they did.)
+
+(2026-09-22, the join of `157-native-4x` (@PLN158 E) and `tuxedo-165-generics` (@PLN165 D7-D10)
+into ../loft2, re-measured at its end: **910 · 577 · 5 · 328**, and `--check-ratchet` pinned lower
+at opaque 328, opaque tests 1311.  The sides read 330 · 1312 (../loft2) and 330 · 1313 (the
+generics line); the joined tree is neither, because the audit classifies FUNCTIONS and both lines
+peeled tests in bodies the other also touched.)
+
+(2026-09-22, the SECOND join that day — `157-native-4x` and `tuxedo-165-generics` into ../loft2 —
+re-measured at its end: **885 · 549 · 5 · 331**, and `--check-ratchet` pinned lower at opaque 331,
+opaque tests 1313.  The sides read 332 (../loft2) and 333 (the generics line); the joined tree
+read 331 · 1314, and the one extra test was ../loft2's own — a bare `Type::Tuple` test in
+`Scopes::scan_set` that loft#1588 added beside an older one — which peels, since a nullable tuple
+local holds the same members.)
+
+(2026-09-22, the join of `tuxedo-1562-layout-gate`, `157-native-4x` and `tuxedo-165-generics` into
+../loft2, re-measured at its end: **876 · 539 · 5 · 332**, and `--check-ratchet` pinned lower —
+opaque 332, opaque tests 1313.  The sides read 333 (../loft2) and 334 (the 157 line and the
+generics line), each true of its own base.  The joined tree read 333 · 1314 with
+`output_coroutine`'s closure test bare, as loft#1586 brought it in; it peels, because a nullable
+fn-ref still captures, and the join reads 332 · 1313.)
+
+(2026-09-22, @PLN165 E4 on `tuxedo-165-generics`: **888 · 556 · 4 · 328**, opaque tests re-pinned
+at 1312 — `sort`'s special-form test asks its nullability question in words (`!matches!(elm,
+Optional)`) and reads the element through the wrapper.)
+
+(2026-09-22, @PLN165 E3 on `tuxedo-165-generics`: **886 · 553 · 5 · 328**, re-pinned at opaque
+328 — `element_store_size` peels its element to ask for a nested vector's stride, which moved
+it to the seeing side, and `insert`'s argument staging reads through the wrapper.)
+
+(2026-09-22, @PLN165 D11 on `tuxedo-165-generics`: **885 · 551 · 5 · 329**, re-pinned at opaque
+329, opaque tests 1313 — the generic vector-element write peels its binding (a `τ?` element is
+`τ`'s shape) and names the tuple case; one existing function moved to the seeing side.)
+
+(2026-09-22, @PLN165 D10 on `tuxedo-165-generics`: **882 · 547 · 5 · 330**, re-pinned at opaque
+330, opaque tests 1313 — the variable table's substitution names the `Optional` arm its
+catch-all took, as `Type::substitute_simultaneous` does beside it.)
+
+(2026-09-22, @PLN165 D8 on `tuxedo-165-generics`: **876 · 540 · 5 · 331**, re-pinned at opaque 331 —
+D8's enum-instance tests peel what they read, and one existing function now does too.)
+
+(2026-09-22, @PLN165 D7 on `tuxedo-165-generics`: **875 · 538 · 5 · 332**, re-pinned at opaque 332,
+opaque tests 1314 — `Type::substitute` gained an `Optional` arm for a pointer's bound, which
+the census counts as seeing through the wrapper.)
+
+(2026-09-22, @PLN165 D4 on `tuxedo-165-generics`: **867 · 529 · 5 · 333**, and `--check-ratchet`
+re-pinned at opaque 333, opaque tests 1314.  The fall is the D4 unit peeling each `never` test it
+added (`.base()`) — a function that asked `matches!(t, Type::Never)` beside a peeled test was
+counted opaque — while the census's growth since the second join is the @PLN165 arcs A–D.)
 
 (2026-09-17, the SECOND join, re-measured at its end: **847 · 507 · 6 · 334**, and
 `--check-ratchet` reports *at baseline* — opaque 334, opaque tests 1314.  The opaque column is
@@ -6639,7 +6729,7 @@ local it is — and the shallowest with no branch in it at all:
   there (`o.opt` read 0).  Both backends; a one-arm assignment read on the other path was the
   same word.  One peel, at the one predicate.
 - **A nullable local first assigned inside a loop body** stayed scoped to the body — the
-  hoist `loop_locals_read_after` reads the same predicate — so the read after the loop that
+  hoist `locals_read_after` reads the same predicate — so the read after the loop that
   LOFT.md promises was a use-after-free on the interpreter and an unresolved `var_x` under
   rustc.  The same peel; and a nullable VECTOR's pre-init then needed a lowering of its own
   (`gen_set_first_nullable_collection_null`): the dense arm allocates a store, or for a

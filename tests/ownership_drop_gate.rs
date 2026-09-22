@@ -657,10 +657,196 @@ fn coalesce_cells() -> Vec<Cell> {
     out
 }
 
+// ── the BOUND family: a local bound from a join, then placed again ─────────────────────────
+
+/// How the join is written: the `??`, the value `if`, and the author's own statement form, which
+/// the compiler writes the other two out to where the binding must own what it is handed.
+const BOUND_SPELL: &[(&str, &str)] = &[
+    ("coal", "x = a ?? @D;"),
+    ("value", "x = if a != null { a } else { @D };"),
+    ("stmt", "if a != null { x = a; } else { x = @D; }"),
+];
+/// Where the bound local goes next.  `ret` is written by the generator: the local is returned.
+const BOUND_PLACE: &[(&str, &str)] = &[
+    ("local", r#"y = x; println("R{y.id}");"#),
+    ("field", r#"c = Hold { h: x }; println("R{c.h.id}");"#),
+    (
+        "push",
+        r#"v: vector<H> = []; v += [x]; println("R{v[0].id}");"#,
+    ),
+    ("ret", ""),
+];
+
+/// `x` is bound from a join of values the function owns and then placed a SECOND time.  Every
+/// source is the function's own, so `(H-Move)` moves each one on and the resource is released
+/// once, by whatever holds it last.  The join is the first bind of `x` or a reassignment of a
+/// local that already holds a record of its own (`@K`), which that reassignment releases.
+fn bound_cells() -> Vec<Cell> {
+    let mut out = Vec::new();
+    let mut idx = 0u32;
+    for path in ["present", "default"] {
+        let setup_a = if path == "present" {
+            "a: H? = mk(@I);"
+        } else {
+            "a: H? = null;"
+        };
+        for &(sname, spelling) in BOUND_SPELL {
+            for bind in ["first", "rebind"] {
+                for &(bname, bsetup, bexpr) in COAL_B {
+                    for &(pname, place) in BOUND_PLACE {
+                        idx += 1;
+                        let name = format!("b_{path}_{sname}_{bind}_{bname}_{pname}");
+                        let pre = if bind == "rebind" {
+                            "x: H = mk(@K);"
+                        } else {
+                            ""
+                        };
+                        let join = spelling.replace("@D", bexpr);
+                        let body = format!("{setup_a} {bsetup} {pre} {join}");
+                        let mut text = String::new();
+                        if pname == "ret" {
+                            let _ = writeln!(text, "fn {name}_m() -> H {{ {body} return x; }}");
+                            let _ = writeln!(
+                                text,
+                                "fn {name}_b() {{ r = {name}_m(); println(\"R{{r.id}}\"); }}"
+                            );
+                        } else {
+                            let _ = writeln!(text, "fn {name}_b() {{ {body} {place} }}");
+                        }
+                        let _ = writeln!(text, "fn {name}() {{ {name}_b(); }}");
+                        out.push(Cell {
+                            text: with_ids(&text, 500_000 + 1000 * idx),
+                            name,
+                        });
+                    }
+                }
+            }
+        }
+    }
+    out
+}
+
+// ── the HANDOVER family: a move written inside a branch arm ────────────────────────────────
+
+/// `(name, setup before the branch, the arm's move of `cc`, what reads the destination after)`.
+const HANDOVER_DEST: &[(&str, &str, &str, &str)] = &[
+    ("local", "", r#"x = cc; println("R{x.id}");"#, ""),
+    (
+        "literal",
+        "",
+        r#"s = S { h: cc }; println("R{s.h.id}");"#,
+        "",
+    ),
+    (
+        "rebuild",
+        "s = S { h: mk(@K) };",
+        "s = S { h: cc };",
+        r#"println("R{s.h.id}");"#,
+    ),
+    (
+        "fieldwrite",
+        "s = S { h: mk(@K) };",
+        r#"s.h = cc; println("X@K");"#,
+        r#"println("R{s.h.id}");"#,
+    ),
+    (
+        "push",
+        "v: vector<H> = [];",
+        "v += [cc];",
+        r#"println("R{len(v)}");"#,
+    ),
+    (
+        "veclit",
+        "v: vector<H> = [];",
+        "v = [cc];",
+        r#"println("R{len(v)}");"#,
+    ),
+    (
+        "enum",
+        "w: W = WNone;",
+        "w = WH { h: cc };",
+        r#"match w { WH { h } => println("R{h.id}"), WNone => {} }"#,
+    ),
+    ("tuplem", "", r#"t = (cc, 1); println("R{t.0.id}");"#, ""),
+];
+/// How the arm is written: an `if` alone, an `if` whose other arm READS the source, a `match` arm.
+const HANDOVER_FORM: &[(&str, &str)] = &[
+    ("if", "if c { @A }"),
+    ("ifelse", r#"if c { @A } else { println("R{cc.id}"); }"#),
+    ("match", "match c { true => { @A }, false => {} }"),
+];
+
+/// A local the function owns, `cc`, moved into a destination inside ONE arm of a branch.  The
+/// field write's overwritten `@K` is `(H-Drop-Not)`'s and carries its `X`; the whole-local
+/// rebuild releases what it displaces.  On the
+/// path that runs the arm the destination owns it; on the other `cc` still does, and releases it
+/// at its own scope end — `(H-Spent)`'s per-path clause.  A `return` from the arm and a loop body
+/// are here too.  The overwritten field of a loop's field write is `(H-Drop-Not)`'s, the author's
+/// to release, so the loop family writes into a collection instead.
+fn handover_cells() -> Vec<Cell> {
+    let mut out = Vec::new();
+    let mut idx = 0u32;
+    for &(dname, setup, arm, after) in HANDOVER_DEST {
+        for &(fname, form) in HANDOVER_FORM {
+            for (pname, taken) in [("taken", "true"), ("skipped", "false")] {
+                idx += 1;
+                let name = format!("k_{dname}_{fname}_{pname}");
+                let branch = form.replace("@A", arm);
+                let text = format!(
+                    "fn {name}_b(c: boolean) {{ cc = mk(@I); {setup} {branch} {after} }}\n\
+                     fn {name}() {{ {name}_b({taken}); }}\n"
+                );
+                out.push(Cell {
+                    text: with_ids(&text, 800_000 + 1000 * idx),
+                    name,
+                });
+            }
+        }
+    }
+    for (pname, taken) in [("taken", "true"), ("skipped", "false")] {
+        idx += 1;
+        let name = format!("k_ret_if_{pname}");
+        let text = format!(
+            "fn {name}_m(c: boolean) -> S {{ cc = mk(@I); if c {{ return S {{ h: cc }}; }} \
+             S {{ h: mk(@J) }} }}\n\
+             fn {name}() {{ r = {name}_m({taken}); println(\"R{{r.h.id}}\"); }}\n"
+        );
+        out.push(Cell {
+            text: with_ids(&text, 800_000 + 1000 * idx),
+            name,
+        });
+    }
+    for &(dname, outer, arm, after) in &[
+        ("local", "", r#"x = cc; println("R{x.id}");"#, ""),
+        (
+            "push",
+            "v: vector<H> = [];",
+            "v += [cc];",
+            r#"println("R{len(v)}");"#,
+        ),
+    ] {
+        for (pname, cond) in [("taken", "true"), ("skipped", "false"), ("first", "i == 0")] {
+            idx += 1;
+            let name = format!("k_loop_{dname}_{pname}");
+            let text = format!(
+                "fn {name}() {{ {outer} for i in 0..2 {{ cc = mk(@I + i); if {cond} {{ {arm} }} }} \
+                 {after} }}\n"
+            );
+            out.push(Cell {
+                text: with_ids(&text, 800_000 + 1000 * idx),
+                name,
+            });
+        }
+    }
+    out
+}
+
 fn all_cells() -> Vec<Cell> {
     let mut cells = pilot_cells();
     cells.extend(cross_cells());
     cells.extend(coalesce_cells());
+    cells.extend(bound_cells());
+    cells.extend(handover_cells());
     cells
 }
 
@@ -1312,6 +1498,9 @@ fn lease_verdict(name: &str) -> Lease {
         ["q", _, "local", ..] => Lease::Once,
         ["q", _, "field", _, dest] if VIEWING.contains(dest) => Lease::Once,
         ["q", ..] => Lease::Refused,
+        // Every source of a bound cell is a local the function made, so each placement moves,
+        // and so does the one local a handover cell moves inside an arm.
+        ["b" | "k", ..] => Lease::Once,
         _ => panic!("{name} has no lease verdict: classify it under formal/heap.md § Drop"),
     }
 }
@@ -1387,35 +1576,22 @@ const CENSUS_BLIND: &[&str] = &[];
 // `D-heap-13` was retired 2026-09-20 with its fix (a collection a call answers releases
 // through the binding, `scopes::drop_hook`'s collection arm): `p_v5`–`p_v7` moved LOST →
 // clean on both backends and `p_v8` / `p_v9`, the controls that bound it, did not move.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[
-    (
-        "D-heap-15",
-        &[
-            "p_v1",
-            "p_v2",
-            "p_o2",
-            "p_i2",
-            "p_j3",
-            "p_j4",
-            "c_coalesce_field",
-            "c_coalesce_enum",
-            "c_coalesce_push",
-            "c_coalesce_veclit",
-            "q_present_local_call_field",
-            "q_present_local_call_push",
-            "q_present_local_var_field",
-            "q_present_local_var_push",
-            "q_present_local_literal_field",
-            "q_present_local_literal_push",
-            "q_default_local_call_field",
-            "q_default_local_var_field",
-            "q_default_local_var_push",
-            "q_default_local_literal_field",
-            "q_default_local_literal_push",
-        ],
-    ),
-    ("D-heap-16", &["p_l2", "q_default_local_call_local"]),
-];
+// `D-heap-15` was NARROWED 2026-09-21: a join copied into a container is written out per arm
+// (`scopes::write_out_joined_copies`), which retired `p_j3`, `p_j4`, the four `c_coalesce_*`
+// cells and every `q_*_local_*` field or push cell on both backends.  What is left is not a
+// join: a whole-collection bind, a tuple bind and a variable rebound to a `??` over itself.
+// `p_v1` left it the same day with `D-heap-23`: a whole-collection copy of a collection the
+// function owns hands its elements' release over on the path it runs.  `p_v2` stays, because it
+// grows the collection after moving it, which `(H-Spent)` refuses; until that error exists the
+// release is given back at the growth and the cell keeps the answer it had.
+// `D-heap-16` was retired 2026-09-21 with its fix (the arm lift that turns the binding into a
+// borrow gives a minting call arm a temp of its own): `p_l2` and `q_default_local_call_local`
+// moved LOST → clean on both backends, and `q_default_param_call_local` with them.
+// `p_o2` left `D-heap-15` 2026-09-22 (loft#1563): a tuple member its own call minted hands its
+// release to the copy when the copy is certain to run, and `c_tuple_tuplem` with it.
+// `p_i2` left it the same day (loft#1563): a rebind written out per arm makes the arm that hands
+// back the binding itself the identity, so the record it keeps is neither displaced nor released.
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v2"])];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix

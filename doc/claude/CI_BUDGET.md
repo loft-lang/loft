@@ -544,6 +544,17 @@ the ~30-min Windows leg; reach for it when the change touches a platform seam.  
 release-gate` is the heavier sibling (every nightly against one commit, 60–90 min) and is
 release evidence, not a branch gate.
 
+**The inner loop can die the same way, and earlier than the tests (2026-09-21).**  A
+`find_problems.sh --subject store` run that had passed two hours before was killed for
+memory while still COMPILING — a subject links tens of test binaries in parallel, and the
+link step is where the memory goes.  Two things had changed, neither in the repo: a
+session's scratch directory under a RAM-backed `/tmp` had grown to gigabytes of finished
+clones, and an editor's language server was holding more.  So before a heavy local run on
+a box where `/tmp` is a tmpfs, read `free -h` AND `df -h /tmp` (a full `/` is the other
+half — `make sweep-scratch`), delete scratch whose durable copy exists, and bound the run:
+`CARGO_BUILD_JOBS=4 NEXTEST_TEST_THREADS=4 ./scripts/find_problems.sh --subject <name>`
+finishes later and finishes.  A killed run is no verdict, exactly as above.
+
 What a GitHub run cannot do: measure a ratio (`make native-ratio`, `make speed` — reports,
 never gates, and they stay local) or read this box's scratch.  What it does that a local
 run cannot: run cold, on a machine nobody else is using, and leave a verdict that

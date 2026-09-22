@@ -66,11 +66,15 @@ const loft_io = {
   // The headless asyncify yield. Mirrors the minimal-shell shim in src/main.rs: on the REWIND
   // replay it stop_rewinds and returns the byte count; on the NORMAL call it is the FRAME BOUNDARY
   // — loft has unwound and JS has control, exactly when a page would read globalThis.loftExposed.
-  loft_host_http_get: (_ptr, _len) => {
+  loft_host_http_get: (ptr, len) => {
     if (ac && ac.exports.asyncify_get_state() === 2 /* REWINDING */) {
       ac.suspend(); // stop_rewind, continue past the yield
       return fakeBytes.length;
     }
+    // The layout sidecar a whole-image load asks for first (`<url>.dschema`) is answered as a
+    // server without one answers it — a 404, without suspending — so the frame boundary stays
+    // the image fetch itself.
+    if (dec.decode(new Uint8Array(mem.buffer, ptr, len)).endsWith(".dschema")) return 0xffffffff;
     // Cross-frame read: reconstruct every exposed value from the memory as it stands AFTER the
     // yield (re-deriving mem.buffer inside readLoftValue — the fetch may have grown it).
     for (const [tag, h] of exposed) {

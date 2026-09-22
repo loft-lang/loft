@@ -1515,6 +1515,16 @@ impl Function {
                 }
                 result
             }
+            // `τ?` over a substituted `τ` stays `τ?` (@FR-N-Shape: the arm the catch-all
+            // below would take, named so the shape test sees the wrapper).
+            Type::Optional(inner) => {
+                Type::Optional(Box::new(Self::subst_type(*inner, tv_nr, concrete)))
+            }
+            // An open instance of a generic ENUM (@PLN165 D8), as `Type::substitute` reads it.
+            Type::Enum(d, mixed, deps) if d == tv_nr => match concrete.base() {
+                Type::Reference(b, _) | Type::Enum(b, _, _) => Type::Enum(*b, mixed, deps),
+                _ => concrete.clone(),
+            },
             // The shape is the keystone's to decide; only the LEAF above differs from
             // the `Parser::substitute_type` twin this mirrors (that one drops the deps,
             // this one carries them).  Written as four hand-spelled formers the two
@@ -3039,6 +3049,59 @@ impl Function {
     }
     pub fn is_argument(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].argument
+    }
+
+    /// The variables that may VIEW a store `root` lives in — every variable a read of which
+    /// can see a write through `root`, or be moved by a growth of it.
+    ///
+    /// A rewrite that reorders a write through `root` against a read asks this, and it has two
+    /// such readers: `(R-InPlaceLiteral)`'s staging, which writes a literal's fields into a
+    /// place before its later fields are read, and `(R-ElemFirst)`'s window, which grows a
+    /// collection before the statements that follow read it.  Two shapes hold such a view:
+    ///
+    /// - a local whose deps CLOSE over a store `root` lives in — through any number of views,
+    ///   so a loop variable (`p` → the iterated copy → `v`) counts as well as a direct `p = v[0]`;
+    /// - where one of those stores is a CALLER's, every heap-typed parameter, and the locals
+    ///   that view one.  A caller may pass an element in beside its container
+    ///   (`sw(v, v[0])`), and nothing in this frame can tell.
+    ///
+    /// It is an upper bound on purpose.  A variable that is left out costs the VALUE (the read
+    /// sees the written or moved place), while one that is included costs its reader a stack
+    /// temp or a declined rewrite.  A local that owns its store (its deps are empty) and is not
+    /// a parameter is never in the set.  Neither is a `text`, which a bind copies (`B-Copy`).
+    #[must_use]
+    pub fn store_viewers(&self, root: u16) -> HashSet<u16> {
+        let closure = |start: u16| -> HashSet<u16> {
+            let mut seen: HashSet<u16> = HashSet::new();
+            let mut stack = vec![start];
+            while let Some(v) = stack.pop() {
+                for d in self.tp(v).depend() {
+                    if d < self.count() && seen.insert(d) {
+                        stack.push(d);
+                    }
+                }
+            }
+            seen
+        };
+        let mut roots = closure(root);
+        roots.insert(root);
+        let from_caller = roots.iter().any(|r| self.is_argument(*r));
+        let foreign: HashSet<u16> = if from_caller {
+            (0..self.count())
+                .filter(|w| *w != root && self.is_argument(*w) && self.tp(*w).heap_dep().is_some())
+                .collect()
+        } else {
+            HashSet::new()
+        };
+        (0..self.count())
+            .filter(|&w| w != root)
+            .filter(|&w| {
+                foreign.contains(&w)
+                    || closure(w)
+                        .iter()
+                        .any(|d| roots.contains(d) || foreign.contains(d))
+            })
+            .collect()
     }
 
     /// Mark `var_nr` binding-const (`const` PREFIX): its slot is write-once.

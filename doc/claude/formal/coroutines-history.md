@@ -6,8 +6,90 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **0** (2026-08-28) — **D-cor-2 opened and closed the same day**; D-cor-1 likewise on
-2026-08-23.
+OPEN: **0** (2026-09-22).  D-cor-5 opened and closed 2026-09-22 (loft#1601); D-cor-4
+opened and closed 2026-09-22 (loft#1589); D-cor-3 opened
+2026-09-21 and closed the next day; D-cor-2 opened and
+closed the same day (2026-08-28); D-cor-1 likewise on 2026-08-23.
+
+> **D-cor-5 — CLOSED (2026-09-22, loft#1601) — a generator held by a record in a keyed collection
+> was never released.**
+> `(G-Hold)` was written with loft#1585, which made a generator holdable at all: before it, a
+> vector of them and a struct field holding one failed to compile.  A record, a vector, a
+> nested record, a vector field and a tuple member now release every frame they hold, at death
+> and at removal.  A KEYED collection (`hash`, `sorted`, `index`, `spatial`) does not: its
+> records are released without a walk — `(H-Drop-Not)` keeps `OpDrop` hooks out of it — and
+> the store walk cannot reach a frame, which lives in the coroutine table rather than in a
+> store.  So its generators, and every heap local they allocated, stay allocated to program
+> exit, on both backends, reported only by the store census.  A vector of vectors of
+> generators was the same until loft#1597 made a vector's cascade walk its vector elements
+> (2026-09-22).
+>
+> **Closed** by giving each keyed collection type whose records hold a generator a FRAMES WALK
+> (`Parser::keyed_frame_release`, synthesized beside the drop cascades as
+> `__frames_<type>`): it walks the records — through the unsorted snapshot a `for` takes of a
+> `hash`, `spatial` or `trie`, and through the cursor of a `sorted` or an `index` — and
+> releases the frames each holds, and nothing else, so a hook beside them stays unrun as
+> `(H-Drop-Not)` says.  It runs where the collection dies: a local at its scope end
+> (`scopes::drop_hook`) and at its rebind, a field in its record's cascade, and a record
+> taken out (`h[k] = null`, `x#remove`), whose walk reaches its inline records, its vectors
+> and its own keyed collections.  Guard
+> `tests/scripts/1601-a-generator-held-in-a-keyed-collection-is-released.loft`.
+
+> **D-cor-4 — CLOSED (2026-09-22, loft#1589) — nothing said who owns a yielded record, and the
+> two backends answered differently.**
+> `(G-Next)` produces one value, but no rule said whose.  The interpreter kept a yielded record
+> the generator's and released it with the generator, so a record returned past its generator's
+> life read `null`.  `--native` handed a record built in a compiler temp to the consumer, whose
+> `for` variable was a borrow of the generator (loft#481), so a drained `for` released nothing
+> and every yield leaked.  A yielded CALL result leaked on both, because the callee minted a
+> store the generator never learned of.  A consumer's value changed when the generator later
+> wrote the local it had yielded (`p1` read `p5`), and a tuple yield of a local was a second
+> name for it on both backends.  And a `match` over a generator collected into a buffer typed
+> `vector<vector<E>>`, with drop hooks running before the arm read (interpreter) or never
+> (native).
+>
+> **Closed** by writing `(G-Own)` — the reading `(G-Next)` and `(H-Move)` already gave — and
+> making both backends keep it.  The parser copies an existing value at the yield
+> (`Parser::yield_owned_value`) and refuses one whose type owns a droppable; both backends
+> forget the temps a yield hands over (`coroutine_layout::yield_handed_temps`, one home), so
+> neither the generator's tail nor its abandonment releases them; a finished generator answers
+> `DbRef::NULL` for a handle on the interpreter too; a generator's `for` variable and a `yield
+> from` item own what they receive (`coroutine_layout::yield_handed_over`); the `match` buffer
+> is typed by its element and takes each record by a MOVE copy; and the native eager path,
+> whose values share one snapshot store, snapshots a handed record as a move and copies it out
+> to the consumer (`coroutine_snapshot_moved`, `coroutine_hand_out`).  A tuple hands over each
+> member; a finished generator's tuple carries the reference null in each reference member
+> (the interpreter types it from the frame, native initialises the transport buffer so), and
+> a tuple an advance produces is its members' sole owner in the scope pass, so a tuple `for`
+> runs each member's hook as its iteration ends.  A generic template's yield copy is decided
+> again per monomorph.  Residual: an advance of an ALREADY finished tuple generator answers a
+> zeroed tuple on the interpreter, whose frame no longer names the type.  Guard
+> `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`.
+
+> **D-cor-3 — CLOSED (2026-09-22, loft#1586) — an endless `while` generator never yielded on
+> `--native`.**
+> `(G-Next)` says an advance runs to the next `yield` and produces one value.  Native loop
+> generators outside CL-9 slice 1 (a `for` whose body ends in one unconditional `yield`) run the
+> whole loop eagerly into a buffer, which the Conformance section accepts as an interleaving
+> difference because the values still agree.  A `while` loop is outside slice 1, and when it is
+> endless the premise fails: `while true { n += 1; yield n; }` answers `1 2` on the interpreter
+> and on `--native` never answers — it fills its buffer until the process is killed for memory
+> (measured at a 2 GB cap; three shapes: integer, boolean and float yields).  A `for` over a large
+> range is lazy on both backends and is the workaround.  Closes with CL-9 slice 3 (COROUTINE.md
+> § Design: lazy loop yields, axis A5).  Found by the Lua expressiveness measurement (LUA_BAR
+> LB3 / LB4).
+>
+> **Closed** by lowering a `while` (a bare `Loop` in the generator body) exactly as slice 1 lowers
+> a `for`, and by ROTATING a loop whose yield has statements after it: they run at the start of
+> the next advance, before the header.  Three defects of the existing lazy `for` path surfaced
+> once `while` loops reached it, and closed with it: a hidden record buffer (`__ref_*`) was
+> re-declared on every advance, so a loop that built a record through a call leaked its last
+> store; a local that adopted such a record was reset by its bare name (E0425); and the tail
+> state bound no parameters (E0425 for a statement after the loop that read one).  A closure in
+> the loop body keeps the eager buffer.  Guard:
+> `tests/scripts/1586-a-while-loop-generator-yields-before-its-next-iteration.loft`, whose cells
+> are all FINITE and assert the ORDER of side effects, so a regression fails an assertion rather
+> than exhausting the machine.  Re-measured: LUA_BAR LB3 and LB4 pass on both backends.
 
 > **D-cor-2 — CLOSED (2026-08-28, loft#1132) — a native transport channel was chosen for
 > types it could not carry.**

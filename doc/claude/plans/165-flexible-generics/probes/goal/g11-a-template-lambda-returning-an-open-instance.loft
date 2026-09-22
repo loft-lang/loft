@@ -1,0 +1,16 @@
+// D11 — the lambda written in a template returns the template's open instance: `U` is
+// `Box<S>`, closed per instance.
+// @EXPECT: 3|q
+struct Box<T> { v: T }
+struct Grid<T> { w: integer, cells: vector<T> }
+fn map_grid<T, U>(g: Grid<T>, f: fn(T) -> U) -> Grid<U> {
+  out: vector<U> = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn boxed<S>(g: Grid<S>) -> Grid<Box<S>> { map_grid(g, |s| { Box { v: s } }) }
+fn main() {
+  a = boxed(Grid { w: 1, cells: [3] });
+  b = boxed(Grid { w: 1, cells: ["q"] });
+  println("{a.cells[0].v}|{b.cells[0].v}");
+}

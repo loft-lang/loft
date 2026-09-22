@@ -1,0 +1,20 @@
+// A0 — the variable bound to a record through a vector's element; the element read, a field
+// of it, and the vector's length after the generic appends a copy.
+// @EXPECT: 20=20|3=3
+struct Pt { x: integer, y: integer }
+fn second<T>(v: vector<T>) -> T { v[1] }
+fn second_p(v: vector<Pt>) -> Pt { v[1] }
+fn grown<T>(v: vector<T>) -> integer {
+  w = v;
+  w += [v[0]];
+  len(w)
+}
+fn grown_p(v: vector<Pt>) -> integer {
+  w = v;
+  w += [v[0]];
+  len(w)
+}
+fn main() {
+  ps = [Pt { x: 1, y: 10 }, Pt { x: 2, y: 20 }];
+  println("{second(ps).y}={second_p(ps).y}|{grown(ps)}={grown_p(ps)}");
+}

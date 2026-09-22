@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The store a join's CALL arm makes is freed when the join is copied into a container —
+// `v += [a ?? mk(n)]` — for a record type with no drop hook at all.
+//
+// The copy only reads the value the join answers, and the call's answer lived nowhere else: the
+// buffer the call is handed starts as the null sentinel, so a callee mints a store of its own,
+// and nothing freed it.  One leaked record per evaluation, on both backends, with the right
+// answer every time.  The field spelling (`Box { p: a ?? mk(n) }`) was already clean because the
+// parser gives that call arm an owner; the scope pass now gives every join copy's call arm the
+// same one (`scopes::write_out_joined_copies`).  The hook half is
+// `a-join-placed-in-a-container-hands-over-the-arm-it-chose.loft`; this is the store half, which
+// only the leak check sees, so it asserts values alone.
+
+// @falsified-at: e5182d188 — interpret exit 1 -> 0, interpret leaked kt=85 JcP×64 -> clean, native exit 1 -> 0,
+//   native leaked kt=85 JcP×64 -> clean
+// @falsified-by: tests/falsified/a-join-copied-into-a-container-frees-the-call-it-made.patch — interpret
+//   exit 1 -> 0, interpret leaked kt=85 JcP×64 -> clean, native exit 1 -> 0, native leaked kt=85
+//   JcP×64 -> clean
+// CHANNEL: the leak channel, and the exit code it sets — every value is right on both trees.
+// ARMED: `LOFT_STRICT_STORES=1`, which turns the leaked stores into a failing exit; the
+//   measurement was taken with it, on both backends.
+// WITNESS: `JcP×64` on the control — one per `jc_push` evaluation.
+// HOLDS: the assertion passes on both trees, and `jc_if_push` and `jc_field`, whose call arm the
+//   parser already gave an owner, leak nothing on either — they are the controls.
+
+struct JcP { jc_id: integer }
+struct JcBox { jc_p: JcP }
+fn jc_mk(id: integer) -> JcP { return JcP { jc_id: id }; }
+
+fn jc_push(n: integer) -> integer {
+  a: JcP? = null;
+  v: vector<JcP> = [];
+  v += [a ?? jc_mk(n)];
+  v[0].jc_id
+}
+
+fn jc_if_push(n: integer) -> integer {
+  a: JcP? = null;
+  v: vector<JcP> = [];
+  v += [if a != null { a } else { jc_mk(n + 1) }];
+  v[0].jc_id
+}
+
+fn jc_field(n: integer) -> integer {
+  a: JcP? = null;
+  b = JcBox { jc_p: a ?? jc_mk(n + 2) };
+  b.jc_p.jc_id
+}
+
+fn main() {
+  t = 0;
+  for i in 0..64 { t += jc_push(i) + jc_if_push(i) + jc_field(i); }
+  assert(t == 6240, "the three cells computed {t}");
+  println("join copy ok");
+}

@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A join placed straight into a container — `Hold { h: a ?? b }`, `v += [a ?? b]` — hands the
+// container the arm it chose, and that arm's source releases nothing more.
+//
+// `formal/heap.md (H-Move)` moves each arm a function owns.  The parser copies such a join as
+// ONE value, whose source names no variable, so no release was handed over on any path: the
+// chosen arm's source released it and so did the container's cascade (D-heap-15).  The author's
+// own spelling, `if a != null { v += [a] } else { v += [b] }`, was clean, so the scope pass now
+// writes the join out to it before any analysis reads the function.
+//
+// jp3 declares the vector FIRST so that the scope end's reverse declaration order puts `b`
+// ahead of it: the cell is about which structure releases, not about that order, which a
+// vector local does not yet keep (D-heap-21).
+//
+// The trace file is this guard's own.
+
+// @falsified-at: e5182d188 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-join-placed-in-a-container-hands-over-the-arm-it-chose.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; the stores are
+//   freed either way, and only the hook's own trace shows the second release.
+// ARMED: no instrument — each hook call is written to this guard's own trace file.
+// WITNESS: on the control every cell but one releases its resource TWICE, on both backends,
+//   scored with the assertions replaced by prints: jp1 `alive1,1,1`, jp2 `alive3,3,3`, jp3
+//   `alive4,5,4,4`, jp4 `alive6,6,6`, jp5 `alive7,7,7`, jp6 `alive8,8,8`, jp7 `alive10,10,10`.
+// HOLDS: jp8 (`L2,11,12`), where the old answer lost the call's STORE instead of doubling its
+//   hook — `a-join-copied-into-a-container-frees-the-call-it-made.loft` carries that half; leak,
+//   panic, free-refusal and expectations are unmoved.
+
+fn trace_path() -> text { return "loft_join_place_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct JpH { id: integer }
+fn OpDrop(self: JpH) { note("{self.id}"); }
+fn jp_mk(id: integer) -> JpH { return JpH { id: id }; }
+struct JpHold { h: JpH }
+enum JpW { JpWH { h: JpH }, JpNone }
+
+fn jp1() { a: JpH? = jp_mk(1); c = JpHold { h: a ?? jp_mk(2) }; note("alive{c.h.id}"); }
+fn jp2() { a: JpH? = null; c = JpHold { h: a ?? jp_mk(3) }; note("alive{c.h.id}"); }
+fn jp3() { v: vector<JpH> = []; a: JpH? = jp_mk(4); b = jp_mk(5); v += [a ?? b]; note("alive{v[0].id}"); }
+fn jp4() { a: JpH? = null; b = jp_mk(6); v: vector<JpH> = []; v += [a ?? b]; note("alive{v[0].id}"); }
+fn jp5() { a: JpH? = null; v: vector<JpH> = []; v += [a ?? JpH { id: 7 }]; note("alive{v[0].id}"); }
+fn jp6() {
+  a: JpH? = jp_mk(8);
+  v: vector<JpH> = [];
+  v += [if a != null { a } else { jp_mk(9) }];
+  note("alive{v[0].id}");
+}
+fn jp7() {
+  a: JpH? = null;
+  w: JpW = JpWH { h: a ?? jp_mk(10) };
+  match w { JpWH { h } => note("alive{h.id}"), JpNone => {} }
+}
+fn jp8() {
+  v: vector<JpH> = [];
+  for i in 0..2 { a: JpH? = null; v += [a ?? jp_mk(11 + i)]; }
+  note("L{len(v)}");
+}
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  jp1(); got = drain();
+  assert(got == "alive1,1", "jp1 the present arm into a field: {got}");
+
+  jp2(); got = drain();
+  assert(got == "alive3,3", "jp2 the default call into a field: {got}");
+
+  jp3(); got = drain();
+  assert(got == "alive4,5,4", "jp3 the present arm appended; the default keeps its own: {got}");
+
+  jp4(); got = drain();
+  assert(got == "alive6,6", "jp4 the default variable appended: {got}");
+
+  jp5(); got = drain();
+  assert(got == "alive7,7", "jp5 a literal default appended: {got}");
+
+  jp6(); got = drain();
+  assert(got == "alive8,8", "jp6 the if spelling appended: {got}");
+
+  jp7(); got = drain();
+  assert(got == "alive10,10", "jp7 into an enum payload: {got}");
+
+  jp8(); got = drain();
+  assert(got == "L2,11,12", "jp8 appended once per iteration: {got}");
+}

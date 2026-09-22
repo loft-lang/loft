@@ -849,14 +849,16 @@ fn p196_native_codegen_projects_fn_ref_d_nr() {
     // Fix invariant: every set_i32_raw emitted for the fn-ref tuple
     // element widens via `i64::from(...)` of the projected `.0` —
     // not a bare `var.0 as i32` (which rustc rejects on tuple type).
+    // The tuple is read where it lives (loft#1594: `pp` itself, no
+    // `__ref_1` copy of it), so the projection names `var_pp`.
     assert!(
-        stdout.contains("i64::from((var___ref_1.0).0)"),
-        "expected fn-ref d_nr projection `i64::from((var___ref_1.0).0)`; got:\n{stdout}"
+        stdout.contains("i64::from((var_pp.0).0)"),
+        "expected fn-ref d_nr projection `i64::from((var_pp.0).0)`; got:\n{stdout}"
     );
-    // And the buggy bare `var___ref_1.0 == i64::MIN` shape must be gone —
+    // And the buggy bare `var_pp.0 == i64::MIN` shape must be gone —
     // it would compare a `(u32, DbRef)` tuple to an i64.
     assert!(
-        !stdout.contains("(var___ref_1.0) == i64::MIN"),
+        !stdout.contains("(var_pp.0) == i64::MIN"),
         "fn-ref tuple field should not be compared to i64::MIN as a bare tuple; got:\n{stdout}"
     );
 }

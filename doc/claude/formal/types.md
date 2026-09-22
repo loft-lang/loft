@@ -678,6 +678,11 @@ the count sits here and the entry sits in [types-history.md](types-history.md) â
 delegates its register states a number nothing beside it can check.  `rule_tags.py registers`
 now checks it, by attributing a `-history` companion's entries to its chapter.
 
+`D-Narrow-Limit` opened and closed 2026-09-22 (loft#1593): a user-written `limit(a, b)` was
+outside all three narrowing rules, keyed out by the alias's `forced_size`; one predicate now
+asks the two full-integer templates instead, and the runtime default is reachable only on the
+overflow seam, as the alias always had it.
+
 `D-Null-Recv`, `D-Null-Guard` and `D-Null-Place` opened and closed 2026-09-07
 (loft#1450): `(N-Domain)`'s in-domain elision was asked about the RECEIVER when it only ever
 proved the INDEX, so an element read through an absent collection typed non-null; the `!= null`

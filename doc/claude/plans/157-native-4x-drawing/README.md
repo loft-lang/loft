@@ -21,6 +21,48 @@ place), § V-e (the runtime's per-allocation overhead), § V-f (the runtime's
 per-record bookkeeping) and § V-g (read-only view elision at a record join)
 SHIPPED (see Sub-arcs); the queue is re-ranked below, and **§ Where to
 resume** is the hand-off for the next session.
+**`R-LazySplit` SHIPPED 2026-09-21, and the `parse` row re-read on x86-64** (`formal/rewrites.md`;
+host `laptop`, the quiet perf box, where `perf` works).  *The lane first* — main 9f5cf6a96,
+`compare.py --loft <this build> --skip-interp --repeat 3 --n-ref 500 --n-native 500`, 14/14
+hashes, **median 1.42×**: `fill_circle` 0.59×, `fill_star` 0.72×, `hash` 1.04×, `lock_curved`
+1.09×, `composite` 1.26×, `lock` 1.34×, `wide_line` 1.35×, `hair` 1.49×, `resize` 1.59×,
+`render_lock` 1.74×, `render_marks` 1.82×, `fronds` 1.97×, `smooth` 2.73× (a 372 ns
+reference), `parse` **3.00×** (19.9 vs 6.63 µs) — the one row on the 3× bar.
+*The correction* — on this lane the byte scanner is NOT what bounds `parse`: `find_option`
+costs 2.8 µs against the reference's 2.15 µs (1.3×), where the arm64 reading above calls the
+row scanner-bound.  What the row is made of, from `perf record --call-graph lbr` over
+never-inline builds of BOTH lanes (loft 311k instructions per parse against 107k at equal
+IPC; 101 store claims + 13 stores + 65 mallocs against 93 mallocs): `parse_fronds` +4.5 µs
+over its twin, `parse_poly` +3.5, `text.split` +2.1 (the reference's `split` is lazy),
+`read_points` +1.4, `parse_circle` +1.3, `acc_pts` +1.2 (12.6×), `fronds` +1.1.
+*What shipped* — `(R-LazySplit)`: `for raw in src.split('\n')` takes each piece from the text
+and never builds the `vector<text>` (priced by hand patch at −1.85 µs, then built): `parse`
+19.21 → **17.44 µs (−9 %), 298k → 268k instructions, 2.93× → 2.63×**, hash `33f6d2b8`; with
+`LOFT_NO_LAZY_SPLIT=1` the bench's emission is byte-identical to main's.  Beside it, under
+`(R-Cold)`: `ops::text_character` answers an ASCII byte inline and outlines the multi-byte
+decode — a `for c in text` walk paid a call per character (580 per parse); −11k instructions
+alone, and general to every text walk.  Cells `tests/scripts/157-lazy-split.loft` s1–s21,
+pins `tests/lazy_split.rs`.  The cell that mattered was the NULL text: `split` answers a null
+text as ONE piece (`len(null)` is 1, so the trailing-piece rule fires), the first build
+answered none, and lazy native disagreed with the interpreter and with its own switch-off
+form until a cell passed a real null rather than `nothing ?? ""`.
+*The queue to 2× (13.3 µs), hand-priced on the release emission, hash kept at every step* —
+measured: the double copies `s.to_lowercase().to_string()` / `raw.trim().to_string()` (a text
+local bound from an expression that is already an owned `String`, or that could borrow)
+−0.5 µs; `OpNewRecordNP` on the field-path `sc.ops += [Op {…}]` mints, whose literal is
+complete yet still prefilled −0.3; an inline null test in front of `OpFreeRef` (228 calls
+per parse, mostly on a never-minted buffer) −0.3; a copy loop `for p in v { w += [p] }` as
+one `vector_add` −0.2 — cumulative with the split **16.07 µs = 2.40×**.  ESTIMATED from the
+profile's shares, not priced: push headers for field-path appends (`sc.ops`, `read_points`'
+four parallel vectors) ≈ −1.5; a record address for the ~30 setters of a minted `Op` ≈ −0.5;
+an exact-size `vector_add` into an empty field ≈ −0.4; `acc_pts` (its element slot re-derived
+seven times through `vec_get_or_raise_runtime`, its text field copied onto itself) ≈ −0.7;
+fewer temporary stores ≈ −0.3.  2× is reachable but narrowly, and wants nearly the whole
+list.  *Instruments that worked here:* `--native-release --native-debug` leaves an unstripped
+binary under `bench/.loft/cache/`; LBR call graphs on `cpu_core` (dwarf unwinding answers
+empty chains on this hybrid CPU, frame pointers break inside the rlib); a logging `rustc`
+first on `PATH` captures loft's exact link line for hand-patch builds; callgrind at n=30
+minus n=10 gives exact per-parse call counts.
 **`R-BoundedNest` SHIPPED 2026-09-17** (`formal/rewrites.md`, the queue's item 2 and C120's
 admissible successor): an innermost counted loop that accumulates `?`-discharged element
 products runs with PLAIN operators behind a guard evaluated once at its entry — every range end

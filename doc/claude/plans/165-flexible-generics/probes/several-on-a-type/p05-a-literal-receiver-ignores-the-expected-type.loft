@@ -1,0 +1,11 @@
+// D9 — a literal that is the RECEIVER of a method builds the instance its payload binds, not
+// the one its statement's expected type names (the method's result).
+// @EXPECT: a|1|2
+struct Pair<K, V> { k: K, v: V }
+fn swap<K, V>(self: Pair<K, V>) -> Pair<V, K> { Pair { k: self.v, v: self.k } }
+fn main() {
+  s = Pair { k: 1, v: "a" }.swap();
+  t: Pair<text, integer> = Pair { k: 1, v: "b" }.swap();
+  n: integer = Pair { k: 2, v: "c" }.k;
+  println("{s.k}|{s.v}|{n}");
+}

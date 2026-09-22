@@ -957,8 +957,13 @@ fn ne_single(s: &mut State) {
 fn lt_single(s: &mut State) {
     let v_v2 = s.get_stack::<f32>();
     let v_v1 = s.get_stack::<f32>();
-    let new_value =
-        (v_v1.is_nan() && !v_v2.is_nan()) || (!v_v1.is_nan() && !v_v2.is_nan() && v_v1 < v_v2);
+    let new_value = {
+        let _a = v_v1;
+        let _b = v_v2;
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        let _lt = !_b.is_nan() && !(_a >= _b);
+        _lt
+    };
     s.put_stack(new_value);
 }
 
@@ -1175,8 +1180,13 @@ fn ne_float(s: &mut State) {
 fn lt_float(s: &mut State) {
     let v_v2 = s.get_stack::<f64>();
     let v_v1 = s.get_stack::<f64>();
-    let new_value =
-        (v_v1.is_nan() && !v_v2.is_nan()) || (!v_v1.is_nan() && !v_v2.is_nan() && v_v1 < v_v2);
+    let new_value = {
+        let _a = v_v1;
+        let _b = v_v2;
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        let _lt = !_b.is_nan() && !(_a >= _b);
+        _lt
+    };
     s.put_stack(new_value);
 }
 
@@ -2488,9 +2498,12 @@ fn clear_keyed(s: &mut State) {
 
 fn index_group(s: &mut State) {
     let v_tp = s.code::<u16>();
+    let v_parent_tp = s.code::<u16>();
+    let v_fld = s.code::<u16>();
     let v_view = s.get_stack::<DbRef>();
     let v_primary = s.get_stack::<DbRef>();
-    s.database.index_group_records(&v_primary, &v_view, v_tp);
+    s.database
+        .index_group_records(&v_primary, &v_view, v_tp, v_parent_tp, v_fld);
 }
 
 fn link_record(s: &mut State) {
@@ -2740,7 +2753,7 @@ fn coroutine_create(s: &mut State) {
 
 fn coroutine_next(s: &mut State) {
     let v_value_size = s.code::<u16>();
-    s.coroutine_next(u32::from(v_value_size & 0xFF));
+    s.coroutine_next(u32::from(v_value_size));
 }
 
 fn coroutine_return(s: &mut State) {

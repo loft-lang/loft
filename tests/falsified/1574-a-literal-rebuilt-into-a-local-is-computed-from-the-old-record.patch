@@ -1,0 +1,326 @@
+diff --git b/src/lexer.rs a/src/lexer.rs
+index 54d0a1509..d241c5373 100644
+--- b/src/lexer.rs
++++ a/src/lexer.rs
+@@ -127,9 +127,6 @@ pub struct Lexer {
+     peek: LexResult,
+     /// Keep the scanned items in memory when a Link is created to return when reverted to this link.
+     memory: Vec<LexResult>,
+-    /// The string-interpolation state each token in `memory` was scanned in, index for
+-    /// index — see [`ScanState`].  A replay restores it with the token.
+-    memory_state: Vec<ScanState>,
+     /// Keep track of the number of currently in use links
+     links: Rc<RefCell<u32>>,
+     /// Keep track of where we are in the current memory structure
+@@ -194,22 +191,6 @@ pub struct Lexer {
+     diagnostics: Diagnostics,
+ }
+ 
+-/// The lexer's string-interpolation state as it stood after a token was scanned: what a
+-/// `"…{` opened, and what the `}` that closes it must resume.
+-///
+-/// It is lexer state and not token content, so the replay buffer has to carry it beside the
+-/// tokens.  A literal the parser reads a SECOND time (after a `revert`) is handed its tokens
+-/// back from the buffer while these fields still describe wherever the live scan had got to,
+-/// and the parser reads them to decide whether a string has a hole: every interpolation in
+-/// a re-read literal was refused (`Expect token ]`).
+-#[derive(Clone)]
+-struct ScanState {
+-    mode: Mode,
+-    in_format_expr: bool,
+-    open_strings: Vec<StrKind>,
+-    backtick_strip: Vec<Option<usize>>,
+-}
+-
+ /// The string a `}` returns to when it closes a format expression.
+ #[derive(Clone, Copy, PartialEq, Eq, Debug)]
+ enum StrKind {
+@@ -446,7 +427,6 @@ impl Default for Lexer {
+                 pos: 0,
+             },
+             memory: Vec::new(),
+-            memory_state: Vec::new(),
+             link: 0,
+             links: Rc::new(RefCell::new(0)),
+             seek_return: None,
+@@ -518,7 +498,6 @@ impl Lexer {
+                 pos: 0,
+             },
+             memory: Vec::new(),
+-            memory_state: Vec::new(),
+             link: 0,
+             links: Rc::new(RefCell::new(0)),
+             seek_return: None,
+@@ -583,9 +562,6 @@ impl Lexer {
+     fn next(&mut self) -> Option<LexResult> {
+         if self.link < self.memory.len() {
+             let n = self.memory[self.link].clone();
+-            if let Some(st) = self.memory_state.get(self.link).cloned() {
+-                self.restore_scan_state(st);
+-            }
+             self.link += 1;
+             lex_trace(format_args!(
+                 "replay {:?} @ {}:{} (cursor stays {}:{})",
+@@ -923,36 +899,10 @@ impl Lexer {
+         )
+     }
+ 
+-    fn scan_state(&self) -> ScanState {
+-        ScanState {
+-            mode: self.mode.clone(),
+-            in_format_expr: self.in_format_expr,
+-            open_strings: self.open_strings.clone(),
+-            backtick_strip: self.backtick_strip.clone(),
+-        }
+-    }
+-
+-    fn restore_scan_state(&mut self, st: ScanState) {
+-        self.mode = st.mode;
+-        self.in_format_expr = st.in_format_expr;
+-        self.open_strings = st.open_strings;
+-        self.backtick_strip = st.backtick_strip;
+-    }
+-
+     pub fn set_mode(&mut self, mode: Mode) {
+         if mode == Mode::Formatting && self.peek_token("}") {
+             self.mode = mode;
+             self.peek = self.resume_string();
+-            // The rest of the string is read straight from the source, not through `cont()`,
+-            // so the replay buffer still holds the `}` it replaces.  A revert past this point
+-            // replayed that `}`, and resuming again read from wherever the live scan had got
+-            // to: a literal parsed a second time refused every interpolation inside it
+-            // (`Expect token ]`).  The resumed string takes the `}`'s slot, so a replay hands
+-            // back what was read.
+-            if self.count_links() > 0 && self.link > 0 && self.link <= self.memory.len() {
+-                self.memory[self.link - 1] = self.peek.clone();
+-                self.memory_state[self.link - 1] = self.scan_state();
+-            }
+         } else {
+             self.mode = mode;
+         }
+@@ -1777,7 +1727,6 @@ impl Lexer {
+             if let Some('.') = self.iter.peek() {
+                 self.next_char();
+                 self.link = self.memory.len();
+-                self.memory_state.push(self.scan_state());
+                 self.memory.push(LexResult::new(
+                     LexItem::Token("..".to_string()),
+                     pos.clone(),
+@@ -1816,7 +1765,6 @@ impl Lexer {
+                 // the following token (digit, identifier, or whatever)
+                 // re-lexes fresh.
+                 self.link = self.memory.len();
+-                self.memory_state.push(self.scan_state());
+                 self.memory.push(LexResult::new(
+                     LexItem::Token(".".to_string()),
+                     self.position.clone(),
+@@ -2036,7 +1984,6 @@ impl Lexer {
+             position: self.position.clone(),
+         };
+         self.memory.clear();
+-        self.memory_state.clear();
+         self.link = 0;
+         self.links = Rc::new(RefCell::new(0));
+         self.iter = LINE.chars().collect::<Vec<_>>().into_iter().peekable();
+@@ -2257,11 +2204,9 @@ impl Lexer {
+         if at_edge && self.link == self.memory.len() {
+             if self.count_links() > 0 {
+                 self.memory.push(res.clone());
+-                self.memory_state.push(self.scan_state());
+                 self.link += 1;
+             } else {
+                 self.memory.clear();
+-                self.memory_state.clear();
+                 self.link = 0;
+             }
+         } else if at_edge && self.link < self.memory.len() && self.count_links() > 0 {
+@@ -2276,7 +2221,6 @@ impl Lexer {
+             // sequence unchanged — the next `cont()` still replays the follow-up — and
+             // makes the buffer say what was actually read.
+             self.memory.insert(self.link, res.clone());
+-            self.memory_state.insert(self.link, self.scan_state());
+             self.link += 1;
+         }
+         self.peek = res;
+@@ -2289,7 +2233,6 @@ impl Lexer {
+         self.links.replace(cur + 1);
+         if self.memory.is_empty() {
+             self.memory.push(self.peek.clone());
+-            self.memory_state.push(self.scan_state());
+             self.link += 1;
+         }
+         Link {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index ebf212b70..c040e7c38 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -292,14 +292,6 @@ pub struct Parser {
+     ///
+     /// One retry, never two: the flag both requests the second parse and stops it asking again.
+     pub(crate) inplace_hint_declined: bool,
+-    /// The local a literal is being rebuilt into, while one of its COLLECTION members is
+-    /// parsed, or `u16::MAX`.  Such a member is written through its field after the record is
+-    /// re-initialised, so a read of the local inside it would read the cleared record
+-    /// (`(E-Asgn)`: the right-hand side is computed before the store).  `var_usages` sets
+-    /// [`Self::rebuild_watch_hit`] when the author names it, and the literal is then built
+-    /// apart and bound instead (loft#1574).
+-    pub(crate) rebuild_watch: u16,
+-    pub(crate) rebuild_watch_hit: bool,
+     /// True while parsing the LHS of a tuple destructuring — `(a, b) = expr`.
+     /// The names there are BINDINGS, exactly like the `x` in `x = expr`, so a
+     /// name that also belongs to a definition must still mint a variable
+@@ -1441,8 +1433,6 @@ impl Parser {
+             in_format_expr: false,
+             prefix_operand: false,
+             inplace_hint_declined: false,
+-            rebuild_watch: u16::MAX,
+-            rebuild_watch_hit: false,
+             in_tuple_lhs: false,
+             sandbox: crate::sandbox::SandboxConfig::default(),
+             def_sandbox: HashMap::new(),
+@@ -17126,9 +17116,6 @@ impl Parser {
+         }
+         if plus {
+             self.vars.in_use(vnr, true);
+-            if vnr == self.rebuild_watch {
+-                self.rebuild_watch_hit = true;
+-            }
+         } else if self.vars.uses(vnr) > 0 {
+             self.vars.in_use(vnr, false);
+         }
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 2943b8804..bb593abac 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -50,10 +50,6 @@ pub(crate) struct FieldSinks {
+     /// the literal fills — and a member later in the same literal is not known yet when an
+     /// earlier one is handled.
+     group_fills: Vec<Value>,
+-    /// loft#1574 — a collection member of a literal rebuilt into a whole local reads that local,
+-    /// or runs code that must precede the release the rebuild makes: the literal is parsed
+-    /// again, built apart and bound (`parse_object`'s retry).
+-    build_apart: bool,
+ }
+ 
+ impl Parser {
+@@ -3636,28 +3632,6 @@ impl Parser {
+         hits_destination || occurrences > disjoint
+     }
+ 
+-    /// Does rebuilding the place `(root, off)` release a record, through a hook, that the
+-    /// literal's initialisers must be computed BEFORE?
+-    ///
+-    /// `(H-Drop)` releases a displaced record *"after the new value has been computed"*.  A
+-    /// literal rebuilt into a whole local re-initialises the record first and writes its fields
+-    /// after, and the release follows the re-init — so an initialiser that runs code the
+-    /// program can observe (a call: a constructor, a logger) ran after the release.  Such a
+-    /// literal is built apart and bound, so the release follows the `Set`.
+-    ///
+-    /// Only a WHOLE local releases here: an element or field destination's old value is the
+-    /// author's to release (`H-Drop-Not`).  And only a type that owns a droppable, since for
+-    /// any other the order is not observable and the temp would buy nothing.  Asked of the
+-    /// type's MEMBERS (`Data::owns_droppable`), not of its cascade, which is synthesized after
+-    /// the parse and so cannot answer here.
+-    fn rebuild_releases(&self, root: u16, off: u32) -> bool {
+-        off == crate::use_analysis::ANY_FIELD
+-            && matches!(
+-                self.vars.tp(root).base(),
+-                Type::Reference(d, _) | Type::Enum(d, true, _) if self.data.owns_droppable(*d)
+-            )
+-    }
+-
+     /// @PLN164 C1 step 2 (@FR-R-InPlaceLiteral) — may a record literal be written straight into
+     /// this vector ELEMENT place, the way one assigned to a FIELD already is?
+     ///
+@@ -4016,34 +3990,7 @@ impl Parser {
+                 if Self::seeds_lambda_hint(&td) {
+                     self.expected = td.clone();
+                 }
+-                // A COLLECTION member of a literal rebuilt into a whole local is written through
+-                // its field after the re-init, so the #330 hoist below cannot reach it: watch
+-                // for the author naming the local inside it (see `Parser::rebuild_watch`).
+-                let watch = match self_read_root {
+-                    Some((xv, off))
+-                        if primed
+-                            && off == crate::use_analysis::ANY_FIELD
+-                            && crate::parser::vectors::is_collection(&td_base)
+-                            && matches!(self.vars.tp(xv).base(), Type::Reference(d, _) if *d == td_nr) =>
+-                    {
+-                        Some(xv)
+-                    }
+-                    _ => None,
+-                };
+-                let outer_watch = watch.map(|xv| {
+-                    (
+-                        std::mem::replace(&mut self.rebuild_watch, xv),
+-                        std::mem::replace(&mut self.rebuild_watch_hit, false),
+-                    )
+-                });
+                 let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
+-                if let Some((w, hit)) = outer_watch {
+-                    if self.rebuild_watch_hit {
+-                        sinks.build_apart = true;
+-                    }
+-                    self.rebuild_watch = w;
+-                    self.rebuild_watch_hit = hit;
+-                }
+                 // A nested literal primed with its field place must have been parsed WHOLE:
+                 // the literal alone, written into the place (`Value::Insert`), and nothing
+                 // after it but the next field or the end of the body.  Anything else — a
+@@ -4081,18 +4028,6 @@ impl Parser {
+             // to alias costs a stack temp, where missing one costs the value: `o.f = S { a:
+             // o.f.b, b: o.f.a }` answered `2,2` for `2,1` on both backends, and so did the
+             // same swap with the second field read through a call (@PLN164 C1).
+-            // `(H-Drop)`'s order: where rebuilding the whole local releases a record, an
+-            // initialiser whose evaluation the program can see must run before that release,
+-            // which follows the re-init.  Lifting it into a temp is not safe for every value —
+-            // a `??` join with a call, copied out of the temp, released twice — so the literal
+-            // is built apart and bound instead, on the construction road every value takes.
+-            if let Some((xv, xoff)) = self_read_root
+-                && self.rebuild_releases(xv, xoff)
+-                && matches!(self.vars.tp(xv).base(), Type::Reference(d, _) | Type::Enum(d, true, _) if *d == td_nr)
+-                && self.ir_has_user_call(&value)
+-            {
+-                sinks.build_apart = true;
+-            }
+             if let Some((xv, xoff)) = self_read_root
+                 && !primed
+                 && self.reads_place(&value, xv, xoff)
+@@ -4502,11 +4437,10 @@ impl Parser {
+         // derived from the in-place construction.
+         if let Some(v_nr) = in_place_var
+             && !self.inplace_hint_declined
+-            && (sinks.build_apart
+-                || !(self.lexer.peek_token(";")
+-                    || self.lexer.peek_token("}")
+-                    || self.lexer.peek_token(",")
+-                    || self.lexer.peek_token(")")))
++            && !(self.lexer.peek_token(";")
++                || self.lexer.peek_token("}")
++                || self.lexer.peek_token(",")
++                || self.lexer.peek_token(")"))
+         {
+             self.lexer.revert(link);
+             self.vars.clean_work_refs(work);
+diff --git b/src/scopes.rs a/src/scopes.rs
+index f6966b597..a054df571 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -10296,16 +10296,7 @@ impl Scopes<'_> {
+                 self.construction_backing.insert(v, w);
+             }
+             Some(w) if w != v => {
+-                // …and where the construction READS the binding: the reuse rebuilds the
+-                // work-ref's store in place on the next pass, and after this `Set` that store
+-                // IS the binding's, so a literal computed from the binding would read the
+-                // record its own re-init just cleared (`(E-Asgn)`: `s = S { n: s.n + 1 }.f()`
+-                // in a loop answered 1 for 7).  Only a self-reading construction gives the
+-                // reuse up.
+-                if drop_hook(function, v, data).is_some()
+-                    || value.reads_var(v)
+-                    || value.reads_var(ov)
+-                {
++                if drop_hook(function, v, data).is_some() {
+                     handoff_disarm.push(v_set(
+                         w,
+                         Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),

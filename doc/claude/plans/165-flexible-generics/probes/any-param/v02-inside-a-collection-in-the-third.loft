@@ -1,0 +1,8 @@
+// C1 — the variable only inside a vector in the THIRD parameter; the return is T.
+// @EXPECT: z|4
+fn last_of<T>(tag: text, n: integer, v: vector<T>) -> T { v[len(v) - 1] }
+fn main() {
+  a: vector<text> = ["x", "z"];
+  b: vector<integer> = [3, 4];
+  println("{last_of("t", 1, a)}|{last_of("u", 2, b)}");
+}

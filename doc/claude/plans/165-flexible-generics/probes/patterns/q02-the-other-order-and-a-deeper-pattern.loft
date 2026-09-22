@@ -1,0 +1,10 @@
+// B6 — three patterns, weakest declared first: `vector<vector<T>>` over `vector<T>` over `T`.
+// @EXPECT: vv 2|v 3|any
+fn f<T>(x: T) -> text { "any" }
+fn f<T>(v: vector<T>) -> text { "v {len(v)}" }
+fn f<T>(v: vector<vector<T>>) -> text { "vv {len(v)}" }
+fn main() {
+  a: vector<vector<integer>> = [[1], [2]];
+  b: vector<text> = ["x", "y", "z"];
+  println("{f(a)}|{f(b)}|{f(2.5)}");
+}

@@ -1,0 +1,17 @@
+// B5 + B3b — a generic bounded by `Named` calling the set at its variable: at the variable
+// only `<T: Named>` applies (the variable does not satisfy `Sized`); each instance re-decides,
+// so the instance at Both reaches `<T: Named + Sized>`, as `wrap`'s twin at Both does.
+// @EXPECT: NS both 2|N named
+interface Named { fn tag(self: Self) -> text }
+interface Sized { fn size(self: Self) -> integer }
+struct Both { n: integer }
+struct OnlyNamed { n: integer }
+fn tag(self: Both) -> text { "both" }
+fn size(self: Both) -> integer { 2 }
+fn tag(self: OnlyNamed) -> text { "named" }
+fn show<T: Named + Sized>(x: T) -> text { "NS {x.tag()} {x.size()}" }
+fn show<T: Named>(x: T) -> text { "N {x.tag()}" }
+fn wrap<U: Named>(x: U) -> text { show(x) }
+fn main() {
+  println("{wrap(Both{n:1})}|{wrap(OnlyNamed{n:1})}");
+}

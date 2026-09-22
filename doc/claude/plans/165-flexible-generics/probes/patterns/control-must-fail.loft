@@ -1,0 +1,8 @@
+// @CONTROL
+// @EXPECT: any
+fn f<T>(v: vector<T>) -> text { "vec {len(v)}" }
+fn f<T>(x: T) -> text { "any" }
+fn main() {
+  a: vector<integer> = [1];
+  println("{f(a)}");
+}

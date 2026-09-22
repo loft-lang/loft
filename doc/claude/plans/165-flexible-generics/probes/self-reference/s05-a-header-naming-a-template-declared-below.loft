@@ -1,0 +1,9 @@
+// A function header and a concrete struct's field name `Later<…>` above `struct Later<T>`.
+// @EXPECT: 7|x|2
+fn first(l: Later<integer>) -> integer { l.v }
+struct Holder { h: Later<text>, n: integer }
+struct Later<T> { v: T }
+fn main() {
+  h = Holder { h: Later { v: "x" }, n: 2 };
+  println("{first(Later { v: 7 })}|{h.h.v}|{h.n}");
+}

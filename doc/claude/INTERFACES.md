@@ -367,9 +367,10 @@ declared.
   supported. Interfaces are constraint annotations, not types.
 - **Composite interfaces / interface inheritance** — `interface A extends B` is
   not supported; declare the methods directly in the interface that needs them.
-- **Associated types** — no `type Item` inside an interface.
 - **Default method implementations** — no bodies inside interface declarations.
-- **Interface inheritance** — no `interface A extends B`.
+- **Naming a companion type outside its interface** — an associated type is in scope
+  (§ Associated types below), but `Self.<Name>` is spellable only inside the declaring
+  interface's body, so a generic cannot write `S.Rows` in its own signature.
 - **Implementing an interface for a type you didn't define** — satisfaction is
   structural; if the method exists with the right signature, it counts. There is
   no orphan rule.
@@ -769,11 +770,13 @@ the target off the one expected-type channel that already carries `lambda_hint` 
 sixth side-channel.
 
 The per-kind `hole_*` form is **deliberate and stays**.  Collapsing it into one
-generic `hole<T>` was evaluated and DECLINED ([C110](DESIGN_DECISIONS.md)): a
-generic method accepts every type by construction, which would delete exactly the
-per-kind opt-in that makes the refusal above auditable.  The cost is paid once per
-target type by a library author and never by a consumer, and it buys a compile
-error where a generic method would silently accept.
+generic `hole<T>` was evaluated and DECLINED ([C110](DESIGN_DECISIONS.md), kept by
+[C126](DESIGN_DECISIONS.md)).  An unbounded `hole<T>` accepts every type, deleting the
+per-kind opt-in.  A BOUNDED one (`<T: SqlHole>`) keeps the compile error — a type that has
+not opted in is refused naming the method to add — but hands the opt-in list to every
+implementor, where the per-kind form keeps it with the target's author: the refusal above
+is auditable by reading ONE target's method list.  The cost is paid once per target type
+by a library author and never by a consumer.
 
 (It was recorded as @PLN125 arc A's A4 until that arc shipped and showed the two
 are not the same gap — an associated type names a COMPANION, while collapsing

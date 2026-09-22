@@ -6,7 +6,9 @@
 // passed and what is declared (`Disp-Exhaustive`); two definitions that both take the call —
 // a defaulted trailing parameter beside a shorter one — are refused as ambiguous, naming
 // both (`Disp-Ambiguous`); and a multi-definition name offers no parse hint, so a
-// width-carrying literal argument is refused where a typed local is the cure (`Disp-Hint`).
+// width-carrying literal argument is refused where a typed local is the cure (`Disp-Hint`) —
+// by selection since @PLN165 B1, whose keys and ranks read a vector's element, so the
+// refusal names what is declared rather than the argument check after it.
 // @falsified-at: 73f6cdc67 — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
 // @falsified-by: tests/falsified/a-name-with-several-definitions-refuses-what-is-not-an-overload.patch — interpret exit 1 -> 0, interpret expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/4 -> 0/4 (the suite's verdict, not a count of matches)
 //   CHANNEL: expectations — none of the four `@EXPECT_ERROR` lines is met on the control,
@@ -21,7 +23,7 @@
 // @EXPECT_ERROR: Unknown field Fire.hit
 // @EXPECT_ERROR: no definition of `hit` takes (Rock) — declared: hit(Fire), hit(Ice)
 // @EXPECT_ERROR: `amb(Fire)` is ambiguous — it is taken by amb(Fire) and amb(Fire, integer)
-// @EXPECT_ERROR: got vector<integer> on argument 2 of call to take
+// @EXPECT_ERROR: no definition of `take` takes (Fire, vector<integer>) — declared: take(Fire, vector<integer(0, 255)>), take(Ice, vector<integer(0, 255)>)
 
 struct Fire { n: integer }
 struct Ice { n: integer }

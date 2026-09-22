@@ -1,0 +1,10 @@
+// A narrow integer into a set of `integer` and `float`: the widening beats the conversion,
+// as it did when the two widths shared a spelling.
+// @EXPECT: integer|integer
+fn f(x: integer) -> text { "integer" }
+fn f(x: float) -> text { "float" }
+fn main() {
+  a: u8 = 3;
+  b: i32 = 4;
+  println("{f(a)}|{f(b)}");
+}

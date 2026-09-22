@@ -102,16 +102,18 @@ fn a_nullable_narrow_capture_is_boxed_too() {
 //
 // A cell is deduped by NAME, so two captures share storage exactly when they share a name.
 // `Small` and `u8` are both one byte wide; if the name did not carry the BOUNDS they would
-// share one cell and `Small` would inherit `u8`'s 0..255 range.  A store past a declared
-// range takes the slot's default (loft#984), so `Small = 200` reads 0 while `u8 = 200` reads
-// 200 — and a shared cell would answer 200 for both.  Each is read against its UNBOXED
-// control, which is what fixes what the right answer is.
+// share one cell and `Small` would inherit `u8`'s 0..255 range.  A slot stepped past its
+// declared range by its own arithmetic takes the type's default (loft#984, C85's overflow
+// seam — a plain store of 200 is refused at compile time for both spellings since
+// loft#1593), so `Small += 199` from 1 reads 0 while `u8 += 199` reads 200 — and a shared
+// cell would answer 200 for both.  Each is read against its UNBOXED control, which is what
+// fixes what the right answer is.
 fn two_one_byte_types_keep_their_own_declared_range() {
-  a: u8 = 1;     f = fn(d: integer) { a = 200; };  call_it(f, 0);
-  b: Small = 1;  g = fn(d: integer) { b = 200; };  call_it(g, 0);
+  a: u8 = 1;     f = fn(d: integer) { a += 199; };  call_it(f, 0);
+  b: Small = 1;  g = fn(d: integer) { b += 199; };  call_it(g, 0);
 
-  c: u8 = 1;     assert_eq("{c}", "1", "the unboxed u8 control starts at 1");     c = 200;
-  e: Small = 1;  assert_eq("{e}", "1", "the unboxed Small control starts at 1");  e = 200;
+  c: u8 = 1;     assert_eq("{c}", "1", "the unboxed u8 control starts at 1");     c += 199;
+  e: Small = 1;  assert_eq("{e}", "1", "the unboxed Small control starts at 1");  e += 199;
 
   assert_eq("{a}", "{c}", "boxed u8 matches the unboxed u8");
   assert_eq("{b}", "{e}", "boxed Small matches the unboxed Small");

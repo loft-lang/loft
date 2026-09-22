@@ -1,0 +1,14 @@
+// A0 — the stdlib's own generics (`sum`, `min_of`, `max_of`) beside hand-written loops.
+// `text` is not `Addable` (its `+` is an append, not an `OpAdd`), so `sum` has no text cell.
+// @EXPECT: 42=42|1.5=1.5|2=2|9=9|-1=-1
+fn sum_i(v: vector<integer>) -> integer { r = 0; for x in v { r += x }; r }
+fn sum_f(v: vector<float>) -> float { r = 0.0; for x in v { r += x }; r }
+fn min_i(v: vector<integer>) -> integer? { r = v[0]; for x in v { if x < r { r = x } }; r }
+fn max_i(v: vector<integer>) -> integer? { r = v[0]; for x in v { if r < x { r = x } }; r }
+fn main() {
+  a = [10, 20, 12];
+  f = [1.0, 0.5];
+  m = [5, 2, 9];
+  e: vector<integer> = [];
+  println("{sum(a)}={sum_i(a)}|{sum(f)}={sum_f(f)}|{min_of(m) ?? -1}={min_i(m) ?? -1}|{max_of(m) ?? -1}={max_i(m) ?? -1}|{min_of(e) ?? -1}={min_i(e) ?? -1}");
+}

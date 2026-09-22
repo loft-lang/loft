@@ -1,55 +1,61 @@
-// Benchmark 11: par (parallel for-loop), 100K elements × 50-iter Newton's sqrt
+// Benchmark 11: par (parallel for-loop) — 100,000 elements of 50-step Newton's sqrt, 4 threads
 //
-// Realistic CPU-intensive workload: 50 Newton iterations per
-// element, summed across 100K elements at 4 threads.  Per-element
-// work dominates par's bookkeeping overhead, so the timing
-// reflects parallel-speedup quality rather than thread-spawn cost.
+// One OP is one parallel pass over the items, summed.  Per-element work dominates par's
+// bookkeeping, so the row reflects parallel-speedup quality rather than thread-spawn cost.
+// The timed loop runs `--n` passes and folds every sum into `sink`; the `hash` column is
+// one pass's rounded sum, which every lane must print the same (bench/README.md).
 //
-// Cross-language columns use matching parallel constructs:
-// - python: multiprocessing.Pool(4)  (4 worker processes — GIL
-//   prevents threads from speeding up CPU-bound work)
-// - rust:   std::thread::spawn × 4   (range-partitioned)
-// - loft-interp: par(items, work, 4) — real 4-thread parallelism
-//   via thread::scope.
-// - loft-native: today's `n_parallel_for_native` runs sequentially
-//   despite the keyword (G4 — plan-06 phase 1 fixes this).  Until
-//   phase 1 lands, this column measures single-threaded native
-//   throughput; expected post-phase-1 it drops into rust's range.
-// - loft-wasm: today's wasm codegen rejects par (OpFreeRef et al
-//   not emitted in the wasm path; G3).  Plan-06 phase 1 + D6
-//   single-threaded fallback fix this; the column then measures
-//   loft's *serial* throughput in WASM.  Until then `-`.
-//
-// Plan-06 phases re-run this and assert no regression past ±5 %.
+// The lanes use matching parallel constructs: loft `par(r = work(s), 4)`, Rust four
+// `std::thread::spawn` workers over a range partition, Python `multiprocessing.Pool(4)`.
 
 fn newton_sqrt(x: float) -> float {
-    guess = x / 2.0;
-    for _ in 0..50 { guess = (guess + x / guess) / 2.0; }
-    guess
+  guess = x / 2.0;
+  for _ in 0..50 { guess = (guess + (x / guess)?) / 2.0; }
+  guess
 }
 
 struct Item { value: integer }
 
 fn work(s: const Item) -> float {
-    newton_sqrt((s.value + 1) as float)
+  newton_sqrt((s.value + 1) as float)
+}
+
+fn pass(items: const vector<Item>) -> integer {
+  sum = 0.0;
+  for s in items par(r = work(s), 4) { sum += r; }
+  round(sum) as integer
+}
+
+/// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
 }
 
 fn main() {
-    n = 100000;
-    items: vector<Item> = [];
-    for i in 0..n { items += [Item { value: i }]; }
-
-    // Warm-up run — discounts thread-pool init from the timed run.
-    sum_warm = 0.0;
-    for s in items par(r = work(s), 4) { sum_warm += r; }
-
-    t0 = ticks();
-    sum = 0.0;
-    for s in items par(r = work(s), 4) { sum += r; }
-    ms = (ticks() - t0) / 1000;
-
-    if round(sum) != round(sum_warm) {
-        println("FAIL: timed result {round(sum)} != warm-up {round(sum_warm)}");
-    }
-    println("result: {round(sum)}  time: {ms}ms");
+  n = arg_n(20);
+  count = 100000;
+  items: vector<Item> = [];
+  for i in 0..count { items += [Item { value: i }]; }
+  // A warm-up pass, so thread start-up is not charged to the first op.
+  warm = pass(items);
+  t0 = ticks();
+  sink = 0;
+  for _r in 0..n { sink += pass(items); }
+  us = ticks() - t0;
+  ns = ((us * 1000) / n) ?? 0;
+  per = (((us * 1000) as float) / ((n * count) as float)) ?? 0.0;
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  println("par\t{n}\t{us}\t{ns}\t{count}\t{per:.3}\t{warm:x}");
+  println("time: {us / 1000}ms sink={sink}");
 }

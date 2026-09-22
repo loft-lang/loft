@@ -1,0 +1,10 @@
+// D4 — the value's type is only known on the second pass (a function declared below).
+// @EXPECT: 41|later
+struct Box<T> { v: T }
+fn main() {
+  b = Box { v: later() };
+  c = Box { v: named() };
+  println("{b.v}|{c.v}");
+}
+fn later() -> integer { 41 }
+fn named() -> text { "later" }

@@ -108,6 +108,28 @@ pub(crate) fn target_holds_null(target: &Type, parent: &Type) -> bool {
     }
 }
 
+/// The slot a value written to a place of type `target` is stored into, as the integer
+/// range checks see it.
+///
+/// @FR-B-Ref-Uniform — a value written to a `&τ` link or a `&τ` parameter is stored into the
+/// linked slot, whose type is `τ`: `c = c + 10` through a `&u8` is the store `w = w + 10`
+/// into the `u8`, so `(I-Narrow)` refuses it and a compound step past the range takes the
+/// slot's default, exactly as for the variable.  A `source` that is itself a link is a
+/// repoint (`c = &other`) or a link copy, not a write through `c`, and keeps the link type.
+/// Only an integer is peeled, because the range question exists only for an integer; every
+/// other scalar written through a link meets the same type-change check the variable meets.
+pub(crate) fn linked_store_target<'a>(target: &'a Type, source: &Type) -> &'a Type {
+    match target.base() {
+        Type::RefVar(inner)
+            if matches!(inner.base(), Type::Integer(_))
+                && !matches!(source.base(), Type::RefVar(_)) =>
+        {
+            inner
+        }
+        _ => target,
+    }
+}
+
 fn uncomputable_default(nullable: bool, spec: &crate::data::IntegerSpec) -> i64 {
     // C85 says an overflow writes the RESERVED sentinel into a non-null slot, which then
     // reads as null — so a non-null slot answers null exactly when its type kept a code back
@@ -770,26 +792,7 @@ impl Parser {
                         self.vars.is_caller_hidden_buf(r),
                     );
                 }
-                // @FR-O-Proxy asks alloc — this decides which work-refs get a null-init in
-                // the preamble, which is the opposite direction from a free: it puts a slot
-                // in a known-absent state, and releases nothing.
-                if !self.vars.is_argument(r)
-                    && !self.vars.is_inline_ref(r)
-                    // @PLAN51 Cluster IV: also null-init caller-side hidden-
-                    // buffer work-refs even when their typedef carries a
-                    // non-empty dep list (e.g. Reference(td, [arg_idx]) for
-                    // if-tail / recursion / explicit-return-in-if shapes).
-                    // Without it, the slot allocator skips them ("no
-                    // first_def") and codegen panics at codegen.rs:2529.
-                    // Empty-dep refs still take this path (the original
-                    // arm); caller_hidden_buf is the additional gate.
-                    // #319: `__ncc_N` heap-DbRef temps likewise — their only
-                    // Set is inside the ncc block, so they need the preamble
-                    // init regardless of their dep list.
-                    && (self.vars.tp(r).depend().is_empty()
-                        || self.vars.is_caller_hidden_buf(r)
-                        || self.vars.name(r).starts_with("__ncc_"))
-                {
+                if self.work_ref_takes_preamble(r) {
                     ls.insert(0, v_set(r, Value::Null));
                 }
             }
@@ -1256,15 +1259,11 @@ impl Parser {
                     let elem_tp = (**inner).clone();
                     let sub_var = self.create_unique("__yf_sub", &sub_type);
                     self.vars.defined(sub_var);
-                    // A yielded handle points INTO the sub-generator's frame store, so the
-                    // item binds as a BORROW of `__yf_sub` — the same dep the streaming
-                    // `for x in g()` gives its loop var (loft#481) — and no scope exit
-                    // frees it: an enclosing `if` arm's did, and released the frame.
-                    let item_tp = if crate::data::holds_dbref(&elem_tp) {
-                        elem_tp.with_deps(&crate::data::Deps::frame1(sub_var))
-                    } else {
-                        elem_tp.clone()
-                    };
+                    // The sub-generator hands each value over (`(G-Own)`), so the item OWNS
+                    // it, and yielding it hands it on: `__yf_item` is the temp the yield
+                    // forgets (`coroutine_layout::yield_handed_temps`), so neither this
+                    // generator nor the item's scope exit releases what the consumer now owns.
+                    let item_tp = elem_tp.clone();
                     let item_var = self.create_unique("__yf_item", &item_tp);
                     self.vars.defined(item_var);
                     let op = self.data.def_nr("OpCoroutineNext");
@@ -1312,7 +1311,7 @@ impl Parser {
                     let elem = (**elem_tp).clone();
                     self.seed_leaving_value_hint(&elem);
                 }
-                self.expression(&mut v);
+                let v_tp = self.expression(&mut v);
                 self.expected = saved_expected;
                 // @P328 — when yielding a NON-CAPTURING closure into an
                 // `iterator<fn(...) -> ...>` generator, the expression
@@ -1354,6 +1353,7 @@ impl Parser {
                         }
                     }
                 }
+                self.yield_owned_value(&mut v, &v_tp);
                 *val = Value::Yield(Box::new(v));
                 Type::Void
             }
@@ -1401,8 +1401,14 @@ impl Parser {
             // (`in_tuple_lhs`, cursor on the `,` or `)`).  A destructuring the
             // parser cannot lower is still refused below — "Cannot destructure a
             // non-tuple value" — so nothing is silenced, only re-homed.
-            if !self.at_binding_name() {
-                self.known_var_or_type(val, &expr_pos);
+            // A name reported here is poisoned (@P376), so the statement that takes the value
+            // does not explain it a second time — `w.f = undefined` reported the name once as
+            // the right-hand side and again as the whole statement's value.
+            if !self.at_binding_name()
+                && !matches!(res.base(), Type::Never)
+                && self.known_var_or_type(val, &expr_pos)
+            {
+                return Type::Never;
             }
             res
         }
@@ -2514,9 +2520,22 @@ use a separate collection or add after the loop"
                 continue;
             }
             let field = Self::field_at(to, off);
+            // The struct and the primary's field, so the op can settle a repeated key across
+            // every keyed member (loft#1576); `u16::MAX` when no field sits at the offset,
+            // which indexes the view and settles nothing, as before.
+            let fld = self
+                .database
+                .field_index_at(struct_tp, byte_off)
+                .unwrap_or(u16::MAX);
             ops.push(self.cl(
                 "OpIndexGroup",
-                &[to.clone(), field, Value::Int(i32::from(coll_tp))],
+                &[
+                    to.clone(),
+                    field,
+                    Value::Int(i32::from(coll_tp)),
+                    Value::Int(i32::from(struct_tp)),
+                    Value::Int(i32::from(fld)),
+                ],
             ));
         }
         ops
@@ -3379,6 +3398,13 @@ use a separate collection or add after the loop"
                 let mut m = Value::TupleGet(src, i as u16);
                 if let Some(owned) = self.tuple_member_owned_copy(&mut m, t) {
                     types[i] = owned;
+                    // `(H-Move)`: a whole-tuple bind MOVES the members of a tuple this function
+                    // owns, while a member read written into a literal (`(t.0, 2)`) is a COPY.
+                    // The two lower onto the same IR, so the builder names the difference and
+                    // the scope pass reads the name (loft#1563).
+                    if let Value::Block(b) = m.unspan_mut() {
+                        b.name = "tuple_member_move";
+                    }
                 }
                 members.push(m);
             }
@@ -3636,31 +3662,7 @@ use a separate collection or add after the loop"
                 && is_scalar(&s_type)
                 && !Self::is_narrow_store_place(&s_type, code)
             {
-                match code.unspan() {
-                    // The bare element op IS the place.  An enum element arrives in this
-                    // spelling on the first pass, before its enum getter wraps it; without
-                    // this arm the first pass typed the local as the enum and the second as
-                    // its link.  It sits above the `OpGet*` arm, whose prefix test would
-                    // otherwise take `OpGetVector` itself.
-                    Value::Call(g, _)
-                        if matches!(self.data.def(*g).name(), "OpGetVector" | "OpVectorRef") =>
-                    {
-                        Some(code.unspan().clone())
-                    }
-                    Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
-                        if gargs.first().is_some_and(|a| {
-                            matches!(a.unspan(), Value::Call(d, _)
-                                if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
-                        }) {
-                            Some(gargs[0].clone())
-                        } else if let [base, fld] = gargs.as_slice() {
-                            Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))
-                        } else {
-                            None
-                        }
-                    }
-                    _ => None,
-                }
+                self.scalar_place_ref(code)
             } else {
                 None
             };
@@ -3812,6 +3814,20 @@ use a separate collection or add after the loop"
         {
             self.vars.set_skip_free(var_nr);
         }
+        // loft#1585 — the same for a generator handle read out of a field or an element
+        // (`h = t.g`, `h = tasks[i]`): a VIEW of a member (`(B-View)`, `(H-View-Drop)`), so
+        // advancing it advances the container's generator and the container alone releases
+        // the frame.  Without the mark the local's scope end freed the frame under the
+        // container, whose next advance answered exhausted.  A local given a handle of its
+        // own elsewhere — on another assignment, or on another arm of this one — keeps the
+        // mark here and has it lifted by the scope pass, which tracks it per path.
+        if op == "="
+            && var_nr != u16::MAX
+            && matches!(s_type.base(), Type::Iterator(..))
+            && crate::scopes::handle_rhs_kinds(code, &self.data).0
+        {
+            self.vars.set_skip_free(var_nr);
+        }
         if amp_vector_replace {
             let clear = self.cl("OpClearVector", &[Value::Var(var_nr)]);
             *code = Value::Insert(vec![clear, code.clone()]);
@@ -3838,8 +3854,12 @@ use a separate collection or add after the loop"
         // "Unknown variable 'qqq'" still fires.
         let code_is_target = matches!(code, Value::Var(c) if *c == var_nr);
         let skip_rhs_check = matches!(s_type, Type::Never) || (poison && code_is_target);
-        if !skip_rhs_check {
-            self.known_var_or_type(code, &rhs_pos);
+        if !skip_rhs_check && self.known_var_or_type(code, &rhs_pos) {
+            // The name is reported; left in `code` it is the statement's value too, and a
+            // lowering that keeps it there (a vector field's) had `expression()` report it a
+            // second time at the statement's start.
+            *code = Value::Null;
+            s_type = Type::Never;
         }
         if poison {
             s_type = Type::Never;
@@ -4305,6 +4325,13 @@ use a separate collection or add after the loop"
                     content,
                     content
                 );
+                *code = Value::Insert(Vec::new());
+                return Type::Void;
+            }
+            if kind == crate::parser::vectors::AppendSource::Unrelated
+                && matches!(s_type.base(), Type::Never)
+            {
+                // A source poisoned by a reported error (@P376) is not a second one.
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
             }
@@ -6006,11 +6033,14 @@ use a separate collection or add after the loop"
                 f_type.source_name(&self.data),
             );
         }
+        // A write THROUGH a link stores into the linked slot, so the narrowing refusal and the
+        // range guard below are asked of that slot's type (`linked_store_target`, loft#1604).
+        let store_tp = linked_store_target(f_type, &s_type);
         // A NULLABLE narrow target takes the implicit CHECKED narrowing instead of the
         // refusal below — `implicit_checked_narrow` is the one home, and this seam has to
         // ask it by hand because `is_equal` above kept it out of `convert` (loft#1246).
         if op == "=" && !matches!(s_type, Type::Null) {
-            self.implicit_checked_narrow(code, &s_type, f_type);
+            self.implicit_checked_narrow(code, &s_type, store_tp);
         }
         // @PLAN48 P2: `x: i32 = some_integer` narrows (loses data) but integer and
         // i32 are `is_equal`, so it bypasses the convert-based check above.  Require
@@ -6024,18 +6054,18 @@ use a separate collection or add after the loop"
         // not fit, so guard inside the discharge and leave this store alone: neither the
         // refusal below nor the outside-the-expression guard after it applies.
         let discharged =
-            op == "=" && !self.first_pass && self.range_guard_inside_discharge(code, f_type);
+            op == "=" && !self.first_pass && self.range_guard_inside_discharge(code, store_tp);
         if !discharged
             && op == "="
             && !self.first_pass
-            && Self::is_narrowing_int_store(&s_type, f_type)
+            && Self::is_narrowing_int_store(&s_type, store_tp)
         {
-            let dst = self.int_type_name(f_type);
-            if let Some(hint) = self.nullable_sentinel_hint(code, f_type, &dst) {
+            let dst = self.int_type_name(store_tp);
+            if let Some(hint) = self.nullable_sentinel_hint(code, store_tp, &dst) {
                 // The literal fits the type but lands on the reserved null
                 // sentinel of a nullable narrow FIELD — explain that, not "too big".
                 diagnostic!(self.lexer, Level::Error, "{hint}");
-            } else if !self.int_value_fits(code, f_type) {
+            } else if !self.int_value_fits(code, store_tp) {
                 let src = self.int_type_name(&s_type);
                 let cures = Self::narrowing_cures(code, &dst);
                 diagnostic!(
@@ -6053,8 +6083,8 @@ use a separate collection or add after the loop"
         // `is_narrowing_int_store` above cannot see it — which is why a declared range on
         // a LOCAL went unenforced entirely, not merely mis-stored.
         if !discharged && op == "=" && !self.first_pass {
-            let holds_null = target_holds_null(f_type, &lhs_parent_tp);
-            self.guard_declared_range(code, f_type, &s_type, holds_null);
+            let holds_null = target_holds_null(store_tp, &lhs_parent_tp);
+            self.guard_declared_range(code, store_tp, &s_type, holds_null);
         }
         if self.validate_lock_assign(code, to) {
             return Type::Void;
@@ -6088,13 +6118,11 @@ use a separate collection or add after the loop"
             for a_nr in 0..self.data.def(sd).attributes().len() {
                 let nm = self.data.attr_name(sd, a_nr);
                 let fpos = self.database.position(self.data.def(sd).known_type(), &nm);
-                if i32::from(fpos) == off
-                    && self.data.def(sd).attributes()[a_nr].check != Value::Null
-                {
-                    let check = self.data.def(sd).attributes()[a_nr].check.clone();
+                if i32::from(fpos) == off && self.field_check(sd, a_nr) != Value::Null {
+                    let check = self.field_check(sd, a_nr);
                     let ref_val = to_args[0].clone();
                     let bound = Self::replace_record_ref(check, &ref_val);
-                    let msg = match &self.data.def(sd).attributes()[a_nr].check_message {
+                    let msg = match &self.field_check_message(sd, a_nr) {
                         Value::Text(s) => Value::Text(s.clone()),
                         _ => Value::Text(format!(
                             "field constraint failed on {}.{nm}",
@@ -6226,7 +6254,7 @@ use a separate collection or add after the loop"
         // `substitute_type`).  Rewriting here would bury T inside `__nullable<T>`
         // and break the "T appears in the first parameter" check + the return
         // type unification.
-        if struct_d == self.cur_type_var {
+        if self.is_header_type_var(struct_d) {
             return elem;
         }
         // The eligibility (non-stdlib, non-synthetic struct) and the synth-enum
@@ -6552,7 +6580,19 @@ use a separate collection or add after the loop"
         // loft#1205 — only a discharge built by THIS left-hand side may be peeled below,
         // so the flag starts clear rather than carrying an earlier statement's answer.
         self.last_place_discharge = false;
+        let vars_before_lhs = self.vars.next_var();
         let mut f_type = self.parse_operators(&Type::Unknown(0), code, &mut parent_tp, 0);
+        // A left-hand side that CREATED its variable in pass 1 is that variable's first
+        // binding — recorded for both passes to read (`first_bind_at`).
+        if self.first_pass
+            && let Value::Var(v) = code.unspan()
+            && *v >= vars_before_lhs
+        {
+            self.first_bind_at.insert(
+                (self.context, *v),
+                (stmt_start_pos.line, stmt_start_pos.pos),
+            );
+        }
         self.amp_head = AmpHead::No;
         self.in_tuple_lhs = saved_tuple_lhs;
         if let (Type::RefVar(_), Value::Var(v_nr)) = (&f_type, &code) {
@@ -7316,8 +7356,26 @@ use a separate collection or add after the loop"
                 // record closure association if the RHS was a capturing lambda.
                 // NOTE: must come AFTER parse_assign_op because that is where the RHS
                 // lambda is parsed and last_closure_work_var gets set by emit_lambda_code.
+                // The target's FIRST binding is this statement when pass 1 created the variable
+                // at this statement's left-hand side (`first_bind_at`); both passes ask it.
+                let first_bind = if op == "="
+                    && let Value::Var(v) = to.unspan()
+                    && self.vars.exists(*v)
+                    && self.first_bind_at.get(&(self.context, *v))
+                        == Some(&(stmt_start_pos.line, stmt_start_pos.pos))
+                {
+                    Some(self.vars.name(*v).to_string())
+                } else {
+                    None
+                };
+                if let Some(name) = &first_bind {
+                    self.first_bind_targets.push(name.clone());
+                }
                 let result =
                     self.parse_assign_op(code, op, &f_type, &to, parent_tp, var_nr, f2_hoisted);
+                if first_bind.is_some() {
+                    self.first_bind_targets.pop();
+                }
                 // loft#1205 — the discharged read runs before the compound, which was built
                 // for a place the seed has just made non-null.  Prepended FIRST so the F2
                 // binding below ends up in front of it: the seed reads and writes THROUGH
@@ -7792,6 +7850,46 @@ use a separate collection or add after the loop"
         }
         let expected = self.coalesce_not_null(&Value::Var(v), &tp);
         (*cond.unspan() == expected).then_some(v)
+    }
+
+    /// The place a scalar read names, as the reference a `&` link to it holds: a vector
+    /// element's own `OpGetVector` / `OpVectorRef`, or `OpGetField(base, fld)` for a field read
+    /// `OpGet*(base, fld)`.  `None` for a read that names no place this way.
+    ///
+    /// @FR-B-Ref-Lvalue — the ONE lowering of a scalar field or element to a link, asked by the
+    /// `&` bind (`c = &p.n`) and by a `&` parameter's argument (`bump(p.n)`), so the two cannot
+    /// link to different places.  The caller decides whether the place may be linked at all
+    /// (a narrow store place may not: D-bind-39).
+    pub(crate) fn scalar_place_ref(&mut self, code: &Value) -> Option<Value> {
+        match code.unspan() {
+            // The bare element op IS the place.  An enum element arrives in this spelling on
+            // the first pass, before its enum getter wraps it; without this arm the first pass
+            // typed the local as the enum and the second as its link.  It sits above the
+            // `OpGet*` arm, whose prefix test would otherwise take `OpGetVector` itself.
+            Value::Call(g, _)
+                if matches!(self.data.def(*g).name(), "OpGetVector" | "OpVectorRef") =>
+            {
+                Some(code.unspan().clone())
+            }
+            Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
+                if gargs.first().is_some_and(|a| {
+                    matches!(a.unspan(), Value::Call(d, _)
+                        if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
+                }) {
+                    Some(gargs[0].clone())
+                } else if let [base, fld] = gargs.as_slice() {
+                    Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))
+                } else {
+                    None
+                }
+            }
+            // The other spelling of a projection, declined on purpose: a tuple member is read
+            // element by element into a value, so there is no reference to hand out (D-tup-2 —
+            // the `&` of a tuple place is refused rather than linked to a copy).
+            Value::TupleGet(..) => None,
+            // Anything else is a value, not a place: a literal, a computed value, a call result.
+            _ => None,
+        }
     }
 
     pub(crate) fn guard_declared_range(
@@ -8932,6 +9030,20 @@ use a separate collection or add after the loop"
                 lp.push(self.cl(
                     "OpCopyRecord",
                     &[Value::Var(for_var), Value::Var(elm_var), element_id],
+                ));
+            } else if self.is_type_var_element(&elm_tp) {
+                // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
+                // `v += [x]` writes it (`OpCopyRecord(src, elm, row)` on the fresh element),
+                // which each monomorph re-lowers at its concrete element type
+                // (`rewrite_vector_write_triplets`).  `set_field` below wraps the destination
+                // in a field read the rewrite does not match, so every scalar instance kept a
+                // RECORD copy of its integer: `dst += v[i..j]` inside a generic wrote into the
+                // constant store on the interpreter and was E0610 on native.
+                let row = i32::from(self.data.def(ed_nr).known_type())
+                    | i32::from(crate::keys::COPY_FRESH_DEST);
+                lp.push(self.cl(
+                    "OpCopyRecord",
+                    &[Value::Var(for_var), Value::Var(elm_var), Value::Int(row)],
                 ));
             } else if let Some(op) = self.narrow_elm_set(&elm_tp, elm_var, &Value::Var(for_var)) {
                 // #624 — a narrow element needs the WIDTH-matched store op; `set_field`

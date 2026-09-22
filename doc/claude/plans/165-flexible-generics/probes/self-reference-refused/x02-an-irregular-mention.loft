@@ -1,0 +1,7 @@
+// D7 — `Bad<vector<T>>` inside `Bad<T>` has no finite set of instances: refused at the
+// declaration (`D-Regular`), and the compiler terminates.
+struct Bad<T> { v: T, n: reference<Bad<vector<T>>>? }
+fn main() {
+  b = Bad { v: 1, n: null };
+  println("{b.v}");
+}

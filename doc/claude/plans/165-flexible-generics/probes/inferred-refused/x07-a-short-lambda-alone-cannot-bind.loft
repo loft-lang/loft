@@ -1,0 +1,7 @@
+// D4 — a `|…|` lambda takes its types from its field, so alone it cannot bind T: refused,
+// naming the lambda and the two cures.
+struct Th<T> { f: fn() -> T }
+fn main() {
+  a = Th { f: || { 42 } };
+  println("{a.f()}");
+}

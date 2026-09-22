@@ -1,0 +1,15 @@
+// B3b — a text-returning re-decided call inside a loop in the generic: its work buffer
+// belongs to the instance.
+// @EXPECT: int 1,int 2,|gen a,gen b,
+fn lab<T: Printable>(x: T) -> text { "gen {x}" }
+fn lab(x: integer) -> text { "int {x}" }
+fn every<U: Printable>(v: vector<U>) -> text {
+  s = "";
+  for e in v { s += lab(e) + ","; }
+  s
+}
+fn main() {
+  a: vector<integer> = [1, 2];
+  b: vector<text> = ["a", "b"];
+  println("{every(a)}|{every(b)}");
+}

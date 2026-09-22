@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A compiler special case for a call name (`any`, `all`, `type_name`, …) is a candidate of
+// last resort, taken only when no definition the program declares takes the call — and a
+// program's GENERIC is such a definition, as its function is.  The gate accepted only a
+// `Function`, so a program's `fn any<T>(v: vector<T>, f: fn(T) -> boolean) -> boolean` never
+// reached: the builtin answered in its place and the program's body never ran, in silence;
+// where the two answer different types, the first pass had typed the call through the
+// template and the second refused the builtin's.  A template takes the call where it binds and its bounds
+// hold; where it does not (an arity, a failed bound), the builtin still answers — and a
+// lambda argument there takes the builtin's own hint, which a program definition of the name
+// withheld even when it had no `fn(…)` parameter to offer one ("Cannot infer type for lambda
+// parameter").
+//
+// @falsified-at: 2f4fc8fd6 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-program-generic-named-like-a-builtin-is-what-its-call-reaches.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control fails the asserts and refuses `sort`.
+//   ARMED: nothing.
+//   WITNESS: on the control `any(a, |x| { x > 1 })` alone is the builtin's `true`, in silence
+//     on both backends (`reverse(a)`, this cell before @PLN165 E1, left `[2,1]`); `"{all(a)}"`
+//     is "all requires 2 arguments".
+//   HOLDS: the cells where the program's generic does not take the call, except the lambda
+//     one, which the control refused.
+
+interface Named { fn tag(self: Self) -> text }
+
+// (`reverse`, `reserve` and `sort` were shapes here; each is a stdlib METHOD on `vector` since
+// @PLN165 E1/E2/E4, so a program's own is for its own types — `a-built-in-is-a-method-a-
+// program-extends-for-its-own-types`, `a-generic-reserves-at-its-elements-width`.)
+fn any<T>(v: vector<T>, f: fn(T) -> boolean) -> boolean { false }
+fn all<U>(v: vector<U>) -> integer { len(v) * 10 }
+fn count_if<T>(a: T, b: T, c: T) -> integer { 7 }
+fn type_name<T: Named>(v: T) -> text { "mine {v.tag()}" }
+
+struct Cat { n: integer }
+fn tag(self: Cat) -> text { "cat" }
+
+fn test_a_call_reaches_the_program() {
+  a: vector<integer> = [1, 2];
+  // The builtin answers `true` here — the program's `any` answers `false`.
+  assert(!any(a, |x| { x > 1 }), "{any(a, |x| { x > 1 })}");
+}
+
+fn test_in_interpolation() {
+  a: vector<integer> = [1, 2];
+  b: vector<text> = ["x", "y", "z"];
+  assert("{all(a)}|{all(b)}" == "20|30", "{all(a)}|{all(b)}");
+}
+
+fn test_where_the_program_generic_does_not_take_the_call() {
+  v: vector<integer> = [3, 1, 2];
+  // A bound the program's `type_name<T: Named>` does not hold: the builtin answers — and where
+  // it holds, the program's generic does (a generic's name was never counted as declared).
+  c = Cat { n: 1 };
+  assert(type_name(v) == "vector<integer>" && type_name(c) == "mine cat", "{type_name(v)} {type_name(c)}");
+  // An arity the program's `all<U>(v)` does not take: the builtin answers.
+  assert(all(v, |x| { x > 0 }) && all(v) == 30, "{all(v)}");
+  // A lambda argument where the program's `count_if` has no `fn(…)` parameter: the builtin's
+  // own hint types `x`, and the builtin answers.
+  assert(count_if(v, |x| { x > 1 }) == 2, "{count_if(v, |x| { x > 1 })}");
+  assert(count_if(1, 2, 3) == 7, "{count_if(1, 2, 3)}");
+}

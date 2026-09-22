@@ -1,4 +1,10 @@
-// Benchmark 6: Newton's method square root (1 million calls)
+// Benchmark 6: Newton's method square root (100,000 calls of 50 steps)
+//
+// One OP is the sum of `newton_sqrt(j + 1 + salt)` over 100,000 `j`.  The timed loop runs `--n` ops, each on an input that differs by
+// the repetition number — in VALUE, never in the amount of work — so no optimiser can
+// hoist or collapse the kernel across repetitions, and folds every result into `sink`.
+// The `hash` column is one canonical op's result: every lane must print the same one,
+// or the lanes are not computing the same thing and their times do not compare.
 fn newton_sqrt(x: float) -> float {
   guess = x / 2.0;
   for _ in 0..50 {
@@ -11,13 +17,45 @@ fn newton_sqrt(x: float) -> float {
   guess
 }
 
-fn main() {
-  n = 1000000;
-  t0 = ticks();
+fn roots(calls: integer, salt: integer) -> integer {
   acc = 0.0;
-  for nw_j in 0..n {
-    acc += newton_sqrt((nw_j + 1) as float);
+  for nw_j in 0..calls {
+    acc += newton_sqrt((nw_j + 1 + salt) as float);
   }
-  ms = (ticks() - t0) / 1000;
-  println("result: {round(acc)}  time: {ms}ms");
+  round(acc) as integer
+}
+
+/// `--n N`: how many ops the timed loop runs (the harness calibrates it per lane).
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+/// One measured routine, in the row format every lane prints (bench/README.md).
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer, sink: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+  println("time: {us / 1000}ms sink={sink}");
+}
+
+fn main() {
+  n = arg_n(10);
+  calls = 100000;
+  t0 = ticks();
+  sink = 0;
+  for r in 0..n { sink += roots(calls, r & 1); }
+  us = ticks() - t0;
+  row("newton_sqrt", n, us, calls, roots(calls, 0), sink);
 }

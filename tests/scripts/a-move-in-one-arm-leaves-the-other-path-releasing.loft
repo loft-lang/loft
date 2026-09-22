@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A value moved into a container inside ONE arm of a branch is released by the container on
+// the path that ran the arm, and by its own local on the path that did not.
+//
+// `formal/heap.md (H-Spent)` decides a move written under a branch per PATH.  The scope pass
+// recorded a copy into a field, an element, a literal or a return buffer as stopping its source
+// on EVERY path, so on the path that skipped the arm the source was never released — silently,
+// on both backends, and with the store freed, so no leak check could see it (D-heap-14).  Only a
+// bind to a local carried the per-path flag (loft#1515); every other destination now carries it
+// too, set right after the copy runs.
+//
+// The trace file is this guard's own.
+//
+// @falsified-at: 7c1e72948 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-move-in-one-arm-leaves-the-other-path-releasing.patch — interpret exit
+//   1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends.  The store is
+//   freed either way; only the hook's own trace shows the release that did not run.
+// ARMED: no instrument — each hook call is written to this guard's own trace file.
+// WITNESS: on the control every SKIPPED cell loses its source, on both backends: `am_push(false)`
+//   drains `L0` for `L0,1`, `am_field(false)` `R2,2` for `R2,3,2`, `am_literal(false)` an empty
+//   trace for `4`, `am_ret(false)` `R6,6` for `5,R6,6`, `am_match(false)` `L0` for `L0,7` and the
+//   loop `L1,8` for `9,L1,8` — six of the nine cells, scored with the assertions replaced by prints.
+// HOLDS: the three TAKEN cells (`L1,1`, `X2,R3,3`, `R5,5`) answer the same on both trees, and
+//   leak, panic, free-refusal and expectations are unmoved.
+
+fn trace_path() -> text { return "loft_arm_move_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct AmH { id: integer }
+fn OpDrop(self: AmH) { note("{self.id}"); }
+fn am_mk(id: integer) -> AmH { return AmH { id: id }; }
+struct AmS { h: AmH }
+
+fn am_push(c: boolean) { cc = am_mk(1); v: vector<AmH> = []; if c { v += [cc]; } note("L{len(v)}"); }
+fn am_field(c: boolean) {
+  s = AmS { h: am_mk(2) };
+  cc = am_mk(3);
+  if c { s.h = cc; note("X2"); }
+  note("R{s.h.id}");
+}
+fn am_literal(c: boolean) { cc = am_mk(4); if c { s = AmS { h: cc }; note("R{s.h.id}"); } }
+fn am_retm(c: boolean) -> AmS { cc = am_mk(5); if c { return AmS { h: cc }; } AmS { h: am_mk(6) } }
+fn am_ret(c: boolean) { r = am_retm(c); note("R{r.h.id}"); }
+fn am_match(c: boolean) { cc = am_mk(7); v: vector<AmH> = []; match c { true => { v += [cc]; }, false => {} } note("L{len(v)}"); }
+fn am_loop() {
+  v: vector<AmH> = [];
+  for i in 0..2 { cc = am_mk(8 + i); if i == 0 { v += [cc]; } }
+  note("L{len(v)}");
+}
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace init failed"); }
+
+  am_push(false); got = drain();
+  assert(got == "L0,1", "an append skipped: the local releases: {got}");
+
+  am_push(true); got = drain();
+  assert(got == "L1,1", "CONTROL an append taken: the collection releases: {got}");
+
+  am_field(false); got = drain();
+  assert(got == "R2,3,2", "a field write skipped: {got}");
+
+  am_field(true); got = drain();
+  assert(got == "X2,R3,3", "CONTROL a field write taken; the overwritten field is the author's: {got}");
+
+  am_literal(false); got = drain();
+  assert(got == "4", "a literal's field skipped: {got}");
+
+  am_ret(false); got = drain();
+  assert(got == "5,R6,6", "a return from the arm not taken: {got}");
+
+  am_ret(true); got = drain();
+  assert(got == "R5,5", "CONTROL the return taken: {got}");
+
+  am_match(false); got = drain();
+  assert(got == "L0,7", "a match arm skipped: {got}");
+
+  am_loop(); got = drain();
+  assert(got == "9,L1,8", "a loop that moves on its first pass only: {got}");
+}

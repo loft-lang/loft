@@ -1,0 +1,13 @@
+// A lambda using the template's bound (Numeric) — at integer and at float.
+// @EXPECT: [1,4,9] [2.25]
+fn my_map<T>(v: vector<T>, f: fn(T) -> T) -> vector<T> {
+  out: vector<T> = [];
+  for x in v { out += [f(x)]; }
+  out
+}
+fn sq<T: Numeric>(v: vector<T>) -> vector<T> { my_map(v, |x| { x * x }) }
+fn main() {
+  a: vector<integer> = [1, 2, 3];
+  f: vector<float> = [1.5];
+  println("{sq(a)} {sq(f)}");
+}

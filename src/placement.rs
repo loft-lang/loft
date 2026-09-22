@@ -23,9 +23,10 @@
 //!
 //! Each kind carries a token. The token is rendered into `Stores::layout_dump`, which
 //! feeds `layout_algo_hash`, which is what `LayoutIdentity` records in the `.dschema`
-//! sidecar beside a persisted store. `Stores::schema_gate_ok` compares the sidecar with
-//! the running program's identity on every `store_load`, and the paged/remote loaders
-//! gate on the same value before range-reading foreign bytes. So bumping a token here
+//! sidecar beside a persisted store. `Stores::layout_verdict_ok` compares the sidecar
+//! with the running program's identity on every whole-image load and every bind of an
+//! existing file, and the paged/remote loaders gate on the same value before
+//! range-reading foreign bytes. So bumping a token here
 //! turns "misread silently" into the refusal that path already knows how to give:
 //!
 //! ```text

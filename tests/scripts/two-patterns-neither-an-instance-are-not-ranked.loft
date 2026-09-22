@@ -1,0 +1,33 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Specific` (@PLN165 B6): two patterns neither of which is a substitution instance of the
+// other — `(T, integer)` and `(integer, T)` at `(1, 2)` — are not ranked, and neither are a
+// narrower pattern and a stronger bound that point opposite ways (`vector<T>` against
+// `<U: Named>` at a `vector<C>` that is itself `Named`).  Each call is refused naming both.
+//
+// @falsified-by: tests/falsified/two-patterns-neither-an-instance-are-not-ranked.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — scored against a MUTATION: before B6 two different patterns were
+//     never ranked, so both calls were refused with these same words.  The patch orders a
+//     disagreeing pattern and bound by the pattern alone, and the second refusal goes.
+//   ARMED: nothing.
+//   WITNESS: under the patch `f(a)` compiles and answers `v`.
+//   HOLDS: the tuple pair, which the patch does not touch.
+// @EXPECT_ERROR: `g((integer, integer))` is ambiguous — it is taken by g<T>((T, integer)) and g<T>((integer, T))
+// @EXPECT_ERROR: `f(vector<C>)` is ambiguous — it is taken by f<T>(vector<T>) and f<U: Named>(U)
+
+interface Named { fn tag(self: Self) -> text }
+struct C { n: integer }
+fn tag(self: C) -> text { "c" }
+fn tag(self: vector<C>) -> text { "vc" }
+
+fn g<T>(p: (T, integer)) -> text { "a" }
+fn g<T>(p: (integer, T)) -> text { "b" }
+
+fn f<T>(v: vector<T>) -> text { "v" }
+fn f<U: Named>(x: U) -> text { "n" }
+
+fn main() {
+  a: vector<C> = [C { n: 1 }];
+  println("{g((1, 2))}|{f(a)}");
+}

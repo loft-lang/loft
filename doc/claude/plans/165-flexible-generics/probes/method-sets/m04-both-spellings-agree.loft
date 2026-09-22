@@ -1,0 +1,11 @@
+// B4 — `(F-OneBody)`: `x.describe(…)` and `describe(x, …)` reach the same definition.
+// @EXPECT: SQUARE 1 x3=SQUARE 1 x3|some square 1=some square 1
+interface Shape { fn kind(self: Self) -> text }
+struct Sq { s: integer }
+fn kind(self: Sq) -> text { "square {self.s}" }
+fn describe(self: Sq, n: integer) -> text { "SQUARE {self.s} x{n}" }
+fn describe<T: Shape>(x: T) -> text { "some {x.kind()}" }
+fn main() {
+  q = Sq { s: 1 };
+  println("{q.describe(3)}={describe(q, 3)}|{q.describe()}={describe(q)}");
+}

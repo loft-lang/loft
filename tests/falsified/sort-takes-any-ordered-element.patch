@@ -1,0 +1,234 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index 42c60ac0f..9ee8ab7a6 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1928,44 +1928,6 @@ pub fn insert < T > (self: vector<T>, index: integer, elem: T) {
+ }
+ #builtin
+ 
+-// Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `<`
+-// (`Ordered`) — a struct defining `op <` sorts by it — and is stable: elements that compare
+-// equal keep their order.  A null element sorts first.
+-pub fn sort < T: Ordered > (self: vector<T>) {
+-  // The runtime sorts integer, float, single and text itself (`#builtin`); this body is the
+-  // sort for every other element: a bottom-up merge that moves elements by copy, through `<`.
+-  n = len(self);
+-  if n < 2 { return; }
+-  src: vector<T> = [];
+-  src += self;
+-  width = 1;
+-  while width < n {
+-    dst: vector<T> = [];
+-    lo = 0;
+-    while lo < n {
+-      mid = min(lo + width, n);
+-      hi = min(lo + 2 * width, n);
+-      i = lo;
+-      j = mid;
+-      while i < mid || j < hi {
+-        if j >= hi || (i < mid && !(src[j] < src[i])) {
+-          dst += src[i..i + 1];
+-          i += 1;
+-        } else {
+-          dst += src[j..j + 1];
+-          j += 1;
+-        }
+-      }
+-      lo = hi;
+-    }
+-    src = dst;
+-    width *= 2;
+-  }
+-  clear(self);
+-  self += src;
+-}
+-#builtin
+-
+ // Sum of all integer elements. Returns 0 for an empty vector.
+ // Superseded by the general `sum(v, init)`; kept as a shim over it
+ // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the
+diff --git b/src/data.rs a/src/data.rs
+index 679f2ae8f..6e189765c 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -5387,12 +5387,7 @@ impl Definition {
+ 
+     #[must_use]
+     pub fn original_name(&self) -> String {
+-        // A GENERIC is keyed as a function is (`n_<name>`, `t_<LEN><type>_<name>`), and the
+-        // name its author wrote is decoded the same way.  Answered raw, `n_type_name` never
+-        // equalled `type_name`: a program's generic of a special form's name was not counted
+-        // as a declaration, so `type_name(c)` answered the special form's `Cat` in silence
+-        // where the program's `type_name<T: Named>` should have taken it.
+-        if matches!(self.def_type, DefType::Function | DefType::Generic) {
++        if self.def_type == DefType::Function {
+             Self::source_name_of_key(&self.name)
+         } else {
+             self.name.clone()
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 9355deb29..25a7104bb 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -6512,60 +6512,6 @@ use #count instead"
+         }
+     }
+ 
+-    /// @PLN165 E4 — does the special form lower this `sort` call?  It sorts the elements the
+-    /// runtime compares itself — `integer` at any width, `float`, `single`, `text` — with one
+-    /// `OpSortVector`.  Any other element that satisfies `Ordered` is the stdlib declaration's
+-    /// to sort, through its body (`sort<T: Ordered>`, stable, by the type's own `<`); the call
+-    /// takes the ordinary path to it, which also refuses an element that is not `Ordered`
+-    /// naming the bound.  Inside a template the element is its variable, and the site is
+-    /// stamped (`TV_SORT`) for the monomorph to decide — where the declaration takes the call;
+-    /// a variable without the bound takes the ordinary path and its refusal.  A call the
+-    /// special form cannot read (an arity, a non-vector) stays with it for its message.
+-    pub(crate) fn sort_is_special(&mut self, source: u16, types: &[Type]) -> bool {
+-        let [vec] = types else {
+-            return true;
+-        };
+-        let Type::Vector(elm, _) = vec.peel_link() else {
+-            return true;
+-        };
+-        if Self::sorts_itself(elm) {
+-            return true;
+-        }
+-        self.is_type_var_element(elm) && self.builtin_selected(source, "sort", types).is_some()
+-    }
+-
+-    /// The element types `OpSortVector` compares at runtime.  Not a nullable one: its order is
+-    /// `<`'s (`@FR-E-NullArg`), which the declaration's body follows.
+-    fn sorts_itself(elm: &Type) -> bool {
+-        matches!(
+-            elm,
+-            Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
+-        )
+-    }
+-
+-    /// The `#builtin` stdlib declaration a call of `name` with these argument types selects,
+-    /// if that is what it selects (`@FR-G-Select`).
+-    ///
+-    /// Asked the way `program_definition_applies` asks: the set first, and where an argument is
+-    /// still a type variable (`NotDecidable` — a template's own call) the ladder, with the
+-    /// definition's variables binding and its bounds holding (`definition_ranks`).
+-    pub(crate) fn builtin_selected(
+-        &mut self,
+-        source: u16,
+-        name: &str,
+-        types: &[Type],
+-    ) -> Option<u32> {
+-        use crate::parser::dispatch::Selection;
+-        let routed = self.data.routed_types(types);
+-        let d = match self.select_overload(source, name, &routed) {
+-            Selection::One(d) => d,
+-            Selection::NotDecidable => self.data.select_fn(source, name, types),
+-            Selection::Ambiguous(_) | Selection::NoneApplicable => return None,
+-        };
+-        (d != u32::MAX && self.data.def(d).builtin() && self.definition_ranks(d, &routed).is_some())
+-            .then_some(d)
+-    }
+-
+     /// Compiler special-case for `sort(v: vector<T>)`.
+     /// Emits `OpSortVector(v, db_tp)` which sorts in-place at runtime, dispatching
+     /// on the database element type.
+@@ -6582,13 +6528,10 @@ use #count instead"
+             return Type::Void;
+         }
+         if let Type::Vector(elm, _) = types[0].peel_link() {
+-            // Which lowering a template's element takes is the monomorph's to decide: this op
+-            // for an element the runtime compares, the declaration's instance otherwise.
+-            if self.is_type_var_element(elm) {
+-                *val = v_block(list.to_vec(), types[0].clone(), Self::TV_SORT);
+-                return Type::Void;
+-            }
+-            if !Self::sorts_itself(elm) {
++            if !matches!(
++                elm.as_ref(),
++                Type::Integer(_) | Type::Float | Type::Single | Type::Text(_)
++            ) {
+                 diagnostic!(
+                     self.lexer,
+                     Level::Error,
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 387d972a7..6752a481a 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -17753,9 +17753,7 @@ impl Parser {
+             "map" => return self.parse_map(val, list, types),
+             "filter" => return self.parse_filter(val, list, types),
+             "reduce" => return self.parse_reduce(val, list, types),
+-            "sort" if self.sort_is_special(source, types) => {
+-                return self.parse_sort(val, list, types);
+-            }
++            "sort" => return self.parse_sort(val, list, types),
+             "insert" => return self.parse_insert(val, list, types),
+             "reverse" => return self.parse_reverse(val, list, types),
+             "reserve" => return self.parse_reserve(val, list, types),
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+index bcf4634fe..e2e79f2fe 100644
+--- b/src/parser/dispatch.rs
++++ a/src/parser/dispatch.rs
+@@ -149,7 +149,7 @@ impl Parser {
+     /// How far each routed argument is from definition `r`'s parameter, or `None` when `r`
+     /// does not take the call (`Disp-Applicable`): more arguments than parameters, a trailing
+     /// parameter with no default, or an argument its parameter cannot accept.
+-    pub(crate) fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
++    fn definition_ranks(&mut self, r: u32, routed: &[Type]) -> Option<Vec<Rank>> {
+         if self.data.def_type(r) == DefType::Generic {
+             return self.template_ranks(r, routed);
+         }
+@@ -337,9 +337,8 @@ impl Parser {
+     /// declared function sends the call down the ordinary path, where
+     /// [`Self::program_definition_applies`] decides by the argument's type.
+     pub(crate) fn program_declares_fn(&self, name: &str) -> bool {
+-        // A GENERIC is as much a definition as a function (`program_definition_applies`).
+         self.data.definitions.iter().any(|d| {
+-            matches!(d.def_type, DefType::Function | DefType::Generic)
++            d.def_type == DefType::Function
+                 && d.original_name().as_str() == name
+                 && !crate::portable_path::is_stdlib_source(&d.position().file)
+         })
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index bdc5004b0..f87b397df 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7587,11 +7587,6 @@ impl Parser {
+     /// A `reserve(v, n)` whose element type is still a TYPE VARIABLE: the claim is sized in
+     /// the element's width, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
+     pub(crate) const TV_RESERVE: &'static str = "tvreserve";
+-    /// A `sort(v)` whose element type is still a TYPE VARIABLE bounded by `Ordered` (@PLN165
+-    /// E4): the monomorph lowers it to `OpSortVector` where the runtime compares the element
+-    /// itself, and to a call of the stdlib declaration's instance otherwise — what the
+-    /// instance's hand-written twin reaches either way.
+-    pub(crate) const TV_SORT: &'static str = "tvsort";
+     /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
+     /// template's closure record lays a capture typed by a type variable out at no width, so
+     /// the read is re-lowered by NAME against the instance's own record
+@@ -10664,28 +10659,6 @@ impl Parser {
+             // substitution, so it is the CONCRETE vector type by now, and the same parse
+             // function the concrete spelling uses lowers it — width, row and setter from one
+             // home.  A nested generic re-stamps through that call and stays deferred.
+-            Value::Block(bl) if bl.name == Self::TV_SORT => {
+-                let bl = *bl;
+-                let list: Vec<Value> = bl
+-                    .operators
+-                    .into_iter()
+-                    .map(|a| self.rewrite_generic_type_defaults(a))
+-                    .collect();
+-                let types = [bl.result.clone()];
+-                if self.sort_is_special(u16::MAX, &types) {
+-                    let mut out = Value::Null;
+-                    self.parse_sort(&mut out, &list, &types);
+-                    out
+-                } else if let Some(d) = self.builtin_selected(u16::MAX, "sort", &types) {
+-                    // The declaration's template: the monomorph's nested-generic pass aims
+-                    // the call at its instance, as it does every call to a template.
+-                    Value::Call(d, list)
+-                } else {
+-                    // The template's bound held where the site was stamped; a concrete type
+-                    // that fails it was refused at the instantiation.
+-                    Value::Null
+-                }
+-            }
+             Value::Block(bl)
+                 if bl.name == Self::TV_INSERT
+                     || bl.name == Self::TV_REVERSE

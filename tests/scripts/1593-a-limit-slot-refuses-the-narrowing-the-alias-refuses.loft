@@ -1,0 +1,44 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1593 — a user-written `integer limit(a, b)` is a NARROW target under `(I-Narrow)`
+// exactly as the stdlib's `u8` is, so the same seams are refused: a store of a value not
+// provably in range, a call, a literal outside the range (`(I-Lit)`), and the checked cast
+// answers null rather than the unchecked value (`(N-Cast?)`).
+//
+// It was not.  The narrowing predicate keyed "narrow" on the alias's `forced_size`, so every
+// `limit(...)` fell through all three rules at once and the runtime range guard answered a
+// legal in-range DEFAULT that nothing reports in an ordinary run: `limit(1, 8)` read 1 for
+// 1000, for -9 and for the literal 9, `1000 as integer limit(0, 7)?` read 1000, and the
+// language's own documentation test taught that a value outside the range "takes the type's
+// default rather than being rejected".  Measured over seven types on both backends; the two
+// aliases refused, the five `limit` spellings did not.
+//
+// The compile-time refusal is the fix (COMPATIBILITY.md § The error surface: a silent-wrong
+// is a missing-error finding, and contract 0 is the one time an error can be added).  What
+// the runtime default still answers is the one seam the alias also leaves open — a slot
+// stepped past its range by its OWN arithmetic, C85's overflow edge — which cell 984 pins
+// on `+=` and this cell leaves alone.
+//
+// @falsified-at: hand-measured (2026-09-22) — the parent build (87089b1fb) accepts every line
+//   below with no diagnostic and prints `0 0 0 0 0 1000`; here each is refused with the cure
+//   named.  The four stores and the call share the message the alias gives; the literal and
+//   the checked cast are the same predicate's other two answers.
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer(0, 7) (may lose data)
+struct S1593 { m: integer limit(0, 7) }
+fn id1593(m: integer limit(0, 7)) -> integer { m }
+
+fn main() {
+  v = 1000;
+  w = -9;
+  s = S1593 { m: v };           // a variable into a field
+  t = S1593 { m: w };
+  a = id1593(v);                // a variable into a parameter
+  b = id1593(w);
+  u = S1593 { m: 9 };           // a literal outside the range (I-Lit)
+  println("{s.m} {t.m} {a} {b} {u.m}");
+}

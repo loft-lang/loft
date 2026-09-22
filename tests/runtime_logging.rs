@@ -157,19 +157,24 @@ fn main() {
     );
 }
 
-/// loft#984 — a write outside a DECLARED range takes the slot's default (the lowest
-/// value in range, or null where the slot admits it) and reports a Warn, on the same
-/// recoverable channel as div-by-zero above: the run continues and exits 0.  The value
-/// the program computed is not the value the slot holds, so it is reported; it is not a
-/// halt, because one degraded value never stops the rest (C80).
+/// loft#984 — a value outside a DECLARED range reaching the slot at run time takes the
+/// slot's default (the lowest value in range, or null where the slot admits it) and reports
+/// a Warn, on the same recoverable channel as div-by-zero above: the run continues and
+/// exits 0.  The value the program computed is not the value the slot holds, so it is
+/// reported; it is not a halt, because one degraded value never stops the rest (C80).
+///
+/// The one seam such a value reaches at run time is the slot's own arithmetic stepping past
+/// its range (`+=`, C85's overflow edge): a plain store of an unranged value — `v = n` —
+/// is refused at compile time for a `limit` slot exactly as for `u8` since loft#1593, and
+/// a refused program exits 1 before any log line exists.
 #[test]
 fn prod_range_defaulted_logs_and_continues() {
     let source = "\
 fn main() {
   print(\"before\\n\");
   v: integer limit(10, 20) = 12;
-  n = 99;
-  v = n;
+  n = 87;
+  v += n;
   print(\"v={v}\\n\");
   print(\"after\\n\");
 }

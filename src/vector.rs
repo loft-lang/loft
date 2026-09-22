@@ -440,8 +440,7 @@ pub fn sorted_finish(sorted: &DbRef, size: u32, keys: &[Key], stores: &mut [Stor
         rec: sorted_rec,
         pos: latest_pos,
     };
-    let key = keys::get_key(&rec, stores, keys);
-    let (pos, found) = sorted_find(sorted, true, size as u16, stores, keys, &key);
+    let (pos, found) = sorted_find_record(sorted, true, size as u16, stores, keys, &rec);
     let store = keys::mut_store(sorted, stores);
     // @P306 — a record with this key already exists: replace it in place
     // (latest insert wins) and do NOT grow.  The just-appended record at
@@ -481,7 +480,16 @@ pub fn sorted_finish(sorted: &DbRef, size: u32, keys: &[Key], stores: &mut [Stor
     store.set_u32_raw(sorted_rec, 4, length + 1);
 }
 
-pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [Store]) {
+/// Place the record `rec` in the `ordered` collection at `sorted` by its key, and answer the
+/// record it DISPLACED — the one already held under that key — or 0 when the key was new.
+///
+/// @FR-Col-Insert: a key names one record, so a record entering under a key the collection
+/// already holds takes the older record's slot (latest insert wins) and the length does not
+/// grow, exactly as the by-value twin [`sorted_finish`] replaces in place.  The displaced
+/// record is only UNLINKED here.  Whether it is also released is the caller's question,
+/// because a member of a linked group shares it with a sibling (`Stores::insert_record`).
+#[must_use]
+pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [Store]) -> u32 {
     let rec_ref = sorted_new(sorted, 4, stores);
     let sorted_rec = keys::store(sorted, stores).get_u32_raw(sorted.rec, sorted.pos);
     let length = keys::store(sorted, stores).get_u32_raw(sorted_rec, 4);
@@ -489,10 +497,20 @@ pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [S
         // we do not have to reorder the first inserted record, set length to 1
         keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, 4, 1);
         keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, rec_ref.pos, rec.rec);
-        return;
+        return 0;
     }
-    let key = keys::get_key(rec, stores, keys);
-    let pos = ordered_find(sorted, true, stores, keys, &key).0;
+    // Searched by the RECORD rather than a key built from it — the same search with the same
+    // `(slot, found)` answer, without collecting the key first.
+    let (pos, found) = ordered_find_record(sorted, true, stores, keys, rec);
+    if found {
+        // A search placing BEFORE its equals lands on the first record holding the key.
+        // Relinking the record that is already there (a group re-indexing one it holds)
+        // displaces nothing.
+        let slot = 8 + pos * 4;
+        let displaced = keys::store(sorted, stores).get_u32_raw(sorted_rec, slot);
+        keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, slot, rec.rec);
+        return if displaced == rec.rec { 0 } else { displaced };
+    }
     // Shift the tail up one slot to open a gap at `pos` — the same three lines
     // `sorted_finish` runs for the by-value case, with the element size fixed at
     // the 4-byte rec-id an `ordered` array holds.
@@ -514,6 +532,7 @@ pub fn ordered_finish(sorted: &DbRef, rec: &DbRef, keys: &[Key], stores: &mut [S
     }
     keys::mut_store(&rec_ref, stores).set_u32_raw(sorted_rec, 8 + pos * 4, rec.rec);
     keys::mut_store(sorted, stores).set_u32_raw(sorted_rec, 4, 1 + length);
+    0
 }
 
 /// Is this collection ABSENT — a declared `?` that holds no collection (loft#917)?
@@ -730,6 +749,19 @@ impl HoistScalar for f64 {
     }
 }
 
+/// A value enum, and a struct-enum's tag: one byte, its null 255 — the calls `OpSetEnum`'s
+/// template and `append_byte` make with `min` 0, so the off-fast-path write is the same.
+impl HoistScalar for u8 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_byte(rec, fld, 0, i32::from(val));
+    }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_byte(db, i32::from(val));
+    }
+}
+
 /// A vector header a loop PUSHES through (@PLN157 § V-q, `@FR-R-Push`): the header plus the
 /// record's capacity in elements, so a push that fits is a bounds test, one store and a
 /// length bump, and only the growth step re-enters the runtime's append and re-derives.
@@ -756,6 +788,45 @@ pub fn push_header(db: &DbRef, stores: &[Store]) -> PushHeader {
         u32::try_from(words).map_or(0, |w| w.saturating_mul(8).saturating_sub(8))
     };
     PushHeader { h, cap }
+}
+
+/// `@FR-R-PushFill`'s window clause — the hot state of a RESERVED counted push loop: the
+/// address of element 0, the length the loop has reached and the capacity in elements.  A
+/// push that fits is one comparison, one store through `base` and a bump of `len`; the
+/// record's own length is written when the window closes ([`Stores::push_window_close`])
+/// or grows, because nothing the loop runs can read it in between — the emitter's proof.
+///
+/// Three scalars whose address never reaches a call: the cold growth arm takes `len` by
+/// value and answers a fresh window by value, so the loop keeps all three in registers.
+/// Measured on `v += [i * 3 + salt]` over 20 000 elements: with the header's own `len` as
+/// the counter — its address handed to the growth arm — every push loaded and stored the
+/// length through the stack, 22.8 µs; with this form 10–13 µs.
+///
+/// [`Stores::push_window_close`]: crate::database::Stores::push_window_close
+#[derive(Clone, Copy, Debug)]
+pub struct PushWindow {
+    /// Element 0 of the pushed vector; null for an absent one (whose `cap` is 0).
+    pub base: *mut u8,
+    /// Elements written so far — the vector's length as the loop sees it.
+    pub len: u32,
+    /// Elements the record holds before it must grow.
+    pub cap: u32,
+}
+
+/// Open a [`PushWindow`] over the vector `p` describes, for elements `size` bytes wide.
+#[must_use]
+#[inline]
+pub fn push_window(p: &PushHeader, size: u32, stores: &[Store]) -> PushWindow {
+    PushWindow {
+        base: vec_base(&p.h, stores).cast_mut(),
+        len: p.h.len,
+        // `p.cap` is in BYTES (see [`push_header`]); an absent vector has none.
+        cap: if p.h.rec == 0 || size == 0 {
+            0
+        } else {
+            p.cap / size
+        },
+    }
 }
 
 /// Derive [`VecHeader`] for the vector `db` points at.
@@ -853,7 +924,11 @@ pub fn vec_base(h: &VecHeader, stores: &[Store]) -> *const u8 {
 /// the read through it answers the getter's own sentinel.  Valid exactly while no store
 /// is reallocated and the record is not freed — the block condition the emitter proves
 /// (`hoist::record_view_ptr`); `LOFT_HOIST_VERIFY=1` re-derives it at every use.
+// `#[inline]`: a non-generic `pub fn` is a real call from a `--native` program, which is a
+// separate crate built without LTO — and this one runs once per record view, which for a
+// `for e in v` loop is once per element.
 #[must_use]
+#[inline]
 pub fn rec_ptr(db: &DbRef, stores: &[Store]) -> *const u8 {
     if db.rec == 0 {
         std::ptr::null()
@@ -1028,6 +1103,173 @@ pub unsafe fn get_elem_at<T: Copy, const VERIFY: bool>(
     get_elem_hoisted_cold::<T>(db, size, from, fld, absent, stores)
 }
 
+/// `(R-BoundedNest)`'s reduction clause — the plain part of `acc = acc + v[i]` over the
+/// elements `[from, to)` of an `i64` vector whose element 0 is at `base`, `elems` long.
+///
+/// The bound is taken from the DATA, one block of [`SUM_BLOCK`] elements at a time, in the
+/// same pass as the sum: when every element of a block lies in `[-SUM_BOUND, SUM_BOUND)` and
+/// the running total is more than `SUM_BLOCK * SUM_BOUND` from the i64 edge, no prefix
+/// inside the block can leave the type, so the plain block sum IS what the checked add would
+/// have answered — the magnitude-bound proof `(R-BoundedNest)` makes for an index chain,
+/// made per block at run time.  The first block that fails ends the plain part, and the
+/// caller's checked loop resumes at the index answered; a null element (`i64::MIN`) fails
+/// the bound and is left to that loop, which propagates it.  Answers `(acc, at)`: the total
+/// so far and the first index NOT summed.
+///
+/// Two spellings decide whether it vectorises, and both are deliberate: the range test is
+/// `(x + B) as u64 >> 41`, OR-accumulated, because rustc's baseline x86-64 is SSE2, which
+/// has a packed 64-bit add and no packed 64-bit signed compare — spelled as two compares
+/// the loop stays scalar and gains nothing; and the sum is `wrapping_add`, exact under the
+/// bound.  Measured on the stdlib `sum` over 20 000 elements: 11.9 → 3.7 µs.
+///
+/// # Safety
+///
+/// `base` must be [`vec_base`] of a header whose `len` is `elems`, taken while no store has
+/// been reallocated since — the loop's growth-free proof (`@FR-R-Base`).
+///
+/// # Panics
+///
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when an admitted block's plain sum is not what
+/// the checked add answers over the same elements — the proof itself, re-run.  Never in the
+/// emitted default.
+#[must_use]
+#[inline]
+pub unsafe fn sum_blocks_i64<const VERIFY: bool>(
+    base: *const u8,
+    elems: u32,
+    from: i64,
+    to: i64,
+    mut acc: i64,
+) -> (i64, i64) {
+    let to = to.min(i64::from(elems));
+    if base.is_null() || from < 0 || from >= to {
+        return (acc, from);
+    }
+    // Element `i` is read as `get_elem_at` reads it — an unaligned load at `base + i * 8`,
+    // the file's one spelling for an element read (loft#1481) — and LLVM vectorises those
+    // as it would a slice: `movdqu` in place of `movdqa`, the same throughput.
+    let elem = |i: usize| -> i64 {
+        // SAFETY: the caller's contract — `elems` elements of 8 bytes at `base`, in a store
+        // the loop cannot grow; every `i` below is under `to <= elems`.
+        unsafe { base.add(i * 8).cast::<i64>().read_unaligned() }
+    };
+    let mut at = from as usize;
+    let end = to as usize;
+    while at < end {
+        let stop = (at + SUM_BLOCK).min(end);
+        let room = acc != i64::MIN
+            && acc.unsigned_abs() < (i64::MAX as u64) - (SUM_BLOCK as u64) * (SUM_BOUND as u64);
+        let mut high: u64 = 0;
+        let mut sum: i64 = 0;
+        for i in at..stop {
+            let x = elem(i);
+            high |= (x.wrapping_add(SUM_BOUND) as u64) >> 41;
+            sum = sum.wrapping_add(x);
+        }
+        if !(high == 0 && room) {
+            break;
+        }
+        if VERIFY {
+            let mut checked = acc;
+            for i in at..stop {
+                checked = checked
+                    .checked_add(elem(i))
+                    .expect("bounded sum: an admitted block overflowed the checked add");
+            }
+            assert_eq!(
+                checked,
+                acc.wrapping_add(sum),
+                "bounded sum: the plain block sum disagrees with the checked add"
+            );
+        }
+        acc = acc.wrapping_add(sum);
+        at = stop;
+    }
+    (acc, at as i64)
+}
+
+/// The block [`sum_blocks_i64`] proves at a time, and the element bound it proves it under:
+/// `SUM_BLOCK * SUM_BOUND` is `2^50`, so a running total up to `2^63 - 2^50` has room for
+/// any admitted block, and `2^40` (about `10^12`) is above every element a realistic sum
+/// holds — a vector of larger values takes the checked loop, as before.
+pub const SUM_BLOCK: usize = 1024;
+pub const SUM_BOUND: i64 = 1 << 40;
+
+/// `@FR-R-Base`'s join clause — the in-range half of `v[i]?.field`: element `from` of the
+/// vector `h` describes and the scalar at `fld` inside it, or `None` for any index the fast
+/// path refuses, which hands the caller to the join it would have run anyway (a negative
+/// index addresses from the end there, an absent element discharges to its default record).
+///
+/// The element comes back beside the value because the join ASSIGNS it to its temp, and the
+/// caller keeps that assignment: it is exactly the `DbRef` [`get_vector_hoisted`] answers in
+/// range, so nothing that reads the temp later can tell the two forms apart.  Measured: the
+/// assignment costs nothing (the store is dead wherever the temp is, and LLVM drops it), and
+/// keeping it means the rewrite owes no proof that the temp is unread.
+///
+/// # Safety
+///
+/// As [`get_elem_at`]: `base` is [`vec_base`] of `h`, taken while `h` described `db`, in a
+/// loop that grows no store.
+///
+/// # Panics
+///
+/// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header or the base no longer matches a
+/// fresh derivation.  Never in the emitted default.
+#[allow(clippy::inline_always)] // an `Option` that is not inlined is a real return slot
+#[must_use]
+#[inline(always)]
+pub unsafe fn elem_field_at<T: Copy, const VERIFY: bool>(
+    h: &VecHeader,
+    base: *const u8,
+    db: &DbRef,
+    size: u32,
+    from: i64,
+    fld: u32,
+    stores: &[Store],
+) -> Option<(DbRef, T)> {
+    if from < 0 || from >= i64::from(h.len) {
+        return None;
+    }
+    if VERIFY {
+        assert_eq!(
+            *h,
+            vec_header(db, stores),
+            "hoisted vector header is stale — the loop wrote the vector it was hoisted for"
+        );
+        assert!(
+            std::ptr::eq(base, vec_base(h, stores)),
+            "hoisted vector base is stale — a store grew or moved under the loop"
+        );
+    }
+    let elem = DbRef {
+        store_nr: h.store_nr,
+        rec: h.rec,
+        pos: checked_vec_pos(from as u32, size),
+    };
+    // SAFETY: as `get_elem_at` — element 0 of a live record in a store the loop cannot grow,
+    // `from < len` inside the record's claim; unaligned because an element offset need not
+    // be aligned for `T` (loft#1481).
+    let val = unsafe {
+        base.add(from as usize * size as usize + fld as usize)
+            .cast::<T>()
+            .read_unaligned()
+    };
+    Some((elem, val))
+}
+
+/// The general typed read of a record's scalar field — `absent` for the null record, else
+/// the load: what a fused read answers off its fast path ([`get_elem_hoisted_cold`]), for a
+/// record already in hand.  The fallback of [`elem_field_at`], applied to the join's result.
+#[must_use]
+#[inline]
+pub fn field_of<T: Copy>(db: &DbRef, fld: u32, absent: T, stores: &[Store]) -> T {
+    if db.rec == 0 {
+        absent
+    } else {
+        keys::store(db, stores).read::<T>(db.rec, db.pos + fld)
+    }
+}
+
 /// One indexed element read against an already-derived [`VecHeader`]: the bounds test and
 /// the typed load, with no `DbRef` built between them (loft#885 stage 2).
 ///
@@ -1142,6 +1384,63 @@ pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
     hoisted
 }
 
+/// `@FR-R-TextBorrow` under `LOFT_HOIST_VERIFY=1` — at the walk's release of its loop
+/// variable, the borrowed element (`held`) against the element read again (`fresh`).
+///
+/// # Panics
+///
+/// When the borrow no longer names the element — its address or its length moved — which
+/// is what a store write in the body the admission did not classify would do.  The
+/// address is compared FIRST, without reading through `held`: a moved store leaves the
+/// borrow dangling, and a dangling read is not a check.  Never in the emitted default.
+#[inline]
+pub fn text_borrow_verify(held: &str, fresh: &str) {
+    assert!(
+        std::ptr::eq(held.as_ptr(), fresh.as_ptr()) && held.len() == fresh.len(),
+        "borrowed text element is stale — the loop moved the element it was borrowed from \
+         (held {} bytes at {:p}, now {} bytes at {:p})",
+        held.len(),
+        held.as_ptr(),
+        fresh.len(),
+        fresh.as_ptr()
+    );
+}
+
+/// `@FR-R-CharWalk` under `LOFT_HOIST_VERIFY=1` — the fast arm's answer for an ASCII byte
+/// (`#index`, `#next`, the character) against what the step as written left behind.
+///
+/// # Panics
+///
+/// When they differ — a byte the arm took in one move that the written step reads
+/// otherwise.  Never in the emitted default.
+#[inline]
+pub fn char_walk_verify(fast: (i64, i64, i32), written: (i64, i64, i32)) {
+    assert!(
+        fast == written,
+        "character walk fast arm disagrees with the step as written \
+         (fast (index, next, c) {fast:?}, written {written:?})"
+    );
+}
+
+/// `@FR-R-RecPtr`'s path clause under `LOFT_HOIST_VERIFY=1` — a field read through a record
+/// address at a SUMMED offset (`v.pos.x`), compared with the unrewritten read that walks the
+/// path.  [`rec_get`]'s own check re-reads the store at the offset it was given, so it
+/// cannot see an offset summed wrongly; this one can.
+///
+/// # Panics
+///
+/// When the two reads disagree.  Never in the emitted default.
+#[must_use]
+#[inline]
+pub fn path_read_verify<T: HoistEq>(through: T, walked: T) -> T {
+    assert!(
+        through.same(walked),
+        "record view read through a field path disagrees with the path walked \
+         (through the address {through:?}, walked {walked:?})"
+    );
+    through
+}
+
 /// @FR-Col-RemoveDense — a vector stays DENSE: removing index `i` shifts every later
 /// element down one, so there are no holes and no tombstones and index `j > i` now names what
 /// was at `j+1`.  That renumbering is what ends the place a view names (@FR-B-Disturb), so it
@@ -1188,6 +1487,40 @@ pub fn sorted_find(
     keys: &[Key],
     key: &[Content],
 ) -> (u32, bool) {
+    // The comparator is resolved ONCE for the search (`keys::fast_order`), so the loop
+    // below compares with a read rather than re-deciding the key's kind per probe.
+    let fast = keys::fast_order(keys, key);
+    sorted_search(sorted, before, size, stores, |at| {
+        keys::order_key(fast.as_ref(), key, at, stores, keys)
+    })
+}
+
+/// [`sorted_find`] for an INSERT: the key searched for is `rec`'s own, read through
+/// [`keys::fast_order_of`] instead of being copied out into a `Vec<Content>` first.
+#[must_use]
+pub fn sorted_find_record(
+    sorted: &DbRef,
+    before: bool,
+    size: u16,
+    stores: &[Store],
+    keys: &[Key],
+    rec: &DbRef,
+) -> (u32, bool) {
+    let fast = keys::fast_order_of(rec, stores, keys);
+    sorted_search(sorted, before, size, stores, |at| {
+        keys::order_record(fast.as_ref(), rec, at, stores, keys)
+    })
+}
+
+/// The binary search both fronts share; `order` answers how the searched key orders
+/// against the element at the `DbRef` it is handed.
+fn sorted_search(
+    sorted: &DbRef,
+    before: bool,
+    size: u16,
+    stores: &[Store],
+    order: impl Fn(&DbRef) -> Ordering,
+) -> (u32, bool) {
     if sorted.rec == 0 {
         return (0, false);
     }
@@ -1211,7 +1544,7 @@ pub fn sorted_find(
     loop {
         let mid = left + (right - left) / 2;
         result.pos = 8 + mid * u32::from(size);
-        let cmp = keys::key_compare(key, &result, stores, keys);
+        let cmp = order(&result);
         let action = if cmp == Ordering::Equal {
             found = true;
             if before {
@@ -1253,6 +1586,34 @@ pub fn ordered_find(
     keys: &[Key],
     key: &[Content],
 ) -> (u32, bool) {
+    let fast = keys::fast_order(keys, key);
+    ordered_search(sorted, before, stores, |at| {
+        keys::order_key(fast.as_ref(), key, at, stores, keys)
+    })
+}
+
+/// [`ordered_find`] for an INSERT — see [`sorted_find_record`].
+#[must_use]
+pub fn ordered_find_record(
+    sorted: &DbRef,
+    before: bool,
+    stores: &[Store],
+    keys: &[Key],
+    rec: &DbRef,
+) -> (u32, bool) {
+    let fast = keys::fast_order_of(rec, stores, keys);
+    ordered_search(sorted, before, stores, |at| {
+        keys::order_record(fast.as_ref(), rec, at, stores, keys)
+    })
+}
+
+/// The binary search both fronts share — see [`sorted_search`].
+fn ordered_search(
+    sorted: &DbRef,
+    before: bool,
+    stores: &[Store],
+    order: impl Fn(&DbRef) -> Ordering,
+) -> (u32, bool) {
     let store = keys::store(sorted, stores);
     let sorted_rec = store.get_u32_raw(sorted.rec, sorted.pos);
     let length = store.get_u32_raw(sorted_rec, 4);
@@ -1275,7 +1636,7 @@ pub fn ordered_find(
         let mid = (left + right + 1) >> 1;
         result.rec = store.get_u32_raw(sorted_rec, 8 + mid * 4);
         result.pos = 8;
-        let cmp = keys::key_compare(key, &result, stores, keys);
+        let cmp = order(&result);
         let action = if cmp == Ordering::Equal {
             found = true;
             if before {

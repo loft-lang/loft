@@ -1,0 +1,16 @@
+// B7 — every leaf returns a RECORD: the template's instance and the concrete member share the
+// dispatcher's return buffer.
+// @EXPECT: 2 2;0 0;5 5;
+struct Pt { x: integer, y: integer }
+enum Shape { Circle { r: integer }, Square { s: integer } }
+fn corner(x: Circle) -> Pt { Pt { x: x.r, y: x.r } }
+fn corner<T>(x: T) -> Pt { Pt { x: 0, y: 0 } }
+fn main() {
+  v: vector<Shape> = [Circle { r: 2 }, Square { s: 3 }, Circle { r: 5 }];
+  out = "";
+  for s in v {
+    p = corner(s);
+    out += "{p.x} {p.y};";
+  }
+  println(out);
+}

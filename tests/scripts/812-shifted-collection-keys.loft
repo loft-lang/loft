@@ -82,11 +82,11 @@ fn main() {
 
   // --- integer limit(100, 300): a 2-byte store with start 100 -------------------
   f: hash<KLim[k]> = [];
-  for i in 0..12 { f += KLim { k: 100 + (i * 10), n: i * 3 }; }
+  for i in 0..12 { f += KLim { k: 100 + (i * 10) ?? 100, n: i * 3 }; }
   assert(len(f) == 12, "limit len {len(f)}");
   fbad = 0;
   for j in 0..12 {
-    ef = f[100 + (j * 10)];
+    ef = f[((100 + (j * 10)) as integer limit(100, 300)?)?];
     if ef == null || ef.n != j * 3 { fbad += 1; }
   }
   assert(fbad == 0, "limit lookups: {fbad} wrong");
@@ -94,11 +94,11 @@ fn main() {
   // --- integer limit(100000, 200000): wide enough to need `Parts::Int`, which is
   //     genuinely raw — the control that says the fix did not shift a raw width --
   g: hash<KWide[k]> = [];
-  for i in 0..12 { g += KWide { k: 100000 + (i * 100), n: i * 3 }; }
+  for i in 0..12 { g += KWide { k: 100000 + (i * 100) ?? 100000, n: i * 3 }; }
   assert(len(g) == 12, "wide len {len(g)}");
   gbad = 0;
   for j in 0..12 {
-    eg = g[100000 + (j * 100)];
+    eg = g[((100000 + (j * 100)) as integer limit(100000, 200000)?)?];
     if eg == null || eg.n != j * 3 { gbad += 1; }
   }
   assert(gbad == 0, "wide-limit lookups: {gbad} wrong");

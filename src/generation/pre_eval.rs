@@ -659,6 +659,42 @@ impl Output<'_> {
                 self.collect_pre_evals_inner(fused.index, result)?;
                 return self.collect_pre_evals_inner(fused.fld, result);
             }
+            // `@FR-R-Base`'s join clause — `v[i]?.f` folds its JOIN block: in range the field
+            // is one load and the block never runs, and the emitter writes the block itself
+            // in the fallback arm.  Lifted into a `let _pre_N` it would run on every pass and
+            // the getter's operand would be a local the emitter cannot see through.  Both
+            // sides ask `fused_join_read`; the index is a variable and the field a constant,
+            // so nothing in it can still hold work.
+            if self
+                .fused_join_read(self.data.def(*d_nr).name(), vals)
+                .is_some()
+            {
+                return Ok(());
+            }
+            // `@FR-R-LazySplit` — the element read of a loop over a lazy split emits as the
+            // iterator's next piece, so its inner `OpGetVectorNullable` must not be lifted:
+            // the binding would name a vector the lazy form never declares.  The emitter
+            // asks the same `lazy_split_reader`, so the two cannot disagree; the read's
+            // other operands are the loop's own index variable and a constant.
+            if self.data.def(*d_nr).name() == "OpGetText"
+                && let Some(elem) = vals.first()
+                && self
+                    .lazy_split_reader(elem, "OpGetVectorNullable")
+                    .is_some()
+            {
+                return Ok(());
+            }
+            // `@FR-R-SplitTable` — the element read of a table emits as the slice at the
+            // index, so its inner `OpGetVectorNullable` must not be lifted either; the
+            // index itself may still hold work.
+            if self.data.def(*d_nr).name() == "OpGetText"
+                && let Some(elem) = vals.first()
+                && self.split_table_read(elem).is_some()
+                && let Value::Call(_, inner) = elem.unspan()
+                && let Some(index) = inner.get(2)
+            {
+                return self.collect_pre_evals_inner(index, result);
+            }
             // @PLN157 P4b — the write twin: a fused element WRITE also folds its inner
             // element address away, so that address must not be lifted either.  Both
             // sides ask `fused_element_write`, so they cannot disagree.

@@ -1,0 +1,187 @@
+// @PLN158 R4 — a minted element's field writes go through the slot's ADDRESS, from the
+// mint up to the element's own finish (`@FR-R-RecPtr`'s mint clause).  A record view's
+// address is promised for the whole REMAINDER of its block, and a mint never got one: the
+// remainder holds the next append, which grows a store.  So each field of an appended
+// record resolved the store again — a store lookup, a record-validity read and two bounds
+// checks per FIELD, 143 instructions for a three-field record against the Rust reference's
+// 18.  The element needs the address only while it is being filled; hand-priced on the
+// emitted Rust first (-38..46 %), then built: `record_append` 126.7 -> 69.1 us (3.55x ->
+// 1.95x), `mesh_emit` 189.3 -> 107.2 us (4.98x -> 2.83x).
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them.  `LOFT_NO_MINT_WINDOW=1`, `LOFT_NO_RECORD_PTR=1`, `LOFT_NO_RECORD_PUSH=1`,
+// `LOFT_NO_GROUP_PUSH=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/mint_window.rs pins them): m1, m6, m10, m11 write every field through
+// the address; m2 writes its fusable fields through it and keeps the store write for the
+// boolean, an in-place set and not a rebind; m3 (a text set), m4's outer element (a nested
+// mint — the nested elements take an address of their own) and m5b (a call in the window
+// that appends elsewhere) grow a store inside the window and decline it; m5's call names
+// the container, so it is evaluated BEFORE the mint (loft#1548) and the window is clean;
+// m7 is a keyed insert, whose claimed record takes the address too; m12 and m13 hand the
+// element to the callee as its buffer, so the caller has no write to serve; m14 is a
+// struct-enum element, a record like any other once the enum clause admits it: its
+// fields go through the address and its tag keeps its store write.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — the window's verdict shown only the
+// element's own writes, so a nested mint inside it was admitted.  The FIRST run of that
+// sabotage changed nothing: every cell stayed green under it, because a stale address needs
+// the store's memory to MOVE inside the window and nine small elements never reallocate —
+// the cells could not fail, so they proved nothing about the growth condition.  m4b was
+// added for that: under the sabotage it answers `120 125094 21420` for `120 127140 21420`
+// on --native (the `k` writes land in memory the store has left; its assert fails), and
+// LOFT_HOIST_VERIFY=1 panics "record view address is stale — a store grew or moved under
+// the block".  Restored byte-identically: interpret / native / every switch / every
+// falsifier green.
+
+struct P { x: integer, y: integer }
+struct Mix { a: integer, on: boolean, f: float, s: single, k: integer }
+struct Named { nm: text, k: integer }
+struct Poly { pts: vector<P>, k: integer }
+struct Big { a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, g: integer }
+struct Ev { id: integer, v: integer }
+struct Two { xs: vector<P>, ys: vector<P> }
+enum Shape { Dot { d: integer }, Box { w: integer, h: integer } }
+
+fn sx(v: const vector<P>) -> integer { t = 0; for p in v { t += p.x; } t }
+fn sy(v: const vector<P>) -> integer { t = 0; for p in v { t += p.y; } t }
+
+// m1 — every field a fusable kind, enough elements to grow several times.
+fn m1() {
+  v: vector<P> = [];
+  for i in 0..300 { v += [P { x: i, y: i * 2 + 1 }]; }
+  println("m1 {len(v)} {sx(v)} {sy(v)} {v[299]?.y}");
+  assert(len(v) == 300 && sx(v) == 44850 && sy(v) == 90000 && v[299]?.y == 599, "m1");
+}
+
+// m2 — fusable fields beside a boolean: an in-place set of a kind the address does not
+// serve is not a rebind of the element.
+fn m2() {
+  v: vector<Mix> = [];
+  for i in 0..40 { v += [Mix { a: i, on: i % 3 == 0, f: i as float * 0.5, s: 2.0f, k: 7 - i }]; }
+  ta = 0; tn = 0; tf = 0.0; ts = 0.0f; tk = 0;
+  for m in v { ta += m.a; if m.on { tn += 1; } tf += m.f; ts += m.s; tk += m.k; }
+  println("m2 {ta} {tn} {tf} {ts} {tk}");
+  assert(ta == 780 && tn == 14 && tf == 390.0 && ts == 80.0f && tk == -500, "m2");
+}
+
+// m3 — a text field: its set re-allocates, so the window declines.
+fn m3() {
+  v: vector<Named> = [];
+  for i in 0..12 { v += [Named { nm: "e{i * i}", k: i }]; }
+  t = 0; for n in v { t += len(n.nm) * 100 + n.k; }
+  println("m3 {t}");
+  assert(t == 3466, "m3");
+}
+
+// m4 — a nested vector literal: a mint inside the window.
+fn m4() {
+  v: vector<Poly> = [];
+  for i in 0..9 { v += [Poly { pts: [P { x: i, y: 1 }, P { x: i * 10, y: 2 }], k: i }]; }
+  t = 0; for q in v { t += sx(q.pts) + sy(q.pts) * 100 + q.k; }
+  println("m4 {t}");
+  assert(t == 3132, "m4");
+}
+
+// m4b — the same shape at a size that REALLOCATES the store inside the window: each outer
+// element owns sixty points claimed in the element's own store, so the store's memory
+// moves between the outer mint and the write of `k` that follows the nested vector.  An
+// address held across that growth writes `k` into memory the store has left.
+fn m4b() {
+  v: vector<Poly> = [];
+  for i in 0..120 {
+    v += [Poly { pts: [for j in 0..60 { P { x: i + j, y: 1 } }], k: i + 1000 }];
+  }
+  tk = 0; tp = 0;
+  for q in v { tk += q.k; tp += len(q.pts) + q.pts[59]?.x; }
+  println("m4b {len(v)} {tk} {tp}");
+  assert(len(v) == 120 && tk == 127140 && tp == 21420, "m4b");
+}
+
+// m5 — a field's value is a call that APPENDS to a sibling vector of the same record.
+fn m5_side(w: Two, i: integer) -> integer { w.ys += [P { x: i, y: i }]; len(w.ys) }
+fn m5() {
+  w = Two { xs: [], ys: [] };
+  for i in 0..25 { w.xs += [P { x: m5_side(w, i), y: i }]; }
+  println("m5 {len(w.xs)} {len(w.ys)} {sx(w.xs)} {sy(w.xs)} {sx(w.ys)}");
+  assert(len(w.xs) == 25 && len(w.ys) == 25 && sx(w.xs) == 325 && sy(w.xs) == 300 && sx(w.ys) == 300, "m5");
+}
+
+// m5b — the call in the window appends to an UNRELATED vector: nothing stages it, so the
+// window holds a store growth and declines.
+fn m5b_side(o: vector<P>, i: integer) -> integer { o += [P { x: i, y: i }]; len(o) }
+fn m5b() {
+  o: vector<P> = [];
+  v: vector<P> = [];
+  for i in 0..25 { v += [P { x: m5b_side(o, i) * 2, y: i }]; }
+  println("m5b {len(v)} {len(o)} {sx(v)} {sy(v)} {sx(o)}");
+  assert(len(v) == 25 && len(o) == 25 && sx(v) == 650 && sy(v) == 300 && sx(o) == 300, "m5b");
+}
+
+// m6 — literal groups outside any loop.
+fn m6() {
+  v: vector<P> = [];
+  v += [P { x: 1, y: 2 }, P { x: 3, y: 4 }, P { x: 5, y: 6 }];
+  v += [P { x: 7, y: 8 }];
+  println("m6 {len(v)} {sx(v)} {sy(v)}");
+  assert(len(v) == 4 && sx(v) == 16 && sy(v) == 20, "m6");
+}
+
+// m7 — a keyed insert: the key is written through the address, then the finish files it.
+fn m7() {
+  s: sorted<Ev[id]> = [];
+  for i in 0..9 { s += [Ev { id: (i * 4) % 9, v: i }]; }
+  ord = 0; tv = 0;
+  for e in s { ord = ord * 10 + e.id; tv += e.v; }
+  h: hash<Ev[id]> = [];
+  for i in 0..20 { h += [Ev { id: i * 7, v: i + 1 }]; }
+  hit = 0;
+  for i in 0..20 { f = h[i * 7]; if f != null { hit += f.v; } }
+  println("m7 {ord} {tv} {hit}");
+  assert(ord == 12345678 && tv == 36 && hit == 210, "m7");
+}
+
+// m10 — a branch in a field's value; m11 — a value that reads the vector being appended.
+fn m10() {
+  v: vector<P> = [];
+  for i in 0..10 { v += [P { x: if i % 2 == 0 { i } else { -i }, y: if i > 4 { 1 } else { 0 } }]; }
+  println("m10 {sx(v)} {sy(v)}");
+  assert(sx(v) == -5 && sy(v) == 5, "m10");
+}
+fn m11() {
+  v: vector<P> = [P { x: 5, y: 0 }];
+  for _ in 0..10 { v += [P { x: len(v), y: v[0]?.x + len(v) }]; }
+  println("m11 {len(v)} {sx(v)} {sy(v)}");
+  assert(len(v) == 11 && sx(v) == 60 && sy(v) == 105, "m11");
+}
+
+// m12 — the element is a call's result returned in registers; m13 — one delivered by copy.
+fn m12_pt(a: integer, b: integer) -> P { P { x: a + b, y: a * b } }
+fn m13_big(i: integer) -> Big { Big { a: i, b: i + 1, c: i + 2, d: i + 3, e: i + 4, f: i + 5, g: i + 6 } }
+fn m12() {
+  v: vector<P> = [];
+  for i in 0..10 { v += [m12_pt(i, 3)]; }
+  println("m12 {sx(v)} {sy(v)}");
+  assert(sx(v) == 75 && sy(v) == 135, "m12");
+}
+fn m13() {
+  v: vector<Big> = [];
+  for i in 0..10 { v += [m13_big(i)]; }
+  t = 0; for b in v { t += b.a + b.d * 10 + b.g * 100; }
+  println("m13 {t}");
+  assert(t == 11295, "m13");
+}
+
+// m14 — a struct-enum element: a window per variant.
+fn m14() {
+  v: vector<Shape> = [];
+  for i in 0..8 { if i % 2 == 0 { v += [Dot { d: i }]; } else { v += [Box { w: i, h: 2 }]; } }
+  t = 0;
+  for s in v { match s { Dot { d } => { t += d; }, Box { w, h } => { t += w * h * 10; } } }
+  println("m14 {t}");
+  assert(t == 332, "m14");
+}
+
+fn main() {
+  m1(); m2(); m3(); m4(); m4b(); m5(); m5b(); m6(); m7(); m10(); m11(); m12(); m13(); m14();
+  println("mint window ok");
+}

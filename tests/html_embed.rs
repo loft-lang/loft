@@ -86,7 +86,7 @@ fn spawn_server(py: &Path, dir: &Path, port: u16) -> Option<Child> {
 }
 
 /// Read the page's `<pre>` after the wait, via the harness's `--assert`.
-fn page_output(url: &str, port: u16) -> String {
+fn page_output(url: &str, port: u16) -> Option<String> {
     let out = Command::new("node")
         .arg(repo_root().join("tools/html_render_check.mjs"))
         .arg(url)
@@ -97,7 +97,16 @@ fn page_output(url: &str, port: u16) -> String {
         .expect("invoke node harness");
     // The assertion fails by design (the value is text, not `true`), and the harness
     // prints it back — which is the only way to read a page's own output from here.
-    String::from_utf8_lossy(&out.stderr).to_string()
+    let text = String::from_utf8_lossy(&out.stderr).to_string();
+    // The harness's own contract: no browser to drive — none installed, or one that never
+    // answered its debugging port — is a `SKIP: …` line and exit 2, which the CALLER turns
+    // into a skip.  Read as page output it failed the assertion below on a runner whose
+    // Chrome was slow to start, naming a pack that was never read.
+    if out.status.code() == Some(2) || text.trim_start().starts_with("SKIP:") {
+        eprintln!("{}", text.trim());
+        return None;
+    }
+    Some(text)
 }
 
 /// The program both halves use: it WRITES the pack natively and READS it back, and the
@@ -231,14 +240,18 @@ fn a_declared_pack_is_readable_in_the_page_by_the_programs_own_path() {
     };
     let _guard = ServerGuard(server);
 
-    let carried = page_output(
+    let Some(carried) = page_output(
         &format!("http://127.0.0.1:{port}/page.html"),
         port.wrapping_add(1),
-    );
-    let bare = page_output(
+    ) else {
+        return;
+    };
+    let Some(bare) = page_output(
         &format!("http://127.0.0.1:{port}/control.html"),
         port.wrapping_add(2),
-    );
+    ) else {
+        return;
+    };
 
     // Value AND cardinality: a store that loaded empty would answer `load=true` with
     // both records absent, which is the failure a `!= null` check waves through.

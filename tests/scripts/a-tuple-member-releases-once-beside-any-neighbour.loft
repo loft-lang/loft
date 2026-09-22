@@ -58,9 +58,15 @@
 // HOLDS: leak, panic, free-refusal and expectations are unmoved — equal on both trees and on
 //   both backends.  SEVEN cells hold, and each is there to hold: c_literal_text and c_scalar
 //   (their dep list already matched the leaf walk), c_two_droppables, c_param, c_from_call,
-//   c_plain, and c_reassigned — which reads FOUR releases on both trees, because a variable
+//   c_plain, and c_reassigned — which read FOUR releases on both trees, because a variable
 //   assigned two tuples has no single pairing and the join declines rather than answer with
-//   the latest one.
+//   the latest one.  c_reassigned reads two since loft#1563, whose hand-off does not go through
+//   the join.
+//
+// The ORDER of the releases in each trace is `(H-Drop)`'s: owners in reverse declaration order,
+// and one structure's members in reverse member order, as a struct's fields are.  Seven cells
+// pinned another order until loft#1588 — whatever the backings' registration at the function's
+// head produced — and read the rule's since that fix placed each backing at its tuple's turn.
 //
 // The trace file is this guard's own — its own means THIS file, not this family: several corpus
 // guards write one, and two concurrent runs of the SAME guard clobber each other's.
@@ -130,11 +136,12 @@ fn c_two_tuples() { a = nb_mk(111); b = nb_mk(112); w = "wx"; t1 = (a, w); t2 = 
 // answers that before the pairing is consulted at all.
 fn c_param_take(p: (NbH, text)) { u = p; note("in{u.0.id}{u.1}"); }
 fn c_param() { s = nb_mk(121); w = "wx"; t = (s, w); c_param_take(t); note("alive{t.0.id}"); }
-// CONTROL — the tuple variable is assigned TWICE, with different backings.  The reader has only
-// the variable, so there is no single pairing to record: the join declines and both resources
-// release twice, exactly as they did before the pairing was carried.  Taking the LATEST answer
-// instead passes this cell's first half and LOSES the second resource's release entirely, which
-// is why the decline is the answer and not a missing case.
+// The tuple variable is assigned TWICE, with different backings.  The reader has only the
+// variable, so there is no single pairing to record, and the join declines: taking the LATEST
+// answer instead passes this cell's first half and LOSES the second resource's release entirely.
+// Each member's release now moves through the scan's per-assignment `tuple_call_mint` instead
+// (loft#1563), which does see which assignment is live, so each resource releases once.  It was
+// a control that pinned both releasing twice.
 fn c_reassigned() { a = nb_mk(131); w = "wx"; b = nb_mk(132); v = "wy"; t = (a, w); u = t; t = (b, v); z = t; note("alive{u.0.id}{z.0.id}"); }
 // A STRUCT-ENUM member beside the text.  It IS a heap leaf, so the leaf walk counts it and the
 // dep list counts it too — and the text between them still put the two out of step.
@@ -182,7 +189,7 @@ fn main() {
   assert(got == "alive21wx,21", "a text neighbour BEFORE the droppable: {got}");
 
   c_between(); got = drain();
-  assert(got == "alive1112,11,12", "a text between two droppables, each once: {got}");
+  assert(got == "alive1112,12,11", "a text between two droppables, each once: {got}");
 
   c_value_enum(); got = drain();
   assert(got == "alive31,31", "a value-enum neighbour releases once: {got}");
@@ -194,7 +201,7 @@ fn main() {
   assert(got == "alive51,51", "CONTROL a scalar neighbour: {got}");
 
   c_two_droppables(); got = drain();
-  assert(got == "alive6162,61,62", "CONTROL two droppables, each once: {got}");
+  assert(got == "alive6162,62,61", "CONTROL two droppables, each once: {got}");
 
   c_nested(); got = drain();
   assert(got == "alive71wx,71", "a nested member with a text beside it: {got}");
@@ -209,13 +216,13 @@ fn main() {
   assert(got == "alive100,100,alive101,101,alive102,102", "the copy in a loop: {got}");
 
   c_two_tuples(); got = drain();
-  assert(got == "alive111112,111,112", "two tuples in one frame: {got}");
+  assert(got == "alive111112,112,111", "two tuples in one frame: {got}");
 
   c_param(); got = drain();
   assert(got == "in121wx,alive121,121", "CONTROL a copy off a tuple parameter: {got}");
 
   c_reassigned(); got = drain();
-  assert(got == "alive131132,131,131,132,132", "CONTROL a reassigned tuple declines: {got}");
+  assert(got == "alive131132,132,131", "a reassigned tuple releases each resource once: {got}");
 
   c_enum_beside(); got = drain();
   assert(got == "alive141wx,141", "a struct-enum member beside the text: {got}");
@@ -227,7 +234,7 @@ fn main() {
   assert(got == "alive161true,161", "a float and a boolean beside the text: {got}");
 
   c_nested_nullable(); got = drain();
-  assert(got == "alive171172,171,172", "a nested nullable member beside the text: {got}");
+  assert(got == "alive171172,172,171", "a nested nullable member beside the text: {got}");
 
   c_from_call(); got = drain();
   assert(got == "alive181wx,181", "CONTROL the tuple comes back from a call: {got}");
@@ -239,10 +246,10 @@ fn main() {
   assert(got == "alive211wx,211", "a declared NULLABLE member beside a text: {got}");
 
   c_declared_two(); got = drain();
-  assert(got == "alive221222,221,222", "a declared tuple, two droppables and a text: {got}");
+  assert(got == "alive221222,222,221", "a declared tuple, two droppables and a text: {got}");
 
   c_declared_nested(); got = drain();
-  assert(got == "alive232231,232,231", "a declared tuple nested in an inferred one: {got}");
+  assert(got == "alive232231,231,232", "a declared tuple nested in an inferred one: {got}");
 
   c_plain(); got = drain();
   assert(got == "alive191192,192,191", "CONTROL two resources release twice: {got}");

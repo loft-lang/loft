@@ -20,6 +20,7 @@ Rules for all Rust and loft code in this project.
 - Names of functions, variables, arguments, and fields must be self-documenting — short but unambiguous.
 - User functions in loft are stored with an `n_` prefix: `data.def_nr("n_foo")`, not `data.def_nr("foo")`.
 - Native stdlib functions follow the scheme `n_<func>` (global) or `t_<LEN><Type>_<method>` (method, LEN = type name length). Example: `t_4text_trim` for `text.trim()`.
+- A free member of an overload set is `f_<LEN><τ₁#τ₂…>_<name>`; an INSTANCE of a generic is `i_<LEN><bound types>_<template key>` (`i_7integer_n_idf`, @PLN165 `D-Key`).  All three length-counted forms are read back by the one decoder, `Data::split_key`; a key keeps its readable characters and the native emitter flattens it (`rust_fn_ident`), refusing two keys that flatten to one identifier.
 - Internal-only functions use an `i_` prefix (e.g. `i_parse_errors`). Registered in `Parser::new()`, not in `default/*.loft`. Invisible to user code — no namespace collision.
 - Operators use `OpCamelCase` in loft source → bare `snake_case` in Rust (`fill.rs`), without any prefix. Exception: `OpReturn` → `op_return`, because `return` is a Rust keyword.
 

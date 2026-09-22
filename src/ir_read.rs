@@ -653,6 +653,7 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         known_type: r.field_int(stores, ds::DEF_KNOWN_TYPE) as u16,
         pub_visible: r.field_bool(stores, ds::DEF_PUB_VISIBLE),
         null_safe: r.field_bool(stores, ds::DEF_NULL_SAFE), // @PLN46 W2
+        builtin: r.field_bool(stores, ds::DEF_BUILTIN),     // @PLN165 arc E
         closure_record: r.field_int(stores, ds::DEF_CLOSURE_RECORD) as u32,
         mutated_captures: read_name_list(
             stores,
@@ -663,6 +664,12 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
             r.field_recvec(ds::DEF_SCALARS_TO_BOX, ds::NAMEREF_STRIDE),
         ),
         bounds: read_u32_list(stores, r.field_recvec(ds::DEF_BOUNDS, ds::INT_STRIDE)),
+        type_params: read_u32_list(stores, r.field_recvec(ds::DEF_TYPE_PARAMS, ds::INT_STRIDE)),
+        instance_of: u32::try_from(r.field_int(stores, ds::DEF_INSTANCE_OF)).unwrap_or(u32::MAX),
+        instance_args: read_type_list(
+            stores,
+            r.field_recvec(ds::DEF_INSTANCE_ARGS, ds::TYPET_STRIDE),
+        ),
         forced_size: if forced == 0 {
             None
         } else {
@@ -806,6 +813,7 @@ fn def_type_from_code(c: i64) -> DefType {
         8 => DefType::Constant,
         9 => DefType::Generic,
         10 => DefType::Interface,
+        11 => DefType::TypeTemplate,
         other => panic!("ir_read: unknown DefType code {other}"),
     }
 }

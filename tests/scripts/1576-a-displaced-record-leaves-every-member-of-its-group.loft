@@ -1,0 +1,132 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1576 — a record a repeated key displaces from a linked group leaves EVERY keyed member,
+// and is released when no vector member still holds it (`formal/collections.md`
+// `(Col-Group-Dup)`, `(Col-Group)`).
+//
+// Displacement was decided per member, inside each member's insert, and inside a group every
+// such insert only UNLINKS — a vector member may still hold the record (loft#1226).  Nothing
+// took the older record out of the members where its key did not collide, and nothing asked
+// whether any member still held it.  So a `hash<B[bar]>` beside an `index<B[note]>` kept `1:x`
+// in the index after `1:y` replaced it in the hash, and a group with no vector member stranded
+// the record and its `text` on every repeated key.  A whole-vector write reaches the members one
+// view at a time, and kept the displaced record in every view but the one it collided in.
+//
+// Axes this file MOVES:  the members (hash + index on different keys, hash + index on the same
+//                        key, sorted + hash, vector + hash + index), how many older records one
+//                        insert displaces (one, two), the route (append through the colliding
+//                        member, through the other member, an element write through the vector,
+//                        a whole-vector write), and what follows (nothing, a removal).
+// Axes it HOLDS FIXED:   one element type with an integer and a text key; every value
+//                        hand-computed; record counts compared as deltas, never absolutes.
+//
+// @falsified-at: a17b2e40a — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0.
+//   CHANNEL: assertions, both backends — the first cell fails on the control (the index keeps
+//   `1:x` after the hash replaced it); an assertion stops the run, so the count is 1.
+//   WITNESS: `the older record left the index too: [1:y ] [1:x 1:y ]` on the control.
+//   HOLDS: leak, panic and free-refusal are equal on both trees.
+// @falsified-by: tests/falsified/1576-a-displaced-record-leaves-every-member-of-its-group.patch —
+//   the same channels.
+
+struct B { bar: integer, note: text }
+struct HI { beats: hash<B[bar]>, byname: index<B[note]> }
+struct HS { beats: hash<B[bar]>, bykey: index<B[bar]> }
+struct SH { ord: sorted<B[bar]>, byname: hash<B[note]> }
+struct VHI { all: vector<B>, beats: hash<B[bar]>, byname: index<B[note]> }
+
+fn records() -> integer {
+  first = "";
+  for line in store_memory().split('\n') { if first == "" { first = line; } }
+  want = false;
+  for tok in first.split(' ') {
+    if want { return tok as integer ?? 0 }
+    if tok == "records" { want = true; }
+  }
+  0
+}
+
+fn by_note(s: HI) -> text { r = ""; for e in s.byname { r += "{e.bar}:{e.note} "; } r }
+fn by_bar(s: HI) -> text { r = ""; for e in s.beats { r += "{e.bar}:{e.note} "; } r }
+fn names(v: VHI) -> text { r = ""; for e in v.byname { r += "{e.bar}:{e.note} "; } r }
+fn rows() -> vector<B> { [B{bar:1,note:"a"}, B{bar:1,note:"b"}, B{bar:2,note:"c"}] }
+
+fn main() {
+  s = HI { beats: [], byname: [] };
+  s.beats += [B{bar:1,note:"x"}];
+  s.beats += [B{bar:1,note:"y"}];
+  assert(by_bar(s) == "1:y " && by_note(s) == "1:y ", "the older record left the index too: [{by_bar(s)}] [{by_note(s)}]");
+  assert(len(s.beats) == 1 && len(s.byname) == 1, "one record in each member: {len(s.beats)}/{len(s.byname)}");
+
+  t = HI { beats: [], byname: [] };
+  t.beats += [B{bar:1,note:"x"}];
+  t.beats += [B{bar:2,note:"y"}];
+  t.beats += [B{bar:1,note:"y"}];
+  assert(by_bar(t) == "1:y " && by_note(t) == "1:y ", "one insert displacing two records: [{by_bar(t)}] [{by_note(t)}]");
+
+  u = HI { beats: [], byname: [] };
+  u.byname += [B{bar:1,note:"x"}];
+  u.byname += [B{bar:1,note:"y"}];
+  assert(by_bar(u) == "1:y " && by_note(u) == "1:y ", "entering through the member whose key did not collide: [{by_bar(u)}] [{by_note(u)}]");
+
+  h = HS { beats: [], bykey: [] };
+  h.beats += [B{bar:1,note:"x"}];
+  h.beats += [B{bar:1,note:"y"}];
+  assert(h.beats[1].note == "y" && len(h.bykey) == 1, "hash + index on one key: {len(h.beats)}/{len(h.bykey)}");
+
+  o = SH { ord: [], byname: [] };
+  o.ord += [B{bar:1,note:"x"}];
+  o.ord += [B{bar:1,note:"y"}];
+  assert(o.byname["x"] == null && len(o.ord) == 1 && len(o.byname) == 1, "sorted + hash: {len(o.ord)}/{len(o.byname)}");
+
+  v = VHI { all: [], beats: [], byname: [] };
+  v.all += [B{bar:1,note:"x"}];
+  v.all += [B{bar:1,note:"y"}];
+  assert(len(v.all) == 2 && v.beats[1].note == "y" && names(v) == "1:y ", "the vector keeps the older record, both keyed members drop it: {len(v.all)} [{names(v)}]");
+
+  w = VHI { all: [], beats: [], byname: [] };
+  w.all += [B{bar:1,note:"p"}];
+  w.all += [B{bar:2,note:"q"}];
+  w.all[0] = B{bar:2, note:"r"};
+  assert(w.beats[2].note == "r" && names(w) == "2:r " && len(w.all) == 2, "an element write that makes a key collide: [{names(w)}] {len(w.all)}");
+
+  b = VHI { all: [], beats: [], byname: [] };
+  b.all = rows();
+  assert(len(b.all) == 3 && len(b.beats) == 2 && names(b) == "1:b 2:c ", "a whole-vector write: {len(b.all)}/{len(b.beats)} [{names(b)}]");
+
+  // No vector member holds a displaced record, so it is released: re-adding the same keys
+  // leaves the record count where the first pass put it.
+  g = HI { beats: [], byname: [] };
+  first = 0;
+  for k in 0..3 {
+    for i in 0..40 { g.beats += [B{bar:i, note:"n{i}"}]; }
+    if k == 0 { first = records(); }
+  }
+  assert(records() == first && len(g.beats) == 40 && len(g.byname) == 40, "hash + index re-adding its keys: {first} -> {records()}");
+
+  q = HS { beats: [], bykey: [] };
+  first = 0;
+  for k in 0..3 {
+    for i in 0..40 { q.beats += [B{bar:i, note:"n{i}"}]; }
+    if k == 0 { first = records(); }
+  }
+  assert(records() == first, "hash + index on one key re-adding its keys: {first} -> {records()}");
+
+  r = SH { ord: [], byname: [] };
+  first = 0;
+  for k in 0..3 {
+    for i in 0..40 { r.ord += [B{bar:i, note:"n{i}"}]; }
+    if k == 0 { first = records(); }
+  }
+  assert(records() == first, "sorted + hash re-adding its keys: {first} -> {records()}");
+
+  // A removal after a displacement releases the survivor once.
+  z = HI { beats: [], byname: [] };
+  z.beats += [B{bar:5,note:"q"}];
+  before = records();
+  z.beats += [B{bar:1,note:"x"}];
+  z.beats += [B{bar:1,note:"y"}];
+  z.beats[1] = null;
+  assert(records() == before && len(z.beats) == 1 && len(z.byname) == 1, "removal after a displacement: {before} -> {records()}");
+}

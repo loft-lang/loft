@@ -1,0 +1,182 @@
+// @PLN158 R2 — the loop variable of `for e in v` takes its ADDRESS from the element base
+// the loop holds (`@FR-R-RecPtr`'s base clause), and the iteration's `#index` is never the
+// sentinel (`@FR-R-Counter`'s iteration clause).  Before it the loop built a `DbRef` for
+// the element and then resolved the store a second time to turn that `DbRef` back into an
+// address — per element, in a loop that already held the address of element 0 — and
+// stepped its index through the null-aware add, which hides the induction variable from
+// the optimiser.  Hand-priced first on the emitted Rust (the address alone −40 %, the step
+// −26 % more), then built: `record_walk` 31.97 -> 16.15 us (2.98x -> 1.50x of the Rust
+// reference), `tuple_kernel` -20 %, `entity_tick` -30 %.  A first build derived the address
+// from the `DbRef` instead of the index (an identity test on its store and record) and
+// measured +46 % SLOWER; it is not what ships.
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them.  `LOFT_NO_BASE_RECPTR=1`, `LOFT_NO_RECORD_PTR=1`, `LOFT_NO_VECTOR_BASE=1`,
+// `LOFT_NO_NN_FAST=1` and `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/iteration_base.rs pins them): w1-w5, w8, w9, w12, w14 take the address
+// from the base (w9 hands the view to a callee too, so its `DbRef` lives beside it); the
+// walks of w6 and w7 that GROW a store hold no address at all — `(R-RecPtr)` declines a
+// remainder that may grow one — while their index still steps unchecked; w11's elements
+// own heap and its reads are not fused; w13 walks scalars, which is another iterator, and
+// keeps the checked step; w15 binds by explicit index and keeps `rec_ptr`.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-21) — the emitted address made to use
+// `index + 1` for `index`: w1 answers `0 0 162 135 243` for `0 -7 155 135 250` on --native
+// plain (its assert fails), and LOFT_HOIST_VERIFY=1 panics "record view address is stale"
+// at the first field read.  Restored byte-identically: interpret / native / every switch
+// / every falsifier green.
+
+struct Ent { id: integer, q: integer, r: integer }
+struct Seg { x0: float, y0: float, w: float }
+struct Named { nm: text, xs: vector<integer>, k: integer }
+struct Chunk { cx: integer, hexes: vector<Ent> }
+struct Map { chunks: vector<Chunk>, tag: integer }
+
+fn ents(n: integer) -> vector<Ent> {
+  v: vector<Ent> = [];
+  for i in 0..n { v += [Ent { id: i, q: i * 3, r: 7 }]; }
+  v
+}
+
+// w1 — three integer fields, every length from empty up.
+fn w1_sum(v: const vector<Ent>) -> integer { t = 0; for e in v { t += e.id * 2 + e.q - e.r; } t }
+fn w1() {
+  a = w1_sum(ents(0));
+  b = w1_sum(ents(1));
+  c = w1_sum(ents(10));
+  d = 0; for e in ents(10) { d += e.q; }
+  f = 0; for e in ents(10) { f += e.id + e.q + e.r; }
+  println("w1 {a} {b} {c} {d} {f}");
+  assert(a == 0 && b == -7 && c == 155 && d == 135 && f == 250, "w1");
+}
+
+// w2 — float fields, and the iteration's own index read in the body.
+fn w2() {
+  s: vector<Seg> = [];
+  for i in 0..6 { s += [Seg { x0: i as float, y0: 0.5, w: 2.0 }]; }
+  acc = 0.0; which = -1;
+  for g in s { acc += g.x0 * g.w + g.y0; if g.x0 > 3.5 && which < 0 { which = g#index; } }
+  println("w2 {acc} {which}");
+  assert(acc == 33.0 && which == 4, "w2");
+}
+
+// w3 — the same vector walked twice, nested: two indexes over one base.
+fn w3() {
+  v = ents(5);
+  t = 0;
+  for a in v { for b in v { if a.id < b.id { t += b.q - a.q; } } }
+  println("w3 {t}");
+  assert(t == 60, "w3");
+}
+
+// w4 — the body WRITES a field through the view, then the vector is walked again.
+fn w4() {
+  v = ents(8);
+  for e in v { e.r = e.id + e.r; e.q += 1; }
+  t = 0; for e in v { t += e.r * 100 + e.q; }
+  println("w4 {t}");
+  assert(t == 8492, "w4");
+}
+
+// w5 — the vector is a FIELD, and each element owns a vector walked inside.
+fn w5() {
+  m = Map { chunks: [], tag: 3 };
+  for c in 0..4 { m.chunks += [Chunk { cx: c, hexes: [] }]; }
+  for c in m.chunks { for i in 0..3 { c.hexes += [Ent { id: i, q: c.cx, r: 1 }]; } }
+  t = 0;
+  for c in m.chunks { t += c.cx * 1000; for h in c.hexes { t += h.id + h.q * 10 + h.r; } }
+  println("w5 {t} {m.tag}");
+  assert(t == 6204 && m.tag == 3, "w5");
+}
+
+// w6 — a CALLEE grows the vector being walked (a direct append is refused at compile
+// time): no base may be held across the growth, and the walk reaches what was appended.
+fn w6_grow(v: vector<Ent>, n: integer) { v += [Ent { id: 100 + n, q: 0, r: 0 }]; }
+fn w6() {
+  v = ents(3);
+  t = 0; n = 0;
+  for e in v { t += e.id; n += 1; if len(v) < 40 { w6_grow(v, n); } }
+  println("w6 {t} {n} {len(v)}");
+  assert(n == 40 && len(v) == 40 && t == 4406, "w6 {t} {n}");
+}
+
+// w7 — the body appends to ANOTHER vector: the loop grows a store.
+fn w7() {
+  v = ents(30);
+  out: vector<Ent> = [];
+  for e in v { if e.id % 3 == 0 { out += [Ent { id: e.id, q: e.q + 1, r: e.r }]; } }
+  t = 0; for e in out { t += e.id + e.q; }
+  println("w7 {len(out)} {t}");
+  assert(len(out) == 10 && t == 550, "w7");
+}
+
+// w8 — `continue` and `break` leave the address and the index consistent.
+fn w8() {
+  v = ents(20);
+  t = 0; last = -1;
+  for e in v {
+    if e.id % 2 == 1 { continue }
+    if e.id > 12 { break }
+    t += e.q; last = e#index;
+  }
+  println("w8 {t} {last}");
+  assert(t == 126 && last == 12, "w8");
+}
+
+// w9 — the view is handed to a callee, so its `DbRef` lives beside its address.
+fn w9_key(e: const Ent, k: integer) -> integer { e.id * k + e.q }
+fn w9() {
+  v = ents(9);
+  t = 0;
+  for e in v { t += w9_key(e, 2) + e.r; }
+  println("w9 {t}");
+  assert(t == 243, "w9");
+}
+
+// w11 — elements that own heap.
+fn w11() {
+  items: vector<Named> = [];
+  for i in 0..5 { items += [Named { nm: "item{i}", xs: [i, i * i], k: i }]; }
+  t = 0;
+  for it in items { t += len(it.nm) * 100 + (it.xs[1] ?? 0) + it.k; }
+  println("w11 {t}");
+  assert(t == 2540, "w11");
+}
+
+// w12 — arithmetic on the iteration's index.
+fn w12() {
+  v = ents(12);
+  t = 0;
+  for e in v { t += (e#index + 1) * e.r + e#index * e#index; }
+  println("w12 {t}");
+  assert(t == 1052, "w12");
+}
+
+// w13 — a vector of scalars; w14 — a filtered walk; w15 — a walk by explicit index.
+fn w13() {
+  xs: vector<integer> = [3, 1, 4, 1, 5, 9, 2, 6];
+  t = 0; for x in xs { t = t * 3 + x; }
+  println("w13 {t}");
+  assert(t == 8571, "w13");
+}
+fn w14() {
+  v = ents(15);
+  t = 0;
+  for e in v if e.id % 4 == 0 { t += e.q + e#index; }
+  println("w14 {t}");
+  assert(t == 96, "w14");
+}
+fn w15() {
+  v = ents(10);
+  t = 0;
+  for i in 0..len(v) { e = v[i]?; t += e.id + e.q; }
+  u = 0;
+  for i in 0..12 { e = v[i]; if e != null { u += e.q; } else { u += 1000; } }
+  println("w15 {t} {u}");
+  assert(t == 180 && u == 2135, "w15");
+}
+
+fn main() {
+  w1(); w2(); w3(); w4(); w5(); w6(); w7(); w8(); w9(); w11(); w12(); w13(); w14(); w15();
+  println("iteration base ok");
+}

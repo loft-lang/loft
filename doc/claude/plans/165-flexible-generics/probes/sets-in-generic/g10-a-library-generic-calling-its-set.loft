@@ -1,0 +1,7 @@
+// B3b — the generic and the set live in a LIBRARY; the instance is built while the user's
+// file is parsed, and the call re-decides in the library's own names.
+// @EXPECT: special cat 1|any dog 2
+use setlib;
+fn main() {
+  println("{wrap(Cat{n:1})}|{wrap(Dog{n:2})}");
+}

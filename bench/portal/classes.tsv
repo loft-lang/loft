@@ -1,0 +1,19 @@
+# The CLASS registry — what each mechanism class is, in the order the portal lists them.
+# Columns: class <TAB> what bounds a routine of this class.
+# A class names the MECHANISM a routine's cost is made of, so that a slow class points at
+# one part of the compiler or runtime rather than at one program.
+call	many small calls or recursion: the per-call frame and argument passing
+int-loop	scalar integer arithmetic in loops: the checked operators and the loop counter
+float-kernel	float arithmetic in loops: the operators, libm calls, the null (NaN) handling
+vector-read	indexed reads of scalar vectors, and reductions over them
+vector-write	element writes and fills of scalar vectors, in place
+vector-build	making a scalar vector: push, comprehension, copy, a vector of vectors
+record-build	appending records to a vector, and returning built records
+record-field	reading and writing fields of records reached through a vector
+keyed	hash, sorted and index collections: insert, find, update, remove, ordered walk
+text-scan	reading text: byte and character walks, find, contains, a line loop
+text-build	making text: format, replace, join, lowercase, trim, the collected pieces of a split
+text-parse	numbers parsed out of text
+alloc-temp	short-lived records and vectors handed between helper calls
+parallel	`par`: work split over threads and its results gathered
+native-boundary	a native (Rust cdylib) routine: the cost of crossing into it

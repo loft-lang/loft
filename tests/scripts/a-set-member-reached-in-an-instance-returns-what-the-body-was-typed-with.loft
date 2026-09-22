@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generic body is typed once; a set call inside it is decided again in each instance
+// (@PLN165 B3b).  `relay<U>`'s body is typed with `keep<T>`'s `-> T`, so at `integer` the call
+// may not reach `keep(v: integer) -> Pt` — the instance would hand a record up where its
+// body expects an integer.  Refused naming the definition it reaches, rather than answered.
+//
+// @falsified-at: 142e35694 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-set-member-reached-in-an-instance-returns-what-the-body-was-typed-with.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — refused on both trees; only the refusal moves.
+//   ARMED: nothing.
+//   WITNESS: on the control the set call inside `relay` is refused in the template body,
+//     "generic type U: method call requires a concrete type".
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: inside `relay`, the call `keep` reaches keep(integer) at (integer), which returns Pt — the generic body was typed with integer
+
+struct Pt { x: integer, y: integer }
+fn keep<T>(v: T) -> T { v }
+fn keep(v: integer) -> Pt { Pt { x: 0, y: 0 } }
+fn relay<U>(v: U) -> U { keep(v) }
+
+fn main() {
+  println("{relay(3)}");
+}

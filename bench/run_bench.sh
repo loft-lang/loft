@@ -76,6 +76,7 @@ Environment:
   LOFT_LIB_DIR    Directory containing libloft.rlib (default: target/release or /usr/local/share/loft)
 
 Output columns: bench | python | loft-interp | loft-native | loft-wasm | rust
+(milliseconds per OP; for statistics — repeats, spread, a ratio with its range — use bench/stats.py)
 EOF
       exit 0 ;;
     --skip-python) SKIP_PYTHON=1 ;;
@@ -135,10 +136,20 @@ if [[ -n "$STDLIB_PATH" ]]; then
   LOFT_PATH_FLAG=(--path "$STDLIB_PATH")
 fi
 
+# Milliseconds per OP, summed over the program's routines, from the rows every bench prints
+# (README.md § The row protocol): `routine iters us ns_op px ns_px hash`.  Per op rather than
+# per run, because the lanes run a different number of ops — the slow ones few, the fast
+# ones many — and only the per-op figure compares across them.
 extract_ms() {
-  # Extract trailing "time: Xms" from output
-  grep -oE 'time: [0-9]+ms' | tail -1 | grep -oE '[0-9]+'
+  awk -F'\t' 'NF == 7 && $1 != "routine" { ns += $4; rows++ }
+              END { if (rows) printf "%.2f", ns / 1000000 }'
 }
+
+# Ops per run: enough for a steady per-op figure, few enough that the interpreted lanes
+# finish.  `bench/stats.py` calibrates this per lane and samples repeatedly; this table is
+# the quick look.
+N_SLOW=2
+N_FAST=10
 
 run_bench() {
   local dir="$1"
@@ -162,14 +173,14 @@ run_bench() {
 
   # Python
   if [[ $SKIP_PYTHON -eq 0 && $HAS_PYTHON -eq 1 && -f "$dir/bench.py" ]]; then
-    [[ $WARMUP -eq 1 ]] && python3 "$dir/bench.py" > /dev/null 2>&1 || true
-    py_ms=$(python3 "$dir/bench.py" 2>/dev/null | extract_ms || true)
+    [[ $WARMUP -eq 1 ]] && python3 "$dir/bench.py" --n $N_SLOW > /dev/null 2>&1 || true
+    py_ms=$(python3 "$dir/bench.py" --n $N_SLOW 2>/dev/null | extract_ms || true)
   fi
 
   # loft interpreter
   if [[ $HAS_LOFT -eq 1 && -f "$dir/bench.loft" ]]; then
-    [[ $WARMUP -eq 1 ]] && "$LOFT" "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
-    li_ms=$("$LOFT" "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" 2>/dev/null | extract_ms || true)
+    [[ $WARMUP -eq 1 ]] && "$LOFT" --interpret "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" --n $N_SLOW > /dev/null 2>&1 || true
+    li_ms=$("$LOFT" --interpret "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" --n $N_SLOW 2>/dev/null | extract_ms || true)
   fi
 
   local build_dir="$dir/.loft"
@@ -189,8 +200,8 @@ run_bench() {
     fi
   fi
   if [[ -f "$build_dir/bench_bin" ]]; then
-    [[ $WARMUP -eq 1 ]] && "$build_dir/bench_bin" > /dev/null 2>&1 || true
-    ln_ms=$("$build_dir/bench_bin" 2>/dev/null | extract_ms || true)
+    [[ $WARMUP -eq 1 ]] && "$build_dir/bench_bin" --n $N_FAST > /dev/null 2>&1 || true
+    ln_ms=$("$build_dir/bench_bin" --n $N_FAST 2>/dev/null | extract_ms || true)
   fi
 
   # loft wasm
@@ -200,8 +211,8 @@ run_bench() {
       "$LOFT" --native-wasm "$build_dir/bench.wasm" "${LOFT_PATH_FLAG[@]}" "$dir/bench.loft" > /dev/null 2>&1 || true
     fi
     if [[ -f "$build_dir/bench.wasm" && $HAS_WASMTIME -eq 1 ]]; then
-      [[ $WARMUP -eq 1 ]] && "$WASMTIME" --dir . "$build_dir/bench.wasm" > /dev/null 2>&1 || true
-      lw_ms=$("$WASMTIME" --dir . "$build_dir/bench.wasm" 2>/dev/null | extract_ms || true)
+      [[ $WARMUP -eq 1 ]] && "$WASMTIME" --dir . "$build_dir/bench.wasm" --n $N_FAST > /dev/null 2>&1 || true
+      lw_ms=$("$WASMTIME" --dir . "$build_dir/bench.wasm" --n $N_FAST 2>/dev/null | extract_ms || true)
     fi
   fi
 
@@ -211,8 +222,8 @@ run_bench() {
     rustc -O -o "$build_dir/bench_rs_bin" "$dir/bench.rs" > /dev/null 2>&1 || true
   fi
   if [[ $HAS_RUST -eq 1 && -f "$build_dir/bench_rs_bin" ]]; then
-    [[ $WARMUP -eq 1 ]] && "$build_dir/bench_rs_bin" > /dev/null 2>&1 || true
-    rs_ms=$("$build_dir/bench_rs_bin" 2>/dev/null | extract_ms || true)
+    [[ $WARMUP -eq 1 ]] && "$build_dir/bench_rs_bin" --n $N_FAST > /dev/null 2>&1 || true
+    rs_ms=$("$build_dir/bench_rs_bin" --n $N_FAST 2>/dev/null | extract_ms || true)
   fi
 
   ms() { [[ -z "$1" ]] && echo "-" || echo "${1}ms"; }

@@ -1,0 +1,10 @@
+// D10 — a library's struct that names itself (regularly), built by the consumer at its own
+// type and walked by the library.
+// @EXPECT: 3|1|c
+use gridlib;
+struct Mine { s: text }
+fn main() {
+  n = Node { v: 1, next: Node { v: 2, next: Node { v: 3, next: null } } };
+  m = Node { v: Mine { s: "c" }, next: null };
+  println("{depth(n)}|{depth(m)}|{m.v.s}");
+}

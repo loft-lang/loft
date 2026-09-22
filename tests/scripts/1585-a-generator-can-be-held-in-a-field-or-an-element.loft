@@ -1,0 +1,266 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1585, `@FR-G-Hold` — A GENERATOR CAN BE HELD IN A FIELD OR AN ELEMENT.  A handle is a value
+// like any other (`(T-Chk-Vec)` types `[g]` for every element type), so a vector of generators
+// and a struct holding one both build, on both backends — the scheduler shape: a set of live
+// behaviours advanced once per tick.  The frame is owned data (`formal/coroutines.md`
+// `(G-Hold)`): whatever holds the handle releases the frame, once —
+//
+// - a container at its death, a live generator included;
+// - a field or an element given a new handle, the frame the old one named;
+// - a removed element (`v.remove(i)`, `x#remove`), the frames it held, in its inline records
+//   and its vectors too;
+// - a local given a new handle, the frame it held — unless it moved into a container first.
+//
+// A handle read out of a member (`h = t.g`, `h = tasks[i]`, a `for` over a vector of them) is a
+// VIEW (`(B-View)`): advancing it advances the member's generator, and the member keeps it.
+//
+// Before, both shapes failed to compile ("cannot build this record", "Field access not supported
+// on type iterator"), with no rule behind the refusal.  Found on the way and fixed here, each a
+// cell below: rebinding a generator local held its first frame to program exit; a value `if`
+// whose arms are generator handles was refused as a generator body; a generator advancing
+// another generator panicked on `--native` ("already borrowed"); `next(tasks[i])` with a
+// computed index was an unknown function; a tuple holding a generator was an internal compiler
+// error; and a generator handle printed nothing.
+//
+// Every generator here owns a heap local, so a frame nobody releases is a store the leak gate
+// reports, and one released early answers `-1` where the hand-computed value is expected.
+//
+// @falsified-at: 870c4cba6 — interpret exit 1 -> 0, native exit 1 -> 0 (LOFT_STRICT_STORES=1 make
+//   falsify …; no patch receipt: the fix is 1454 source lines, past the tool's bound)
+// CHANNEL: exit code, both backends — the control refuses the program at compile time.
+// ARMED: LOFT_STRICT_STORES=1, for the leak half: every generator here owns a heap local.
+// WITNESS: on the control, `fatal: cannot build this record — its type never resolved` at
+//   `tasks += [g]` — the first refusal, which stops the compile.
+// HOLDS: assertions, leak and panic read zero on both trees — the control stops before running.
+
+fn patrol(id: integer, n: integer) -> iterator<integer> {
+  steps = [0, 1, 2, 3, 4, 5, 6, 7];
+  for s in steps {
+    if s >= n { break; }
+    yield id * 100 + s;
+  }
+}
+
+struct Task { g: iterator<integer>, id: integer }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// 1 — a vector: appended, literal, a computed index, and a local moved in (not freed twice).
+fn c1() -> text {
+  tasks: vector<iterator<integer>> = [];
+  g = patrol(1, 2);
+  tasks += [g];
+  tasks += [patrol(2, 2)];
+  i = 1;
+  a = next(tasks[0]) ?? -1;
+  b = next(tasks[i]) ?? -1;
+  c = next(tasks[0]) ?? -1;
+  far = 7;
+  d = next(tasks[far]) ?? -1;
+  "{a} {b} {c} {d} {len(tasks)}"
+}
+
+// 2 — the scheduler: round-robin until every behaviour is done, removing each as it ends.
+fn c2() -> text {
+  ts = [patrol(1, 3), patrol(2, 1), patrol(3, 2)];
+  out = "";
+  while len(ts) > 0 {
+    i = 0;
+    while i < len(ts) {
+      x = next(ts[i]);
+      if x == null { ts.remove(i); } else { out += "{x},"; i += 1; }
+    }
+  }
+  out
+}
+
+// 3 — a field: advanced in place, walked by a `for` that breaks (the field keeps its place),
+//     given a new generator, and read through a view in an inner block.
+fn c3() -> text {
+  t = Task { g: patrol(1, 6), id: 7 };
+  a = next(t.g) ?? -1;
+  s = 0;
+  for x in t.g { s += x; if x == 102 { break; } }
+  b = next(t.g) ?? -1;
+  v = 0;
+  if a > 0 { h = t.g; v = next(h) ?? -1; }
+  c = next(t.g) ?? -1;
+  t.g = patrol(2, 3);
+  d = next(t.g) ?? -1;
+  "{a} {s} {b} {v} {c} {d} {t.id}"
+}
+
+// 4 — an element given a new generator, and an element read through a view in an inner block.
+fn c4() -> text {
+  ts = [patrol(1, 3), patrol(2, 3)];
+  a = next(ts[0]) ?? -1;
+  ts[0] = patrol(9, 2);
+  b = next(ts[0]) ?? -1;
+  if b > 0 { h = ts[1]; b += next(h) ?? -1; }
+  c = next(ts[1]) ?? -1;
+  "{a} {b} {c}"
+}
+
+// 5 — a `for` over a vector of generators, twice: the loop variable views each element.
+fn c5() -> text {
+  ts = [patrol(1, 3), patrol(2, 3), patrol(3, 3)];
+  s = 0;
+  for t in ts { s += next(t) ?? -1; }
+  for t in ts { s += next(t) ?? -1; }
+  "{s}"
+}
+
+// 6 — a live generator removed, by index and by `#remove`: its frame goes with it.
+fn c6() -> text {
+  ts = [patrol(1, 3), patrol(2, 3), patrol(3, 3)];
+  a = next(ts[0]) ?? -1;
+  ts.remove(0);
+  s = 0;
+  for t in ts { v = next(t) ?? -1; s += v; if v == 200 { t#remove; } }
+  b = next(ts[0]) ?? -1;
+  "{a} {s} {b} {len(ts)}"
+}
+
+// 7 — a vector of records holding generators: removed, `#remove`d, and dying with the rest.
+fn c7() -> text {
+  ts = [Task { g: patrol(1, 3), id: 1 }, Task { g: patrol(2, 3), id: 2 }, Task { g: patrol(3, 3), id: 3 }];
+  a = next(ts[0].g) ?? -1;
+  ts.remove(0);
+  b = next(ts[0].g) ?? -1;
+  for t in ts { if t.id == 2 { t#remove; } }
+  c = next(ts[0].g) ?? -1;
+  "{a} {b} {c} {len(ts)}"
+}
+
+// 8 — a local given a new generator releases the one it held, in a loop too; one moved into a
+//     container first keeps running there, on the path that moved it.
+fn c8(moved: boolean) -> text {
+  g = patrol(0, 3);
+  s = 0;
+  for i in 1..4 { s += next(g) ?? -1; g = patrol(i, 3); }
+  s += next(g) ?? -1;
+  tasks: vector<iterator<integer>> = [];
+  h = patrol(5, 3);
+  if moved { tasks += [h]; }
+  h = patrol(6, 3);
+  b = next(h) ?? -1;
+  c = 0;
+  for t in tasks { c += next(t) ?? -1; }
+  "{s} {b} {c}"
+}
+
+// 9 — a local that views a member on one path and owns a generator on another, on two
+//     assignments and on two arms of one.
+fn c9(t: Task, own: boolean) -> integer {
+  h = t.g;
+  if own { h = patrol(5, 3); }
+  next(h) ?? -1
+}
+fn c9_join() -> text {
+  ts = [patrol(1, 3), patrol(2, 3)];
+  s = 0;
+  for i in 0..4 {
+    h = if i % 2 == 0 { ts[i / 2] } else { patrol(9, 2) };
+    s += next(h) ?? -1;
+  }
+  c = next(ts[0]) ?? -1;
+  "{s} {c}"
+}
+
+// 10 — a generator that advances another (native panicked), and a value `if` of handles.
+fn relay(g: iterator<integer>) -> iterator<integer> { for x in g { yield x + 1000; } }
+fn c10() -> text {
+  g = patrol(1, 3);
+  h = relay(g);
+  a = next(h) ?? -1;
+  b = next(h) ?? -1;
+  k = if a > 0 { patrol(4, 2) } else { patrol(5, 2) };
+  c = next(k) ?? -1;
+  "{a} {b} {c}"
+}
+
+// 11 — records holding generators, yielded and kept (`(G-Own)` composes).
+fn tasks(n: integer) -> iterator<Task> { for i in 1..n { yield Task { g: patrol(i, 2), id: i }; } }
+fn c11() -> text {
+  keep: vector<Task> = [];
+  for t in tasks(4) { a = next(t.g) ?? -1; if a > 100 { keep += [t]; } }
+  s = 0;
+  for k in keep { s += next(k.g) ?? -1; }
+  "{s} {len(keep)}"
+}
+
+// 13 — a removed record's handles are released through its inline records and its vectors.
+struct Outer { n: integer, t: Task }
+struct Crew { ts: vector<Task>, n: integer }
+fn c13() -> text {
+  os = [Outer { n: 1, t: Task { g: patrol(1, 3), id: 1 } }, Outer { n: 2, t: Task { g: patrol(2, 3), id: 2 } }];
+  a = next(os[0].t.g) ?? -1;
+  os.remove(0);
+  b = next(os[0].t.g) ?? -1;
+  cs = [Crew { ts: [Task { g: patrol(3, 3), id: 3 }, Task { g: patrol(4, 3), id: 4 }], n: 1 },
+        Crew { ts: [Task { g: patrol(5, 3), id: 5 }], n: 2 }];
+  c = next(cs[0].ts[1].g) ?? -1;
+  for k in cs { if k.n == 1 { k#remove; } }
+  d = next(cs[0].ts[0].g) ?? -1;
+  "{a} {b} {c} {d} {len(os)} {len(cs)}"
+}
+
+// 14 — a tuple member: a local, a returned tuple rebound in a loop, destructured, a
+//     destructuring `for` over a vector of tuples, whose binder views the element, and an
+//     element's member read again and again, each read a view.
+fn pair(i: integer) -> (integer, iterator<integer>) { t = (i, patrol(i, 3)); t }
+fn c14() -> text {
+  t = (7, patrol(1, 3));
+  a = next(t.1) ?? -1;
+  s = 0;
+  for i in 1..3 {
+    u = pair(i);
+    s += next(u.1) ?? -1;
+    u = (9, patrol(9, 2));
+    s += next(u.1) ?? -1;
+  }
+  v: vector<(integer, iterator<integer>)> = [];
+  v += [(1, patrol(4, 3))];
+  (k, g) = (2, patrol(5, 3));
+  b = next(g) ?? -1;
+  c = 0;
+  for (i, h) in v { c += i + (next(h) ?? -1); }
+  d = next(v[0].1) ?? -1;
+  r = "";
+  for i in 0..2 { r += "{next(v[0].1) ?? -1},"; }
+  "{a} {t.0} {s} {b} {c} {d} {k} {r}"
+}
+
+// 12 — a handle renders as its kind, held or bare, on both backends alike.
+fn c12() -> text {
+  t = Task { g: patrol(1, 3), id: 7 };
+  g = patrol(2, 2);
+  "{t} {[patrol(3, 1)]} {g}"
+}
+
+fn main() {
+  ok("c1 vector            ", c1(), "100 200 101 -1 2");
+  ok("c2 scheduler         ", c2(), "100,200,300,101,301,102,");
+  ok("c3 field             ", c3(), "100 203 103 104 105 200 7");
+  ok("c4 element           ", c4(), "100 1100 201");
+  ok("c5 for over handles  ", c5(), "1203");
+  ok("c6 remove            ", c6(), "100 500 301 1");
+  ok("c7 records           ", c7(), "100 200 300 1");
+  ok("c8 rebind, moved     ", c8(true), "600 600 500");
+  ok("c8 rebind, kept      ", c8(false), "600 600 0");
+  t = Task { g: patrol(1, 3), id: 7 };
+  a = c9(t, false);
+  b = c9(t, true);
+  c = next(t.g) ?? -1;
+  ok("c9 view, then own    ", "{a} {b} {c}", "100 500 101");
+  ok("c9 join              ", c9_join(), "2100 101");
+  ok("c10 relay, value if  ", c10(), "1100 1101 400");
+  ok("c11 yielded records  ", c11(), "502 2");
+  ok("c13 nested removal   ", c13(), "100 200 400 500 1 1");
+  ok("c14 tuples           ", c14(), "100 7 2100 500 401 401 2 402,-1,");
+  ok("c12 rendering        ", c12(), "{{g:iterator,id:7}} [iterator] iterator");
+  println("a generator can be held in a field or an element: every cell holds");
+}

@@ -71,14 +71,30 @@ impl OpEmitter for OpGetRecordEmitter {
             return super::default::DefaultEmitter.emit(ctx, args);
         }
         let db_tp = *db_tp;
-        let key_types: Vec<i8> = ctx
+        let row = ctx
             .output
             .stores
             .types
-            .get(usize::try_from(db_tp).unwrap_or(0))
+            .get(usize::try_from(db_tp).unwrap_or(0));
+        let key_types: Vec<i8> = row
             .map(|t| t.keys.iter().map(|k| k.type_nr).collect())
             .unwrap_or_default();
         let key_vals = &args[3..];
+        // @FR-R-TypedKeyed — the schema says this is a `hash` with ONE key of an integer
+        // width `hash::find_long` lists, so the lookup takes the typed entry with the key
+        // as a value.  The widths are the ones `emit_content` wraps as `Content::Long`
+        // AND `fast_key` resolves; any other key, kind or arity keeps the general call.
+        let typed = !ctx.output.typed_keyed_disabled
+            && row.is_some_and(|t| matches!(t.parts, crate::database::Parts::Hash(..)))
+            && key_vals.len() == 1
+            && matches!(key_types.as_slice(), [k] if matches!(k.unsigned_abs(), 1 | 2 | 8 | 12));
+        if typed {
+            write!(ctx.w, "OpGetHashLong(cell,")?;
+            ctx.emit(&args[0])?;
+            write!(ctx.w, ", {db_tp}_i32, ")?;
+            ctx.output.emit_long_key(&mut *ctx.w, &key_vals[0])?;
+            return write!(ctx.w, ")");
+        }
         write!(ctx.w, "OpGetRecord(cell,")?;
         ctx.emit(&args[0])?;
         write!(ctx.w, ", {db_tp}_i32, ")?;

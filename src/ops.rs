@@ -232,19 +232,39 @@ macro_rules! sentinel_long {
     }};
 }
 
+/// The character of `val` that holds byte `from` (a negative `from` counts back from the
+/// end), or `'\0'` when `from` lies outside the text.
+///
+/// A byte below `0x80` is a whole character, so that case is answered here, inline: a
+/// character-by-character walk of ASCII text costs one bounds test and one load per
+/// character, in generated code as well as in the interpreter.  Every other byte belongs
+/// to a multi-byte character and goes to [`text_character_wide`].
+///
+/// Enforces `@FR-R-Cold`: the snap-back and the decode are outlined so this test inlines.
+#[inline]
 #[must_use]
 pub fn text_character(val: &str, from: i64) -> char {
     let len = val.len() as i64;
-    let mut idx = if from < 0 { from + len } else { from };
+    let idx = if from < 0 { from + len } else { from };
     if idx < 0 || idx >= len {
         return char::from(0);
     }
-    let mut b = val.as_bytes()[idx as usize];
-    while b & 0xC0 == 0x80 && idx > 0 {
-        idx -= 1;
-        b = val.as_bytes()[idx as usize];
+    let b = val.as_bytes()[idx as usize];
+    if b < 0x80 {
+        return char::from(b);
     }
-    val[idx as usize..].chars().next().unwrap_or(char::from(0))
+    text_character_wide(val, idx as usize)
+}
+
+/// The multi-byte character holding byte `idx` of `val`.  An index inside the character
+/// snaps back to its first byte, so every byte of a character answers that character.
+#[inline(never)]
+fn text_character_wide(val: &str, mut idx: usize) -> char {
+    let bytes = val.as_bytes();
+    while bytes[idx] & 0xC0 == 0x80 && idx > 0 {
+        idx -= 1;
+    }
+    val[idx..].chars().next().unwrap_or(char::from(0))
 }
 
 #[must_use]

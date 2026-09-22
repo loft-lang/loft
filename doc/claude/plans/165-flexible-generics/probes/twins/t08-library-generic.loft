@@ -1,0 +1,11 @@
+// A0 — a `use`d library's generic, instantiated at the consumer's OWN record type.
+// @EXPECT: 2=2|0=0
+use twinlib;
+struct Mine { m: integer }
+fn count_if_positive_m(v: vector<Mine>, n: integer) -> integer {
+  if n > 0 { len(v) } else { 0 }
+}
+fn main() {
+  ms = [Mine { m: 1 }, Mine { m: 2 }];
+  println("{twinlib::count_if_positive(ms, 1)}={count_if_positive_m(ms, 1)}|{twinlib::count_if_positive(ms, 0)}={count_if_positive_m(ms, 0)}");
+}

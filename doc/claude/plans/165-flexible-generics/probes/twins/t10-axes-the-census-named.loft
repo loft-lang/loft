@@ -1,0 +1,21 @@
+// A0 — the axes `matrix_axes.py` found t01–t09 holding fixed: a narrow integer (loft#1383's
+// class, two instances at two widths), a boolean, an enum, a keyed collection BOUND to the
+// variable, and an argument spelled as a field, an element and a call result.
+// @EXPECT: 200=200|70000=70000|true=true|Green=Green|2=2|5=5|6=6|9=9
+enum Color { Red, Green }
+struct Key { k: integer }
+struct Hold { n: integer, xs: vector<integer> }
+fn idf<T>(x: T) -> T { x }
+fn idf_u8(x: u8) -> u8 { x }
+fn idf_i(x: integer) -> integer { x }
+fn idf_b(x: boolean) -> boolean { x }
+fn idf_c(x: Color) -> Color { x }
+fn idf_h(x: hash<Key[k]>) -> hash<Key[k]> { x }
+fn make() -> Hold { Hold { n: 9, xs: [1] } }
+fn main() {
+  small: u8 = 200;
+  wide = 70000;
+  h: hash<Key[k]> = [Key { k: 1 }, Key { k: 2 }];
+  o = Hold { n: 5, xs: [6, 7] };
+  println("{idf(small)}={idf_u8(small)}|{idf(wide)}={idf_i(wide)}|{idf(true)}={idf_b(true)}|{idf(Color.Green)}={idf_c(Color.Green)}|{len(idf(h))}={len(idf_h(h))}|{idf(o.n)}={idf_i(o.n)}|{idf(o.xs[0])}={idf_i(o.xs[0])}|{idf(make()).n}={make().n}");
+}

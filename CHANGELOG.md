@@ -14,6 +14,27 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A store written by an older version of your program is refused, not misread, by every
+way of opening it.**  A struct that gained, lost or changed a field lays its records out
+differently, and `store_load` already refused a store written with the old layout.
+`store_persist_bind` on an existing file did not: it bound the store and read each record at
+the wrong offsets, and then marked the file with the new layout, so later loads accepted it
+too.  `store_load_url` and `store_load_url_trusted` did not check at all.  All three now
+answer `false`, name what differs, and leave the file and your collection untouched.  Rebuild
+the store with the new program, or open it with the version that wrote it.
+
+**A `limit(lo, hi)` type refuses a value it cannot hold, like `u8` always did.**  Storing a
+plain integer into `integer limit(0, 7)` — a field, a parameter, a variable — compiled and
+silently stored the range's default (0, or the bound nearest zero) with nothing reported,
+where the same store into `u8` was refused with the cure named; `x as integer limit(0, 7)?`
+answered `x` unchanged.  All three now behave as the width aliases do: the store, call and
+out-of-range literal are refused, and the message says to write what the value becomes
+(`x ?? 0`) or to take the checked cast, which is `null` when it does not fit.  A program that
+relied on the silent default gets an error at each such site and the same 0 back once it
+writes `?? 0`.  The `redundant-coalesce` lint no longer flags that `?? 0` as unused.  Also, a
+`limit` bound the type cannot carry is refused once and recovers as plain `integer`, instead
+of adding a second error about a type you never wrote.
+
 **A record copied from a local whose name an earlier block also used reads right on the
 interpreter.**  `r = P {…}` in one loop and, in a later loop, `r = P {…}; c = r` — the second
 `r` is a new variable under the old name, and on `--interpret` the copy `c = r` was handed the

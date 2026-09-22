@@ -514,6 +514,22 @@ fn add_fn_block(
         eprintln!("live-reload: '{head}' parsed but did not join the set of '{name}'; skipped");
         return false;
     }
+    // `Disp-World`'s stated limit (@PLN165 B7): a set that holds a GENERIC has no per-spelling
+    // stub at a static site (`stub_admissible` declines — a template's call is an instance
+    // chosen per use), so its static calls reach their definitions directly and nothing here
+    // could rebuild them.  Taking the add would move the dynamic sites to the new world and
+    // leave the static ones selecting in the old — the stale selection the rule forbids.  So
+    // the add is refused whole, and the next full run takes it.
+    if set_members(&parser.data, set)
+        .iter()
+        .any(|&m| parser.data.def_type(m) == crate::data::DefType::Generic)
+    {
+        parser.data.rollback_to(pre_defs);
+        eprintln!(
+            "live-reload: adding '{head}' is refused — the set of '{name}' holds a generic, whose static calls reach their definitions directly with nothing to rebuild; restart to apply"
+        );
+        return false;
+    }
     // Every specialisation of the name from the worlds before this one — the defs the running
     // program's sites call, whose numbers stay the dispatch home; a rebuild from an earlier
     // world (`__w<k>`) is reached only through one of these and is not rebuilt again.

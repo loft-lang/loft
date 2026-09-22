@@ -719,7 +719,7 @@ impl Parser {
             // null with no diagnostic at all (`t = (x + y, 9)`).  Ask the lexer first and
             // give a member its own temp; the built value returns on the normal channel, so
             // everything downstream is unchanged.
-            let divert = matches!(val, Value::Var(_)) && self.lexer.peek_tuple_literal();
+            let divert = matches!(val, Value::Var(_)) && self.peek_tuple_literal();
             let mut member0 = Value::Null;
             let t = if divert {
                 let t = self.expression(&mut member0);
@@ -1159,7 +1159,7 @@ impl Parser {
         if fnr == usize::MAX {
             return None;
         }
-        Some(self.get_field(rec, fnr, Value::Var(self.closure_param)))
+        Some(self.closure_capture_read(rec, fnr))
     }
 
     /// The record and attribute index THIS scope names a relayed capture by, or `None` when it
@@ -1217,9 +1217,12 @@ impl Parser {
         // `Reference(elem)` type and `p += [9]` reported *"No matching operator 'Add' on
         // 'integer' and 'integer'"* — the ELEMENT's type, for an append to the collection
         // (loft#1276, the same shape loft#1209 had through `?`).
+        // A variable whose first binding is the statement creating this lambda holds nothing
+        // yet, so it is not offered as a capture (`first_bind_targets`).
         let mut ctx: Vec<(String, Type)> = outer_vars
             .all_names_and_types()
             .into_iter()
+            .filter(|(n, _)| !self.first_bind_targets.contains(n))
             .map(|(n, t)| match t {
                 Type::RefVar(inner) => (n, *inner),
                 other => (n, other),
@@ -1360,6 +1363,9 @@ or build a local and use that."
     }
 
     pub(crate) fn parse_lambda(&mut self, code: &mut Value) -> Type {
+        if self.discovering > 0 {
+            return self.lambda_signature();
+        }
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
         let stored_name = format!("n_{lambda_name}");
@@ -1401,6 +1407,7 @@ or build a local and use that."
         }
         let d_nr = self.context;
         self.mark_lambda_sandboxed(outer_context, d_nr);
+        self.mark_template_lambda(outer_context, d_nr);
 
         // Parse optional return type annotation.
         let result = if self.lexer.has_token("->") {
@@ -1574,6 +1581,75 @@ or build a local and use that."
         Type::Function(arg_types, Box::new(ret_type), dep, consts)
     }
 
+    /// The type a `fn(…) -> τ { … }` lambda's header spells, for a generic literal reading its
+    /// values to learn its instance (`Parser::discovering`): that read defines nothing, and a
+    /// lambda parsed as one is a definition.  The body is still READ — a walk over its tokens
+    /// would record ones no parse reads (a format string's holes) for the literal's second
+    /// read to replay — against a table of its own, which the literal's read puts back.
+    fn lambda_signature(&mut self) -> Type {
+        let file = self.lexer.pos().file.clone();
+        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", &file));
+        self.lexer.token("(");
+        let mut arguments = Vec::new();
+        self.parse_arguments("__lambda", &mut arguments);
+        self.lexer.token(")");
+        let result = if self.lexer.has_token("->") {
+            self.parse_type_full(self.context, true)
+                .unwrap_or(Type::Void)
+        } else {
+            Type::Void
+        };
+        let result = self.boxed_tuple_return(result);
+        self.read_lambda_body(&arguments);
+        self.vars = outer_vars;
+        let arg_types: Vec<Type> = arguments.iter().map(|a| a.typedef.clone()).collect();
+        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant));
+        Type::Function(arg_types, Box::new(result), Deps::none(), consts)
+    }
+
+    /// A `|…| { … }` lambda for the same read: its parameter types come from the type that
+    /// read is looking for, so it answers none, and the value holding it binds nothing
+    /// (`Parser::discovery_skipped_lambda`).  Read as [`Self::lambda_signature`] reads a body.
+    fn skip_short_lambda(&mut self, expect_close: bool) {
+        let file = self.lexer.pos().file.clone();
+        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", &file));
+        let mut arguments = Vec::new();
+        if expect_close {
+            while let Some(name) = self.lexer.has_identifier() {
+                arguments.push(Argument {
+                    name,
+                    typedef: Type::Unknown(0),
+                    default: Value::Null,
+                    constant: false,
+                    ref_pos: (0, 0),
+                    const_pos: (0, 0),
+                });
+                if !self.lexer.has_token(",") {
+                    break;
+                }
+            }
+            self.lexer.token("|");
+        }
+        self.read_lambda_body(&arguments);
+        self.vars = outer_vars;
+        self.discovery_skipped_lambda = true;
+    }
+
+    /// Read a discovered lambda's body with its parameters in scope; what it reports is the
+    /// lambda's own second read's to say.
+    fn read_lambda_body(&mut self, arguments: &[Argument]) {
+        let mark = self.lexer.diagnostics().mark();
+        for a in arguments {
+            self.create_var(&a.name, &a.typedef);
+        }
+        let outer_loop = self.in_loop;
+        self.in_loop = false;
+        let mut body = Value::Null;
+        self.parse_block("lambda", &mut body, &Type::Unknown(0));
+        self.in_loop = outer_loop;
+        self.lexer.rewind_diagnostics(mark);
+    }
+
     // <short-lambda> ::= '||' ['->' type] block              (expect_close=false)
     //                  | '|' [param {',' param}] '|' ['->' type] block  (expect_close=true)
     // param ::= ident [':' type]
@@ -1583,6 +1659,10 @@ or build a local and use that."
     // Produces Type::Function; runtime representation is d_nr as i32, same as fn-ref.
     #[allow(clippy::too_many_lines)] // single context save/restore spans the whole body; splitting would need unsafe borrowing
     pub(crate) fn parse_lambda_short(&mut self, code: &mut Value, expect_close: bool) -> Type {
+        if self.discovering > 0 {
+            self.skip_short_lambda(expect_close);
+            return Type::Unknown(0);
+        }
         let lambda_name = format!("__lambda_{}", self.lambda_counter);
         self.lambda_counter += 1;
         let stored_name = format!("n_{lambda_name}");
@@ -1691,6 +1771,7 @@ or build a local and use that."
         }
         let d_nr = self.context;
         self.mark_lambda_sandboxed(outer_context, d_nr);
+        self.mark_template_lambda(outer_context, d_nr);
 
         // return-type annotations are not allowed in |x| short-form lambdas.
         let has_arrow = self.lexer.has_token("->");
@@ -1898,8 +1979,20 @@ or build a local and use that."
 
     // emit the lambda value — plain Int(d_nr) for non-capturing
     // lambdas, or an Insert block that allocates and populates the closure record.
-    #[allow(clippy::similar_names)]
     fn emit_lambda_code(&mut self, code: &mut Value, d_nr: u32) {
+        self.emit_lambda_code_in(code, d_nr, None);
+    }
+
+    /// [`Self::emit_lambda_code`], with the closure record built into `reuse_w` when given —
+    /// the `__clos` variable an instance inherited from its template, re-emitted for the
+    /// instance's own record ([`Parser::instantiate_template_lambda`]).
+    #[allow(clippy::similar_names)]
+    pub(crate) fn emit_lambda_code_in(
+        &mut self,
+        code: &mut Value,
+        d_nr: u32,
+        reuse_w: Option<u16>,
+    ) {
         let closure_rec_d = self.data.def(d_nr).closure_record();
         if closure_rec_d != u32::MAX && !self.first_pass {
             // A5.6-1/2 (16-byte fn-ref + embedded closure):
@@ -1919,10 +2012,16 @@ or build a local and use that."
             // At call sites, fn_call_ref reads the embedded DbRef and pushes it as
             // the hidden __closure arg automatically — no explicit injection needed.
             let rec_tp = Type::Reference(closure_rec_d, Deps::none());
-            let w = self.create_unique("__clos", &rec_tp);
-            self.vars.defined(w);
-            // Register w as a work-ref so parse_code inserts Set(w,Null) at fn start.
-            self.vars.add_to_work_refs(w);
+            let w = if let Some(w) = reuse_w {
+                self.vars.set_type(w, rec_tp.clone());
+                w
+            } else {
+                let w = self.create_unique("__clos", &rec_tp);
+                self.vars.defined(w);
+                // Register w as a work-ref so parse_code inserts Set(w,Null) at fn start.
+                self.vars.add_to_work_refs(w);
+                w
+            };
             let tp_nr = i32::from(self.data.def(closure_rec_d).known_type());
             // Build fn_type for fn_ref_var: visible params (excluding __closure) + ret.
             let n_all_attrs = self.data.attributes(d_nr);
@@ -2055,9 +2154,60 @@ or build a local and use that."
             // record the work var so parse_assign can populate closure_vars
             // (used by write-back and native codegen's closure_var_of lookup).
             self.last_closure_work_var = w;
+        } else if self.data.def_type(d_nr) == DefType::Generic {
+            // A TEMPLATE lambda answers a distinct node rather than its bare number, so an
+            // instance finds it by shape ([`Parser::rewrite_generic_type_defaults`]) and never
+            // mistakes an integer for it.  A template emits no code, so nothing runs this.
+            let params: Vec<Type> = self
+                .data
+                .def(d_nr)
+                .attributes()
+                .iter()
+                .filter(|a| !a.hidden && a.name != "__closure")
+                .map(|a| a.typedef.clone())
+                .collect();
+            let ret = self.data.def(d_nr).returned().clone();
+            let tp = Type::Function(
+                params,
+                Box::new(ret),
+                Deps::none(),
+                crate::data::ConstParams::NONE,
+            );
+            *code = Value::FnRef(d_nr as i32, u16::MAX, Box::new(tp));
         } else {
             *code = Value::Int(d_nr as i32);
         }
+    }
+
+    /// A lambda written inside a TEMPLATE is a template itself (`interfaces.md (G-Mono)`): its
+    /// parameters, its captures and its body mention the template's type variables, so it has
+    /// no one body until the enclosing instance binds them.  It shares the template's bounds,
+    /// so a bound method or operator on the variable resolves inside it as it does outside.
+    fn mark_template_lambda(&mut self, outer: u32, d_nr: u32) {
+        if outer == u32::MAX || self.data.def_type(outer) != DefType::Generic {
+            return;
+        }
+        self.data.definitions[d_nr as usize].def_type = DefType::Generic;
+        let bounds = self.data.def(outer).bounds.clone();
+        self.data.definitions[d_nr as usize].bounds = bounds;
+    }
+
+    /// Read the capture at field `fnr` of the closure record `rec` through this lambda's
+    /// `__closure` parameter.  Inside a TEMPLATE lambda the record's layout is the template's
+    /// — a capture typed by a type variable has no width yet — so the read is stamped
+    /// [`Parser::TV_CAPTURE`] with the capture's NAME and re-lowered against the instance's
+    /// own record.
+    pub(crate) fn closure_capture_read(&mut self, rec: u32, fnr: usize) -> Value {
+        let read = self.get_field(rec, fnr, Value::Var(self.closure_param));
+        if self.data.def_type(self.context) != DefType::Generic {
+            return read;
+        }
+        let name = self.data.attr_name(rec, fnr);
+        crate::data::v_block(
+            vec![Value::Var(self.closure_param), Value::Text(name), read],
+            self.data.attr_type(rec, fnr),
+            Self::TV_CAPTURE,
+        )
     }
 
     /// The backing a NULL collection capture needs before the closure record can share it —
@@ -2676,7 +2826,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// native mirror, and closure records are its sole producer, so none of this reaches
     /// user-defined struct fields.  Ownership (which marker) is decided later, after
     /// scope analysis — see `scopes::mark_borrowed_captures` (#682).
-    fn closure_attr_type(&mut self, tp: &Type) -> Type {
+    pub(crate) fn closure_attr_type(&mut self, tp: &Type) -> Type {
         // A NULLABLE heap value takes the same storage as its dense twin, and that is the
         // whole of the rule rather than a special case: `S?` IS a `DbRef` whose `rec == 0`
         // means absent, so sharing it needs no wrapper.  Left to fall through, the `S?`
@@ -4586,6 +4736,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 self.data.variant_of(*syn, "Some"),
                 Deps::frame(parent_tp.depend()),
             )
+        } else if let Type::Enum(e, true, _) = assign_tp.base() {
+            // A struct-enum element is a record of its enum, typed as its enum — `was` collapsed it
+            // to a placeholder def whenever the container's content did not resolve (a vector
+            // FIELD of a literal among them), and the scope pass then could not see that
+            // appending a unit variant's literal (`B`, built in a work-ref and copied in) hands
+            // its release to the container: both released it.  A value of the enum (`dot` in
+            // `[JCircle { r: 1 }, dot]`) is stored into it as it is; a variant LITERAL is built
+            // into it (the object literal's `type_matches`).
+            Type::Enum(*e, true, Deps::frame(parent_tp.depend()))
         } else if let Type::Vector(inner, _) = assign_tp {
             // #555 — a `vector<T>` element keeps its SPECIFIC type.  `was` routes through
             // `type_def_nr(vector<T>)`, which collapses EVERY vector to the one generic `vector`
@@ -4814,7 +4973,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if Self::seeds_lambda_hint(in_t) {
                 self.expected = in_t.base().clone();
             }
+            let item_pos = self.lexer.peek_pos().clone();
             let parsed = self.parse_operators(&in_t.clone(), &mut p, &mut parent_tp, 0);
+            // A name READ must resolve — the struct field value's gap (`parse_object_field`):
+            // `[undefined]` reported only that `main_vector<unknown>` never resolved.
+            // The literal is poisoned whole (@P376): an element typed by nothing would type
+            // the vector by nothing, and its layout is then refused a second time.
+            if !matches!(parsed.base(), Type::Never) && self.known_var_or_type(&p, &item_pos) {
+                self.expected = saved_expected;
+                self.skip_to_close("[", "]");
+                return Some(Type::Never);
+            }
             self.expected = saved_expected;
             parsed
         };
@@ -5415,7 +5584,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // handle size (4).  Integer/single (≥4) and the inner scalar append
             // (`in_t` not a vector) are untouched.
             let elem_known = lhs_known.unwrap_or_else(|| self.vector_of(in_t));
+            // Inside a template a vector over a type variable has no row yet (`vector_of`
+            // bakes the `u16::MAX` sentinel), so there is no content to size.
             let known_tp = if matches!(in_t, Type::Vector(_, _))
+                && elem_known != u16::MAX
                 && self.database.size(self.database.content(elem_known)) < 4
             {
                 self.database.vector(elem_known)
@@ -6089,7 +6261,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             return None;
         }
         self.vars.defined(o);
-        let mut ops = self.vector_db(tp, o);
+        let mut ops = self.vector_db(&elm, o);
         // The clear says once, where the replace is: a no-op on a fresh store and correct on a
         // reused one — the same reason the match-arm copy beside this one clears.
         ops.push(self.cl("OpClearVector", &[Value::Var(o)]));
@@ -6099,6 +6271,150 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let owned_tp = Type::Vector(Box::new(elm), Deps::frame1(o));
         *val.unspan_mut() = crate::data::v_block(ops, owned_tp.clone(), "tuple_member_copy");
         Some(owned_tp)
+    }
+
+    /// Make the value a `yield` hands over one the consumer owns — `formal/coroutines.md`
+    /// `(G-Own)`, @FR-G-Own.  What an advance produces is the consumer's, so the generator must
+    /// not still hold it once it is yielded.
+    ///
+    /// A FRESH value — a record built in place, or a call result that views none of the
+    /// generator's variables — is handed over as it is: the temp holding it is the one
+    /// [`yield_handed_temps`](crate::coroutine_layout::yield_handed_temps) names, and the
+    /// generator forgets that temp at the yield.  An EXISTING value — a local, a parameter, a
+    /// member, or a call result that views one — is COPIED into a store of its own first,
+    /// because `(H-Move)` does not list a yield among the positions that move: a later change
+    /// the generator makes must not reach the consumer's value, and the consumer releasing its
+    /// value must not release the generator's.  A type that owns a droppable is refused there
+    /// (`(H-Copy-Refuse)`): the copy would be a second structure releasing the resource again.
+    pub(crate) fn yield_owned_value(&mut self, val: &mut Value, tp: &Type) {
+        if self.first_pass || !crate::coroutine_layout::yield_handed_over(tp) {
+            return;
+        }
+        // A TUPLE hands over each heap member: a literal's members one by one, and a tuple
+        // the generator holds through a literal of its members, which copies each of them.
+        if let Type::Tuple(elems) = tp.base() {
+            if let Value::Var(t) = val.unspan()
+                && *t < self.vars.count()
+                && (self.vars.is_argument(*t) || !self.vars.is_compiler_generated(*t))
+            {
+                let t = *t;
+                *val = Value::Tuple(
+                    (0..elems.len())
+                        .map(|i| Value::TupleGet(t, i as u16))
+                        .collect(),
+                );
+            }
+            if let Value::Tuple(items) = val.unspan_mut() {
+                for (item, elm) in items.iter_mut().zip(elems.clone()) {
+                    self.yield_owned_value(item, &elm);
+                }
+            }
+            return;
+        }
+        if self.yield_is_fresh(val, tp) {
+            return;
+        }
+        let rec = tp.heap_def_nr();
+        if let Some(d_nr) = rec
+            && self.data.owns_droppable(d_nr)
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "cannot yield an existing `{}` here — a yield hands the consumer a copy it owns, \
+                 and `{}` owns a resource, so the copy would release it a second time. Yield a \
+                 value built here instead (a literal, or a call that builds one)",
+                tp.source_name(&self.data),
+                tp.source_name(&self.data)
+            );
+            return;
+        }
+        // The copy's backing is created OWNED: the value's own type may carry the deps of the
+        // place it was read from, and a backing that inherited them would read as a borrow.
+        let owned_create = tp.with_deps(&Deps::none());
+        let src = val.clone();
+        if let Some(d_nr) = rec {
+            let kt = self.data.def(d_nr).known_type();
+            if kt == u16::MAX {
+                return;
+            }
+            // The pass-2-only work-ref sequence, for the reason `tuple_member_owned_copy`
+            // gives: this backing's role is not the return buffer's.
+            let o = self.vars.work_refs_p2(&owned_create, &mut self.lexer);
+            if o == u16::MAX {
+                return;
+            }
+            let db = self.cl("OpDatabase", &[Value::Var(o), Value::Int(i32::from(kt))]);
+            let copy = self.cl(
+                "OpCopyRecord",
+                &[src.clone(), Value::Var(o), Value::Int(i32::from(kt))],
+            );
+            // A null yields null: `OpCopyRecord` alone would turn it into a default record.
+            let fill = if matches!(tp, Type::Optional(_))
+                && let Some(is_null) = self.null_test(src, tp, false)
+            {
+                v_if(
+                    is_null,
+                    Value::Null,
+                    v_block(vec![db, copy], Type::Void, "yield_copy_fill"),
+                )
+            } else {
+                v_block(vec![db, copy], Type::Void, "yield_copy_fill")
+            };
+            let owned_tp = owned_create.depending(o);
+            *val = v_block(
+                vec![v_set(o, Value::Null), fill, Value::Var(o)],
+                owned_tp,
+                "yield_copy",
+            );
+            return;
+        }
+        let Type::Vector(b, _) = tp.base() else {
+            return;
+        };
+        let elm = (**b).clone();
+        let o = self.create_unique("yieldcopy", &owned_create);
+        if o == u16::MAX {
+            return;
+        }
+        self.vars.defined(o);
+        let mut ops = self.vector_db(&elm, o);
+        ops.push(self.cl("OpClearVector", &[Value::Var(o)]));
+        let elem_tp = self.append_elem_tp(&elm);
+        ops.push(self.cl("OpAppendVector", &[Value::Var(o), src, Value::Int(elem_tp)]));
+        ops.push(Value::Var(o));
+        *val = v_block(
+            ops,
+            Type::Vector(Box::new(elm), Deps::frame1(o)),
+            "yield_copy",
+        );
+    }
+
+    /// Is the value a `yield` hands over FRESH — held by nothing of the generator's but the
+    /// compiler temp it was built in?  A record built in place ends in such a temp, and a call
+    /// result is fresh unless its type views one of the generator's own variables or
+    /// parameters.  Anything the author named — a local, a parameter, a member read, a view —
+    /// is an existing value (see [`Self::yield_owned_value`]).
+    fn yield_is_fresh(&self, val: &Value, tp: &Type) -> bool {
+        let named = |v: u16| {
+            v < self.vars.count()
+                && (self.vars.is_argument(v) || !self.vars.is_compiler_generated(v))
+        };
+        if tp.depend().iter().any(|&d| named(d)) {
+            return false;
+        }
+        let mut tail = val.unspan();
+        while let Value::Block(bl) = tail {
+            let Some(last) = bl.operators.last() else {
+                return false;
+            };
+            tail = last.unspan();
+        }
+        match tail {
+            Value::Var(v) => !named(*v),
+            Value::Call(d, _) => !crate::use_analysis::is_projection_op(&self.data, *d),
+            _ => false,
+        }
     }
 
     /// The heap local a [`Self::tuple_member_owned_copy`] block was built from — `None` for
@@ -6122,9 +6438,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let Value::Block(b) = val.unspan() else {
             return None;
         };
-        if b.name != "tuple_member_copy" {
+        if !matches!(
+            b.name,
+            "tuple_member_copy" | "tuple_member_move" | "yield_copy"
+        ) {
             return None;
         }
+        // A `yield` copy ([`Self::yield_owned_value`]) has the same shape under its own name.
         // The block ends `OpAppendVector(backing, source, elem_tp); backing` for a VECTOR
         // member, `OpReplaceKeyed(source, backing, tp); backing` for a KEYED one and
         // `OpCopyRecord(source, backing, tp)` (inside the fill block) for a STRUCT one, and the
@@ -6140,7 +6460,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     "OpReplaceKeyed" | "OpCopyRecord" => args.first().cloned(),
                     _ => None,
                 },
-                Value::Block(inner) if inner.name == "tuple_member_copy_fill" => {
+                Value::Block(inner)
+                    if matches!(inner.name, "tuple_member_copy_fill" | "yield_copy_fill") =>
+                {
                     source_in(data, &inner.operators)
                 }
                 Value::If(_, t, f) => source_in(data, std::slice::from_ref(t.as_ref()))

@@ -1,0 +1,9 @@
+// Vectors of two widths.
+// @EXPECT: u8 2|u16 1
+fn s(v: vector<u8>) -> text { "u8 {len(v)}" }
+fn s(v: vector<u16>) -> text { "u16 {len(v)}" }
+fn main() {
+  a: vector<u8> = [1, 2];
+  b: vector<u16> = [300];
+  println("{s(a)}|{s(b)}");
+}

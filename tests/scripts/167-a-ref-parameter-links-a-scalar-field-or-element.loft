@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` parameter links to a scalar field or element exactly as a `&` bind does
+// (`binding.md (B-Ref-Lvalue)`, which names a field and an element as linkable with no
+// exception for a type): `bump(p.n)` writes `p.n`, `bump(v[i])` writes `v[i]`.  Both
+// spellings lower through one home, `Parser::scalar_place_ref`, so a bind and an argument
+// cannot link to different places.  Before @PLN167 B1 the argument was refused as "a literal
+// or expression" on both backends, while the same place linked at a bind.
+//
+// Cells: an `integer`, `float`, `boolean`, value-enum, `character` and `integer?` field; a
+// nested field; an element at a variable index and in a loop; ONE place through two `&`
+// parameters (`add2(p.n, p.n)`, `add2(v[i], v[j])` with `i == j` — on native two raw pointers
+// to one slot, loft#1605's hazard); a callee that reads the place by another route after
+// writing it (`brighten(p.r, p)`, which must see the write); a field of a plain and of a `&`
+// record parameter, which alias the caller's record; a guarded index; and an element of a
+// vector the callee grows when the vector is NOT the element's (`w`), which compiles.
+//
+// @falsified-at: 92bdca3d9 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/167-a-ref-parameter-links-a-scalar-field-or-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions — each place's value after the calls.
+
+enum Col { Red, Blue, Green }
+struct In { k: integer }
+struct P { n: integer, f: float, b: boolean, c: Col, ch: character, m: integer?, r: integer, inner: In }
+
+fn bump(c: &integer) { c = c + 1; }
+fn add2(a: &integer, b: &integer) { a += 1; b += 10; }
+fn scale(f: &float) { f = f * 2.0; }
+fn flip(b: &boolean) { b = !b; }
+fn paint(c: &Col) { c = Col.Blue; }
+fn to_z(c: &character) { c = 'z'; }
+fn maybe(c: &integer?) { if c == null { c = 7; } else { c = c + 100; } }
+fn brighten(c: &integer, q: P) -> integer { c = c + 5; q.r }
+fn via_param(q: P) { bump(q.n); }
+fn via_ref(q: &P) { bump(q.n); }
+fn grow_bump(c: &integer, v: &vector<integer>) { v += [9]; c = c + 1; }
+fn mk() -> P { P { n: 10, f: 1.5, b: true, c: Col.Red, ch: 'a', m: null, r: 3, inner: In { k: 40 } } }
+
+fn fields() -> text {
+  p = mk();
+  bump(p.n);
+  add2(p.n, p.n);
+  scale(p.f);
+  flip(p.b);
+  paint(p.c);
+  to_z(p.ch);
+  maybe(p.m);
+  maybe(p.m);
+  bump(p.inner.k);
+  seen = brighten(p.r, p);
+  "{p.n} {p.f} {p.b} {p.c} {p.ch} {p.m} {p.inner.k} {p.r} {seen}"
+}
+fn elements() -> text {
+  v: vector<integer> = [1, 2, 3];
+  i = 1;
+  j = 1;
+  if i < len(v) { bump(v[i]); }
+  if i < len(v) && j < len(v) { add2(v[i], v[j]); }
+  for x in 0..3 { bump(v[x]); }
+  bump(v[0]);
+  bump(v[-1]);
+  "{v}"
+}
+fn parameters() -> text { p = mk(); via_param(p); via_ref(p); "{p.n}" }
+fn another_container() -> text {
+  v: vector<integer> = [1, 2, 3];
+  w: vector<integer> = [7];
+  grow_bump(v[0], w);
+  "{v} {w}"
+}
+
+fn main() {
+  assert(fields() == "22 3 false Blue z 107 41 8 8", "scalar fields through & parameters: {fields()}");
+  assert(elements() == "[3,15,5]", "elements through & parameters: {elements()}");
+  assert(parameters() == "12", "a field of a plain and of a & record parameter: {parameters()}");
+  assert(another_container() == "[2,2,3] [7,9]", "a callee growing another container: {another_container()}");
+  println("a & parameter links a scalar field or element");
+}

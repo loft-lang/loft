@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1563, `@FR-H-Move` — A VARIABLE REBOUND TO A JOIN OVER ITSELF RELEASES ONCE.  In
+// `a = a ?? mk()` and `a = if c { a } else { mk() }` the arm that hands back `a` keeps the value
+// `a` already holds: it moves nothing, displaces nothing and releases nothing — `a = a` is the
+// identity.  Every other arm is a plain rebind, which releases the record it displaces.  Each
+// resource is therefore released once, after its last read.
+//
+// Measured before the fix, identically on both backends: a `??` over itself released the kept
+// record when `a` was rebound, before the read, and again at scope end; an `if` over itself
+// released the kept record never, and the displaced one never either; a local handed back by the
+// other arm (`a = b ?? a`, `a = a ?? b`) was released twice.
+//
+// Only releases and reads are traced (`<id>`, `R<id>`), and every expected count is worked out by
+// hand, and `check` asserts a read precedes the release of the record it read.  The last cells are
+// controls that were right before: the same joins bound to a DIFFERENT variable, which is how the
+// two-statement spelling `x = a ?? mk(); a = x` reads them.
+//
+// @falsified-at: a266ec37f — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1563-a-variable-rebound-to-a-join-over-itself-releases-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; the stores are
+//   right on both trees, and only the hook trace shows the wrong releases.
+// ARMED: no instrument — each hook call and read is written to this guard's own trace file.
+// WITNESS: on the control, measured with a print in place of the assertion: `a = a ?? mk(2)`
+//   traces `M1 1 R1 1` (released before the read and again), `a = if c { a } else { mk(6) }`
+//   `M5 R5` (never released), and `a = b ?? a` with `b` present `M9 M10 9 R10 10 10`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_join_over_itself_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn count(trace: text, id: text) -> integer {
+  n = 0;
+  for part in trace.split(',') { if part == id { n += 1; } }
+  n
+}
+
+// The position of the first `id` in the trace, or -1.
+fn at(trace: text, id: text) -> integer {
+  i = 0;
+  for part in trace.split(',') {
+    if part == id { return i; }
+    i += 1;
+  }
+  -1
+}
+
+struct Jh { id: integer }
+fn OpDrop(self: Jh) { note("{self.id}"); }
+fn jmk(id: integer) -> Jh { return Jh { id: id }; }
+struct Jw { h: Jh, n: integer }
+fn jmkw(id: integer) -> Jw { return Jw { h: Jh { id: id }, n: id }; }
+
+fn s1() { a: Jh? = jmk(1); a = a ?? jmk(2); note("R{a.id}"); }
+fn s2() { a: Jh? = null; a = a ?? jmk(2); note("R{a.id}"); }
+fn s3() { a: Jh? = jmk(3); b = jmk(4); a = a ?? b; note("R{a.id}"); }
+fn s4() { a: Jh? = null; b = jmk(4); a = a ?? b; note("R{a.id}"); }
+fn s5() { a: Jh? = jmk(5); c = a.id > 0; a = if c { a } else { jmk(6) }; note("R{a.id}"); }
+fn s6() { a: Jh? = jmk(5); c = a.id > 9; a = if c { a } else { jmk(6) }; note("R{a.id}"); }
+fn s7() { a: Jh? = jmk(7); c = a.id > 0; a = if c { jmk(8) } else { a }; note("R{a.id}"); }
+fn s8() { a: Jh? = jmk(7); c = a.id > 9; a = if c { jmk(8) } else { a }; note("R{a.id}"); }
+fn s9() { a: Jh? = jmk(9); b: Jh? = jmk(10); a = b ?? a; note("R{a.id}"); }
+fn s10() { a: Jh? = jmk(9); b: Jh? = null; a = b ?? a; note("R{a.id}"); }
+fn s11() { a: Jh? = null; for i in 0..2 { a = a ?? jmk(11 + i); note("R{a.id}"); } }
+fn s12() { a: Jh? = jmk(13); if a.id > 0 { a = a ?? jmk(14); } note("R{a.id}"); }
+fn s13() { w: Jw? = jmkw(15); w = w ?? jmkw(16); note("R{w.h.id}"); }
+fn k1() { a: Jh? = jmk(21); x: Jh? = jmk(20); x = a ?? jmk(22); note("R{x.id}"); }
+fn k2() { a: Jh? = jmk(25); x: Jh? = jmk(24); c = a.id > 99; x = if c { a } else { jmk(26) }; note("R{x.id}"); }
+
+// Every id in `ids` released once, every read in `reads` made `n` times, and each `pairs` read
+// made before the release of the record it read.
+fn check(nm: text, ids: vector<text>, reads: vector<text>, n: integer, pairs: vector<text>) {
+  got = drain();
+  ok = true;
+  for id in ids { if count(got, id) != 1 { ok = false; } }
+  for r in reads { if count(got, r) != n { ok = false; } }
+  for id in pairs { if at(got, "R{id}") < 0 || at(got, id) < at(got, "R{id}") { ok = false; } }
+  assert(ok, "{nm}: {got}");
+}
+
+fn main() {
+  drain();
+  s1(); check("s1 ?? itself, present      ", ["1"], ["R1"], 1, ["1"]);
+  s2(); check("s2 ?? itself, absent       ", ["2"], ["R2"], 1, ["2"]);
+  s3(); check("s3 ?? a local, self chosen ", ["3", "4"], ["R3"], 1, ["3"]);
+  s4(); check("s4 ?? a local, it moves    ", ["4"], ["R4"], 1, ["4"]);
+  s5(); check("s5 if, self arm runs       ", ["5"], ["R5"], 1, ["5"]);
+  s6(); check("s6 if, call arm runs       ", ["5", "6"], ["R6"], 1, ["6"]);
+  s7(); check("s7 if else-self, call runs ", ["7", "8"], ["R8"], 1, ["8"]);
+  s8(); check("s8 if else-self, self runs ", ["7"], ["R7"], 1, ["7"]);
+  s9(); check("s9 b ?? itself, b chosen   ", ["9", "10"], ["R10"], 1, ["10"]);
+  s10(); check("s10 b ?? itself, self      ", ["9"], ["R9"], 1, ["9"]);
+  s11(); check("s11 in a loop              ", ["11"], ["R11"], 2, ["11"]);
+  s12(); check("s12 in an if arm           ", ["13"], ["R13"], 1, ["13"]);
+  s13(); check("s13 a droppable member     ", ["15"], ["R15"], 1, ["15"]);
+  k1(); check("k1 control: other binding  ", ["20", "21"], ["R21"], 1, ["21"]);
+  k2(); check("k2 control: other binding  ", ["24", "25", "26"], ["R26"], 1, ["26"]);
+  println("a variable rebound to a join over itself releases once: every cell holds");
+}

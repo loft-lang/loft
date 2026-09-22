@@ -1,0 +1,143 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1564, `@FR-H-Drop` — A LOCAL RELEASES EVERY RECORD IT HELD, ACROSS PASSES AND RETURNS.
+// A reassignment releases the record it displaces, and the owner's scope end releases the one
+// it still holds.  Three shapes lost a record on both backends, silently:
+//
+// - (a) a local the function returns, first built by a LITERAL.  The returned local is renamed
+//   onto the caller's buffer, and a literal into it is written in place behind a guard.  That
+//   write never recorded that the local owns what it built, so the next reassignment released
+//   nothing.  Built first by a call, it was right.
+// - (b) a returned local DECLARED in a loop body.  Renamed onto the buffer, it is a parameter
+//   by slot: the pass end never released it, and every pass refilled the same buffer.  A search
+//   loop lost every pass it did not return on — all of them when it returned nothing.
+// - (l) a local first bound in a loop body and read after the loop.  Its scope is moved out to
+//   the function, with a null before the loop, and that null recorded no ownership, so the
+//   binding in the loop released nothing on the passes after the first.  And a local owned
+//   before a loop that the loop rebinds lost its record at a rebind after the loop.
+//
+// Only releases and reads are traced, as `<id>` and `R<id>`, in the order they happen.  Every
+// expected trace is worked out by hand: a rebind releases the record it displaces after the
+// new value is computed, a returned record is released by the caller, and a local still
+// holding a record releases it at its scope's end.  Cells a7, a8, b6 and l7 are controls that
+// were right before.
+//
+// @falsified-at: 729c9f497 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1564-a-local-releases-every-record-it-held-across-passes-and-returns.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; the stores are
+//   right on both trees, and only the hook's own trace shows the missing release.
+// ARMED: no instrument — each hook call is written to this guard's own trace file.
+// WITNESS: on the control all seventeen fault cells miss a release and the four controls hold, on
+//   both backends, scored with the assertions replaced by prints: `a1` `R2,2`, `b1` `R29,29`,
+//   `b5` `36,35,R37,37`, `l1` `R42,42`, `l5` `49,50,51,R53,53`, `l6` `R56,56`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_local_every_record_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct Lh { id: integer }
+fn OpDrop(self: Lh) { note("{self.id}"); }
+struct Lhold { h: Lh }
+struct Lbag { v: vector<Lh>, tag: integer }
+struct Lsn { h: Lh? }
+fn lmk(id: integer) -> Lh { return Lh { id: id }; }
+fn lmkh(id: integer) -> Lhold { return Lhold { h: lmk(id) }; }
+
+// (a) a returned local first built by a literal.
+fn a1_f() -> Lhold { s = Lhold { h: lmk(1) }; s = Lhold { h: lmk(2) }; return s; }
+fn a1() { r = a1_f(); note("R{r.h.id}"); }
+fn a2_f(c: boolean) -> Lhold { s = Lhold { h: lmk(3) }; if c { return s; } s = Lhold { h: lmk(4) }; return s; }
+fn a2() { r = a2_f(false); note("R{r.h.id}"); }
+fn a3_f() -> Lh { s = Lh { id: 5 }; s = lmk(6); return s; }
+fn a3() { r = a3_f(); note("R{r.id}"); }
+fn a4_f() -> Lbag { s = Lbag { v: [lmk(7)], tag: 1 }; s = Lbag { v: [lmk(8)], tag: 2 }; return s; }
+fn a4() { r = a4_f(); note("R{r.v[0].id}"); }
+fn a5_f() -> Lsn { s = Lsn { h: lmk(9) }; s = Lsn { h: lmk(10) }; return s; }
+fn a5() { r = a5_f(); note("R{r.h.id}"); }
+fn a6_f() -> Lhold { s = Lhold { h: lmk(11) }; t = Lhold { h: lmk(12) }; s = t; return s; }
+fn a6() { r = a6_f(); note("R{r.h.id}"); }
+fn a7_f() -> Lhold { s = lmkh(13); s = Lhold { h: lmk(14) }; return s; }
+fn a7() { r = a7_f(); note("R{r.h.id}"); }
+fn a8_f(c: boolean) -> Lhold { s = Lhold { h: lmk(15) }; if c { return s; } s = Lhold { h: lmk(16) }; return s; }
+fn a8() { r = a8_f(true); note("R{r.h.id}"); }
+
+// (b) a returned local declared in a loop body.
+fn b1_f(k: integer) -> Lh { for i in 0..3 { s = lmk(20 + i); if i == k { return s; } } return lmk(29); }
+fn b1() { r = b1_f(7); note("R{r.id}"); }
+fn b2() { r = b1_f(2); note("R{r.id}"); }
+fn b3_f(k: integer) -> Lhold { for i in 0..3 { s = Lhold { h: lmk(23 + i) }; if i == k { return s; } } return lmkh(28); }
+fn b3() { r = b3_f(1); note("R{r.h.id}"); }
+fn b4_f(k: integer) -> Lh { i = 0; while i < 3 { s = lmk(31 + i); if i == k { return s; } i += 1; } return lmk(39); }
+fn b4() { r = b4_f(2); note("R{r.id}"); }
+fn b5_f(k: integer) -> Lh {
+  for i in 0..2 {
+    s = lmk(34 + i);
+    u = lmk(36 + i);
+    if i == 9 { return s; }
+    if i == k { return u; }
+  }
+  return lmk(38);
+}
+fn b5() { r = b5_f(1); note("R{r.id}"); }
+fn b6() { r = b1_f(0); note("R{r.id}"); }
+
+// (l) a local first bound in a loop body and read after the loop.
+fn l1() { for i in 0..3 { s = lmk(40 + i); } note("R{s.id}"); }
+fn l2() { for i in 0..3 { s = Lhold { h: lmk(43 + i) }; } note("R{s.h.id}"); }
+fn l3() { for i in 0..2 { for j in 0..2 { s = lmk(60 + 2 * i + j); } } note("R{s.id}"); }
+fn l4() { for i in 0..3 { s = lmk(46 + i); if i == 1 { break; } } note("R{s.id}"); }
+fn l5() { s = lmk(49); for i in 0..3 { s = lmk(50 + i); } s = lmk(53); note("R{s.id}"); }
+fn l6_f() -> Lh { for i in 0..3 { s = lmk(54 + i); } return s; }
+fn l6() { r = l6_f(); note("R{r.id}"); }
+fn l7() { for i in 0..2 { s = lmk(57 + i); note("R{s.id}"); } }
+
+fn check(nm: text, want: text) {
+  got = drain();
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn main() {
+  drain();
+  a1(); check("a1 literal, literal       ", "1,R2,2");
+  a2(); check("a2 early return not taken ", "3,R4,4");
+  a3(); check("a3 bare literal, call     ", "5,R6,6");
+  a4(); check("a4 vector member          ", "7,R8,8");
+  a5(); check("a5 nullable member        ", "9,R10,10");
+  a6(); check("a6 moved from a local     ", "11,R12,12");
+  a7(); check("a7 control: call first    ", "13,R14,14");
+  a8(); check("a8 control: returned early", "R15,15");
+  b1(); check("b1 search loop, no return ", "20,21,22,R29,29");
+  b2(); check("b2 returned on pass 2     ", "20,21,R22,22");
+  b3(); check("b3 literal, pass 1        ", "23,R24,24");
+  b4(); check("b4 while, pass 2          ", "31,32,R33,33");
+  b5(); check("b5 the other local        ", "36,34,35,R37,37");
+  b6(); check("b6 control: pass 0        ", "R20,20");
+  l1(); check("l1 read after the loop    ", "40,41,R42,42");
+  l2(); check("l2 literal                ", "43,44,R45,45");
+  l3(); check("l3 nested loops           ", "60,61,62,R63,63");
+  l4(); check("l4 break                  ", "46,R47,47");
+  l5(); check("l5 rebound after the loop ", "49,50,51,52,R53,53");
+  l6(); check("l6 returned after the loop", "54,55,R56,56");
+  l7(); check("l7 control: pass-scoped   ", "R57,57,R58,58");
+  println("a local releases every record it held: every cell holds");
+}

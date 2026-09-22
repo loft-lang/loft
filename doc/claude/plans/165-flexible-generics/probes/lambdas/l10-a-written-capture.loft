@@ -1,0 +1,11 @@
+// A template lambda that WRITES a captured counter (a mutated scalar capture is boxed).
+// @EXPECT: 3 2
+fn each<T>(v: vector<T>, f: fn(T)) { for x in v { f(x); } }
+fn count_all<T>(v: vector<T>) -> integer {
+  n = 0;
+  each(v, |x| { n += 1; });
+  n
+}
+fn main() {
+  println("{count_all([4, 5, 6])} {count_all(["a", "b"])}");
+}

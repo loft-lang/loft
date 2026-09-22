@@ -51,6 +51,10 @@
 // The trace file is this guard's own — and its own means THIS file, not this family: seven
 // corpus guards write one, and two concurrent runs of the SAME guard clobber each other's
 // (see `scripts/falsify.sh`, which now says so on its unclean path).
+//
+// The ORDER within one tuple is reverse member order, as a struct's fields are (loft#1588): the
+// cells with two droppables pinned the forward order until then, which is what the backings'
+// registration at the function's head produced, not a rule.
 
 fn trace_path() -> text { return "loft_nullmember_trace.tmp"; }
 
@@ -117,7 +121,7 @@ fn main() {
   assert(got == "alivefalse,4", "a nullable member at index 1, a scalar before it: {got}");
 
   c_two_null(); got = drain();
-  assert(got == "alivefalsefalse,51,52", "two nullable droppable members, each once: {got}");
+  assert(got == "alivefalsefalse,52,51", "two nullable droppable members, each once: {got}");
 
   c_absent(); got = drain();
   assert(got == "absenttrue", "an absent nullable member releases nothing: {got}");

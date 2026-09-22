@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `D-Specific` (@PLN165 B6): between two generics of one name, a parameter pattern that is a
+// substitution instance of the other's — and not the reverse — admits fewer types and takes
+// the call: `vector<T>` beats `T` for a vector, `vector<vector<T>>` beats `vector<T>`.  Both
+// templates may instantiate at one type side by side (their instances are keyed by their
+// templates).  A pattern and a bound that agree order the pair; the order is read again in
+// each instance of a generic that calls the set at its own variable.
+//
+// @falsified-at: 135c07821 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-narrower-pattern-is-the-more-specific-generic.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses every call two templates take.
+//   ARMED: nothing.
+//   WITNESS: on the control `f(a)` is "ambiguous — it is taken by f<T>(vector<T>) and
+//     f<T>(T)".
+//   HOLDS: the calls only `f<T>(x: T)` takes.
+
+interface Named { fn tag(self: Self) -> text }
+struct C { n: integer }
+fn tag(self: C) -> text { "c" }
+
+fn f<T>(x: T) -> text { "any" }
+fn f<T>(v: vector<T>) -> text { "v {len(v)}" }
+fn f<T>(v: vector<vector<T>>) -> text { "vv {len(v)}" }
+
+fn g<T>(v: vector<T>) -> text { "vec {len(v)}" }
+fn g<T: Printable>(x: T) -> text { "any {x}" }
+
+fn n<T: Named>(v: vector<T>) -> text { "vn {len(v)}" }
+fn n<T>(x: T) -> text { "any" }
+
+fn wrap<U>(x: U) -> text { f(x) }
+fn vwrap<U>(v: vector<U>) -> text { f(v) }
+
+fn test_the_narrower_pattern() {
+  a: vector<vector<integer>> = [[1], [2]];
+  b: vector<text> = ["x", "y", "z"];
+  assert(f(a) == "vv 2", "{f(a)}");
+  assert(f(b) == "v 3", "{f(b)}");
+  assert(f(2.5) == "any", "{f(2.5)}");
+}
+
+fn test_two_instances_at_one_type() {
+  a: vector<integer> = [1, 2];
+  assert(g(a) == "vec 2", "{g(a)}");
+  assert(g(5) == "any 5", "{g(5)}");
+}
+
+fn test_a_pattern_and_a_bound_that_agree() {
+  cs: vector<C> = [C { n: 1 }];
+  assert(n(cs) == "vn 1", "{n(cs)}");
+  assert(n(3) == "any", "{n(3)}");
+}
+
+fn test_re_decided_in_each_instance() {
+  a: vector<integer> = [1, 2];
+  c: vector<float> = [0.5];
+  assert(wrap(a) == "v 2", "{wrap(a)}");
+  assert(wrap(3) == "any", "{wrap(3)}");
+  assert(vwrap(c) == "v 1", "{vwrap(c)}");
+}

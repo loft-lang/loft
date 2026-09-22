@@ -244,6 +244,10 @@ pub(crate) struct OpSets {
     pub(crate) conditional_ref_frees: std::sync::Arc<HashSet<u32>>,
     /// `OpFreeText` — the text release, or `u32::MAX` where the table has none.
     pub(crate) text_free: u32,
+    /// The functions a drop site calls — a type's `OpDrop` hook and its cascades
+    /// ([`Data::is_drop_function`]).  A release, like the frees above, and never a use of what
+    /// it releases.
+    pub(crate) drop_functions: std::sync::Arc<HashSet<u32>>,
 }
 
 impl OpSets {
@@ -252,6 +256,7 @@ impl OpSets {
     pub(crate) fn build(data: &Data) -> Self {
         let mut write_first_arg = HashSet::new();
         let mut lengths = HashSet::new();
+        let mut drop_functions = HashSet::new();
         for d in 0..data.definitions() {
             let n = data.def(d).name();
             if is_first_arg_write_name(n) {
@@ -259,6 +264,9 @@ impl OpSets {
             }
             if is_length_op_name(n) {
                 lengths.insert(d);
+            }
+            if data.is_drop_function(d) {
+                drop_functions.insert(d);
             }
         }
         let nrs = |names: &[&str]| -> HashSet<u32> {
@@ -292,6 +300,7 @@ impl OpSets {
             unconditional_ref_frees: std::sync::Arc::new(unconditional_ref_frees),
             conditional_ref_frees: std::sync::Arc::new(conditional_ref_frees),
             text_free,
+            drop_functions: std::sync::Arc::new(drop_functions),
         }
     }
 }
@@ -509,7 +518,11 @@ struct Uses {
     get_field: u32,
     op_append: u32,
     op_database: u32,
-    op_free: u32,
+    /// Every op that RELEASES its first argument ([`OpSets::frees`]) — scope machinery, never a
+    /// use of what it releases.
+    frees: std::sync::Arc<HashSet<u32>>,
+    /// The drop hooks and cascades ([`OpSets::drop_functions`]) — scope machinery too.
+    drop_functions: std::sync::Arc<HashSet<u32>>,
     /// @PLN90 — `OpCopyRecord` def_nr: a record deep-copy (`v[i] = e`, a `?? E{…}` default
     /// element, a struct copy). Not append-based, so the var-buffer / construction /
     /// return-buffer branches never see it; recorded here so the decision covers it.
@@ -529,6 +542,10 @@ struct Uses {
     /// to). Back-edges break the position↔execution correspondence, so Tier 1
     /// refuses any copy whose fill sits at depth > 0.
     loop_depth: u32,
+    /// Inside a `yield`'s value.  A record copy there is the one `formal/coroutines.md`
+    /// `(G-Own)` requires of an existing value — no restructuring of the source turns it into
+    /// a move — so it is not a copy the notice can offer to avoid.
+    in_yield: bool,
     /// @PLN90 item 2 — track source locations for the report. Only ON when
     /// `LOFT_COPY_SURVIVAL` is set (positions are needed only for the survival report), so the
     /// default hot path pays no `Position` clone and stays byte-identical.
@@ -731,6 +748,11 @@ impl Uses {
                     *e = (*e).max(pos);
                 }
             }
+            Value::Yield(inner) => {
+                let outer = std::mem::replace(&mut self.in_yield, true);
+                self.visit(inner, Ctx::Other);
+                self.in_yield = outer;
+            }
             // A loop body's back-edge can re-execute a write after a read, so the
             // pre-order position no longer tracks execution order inside it — bump
             // the depth so Tier 1 can refuse copies filled here.
@@ -749,11 +771,21 @@ impl Uses {
                 }
                 self.loop_depth -= 1;
             }
-            // Scope machinery, not a user mutation: `OpFreeRef(x)` / `Drop(x)` must
-            // not count as a non-reader use of `x` (a free placed AFTER the last
-            // read is exactly what we want; the scope pass repositions it post-
-            // elision anyway). Visit nothing — recursing would mark the arg `Other`.
-            Value::Call(d, _) if *d == self.op_free => {}
+            // Scope machinery, not a user mutation: a free of `x` or `Drop(x)` must not
+            // count as a use of `x` (a free placed AFTER the last read is exactly what we
+            // want; the scope pass repositions it post-elision anyway). Visit nothing —
+            // recursing would mark the arg `Other`.  Every spelling of a free, not the plain
+            // one alone: a `return x` of a loop-body local ends with `OpFreeRefIfDistinct(x,
+            // …)`, and read as a later use it turned the move into a copy advice claiming
+            // `x` was "still used after this point".  The release through the type's hook is
+            // the same machinery — `if OpConvBoolFromRef(x) hook(x) else null`, liveness test
+            // included — and the scope pass puts a loop-body local's at the pass end, AFTER a
+            // `return x` in the pass in program order although no path reaches both.
+            Value::Call(d, _) if self.frees.contains(d) || self.drop_functions.contains(d) => {}
+            Value::If(_, t, e)
+                if matches!(e.unspan(), Value::Null)
+                    && matches!(t.unspan(), Value::Call(d, _) if self.drop_functions.contains(d)) =>
+                {}
             Value::Drop(_) => {}
             Value::Set(v, rhs) => {
                 *self.def_count.entry(*v).or_insert(0) += 1;
@@ -865,7 +897,7 @@ impl Uses {
                 // `OpCopyRecord` carries no span, so borrow the nearest enclosing one. The row's
                 // target/name is the DEST; the classified var is the SOURCE (`src`). `loop_surv`
                 // (item 4) = the source outlives the enclosing loop (copied every iteration).
-                if record {
+                if record && !self.in_yield {
                     let loop_surv = self.loop_survives(src);
                     self.record_copy
                         .push((dest, src, self.pos, loop_surv, self.cur_pos.clone()));
@@ -910,7 +942,8 @@ fn collect_uses(code: &Value, data: &Data, survival_on: bool) -> Uses {
         get_field: data.def_nr("OpGetField"),
         op_append: data.def_nr("OpAppendVector"),
         op_database: data.def_nr("OpDatabase"),
-        op_free: data.def_nr("OpFreeRef"),
+        frees: std::sync::Arc::clone(&ops.frees),
+        drop_functions: std::sync::Arc::clone(&ops.drop_functions),
         op_copy_record: data.def_nr("OpCopyRecord"),
         projections: std::sync::Arc::clone(&ops.projections),
         value_readers: std::sync::Arc::clone(&ops.value_readers),
@@ -923,6 +956,7 @@ fn collect_uses(code: &Value, data: &Data, survival_on: bool) -> Uses {
         append_expr: HashMap::new(),
         pos: 0,
         loop_depth: 0,
+        in_yield: false,
         track_pos: survival_on,
         cur_pos: None,
         mut_max_pos: HashMap::new(),
@@ -5286,7 +5320,7 @@ impl Census<'_> {
                         for (item, elm) in items.iter().zip(elms) {
                             if !self.data.type_owns_droppable_anywhere(elm)
                                 || matches!(item.unspan(),
-                                    Value::Block(b) if b.name == "tuple_member_copy")
+                                    Value::Block(b) if matches!(b.name, "tuple_member_copy" | "tuple_member_move"))
                             {
                                 continue;
                             }

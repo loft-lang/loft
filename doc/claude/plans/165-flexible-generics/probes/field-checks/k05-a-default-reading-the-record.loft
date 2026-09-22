@@ -1,0 +1,8 @@
+// A stored default that reads another field of the record.
+// @EXPECT: 4|10
+struct Box<T> { v: T, n: integer, m: integer = $.n + 1 }
+fn main() {
+  a = Box { v: "a", n: 3 };
+  b: Box<float> = Box { v: 1.0, n: 9 };
+  println("{a.m}|{b.m}");
+}

@@ -297,7 +297,7 @@ pub(crate) const NAMENR_NAME: u32 = 8; // text
 /// `Definition` record (element of `Data.definitions` = `vector<Definition>`).
 /// Inlines `Position` (`DEF_POSITION` base) and `Function` (`DEF_VARIABLES`
 /// base).  `def_type` / `purity` store integer codes (see `ir_store`).
-pub(crate) const DEFINITION_STRIDE: u32 = 167; // @PLN24 arc A — +8 for the two #c text refs
+pub(crate) const DEFINITION_STRIDE: u32 = 184; // @PLN24 arc A — +8 for the two #c text refs; @PLN165 D2/D3 — +16 for type_params, instance_of, instance_args; arc E — +1 for builtin
 pub(crate) const DEF_SOURCE: u32 = 0;
 pub(crate) const DEF_DEF_TYPE: u32 = 8;
 pub(crate) const DEF_PARENT: u32 = 16;
@@ -307,25 +307,29 @@ pub(crate) const DEF_KNOWN_TYPE: u32 = 52;
 pub(crate) const DEF_CLOSURE_RECORD: u32 = 60;
 pub(crate) const DEF_FORCED_SIZE: u32 = 68; // Option<u8>; 0 = None
 pub(crate) const DEF_PURITY: u32 = 76;
-pub(crate) const DEF_NAME: u32 = 84;
-pub(crate) const DEF_ATTRIBUTES: u32 = 88; // vector<Attribute>
-pub(crate) const DEF_CODE: u32 = 92; // vector<Node> (box-of-one)
-pub(crate) const DEF_RETURNED: u32 = 96; // vector<TypeT> (box-of-one)
-pub(crate) const DEF_RUST: u32 = 100;
-pub(crate) const DEF_NATIVE: u32 = 104;
-pub(crate) const DEF_VARIABLES: u32 = 108; // inlined Function base (20 bytes)
-pub(crate) const DEF_MUTATED_CAPTURES: u32 = 128; // vector<NameRef>
-pub(crate) const DEF_SCALARS_TO_BOX: u32 = 132; // vector<NameRef>
-pub(crate) const DEF_BOUNDS: u32 = 136; // vector<integer>
-pub(crate) const DEF_FIELD_GROUPS: u32 = 140; // vector<LinkedFieldGroup>
-pub(crate) const DEF_SYNTHETIC: u32 = 144; // Option<&str>; "" = None
-pub(crate) const DEF_CAP: u32 = 148; // @PLN86 the group#right call-gate link; "" = unlinked
-pub(crate) const DEF_SUPERSEDED: u32 = 152; // @PLN102 arc C #superseded "Y"; "" = not superseded
-pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 164;
-pub(crate) const DEF_PUB_VISIBLE: u32 = 165;
-pub(crate) const DEF_NULL_SAFE: u32 = 166; // @PLN46 W2 #null_safe; false = unannotated
-pub(crate) const DEF_C_SYMBOL: u32 = 156; // @PLN24 #c "sym"; "" = not a C binding
-pub(crate) const DEF_C_SIG: u32 = 160; // @PLN24 the declared C signature; "" = none
+pub(crate) const DEF_NAME: u32 = 92;
+pub(crate) const DEF_ATTRIBUTES: u32 = 96; // vector<Attribute>
+pub(crate) const DEF_CODE: u32 = 100; // vector<Node> (box-of-one)
+pub(crate) const DEF_RETURNED: u32 = 104; // vector<TypeT> (box-of-one)
+pub(crate) const DEF_RUST: u32 = 108;
+pub(crate) const DEF_NATIVE: u32 = 112;
+pub(crate) const DEF_VARIABLES: u32 = 116; // inlined Function base (20 bytes)
+pub(crate) const DEF_MUTATED_CAPTURES: u32 = 136; // vector<NameRef>
+pub(crate) const DEF_SCALARS_TO_BOX: u32 = 140; // vector<NameRef>
+pub(crate) const DEF_BOUNDS: u32 = 144; // vector<integer>
+pub(crate) const DEF_FIELD_GROUPS: u32 = 148; // vector<LinkedFieldGroup>
+pub(crate) const DEF_SYNTHETIC: u32 = 152; // Option<&str>; "" = None
+pub(crate) const DEF_CAP: u32 = 156; // @PLN86 the group#right call-gate link; "" = unlinked
+pub(crate) const DEF_SUPERSEDED: u32 = 160; // @PLN102 arc C #superseded "Y"; "" = not superseded
+pub(crate) const DEF_RETURNED_NOT_NULL: u32 = 180;
+pub(crate) const DEF_PUB_VISIBLE: u32 = 181;
+pub(crate) const DEF_NULL_SAFE: u32 = 182; // @PLN46 W2 #null_safe; false = unannotated
+pub(crate) const DEF_BUILTIN: u32 = 183; // @PLN165 arc E #builtin; false = an ordinary body
+pub(crate) const DEF_C_SYMBOL: u32 = 164; // @PLN24 #c "sym"; "" = not a C binding
+pub(crate) const DEF_C_SIG: u32 = 168; // @PLN24 the declared C signature; "" = none
+pub(crate) const DEF_TYPE_PARAMS: u32 = 172; // @PLN165 D2 vector<integer>, header order
+pub(crate) const DEF_INSTANCE_OF: u32 = 84; // @PLN165 D3 the template; -1 = not an instance
+pub(crate) const DEF_INSTANCE_ARGS: u32 = 176; // @PLN165 D3 vector<TypeT>
 
 /// `Data` record (the root).
 pub(crate) const DATA_SOURCE: u32 = 0;
@@ -1488,6 +1492,9 @@ mod tests {
         );
         assert_eq!(pos(ids.definition, "scalars_to_box"), DEF_SCALARS_TO_BOX);
         assert_eq!(pos(ids.definition, "bounds"), DEF_BOUNDS);
+        assert_eq!(pos(ids.definition, "type_params"), DEF_TYPE_PARAMS);
+        assert_eq!(pos(ids.definition, "instance_of"), DEF_INSTANCE_OF);
+        assert_eq!(pos(ids.definition, "instance_args"), DEF_INSTANCE_ARGS);
         assert_eq!(pos(ids.definition, "field_groups"), DEF_FIELD_GROUPS);
         assert_eq!(pos(ids.definition, "synthetic"), DEF_SYNTHETIC);
         assert_eq!(pos(ids.definition, "cap"), DEF_CAP);
@@ -1500,6 +1507,7 @@ mod tests {
         );
         assert_eq!(pos(ids.definition, "pub_visible"), DEF_PUB_VISIBLE);
         assert_eq!(pos(ids.definition, "null_safe"), DEF_NULL_SAFE);
+        assert_eq!(pos(ids.definition, "builtin"), DEF_BUILTIN);
 
         // Data record (root).
         assert_eq!(pos(ids.data, "source"), DATA_SOURCE);

@@ -1,0 +1,125 @@
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 77384890c..a1f637d10 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7715,7 +7715,7 @@ impl Parser {
+         // is where that name becomes the implementor's own companion.  With no associated
+         // types the list is one long and every step below reads exactly as it did.
+         let mut bindings: Vec<(u32, Type)> = var_bindings.clone();
+-        bindings.extend(self.associated_bindings(g_nr, &var_bindings));
++        bindings.extend(self.associated_bindings(g_nr, type_nr));
+         // Clone the template data before mutating self.data.
+         let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
+         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
+@@ -8482,8 +8482,8 @@ impl Parser {
+     /// answer depend on declaration order.  Disagreement is a compile error naming both
+     /// types, because the alternative is a monomorph typed against a companion the author
+     /// never chose.
+-    fn associated_bindings(&mut self, g_nr: u32, var_bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
+-        let (out, clashes) = self.infer_associated(g_nr, var_bindings);
++    fn associated_bindings(&mut self, g_nr: u32, concrete_nr: u32) -> Vec<(u32, Type)> {
++        let (out, clashes) = self.infer_associated(g_nr, concrete_nr);
+         for text in clashes {
+             let msg = crate::diagnostics::diagnostic_format(Level::Error, format_args!("{text}"));
+             let peek_pos = self.lexer.peek().position.clone();
+@@ -8495,34 +8495,8 @@ impl Parser {
+     /// [`Self::associated_bindings`] without its diagnostic: the pairs it infers, and one
+     /// message per associated type the implementor names two different companions for.
+     /// Asked on its own by [`Self::satisfies`], which must answer without reporting.
+-    fn infer_associated(
+-        &self,
+-        g_nr: u32,
+-        var_bindings: &[(u32, Type)],
+-    ) -> (Vec<(u32, Type)>, Vec<String>) {
+-        // Per VARIABLE (@PLN165 C3, F13): each variable's bounds name the associated types
+-        // its binding supplies — `<S: Source, K: Sink>` binds `S.Rows` from `S`'s type and
+-        // `K.Item` from `K`'s.  Reading only the first left `K.Item` unbound, and a call
+-        // through its bound read garbage.
+-        let mut out: Vec<(u32, Type)> = Vec::new();
+-        let mut clashes: Vec<String> = Vec::new();
+-        for (i, (holder, bound)) in var_bindings.iter().enumerate() {
+-            let concrete_nr = self.data.type_def_nr(bound);
+-            let (o, c) =
+-                self.infer_associated_for(self.var_bounds(g_nr, *holder, i == 0), concrete_nr);
+-            out.extend(o);
+-            clashes.extend(c);
+-        }
+-        (out, clashes)
+-    }
+-
+-    /// [`Self::infer_associated`] for one variable: the companions its `bounds` declare, read
+-    /// off the implementor `concrete_nr`'s own signatures.
+-    fn infer_associated_for(
+-        &self,
+-        bounds: Vec<u32>,
+-        concrete_nr: u32,
+-    ) -> (Vec<(u32, Type)>, Vec<String>) {
++    fn infer_associated(&self, g_nr: u32, concrete_nr: u32) -> (Vec<(u32, Type)>, Vec<String>) {
++        let bounds = self.data.definitions[g_nr as usize].bounds.clone();
+         if bounds.is_empty() || concrete_nr == u32::MAX {
+             return (Vec::new(), Vec::new());
+         }
+@@ -8746,7 +8720,10 @@ impl Parser {
+     /// variables bind AND its bounds hold), and a template whose bounds fail is simply not a
+     /// candidate there; the diagnostic belongs to the instantiation that goes ahead anyway.
+     pub(crate) fn satisfies(&self, g_nr: u32, var_bindings: &[(u32, Type)]) -> bool {
+-        let (assoc, clashes) = self.infer_associated(g_nr, var_bindings);
++        let first = var_bindings
++            .first()
++            .map_or(u32::MAX, |(_, b)| self.data.type_def_nr(b));
++        let (assoc, clashes) = self.infer_associated(g_nr, first);
+         clashes.is_empty()
+             && self
+                 .satisfaction_messages(g_nr, var_bindings, &assoc)
+@@ -8804,17 +8781,7 @@ impl Parser {
+         if first_concrete == u32::MAX {
+             return messages;
+         }
+-        // The implementor an associated type was read off: the variable whose bounds declare
+-        // the interface that owns it (@PLN165 C3), the first variable's where none does.
+-        let implementor_of = |ph: u32| -> String {
+-            let iface = self.data.def(ph).parent;
+-            let owner = var_bindings.iter().enumerate().find(|(i, (holder, _))| {
+-                self.var_bounds(g_nr, *holder, *i == 0).contains(&iface)
+-            });
+-            let concrete = owner.map_or(first_concrete, |(_, (_, b))| self.data.type_def_nr(b));
+-            let concrete = if concrete == u32::MAX { first_concrete } else { concrete };
+-            self.data.def(concrete).name().to_string()
+-        };
++        let concrete_name = self.data.def(first_concrete).name().to_string();
+         // @PLN125 A2c — the bound declared on an associated type is a promise about the
+         // COMPANION, and this is the only place it can be kept: `type Rows: Cursor` says a
+         // generic may call `Cursor`'s methods on whatever `open` returns, and the template
+@@ -8830,7 +8797,6 @@ impl Parser {
+             };
+             let ph_name = self.data.def(*ph).name().to_string();
+             let companion_name = self.data.def(companion_nr).name().to_string();
+-            let concrete_name = implementor_of(*ph);
+             for bound_nr in self.data.definitions[*ph as usize].bounds.clone() {
+                 let bound_name = self.data.def(bound_nr).name().to_string();
+                 for why in self.satisfaction_failures(bound_nr, companion_nr) {
+@@ -9643,23 +9609,9 @@ impl Parser {
+                 if template != *d {
+                     via_template.push((*d, template));
+                 }
+-                // A first argument that is not a plain variable takes the callee's first
+-                // parameter under this instance's bindings — the callee is the template or an
+-                // instance bound to this template's variables, so that is the argument's type
+-                // at a variable position.  The FIRST binding is only the last resort: with two
+-                // variables it is often the other one's (`inner(bs[i], a)` inside
+-                // `outer<A, B>` bound `inner` at `A`, and read a text as an integer).
+-                let from_param = self
+-                    .data
+-                    .def(*d)
+-                    .attributes
+-                    .iter()
+-                    .find(|a| !a.hidden)
+-                    .map(|a| Self::substitute_all(a.typedef.clone(), bindings))
+-                    .filter(|t| !t.is_unknown() && !self.data.mentions_type_var(t));
+                 let arg_tp = match args.first().map(Value::unspan) {
+                     Some(Value::Var(a)) if *a < mono_vars.count() => mono_vars.tp(*a).clone(),
+-                    _ => from_param.unwrap_or_else(|| concrete.clone()),
++                    _ => concrete.clone(),
+                 };
+                 targets.push((*d, arg_tp));
+             }

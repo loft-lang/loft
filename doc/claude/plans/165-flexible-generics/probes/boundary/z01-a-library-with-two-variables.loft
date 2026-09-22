@@ -1,0 +1,9 @@
+// C4 — two variables in a `use`d library: a free generic, an overload-set member beside a
+// concrete one, a nested call whose variables cross, and a tuple of both.
+// @EXPECT: 1:a|b:2|int 1 2|gen x 2.5|z:7|3 w
+use twolib;
+fn main() {
+  v: vector<text> = ["y", "z"];
+  t = keep_both(3, "w");
+  println("{pair_up(1, "a")}|{pair_up("b", 2)}|{show(1, 2)}|{show("x", 2.5)}|{swap_last(7, v)}|{t.0} {t.1}");
+}

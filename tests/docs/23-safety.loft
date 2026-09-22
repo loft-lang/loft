@@ -323,6 +323,16 @@ fn main() {
   // (`warning[variant-field-unchecked]`); bind the field in a `match` arm,
   // which is per-variant and cannot reach the wrong one.
 
+  // ## A conditional `yield` in a loop runs eagerly on --native
+  // A generator is suspended at each `yield` on the interpreter.  On --native
+  // a `for` or `while` loop is too when its one `yield` sits on the body's
+  // straight line; a yield inside an `if` or `match`, two yields in one
+  // iteration, a nested loop or a `continue` runs the whole loop before the
+  // first value is handed out.  The values agree, the side effects do not —
+  // and an endless `while true { if ready { yield x; } }` never hands out a
+  // value on --native, it runs until memory runs out.  Keep the yield
+  // unconditional: `while true { …; yield x; }` is lazy on both backends.
+
   // ## XOR is `^`, not exponentiation
   // Unlike some languages where `^` means "power", in loft `^` is bitwise
   // XOR. For exponentiation use the `**` operator (`2 ** 10 == 1024`,

@@ -1,0 +1,192 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1600, `@FR-H-Drop` — WHERE A LOCAL BOUND INSIDE AN `if` ARM IS RELEASED, and the order a
+// HOISTED local releases in.  Two contracts, one of them still a design question:
+//
+// ALWAYS (D-heap-37, closed): a local bound inside an `if` arm, a loop body or a block and READ
+// after it is hoisted to the enclosing scope, and released there in reverse declaration order —
+// before the locals declared ahead of it (`a9`–`a11`; the controls `k1`–`k3`).  The three
+// hoists registered it with a bare push, and its backing kept its turn at the function's head.
+//
+// OPT-IN (D-heap-36, OPEN): whether a local every mention of which lies in ONE arm dies at the
+// arm's end or at the scope around the `if`.  @PLN125 decided the scope around it
+// (`pln125-b-drop.loft`'s `if_block_local`); loft#1600 asks for the arm's end.  The mechanism
+// exists behind `LOFT_ARM_SCOPE=1`, and so do its cells: run this file with it set to assert
+// them (`a1`–`a8`, `a12`–`a16`).  Off by default, and the corpus runs it off.
+//
+// Every expected trace is worked out by hand.  The drop hook writes a trace FILE, as
+// `139-drop-cascade.loft` does and for its reason.
+//
+// @falsified-at: 788f6e4a9 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.patch
+//   — the same channels.
+// CHANNEL: assertion failures, both backends — the order cells carry a hoisted local late.
+// HOLDS: leak and panic are unmoved; the controls `k1`–`k3` are right before and after.
+// WITNESS: on the control, `a9 read after the if: m50,m52,r1,a1,x,d50,d52, want …,x,d52,d50`.
+
+fn trace_path() -> text { return "loft_1600_arm_scope_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+struct H { id: integer }
+fn OpDrop(self: H) { note("d{self.id}"); }
+fn mk(id: integer) -> H { note("m{id}"); return H { id: id }; }
+fn mkv(id: integer) -> vector<H> { return [mk(id)]; }
+
+// 1 — the issue's shape: a vector moved into a local inside the arm.
+fn a1(c: boolean) { v: vector<H> = [mk(50)]; if c { w = v; note("r{len(w)}"); } note("x"); }
+
+// 2 — the same in the ELSE arm.
+fn a2(c: boolean) { v: vector<H> = [mk(50)]; if !c { note("no"); } else { w = v; note("r{len(w)}"); } note("x"); }
+
+// 3 — in an `if` nested inside the arm: the inner arm is the scope.
+fn a3(c: boolean) { v: vector<H> = [mk(50)]; if c { if c { w = v; note("r{len(w)}"); } note("b"); } note("x"); }
+
+// 4 — in an else-if arm.
+fn a4(c: boolean) { v: vector<H> = [mk(50)]; if !c { note("no"); } else if c { w = v; note("r{len(w)}"); } note("x"); }
+
+// 5 — a record a call returns.
+fn a5(c: boolean) { v: vector<H> = [mk(50)]; if c { r = mk(52); note("r{r.id}"); } note("x"); }
+
+// 6 — a vector a call returns.
+fn a6(c: boolean) { v: vector<H> = [mk(50)]; if c { w = mkv(53); note("r{len(w)}"); } note("x"); }
+
+// 7 — the arm inside a loop body: released before the pass goes on.
+fn a7(c: boolean) {
+  v: vector<H> = [mk(50)];
+  for _ in 0..1 { if c { w = v; note("r{len(w)}"); } note("e"); }
+  note("x");
+}
+
+// 8 — a record literal.
+fn a8(c: boolean) { v: vector<H> = [mk(50)]; if c { r = H { id: 54 }; note("r{r.id}"); } note("x"); }
+
+// 9 — READ after the `if`: the local is the function's, released in reverse declaration order.
+fn a9(c: boolean) { v: vector<H> = [mk(50)]; if c { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+
+// 10 — the same, bound in a loop body and read after the loop.
+fn a10() { v: vector<H> = [mk(50)]; for _ in 0..1 { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+
+// 11 — the same, bound in a block and read after it.
+fn a11() { v: vector<H> = [mk(50)]; { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+
+// 12 — a record bound in BOTH arms: each arm's own.
+fn a12(c: boolean) {
+  v: vector<H> = [mk(50)];
+  if c { r = H { id: 70 }; note("r{r.id}"); } else { r = H { id: 71 }; note("q{r.id}"); }
+  note("x");
+}
+
+// 13 — rebound inside the arm: the displaced record goes after the new one is built.
+fn a13(c: boolean) {
+  v: vector<H> = [mk(50)];
+  if c { r = mk(74); note("r{r.id}"); r = mk(75); note("s{r.id}"); } else { r = mk(76); }
+  note("x");
+}
+
+// 14 — the arm leaves its loop with `break`.
+fn a14(c: boolean) {
+  v: vector<H> = [mk(50)];
+  for _ in 0..2 { if c { w = [mk(62)]; note("r{len(w)}"); break; } }
+  note("b");
+  note("x");
+}
+
+// 15 — a `match` arm.
+fn a15(c: boolean) {
+  v: vector<H> = [mk(50)];
+  match c { true => { w = [mk(63)]; note("r{len(w)}"); }, false => { note("no"); } }
+  note("x");
+}
+
+// 16 — the arm returns from the function.
+fn g16(c: boolean) -> integer { if c { w = [mk(65)]; note("r{len(w)}"); return len(w); } 0 }
+fn a16() { note("g{g16(true)}"); }
+
+// Controls — right before and after.
+// k1: a vector moved in the arm and read after the `if`.
+fn k1(c: boolean) { v: vector<H> = [mk(50)]; if c { w = v; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+// k2: the arm not taken, the local read after it.
+fn k2(c: boolean) { v: vector<H> = [mk(50)]; if !c { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+// k3: a vector literal in the arm, which kept the arm's scope before.
+fn k3(c: boolean) { v: vector<H> = [mk(50)]; if c { w = [mk(52)]; note("r{len(w)}"); } note("x"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  // ALWAYS — the hoisted local's release order, and the controls.
+  a9(true);
+  ok("a9 read after the if  ", drain(), "m50,m52,r1,a1,x,d52,d50");
+  a10();
+  ok("a10 read after a loop ", drain(), "m50,m52,r1,a1,x,d52,d50");
+  a11();
+  ok("a11 read after a block", drain(), "m50,m52,r1,a1,x,d52,d50");
+  k1(true);
+  ok("k1 control, read after", drain(), "m50,r1,a1,x,d50");
+  k2(true);
+  ok("k2 control, not taken ", drain(), "m50,a0,x,d50");
+  k3(true);
+  ok("k3 control, literal   ", drain(), "m50,m52,r1,d52,x,d50");
+  // OPT-IN — an arm's local released at the arm's end (`LOFT_ARM_SCOPE=1`, D-heap-36).
+  // `env_variable` answers null for an unset variable, where its doc says `""` (loft#1609).
+  arm = env_variable("LOFT_ARM_SCOPE");
+  if arm != null && arm != "" {
+    a1(true);
+    ok("a1 moved in the arm   ", drain(), "m50,r1,d50,x");
+    a2(true);
+    ok("a2 else arm           ", drain(), "m50,r1,d50,x");
+    a3(true);
+    ok("a3 nested if          ", drain(), "m50,r1,d50,b,x");
+    a4(true);
+    ok("a4 else-if            ", drain(), "m50,r1,d50,x");
+    a5(true);
+    ok("a5 record from a call ", drain(), "m50,m52,r52,d52,x,d50");
+    a6(true);
+    ok("a6 vector from a call ", drain(), "m50,m53,r1,d53,x,d50");
+    a7(true);
+    ok("a7 in a loop body     ", drain(), "m50,r1,d50,e,x");
+    a8(true);
+    ok("a8 record literal     ", drain(), "m50,r54,d54,x,d50");
+    a12(true);
+    ok("a12 both arms, true   ", drain(), "m50,r70,d70,x,d50");
+    a12(false);
+    ok("a12 both arms, false  ", drain(), "m50,q71,d71,x,d50");
+    a13(true);
+    ok("a13 rebound in the arm", drain(), "m50,m74,r74,m75,d74,s75,d75,x,d50");
+    a14(true);
+    ok("a14 break             ", drain(), "m50,m62,r1,d62,b,x,d50");
+    a15(true);
+    ok("a15 match arm         ", drain(), "m50,m63,r1,d63,x,d50");
+    a16();
+    ok("a16 early return      ", drain(), "m65,r1,d65,g1");
+  } else {
+    // Run every cell so none of them rots unparsed; their traces are the rule this file
+    // does not assert with the switch off.
+    a1(true); a2(true); a3(true); a4(true); a5(true); a6(true); a7(true); a8(true);
+    a12(true); a12(false); a13(true); a14(true); a15(true); a16();
+    drain();
+  }
+  delete(trace_path());
+  println("a hoisted local releases in its declaration turn: every asserted cell holds");
+}

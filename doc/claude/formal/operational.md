@@ -154,6 +154,15 @@ comparison, `??`) evaluates both operands under E-Left.
                 value, so a NON-optional one is unconditionally true and its condition cannot
                 fail.  That last case is `constant-condition`; the `!` spelling of the same
                 question is `redundant-null-negation`.
+  (E-Eq)        `==` compares a VALUE by value and a REFERENCE by identity (DESIGN_DECISIONS
+                C91): a scalar by its value, a `text` by its characters, a `value struct` by
+                its CONTENT — every field with its own type's `==`, in declaration order, a
+                nested value struct by its own content and a reference field by identity —
+                and a `struct`, a collection or any other reference by identity.  It never
+                follows a reference into another store.  A type's own `OpEq` replaces this
+                for that type.  `!=` is the exact complement of `==` for every type, a type's
+                own `OpEq` included, with each operand evaluated once; a type's own `OpNe`
+                replaces the complement.
 ```
 
 **In words.** Arithmetic gives the obvious result when it fits. When it *can't* — overflow,
@@ -172,6 +181,14 @@ every program that says nothing. Comparisons are the first exception to contagio
 scalar types** — `null == null` is always true, never type-dependent. (`float`/`single` null was
 a NaN, so `null == null` used to be false and ordering unordered — deviation D-op-null-1, CLOSED
 by keystone step 2 (2026-07-10); both are now uniform with the integer/char behavior.)
+
+**Equality is bounded by the value's own storage (E-Eq).**  A value is compared as what it is,
+so a `value struct` copy equals its source, and a reference is compared as the handle it is, so
+two `struct` records built alike are two records.  Nothing in between: a comparison of a record's
+own fields that went on by identity for its references would answer differently for a reason in
+the layout, not the language (C91 rejects that hybrid).  A deep comparison is the reserved
+`===`.  `!=` answers the complement of whatever `==` answers, a type's own `OpEq` included — at a
+concrete site as inside a `<T: Equatable>` body (loft#1581).
 
 **`boolean` has equality but no ordering, and the ordering clause used to claim it anyway.**
 `null == null`, `null == false` and `!=` all answer per the rule on a `boolean?`, but `<` on two
@@ -428,8 +445,12 @@ drift apart; verified both backends —
 ## Deviations
 
 **OPEN: 2.**
-- **D-op-1** — there is no shared operational semantics — the interpreter is the spec
-- **D-op-2** — interpreter/native divergences are test-caught, not definition-caught
+- **D-op-1** — there is no shared operational semantics — the interpreter is the spec.  Not
+  resolvable in a release: two implementations, and nothing links them into one executable
+  semantics outside the tests that run both; @PLN89's differential oracle narrows it, and each
+  divergence it catches is filed on its own.
+- **D-op-2** — interpreter/native divergences are test-caught, not definition-caught.  Not
+  resolvable in a release, for D-op-1's reason.
 
 The full register — these entries in full, plus every closed one with its dates and
 issue numbers — is the companion [operational-history.md](operational-history.md).

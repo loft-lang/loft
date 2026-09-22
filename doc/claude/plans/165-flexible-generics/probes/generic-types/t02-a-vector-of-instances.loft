@@ -1,0 +1,13 @@
+// D3 — `vector<Box<integer>>`: value, length.
+// @EXPECT: 3 20 30
+struct Box<T> { v: T }
+fn main() {
+  v: vector<Box<integer>> = [];
+  for i in 0..3 {
+    x: Box<integer> = Box { v: i * 10 };
+    v += [x];
+  }
+  s = 0;
+  for e in v { s += e.v; }
+  println("{len(v)} {v[2].v} {s}");
+}

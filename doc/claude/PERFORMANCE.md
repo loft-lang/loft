@@ -175,6 +175,37 @@ runs (nothing to sample — no dispatch loop) and `LOFT_ALLOC_SITES` (it ranks a
 *process-wide* peak by bytecode position, and a suite's peak may have been reached in any
 of its runs, so those positions have no single `Data` to resolve against).
 
+### Attributing a bench ROW — `--names` on the native build (@PLN158)
+
+`perf` names `n_<yours>` only while the function still exists as a symbol.  A shipped
+build (`--native-release`) is lean and fully optimised, and rustc INLINES a small routine
+into the loop that calls it — a bench lane's `main` — so `perf annotate` shows the lane's
+float math with no way to say which row's it is.  Two rows of the consumer lane
+(`mesh_aabb`, `enum_match`) were measured unattributable that way (`round-3.md`), and the
+whole record class sat behind them.
+
+`loft --native-release --names` is the instrument: every generated loft function carries
+`#[inline(never)]` (loft#954's attribute, which the browser build uses so a trap's frames
+resolve), so each row has a symbol and `perf` attributes its samples to it.  A MEASUREMENT
+build, never one that ships — the attribute costs exactly the inlining it names.  The
+recipe, on one core:
+
+```bash
+loft --native-release --names --native-emit /tmp/lane.rs bench/16_consumer_shapes/bench.loft
+bench/portal/hand_price.sh /tmp/lane.rs /tmp/lane          # the shipped flags
+perf record -F 15000 -e cycles:u -o /tmp/lane.data -- taskset -c 0 /tmp/lane --n 200
+perf report -i /tmp/lane.data --stdio --sort symbol | grep n_c_mesh_aabb   # the row's share
+perf annotate -i /tmp/lane.data --stdio -s consumer::n_c_mesh_aabb__inv    # its instructions
+```
+
+Read the row's TWIN when one exists (`n_<row>__inv`, `@FR-R-Callee`): the lane calls the
+twin, and the plain function carries no samples.  Check first that the named build times
+the row the same as the plain one (it did, both rows, to 0.3 %) — an attribute that moved
+the row would be measuring something else.  What it found on its first use: `mesh_aabb`'s
+5.3 ns a vertex was six null-aware float compares spelled as four NaN tests and a
+short-circuit each, which LLVM cannot make branchless; respelled as one null test over
+operands bound first (`OpLtFloat`'s template), the row went 38.7 → 20.9 µs, 4.81× → 2.73×.
+
 ### The two ways a profile can lie, and what it now says instead
 
 Both were found by pointing the sampler at a real consumer (moros), and both matter more
@@ -545,6 +576,65 @@ Wall-clock milliseconds, **best of 3 warm runs**, single core, Linux x86-64, **r
 > again. The hash rows are doubly out of date: they also predate **@PLN135**, which measured
 > integer-key insert 933 → 505 ms (350 ms with `reserve`) and lookup ~95 → ~75 ms — see
 > [plans/135-hash-performance/README.md](plans/135-hash-performance/README.md).
+
+**Re-measured 2026-09-21 as STATISTICS** (`python3 bench/stats.py`, x86-64 host `laptop`,
+branch `157-native-4x` at 3c87e8968; the reference is `rustc -O`).  The suite moved onto the
+row protocol the drawing bench uses (`bench/README.md`): every program runs its op `--n` times
+and reports ns per op, `--n` is calibrated per lane to ~400 ms, one warm-up round is discarded,
+seven samples per lane are taken interleaved and pinned to the fastest core, and a row carries
+its spread and the RANGE of its ratio, so a verdict is `ok`, `OVER` or `unclear` rather than a
+bare number.  Two full runs reproduce every ratio to about 1 % (the threaded row to about 4 %).
+
+| # | routine | native ns/op | ±% | Rust ns/op | ±% | native/Rust | range | 2× |
+|---|---------|-------------:|---:|-----------:|---:|------------:|-------|----|
+| 01 | fibonacci    | 10 362 156 | 0.7 |  2 636 753 | 0.0 | **3.93** | 3.92–3.95 | OVER |
+| 02 | sum_loop     |  5 384 541 | 0.0 |  2 975 253 | 0.0 | 1.81 | 1.81–1.81 | ok |
+| 03 | sieve        | 11 075 176 | 0.3 | 10 687 972 | 0.1 | 1.04 | 1.03–1.04 | ok |
+| 04 | collatz      | 51 450 833 | 0.0 | 25 667 500 | 0.1 | 2.00 | 2.00–2.01 | OVER |
+| 05 | mandelbrot   |  6 087 859 | 0.0 |  6 130 265 | 0.1 | 0.99 | 0.99–0.99 | ok |
+| 06 | newton_sqrt  | 28 153 166 | 0.1 | 12 768 966 | 0.1 | 2.20 | 2.20–2.21 | OVER |
+| 07 | string_build | 11 079 593 | 0.1 |  4 389 800 | 0.3 | 2.52 | 2.52–2.53 | OVER |
+| 08 | word_count   | 20 848 277 | 1.0 |  4 476 639 | 0.8 | **4.66** | 4.62–4.71 | OVER |
+| 09 | dot_product  |  1 489 399 | 2.7 |  1 360 473 | 2.6 | 1.09 | 1.06–1.11 | ok |
+| 10 | sort         |  2 182 335 | 1.4 |    899 534 | 0.2 | 2.43 | 2.42–2.46 | OVER |
+| 11 | par          |  9 589 789 | 1.1 |  1 816 663 | 2.3 | **5.28** | 5.19–5.38 | OVER |
+| 12 | drawing hash |    106 317 | 0.8 |    106 011 | 0.1 | 1.00 | 1.00–1.01 | ok |
+| 12 | drawing lock |  2 064 088 | 1.9 |  1 535 169 | 1.3 | 1.34 | 1.33–1.37 | ok |
+
+Median 2.00×; six rows inside 2×, seven over, none unclear.  The rows are NOT comparable with
+the tables below, and three of the old rows were not comparable with THEMSELVES: `10_sort`
+timed a loft insertion sort against a Rust BUBBLE sort; `02_sum_loop`'s reference
+`black_box`ed every addition while loft's loop was free to collapse (the row is now a
+loop-carried mix neither side can collapse or vectorise); and `11_par`'s reference
+`black_box`ed every element, which blocked the vectorisation a Rust author gets for free —
+that is most of why the row now reads 5.3× where it read 1.1×.  `bench/README.md` § The row
+protocol states the four rules that keep a row like-for-like.
+
+⚠ **The `loft-interp` column below was never the interpreter.**  `run_bench.sh` ran
+`loft prog.loft`, and a bare run takes the DEFAULT backend, which is native (the unoptimised
+semantics tier).  So *"the interpreter now beats CPython on 8 of 11"* in the notes under the
+old table was the native backend beating CPython.  With `--interpret` passed, ms per op on
+the 2026-09-21 workloads:
+
+| routine | Python | loft interpreter | interp / Python |
+|---------|-------:|-----------------:|----------------:|
+| fibonacci    |  82.9 |   538.1 |  6.5× |
+| sum_loop     | 184.5 | 1 236.5 |  6.7× |
+| sieve        | 218.0 | 2 104.5 |  9.7× |
+| collatz      | 974.7 | 8 150.9 |  8.4× |
+| mandelbrot   | 169.0 | 1 192.1 |  7.1× |
+| newton_sqrt  | 156.3 | 1 505.0 |  9.6× |
+| string_build |  23.2 |    80.5 |  3.5× |
+| word_count   |  17.2 |   217.9 | 12.7× |
+| dot_product  |  50.0 |   797.4 | 16.0× |
+| sort         | 105.4 |   986.0 |  9.4× |
+| par          |  50.1 |   321.2 |  6.4× |
+
+The interpreter is 3.5–16× SLOWER than CPython on every row (one run per lane, 2 ops — a
+quick look, not statistics; the gap is far outside its noise).  The conclusion drawn from the
+old reading — that the interpreter optimisations P1/P2 are low-priority because *"it's already
+fast"* — rested on the wrong column and is withdrawn; whether they matter is the owner's call,
+since the interpreter is the debugging and oracle lane and native is what ships.
 
 **Re-measured 2026-09-17** (`bench/run_bench.sh --skip-python --skip-wasm --warmup`, this
 x86-64 box, one run; the Rust column is `rustc -O`).  These are ENGINE measurements: synthetic

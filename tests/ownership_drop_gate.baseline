@@ -1,10 +1,6 @@
 # ownership_drop_gate — the interpreter cells that are NOT clean, measured on the tree that
 # committed this file.  Each line is an open (H-Drop) defect: `cell KIND,KIND`.
 # Regenerate only after reading the diff: LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
-c_coalesce_enum DOUBLE
-c_coalesce_field DOUBLE
-c_coalesce_push DOUBLE
-c_coalesce_veclit DOUBLE
 c_elem_enum DOUBLE
 c_elem_field DOUBLE
 c_elem_push DOUBLE
@@ -32,39 +28,15 @@ c_tuple_tuplem DOUBLE
 c_tuple_veclit DOUBLE
 p_e1 DOUBLE
 p_e2 DOUBLE
-p_i2 DOUBLE,EARLY
-p_j3 DOUBLE
-p_j4 DOUBLE
-p_l2 LOST
 p_o1 DOUBLE
-p_o2 DOUBLE,EARLY
 p_o3 DOUBLE,EARLY
 p_o4 DOUBLE,EARLY
 p_o5 DOUBLE,EARLY
-p_v1 DOUBLE
 p_v2 DOUBLE
 p_v3 DOUBLE
-q_default_field_call_field DOUBLE
-q_default_field_call_push DOUBLE
 q_default_field_call_ret DOUBLE,EARLY
-q_default_field_literal_field DOUBLE
-q_default_field_literal_push DOUBLE
 q_default_field_literal_ret DOUBLE,EARLY
-q_default_field_var_field DOUBLE
-q_default_field_var_push DOUBLE
 q_default_field_var_ret DOUBLE,EARLY
-q_default_local_call_field DOUBLE
-q_default_local_call_local LOST
-q_default_local_literal_field DOUBLE
-q_default_local_literal_push DOUBLE
-q_default_local_var_field DOUBLE
-q_default_local_var_push DOUBLE
-q_default_param_call_field DOUBLE
-q_default_param_call_local LOST
-q_default_param_literal_field DOUBLE
-q_default_param_literal_push DOUBLE
-q_default_param_var_field DOUBLE
-q_default_param_var_push DOUBLE
 q_present_field_call_field DOUBLE
 q_present_field_call_push DOUBLE
 q_present_field_call_ret DOUBLE,EARLY
@@ -74,12 +46,6 @@ q_present_field_literal_ret DOUBLE,EARLY
 q_present_field_var_field DOUBLE
 q_present_field_var_push DOUBLE
 q_present_field_var_ret DOUBLE,EARLY
-q_present_local_call_field DOUBLE
-q_present_local_call_push DOUBLE
-q_present_local_literal_field DOUBLE
-q_present_local_literal_push DOUBLE
-q_present_local_var_field DOUBLE
-q_present_local_var_push DOUBLE
 q_present_param_call_field DOUBLE
 q_present_param_call_push DOUBLE
 q_present_param_call_ret DOUBLE

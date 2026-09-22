@@ -129,6 +129,13 @@ pub fn complete_definition(_lexer: &mut Lexer, data: &mut Data, d_nr: u32) {
         "radix" | "hash" | "reference" | "index" | "sorted" | "spatial" | "trie" => {
             data.set_returned(d_nr, Type::Reference(d_nr, Deps::none()));
         }
+        // A generator handle (loft#1585): the element type a `vector<iterator<T>>` stores.
+        "iterator" => {
+            data.set_returned(
+                d_nr,
+                Type::Iterator(Box::new(Type::Unknown(0)), Box::new(Type::Null)),
+            );
+        }
         "keys_definition" => {
             data.set_returned(d_nr, Type::Keys);
             data.definitions[d_nr as usize].known_type = 8;
@@ -185,6 +192,12 @@ pub(crate) fn synth_nullable_target(data: &Data, struct_d: u32) -> bool {
 }
 
 fn copy_unknown_fields(data: &mut Data, d: u32) {
+    // An instance of a generic struct takes its fields from its template, closed per instance
+    // (`Data::refresh_instances`, @PLN165 D7): a forward stub resolved here would name the
+    // bare TEMPLATE (`b: B` for `b: B<integer>`), which then reached layout.
+    if data.def(d).instance_of != u32::MAX {
+        return;
+    }
     for nr in 0..data.attributes(d) {
         // `Unknown(was)` names the forward-referenced type's STUB def — except for
         // `Unknown(0)`, which is the codebase-wide "no type known" sentinel and names
@@ -204,14 +217,19 @@ fn copy_unknown_fields(data: &mut Data, d: u32) {
             Type::Optional(inner) => (*inner, true),
             other => (other, false),
         };
+        // A stub adopted by a GENERIC struct is not its type: the field names an instance whose
+        // arguments pass 1 set aside (`skip_forward_type_args`), retyped on pass 2 (@PLN165 D7).
+        let is_template = |w: u32| data.def_type(w) == DefType::TypeTemplate;
         if let Type::Unknown(was) = attr_type
             && was != 0
+            && !is_template(was)
         {
             let resolved = data.def(was).returned.clone();
             set_attr_type_keeping_optional(data, d, nr, resolved, optional);
         } else if let Type::Vector(content, dep) = &attr_type
             && let Type::Unknown(was) = **content
             && was != 0
+            && !is_template(was)
         {
             let dep = dep.clone();
             // Forward-ref element resolves DENSE — the dense-default invariant
@@ -308,7 +326,11 @@ pub fn actual_types_deferred(
             }
             DefType::Function => {
                 copy_unknown_fields(data, d);
-                if let Type::Unknown(was) = data.def(d).returned {
+                // A return naming a generic struct declared below is not the bare template:
+                // `between_passes` makes it the instance its arguments name (@PLN165 D7).
+                if let Type::Unknown(was) = data.def(d).returned
+                    && data.def_type(was) != DefType::TypeTemplate
+                {
                     data.set_returned(d, data.def(was).returned.clone());
                 }
             }
@@ -399,6 +421,23 @@ pub fn sync_capture_ownership(data: &Data, database: &mut Stores) {
 /// The answer is transitive.  An inline struct field stores its content's bytes, so a
 /// host whose field type is itself waiting cannot be laid out either — laying it out
 /// would register the field with content id `u16::MAX`.
+/// Lay out a concrete struct whose layout waited for pass 2 — a field naming a generic struct
+/// declared below is only an instance once pass 2 re-reads it (@PLN165 D7) — as soon as its
+/// declaration is complete there, before code that writes its fields is parsed.  Nothing for
+/// a struct already laid out, one still blocked, or one containing itself (`fill_all` reports
+/// that).
+pub(crate) fn lay_out_late(data: &mut Data, database: &mut Stores, d: u32) {
+    if data.def(d).known_type != u16::MAX
+        || data.def_type(d) != DefType::Struct
+        || layout_blocked(data, d, &mut Vec::new())
+        || data.has_value_cycle(d, &mut std::collections::HashSet::new())
+    {
+        return;
+    }
+    fill_database(data, database, d);
+    database.lay_out_record(data.def(d).known_type);
+}
+
 fn layout_blocked(data: &Data, d: u32, seen: &mut Vec<u32>) -> bool {
     if d == u32::MAX {
         return true;
@@ -484,7 +523,11 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
     // has no finite size either, and with no struct anywhere in it nothing else would ask.
     let mut found_cycle = false;
     for d_nr in start_def..data.definitions() {
-        if matches!(data.def_type(d_nr), DefType::Struct | DefType::Enum) {
+        // An open instance (@PLN165 D5) is never laid out, so it has no size to be infinite.
+        if matches!(data.def_type(d_nr), DefType::Struct | DefType::Enum)
+            && !data.is_open_instance(d_nr)
+            && !data.is_template_part(d_nr)
+        {
             let mut visiting = std::collections::HashSet::new();
             if data.has_value_cycle(d_nr, &mut visiting) {
                 // Whether or not this def is one to REPORT, its layout is now unreachable —
@@ -504,13 +547,14 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
                 } else {
                     "Struct"
                 };
+                // An instance of a generic struct is named as the reader writes it
+                // (`Node<integer>`, not its key), which is what its twin's report names.
+                let shown = Type::Reference(d_nr, Deps::none()).source_name(data);
                 lexer.pos_diagnostic(
                     Level::Error,
                     &data.def(d_nr).position,
                     &format!(
-                        "{noun} '{}' contains itself (directly or indirectly) — use reference<{}> to break the cycle",
-                        data.def(d_nr).name,
-                        data.def(d_nr).name,
+                        "{noun} '{shown}' contains itself (directly or indirectly) — use reference<{shown}> to break the cycle",
                     ),
                 );
             }
@@ -613,6 +657,7 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
         if ((matches!(data.def_type(d_nr), DefType::EnumValue) && data.attributes(d_nr) > 0)
             || matches!(data.def_type(d_nr), DefType::Struct))
             && data.def(d_nr).known_type == u16::MAX
+            && !data.is_template_part(d_nr)
             && !layout_blocked(data, d_nr, &mut Vec::new())
         {
             fill_database(data, database, d_nr);
@@ -812,6 +857,12 @@ fn synth_nullable_struct_fields(data: &mut Data, database: &mut Stores, lexer: &
             // field.  Adding the skip would be a behaviour change with no measured case
             // asking for it.
             if data.def(host).synthetic.is_some() {
+                continue;
+            }
+            // An open instance (@PLN165 D5) is never laid out, so its fields need no wrapper —
+            // one over it would embed a fieldless row, which has no layout either.  Nor is a
+            // generic enum's own variant (D8).
+            if data.is_open_instance(host) || data.is_template_part(host) {
                 continue;
             }
             if !(matches!(data.def_type(host), DefType::Struct)
@@ -1041,6 +1092,40 @@ fn variant_parent_qualified_name(data: &Data, database: &Stores, d_nr: u32) -> O
 }
 
 pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
+    // A generator handle is stored as the 12-byte `DbRef` it is (loft#1585): the stdlib's
+    // `type iterator` has that row, whichever layout asks for it first.
+    if data.def(d_nr).known_type == u16::MAX
+        && data.def_type(d_nr) == DefType::Type
+        && data.def(d_nr).name == "iterator"
+    {
+        data.definitions[d_nr as usize].known_type = database.dbref();
+        return;
+    }
+    // @PLN165 D5 — an OPEN instance (`Box<T>` inside a template) gets a ROW and no layout:
+    // its fields are typed by a variable, and laying them out is loft#1536's class (a
+    // zero-width `__typevar_T` field).  The row is what the type variable's placeholder has —
+    // an internal, fieldless entry a template's record ops can name — and each monomorph
+    // retargets it to its concrete instance's (`retarget_parametric_type_rows`), which
+    // refuses a monomorph still naming one.  Its fields are never read through it: every
+    // field access of an open instance is deferred to the instance (`Parser::TV_FIELD`).
+    if data.is_open_instance(d_nr) {
+        if data.def(d_nr).known_type == u16::MAX {
+            // A variant is named by its instance: every instance's `Full` is `Full`.
+            let d = data.def(d_nr);
+            let reg_name = if d.def_type == DefType::EnumValue {
+                format!(
+                    "{TYPEVAR_ROW_PREFIX}{}::{}",
+                    data.def(d.parent).name,
+                    d.name
+                )
+            } else {
+                format!("{TYPEVAR_ROW_PREFIX}{}", d.name)
+            };
+            let s_type = database.structure(&reg_name, 0);
+            data.definitions[d_nr as usize].known_type = s_type;
+        }
+        return;
+    }
     if data.def(d_nr).name == "Unknown(0)" {
         return;
     }

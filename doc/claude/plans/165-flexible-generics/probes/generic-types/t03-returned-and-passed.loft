@@ -1,0 +1,11 @@
+// D3 — an instance as a parameter and a return; the return's literal takes its instance
+// from the declared return type.
+// @EXPECT: 8|x!
+struct Box<T> { v: T }
+fn mk(n: integer) -> Box<integer> { Box { v: n } }
+fn twice(b: Box<integer>) -> integer { b.v * 2 }
+fn bang(b: Box<text>) -> Box<text> { r: Box<text> = Box { v: b.v + "!" }; r }
+fn main() {
+  t: Box<text> = Box { v: "x" };
+  println("{twice(mk(4))}|{bang(t).v}");
+}

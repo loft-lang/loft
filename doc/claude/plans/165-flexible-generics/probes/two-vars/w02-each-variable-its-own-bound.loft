@@ -1,0 +1,11 @@
+// C2 — each variable carries its OWN bound: `K: Named` calls `tag`, `V: Printable` formats.
+// @EXPECT: cat 1=2.5|dog 2=x
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+fn label<K: Named, V: Printable>(k: K, v: V) -> text { "{k.tag()}={v}" }
+fn main() {
+  println("{label(Cat{n:1}, 2.5)}|{label(Dog{n:2}, "x")}");
+}

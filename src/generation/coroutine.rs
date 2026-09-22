@@ -72,6 +72,23 @@ pub(crate) fn yield_slot_i64(kind: YieldSlot, expr: &str) -> Option<String> {
 /// tuple element of kind `kind` from the `_loft_yield_buf` transport buffer at
 /// `slot`.
 #[must_use]
+/// The initial value of the consumer's `next_into` buffer for a tuple of `kinds`: every slot
+/// zero, except a `Ref`'s store word, which is `u16::MAX` — so the tuple an EXHAUSTED advance
+/// leaves (the generator writes no slot) carries `DbRef::NULL` in each reference member, the
+/// reference null `(H-RefNull)`, and a consumer that owns those members releases nothing.
+pub(crate) fn yield_buf_init(kinds: &[YieldSlot]) -> String {
+    let mut words: Vec<&str> = Vec::new();
+    for &kind in kinds {
+        if kind == YieldSlot::Ref {
+            words.push("65535");
+            words.push("0");
+        } else {
+            words.extend(std::iter::repeat_n("0", kind.width()));
+        }
+    }
+    format!("[{}]", words.join(", "))
+}
+
 pub(crate) fn yield_slot_read(kind: YieldSlot, slot: usize) -> String {
     let s1 = slot + 1;
     match kind {
@@ -97,7 +114,10 @@ pub(crate) fn yield_slot_read(kind: YieldSlot, slot: usize) -> String {
 /// Derive the generator struct name from the loft function name.
 /// `n_count` → `NCountGen`, `n_gen_len` → `NGenLenGen`.
 fn gen_struct_name(fn_name: &str) -> String {
-    let base = fn_name.strip_prefix("n_").unwrap_or(fn_name);
+    // A key may keep non-identifier characters (an instance's `i_15vector<integer>_…`); the
+    // one flattening the function's own identifier goes through applies here too.
+    let flat = super::rust_fn_ident(fn_name);
+    let base = flat.strip_prefix("n_").unwrap_or(&flat);
     let capitalized: String = base
         .split('_')
         .map(|part| {
@@ -138,13 +158,17 @@ enum YieldSegment {
     /// - `whole`: the unsplit block, kept so a downgrade to `ForLoopBody` is exact
     /// - `setup`: the block's statements BEFORE the loop (the cursor initialisation)
     /// - `body`: the loop's own operators — the header (advance + bound test) and the body,
-    ///   with the trailing `yield` still in place; the emitter rewrites that one node
+    ///   up to and including the `yield`; the emitter rewrites that one node
+    /// - `resume`: the rest of the iteration, the statements AFTER the `yield` — run at the
+    ///   START of the next advance, before the header, so the loop is rotated rather than
+    ///   cut.  Empty when the `yield` ends the body; a third state when it does not.
     /// - `post`: the block's statements AFTER the loop (scope-exit frees, implicit return)
     ForLoopLazy {
         pre: Vec<Value>,
         whole: Value,
         setup: Vec<Value>,
         body: Vec<Value>,
+        resume: Vec<Value>,
         post: Vec<Value>,
     },
 }
@@ -315,22 +339,35 @@ fn lazy_yield_init(yield_tp: &Type) -> &'static str {
 
 /// Recognise the loop shape a single advance can run one iteration of (CL-9 slice 1).
 ///
-/// Returns `(setup, loop_ops, post)` — the statements before the loop, the loop's own
-/// operators, and the statements after it.  Everything this REJECTS keeps the eager buffer,
-/// so no generator regresses while the remaining axes are still to come:
+/// Returns `(setup, loop_ops, resume, post)` — the statements before the loop, the loop's
+/// operators up to its `yield`, the rest of the iteration, and the statements after the loop.
+/// Everything this REJECTS keeps the eager buffer, so no generator regresses while the
+/// remaining axes are still to come:
 ///
 /// * more than one loop, or a yield outside the loop — the state graph is not one cursor;
-/// * more than one yield, or one that is not the loop body's last statement (axes A2/A3) —
-///   re-entry would have to land at the yield that suspended, which one state cannot encode;
+/// * more than one yield, or one under an `if`/`match` (axes A2/A3) — re-entry would have to
+///   land at the yield that suspended, which one state cannot encode.  A yield on the body's
+///   straight line may have statements after it: they are the `resume` slice;
 /// * a nested loop (A4) — its `break` would be caught by the single-iteration wrapper this
 ///   lowering runs the body in, ending the OUTER loop instead of the inner one;
 /// * a `continue` — it would leave the iteration without yielding, which the wrapper reads
 ///   as "the loop ended";
 /// * a `return` — it would return from `next()` rather than from the generator.
+///
+/// A `while` (or bare `loop`) is the same shape with nothing around it: the parser emits it
+/// as a `Loop` directly in the generator's body, its condition the loop's first operator, and
+/// with no cursor to set up and no block scope to close.  It used to be rejected for not being
+/// a block, which lowered EVERY `while` generator eagerly — and an endless one, the usual
+/// shape of a behaviour, filled its buffer until the process ran out of memory (loft#1586).
+#[allow(clippy::type_complexity)]
 fn detect_lazy_for(
     val: &Value,
     data: &crate::data::Data,
-) -> Option<(Vec<Value>, Vec<Value>, Vec<Value>)> {
+) -> Option<(Vec<Value>, Vec<Value>, Vec<Value>, Vec<Value>)> {
+    if let Value::Loop(lp) = val.unspan() {
+        let (body, resume) = lazy_loop_body(&lp.operators, data)?;
+        return Some((Vec::new(), body, resume, Vec::new()));
+    }
     let Value::Block(bl) = val.unspan() else {
         return None;
     };
@@ -349,30 +386,7 @@ fn detect_lazy_for(
     let Value::Loop(lp) = bl.operators[at].unspan() else {
         return None;
     };
-    let mut yields = 0usize;
-    let mut disqualified = false;
-    for op in &lp.operators {
-        op.walk(&mut |n| match n {
-            Value::Yield(_) => yields += 1,
-            Value::Loop(_) | Value::Continue(_) | Value::Return(_) => disqualified = true,
-            _ => {}
-        });
-    }
-    if yields != 1 || disqualified {
-        return None;
-    }
-    // A trailing free is the compiler's statement, not the author's — hoist it above the
-    // suspend rather than reading it as "a statement after the yield" and giving up.
-    let mut body_ops = lp.operators.clone();
-    if !body_ops.last().is_some_and(tail_is_yield)
-        && let Some(tail) = body_ops.last()
-        && let Some(fixed) = hoist_trailing_frees(tail, data)
-    {
-        *body_ops.last_mut()? = fixed;
-    }
-    if !body_ops.last().is_some_and(tail_is_yield) {
-        return None;
-    }
+    let (body_ops, resume) = lazy_loop_body(&lp.operators, data)?;
     // The block's trailing `return` is the generator's implicit end, which the state machine
     // expresses with its exhausted sentinel — emitting a Rust `return` of the loft value
     // answers the wrong type from `next()`.  Unwrap it the way `collect_segments` unwraps the
@@ -394,7 +408,67 @@ fn detect_lazy_for(
             _ => break,
         }
     }
-    Some((bl.operators[..at].to_vec(), body_ops, post))
+    Some((bl.operators[..at].to_vec(), body_ops, resume, post))
+}
+
+/// The loop's operators split at the `yield`, ready for [`YieldSegment::ForLoopLazy`] — or
+/// `None` when one advance cannot run one iteration of them (the rejections
+/// [`detect_lazy_for`] lists).
+fn lazy_loop_body(ops: &[Value], data: &crate::data::Data) -> Option<(Vec<Value>, Vec<Value>)> {
+    let mut yields = 0usize;
+    let mut disqualified = false;
+    for op in ops {
+        op.walk(&mut |n| match n {
+            Value::Yield(_) => yields += 1,
+            Value::Loop(_) | Value::Continue(_) | Value::Return(_) => disqualified = true,
+            _ => {}
+        });
+    }
+    if yields != 1 || disqualified {
+        return None;
+    }
+    // A trailing free is the compiler's statement, not the author's — hoist it above the
+    // suspend rather than making it a resume slice of its own, which an abandoned generator
+    // never runs.
+    let mut body_ops = ops.to_vec();
+    if !body_ops.last().is_some_and(tail_is_yield)
+        && let Some(tail) = body_ops.last()
+        && let Some(fixed) = hoist_trailing_frees(tail, data)
+    {
+        *body_ops.last_mut()? = fixed;
+    }
+    if body_ops.last().is_some_and(tail_is_yield) {
+        return Some((body_ops, Vec::new()));
+    }
+    split_at_yield(&body_ops)
+}
+
+/// Split a loop body at its one `yield` into the statements up to and including it and the
+/// statements after it — `None` when the yield is not on the body's straight line (inside an
+/// `if`, a `match`, a call argument), which is axis A3 and stays eager.
+///
+/// The yield may sit inside nested blocks, as a `for` body's does: the block keeps its
+/// statements up to the yield, and the ones after it join the outer statements that follow
+/// the block.  Flattening them out of the block is sound for the locals the emitter admits
+/// (`resume_is_carried`): a struct field, a parameter, or a local the resume slice alone
+/// names — none of which a Rust block scope decides.
+fn split_at_yield(ops: &[Value]) -> Option<(Vec<Value>, Vec<Value>)> {
+    let at = ops.iter().position(contains_yield)?;
+    let mut before = ops[..at].to_vec();
+    let mut after = Vec::new();
+    match ops[at].unspan() {
+        Value::Yield(_) => before.push(ops[at].clone()),
+        Value::Block(bl) => {
+            let (inner_before, inner_after) = split_at_yield(&bl.operators)?;
+            let mut head = bl.clone();
+            head.operators = inner_before;
+            before.push(Value::Block(head));
+            after = inner_after;
+        }
+        _ => return None,
+    }
+    after.extend_from_slice(&ops[at + 1..]);
+    Some((before, after))
 }
 
 /// Try to recognise a `yield from` desugared block.
@@ -515,12 +589,13 @@ fn collect_segments(ops: &[Value], data: &crate::data::Data) -> (Vec<YieldSegmen
             // lowered lazily — one iteration per advance — so its side effects interleave
             // with the consumer's exactly as they do on the interpreter.  Everything else
             // keeps the eager buffer.
-            if let Some((setup, body, post)) = detect_lazy_for(inner_op, data) {
+            if let Some((setup, body, resume, post)) = detect_lazy_for(inner_op, data) {
                 segments.push(YieldSegment::ForLoopLazy {
                     pre: std::mem::take(&mut pre),
                     whole: inner_op.clone(),
                     setup,
                     body,
+                    resume,
                     post,
                 });
             } else {
@@ -617,7 +692,23 @@ fn coroutine_persistent_locals(data: &crate::data::Data, def_nr: u32) -> Vec<(u1
         // eager-collect factory) own no store and keep their own emission paths.
         // One home: `variables::owns_literal_backing_store` — the keyed twin `__kvb_*` was
         // missing here and at the pre-declaration below (loft#1130).
-        if name.starts_with("__") && !crate::variables::owns_literal_backing_store(name) {
+        // And so is every other compiler HEAP temp — a call's return buffer `__ref_*`, a lift
+        // `__lift_*`, a closure's record `___clos_*` (loft#1587), an owner witness `__own_*`.
+        // The interpreter serialises the WHOLE frame at a `yield`, temps included, so each one
+        // outlives the advance that set it; as a `next_*`-scope local it was re-declared NULL
+        // on every advance instead.  Two defects came of that: a temp whose null initialiser
+        // sits at the top of the body is DECLARED in the first state and filled in a later one
+        // (E0425 — a variant literal built from a call, `yield A { h: mk(1) }`), and a buffer
+        // minted in one state was freed by the tail as the NULL of another, so every record a
+        // generator yielded or built through a call leaked (loft#1586's lazy loop, and every
+        // straight-line record yield).  Keyed off the lowered type, as the list below is.
+        let heap_temp = name.starts_with("__")
+            && !name.starts_with("__yf_")
+            && rust_type(var_table.tp(v), &Context::Variable) == "DbRef";
+        if name.starts_with("__")
+            && !crate::variables::owns_literal_backing_store(name)
+            && !heap_temp
+        {
             continue;
         }
         let tp = var_table.tp(v);
@@ -639,6 +730,7 @@ fn coroutine_persistent_locals(data: &crate::data::Data, def_nr: u32) -> Vec<(u1
                 | Type::Radix(_, _, _)
                 | Type::Trie(_, _, _)
                 | Type::Index(_, _, _)
+                | Type::Function(..)
         );
         if !suitable {
             continue;
@@ -688,6 +780,27 @@ fn persistent_field_names(
         out.insert(*v, name);
     }
     out
+}
+
+/// Bind every parameter under its local spelling at the top of a state arm — `var_x` for
+/// `self.var_x`, a `&str` view for a text slot — so a statement emitted in any state names a
+/// parameter the way the function body does.  Every state arm needs it, the TAIL included: the
+/// tail had none, so a generator whose statements after its loop read a parameter did not
+/// build (E0425) once the loop was lowered lazily.
+fn write_param_shadows(
+    w: &mut dyn Write,
+    attrs: &[crate::data::Attribute],
+    indent: &str,
+) -> std::io::Result<()> {
+    for attr in attrs {
+        let aname = sanitize(&attr.name);
+        if is_text_slot(&attr.typedef) {
+            writeln!(w, "{indent}let var_{aname}: &str = &self.var_{aname};")?;
+        } else {
+            writeln!(w, "{indent}let var_{aname} = self.var_{aname};")?;
+        }
+    }
+    Ok(())
 }
 
 /// Emit `drop_stores` — release the heap locals a generator still owns when its handle is
@@ -760,11 +873,28 @@ fn emit_drop_stores(
             "        loft::codegen_runtime::coroutine_release_snapshots(stores, &mut self.__snap);"
         )?;
     }
-    for name in &owned {
+    // Two owned locals can hold one store (a lazy loop's `__ref_*` buffer and the local that
+    // adopted its record), so with more than one the release is once per store.
+    let once = owned.len() > 1;
+    if once {
         writeln!(
             w,
-            "        if self.var_{name}.store_nr != u16::MAX {{ \
-             loft::codegen_runtime::coroutine_drop_local(stores, self.var_{name}, \"var_{name}\"); \
+            "        let mut __released: Vec<(u16, u32)> = Vec::new();"
+        )?;
+    }
+    for name in &owned {
+        let release = if once {
+            format!(
+                "loft::codegen_runtime::coroutine_drop_local_once(stores, self.var_{name}, \"var_{name}\", &mut __released)"
+            )
+        } else {
+            format!(
+                "loft::codegen_runtime::coroutine_drop_local(stores, self.var_{name}, \"var_{name}\")"
+            )
+        };
+        writeln!(
+            w,
+            "        if self.var_{name}.store_nr != u16::MAX {{ {release}; \
              self.var_{name}.store_nr = u16::MAX; }}"
         )?;
     }
@@ -909,6 +1039,9 @@ fn persistent_default(tp: &Type) -> String {
         | Type::Index(_, _, _)
         | Type::Enum(_, true, _)
         | Type::Iterator(_, _) => "DbRef::NULL".to_string(),
+        // A fn-ref is the `(definition, closure record)` pair `rust_type` lowers it to; the
+        // null closure is what a non-capturing lambda carries.
+        Type::Function(..) => "(0_u32, DbRef::NULL)".to_string(),
         // Every remaining field type lowers to a Rust NUMBER, so the zero of whatever
         // `rust_type` decided is a value of exactly that type.  Asking it, rather than
         // listing the types a second time here, is the point: the second list had drifted
@@ -1142,7 +1275,20 @@ impl Output<'_> {
                     writeln!(w, "            let v = self.__values[self.__idx];")?;
                 }
                 writeln!(w, "            self.__idx += 1;")?;
-                writeln!(w, "            return v;")?;
+                // `(G-Own)`: a handle leaves in a store of the consumer's own, since the
+                // snapshot store it was collected into stays the generator's.
+                if let Some(tp) = is_dbref
+                    .then(|| snapshot_type_id(self.data, yield_tp))
+                    .flatten()
+                    .filter(|_| crate::coroutine_layout::yield_handed_over(yield_tp))
+                {
+                    writeln!(
+                        w,
+                        "            return loft::codegen_runtime::coroutine_hand_out(cell, v, {tp});"
+                    )?;
+                } else {
+                    writeln!(w, "            return v;")?;
+                }
             }
             writeln!(w, "        }}")?;
             if is_dbref {
@@ -1296,28 +1442,17 @@ impl Output<'_> {
         let mut next_state = 0usize;
         for segment in segments {
             state_of.push(next_state);
-            next_state += if matches!(segment, YieldSegment::ForLoopLazy { .. }) {
-                2
-            } else {
-                1
+            next_state += match segment {
+                YieldSegment::ForLoopLazy { resume, .. } if !resume.is_empty() => 3,
+                YieldSegment::ForLoopLazy { .. } => 2,
+                _ => 1,
             };
         }
         let after_segments = next_state;
         for (seg_idx, segment) in segments.iter().enumerate() {
             let state_idx = state_of[seg_idx];
             writeln!(w, "            {state_idx} => {{")?;
-            // Shadow-bind parameters.
-            for attr in attrs {
-                let aname = sanitize(&attr.name);
-                if is_text_slot(&attr.typedef) {
-                    writeln!(
-                        w,
-                        "                let var_{aname}: &str = &self.var_{aname};"
-                    )?;
-                } else {
-                    writeln!(w, "                let var_{aname} = self.var_{aname};")?;
-                }
-            }
+            write_param_shadows(w, attrs, "                ")?;
             match segment {
                 YieldSegment::Simple { pre, val } => {
                     for stmt in pre {
@@ -1341,6 +1476,10 @@ impl Output<'_> {
                                 yield_slot_write(w, kind, slot, &code)?;
                                 slot += kind.width();
                             }
+                        }
+                        // `(G-Own)`: the members' temps are handed over with the tuple.
+                        for field in self.handed_yield_fields(val) {
+                            writeln!(w, "                self.var_{field} = DbRef::NULL;")?;
                         }
                         writeln!(w, "                return true;")?;
                     } else if is_fnref_into {
@@ -1386,10 +1525,28 @@ impl Output<'_> {
                         writeln!(w, "                return true;")?;
                     } else {
                         let yield_code = self.generate_expr_buf(val)?;
-                        writeln!(
-                            w,
-                            "                return {wrap_open}{yield_code}{wrap_close};"
-                        )?;
+                        // `(G-Own)`: a yielded record is HANDED to the consumer, so the
+                        // generator forgets the temps holding it rather than releasing them
+                        // at its tail or when it is dropped.
+                        let handed = self.handed_yield_fields(val);
+                        if handed.is_empty() {
+                            writeln!(
+                                w,
+                                "                return {wrap_open}{yield_code}{wrap_close};"
+                            )?;
+                        } else {
+                            writeln!(
+                                w,
+                                "                let __yv = {wrap_open}{yield_code}{wrap_close};"
+                            )?;
+                            // The WHOLE field, not only its store number: the tail's drop
+                            // hook is guarded on `rec != 0`, and a field that kept its record
+                            // number there read the null store (index 65535).
+                            for field in handed {
+                                writeln!(w, "                self.var_{field} = DbRef::NULL;")?;
+                            }
+                            writeln!(w, "                return __yv;")?;
+                        }
                     }
                 }
                 YieldSegment::YieldFrom { pre, init } => {
@@ -1425,6 +1582,7 @@ impl Output<'_> {
                     pre,
                     setup,
                     body,
+                    resume,
                     post,
                     ..
                 } => {
@@ -1441,21 +1599,23 @@ impl Output<'_> {
                     // State 2 of 2 — ONE iteration per advance.  The loop's operators run
                     // inside a wrapper that is left two ways: the header's bound test
                     // `break`s it with `__exhausted` still set (the loop is over), and the
-                    // trailing `yield` breaks it after capturing the value (`yield_lazy_wrap`
-                    // in emit.rs).  That is the whole of the laziness: the next iteration
-                    // does not run until the consumer asks for it.
-                    writeln!(w, "            {} => {{", state_idx + 1)?;
-                    for attr in attrs {
-                        let aname = sanitize(&attr.name);
-                        if is_text_slot(&attr.typedef) {
-                            writeln!(
-                                w,
-                                "                let var_{aname}: &str = &self.var_{aname};"
-                            )?;
-                        } else {
-                            writeln!(w, "                let var_{aname} = self.var_{aname};")?;
-                        }
+                    // `yield` breaks it after capturing the value (`yield_lazy_wrap` in
+                    // emit.rs).  That is the whole of the laziness: the next iteration does
+                    // not run until the consumer asks for it.
+                    //
+                    // With statements after the `yield`, the loop is ROTATED: an advance that
+                    // resumes a suspended iteration (state 3 of 3) first runs the rest of it,
+                    // then the header and the next iteration up to its `yield`.  The first
+                    // advance enters at state 2 and has no rest to run.  A `break` in the rest
+                    // leaves the same wrapper the header's does, so it ends the loop.
+                    let resume_state = state_idx + 2;
+                    let after_loop = state_idx + if resume.is_empty() { 2 } else { 3 };
+                    if resume.is_empty() {
+                        writeln!(w, "            {} => {{", state_idx + 1)?;
+                    } else {
+                        writeln!(w, "            {} | {resume_state} => {{", state_idx + 1)?;
                     }
+                    write_param_shadows(w, attrs, "                ")?;
                     writeln!(w, "                let mut __exhausted = true;")?;
                     writeln!(
                         w,
@@ -1463,6 +1623,14 @@ impl Output<'_> {
                         lazy_yield_init(yield_tp)
                     )?;
                     writeln!(w, "                'iter: loop {{")?;
+                    if !resume.is_empty() {
+                        writeln!(w, "                    if self.state == {resume_state} {{")?;
+                        for stmt in resume {
+                            let stmt_code = self.generate_expr_buf(stmt)?;
+                            writeln!(w, "                        {stmt_code};")?;
+                        }
+                        writeln!(w, "                    }}")?;
+                    }
                     let prev_wrap = self.yield_lazy_wrap.take();
                     self.yield_lazy_wrap = Some((wrap_open.clone(), wrap_close.clone()));
                     for stmt in body {
@@ -1480,9 +1648,12 @@ impl Output<'_> {
                         let stmt_code = self.generate_expr_buf(stmt)?;
                         writeln!(w, "                    {stmt_code};")?;
                     }
-                    writeln!(w, "                    self.state = {};", state_idx + 2)?;
+                    writeln!(w, "                    self.state = {after_loop};")?;
                     writeln!(w, "                    continue;")?;
                     writeln!(w, "                }}")?;
+                    if !resume.is_empty() {
+                        writeln!(w, "                self.state = {resume_state};")?;
+                    }
                     writeln!(w, "                return __y;")?;
                 }
                 YieldSegment::ForLoopBody { .. } => {
@@ -1532,6 +1703,7 @@ impl Output<'_> {
         if !tail.is_empty() {
             let tail_state = after_segments;
             writeln!(w, "            {tail_state} => {{")?;
+            write_param_shadows(w, attrs, "                ")?;
             for op in tail {
                 write!(w, "                ")?;
                 self.output_code_inner(w, op)?;
@@ -1556,6 +1728,55 @@ impl Output<'_> {
             writeln!(w, "        }}")?; // close loop
         }
         writeln!(w, "    }}")
+    }
+
+    /// The statement an eager factory pushes a handle yield with: a snapshot of the value in
+    /// the generator's one snapshot store (`coroutine_snapshot`).  Where the yield is handed
+    /// over (`(G-Own)`) the value is FRESH — the parser copied anything else — so the snapshot
+    /// is a move: the value's own store is released right after, and the temps that held it
+    /// are forgotten, as the lazy path forgets them, so neither the next iteration nor the
+    /// generator's tail touches that store again.
+    pub(super) fn eager_snapshot_push(&self, val: &Value, val_code: &str, tp: u16) -> String {
+        use std::fmt::Write as _;
+        let yield_tp = match self.data.def(self.def_nr).returned().base() {
+            Type::Iterator(inner, _) => (**inner).clone(),
+            _ => Type::Void,
+        };
+        if !crate::coroutine_layout::yield_handed_over(&yield_tp) {
+            return format!(
+                "__values.push(loft::codegen_runtime::coroutine_snapshot(cell, &mut __snap, ({val_code}), {tp}))"
+            );
+        }
+        let mut out = format!(
+            "{{ let __yv = ({val_code}); __values.push(loft::codegen_runtime::coroutine_snapshot_moved(cell, &mut __snap, __yv, {tp}));"
+        );
+        // A temp scoped to a block INSIDE the value is declared there and ends with it; only
+        // one that outlives the value is still in scope here, and still able to be released.
+        let mut inner_scopes = std::collections::HashSet::new();
+        val.walk(&mut |n| {
+            if let Value::Block(b) = n {
+                inner_scopes.insert(b.scope);
+            }
+        });
+        let vars = self.data.def(self.def_nr).variables();
+        for t in crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val) {
+            if !inner_scopes.contains(&vars.scope(t)) {
+                let _ = write!(out, " {} = DbRef::NULL;", self.var_place(t));
+            }
+        }
+        out += " }";
+        out
+    }
+
+    /// The struct fields of the compiler temps a straight-line `yield` hands over — the ones
+    /// [`yield_handed_temps`](crate::coroutine_layout::yield_handed_temps) names, the
+    /// interpreter's answer too, that live across states.  A temp local to one state ends with
+    /// the `return` that yields it, so nothing releases it and it needs no forgetting.
+    fn handed_yield_fields(&self, val: &Value) -> Vec<String> {
+        crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val)
+            .into_iter()
+            .filter_map(|v| self.coroutine_persistent_fields.get(&v).cloned())
+            .collect()
     }
 
     /// Emit a loft generator function as a Rust state-machine struct.
@@ -1599,11 +1820,6 @@ impl Output<'_> {
 
         // P224: compute persistent locals once, share across struct + impl + factory.
         let persistent = coroutine_persistent_locals(self.data, def_nr);
-        // loft#928: and their field names with them, so every emitter spells a field the
-        // same way.  Derived here rather than at each site because a name is only unique
-        // relative to the OTHER fields on the struct.
-        let fields = persistent_field_names(&attrs, &persistent, self.data.def(def_nr).variables());
-
         // Two reasons a loop that `detect_lazy_for` accepted still cannot be lowered lazily.
         //
         // The unified `next_into` channel (a tuple or fn-ref yield) writes its value into the
@@ -1613,11 +1829,10 @@ impl Output<'_> {
         // A DbRef yield (struct / vector / struct-enum) is held back for a different reason.
         // Lowering it lazily makes the VALUES right — the eager collector's aliasing, which
         // the loud `compile_error!` in the yield-collect path names, cannot happen when each
-        // yield returns immediately — but the record is built into a `__ref_*` work local that
-        // is re-declared on every advance and is not a struct field, so nothing frees it: a
-        // three-yield generator run to exhaustion leaked all three records.  Persisting the
-        // work-ref is what unlocks this, and it is its own change; refusing to compile is
-        // better than building and leaking.
+        // yield returns immediately — but the record is built into a `__ref_*` temp, and one
+        // temp per SITE serves every iteration of a loop: the next iteration refills the
+        // record the consumer was handed.  The temp is a struct field now (every compiler
+        // heap temp is); what remains is who owns a yielded record, which loft#1589 records.
         //
         // And a lazy loop runs its setup in one state and its body in the next, so anything
         // the setup binds has to outlive the advance that bound it, which only a struct FIELD
@@ -1631,9 +1846,11 @@ impl Output<'_> {
         // surviving lazy segment's states a second time.
         let persistent_vars: std::collections::HashSet<u16> =
             persistent.iter().map(|(v, _)| *v).collect();
+        // Peeled (`@FR-N-Shape`): an `iterator<τ?>` is refused today, so the wrapper cannot
+        // reach this, but the channel is a question about the runtime SHAPE, which `τ?` shares.
         let channel_can_suspend = tuple_kinds(&yield_tp).is_none()
             && !matches!(
-                yield_tp,
+                yield_tp.base(),
                 Type::Function(..)
                     | Type::Reference(_, _)
                     | Type::Vector(_, _)
@@ -1652,9 +1869,50 @@ impl Output<'_> {
             }
             carried
         };
+        // The resume slice runs in a LATER advance than the statements before the yield, so a
+        // local it shares with them has to outlive the advance, which only a struct field or a
+        // parameter does.  The function-scope work locals (`__ref_*`, `__vdb_*`) are
+        // re-declared on every advance — a `__ref_1` set before the yield would read NULL
+        // after it, a wrong value with no diagnostic — so they do not count.  A `__work_*`
+        // format buffer does: every format string sets it before its first read.
+        let resume_is_carried = |seg: &YieldSegment| {
+            let YieldSegment::ForLoopLazy {
+                pre,
+                setup,
+                body,
+                resume,
+                post,
+                ..
+            } = seg
+            else {
+                return true;
+            };
+            let vars = self.data.def(def_nr).variables();
+            let names = |ops: &[Value]| {
+                let mut out = std::collections::HashSet::new();
+                for op in ops {
+                    op.walk(&mut |n| match n {
+                        Value::Var(v) | Value::Set(v, _) | Value::CallRef(v, _) => {
+                            out.insert(*v);
+                        }
+                        _ => {}
+                    });
+                }
+                out
+            };
+            let elsewhere = names(&[pre.as_slice(), setup, body, post].concat());
+            names(resume).iter().all(|v| {
+                persistent_vars.contains(v)
+                    || vars.is_argument(*v)
+                    || vars.name(*v).starts_with("__work_")
+                    || !elsewhere.contains(v)
+            })
+        };
         let keep_lazy = channel_can_suspend
             && segments.iter().all(|s| match s {
-                YieldSegment::ForLoopLazy { setup, .. } => setup_is_carried(setup),
+                YieldSegment::ForLoopLazy { setup, .. } => {
+                    setup_is_carried(setup) && resume_is_carried(s)
+                }
                 _ => true,
             });
         if !keep_lazy {
@@ -1668,6 +1926,10 @@ impl Output<'_> {
             }
         }
         let segments = segments;
+        // loft#928: and their field names with them, so every emitter spells a field the
+        // same way.  Derived here rather than at each site because a name is only unique
+        // relative to the OTHER fields on the struct.
+        let fields = persistent_field_names(&attrs, &persistent, self.data.def(def_nr).variables());
 
         // The outer `loop {}` in `next_*` is what lets a state hand over to the next one
         // without returning a value.  A lazily-lowered loop needs it for the same reason a
@@ -1944,11 +2206,8 @@ impl Output<'_> {
                         // A straight-line handle yield is snapshotted too: the record
                         // may be rewritten between this yield and the next, and the
                         // buffer is read only after the whole factory has run.
-                        writeln!(
-                            w,
-                            "    __values.push(loft::codegen_runtime::coroutine_snapshot(\
-                             cell, &mut __snap, {val_code}, {tp}));"
-                        )?;
+                        let push = self.eager_snapshot_push(val, &val_code, tp);
+                        writeln!(w, "    {push};")?;
                     } else {
                         writeln!(
                             w,
@@ -1969,12 +2228,18 @@ impl Output<'_> {
                     writeln!(w, "            let v = __sub.{sub_advance}(stores);")?;
                     writeln!(w, "            if v == {sub_exhaust} {{ break; }}")?;
                     if let Some(tp) = snapshot_tp {
-                        // The sub-generator owns what it yields and frees it when it
-                        // is exhausted, which happens right here — so this buffer
-                        // keeps its own copy.
+                        // The sub-generator hands each value over (`(G-Own)`), so this
+                        // buffer snapshots it and releases the handed store; a type not
+                        // handed over stays the sub-generator's, which frees it when it is
+                        // exhausted — right here — so the buffer keeps its own copy.
+                        let snap = if crate::coroutine_layout::yield_handed_over(yield_tp) {
+                            "coroutine_snapshot_moved"
+                        } else {
+                            "coroutine_snapshot"
+                        };
                         writeln!(
                             w,
-                            "            __values.push(loft::codegen_runtime::coroutine_snapshot(\
+                            "            __values.push(loft::codegen_runtime::{snap}(\
                              cell, &mut __snap, v, {tp}));"
                         )?;
                     } else {

@@ -1,0 +1,9 @@
+// D4 — the first read reads a `|x|` body holding a format string without defining the
+// lambda, and the second read replays the rest of the string its hole resumed.
+// @EXPECT: 4!|8
+struct Fs<T> { f: fn(T) -> text, v: T }
+fn main() {
+  a = Fs { f: |x| { "{x}!" }, v: 4 };
+  g = fn(n: integer) -> integer { n + 1 };
+  println("{a.f(a.v)}|{g(7)}");
+}

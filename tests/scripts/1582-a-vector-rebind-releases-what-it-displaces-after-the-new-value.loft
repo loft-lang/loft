@@ -1,0 +1,90 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1582, `@FR-H-Drop` — A VECTOR REBIND RELEASES WHAT IT DISPLACES AFTER THE NEW VALUE.  A
+// reassignment releases the elements it displaces after the new value has been computed and
+// before anything after the statement runs.  A vector literal lowers to its own backing store,
+// and a rebind pointed the local at a new one while the old one waited for its scope end, so it
+// was released after every read.  In a loop, the backing re-minted each pass released its
+// previous elements before the new ones were made.  The scope pass now releases the displaced
+// backing at the statement's end.  The parser marks that end, because a literal is spliced into
+// its block flat: `v = [mk(2)]` and `v = []; v += [mk(2)]` on one line were otherwise the same
+// statements, and the rule orders them differently.
+//
+// Every expected sequence is worked out by hand: `M<id>` a make, `D<id>` a release, `R<n>` a read.
+// The last cell is a control that was right before: a first bind displaces nothing.
+//
+// @falsified-at: 1c729936d — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1582-a-vector-rebind-releases-what-it-displaces-after-the-new-value.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; the release
+//   COUNT is right on both trees, and only the order in the trace moves.
+// ARMED: no instrument — each make, release and read is written to this guard's own trace file.
+// WITNESS: on the control, measured with a print in place of the assertion: a literal rebind
+//   traces `M20,M21,R1,D21,D20` (the displaced element last), and the loop
+//   `M40,M41,R1,D41,M42,R1,D42,D40` (41 before 42 is made, 40 at the function's end).
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_vector_rebind_order_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct Vh { id: integer }
+fn OpDrop(self: Vh) { note("D{self.id}"); }
+fn vmk(id: integer) -> Vh { note("M{id}"); Vh { id: id } }
+fn vmkv(id: integer) -> vector<Vh> { [vmk(id)] }
+struct Vw { h: Vh, n: integer }
+
+fn g1() { v: vector<Vh> = [vmk(20)]; v = [vmk(21)]; note("R{len(v)}"); }
+fn g2() { v: vector<Vh> = [vmk(20)]; v = vmkv(21); note("R{len(v)}"); }
+fn g3() { v: vector<Vh> = [vmk(20)]; w: vector<Vh> = [vmk(30)]; v = w; note("R{len(v)}"); }
+fn g4() { v: vector<Vh> = [vmk(20)]; v = []; v += [vmk(22)]; note("R{len(v)}"); }
+fn g5() { v: vector<Vh> = [vmk(40)]; for i in 0..2 { v = [vmk(41 + i)]; note("R{len(v)}"); } }
+fn g6() { v: vector<Vh> = [vmk(50)]; c = len(v) > 0; if c { v = [vmk(51)]; } note("R{len(v)}"); }
+fn g7() { v: vector<Vh> = [vmk(1), vmk(2)]; v = [vmk(3)]; note("R{len(v)}"); }
+fn g8() { v: vector<Vh> = [vmk(30)]; r = { v = [vmk(31)]; len(v) }; note("R{r}"); }
+fn g9() {
+  v: vector<Vh> = [vmk(20)];
+  v = [vmk(21)];
+  note("R{len(v)}");
+}
+fn g10() { v: vector<Vw> = [Vw { h: Vh { id: 60 }, n: 1 }]; v = [Vw { h: Vh { id: 61 }, n: 2 }]; note("R{len(v)}"); }
+fn k1() { v: vector<Vh> = [vmk(70)]; note("R{len(v)}"); }
+
+fn check(nm: text, want: text) {
+  got = drain();
+  assert(got == want, "{nm}: {got}");
+}
+
+fn main() {
+  drain();
+  g1(); check("g1 a literal            ", "M20,M21,D20,R1,D21");
+  g2(); check("g2 a call               ", "M20,M21,D20,R1,D21");
+  g3(); check("g3 a copy               ", "M20,M30,D20,R1,D30");
+  g4(); check("g4 [] then an append    ", "M20,D20,M22,R1,D22");
+  g5(); check("g5 in a loop            ", "M40,M41,D40,R1,M42,D41,R1,D42");
+  g6(); check("g6 in an if arm         ", "M50,M51,D50,R1,D51");
+  g7(); check("g7 two displaced        ", "M1,M2,M3,D1,D2,R1,D3");
+  g8(); check("g8 a block's value      ", "M30,M31,D30,R1,D31");
+  g9(); check("g9 one statement a line ", "M20,M21,D20,R1,D21");
+  g10(); check("g10 a droppable member ", "D60,R1,D61");
+  k1(); check("k1 control: first bind  ", "M70,R1,D70");
+  println("a vector rebind releases what it displaces after the new value: every cell holds");
+}

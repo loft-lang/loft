@@ -975,8 +975,11 @@ impl State {
             // the whole structural change: a fetch that is loft code has to run
             // where a loft function CAN be run, and `Stores` is not that place.
             let found = self.database.find(&data, db_tp, &key);
-            if found.rec != 0 {
-                found // resident: no query, no source, ordinary loft speed
+            if found.rec != 0 || !self.database.lazy_bound(&data) {
+                // Resident: no query, no source, ordinary loft speed.  Or a miss on a
+                // collection nothing is bound to, which is final — asked BEFORE the
+                // driver question below, whose answer walks the program's definitions.
+                found
             } else if let Some(source) = self
                 .database
                 .lazy_loft_source(&data, self.has_lazy_driver(db_tp))

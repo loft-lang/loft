@@ -1,0 +1,10 @@
+// D4 — a lambda handed to a call inside a field value: typed from its header, the call's
+// result binds T.
+// @EXPECT: 6|4
+struct Box<T> { v: T }
+fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
+fn main() {
+  b = Box { v: apply(fn(x: integer) -> integer { x * 2 }, 3) };
+  h = fn(s: text) -> integer { len(s) };
+  println("{b.v}|{h("abcd")}");
+}

@@ -1,0 +1,14 @@
+// B3b — a generic calling a generic calling the set: re-decided at the innermost instance.
+// @EXPECT: special cat 1|any dog 2
+interface Named { fn tag(self: Self) -> text }
+struct Cat { n: integer }
+struct Dog { n: integer }
+fn tag(self: Cat) -> text { "cat {self.n}" }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+fn show<T: Named>(x: T) -> text { "any {x.tag()}" }
+fn show(x: Cat) -> text { "special {x.tag()}" }
+fn wrap<U: Named>(x: U) -> text { show(x) }
+fn outer<V: Named>(x: V) -> text { wrap(x) }
+fn main() {
+  println("{outer(Cat{n:1})}|{outer(Dog{n:2})}");
+}

@@ -83,6 +83,22 @@ make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the bui
                                          #   Every new tests/scripts file records its answer
                                          #   (`@falsified-at:`, gated) — TESTING.md
 make speed                               # what got slower/faster — a REPORT, never a gate
+make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
+                                         #   every bench lane here and renders ONE page,
+                                         #   doc/claude/PERF_PORTAL.md — a median per mechanism
+                                         #   class (keyed, vector-build, call, record-field, …),
+                                         #   every routine under its class, and the surveyed
+                                         #   library routines still waiting for a row (@PLN158).
+                                         #   `perf-portal-render` re-renders from saved runs;
+                                         #   PACKAGES="--package <scratch clone>/drawing=drawing"
+                                         #   adds a library's own bench.  A REPORT, never a gate
+python3 bench/stats.py                   # native vs the Rust reference per bench routine, as
+                                         #   STATISTICS: --n calibrated per lane, a warm-up
+                                         #   round dropped, 7 interleaved samples pinned to the
+                                         #   fastest core, the ratio with its RANGE and an
+                                         #   ok / OVER / unclear verdict against --bar (2.0);
+                                         #   hashes must agree across lanes.  `--tsv` keeps a
+                                         #   run to diff against the next — bench/README.md
 make ops-census                          # which bytecode operators anything still EMITS:
                                          #   live / unexercised (a site emits it, no program
                                          #   does — a test gap) / orphan (nothing emits it and
@@ -413,7 +429,9 @@ the bug-filing policy above). It never blocks.
 
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
 [INTERFACES.md](doc/claude/INTERFACES.md) traits/generics · [TUPLES.md](doc/claude/TUPLES.md) ·
-[COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md).
+[COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md) ·
+[OCAML_BAR.md](doc/claude/OCAML_BAR.md) / [LUA_BAR.md](doc/claude/LUA_BAR.md) expressiveness probes against OCaml and
+Lua, measured (reports, never gates — and run a generator probe inside a memory cap).
 
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) parser/two-pass/types ·
 [INTERMEDIATE.md](doc/claude/INTERMEDIATE.md) Value/Type/opcodes/State · [INTERNALS.md](doc/claude/INTERNALS.md) ·
@@ -446,7 +464,7 @@ report says so rather than printing nothing (loft#1088). PERFORMANCE.md § LOFT_
 
 **Testing / debug:** [TESTING.md](doc/claude/TESTING.md) framework/`LOFT_LOG`/LogConfig ·
 [DEBUG.md](doc/claude/DEBUG.md) tools + boundary-matrix runner · [CAVEATS.md](doc/claude/CAVEATS.md) edge cases ·
-[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
+[PERFORMANCE.md](doc/claude/PERFORMANCE.md) benchmarks + profiling (its oracle: [PROFILE_ORACLE.md](doc/claude/PROFILE_ORACLE.md)) · [PERF_PORTAL.md](doc/claude/PERF_PORTAL.md) (GENERATED: every measured routine against its Rust twin, by mechanism class — `make perf-portal`) · [CI_BUDGET.md](doc/claude/CI_BUDGET.md) what runs
 when + the 20-min PR rule.
 
 **Quality / stability / formal:** [CODE.md](doc/claude/CODE.md) · [DOC_QUALITY.md](doc/claude/DOC_QUALITY.md) ·
@@ -771,6 +789,14 @@ mint-group templates — with it on, a no-heap struct element is built IN the pu
 next slot (no `record_new` dispatch, no default prefill: the group's writes fill every field
 explicitly) and the finish is the length bump — and is the bisect step for a wrong element,
 default value or length out of a record-appending loop.
+**`LOFT_NO_FIELD_MINT=1`** (`@FR-R-Mint`'s field clause, default-ON, generation time,
+`--native` only) keeps a record append to a vector FIELD (`m.verts += [Vertex { … }]`) on
+its templates — with it off, such an append in a loop holds the push header a bare-variable
+append holds, keyed by the path a read of the field already has (`mesh_emit` −73 %, 18.3× →
+4.9× of Rust); a linked group's member, a keyed field, a variant's field and a nullable
+element's payload keep the general append — and is the first bisect step for a wrong, missing
+or extra element out of a loop that appends records to a record's vector field;
+`LOFT_HOIST_VERIFY=1` re-derives the header at the slot and the finish.
 **`LOFT_NO_GROUP_PUSH=1`** (`@FR-R-GroupPush`, default-ON, generation time, `--native` only)
 makes a record append OUTSIDE any held header keep its templates again — with it off, a
 literal group `v += [pt(a, b), pt(c, d)]` that no enclosing loop holds a header for (a group
@@ -801,9 +827,51 @@ append relocates the element's bytes (heap handles included — they never chang
 zeroes the source, and the buffer's free is record-level — and is the bisect step for a
 wrong element, a leak or a double free out of a loop that appends a dying temporary's
 elements.  `LOFT_TRACE_MOVE=1` names the gate that declined a pairing.
+**`LOFT_NO_LAZY_SPLIT=1`** (`@FR-R-LazySplit`, default-ON, generation time, `--native`
+only) makes `for p in t.split(c)` build and walk its `vector<text>` again — with it off, a
+loop over the standard library's `split` with a CONSTANT separator takes each piece
+straight from the text (a parameter nothing writes is borrowed; any other source is
+iterated as a copy taken where the call stood, so a write in the body cannot reach it),
+the vector and its per-piece records are never built, and the call's hidden buffer is
+never minted (the drawing bench's `parse` row −9 %: its outer loop is
+`for raw in src.split('\n')`) — and is the first bisect step for a wrong, missing or
+extra piece out of a loop over a `split` on native.  A variable separator, a `rev`, a
+split bound to a name first and a generator keep the vector.  `LOFT_TRACE_LAZY_SPLIT=1`
+names each loop admitted and each declined with its reason.
+**`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time, `--native`
+only) makes the loop variable of `for p in vector<text>` — and of a lazily split text —
+copy its element into a `String` again — with it off, `p` is bound as the `&str` the
+element read answers and read bare, where the body reads it only as a text VALUE (an
+operand at a `text` position, the source of a bind into another slot), never writes,
+links or captures it, and (for a vector) writes no store; a text VALUE op — scalar and
+text operands, a scalar or text result, or a write to a text VARIABLE — is no store write
+to that condition, and `OpGetText` is a reader, so the walk holds its header, length and
+base like any other (the stdlib `join` 5.40× → 1.96× of Rust, `split_walk` 1.80× →
+1.01×, `parse_num` 1.46× → 0.98×) — and is the first bisect step for a wrong, stale or
+crashing text read through such a loop variable on native.  `LOFT_HOIST_VERIFY=1`
+re-reads the element at the walk's release and panics when the borrow no longer names it
+(address first, so a dangling borrow is never read); `LOFT_TRACE_TEXT_BORROW=1` names each
+walk admitted and each declined with its reason.  A `&p` link, `p += …`, `p` handed to a
+`&text` parameter, tupled or returned, a store written in the body and a generator keep
+the copy.
+**`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time, `--native` only)
+makes `for c in text` take every character through the step as written again — with it
+off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
+every other byte, a NUL — whose read notes a fault — and the end take the written step in
+the `else` arm), and where nothing in the loop writes the text its null test — a content
+compare of the whole text LLVM does not hoist — is asked ONCE before the loop
+(`char_walk` 4.62× → 2.48× of Rust; the stdlib `split`, built on such a walk, 12.5× →
+7.8×) — and is the first bisect step for a wrong character, a wrong `c#index` or a missed
+fault out of a character walk on native.  `LOFT_HOIST_VERIFY=1` runs the written step
+beside the fast arm and panics when they disagree, and asserts the hoisted null test
+inside the loop; `LOFT_TRACE_CHAR_WALK=1` names each walk and whether its null test moved.
+A call or literal source keeps the written step (the lowering evaluates such a source per
+iteration).
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
-with it off, a loop that grows no store (no push, no mint push — a null-discharge
+with it off, a loop that grows no store (no push and no mint, whether or not the mint
+emits through a push header — since 2026-09-21: one left on its templates grows its store
+all the same, and a base bound beside it answered `null` on native; a null-discharge
 buffer's mint is a fresh store and does not count, since 2026-09-18)
 binds the address of each hoisted vector's element 0 beside its header and every read
 or write is one bounds test and one load or store through it (the resample probe −14 %)
@@ -833,6 +901,56 @@ rebinds the view; a nullable view — `e = v[i]` without `?`, a `for e in v` loo
 is admitted as its record, the null address answering the sentinel.  `LOFT_HOIST_VERIFY=1` re-derives the
 address and re-reads the store at every use; `LOFT_TRACE_RECPTR=1` names each view bound
 and each declined with its reason.  `LOFT_NO_VECTOR_BASE=1` switches it off too (one rule).
+**`LOFT_NO_BASE_RECPTR=1`** (`@FR-R-RecPtr`'s base clause, default-ON, generation time,
+`--native` only) makes the loop variable of `for e in v` resolve the store for its address
+again — with it off, the address is the loop's held element base plus index times size
+under the in-range test, no `DbRef` consulted, and the iteration's `#index` (never the
+sentinel, `@FR-R-Counter`'s iteration clause, `LOFT_NO_NN_FAST`) steps through the non-null
+add (`record_walk` −49 %, 2.98× → 1.50× of Rust; `tuple_kernel` −20 %; `entity_tick`
+−30 %) — and is the first bisect step for a wrong field read through a `for e in v` loop
+variable on native; `LOFT_HOIST_VERIFY=1` compares the address with a fresh `rec_ptr` at
+every use.  An address derived from the element's `DbRef` instead of the index measured
++46 % SLOWER and is not what ships.
+**`LOFT_NO_NESTED_FIELD=1`** (`@FR-R-RecPtr`'s path clause, default-ON, generation time,
+`--native` only) makes a scalar field reached through INLINE sub-records (`v.pos.x`) rebuild
+its `DbRef` and resolve the store again — with it off, such a field of a record view is read
+and written through the view's address at the summed offset, and a view whose only accesses
+are nested binds an address at all (`mesh_aabb` −47 %, 9.2× → 4.7× of Rust) — and is the
+first bisect step for a wrong value read or written through a nested field path on native;
+`LOFT_HOIST_VERIFY=1` compares every such read with the path walked the unrewritten way.
+Emitter-local on purpose: folded in the parser, the read would become an `(R-Scalar)`
+candidate typed by the PARENT record, which a write through a sub-record view never evicts.
+**`LOFT_NO_MINT_WINDOW=1`** (`@FR-R-RecPtr`'s mint clause, default-ON, generation time,
+`--native` only) makes every field write of an appended record resolve the store again —
+with it off, a minted plain-record element holds its slot's address from the mint up to its
+own finish, and its `integer` / `float` / `single` fields are one store each through it
+(`record_append` −45 %, 3.55× → 1.95× of Rust; `mesh_emit` −43 %, 2.83×); a window that
+holds a text set, a nested mint, a builder that appends or a delivery copy declines — and is
+the first bisect step for a wrong or lost field in an appended record on native;
+`LOFT_HOIST_VERIFY=1` compares the address with a fresh derivation at every write.  Its
+cells could not fail until one reallocated the store INSIDE a window (`m4b`): small cells
+never move the memory a stale address would miss.
+**`LOFT_NO_COPY_IN_PLACE=1`** (`@FR-R-InPlace`'s copy clause, default-ON, generation time,
+`--native` only) makes a whole-record copy a store writer again, so a loop holding one
+hoists nothing — with it off, a flag-free `OpCopyRecord` over a record type that owns no
+heap is an in-place write at a larger width: the write-back idiom `e = v[i]?; …; v[i] = e`
+(a copy of a view onto the place it views, which the runtime makes a no-op) keeps its
+loop's header, base and the address of `e` (`entity_tick` −23 %, 3.19× → 2.45× of Rust) —
+and is the first bisect step for a wrong value in a loop that assigns a whole record to an
+element or a field; `LOFT_HOIST_VERIFY=1` is the falsifier (the copy writes its type WHOLE
+for the scalar hoist).  A heap-owning type and a call's freed result keep the store-writer
+verdict.  The copy is not elided: on the absent-element path it is an out-of-range store
+with a fault note of its own.
+**`LOFT_NO_ENUM_RECORD=1`** (`@FR-R-PushRec`'s and `@FR-R-RecPtr`'s enum clauses, default-ON,
+generation time, `--native` only) makes a USER struct-enum value no record to the hoist
+family again — with it off, a `vector<Edit>` appends through a push header (the slot zeroed,
+the literal writing its own tag), a minted element of any record type holds its window
+address, a struct-enum view holds its address and its TAG is one byte read through it, and
+`for e in edits` is seen through the `OpGetField` its element is bound behind (`enum_match`
+−64 %, 12.4× → 4.5× of Rust) — and is the first bisect step for a wrong variant, a wrong
+payload field or a lost element out of a vector of struct-enum values on native.  The
+exclusion of enum payloads belongs to `(R-Scalar)`'s (type, offset) key and stays there; the
+synthetic `__nullable<S>` stays out of all of it.
 **`LOFT_NO_LOOP_BUFFER_REUSE=1`** (@PLN157 § V-al, `@FR-R-LoopBuffer`, default-ON,
 generation time) makes a vector local declared `[]` INSIDE a loop re-mint its per-site
 buffer every iteration again — with it off, the buffer's store and its vector survive the
@@ -861,7 +979,35 @@ bisect step for a wrong element or length out of a counted push loop on native. 
 that can `break`, `return` or loop again, a push under a branch, another write to the
 path, or a range end that is not a simple invariant declines the loop.
 `LOFT_TRACE_PUSH_FILL=1` names each decline; `LOFT_HOIST_VERIFY=1` re-derives the push
-header at the fill.
+header at the fill.  The loop is read in either spelling — the statement and the
+comprehension `[for i in a..b { e }]` — and the reservation stands in front of every
+guarded copy of the loop (one written after a guard lands in the arm that does not run).
+**`LOFT_NO_PUSH_WINDOW=1`** (`@FR-R-PushFill`'s window clause, default-ON, generation time,
+`--native` only) makes a reserved counted push loop push through its push header again, the
+length written back to the record per push — with it off, a loop whose body reaches its
+vector through the pushes alone (an exclusive root, never named outside the pushes, no
+variable that may view it, no other store write) pushes through a held element address and
+a local length, and writes the record's length once when the loop ends (`push` 48.8 → 8.0 µs,
+0.47× its Rust twin; `comprehension` 9.53× → 1.70×; `grid` 8.10× → 2.81×; `f32_build`
+−80 %) — and is the first bisect step for a wrong element or length out of a counted push
+loop or a comprehension on native.  `LOFT_TRACE_PUSH_FILL=1` names the clause that declined
+a window.  ⚠ `LOFT_HOIST_VERIFY=1` checks the window's base and its frozen header at every
+push, but CANNOT see what the admission exists to prevent — a runtime reader meeting the
+lagging length changes no held fact — so there the interpreter is the falsifier.  The form
+is load-bearing: the window is three scalars whose address never reaches a call, because a
+counter whose address escaped to the growth arm lived on the stack and cost half the gain.
+**`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
+only) makes `v[i]?.f` run its join on every pass and read the result through the store again
+— with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that
+holds the vector's header and element base is one range test and one load through the base,
+the join written once in the fallback arm for every index that test refuses (`record_update`
+34.9 → 12 µs, 4.62× → 1.60× of Rust, pinned) — and is the first bisect step for a wrong field out of
+`v[i]?.f` inside a loop on native.  The fallback is never a constant: a negative index
+addresses from the end there and an absent element answers its default RECORD's field, which
+a declared field default makes non-zero — `LOFT_HOIST_VERIFY=1` cannot see a mistake in that
+arm, the interpreter can.  ⚠ Built at TWO sites through one recogniser
+(`hoist::fused_join_read`): the pre-eval collector lifts every `Block` argument, so an
+emitter arm it does not know about never fires — and only a pin shows that, no value does.
 **`LOFT_NO_INVARIANT_HOIST=1`** (@PLN157 § V-ao, `@FR-R-Invariant`, default-ON, generation
 time) makes every invariant integer chain evaluate at every use again — with it off, a
 chain of `+ - * neg & | ^` over literals and variables a loop neither rebinds nor lets
@@ -893,6 +1039,20 @@ wrong accumulate or index out of such a loop on native; `LOFT_HOIST_VERIFY=1` co
 plain operator's answer with the checked template's and every raw read with the checked read,
 panicking on a disagreement; `LOFT_TRACE_NEST=1` names every admission and decline and whether
 the reads are raw.
+**`LOFT_NO_BOUNDED_SUM=1`** (`@FR-R-BoundedNest`'s reduction clause, default-ON, generation
+time, `--native` only) makes `acc = acc + v[i]` over an integer vector pay the checked add on
+every element again — with it off, a counted loop that is one such accumulate over a held
+header and base sums what it can PLAIN first, a block of 1024 at a time, admitted when every
+element lies in `[−2^40, 2^40)` and the running total is more than `2^50` from the i64 edge
+(the nest's magnitude-bound proof, taken from the data per block in the same pass, so no
+prefix in the block can overflow and the plain sum IS the checked answer), and the checked
+loop resumes where the first block declines (the stdlib `sum` 11.9 → 3.7 µs, 6.45× → 2.06× of
+Rust, pinned; no answer changes on any input, a null element and a large element take the checked
+loop) — and is the first bisect step for a wrong sum out of such a loop on native.
+`LOFT_HOIST_VERIFY=1` re-runs every admitted block through the checked add and panics on a
+disagreement — the proof itself, so it has no blind spot.  The bound test is spelled in
+add / shift / or on purpose: baseline x86-64 is SSE2, with a packed 64-bit add and no packed
+64-bit signed compare, and written as two compares the loop stays scalar and gains nothing.
 **`LOFT_NO_RANGE_ARITH=1`** (`@FR-R-Range`, default-ON, generation time, `--native` only)
 makes every integer operator keep its checked template again — with it off, an operator
 whose RESULT provably fits the type (a literal, a mask of a non-sentinel value, `len`/`size`
@@ -907,6 +1067,12 @@ the counter's seed INSIDE the loop and the parser emits it as the statement befo
 counted loop was ever ranged.  Nothing showed it, because the pin that should have
 (`range_arith` a4) was recording a plain form the CHAIN GUARD supplied — a pin can borrow
 another rewrite's evidence and read as proof of its own clause.
+Since 2026-09-22 the proof also reads the STATIC TYPE (`range::type_range`): a non-nullable
+`u8`/`i8`/`u16`/`i16` or user `limit(lo, hi)` parameter, local or compiler-typed join (the
+cbor decoder's `(bytes[p] ?? 0) * 256`) carries its type's range — a fact since loft#1593 made
+every store into such a slot refuse an unprovable value; `i32`/`u32` (the templates) and a
+signed alias with a spare bottom code (`limit(-100, 100) size(1)`, whose overflow writes the
+sentinel) stay unranged, and a boxed capture is read through its box and stays checked.
 **`LOFT_NO_GUARDED_CHAIN=1`** (`@FR-R-GuardedChain`, default-ON, generation time, `--native`
 only) makes a counted loop's index chains keep their checked operators — with it off, chains
 of `+ - *` and negation over literals, the loop's and nested loops' counters, integer locals
@@ -941,6 +1107,38 @@ also what fixed the heap-owning case: the claims walk read the source through a 
 captured before the growth relocated it — a freed block).  The doubling fill a canvas is
 built with is this shape run to a ladder; `render_marks` −8 %.  First bisect step for a
 wrong element out of a self-append.
+**`LOFT_NO_FAST_ORDER=1`** (@PLN158 keyed class, runtime, BOTH backends) makes every search
+that ORDERS — an `index` descent, a `sorted` / `ordered` binary search — compare through the
+general `key_compare` / `compare` again, an exact `index` lookup take the boundary descent,
+and an `index` insert look its duplicate up before it descends — with it off, the key is
+resolved once per search (`keys::FastOrder`), a full-key lookup stops at the equal node
+(`tree::find_exact`), and a refused `tree::add` names the duplicate its own descent met
+(`index` fill-and-find −33 %) — and is the first bisect step for a wrong element, order or
+lookup out of a `sorted`, `ordered` or `index`.  **`LOFT_NO_ONE_PROBE_INSERT=1`** makes a
+`hash` insert look its duplicate up and then file the entry as two hash-and-probe walks again
+— with it off, one walk answers both (`hash::probe_for_insert`; a 5,000-key fill −37 %) — and
+is the first bisect step for a lost, duplicated or unfindable `hash` entry.
+**`LOFT_KEYED_VERIFY=1`** is the falsifier for both: every pre-resolved comparison, every
+exact lookup and every one-probe insert is checked against the general form as it is made,
+and a disagreement panics naming both answers — run the keyed cells or the script corpus
+under it after touching `keys.rs`, `hash.rs`, `tree.rs` or the `sorted` searches.  Two more
+levers of the same pass carry no switch because they have no second answer to bisect to: a
+miss on a collection with no lazy binding answers at once (`Stores::lazy_bound`, a lookup
+loop that misses half the time −20 %), and a whole word fed to the hasher on a word boundary
+is one inline round (`SipHasher13::write_u64`, digest pinned by `siphash_std_parity`).
+**`LOFT_NO_HALF_LOAD=1`** (runtime, BOTH backends) rebuilds a `hash` table at three quarters
+full again instead of at half — a writer's policy no reader assumes, so stores written under
+either read under both; with it off a miss walks ~1 bucket where it walked 5 at the old
+threshold (removal −25 %, the vector + hash group −22 %, fill −21 %), for ~3.6 bytes an entry
+more bucket array — and is the bisect step for a `hash` whose table size matters.
+**`LOFT_NO_TYPED_KEYED=1`** (`@FR-R-TypedKeyed`, generation time, `--native` only) emits a
+lookup in a `hash` with ONE integer key as the general `OpGetRecord` again — with it off it
+is `OpGetHashLong`, the key handed over as the integer it is, with no `Content` built, no
+type-row dispatch and the walk compiled for the key's kind (613 → 444 instructions a lookup,
+`hash_find` −13 %) — and is the first bisect step for a wrong or missing record out of such
+a lookup on native; `LOFT_KEYED_VERIFY=1` answers every typed lookup through the general
+entry too, and checks a removal's recognised slot against the entry's own index.
+`bench/portal/analysis/keyed.md` has the ledger and what is left.
 **`LOFT_RELEASE_PASS_PROBE=1`** (generation time) is a MEASUREMENT INSTRUMENT, never a
 build anyone ships: every integer `+`, `-`, `*`, negation, bit op and non-literal
 division emits the processor's wrapping operator and every float comparison the plain

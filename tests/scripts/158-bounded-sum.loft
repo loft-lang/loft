@@ -1,0 +1,138 @@
+// @PLN158 — `acc = acc + v[i]` over an integer vector sums what it can PLAIN, per block under a
+// bound taken from the data (`(R-BoundedNest)`'s reduction clause).
+//
+// The stdlib `sum` is that loop, and every element paid the checked, null-propagating add:
+// a sentinel test on each operand and a `checked_add`, which cannot vectorise — 6.45× the
+// Rust twin's wrapping add.  The gap is not the overflow semantics (an i128 form that would
+// change them is rejected, and unnecessary): a block of 1024 whose elements all lie in
+// [-2^40, 2^40) and whose running total is more than 2^50 from the i64 edge cannot overflow
+// at any prefix, so its plain sum IS the checked answer; a block that fails runs the checked
+// loop from where it stands.  No answer changes on any input.  Hand-priced first, then built:
+// `sum` 11.9 -> 3.7 us (6.45× -> ~2.05×), hash unchanged.
+//
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them, each expectation computed by the formula in its comment.
+// `LOFT_NO_BOUNDED_SUM=1`, `LOFT_NO_VECTOR_BASE=1`, `LOFT_NO_VECTOR_HOIST=1` and
+// `LOFT_HOIST_VERIFY=1` must all answer identically.
+//
+// Predictions (tests/bounded_sum.rs pins them).  THE PRELUDE EMITTED: the stdlib `sum`'s
+// instance and its callee twin, s_user (the same loop written by hand), s_acc (the operands
+// the other way round).  NO PRELUDE: s_float (a float accumulate), s_join (a `?`-discharged
+// read — its operand is a join), s_two (a second statement in the body), s_step (a computed
+// index), s_walk (a `for x in v` walk, no counted range).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-22) — each of the proof's two clauses
+// switched off in turn, on --native:
+//   - the ROOM test (the running total far enough from the edge): s5 answers
+//     -9223372036854773861 for null — a wrapped garbage number, exactly what C85 exists to
+//     forbid — and its assert fails.
+//   - the element BOUND: s2 answers 9223372036854775807 for null (the MAX + 1 prefix
+//     overflow is summed plain and cancelled), and s3's null element would be summed as
+//     MIN.  Its assert fails.
+// LOFT_HOIST_VERIFY=1 SEES both: it re-runs every admitted block through the checked add,
+// and panics "an admitted block overflowed the checked add" under either sabotage — this
+// clause's verifier is the proof itself, re-run, so it has no blind spot here.  THREE
+// expectations in this file were written by hand and were wrong (s4's 2000 * (2^40 - 1),
+// s5's total, s_step's 1499 * 1500); every number now stands as Python computed it, and
+// the interpreter agreed with Python each time.  Restored byte-identically (`git diff`
+// empty against the pre-sabotage commit): interpret / native / every switch / every
+// falsifier green.
+
+fn tot(v: const vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
+
+// s1 — the realistic case, longer than one block: 0..5000 = 12497500, and a salt per element.
+fn s1() {
+  v = [for i in 0..5000 { i }];
+  w = [for i in 0..5000 { i * 3 - 7000 }];
+  println("s1 {sum(v)} {sum(w)} {sum(v, 10)}");
+  assert(sum(v) == 12497500 && sum(w) == 2492500 && sum(v, 10) == 12497510, "s1");
+}
+
+// s2 — the prefix-overflow pair from the analysis: MAX + 1 overflows on the way, so the sum is
+// null although the total fits; reordered, no prefix overflows.  Both answers must STAY.
+fn s2() {
+  a = [9223372036854775807, 1, -1];
+  b = [1, -1, 9223372036854775807];
+  println("s2 {sum(a)} {sum(b)} {(sum(a) ?? -7)}");
+  assert(sum(a) == null && sum(b) == 9223372036854775807 && (sum(a) ?? -7) == -7, "s2");
+}
+
+// s3 — a null element in the middle of the second block: the sum is null, and the elements
+// before it are summed exactly (the first block is admitted, the second declines).
+fn s3() {
+  v = [for i in 0..3000 { i }];
+  v[1500] = null;    // a null stored into a plain integer slot: the sentinel the bound must catch
+  w = [for i in 0..3000 { i }];
+  w[0] = null;
+  println("s3 {sum(v)} {sum(w)} {(sum(v) ?? 5)}");
+  assert(sum(v) == null && sum(w) == null && (sum(v) ?? 5) == 5, "s3");
+}
+
+// s4 — elements AT the bound: 2^40 - 1 is admitted, 2^40 is not, -2^40 is, -2^40 - 1 is
+// not.  Two thousand of each, so the declining ones take the checked loop for a whole
+// block.  2000 * (2^40 - 1) = 2199023255550000, 2000 * 2^40 = 2199023255552000; the mixed vector cancels to 0.
+fn s4() {
+  lo = [for _ in 0..2000 { 1099511627775 }];
+  hi = [for _ in 0..2000 { 1099511627776 }];
+  neg = [for _ in 0..2000 { -1099511627776 }];
+  mix = [for i in 0..2000 { if i % 2 == 0 { 1099511627777 } else { -1099511627777 } }];
+  println("s4 {sum(lo)} {sum(hi)} {sum(neg)} {sum(mix)}");
+  assert(sum(lo) == 2199023255550000 && sum(hi) == 2199023255552000 && sum(neg) == -2199023255552000 && sum(mix) == 0, "s4");
+}
+
+// s5 — a running total near the edge: `init` puts the accumulator within 2^50 of MAX, so
+// every block declines the room test and the checked loop answers.  2^63 - 1 - 2^50 + 2048 =
+// 9222246136947935231; an init 100 below MAX overflows on the 101st element: null.
+fn s5() {
+  v = [for _ in 0..2048 { 1 }];
+  near = 9223372036854775807 - 1125899906842624;
+  println("s5 {sum(v, near)} {sum(v, 9223372036854775807 - 100)}");
+  assert(sum(v, near) == 9222246136947935231 && sum(v, 9223372036854775807 - 100) == null, "s5");
+}
+
+// s6 — an empty vector, one element, and a vector shorter than one block.
+fn s6() {
+  e: vector<integer> = [];
+  one = [42];
+  short = [for i in 0..100 { i * i }];
+  println("s6 {sum(e)} {sum(one)} {sum(short)}");
+  assert(sum(e) == 0 && sum(one) == 42 && sum(short) == 328350, "s6");
+}
+
+// s7 — negative elements, and a total that crosses zero on every step: sum over i <= 4000 of
+// (-1)^i * i = 2000 pairs (2k, 2k+1) at -1 each, plus the lone 4000 = 2000.
+fn s7() {
+  v = [for i in 0..4001 { if i % 2 == 0 { i } else { 0 - i } }];
+  println("s7 {sum(v)}");
+  assert(sum(v) == 2000, "s7");
+}
+
+// s_user — the same loop written by hand takes the prelude too; s_acc — the operands the
+// other way round.  0..3000 = 4498500.
+fn s_user(v: const vector<integer>) -> integer { acc = 0; for i in 0..len(v) { acc = acc + v[i]; } acc }
+fn s_acc(v: const vector<integer>) -> integer { acc = 0; for i in 0..len(v) { acc = v[i] + acc; } acc }
+fn s8() {
+  v = [for i in 0..3000 { i }];
+  println("s8 {s_user(v)} {s_acc(v)}");
+  assert(s_user(v) == 4498500 && s_acc(v) == 4498500, "s8");
+}
+
+// The shapes that keep the checked loop, and must still answer right.
+fn s_float(v: const vector<float>) -> float { acc = 0.0; for i in 0..len(v) { acc = acc + v[i]; } acc }
+fn s_join(v: const vector<integer>) -> integer { acc = 0; for i in 0..len(v) + 5 { acc = acc + (v[i] ?? 1000); } acc }
+fn s_two(v: const vector<integer>) -> integer { acc = 0; n = 0; for i in 0..len(v) { acc = acc + v[i]; n += 1; } acc + n }
+fn s_step(v: const vector<integer>) -> integer { acc = 0; for i in 0..len(v) / 2 { acc = acc + v[i * 2]; } acc }
+fn s_walk(v: const vector<integer>) -> integer { acc = 0; for x in v { acc = acc + x; } acc }
+fn s9() {
+  v = [for i in 0..3000 { i }];
+  f = [for i in 0..3000 { i as float * 0.5 }];
+  // join: 4498500 + 5 * 1000 = 4503500; two: 4498500 + 3000 = 4501500; step: the 1500 even i below
+  // 3000 = 1499 * 1500 = 2248500.
+  println("s9 {s_float(f)} {s_join(v)} {s_two(v)} {s_step(v)} {s_walk(v)}");
+  assert(s_float(f) == 2249250.0 && s_join(v) == 4503500 && s_two(v) == 4501500 && s_step(v) == 2248500 && s_walk(v) == 4498500, "s9");
+}
+
+fn main() {
+  s1(); s2(); s3(); s4(); s5(); s6(); s7(); s8(); s9();
+  println("bounded sum ok");
+}

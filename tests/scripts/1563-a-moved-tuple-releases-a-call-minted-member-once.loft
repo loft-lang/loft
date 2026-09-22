@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1563, `@FR-H-Move` — A MOVED TUPLE RELEASES A CALL-MINTED MEMBER ONCE.  `u = t` of a tuple
+// the function built MOVES it, member by member, so each resource has one owner and one release.
+// A member built by a literal already moved: its work-ref is named in the tuple's type.  A member
+// its own CALL minted (`t = (mk(11), 1)`) names nothing there, so the copy moved nothing and both
+// the copy and the member ran the hook — and, measured, so did a member built by a literal.  A
+// refill (`t = (mk(12), 2)`) then released the moved member again, before the copy was read.  The
+// member's buffer is now the source the copy moves the release from, where the copy is certain to
+// run.
+//
+// Only releases and reads are traced (`<id>`, `R<id>`), and every expected count is worked out by
+// hand: each record once.  The order among the scope-end releases is not asserted — that is the
+// scope-end order question, loft#1588, not this one.  The last cell is a control that was right
+// before: a move written in an `if` arm that does not run.
+//
+// @falsified-at: cce21dfde — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1563-a-moved-tuple-releases-a-call-minted-member-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends; the stores are
+//   right on both trees, and only the hook trace shows the second release.
+// ARMED: no instrument — each hook call and read is written to this guard's own trace file.
+// WITNESS: on the control all six fault cells release twice and the control holds, on both
+//   backends, scored with the assertion replaced by a print: `g1` `R11,11,11`, `g2`
+//   `21,R21,R22,22,21` (21 released before it is read), `g6` `R61,61,61` (a literal member).
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_moved_tuple_member_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn once(trace: text, id: text) -> boolean {
+  n = 0;
+  for part in trace.split(',') { if part == id { n += 1; } }
+  n == 1
+}
+
+struct Tm { id: integer }
+fn OpDrop(self: Tm) { note("{self.id}"); }
+fn tmk(id: integer) -> Tm { return Tm { id: id }; }
+
+fn g1() { t = (tmk(11), 1); u = t; note("R{u.0.id}"); }
+fn g2() { t = (tmk(21), 1); u = t; t = (tmk(22), 2); note("R{u.0.id}"); note("R{t.0.id}"); }
+fn g3() { t = (tmk(31), 1); u = t; t = (tmk(32), 2); z = t; note("R{u.0.id}"); note("R{z.0.id}"); }
+fn g4() { t = (tmk(41), tmk(42)); u = t; note("R{u.0.id}"); note("R{u.1.id}"); }
+fn g5() {
+  t = (tmk(51), 1);
+  u = t;
+  t = (tmk(52), 2);
+  z = t;
+  t = (tmk(53), 3);
+  note("R{u.0.id}");
+  note("R{z.0.id}");
+  note("R{t.0.id}");
+}
+fn g6() { t = (Tm { id: 61 }, 1); u = t; note("R{u.0.id}"); }
+fn c2() { t = (tmk(71), 1); c = t.1 > 5; if c { u = t; note("R{u.0.id}"); } note("X"); }
+
+fn check(nm: text, ids: vector<text>, reads: text) {
+  got = drain();
+  ok = true;
+  for id in ids { if !once(got, id) { ok = false; } }
+  for r in reads.split(',') { if r != "" && !once(got, r) { ok = false; } }
+  assert(ok, "{nm}: {got}");
+}
+
+fn main() {
+  drain();
+  g1(); check("g1 moved             ", ["11"], "R11");
+  g2(); check("g2 moved and refilled", ["21", "22"], "R21,R22");
+  g3(); check("g3 moved twice       ", ["31", "32"], "R31,R32");
+  g4(); check("g4 two members       ", ["41", "42"], "R41,R42");
+  g5(); check("g5 refilled twice    ", ["51", "52", "53"], "R51,R52,R53");
+  g6(); check("g6 literal member    ", ["61"], "R61");
+  c2(); check("c2 arm not taken     ", ["71"], "X");
+  println("a moved tuple releases a call-minted member once: every cell holds");
+}

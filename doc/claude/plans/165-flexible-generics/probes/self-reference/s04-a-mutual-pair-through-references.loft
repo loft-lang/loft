@@ -1,0 +1,10 @@
+// D7 — the same pair through `reference<…>?`, which every instance lays out.
+// @EXPECT: 1|2|1
+struct A<T> { v: T, b: reference<B<T>>? }
+struct B<T> { w: T, a: reference<A<T>>? }
+fn main() {
+  x = A { v: 1, b: null };
+  y = B { w: 2, a: x };
+  z = A { v: 3, b: y };
+  println("{x.v}|{z.b.w}|{z.b.a.v}");
+}

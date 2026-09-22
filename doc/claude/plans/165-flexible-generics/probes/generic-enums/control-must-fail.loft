@@ -1,0 +1,7 @@
+// @CONTROL
+// @EXPECT: 9
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T }, Empty }
+fn main() {
+  s = Dot { at: 1 };
+  match s { Dot { at } => println("{at}"), _ => println("other") }
+}

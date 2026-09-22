@@ -1,0 +1,8 @@
+// @CONTROL — the expectation is deliberately wrong; the matrix is only valid when this
+// cell FAILS.
+// @EXPECT: 7=8
+fn idf<T>(x: T) -> T { x }
+fn idf_i(x: integer) -> integer { x }
+fn main() {
+  println("{idf(7)}={idf_i(7)}");
+}

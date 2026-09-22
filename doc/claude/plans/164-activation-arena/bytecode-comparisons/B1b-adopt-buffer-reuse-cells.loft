@@ -438,7 +438,9 @@ fn r21() {
 
 // r22 — `parse_scene_at`'s `ps_f`: a callee that answers its buffer or a record of its own
 // (a chain and a literal exit), bound inside an `if` in a loop, so the scope pass puts a
-// null-init in front of the `if` and the bind is a REBIND — twice per activation.
+// null-init in front of the `if` and the bind is a REBIND — twice per activation.  (Under
+// `LOFT_ARM_SCOPE=1` every mention of `mf` lying in the arm makes it the arm's local and a first
+// bind there; r28 keeps the pre-init shape either way.)
 fn r22() {
   total = 0;
   for line in 0..8 {
@@ -571,6 +573,21 @@ fn r27() {
   println("r27 {s}");
 }
 
+// r28 — the same callee, bound inside an `if` in a loop and read in a LATER `if`: the local is
+// the loop body's, so the scope pass puts a null-init in front of the first `if` and the bind
+// is a REBIND that follows it on every path — twice per activation.
+fn r28() {
+  total = 0;
+  for line in 0..8 {
+    even = md(line, 2) == 0;
+    if even { mf = scan_mk(4, md(line, 5)); }
+    if even { if mf.matched { total += mf.pts[1]? } else { total += 50 + len(mf.pts) } } else { total += 1 }
+  }
+  // even lines hit 0, 2, 4, 1: 50 + 4 + 8 + 2; odd lines 4 × 1
+  assert(total == 68, "r28 {total}");
+  println("r28 {total}");
+}
+
 fn run(c: text) {
   if c == "r1" { r1() } else if c == "r2" { r2() } else if c == "r3" { r3() }
   else if c == "r4" { r4() } else if c == "r5" { r5() } else if c == "r6" { r6() }
@@ -581,6 +598,7 @@ fn run(c: text) {
   else if c == "r19" { r19() } else if c == "r20" { r20() } else if c == "r21" { r21() }
   else if c == "r22" { r22() } else if c == "r23" { r23() } else if c == "r24" { r24() }
   else if c == "r25" { r25() } else if c == "r26" { r26() } else if c == "r27" { r27() }
+  else if c == "r28" { r28() }
 }
 
 /// With no argument every cell runs; `-- r9` runs one.
@@ -588,7 +606,7 @@ fn main() {
   args = arguments();
   if len(args) == 0 {
     r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); r12(); r13(); r14();
-    r15(); r16(); r18(); r19(); r20(); r21(); r22(); r23(); r24(); r25(); r26(); r27();
+    r15(); r16(); r18(); r19(); r20(); r21(); r22(); r23(); r24(); r25(); r26(); r27(); r28();
     println("B1b cells PASSED");
   } else {
     for a in args { run(a); }

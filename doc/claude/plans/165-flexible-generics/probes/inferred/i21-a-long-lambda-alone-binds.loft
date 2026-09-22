@@ -1,0 +1,7 @@
+// D4 — a `fn() -> integer` lambda spells its type: it alone binds T.
+// @EXPECT: 42
+struct Th<T> { f: fn() -> T }
+fn main() {
+  a = Th { f: fn() -> integer { 42 } };
+  println("{a.f()}");
+}

@@ -1,0 +1,5 @@
+// @CONTROL
+// @EXPECT: 8
+enum Sl { Full { v: integer }, Hole }
+fn get<T>(d: T, s: Sl) -> T { match s { Full { v } => d, Hole => d } }
+fn main() { println("{get(7, Sl.Hole)}"); }

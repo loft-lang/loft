@@ -2324,6 +2324,66 @@ impl Type {
         }
     }
 
+    /// `[holder ↦ bound]` over this type — the one home for substituting a type variable (or
+    /// an associated type) wherever it sits.  Every former descends through
+    /// [`Type::map_children`], so `vector<T>`, `(T, T)`, `T?`, `iterator<T>` and `fn(T) -> T`
+    /// are all reached, and a new former fails the build there rather than staying parametric.
+    #[must_use]
+    pub fn substitute(self, holder: u32, bound: &Type) -> Type {
+        match self {
+            // `reference<X>` at a substituted `X` stays a POINTER: the marker lives in the
+            // replaced reference's deps, and a record bound in its place keeps it — without
+            // it `reference<Node<T>>?` in `Node<integer>` became an inline self field.
+            Type::Reference(d, deps) if d == holder && deps.is_pointer_marker() => match bound {
+                Type::Reference(b, _) => Type::Reference(*b, deps),
+                Type::Optional(inner) => match inner.base() {
+                    Type::Reference(b, _) => Type::Optional(Box::new(Type::Reference(*b, deps))),
+                    _ => bound.clone(),
+                },
+                other => other.clone(),
+            },
+            Type::Reference(d, _) if d == holder => bound.clone(),
+            // An open instance of a generic ENUM is `Enum(holder, …)`: it becomes the bound
+            // instance and keeps its own form (@PLN165 D8).
+            Type::Enum(d, mixed, deps) if d == holder => match bound.base() {
+                Type::Reference(b, _) | Type::Enum(b, _, _) => Type::Enum(*b, mixed, deps),
+                _ => bound.clone(),
+            },
+            other => other.map_children(&mut |c| c.clone().substitute(holder, bound)),
+        }
+    }
+
+    /// Every `(holder, bound)` pair at once: a bound is never substituted again.  Where one
+    /// pair's bound names another pair's holder — the variables of `Pair<V, K>` inside
+    /// `Pair<K, V>`, `[K ↦ V, V ↦ K]` — [`Type::substitute_all`]'s fold turned `k: K` into
+    /// `V` and back into `K` (@PLN165 D10).
+    #[must_use]
+    pub fn substitute_simultaneous(self, bindings: &[(u32, Type)]) -> Type {
+        match self {
+            Type::Optional(inner) => {
+                Type::Optional(Box::new(inner.substitute_simultaneous(bindings)))
+            }
+            Type::Reference(h, _) | Type::Enum(h, _, _)
+                if bindings.iter().any(|(x, _)| *x == h) =>
+            {
+                let bound = bindings
+                    .iter()
+                    .find(|(x, _)| *x == h)
+                    .map_or(Type::Unknown(0), |(_, b)| b.clone());
+                self.substitute(h, &bound)
+            }
+            other => other.map_children(&mut |c| c.clone().substitute_simultaneous(bindings)),
+        }
+    }
+
+    /// [`Type::substitute`] for every `(holder, bound)` pair, in order.
+    #[must_use]
+    pub fn substitute_all(self, bindings: &[(u32, Type)]) -> Type {
+        bindings
+            .iter()
+            .fold(self, |t, (holder, bound)| t.substitute(*holder, bound))
+    }
+
     /// Pair this type's children with `other`'s, for a walk that descends TWO type
     /// trees at once — the unifier's shape of the question `for_each_child` answers
     /// for one tree.
@@ -3011,6 +3071,21 @@ impl Type {
                     data.def(*t).name
                 )
             }
+            // An instance of a generic struct (@PLN165 D3/D5) is SHOWN as its template applied to
+            // its arguments, each spelled as the reader wrote it — `Box<T>` for the open
+            // instance keyed `Box<T#5>`, `Box<u8>` where the key carries the width.  The key
+            // keeps the def name.
+            Type::Reference(t, _) | Type::Enum(t, _, _)
+                if source && data.def(*t).instance_of != u32::MAX =>
+            {
+                let d = data.def(*t);
+                let args: Vec<String> = d
+                    .instance_args
+                    .iter()
+                    .map(|a| a.render(data, true))
+                    .collect();
+                format!("{}<{}>", data.def(d.instance_of).name, args.join(", "))
+            }
             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
             Type::Text(_) => "text".to_string(),
             Type::Vector(tp, _) if matches!(tp as &Type, Type::Unknown(_)) => "vector".to_string(),
@@ -3056,6 +3131,14 @@ impl Type {
             Type::Float => "float".to_string(),
             Type::Single => "single".to_string(),
             Type::Character => "character".to_string(),
+            // A width declared through a stdlib alias reads as the alias the author wrote
+            // (`Box<u8>`): the key's `integer(0, 255)` is no spelling the parser reads, and a
+            // debugger seed annotated with it could not be evaluated (@PLN165 D10).
+            Type::Integer(spec)
+                if source && spec.forced_size.is_some() && data.integer_alias(spec).is_some() =>
+            {
+                data.integer_alias(spec).unwrap_or("integer").to_string()
+            }
             Type::Integer(spec) if spec.source_name().is_some() => {
                 spec.source_name().unwrap_or("integer").to_string()
             }
@@ -3332,7 +3415,10 @@ pub fn element_stack_size(t: &Type) -> usize {
         | Type::Hash(_, _, _)
         | Type::Radix(_, _, _)
         | Type::Trie(_, _, _)
-        | Type::Enum(_, true, _) => std::mem::size_of::<crate::keys::DbRef>(),
+        | Type::Enum(_, true, _)
+        // A generator handle is a `DbRef` naming its frame (loft#1585); sized 0 here, a tuple
+        // member of one overlapped its neighbours.
+        | Type::Iterator(_, _) => std::mem::size_of::<crate::keys::DbRef>(),
         Type::Tuple(elems) => {
             // @PLN114 — the STACK view: one `aligned_stack_step` slot per element,
             // because that is what a push actually advances.  The natural-alignment
@@ -4191,6 +4277,30 @@ pub enum ImpureCategory {
     ParCall,
 }
 
+/// Which length-counted key form a definition name has ([`Data::split_key`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum KeyKind {
+    /// `t_<LEN><spelling>_<method>` — a method, keyed on its receiver's spelling.
+    Method,
+    /// `f_<LEN><spelling>_<name>` — a free member of an overload set, keyed on the spelling
+    /// of every declared parameter.
+    FreeOverload,
+    /// `i_<LEN><spelling>_<template key>` — an INSTANCE of a generic: the identity spelling
+    /// of every type it binds, joined with `#`, then the key of the template it was made from
+    /// (`D-Key`, @PLN165).
+    Instance,
+}
+
+/// A length-counted definition key read back into its parts by [`Data::split_key`].
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct KeyParts<'a> {
+    pub kind: KeyKind,
+    /// The length-counted part: a receiver's spelling, or a full parameter spelling.
+    pub spelling: &'a str,
+    /// What follows the `_` separator — the name the source wrote.
+    pub rest: &'a str,
+}
+
 #[derive(Clone, PartialEq, Debug)]
 pub enum DefType {
     // Not yet known, must be filled in after the first parse pass.
@@ -4218,6 +4328,11 @@ pub enum DefType {
     // Method stubs are stored as attributes on this definition.
     // Used by bounded generics (<T: InterfaceName>) for satisfaction checking (I6).
     Interface,
+    // @PLN165 D2 (`D-Template`): a generic STRUCT or ENUM — `struct Box<T> { v: T }`.  Its own
+    // kind, so every site that asks `def_type == Struct` reads a template as NOT a struct: it
+    // is never laid out and never emitted.  Its instances (`Box<integer>`) are ordinary
+    // structs, minted per argument list.
+    TypeTemplate,
 }
 
 impl Display for DefType {
@@ -4477,6 +4592,21 @@ pub struct Definition {
     /// Empty for non-generic or unbounded generic functions.  Multiple bounds (`<T: A + B>`)
     /// are stored as multiple entries; checked for conflicting method signatures at I6.
     pub bounds: Vec<u32>,
+    /// @PLN165 D2 — a TYPE TEMPLATE's variables (their placeholders) in HEADER order, which is
+    /// the order `Box<integer, text>` binds its arguments in.  Empty for anything else.
+    pub type_params: Vec<u32>,
+    /// @PLN165 D3 — the type template this struct was minted from (`Box<integer>` → `Box`), or
+    /// `u32::MAX`.  A stored fact: reading it back out of the instance's NAME is the decoder
+    /// problem finding 3 names.
+    pub instance_of: u32,
+    /// @PLN165 D3 — the instance's type arguments, in the template's header order.
+    pub instance_args: Vec<Type>,
+    /// @PLN165 arc E — `#builtin`: this stdlib declaration is a built-in's SIGNATURE — its
+    /// place in the name's overload set, its method spelling, what hover and the API listing
+    /// read — and a call that selects it lowers through the compiler's special form of its
+    /// name, as the bare call always has.  A marker on the declaration, never a name test.
+    /// Persisted through the IR store (`DEF_BUILTIN`), mirrored in `tools/ir_schema/ir.loft`.
+    pub builtin: bool,
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
@@ -4594,6 +4724,13 @@ impl Definition {
         self.null_safe
     }
 
+    /// `#builtin` (@PLN165 arc E): a call selecting this declaration lowers through the
+    /// special form of its name.
+    #[must_use]
+    pub fn builtin(&self) -> bool {
+        self.builtin
+    }
+
     /// `#superseded "Y"` (@PLN102 arc C): the bare successor-symbol name this
     /// callable is superseded by, or empty if not superseded.  Inert in step 1
     /// (parsed + stored only); a later step reads it to steer owned-source callers.
@@ -4607,14 +4744,8 @@ impl Definition {
     /// `text` method); `None` for a free fn (`n_…`) or operator (`Op…`).
     #[must_use]
     pub fn method_type_prefix(&self) -> Option<&str> {
-        let rest = self.name.strip_prefix("t_")?;
-        let nd = rest.chars().take_while(char::is_ascii_digit).count();
-        let len: usize = rest.get(..nd)?.parse().ok()?;
-        // `t_`(2) + digits(nd) + type(len) + `_`(1) + method. The byte AFTER the type name
-        // must be the `_` separator — the other four manglers (`api_surface::method_name`,
-        // `generation::is_t_param_stub`, `parser::h5_names_a_generic_template`) require it; a
-        // longer `rest` alone is not enough, so `t_4textX…` must NOT be read as a method.
-        (rest.as_bytes().get(nd + len) == Some(&b'_')).then_some(&self.name[..=2 + nd + len])
+        let key = Data::split_key(&self.name).filter(|k| k.kind == KeyKind::Method)?;
+        Some(&self.name[..self.name.len() - key.rest.len()])
     }
 
     /// The user-facing name of this definition — the internal `n_` (free fn) or
@@ -4622,9 +4753,14 @@ impl Definition {
     /// `contains`.  Used by diagnostics (the @PLN102 arc-C steer + fold lint).
     #[must_use]
     pub fn display_name(&self) -> &str {
-        match self.method_type_prefix() {
-            Some(p) => &self.name[p.len()..],
-            None => self.name.strip_prefix("n_").unwrap_or(&self.name),
+        let mut name = self.name.as_str();
+        // An instance displays as its template.
+        while let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Instance) {
+            name = parts.rest;
+        }
+        match Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
+            Some(parts) => parts.rest,
+            None => name.strip_prefix("n_").unwrap_or(name),
         }
     }
 
@@ -5062,7 +5198,26 @@ impl Definition {
     /// question that reaches them.
     #[must_use]
     pub fn is_loft_defined(&self) -> bool {
-        (self.name.starts_with("n_") || self.name.starts_with("t_")) && self.code != Value::Null
+        (self.name.starts_with("n_")
+            || self.name.starts_with("t_")
+            || self.is_instance()
+            || self.is_free_overload())
+            && self.code != Value::Null
+    }
+
+    /// Is this a FREE member of an overload set — keyed `f_<LEN><τ₁#τ₂…>_<name>` (`Disp-Key`,
+    /// @PLN162)?  A free function in every respect but its key.
+    #[must_use]
+    pub fn is_free_overload(&self) -> bool {
+        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::FreeOverload)
+    }
+
+    /// Is this an INSTANCE of a generic — keyed `i_<LEN><types>_<template>` (`D-Key`)?  Asked
+    /// of the key's shape, not of its prefix: the runtime's own `i_parse_*` helpers share the
+    /// letter and are no instance.
+    #[must_use]
+    pub fn is_instance(&self) -> bool {
+        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::Instance)
     }
 
     /// Cluster-A.3 (OWNERSHIP_MODEL row 102) — THE adopt-vs-copy answer for a
@@ -5223,20 +5378,25 @@ impl Definition {
             .find(|g| matches!(g.kind, LinkedFieldKind::Tuple))
     }
 
+    /// The name the source wrote for the function keyed `key`: a method's or a free
+    /// overload's `rest`, an instance's TEMPLATE's name, a plain `n_<name>`'s `<name>`.
+    fn source_name_of_key(key: &str) -> String {
+        match Data::split_key(key) {
+            Some(parts) if parts.kind == KeyKind::Instance => Self::source_name_of_key(parts.rest),
+            Some(parts) => parts.rest.to_string(),
+            None => key.get(2..).unwrap_or(key).to_string(),
+        }
+    }
+
     #[must_use]
     pub fn original_name(&self) -> String {
-        if self.def_type == DefType::Function {
-            if self.name.starts_with("t_") || self.name.starts_with("f_") {
-                if let Ok(nr) = self.name[2..4].parse::<u8>() {
-                    self.name[5 + nr as usize..].to_string()
-                } else if let Ok(nr) = self.name[2..3].parse::<u8>() {
-                    self.name[4 + nr as usize..].to_string()
-                } else {
-                    self.name[2..].to_string()
-                }
-            } else {
-                self.name[2..].to_string()
-            }
+        // A GENERIC is keyed as a function is (`n_<name>`, `t_<LEN><type>_<name>`), and the
+        // name its author wrote is decoded the same way.  Answered raw, `n_type_name` never
+        // equalled `type_name`: a program's generic of a special form's name was not counted
+        // as a declaration, so `type_name(c)` answered the special form's `Cat` in silence
+        // where the program's `type_name<T: Named>` should have taken it.
+        if matches!(self.def_type, DefType::Function | DefType::Generic) {
+            Self::source_name_of_key(&self.name)
         } else {
             self.name.clone()
         }
@@ -5433,6 +5593,16 @@ pub struct Data {
     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
     /// serialize) consulted by the few value-semantics chokepoints.
     pub value_structs: HashSet<u32>,
+    /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
+    /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
+    /// forever.  A refused program does not run, so this needs no place in the image.
+    pub refused_type_templates: HashSet<u32>,
+    /// @PLN165 B2 — the bound set each type-variable placeholder stands for, as its sorted
+    /// interface names joined with `+` (`"Ordered+Printable"`; `""` unbounded).  A placeholder
+    /// is minted per (spelling, bound set), so this is what tells two variables of one bound set
+    /// apart from two of different sets when a TEMPLATE is keyed up to renaming
+    /// ([`Data::full_spelling`]).  A thin marker, like `value_structs`.
+    pub type_var_bound_keys: HashMap<u32, String>,
     used_definitions: HashSet<u32>,
     used_attributes: HashSet<(u32, usize)>,
     /// This definition is referenced by a specific definition, the code is used to update this
@@ -5654,6 +5824,15 @@ pub fn is_dbref(tp: &Type) -> bool {
             | Type::Trie(_, _, _)
             | Type::Enum(_, true, _)
     )
+}
+
+/// [`is_dbref`], or a generator handle: every value a tuple slot moves as one 12-byte `DbRef`.
+/// A handle names a frame in the coroutine table rather than a store, so it answers no store
+/// question and stays out of `is_dbref`; a tuple member of one ended in an internal compiler
+/// error at the first put (loft#1585).
+#[must_use]
+pub fn is_dbref_slot(tp: &Type) -> bool {
+    is_dbref(tp) || matches!(tp, Type::Iterator(_, _))
 }
 
 /// How many HEAP LEAVES a tuple type holds, counting THROUGH nested tuples.
@@ -6025,6 +6204,8 @@ impl Data {
             adopted_stubs: Vec::new(),
             source: STD_SOURCE,
             value_structs: HashSet::new(),
+            refused_type_templates: HashSet::new(),
+            type_var_bound_keys: HashMap::new(),
             used_definitions: HashSet::new(),
             used_attributes: HashSet::new(),
             referenced: HashMap::new(),
@@ -6599,6 +6780,10 @@ impl Data {
             mutated_captures: Vec::new(),
             scalars_to_box: Vec::new(),
             bounds: Vec::new(),
+            type_params: Vec::new(),
+            instance_of: u32::MAX,
+            instance_args: Vec::new(),
+            builtin: false,
             const_ref: None,
             forced_size: None,
             purity: Purity::Unknown,
@@ -7215,25 +7400,10 @@ impl Data {
         if let Some(rest) = name.strip_prefix("n_") {
             return rest.to_string();
         }
-        let Some(rest) = name.strip_prefix("t_") else {
-            return name.to_string();
-        };
-        // `<LEN><Type>_<method>`: the length prefix is what makes a type name containing
-        // `_` unambiguous, so it is what the split has to read.
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        if digits == 0 {
-            return name.to_string();
-        }
-        let Ok(len) = rest[..digits].parse::<usize>() else {
-            return name.to_string();
-        };
-        let after = &rest[digits..];
-        if after.len() <= len || !after.is_char_boundary(len) {
-            return name.to_string();
-        }
-        let (tp, tail) = after.split_at(len);
-        match tail.strip_prefix('_') {
-            Some(method) if !method.is_empty() => format!("{tp}.{method}"),
+        match Self::split_key(name) {
+            Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {
+                format!("{}.{}", key.spelling, key.rest)
+            }
             _ => name.to_string(),
         }
     }
@@ -7295,21 +7465,61 @@ impl Data {
         (tn != u32::MAX).then(|| Self::sig_type_name(&self.key_type_name(tn), tp))
     }
 
+    /// The one answer to *"which type is this, for a key or a rank?"* — [`Self::identity_spelling`],
+    /// or with `LOFT_NO_ELEMENT_KEY=1` the erasing [`Self::type_spelling`] (@PLN165 B1).  `None`
+    /// only in the erasing form, for a type with no def to name.
+    #[must_use]
+    pub(crate) fn key_identity(&self, tp: &Type) -> Option<String> {
+        if crate::keys::element_key_enabled() {
+            Some(self.identity_spelling(tp))
+        } else {
+            self.type_spelling(tp)
+        }
+    }
+
     /// Every DECLARED parameter's spelling joined with `#` — the FULL spelling a definition
     /// is keyed by when its name has several (`Disp-Key`, @PLN162).  `#` is the separator
     /// [`Self::bound_stub_name`] already relies on: no identifier can contain it, and the
-    /// native emitter maps it to `__`.  Hidden parameters (a return buffer) are not part of a
-    /// signature and are skipped.  `None` when a parameter has no spelling, which keeps such
-    /// a definition on today's keys.  Two `vector<τ>` spell alike — the element type is not
-    /// in a key today either.
+    /// native emitter flattens it.  Hidden parameters (a return buffer) are not part of a
+    /// signature and are skipped.  Each type is its [`Self::key_identity`], so
+    /// `vector<integer>` and `vector<text>` are two keys, as `u8` and `u16` are (@PLN165 B1);
+    /// `None` only under `LOFT_NO_ELEMENT_KEY=1`, for a parameter with no spelling.
     #[must_use]
     pub(crate) fn full_spelling<'a>(
         &self,
         params: impl Iterator<Item = &'a Type>,
     ) -> Option<String> {
+        let params: Vec<&Type> = params.collect();
+        // @PLN165 B2 — a TEMPLATE's parameters are keyed up to renaming its variables: each is
+        // written as its position among the variables in order of first appearance, with its
+        // bound set (`$0:Ordered`), so `f<T>(v: vector<T>)` and `f<U>(v: vector<U>)` are one key
+        // — the redefinition they are — while `f<T: A>` and `f<T: B>` are two.
+        let mut vars: Vec<(u32, String)> = Vec::new();
+        for tp in &params {
+            tp.any_node(&mut |t| {
+                if let Type::Reference(d, _) = t.base()
+                    && (*d as usize) < self.definitions.len()
+                    && self.is_type_var_placeholder(*d)
+                    && !vars.iter().any(|(v, _)| v == d)
+                {
+                    let bounds = self.type_var_bound_keys.get(d).cloned().unwrap_or_default();
+                    let label = if bounds.is_empty() {
+                        format!("${}", vars.len())
+                    } else {
+                        format!("${}:{bounds}", vars.len())
+                    };
+                    vars.push((*d, label));
+                }
+                false
+            });
+        }
         let mut parts = Vec::new();
         for tp in params {
-            parts.push(self.type_spelling(tp)?);
+            if vars.is_empty() {
+                parts.push(self.key_identity(tp)?);
+            } else {
+                parts.push(self.identity_with_vars(tp, &vars));
+            }
         }
         Some(parts.join("#"))
     }
@@ -7363,6 +7573,25 @@ impl Data {
     /// attribute labelled by its spelling.  A free incumbent is re-keyed from `n_<name>` to
     /// its full spelling, so the name offers no parse hint (`Disp-Hint`) and the sites that
     /// read `n_<name>` as THE definition find none, exactly as they do for a `both` name.
+    /// The `self`/`both` METHODS named `fn_name` that source `source` declares, on any
+    /// receiver — what a free generic of the name joins in one overload set (@PLN165 B4).
+    fn methods_named(&self, fn_name: &str, source: u16) -> Vec<u32> {
+        (0..self.definitions.len() as u32)
+            .filter(|&d| {
+                let def = &self.definitions[d as usize];
+                def.source == source
+                    && matches!(def.def_type, DefType::Function | DefType::Generic)
+                    && def
+                        .attributes
+                        .first()
+                        .is_some_and(|a| a.name == "self" || a.name == "both")
+                    && Self::split_key(&def.name)
+                        .is_some_and(|k| k.kind == KeyKind::Method && k.rest == fn_name)
+                    && !Self::is_bound_stub_name(&def.name)
+            })
+            .collect()
+    }
+
     pub(crate) fn admit_overload_set(&mut self, lexer: &mut Lexer, fn_name: &str, incumbent: u32) {
         let mut main = self.def_nr(fn_name);
         if main == u32::MAX {
@@ -7433,7 +7662,36 @@ impl Data {
             .filter(|p| !p.hidden)
             .map(|p| p.typedef.source_name(self))
             .collect();
-        format!("{fn_name}({})", params.join(", "))
+        // A TEMPLATE member (@PLN165 B3) is named with its header, the way its author wrote
+        // it — `show<T: Named>(T)` — so a refusal naming it says which definition it means.
+        let mut vars: Vec<String> = Vec::new();
+        if self.def_type(r) == DefType::Generic {
+            for p in self.def(r).attributes.iter().filter(|p| !p.hidden) {
+                p.typedef.any_node(&mut |t| {
+                    if let Type::Reference(d, _) = t.base()
+                        && (*d as usize) < self.definitions.len()
+                        && self.is_type_var_placeholder(*d)
+                    {
+                        let spelled = Self::type_var_spelling(self.def(*d).name());
+                        let bounds = self.type_var_bound_keys.get(d).cloned().unwrap_or_default();
+                        let label = if bounds.is_empty() {
+                            spelled.to_string()
+                        } else {
+                            format!("{spelled}: {}", bounds.replace('+', " + "))
+                        };
+                        if !vars.contains(&label) {
+                            vars.push(label);
+                        }
+                    }
+                    false
+                });
+            }
+        }
+        if vars.is_empty() {
+            format!("{fn_name}({})", params.join(", "))
+        } else {
+            format!("{fn_name}<{}>({})", vars.join(", "), params.join(", "))
+        }
     }
 
     #[must_use]
@@ -7483,7 +7741,49 @@ impl Data {
     /// than name one: the `t_4Self_` scan in `parser/mod.rs` and the REPL's completion prefix.
     #[must_use]
     pub fn mangle_method(spelling: &str, method: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
         format!("t_{}{}_{method}", spelling.len(), spelling)
+    }
+
+    /// What [`Self::split_key`] relies on to find where `LEN` ends: the length-counted part
+    /// never begins with a digit.  A real `assert!`, because `debug_assert!` is compiled out of
+    /// this crate — a spelling that broke it would decode to the wrong name in silence.
+    fn assert_spelling_decodes(spelling: &str) {
+        assert!(
+            !spelling.starts_with(|c: char| c.is_ascii_digit()),
+            "a definition key's spelling may not begin with a digit: {spelling:?}"
+        );
+    }
+
+    /// The ONE decoder of a length-counted definition key (@FR-G-Key) — `t_<LEN><spelling>_<rest>` (a
+    /// method), `f_<LEN><spelling>_<rest>` (a free member of an overload set) or
+    /// `i_<LEN><spelling>_<rest>` (an instance of a generic) — and the inverse of
+    /// [`Self::mangle_method`], [`Self::mangle_free_overload`] and [`Self::mangle_instance`].  `LEN` is read as
+    /// EVERY leading digit, so a spelling of 100 characters or more decodes like a short one.
+    /// `None` for a key of any other shape (`n_…`, an operator, a type), for a `LEN` that runs
+    /// past the key, and for a spelling not followed by the `_` separator.
+    #[must_use]
+    pub fn split_key(name: &str) -> Option<KeyParts<'_>> {
+        let (kind, body) = if let Some(body) = name.strip_prefix("t_") {
+            (KeyKind::Method, body)
+        } else if let Some(body) = name.strip_prefix("i_") {
+            (KeyKind::Instance, body)
+        } else {
+            (KeyKind::FreeOverload, name.strip_prefix("f_")?)
+        };
+        let digits = body.bytes().take_while(u8::is_ascii_digit).count();
+        if digits == 0 {
+            return None;
+        }
+        let len: usize = body[..digits].parse().ok()?;
+        let after = &body[digits..];
+        let spelling = after.get(..len)?;
+        let rest = after.get(len..)?.strip_prefix('_')?;
+        Some(KeyParts {
+            kind,
+            spelling,
+            rest,
+        })
     }
 
     /// The key of a FREE definition that belongs to an overload set (`Disp-Key`, @PLN162):
@@ -7492,7 +7792,138 @@ impl Data {
     /// rule — and a free overload is not one: it has no receiver and no `x.f(…)` spelling.
     #[must_use]
     pub fn mangle_free_overload(spelling: &str, name: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
         format!("f_{}{}_{name}", spelling.len(), spelling)
+    }
+
+    /// The key of an INSTANCE of a generic (`D-Key`, @PLN165, @FR-G-Key): `i_<LEN><spelling>_<template>`,
+    /// `spelling` every bound type's [`Self::identity_spelling`] joined with `#` in the order the
+    /// template's variables first appear, `template` the template's own key.  Its own kind,
+    /// because an instance is not a method on its first bound type — keyed as one
+    /// (`t_3Cat_count_of`), it took a real method `count_of` on `Cat` for itself — and the
+    /// template's key in it keeps two templates of one name from sharing an instance.  The key
+    /// keeps its readable characters; the native emitter makes it an identifier.
+    #[must_use]
+    pub fn mangle_instance(spelling: &str, template: &str) -> String {
+        Self::assert_spelling_decodes(spelling);
+        format!("i_{}{}_{template}", spelling.len(), spelling)
+    }
+
+    /// What distinguishes one binding of a type variable from another in an instance's key.
+    ///
+    /// A collection keeps its element (a `vector`'s type def is the bare `vector`, which
+    /// erases it — loft#1024); an integer keeps its range and a forced width (every
+    /// `Integer(_)` resolves to the one `integer` def — loft#1383, loft#1418); any other type
+    /// is its def's name.  `(C-Int)` admits a widening for CONVERSION, which is why this is not
+    /// the conversion predicate: identity is exactly what one instance per distinct
+    /// instantiation (`@FR-G-Mono`) is keyed by.
+    #[must_use]
+    pub fn identity_spelling(&self, tp: &Type) -> String {
+        if !crate::keys::element_key_enabled() {
+            return self.identity_spelling_erasing(tp);
+        }
+        // @PLN165 B1 — the whole type, all the way down: a width inside a vector, the `?`
+        // of a nullable binding (`Pt` and `Pt?` are two instantiations), a function type's
+        // signature (its type DEF is the `i32` its value is stored as, so a function type
+        // shared a key with `i32`).
+        let rec = |t: &Type| self.identity_spelling(t);
+        match tp {
+            Type::Integer(spec) => {
+                // schema-key — the width is part of which type this is (loft#1418).
+                let named = tp.name(self);
+                match spec.forced_size {
+                    Some(n) => format!("{named}s{n}"),
+                    None => named,
+                }
+            }
+            Type::Optional(inner) => format!("{}?", rec(inner)),
+            Type::Rewritten(inner) => rec(inner),
+            Type::RefVar(inner) => format!("&{}", rec(inner)),
+            Type::Vector(elm, _) if !matches!(elm.base(), Type::Unknown(_)) => {
+                format!("vector<{}>", rec(elm))
+            }
+            Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
+            // A tuple keeps its synthetic struct's name (`__tuple<integer,text>`), the one
+            // spelling a boxed and an unboxed tuple share — computed as `tuple_def` names it,
+            // whether or not that struct is registered yet: read off the registry, a key
+            // spelled `(integer, text)` before the struct existed and `__tuple<…>` after,
+            // and one type minted two instances (@PLN165 D11).
+            Type::Tuple(elems) => format!(
+                "__tuple<{}>",
+                elems
+                    .iter()
+                    .map(|t| t.name(self))
+                    .collect::<Vec<_>>()
+                    .join(",")
+            ),
+            Type::Function(params, ret, _, consts) => {
+                let p: Vec<String> = params
+                    .iter()
+                    .enumerate()
+                    .map(|(i, t)| {
+                        if consts.is(i) {
+                            format!("const {}", rec(t))
+                        } else {
+                            rec(t)
+                        }
+                    })
+                    .collect();
+                format!("fn({}) -> {}", p.join(", "), rec(ret))
+            }
+            _ => self.identity_spelling_erasing(tp),
+        }
+    }
+
+    /// [`Self::identity_spelling`] with each of a template's type variables written as its
+    /// label in `vars` (`$0:Ordered`) — a template's key up to renaming (@PLN165 B2).
+    fn identity_with_vars(&self, tp: &Type, vars: &[(u32, String)]) -> String {
+        let rec = |t: &Type| self.identity_with_vars(t, vars);
+        match tp {
+            Type::Reference(d, _) | Type::Enum(d, _, _) => {
+                if let Some((_, label)) = vars.iter().find(|(v, _)| v == d) {
+                    return label.clone();
+                }
+                self.identity_spelling(tp)
+            }
+            Type::Optional(inner) => format!("{}?", rec(inner)),
+            Type::Rewritten(inner) => rec(inner),
+            Type::RefVar(inner) => format!("&{}", rec(inner)),
+            Type::Vector(elm, _) if !matches!(elm.base(), Type::Unknown(_)) => {
+                format!("vector<{}>", rec(elm))
+            }
+            Type::Iterator(elm, _) => format!("iterator<{}>", rec(elm)),
+            Type::Tuple(elems) => {
+                format!("({})", elems.iter().map(rec).collect::<Vec<_>>().join(", "))
+            }
+            Type::Function(params, ret, _, _) => format!(
+                "fn({}) -> {}",
+                params.iter().map(rec).collect::<Vec<_>>().join(", "),
+                rec(ret)
+            ),
+            _ => self.identity_spelling(tp),
+        }
+    }
+
+    /// The identity spelling before @PLN165 B1 — an instance's key as A5 minted it, which
+    /// erased a `τ?`'s nullability and a function type's signature.  `LOFT_NO_ELEMENT_KEY=1`.
+    fn identity_spelling_erasing(&self, tp: &Type) -> String {
+        if crate::parser::Parser::is_collection_type(tp.base()) {
+            tp.name(self) // schema-key — the instance's identity; @FR-G-Mono wants the element
+        } else if let Type::Integer(spec) = tp.base() {
+            // schema-key — loft#1418's forced WIDTH is part of which instance this is.
+            let named = tp.name(self);
+            match spec.forced_size {
+                Some(n) => format!("{named}s{n}"),
+                None => named,
+            }
+        } else {
+            let nr = self.type_def_nr(tp);
+            if nr == u32::MAX {
+                tp.name(self)
+            } else {
+                self.def(nr).name().to_string()
+            }
+        }
     }
 
     /// The internal name of a BOUND-METHOD STUB for `holder` — a generic's type variable, or an
@@ -7594,11 +8025,29 @@ impl Data {
         Self::mangle_method(&n, method)
     }
 
+    /// The definition a receiver's methods belong to: the template of an instance of a
+    /// generic struct (@PLN165 D6), the receiver's own definition otherwise.
+    #[must_use]
+    pub fn method_family(&self, type_nr: u32) -> u32 {
+        match self.definitions.get(type_nr as usize) {
+            Some(d) if d.instance_of != u32::MAX => d.instance_of,
+            _ => type_nr,
+        }
+    }
+
     /// The name that KEYS a method on `type_nr`: a concrete type's own name, or a bound
     /// holder's marked spelling.
     #[must_use]
     fn key_type_name(&self, type_nr: u32) -> String {
         let d = &self.definitions[type_nr as usize];
+        // @PLN165 D6 — a method of a generic struct is keyed on the TEMPLATE, as a `vector<τ>`
+        // receiver keys on `vector` (loft#1539): `fn at<T>(self: Grid<T>)` is `t_4Grid_at`, and
+        // a call on a `Grid<integer>` looks there.  A concrete `fn at(self: Grid<integer>)`
+        // beside it then shares the key and the two form one overload set, ranked as a
+        // concrete member beside a template is (arc B).
+        if d.instance_of != u32::MAX {
+            return self.key_type_name(d.instance_of);
+        }
         if d.bound_holder {
             format!("{}{}", d.name, Self::HOLDER_MARK)
         } else {
@@ -7821,8 +8270,19 @@ impl Data {
         // a stdlib name stays the refusal below (C95), and a library's names stay module-scoped
         // (C97).  The same spelling twice is the redefinition it always was.
         let mut overload_label: Option<String> = None;
+        // @PLN165 B4 — a `self` method that joins a free generic's set after registering.
+        let mut join_as_method = false;
+        // @PLN165 B2 — a TEMPLATE is a member too: an incumbent that is one (`Generic`, set
+        // right after it registered), or a newcomer whose parameters name a type variable.
+        let generic_members = crate::keys::generic_member_enabled();
+        let newcomer_is_template = arguments.iter().any(|a| self.mentions_type_var(&a.typedef));
+        let incumbent_joins = |data: &Self, d: u32| match data.def(d).def_type {
+            DefType::Function => generic_members || !newcomer_is_template,
+            DefType::Generic => generic_members,
+            _ => false,
+        };
         if d_nr != u32::MAX
-            && self.def(d_nr).def_type == DefType::Function
+            && incumbent_joins(self, d_nr)
             && self.def(d_nr).source == self.source
             && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
             && self.def_full_spelling(d_nr).as_ref() != Some(&full)
@@ -7864,6 +8324,46 @@ impl Data {
             if own(self, &key) == u32::MAX {
                 name = key;
                 overload_label = Some(full);
+            }
+        } else if d_nr == u32::MAX
+            && generic_members
+            && crate::keys::method_in_set_enabled()
+            && !crate::portable_path::is_stdlib_source(&lexer.pos().file)
+            && (o_nr == u32::MAX
+                || (self.def(o_nr).def_type == DefType::Dynamic
+                    && self.def(o_nr).source == self.source))
+        {
+            // @PLN165 B4 — a free GENERIC beside a same-named `self`/`both` METHOD of this
+            // source is one overload set, in either declaration order: before, the method was
+            // found by its receiver key and the generic never asked, so `describe(sq)` reached
+            // a two-parameter method and was refused for its missing argument while the
+            // one-parameter generic took it.  The method keeps its `t_` key (both spellings of
+            // a call still reach it — `(F-OneBody)`); the generic joins under its full
+            // spelling.  A method on the generic's own pattern stays `(F-OneBody)`'s refusal,
+            // reported above.
+            if !(is_self || is_both) && newcomer_is_template {
+                let methods = self.methods_named(fn_name, self.source);
+                if !methods.is_empty()
+                    && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+                {
+                    let key = Self::mangle_free_overload(&full, fn_name);
+                    if own(self, &key) == u32::MAX {
+                        for m in methods {
+                            self.admit_overload_set(lexer, fn_name, m);
+                        }
+                        name = key;
+                        overload_label = Some(full);
+                    }
+                }
+            } else if is_self || is_both {
+                let t = own(self, &format!("n_{fn_name}"));
+                if t != u32::MAX
+                    && self.def(t).def_type == DefType::Generic
+                    && self.def(t).source == self.source
+                {
+                    self.admit_overload_set(lexer, fn_name, t);
+                    join_as_method = is_self;
+                }
             }
         }
         if d_nr != u32::MAX {
@@ -7908,7 +8408,9 @@ impl Data {
             // for operator definitions (add_op), where non-mutable params are bytecode constants.
         }
         if is_self || is_both {
-            let type_nr = self.type_def_nr(&arguments[0].typedef);
+            // A method of a generic struct is a member of the TEMPLATE, where it is keyed
+            // (`key_type_name`, @PLN165 D6): every instance, open or concrete, reaches it there.
+            let type_nr = self.method_family(self.type_def_nr(&arguments[0].typedef));
             let existing = self.attr(type_nr, fn_name) != usize::MAX;
             // @FR-F-Recv — `m(τ)` and `m(τ?)` are TWO definitions: the mangled key carries the
             // `?` (@PLN25), so they never collide there.  They do collide HERE, because a `τ?`
@@ -7989,6 +8491,9 @@ impl Data {
                 self.definitions[type_nr as usize].attributes[a_nr].constant = true;
             }
         }
+        if join_as_method {
+            self.admit_overload_set(lexer, fn_name, d_nr);
+        }
         if is_both || overload_label.is_some() {
             let mut main = self.def_nr(fn_name);
             if main == u32::MAX {
@@ -8054,9 +8559,11 @@ impl Data {
             };
             // `Disp-Key` (@PLN162): an overload of a method lives under its FULL parameter
             // spelling; that key is asked first, so a second `m(self: τ, …)` reaches its own
-            // def on pass 2 and not the incumbent's.  With one parameter the two keys are one.
-            if arguments.len() > 1
-                && let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+            // def on pass 2 and not the incumbent's.  With one parameter the two keys are one —
+            // except where the receiver's key names a FAMILY (`vector` for `vector<integer>`,
+            // the template `Grid` for `Grid<T>`, @PLN165 D6), so it is asked whenever it differs.
+            if let Some(full) = self.full_spelling(arguments.iter().map(|a| &a.typedef))
+                && (arguments.len() > 1 || full != sig)
             {
                 let d_nr = lookup(&Self::mangle_method(&full, fn_name));
                 if d_nr != u32::MAX {
@@ -8113,7 +8620,11 @@ impl Data {
             return true;
         };
         let declared = self.type_def_nr(&receiver.typedef);
-        declared == u32::MAX || declared == type_nr
+        // @PLN165 D6 — the instances of one generic struct are one receiver family, as every
+        // `vector<τ>` is `vector`: `fn at<T>(self: Grid<T>)` receives a `Grid<integer>`.
+        declared == u32::MAX
+            || declared == type_nr
+            || self.method_family(declared) == self.method_family(type_nr)
     }
 
     /// The definitions `fn_name` could resolve to for a receiver of type `tp`, as a SET, in
@@ -8162,10 +8673,27 @@ impl Data {
             Type::RefVar(inner) => inner.as_ref(),
             other => other,
         };
-        let type_nr = self.type_def_nr(tp);
+        let mut type_nr = self.type_def_nr(tp);
         if type_nr == u32::MAX {
             // No method dispatch for types like Function; fall back to n_ global.
             return free();
+        }
+        // @FR-F-Recv — a VARIANT's value is a value of its enum, so a method declared on the
+        // enum answers `m(v)` as it answers `v.m()` (the field path's Plan-19 fallback): where
+        // the variant declares no `m` of its own, its enum is the receiver.  Asked only here,
+        // the free spelling reported an unknown function the method spelling reached.
+        // "Its own" in either nullability spelling (`m(self: Tri?)` is the variant's too), which
+        // is what the spelling loop below tries — asked of the dense one alone, an enum's
+        // generated dispatcher reached ITSELF for such a variant.
+        if self.def_type(type_nr) == DefType::EnumValue {
+            let parent = self.definitions[type_nr as usize].parent;
+            let base = self.key_type_name(type_nr);
+            let declares_own = [base.clone(), format!("{base}?")]
+                .iter()
+                .any(|sp| self.source_nr(source, &Self::mangle_method(sp, fn_name)) != u32::MAX);
+            if parent != u32::MAX && self.def_type(parent) == DefType::Enum && !declares_own {
+                type_nr = parent;
+            }
         }
         // A bound HOLDER's stubs are keyed per SIGNATURE (loft#1275), and this entry point has
         // no arity to offer, so every arity the language admits is probed — `Walkable::children`
@@ -8424,8 +8952,12 @@ impl Data {
     }
 
     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
+        // Not a stub a GENERIC struct adopted: its target would be the bare template, where
+        // each use names an instance whose arguments the paths that read them resolve
+        // (@PLN165 D7).
         let adopted: Vec<(u32, Type)> = std::mem::take(&mut self.adopted_stubs)
             .into_iter()
+            .filter(|d| self.definitions[*d as usize].def_type != DefType::TypeTemplate)
             .map(|d| (d, self.definitions[d as usize].returned.clone()))
             .filter(|(_, ret)| !matches!(ret, Type::Unknown(_)))
             .collect();
@@ -8642,6 +9174,255 @@ impl Data {
                 }
             }
             _ => t.clone(),
+        }
+    }
+
+    /// @PLN165 D3 — the instance of the type template `template` at `args` (`Box<integer>`):
+    /// an ordinary struct whose fields are the template's with every variable replaced by its
+    /// argument, laid out and emitted as its hand-written twin would be.  `tuple_def`'s four
+    /// properties hold: NAMED from the arguments' identity spellings, so two widths or two
+    /// element types are two instances and two dep lists are one (F12); IDEMPOTENT; DEFERRED
+    /// (`u32::MAX`) while an argument is unresolved or still names a type variable — the
+    /// pass-2 call mints it with final arguments (F11); REGISTERED for every source.  The
+    /// instance records `(template, args)` on its definition (`instance_of`,
+    /// `instance_args`).  `u32::MAX` too for an argument count the template does not take;
+    /// the caller reports that.  An instance is an ordinary type: @FR-G-Type.
+    pub fn instance_def(&mut self, lexer: &mut Lexer, template: u32, args: &[Type]) -> u32 {
+        // A template refused at its declaration (`D-Regular`, @FR-G-Regular) has no instances to mint.
+        if self.refused_type_templates.contains(&template) {
+            return u32::MAX;
+        }
+        let params = self.definitions[template as usize].type_params.clone();
+        // `never` is a poisoned site's type (@P376), not an argument: no instance holds one.
+        // An argument mentioning a type variable mints an OPEN instance (@PLN165 D5,
+        // `is_open_instance`), which is never laid out.
+        if params.len() != args.len()
+            || args.iter().any(Self::type_has_unresolved)
+            || args.iter().any(|a| matches!(a.base(), Type::Never))
+        {
+            return u32::MAX;
+        }
+        let args: Vec<Type> = args.iter().map(Type::without_deps).collect();
+        let spelled: Vec<String> = args.iter().map(|a| self.identity_spelling(a)).collect();
+        let name = format!(
+            "{}<{}>",
+            self.definitions[template as usize].name,
+            spelled.join(",")
+        );
+        if let Some(&nr) = self.def_names.get(&(name.clone(), STD_SOURCE)) {
+            return nr;
+        }
+        // Termination (@PLN165 D7): a template mentioning itself IRREGULARLY
+        // (`Bad<vector<T>>` inside `Bad<T>`) has no finite set of instances, and closing its
+        // fields would mint deeper ones forever.  The declaration refuses it (`D-Regular`);
+        // this bound is what keeps the compiler finite until that report is read.
+        if name.matches('<').count() > Self::MAX_INSTANCE_NESTING {
+            return u32::MAX;
+        }
+        let position = self.definitions[template as usize].position.clone();
+        let enum_mixed = match self.definitions[template as usize].returned.base() {
+            Type::Enum(_, mixed, _) => Some(*mixed),
+            _ => None,
+        };
+        let kind = if enum_mixed.is_some() {
+            DefType::Enum
+        } else {
+            DefType::Struct
+        };
+        let d = self.add_def(&name, &position, kind);
+        self.def_names.entry((name, STD_SOURCE)).or_insert(d);
+        self.definitions[d as usize].source = STD_SOURCE;
+        self.definitions[d as usize].returned = match enum_mixed {
+            Some(mixed) => Type::Enum(d, mixed, Deps::none()),
+            None => Type::Reference(d, Deps::none()),
+        };
+        self.definitions[d as usize].instance_of = template;
+        self.definitions[d as usize].instance_args.clone_from(&args);
+        let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+        if enum_mixed.is_some() {
+            self.fill_enum_instance(lexer, template, d, &bindings);
+            return d;
+        }
+        for f in &self.template_fields(template) {
+            self.copy_instance_field(lexer, d, f, &bindings);
+        }
+        d
+    }
+
+    /// An instance of a generic ENUM (@PLN165 D8) is the enum and each of its variants, minted
+    /// together: the variant list (`Dot`, `Line`, … with their discriminants, as
+    /// `parse_enum_values` records it) and one variant definition per template variant, its
+    /// payload fields closed to the instance.  The variants keep their bare names — first-wins,
+    /// as every `__nullable<S>` has its own `Null` and `Some` — and are found through their
+    /// enum (`variant_of`), which is how a variant in context resolves.
+    fn fill_enum_instance(
+        &mut self,
+        lexer: &mut Lexer,
+        template: u32,
+        d: u32,
+        bindings: &[(u32, Type)],
+    ) {
+        let list = self.definitions[template as usize].attributes.clone();
+        for a in list
+            .iter()
+            .filter(|a| matches!(a.typedef.base(), Type::Enum(e, _, _) if *e == template))
+        {
+            let Type::Enum(_, variant_mixed, _) = *a.typedef.base() else {
+                continue;
+            };
+            let a_nr = self.add_attribute(
+                lexer,
+                d,
+                &a.name,
+                Type::Enum(d, variant_mixed, Deps::none()),
+            );
+            self.definitions[d as usize].attributes[a_nr].constant = true;
+            self.definitions[d as usize].attributes[a_nr].value = a.value.clone();
+        }
+        let variants: Vec<u32> = self
+            .children_of(template)
+            .filter(|&c| self.def_type(c) == DefType::EnumValue)
+            .collect();
+        let position = self.definitions[d as usize].position.clone();
+        for v in variants {
+            let vname = self.definitions[v as usize].name.clone();
+            let vd = self.add_def(&vname, &position, DefType::EnumValue);
+            self.definitions[vd as usize].source = STD_SOURCE;
+            self.definitions[vd as usize].parent = d;
+            // As its template variant says: a payload variant is `Enum(_, true)`, and a unit
+            // variant of a mixed enum takes its parent's form (`parse_enum_values`).
+            let variant_mixed = matches!(
+                self.definitions[v as usize].returned.base(),
+                Type::Enum(_, true, _)
+            );
+            self.definitions[vd as usize].returned = Type::Enum(d, variant_mixed, Deps::none());
+            let fields = self.definitions[v as usize].attributes.clone();
+            for f in &fields {
+                self.copy_instance_field(lexer, vd, f, bindings);
+            }
+        }
+    }
+
+    /// A generic struct's FIELDS, which each instance copies — not its method members, which
+    /// stay on the template, where a method call on any instance finds them (@PLN165 D6).
+    fn template_fields(&self, template: u32) -> Vec<Attribute> {
+        self.definitions[template as usize]
+            .attributes
+            .iter()
+            .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
+            .cloned()
+            .collect()
+    }
+
+    /// Deeper than this an instance's arguments stop being spelled — the bound behind
+    /// `D-Regular` (see [`Data::instance_def`]).
+    const MAX_INSTANCE_NESTING: usize = 48;
+
+    /// Give instance `d` the template field `f`: its type with the instance's bindings applied
+    /// and every open instance in it closed ([`Data::close_open`]), and the field's flags.
+    fn copy_instance_field(
+        &mut self,
+        lexer: &mut Lexer,
+        d: u32,
+        f: &Attribute,
+        bindings: &[(u32, Type)],
+    ) {
+        let tp = self.close_open(lexer, &f.typedef, bindings);
+        let a_nr = self.add_attribute(lexer, d, &f.name, tp);
+        let a = &mut self.definitions[d as usize].attributes[a_nr];
+        a.mutable = f.mutable;
+        a.constant = f.constant;
+        a.const_field = f.const_field;
+        a.value_const = f.value_const;
+        a.init = f.init;
+        a.nullable = f.nullable;
+        a.hidden = f.hidden;
+        a.value = f.value.clone();
+        a.check = f.check.clone();
+        a.check_message = f.check_message.clone();
+    }
+
+    /// `tp` with `bindings` applied and every OPEN instance in it closed — replaced by the
+    /// instance its arguments name once the bindings decide them (@PLN165 D7).  An instance's
+    /// fields are its template's through this: `Tree<text>`'s `kids: vector<Tree<T>>` is
+    /// `vector<Tree<text>>`.  Regular recursion ends because `instance_def` registers a name
+    /// before it fills the fields, so `Tree<text>` inside `Tree<text>` finds itself.  An
+    /// argument still mentioning a variable afterwards keeps an open instance.
+    pub fn close_open(&mut self, lexer: &mut Lexer, tp: &Type, bindings: &[(u32, Type)]) -> Type {
+        // The open instances the type WRITES — collected before the bindings apply, because
+        // one a binding brings in (`T ↦ Box<T>` for `Box<Box<T>>`'s field `v: T`) is already
+        // the answer: closing it again under the same bindings recursed without end.
+        let tp = tp.clone();
+        let mut opens: Vec<u32> = Vec::new();
+        tp.any_node(&mut |t| {
+            if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
+                && self.is_open_instance(*r)
+                && !opens.contains(r)
+            {
+                opens.push(*r);
+            }
+            false
+        });
+        let mut pairs: Vec<(u32, Type)> = Vec::new();
+        for o in opens {
+            let template = self.definitions[o as usize].instance_of;
+            let args: Vec<Type> = self.definitions[o as usize]
+                .instance_args
+                .clone()
+                .iter()
+                .map(|a| self.close_open(lexer, a, bindings))
+                .collect();
+            let closed = self.instance_def(lexer, template, &args);
+            if closed != u32::MAX && closed != o {
+                pairs.push((o, Type::Reference(closed, Deps::none())));
+            }
+        }
+        // At once: an instance's arguments may be the template's own variables in another
+        // order (`Pair<V, K>` inside `Pair<K, V>`).
+        pairs.extend(bindings.iter().cloned());
+        tp.substitute_simultaneous(&pairs)
+    }
+
+    /// Does `tp` still name something unresolved — a forward stub, or a generic struct's bare
+    /// TEMPLATE, which is never a type (a stub inside `reference<…>` is adopted as the
+    /// template before its arguments can be read, @PLN165 D7)?
+    #[must_use]
+    pub fn names_unresolved(&self, tp: &Type) -> bool {
+        tp.any_node(&mut |t| match t.base() {
+            Type::Unknown(_) => true,
+            Type::Reference(d, _) => {
+                (*d as usize) < self.definitions.len()
+                    && self.definitions[*d as usize].def_type == DefType::TypeTemplate
+            }
+            _ => false,
+        })
+    }
+
+    /// Give every instance of `template` the fields the template gained after it was minted —
+    /// an instance its OWN declaration mints (`Tree<T>` in `kids: vector<Tree<T>>`) copied
+    /// only the fields parsed before that mention — and re-close a field that was a forward
+    /// stub when it was copied (@PLN165 D7).
+    pub fn refresh_instances(&mut self, lexer: &mut Lexer, template: u32) {
+        let fields = self.template_fields(template);
+        let params = self.definitions[template as usize].type_params.clone();
+        for d in 0..self.definitions() {
+            if self.definitions[d as usize].instance_of != template {
+                continue;
+            }
+            let args = self.definitions[d as usize].instance_args.clone();
+            let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+            for f in &fields {
+                let a = self.attr(d, &f.name);
+                if a == usize::MAX {
+                    self.copy_instance_field(lexer, d, f, &bindings);
+                } else if self.names_unresolved(&self.definitions[d as usize].attributes[a].typedef)
+                {
+                    // A field whose template type was a forward stub when the instance was
+                    // minted: closed again from the template's resolved field.
+                    let tp = self.close_open(lexer, &f.typedef, &bindings);
+                    self.definitions[d as usize].attributes[a].typedef = tp;
+                }
+            }
         }
     }
 
@@ -9026,6 +9807,166 @@ impl Data {
         self.definitions[v_nr as usize].known_type = vec_tp;
         v_nr
     }
+    /// The tuple a synthetic `__tuple<…>` record stands for — the box a lifetime-bearing
+    /// tuple return is delivered in (loft#1349) — or `None` for any other definition.
+    #[must_use]
+    pub fn boxed_tuple(&self, d: u32) -> Option<Type> {
+        let def = self.definitions.get(d as usize)?;
+        let group = def.tuple_group()?;
+        Some(Type::Tuple(
+            group
+                .field_indices
+                .iter()
+                .map(|&i| def.attributes[i as usize].typedef.clone())
+                .collect(),
+        ))
+    }
+
+    /// The stdlib `type` alias that declares exactly this narrow integer (`u8` for
+    /// `integer limit(0, 255) size(1)`), read off the declarations themselves.
+    #[must_use]
+    pub fn integer_alias(&self, spec: &IntegerSpec) -> Option<&str> {
+        self.definitions.iter().find_map(|d| {
+            (d.def_type == DefType::Type
+                && d.source == STD_SOURCE
+                && matches!(d.returned.base(), Type::Integer(s)
+                    if s == spec && s.forced_size == spec.forced_size))
+            .then_some(d.name.as_str())
+        })
+    }
+
+    /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type
+    /// rather than a type?
+    #[must_use]
+    pub fn mentions_type_var(&self, tp: &Type) -> bool {
+        tp.any_node(&mut |t| match t.base() {
+            Type::Reference(d, _) => {
+                (*d as usize) < self.definitions.len()
+                    && (self.is_type_var_placeholder(*d) || self.is_open_instance(*d))
+            }
+            Type::Enum(d, _, _) => self.is_open_instance(*d),
+            _ => false,
+        })
+    }
+
+    /// An OPEN instance (@PLN165 D5): an instance of a generic struct whose recorded
+    /// arguments mention a type variable — `Box<T>` written inside a template.  It is a type
+    /// only inside that template: never laid out, and a monomorph substitutes the concrete
+    /// instance its bindings name ([`Data::open_instance_bindings`]).  A VARIANT of an open
+    /// enum instance is one too (@PLN165 D8): its payload is typed by the same variable, and
+    /// a monomorph reads the variant of that name in its own instance (@FR-G-Type).
+    #[must_use]
+    pub fn is_open_instance(&self, d_nr: u32) -> bool {
+        let Some(d) = self.definitions.get(d_nr as usize) else {
+            return false;
+        };
+        if d.def_type == DefType::EnumValue && d.instance_of == u32::MAX {
+            return self
+                .definitions
+                .get(d.parent as usize)
+                .is_some_and(|p| p.def_type == DefType::Enum)
+                && self.is_open_instance(d.parent);
+        }
+        d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+    }
+
+    /// A definition that is only a TEMPLATE's part and so never laid out (@PLN165 D8): a
+    /// variant of a generic enum, whose payload is typed by the template's variables — each
+    /// instance has variants of its own.
+    #[must_use]
+    pub fn is_template_part(&self, d_nr: u32) -> bool {
+        let Some(d) = self.definitions.get(d_nr as usize) else {
+            return false;
+        };
+        d.def_type == DefType::EnumValue
+            && (d.parent as usize) < self.definitions.len()
+            && self.definitions[d.parent as usize].def_type == DefType::TypeTemplate
+    }
+
+    /// Does `tp` mention the definition `d` — directly, or through an open instance's
+    /// arguments?  `Box<T>` is `Reference(Box<T>)`: its `T` lives in the instance's recorded
+    /// arguments, where [`Type::contains_def`]'s structural walk does not look, so a question
+    /// about a type VARIABLE asks this.
+    #[must_use]
+    pub fn type_mentions(&self, tp: &Type, d: u32) -> bool {
+        tp.contains_def(d)
+            || tp.any_node(&mut |t| {
+                matches!(t.base(), Type::Reference(r, _) | Type::Enum(r, _, _)
+                    if self.is_open_instance(*r)
+                    && self.definitions[*r as usize]
+                        .instance_args
+                        .iter()
+                        .any(|a| self.type_mentions(a, d)))
+            })
+    }
+
+    /// Every type-variable placeholder `tp` mentions, in first-seen order — through open
+    /// instances' arguments as [`Data::type_mentions`] reads them.
+    pub fn placeholders_in(&self, tp: &Type, out: &mut Vec<u32>) {
+        let mut found: Vec<u32> = Vec::new();
+        tp.any_node(&mut |t| {
+            if let Type::Reference(r, _) | Type::Enum(r, _, _) = t.base()
+                && (*r as usize) < self.definitions.len()
+                && (self.is_type_var_placeholder(*r) || self.is_open_instance(*r))
+            {
+                found.push(*r);
+            }
+            false
+        });
+        for r in found {
+            if self.is_type_var_placeholder(r) {
+                if !out.contains(&r) {
+                    out.push(r);
+                }
+            } else {
+                for a in &self.definitions[r as usize].instance_args {
+                    self.placeholders_in(a, out);
+                }
+            }
+        }
+    }
+
+    /// The `(open instance ↦ concrete instance)` pairs a monomorph with `bindings` adds to
+    /// its substitution (@PLN165 D5): every open instance whose arguments mention a bound
+    /// variable, in creation order so a nested one (`Box<Box<T>>`) finds its inner argument
+    /// already paired.  `substitute_all` replaces `Reference(holder)` wherever it sits, so the
+    /// signature, the variable table and the body's types reach the concrete instance by the
+    /// substitution the variable itself takes — `[T ↦ integer]` over `Box<T>` is
+    /// `Box<integer>`, `instance_def` of the substituted arguments.  One whose arguments still
+    /// mention a variable afterwards (a template instantiated at another's variable) pairs
+    /// with the open instance of those arguments.
+    pub fn open_instance_bindings(
+        &mut self,
+        lexer: &mut Lexer,
+        bindings: &[(u32, Type)],
+    ) -> Vec<(u32, Type)> {
+        let mut pairs: Vec<(u32, Type)> = Vec::new();
+        for d in 0..self.definitions() {
+            if !self.is_open_instance(d)
+                || !bindings.iter().any(|(h, _)| {
+                    self.definitions[d as usize]
+                        .instance_args
+                        .iter()
+                        .any(|a| self.type_mentions(a, *h))
+                })
+            {
+                continue;
+            }
+            let template = self.definitions[d as usize].instance_of;
+            let all: Vec<(u32, Type)> = bindings.iter().chain(pairs.iter()).cloned().collect();
+            let args: Vec<Type> = self.definitions[d as usize]
+                .instance_args
+                .clone()
+                .into_iter()
+                .map(|a| a.substitute_all(&all))
+                .collect();
+            let bound = self.instance_def(lexer, template, &args);
+            if bound != u32::MAX && bound != d {
+                pairs.push((d, Type::Reference(bound, Deps::none())));
+            }
+        }
+        pairs
+    }
 
     /// A generic type-variable placeholder: the attribute-less, self-referential
     /// `Struct` the parser registers for a `<T>` type parameter (e.g. stdlib
@@ -9249,7 +10190,7 @@ impl Data {
         if !path.insert(d_nr) {
             return false; // already on this path — see the cycle note above
         }
-        if self.drop_hook_nr(d_nr) != u32::MAX {
+        if self.drop_hook_nr(d_nr) != u32::MAX || d_nr == self.iterator_def() {
             return true;
         }
         if self
@@ -9284,6 +10225,67 @@ impl Data {
         self.type_owns_droppable(t, &mut HashSet::new())
     }
 
+    /// Does a value of this TYPE hold a generator handle somewhere inside it — the part of
+    /// [`Self::type_owns_droppable_anywhere`] that is owned DATA rather than a resource with a
+    /// hook (loft#1585): a removal releases it where `(H-Drop-Not)` runs no hook.
+    #[must_use]
+    pub fn type_holds_generator(&self, t: &Type) -> bool {
+        fn walk(data: &Data, t: &Type, path: &mut HashSet<u32>) -> bool {
+            match t {
+                Type::Iterator(_, _) => true,
+                Type::Reference(d, _)
+                | Type::Enum(d, true, _)
+                | Type::Sorted(d, _, _)
+                | Type::Index(d, _, _)
+                | Type::Hash(d, _, _)
+                | Type::Radix(d, _, _)
+                | Type::Trie(d, _, _) => {
+                    path.insert(*d)
+                        && (data
+                            .def(*d)
+                            .attributes
+                            .iter()
+                            .any(|a| walk(data, &a.typedef, path))
+                            || data
+                                .children_of(*d)
+                                .filter(|&c| data.def_type(c) == DefType::EnumValue)
+                                .any(|c| {
+                                    data.def(c)
+                                        .attributes
+                                        .iter()
+                                        .any(|a| walk(data, &a.typedef, path))
+                                }))
+                }
+                Type::Vector(e, _) => walk(data, e, path),
+                Type::Optional(i) | Type::RefVar(i) | Type::Rewritten(i) => walk(data, i, path),
+                Type::Tuple(es) => es.iter().any(|e| walk(data, e, path)),
+                _ => false,
+            }
+        }
+        walk(self, t, &mut HashSet::new())
+    }
+
+    /// The name of the function that releases the generator frames a KEYED collection's
+    /// records hold (loft#1601) — one per collection type, synthesized beside the drop
+    /// cascades (`Parser::synth_drop_cascades`) and called where the collection dies.
+    #[must_use]
+    pub fn keyed_frames_name(&self, tp: &Type) -> String {
+        format!("__frames_{}", tp.base().without_deps().name(self))
+    }
+
+    /// Is `tp` a keyed collection whose records hold a generator handle (loft#1601)?
+    #[must_use]
+    pub fn keyed_holds_generator(&self, tp: &Type) -> bool {
+        matches!(
+            tp.base(),
+            Type::Sorted(_, _, _)
+                | Type::Index(_, _, _)
+                | Type::Hash(_, _, _)
+                | Type::Radix(_, _, _)
+                | Type::Trie(_, _, _)
+        ) && self.type_holds_generator(tp)
+    }
+
     fn type_owns_droppable(&self, t: &Type, path: &mut HashSet<u32>) -> bool {
         match t {
             Type::Reference(d, _)
@@ -9298,8 +10300,39 @@ impl Data {
                 self.type_owns_droppable(inner, path)
             }
             Type::Tuple(elms) => elms.iter().any(|e| self.type_owns_droppable(e, path)),
+            // A generator handle owns its frame (loft#1585): whatever holds one releases it.
+            Type::Iterator(_, _) => true,
             _ => false,
         }
+    }
+
+    /// The stdlib's `type iterator` — the definition a stored generator handle has
+    /// (loft#1585) — or `u32::MAX` before the stdlib declares it.
+    #[must_use]
+    pub fn iterator_def(&self) -> u32 {
+        self.source_nr(0, "iterator")
+    }
+
+    /// Does any record field or collection element hold a generator handle?  Such a member is
+    /// released by its container's cascade (loft#1585), so the cascade pass has work even in
+    /// a program that declares no `OpDrop`.
+    #[must_use]
+    pub fn any_generator_member(&self) -> bool {
+        fn holds(t: &Type) -> bool {
+            match t {
+                Type::Iterator(_, _) => true,
+                Type::Vector(e, _) => holds(e),
+                Type::Optional(i) | Type::Rewritten(i) => holds(i),
+                Type::Tuple(es) => es.iter().any(holds),
+                _ => false,
+            }
+        }
+        self.definitions.iter().any(|d| {
+            matches!(
+                d.def_type,
+                DefType::Struct | DefType::EnumValue | DefType::Vector
+            ) && (d.attributes.iter().any(|a| holds(&a.typedef)) || holds(&d.returned))
+        })
     }
 
     /// Could this definition be a lazy driver, and must it therefore be checked?
@@ -9920,10 +10953,9 @@ impl Data {
     /// The method a `t_<LEN><Type>_<method>` key files, or `None` for a key of any other
     /// shape — a free function, a type, a bound stub.
     fn method_name_of_key(key: &str) -> Option<&str> {
-        let rest = key.strip_prefix("t_")?;
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
-        let len: usize = rest[..digits].parse().ok()?;
-        rest.get(digits + len..)?.strip_prefix('_')
+        Self::split_key(key)
+            .filter(|k| k.kind == KeyKind::Method)
+            .map(|k| k.rest)
     }
 
     /// Variant of [`import_all`] that **overwrites** forward-reference stubs
@@ -10041,7 +11073,7 @@ impl Data {
     /// `Some(new_type)` when the subtree contained `Type::Unknown(stub)`
     /// and was rewritten, or `None` when the subtree is unchanged.
     #[allow(clippy::only_used_in_recursion)] // kept as associated fn for clarity
-    fn rewrite_type_opt(t: &Type, stub: u32, target: &Type) -> Option<Type> {
+    pub(crate) fn rewrite_type_opt(t: &Type, stub: u32, target: &Type) -> Option<Type> {
         match t {
             Type::Unknown(n) if *n == stub => Some(target.clone()),
             Type::Vector(inner, deps) => Self::rewrite_type_opt(inner, stub, target)
@@ -10423,6 +11455,9 @@ impl Data {
             // so the vector storage path treats fn-ref vectors
             // identically to `vector<i32>`.
             Type::Function(..) => self.def_nr("i32"),
+            // A generator HANDLE — a 12-byte reference to its frame — stored in a field or an
+            // element (loft#1585): the stdlib's `type iterator`, laid out as a stored `DbRef`.
+            Type::Iterator(_, _) => self.source_nr(0, "iterator"),
             _ => u32::MAX,
         }
     }
@@ -10492,6 +11527,8 @@ impl Data {
             // `i32` (4-byte int alias) so vector storage is flat.
             // Same lookup as `type_def_nr`'s Function arm.
             Type::Function(..) => self.def_nr("i32"),
+            // A generator handle element (loft#1585) — see `type_def_nr`.
+            Type::Iterator(_, _) => self.source_nr(0, "iterator"),
             _ => u32::MAX,
         }
     }
@@ -11551,5 +12588,65 @@ mod type_name_user_facing_tests {
         assert_eq!(Type::optional(Type::Never), Type::Never); // normalise non-values
         assert_eq!(Type::optional(Type::Null), Type::Null);
         assert!(!txt.peel_optional().1); // a plain type is not optional
+    }
+}
+
+#[cfg(test)]
+mod key_decoder_tests {
+    use super::{Data, DefType, KeyKind};
+    use crate::lexer::Position;
+
+    fn def_named(key: &str) -> String {
+        let mut d = Data::new();
+        let pos = Position {
+            file: String::new(),
+            line: 0,
+            pos: 0,
+        };
+        let nr = d.add_def(key, &pos, DefType::Function);
+        d.def(nr).original_name()
+    }
+
+    /// A key whose spelling is 100 characters or more decodes like a short one — the free
+    /// overload of @PLN165 probe a1 is 121 characters, and the two-digit reader answered
+    /// part of its spelling for the name.
+    #[test]
+    fn a_key_over_ninety_nine_characters_decodes_to_its_name() {
+        let spelling = [
+            "AVeryLongStructureNameNumberOneForTheKey",
+            "AVeryLongStructureNameNumberTwoForTheKey",
+            "AVeryLongStructureNameNumberThreeForKey",
+        ]
+        .join("#");
+        assert!(spelling.len() >= 100);
+        let key = Data::mangle_free_overload(&spelling, "pick");
+        assert_eq!(def_named(&key), "pick");
+        let parts = Data::split_key(&key).expect("a minted key decodes");
+        assert_eq!(parts.kind, KeyKind::FreeOverload);
+        assert_eq!(parts.spelling, spelling);
+        assert_eq!(parts.rest, "pick");
+        let method = Data::mangle_method(&spelling, "go_far");
+        assert_eq!(def_named(&method), "go_far");
+    }
+
+    /// The short forms, a spelling that holds the separator, and the shapes that are no
+    /// length-counted key at all.
+    #[test]
+    fn every_key_form_decodes_through_one_reader() {
+        assert_eq!(def_named("t_4text_starts_with"), "starts_with");
+        assert_eq!(def_named("t_11main_vector_len"), "len");
+        assert_eq!(def_named("f_10Rock#Paper_beat"), "beat");
+        assert_eq!(def_named("n_plain"), "plain");
+        assert!(Data::split_key("n_plain").is_none());
+        assert!(Data::split_key("t_x_nolen").is_none());
+        assert!(Data::split_key("t_9short_x").is_none());
+        assert!(Data::split_key("t_4textXlen").is_none());
+    }
+
+    /// The encoder refuses the one spelling the decoder cannot read back.
+    #[test]
+    #[should_panic(expected = "may not begin with a digit")]
+    fn a_spelling_that_begins_with_a_digit_is_refused_at_the_encoder() {
+        let _ = Data::mangle_method("9lives", "x");
     }
 }

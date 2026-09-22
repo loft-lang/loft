@@ -1,0 +1,448 @@
+diff --git b/src/data.rs a/src/data.rs
+index a80911123..7fe6934d8 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -7619,7 +7619,7 @@ impl Data {
+         );
+     }
+ 
+-    /// The ONE decoder of a length-counted definition key (@FR-G-Key) — `t_<LEN><spelling>_<rest>` (a
++    /// The ONE decoder of a length-counted definition key — `t_<LEN><spelling>_<rest>` (a
+     /// method), `f_<LEN><spelling>_<rest>` (a free member of an overload set) or
+     /// `i_<LEN><spelling>_<rest>` (an instance of a generic) — and the inverse of
+     /// [`Self::mangle_method`], [`Self::mangle_free_overload`] and [`Self::mangle_instance`].  `LEN` is read as
+@@ -7660,7 +7660,7 @@ impl Data {
+         format!("f_{}{}_{name}", spelling.len(), spelling)
+     }
+ 
+-    /// The key of an INSTANCE of a generic (`D-Key`, @PLN165, @FR-G-Key): `i_<LEN><spelling>_<template>`,
++    /// The key of an INSTANCE of a generic (`D-Key`, @PLN165): `i_<LEN><spelling>_<template>`,
+     /// `spelling` every bound type's [`Self::identity_spelling`] joined with `#` in the order the
+     /// template's variables first appear, `template` the template's own key.  Its own kind,
+     /// because an instance is not a method on its first bound type — keyed as one
+diff --git b/src/keys.rs a/src/keys.rs
+index 9279f9b15..4d9f4f00b 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1069,15 +1069,6 @@ pub fn method_in_set_enabled() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_METHOD_IN_SET"))
+ }
+ 
+-/// @PLN165 C2 — a generic's header declares a LIST of type variables (`<K, V>`), each with its
+-/// own bounds.  **DEFAULT ON.**  `LOFT_NO_SEVERAL_VARS=1` refuses a header with more than one
+-/// again and keeps a variable's bounds on its function alone — the rollback, and the first
+-/// bisect step for a generic with several variables that binds or checks the wrong one.
+-pub fn several_vars_enabled() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_SEVERAL_VARS"))
+-}
+-
+ /// @PLN165 B3b — a call written inside a generic, whose argument is typed by the generic's own
+ /// variable, is lowered again in each instance with the instance's argument types, so it
+ /// reaches the member of its name's overload set the instance's concrete twin reaches.
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 14f8fb08c..eaf42ce75 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -564,15 +564,6 @@ impl Parser {
+                     let vec_tp = self.data.type_def_nr(vtp);
+                     let db_tp = self.data.def(vec_tp).known_type();
+                     let size = self.vector_elem_iter_stride(vtp);
+-                    // A type variable's element names its variable (@PLN165 C2).
+-                    let stride = match vtp.base() {
+-                        Type::Reference(tv, _)
+-                            if size == 0 && self.data.is_type_var_placeholder(*tv) =>
+-                        {
+-                            Self::type_var_stride(*tv)
+-                        }
+-                        _ => i32::from(size),
+-                    };
+                     // Plan-07 phase 4 step 4.6 — for-loop iteration uses
+                     // the *Nullable* peers; OOB returns a null DbRef which
+                     // the loop's pre-body null-check
+@@ -581,7 +572,7 @@ impl Parser {
+                     // keeps the raising OpGetVector / OpVectorRef.
+                     let mut ref_expr = self.cl(
+                         "OpGetVectorNullable",
+-                        &[code.clone(), Value::Int(stride), i.clone()],
++                        &[code.clone(), Value::Int(i32::from(size)), i.clone()],
+                     );
+                     // @PLN25 E2 — a `__nullable<S>` element is `Enum(synth,true)`,
+                     // not `Reference`, but in a LINKED collection (an array of
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index bf89df30d..19b9cdb1a 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -1685,17 +1685,11 @@ impl Parser {
+         // stands for the same bound set — a second bound set is a second variable
+         // and needs a placeholder of its own, because the placeholder is what keys
+         // the bound-method stubs (loft#1300, loft#1301).
+-        // Where this parser has no record of the placeholder — it was minted by another parse
+-        // whose Data this one continues (a prepared or cached stdlib) — the placeholder's OWN
+-        // recorded bounds decide: reused blind, a `<T>` took a stdlib `<T: Ordered>`'s
+-        // placeholder and, once a variable's bounds live on its placeholder (@PLN165 C2), its
+-        // bound as well — an unbounded `a == b` compiled and a `boolean` was refused as not
+-        // `Ordered`.
+         let reusable = existing != u32::MAX
+-            && self.type_var_bounds.get(&existing).map_or_else(
+-                || self.placeholder_bounds_key(existing) == bounds_key,
+-                |b| *b == bounds_key,
+-            );
++            && self
++                .type_var_bounds
++                .get(&existing)
++                .is_none_or(|b| *b == bounds_key);
+         let holder = if reusable {
+             existing
+         } else if !self.first_pass {
+@@ -1737,18 +1731,6 @@ impl Parser {
+         Some(holder)
+     }
+ 
+-    /// The bound-set key (`Parser::type_var_bounds_key`'s spelling) of the bounds a type-variable
+-    /// placeholder carries on its own definition — the record that travels with the Data
+-    /// (@PLN165 C2), where this parser's own map may not.
+-    fn placeholder_bounds_key(&self, holder: u32) -> String {
+-        let names: Vec<String> = self.data.definitions[holder as usize]
+-            .bounds
+-            .iter()
+-            .map(|b| self.data.def(*b).name().to_string())
+-            .collect();
+-        Self::type_var_bounds_key(&names)
+-    }
+-
+     #[allow(clippy::too_many_lines)]
+     // @F16 — functions & declarations (pub, parameters, return)
+     pub(crate) fn parse_function(&mut self) -> bool {
+@@ -1777,10 +1759,9 @@ impl Parser {
+         let header = self.parse_type_var_header();
+         let mut is_generic = !header.is_empty();
+         let type_var_name = header.first().map(|v| v.name.clone()).unwrap_or_default();
+-        // @PLN165 C2 — a header declares a LIST of variables (`<K, V>`); each is bound on its
+-        // own, carries its own bounds, and is inferred from the parameters that name it.
+-        // `LOFT_NO_SEVERAL_VARS=1` refuses a header with more than one again.
+-        let several = header.len() > 1 && !crate::keys::several_vars_enabled();
++        // A generic function declares ONE type variable; a header with more is refused where
++        // the second is written, and its template never instantiates.
++        let several = header.len() > 1;
+         if several && !self.first_pass {
+             let names: Vec<&str> = header.iter().map(|v| v.name.as_str()).collect();
+             diagnostic_at!(
+@@ -1992,10 +1973,7 @@ impl Parser {
+         // again on second pass with all defs visible) but still install
+         // any bounds we CAN resolve so the body can dispatch.
+         // I4: resolve each variable's bound names to interface def_nrs.  The definition's
+-        // `bounds` are its FIRST variable's (what a one-variable reader has always asked);
+-        // every variable's own are on its placeholder (@PLN165 C2), which is where
+-        // `has_bound_for_method` and satisfaction read them — a placeholder stands for one
+-        // (spelling, bound set) pair, so the two never disagree.
++        // `bounds` are its first variable's (a header with more is refused above).
+         for (i, var) in header.iter().enumerate() {
+             if var.bounds.is_empty() {
+                 continue;
+@@ -2010,11 +1988,6 @@ impl Parser {
+             // the body parser can emit `Value::Call(t_stub_nr, ...)` for method/op calls on T.
+             // `re_resolve_call` then substitutes these with the concrete type's implementation.
+             if let Some(&(_, holder)) = self.cur_type_vars.iter().find(|(n, _)| *n == var.name) {
+-                if holder != u32::MAX && crate::keys::several_vars_enabled() {
+-                    self.data.definitions[holder as usize]
+-                        .bounds
+-                        .clone_from(&bounds);
+-                }
+                 self.create_bound_method_stubs(holder, &bounds);
+             }
+         }
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+index 30469a1ff..af164957e 100644
+--- b/src/parser/dispatch.rs
++++ a/src/parser/dispatch.rs
+@@ -193,7 +193,8 @@ impl Parser {
+         }) {
+             return None;
+         }
+-        if !self.satisfies(r, &bindings) {
++        let first = bindings[0].1.clone();
++        if !self.satisfies(r, self.data.type_def_nr(&first)) {
+             return None;
+         }
+         let declared: Vec<Type> = self
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index 223d01fc3..6db20109e 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -1948,13 +1948,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         // change (`known` / is_base / is_linked / deref type are untouched).
+         let elm_size = if matches!(elm_type, Type::Vector(_, _)) {
+             elm_size_raw.max(4)
+-        } else if let Type::Reference(tv, _) = elm_type.base()
+-            && elm_size_raw == 0
+-            && self.data.is_type_var_placeholder(*tv)
+-        {
+-            // A type variable's element has no width until an instance binds it: the read
+-            // names the variable instead (`Parser::type_var_stride`, @PLN165 C2).
+-            Self::type_var_stride(*tv)
+         } else {
+             elm_size_raw
+         };
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index dce60be7c..b57ca0633 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7424,15 +7424,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// The stride an element read of `vector<V>` bakes while `V` is a type VARIABLE: it has no
+-    /// width yet, so the read carries a marker naming the variable — negative, which no real
+-    /// stride is — and each instance rewrites the reads whose marker names the variable it
+-    /// binds (`substitute_type_in_value`).  A plain `0` could not say which of two variables a
+-    /// read was over, and the first binding's pass took every one (@PLN165 C2).
+-    pub(crate) fn type_var_stride(tv_nr: u32) -> i32 {
+-        -1 - i32::try_from(tv_nr).unwrap_or(i32::MAX - 1)
+-    }
+-
+     /// The `Block` name [`build_default`](Parser::build_default) stamps on an `x?`
+     /// default it could not decide — the operand's type is a type VARIABLE, so the
+     /// answer belongs to the monomorph.  [`rewrite_generic_type_defaults`] finds it by
+@@ -7676,7 +7667,7 @@ impl Parser {
+         // bound check are read against (C3 carries them per variable).
+         let concrete = var_bindings[0].1.clone();
+         let type_nr = self.data.type_def_nr(&concrete);
+-        // `D-Key` (@FR-G-Key) — the instance's key names its template and every bound type.
++        // `D-Key` — the instance's key names its template and every bound type.
+         let mangled = if crate::keys::instance_key_enabled() {
+             let spelling: Vec<String> = var_bindings
+                 .iter()
+@@ -7715,7 +7706,7 @@ impl Parser {
+         // is where that name becomes the implementor's own companion.  With no associated
+         // types the list is one long and every step below reads exactly as it did.
+         let mut bindings: Vec<(u32, Type)> = var_bindings.clone();
+-        bindings.extend(self.associated_bindings(g_nr, &var_bindings));
++        bindings.extend(self.associated_bindings(g_nr, type_nr));
+         // Clone the template data before mutating self.data.
+         let tmpl_code = self.data.definitions[g_nr as usize].code.clone();
+         let tmpl_returned = self.data.definitions[g_nr as usize].returned.clone();
+@@ -7895,7 +7886,7 @@ impl Parser {
+         }
+         // I6: verify the concrete type satisfies every declared bound.
+         // Emit a diagnostic and return u32::MAX if any required method is missing.
+-        if !self.check_satisfaction(g_nr, &var_bindings, &bindings[var_bindings.len()..]) {
++        if !self.check_satisfaction(g_nr, type_nr, &bindings[1..]) {
+             // Return d_nr (not u32::MAX) so `call` doesn't emit a redundant
+             // "Unknown function" error — the satisfaction error is sufficient.
+             // The function won't execute because parsing will halt on errors.
+@@ -8482,8 +8473,8 @@ impl Parser {
+     /// answer depend on declaration order.  Disagreement is a compile error naming both
+     /// types, because the alternative is a monomorph typed against a companion the author
+     /// never chose.
+-    fn associated_bindings(&mut self, g_nr: u32, var_bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
+-        let (out, clashes) = self.infer_associated(g_nr, var_bindings);
++    fn associated_bindings(&mut self, g_nr: u32, concrete_nr: u32) -> Vec<(u32, Type)> {
++        let (out, clashes) = self.infer_associated(g_nr, concrete_nr);
+         for text in clashes {
+             let msg = crate::diagnostics::diagnostic_format(Level::Error, format_args!("{text}"));
+             let peek_pos = self.lexer.peek().position.clone();
+@@ -8495,34 +8486,8 @@ impl Parser {
+     /// [`Self::associated_bindings`] without its diagnostic: the pairs it infers, and one
+     /// message per associated type the implementor names two different companions for.
+     /// Asked on its own by [`Self::satisfies`], which must answer without reporting.
+-    fn infer_associated(
+-        &self,
+-        g_nr: u32,
+-        var_bindings: &[(u32, Type)],
+-    ) -> (Vec<(u32, Type)>, Vec<String>) {
+-        // Per VARIABLE (@PLN165 C3, F13): each variable's bounds name the associated types
+-        // its binding supplies — `<S: Source, K: Sink>` binds `S.Rows` from `S`'s type and
+-        // `K.Item` from `K`'s.  Reading only the first left `K.Item` unbound, and a call
+-        // through its bound read garbage.
+-        let mut out: Vec<(u32, Type)> = Vec::new();
+-        let mut clashes: Vec<String> = Vec::new();
+-        for (i, (holder, bound)) in var_bindings.iter().enumerate() {
+-            let concrete_nr = self.data.type_def_nr(bound);
+-            let (o, c) =
+-                self.infer_associated_for(self.var_bounds(g_nr, *holder, i == 0), concrete_nr);
+-            out.extend(o);
+-            clashes.extend(c);
+-        }
+-        (out, clashes)
+-    }
+-
+-    /// [`Self::infer_associated`] for one variable: the companions its `bounds` declare, read
+-    /// off the implementor `concrete_nr`'s own signatures.
+-    fn infer_associated_for(
+-        &self,
+-        bounds: Vec<u32>,
+-        concrete_nr: u32,
+-    ) -> (Vec<(u32, Type)>, Vec<String>) {
++    fn infer_associated(&self, g_nr: u32, concrete_nr: u32) -> (Vec<(u32, Type)>, Vec<String>) {
++        let bounds = self.data.definitions[g_nr as usize].bounds.clone();
+         if bounds.is_empty() || concrete_nr == u32::MAX {
+             return (Vec::new(), Vec::new());
+         }
+@@ -8724,13 +8689,8 @@ impl Parser {
+     /// `assoc` is what [`Self::try_generic_instantiation`] already inferred for this
+     /// monomorph — passed in rather than recomputed, so a companion the implementor cannot
+     /// agree on is reported once, not once per place that asks.
+-    fn check_satisfaction(
+-        &mut self,
+-        g_nr: u32,
+-        var_bindings: &[(u32, Type)],
+-        assoc: &[(u32, Type)],
+-    ) -> bool {
+-        let messages = self.satisfaction_messages(g_nr, var_bindings, assoc);
++    fn check_satisfaction(&mut self, g_nr: u32, concrete_nr: u32, assoc: &[(u32, Type)]) -> bool {
++        let messages = self.satisfaction_messages(g_nr, concrete_nr, assoc);
+         for message in &messages {
+             let msg =
+                 crate::diagnostics::diagnostic_format(Level::Error, format_args!("{message}"));
+@@ -8745,81 +8705,40 @@ impl Parser {
+     /// of each template member of an overload set (`D-Rank`: a template takes a call where its
+     /// variables bind AND its bounds hold), and a template whose bounds fail is simply not a
+     /// candidate there; the diagnostic belongs to the instantiation that goes ahead anyway.
+-    pub(crate) fn satisfies(&self, g_nr: u32, var_bindings: &[(u32, Type)]) -> bool {
+-        let (assoc, clashes) = self.infer_associated(g_nr, var_bindings);
++    pub(crate) fn satisfies(&self, g_nr: u32, concrete_nr: u32) -> bool {
++        let (assoc, clashes) = self.infer_associated(g_nr, concrete_nr);
+         clashes.is_empty()
+             && self
+-                .satisfaction_messages(g_nr, var_bindings, &assoc)
++                .satisfaction_messages(g_nr, concrete_nr, &assoc)
+                 .is_empty()
+     }
+ 
+-    /// The bounds of the template `g_nr`'s variable `holder`: the variable's own, recorded on
+-    /// its placeholder (@PLN165 C2), or — for the first variable of a template whose
+-    /// placeholder carries none (`LOFT_NO_SEVERAL_VARS=1`, an image cached before) — the
+-    /// template's list, which is the first variable's.
+-    fn var_bounds(&self, g_nr: u32, holder: u32, first: bool) -> Vec<u32> {
+-        let own = &self.data.definitions[holder as usize].bounds;
+-        if !own.is_empty() {
+-            own.clone()
+-        } else if first {
+-            self.data.definitions[g_nr as usize].bounds.clone()
+-        } else {
+-            Vec::new()
+-        }
+-    }
+-
+     /// Every reason `concrete_nr` fails `g_nr`'s bounds and its associated types' bounds, as
+     /// the words a diagnostic prints — empty when it satisfies them.  The one home of the
+     /// judgement [`Self::check_satisfaction`] and [`Self::satisfies`] both read.
+     fn satisfaction_messages(
+         &self,
+         g_nr: u32,
+-        var_bindings: &[(u32, Type)],
++        concrete_nr: u32,
+         assoc: &[(u32, Type)],
+     ) -> Vec<String> {
++        let bounds = self.data.definitions[g_nr as usize].bounds.clone();
++        if bounds.is_empty() {
++            return Vec::new();
++        }
++        if concrete_nr == u32::MAX {
++            return Vec::new(); // can't check without a concrete type def_nr
++        }
++        let concrete_name = self.data.def(concrete_nr).name().to_string();
+         let mut messages: Vec<String> = Vec::new();
+-        // Each variable's binding against ITS OWN bounds (@PLN165 C2): `<K: Named, V: Named>`
+-        // judges `V`'s type too, where the template's list held `K`'s alone and a `text`
+-        // bound to `V` passed unchecked — its stub then resolved to nothing and answered
+-        // empty, silently.
+-        let mut first_concrete = u32::MAX;
+-        for (i, (holder, bound)) in var_bindings.iter().enumerate() {
+-            let concrete_nr = self.data.type_def_nr(bound);
+-            if i == 0 {
+-                first_concrete = concrete_nr;
+-            }
+-            if concrete_nr == u32::MAX {
+-                continue; // can't check without a concrete type def_nr
+-            }
+-            let concrete_name = self.data.def(concrete_nr).name().to_string();
+-            for iface_nr in self.var_bounds(g_nr, *holder, i == 0) {
+-                let iface_name = self.data.def(iface_nr).name().to_string();
+-                for why in self.satisfaction_failures(iface_nr, concrete_nr) {
+-                    messages.push(format!(
+-                        "'{concrete_name}' does not satisfy interface '{iface_name}': {why}"
+-                    ));
+-                }
++        for iface_nr in bounds {
++            let iface_name = self.data.def(iface_nr).name().to_string();
++            for why in self.satisfaction_failures(iface_nr, concrete_nr) {
++                messages.push(format!(
++                    "'{concrete_name}' does not satisfy interface '{iface_name}': {why}"
++                ));
+             }
+         }
+-        if first_concrete == u32::MAX {
+-            return messages;
+-        }
+-        // The implementor an associated type was read off: the variable whose bounds declare
+-        // the interface that owns it (@PLN165 C3), the first variable's where none does.
+-        let implementor_of = |ph: u32| -> String {
+-            let iface = self.data.def(ph).parent;
+-            let owner = var_bindings
+-                .iter()
+-                .enumerate()
+-                .find(|(i, (holder, _))| self.var_bounds(g_nr, *holder, *i == 0).contains(&iface));
+-            let concrete = owner.map_or(first_concrete, |(_, (_, b))| self.data.type_def_nr(b));
+-            let concrete = if concrete == u32::MAX {
+-                first_concrete
+-            } else {
+-                concrete
+-            };
+-            self.data.def(concrete).name().to_string()
+-        };
+         // @PLN125 A2c — the bound declared on an associated type is a promise about the
+         // COMPANION, and this is the only place it can be kept: `type Rows: Cursor` says a
+         // generic may call `Cursor`'s methods on whatever `open` returns, and the template
+@@ -8835,7 +8754,6 @@ impl Parser {
+             };
+             let ph_name = self.data.def(*ph).name().to_string();
+             let companion_name = self.data.def(companion_nr).name().to_string();
+-            let concrete_name = implementor_of(*ph);
+             for bound_nr in self.data.definitions[*ph as usize].bounds.clone() {
+                 let bound_name = self.data.def(bound_nr).name().to_string();
+                 for why in self.satisfaction_failures(bound_nr, companion_nr) {
+@@ -9648,23 +9566,9 @@ impl Parser {
+                 if template != *d {
+                     via_template.push((*d, template));
+                 }
+-                // A first argument that is not a plain variable takes the callee's first
+-                // parameter under this instance's bindings — the callee is the template or an
+-                // instance bound to this template's variables, so that is the argument's type
+-                // at a variable position.  The FIRST binding is only the last resort: with two
+-                // variables it is often the other one's (`inner(bs[i], a)` inside
+-                // `outer<A, B>` bound `inner` at `A`, and read a text as an integer).
+-                let from_param = self
+-                    .data
+-                    .def(*d)
+-                    .attributes
+-                    .iter()
+-                    .find(|a| !a.hidden)
+-                    .map(|a| Self::substitute_all(a.typedef.clone(), bindings))
+-                    .filter(|t| !t.is_unknown() && !self.data.mentions_type_var(t));
+                 let arg_tp = match args.first().map(Value::unspan) {
+                     Some(Value::Var(a)) if *a < mono_vars.count() => mono_vars.tp(*a).clone(),
+-                    _ => from_param.unwrap_or_else(|| concrete.clone()),
++                    _ => concrete.clone(),
+                 };
+                 targets.push((*d, arg_tp));
+             }
+@@ -9930,16 +9834,12 @@ impl Parser {
+                 // and anything wider reads garbage from element 1 onward, while
+                 // `len()` and the same vector passed to a NON-generic helper stay
+                 // correct (loft#791).
+-                // @PLN165 C2 — with several variables the stride names WHICH variable's element
+-                // it reads (`type_var_stride`), so this pass rewrites only its own; a legacy `0`
+-                // (a cached one-variable template) is still that one variable's.
+                 if new_d != u32::MAX
+                     && (new_d as usize) < data.definitions.len()
+                     && (data.def(new_d).name() == "OpGetVector"
+                         || data.def(new_d).name() == "OpGetVectorNullable")
+                     && new_args.len() == 3
+-                    && matches!(&new_args[1], Value::Int(n)
+-                        if *n == 0 || *n == Self::type_var_stride(tv_nr))
++                    && matches!(&new_args[1], Value::Int(0))
+                 {
+                     let cur_size = if let Value::Int(n) = &new_args[1] {
+                         *n

@@ -1,0 +1,137 @@
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index 7f65fd828..a685bd8f9 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -1679,9 +1679,7 @@ pub fn mint_window(
+     // offsets the literal's lowering resolved, so the address asks no layout.  (A
+     // struct-enum element's variable is typed by a placeholder record, not by the enum.)
+     let e_tp = data.def(def_nr).variables().tp(*e);
+-    // A nullable element is not a fresh record's type, and is refused by name (@FR-N-Shape).
+-    let is_record = !matches!(e_tp, Type::Optional(_))
+-        && matches!(e_tp.base(), Type::Reference(_, _) | Type::Enum(_, true, _));
++    let is_record = matches!(e_tp, Type::Reference(_, _) | Type::Enum(_, true, _));
+     if !is_record || (plain_record_type(data, e_tp).is_none() && !enum_record_enabled()) {
+         return Err("not a record element");
+     }
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index a6ee88100..dbbba6f34 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -6767,7 +6767,7 @@ impl Parser {
+             }
+             Type::Unknown(0)
+         } else if self.vars.name_exists(name)
+-            && matches!(self.vars.tp(self.vars.var(name)).base(), Type::Never)
++            && matches!(self.vars.tp(self.vars.var(name)), Type::Never)
+         {
+             // A local whose binding already failed holds no value (its type is poisoned
+             // `never`, the way an errored assignment's is): the binding's diagnostic names
+@@ -13391,70 +13391,6 @@ impl Parser {
+     }
+ 
+     /// Try to find a matching defined operator. There can be multiple possible definitions for each operator.
+-    /// The `value struct` both operands of a comparison are, when they are the same one.
+-    fn value_struct_operands(&self, types: &[Type]) -> Option<u32> {
+-        let [a, b] = types else {
+-            return None;
+-        };
+-        match (a.base(), b.base()) {
+-            (Type::Reference(d, _), Type::Reference(e, _))
+-                if d == e && self.data.is_value_struct(*d) =>
+-            {
+-                Some(*d)
+-            }
+-            _ => None,
+-        }
+-    }
+-
+-    /// `a == b` (or `a != b`) for two values of the `value struct` `d`, by CONTENT: every field
+-    /// compared with its own type's `==`, left to right, stopping at the first that differs —
+-    /// a float field by float equality, a text by its characters, a nested value struct by
+-    /// its own content, a reference field by identity (DESIGN_DECISIONS C91: bounded to the
+-    /// value's own storage, never a reference-chase).
+-    ///
+-    /// An operand that runs code is evaluated ONCE into a temporary; any other is read in
+-    /// place per field.  `None` when a field has no `==`, which leaves the comparison to the
+-    /// caller's ordinary resolution.
+-    fn value_struct_eq(&mut self, d: u32, list: &[Value], negate: bool) -> Option<Value> {
+-        let mut stmts = Vec::new();
+-        let mut sides = Vec::new();
+-        for v in list {
+-            if self.ir_has_user_call(v) {
+-                let tmp = self.create_unique("__veq", &Type::Reference(d, Deps::none()));
+-                self.vars.defined(tmp);
+-                stmts.push(v_set(tmp, v.clone()));
+-                sides.push(Value::Var(tmp));
+-            } else {
+-                sides.push(v.clone());
+-            }
+-        }
+-        let mut acc: Option<Value> = None;
+-        for f in 0..self.data.def(d).attributes().len() {
+-            let ftp = self.data.attr_type(d, f);
+-            let fa = self.get_field(d, f, sides[0].clone());
+-            let fb = self.get_field(d, f, sides[1].clone());
+-            let mut cmp = Value::Null;
+-            let t = self.call_op(&mut cmp, "==", &[fa, fb], &[ftp.clone(), ftp]);
+-            if t.is_unknown() || matches!(t.base(), Type::Null) {
+-                return None;
+-            }
+-            acc = Some(match acc {
+-                None => cmp,
+-                Some(prev) => v_if(prev, cmp, Value::Boolean(false)),
+-            });
+-        }
+-        let mut res = acc.unwrap_or(Value::Boolean(true));
+-        if negate {
+-            res = self.cl("OpNot", &[res]);
+-        }
+-        Some(if stmts.is_empty() {
+-            res
+-        } else {
+-            stmts.push(res);
+-            v_block(stmts, Type::Boolean, "value_eq")
+-        })
+-    }
+-
+     fn call_op(&mut self, code: &mut Value, op: &str, list: &[Value], types: &[Type]) -> Type {
+         self.call_op_as(code, op, op, list, types)
+     }
+@@ -13652,37 +13588,6 @@ impl Parser {
+                     }
+                 }
+             }
+-            // `@FR-E-Eq`, loft#1581 — `!=` DERIVES from the type's own `OpEq` at a concrete
+-            // site, as it already does inside a `<T: Equatable>` body (loft#1144, above):
+-            // `a != b` is `!(a == b)`, each operand evaluated once.  Asked only after a user
+-            // `OpNe` came up empty, so a type that defines both keeps its own.  Without it the
+-            // loop below matched `OpNeRef` — identity — and two equal values answered `a == b`
+-            // and `a != b` both true.
+-            if op == "!="
+-                && list.len() == 2
+-                && let Some(first) = types.first()
+-            {
+-                let eq = self.data.find_op_method(u16::MAX, "OpEq", first);
+-                if eq != u32::MAX {
+-                    let mut eq_code = Value::Null;
+-                    let tp = self.call_nr(&mut eq_code, eq, list, types, false, &[], None);
+-                    if tp != Type::Null {
+-                        *code = self.cl("OpNot", &[eq_code]);
+-                        return Type::Boolean;
+-                    }
+-                }
+-            }
+-            // `@FR-E-Eq`, loft#1580 — a `value struct` is a VALUE, and values compare
+-            // by content over their own storage.  Without a user `OpEq` the loop below matched
+-            // `OpEqRef` and compared identity, so a copy was unequal to its source.
+-            if matches!(op, "==" | "!=")
+-                && list.len() == 2
+-                && let Some(d) = self.value_struct_operands(types)
+-                && let Some(eq) = self.value_struct_eq(d, list, op == "!=")
+-            {
+-                *code = eq;
+-                return Type::Boolean;
+-            }
+             let mut possible = Vec::new();
+             for pos in self
+                 .data

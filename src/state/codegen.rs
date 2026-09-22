@@ -618,6 +618,22 @@ impl State {
             ValueType::Yield => {
                 // CO1.3c: emit the yielded expression, then OpCoroutineYield.
                 let t = self.generate_node(node.yield_inner(), stack, false);
+                // `(G-Own)`: the consumer owns what it is handed, so the generator forgets the
+                // temps holding it before it suspends — its tail and `free_coroutine` then find
+                // them null.  The value is already on the stack; the writes below leave it there.
+                let handed = crate::coroutine_layout::yield_handed_temps(
+                    stack.data,
+                    stack.def_nr,
+                    &node.yield_inner().to_owned_value(),
+                );
+                // A raw put, not a `Set`: `generate_set` releases an owned local's old value
+                // before it writes, and that value is the record being handed over.
+                for tmp in handed {
+                    stack.add_op("OpNullRefSentinel", self);
+                    let pos = stack.var_pos(tmp);
+                    stack.add_op("OpPutRef", self);
+                    self.code_add(pos);
+                }
                 let value_size = crate::variables::size(&t, &crate::data::Context::Argument);
                 stack.add_op("OpCoroutineYield", self);
                 self.code_add(value_size);
@@ -1398,8 +1414,10 @@ impl State {
         // CO1.3c: generator functions use OpCoroutineReturn instead of OpReturn.
         if matches!(return_type, Type::Iterator(_, _)) {
             // For generators, `return` means exhaust — push null of the yield type.
+            // The packed operand `OpCoroutineNext` carries, so the null a finished generator
+            // answers is typed by the same channel tag (`State::push_null_value`).
             let yield_size = if let Type::Iterator(inner, _) = return_type {
-                size(inner, &Context::Argument)
+                crate::coroutine_layout::next_operands(inner).0 as u16
             } else {
                 0
             };
@@ -1733,7 +1751,7 @@ impl State {
                 // question is [`is_dbref`](crate::data::is_dbref)'s and is asked there —
                 // spelled inline it drifts short by exactly the five keyed collections,
                 // which is what a `hash<S[k]>` tuple element hit here.
-                t if crate::data::is_dbref(t) => stack.add_op("OpPutRef", self),
+                t if crate::data::is_dbref_slot(t) => stack.add_op("OpPutRef", self),
                 other => panic!("Tuple set: unsupported element type {other:?}"),
             }
             self.code_add(pos);
@@ -1768,7 +1786,7 @@ impl State {
                     stack.add_op("OpConstFloat", self);
                     self.code_add(0.0f64);
                 }
-                t if crate::data::is_dbref(t) => {
+                t if crate::data::is_dbref_slot(t) => {
                     // T1.8c: use NullRefSentinel (no store allocation) for tuple
                     // reference elements.  The element will be overwritten by PutRef
                     // or CopyRecord during destructuring; a real store is not needed
@@ -1802,7 +1820,7 @@ impl State {
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
-                t if crate::data::is_dbref(t) => stack.add_op("OpPutRef", self),
+                t if crate::data::is_dbref_slot(t) => stack.add_op("OpPutRef", self),
                 _ => unreachable!(),
             }
             self.code_add(pos);
@@ -3042,7 +3060,7 @@ impl State {
                 Type::Text(_) => stack.add_op("OpPutText", self),
                 // See the sibling note in `emit_tuple_var_pop_put`: the DbRef-shaped set
                 // is [`is_dbref`](crate::data::is_dbref)'s to answer.
-                t if crate::data::is_dbref(t) => stack.add_op("OpPutRef", self),
+                t if crate::data::is_dbref_slot(t) => stack.add_op("OpPutRef", self),
                 Type::Tuple(_) => unreachable!("handled above"),
                 other => panic!("emit_tuple_put_ops: unsupported elem {other:?}"),
             }
@@ -3992,6 +4010,16 @@ impl State {
         // existing body unchanged.  Makes the Call path store-capable.
         let params_owned: Vec<Value> = parameters.iter().map(|p| p.to_owned_value()).collect();
         let parameters = &params_owned[..];
+        // @FR-G-Mono — a generic never survives the parser: a call names an INSTANCE.  A
+        // template has no code, and a call to one ran nothing and ended the program with no
+        // output and a clean exit (a nested generic call in a monomorph over an open enum
+        // instance, @PLN165 D10), so it is refused here rather than emitted.
+        assert!(
+            stack.data.def(op).def_type() != crate::data::DefType::Generic,
+            "a call to the template {} reached the bytecode — every call names an instance \
+             (@FR-G-Mono)",
+            stack.data.def(op).name()
+        );
         let mut tps = Vec::new();
         let mut last = 0;
         let mut was_stack = u16::MAX;
@@ -4893,8 +4921,10 @@ impl State {
         let return_type = stack.data.def(stack.def_nr).returned();
         // CO1.3c: generator functions use OpCoroutineReturn.
         if matches!(return_type, Type::Iterator(_, _)) {
+            // The packed operand `OpCoroutineNext` carries, so the null a finished generator
+            // answers is typed by the same channel tag (`State::push_null_value`).
             let yield_size = if let Type::Iterator(inner, _) = return_type {
-                size(inner, &Context::Argument)
+                crate::coroutine_layout::next_operands(inner).0 as u16
             } else {
                 0
             };

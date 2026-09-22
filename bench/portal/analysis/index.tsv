@@ -1,0 +1,4 @@
+# class <TAB> analysis file — for an analysis that serves more than one class.
+# A class with its own `analysis/<class>.md` needs no row here.
+record-field	records.md
+record-build	records.md

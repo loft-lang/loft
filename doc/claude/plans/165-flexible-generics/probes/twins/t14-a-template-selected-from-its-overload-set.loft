@@ -1,0 +1,22 @@
+// B3 — a template that SELECTION chose from its name's overload set answers what its
+// concrete twin answers: a text element, a record element, and a bounded variable, each
+// beside the hand-written function the instance must equal.
+// @EXPECT: p=p|4=4|any dog 2=any dog 2|999
+interface Named { fn tag(self: Self) -> text }
+struct Dog { n: integer }
+struct Pt { x: integer, y: integer }
+fn tag(self: Dog) -> text { "dog {self.n}" }
+fn first<T>(v: vector<T>) -> T { v[0] }
+fn first(v: vector<integer>) -> integer { 999 }
+fn first_text_twin(v: vector<text>) -> text { v[0] }
+fn first_pt_twin(v: vector<Pt>) -> Pt { v[0] }
+fn show<T: Named>(x: T) -> text { "any {x.tag()}" }
+fn show(x: integer) -> text { "int {x}" }
+fn show_dog_twin(x: Dog) -> text { "any {x.tag()}" }
+fn main() {
+  b: vector<text> = ["p", "q"];
+  ps: vector<Pt> = [Pt { x: 3, y: 4 }, Pt { x: 5, y: 6 }];
+  a: vector<integer> = [1];
+  d = Dog { n: 2 };
+  println("{first(b)}={first_text_twin(b)}|{first(ps).y}={first_pt_twin(ps).y}|{show(d)}={show_dog_twin(d)}|{first(a)}");
+}

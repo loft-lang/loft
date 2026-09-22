@@ -1,0 +1,6 @@
+// D4 — the value's own error is the one reported; the literal adds nothing (@P376).
+struct Box<T> { v: T }
+fn main() {
+  b = Box { v: undefined_name };
+  println("{b.v}");
+}

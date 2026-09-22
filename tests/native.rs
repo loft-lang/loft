@@ -2653,12 +2653,11 @@ fn a_table_loft_wrote_and_a_table_loft_found_are_one_value() -> std::io::Result<
 ///   rank 7|0|1|a;7|1|2|b;7|2|3|c;…   the steps went in as 3,1,2. The ordinal is
 ///           the COLLECTION's order, not the order a program added things in,
 ///           and only an out-of-order insertion can tell those apart.
-///   beats 1|0|1|y;1|1|1|x;1|2|2|z   TWO elements of bar 1, surviving as rows 0
-///           and 1. This is the `INSERT` that falsified the clean addressing
-///           rule, kept as a test — and it needs `Beat` to have a second keyed
-///           view, because a `sorted` whose element type has only one view
-///           REPLACES on an equal key (measured, both backends).
-///   byname 1|1|x;1|1|y;1|2|z   the SAME three records, addressed by the other
+///   beats 1|0|1|x;1|1|2|z;1|2|3|y   added as bars 1, 3, 2: the ordinal is the
+///           collection's order again, here for a `sorted` whose element type has
+///           a second keyed view (so it is stored by reference).  Every bar is
+///           distinct — a `sorted` keeps one record per key (loft#1572).
+///   byname 1|1|x;1|3|y;1|2|z   the SAME three records, addressed by the other
 ///           view's key. Only `beats` was written to; two keyed collections over
 ///           one element type are views of one record set (loft#843), so both
 ///           child tables hold all three.
@@ -2719,8 +2718,8 @@ fn a_collection_field_becomes_child_rows_a_real_engine_gives_back() -> std::io::
         "tags   7|0|a|1|~;7|1|b|2|;9|0|a|1|x;9|1|a|1|x;9|2|c|3|~",
         "seen   7|m1|10;7|m2|20;9|m1|99",
         "rank   7|0|1|a;7|1|2|b;7|2|3|c;9|0|6|g;9|1|8|h",
-        "beats  1|0|1|y;1|1|1|x;1|2|2|z",
-        "byname 1|1|x;1|1|y;1|2|z",
+        "beats  1|0|1|x;1|1|2|z;1|2|3|y",
+        "byname 1|1|x;1|3|y;1|2|z",
         "depth  tables=4 grandchild=ledger_marks_pieces inline=ledger_meta_notes",
         "ledger 1|one|5;2|two|6",
         "marks  1|0|A;1|1|B;2|0|A;2|1|C",

@@ -1,0 +1,9 @@
+// B6 — F7c: both templates instantiate at `T = integer` side by side; each call reaches its
+// own instance (A5's key names the template).
+// @EXPECT: vec 2|any 5
+fn f<T>(v: vector<T>) -> text { "vec {len(v)}" }
+fn f<T: Printable>(x: T) -> text { "any {x}" }
+fn main() {
+  a: vector<integer> = [1, 2];
+  println("{f(a)}|{f(5)}");
+}

@@ -1,0 +1,9 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// DESIGN.md § Out of scope.  A generic has no single address until it is instantiated.
+// Measured 9f5cf6a96: `Unknown variable 'idf'`.  Expected: refused naming the reason.
+fn idf<T>(x: T) -> T { return x; }
+fn main() {
+  f = idf;
+  print("{f(3)}");
+}

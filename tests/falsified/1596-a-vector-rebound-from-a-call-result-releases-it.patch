@@ -1,0 +1,292 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 371472ba5..1dfc89364 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -69,12 +69,6 @@ struct Scopes<'s> {
+     /// Every literal backing (`__vdb_N`) each vector local is bound to anywhere in the function
+     /// ([`vector_literal_backings`]), keyed by the pre-scan id.
+     vector_backings: HashMap<u16, Vec<u16>>,
+-    /// Every call buffer (`__ref_N`) each vector local is bound through anywhere in the function
+-    /// ([`vector_call_buffers`]), keyed by the pre-scan id.
+-    vector_call_buffers: HashMap<u16, Vec<u16>>,
+-    /// The vector locals promoted onto the return buffer that a statement has already filled
+-    /// ([`Scopes::promoted_vector_refill`]).
+-    promoted_filled: HashSet<u16>,
+     /// Recursion depth counter for `scan`; reset to 0 when scope analysis starts.
+     scan_depth: usize,
+     /// Counter for `__lift_N` temporary variables created to own inline struct
+@@ -3323,41 +3317,6 @@ fn vector_literal_backings(
+     out
+ }
+ 
+-/// The call buffers (`__ref_N`) each vector local is bound through, anywhere in `code`: the hidden
+-/// return buffer a `Set(v, f(…, __ref_N))` hands the callee.  A rebind of `v` displaces the
+-/// value the call delivered into whichever of them it held.
+-fn vector_call_buffers(code: &Value, function: &Function) -> HashMap<u16, Vec<u16>> {
+-    let mut out: HashMap<u16, Vec<u16>> = HashMap::new();
+-    code.walk(&mut |n| {
+-        if let Value::Set(v, rhs) = n.unspan()
+-            && let Some(b) = call_buffer_of(rhs, function)
+-        {
+-            let list = out.entry(*v).or_default();
+-            if !list.contains(&b) {
+-                list.push(b);
+-            }
+-        }
+-    });
+-    out
+-}
+-
+-/// The vector return buffer (`__ref_N`) a call right-hand side hands its callee, or `None`.
+-fn call_buffer_of(rhs: &Value, function: &Function) -> Option<u16> {
+-    let Value::Call(_, args) = rhs.unspan() else {
+-        return None;
+-    };
+-    args.iter().find_map(|a| match a.unspan() {
+-        Value::Var(b)
+-            if (*b as usize) < function.count() as usize
+-                && function.name(*b).starts_with("__ref_")
+-                && matches!(function.tp(*b).base(), Type::Vector(_, _)) =>
+-        {
+-            Some(*b)
+-        }
+-        _ => None,
+-    })
+-}
+-
+ /// Is `stmt` the re-mint of a vector literal's backing — `OpDatabase(__vdb_N, …)` — which the
+ /// literal's following statements refill?
+ fn remints_literal_backing(stmt: &Value, function: &Function, data: &Data) -> bool {
+@@ -5154,8 +5113,6 @@ fn run_scan_phase(
+         loops: vec![],
+         loop_refills: vec![],
+         vector_backings: vector_literal_backings(orig_code, orig_vars, data),
+-        vector_call_buffers: vector_call_buffers(orig_code, orig_vars),
+-        promoted_filled: HashSet::new(),
+         scan_depth: 0,
+         lift_counter: 0,
+         lift_vars: Vec::new(),
+@@ -12110,180 +12067,6 @@ impl Scopes<'_> {
+         out
+     }
+ 
+-    /// `@FR-H-Drop`, the reassignment clause, for a vector local that may hold a CALL's result:
+-    /// `(before, after)` the rebinding statement, or `None` where it is not such a rebind.
+-    ///
+-    /// A call-delivered vector is released through the local that names it (`drop_hook`'s
+-    /// delivered binding), so once the local names the new value nothing names the old one.
+-    /// Before the statement, a local whose value lives in one of its call buffers (store
+-    /// identity) is aliased into a displaced temp.  Where the statement's own call is handed that
+-    /// same buffer, the buffer is detached, so the callee mints a fresh one rather than clearing
+-    /// the elements still owed their release.  After the new value, the temp's elements are
+-    /// released, every buffer sharing its store is set to the sentinel (the sweep would free it
+-    /// again), and the store is freed.
+-    fn vector_call_rebind(
+-        &mut self,
+-        stmt: &Value,
+-        function: &mut Function,
+-        data: &Data,
+-    ) -> Option<(Vec<Value>, Vec<Value>)> {
+-        let Value::Set(ov, rhs) = stmt.unspan() else {
+-            return None;
+-        };
+-        let v = *self.var_mapping.get(ov).unwrap_or(ov);
+-        let Type::Vector(elem, _) = function.tp(v).base().clone() else {
+-            return None;
+-        };
+-        let nr = data.drop_cascade_nr(data.collection_def_nr(&elem));
+-        if nr == u32::MAX || function.is_captured(v) || function.is_compiler_generated(v) {
+-            return None;
+-        }
+-        if function.is_argument(v) || !self.var_scope.contains_key(&v) {
+-            return None;
+-        }
+-        // The census names the buffers `v` is bound through; the value can live in any buffer of
+-        // its type, because a call that reads its own destination rotates two buffers
+-        // (`OpPutRef`) to keep them apart.  Every one of them is asked, since a buffer left
+-        // naming the store released here would hand that store to the next call.
+-        if self.vector_call_buffers.get(ov).is_none_or(Vec::is_empty) {
+-            return None;
+-        }
+-        let want = function.tp(v).base().without_deps();
+-        let buffers: Vec<u16> = (0..function.count())
+-            .filter(|&b| {
+-                function.name(b).starts_with("__ref_")
+-                    && self.var_scope.contains_key(&b)
+-                    && function.tp(b).base().without_deps() == want
+-            })
+-            .collect();
+-        if buffers.is_empty() {
+-            return None;
+-        }
+-        let incoming = call_buffer_of(rhs, function);
+-        let tp = function.tp(v).base().without_deps();
+-        self.lift_counter += 1;
+-        let tmp = function.add_temp_var(&format!("__vdisp_{}", self.lift_counter), &tp);
+-        self.var_scope.insert(tmp, self.scope);
+-        self.var_order.push(tmp);
+-        let sentinel = || Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+-        let distinct = |a: u16, b: u16| {
+-            Value::Call(
+-                data.def_nr("OpDistinctStore"),
+-                vec![Value::Var(a), Value::Var(b)],
+-            )
+-        };
+-        let mut pre = vec![v_set(tmp, sentinel())];
+-        for &b in &buffers {
+-            let mut take = vec![v_set(
+-                tmp,
+-                Value::Call(data.def_nr("OpRefAlias"), vec![Value::Var(v)]),
+-            )];
+-            if Some(b) == incoming {
+-                take.push(v_set(b, sentinel()));
+-            }
+-            pre.push(v_if(distinct(v, b), Value::Null, Value::Insert(take)));
+-        }
+-        let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(tmp)]);
+-        let mut post = Vec::new();
+-        // A detached buffer is handed back the store its callee minted instead, so the next
+-        // rebind finds the local's value in it and the sweep frees it.
+-        if let Some(b) = incoming {
+-            post.push(v_if(
+-                Value::Call(data.def_nr("OpRefIsNull"), vec![Value::Var(b)]),
+-                v_set(
+-                    b,
+-                    Value::Call(data.def_nr("OpRefAlias"), vec![Value::Var(v)]),
+-                ),
+-                Value::Null,
+-            ));
+-        }
+-        post.push(v_if(
+-            live,
+-            Value::Call(nr, vec![Value::Var(tmp)]),
+-            Value::Null,
+-        ));
+-        for &b in &buffers {
+-            post.push(v_if(distinct(b, tmp), Value::Null, v_set(b, sentinel())));
+-        }
+-        post.push(call("OpFreeRef", tmp, data));
+-        post.push(v_set(tmp, sentinel()));
+-        Some((pre, post))
+-    }
+-
+-    /// `@FR-H-Drop`, the reassignment clause, for a vector local promoted onto the RETURN
+-    /// BUFFER: `(before, after, waits)` a statement that refills it, or `None`.
+-    ///
+-    /// The promoted local IS the caller's buffer, so every rebind refills that one store in
+-    /// place — a call copies into it or is handed it, a literal or `[]` clears it
+-    /// (`OpClearVector`) and appends — and the old elements go with no hook (`(H-Drop-Not)`).
+-    /// They are copied into a fresh vector before the statement (`OpAppendVector` takes their
+-    /// heap along) and released from the copy after the new value, which `waits` for the
+-    /// statement's end when the statement is a clear that its literal fills after.  The FIRST
+-    /// statement to reach the buffer is its initial fill and displaces nothing: the buffer a
+-    /// caller hands in is emptied at entry and may still hold what the caller already released.
+-    fn promoted_vector_refill(
+-        &mut self,
+-        stmt: &Value,
+-        function: &mut Function,
+-        data: &Data,
+-    ) -> Option<(Vec<Value>, Vec<Value>, bool)> {
+-        let (v, waits) = match stmt.unspan() {
+-            Value::Set(v, _) => (*self.var_mapping.get(v).unwrap_or(v), false),
+-            Value::Call(d, args) if *d == data.def_nr("OpClearVector") => {
+-                let Some(Value::Var(v)) = args.first().map(Value::unspan) else {
+-                    return None;
+-                };
+-                (*v, true)
+-            }
+-            _ => return None,
+-        };
+-        let Type::Vector(elem, _) = function.tp(v).base().clone() else {
+-            return None;
+-        };
+-        if !function.is_argument(v) || !self.is_promoted_ret_buffer(function, data, v) {
+-            return None;
+-        }
+-        let nr = data.drop_cascade_nr(data.collection_def_nr(&elem));
+-        if nr == u32::MAX || self.promoted_filled.insert(v) {
+-            return None;
+-        }
+-        let elem_kt = data.def(elem.heap_def_nr()?).known_type();
+-        let tp = function.tp(v).base().without_deps();
+-        self.lift_counter += 1;
+-        let tmp = function.add_temp_var(&format!("__vsnap_{}", self.lift_counter), &tp);
+-        self.var_scope.insert(tmp, self.scope);
+-        self.var_order.push(tmp);
+-        let live = |x: u16| Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(x)]);
+-        let pre = vec![
+-            v_set(tmp, Value::Null),
+-            v_if(
+-                live(v),
+-                Value::Call(
+-                    data.def_nr("OpAppendVector"),
+-                    vec![
+-                        Value::Var(tmp),
+-                        Value::Var(v),
+-                        Value::Int(i32::from(elem_kt)),
+-                    ],
+-                ),
+-                Value::Null,
+-            ),
+-        ];
+-        let post = vec![
+-            v_if(
+-                live(tmp),
+-                Value::Call(nr, vec![Value::Var(tmp)]),
+-                Value::Null,
+-            ),
+-            call("OpFreeRef", tmp, data),
+-            v_set(
+-                tmp,
+-                Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new()),
+-            ),
+-        ];
+-        Some((pre, post, waits))
+-    }
+-
+     fn in_place_rebuild(
+         &mut self,
+         stmt: &Value,
+@@ -12708,8 +12491,6 @@ impl Scopes<'_> {
+             // construction of a local (outside a loop) displaces nothing.
+             let rebuilt = self.in_place_rebuild(v, function, data);
+             let rebind_release = self.vector_rebind_release(v, function, data);
+-            let call_rebind = self.vector_call_rebind(v, function, data);
+-            let promoted_refill = self.promoted_vector_refill(v, function, data);
+             // A literal's `Set` heads the statements that fill its new backing, so its release
+             // waits for the statement's end; any other rebind is a whole statement already.
+             let rebind_is_group = matches!(v.unspan(), Value::Set(_, rhs)
+@@ -12787,12 +12568,6 @@ impl Scopes<'_> {
+             if let Some((pre, _)) = &rebuilt {
+                 ls.extend(pre.iter().cloned());
+             }
+-            if let Some((pre, _)) = &call_rebind {
+-                ls.extend(pre.iter().cloned());
+-            }
+-            if let Some((pre, _, _)) = &promoted_refill {
+-                ls.extend(pre.iter().cloned());
+-            }
+             if let Value::Insert(to_insert) = sv {
+                 for i in to_insert {
+                     ls.push(i.clone());
+@@ -12809,20 +12584,10 @@ impl Scopes<'_> {
+                     ls.extend(post);
+                 }
+             }
+-            if let Some((_, post, waits)) = promoted_refill {
+-                if waits {
+-                    at_end.extend(post);
+-                } else {
+-                    ls.extend(post);
+-                }
+-            }
+-            let call_release = call_rebind.map(|(_, post)| post).unwrap_or_default();
+             if rebind_is_group {
+                 at_end.extend(rebind_release);
+-                at_end.extend(call_release);
+             } else {
+                 ls.extend(rebind_release);
+-                ls.extend(call_release);
+             }
+             // loft#1331 — DETACH an accumulator this statement repointed at a destination the
+             // frame does not own, so the scope-exit sweep frees nothing instead of freeing the

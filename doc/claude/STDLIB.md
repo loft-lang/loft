@@ -316,8 +316,8 @@ there, and too much costs the unused tail until the vector is copied.
 
 **`reserve(h, n)` also takes a `hash`**, where it sizes the bucket table instead
 of an element block. Here it pays on the plain shape — no interleaving needed —
-because a hash rebuilds its whole table every time it crosses a 0.75 load factor,
-re-bucketing every entry it already holds:
+because a hash rebuilds its whole table every time it is half full, re-bucketing
+every entry it already holds:
 
 ```loft
 cache: hash<Entry[key]> = [];
@@ -325,11 +325,13 @@ reserve(cache, expected_rows);
 for row in rows { cache += Entry { key: row.id, value: row.value }; }
 ```
 
-Filling a million-entry hash rebuilds the table 17 times without it. Measured on
-`--native-release`, 1M `integer` keys: **618 → 352 ms**, and the finished table is
-**half the size** (10.2 MB → 5.3 MB) — the growth ladder doubles *past* the
-trigger and lands at load 0.42, while a reserved table sits at the 0.75 it asked
-for. So it buys time and memory at once.
+Filling a million-entry hash rebuilds the table 18 times without it. Measured on
+`--native-release`, 1M `integer` keys (2026-09-21): **240 → ~120 ms**, and the finished
+table is **a third smaller** (11.5 MB → 8.0 MB) — the growth ladder doubles *past* the
+trigger and lands at load 0.35, while a reserved table sits at the 0.5 it asked for. So
+it buys time and memory at once.  (Until 2026-09-21 the trigger was 0.75: tables were
+half this size, a miss walked five buckets where it now walks one, and a lookup at this
+size was 10 % slower on a hit and 35 % on a miss — `bench/portal/analysis/keyed.md`.)
 
 Same contract as the vector form: capacity only. It never changes `len(h)`, the
 records, or which keys are found; an `n` the table already covers does nothing;
@@ -344,7 +346,7 @@ with a message that says so.
 
 | Function | Description |
 |----------|-------------|
-| `sum<T: Addable>(v: vector<T>, init: T? = null) -> T` | Sum of all elements. `init` is the identity to start from; leave it out and the element type's own zero is used (`0`, `0.0`, `""`). |
+| `sum<T: Addable>(v: vector<T>, init: T? = null) -> T` | Sum of all elements. `init` is the identity to start from; leave it out and the element type's own zero is used (`0`, `0.0`) — `text` is not `Addable`. |
 | `sum_of(v: vector<integer>) -> integer` | Superseded by `sum` — kept working. Sum of all elements; returns 0 for an empty vector. |
 **A bound declares the MINIMUM, and the rest derives.** `Ordered` declares `op <` alone and
 `Equatable` declares `op ==` alone, so a user type satisfies either by defining one method —
@@ -854,7 +856,7 @@ also the canonical pattern for any single-collection on-disk state.
 
 | Function | Description |
 |----------|-------------|
-| `store_persist_bind(h: hash, path: text) -> boolean` | Re-roots the Store backing `h` at a file at `path`.  Fresh-path branch: snapshots the current bytes (padded to ≥1024 words with a valid tail-free block), writes them, and mmaps the file.  Existing-path branch: opens the file via mmap and adopts its contents (discarding the in-memory state at that slot).  Returns `false` on any I/O / format error — no panic; callers fall back to JSON or rebuild. |
+| `store_persist_bind(h: hash, path: text) -> boolean` | Re-roots the Store backing `h` at a file at `path`.  Fresh-path branch: snapshots the current bytes (padded to ≥1024 words with a valid tail-free block), writes them, and mmaps the file.  Existing-path branch: opens the file via mmap and adopts its contents (discarding the in-memory state at that slot) — unless the `.dschema` beside it records a different layout than `h`'s type, which is refused as `store_load` refuses it.  Returns `false` on any I/O / format / layout error — no panic; callers fall back to JSON or rebuild. |
 | `store_persist_copy(r: reference, path: text) -> boolean` | Writes an image of `r` laid out for PAGING and leaves the live collection where it is — nothing moves, so every reference stays valid, and the file is NOT bound.  The image is REBUILT, so each record sits in its collection's own order (key order for a `trie`), which is what makes a paged prefix query cheap: measured 4.9 requests / 0.32 MB against a bound image's 19.9 / 1.28 MB on a 74,692-word vocabulary.  Sized to its content, with none of the growth slack a bound file keeps.  Use it for a file another program or a browser will READ; use `store_persist_bind` for a store you go on writing to. @PLN134 |
 
 Usage pattern:
@@ -882,8 +884,14 @@ fn main() {
   `h` is unchanged from a record-layout perspective — the DbRef
   shape `(store_nr, rec, pos)` stays valid, only the underlying
   buffer moves from anonymous heap to mmap.
-- When `path` exists, the call invokes `Store::open(path)` which
-  validates the loft Store signature and rebuilds the free-list.
+- When `path` exists, the call first compares the layout recorded
+  in `<path>.dschema` with `h`'s type.  A different layout — a
+  struct that gained, lost or changed a field — is refused: the
+  call returns `false`, prints what differs on stderr, and leaves
+  the file, its `.dschema` and `h` untouched.  A file without a
+  `.dschema` is not checked.  Otherwise the call invokes
+  `Store::open(path)`, which validates the loft Store signature and
+  rebuilds the free-list.
   The caller's prior in-memory state at that slot is discarded.
   The caller's existing `DbRef`s into the hash remain valid IFF the
   on-disk layout describes the same type — the standard pattern is
@@ -1591,7 +1599,7 @@ XS = single-line/single-fn change; S = focused half-day fix.
 
 | Item | Where it bit | Shape | Effort |
 |---|---|---|---|
-| `vector.sort()` (text added 2026-05-18); `vector.sort_by(fn)` deferred | scan.loft (3 sites), viewer's plan-bucket sort, activity feed date sort | Pre-existing `sort(v)` builtin extended to dispatch on text element type via `vector::sort_text_vector` (lexicographic, sorts u32 string offsets by what they point at).  `sort_by(fn)` for user types still open — needs callback-passing infrastructure.  Replaces the `sorted<T[K]>` set-as-sort-proxy pattern for text. | **`sort()` text-element shipped (@PLN42 phase 10.8)**; `sort_by(fn)` open. |
+| `vector.sort()` (text added 2026-05-18); `vector.sort_by(fn)` deferred | scan.loft (3 sites), viewer's plan-bucket sort, activity feed date sort | Pre-existing `sort(v)` builtin extended to dispatch on text element type via `vector::sort_text_vector` (lexicographic, sorts u32 string offsets by what they point at).  A user type sorts by its own `op <` since @PLN165 E4 (`sort<T: Ordered>`, stable); `sort_by(fn)` — a comparator other than the type's own `<` — is still open.  Replaces the `sorted<T[K]>` set-as-sort-proxy pattern for text. | **`sort()` text-element shipped (@PLN42 phase 10.8)**; `sort_by(fn)` open. |
 | JSON emission helpers | scan.loft has 80+ lines of manual `json_escape` + per-row format-string emission + comma management.  viewer reads via `value.field("x").as_text()` — no symmetric write API. | `to_json(value) -> text` for primitives + `JsonBuilder` for nested structures.  Mirror of the existing `json_parse` + `JsonValue` read API. | S–M |
 | ~~Path helpers — stdlib `path` module~~ — shipped 2026-05-18 as text methods | scan.loft, viewer, lib/markdown each rolled their own `dir_of` / `basename` / `resolve_relative` | Pure-loft as four text methods in `default/03_text.loft`: `p.dir()`, `p.basename()`, `p.join(other)`, `p.resolve(target)`.  Module-prefix style (`path::dir(p)`) couldn't ship — loft uses self-type method dispatch, not module namespaces.  `file().path` `./<name>` normalisation deferred to a follow-up. | **Shipped (@PLN42 phase 10.9)** |
 | ~~`text.split(text)`~~ — shipped 2026-05-18 as `text.split_text(text)` | scan.loft's link extractor walks char-by-char to find `](` (only `text.split(char)` exists today) | Renamed from `split` to `split_text` because loft doesn't allow fn overloading by non-self parameter type — `split(text, character)` and `split(text, text)` collide on the name `split`.  Underlying overloading limitation deserves its own follow-up (file when a second consumer hits it). | **Shipped (@PLN42 phase 10.4)** |

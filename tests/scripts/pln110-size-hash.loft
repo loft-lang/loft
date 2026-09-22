@@ -7,7 +7,7 @@
 // open addressing's spare capacity IS the format — unlike a vector, whose spare
 // capacity is reserve and is excluded.  Allocation-local: the pointed-to entry
 // entries live in the collection's entry ARENA and are NOT counted.  The table
-// grows in steps as it rehashes (load factor 0.75, room → room·2−1); those step
+// grows in steps as it rehashes (rebuilt at HALF full, room → room·2−1); those step
 // sizes encode the resize policy, so a policy change is a conscious layout change
 // that flips this test (that is the intent — @PLN97).
 //
@@ -17,6 +17,15 @@
 // first table still starts at 16 slots and the load factor is unchanged — only the
 // ladder past it shifts, because a bigger reserved prefix leaves more of each
 // doubled record for buckets.
+//
+// 2026-09-21 moved the POLICY, deliberately (@PLN158, `bench/portal/analysis/keyed.md`
+// L5): a table is rebuilt at half full where it was three quarters, because a probe is a
+// dependent read of the entry and a miss at 0.75 walks 8.5 buckets.  The ladder is the
+// same (16, 38, 82, 170 slots); what moved is WHEN each rung is climbed — the insert that
+// finds `length >= elms / 2`.  The first version of this file sampled at 3, 13 and 39
+// entries, which both policies answer alike, so the change it exists to notice passed it
+// unnoticed; it now samples on both sides of every rung (8|9, 19|20, 41|42), where the
+// old rule answers 64, 64, 152, 152, 328, 328.
 //
 // Values verified against both backends (interpret + native) during Phase 1.
 
@@ -36,20 +45,40 @@ fn main() {
   assert(size(h) == 64, "initial table = 16 slots × 4 = 64 (13 holes counted): {size(h)}");
   assert(size(h) >= len(h)*4, "table ≥ live entries × 4 (holes make it larger)");
 
-  for i in 4..14 {
+  for i in 4..9 {
     h += K { id: i, v: i * 10 };
   }
-  // first rehash (load 0.75): room 12 → 23, elms = 38 slots × 4
-  assert(size(h) == 152, "after 1st rehash = 38 slots × 4 = 152: {size(h)}");
+  // 8 entries: exactly half of 16 slots, and the table is still the first one — the
+  // rebuild belongs to the insert that FINDS it half full.
+  assert(size(h) == 64, "8 entries still fit the first table: {size(h)}");
+  h += K { id: 9, v: 90 };
+  // first rehash: room 12 → 23, elms = 38 slots × 4
+  assert(size(h) == 152, "the 9th insert rebuilds: 38 slots × 4 = 152: {size(h)}");
 
-  for i in 14..40 {
+  for i in 10..20 {
     h += K { id: i, v: i * 10 };
   }
+  assert(size(h) == 152, "19 entries = half of 38: not yet: {size(h)}");
+  h += K { id: 20, v: 200 };
   // second rehash: room 23 → 45, elms = 82 slots × 4
-  assert(size(h) == 328, "after 2nd rehash = 82 slots × 4 = 328: {size(h)}");
+  assert(size(h) == 328, "the 20th insert rebuilds: 82 slots × 4 = 328: {size(h)}");
+
+  for i in 21..40 {
+    h += K { id: i, v: i * 10 };
+  }
   // the full table exceeds the live count: 39 live entries in an 82-slot table
   assert(
     len(h) == 39 && size(h) / 4 == 82,
     "82-slot table holds 39 live: len={len(h)} slots={size(h) / 4}"
   );
+  h += K { id: 40, v: 400 };
+  h += K { id: 41, v: 410 };
+  assert(size(h) == 328, "41 entries = half of 82: not yet: {size(h)}");
+  h += K { id: 42, v: 420 };
+  // third rehash: room 45 → 89, elms = 170 slots × 4
+  assert(size(h) == 680, "the 42nd insert rebuilds: 170 slots × 4 = 680: {size(h)}");
+  // every key is still found after three rebuilds
+  found = 0;
+  for i in 1..43 { if h[i] != null { found += 1; } }
+  assert(found == 42, "all 42 keys answer after three rebuilds: {found}");
 }

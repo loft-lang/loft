@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D6 — a method of a generic struct is a TEMPLATE keyed on the struct's template,
+// `t_4Grid_at`, as a `vector<T>` receiver's is keyed on `vector` (loft#1539): every instance,
+// open or concrete, is one receiver family, a member of the template.  `g.at(i)` and
+// `at(g, i)` answer alike and equal the twin's `fn at(self: GridInteger, i: integer)`, the
+// out-of-range read included; a method writes its receiver, builds a new instance, calls
+// another method on `self`, and carries a bound.  A concrete method on one instance beside
+// the template forms one overload set, the concrete member taking the instance it names, in
+// both spellings — and so do one-parameter `vector` method overloads, whose second member
+// used to be reached as the first on pass 2.
+//
+// @falsified-at: eb318a057 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-structs-method-reaches-every-instance.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control reaches no method of an instance.
+//   ARMED: nothing.
+//   WITNESS: on the control `g.at(1)` is "Unknown field Grid<integer>.at".
+//   HOLDS: nothing else.
+
+struct Grid<T> { cells: vector<T>, w: integer }
+
+fn use_it(g: Grid<integer>) -> integer { g.size() }
+
+fn at<T>(self: Grid<T>, i: integer) -> T? { self.cells[i] }
+fn size<T>(self: Grid<T>) -> integer { len(self.cells) }
+fn last<T>(self: Grid<T>) -> T? { self.at(len(self.cells) - 1) }
+fn widen<T>(self: Grid<T>, by: integer) { self.w += by; }
+fn with_w<T>(self: Grid<T>, w: integer) -> Grid<T> { Grid { cells: self.cells, w: w } }
+fn show<T: Printable>(self: Grid<T>) -> text {
+  s = "[";
+  for c in self.cells { if len(s) > 1 { s += ","; } s += "{c}"; }
+  s + "]"
+}
+fn describe(self: Grid<integer>) -> text { "int {self.w}" }
+fn describe<T>(self: Grid<T>) -> text { "any {self.w}" }
+
+fn head(self: vector<integer>) -> text { "int {self[0]}" }
+fn head<T>(self: vector<T>) -> text { "any {len(self)}" }
+
+fn test_both_spellings_agree_at_every_instance() {
+  g = Grid { cells: [1, 2, 3], w: 3 };
+  t = Grid { cells: ["a", "b"], w: 2 };
+  assert(g.at(1) == 2 && at(g, 1) == 2 && t.at(1) == "b" && at(t, 1) == "b", "at");
+  assert(g.at(7) == null && at(t, 9) == null, "the out-of-range read is null");
+  assert(g.last() == 3 && t.last() == "b" && use_it(g) == 3, "last / size");
+}
+
+fn test_a_method_writes_and_builds() {
+  g = Grid { cells: [1], w: 3 };
+  g.widen(2);
+  h = g.with_w(4);
+  t = Grid { cells: ["a"], w: 1 }.with_w(20);
+  assert(g.w == 5 && h.w == 4 && t.w == 20, "{g.w} {h.w} {t.w}");
+}
+
+fn test_a_bounded_method() {
+  assert(Grid { cells: [1, 2], w: 2 }.show() == "[1,2]", "show integer");
+  assert(show(Grid { cells: ["x", "y"], w: 2 }) == "[x,y]", "show text");
+}
+
+fn test_a_concrete_member_beside_the_template() {
+  g = Grid { cells: [1], w: 3 };
+  t = Grid { cells: ["a"], w: 4 };
+  assert(g.describe() == "int 3" && describe(g) == "int 3", "concrete");
+  assert(t.describe() == "any 4" && describe(t) == "any 4", "template");
+  assert([4, 5].head() == "int 4" && ["a"].head() == "any 1", "vector overloads");
+}

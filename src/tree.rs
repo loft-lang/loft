@@ -40,10 +40,11 @@ pub fn find(
         pos: 0,
     };
     let mut cmp = Ordering::Equal;
+    let fast = keys::fast_order(keys, key);
     while rec > 0 {
         result.rec = rec;
         result.pos = 8;
-        cmp = keys::key_compare(key, &result, stores, keys);
+        cmp = keys::order_key(fast.as_ref(), key, &result, stores, keys);
         let action = if cmp == Ordering::Equal {
             if before {
                 Ordering::Less
@@ -91,6 +92,44 @@ pub fn find(
     } else {
         next(store, &result)
     }
+}
+
+/// The record that carries exactly `key`, or 0 — the point lookup (@FR-Col-Lookup).
+///
+/// [`find`] answers a BOUNDARY: it never stops at an equal key, runs to the leaf, and its
+/// caller then steps to the neighbour and compares once more — the right shape for a
+/// range's ends and for a PARTIAL key, which several records match.  A full key matches
+/// at most one (an insert displaces its duplicate, @FR-Col-Insert), so the descent can
+/// stop at it: the caller passes a key as long as `keys`, and the comparator is resolved
+/// once for the whole descent ([`keys::fast_order`]).
+#[must_use]
+pub fn find_exact(
+    data: &DbRef,
+    fields: u16,
+    stores: &[Store],
+    keys: &[Key],
+    key: &[Content],
+) -> u32 {
+    let store = keys::store(data, stores);
+    let fast = keys::fast_order(keys, key);
+    // The root is a link like any other, so a negative one is no node: that is what an
+    // ABSENT collection's reserved id reads as (loft#1213), and `add` treats it the same.
+    let root = store.get_i32_raw(data.rec, data.pos);
+    let mut node = DbRef {
+        store_nr: data.store_nr,
+        rec: if root > 0 { root as u32 } else { 0 },
+        pos: 8,
+    };
+    while node.rec > 0 {
+        let to = match keys::order_key(fast.as_ref(), key, &node, stores, keys) {
+            Ordering::Equal => return node.rec,
+            Ordering::Less => store.get_i32_raw(node.rec, u32::from(fields) + RB_LEFT),
+            Ordering::Greater => store.get_i32_raw(node.rec, u32::from(fields) + RB_RIGHT),
+        };
+        // A negative link is a thread to an in-order neighbour: a leaf, for a descent.
+        node.rec = if to >= 0 { to as u32 } else { 0 };
+    }
+    0
 }
 
 /// The `(start, finish)` cursor pair for iterating the range `from ..(=) till`.
@@ -198,27 +237,49 @@ pub fn range_cursors(
     }
 }
 
-/// Add a new record
-/// Always the same: `store`, `rec_pos`, `top_pos`, `lower`
-pub fn add(data: &DbRef, record: &DbRef, fields: u16, stores: &mut [Store], keys: &[Key]) {
+/// Add a new record.
+///
+/// Answers 0 when the record went in, and otherwise the record that already carries its
+/// key — the tree is then UNCHANGED (a refused `put` returns before it links or balances
+/// anything), so the caller can displace that record and add again (@FR-Col-Insert).  That
+/// is what lets an insert find its duplicate on the descent it makes anyway, instead of
+/// looking the key up first and descending a second time.
+///
+/// The comparator is resolved once from the new record's own key
+/// ([`keys::fast_order_of`]).  A text key keeps the general one here: `put` rebalances
+/// the stores it compares against as it unwinds, so nothing borrowed from them can be held.
+pub fn add(data: &DbRef, record: &DbRef, fields: u16, stores: &mut [Store], keys: &[Key]) -> u32 {
+    let fast = {
+        let mut own = *record;
+        own.pos = 8;
+        keys::fast_order_of(&own, stores, keys).and_then(|f| f.detached())
+    };
     let store = keys::mut_store(data, stores);
     let mut rec = *record;
     rec.pos = u32::from(fields);
     store.set_byte(rec.rec, rec.pos + RB_FLAG, 0, 0);
     store.set_i32_raw(rec.rec, rec.pos + RB_LEFT, 0);
     store.set_i32_raw(rec.rec, rec.pos + RB_RIGHT, 0);
+    let mut duplicate = 0;
     let new_top = if store.get_i32_raw(data.rec, data.pos) == 0 {
         rec.rec
     } else {
         let top = store.get_i32_raw(data.rec, data.pos);
-        put(0, top, &rec, 0, 0, keys, stores) as u32
+        let mut walk = Put {
+            rec: &rec,
+            keys,
+            fast: fast.as_ref(),
+            duplicate: &mut duplicate,
+        };
+        walk.put(0, top, 0, 0, stores) as u32
     };
     if new_top == 0 || new_top == u32::MAX {
-        return; // problem encountered: probably duplicate key
+        return duplicate; // problem encountered: probably duplicate key
     }
     let store = keys::mut_store(data, stores);
     store.set_i32_raw(data.rec, data.pos, new_top as i32);
     store.set_byte(new_top, rec.pos + RB_FLAG, 0, 0);
+    0
 }
 
 #[must_use]
@@ -270,51 +331,63 @@ fn set_flag(store: &mut Store, r: &DbRef, to: bool) {
     store.set_byte(r.rec, r.pos + RB_FLAG, 0, i32::from(to));
 }
 
-/// Find the correct position to insert the element
-fn put(
-    depth: u32,
-    pos: i32,
-    rec: &DbRef,
-    l: i32,
-    r: i32,
-    keys: &[Key],
-    stores: &mut [Store],
-) -> i32 {
-    if depth > RB_MAX_DEPTH {
-        return 0;
-    }
-    if pos <= 0 {
-        let store = &mut stores[rec.store_nr as usize];
-        set_flag(store, rec, true);
-        set_left(store, rec, -l);
-        set_right(store, rec, -r);
-        return rec.rec as i32;
-    }
-    if pos as u32 == rec.rec {
-        // duplicate record
-        return rec.rec as i32;
-    }
-    let current = to_ref(rec, pos);
-    let cmp = keys::compare(&compare(rec), &compare(&current), stores, keys);
-    if cmp == Ordering::Less {
-        let next = left(keys::store(rec, stores), &current);
-        let p = put(depth + 1, next, rec, l, pos, keys, stores);
-        if p < 0 {
+/// What one insert's descent carries down unchanged: the record, how to order it, and
+/// where to report the record whose key it duplicates.
+struct Put<'a> {
+    rec: &'a DbRef,
+    keys: &'a [Key],
+    fast: Option<&'a keys::FastOrder<'static>>,
+    duplicate: &'a mut u32,
+}
+
+impl Put<'_> {
+    /// Find the correct position to insert the element
+    fn put(&mut self, depth: u32, pos: i32, l: i32, r: i32, stores: &mut [Store]) -> i32 {
+        let rec = self.rec;
+        if depth > RB_MAX_DEPTH {
+            return 0;
+        }
+        if pos <= 0 {
+            let store = &mut stores[rec.store_nr as usize];
+            set_flag(store, rec, true);
+            set_left(store, rec, -l);
+            set_right(store, rec, -r);
+            return rec.rec as i32;
+        }
+        if pos as u32 == rec.rec {
+            // duplicate record
+            return rec.rec as i32;
+        }
+        let current = to_ref(rec, pos);
+        let cmp = keys::order_record(
+            self.fast,
+            &compare(rec),
+            &compare(&current),
+            stores,
+            self.keys,
+        );
+        if cmp == Ordering::Less {
+            let next = left(keys::store(rec, stores), &current);
+            let p = self.put(depth + 1, next, l, pos, stores);
+            if p < 0 {
+                return -1;
+            }
+            set_left(keys::mut_store(rec, stores), &current, p);
+        } else if cmp == Ordering::Greater {
+            let next = right(keys::store(rec, stores), &current);
+            let p = self.put(depth + 1, next, pos, r, stores);
+            if p < 0 {
+                return -1;
+            }
+            set_right(keys::mut_store(rec, stores), &current, p);
+        } else {
+            // double keys: nothing is linked or balanced on the way back up, so the
+            // tree is as it was and the caller decides what the duplicate is worth.
+            *self.duplicate = pos as u32;
             return -1;
         }
-        set_left(keys::mut_store(rec, stores), &current, p);
-    } else if cmp == Ordering::Greater {
-        let next = right(keys::store(rec, stores), &current);
-        let p = put(depth + 1, next, rec, pos, r, keys, stores);
-        if p < 0 {
-            return -1;
-        }
-        set_right(keys::mut_store(rec, stores), &current, p);
-    } else {
-        // double keys
-        return -1;
+        balance(keys::mut_store(rec, stores), &current)
     }
-    balance(keys::mut_store(rec, stores), &current)
 }
 
 fn to_ref(rec: &DbRef, to: i32) -> DbRef {

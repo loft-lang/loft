@@ -1,0 +1,11 @@
+// A field `assert` of a generic struct holds on each instance, as its twin's does: an
+// annotated literal, an inferred one, and one built inside a generic.
+// @EXPECT: 3|4|5
+struct Box<T> { v: T, n: integer assert(n > 0, "n must be positive") }
+fn mk<T>(x: T, k: integer) -> Box<T> { Box { v: x, n: k } }
+fn main() {
+  a: Box<text> = Box { v: "a", n: 3 };
+  b = Box { v: 2.5, n: 4 };
+  c = mk("q", 5);
+  println("{a.n}|{b.n}|{c.n}");
+}

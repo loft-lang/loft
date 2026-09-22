@@ -1,0 +1,116 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index e3b1b2570..3061e5d52 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -17203,11 +17203,11 @@ impl Parser {
+                 // #432 — a named vector-literal argument (`f(v: [10, 255, 20])`)
+                 // builds at the parameter's element width too.  Map the name to its
+                 // parameter to seed the hint, then clear it after parsing.
+-                let hint_d_nr = self.free_call_hint(name, &types);
++                let hint_d_nr = self.data.def_nr(&format!("n_{name}"));
+                 if hint_d_nr != u32::MAX {
+                     for a in 0..self.data.attributes(hint_d_nr) {
+                         if self.data.attr_name(hint_d_nr, a) == arg_name {
+-                            let expected = self.callee_param_hint(hint_d_nr, a, &types);
++                            let expected = self.data.attr_type(hint_d_nr, a);
+                             // loft#1067 — `takes(f: |x| { x * 2 })` names the same
+                             // parameter the positional form does, so it must infer the
+                             // same way; the spelling of the argument is not the axis.
+@@ -17272,9 +17272,9 @@ impl Parser {
+                 // IDENTICAL declared parameter type, with a message whose cure ("give the
+                 // target an enum type") the target already satisfied (loft#1280).  It is
+                 // the fn-ref call-site position of loft#1122's family.
+-                let hint_d_nr = self.free_call_hint(name, &types);
++                let hint_d_nr = self.data.def_nr(&format!("n_{name}"));
+                 let hinted = if hint_d_nr != u32::MAX && arg_idx < self.data.attributes(hint_d_nr) {
+-                    Some(self.callee_param_hint(hint_d_nr, arg_idx, &types))
++                    Some(self.data.attr_type(hint_d_nr, arg_idx))
+                 } else {
+                     self.fnref_param_hint(name, arg_idx)
+                 };
+@@ -18538,24 +18538,6 @@ impl Parser {
+         Self::seeds_vector_hint(expected) || crate::parser::vectors::is_keyed(expected)
+     }
+ 
+-    /// The definition a FREE call's arguments parse under: the free function `n_<name>`, or
+-    /// — for the free spelling of a method (`m(x, …)`, `@FR-F-Recv`) — the one method of
+-    /// that name at the first argument's type, the candidate the dot spelling parses under
+-    /// (`Disp-Hint`).  `u32::MAX` when neither names one definition.
+-    pub(crate) fn free_call_hint(&self, name: &str, types: &[Type]) -> u32 {
+-        let free = self.data.def_nr(&format!("n_{name}"));
+-        if free != u32::MAX {
+-            return free;
+-        }
+-        let Some(receiver) = types.first().filter(|t| !t.is_unknown()) else {
+-            return u32::MAX;
+-        };
+-        match self.data.candidates(u16::MAX, name, receiver).as_slice() {
+-            [one] if self.data.def(*one).name().starts_with("t_") => *one,
+-            _ => u32::MAX,
+-        }
+-    }
+-
+     // <call> ::= [ <expression> { ',' <expression> } ] ')'
+     /// Parse a method call's `(arg, …)` and emit it, the definition FIXED by the caller (a
+     /// bound's stub, an enum variant's method).  See [`Self::parse_method_selecting`].
+@@ -18701,10 +18683,9 @@ impl Parser {
+                 if hint_nr != u32::MAX {
+                     let a = self.data.attr(hint_nr, &arg_name);
+                     if a != usize::MAX {
+-                        let expected = self.callee_param_hint(hint_nr, a, &types);
++                        let expected = self.data.attr_type(hint_nr, a);
+                         if Self::seeds_collection_hint(&expected)
+                             || self.interpolation_target(&expected) != u32::MAX
+-                            || Self::seeds_lambda_hint(&expected)
+                         {
+                             self.expected = expected;
+                         }
+@@ -18735,14 +18716,12 @@ impl Parser {
+             // so a nested call does not inherit the enclosing one's expectation.
+             self.expected = Type::Unknown(0);
+             if hint_nr != u32::MAX && list.len() < self.data.attributes(hint_nr) {
+-                let expected = self.callee_param_hint(hint_nr, list.len(), &types);
++                let expected = self.data.attr_type(hint_nr, list.len());
+                 // @PLN124 — a format-string argument to a METHOD builds the
+                 // parameter's type too (`db.run("… {id} …")`), which is the shape a
+-                // library API actually presents.  A `fn(…)` parameter types a short
+-                // lambda, as it does for the free spelling of the same call.
++                // library API actually presents.
+                 if Self::seeds_collection_hint(&expected)
+                     || self.interpolation_target(&expected) != u32::MAX
+-                    || Self::seeds_lambda_hint(&expected)
+                 {
+                     self.expected = expected;
+                 }
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index a2bbb03b9..54f56ce7f 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -8378,27 +8378,6 @@ impl Parser {
+         ))
+     }
+ 
+-    /// The type a call's argument at `arg` is checked against — the callee's declared
+-    /// parameter — with, for a GENERIC callee, every type variable the arguments parsed so far
+-    /// (`types`) have bound replaced by what it bound to.  A short lambda takes its parameter
+-    /// types from this, so `my_map(a, |x| { x * 10 })` hands `x` the element type of `a`, as
+-    /// the built-in `map` and a concrete twin do; a variable no earlier argument binds stays
+-    /// as declared, and the lambda says it cannot infer it.
+-    pub(crate) fn callee_param_hint(&self, d_nr: u32, arg: usize, types: &[Type]) -> Type {
+-        let declared = self.data.attr_type(d_nr, arg);
+-        if self.data.def_type(d_nr) != DefType::Generic {
+-            return declared;
+-        }
+-        let Some(bindings) = Self::bind_template(&self.data, d_nr, types) else {
+-            return declared;
+-        };
+-        let known: Vec<(u32, Type)> = bindings
+-            .into_iter()
+-            .filter(|(_, b)| !b.is_unknown())
+-            .collect();
+-        Self::substitute_all(declared, &known)
+-    }
+-
+     /// The type variables of the template `g_nr`: the distinct placeholders its declared
+     /// parameters mention, in the order they FIRST appear.  An interface's associated type
+     /// (a placeholder whose parent is the interface) is not one — it is bound from the

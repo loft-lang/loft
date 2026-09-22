@@ -1,0 +1,9 @@
+// B3b — the body of `relay<U>` is typed with `keep<T>`'s `-> T`; at `integer` the call
+// reaches `keep(v: integer) -> Pt`, a different type — refused naming it.
+struct Pt { x: integer, y: integer }
+fn keep<T>(v: T) -> T { v }
+fn keep(v: integer) -> Pt { Pt { x: 0, y: 0 } }
+fn relay<U>(v: U) -> U { keep(v) }
+fn main() {
+  println("{relay(3)}");
+}

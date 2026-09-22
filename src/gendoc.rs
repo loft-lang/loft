@@ -264,7 +264,12 @@ fn parse_section(trimmed: &str) -> Option<String> {
 /// signature-only and full-body capture based on the declaration kind.
 fn collect_sig(lines: &[&str]) -> (String, usize) {
     let first = lines[0].trim();
-    if first.starts_with("pub struct") || first.starts_with("pub enum") {
+    // An interface's body IS its contract — the operators or methods a type must define to
+    // satisfy it — so, like a struct's fields, it is shown whole rather than cut at `{`.
+    if first.starts_with("pub struct")
+        || first.starts_with("pub enum")
+        || first.starts_with("pub interface")
+    {
         return collect_block(lines);
     }
     (strip_body(first), 1)
@@ -402,6 +407,7 @@ fn sig_name(sig: &str) -> Option<String> {
         .or_else(|| trimmed.strip_prefix("pub type "))
         .or_else(|| trimmed.strip_prefix("pub struct "))
         .or_else(|| trimmed.strip_prefix("pub enum "))
+        .or_else(|| trimmed.strip_prefix("pub interface "))
         .or_else(|| trimmed.strip_prefix("pub "))?;
     let name: String = rest
         .chars()
@@ -475,10 +481,6 @@ fn generate_stdlib_section(
     let nav = build_nav(topic_info, stdlib_info, &stem);
     let mut body = String::new();
     for (sig, doc_lines) in &section.items {
-        // I11: interface declarations have no rendering path yet — skip gracefully.
-        if sig_kind(sig) == "interface" {
-            continue;
-        }
         let paras = group_paragraphs(doc_lines);
         if sig.is_empty() {
             body.push_str("<div class=\"section-desc\">");
@@ -1720,8 +1722,6 @@ fn sig_kind(sig: &str) -> &'static str {
     } else if trimmed.starts_with("pub enum ") {
         "enum"
     } else if trimmed.starts_with("pub interface ") || trimmed.starts_with("interface ") {
-        // I11: interface declarations are not yet rendered; return a distinct kind so
-        // callers can skip them gracefully without mislabelling them as "const".
         "interface"
     } else {
         "const"
@@ -2298,17 +2298,44 @@ fn generate_typst(
     Ok(())
 }
 
-// ── I11 — gendoc guard for interface declarations ────────────────────────────
+// ── Interface declarations in the stdlib pages ───────────────────────────────
 
 #[cfg(test)]
 mod tests {
-    use super::sig_kind;
+    use super::{collect_sig, sig_kind, sig_name};
 
-    /// I11: `sig_kind` must return `"interface"` (not `"const"`) for interface
-    /// declarations so that they are skipped gracefully in stdlib rendering.
+    /// An interface is its own kind in the search index, never mislabelled `"const"`.
     #[test]
     fn sig_kind_interface_returns_interface() {
         assert_eq!(sig_kind("pub interface Ordered { }"), "interface");
         assert_eq!(sig_kind("interface Foo {}"), "interface");
+    }
+
+    /// An interface is found by its NAME: without its own prefix the name read was the
+    /// keyword, and every stdlib interface was listed as `interface`.
+    #[test]
+    fn sig_name_of_an_interface_is_its_name() {
+        assert_eq!(
+            sig_name("pub interface Ordered {").as_deref(),
+            Some("Ordered")
+        );
+    }
+
+    /// An interface's signature carries its body — the operators a type must define.
+    #[test]
+    fn collect_sig_keeps_an_interface_body() {
+        let src = [
+            "pub interface Ordered {",
+            "  op < (self: Self, other: Self) -> boolean",
+            "}",
+            "",
+            "fn after() {}",
+        ];
+        let (sig, consumed) = collect_sig(&src);
+        assert_eq!(consumed, 3);
+        assert!(
+            sig.contains("op < (self: Self, other: Self) -> boolean"),
+            "{sig}"
+        );
     }
 }

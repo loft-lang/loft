@@ -1,0 +1,11 @@
+// B4 — the method returns a record (a return buffer): selection by rank keeps its ABI.
+// @EXPECT: 10 1|7 7
+struct Pt { x: integer, y: integer }
+struct Sq { s: integer }
+fn corner(self: Sq) -> Pt { Pt { x: self.s * 10, y: self.s } }
+fn corner<T>(x: T) -> Pt { Pt { x: 7, y: 7 } }
+fn main() {
+  a = corner(Sq { s: 1 });
+  b = corner(3);
+  println("{a.x} {a.y}|{b.x} {b.y}");
+}

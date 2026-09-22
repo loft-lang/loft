@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A LITERAL PARSED TWICE KEEPS ITS INTERPOLATIONS.  The parser reads some record literals a
+// second time from a `revert`: a literal followed by a method call and bound to a local, and a
+// literal rebuilt into a local that one of its collection members reads (loft#1574).  The
+// second read is handed the tokens back from the lexer's replay buffer.  The lexer's
+// string-interpolation state was not replayed with them, so a `"…{x}…"` inside such a literal
+// looked like a plain string the second time, and the program was refused with `Expect token ]`
+// or `Expect token )`.  Each token is now replayed with the state it was scanned in.
+//
+// Every expected value is worked out by hand.  The last cell is a control that was right
+// before: the same literal without an interpolation.
+//
+// @falsified-at: 273ebfb0a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-literal-parsed-twice-keeps-its-interpolations.patch — interpret exit
+//   1 -> 0, native exit 1 -> 0
+// CHANNEL: the exit code — the control REFUSES the program, identically on both backends, so no
+//   assertion runs there.
+// WITNESS: `Expect token ]`, `Expect token }`, `Syntax error: unexpected ']'` and `expected text, got
+//   void on return from block` at the cells' literals, on both backends.
+// HOLDS: leak, panic and expectations are unmoved on both trees.
+
+struct Bt { ts: vector<text>, n: integer }
+fn me(self: Bt) -> Bt { self }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+/// g1 — an interpolation in a vector member of a literal followed by a method call.
+fn g1() -> text {
+  k = 3;
+  s = Bt { ts: ["{k}"], n: 2 }.me();
+  "{s.ts[0]},{s.n}"
+}
+/// g2 — an interpolation in a scalar member, inside a call.
+fn g2() -> text {
+  k = 34;
+  s = Bt { ts: [], n: len("{k}") }.me();
+  "{s.n},{len(s.ts)}"
+}
+/// g3 — two interpolations, one with a format spec, and text around them.
+fn g3() -> text {
+  k = 7;
+  s = Bt { ts: ["a{k}b", "<{k:>3}>"], n: 1 }.me();
+  "{s.ts[0]}|{s.ts[1]}"
+}
+/// g4 — a nested interpolation: a string literal inside a hole.
+fn g4() -> text {
+  k = 5;
+  s = Bt { ts: ["x{"y{k}"}z"], n: 1 }.me();
+  s.ts[0]
+}
+/// g5 — the rebuild that reads the local (loft#1574), so the literal is read twice.
+fn g5() -> text {
+  s = Bt { ts: ["a"], n: 5 };
+  s = Bt { ts: ["{s.n}-{s.ts[0]}"], n: 2 };
+  "{s.ts[0]},{s.n}"
+}
+/// c1 — control: no interpolation.
+fn c1() -> text {
+  s = Bt { ts: ["plain"], n: 2 }.me();
+  "{s.ts[0]},{s.n}"
+}
+
+fn main() {
+  ok("g1 vector member      ", g1(), "3,2");
+  ok("g2 scalar member      ", g2(), "2,0");
+  ok("g3 spec and text      ", g3(), "a7b|<  7>");
+  ok("g4 nested string      ", g4(), "xy5z");
+  ok("g5 rebuild            ", g5(), "5-a,2");
+  ok("c1 no interpolation   ", c1(), "plain,2");
+  println("a literal parsed twice keeps its interpolations: every cell holds");
+}

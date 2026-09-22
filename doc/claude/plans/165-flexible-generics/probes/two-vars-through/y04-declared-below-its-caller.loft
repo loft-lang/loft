@@ -1,0 +1,6 @@
+// C3 — a two-variable template declared BELOW its caller (the stale-instance re-derivation).
+// @EXPECT: 5:v|w:6
+fn main() {
+  println("{later(5, "v")}|{later("w", 6)}");
+}
+fn later<A: Printable, B: Printable>(a: A, b: B) -> text { "{a}:{b}" }

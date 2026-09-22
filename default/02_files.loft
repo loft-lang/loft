@@ -418,12 +418,16 @@ pub fn store_durable_seal(path: text) -> boolean fs#update;
 //
 // Call on a path that DOES exist: opens the file via mmap; the
 // caller's prior in-memory contents at that slot are dropped in
-// favour of the on-disk image.  This is the load-on-startup path,
-// assumes the on-disk layout matches the declared type.
+// favour of the on-disk image.  This is the load-on-startup path.
+// The `.dschema` file written beside the store records the layout
+// it was written with.  When that layout differs from `r`'s type —
+// a struct gained, lost or changed a field — the bind is refused
+// (`false`, with the difference on stderr), exactly as `store_load`
+// refuses it.  The file, its `.dschema` and `r` are left untouched.
 //
 // Both modes return `true` on success, `false` on any I/O / format
-// error (no panic — the binding is fail-soft, callers fall back to
-// JSON or rebuild-from-source).
+// / layout error (no panic — the binding is fail-soft, callers fall
+// back to JSON or rebuild-from-source).
 //
 // Typical dryopea-style pattern:
 //   pw = PaintedWorld { painted: [] }   // painted's declared type is hash<PaintedHex[q, r]>
@@ -483,8 +487,9 @@ pub fn store_persist_copy(r: const reference, path: text) -> boolean fs#update;
 // never reach the file).  Use it to open a snapshot for querying where
 // `store_persist_bind` can't run (a browser / wasm target) or where a durable
 // live binding isn't wanted.  Returns `false` on a missing / truncated /
-// wrong-format file (no panic; assumes the on-disk layout matches `r`'s
-// declared type).  This is the whole-file load that the browser's working-set
+// wrong-format file, and on a file whose `.dschema` records a different
+// layout than `r`'s declared type (no panic; the difference is printed on
+// stderr).  This is the whole-file load that the browser's working-set
 // path builds on.
 //   h: hash<Rec[id]> = []
 //   store_load(h, "world.store")   // h now holds the file's records
@@ -498,8 +503,10 @@ pub fn store_load(r: reference, path: text) -> boolean fs#read;
 // on a match heap-load it into `r` — the bytes never touch disk. A fetch error or
 // a hash mismatch REFUSES the load (returns false, loads nothing). The
 // fetch→verify→trust discipline the registry install uses, bridged onto the store
-// loader; `url` may be `http(s)://` or `file://`. Whole-file counterpart of the
-// paged `store_load_key(s)`/`store_load_range` loaders.
+// loader; `url` may be `http(s)://` or `file://`. Like `store_load`, it refuses
+// an image whose `<url>.dschema` records a different layout than `r`'s type (a
+// missing `.dschema` is not checked). Whole-file counterpart of the paged
+// `store_load_key(s)`/`store_load_range` loaders.
 //   h: hash<Rec[id]> = []
 //   store_load_url(h, "https://cdn.example/world.store", "<sha256-hex>")
 pub fn store_load_url(r: reference, url: text, sha256: text) -> boolean fs#read;
@@ -509,8 +516,9 @@ pub fn store_load_url(r: reference, url: text, sha256: text) -> boolean fs#read;
 // Load a whole store IMAGE over HTTP(S)/file:// from a TRUSTED source into `r` —
 // the INSTANT counterpart of store_load_url: skips the SHA-256 pin (you trust the
 // origin) for a fast read, but is still structurally validated, so a corrupt or
-// malformed image is rejected (false), never adopted. Use store_load_url for an
-// untrusted source.
+// malformed image is rejected (false), never adopted, and an image whose
+// `<url>.dschema` records a different layout is refused. Use store_load_url for
+// an untrusted source.
 //   world: hash<Rec[id]> = []
 //   store_load_url_trusted(world, "https://cdn.internal/world.store")
 pub fn store_load_url_trusted(r: reference, url: text) -> boolean fs#read;
@@ -1098,8 +1106,10 @@ fn OpSortVector(r: vector, db_tp: const u16);
 // CO1.2: Coroutine opcodes
 fn OpCoroutineCreate(d_nr: const integer, args_size: const u16, to: const integer);
 #rust"s.coroutine_create(@d_nr as u32, u32::from(@args_size), @to as u32);"
+// `value_size` is packed: the byte size in the low byte, the channel tag above it
+// (`coroutine_layout::next_operands`).  The null a finished generator answers reads the tag.
 fn OpCoroutineNext(value_size: const u16);
-#rust"s.coroutine_next(u32::from(@value_size & 0xFF));"
+#rust"s.coroutine_next(u32::from(@value_size));"
 
 // CO1.3a: Coroutine return — exhaust frame, push null, return to consumer
 fn OpCoroutineReturn(value_size: const u16);

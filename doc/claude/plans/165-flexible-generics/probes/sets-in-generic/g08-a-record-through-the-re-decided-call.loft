@@ -1,0 +1,12 @@
+// B3b — the re-decided call returns a RECORD (a return buffer in the instance's frame): the
+// instance answers what its twin does, and nothing leaks.
+// @EXPECT: 3 4|7 7
+struct Pt { x: integer, y: integer }
+fn mk<T>(v: T) -> Pt { Pt { x: 7, y: 7 } }
+fn mk(v: Pt) -> Pt { Pt { x: v.x, y: v.y } }
+fn relay<U>(v: U) -> Pt { mk(v) }
+fn main() {
+  p = relay(Pt { x: 3, y: 4 });
+  q = relay(5);
+  println("{p.x} {p.y}|{q.x} {q.y}");
+}

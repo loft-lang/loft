@@ -25,11 +25,11 @@
 <article>
 <p>A generic function uses a type variable to work with any type. Write the function once; the compiler creates a specialised copy for each concrete type you call it with.</p>
 <h2 id="declaring-a-generic-function">Declaring a generic function</h2>
-<p>Place a single type variable in angle brackets after the function name. The type variable must appear in the first parameter (directly or as a container element like vector&lt;T&gt;) — a T that appears only later, or only in the return type, is refused with "Type variable T must appear in the first parameter".  ONE type variable: <code>&lt;T, U&gt;</code> does not parse.</p>
-<p>Generic STRUCTS are a separate thing and loft does not have them — <code>struct Box&lt;T&gt;</code> is a parse error.  A generic FUNCTION over <code>vector&lt;T&gt;</code> covers most of what a generic container would be reached for.</p>
+<p>Place a single type variable in angle brackets after the function name. The type variable must appear in a parameter (directly or as a container element like vector&lt;T&gt;) — any parameter; a T that appears only in the return type is refused, since a call infers T from its arguments.  A header may declare several variables — <code>&lt;K: Printable, V: Printable&gt;</code> — each with its own bounds, each inferred from the parameters that name it.</p>
+<p>A struct may declare type variables too — see Generic structs below.</p>
 <pre><code><span class="kw">fn</span> identity&lt;<span class="en">T</span>&gt;(x: <span class="en">T</span>) -&gt; <span class="en">T</span> { x }</code></pre>
 <h2 id="calling-a-generic-function">Calling a generic function</h2>
-<p>No special syntax at the call site — the compiler infers T from the first argument's type and creates a specialised copy automatically.</p>
+<p>No special syntax at the call site — the compiler infers T from the arguments' types and creates a specialised copy automatically.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">test_identity</span>() {
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">identity</span>(<span class="nm">42</span>) == <span class="nm">42</span>, <span class="st">"identity integer"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">identity</span>(<span class="nm">3.14</span>) == <span class="nm">3.14</span>, <span class="st">"identity float"</span>);
@@ -83,18 +83,18 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
 </code></pre>
 <p>Reach for <code>Ordered + Addable</code> when you want <code>+</code> and a comparison.</p>
 <p><code>-</code> desugars to the same <code>OpMin</code> name at BOTH arities, so unary negation and binary subtraction are two SIGNATURES of one name — and therefore two bounds: <code>&lt;T: Numeric&gt;</code> gives you <code>-a</code>, <code>&lt;T: Subtractable&gt;</code> gives you <code>a - b</code>, and <code>&lt;T: Numeric + Subtractable&gt;</code> gives you both.  A user type provides one of the two arities and so satisfies one of the two bounds — a concrete method key carries no arity, so a type cannot declare <code>OpMin</code> twice.</p>
-<pre><code><span class="kw">fn</span> gen_diff&lt;<span class="en">T</span>: <span class="en">Subtractable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { gen_a - gen_b }
-<span class="kw">fn</span> gen_negdiff&lt;<span class="en">T</span>: <span class="en">Numeric</span> + <span class="en">Subtractable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { -(gen_a - gen_b) }</code></pre>
-<pre><code><span class="kw">fn</span> gen_max&lt;<span class="en">T</span>: <span class="en">Ordered</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<pre><code><span class="kw">fn</span> gen_diff&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { gen_a - gen_b }
+<span class="kw">fn</span> gen_negdiff&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Numeric</a></span> + <span class="en"><a href="stdlib-interfaces.html">Subtractable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>) -&gt; <span class="en">T</span> { -(gen_a - gen_b) }</code></pre>
+<pre><code><span class="kw">fn</span> gen_max&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   <span class="kw">if</span> gen_x &gt; gen_y { gen_x } <span class="kw">else</span> { gen_y }
 }
-<span class="kw">fn</span> gen_min&lt;<span class="en">T</span>: <span class="en">Ordered</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<span class="kw">fn</span> gen_min&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   <span class="kw">if</span> gen_x &lt; gen_y { gen_x } <span class="kw">else</span> { gen_y }
 }
-<span class="kw">fn</span> same&lt;<span class="en">T</span>: <span class="en">Equatable</span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {
+<span class="kw">fn</span> same&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Equatable</a></span>&gt;(gen_x: <span class="en">T</span>, gen_y: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">boolean</a></span> {
   gen_x == gen_y
 }
-<span class="kw">fn</span> described&lt;<span class="en">T</span>: <span class="en">Printable</span>&gt;(gen_x: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
+<span class="kw">fn</span> described&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Printable</a></span>&gt;(gen_x: <span class="en">T</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> {
   gen_x.<span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>()
 }
 <span class="kw">fn</span> <span class="fn-call">test_bounded</span>() {
@@ -111,7 +111,7 @@ Walkable   — the method `children() -&gt; vector&lt;Self&gt;`.  The standard l
 }</code></pre>
 <h2 id="combining-bounds">Combining bounds</h2>
 <p>Use <code>+</code> to require multiple interfaces: <code>&lt;T: Ordered + Addable&gt;</code>.</p>
-<pre><code><span class="kw">fn</span> clamped_add&lt;<span class="en">T</span>: <span class="en">Ordered</span> + <span class="en">Addable</span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>, gen_hi: <span class="en">T</span>) -&gt; <span class="en">T</span> {
+<pre><code><span class="kw">fn</span> clamped_add&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Ordered</a></span> + <span class="en"><a href="stdlib-interfaces.html">Addable</a></span>&gt;(gen_a: <span class="en">T</span>, gen_b: <span class="en">T</span>, gen_hi: <span class="en">T</span>) -&gt; <span class="en">T</span> {
   result = gen_a + gen_b;
   <span class="kw">if</span> result &gt; gen_hi { gen_hi } <span class="kw">else</span> { result }
 }
@@ -161,6 +161,36 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="kw">for</span> node <span class="kw">in</span> <span class="fn-call"><a href="stdlib-vector-aggregates.html">tree_walk</a></span>(tree, <span class="nm">10</span>) { seen += <span class="st">"{node.label} "</span>; }
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(seen == <span class="st">"root a b "</span>, <span class="st">"Walkable on a user type: {seen}"</span>);
 }</code></pre>
+<h2 id="generic-structs">Generic structs</h2>
+<p>A struct may declare type variables: <code>struct Box&lt;T&gt; { v: T }</code>.  <code>Box&lt;integer&gt;</code> names an INSTANCE — an ordinary struct whose <code>v</code> is an <code>integer</code>, laid out as a hand-written <code>struct BoxInteger { v: integer }</code> would be.  A literal builds the instance its annotation names, or else the one its field values bind: <code>Box { v: 1 }</code> is a <code>Box&lt;integer&gt;</code>, as <code>identity(1)</code> makes T an integer.  A literal with nothing to bind a variable from (<code>Box {}</code>, <code>Box { v: [] }</code> for a <code>vector&lt;T&gt;</code> field) is refused, naming the variable; give the binding its type.</p>
+<pre><code><span class="kw">struct</span> <span class="en">Box</span>&lt;<span class="en">T</span>&gt; { v: <span class="en">T</span> }
+<span class="kw">struct</span> <span class="en">Stack</span>&lt;<span class="en">T</span>&gt; { items: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt;, name: <span class="ty"><a href="stdlib-types.html">text</a></span> }
+<span class="kw">fn</span> <span class="fn-call">twice</span>(b: <span class="en">Box</span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { b.v * <span class="nm">2</span> }
+<span class="kw">fn</span> <span class="fn-call">test_generic_struct</span>() {
+  b = <span class="en">Box</span> { v: <span class="nm">21</span> };
+  t = <span class="en">Box</span> { v: <span class="st">"hi"</span> };
+  s: <span class="en">Stack</span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt; = <span class="en">Stack</span> { items: [], name: <span class="st">"floats"</span> };
+  s.items += [<span class="nm">1.5</span>, <span class="nm">2.5</span>];
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">twice</span>(b) == <span class="nm">42</span>, <span class="st">"an inferred Box&lt;integer&gt; is the one the parameter names"</span>);
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(t.v == <span class="st">"hi"</span> &amp;&amp; <span class="bi"><a href="stdlib-text.html">len</a></span>(s.items) == <span class="nm">2</span>, <span class="st">"Box&lt;text&gt; and Stack&lt;float&gt;"</span>);
+}</code></pre>
+<h2 id="two-type-variables-and-a-callback">Two type variables and a callback</h2>
+<p>A generic may declare several variables, and one no argument binds may be bound by a callback's RESULT: <code>map_grid</code> below turns a <code>Grid&lt;T&gt;</code> into a <code>Grid&lt;U&gt;</code>, and the short lambda's body decides what <code>U</code> is — <code>|t| { t.height }</code> makes it an <code>integer</code>.  A generic beside a concrete function of the same name is one overload set: the concrete <code>show</code> takes a <code>Grid&lt;Tile&gt;</code>, the bounded generic every other <code>Grid</code> it can print.</p>
+<pre><code><span class="kw">struct</span> <span class="en">Tile</span> { height: <span class="ty"><a href="stdlib-types.html">integer</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span> }
+<span class="kw">fn</span> <span class="fn-call"><a href="stdlib-field-iteration-support-types.html">to_text</a></span>(self: <span class="en">Tile</span>) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { self.name }
+<span class="kw">struct</span> <span class="en">Grid</span>&lt;<span class="en">T</span>&gt; { w: <span class="ty"><a href="stdlib-types.html">integer</a></span>, cells: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">T</span>&gt; }
+<span class="kw">fn</span> map_grid&lt;<span class="en">T</span>, <span class="en">U</span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;, f: <span class="kw">fn</span>(<span class="en">T</span>) -&gt; <span class="en">U</span>) -&gt; <span class="en">Grid</span>&lt;<span class="en">U</span>&gt; {
+  out: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="en">U</span>&gt; = [];
+  <span class="kw">for</span> c <span class="kw">in</span> g.cells { out += [<span class="fn-call">f</span>(c)]; }
+  <span class="en">Grid</span> { w: g.w, cells: out }
+}
+<span class="kw">fn</span> show&lt;<span class="en">T</span>: <span class="en">Printable</span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { r = <span class="st">""</span>; <span class="kw">for</span> c <span class="kw">in</span> g.cells { r += <span class="st">"[{c.to_text()}]"</span>; } r }
+<span class="kw">fn</span> <span class="fn-call">show</span>(g: <span class="en">Grid</span>&lt;<span class="en">Tile</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"tiles:{len(g.cells)}"</span> }
+<span class="kw">fn</span> <span class="fn-call">test_two_variables</span>() {
+  tiles = <span class="en">Grid</span> { w: <span class="nm">2</span>, cells: [<span class="en">Tile</span> { height: <span class="nm">3</span>, name: <span class="st">"a"</span> }, <span class="en">Tile</span> { height: <span class="nm">5</span>, name: <span class="st">"b"</span> }] };
+  heights = <span class="fn-call">map_grid</span>(tiles, |t| { t.height });
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">show</span>(tiles) == <span class="st">"tiles:2"</span> &amp;&amp; <span class="fn-call">show</span>(heights) == <span class="st">"[3][5]"</span>, <span class="st">"{show(heights)}"</span>);
+}</code></pre>
 <h2 id="disallowed-operations">Disallowed operations</h2>
 <p>The compiler rejects operations the bound does not cover, and it says which: <code>x + y</code> on unbounded T   — "generic type T: operator <code>+</code> requires a concrete type" <code>x.field</code> on T           — "generic type T: field access requires a concrete type" The same wording covers an operator OUTSIDE a bound: <code>x + y</code> under <code>Numeric</code> and <code>x - y</code> under <code>Addable</code> are refused in exactly those words.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">main</span>() {
@@ -171,6 +201,8 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="fn-call">test_combined_bounds</span>();
   <span class="fn-call">test_user_type_bounds</span>();
   <span class="fn-call">test_walkable</span>();
+  <span class="fn-call">test_generic_struct</span>();
+  <span class="fn-call">test_two_variables</span>();
 }</code></pre>
 <section id="loft-panel" class="loft-panel" hidden>
 <h2>Run it yourself</h2>
@@ -192,18 +224,17 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 // concrete type you call it with.
 // ## Declaring a generic function
 // Place a single type variable in angle brackets after the function name.
-// The type variable must appear in the first parameter (directly or as a
-// container element like vector&lt;T&gt;) — a T that appears only later, or only in
-// the return type, is refused with "Type variable T must appear in the first
-// parameter".  ONE type variable: `&lt;T, U&gt;` does not parse.
+// The type variable must appear in a parameter (directly or as a container
+// element like vector&lt;T&gt;) — any parameter; a T that appears only in the return
+// type is refused, since a call infers T from its arguments.  A header may
+// declare several variables — `&lt;K: Printable, V: Printable&gt;` — each with its
+// own bounds, each inferred from the parameters that name it.
 //
-// Generic STRUCTS are a separate thing and loft does not have them — `struct
-// Box&lt;T&gt;` is a parse error.  A generic FUNCTION over `vector&lt;T&gt;` covers most of
-// what a generic container would be reached for.
+// A struct may declare type variables too — see Generic structs below.
 fn identity&lt;T&gt;(x: T) -&gt; T { x }
 // ## Calling a generic function
-// No special syntax at the call site — the compiler infers T from the first
-// argument's type and creates a specialised copy automatically.
+// No special syntax at the call site — the compiler infers T from the
+// arguments' types and creates a specialised copy automatically.
 fn test_identity() {
   assert(identity(42) == 42, "identity integer");
   assert(identity(3.14) == 3.14, "identity float");
@@ -362,6 +393,46 @@ fn test_walkable() {
   for node in tree_walk(tree, 10) { seen += "{node.label} "; }
   assert(seen == "root a b ", "Walkable on a user type: {seen}");
 }
+// ## Generic structs
+// A struct may declare type variables: `struct Box&lt;T&gt; { v: T }`.  `Box&lt;integer&gt;`
+// names an INSTANCE — an ordinary struct whose `v` is an `integer`, laid out as a
+// hand-written `struct BoxInteger { v: integer }` would be.  A literal builds the
+// instance its annotation names, or else the one its field values bind:
+// `Box { v: 1 }` is a `Box&lt;integer&gt;`, as `identity(1)` makes T an integer.  A
+// literal with nothing to bind a variable from (`Box {}`, `Box { v: [] }` for a
+// `vector&lt;T&gt;` field) is refused, naming the variable; give the binding its type.
+struct Box&lt;T&gt; { v: T }
+struct Stack&lt;T&gt; { items: vector&lt;T&gt;, name: text }
+fn twice(b: Box&lt;integer&gt;) -&gt; integer { b.v * 2 }
+fn test_generic_struct() {
+  b = Box { v: 21 };
+  t = Box { v: "hi" };
+  s: Stack&lt;float&gt; = Stack { items: [], name: "floats" };
+  s.items += [1.5, 2.5];
+  assert(twice(b) == 42, "an inferred Box&lt;integer&gt; is the one the parameter names");
+  assert(t.v == "hi" &amp;&amp; len(s.items) == 2, "Box&lt;text&gt; and Stack&lt;float&gt;");
+}
+// ## Two type variables and a callback
+// A generic may declare several variables, and one no argument binds may be bound by a
+// callback's RESULT: `map_grid` below turns a `Grid&lt;T&gt;` into a `Grid&lt;U&gt;`, and the short
+// lambda's body decides what `U` is — `|t| { t.height }` makes it an `integer`.  A
+// generic beside a concrete function of the same name is one overload set: the concrete
+// `show` takes a `Grid&lt;Tile&gt;`, the bounded generic every other `Grid` it can print.
+struct Tile { height: integer, name: text }
+fn to_text(self: Tile) -&gt; text { self.name }
+struct Grid&lt;T&gt; { w: integer, cells: vector&lt;T&gt; }
+fn map_grid&lt;T, U&gt;(g: Grid&lt;T&gt;, f: fn(T) -&gt; U) -&gt; Grid&lt;U&gt; {
+  out: vector&lt;U&gt; = [];
+  for c in g.cells { out += [f(c)]; }
+  Grid { w: g.w, cells: out }
+}
+fn show&lt;T: Printable&gt;(g: Grid&lt;T&gt;) -&gt; text { r = ""; for c in g.cells { r += "[{c.to_text()}]"; } r }
+fn show(g: Grid&lt;Tile&gt;) -&gt; text { "tiles:{len(g.cells)}" }
+fn test_two_variables() {
+  tiles = Grid { w: 2, cells: [Tile { height: 3, name: "a" }, Tile { height: 5, name: "b" }] };
+  heights = map_grid(tiles, |t| { t.height });
+  assert(show(tiles) == "tiles:2" &amp;&amp; show(heights) == "[3][5]", "{show(heights)}");
+}
 // ## Disallowed operations
 // The compiler rejects operations the bound does not cover, and it says which:
 //   `x + y` on unbounded T   — "generic type T: operator '+' requires a concrete type"
@@ -376,6 +447,8 @@ fn main() {
   test_combined_bounds();
   test_user_type_bounds();
   test_walkable();
+  test_generic_struct();
+  test_two_variables();
 }
 </pre>
 <style>.loft-panel{margin:2em 0;padding:1em;border:1px solid #d0d7de;border-radius:6px;background:#f6f8fa}.loft-panel h2{margin-top:0}.lp-note{color:#57606a;font-size:0.9em;margin:0 0 0.8em}.lp-bar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:0.8em}.loft-panel button{background:#2563eb;color:#fff;border:0;border-radius:4px;padding:5px 14px;font-size:0.9em;font-weight:600;cursor:pointer}.loft-panel button:disabled{opacity:0.4;cursor:default}.lp-status{font-size:0.85em;color:#57606a}.lp-status.lp-ok{color:#1a7f37}.lp-status.lp-err{color:#cf222e}.lp-status.lp-info{color:#57606a}.lp-output{background:#fff;border:1px solid #d0d7de;border-radius:4px;padding:8px;min-height:2.2em;max-height:16em;overflow:auto;white-space:pre-wrap;margin:0 0 0.8em}.lp-frame{background:#fff;border:1px solid #d0d7de;border-radius:4px;padding:8px;margin-bottom:0.8em}.lp-frame-head{font-size:0.85em;color:#57606a;margin-bottom:6px}.lp-locals{display:flex;gap:6px;flex-wrap:wrap}.lp-local,.lp-callable{background:#eaeef2;border-radius:3px;padding:2px 6px;font-size:0.85em;cursor:pointer}.lp-local:hover,.lp-callable:hover{background:#d0d7de}.lp-callables{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:0.8em}.lp-prompt{display:flex;gap:6px;align-items:center}.lp-caret{color:#2563eb;font-weight:700}.lp-prompt input{flex:1;padding:6px 8px;border:1px solid #d0d7de;border-radius:4px;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.9em}.lp-log{margin-top:0.6em;display:flex;flex-direction:column;gap:4px;max-height:14em;overflow:auto}.lp-row{display:flex;gap:8px;align-items:baseline;font-size:0.9em}.lp-q{color:#2563eb;flex:0 0 auto}.lp-a{color:#1f2328;word-break:break-word}.lp-row.lp-warn .lp-a{color:#9a6700}.lp-lines{margin-top:1em}.lp-lines summary{cursor:pointer;font-size:0.9em;color:#57606a}.lp-src{margin:0.6em 0 0;padding-left:3.5em;background:#fff;border:1px solid #d0d7de;border-radius:4px;max-height:20em;overflow:auto}.lp-line{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;font-size:0.82em;white-space:pre;cursor:pointer;padding:0 4px}.lp-line:hover{background:#eaeef2}.lp-line.lp-break{background:#ffebe9;outline:1px solid #cf222e}@media print{.loft-panel{display:none}}</style>

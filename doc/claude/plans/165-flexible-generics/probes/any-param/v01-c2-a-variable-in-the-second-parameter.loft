@@ -1,0 +1,6 @@
+// C1 — c2: one variable, in the SECOND parameter.
+// @EXPECT: 1:a|2:7
+fn hole<T: Printable>(n: integer, v: T) -> text { "{n}:{v}" }
+fn main() {
+  println("{hole(1, "a")}|{hole(2, 7)}");
+}

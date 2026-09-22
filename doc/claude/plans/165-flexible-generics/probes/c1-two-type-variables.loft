@@ -1,0 +1,9 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// STEPS.md C2–C4.  Two type variables, bound to swapped types: TWO monomorphs.
+// Measured 9f5cf6a96: three parse errors at the comma (`Expect token >` …).
+// Expected after C4: `1:a|b:2`, the two instances named apart.
+fn pair_up<K: Printable, V: Printable>(k: K, v: V) -> text { return "{k}:{v}"; }
+fn main() {
+  print("{pair_up(1, "a")}|{pair_up("b", 2)}");
+}

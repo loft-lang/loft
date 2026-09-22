@@ -1,0 +1,100 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1594, `@FR-H-Drop`, `@FR-H-Move` — A TUPLE MEMBER IS RELEASED ONCE.  A type's `OpDrop` runs
+// once per structure holding a lease, at that structure's death, and a variable this function
+// owns MOVES when it is returned.  Two tuple shapes ran a member's hook twice, on both backends
+// and with no diagnostic:
+//
+// - a RETURNED tuple local (`a = (1, mk(1)); a`): the return copies each member into the return
+//   record, and `a`'s scope end released the member again.  The copy read the member through a
+//   stash, so the hand-off the scope pass records stopped the stash and not `a`; a nullable
+//   member was copied through a stash of its own, under its own null test; and a member with no
+//   claimant (a bufferless call, a generator's advance) had no buffer to mark at all.
+// - a destructuring `for (i, hh) in v` over a `vector<(integer, H)>`: each `hh` was bound as an
+//   OWNER and released its member as its iteration ended, and `v` released it again.  A binder
+//   read off the loop variable's member is a view of that variable (`(B-View)`).
+//
+// Every expected trace is worked out by hand.  The drop hook writes a trace FILE, as
+// `139-drop-cascade.loft` does and for its reason.
+//
+// @falsified-at: 8c1d59c71 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1594-a-tuple-member-is-released-once.patch — the same channels.
+// CHANNEL: assertion failures, both backends — the traces carry the extra hooks.
+// HOLDS: exit code aside, leak and panic are unmoved; `c6` (a returned literal, a plain `for`) is
+//   the control, right before and after.
+// WITNESS: on the control, `c1 returned local: m1,d1,b1,d1, want m1,b1,d1` — the member's hook
+//   at the callee's end, before the caller reads it, and again at the caller's.
+
+fn trace_path() -> text { return "loft_1594_tuple_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+struct H { id: integer }
+fn OpDrop(self: H) { note("d{self.id}"); }
+fn mk(id: integer) -> H { note("m{id}"); return H { id: id }; }
+fn mk_opt(id: integer) -> H? { note("m{id}"); if id > 0 { H { id: id } } else { null } }
+
+// 1 — a returned tuple local, its member minted by a call.
+fn ret_one() -> (integer, H) { a = (1, mk(1)); a }
+fn c1() { b = ret_one(); note("b{b.1.id}"); }
+
+// 2 — two heap members around a scalar.
+fn ret_two() -> (H, integer, H) { a = (mk(3), 5, mk(4)); a }
+fn c2() { t = ret_two(); note("t{t.0.id}{t.2.id}"); }
+
+// 3 — a NULLABLE member, present and absent.
+fn ret_opt(id: integer) -> (integer, H?) { a = (1, mk_opt(id)); a }
+fn c3() { p = ret_opt(5); q = ret_opt(0); note("p{p.1.id}q{q.1.id}"); }
+
+// 4 — a whole-tuple bind, then the copy returned.
+fn ret_bound() -> (integer, H) { a = (1, mk(7)); u = a; u }
+fn c4() { u = ret_bound(); note("u{u.1.id}"); }
+
+// 5 — a destructuring `for` over a vector of tuples: `v` releases each member, once.  Which
+//     element goes first is not what this cell asks (no rule orders a collection's elements),
+//     so either order passes and a third hook does not.
+fn c5() { v = [(1, mk(5)), (2, mk(6))]; n = 0; for (i, hh) in v { n += i + hh.id; } note("n{n}"); }
+
+// 6 — CONTROL: a returned literal and a plain `for`, right before and after.
+fn ret_literal() -> (integer, H) { (1, mk(8)) }
+fn c6() { r = ret_literal(); v = [(1, mk(9))]; for t in v { note("r{t.1.id}"); } note("l{r.1.id}"); }
+
+fn main() {
+  drain();
+  c1();
+  ok("c1 returned local    ", drain(), "m1,b1,d1");
+  c2();
+  ok("c2 two members       ", drain(), "m3,m4,t34,d4,d3");
+  c3();
+  ok("c3 nullable member   ", drain(), "m5,m0,p5qnull,d5");
+  c4();
+  ok("c4 bound then returned", drain(), "m7,u7,d7");
+  c5();
+  t5 = drain();
+  assert(t5 == "m5,m6,n14,d5,d6" || t5 == "m5,m6,n14,d6,d5", "c5 destructuring for: {t5}");
+  c6();
+  ok("c6 control           ", drain(), "m8,m9,r9,l8,d9,d8");
+  delete(trace_path());
+  println("a tuple member is released once: every cell holds");
+}

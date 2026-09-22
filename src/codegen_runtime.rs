@@ -727,6 +727,50 @@ pub fn OpGetRecord(
     get_record_lookup(cell, data, db_tp, key).or_null()
 }
 
+/// [`OpGetRecord`] for a `hash<T[k]>` whose ONE key is an integer, the key handed over as
+/// the value (`@FR-R-TypedKeyed`): what `--native` emits where the collection's kind and
+/// its key's are read off the schema at generation time.
+///
+/// The general entry learns both again per lookup — a `Content` built to be matched
+/// apart, the collection's type row dispatched on, a `FastKey` chosen and re-dispatched —
+/// which after the probe walk itself was cut to ~1.2 buckets had become most of a lookup.
+/// This one goes straight to `hash::find_long`.  Everything that is not the plain answer
+/// — no record, an absent collection, a width `find_long` does not list, a miss on a
+/// collection a lazy source is bound to — is the general entry's, reached with the same
+/// key, so the two cannot answer differently.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when the typed lookup and the general one disagree.
+pub fn OpGetHashLong(
+    cell: &std::cell::UnsafeCell<Stores>,
+    data: DbRef,
+    db_tp: i32,
+    key: i64,
+) -> DbRef {
+    let stores: &mut Stores = unsafe { &mut *cell.get() };
+    if data.rec != 0
+        && !vector::is_absent_collection(&data, &stores.allocations)
+        && let [k] = stores.keys(db_tp as u16)
+        && let Some(found) = crate::hash::find_long(&data, &stores.allocations, k, key)
+        && (found.rec != 0 || !stores.lazy_bound(&data))
+    {
+        if crate::keys::keyed_verify() {
+            let general = stores.find(&data, db_tp as u16, &[crate::keys::Content::Long(key)]);
+            assert!(
+                (general.rec, general.pos) == (found.rec, found.pos),
+                "LOFT_KEYED_VERIFY: the typed lookup answers {}+{} where the general one \
+                 answers {}+{}",
+                found.rec,
+                found.pos,
+                general.rec,
+                general.pos,
+            );
+        }
+        return found.or_null();
+    }
+    OpGetRecord(cell, data, db_tp, &[crate::keys::Content::Long(key)])
+}
+
 /// [`OpGetRecord`]'s lookup: resident first, then the lazy source.  Every miss arm answers
 /// a reference with no record and the caller spells it as a value.
 fn get_record_lookup(
@@ -745,7 +789,10 @@ fn get_record_lookup(
         // nothing (generated code is Rust calling Rust), and it keeps the two
         // backends reading the same two calls in the same order.
         let found = stores.find(&data, db_tp as u16, key);
-        if found.rec != 0 {
+        // Resident, or a miss on a collection nothing is bound to: either way the
+        // collection has answered (`Stores::lazy_bound`).  The interpreter's twin asks
+        // the same question at the same point.
+        if found.rec != 0 || !stores.lazy_bound(&data) {
             return found;
         }
         // @PLN133 S8 — a source served by a LOFT driver. Same shape as the
@@ -857,6 +904,93 @@ fn get_record_lookup(
         }
         stores.fetch_missing(&data, db_tp as u16, key)
     }
+}
+
+/// The pieces of `text.split(separator)`, one at a time and in order, as slices of `text`
+/// (`@FR-R-LazySplit`): what a `for piece in text.split(c)` loop iterates when nothing
+/// else can reach the vector the call would have built.
+///
+/// It yields exactly the elements `split` in `default/02_files.loft` returns: none for an
+/// empty text, and otherwise one piece per separator plus the trailing piece, which is
+/// empty when the text ends in a separator.  A NULL text is not empty — it is the one
+/// character of the null sentinel — so it answers itself as its only piece, as `split`
+/// does.  The separator is a character, so a multi-byte one splits on the whole character
+/// and never inside another.
+pub struct LazySplit<'a> {
+    rest: Option<&'a str>,
+    separator: char,
+}
+
+impl<'a> Iterator for LazySplit<'a> {
+    type Item = &'a str;
+
+    #[inline]
+    fn next(&mut self) -> Option<&'a str> {
+        let text = self.rest?;
+        if let Some(at) = text.find(self.separator) {
+            self.rest = Some(&text[at + self.separator.len_utf8()..]);
+            Some(&text[..at])
+        } else {
+            self.rest = None;
+            Some(text)
+        }
+    }
+}
+
+/// Start a [`LazySplit`] over `text`.
+#[inline]
+#[must_use]
+pub fn lazy_split(text: &str, separator: char) -> LazySplit<'_> {
+    let rest = if text.is_empty() { None } else { Some(text) };
+    LazySplit { rest, separator }
+}
+
+/// The element `from` of a split TABLE (`@FR-R-SplitTable`) — the pieces of a
+/// `parts = text.split(c)` collected as slices — answering what the NULLABLE element read
+/// of the `vector<text>` it replaces answers (`OpGetVectorNullable` then `OpGetText`): a
+/// negative index counts from the end; the null index is the null text; an index outside
+/// the table is the null text too, and notes the out-of-bounds fault a formatted hole
+/// renders, exactly as the op's template does.
+#[inline]
+#[must_use]
+pub fn split_table_get<'a>(table: &[&'a str], from: i64) -> &'a str {
+    if from == i64::MIN {
+        return crate::state::STRING_NULL;
+    }
+    let len = table.len() as i64;
+    let at = if from < 0 { from + len } else { from };
+    if at < 0 || at >= len {
+        crate::ops::note_format_fault(3, true);
+        crate::state::STRING_NULL
+    } else {
+        table[at as usize]
+    }
+}
+
+/// [`split_table_get`] for the RAISING element read (`OpGetVector`, the user-facing
+/// `v[i]`): the same slice in range, and outside it the same recoverable fault
+/// `Stores::vec_get_or_raise_runtime` raises — `NegativeIndex` for an index still negative
+/// after counting from the end, `IndexOutOfBounds` past the end — and the null text.
+#[inline]
+pub fn split_table_get_or_raise<'a>(stores: &mut Stores, table: &[&'a str], from: i64) -> &'a str {
+    let len = table.len() as i64;
+    let at = if from < 0 { from + len } else { from };
+    if at < 0 {
+        stores.raise_recoverable_runtime(crate::runtime_error::RuntimeErrorKind::NegativeIndex {
+            idx: from,
+        });
+        return crate::state::STRING_NULL;
+    }
+    if at >= len {
+        stores.raise_recoverable_runtime(
+            crate::runtime_error::RuntimeErrorKind::IndexOutOfBounds {
+                idx: from,
+                len: table.len() as u32,
+            },
+        );
+        return crate::state::STRING_NULL;
+    }
+    table[at as usize]
 }
 
 /// Extract a substring from a text value.
@@ -4791,6 +4925,30 @@ pub fn coroutine_drop_local(stores: &mut Stores, db: DbRef, name: &str) {
     }
 }
 
+/// [`coroutine_drop_local`] for a generator that owns more than one heap local: two of them
+/// can hold ONE store — a lazily-lowered loop's record buffer (`__ref_*`) and the local that
+/// adopted the record the call built in it — and releasing that store twice frees a slot
+/// another record may already hold.  `seen` collects the stores this `drop_stores` has
+/// released; a nested generator handle is keyed by its table slot as well, because every
+/// handle shares the one coroutine store number.
+pub fn coroutine_drop_local_once(
+    stores: &mut Stores,
+    db: DbRef,
+    name: &str,
+    seen: &mut Vec<(u16, u32)>,
+) {
+    let key = if db.store_nr == NATIVE_COROUTINE_STORE {
+        (db.store_nr, db.rec)
+    } else {
+        (db.store_nr, 0)
+    };
+    if seen.contains(&key) {
+        return;
+    }
+    seen.push(key);
+    coroutine_drop_local(stores, db, name);
+}
+
 /// Copy the `tp` record `src` into the generator's snapshot store `snap` and answer the
 /// copy's handle.  An eager factory runs its whole loop before the consumer reads a
 /// value, so a pushed handle to a per-iteration local would alias the local's FINAL
@@ -4822,6 +4980,39 @@ pub fn coroutine_snapshot(
     r
 }
 
+/// [`coroutine_snapshot`] of a value the generator HANDS over (`(G-Own)`): a fresh record in
+/// a store of its own that nothing else holds, so the snapshot is a move and that store is
+/// released here.  Its resource travels with the snapshot, so no drop hook runs.
+pub fn coroutine_snapshot_moved(
+    cell: &std::cell::UnsafeCell<Stores>,
+    snap: &mut DbRef,
+    src: DbRef,
+    tp: i32,
+) -> DbRef {
+    let r = coroutine_snapshot(cell, snap, src, tp);
+    if src.store_nr != u16::MAX {
+        let stores: &mut Stores = unsafe { &mut *cell.get() };
+        if (src.store_nr as usize) < stores.allocations.len() {
+            stores.free_named(&src, "__yield");
+        }
+    }
+    r
+}
+
+/// Hand the consumer an eagerly-collected value of its own — `formal/coroutines.md`
+/// `(G-Own)`: what an advance produces is the consumer's, which releases it, while an eager
+/// factory keeps every value in ONE snapshot store the generator releases.  So each value
+/// leaves in a fresh store: a copy of its snapshot record, typed `tp` as
+/// [`coroutine_snapshot`] typed it.  A null stays null.
+pub fn coroutine_hand_out(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, tp: i32) -> DbRef {
+    if src.store_nr == u16::MAX {
+        return src;
+    }
+    let own = OpDatabase(cell, DbRef::NULL, tp);
+    OpCopyRecord(cell, src, own, tp);
+    own
+}
+
 /// Release a generator's snapshot store (see [`coroutine_snapshot`]) — at exhaustion,
 /// and from `drop_stores` when the generator is abandoned.  Idempotent.
 pub fn coroutine_release_snapshots(stores: &mut Stores, snap: &mut DbRef) {
@@ -4850,23 +5041,59 @@ pub fn free_native_coroutine(gen_ref: DbRef, stores: &mut Stores) {
     }
 }
 
-/// Advance a native coroutine and return the yielded value as `i64`.
-/// Frees the coroutine slot automatically when it is exhausted.
-pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
+/// The occupant a generator's slot holds while that generator runs: the advance takes the
+/// generator out of the table, so this answers nothing — every method keeps its default.
+struct Advancing;
+impl LoftCoroutine for Advancing {}
+
+/// Run one advance of the generator `gen_ref` names, or answer `dead` where no live generator
+/// has that handle.  `step` answers the value and whether the generator is now exhausted,
+/// which frees its slot (P2-R7 parity).
+///
+/// The generator is taken OUT of the table for the advance, with [`Advancing`] holding its
+/// slot and generation: its body may advance another generator — one it was handed, or one
+/// it made — or allocate one, and each of those borrows the table again.  Advanced under the
+/// table's borrow, a generator that consumed another panicked with "already borrowed".
+fn advance_native<R>(
+    gen_ref: DbRef,
+    stores: &mut Stores,
+    dead: R,
+    step: impl FnOnce(&mut dyn LoftCoroutine, &mut Stores) -> (R, bool),
+) -> R {
+    let taken = NATIVE_COROUTINES.with(|c| {
+        let mut coroutines = c.borrow_mut();
+        if !native_coroutine_live(&coroutines, gen_ref) {
+            return None;
+        }
+        let (_, coro) = coroutines[gen_ref.rec as usize].as_mut()?;
+        Some(std::mem::replace(coro, Box::new(Advancing)))
+    });
+    let Some(mut coro) = taken else {
+        return dead;
+    };
+    let (val, exhausted) = step(coro.as_mut(), stores);
     NATIVE_COROUTINES.with(|c| {
         let mut coroutines = c.borrow_mut();
         let idx = gen_ref.rec as usize;
-        if native_coroutine_live(&coroutines, gen_ref)
-            && let Some((_, coro)) = coroutines[idx].as_mut()
-        {
-            let val = coro.next_i64(stores);
-            if val == COROUTINE_EXHAUSTED {
-                coroutines[idx] = None; // free on exhaustion (P2-R7 parity)
+        // Put back only into the slot it left: a free during the advance empties the slot,
+        // and a later allocation may already hold it under another generation.
+        if native_coroutine_live(&coroutines, gen_ref) {
+            if exhausted {
+                coroutines[idx] = None;
+            } else if let Some((_, slot)) = coroutines[idx].as_mut() {
+                *slot = coro;
             }
-            val
-        } else {
-            COROUTINE_EXHAUSTED
         }
+    });
+    val
+}
+
+/// Advance a native coroutine and return the yielded value as `i64`.
+/// Frees the coroutine slot automatically when it is exhausted.
+pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
+    advance_native(gen_ref, stores, COROUTINE_EXHAUSTED, |coro, stores| {
+        let val = coro.next_i64(stores);
+        (val, val == COROUTINE_EXHAUSTED)
     })
 }
 
@@ -4874,20 +5101,9 @@ pub fn coroutine_next_i64(gen_ref: DbRef, stores: &mut Stores) -> i64 {
 /// (@P327 native).  Writes the yielded value's bytes into `dest` and
 /// returns true; returns false and frees the slot on exhaustion.
 pub fn coroutine_next_into(gen_ref: DbRef, stores: &mut Stores, dest: &mut [i64]) -> bool {
-    NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        let idx = gen_ref.rec as usize;
-        if native_coroutine_live(&coroutines, gen_ref)
-            && let Some((_, coro)) = coroutines[idx].as_mut()
-        {
-            let ok = coro.next_into(stores, dest);
-            if !ok {
-                coroutines[idx] = None;
-            }
-            ok
-        } else {
-            false
-        }
+    advance_native(gen_ref, stores, false, |coro, stores| {
+        let ok = coro.next_into(stores, dest);
+        (ok, !ok)
     })
 }
 
@@ -4896,24 +5112,12 @@ pub fn coroutine_next_into(gen_ref: DbRef, stores: &mut Stores, dest: &mut [i64]
 /// exhausted.  Frees the coroutine slot automatically on exhaustion,
 /// mirroring `coroutine_next_i64` (@P326).
 pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
-    NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        let idx = gen_ref.rec as usize;
-        if native_coroutine_live(&coroutines, gen_ref)
-            && let Some((_, coro)) = coroutines[idx].as_mut()
-        {
-            let val = coro.next_dbref(stores);
-            // Null sentinel matches `vector::null_ref` and `OpNullRefSentinel`:
-            // store_nr == u16::MAX is the universal "no record" indicator.
-            // The for-loop's `OpCoroutineExhausted(gen)` check also flips to
-            // true here because exhaustion frees the slot.
-            if val.store_nr == u16::MAX {
-                coroutines[idx] = None;
-            }
-            val
-        } else {
-            DbRef::NULL
-        }
+    // Null sentinel matches `vector::null_ref` and `OpNullRefSentinel`: store_nr == u16::MAX
+    // is the universal "no record" indicator.  The for-loop's `OpCoroutineExhausted(gen)`
+    // check also flips to true here because exhaustion frees the slot.
+    advance_native(gen_ref, stores, DbRef::NULL, |coro, stores| {
+        let val = coro.next_dbref(stores);
+        (val, val.store_nr == u16::MAX)
     })
 }
 
@@ -4921,21 +5125,16 @@ pub fn coroutine_next_dbref(gen_ref: DbRef, stores: &mut Stores) -> DbRef {
 /// or `STRING_NULL` (`"\0"`) when exhausted.  Frees the coroutine slot
 /// automatically on exhaustion, mirroring `coroutine_next_i64`.
 pub fn coroutine_next_text(gen_ref: DbRef, stores: &mut Stores) -> String {
-    NATIVE_COROUTINES.with(|c| {
-        let mut coroutines = c.borrow_mut();
-        let idx = gen_ref.rec as usize;
-        if native_coroutine_live(&coroutines, gen_ref)
-            && let Some((_, coro)) = coroutines[idx].as_mut()
-        {
+    advance_native(
+        gen_ref,
+        stores,
+        crate::state::STRING_NULL.to_string(),
+        |coro, stores| {
             let val = coro.next_text(stores);
-            if val == crate::state::STRING_NULL {
-                coroutines[idx] = None;
-            }
-            val
-        } else {
-            crate::state::STRING_NULL.to_string()
-        }
-    })
+            let done = val == crate::state::STRING_NULL;
+            (val, done)
+        },
+    )
 }
 
 /// Test whether a native coroutine has been exhausted (its slot freed).

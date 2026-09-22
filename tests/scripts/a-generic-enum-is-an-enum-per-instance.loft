@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D8 — an enum may declare type variables.  `Shape<integer>` is an instance: the
+// enum AND each of its variants, minted together, payloads closed to the instance, laid out
+// and emitted as the twin `enum ShapeI { Dot { at: integer }, … }` is (their bytecode is
+// identical with type ids masked).  A variant literal builds the instance its payload binds,
+// or the one its annotation names (a unit variant has only the annotation); `match` reads
+// it; it sits in a vector and carries a nullable payload; a method on the instance answers
+// both spellings, a variant-typed receiver included; and a set whose members take an
+// instance's variants — `Shape<integer>::Dot` — dispatches on the variant at run time.
+// (Replaces the D2 guard that refused an enum's type variables.)
+//
+// @falsified-at: 0ef466f6a — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-enum-is-an-enum-per-instance.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses `enum Shape<T>`.
+//   ARMED: nothing.
+//   WITNESS: on the control the declaration is "an enum declares no type variables".
+//   HOLDS: nothing else.
+
+enum Shape<T> { Dot { at: T }, Line { from: T, to: T }, Empty }
+enum Maybe<T> { Has { v: T? }, Nothing }
+
+fn show(s: Shape<integer>) -> text {
+  match s { Dot { at } => "dot {at}", Line { from, to } => "line {from}-{to}", Empty => "empty" }
+}
+fn show_text(s: Shape<text>) -> text {
+  match s { Dot { at } => "dot {at}", Line { from, to } => "line {from}-{to}", Empty => "empty" }
+}
+fn arity(self: Shape<integer>) -> integer {
+  match self { Dot { at } => 1, Line { from, to } => 2, Empty => 0 }
+}
+fn get(m: Maybe<integer>) -> text {
+  match m { Has { v } => if v == null { "none" } else { "{v}" }, Nothing => "nothing" }
+}
+fn f(x: Shape<integer>::Dot) -> text { "dot {x.at}" }
+fn f(x: Shape<integer>::Line) -> text { "line {x.from}" }
+fn f(_x: Shape<integer>::Empty) -> text { "empty" }
+
+fn test_construct_and_match() {
+  a = Dot { at: 1 };
+  b = Line { from: "a", to: "b" };
+  e: Shape<integer> = Empty;
+  assert(show(a) == "dot 1" && show_text(b) == "line a-b" && show(e) == "empty", "match");
+}
+
+fn test_a_vector_and_a_nullable_payload() {
+  v: vector<Shape<integer>> = [Dot { at: 1 }, Line { from: 3, to: 5 }, Empty];
+  s = "";
+  for x in v { s += show(x) + ";"; }
+  n: Maybe<integer> = Has { v: null };
+  c: Maybe<integer>? = null;
+  assert(s == "dot 1;line 3-5;empty;" && get(n) == "none" && get(Has { v: 5 }) == "5", s);
+  assert(c == null, "a nullable instance");
+}
+
+fn test_a_method_in_both_spellings() {
+  a = Dot { at: 7 };
+  b = Line { from: 1, to: 2 };
+  assert(a.arity() == 1 && arity(b) == 2 && Dot { at: 9 }.arity() == 1, "arity");
+}
+
+fn test_dispatch_over_the_variants() {
+  v: vector<Shape<integer>> = [Line { from: 4, to: 5 }, Dot { at: 2 }, Empty];
+  s = "";
+  for x in v { s += f(x) + ";"; }
+  assert(s == "line 4;dot 2;empty;", s);
+}

@@ -6,9 +6,10 @@
 
 > **Status: completed in 0.8.3.** CO1.1–CO1.6 implemented; `yield from` (CO1.4) deferred to 1.1+.
 > Open enhancement: **native lazy loop yields** ([Design: lazy loop yields (CL-9)](#design-lazy-loop-yields-cl-9))
-> — slice 1 has landed (loft#836): a loop body ending in one unconditional `yield` is lazy on
-> `--native`. Slices 2–4 (multiple / conditional yields, nested and `while` loops, text-in-loop
-> interning) are what remains of the [formal/coroutines.md](formal/coroutines.md) decided edge.
+> — slice 1 has landed (loft#836), and the `while` half of slice 3 with it (loft#1586): a `for` or
+> `while` loop with one `yield` on its body's straight line is lazy on `--native`, statements
+> after the yield included. Slices 2–4 (multiple / conditional yields, nested loops, text-in-loop
+> interning) are what remains; each keeps the eager buffer.
 
 Coroutines give loft programs generator functions: functions that can suspend
 execution with `yield`, return a value to the caller, and resume from the same
@@ -147,6 +148,23 @@ tests the frame's `status` field and returns true regardless of whether the
 generator ever yielded a null value (see
 [Known Limitations CL-1](#known-limitations)).
 
+**A yielded value is the consumer's** (`formal/coroutines.md` `(G-Own)`).  A record,
+struct-enum or vector that `next` or a `for` receives belongs to the receiver: it
+outlives the generator, and a `for` releases each one when its iteration ends.  A
+value built at the `yield` is handed over as it is; a value the generator keeps —
+a local, a parameter, a field — is copied, so the generator changing it later does
+not change what the consumer holds:
+
+```loft
+fn totals() -> iterator<Stat> {
+    s = Stat { n: 0 };
+    for x in 1..4 { s.n += x; yield s; }   // each consumer sees 1, 3, 6
+}
+```
+
+A type with a drop hook (`OpDrop`) cannot be copied, so yielding an existing one
+is a compile-time error; yield a value built at the `yield` instead.
+
 ### Generator function with parameters
 
 Parameters are captured into the frame at construction time. They are
@@ -176,6 +194,40 @@ fn first_positive(v: vector<integer>) -> iterator<integer> {
 
 Consuming it yields the one value and then stops: `next` answers `5`, the next `next`
 answers null, and `exhausted` is true.
+
+### Holding generators — a scheduler
+
+A generator handle is a value like any other: a struct field, a vector element and a tuple
+member can hold one, and whatever holds it owns the generator (`formal/coroutines.md`
+(G-Hold)).  That is how a set of live behaviours is advanced once per tick:
+
+```loft
+fn patrol(id: integer, n: integer) -> iterator<integer> {
+    for step in 0..n { yield id * 100 + step; }
+}
+
+fn main() {
+    tasks: vector<iterator<integer>> = [];
+    tasks += [patrol(1, 3), patrol(2, 1)];
+    while len(tasks) > 0 {
+        i = 0;
+        while i < len(tasks) {
+            x = next(tasks[i]);
+            if x == null { tasks.remove(i); } else { println("{x}"); i += 1; }
+        }
+    }
+}
+```
+
+The generator is released exactly once, by its holder: a local at its scope end or when it
+is given another generator, a field or an element when it is given another one, and a record
+or a collection when it dies — or, for an element, when it is removed, so removing a task that
+has not finished (`tasks.remove(i)`, `t#remove`) ends it.  Putting a local into a container
+(`tasks += [g]`, `Task { g: g }`) MOVES it there.  Reading one back out — `h = t.g`,
+`h = tasks[i]`, `for t in tasks` — gives a view: advancing `h` advances the generator the
+container holds, and the container keeps it.  A handle prints as `iterator`.  A keyed collection (`hash`, `sorted`,
+`index`, `spatial`) releases the generators its records hold the same way, and runs no other
+release for them (`formal/heap.md` (H-Drop-Not)).
 
 ---
 
@@ -1152,7 +1204,7 @@ Implement the suspend/resume cycle.
 | CL-5 | Serialisation cost per yield is O(frame depth); deeply recursive `yield from` chains are slow | Flatten recursive generators iteratively using an explicit `vector` stack local |
 | CL-6 | Mutable-reference parameters (`&vector<T>`) in a generator function are not visible to the frame copy | Pass collections by value or use `reference<T>` and write through the reference |
 | CL-8 | On `--native`, a generator yielding a tuple with a **text element** (`iterator<(text, integer)>`) does not yet compile — a yielded `text` is a `&str`, so riding the unified yield codec needs a store intern (`db_from_text`) with a lifetime question still open. Scalar and DbRef-ref tuple elements (`(integer, float)`, `(vector, integer)`, …) work on both backends. | Yield the text from a separate single-`text` generator, or wrap the pair in a record and yield its `reference<S>` |
-| CL-9 | **Mostly fixed (loft#836, slice 1).** A loop whose body ends in ONE unconditional `yield` is now lazy on `--native` too: one iteration per advance, the cursor persisted in the coroutine struct. An infinite or early-`break`-consumed loop-generator therefore stops when its consumer does. FOUR shapes still take the eager `ForLoopBody` buffer, so their side effects still interleave differently: more than one yield per iteration, a yield inside an `if`/`match`, a nested loop, a `continue`, and a statement AFTER the yield (each needs a resume point one state cannot encode — axes A2–A5). A yield of a tuple / fn-ref (the `next_into` channel) or of a struct / vector also stays eager; a struct / vector pushed into the eager buffer is a per-yield SNAPSHOT in a store the generator owns (released when it is exhausted or abandoned), so the consumer reads the value as it was at the yield rather than the record's final state, and the statements after the loop run once the buffer is filled (loft#1356). Values agree throughout. | Put the `yield` last in the loop body and yield a scalar or `text` — that shape is lazy on both backends. Otherwise use **straight-line** yields, or fully drain the generator. Remaining slices: **[Lazy loop yields (CL-9)](#design-lazy-loop-yields-cl-9)** below. |
+| CL-9 | **Mostly fixed (loft#836 slice 1; loft#1586 `while` and statements after the yield).** A `for` or `while` loop with ONE `yield` on its body's straight line is lazy on `--native` too: one iteration per advance, the cursor persisted in the coroutine struct, and statements after the yield run at the start of the next advance (the loop is rotated). An infinite or early-`break`-consumed loop-generator therefore stops when its consumer does — `while true { …; yield x; }` included. These shapes still take the eager `ForLoopBody` buffer, so their side effects still interleave differently: more than one yield per iteration, a yield inside an `if`/`match`, a nested loop and a `continue` (axes A2–A4).  A closure in the loop body is lazy since loft#1587, which made a lambda's fn-ref and closure record persistent fields. ⚠ An eager loop runs to its end before the first value is handed out, so an ENDLESS loop of one of those shapes — `while true { if ready { yield x; } }` — never hands one out on `--native`: it fills its buffer until the process runs out of memory. `LOFT_TIMEOUT` does not stop it first. A yield of a tuple / fn-ref (the `next_into` channel) or of a struct / vector also stays eager; a struct / vector pushed into the eager buffer is a per-yield SNAPSHOT in a store the generator owns (released when it is exhausted or abandoned), so the consumer reads the value as it was at the yield rather than the record's final state, and the statements after the loop run once the buffer is filled (loft#1356). Values agree throughout. | Keep one `yield` on the loop body's straight line — not under an `if` — and yield a scalar or `text`; that shape is lazy on both backends, `for` and `while` alike. Otherwise use **straight-line** yields, or fully drain the generator. Remaining slices: **[Lazy loop yields (CL-9)](#design-lazy-loop-yields-cl-9)** below. |
 
 ### Native yield codec — status (@PLAN16 phase 02)
 
@@ -1173,9 +1225,16 @@ Full record: the @PLAN16 closure doc at
 
 ## Design: lazy loop yields (CL-9)
 
-> **Status: slice 1 built (loft#836, 2026-08-10); slices 2-4 open.** A loop whose body ends in
-> ONE unconditional `yield` is lowered to a header+body state pair — one iteration per advance,
-> the cursor persisted — and everything else keeps the eager buffer. `tests/scripts/836-lazy-loop-yields.loft`
+> **Status: slice 1 built (loft#836, 2026-08-10); the `while` half of slice 3 and the statement
+> after the yield built (loft#1586, 2026-09-22); slice 2, nested loops and slice 4 open.** A loop
+> with ONE `yield` on its body's straight line is lowered to a header+body state pair — one
+> iteration per advance, the cursor persisted — and everything else keeps the eager buffer.  A
+> `while` is the same lowering with no setup (the parser emits it as a bare `Loop`).  Statements
+> after the yield ROTATE the loop: a third state runs them at the start of the next advance,
+> before the header, so a `break` among them still ends the loop.  A lazy loop's hidden record
+> buffers (`__ref_*`) persist in the struct, and so do a lambda's fn-ref and its `___clos_*`
+> record (loft#1587), which is what lets a loop that builds a closure per iteration stay lazy.
+> Guard: `tests/scripts/1586-a-while-loop-generator-yields-before-its-next-iteration.loft`. `tests/scripts/836-lazy-loop-yields.loft`
 > and `tests/oracle/26-coroutine-laziness.loft` assert the interleaving; VALUES cannot, which is
 > why the value-only oracle reported agreement across a difference this wide.
 > The eager buffer holds VALUES, not handles: a struct or vector yield is copied into a

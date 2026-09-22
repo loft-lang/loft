@@ -1,0 +1,11 @@
+// D6 — a method whose variable carries a bound, interpolating the element.
+// @EXPECT: [1,2]|[x,y]
+struct Grid<T> { cells: vector<T>, w: integer }
+fn show<T: Printable>(self: Grid<T>) -> text {
+  s = "[";
+  for c in self.cells { if len(s) > 1 { s += ","; } s += "{c}"; }
+  s + "]"
+}
+fn main() {
+  println("{Grid { cells: [1, 2], w: 2 }.show()}|{show(Grid { cells: ["x", "y"], w: 2 })}");
+}

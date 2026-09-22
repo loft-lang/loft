@@ -1,0 +1,188 @@
+// Benchmark 13: the standard library's TEXT routines, one row each
+//
+// Every row is one routine a program calls on text: splitting it, searching it, rewriting
+// it, walking it, formatting numbers into it and parsing them out of it.  One OP works a
+// 200-line text; the two inputs differ in VALUE (their numbers) and never in size, and
+// the rows alternate between them so no result can be carried across repetitions.  The
+// `hash` column is one canonical op's result, which the Rust twin must print the same.
+
+fn make_text(lines: integer, salt: integer) -> text {
+  out = "";
+  for i in 0..lines {
+    out += "  Item-{i + salt}: alpha,beta;GAMMA delta={(i * 7 + salt) % 1000}.{i % 100}  \n";
+  }
+  out
+}
+
+fn make_numbers(count: integer, salt: integer) -> text {
+  out = "";
+  for i in 0..count {
+    if i > 0 { out += " "; }
+    out += "{(i * 37 + salt) % 5000}.{i % 4 * 25}";
+  }
+  out
+}
+
+fn make_words(count: integer, salt: integer) -> vector<text> {
+  out: vector<text> = [];
+  for i in 0..count { out += ["w{(i * 13 + salt) % 977}"]; }
+  out
+}
+
+// split — the pieces COLLECTED: a vector of texts the caller indexes.
+fn t_split(src: text) -> integer {
+  parts = src.split('\n');
+  n = len(parts);
+  for i in 0..len(parts) { n += size(parts[i]?); }
+  n
+}
+
+// split — the pieces WALKED, which is how a line-oriented program reads a file.
+fn t_lines(src: text) -> integer {
+  n = 0;
+  for line in src.split('\n') { n += size(line) + 1; }
+  n
+}
+
+// contains + find, per line.
+fn t_search(src: text) -> integer {
+  n = 0;
+  for line in src.split('\n') {
+    if line.contains("GAMMA") { n += 1; }
+    n += line.find("delta=") ?? -1;
+  }
+  n
+}
+
+// replace — every occurrence, by a longer text.
+fn t_replace(src: text) -> integer {
+  size(src.replace("alpha", "omega-omega"))
+}
+
+// trim + to_lowercase + starts_with, per line.
+fn t_lower(src: text) -> integer {
+  n = 0;
+  for line in src.split('\n') {
+    low = line.trim().to_lowercase();
+    n += size(low);
+    if low.starts_with("item") { n += 1; }
+  }
+  n
+}
+
+// a character walk: `for c in text`.
+fn t_chars(src: text) -> integer {
+  n = 0;
+  for c in src {
+    if c == 'a' || c == 'e' || c == 'i' { n += 1; }
+    if c > '9' { n += 2; }
+  }
+  n
+}
+
+// a byte walk: `byte_at` over `0..size`.
+fn t_bytes(src: text) -> integer {
+  n = 0;
+  for i in 0..size(src) {
+    if src.byte_at(i) == 44 { n += 1; }
+  }
+  n
+}
+
+// numbers formatted INTO a text.
+fn t_format(count: integer, salt: integer) -> integer {
+  out = "";
+  for i in 0..count {
+    out += "{i + salt}:{(i as float) * 0.25:.2};";
+  }
+  size(out)
+}
+
+// numbers parsed OUT of a text.
+fn t_parse(nums: text) -> integer {
+  acc = 0.0;
+  for tok in nums.split(' ') {
+    acc += (tok as float?) ?? 0.0;
+  }
+  round(acc * 4.0) as integer
+}
+
+// join — a vector of texts into one.
+fn t_join(words: const vector<text>) -> integer {
+  size(words.join(", "))
+}
+
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+}
+
+fn main() {
+  n = arg_n(200);
+  a = make_text(200, 0);
+  b = make_text(200, 1);
+  na = make_numbers(2000, 0);
+  nb = make_numbers(2000, 1);
+  wa = make_words(2000, 0);
+  wb = make_words(2000, 1);
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  sink = 0;
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_split(a) } else { t_split(b) }; }
+  row("split", n, ticks() - t0, 200, t_split(a));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_lines(a) } else { t_lines(b) }; }
+  row("split_walk", n, ticks() - t0, 200, t_lines(a));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_search(a) } else { t_search(b) }; }
+  row("find_contains", n, ticks() - t0, 200, t_search(a));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_replace(a) } else { t_replace(b) }; }
+  row("replace", n, ticks() - t0, 200, t_replace(a));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_lower(a) } else { t_lower(b) }; }
+  row("trim_lower", n, ticks() - t0, 200, t_lower(a));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_chars(a) } else { t_chars(b) }; }
+  row("char_walk", n, ticks() - t0, size(a), t_chars(a));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_bytes(a) } else { t_bytes(b) }; }
+  row("byte_walk", n, ticks() - t0, size(a), t_bytes(a));
+
+  t0 = ticks();
+  for r in 0..n { sink += t_format(2000, r & 1); }
+  row("format_num", n, ticks() - t0, 2000, t_format(2000, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_parse(na) } else { t_parse(nb) }; }
+  row("parse_num", n, ticks() - t0, 2000, t_parse(na));
+
+  t0 = ticks();
+  for r in 0..n { sink += if r & 1 == 0 { t_join(wa) } else { t_join(wb) }; }
+  row("join", n, ticks() - t0, 2000, t_join(wa));
+
+  println("time: 0ms sink={sink}");
+}

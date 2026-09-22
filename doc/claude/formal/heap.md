@@ -597,8 +597,21 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-14`, `D-heap-15` and `D-heap-16` (`D-heap-13`
-closed 2026-09-20).  The
+OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-36`,
+loft#1600, opened 2026-09-22 as a design question; `D-heap-37`, the hoist order found beside it,
+opened and closed that day; `D-heap-38`, what an arm-scope rule would leave for a vector bound in
+both arms, opened that day; `D-heap-34` and `D-heap-35` opened and closed
+2026-09-22, loft#1597 and the struct-enum unit literal found beside it; `D-heap-26` and `D-heap-28` closed 2026-09-22;
+`D-heap-30`, `D-heap-31` and `D-heap-32` opened and closed 2026-09-22, loft#1594, loft#1596 and
+loft#1598; `D-heap-28` and
+`D-heap-29` found 2026-09-22 while closing `D-heap-15`'s `p_i2`, the second closed that day; `D-heap-27`, the tuple twin of
+`D-heap-21` and `D-heap-22`, opened and closed 2026-09-22; `D-heap-22` and `D-heap-24`
+closed 2026-09-21, `D-heap-25`, found in D-heap-24's controls, and `D-heap-26`, found in
+D-heap-22's, both opened that day and the first closed; `D-heap-13`
+closed 2026-09-20; `D-heap-16` closed 2026-09-21 together with the three it uncovered,
+`D-heap-18`, `D-heap-19` and `D-heap-20`, each opened and closed that day; `D-heap-14` closed the
+same day, and `D-heap-21` and `D-heap-23` opened and closed with it; `D-heap-22`, `D-heap-21`'s
+loop-body face, and `D-heap-24`, found beside `D-heap-23`, still open).  The
 first two are the copy-lease rules `(H-Copy-Refuse)` and `(H-Copy-Lease)`, written 2026-09-15
 before their implementation (@PLN163); `D-heap-8` was NARROWED 2026-09-17 when the owner ruled that
 a value the function owns MOVES, which makes 156 of its 227 measured sites legal and leaves the 71
@@ -646,6 +659,482 @@ freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a ref
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
+
+### D-heap-23 — OPENED AND CLOSED (2026-09-21): a whole-collection copy of a collection the function owns released its elements twice
+
+- **Violates:** (H-Move) — a collection the function owns moves wherever it is placed, and its
+  elements go with it: `d = v`, `w += v`, `d = a + b`, and a `return v` from a nested block.
+- **Where:** the parser writes each as a whole-collection COPY — `OpAppendVector(d, v)`, or
+  `OpReplaceVector(buffer, v)` into the caller's buffer where `v`'s backing is not that buffer,
+  which is every `return v` below a function's top level — and no site handed the release over,
+  so the source's backing ran its cascade over the elements the copy had moved.
+- **Effect:** measured on both backends, identical: `d = v` released `80` twice; `w += v`
+  `70` twice; `d = a + b` both operands twice; and `if c { v = [mk(20)]; return v }` released
+  `20` in the callee BEFORE the caller read it and again in the caller — a use after release in
+  a shape as ordinary as building a result inside an `if`.  The same through a `match` arm and
+  from a loop body.  A top-level `return v` was clean: there the backing IS the caller's buffer,
+  so nothing is copied.  The stores were right throughout (poison, strict stores and native's
+  leak check silent); only the hooks doubled.
+- **Closed:** the source's backing takes loft#1515's per-path flag, set right after the copy
+  (`collection_copy_handoff`, one home, read by the pre-scan registration and the flag write); a
+  re-mint of the backing resets it (`in_place_rebuild`), because what the rebuilt store holds is
+  its own again.  A collection GROWN after its elements moved gives the release back at the
+  growth: `(H-Spent)` refuses that program, and until the error exists it keeps the answer it had
+  (`p_v2`).  `p_v1` retired from `D-heap-15`.  Guard
+  `tests/scripts/a-moved-collection-releases-its-elements-once.loft`.
+
+### D-heap-25 — OPENED AND CLOSED (2026-09-21, loft#1573): a literal rebuilt into a local released the record it displaced before the new value was computed
+
+- **Violates:** (H-Drop), its reassignment clause — the release runs *"after the new value has
+  been computed"*.
+- **Where:** a literal into a live record local is REBUILT in place: the re-init
+  (`OpDatabase(s, tp)`) is a statement of its own and the field writes are the statements after
+  it, and `Scopes::in_place_rebuild` places the release right after the re-init.  A literal
+  whose fields read `s` itself had its initialisers lifted above the re-init (#330), which is
+  why it was right.
+- **Effect:** measured on both backends, identical: `s = Hold { h: mk(20) }; s = Hold { h:
+  mk(21) }` made 20, released 20, then made 21.  The rule's order is make 20, make 21, release
+  20.  The same for a bare droppable (`s = H { id: tick(21) }` released before `tick` ran), for
+  a local renamed onto the return buffer, inside a loop, for an enum variant, a nested literal
+  and a rebuild in an `if` arm.  A rebind from a call, a literal that reads `s`, and a nullable
+  local were in the rule's order.
+- **Closed:** where the rebuilt type owns a droppable (`Data::owns_droppable` — its cascade is
+  synthesized only after the parse) and an initialiser calls a user function
+  (`ir_has_user_call`), the literal is built apart and bound (`D-rw-5`'s road), so the release
+  follows the `Set`.  Lifting just that initialiser above the re-init, as #330 lifts a
+  self-reading one, was built first and measured wrong: a `??` join with a call, copied out of
+  its temp, released twice (the drop gate's `q_default_field_*_field`).  On a first bind the
+  road costs nothing, since the binding adopts the work-ref's store.  Guard
+  `tests/scripts/1573-a-rebuilt-local-releases-what-it-displaces-after-the-new-value.loft`.
+
+### D-heap-24 — OPENED AND CLOSED (2026-09-21, loft#1564): a local lost a record it held when its binding ran more than once, or when it was renamed onto the return buffer
+
+- **Violates:** (H-Drop), its reassignment and scope-end clauses.
+- **Where:** three facts the scope pass reads to release a displaced record were missing, and
+  one rename should not have happened.
+  - A local renamed onto the return buffer is first BUILT, not bound, when its first value is a
+    literal: the guarded in-place write (`parse_object`, @PLN157 § V-d).  `in_place_rebuild`
+    never recorded that the local then owns what it built, so the next reassignment released
+    nothing.
+  - A local first bound in a loop body and read after the loop has its scope moved out to the
+    function, with a null before the loop (loft#1156).  That null recorded no ownership, so the
+    binding in the loop released nothing on the passes after the first.
+  - A local owned on entry to a loop and rebound in it lost its ownership record at the loop's
+    end, because the merge kept only entries the body left UNCHANGED.  A rebind after the loop
+    then released nothing for the last pass's record.
+  - A local DECLARED in a loop body and returned was renamed onto the return buffer.  As a
+    parameter by slot, it was never released at a pass end, and every pass refilled the same
+    buffer.
+- **Effect:** measured on both backends, identical: `s = Hold { h: mk(20) }; s = Hold { h:
+  mk(21) }; return s` never released 20, with or without an early return between the two, and
+  for a record owning a vector or a nullable member too.  `for i in 0..3 { s = mk(20 + i); if i
+  == k { return s; } } return mk(99)` lost every pass it did not return on, all three when it
+  never returned.  `for … { s = mk(20 + i) } use(s)` lost 20 and 21 in a function returning
+  nothing: no rename is needed for that shape.  The entry as first written named only the
+  returned-local shape.
+- **Closed:** the in-place rebuild records the local as owning what it built, after its snapshot,
+  so the caller's record at entry stays untouched.  The loop pre-init records the null as owned;
+  the release is guarded on the record being live, so the first pass releases nothing.  The loop
+  merge keeps an entry that is owned both on entry and at the body's end, at its entry depth; a
+  local whose body mixes owning and viewing releases through its owner witness instead
+  (loft#1336).  The promotion ladder declines the rename for a local the program declared in a
+  loop (`Function::created_in_loop`), so it is an ordinary loop-body local and its `return` copies
+  into the buffer.  The copy advice then claimed that copy was avoidable because `s` was "still
+  used after this point".  The uses it counted were the pass-end release and a guarded free,
+  which no path from the return reaches.  The collector now skips every free
+  (`OpSets::frees`) and every drop hook (`OpSets::drop_functions`) as scope machinery.  Before,
+  it skipped only `OpFreeRef`, and the notice was false on the tree before this entry too, for
+  a second loop local.  Guard
+  `tests/scripts/1564-a-local-releases-every-record-it-held-across-passes-and-returns.loft`.
+
+### D-heap-21 — OPENED AND CLOSED (2026-09-21): a collection local was released after every other local at its scope's end
+
+- **Violates:** (H-Drop), its scope-end clause: *"the owner's scope end, in reverse declaration
+  order"*.  The order is part of the contract because a later structure may hold a lease on an
+  earlier one's resource: cursors in a vector must close before the connection declared ahead of
+  them.
+- **Where:** `get_free_vars` sweeps a scope in reverse `var_order`, which is the order variables
+  are REGISTERED.  A collection local is a view of the store holding its elements — its
+  `__vdb_N` backing, or the `__ref_N` buffer a call delivered it through — and that store is
+  registered by its null-init at the head of the function, so it was swept last whatever the
+  declaration order.
+- **Effect:** measured on both backends, identical: `b = mk(5); v: vector<H> = [mk(4)]` released
+  `5` before `4`; two vectors released in declaration order; three locals `b, v, w` released
+  `5 4 6` for the rule's `6 4 5`; a collection a call answers (`d = mkv(4)`) the same.  A struct
+  holding a vector, and a vector declared first, were right — the controls.
+- **Closed:** when a local is first registered, a `__vdb_N` it views — or, for a collection, a
+  `__ref_N` — moves to its place in `var_order`, which is where the store is minted.  Its scope
+  and its ownership are untouched; only its turn in the sweep moves.  A record local releases
+  through itself and its buffer's free is identity-guarded, so a record buffer keeps its place.
+  Guard `tests/scripts/a-collection-local-releases-in-declaration-order.loft`.
+
+### D-heap-26 — OPENED 2026-09-21, CLOSED 2026-09-22 (loft#1582): a vector local reassigned released the elements it displaces at scope end, or before the new ones were built
+
+- **Violates:** (H-Drop), its reassignment clause — the displaced record is released *"after the
+  new value has been computed and before anything after the statement runs"*.
+- **Where:** outside a loop, a rebind of a vector local mints a new `__vdb_N` backing, and the
+  displaced one is released only by its own scope-end sweep.  Inside a loop, on a vector declared
+  before it or read after it, the same backing is re-minted each pass, and
+  `Scopes::in_place_rebuild` releases its snapshot right after the re-init — the vector twin of
+  `D-heap-25`.
+- **Effect:** measured on both backends, identical: `v = [mk(20)]; v = [mk(21)]` makes 20 and 21,
+  reads, and releases 21 and then 20 at the scope's end.  The rule's order is make 21, release 20,
+  read.  The same for a call (`v = mkv(21)`), a copy (`v = w`) and `v = []` followed by an append.
+  In a loop the displaced elements go before the new ones are made.  The count is right.
+- **Status:** CLOSED 2026-09-22 — found 2026-09-21 in `D-heap-22`'s guard, whose hoisted-vector
+  control it is.
+- **Closed:** the scope pass releases the displaced backing at the statement's END.  At a vector
+  rebind, `Scopes::vector_rebind_release` releases every literal backing the local is bound to
+  anywhere except the new one (`vector_literal_backings`).  Each is released through its hook,
+  freed, and set to the sentinel; the one it held is live and the others are already the
+  sentinel.  A literal's `Set` heads the statements that fill its backing, so that release,
+  and a re-minted backing's snapshot (`in_place_rebuild`), wait for the statement's end: a
+  `Line` marker, or the block's end in front of its value.  The parser puts that marker after a
+  statement it spliced flat (`parse_block`).  The spliced statements alone could not say where
+  the statement ended: `v = [mk(2)]` and `v = []; v += [mk(2)]` on one line lowered to the same
+  IR, and the rule orders them differently.  Measured on both backends: a literal, a call, a
+  copy, `[]` then an append, a loop, an `if` arm, two displaced elements, a block's value, and
+  a droppable member.  An element view held across the rebind is refused, as before
+  (`(H-View-Drop)`), so the earlier free cannot be observed through one.  Guard
+  `tests/scripts/1582-a-vector-rebind-releases-what-it-displaces-after-the-new-value.loft`.
+  Three neighbours were found with the matrix and are their own issues: a vector that held a
+  CALL's result loses its release when rebound (loft#1596), a vector of vectors never releases
+  its inner elements (loft#1597), and a vector moved out and then refilled releases the moved
+  elements twice (loft#1598).
+
+### D-heap-38 — OPEN (2026-09-22, loft#1607): under the arm-scope rule, a vector local bound in both arms of an `if` is released at the end of the scope around it
+
+- **Violates:** (H-Drop), its scope-end clause — an arm's owner dies at the arm's end.
+- **Where:** `D-heap-36`'s opt-in rule (`LOFT_ARM_SCOPE=1`) makes a local bound in BOTH arms
+  each arm's own for a record or a text, and not for a vector or a tuple.  Each arm's bind lands in a backing of its own
+  (`__vdb_2`, `__vdb_3`), and the variable's type names one of them, the LAST bind's
+  (`@FR-O-Latest`).  The arm-end release reads that one dep (`scopes::outer_collection_backing`),
+  so the other arm would release the wrong backing.  Measured when the case was allowed: the
+  true arm released the false arm's empty `__vdb_3`, and `D50` never ran.  So the case keeps the
+  pre-init in front of the `if`.
+- **Effect:** measured on both backends, identical: `if c { w = v; … } else { w = v; … }` released
+  `v`'s element after the `if`'s successor ran.  The count is right.
+- **Status:** OPEN.  The cure is a per-path fact, the backing the local's latest bind on THIS
+  path names, snapshotted per arm as `construction_backing` is for records; or both arms' binds
+  sharing one backing.
+
+### D-heap-37 — OPENED AND CLOSED (2026-09-22, found with loft#1600): a local hoisted out of an `if`, a loop or a block was released after the locals declared before it
+
+- **Violates:** (H-Drop), its scope-end clause — reverse declaration order.
+- **Where:** a local bound inside an `if` arm, a loop body or a block and READ after it is
+  registered at the enclosing scope by a hoist (`Scopes::scan_if`'s pre-init, and the loop and
+  block hoist `locals_read_after` feeds).  The three registered it with a bare `var_order` push.
+  `D-heap-21`'s move of a collection local's backing to the local's turn was made only by the
+  plain first bind, so the backing kept its turn at the function's head.
+- **Effect:** measured on both backends, identical: `v: vector<H> = [mk(50)]; if c { w = [mk(52)] }
+  len(w)` released `50 52` for the rule's `52 50`; the same bound in a loop body, in a block, and
+  a vector a call returned.
+- **Status:** CLOSED 2026-09-22.
+- **Closed:** one home for a local's registration, `Scopes::register_binding`, which the first
+  bind and the three hoists call.  Guard
+  `tests/scripts/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.loft` `a9`–`a11`.
+
+### D-heap-36 — OPEN (2026-09-22, loft#1600): which scope does a local every mention of which lies in one `if` arm die at?
+
+- **The question.** (H-Drop) releases at *"the owner's scope end (@PLAN125 arc B)"*, and arc B
+  HOISTS a local written inside an `if` block to the function's scope: `pln125-b-drop.loft`'s
+  `if_block_local` pins its drop at the function's end, *"the drop is wherever the free is"*.
+  A block local stays readable after its block (`{ n = 5 } n` is legal), so the function IS its
+  owner's scope by that reading.  loft#1600 asks for the arm's end instead, and `D-heap-27`'s
+  paraphrase of the clause ("for a loop body's or a block's owner, THAT scope's end") reads the
+  same way.  The implementation answers both: a vector LITERAL bound in an arm is released at
+  the arm's end (its backing is not registered when `Scopes::scan_if` asks), every other heap
+  local at the end of the scope around the `if`.
+- **Status:** OPEN, a design call for the owner — may such a local be released at the arm's end,
+  for memory only, or for drops too?  The arm-scope rule is built and OPT-IN:
+  `LOFT_ARM_SCOPE=1` makes a local the program declared, every mention of which lies inside the
+  `if`'s arms, the arm's (`Scopes::confined_to_one_arm`, counted by `var_mentions_in`).  Any
+  mention elsewhere keeps the pre-init, and so do these: a local the arm hands out as its value
+  or through a `return`; a value-branch bind the scan wrote out into the arms (`sunk`); and a
+  compiler temp.  Bound in both arms, a record or a text is each arm's own; a vector is
+  `D-heap-38`.  Default-on, it regressed `1495-a-diverging-arm-beside-a-value-arm-still-yields`
+  (a value `if` whose return the parser rewrote into a buffer copy: value-wrong and an
+  interpreter panic) and `a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer`
+  (release order), and it contradicts `pln125-b-drop`.  The arm cells of
+  `tests/scripts/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.loft` assert
+  it when the switch is set.
+
+### D-heap-35 — OPENED AND CLOSED (2026-09-22, found with loft#1597): a struct-enum vector released a unit variant's literal twice
+
+- **Violates:** (H-Move) — a fresh value placed into an element moves there, and the element's
+  container releases it once.
+- **Where:** a unit variant (`B`) is built in a work-ref and copied into the element; a variant
+  with a payload is written in place.  The copy hands the release over when the destination is
+  an appended element whose type owns a droppable (`scopes::appends_to_element`), and the
+  element variable of a struct-enum vector was typed off a PLACEHOLDER def whenever the
+  container's content did not resolve (`Parser::unique_elm_var`), so the test said no.
+- **Effect:** measured on both backends, identical: `v: vector<E> = [A { id: 1 }, B, A { id: 2 }]`
+  ran B's hook twice, from the vector's cascade and from the work-ref; appended (`v += [B]`)
+  and in a struct field's literal the same.
+- **Status:** CLOSED 2026-09-22.
+- **Closed:** a struct-enum element variable is typed as a record of its enum.  A literal of one
+  of its variants is still built INTO that element, as it was against the placeholder: a
+  variant literal matches an inline element slot typed as its enum (`Parser`'s object-literal
+  `type_matches`).  Otherwise every `v += [A { … }]` goes through a work-ref and a copy and
+  loses its push header — measured on the `enum_record`, `mint_window` and `copy_in_place`
+  emission pins.  Guard
+  `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft` `c10`.
+
+### D-heap-34 — OPENED AND CLOSED (2026-09-22, loft#1597): a vector of vectors never released its inner elements
+
+- **Violates:** (H-Drop) — a container's death releases what it holds.
+- **Where:** a vector's synthesized cascade walks its elements when the element type owns a
+  droppable (`Parser::cascade_element`), and it named only RECORD elements.  A vector element
+  had no cascade to call, so `vector<vector<H>>`, a struct field of that type and every deeper
+  nesting walked nothing.
+- **Effect:** measured on both backends, identical, with no diagnostic:
+  `v: vector<vector<H>> = [[mk(50)], [mk(52)]]` traced `M50 M52 R2` — neither released.  A
+  rebind, a return and a loop the same.
+- **Status:** CLOSED 2026-09-22.
+- **Closed:** a vector element is released through its own collection's cascade
+  (`collection_def_nr`), read as `v[i]` reads it; a struct's vector field of vectors takes the
+  same walk.  A local vector appended as an element (`v += [inner]`) is a collection copy, and
+  hands the release of the store its elements live in to the element on the paths the copy
+  ran (`scopes::collection_copy_ends`, beside `D-heap-23`'s whole-collection copies).  A removed
+  inner vector keeps its hooks unrun (`(H-Drop-Not)`).  Guard
+  `tests/scripts/1597-a-vector-of-vectors-releases-its-inner-elements.loft`.
+
+### D-heap-32 — OPENED AND CLOSED (2026-09-22, loft#1598): a vector moved out and then refilled released the moved elements twice
+
+- **Violates:** (H-Move) — a collection the function owns moves wherever it is placed, and each
+  element is released once.
+- **Where:** a whole-collection copy hands the elements' release over by flagging the backing
+  store they live in (`collection_copy_handoff`, `D-heap-23`).  It named the backing the
+  source's TYPE names, which is the one of its LAST binding.  At the copy, a source rebound
+  later still held an earlier one.
+- **Effect:** measured on both backends, identical: `v = [mk(20)]; w = v; v = [mk(21)]` released
+  20 twice, from `v`'s first backing and from `w`.  A move with no refill was clean.
+- **Status:** CLOSED 2026-09-22 — found the same day with `D-heap-26`'s matrix.
+- **Closed:** the copy flags every literal backing its source is bound to
+  (`collection_copy_backings`, over `vector_literal_backings`).  Only the one it holds is live:
+  a rebind releases the others and sets them to the sentinel (`D-heap-26`), and a refill's re-mint
+  gives its own backing its release back.  Guard
+  `tests/scripts/1598-a-vector-moved-out-and-refilled-releases-the-moved-elements-once.loft`.
+  Found beside it: a vector moved into a local inside an `if` arm is released at the function's
+  end rather than the arm's (loft#1600).
+
+### D-heap-31 — OPENED AND CLOSED (2026-09-22, loft#1596): a vector local rebound away from a call's result never released it
+
+- **Violates:** (H-Drop), its reassignment clause.
+- **Where:** a call delivers a vector into a return buffer of the caller's (`__ref_N`), and the
+  local that names the delivered value is what releases its elements (`drop_hook`'s delivered
+  binding).  After a rebind that local names the new value, so no release was ever emitted for
+  the old one.  In a loop the call is handed the SAME buffer again and cleared the old elements
+  in place, with no hook (`(H-Drop-Not)`).  A local promoted onto the return buffer is that
+  buffer, so a call, a literal or `[]` refilled it in place the same way.
+- **Effect:** measured on both backends, identical: `v = mkv(1); v = mkv(2)` traced
+  `M1 M2 R1 D2`, with 1 never released.  The same for a literal, a copy, `[]`, an `if` arm, and
+  a function returning the local, and every pass of a loop but the last lost its elements.
+- **Status:** CLOSED 2026-09-22 — found the same day with `D-heap-26`'s matrix.
+- **Closed:** `Scopes::vector_call_rebind` takes the displaced value aside before a rebind of a
+  local that may hold a call's result: an alias, where the local's store is one of the call
+  buffers of its type (store identity, since a call that reads its own destination rotates two
+  buffers).  A buffer the rebinding call is handed is detached first, so the callee fills a fresh
+  one, and is handed that store back after the call.  After the new value, the aside's elements
+  are released, every buffer sharing its store is set to the sentinel, and the store is freed.
+  For a local promoted onto the return buffer, `Scopes::promoted_vector_refill` copies the old
+  elements out before a refill (`OpAppendVector` takes their heap along) and releases the copy
+  after.  The first fill displaces nothing: the buffer a caller hands in is emptied at entry and
+  may hold what the caller already released.  Guard
+  `tests/scripts/1596-a-vector-rebound-from-a-call-result-releases-it.loft`.  Found beside it: a
+  function returning such a local rebound in a LOOP re-points it at a buffer of its own, and the
+  caller frees only the one it handed in (loft#1599, a leak).
+
+### D-heap-28 — OPENED AND CLOSED (2026-09-22, loft#1591): a variable rebound to a `??` chain that holds itself never released the kept record on `--native`
+
+- **Violates:** (H-Move), and `@FR-O-NoDiverge` — the two backends disagree.
+- **Where:** `a = a ?? b ?? mk()` is `(a ?? b) ?? mk()`, so the subject `(a ?? b)` is hoisted into a
+  `__ncc_N` temp.  The oracle calls the chain `Own::Join`, which makes the rebind a view, so `a`
+  carries an owner witness (`@FR-O-Witness`).  The chain's one copy sits in a different place on
+  each backend.  The interpreter aliases the hoist (`VarRef a; PutRef __ncc_1`), and native
+  deep-copies it (`OpDatabase` + `OpCopyRecord`, `generation/dispatch.rs`'s record-bind arm).  On
+  native the witness's store-identity test sees a new store and releases the witness without its
+  hook (the hand-off flag is set).  The copy `a` now holds has no owner.
+- **Effect:** measured: `a: H? = mk(17); b: H? = null; a = a ?? b ?? mk(18)` traces `M17 R17 D17`
+  on the interpreter and `M17 R17` on `--native`.  `a = x ?? a ?? mk(3)` behaves the same.  Clean
+  on both backends: the same chain bound to another variable, every chain without the
+  destination, the destination absent, and a single `??` over itself (`D-heap-15`, `p_i2`).
+- **Status:** CLOSED 2026-09-22 — found the same day while closing `p_i2`.
+- **Closed:** the chain is rewritten before any analysis reads the function
+  (`scopes::reassociate_self_coalesce`), so neither the hoist nor the witness is involved.  In
+  `if present(p) { p } else { q }` only the `q` arm can be absent, so `(p ?? q) ?? d` equals
+  `if present(p) { p } else { q ?? d }`, with the same value and the same evaluation order.
+  With the destination as the HEAD the rebind becomes `if present(a) { } else { a = rest }`, where
+  `rest` is the chain without its head and no longer names `a`.  With the destination further
+  along, and every operand before the last a variable, the chain is right-associated all the
+  way down, so each arm is a variable or the last default and the per-arm write-out takes it,
+  its `a` arm the identity (`D-heap-15`, `p_i2`).  A chain that names no destination keeps its
+  form.  Measured on both backends: the destination first, second, third and last, a call in
+  the middle, the head absent, and in a loop.  Guard
+  `tests/scripts/1591-a-coalesce-chain-that-holds-its-destination-releases-once.loft`.
+
+### D-heap-29 — OPENED AND CLOSED (2026-09-22, loft#1592): in a loop, a join over a source declared outside it, moved on, released twice
+
+- **Violates:** (H-Move), and `@FR-O-Complete`.
+- **Where:** in a loop, `Scopes::arm_source_outlives_loop` declines to write a first-bind join out
+  per arm and lifts it instead (`lift_join_arm_tails`).  The binding then borrows the per-arm
+  temps, and the minting call's temp owns its store.  The decline stands in for the `(H-Spent)`
+  refusal of a name moved on every pass, and the stand-in does not hold when the body REFILLS
+  the source before the next pass.  `x = a ?? mk(); a = x` copies the borrow into `a`, so both
+  `a` and the temp release the record, and on native both free its store.
+- **Effect:** measured: `a: H? = null; for i in 0..1 { x = a ?? mk(11 + i); a = x }` traces
+  `M11 R11 D11 D11` on both backends.  Two passes trace `M11 R11 D11 R11 D11 D11` on the
+  interpreter and panic on `--native` (`allocation.rs:1622`, store index 65535).  Clean on both
+  backends: the unrolled form, `a` declared in the loop, the join without `a = x`, and a plain
+  `x = mk(); a = x` in the same loop.
+- **Status:** CLOSED 2026-09-22 — found the same day while closing `p_i2`.
+- **Closed:** the scan records, for each loop it enters, the variables the body assigns on
+  EVERY pass (`loop_body_refills`): a `Set` among the loop's own statements or those of its body
+  block, in a body with no `continue` that could skip it.  `arm_source_outlives_loop` no longer
+  counts such a source, so the join is written out per arm, and the move into `x` and back into
+  `a` is the one-pass move the per-path flags already decide.  Measured clean on both backends:
+  one and two passes, the refill before the join, the refill from another value, a nested loop
+  refilled inside, a `break` after the refill, `while`, and the `if` spelling.  A source spent on
+  every pass (a program `(H-Spent)` refuses) keeps the lift.  Guard
+  `tests/scripts/1592-a-join-in-a-loop-over-a-refilled-source-releases-once.loft`.
+
+### D-heap-30 — OPENED AND CLOSED (2026-09-22, loft#1594): a tuple member's hook ran twice — a returned tuple local, and a destructuring `for`
+
+- **Violates:** (H-Drop) — one hook per structure holding a lease — and (H-Move)'s return
+  clause.
+- **Where:** two shapes, one member release (`scopes::tuple_owned_elem_frees`).
+  - A returned tuple local.  `a = (1, mk(1)); a` copies each member into the return record
+    (`synthetic_tuple_return`), and `a`'s scope end released the member again.  The copy read
+    the member through a stash (`emit_tuple_set_ops`), so the hand-off the scan records stopped
+    the stash and not `a`.  A nullable member was copied through a stash of its own, under its
+    own null test.  A member with no claimant to disarm (a bufferless call, a generator's
+    advance) had no buffer to mark at all.
+  - A destructuring `for (i, hh) in v` over a `vector<(integer, H)>`.  Each binder was created
+    as an OWNER and released its member as its iteration ended, and `v` released it again.
+- **Effect:** measured identically on both backends, before loft#1589 as after: a returned
+  local traced `m1 d1 B b1:1 … d1`, and a destructuring loop `d5 d6` per pass and again at `v`'s
+  end.
+- **Status:** CLOSED 2026-09-22 — found while closing loft#1589, whose generator tuple `for`
+  variable reached the same release.
+- **Closed:** a tuple VARIABLE is read in place by `emit_tuple_set_ops`, so each member copy
+  names it.  The scan honours a returned tuple's copies as it does a whole-tuple bind's
+  (`synthetic_tuple_return` beside `tuple_member_move`).  A copy into a place whose container
+  releases it (`copy_hands_off`) hands a member off like one into a buffer.  A stash names the
+  member it holds, and a nullable member's own null test is entered (`walk_member_writes`).  A
+  member with no claimant drops its pairing, keeping its free and losing its hook.  A binder
+  read off a loop variable's member is a view of that variable (`(B-View)`).  Measured clean on
+  both backends: one and two heap members, a nullable member present and absent, a bind then a
+  return, the destructuring loop, and the controls, a returned literal and a plain `for`.  Guard
+  `tests/scripts/1594-a-tuple-member-is-released-once.loft`.
+
+### D-heap-27 — OPENED AND CLOSED (2026-09-22, loft#1588): a tuple's member backings were released at the function's head turn, not the tuple's
+
+- **Violates:** (H-Drop), its scope-end clause — *"the owner's scope end, in reverse declaration
+  order"*, and for a loop body's or a block's owner, THAT scope's end.
+- **Where:** a tuple's vector member lives in a `__vdb_N` backing, and a record member a
+  whole-tuple bind (`u = t`) copies lives in a `__ref_p2_N` one (loft#1361).  Both are registered
+  by their null-init at the function's head, so `get_free_vars` swept them after every other
+  local, and a tuple declared in a block or a loop body left them to the function's end.  The
+  `D-heap-21` and `D-heap-22` cures read a VECTOR local's one dep, and a tuple has no dep list of
+  its own.
+- **Effect:** measured on both backends, identical: `b = mk(11); t = (mk(12), 1); u = t` released
+  `11 12` for the rule's `12 11`; `t = (mk(21), 1); u = t; t = (mk(22), 2)` released `22 21` for
+  `21 22`; in a loop body the last pass's member was released after the loop, and in a block after
+  the block's successor ran — for a vector member even with no move (`if … { t = ([mk(1)], 1) }`).
+  The counts were right.  Along the way a SECOND defect showed, hidden by the first: a whole-tuple
+  bind of a vector member copied the elements into a backing minted as `main_vector<vector<T>>`
+  (`vector_db` takes the ELEMENT type and was handed the vector's), which carried no hook, so the
+  source's backing released them at the SOURCE's turn and the copy never did — a double release
+  wearing a single one, `(H-Move)` unmet.
+- **Closed:** each of a tuple's member backings takes the tuple's turn in the sweep, read after the
+  literal is scanned so a refill's backing lands at the tuple and not at the refill; a tuple
+  leaving an inner scope releases a member backing registered outside it there — a vector's
+  emptied, a record's freed and reset to the null sentinel — unless a variable of a scope that
+  stays open views it; the tuple member copy's backing is typed by its element, and a whole-tuple
+  bind (`tuple_member_move`) moves a vector member's release to the copy, paired through
+  `Scopes::tuple_member_now` because the tuple's type carries only its LATEST assignment's deps.
+  Order within one tuple is reverse member order, as a struct's fields are: seven cells of
+  `a-tuple-member-releases-once-beside-any-neighbour.loft` had pinned whatever the head
+  registration gave.  A refused copy of a vector member (`t2 = (tt.0, 2)`) now releases twice with
+  the rest of `D-heap-8`'s `c_tuple_*` family, where the hook-less backing gave one.
+  Guard `tests/scripts/1588-a-tuple-releases-at-its-own-turn.loft`.
+
+### D-heap-22 — OPENED AND CLOSED (2026-09-21, loft#1565): a vector declared in a loop body released its elements during the NEXT pass, not at the end of its own
+
+- **Violates:** (H-Drop), its scope-end clause — the owner of a loop-body local dies at the end
+  of each pass, in reverse declaration order.
+- **Where:** the vector's backing — its `__vdb_N`, or the `__ref_N` buffer a call delivered it
+  through — is registered at FUNCTION scope so the store is reused across passes, and nothing
+  released the elements at the pass end.  A literal's were released by the next pass's re-mint
+  (its displaced snapshot), the last pass's at the function's end.  A call-delivered vector's were
+  never released: D-heap-13's release runs over the BINDING, which is out of scope by the time the
+  backing is swept.
+- **Effect:** measured on both backends, identical: `for i in 0..2 { b = mk(10 + i); v: vector<H>
+  = [mk(20 + i)]; }` released `10 20 11 21` for the rule's `20 10 21 11`.  A `break` released the
+  vector after the loop's successor ran.  `v = mkv(20 + i)` in a loop never released 20 or 21.
+  Where the vector was the pass's first statement the order came out right by accident.
+- **Closed:** `get_free_vars` releases a vector local whose one dep is a backing registered in an
+  outer scope (`outer_collection_backing`) at the local's own scope exit: normal end, `break` and
+  `continue` alike, in its declaration turn.  Only a local the program declared, and never an
+  argument backing — measured wrong both ways: a compiler temp with that dep is an INNER vector
+  of a nested literal, owned by the outer one, and clearing it emptied `t[0..2][0]`; a literal
+  backing renamed onto the return buffer is the caller's, and releasing it emptied the vector
+  being returned.  And only where the release runs a hook: for any other element type nothing
+  observable is late.
+  The release is the backing's `scope_end_drop`, so a hand-off that stopped it still stops it.
+  The vector is then emptied (`OpClearVector` runs no hooks, `H-Drop-Not`), so the re-mint and the
+  backing's own release find nothing to release a second time; the store is still reused.  Guard
+  `tests/scripts/1565-a-loop-body-vector-releases-its-elements-at-the-end-of-its-own-pass.loft`.
+
+### D-heap-18 — OPENED AND CLOSED (2026-09-21): a local bound from a join, placed again, released twice
+
+- **Violates:** (H-Move) — every arm of `x = a ?? b` (or `x = if c { a } else { b }`) is a value
+  the function owns, so `x` owns what the join hands it, and placing `x` again moves it on.
+  One release, by whatever holds it last.
+- **Where:** the arm lift (`Scopes::lift_join_arm_tails`).  It gives each arm a `__lift_N` temp,
+  keeps each arm's release with the arm's SOURCE and makes `x` a BORROW of the temps.  That is
+  right for `x` read in place, and wrong the moment `x` is placed: `y = x`, `S { h: x }`,
+  `v += [x]` and `return x` each stopped `x`, which released nothing, while the source still
+  released.  The author's own statement form, `if c { x = a } else { x = b }`, was clean
+  throughout: there `x` owns, and loft#1515's per-path flags stop the sources.
+- **Effect:** measured 2026-09-21 on the 144-cell `bound` family of `ownership_drop_gate`
+  (`b_*`: the `??`, the value `if` and the statement form; first bind and reassignment; a
+  call, a variable and a literal default; both paths; four placements): **63 cells released
+  twice** on the tree before, some also before a read, on both backends and with no diagnostic.
+  None of the gate's earlier families placed a join-bound local a second time.
+- **Closed:** a FIRST bind of a type that owns a droppable is written out to the statement
+  form, as a reassignment already was (`sink_set_into_arms`, then a rescan so the analyses
+  before the scan read that form).  A literal default arm is written out whole, and the
+  binding adopts its construction as a single bind of the literal does.  Not where an arm's
+  source outlives the loop the bind runs in: that places one name on every iteration, which
+  `(H-Spent)` refuses; until that error is built, the lift's keep-with-the-source is the answer
+  that releases once (`p_l1`, which the rewrite otherwise turned into a use after release).
+  After: 144 of 144 clean on both backends.
+
+### D-heap-19 — OPENED AND CLOSED (2026-09-21): a copy into a local promoted onto the return buffer moved nothing
+
+- **Violates:** (H-Move), (H-Drop).
+- **Where:** `copy_moves_drop_from` refuses a hand-off into an ARGUMENT, and exempts the return
+  buffer only when it is named `__ref…`.  A local promoted onto the buffer
+  (`x = …; return x` becomes `fn f(…, x: H)`) is that buffer under the local's name.
+- **Effect:** `a = mk(5); x = mk(1); x = a; return x` released `5` twice, the first time before
+  the caller read it, on both backends; the same under a branch (`if c { x = a }`).
+- **Closed:** `copy_moves_drop_from` asks `promoted_ret_buffer`, the one home `displaced_drop`
+  already used for the same question (D-heap-7's `a = mk(1); a = mk(5); return a`), so every
+  reader of a copy agrees that the caller adopts what the promoted local holds.
+
+### D-heap-20 — OPENED AND CLOSED (2026-09-21): a literal rebuilt into a local promoted onto the return buffer lost what it displaced
+
+- **Violates:** (H-Drop), its reassignment clause.
+- **Where:** a literal into a promoted return buffer is guarded — a record the buffer already
+  holds is written in place, an absent one is minted (`parse_object`, @PLN157 § V-d) — and
+  `Scopes::in_place_rebuild` recognised only the unguarded `OpDatabase`.  The guard's premise
+  holds at entry, where a record in the buffer is the caller's; after `x = mk(1)` it is this
+  frame's.
+- **Effect:** `x = mk(1); x = H { id: 7 }; return x` never released `1`, on both backends; a
+  caller rebinding from such a callee (`r = f(1); r = f(2)`) lost both.
+- **Closed:** `in_place_rebuild` looks through the guard.  `displaced_drop` then releases only
+  a record this frame bound, so the caller's offered record at entry stays untouched.
 
 ### D-heap-17 — OPENED AND CLOSED (2026-09-17): a self-append read its source through the record number captured before the growth moved it
 
@@ -719,7 +1208,7 @@ CLOSED 2026-09-17, below.
   across 900 000 refills, and twelve value cells); plan cells
   `plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
 
-### D-heap-8 — OPEN (2026-09-15): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
+### D-heap-8 — OPEN (2026-09-15, loft#1568): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
 - **Violates:** (H-Copy-Refuse).
 - ⚠ **NARROWED 2026-09-17, when the owner ruled on the copy rules.**  `(H-Move)` now moves a value
@@ -800,7 +1289,7 @@ CLOSED 2026-09-17, below.
   and then the refusal on by default, with the switch left as the bisect step for a program the
   rules refuse.
 
-### D-heap-9 — OPEN (2026-09-15): `OpCopy` is not a hook
+### D-heap-9 — OPEN (2026-09-15, loft#1569): `OpCopy` is not a hook
 
 - **Violates:** (H-Copy-Lease), (H-Elide).
 - **Where:** `parser/definitions.rs` checks `OpDrop`'s signature (`check_drop_signature`) and
@@ -962,7 +1451,7 @@ CLOSED 2026-09-17, below.
   to cascade over.  `p_v5`–`p_v7` are clean on both baselines and `p_v8`/`p_v9` still read one
   release each.
 
-### D-heap-14 — OPEN (2026-09-17): a hand-over written under a branch leaks the source on the path that does not run
+### D-heap-14 — OPENED 2026-09-17, CLOSED 2026-09-21: a hand-over written under a branch leaks the source on the path that does not run
 
 - **Violates:** (H-Drop), and (H-Spent)'s per-path clause.
 - **Where:** `Scopes::mint_handoff_flag` arms a per-path `__hoff_` flag only for a conditional bind
@@ -983,15 +1472,21 @@ CLOSED 2026-09-17, below.
   control either, so their silence is not a verdict.  What is skipped is the HOOK while the
   record's memory is still freed, which is the blindness `D-heap-13` already records.  The hook
   trace is the only channel that shows it.
-- **Status:** OPEN — found while measuring `D-heap-8`'s population.  No corpus guard exercises the
-  shape: the only conditional appends among the 38 hook-declaring files are
+- **Status:** CLOSED 2026-09-21 — found while measuring `D-heap-8`'s population.  No corpus guard
+  exercised the shape: the only conditional appends among the 38 hook-declaring files are
   `bytes += [c as u8 ?? 0]` in the trace helper, which appends bytes rather than a droppable.
-- **Removal:** the per-path flag armed for every destination a hand-over can have, not only a bind
-  to a local.  `(H-Spent)` makes that a rule rather than an implementation detail: a name spent on
-  one path is live on the other, and the release must run on exactly the paths that did not move
-  it.
+- **Closed:** the per-path flag is armed for every destination a hand-over can have.  A user
+  variable whose type owns a droppable, handed to a field, an element, a literal or a return
+  buffer by a copy inside a branch arm (`arm_container_handoffs`), gets loft#1515's flag; the
+  collector keeps it out of the static set (the pair `(u16::MAX, source)`), and the scan sets the
+  flag right after the copy runs.  Which copies stop what is one question with one home,
+  `copy_record_handoff`, read by the collector and by the flag write alike.  Measured on the new
+  `handover` family of `ownership_drop_gate` (`k_*`: eight destinations × `if`, `if`/`else` and a
+  `match` arm × taken and skipped, a `return` from an arm, a loop that moves on some passes): 24
+  of its 56 cells lost the source on the tree before, on both backends, and none does after.
+  Guard `tests/scripts/a-move-in-one-arm-leaves-the-other-path-releasing.loft`.
 
-### D-heap-15 — OPEN (2026-09-17): a value the rules MOVE is still copied, and both structures release it
+### D-heap-15 — OPEN (2026-09-17, NARROWED 2026-09-21, loft#1563): a value the rules MOVE is still copied, and both structures release it
 
 - **Violates:** (H-Move), and through it (H-Lease).
 - **Where:** not established.  What is measured is the population, below; the shapes share that
@@ -1023,14 +1518,71 @@ CLOSED 2026-09-17, below.
   it appears to, where silence reads as a pass; it is worse only because a verdict does not even
   look like silence.  The 23 cells here and in `D-heap-16` were the measure of it: they appeared
   the moment the verdict narrowed, having been there all along.
+- ⚠ **NARROWED 2026-09-21 — the JOIN half is closed.**  17 of the 21 cells placed a join into a
+  container: `Hold { h: a ?? b }`, `v += [if c { a } else { mk() }]`.  The parser copies such a
+  join as ONE value (`OpCopyRecord(<join>, dest, tp)`), whose source names no variable, so no
+  release was handed over on any path.  The author's own statement spelling,
+  `if c { v += [a] } else { v += [b] }`, was measured clean on all twelve cells of the same
+  matrix, so the join is now written out to it before any analysis reads the function
+  (`scopes::write_out_joined_copies`), and each arm is the plain copy that `D-heap-14`'s per-path
+  flag already decides.  A bare minting call arm is given the owner a view-typed join gives it
+  (`{ __ref_N = call; __ref_N }`), which also closed the STORE that `v += [a ?? mk()]` leaked on
+  the path that made it.  All 17 are clean on both backends, and so are 11 of `D-heap-8`'s cells
+  on the path where the value the join chose was the function's own (`q_default_field_*`,
+  `q_default_param_*`).  **Open:** `p_v2` (`d = v`, then `v` grown — `(H-Spent)` refuses it;
+  `p_v1`, the same bind without the growth, closed with `D-heap-23`), `p_o2` (`u = t` of a tuple)
+  and `p_i2` (`a = a ?? mk()`, a variable rebound to a `??` over itself).  None of them is a
+  join.
+- ⚠ **NARROWED again 2026-09-22 — the tuple bind is closed (`p_o2`, loft#1563).**  `u = t` of a
+  tuple is lowered onto one copy per member (loft#1361), and a member names its work-ref in the
+  tuple's type — except a member its own CALL minted (`t = (mk(11), 1)`), whose pairing lives only
+  in the scan's `tuple_call_mint`.  So that copy moved nothing: both sides ran the hook, and a
+  refill released the moved member again before the copy was read (`p_o2`; a literal member
+  measured the same).  `scopes::call_minted_member_handoff` makes the member's buffer the source
+  the copy moves the release from, `tuple_owned_elem_frees` skips a handed-off buffer's hook, and
+  an unconditional refill retires the hand-off for the members it mints.  Only the whole-tuple
+  bind moves: `(t.0, 2)` lowers onto the same copy but spells a copy of a container's member,
+  which `(H-Copy-Refuse)` refuses, so the bind's builder names its blocks `tuple_member_move` and
+  the hand-off reads that name (`c_tuple_tuplem` stays with its `c_tuple_*` siblings).  And only
+  where the copy is CERTAIN to run (`walk_unconditional`, in the tuple's own scope): a move
+  written in an `if` arm keeps both releases on the path that runs it, because moving it there
+  lost the release on the path that skips the arm.  Guard
+  `tests/scripts/1563-a-moved-tuple-releases-a-call-minted-member-once.loft`.  **Open:** `p_v2`
+  and `p_i2` (programs `(H-Spent)` and `(H-Copy-Refuse)` refuse, `D-heap-8`'s errors), and that
+  tuple move written in an arm.
+- ⚠ **NARROWED again 2026-09-22 — the variable rebound to a join over ITSELF is closed (`p_i2`,
+  loft#1563).**  `p_i2` is not a copy: `a` is a local the function owns, so `(H-Move)` moves it
+  and it owes one release (`PILOT_ONCE`).  A rebind from a value branch is written out per arm
+  (`@FR-O-Complete`), and `sink_set_into_arms` declined an arm whose tail is the binding itself.
+  The value form then ran instead, with two outcomes and both wrong.  For `a = a ?? mk()`, the
+  rebind snapshotted `a` as displaced and released it on the path where the new value IS that
+  record: early, and again at scope end.  For `a = if c { a } else { mk() }`, the join's type
+  named `a`, so `a` read as a borrow of itself and released nothing at all.  Written out, that
+  arm is `a = a`, the identity `(B-Copy)` gives no second structure (#330's elision).  It moves,
+  displaces and releases nothing, and each other arm is the plain rebind the author's own
+  `if c { } else { a = mk() }` makes.  The binding's dep on itself is dropped with the arm.
+  Measured clean on both backends: every arm side of `??` and `if`, each operand present or
+  absent, a local on the other arm (`a = a ?? b`, `a = b ?? a`), in a loop, in an `if` arm, and
+  a record holding a droppable member.  Guard
+  `tests/scripts/1563-a-variable-rebound-to-a-join-over-itself-releases-once.loft`.
+  **Open:** `p_v2` (`(H-Spent)`) and the tuple move written in an arm.  A `??` CHAIN whose
+  hoisted subject names the destination (`a = a ?? b ?? mk()`) is a different defect, a backend
+  split at the hoist, and has its own entry: `D-heap-28`.
 - **Removal:** the copy that makes the second structure, removed wherever the rules move the
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.
 
-### D-heap-16 — OPEN (2026-09-17): the fresh value of a `??` DEFAULT arm is never released
+### D-heap-16 — OPENED 2026-09-17, CLOSED 2026-09-21: the fresh value of a `??` DEFAULT arm is never released
 
 - **Violates:** (H-Drop).
-- **Where:** not established.
+- **Where:** the arm lift (`Scopes::lift_join_arm_tails`).  `x = a ?? mk(7)` over a LOCAL `a` is
+  typed as `a`'s own type, so the parser reads the join as owned and leaves the call arm for `x`
+  to own.  The lift then rewrites `x` into a borrow of the per-arm temps and gives a temp only
+  to the `a` arm.  The call's answer lives only in the value the join hands over: its `__ref_N`
+  buffer starts as the null sentinel (loft#1085), and a callee handed null mints a store of its
+  own.  So nothing owned it, and the buffer's scope-end free was paired with `x` besides.  The
+  `if` spelling of the same join was clean, because the parser types its `a` arm as a view and
+  gives the call arm an owner (`join-arm-owner`) before the lift runs.
 - **Effect:** the value the default arm builds owes one release and runs none.  Measured on both
   backends: `a: H? = null; x = a ?? mk(7)` traces `M7 R7` — minted, read, never released — and
   the loop form `for i in 0..2 { x = a ?? mk(27 + i) }` leaks once per iteration
@@ -1045,9 +1597,16 @@ CLOSED 2026-09-17, below.
   (`g = fn(q: P?) -> P { q ?? P{} }`, argument witness closed by loft#1248, capture witness
   tracked there).  That is a lambda leaking a store per call; this is a plain function leaving a
   HOOK unrun.  Whether one cure reaches both is not established.
-- **Status:** OPEN — exposed 2026-09-17 by narrowing the refusal, the same way as `D-heap-15`.
-- **Removal:** the default arm's value released at the scope end of whatever binds it, on both
-  backends, with the present-arm control held at one release.
+- **Status:** CLOSED 2026-09-21 — exposed 2026-09-17 by narrowing the refusal, the same way as
+  `D-heap-15`.
+- **Closed:** when the lift turns the binding into a borrow, it gives each bare minting call arm a
+  temp of its own as well, which owns the store on the path that made it and is null on every
+  other (`Scopes::lift_owned_call_tails`).  `p_l2`, `q_default_local_call_local` and
+  `q_default_param_call_local` moved LOST → clean on both backends, with the present-arm control
+  at one release.  ⚠ The missing owner was never the hook's alone: the STORE leaked too, for
+  EVERY record type — `a: P? = null; x = a ?? mkp(n)` in a function called 1000 times left
+  `P×1000` unfreed on both backends — and that is closed with it.  The fix also exposed
+  `D-heap-18` in four cells, which had released once only because their store had no owner.
 
 ### D-heap-11 — OPENED 2026-09-15, CLOSED 2026-09-17: a view of a droppable member is turned into a copy when its container is disturbed
 

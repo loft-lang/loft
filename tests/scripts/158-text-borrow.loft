@@ -1,0 +1,250 @@
+// `@FR-R-TextBorrow` — the loop variable of `for p in vector<text>` (and of a lazily split
+// text) BORROWS its element on `--native`: no `String` is built per element, and the walk
+// holds the vector's header, length and base like any other.  Every cell hand-computes its
+// value; the interpreter copies the element as the IR spells it and is the oracle.  The
+// cells walk the axes the rewrite has: what the BODY does with `p` (size, compare, prefix,
+// format, bind to another local, match on it, hand it to a user function by value, walk its
+// characters, split it again), what must DECLINE and still answer right (a rebind of `p`,
+// an append to `p`, a `&p` link, `p` handed to a `&text` parameter, `p` in a tuple, `p`
+// returned, a store written in the body — another vector's, the walked vector's, and the
+// CURRENT element's, which is the cell that reads differently the moment the store
+// condition is dropped), a null element, an empty walk, and a generator.
+// `LOFT_NO_TEXT_BORROW=1`, `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`, `LOFT_STRICT_STORES=1`
+// and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+//
+// @falsified-at: hand-measured (2026-09-22) — `hoist::borrowed_text_walks` sabotaged to
+// skip the store condition: native EXITS 1 WITH NO OUTPUT at t17 (the borrow dangles once
+// the 64 KiB overwrite grows the store; with a short overwrite the old bytes survive and
+// the value channel reads `ok`, which is why the cell grows the store), and
+// `LOFT_HOIST_VERIFY=1` panics at the walk's release, `borrowed text element is stale —
+// … (held 3 bytes at …, now 65536 bytes at …)`; the interpreter and `LOFT_NO_TEXT_BORROW=1`
+// print `ok` on the same build.  Restored, every cell is exact on both backends under every
+// switch above.
+
+struct Row { label: text, n: integer }
+
+// t1 — the plain walk: size, a compare, a prefix test.
+fn t1(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    n += size(p);
+    if p == "alpha" { n += 1000; }
+    if p.starts_with("w1") { n += 100; }
+  }
+  n
+}
+
+// t2 — `p` formatted, bound to another local, and matched on: every one a text VALUE.
+fn t2(words: vector<text>) -> text {
+  out = "";
+  for p in words {
+    q = p;
+    out += "{p}/{q}:";
+    out += match p { "w1x" => "X", "alpha" => "A", _ => "-" };
+    out += ";";
+  }
+  out
+}
+
+// t3 — `p` handed to a user function by value, and its characters walked.
+fn vowels(s: text) -> integer {
+  n = 0;
+  for c in s { if c == 'a' || c == 'e' || c == 'i' { n += 1; } }
+  n
+}
+fn t3(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    n += vowels(p);
+    for c in p { if c == 'w' { n += 10; } }
+  }
+  n
+}
+
+// t4 — a lazily split text, each piece a borrow; a piece split again inside.
+fn t4(src: text) -> integer {
+  n = 0;
+  for line in src.split('\n') {
+    n += size(line) + 1;
+    for w in line.split(' ') { if w.starts_with("b") { n += 100; } }
+  }
+  n
+}
+
+// t5 — the standard library's own walk of texts.
+fn t5(words: vector<text>) -> text { words.join(", ") }
+
+// t6 — DECLINES: `p` rebound in the body.  Both backends read the rebound value.
+fn t6(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    p = p + "!";
+    n += size(p);
+  }
+  n
+}
+
+// t7 — DECLINES: `p` appended to.
+fn t7(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    p += "??";
+    n += size(p);
+  }
+  n
+}
+
+// t8 — DECLINES: a `&p` link.
+fn t8(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    l = &p;
+    l += "-";
+    n += size(p);
+  }
+  n
+}
+
+// t9 — DECLINES: `p` handed to a `&text` parameter.
+fn grow(s: &text) { s += "+"; }
+fn t9(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    grow(p);
+    n += size(p);
+  }
+  n
+}
+
+// t10 — DECLINES: `p` in a tuple literal.
+fn t10(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    t = (size(p), p);
+    n += t.0 + size(t.1);
+  }
+  n
+}
+
+// t11 — DECLINES: `p` returned from the body.
+fn t11(words: vector<text>, want: text) -> text {
+  for p in words {
+    if p == want { return p; }
+  }
+  "none"
+}
+
+// t12 — DECLINES: the body writes ANOTHER vector's store.
+fn t12(words: vector<text>) -> integer {
+  acc: vector<integer> = [];
+  for p in words {
+    acc += [size(p)];
+  }
+  n = 0;
+  for x in acc { n += x; }
+  n
+}
+
+// t13 — DECLINES: the body overwrites a LATER element of the walked vector (an append
+// is refused by the language).  Both backends bind that element after the write.
+fn t13(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    if p#first { words[4] = "zzzzzz"; }
+    n += size(p);
+  }
+  n
+}
+
+// t14 — a null element: the sentinel text, sized as its one character.
+fn t14(words: vector<text?>) -> integer {
+  n = 0;
+  for p in words {
+    if p == null { n += 1000; } else { n += size(p ?? ""); }
+  }
+  n
+}
+
+// t15 — an empty walk.
+fn t15(words: vector<text>) -> integer {
+  n = 7;
+  for p in words { n += size(p); }
+  n
+}
+
+// t16 — a walk over a record's vector field, the loop nested in a record walk.
+fn t16(rows: vector<Row>, words: vector<text>) -> integer {
+  n = 0;
+  for r in rows {
+    for p in words {
+      if p.starts_with(r.label) { n += r.n; }
+    }
+  }
+  n
+}
+
+// t17 — DECLINES: the body overwrites the CURRENT element after `p` is bound, with a text
+// large enough to grow the store.  The interpreter's copy reads the original; a borrow
+// that survived the store write would dangle: the cell that distinguishes the store
+// condition from luck.  (A SHORT overwrite leaves the old bytes in place and the value
+// channel cannot see it — only the checking form can; the growth is what makes the value
+// channel see it too.)
+fn t17(words: vector<text>, fill: text) -> integer {
+  n = 0;
+  for p in words {
+    words[p#index] = fill;
+    n += size(p);
+    if p.starts_with("w1") { n += 100; }
+  }
+  n
+}
+fn big(n: integer) -> text { out = ""; for _ in 0..n { out += "0123456789abcdef"; } out }
+
+// t18 — DECLINES: a generator.
+fn t18(words: vector<text>) -> iterator<integer> {
+  for p in words { yield size(p); }
+}
+
+fn main() {
+  ws: vector<text> = ["w17", "w1x", "alpha", "w", "béta"];
+  // t1: 3+3+5+1+5 = 17; alpha +1000; w17, w1x +200 → 1217
+  assert(t1(ws) == 1217, "t1 {t1(ws)}");
+  assert(t2(ws) == "w17/w17:-;w1x/w1x:X;alpha/alpha:A;w/w:-;béta/béta:-;", "t2 {t2(ws)}");
+  // t3: vowels 0+0+2+0+1 = 3; a 'w' in w17, w1x, w → +30 → 33
+  assert(t3(ws) == 33, "t3 {t3(ws)}");
+  // t4: "ab cd\nbee\n" → lines "ab cd" (6), "bee" (4), "" (1) = 11; b-words: bee → +100 → 111
+  assert(t4("ab cd\nbee\n") == 111, "t4 {t4("ab cd\nbee\n")}");
+  assert(t5(ws) == "w17, w1x, alpha, w, béta", "t5 {t5(ws)}");
+  // t6/t7: each element one/two bytes longer: 17+5 = 22, 17+10 = 27
+  assert(t6(ws) == 22, "t6 {t6(ws)}");
+  assert(t7(ws) == 27, "t7 {t7(ws)}");
+  // t8/t9: written through the link / the parameter → +1 each → 22
+  assert(t8(ws) == 22, "t8 {t8(ws)}");
+  assert(t9(ws) == 22, "t9 {t9(ws)}");
+  // t10: 2 × 17
+  assert(t10(ws) == 34, "t10 {t10(ws)}");
+  assert(t11(ws, "alpha") == "alpha" && t11(ws, "zeta") == "none", "t11 {t11(ws, "alpha")}");
+  assert(t12(ws) == 17, "t12 {t12(ws)}");
+  // t13: 3+3+5+1 + size("zzzzzz") = 18; the last element is overwritten before its turn
+  w2: vector<text> = ["w17", "w1x", "alpha", "w", "béta"];
+  assert(t13(w2) == 18, "t13 {t13(w2)}");
+  assert(w2[4]? == "zzzzzz", "t13 element {w2[4]?}");
+  wn: vector<text?> = ["ab", null, "cde"];
+  assert(t14(wn) == 1005, "t14 {t14(wn)}");
+  empty: vector<text> = [];
+  assert(t15(empty) == 7, "t15 {t15(empty)}");
+  rows: vector<Row> = [Row { label: "w1", n: 3 }, Row { label: "b", n: 40 }, Row { label: "zz", n: 500 }];
+  // t16: w1 matches w17, w1x → 6; b matches béta → 40 → 46
+  assert(t16(rows, ws) == 46, "t16 {t16(rows, ws)}");
+  w3: vector<text> = ["w17", "w1x", "alpha", "w", "béta"];
+  // t17: the oracle's copy sizes each ORIGINAL element, 3+3+5+1+5 = 17, and w17, w1x
+  // carry the prefix, +200 → 217.  Elements after the current one are overwritten by
+  // their own iteration, never before, so the copy sees every original.
+  fill = big(4096);
+  assert(t17(w3, fill) == 217, "t17 {t17(w3, fill)}");
+  assert(size(w3[0]?) == 65536 && size(w3[4]?) == 65536, "t17 elements {size(w3[0]?)}");
+  n18 = 0;
+  for x in t18(ws) { n18 += x; }
+  assert(n18 == 17, "t18 {n18}");
+  println("ok");
+}

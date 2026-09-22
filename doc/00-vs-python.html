@@ -101,10 +101,10 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> Field access is checked at compile time — typos in field names are caught before any code runs. Struct memory layout is fixed and unboxed; integer and float fields live directly in memory with no heap allocation overhead. Methods are ordinary named functions — they can be added from any file, at any time, without modifying the struct definition.</p>
-<p class="down"><strong>Downside</strong> No inheritance, no <code>__repr__</code>, no operator overloading (<code>__add__</code>, <code>__eq__</code>, etc.), no properties or descriptors. Python's <code>@dataclass</code> generates <code>__init__</code>, <code>__repr__</code>, and <code>__eq__</code> automatically. Loft structs are data holders; all display and comparison logic must be written by hand. Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.</p>
+<p class="down"><strong>Downside</strong> No inheritance, no properties or descriptors. Printing needs no <code>__repr__</code> — <code>"{p}"</code> renders every field — and a struct can overload operators by defining them (<code>OpAdd</code> for <code>+</code>, <code>OpEq</code> for <code>==</code>, <code>OpLt</code> for <code>&lt;</code>). But <code>==</code> on a <code>struct</code> compares identity until it defines <code>OpEq</code>, where Python's <code>@dataclass</code> generates a field-by-field <code>__eq__</code> for you; a <code>value struct</code> compares its fields without one. Python also supports plain dicts as lightweight records, which is often more convenient for ad-hoc data.</p>
 </div>
 
-<h2 id="loops">4. <code>while</code> loop — yes; no <code>loop</code> or <code>while ... else</code></h2>
+<h2 id="loops">4. <code>while</code> loop — yes, and <code>while true</code>; no <code>while ... else</code></h2>
 <div class="compare">
 <div>
   <p class="lang-label loft-label">Loft</p>
@@ -115,8 +115,8 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
     queue.<span class="fn-call">remove</span>(<span class="nm">0</span>);   <span class="cm">// `#remove` is for a loop variable</span>
 }
 
-<span class="cm">// No loop keyword — infinite loop needs a large bound:</span>
-<span class="kw">for</span> _ <span class="kw">in</span> <span class="nm">0..2147483647</span> {
+<span class="cm">// An infinite loop, left by a break:</span>
+<span class="kw">while</span> <span class="kw">true</span> {
     <span class="kw">if</span> <span class="fn-call">should_exit</span>() { <span class="kw">break</span>; }
     <span class="fn-call">step</span>();
 }</code></pre>
@@ -136,7 +136,7 @@ p.x = <span class="st">"hi"</span> <span class="cm"># allowed at runtime; mypy c
 </div>
 <div class="verdict">
 <p class="up"><strong>Upside</strong> <code>while condition { }</code> works exactly as expected. Filtered loops (<code>for x in v if pred(x)</code>) and loop attributes (<code>x#first</code>, <code>x#count</code>) add expressive power to <code>for</code> without needing a separate loop form.</p>
-<p class="down"><strong>Downside</strong> No <code>while True:</code> equivalent — infinite loops require a bounded <code>for</code> range as a workaround. No <code>while ... else</code> (executes when the condition becomes false without a <code>break</code>), a Python pattern with no clean equivalent in loft.</p>
+<p class="down"><strong>Downside</strong> No <code>while ... else</code> (executes when the condition becomes false without a <code>break</code>), a Python pattern with no clean equivalent in loft.</p>
 </div>
 
 <h2 id="enum-dispatch">5. Polymorphic enum dispatch vs <code>isinstance</code></h2>

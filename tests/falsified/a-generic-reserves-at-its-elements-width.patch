@@ -1,0 +1,93 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index b3b8085e3..24c17f2d6 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1912,14 +1912,6 @@ pub fn reverse < T > (self: vector<T>) {
+ }
+ #builtin
+ 
+-// Give a vector room for `n` elements, so filling it does not grow it step by step:
+-// `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count
+-// the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
+-pub fn reserve < T > (self: vector<T>, n: integer) {
+-  reserve(self, n)
+-}
+-#builtin
+-
+ // Sum of all integer elements. Returns 0 for an empty vector.
+ // Superseded by the general `sum(v, init)`; kept as a shim over it
+ // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 17336e3ad..f5d5577bf 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -6433,8 +6433,8 @@ use #count instead"
+ 
+     /// Is a collection's element type still a TYPE VARIABLE — a template's `T`, whose
+     /// placeholder is an attribute-less struct?  A builtin whose lowering is a function of the
+-    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE),
+-    /// [`TV_RESERVE`](Parser::TV_RESERVE)) defers itself to the monomorph there.
++    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE))
++    /// defers itself to the monomorph there.
+     pub(crate) fn is_type_var_element(&self, elm: &Type) -> bool {
+         matches!(elm.base(), Type::Reference(d, _) if self.data.is_type_var_placeholder(*d))
+     }
+@@ -6645,13 +6645,6 @@ use #count instead"
+             );
+             return Type::Void;
+         };
+-        // The claim is sized in the element's width, and a type variable has none yet
+-        // (@FR-G-Mono): lowered in the template, every instance reserved at the placeholder's
+-        // 12 bytes, where its twin reserves at 8, 1 or 16.
+-        if self.is_type_var_element(elm) {
+-            *val = v_block(list.to_vec(), types[0].clone(), Self::TV_RESERVE);
+-            return Type::Void;
+-        }
+         let elm_size = self.element_store_size(elm);
+         *val = self.cl(
+             "OpReserveVector",
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index f436b442d..0a7ecc187 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7584,9 +7576,6 @@ impl Parser {
+     /// A `reverse(v)` whose element type is still a TYPE VARIABLE: the width it walks is the
+     /// element's, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
+     pub(crate) const TV_REVERSE: &'static str = "tvreverse";
+-    /// A `reserve(v, n)` whose element type is still a TYPE VARIABLE: the claim is sized in
+-    /// the element's width, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
+-    pub(crate) const TV_RESERVE: &'static str = "tvreserve";
+     /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
+     /// template's closure record lays a capture typed by a type variable out at no width, so
+     /// the read is re-lowered by NAME against the instance's own record
+@@ -10652,26 +10641,19 @@ impl Parser {
+             // substitution, so it is the CONCRETE vector type by now, and the same parse
+             // function the concrete spelling uses lowers it — width, row and setter from one
+             // home.  A nested generic re-stamps through that call and stays deferred.
+-            Value::Block(bl)
+-                if bl.name == Self::TV_INSERT
+-                    || bl.name == Self::TV_REVERSE
+-                    || bl.name == Self::TV_RESERVE =>
+-            {
++            Value::Block(bl) if bl.name == Self::TV_INSERT || bl.name == Self::TV_REVERSE => {
+                 let bl = *bl;
+                 let list: Vec<Value> = bl
+                     .operators
+                     .into_iter()
+                     .map(|a| self.rewrite_generic_type_defaults(a))
+                     .collect();
++                let types = [bl.result.clone()];
+                 let mut out = Value::Null;
+                 if bl.name == Self::TV_INSERT {
+-                    self.parse_insert(&mut out, &list, &[bl.result.clone()]);
+-                } else if bl.name == Self::TV_REVERSE {
+-                    self.parse_reverse(&mut out, &list, &[bl.result.clone()]);
++                    self.parse_insert(&mut out, &list, &types);
+                 } else {
+-                    // The count was checked an integer where the template stamped the site.
+-                    let count = Type::Integer(crate::data::IntegerSpec::wide());
+-                    self.parse_reserve(&mut out, &list, &[bl.result.clone(), count]);
++                    self.parse_reverse(&mut out, &list, &types);
+                 }
+                 out
+             }

@@ -1,0 +1,9 @@
+// D4 — a float binds `float`; a value typed nullable binds the base type.
+// @EXPECT: 1.5|null
+struct Box<T> { v: T }
+fn maybe(k: integer) -> integer { if k > 0 { k } else { null } }
+fn main() {
+  f = Box { v: 1.5 };
+  n = Box { v: maybe(0) };
+  println("{f.v}|{n.v}");
+}

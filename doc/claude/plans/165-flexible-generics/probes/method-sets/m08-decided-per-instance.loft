@@ -1,0 +1,11 @@
+// B4 + B3b — a generic calling a method-and-generic set at its variable: each instance
+// reaches what its twin reaches.
+// @EXPECT: sq 1|any 3
+struct Sq { s: integer }
+fn label(self: Sq) -> text { "sq {self.s}" }
+fn label<T: Printable>(x: T) -> text { "any {x}" }
+fn wrap<U: Printable>(x: U) -> text { label(x) }
+fn to_text(self: Sq) -> text { "Sq" }
+fn main() {
+  println("{wrap(Sq{s:1})}|{wrap(3)}");
+}

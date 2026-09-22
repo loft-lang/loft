@@ -1,0 +1,12 @@
+// B7 — a NULLABLE position held at the enum: a present value decides by variant, a null
+// reaches the static selection — the template's instance at `Shape?`.
+// @EXPECT: 12|-1|-1
+enum Shape { Circle { r: integer }, Square { s: integer } }
+fn area(x: Circle) -> integer { 3 * x.r * x.r }
+fn area<T>(x: T) -> integer { -1 }
+fn pick(k: integer) -> Shape? {
+  if k == 0 { Circle { r: 2 } } else if k == 1 { Square { s: 1 } } else { null }
+}
+fn main() {
+  println("{area(pick(0))}|{area(pick(1))}|{area(pick(2))}");
+}

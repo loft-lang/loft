@@ -154,6 +154,19 @@ fn the_switch_restores_b1() {
 fn a_bind_after_an_if_pre_init_adopts() {
     let out = std::env::temp_dir().join("loft_adopt_buffer_reuse_on.rs");
     let rust = emit(&out, &[]);
+    // r28: read in a later `if`, so pre-initialised in front of the first — the plain
+    // assignment adopts.
+    let r28 = section(&rust, "n_r28");
+    assert!(
+        r28.contains("var_mf = n_scan_mk(cell, 4_i64,"),
+        "r28 native: the plain assignment"
+    );
+    assert!(
+        !r28.contains("OpCopyRecord(cell,_src, var_mf"),
+        "r28 native: no copy into `mf`"
+    );
+    // r22: bound inside the `if` alone — pre-initialised in front of it all the same (an arm's
+    // local is the scope around the `if`'s unless `LOFT_ARM_SCOPE=1`, formal/heap.md D-heap-36).
     let r22 = section(&rust, "n_r22");
     assert!(
         r22.contains("var_mf = n_scan_mk(cell, 4_i64,"),
@@ -258,7 +271,8 @@ fn the_store_census_drops() {
     // literal mints into the null buffer where it minted a store of its own.  The native pair
     // fell again 174/270 → 169/265 on 2026-09-18 with `@FR-R-LoopRecord` (a record literal
     // bound inside a loop keeps its store across the iterations) — in both arms, so the
-    // pool's own drop (96) is unchanged.
+    // pool's own drop (96) is unchanged.  Cell r28 (2026-09-22) adds exactly its own share,
+    // measured alone: one mint pooled and four without, on each backend.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -271,7 +285,7 @@ fn the_store_census_drops() {
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),
-        (197, 303, 169, 265),
+        (198, 307, 170, 269),
         "mints (interpret on, off, native on, off)"
     );
 }

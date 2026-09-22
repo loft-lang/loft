@@ -1,0 +1,7 @@
+// D7 — `next: Node<T>?` stores the record INLINE, which its twin refuses ("contains
+// itself — use reference<…>"); so is the template, at the declaration.
+struct Node<T> { v: T, next: Node<T>? }
+fn main() {
+  n = Node { v: 1 };
+  println("{n.v}");
+}

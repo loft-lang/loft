@@ -1,0 +1,81 @@
+diff --git a/src/codegen_runtime.rs b/src/codegen_runtime.rs
+index b23714b37..9a8f7b2b9 100644
+--- a/src/codegen_runtime.rs
++++ b/src/codegen_runtime.rs
+@@ -748,6 +748,13 @@ fn get_record_lookup(
+         if found.rec != 0 {
+             return found;
+         }
++        // PRICING-PROBE B
++        if !stores
++            .lazy_sources
++            .contains_key(&(data.store_nr, data.rec, data.pos))
++        {
++            return found;
++        }
+         // @PLN133 S8 — a source served by a LOFT driver. Same shape as the
+         // interpreter's: run the driver, then re-run the lookup, because the
+         // collection stays the only authority on what is resident.
+diff --git a/src/keys.rs b/src/keys.rs
+index 3a621dc2d..83070a8ad 100644
+--- a/src/keys.rs
++++ b/src/keys.rs
+@@ -2420,6 +2420,16 @@ fn bad_store_nr(r: &DbRef, len: usize) -> ! {
+ 
+ #[must_use]
+ pub fn compare(rec1: &DbRef, rec2: &DbRef, stores: &[Store], keys: &[Key]) -> Ordering {
++    // PRICING-PROBE C
++    if let [k] = keys
++        && k.type_nr == 1
++    {
++        let s = store(rec1, stores);
++        let p = u32::from(k.position);
++        return s
++            .get_int(rec1.rec, rec1.pos + p)
++            .cmp(&s.get_int(rec2.rec, rec2.pos + p));
++    }
+     for key in keys {
+         let pos1 = rec1.pos + u32::from(key.position);
+         let pos2 = rec2.pos + u32::from(key.position);
+@@ -2433,6 +2443,13 @@ pub fn compare(rec1: &DbRef, rec2: &DbRef, stores: &[Store], keys: &[Key]) -> Or
+ 
+ #[must_use]
+ pub fn key_compare(key: &[Content], rec: &DbRef, stores: &[Store], keys: &[Key]) -> Ordering {
++    // PRICING-PROBE C
++    if let ([k], [Content::Long(v)]) = (keys, key)
++        && k.type_nr == 1
++    {
++        let s = store(rec, stores);
++        return v.cmp(&s.get_int(rec.rec, rec.pos + u32::from(k.position)));
++    }
+     for (k_nr, val) in key.iter().enumerate() {
+         let k = &keys[k_nr];
+         let pos_r = u32::from(k.position);
+diff --git a/src/siphash.rs b/src/siphash.rs
+index 2ca9ea4a5..81713bb8a 100644
+--- a/src/siphash.rs
++++ b/src/siphash.rs
+@@ -187,12 +187,23 @@ impl SipHasher13 {
+ 
+     /// Feed a `u64` exactly as `<u64 as Hash>::hash` does — the default
+     /// `Hasher::write_u64`, since SipHasher13 specialises no integer method.
++    #[inline]
+     pub fn write_u64(&mut self, i: u64) {
++        // PRICING-PROBE A
++        if self.ntail == 0 {
++            let mi = u64::from_le_bytes(i.to_ne_bytes());
++            self.length += 8;
++            self.state.v3 ^= mi;
++            compress!(self.state);
++            self.state.v0 ^= mi;
++            return;
++        }
+         self.write(&i.to_ne_bytes());
+     }
+ 
+     /// Feed an `i64` exactly as `<i64 as Hash>::hash` does: `write_i64`'s default is
+     /// `write_u64(i as u64)`.
++    #[inline]
+     pub fn write_i64(&mut self, i: i64) {
+         self.write_u64(i as u64);
+     }

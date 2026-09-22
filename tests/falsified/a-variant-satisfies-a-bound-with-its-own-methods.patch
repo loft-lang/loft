@@ -1,0 +1,97 @@
+diff --git b/src/parser/dispatch.rs a/src/parser/dispatch.rs
+index 79499c326..1f124f771 100644
+--- b/src/parser/dispatch.rs
++++ a/src/parser/dispatch.rs
+@@ -849,6 +849,7 @@ impl Parser {
+                 Selection::NotDecidable => return None,
+             }
+         }
++        let ret = self.data.def(leaves[0].1).returned().clone();
+         // `Disp-Dynamic` over a NULLABLE enum position (D-disp-2): a present value's variant
+         // decides exactly as a dense one's does, and a null — which has no variant — reaches
+         // the definition the call's static types select, which is what it reached before the
+@@ -860,29 +861,15 @@ impl Parser {
+                 .any(|(pos, _)| matches!(routed[*pos], Type::Optional(_)))
+         });
+         // A variant tuple — or a null at a nullable position — may select a TEMPLATE member
+-        // (@PLN165 B7).  Its leaf is the template's instance at that tuple's types — the
+-        // variant's own type at a dynamic position — built the way a static call builds it,
+-        // so the leaf is what the call would reach had the variant been its static type
+-        // (`Disp-Match-Equiv`).  An instance that cannot be built refuses the call naming the
+-        // template, never answering every variant with the static selection.
+-        for leaf in &mut leaves {
+-            if self.data.def_type(leaf.1) == DefType::Generic {
+-                leaf.1 = self.instantiate_template(leaf.1, name, &leaf.2);
+-            }
+-        }
+-        let null_leaf = null_leaf.map(|d| {
+-            if self.data.def_type(d) == DefType::Generic {
+-                self.instantiate_template(d, name, routed)
+-            } else {
+-                d
+-            }
+-        });
+-        let failed = leaves
++        // (@PLN165 B3).  Its instance per variant is not built here, so the call is refused
++        // rather than answered, for every variant, by the one definition the static types
++        // select.
++        let template_leaf = leaves
+             .iter()
+             .map(|(_, d, ts)| (*d, ts.clone()))
+             .chain(null_leaf.map(|d| (d, routed.to_vec())))
+-            .find(|(d, _)| *d == u32::MAX || self.data.def_type(*d) == DefType::Generic);
+-        if let Some((_, leaf_types)) = failed {
++            .find(|(d, _)| self.data.def_type(*d) == DefType::Generic);
++        if let Some((g, leaf_types)) = template_leaf {
+             let shown = |data: &crate::data::Data, ts: &[Type]| -> String {
+                 ts.iter()
+                     .map(|t| t.source_name(data))
+@@ -890,15 +877,15 @@ impl Parser {
+                     .join(", ")
+             };
+             let text = format!(
+-                "`{name}({})` decides by variant, and at ({}) no instance of the generic it selects can be built",
++                "`{name}({})` decides by variant, and at ({}) that selects the generic {}; a decision by variant reaches concrete definitions only — declare `{name}` at those types",
+                 shown(&self.data, routed),
+                 shown(&self.data, &leaf_types),
++                self.data.overload_signature(name, g)
+             );
+             crate::diagnostic!(self.lexer, crate::diagnostics::Level::Error, "{text}");
+             self.reported_dynamic_refusal = true;
+             return None;
+         }
+-        let ret = self.data.def(leaves[0].1).returned().clone();
+         // One dispatcher has ONE return type, so the definitions it chooses between must agree
+         // on it — DESIGN.md's open question 4, at the one place it cannot stay open.  A
+         // `Fireball` leaf answering `integer` beside an enum-level leaf answering `text` read the
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 51e8c4c32..b58c609ac 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -8504,13 +8504,6 @@ impl Parser {
+     fn satisfaction_failures(&self, iface_nr: u32, concrete_nr: u32) -> Vec<String> {
+         let concrete_name = self.data.def(concrete_nr).name().to_string();
+         let concrete_type = self.data.def(concrete_nr).returned().clone();
+-        // A struct-enum VARIANT's `returned` is its parent ENUM, so a method declared on the
+-        // variant itself (`fn tag(self: Cat)`) was never seen: `greet<T: Named>(Cat {…})` was
+-        // "'Cat' does not satisfy interface 'Named': missing tag" while `c.tag()` compiled —
+-        // `(G-Sat)` says the methods VISIBLE for the type decide.  The variant's own type is
+-        // asked first; the enum's methods, visible for every variant, stay the fallback.
+-        let variant_type = (self.data.def_type(concrete_nr) == DefType::EnumValue)
+-            .then(|| Type::Reference(concrete_nr, crate::data::Deps::none()));
+         let mut out = Vec::new();
+         for child_nr in self.data.children_of(iface_nr).collect::<Vec<u32>>() {
+             // Only the METHODS are structural satisfaction; a companion type is matched
+@@ -8522,11 +8515,7 @@ impl Parser {
+             };
+             // I9-prim: use find_fn which checks both the method-style convention
+             // (t_7integer_OpLt) and the add_op convention (OpLtInt via possible map).
+-            let mut found = variant_type
+-                .as_ref()
+-                .map(|v| self.data.find_fn(u16::MAX, &method_suffix, v))
+-                .filter(|d| *d != u32::MAX)
+-                .unwrap_or_else(|| self.data.find_fn(u16::MAX, &method_suffix, &concrete_type));
++            let mut found = self.data.find_fn(u16::MAX, &method_suffix, &concrete_type);
+             // @PLN25 E2 — a synth `__nullable<S>` delegates method/interface
+             // resolution to its underlying `S` (a method call on a nullable
+             // element unwraps through `Some` to call `S`'s method), so satisfy

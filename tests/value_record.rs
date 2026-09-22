@@ -37,27 +37,27 @@ const EXPECTED: &[(&str, bool)] = &[
 const TAIL_CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ah-value-tail-cells.loft";
 const TAIL_EXPECTED: &[(&str, bool)] = &[
-    ("n_pt", true),         // t1: delivered into a push slot — the tuple is materialised
-    ("n_half", true),       // t2: a forwarding tail
-    ("n_mk_kept", true),    // t3: its record is appended — a copy FROM a value local materialises
-    ("n_fwd_kept", true),   // t3: forwards an admitted callee
-    ("n_pt5", true),        // t5: forwarded by `half5`, itself admitted now (E-1)
-    ("n_half5", true),      // t5: the join local is its buffer — a forward (E-1)
-    ("n_sel", true),        // t6: a selecting tail (a view of a `const` parameter)
-    ("n_ctrl", true),       // t7: a selecting tail with an early return
-    ("n_half_chord", true), // t8: selecting calls without their brackets, then a forward
-    ("n_own", false),       // t9: an OWNED tail — the value form would mint per call
-    ("n_pt10", false),      // t10: a discharge arm joined with a variable
-    ("n_maybe", false),     // t10: a nullable result has no tuple
-    ("n_ping", true),       // t11: a branch of two admitted calls, mutually recursive
-    ("n_pong", true),       // t11: the forwarding half of the pair
-    ("n_pt12", false),      // t12: delivered into a field / element through a `__lift_` temp
-    ("n_pt13", false),      // t13: its result is passed as an argument (`disc(given)`)
-    ("n_disc", false),      // t13: a JOIN tail — a view on one arm, a mint on the other
-    ("t_2Pt_gpick", true),  // t14: a generic instance's statement-join selecting tail
-    ("t_4Coin_gmax", true), // t14: the same over a ONE-field record — the `(i64,)` tuple
-    ("n_sel15", true),      // t15: a lifted selecting tail over by-value parameters
-    ("n_sel15c", true),     // t15: the same over `const` parameters
+    ("n_pt", true),           // t1: delivered into a push slot — the tuple is materialised
+    ("n_half", true),         // t2: a forwarding tail
+    ("n_mk_kept", true),      // t3: its record is appended — a copy FROM a value local materialises
+    ("n_fwd_kept", true),     // t3: forwards an admitted callee
+    ("n_pt5", true),          // t5: forwarded by `half5`, itself admitted now (E-1)
+    ("n_half5", true),        // t5: the join local is its buffer — a forward (E-1)
+    ("n_sel", true),          // t6: a selecting tail (a view of a `const` parameter)
+    ("n_ctrl", true),         // t7: a selecting tail with an early return
+    ("n_half_chord", true),   // t8: selecting calls without their brackets, then a forward
+    ("n_own", false),         // t9: an OWNED tail — the value form would mint per call
+    ("n_pt10", false),        // t10: a discharge arm joined with a variable
+    ("n_maybe", false),       // t10: a nullable result has no tuple
+    ("n_ping", true),         // t11: a branch of two admitted calls, mutually recursive
+    ("n_pong", true),         // t11: the forwarding half of the pair
+    ("n_pt12", false),        // t12: delivered into a field / element through a `__lift_` temp
+    ("n_pt13", false),        // t13: its result is passed as an argument (`disc(given)`)
+    ("n_disc", false),        // t13: a JOIN tail — a view on one arm, a mint on the other
+    ("i_2Pt_n_gpick", true),  // t14: a generic instance's statement-join selecting tail
+    ("i_4Coin_n_gmax", true), // t14: the same over a ONE-field record — the `(i64,)` tuple
+    ("n_sel15", true),        // t15: a lifted selecting tail over by-value parameters
+    ("n_sel15c", true),       // t15: the same over `const` parameters
 ];
 
 /// The § V-an chains (`bytecode-comparisons/V-an-chain-cells.loft`): the parser's
@@ -215,7 +215,7 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
     // A generic instance's selecting tail binds its join local from a parameter's VIEW in
     // each statement arm (t14): the value form reads the view's fields into the tuple and
     // neither mints a store for the join nor deep-copies into it.
-    for name in ["t_2Pt_gpick", "t_4Coin_gmax"] {
+    for name in ["i_2Pt_n_gpick", "i_4Coin_n_gmax"] {
         let body = body_of(name);
         assert!(
             !body.contains("OpDatabase(cell,") && !body.contains("OpCopyRecord(cell,"),

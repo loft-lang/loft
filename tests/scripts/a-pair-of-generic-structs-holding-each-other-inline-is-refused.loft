@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D7 — `P<T>` holds a `Q<T>?` INLINE and `Q<T>` a `P<T>?`: each instance contains
+// itself through the other, refused as the hand-written twin pair `PT` / `QT` holding each
+// other inline is.  `Q` is declared below `P`, so the cycle is only visible once pass 2 names the
+// forward instance.
+//
+// @falsified-at: f5db133f1 — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-pair-of-generic-structs-holding-each-other-inline-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations.
+//   ARMED: nothing.
+//   WITNESS: on the control `q: Q<T>?` above `struct Q<T>` is a syntax error ("Expect
+//     token }").
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: Struct 'P<text>' contains itself (directly or indirectly) — use reference<P<text>> to break the cycle
+// @EXPECT_ERROR: Struct 'Q<text>' contains itself (directly or indirectly) — use reference<Q<text>> to break the cycle
+
+struct P<T> { v: T, q: Q<T>? }
+struct Q<T> { w: T, p: P<T>? }
+
+fn test_the_pair() {
+  p = P { v: "a" };
+  assert(p.v == "a", "unreachable");
+}

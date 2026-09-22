@@ -60,6 +60,40 @@ const CALL_DEPTH: u8 = 3;
 /// `u32::MAX` as `i64`: the widest a text size or a vector length can be.
 const U32_MAX: i64 = u32::MAX as i64;
 
+/// `@FR-R-Range`'s type clause — the range a value carries BY ITS STATIC TYPE, or `None`
+/// where the type is not a fact about the value.  A non-nullable `Integer[lo, hi]` whose
+/// range FILLS its width — `u8`, `i8`, `u16`, `i16`, every user-written `limit(lo, hi)` — is
+/// one: since loft#1593 every store, call and literal into such a slot is refused unless
+/// provably in range (`(I-Narrow)`, `(I-Lit)`), a `?? d` fallback lands in range, and the one
+/// run-time arrival — the slot's own arithmetic stepping past the range (C85's overflow
+/// edge) — answers the type's DEFAULT, which is in range too (`(E-Uncomp-NN)`).  So no value
+/// outside `[lo, hi]` can ever be held, whoever writes.
+///
+/// Three specs are NOT facts and answer `None`: the two full-integer templates (the range
+/// the plain `integer` REPORTS is not the range it holds), and `i32`/`u32`, which keep a
+/// code back for null that an overflow does write into a non-null slot — a `u32` local can
+/// hold the sentinel after `+=`, and a range that trusted its type would run plain arithmetic
+/// on it.  A nullable `τ?` and a `&` link answer `None` for the same reason: the slot can hold
+/// what the range does not describe.
+#[must_use]
+pub fn type_range(tp: &crate::data::Type) -> Option<Range> {
+    match tp {
+        // The nullability question, spelled (`@FR-N-Shape`): a `τ?` slot can hold what the
+        // range does not describe, so it is not a fact — deliberately NOT peeled through.
+        crate::data::Type::Optional(_) => None,
+        crate::data::Type::Integer(spec) => {
+            if spec.is_signed32_template()
+                || spec.is_wide_template()
+                || spec.reserves_sentinel_unconditionally()
+            {
+                return None;
+            }
+            fits(i128::from(spec.min), i128::from(spec.max))
+        }
+        _ => None,
+    }
+}
+
 /// Make a range from `i128` ends, or `None` when it does not fit the type (the sentinel
 /// excluded).
 fn fits(lo: i128, hi: i128) -> Option<Range> {
@@ -95,12 +129,16 @@ pub fn range(
             let else_range = range(data, nn, rv, else_arm, depth)?;
             Some(union(then_range, else_range))
         }
-        Value::Block(b) => b
-            .operators
-            .iter()
-            .rev()
-            .find(|op| !matches!(op, Value::Line(_)))
-            .and_then(|tail| range(data, nn, rv, tail, depth)),
+        // A block's RESULT TYPE is a fact about its value before its tail is read: the join
+        // `v[i] ?? 0` over a `u8` vector is typed `integer(0, 255)` by the compiler, while its
+        // tail — an `if` whose then arm is the element temp — ranges nothing by shape.
+        Value::Block(b) => type_range(&b.result).or_else(|| {
+            b.operators
+                .iter()
+                .rev()
+                .find(|op| !matches!(op, Value::Line(_)))
+                .and_then(|tail| range(data, nn, rv, tail, depth))
+        }),
         Value::Return(inner) => range(data, nn, rv, inner, depth),
         Value::Call(d_nr, args) => {
             if (*d_nr as usize) >= data.definitions.len() {
@@ -294,10 +332,25 @@ fn call_range(
 /// every assignment is in it, so its range never changes afterwards and the map grows
 /// monotonically; it settles in at most `vars` rounds.
 #[must_use]
-pub fn range_vars(data: &Data, code: &Value, nn: &HashMap<u16, bool>) -> HashMap<u16, Range> {
+pub fn range_vars(
+    data: &Data,
+    vars: &crate::variables::Function,
+    code: &Value,
+    nn: &HashMap<u16, bool>,
+) -> HashMap<u16, Range> {
     let mut escaped: std::collections::HashSet<u16> = std::collections::HashSet::new();
     super::non_sentinel::collect_escapes(data, code, &mut escaped);
     let mut rv: HashMap<u16, Range> = HashMap::new();
+    // `@FR-R-Range`'s type clause — every variable whose STATIC TYPE is a fact carries that
+    // range from the start: a `u8` or `limit(lo, hi)` parameter (which no `Set` ever ranges),
+    // and a local the compiler typed narrow.  Seeded before the fixpoint, so a `Set` into such
+    // a variable is judged against the type's range rather than widening it: the fixpoint
+    // below never inserts over an existing entry, and the type is the narrower fact.
+    for v in 0..vars.count() {
+        if let Some(r) = type_range(vars.tp(v)) {
+            rv.insert(v, r);
+        }
+    }
     // Counters first: their step names themselves, which the fixpoint below refuses.
     let mut counters: std::collections::HashSet<u16> = std::collections::HashSet::new();
     seed_counters(data, code, code, nn, &mut rv, &mut counters);

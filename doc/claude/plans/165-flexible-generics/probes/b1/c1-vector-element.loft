@@ -1,0 +1,9 @@
+// Two overloads that differ only in a vector's element.
+// @EXPECT: ints|texts
+fn first(v: vector<integer>) -> text { "ints" }
+fn first(v: vector<text>) -> text { "texts" }
+fn main() {
+  a: vector<integer> = [1];
+  b: vector<text> = ["p"];
+  println("{first(a)}|{first(b)}");
+}

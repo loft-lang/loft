@@ -186,3 +186,116 @@ fn runaway_recursion_through_a_frameless_helper_hits_the_depth_cap() {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// An overload member (`f_…`) and an instance of a free generic (`i_…_n_…`) are free functions
+/// in all but their key, so a runaway recursion through either stops at loft's depth cap on
+/// `--native` as its `n_` twin does — it overflowed Rust's own stack (the member) or ran past
+/// the cap unchecked (the instance), because the prelude that enforces the cap was written for
+/// `n_` names alone.
+#[test]
+fn runaway_recursion_through_an_overload_member_or_a_generic_hits_the_depth_cap() {
+    let dir = std::env::temp_dir().join(format!("loft_leaf_chain_keyed_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let cases = [
+        (
+            "member.loft",
+            "struct P { x: integer }\nstruct Q { y: integer }\n\
+             fn depth(a: P, n: integer) -> integer { if n == 0 { 0 } else { depth(a, n - 1) + 1 } }\n\
+             fn depth(a: Q, n: integer) -> integer { n }\n\
+             fn main() { println(\"{depth(P { x: 1 }, 10000000)}\"); }\n",
+        ),
+        (
+            "instance.loft",
+            "fn depth<T>(a: T, n: integer) -> integer { if n == 0 { 0 } else { depth(a, n - 1) + 1 } }\n\
+             fn main() { println(\"{depth(1, 10000000)}\"); }\n",
+        ),
+    ];
+    for (file, src) in cases {
+        let prog = dir.join(file);
+        std::fs::write(&prog, src).expect("write the probe");
+        for mode in ["--native", "--native-release"] {
+            let res = loft(&[mode, &prog.to_string_lossy()], &[]);
+            let err = String::from_utf8_lossy(&res.stderr);
+            assert_eq!(
+                res.status.code(),
+                Some(1),
+                "{file} {mode}: a clean fault exit, not a signal:\n{err}"
+            );
+            assert!(
+                err.contains("call stack overflow"),
+                "{file} {mode}: the depth cap must report the runaway recursion:\n{err}"
+            );
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A loft-bodied METHOD is a call frame like a free function: a runaway recursion through one
+/// stops at loft's depth cap on `--native` and `--native-release` as it does on the
+/// interpreter, rather than overflowing Rust's own stack — alone, mutually with another
+/// method, and through a method on a generic receiver — and `stack_trace()` names its frames
+/// as the interpreter names them.
+#[test]
+fn runaway_recursion_through_a_method_hits_the_depth_cap() {
+    let dir = std::env::temp_dir().join(format!("loft_leaf_chain_method_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("scratch dir");
+    let cases = [
+        (
+            "self.loft",
+            "struct P { x: integer }\n\
+             fn depth(self: P, n: integer) -> integer { if n == 0 { 0 } else { self.depth(n - 1) + 1 } }\n\
+             fn main() { p = P { x: 1 }; println(\"{p.depth(10000000)}\"); }\n",
+        ),
+        (
+            "mutual.loft",
+            "struct P { x: integer }\nstruct Q { y: integer }\n\
+             fn ping(self: P, q: Q, n: integer) -> integer { if n == 0 { 0 } else { q.pong(self, n - 1) + 1 } }\n\
+             fn pong(self: Q, p: P, n: integer) -> integer { if n == 0 { 0 } else { p.ping(self, n - 1) + 1 } }\n\
+             fn main() { println(\"{P { x: 1 }.ping(Q { y: 2 }, 10000000)}\"); }\n",
+        ),
+        (
+            "generic.loft",
+            "fn depth<T>(self: vector<T>, n: integer) -> integer { if n == 0 { 0 } else { self.depth(n - 1) + 1 } }\n\
+             fn main() { v: vector<integer> = [1]; println(\"{v.depth(10000000)}\"); }\n",
+        ),
+    ];
+    for (file, src) in cases {
+        let prog = dir.join(file);
+        std::fs::write(&prog, src).expect("write the probe");
+        for mode in ["--native", "--native-release"] {
+            let res = loft(&[mode, &prog.to_string_lossy()], &[]);
+            let err = String::from_utf8_lossy(&res.stderr);
+            assert_eq!(
+                res.status.code(),
+                Some(1),
+                "{file} {mode}: a clean fault exit, not a signal:\n{err}"
+            );
+            assert!(
+                err.contains("call stack overflow"),
+                "{file} {mode}: the depth cap must report the runaway recursion:\n{err}"
+            );
+        }
+    }
+    let prog = dir.join("frames.loft");
+    std::fs::write(
+        &prog,
+        "struct P { x: integer }\n\
+         fn show(self: P, n: integer) -> integer {\n\
+           if n == 0 { for f in stack_trace() { println(\"frame {f.function}\"); } self.x }\n\
+           else { self.show(n - 1) + 1 }\n\
+         }\n\
+         fn main() { println(\"{P { x: 7 }.show(2)}\"); }\n",
+    )
+    .expect("write the probe");
+    let expected = "frame main\nframe t_1P_show\nframe t_1P_show\nframe t_1P_show\n9\n";
+    for mode in ["--interpret", "--native"] {
+        let res = loft(&[mode, &prog.to_string_lossy()], &[]);
+        assert_eq!(
+            String::from_utf8_lossy(&res.stdout),
+            expected,
+            "{mode}: {}",
+            String::from_utf8_lossy(&res.stderr)
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}

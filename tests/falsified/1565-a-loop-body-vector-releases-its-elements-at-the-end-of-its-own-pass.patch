@@ -1,0 +1,64 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 09564fed0..50901e5e2 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -3621,31 +3621,6 @@ fn construction_work_ref(rhs: &Value, function: &Function) -> Option<u16> {
+     }
+ }
+ 
+-/// The backing of vector local `v` when it lives in a scope OTHER than the ones being left:
+-/// `v`'s one dep, a literal's `__vdb_N` or the `__ref_N` buffer a call delivered it through.
+-/// A keyed collection is not asked — its records are the author's to release (`H-Drop-Not`),
+-/// and neither is a backing that is an ARGUMENT: that is the caller's buffer, a literal backing
+-/// renamed onto the return buffer included, and what it holds is being handed back.  Only a local
+-/// the program DECLARED is asked: a compiler temp with the same dep is a vector built INSIDE that
+-/// store — an inner vector of a nested literal — which the outer vector owns.
+-fn outer_collection_backing(
+-    function: &Function,
+-    v: u16,
+-    exited: &std::collections::HashSet<u16>,
+-) -> Option<u16> {
+-    if !matches!(function.tp(v).base(), Type::Vector(_, _)) || function.is_compiler_generated(v) {
+-        return None;
+-    }
+-    let [b] = function.tp(v).depend()[..] else {
+-        return None;
+-    };
+-    let n = function.name(b);
+-    ((n.starts_with("__vdb_") || n.starts_with("__ref_"))
+-        && !exited.contains(&b)
+-        && !function.is_argument(b))
+-    .then_some(b)
+-}
+-
+ /// The work-ref whose record `rhs` delivers to its target: a construction bound directly
+ /// ([`construction_work_ref`]), or one handed to a function whose body hands that parameter
+ /// back WHOLE — `s = me(Bx { … })` with `fn me(self: Bx) -> Bx { self }`, where the call returns
+@@ -13620,27 +13595,10 @@ impl Scopes<'_> {
+         // caller holds the record and this frame must not free it.  Computed once here
+         // rather than per variable: the reading walks the body.
+         let link_delivered = link_written_closure_records(data, function, self.d_nr);
+-        let exited: std::collections::HashSet<u16> = vars.iter().copied().collect();
+         for v in vars {
+             if v == ret_var || suppress_source(function, v) {
+                 continue;
+             }
+-            // `@FR-H-Drop`, the scope-end clause — a VECTOR local whose elements live in a
+-            // backing registered in an OUTER scope (its `__vdb_N`, or the `__ref_N` buffer a call
+-            // delivered it through, both minted at the function's head so the store is reused)
+-            // is released HERE, at its own scope's end, and emptied.  Left to the backing, a loop
+-            // body's vector released its elements during the NEXT pass, at the re-mint, and the
+-            // last pass's after the loop (loft#1565); a call-delivered one never, because the
+-            // backing's release looks for a binding that is out of scope by then.  Emptying it
+-            // is what keeps the re-mint and the backing's own release from running the hooks a
+-            // second time — `clear` runs none (`H-Drop-Not`).  The release is the backing's
+-            // (`scope_end_drop`), so a hand-off that stopped it still stops it.
+-            if let Some(backing) = outer_collection_backing(function, v, &exited)
+-                && let Some(hook) = self.scope_end_drop(function, backing, data, None)
+-            {
+-                ls.push(hook);
+-                ls.push(call("OpClearVector", v, data));
+-            }
+             // loft#1336 / @FR-O-Witness — a witnessed local's store is released through its
+             // witness, which names it only while the local still holds it; the local itself
+             // is never-free.  A returned local is skipped above like any other: the store is
