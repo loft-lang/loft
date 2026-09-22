@@ -22,7 +22,7 @@ link is done and the `DbRef` or pointer alone choosing where.
 
 - **Effort:** M (P0 XS · A XS+M+S+XS · B S+XS+XS · C M+S+S · D XS) — A1 grew from S to M
   in P0, see § P0
-- **Design:** ✓ for decisions 2 and 3; decision 1's SCOPE (every narrow local, or only a linked one) is open with the owner
+- **Design:** ✓ — the three decisions are made; decision 1's scope settled 2026-09-22 (linked locals only)
 - **Last touched:** 2026-09-22
 
 ## What is measured, and what the rules say
@@ -85,7 +85,10 @@ function (`__retbuf`), so its stack form cannot change.
    kind in the type (refuses cross-kind re-pointing for no reason once the encodings agree); a
    Rust `i8`/`i16` local (two's complement, which a store `i8` is not — P0 measured `-1` as
    `0x7F` in the store and `0xFF` in the register).
-   **OPEN — which narrow locals change (the owner's call, asked 2026-09-22):**
+   **DECIDED 2026-09-22 with the owner: only a LINKED narrow local changes** — a local (or by-value
+   parameter) whose address is taken by a `&` bind, a `&` argument or a re-point.  Revisable: if
+   the two shapes prove costlier than the uniform one, the first option below is the fallback,
+   and nothing in the link itself depends on the choice.  The two options as weighed:
    - *every* narrow local, whether or not anything links it: one shape, no per-variable fact,
      and the whole corpus exercises the new encoding — at the price of every narrow read and
      write in a loop such as `for b in px { t += b }`, which is where the drawing bench spends
@@ -97,7 +100,12 @@ function (`__retbuf`), so its stack form cannot change.
      and almost nothing exercises the new one (the corpus has ONE linked narrow local, no
      published library declares a narrow `&` parameter) so the guards carry the weight.  It also
      leaves a closure capture and a generator frame (R9) untouched.
-   The recommendation is the second.  A1/A2 do not start until this is answered.
+   **The instrument that makes the corpus exercise the new shape anyway:** a generation-time
+   switch, `LOFT_LINK_ALL_NARROW=1`, treats EVERY narrow local as linked.  The corpus compiled
+   natively under it turns each site that reads an encoded local as its value into a rustc type
+   error (`u8` where an `i64` is wanted), and its value cells under both backends check the
+   decode; shipped code marks only what is linked.  A1 lands with a clean corpus under the
+   switch, and the switch stays as the bisect step for a wrong narrow value.
    **Cells the scope decision owes, whichever way it goes** (2026-09-22): a narrow by-value
    PARAMETER linked in its callee (re-encoded at entry — only if linked, under the second
    option); a `&u8` parameter RE-POINTED to a local of the callee (`c = &y`: a re-point takes an
