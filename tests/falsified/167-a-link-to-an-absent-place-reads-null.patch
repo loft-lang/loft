@@ -1,0 +1,111 @@
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index 898a8af62..198bc1dd7 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -436,13 +436,9 @@ impl Output<'_> {
+     ) -> std::io::Result<()> {
+         write!(w, "let __ed = ")?;
+         self.output_code_inner(w, place)?;
+-        // An absent place — an out-of-range element, a field of an absent record — is the
+-        // null `DbRef` (`rec == 0`), and its link is the null pointer: reads answer the type's
+-        // absent value and writes are dropped, as the interpreter's link to it does.
+         write!(
+             w,
+-            "; if __ed.rec == 0 {{ std::ptr::null_mut() }} else {{ \
+-             stores.store_mut(&__ed).addr_mut::<{base}>(__ed.rec, __ed.pos) as *mut {base} }}"
++            "; stores.store_mut(&__ed).addr_mut::<{base}>(__ed.rec, __ed.pos) as *mut {base}"
+         )
+     }
+ 
+@@ -789,15 +785,7 @@ impl Output<'_> {
+                 // Asked through `fn_ref_context` like the parameter write-back, so an
+                 // if-VALUED source builds the pair inside each arm (loft#1454).
+                 let fn_link = matches!(inner.base(), Type::Function(..));
+-                // A scalar link may name an ABSENT place — a null pointer — and a write to it
+-                // lands nowhere, as the interpreter's `OpSet*` drops a write to a `rec == 0`
+-                // reference.  The value is still computed: it may have effects.
+-                let may_be_absent = crate::generation::absent_link_value(inner.base()).is_some();
+-                if may_be_absent {
+-                    write!(w, "{{ let __lw = ")?;
+-                } else {
+-                    write!(w, "unsafe {{ *var_{name} = ")?;
+-                }
++                write!(w, "unsafe {{ *var_{name} = ")?;
+                 if bool_link {
+                     write!(w, "u8::from(")?;
+                 }
+@@ -816,14 +804,7 @@ impl Output<'_> {
+                 if text_link {
+                     write!(w, ").to_string()")?;
+                 }
+-                if may_be_absent {
+-                    write!(
+-                        w,
+-                        "; if !var_{name}.is_null() {{ unsafe {{ *var_{name} = __lw }} }} }}"
+-                    )?;
+-                } else {
+-                    write!(w, " }}")?;
+-                }
++                write!(w, " }}")?;
+             }
+             return Ok(());
+         }
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index dca27c561..78c1fb80f 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -389,20 +389,14 @@ impl Output<'_> {
+                     // the storage BYTE (0/1/255), as a `boolean?` local does, so `c == null`
+                     // can see the 255: the two-state read would answer `false` for a null.
+                     // Only a non-null `&boolean` reads as a `bool` (loft#655).
++                    if !matches!(**inner, Type::Optional(_))
++                        && matches!(inner.base(), Type::Boolean)
++                    {
++                        return write!(w, "unsafe {{ *var_{var_name} == 1 }}");
++                    }
+                     if matches!(inner.base(), Type::Text(_)) {
+                         return write!(w, "unsafe {{ &*var_{var_name} }}");
+                     }
+-                    // A link to an ABSENT scalar place (`&v[10]`, a field of an absent record)
+-                    // holds a null pointer and reads the type's absent value — the one the
+-                    // interpreter's `OpGet*` answers for a `rec == 0` reference (C80: nothing
+-                    // stops a running calculation).  A `&boolean` answers its storage byte, so
+-                    // an absent one reads as null here as it does there.
+-                    if let Some(absent) = crate::generation::absent_link_value(inner.base()) {
+-                        return write!(
+-                            w,
+-                            "unsafe {{ if var_{var_name}.is_null() {{ {absent} }} else {{ *var_{var_name} }} }}"
+-                        );
+-                    }
+                     return write!(w, "unsafe {{ *var_{var_name} }}");
+                 } else if let Type::RefVar(inner) = variables.tp(var)
+                     && matches!(inner.base(), Type::Reference(..))
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index 9a4ff8373..0de89510c 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -1542,24 +1542,6 @@ pub(crate) fn is_raw_tuple_link(vars: &crate::variables::Function, var: u16) ->
+ /// a local, a link and a forwarded parameter all pass as one pointer.  A heap `τ` keeps
+ /// `&mut T`: its store place reaches the call through a temporary of its own, so two
+ /// arguments never share the memory the reference names.
+-/// What a read through a scalar `&` link to an ABSENT place answers on native — the Rust
+-/// spelling of the value the interpreter's getter gives a `rec == 0` reference: `OpGetInt`'s
+-/// `i64::MIN`, `OpGetFloat`'s / `OpGetSingle`'s NaN, `OpGetCharacter`'s codepoint 0,
+-/// `OpGetBoolean`'s storage byte 255 and `OpGetEnum`'s disc 0.  `None` for a link that cannot
+-/// name an absent place: a text, a tuple and a fn-ref link only ever link a local.
+-#[must_use]
+-pub(crate) fn absent_link_value(inner: &Type) -> Option<&'static str> {
+-    match inner {
+-        Type::Integer(_) => Some("i64::MIN"),
+-        Type::Float => Some("f64::NAN"),
+-        Type::Single => Some("f32::NAN"),
+-        Type::Character => Some("0"),
+-        Type::Boolean => Some("255_u8"),
+-        Type::Enum(_, false, _) => Some("0_u8"),
+-        _ => None,
+-    }
+-}
+-
+ #[must_use]
+ pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
+     matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))

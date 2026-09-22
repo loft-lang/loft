@@ -19,6 +19,12 @@
 // element; a `float`, `boolean`, value-enum and `character` element; a re-point from an absent
 // place to a present one; a loop mixing present and absent indices.
 //
+// @falsified-at: 9a75a1e27 — native exit 1 -> 0, native panicked -> clean; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/167-a-link-to-an-absent-place-reads-null.patch — native exit 1 -> 0, native panicked -> clean; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// HOLDS: leak and free-refusal are clean on both trees and both backends; the panic is the channel.
+//
 // CHANNEL: the assertions, on the native build (the control panics there).
 
 enum Col { Red, Blue }
