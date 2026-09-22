@@ -106,6 +106,13 @@ function (`__retbuf`), so its stack form cannot change.
    error (`u8` where an `i64` is wanted), and its value cells under both backends check the
    decode; shipped code marks only what is linked.  A1 lands with a clean corpus under the
    switch, and the switch stays as the bisect step for a wrong narrow value.
+   **Measured 2026-09-22:** the whole script corpus under `LOFT_LINK_ALL_NARROW=1` passes on
+   BOTH backends but for `931b-i32-accepted-forms-run`, whose subject the switch inverts by
+   construction — its cell asserts *"a local keeps the 8-byte slot"* and reads `705032704` for
+   `5000000000` once every narrow local is encoded.  That is the one expected difference, and
+   no other cell moved.  A compiler temp is never linked and is spared by the switch too:
+   without that exclusion 7 native and 1 interpreted scripts fail, because a `__ncc_N` /
+   `__dn4_N` holds a value the narrowing has not yet checked.
    **Cells the scope decision owes, whichever way it goes** (2026-09-22): a narrow by-value
    PARAMETER linked in its callee (re-encoded at entry — only if linked, under the second
    option); a `&u8` parameter RE-POINTED to a local of the callee (`c = &y`: a re-point takes an
