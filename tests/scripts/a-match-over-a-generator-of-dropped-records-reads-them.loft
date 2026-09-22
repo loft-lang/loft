@@ -1,0 +1,52 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `match` over a generator of records whose type has a drop hook reads the first record's
+// field on --native, as on the interpreter.
+//
+// A `match` subject that is a generator is collected into a buffer first, which advances the
+// generator to its end, so its TAIL runs: the drop hook of every heap temp it still holds, each
+// guarded on the temp's record number.  A yielded record is handed to the consumer and its temp
+// forgotten — and forgetting only the STORE number left the record number set, so the tail's
+// guard let the hook read the null store: `index out of bounds: the len is 4 but the index is
+// 65535`.  Found by the loft2 session's probe for loft#1589, the moment the generator's heap
+// temps became fields; the forget now clears the whole field.
+//
+// The drop hook is silent on purpose: WHEN it runs for a yielded record is loft#1589's open
+// question (the interpreter releases before the arm reads, --native leaves the record to the
+// consumer), so this file asserts only the value.
+//
+// Axes this file MOVES:  where the record comes from (a call, a literal) and which pattern
+//                        reads it (the first element, a later one).
+// Axes it HOLDS FIXED:   a drop hook on the payload type; one generator shape; every value
+//                        hand-computed.
+//
+// @falsified-at: b9336eddb — native exit 1 -> 0, native panic -> none; interpret INERT (expected
+//   for a backend-divergence guard — only one side can move).
+//   CHANNEL: panic, native — the control panicked at `src/database/allocation.rs` (`index out of
+//   bounds: the len is 4 but the index is 65535`).
+//   WITNESS: that panic, on `first_calls()`, before any assertion.
+//   HOLDS: the interpreter is equal on both trees.  The native LEAK column reads
+//   `kt=87 A×12, kt=88 B×6` on this tree, which `make falsify` scores as unclean: those are the
+//   yielded records the stream consumer never releases — loft#1589's native half, present
+//   before the generator's temps became fields — and not this guard's channel.
+// @falsified-by: tests/falsified/a-match-over-a-generator-of-dropped-records-reads-them.patch —
+//   the same channels.
+
+struct H { id: integer }
+fn OpDrop(self: H) { }
+fn mk(i: integer) -> H { return H { id: i }; }
+enum E { A { h: H }, B }
+
+fn from_calls() -> iterator<E> { yield A { h: mk(1) }; yield A { h: mk(2) }; yield B; }
+fn from_literals() -> iterator<E> { yield A { h: H { id: 10 } }; yield A { h: H { id: 20 } }; yield B; }
+
+fn first_calls() -> integer { match from_calls() { [A { h }, ..] => h.id, _ => 0 } }
+fn first_literals() -> integer { match from_literals() { [A { h }, ..] => h.id, _ => 0 } }
+fn second_literals() -> integer { match from_literals() { [_, A { h }, ..] => h.id, _ => 0 } }
+
+fn main() {
+  assert(first_calls() == 1, "first record built by a call: {first_calls()}");
+  assert(first_literals() == 10, "first record built by a literal: {first_literals()}");
+  assert(second_literals() == 20, "second record: {second_literals()}");
+}
