@@ -3726,8 +3726,14 @@ impl Parser {
         // later input and a debugger's eval resolve their names under that scope, and where
         // a definition colliding with a stdlib one is a collision of ONE key.  A gate that
         // asks "is this the reader's code?" therefore reads the definition's FILE, not this
-        // id — `Data::is_owned_def`.
-        self.lambda_counter = 0;
+        // id.
+        //
+        // The lambda counter CONTINUES where the session left it, and only the two passes of
+        // THIS input share a start (`lambda_base` below).  Reset to 0 here, a second REPL
+        // input carrying a lambda minted `__lambda_0` again while the first input's
+        // definition was still in the session: *"Cannot redefine '__lambda_0'"*, so a session
+        // could hold one lambda and no more.
+        let lambda_base = self.lambda_counter;
         self.fn_lambdas.clear();
         self.declared_capabilities.clear();
         self.member_access.clear();
@@ -3750,7 +3756,8 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
-        self.lambda_counter = 0;
+        // Pass 2 mints the same names pass 1 did, so it starts where pass 1 started.
+        self.lambda_counter = lambda_base;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
         self.first_pass = false;
@@ -3796,7 +3803,9 @@ impl Parser {
         self.lexer.parse_string(text, filename);
         self.deferred_unknown.clear();
         self.resolutions.clear();
-        self.lambda_counter = 0;
+        // The counter continues, as `parse_str`'s does and for the same reason: the session
+        // still holds the definitions the previous input minted.
+        let lambda_base = self.lambda_counter;
         self.fn_lambdas.clear();
         self.data.source = source;
         self.parse_file();
@@ -3809,7 +3818,7 @@ impl Parser {
         }
         self.deferred_unknown.clear();
         self.resolutions.clear();
-        self.lambda_counter = 0;
+        self.lambda_counter = lambda_base;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
         self.first_pass = false;

@@ -55,6 +55,29 @@ fn multi_line_fn_then_call() {
     assert!(out.contains("42"), "expected 42 in stdout, got {out:?}");
 }
 
+/// A session may hold MORE THAN ONE lambda.
+///
+/// Every input minted its lambdas from zero while the previous input's definitions were still
+/// in the session, so the second input carrying one died on *"Cannot redefine
+/// `__lambda_0`"* — one lambda per session, on the released build too.  The counter continues
+/// across inputs; only the two PASSES of one input share a start, which is what makes both
+/// mint the same names.
+#[test]
+fn a_session_holds_more_than_one_lambda() {
+    let out = repl(
+        &["repl"],
+        "[1, 2].map(|n| { n * 3 })\n[3, 1].filter(|n| { n > 1 })\n[1, 2, 3].reduce(0, |a, b| { a + b })\n:quit\n",
+    );
+    assert!(
+        out.contains("[3,6]") && out.contains("[3]") && out.contains('6'),
+        "expected all three lambda inputs to answer, got {out:?}"
+    );
+    assert!(
+        !out.contains("__lambda_"),
+        "no lambda name should reach the reader, got {out:?}"
+    );
+}
+
 /// Acceptance #3 — a parse error doesn't crash; the session keeps working.
 #[test]
 fn recovers_from_parse_error() {
