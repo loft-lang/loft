@@ -437,8 +437,10 @@ fn r21() {
 }
 
 // r22 — `parse_scene_at`'s `ps_f`: a callee that answers its buffer or a record of its own
-// (a chain and a literal exit), bound inside an `if` in a loop.  Every mention of `mf` lies in
-// the arm, so it is the arm's local (loft#1600) and the bind is a FIRST bind there.
+// (a chain and a literal exit), bound inside an `if` in a loop, so the scope pass puts a
+// null-init in front of the `if` and the bind is a REBIND — twice per activation.  (Under
+// `LOFT_ARM_SCOPE=1` every mention of `mf` lying in the arm makes it the arm's local and a first
+// bind there; r28 keeps the pre-init shape either way.)
 fn r22() {
   total = 0;
   for line in 0..8 {

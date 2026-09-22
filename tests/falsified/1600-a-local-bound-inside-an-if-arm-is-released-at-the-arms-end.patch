@@ -1,26 +1,95 @@
 diff --git b/src/keys.rs a/src/keys.rs
-index 775888906..fe5c1d2d0 100644
+index 6f3caa6aa..fe5c1d2d0 100644
 --- b/src/keys.rs
 +++ a/src/keys.rs
-@@ -1265,16 +1265,6 @@ pub fn adopt_first_bind_enabled() -> bool {
+@@ -1265,17 +1265,6 @@ pub fn adopt_first_bind_enabled() -> bool {
      *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
  }
  
--/// loft#1600 (`@FR-H-Drop`, scope-end clause): a heap local every mention of which lies in
--/// ONE arm of an `if` is declared in that arm and released at its end, rather than
--/// pre-initialised at the `if`'s scope and released at that scope's end.
--/// `LOFT_NO_ARM_SCOPE=1` restores the pre-init, and is the first bisect step for a wrong
--/// release order, a leak or a use-after-free around a local first bound inside an `if` arm.
+-/// loft#1600 (`@FR-H-Drop`, scope-end clause), OPT-IN: a heap local every mention of which
+-/// lies in ONE arm of an `if` is declared in that arm and released at its end, rather than
+-/// pre-initialised at the `if`'s scope and released at that scope's end.  Off by default:
+-/// which of the two scopes an `if`-arm local has is an open design question (`formal/heap.md`
+-/// D-heap-36) — @PLN125 decided the function's (`pln125-b-drop.loft`'s `if_block_local`), and
+-/// the value-`if` delivery paths read the pre-init.  `LOFT_ARM_SCOPE=1` turns it on.
 -pub fn arm_scope_enabled() -> bool {
 -    static ON: OnceLock<bool> = OnceLock::new();
--    *ON.get_or_init(|| !env_set("LOFT_NO_ARM_SCOPE"))
+-    *ON.get_or_init(|| env_set("LOFT_ARM_SCOPE"))
 -}
 -
  /// @PLN164 B1b (`@FR-O-Buffer`, `@FR-R-Reuse`): the buffer of a call whose result a local
  /// adopts at its first bind is POOLED — minted once per activation and handed to every call,
  /// so a callee that promotes a local onto its buffer fills the caller's store instead of
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 21452e39a..8019f025c 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -4850,16 +4850,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// Is `v_nr` an ELEMENT slot typed as the enum whose variant `td_nr` is?  The slot is a
+-    /// record of the enum `OpNewRecord` carved out, and a literal of the variant writes every
+-    /// field the variant has and its tag, so it is built there as a struct literal is — rather
+-    /// than in a work-ref copied in, which also costs the append its push header.
+-    fn variant_fills_element(&self, v_nr: u16, td_nr: u32) -> bool {
+-        self.vars.is_inline_ref(v_nr)
+-            && self.data.def_type(td_nr) == DefType::EnumValue
+-            && matches!(self.vars.tp(v_nr).base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent)
+-    }
+-
+     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
+         // @PLN25 single-payload: a `__nullable<S>::Some` variant's body uses S's field names,
+         // which live in the inline `payload` field — not `Some`'s direct fields {enum, payload}.
+@@ -4953,9 +4943,16 @@ impl Parser {
+             // spelling was accidentally leak-free only because the work-ref road it was pushed
+             // onto frees correctly, and converging it inherits the dense road's defect.  The
+             // peel lands once loft#1483 is closed, not before.
+-            let type_matches =
+-                var_tp.is_unknown() || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr);
+-            let type_matches = type_matches || self.variant_fills_element(*v_nr, td_nr);
++            // A variant literal matches an ELEMENT slot typed as its enum: the slot is a record
++            // of the enum `OpNewRecord` carved out, and the literal writes every field the
++            // variant has and its tag, so it is built there as a struct literal is — rather
++            // than in a work-ref copied in, which also costs the append its push header.
++            let variant_into_element = self.vars.is_inline_ref(*v_nr)
++                && self.data.def_type(td_nr) == DefType::EnumValue
++                && matches!(var_tp.base(), Type::Reference(d, _) if *d == self.data.def(td_nr).parent);
++            let type_matches = var_tp.is_unknown()
++                || matches!(&var_tp, Type::Reference(d, _) if *d == td_nr)
++                || variant_into_element;
+             // loft#660 — a vector-literal ELEMENT alias is never an in-place
+             // allocation target.  Its storage is the slot `OpNewRecord` already
+             // carved out of the container, so re-allocating it here (`OpDatabase`)
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 0b8f7ee3a..ab61f9431 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -4737,14 +4737,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 Deps::frame(parent_tp.depend()),
+             )
+         } else if let Type::Enum(e, true, _) = assign_tp.base() {
+-            // A struct-enum element is a record of its enum, typed as its enum — `was` collapsed it
+-            // to a placeholder def whenever the container's content did not resolve (a vector
+-            // FIELD of a literal among them), and the scope pass then could not see that
+-            // appending a unit variant's literal (`B`, built in a work-ref and copied in) hands
+-            // its release to the container: both released it.  A value of the enum (`dot` in
+-            // `[JCircle { r: 1 }, dot]`) is stored into it as it is; a variant LITERAL is built
+-            // into it (the object literal's `type_matches`).
+-            Type::Enum(*e, true, Deps::frame(parent_tp.depend()))
++            // A struct-enum element is a record of its enum, read off `assign_tp` because the
++            // container's content does not always resolve (a vector FIELD of a literal among
++            // them), and a placeholder def hides from the scope pass that appending a unit
++            // variant's literal (`B`, built in a work-ref and copied in) hands its release to
++            // the container.  A RECORD of the enum, as `was` types it when the content does
++            // resolve: typed `Enum`, every variant literal is built in a work-ref and copied
++            // in, instead of written into the element.
++            Type::Reference(*e, Deps::frame(parent_tp.depend()))
+         } else if let Type::Vector(inner, _) = assign_tp {
+             // #555 — a `vector<T>` element keeps its SPECIFIC type.  `was` routes through
+             // `type_def_nr(vector<T>)`, which collapses EVERY vector to the one generic `vector`
 diff --git b/src/scopes.rs a/src/scopes.rs
-index 3a05df04b..4e0b169b2 100644
+index 768e38ddf..4e0b169b2 100644
 --- b/src/scopes.rs
 +++ a/src/scopes.rs
 @@ -141,13 +141,6 @@ struct Scopes<'s> {
@@ -37,7 +106,15 @@ index 3a05df04b..4e0b169b2 100644
      /// The backing local each CAPTURE named at the closure build — see
      /// [`capture_build_backings`].  Computed once off the raw body, because the answer is
      /// positional (@FR-O-Latest) and the variable table carries only the LAST assignment.
-@@ -5566,7 +5559,6 @@ fn run_scan_phase(
+@@ -5558,7 +5551,6 @@ fn rewrite_written_out(code: &mut Value, vars: &mut Function, written: &[(usize,
+     hit
+ }
+ 
+-#[allow(clippy::too_many_arguments)]
+ fn run_scan_phase(
+     data: &mut Data,
+     database: &mut crate::database::Stores,
+@@ -5567,7 +5559,6 @@ fn run_scan_phase(
      orig_vars: &Function,
      confined: &HashMap<u16, u16>,
      disturbed: Option<&DisturbedParams>,
@@ -45,7 +122,7 @@ index 3a05df04b..4e0b169b2 100644
  ) -> Vec<(usize, u16)> {
      // @PLN85 `local_source` over-free fix (gated): the heap slots whose OWNED store
      // is displaced by a later borrow/join reassignment. Computed on the pre-scope
-@@ -5608,8 +5600,6 @@ fn run_scan_phase(
+@@ -5609,8 +5600,6 @@ fn run_scan_phase(
          lift_join_witness: HashMap::new(),
          pending_join_witness: std::cell::Cell::new(u16::MAX),
          multi_assigned: multi_assigned_in(orig_code),
@@ -54,7 +131,7 @@ index 3a05df04b..4e0b169b2 100644
          assigned: assigned_in(orig_code),
          read_only_locals: crate::use_analysis::read_only_record_locals(
              orig_code,
-@@ -6600,81 +6590,6 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
+@@ -6601,81 +6590,6 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
          .collect()
  }
  
@@ -91,7 +168,7 @@ index 3a05df04b..4e0b169b2 100644
 -fn leaves_as_value(val: &Value, v: u16) -> bool {
 -    match val.unspan() {
 -        Value::Block(bl) => {
--            !matches!(bl.result, Type::Void)
+-            !matches!(bl.result.base(), Type::Void)
 -                && bl
 -                    .operators
 -                    .last()
@@ -136,7 +213,7 @@ index 3a05df04b..4e0b169b2 100644
  /// The value of `v`'s one `Set` in the two arms of an `if`, where `v` is assigned under no
  /// loop and under no other name, or `None`.  `scan_if` reads it together with
  /// `multi_assigned` (the whole body's count), so a `Some` is the variable's ONLY bind.
-@@ -8449,9 +8364,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+@@ -8450,9 +8364,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
              &orig_vars,
              &HashMap::new(),
              disturbed,
@@ -146,7 +223,7 @@ index 3a05df04b..4e0b169b2 100644
          // A reassignment the scan wrote out per arm was seen in its VALUE form by every analysis
          // that ran before the scan.  Rewrite exactly those and scan again, so those analyses read
          // the per-arm form; the confinement rescan below starts from the rewritten pair too.
-@@ -8466,7 +8379,6 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+@@ -8467,7 +8379,6 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                  &orig_vars,
                  &HashMap::new(),
                  disturbed,
@@ -154,7 +231,7 @@ index 3a05df04b..4e0b169b2 100644
              );
          }
          // Plan-57 cluster I-a — two-phase scan.  If a vector store is block-confined,
-@@ -8502,7 +8414,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+@@ -8503,7 +8414,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                  }
              }
              run_scan_phase(
@@ -163,7 +240,7 @@ index 3a05df04b..4e0b169b2 100644
              );
              for (&vdb, &(_local, b)) in &confined {
                  relocate_null_init(&mut data.definitions[d_nr as usize].code, vdb, b);
-@@ -11527,7 +11439,32 @@ impl Scopes<'_> {
+@@ -11528,7 +11439,32 @@ impl Scopes<'_> {
          }
          let first_binding = !self.var_scope.contains_key(&v);
          if first_binding {
@@ -197,7 +274,7 @@ index 3a05df04b..4e0b169b2 100644
          }
          // When a Reference variable is assigned from a user-function call,
          // codegen has two sub-paths (state/codegen.rs gen_set_first_at_tos /
-@@ -13096,9 +13033,6 @@ impl Scopes<'_> {
+@@ -13097,9 +13033,6 @@ impl Scopes<'_> {
          let mut pre_inits: Vec<u16> = Vec::new();
          self.find_first_ref_vars(t_val, function, &mut pre_inits);
          self.find_first_ref_vars(f_val, function, &mut pre_inits);
@@ -207,7 +284,7 @@ index 3a05df04b..4e0b169b2 100644
  
          // Also find small variables assigned in BOTH branches (or an else-if chain).
          let mut small_both: Vec<u16> = Vec::new();
-@@ -13134,7 +13068,8 @@ impl Scopes<'_> {
+@@ -13135,7 +13068,8 @@ impl Scopes<'_> {
          // the branch scans see them as already assigned and use the set_var/OpPutRef
          // re-assignment path instead of claim().
          for &v in &pre_inits {
@@ -217,7 +294,7 @@ index 3a05df04b..4e0b169b2 100644
          }
          // Register small variables assigned in both branches at the parent scope too.
          for &v in &small_both {
-@@ -13201,88 +13136,6 @@ impl Scopes<'_> {
+@@ -13202,88 +13136,6 @@ impl Scopes<'_> {
          Value::Insert(stmts)
      }
  
@@ -306,7 +383,7 @@ index 3a05df04b..4e0b169b2 100644
      /// Collect the variables an `if` branch ASSIGNS, so the caller can emit their
      /// null-init before the `If` — a variable written in one arm and read after it must
      /// hold null rather than an uninitialised slot.
-@@ -13367,7 +13220,8 @@ impl Scopes<'_> {
+@@ -13368,7 +13220,8 @@ impl Scopes<'_> {
              let mut hoist: Vec<u16> = Vec::new();
              self.locals_read_after(v, &bl.operators[i + 1..], function, &mut hoist);
              for &h in &hoist {
