@@ -208,25 +208,7 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 1.**
-
-- **D-tup-15** *(OPEN 2026-09-22, NARROWED the same day, loft#1590)* — `(T-Cons)` constructs a
-  tuple from any members, and `t = (["a"], 1)` was refused: *"Variable 't' cannot change type
-  from vector<text> to (vector<text>, integer)"*, on both backends, and on `main` since at least
-  2026-09-03.  The assignment's destination is the accumulator a heap-building right-hand side
-  adopts, and member 0 of `( … )` is parsed before a `,` proves the group a tuple, so
-  `Lexer::peek_tuple_literal` asks ahead and a tuple's member 0 gets a temp of its own.  That
-  walk stopped at EVERY string literal and answered "not a tuple", so a member 0 holding a string
-  anywhere — a `vector<text>`, a struct literal with a text field — adopted the destination and
-  typed it as the member.
-  **Narrowed:** a string without an interpolation hole is crossed like any other token, now that
-  every remembered token carries the scanner's hole state (`ScanState`).  **Open:** a string that
-  OPENS a hole still stops the walk — its `}` resumes the string only after the parser switches
-  modes, and a spec is read in `Formatting` mode, where whitespace is a token — so
-  `t = (["{x}"], 1)` is still refused; answering "tuple" there instead refuses
-  `v = (["{x}"] + w)`, a parenthesised concatenation that needs the destination.  The cure is a
-  walk that follows `parse_string`'s mode protocol.  Workaround: bind the vector first.  Guard
-  `tests/scripts/1590-a-tuple-whose-first-member-holds-a-string-binds.loft`.
+**OPEN: 0.**  D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
 
 - **D-tup-10** *(CLOSED 2026-09-16, loft#1423 / loft#1451)* — `(T-Absent)` said no
   `Optional(Tuple)` exists while the code minted one wherever absence is synthesised:

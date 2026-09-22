@@ -6,9 +6,8 @@
 // member 0 builds in a temp of its own.  That look-ahead stopped at every string literal and
 // answered "not a tuple", so `t = (["a"], 1)` typed `t` as the member and was refused: "cannot
 // change type from vector<text> to (vector<text>, integer)".  A string without an interpolation
-// hole is now crossed like any other token.  A string that OPENS a hole still stops it, so a
-// vector literal in member 0 holding an interpolated string stays refused (loft#1590 stays open
-// for that half) and is not a cell here.
+// hole is now crossed like any other token.  A string that OPENS a hole is the other half, in
+// `1590-a-tuple-member-string-may-open-a-hole.loft`.
 //
 // Every expected value is worked out by hand.  The last four cells are controls that were right
 // before: a member 0 with no string, and three parenthesised expressions that are NOT tuples and

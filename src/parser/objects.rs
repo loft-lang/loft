@@ -3080,6 +3080,152 @@ impl Parser {
         }
     }
 
+    /// Is the parenthesised group just opened a TUPLE literal — does a top-level `,`
+    /// reach the caller before the group's own `)`?
+    ///
+    /// The caller needs the answer BEFORE it parses member 0, which is the only member
+    /// parsed before a `,` has proved anything: a tuple MEMBER is not the enclosing
+    /// assignment's whole value, so it must not adopt that assignment's destination
+    /// variable as its build accumulator the way a parenthesised expression legitimately
+    /// does (`v = (["{x}"] + w)` needs it; `t = (["{x}"], 1)` must not take it).
+    ///
+    /// Every token this walk reads is REMEMBERED, and the real parse replays those tokens
+    /// after the revert rather than scanning them again.  So the walk must read each token
+    /// the way the parse will: a string that opens an interpolation hole is followed as
+    /// [`parse_string`](Self::parse_string) follows it — the hole's first token in the
+    /// string's own mode, the hole's expression as code, the closing `}` resuming the string
+    /// through [`set_mode`](crate::lexer::Lexer::set_mode), and a spec after a `:` read by
+    /// [`skip_format_spec_ahead`](Self::skip_format_spec_ahead).  A walk that crosses a hole
+    /// any other way hands the parse a mis-scanned string.
+    ///
+    /// The walk stops short of the closer, answering `false`, at a depth-0 `;` or at end of
+    /// input — inside parentheses that means the source is malformed, and stopping keeps
+    /// the scan STATEMENT-LOCAL.  That bound is not only about speed: `revert` restores the
+    /// token STREAM and not the reporting cursor (a replayed token deliberately leaves
+    /// `position` where the scan reached), so however far this walks is how far a
+    /// diagnostic raised inside the replayed region has its caret pushed.  Unbounded, an
+    /// unclosed `(` moved its caret from the offending line to the end of the function.
+    ///
+    /// Deliberately not `Lexer::recover_to`, whose depth walk this otherwise mirrors:
+    /// recovery may cross anything, and this stops at the statement's end.
+    pub(crate) fn peek_tuple_literal(&mut self) -> bool {
+        let saved = self.lexer.link();
+        let mut depth: i32 = 0;
+        // The depth to return to as each open interpolation hole closes.
+        let mut holes: Vec<i32> = Vec::new();
+        let mut found = false;
+        loop {
+            match self.lexer.peek().has {
+                LexItem::None => break,
+                LexItem::CString(_) => {
+                    // Past the string, then the parse's own two questions: does a NESTED
+                    // literal still hold a hole open, or did a plain one leave the lexer in
+                    // `Formatting`, which `parse_string` loops on?
+                    self.lexer.cont();
+                    if self.lexer.nested_hole_open() || self.lexer.mode() == Mode::Formatting {
+                        self.lexer.set_mode(Mode::Code);
+                        holes.push(depth);
+                        depth = 0;
+                    }
+                    continue;
+                }
+                _ => {}
+            }
+            if depth == 0 {
+                if let Some(&outer) = holes.last() {
+                    let closes = if self.lexer.peek_token(":") {
+                        self.skip_format_spec_ahead();
+                        true
+                    } else {
+                        self.lexer.peek_token("}")
+                    };
+                    if closes {
+                        if self.lexer.peek_token("}") {
+                            self.lexer.set_mode(Mode::Formatting);
+                        }
+                        holes.pop();
+                        depth = outer;
+                        continue;
+                    }
+                } else if self.lexer.peek_token(",") {
+                    found = true;
+                    break;
+                } else if self.lexer.peek_token(";") {
+                    break;
+                }
+            }
+            if self.lexer.peek_token("(")
+                || self.lexer.peek_token("[")
+                || self.lexer.peek_token("{")
+            {
+                depth += 1;
+            } else if self.lexer.peek_token(")")
+                || self.lexer.peek_token("]")
+                || self.lexer.peek_token("}")
+            {
+                if depth == 0 {
+                    break;
+                }
+                depth -= 1;
+            }
+            self.lexer.cont();
+        }
+        self.lexer.revert(saved);
+        found
+    }
+
+    /// Read ahead over a `{x:…}` spec, from its `:`, in the modes the spec branch of
+    /// [`parse_string`](Self::parse_string) reads it in: the fill and the flags in
+    /// `Formatting` mode, where whitespace is a token (a space is a fill), and a width as
+    /// code.  Stops on the string the closing `}` resumed — without a width that `}` is
+    /// read in `Formatting` mode, which resumes it — or on the `}` itself when the width's
+    /// code read it, for the caller to resume.  The one other reader of this grammar is
+    /// that branch; this reads the same tokens and computes nothing.
+    fn skip_format_spec_ahead(&mut self) {
+        self.lexer.set_mode(Mode::Formatting);
+        self.lexer.cont();
+        if let LexItem::Token(t) = self.lexer.peek().has
+            && !SKIP_TOKEN.contains(&t.as_str())
+        {
+            self.lexer.cont();
+        }
+        let mut flags = OUTPUT_DEFAULT;
+        self.string_states(&mut flags);
+        let width = match self.lexer.peek().has {
+            LexItem::Token(s) | LexItem::Identifier(s) => {
+                !SKIP_WIDTH.contains(&s.as_str()) && crate::parser::radix_for(&s).is_none()
+            }
+            LexItem::Integer(_, _) | LexItem::Float(..) => true,
+            _ => false,
+        };
+        if width {
+            self.lexer.set_mode(Mode::Code);
+        }
+        let mut depth: i32 = 0;
+        loop {
+            match self.lexer.peek().has {
+                LexItem::None => return,
+                LexItem::CString(_) if !width => return,
+                _ => {}
+            }
+            if self.lexer.peek_token("(")
+                || self.lexer.peek_token("[")
+                || self.lexer.peek_token("{")
+            {
+                depth += 1;
+            } else if self.lexer.peek_token(")")
+                || self.lexer.peek_token("]")
+                || self.lexer.peek_token("}")
+            {
+                if depth == 0 {
+                    return;
+                }
+                depth -= 1;
+            }
+            self.lexer.cont();
+        }
+    }
+
     // Iterator for
     // <for> ::= <identifier> 'in' <range> '{' <block>
     pub(crate) fn iter_for(&mut self, val: &mut Value, append_value: &mut u16) -> Type {
