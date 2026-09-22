@@ -87,9 +87,12 @@ fn counts(rust: &str) -> HashMap<String, (usize, usize, usize, usize)> {
         if line.contains("@FR-R-GroupPush group push header") {
             row.1 += 1;
         }
-        // `push_record_hoisted_zero` (the heap clause) is a slot use like the plain one.
+        // `push_record_hoisted_zero` (the heap clause) is a slot use like the plain one, and
+        // so are the windowed slot and finish (`@FR-R-PushFill`'s record clause).
         row.2 += line.matches("push_record_hoisted").count()
-            + line.matches("push_record_finish").count();
+            + line.matches("push_record_finish").count()
+            + line.matches("push_record_windowed").count()
+            + line.matches("windowed finish").count();
         // @PLN157 § V-y — the no-prefill twin IS the template call (minus the default
         // walk), so both spellings count as "template left".
         row.3 +=

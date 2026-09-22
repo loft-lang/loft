@@ -996,6 +996,12 @@ push, but CANNOT see what the admission exists to prevent — a runtime reader m
 lagging length changes no held fact — so there the interpreter is the falsifier.  The form
 is load-bearing: the window is three scalars whose address never reaches a call, because a
 counter whose address escaped to the growth arm lived on the stack and cost half the gain.
+Since 2026-09-22 the window also takes RECORD mint groups, at the top level or under `if`
+arms (the arms are exclusive, so the trip count bounds the appends): the slot is the
+window's next, the field sets and the mint address are that pointer, the finish is the
+window's bump (`enum_match` 35.9 → 23.4 µs, ~3.98× → ~2.6×); a group whose literal fills
+the element's own vector field, a read or a view of the vector in the body, a `break` and a
+second pushed vector keep the header mints.
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
 — with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that

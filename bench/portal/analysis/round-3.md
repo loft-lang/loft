@@ -28,6 +28,38 @@ what they are, with what was learned.
 
 ## Built
 
+### The record push window under a branch — `(R-PushFill)`'s record clause, 2026-09-22
+
+Built as the record clause of `(R-PushFill)` (`formal/rewrites.md`, the in-words paragraph
+beside the window clause's), switch `LOFT_NO_PUSH_WINDOW`, trace `LOFT_TRACE_PUSH_FILL`,
+cells `tests/scripts/158-record-window.loft` r1–r11 (identical on the interpreter and on
+native under `LOFT_HOIST_VERIFY`, `LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES`
+and `LOFT_NATIVE_LEAK_CHECK`; falsified by the finish emitted as nothing — r1 `0 0 0 0` for
+`300 7261 6400 6566`), pins `tests/record_window.rs`.  A counted loop whose pushes are
+record MINT GROUPS, at the top level or under `if` arms, reserves its trips, opens one
+window, mints every group through it (the slot `base + len·size`, zeroed through the held
+address; the field sets and `(R-RecPtr)`'s mint address are that pointer; the finish is the
+window's bump) and closes it once after every copy of the loop:
+
+| `enum_match` row (3 000 mints, three arms) | µs | ratio |
+|---|---:|---|
+| before | 35.9 | 3.98× |
+| hand price (the emission edited by script) | 20.4 | ~2.3× |
+| built, the fast path a CALL | 23.4 | — |
+| built, `push_record_windowed` `#[inline(always)]` | **23.4 → see the pin** | **~2.6×** |
+
+The declines are cells: a group whose literal fills the element's own vector field (r4 — a
+claim in the store the base is held in), a read of the vector in the body (r7), a `break`
+(r8), groups on two vectors (r10), a view of the vector read inside the body (r11); a view
+read only AFTER the close is admitted (r9), and so is a nested-record element (r5) — its
+`pos.x` set has a field on the root, and the ROOT being the fresh element is what decides.
+Three lessons: the window's close must stand after EVERY guarded copy of the loop (the
+first hand placement closed the checked copy alone and read hash `0` — a length nothing
+wrote is an empty vector to the consumer, and only the value channel says so); a fast path
+LLVM keeps as a call costs 15 % of the gain until it is forced inline; and the finish's own
+element operand is a mention of the vector to a naive count, which would have declined
+every group.
+
 ### The split table — `(R-SplitTable)` + `(R-TextBorrow)`'s discharge clause, 2026-09-22
 
 Built as the rule `(R-SplitTable)` (`formal/rewrites.md`), switch `LOFT_NO_SPLIT_TABLE`,
@@ -490,7 +522,9 @@ close does not run leaves the length at 0, which the consumer loop reads as empt
 price stands only with the hash.  To build: `(R-PushFill)`'s window clause extended to
 record MINT GROUPS under `if` arms of a counted loop — at most one mint per pass, so the
 trip-count reservation bounds the total and the window never grows inside the loop.
-Next: that window; `for c in s.trim()`'s per-iteration call source.  Levers this round FOUND
+**BUILT** as the record clause (§ Built): 35.9 → 23.4 µs on the harness, the fast path
+forced inline; `stats.py --only 16` pins it below.  Next: `for c in s.trim()`'s
+per-iteration call source.  Levers this round FOUND
 and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
 through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
