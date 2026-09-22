@@ -287,8 +287,12 @@ so the row this moves is the library's own, not a suite lane's.
 **BUILT 2026-09-22, both halves, after loft#1593 (fixed the same day, `2ac19e9c6`):**
 `(R-Range)`'s type clause, `range::type_range` at the proof's two homes.  The cbor decoder's
 reassembly is plain with no change to the library (+8 plain ops in `read_value`); its encoder's
-`major * 32 + k` becomes plain the day the library writes `major: integer limit(0, 7)` — one
-line, theirs (reported here, not edited there), and cell c2 shows it fires.  What building it
+`major * 32 + k` went plain in **cbor 0.1.6** (published 2026-09-22 at the owner's ask:
+`major: integer limit(0, 7)`, `head` 10 checked ops → 1; suite and guide byte-identical on
+interpret / native / wasm before and after; registry index signed bound to `cbor@0.1.6`).
+The census row's O(n³) note was stale — 0.1.5 already encodes each key once — and is
+corrected.  Still open on OUR side: a `text.bytes() -> vector<u8>` in the stdlib, which is
+what cbor's byte-at-a-time text append (`buf += [value.byte_at(i) & 255 as u8]`) is missing.  What building it
 found: the clause could not be sound before #1593; the `i32` cell written to falsify the
 spare-code exclusion could not fail (the template clause excludes it first), and the spec the
 exclusion actually decides is a signed library alias with a spare bottom code, which does hold
