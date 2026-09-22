@@ -15025,6 +15025,26 @@ impl Parser {
                 all_types[nr] = tp.clone();
                 continue;
             }
+            // … and at a KEYED parameter, the empty collection its concrete spelling builds
+            // (`f([])` at a `hash<K[k]>` mints a `__kvb_N` store, loft#703).  A generic's
+            // parameter learns it is keyed only here (`fold(v, [], add)` binds `U` from
+            // `add`), and without this arm the `[]` reached the callee as a bare `null`: the
+            // interpreter looped in the instance and `--native` did not compile (E0308), where
+            // a typed empty local passed in its place was right.
+            if matches!(&actual_code, Value::Insert(ops) if ops.len() <= 1)
+                && crate::parser::vectors::is_keyed(&tp)
+                && let Some(kt) = self.keyed_known_type(&tp)
+            {
+                let kvb = self.vars.work_keyed(&tp.without_deps(), &mut self.lexer);
+                let ls = vec![
+                    v_set(kvb, Value::Null),
+                    self.cl("OpDatabase", &[Value::Var(kvb), Value::Int(i32::from(kt))]),
+                    Value::Var(kvb),
+                ];
+                actual.push(v_block(ls, tp.clone(), "empty_vector_arg"));
+                all_types[nr] = tp.clone();
+                continue;
+            }
             // L4: reject non-variable expressions passed to `&` parameters (except &text
             // which has its own work-text copy handling in convert()).  The `&` modifier
             // means "mutations propagate back to the caller" — passing a literal means

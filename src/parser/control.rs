@@ -12147,13 +12147,16 @@ impl Parser {
         let mut code =
             std::mem::replace(&mut self.data.definitions[d_nr as usize].code, Value::Null);
         // Which locals did the template type as the type variable?  Those are the binds the
-        // record lowering was written for; a local the template already typed as a vector
-        // got the vector lowering at the parse and is left alone.
+        // record lowering was written for; a local the template already typed as a collection
+        // got that lowering at the parse and is left alone.  Vector OR keyed: `acc = init` in
+        // `fold<T, U>` is the same `@FR-B-Copy` whole-value bind at a `hash`, and left aliasing
+        // the argument the caller freed its own collection through the result.
         let tv_typed = |v: u16, vars: &crate::variables::Function| -> bool {
             (v as usize) < tmpl_vars.count() as usize
                 && matches!(tmpl_vars.tp(v).base(), Type::Reference(h, _) if holders.contains(h))
                 && (v as usize) < vars.count() as usize
-                && matches!(vars.tp(v).base(), Type::Vector(_, _))
+                && (matches!(vars.tp(v).base(), Type::Vector(_, _))
+                    || crate::parser::vectors::is_keyed(vars.tp(v)))
         };
         if let Value::Block(bl) = &mut code {
             // B-Copy: the whole-value vector binds.
@@ -12196,6 +12199,39 @@ impl Parser {
     /// The FIRST assignment of a local is also its declaration — the null-init that allocates
     /// an owned vector local's store on both backends — so a first bind keeps a `Set(v, null)`
     /// in front of the copy; a rebind copies into the store the local already has.
+    /// The whole-value copy `@FR-B-Copy` asks of `d = v` at this INSTANCE's collection type:
+    /// `OpReplaceVector` for a vector, `OpReplaceKeyed` for a keyed kind — the ops the
+    /// concrete spelling of the same bind emits.  `None` where the source is neither, which
+    /// leaves the bind alone.
+    ///
+    /// The keyed half is what `fold(v, [], add)`'s `acc = init` needed: the template lowered
+    /// it while `U` was a record placeholder, so no keyed copy was emitted and the instance
+    /// ALIASED the caller's collection — the caller then freed it through the result and
+    /// still held it in the argument's own work-ref, and the NEXT call over a recycled store
+    /// read records that were no longer there (a second fold beside it made the first one's
+    /// answer shrink).  Its concrete twin copies.
+    fn generic_collection_copy(&mut self, v: u16, u: u16) -> Option<Value> {
+        let src = self.vars.tp(u).base().clone();
+        if let Type::Vector(elm, _) = &src {
+            let rec_tp = self.append_elem_tp(elm);
+            return Some(self.cl(
+                "OpReplaceVector",
+                &[Value::Var(v), Value::Var(u), Value::Int(rec_tp)],
+            ));
+        }
+        if crate::parser::vectors::is_keyed(&src)
+            && let Some(kt) = self.keyed_known_type(&src)
+        {
+            // Source first, destination second — `OpReplaceKeyed(src, dest, tp)`, as the
+            // keyed local's own assignment site spells it.
+            return Some(self.cl(
+                "OpReplaceKeyed",
+                &[Value::Var(u), Value::Var(v), Value::Int(i32::from(kt))],
+            ));
+        }
+        None
+    }
+
     fn rewrite_generic_vector_binds(
         &mut self,
         node: &mut Value,
@@ -12219,14 +12255,9 @@ impl Parser {
                     // made for — `filter(vv, f)` inside a generic panicked at
                     // `vector<vector<integer>>` — where the concrete twin aliases.
                     && !self.vars.tp(*v).depend().contains(u)
-                    && let Type::Vector(elm, _) = self.vars.tp(*u).base().clone()
+                    && let Some(replace) = self.generic_collection_copy(*v, *u)
                 {
-                    let (v, u) = (*v, *u);
-                    let rec_tp = self.append_elem_tp(&elm);
-                    let replace = self.cl(
-                        "OpReplaceVector",
-                        &[Value::Var(v), Value::Var(u), Value::Int(rec_tp)],
-                    );
+                    let v = *v;
                     *node = if first {
                         Value::Insert(vec![crate::data::v_set(v, Value::Null), replace])
                     } else {

@@ -3,63 +3,51 @@
 //
 // `reduce` reads its accumulator type off the FOLD, not off the initial value (loft#956).
 //
-// A collection accumulator is refused rather than mis-compiled (loft#951's cut: the fold has
-// to hand the callee a buffer per step, and a collection's is not the text one).  The refusal
-// asked the INITIAL VALUE what type it was, and a bare `[]` has none to give — it arrives as
-// `Unknown(0)`, which is not heap storage, so it walked straight past the refusal it was
-// written for.  What came out the other side was a `reduce_acc` variable with no type:
-// `--interpret` read it back EMPTY (`len=`, where `0` is the answer) and `--native` reached
-// `rust_type` with a `Never` and panicked — *"Incorrect type Never"*, an internal compiler
-// error with the user's line nowhere in it.  Both on released 2026.8.0 as well.
+// The refusal of a collection accumulator used to ask the INITIAL VALUE what type it was, and a
+// bare `[]` has none to give — it arrives as `Unknown(0)`, which is not heap storage, so it
+// walked straight past the refusal it was written for.  What came out the other side was a
+// `reduce_acc` variable with no type: `--interpret` read it back EMPTY and `--native` reached
+// `rust_type` with a `Never` and panicked — an internal compiler error with the user's line
+// nowhere in it.  Both on released 2026.8.0 as well.
 //
-// The signature always knew.  `f: fn(U, T) -> U` names `U` in its first parameter and the
-// init only has to be assignable to it, so the accumulator now comes from the fold and the
-// literal only has to agree.  c1 and c2 are then the SAME program said two ways, and they get
-// the same answer — which is the whole point: `[]` and `vector<integer>` were never different
-// folds, only different amounts of writing-out.
+// The signature always knew.  `f: fn(U, T) -> U` names `U` in its first parameter and the init
+// only has to be assignable to it, so the accumulator comes from the fold and the literal only
+// has to agree.  c1 and c2 are then the SAME program said two ways, and they get the same
+// answer — which is the whole point: `[]` and `vector<integer>` were never different folds,
+// only different amounts of writing-out.
 //
-// Two `vector<integer>` lines, one per cell: c1 and c2 are the same fold written two ways and
-// the point is that they now answer IDENTICALLY, so both must appear.
-// @EXPECT_ERROR: cannot fold into a `vector<integer>` accumulator yet
-// @EXPECT_ERROR: cannot fold into a `vector<integer>` accumulator yet
-// @EXPECT_ERROR: cannot fold into a `vector<text>` accumulator yet
-// @EXPECT_ERROR: cannot fold into a `index<Rec956[id]>` accumulator yet
-//
-// The keyed cell also pins the diagnostic's own spelling: `Type::name` used to interpolate a
-// keyed collection's key list with `{:?}`, so a refusal read `index<Rec956,[("id", true)]>` —
-// a Rust debug dump in a message a user is meant to act on. It now names the type the way the
-// program writes it.
+// @PLN165 E7 changed what that same answer IS.  `reduce` is a `#builtin` method whose
+// declaration folds with its own body (`acc = init; for x in self { acc = f(acc, x); } acc`),
+// so a collection accumulator is no longer refused: every cell below folds, and c1 and c2 still
+// answer identically.  c4's bare `[]` at a KEYED accumulator reached the declaration as a bare
+// `null` (the generic call built an empty vector for a `[]` argument and nothing for a keyed
+// one): the interpreter looped and `--native` did not compile.  It now builds the empty
+// collection its concrete spelling builds.
 
 struct Rec956 { id: integer }
 
-fn addv956(acc: vector<integer>, x: integer) -> vector<integer> { acc }
-fn addt956(acc: vector<text>, x: text) -> vector<text> { acc }
-fn addi956(acc: index<Rec956[id]>, x: integer) -> index<Rec956[id]> { acc }
+fn addv956(acc: vector<integer>, x: integer) -> vector<integer> { acc += [x * 10]; acc }
+fn addt956(acc: vector<text>, x: text) -> vector<text> { acc += ["{x}{x}"]; acc }
+fn addi956(acc: index<Rec956[id]>, x: integer) -> index<Rec956[id]> { acc += [Rec956 { id: x }]; acc }
 
 fn main() {
   n = [1, 2, 3, 4];
   ts = ["a", "b"];
 
-  // c1 — the filed shape: a bare `[]`.  Nothing here says what it is empty OF, so before the
-  //      fix this was the one spelling that escaped the refusal.  It must now be refused with
-  //      the type the FOLD names, not with silence.
+  // c1 — the filed shape: a bare `[]`.  Nothing here says what it is empty OF; the fold does.
   c1 = n.reduce([], addv956);
 
-  // c2 (oracle) — the same fold with the accumulator written out.  This was always refused,
-  //      and c1 must now answer identically: the diagnostic names `vector<integer>` in both.
+  // c2 (oracle) — the same fold with the accumulator written out.  c1 must answer identically.
   init: vector<integer> = [];
   c2 = n.reduce(init, addv956);
 
-  // c3 — the element type is not the axis.  A `vector<text>` fold from a bare `[]` must name
-  //      `vector<text>`, so the type is read off the fold rather than guessed from the input.
+  // c3 — the element type is not the axis: a `vector<text>` fold from a bare `[]`.
   c3 = ts.reduce([], addt956);
 
-  // c4 — a KEYED collection, not just a vector.  `is_heap_storage` covers every collection
-  //      kind, and a bare `[]` is how all of them are spelled empty, so the hole was the same
-  //      width for each.
+  // c4 — a KEYED collection, not just a vector: a bare `[]` is how every kind is spelled empty.
   c4 = n.reduce([], addi956);
 
-  // Every fold above is refused, so nothing here runs — the cells are the diagnostics. The
-  // uses keep each result live so no dead-code pass can drop the call before it is checked.
-  println("{len(c1)}{len(c2)}{len(c3)}{len(c4)}");
+  assert("{c1}" == "{c2}" && "{c1}" == "[10,20,30,40]", "{c1} {c2}");
+  assert("{c3}" == "[\"aa\",\"bb\"]", "{c3}");
+  assert(len(c4) == 4 && c4[3].id == 3, "{len(c4)}");
 }

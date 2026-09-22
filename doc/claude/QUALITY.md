@@ -2780,9 +2780,12 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
-(2026-09-22, @PLN165 E5–E7 on `tuxedo-165-generics`: opaque tests re-pinned at 1309 — the
-method spelling's by-name recognition of `map`/`filter`/`reduce` (`parse_vector_method`) is
-retired, and its bare shape tests with it.)
+(2026-09-22, @PLN165 E5–E7 on `tuxedo-165-generics`, rebased onto `main` @ ffb66a58b and
+re-measured there: **946 · 620 · 4 · 322**, and `--check-ratchet` re-pinned at opaque 322,
+opaque tests 1309 — the method spelling's by-name recognition of `map`/`filter`/`reduce`
+(`parse_vector_method`) is retired, and its bare shape tests with it.  The two the arc added
+peel: the tuple result's own test reads `bl.result.base()`, and the keyed bind asks
+`is_keyed`, which peels.)
 
 (2026-09-22, the third line of the same join — `tuxedo-1562-layout-gate` (loft#1597, #1600,
 #1601) — re-measured at its end: **941 · 615 · 4 · 322**, opaque tests 1311, at the pin the two-line
