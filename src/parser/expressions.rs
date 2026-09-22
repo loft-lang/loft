@@ -108,6 +108,28 @@ pub(crate) fn target_holds_null(target: &Type, parent: &Type) -> bool {
     }
 }
 
+/// The slot a value written to a place of type `target` is stored into, as the integer
+/// range checks see it.
+///
+/// @FR-B-Ref-Uniform — a value written to a `&τ` link or a `&τ` parameter is stored into the
+/// linked slot, whose type is `τ`: `c = c + 10` through a `&u8` is the store `w = w + 10`
+/// into the `u8`, so `(I-Narrow)` refuses it and a compound step past the range takes the
+/// slot's default, exactly as for the variable.  A `source` that is itself a link is a
+/// repoint (`c = &other`) or a link copy, not a write through `c`, and keeps the link type.
+/// Only an integer is peeled, because the range question exists only for an integer; every
+/// other scalar written through a link meets the same type-change check the variable meets.
+pub(crate) fn linked_store_target<'a>(target: &'a Type, source: &Type) -> &'a Type {
+    match target {
+        Type::RefVar(inner)
+            if matches!(inner.base(), Type::Integer(_))
+                && !matches!(source.base(), Type::RefVar(_)) =>
+        {
+            inner
+        }
+        other => other,
+    }
+}
+
 fn uncomputable_default(nullable: bool, spec: &crate::data::IntegerSpec) -> i64 {
     // C85 says an overflow writes the RESERVED sentinel into a non-null slot, which then
     // reads as null — so a non-null slot answers null exactly when its type kept a code back
@@ -6035,11 +6057,14 @@ use a separate collection or add after the loop"
                 f_type.source_name(&self.data),
             );
         }
+        // A write THROUGH a link stores into the linked slot, so the narrowing refusal and the
+        // range guard below are asked of that slot's type (`linked_store_target`, loft#1604).
+        let store_tp = linked_store_target(f_type, &s_type);
         // A NULLABLE narrow target takes the implicit CHECKED narrowing instead of the
         // refusal below — `implicit_checked_narrow` is the one home, and this seam has to
         // ask it by hand because `is_equal` above kept it out of `convert` (loft#1246).
         if op == "=" && !matches!(s_type, Type::Null) {
-            self.implicit_checked_narrow(code, &s_type, f_type);
+            self.implicit_checked_narrow(code, &s_type, store_tp);
         }
         // @PLAN48 P2: `x: i32 = some_integer` narrows (loses data) but integer and
         // i32 are `is_equal`, so it bypasses the convert-based check above.  Require
@@ -6053,18 +6078,18 @@ use a separate collection or add after the loop"
         // not fit, so guard inside the discharge and leave this store alone: neither the
         // refusal below nor the outside-the-expression guard after it applies.
         let discharged =
-            op == "=" && !self.first_pass && self.range_guard_inside_discharge(code, f_type);
+            op == "=" && !self.first_pass && self.range_guard_inside_discharge(code, store_tp);
         if !discharged
             && op == "="
             && !self.first_pass
-            && Self::is_narrowing_int_store(&s_type, f_type)
+            && Self::is_narrowing_int_store(&s_type, store_tp)
         {
-            let dst = self.int_type_name(f_type);
-            if let Some(hint) = self.nullable_sentinel_hint(code, f_type, &dst) {
+            let dst = self.int_type_name(store_tp);
+            if let Some(hint) = self.nullable_sentinel_hint(code, store_tp, &dst) {
                 // The literal fits the type but lands on the reserved null
                 // sentinel of a nullable narrow FIELD — explain that, not "too big".
                 diagnostic!(self.lexer, Level::Error, "{hint}");
-            } else if !self.int_value_fits(code, f_type) {
+            } else if !self.int_value_fits(code, store_tp) {
                 let src = self.int_type_name(&s_type);
                 let cures = Self::narrowing_cures(code, &dst);
                 diagnostic!(
@@ -6082,8 +6107,8 @@ use a separate collection or add after the loop"
         // `is_narrowing_int_store` above cannot see it — which is why a declared range on
         // a LOCAL went unenforced entirely, not merely mis-stored.
         if !discharged && op == "=" && !self.first_pass {
-            let holds_null = target_holds_null(f_type, &lhs_parent_tp);
-            self.guard_declared_range(code, f_type, &s_type, holds_null);
+            let holds_null = target_holds_null(store_tp, &lhs_parent_tp);
+            self.guard_declared_range(code, store_tp, &s_type, holds_null);
         }
         if self.validate_lock_assign(code, to) {
             return Type::Void;

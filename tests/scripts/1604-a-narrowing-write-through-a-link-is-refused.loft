@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A value written through a `&` link or a `&` parameter is stored into the linked slot
+// (`binding.md (B-Ref-Uniform)`), so a store that is not provably inside a narrow slot's range is
+// refused at compile time with the cure named (`types.md (I-Narrow)`), exactly as `w = w + 10`
+// into the `u8` itself is.  Before loft#1604 each of these compiled and stored the unchecked
+// value on both backends.
+//
+// Cells: a local link and a `&` parameter; `u8`, `i8` and a user `limit(1, 8)`.  Every expected
+// error below is matched exactly once, so a second error for one write fails the file.  The
+// compound spelling (`+=`) is not a refusal — it takes the slot's default — and has its own
+// guard, `1604-a-compound-step-through-a-narrow-link-takes-the-slot-default.loft`.
+//
+// CHANNEL: the expected diagnostics, one per refused write.
+//
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8 (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to i8 (may lose data)
+// @EXPECT_ERROR: cannot implicitly narrow integer to integer(1, 8) (may lose data)
+
+type Small = integer limit(1, 8);
+
+fn bump(x: &u8) { x = x + 10; }
+fn local_link() { w: u8 = 250; d = &w; d = d + 10; }
+fn i8_parameter(y: &i8) { y = y * 2; }
+fn small_link() { k: Small = 2; kk = &k; kk = kk * 50; }
+
+fn main() {
+  z: u8 = 250;
+  bump(z);
+  local_link();
+  n: i8 = 100;
+  i8_parameter(n);
+  small_link();
+}

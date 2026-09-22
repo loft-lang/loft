@@ -1945,6 +1945,8 @@ impl Parser {
         // it is already in range — clamping is idempotent, and `set_byte`'s out-of-range
         // return is discarded, so nothing is judged or reported twice.
         if op != "=" && !self.first_pass {
+            // A compound step through a link steps the linked slot (loft#1604).
+            let f_type = crate::parser::expressions::linked_store_target(f_type, src_tp);
             let holds_null = crate::parser::expressions::target_holds_null(f_type, parent_tp);
             let bounded = self.guard_compound_range(&mut code, f_type, holds_null);
             // `@FR-E-Uncomp-Seen` — offer this store's fit status to an `if !place { … }` that
