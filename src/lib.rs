@@ -281,6 +281,7 @@ pub mod keys;
 pub mod lease;
 mod lexer;
 pub mod lsp;
+pub mod narrow;
 pub mod native;
 pub mod net_profile;
 pub mod null_census;

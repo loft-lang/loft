@@ -620,6 +620,23 @@ impl NarrowIntKind {
         matches!(self, NarrowIntKind::ByteNullable | NarrowIntKind::Short)
     }
 
+    /// The kind as the interpreter's `OpVarNarrow` / `OpPutNarrow` operand spells it — the
+    /// constants in `crate::narrow`, which decode by this code.
+    #[must_use]
+    pub fn code(self) -> u8 {
+        match self {
+            NarrowIntKind::Byte => crate::narrow::BYTE,
+            NarrowIntKind::ByteNullable => crate::narrow::BYTE_NULLABLE,
+            NarrowIntKind::ShortRaw => crate::narrow::SHORT_RAW,
+            NarrowIntKind::Short => crate::narrow::SHORT,
+            NarrowIntKind::ShortFull => crate::narrow::SHORT_FULL,
+            NarrowIntKind::Int4 => crate::narrow::INT4,
+            NarrowIntKind::Int4Raw => crate::narrow::INT4_RAW,
+            NarrowIntKind::Int4Full => crate::narrow::INT4_FULL,
+            NarrowIntKind::Int => u8::MAX,
+        }
+    }
+
     /// The `OpGet*` op name for this kind.
     #[must_use]
     pub fn get_op(self) -> &'static str {
@@ -5978,6 +5995,96 @@ pub fn holds_dbref(tp: &Type) -> bool {
 /// still spelling this list inline — adopting them changes behaviour per site and each needs
 /// its own probe, which is why they are a checklist and not a sweep.
 #[must_use]
+/// How a LINKED narrow integer local holds its value — the encoding a FIELD of its type has
+/// (@PLN167 decision 1, `@FR-B-Ref-Uniform`), so that one `&u8` pointer or `DbRef` reads a
+/// local and a field alike.
+///
+/// A local is a slot like a field, never a narrow-vector element (`narrow_vec = false`), so
+/// a non-nullable two-byte type takes the full-range kind and a nullable one the `+1` kind;
+/// `min` is what the kind's read and write ops take.  `None` for a type that is not narrow:
+/// the full `integer`, which stays the 8-byte slot every local has.  The bytes themselves are
+/// written and read by `crate::narrow`, on both backends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NarrowSlot {
+    pub kind: NarrowIntKind,
+    /// The `min` operand of the kind's ops; `0` for a kind that takes none.
+    pub min: i32,
+    pub width: u8,
+}
+
+impl NarrowSlot {
+    #[must_use]
+    pub fn of_type(tp: &Type) -> Option<Self> {
+        let nullable = matches!(tp, Type::Optional(_));
+        let Type::Integer(spec) = tp.base() else {
+            return None;
+        };
+        let width = spec.byte_width(nullable);
+        if width >= 8 {
+            return None;
+        }
+        let kind = NarrowIntKind::of(width, nullable, false, spec.unsigned_wide());
+        let min = if kind.takes_min() {
+            spec.usable_min(kind.reserves_sentinel())
+        } else {
+            0
+        };
+        Some(Self { kind, min, width })
+    }
+
+    /// The Rust type a native local of this kind is declared as: the storage width, unsigned
+    /// where the encoding is a biased code.
+    #[must_use]
+    pub fn rust_type(self) -> &'static str {
+        match self.kind {
+            NarrowIntKind::Byte | NarrowIntKind::ByteNullable => "u8",
+            NarrowIntKind::ShortRaw | NarrowIntKind::Short | NarrowIntKind::ShortFull => "u16",
+            NarrowIntKind::Int4 => "i32",
+            NarrowIntKind::Int4Raw | NarrowIntKind::Int4Full => "u32",
+            NarrowIntKind::Int => "i64",
+        }
+    }
+
+    /// The `crate::narrow` function pair for this kind, `(enc, dec)`, and whether it takes
+    /// the `min` argument.
+    fn fns(self) -> (&'static str, &'static str, bool) {
+        match self.kind {
+            NarrowIntKind::Byte => ("enc_byte", "dec_byte", true),
+            NarrowIntKind::ByteNullable => ("enc_byte_nullable", "dec_byte_nullable", true),
+            NarrowIntKind::ShortRaw => ("enc_short_raw", "dec_short_raw", true),
+            NarrowIntKind::Short => ("enc_short", "dec_short", true),
+            NarrowIntKind::ShortFull => ("enc_short_full", "dec_short_full", true),
+            NarrowIntKind::Int4 => ("enc_int4", "dec_int4", false),
+            NarrowIntKind::Int4Raw => ("enc_int4_raw", "dec_int4_raw", false),
+            NarrowIntKind::Int4Full | NarrowIntKind::Int => {
+                ("enc_int4_full", "dec_int4_full", false)
+            }
+        }
+    }
+
+    /// Native: the stored bytes for the wide value `expr`.
+    #[must_use]
+    pub fn encode_rust(self, expr: &str) -> String {
+        let (enc, _, takes_min) = self.fns();
+        if takes_min {
+            format!("loft::narrow::{enc}(({expr}) as i64, {}_i32)", self.min)
+        } else {
+            format!("loft::narrow::{enc}(({expr}) as i64)")
+        }
+    }
+
+    /// Native: the wide value of the stored bytes `expr`.
+    #[must_use]
+    pub fn decode_rust(self, expr: &str) -> String {
+        let (_, dec, takes_min) = self.fns();
+        if takes_min {
+            format!("loft::narrow::{dec}({expr}, {}_i32)", self.min)
+        } else {
+            format!("loft::narrow::{dec}({expr})")
+        }
+    }
+}
+
 pub fn is_scalar(tp: &Type) -> bool {
     matches!(
         // `@FR-N-Shape` — a `τ?` scalar is stored in `τ`'s own width with an in-band sentinel

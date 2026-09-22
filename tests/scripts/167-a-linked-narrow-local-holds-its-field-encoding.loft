@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A narrow integer local that a `&` names — by a `&` bind, a `&` argument or a re-point —
+// holds its type's FIELD encoding (`binding.md (B-Ref-Uniform)`, @PLN167 decision 1): the
+// value biased by the type's minimum, one byte for a `u8`/`i8`/`limit(1000, 1100)`, two for a
+// `u16`, four for an `i32`/`u32`, with the sentinel code a nullable slot reserves.  A `&u8` is
+// then a byte pointer (a byte-wide `DbRef` on the interpreter) whether it names a local or a
+// field, and reads and writes through it decode and encode at every access.  A narrow local
+// nothing links keeps the 8-byte slot every local has.
+//
+// Every cell states its expected value by hand.  The values are what a `u8` local answered
+// before the encoding too — the change is the representation, so the cells that can FAIL on
+// a wrong encoding are the edges: an `i8` holding `-1` or `-128` (a Rust `i8` would be
+// `0xFF`, a store byte is `0x7F`), a `u8` at `255`, a `u8?` at its null code and at `254`, a
+// `limit(1000, 1100)` whose bias is not zero, and a local first bound inside an `if` ARM and
+// read after it — whose pre-declared default is written before any arm runs.
+//
+// Cells: each narrow type at min, max and (for `u8?`) null, written and read through a bind;
+// a re-point between two linked locals; a loop variable linked in the body; a by-value
+// parameter linked in its callee; a `&` parameter re-pointed to a local of the callee; the arm
+// pre-init; the decode seams (`n: integer = x`, `x + 1000`, `"{x}"`, `as u8 ??`); a linked
+// local handed by value to a function and returned; an unlinked neighbour that must not move.
+//
+// CHANNEL: the assertions.
+
+type Lim = integer limit(1000, 1100);
+struct B { n: u8 }
+
+fn set200(c: &u8) { c = 200; }
+fn dec8(c: &i8) { c -= 1; }
+fn setn(c: &u8?) { c = null; }
+fn wide(v: integer) -> integer { v * 2 }
+fn takes_u8(v: u8) -> u8 { v }
+fn link_param(p: u8) -> text { c = &p; c = 33; "{p} {c}" }
+fn repoint_to_local(c: &u8) -> text { y: u8 = 250; c = &y; c = 251; "{y}" }
+
+fn edges() -> text {
+  x: u8 = 255; c = &x; a1 = "{c}"; c = 0; a2 = "{x}";
+  y: i8 = -1; d = &y; b1 = "{d}"; d = -128; b2 = "{y}"; d = 127; b3 = "{y}";
+  z: u8? = null; e = &z; c1 = "{e} {z == null}"; e = 254; c2 = "{z}"; e = null; c3 = "{z == null}";
+  l: Lim = 1000; f = &l; d1 = "{f}"; f = 1100; d2 = "{l}";
+  w: u16 = 65535; g = &w; e1 = "{g}"; g = 0; e2 = "{w}";
+  m: i32 = -2147483647; h = &m; f1 = "{h}"; h = 2147483647; f2 = "{m}";
+  u: u32 = 4294967294; k = &u; g1 = "{k}"; k = 0; g2 = "{u}";
+  "{a1} {a2}|{b1} {b2} {b3}|{c1} {c2} {c3}|{d1} {d2}|{e1} {e2}|{f1} {f2}|{g1} {g2}"
+}
+
+fn repoint() -> text { x: u8 = 3; y: u8 = 250; c = &x; c = &y; c = 7; "{x} {y}" }
+
+fn loop_variable() -> text {
+  px: vector<u8> = [250, 1, 2];
+  seen = "";
+  for b in px { c = &b; c = 9; seen += "{b}"; }
+  seen
+}
+
+fn arm_pre_init(k: integer) -> text {
+  if k > 0 { q: i8 = -5; } else { q: i8 = 5; }
+  c = &q;
+  c += 1;
+  "{q}"
+}
+
+fn seams() -> text {
+  x: u8 = 250; c = &x;
+  n: integer = x;
+  n2 = x + 1000;
+  w = wide(x);
+  t = takes_u8(x);
+  x = (n2 - 999) as u8 ?? 9;
+  s = "{x}";
+  "{n} {n2} {w} {t} {s} {c}"
+}
+
+fn unlinked_neighbour() -> text { a: u8 = 250; b: u8 = 5; c = &a; c = 7; b += 1; "{a} {b}" }
+
+fn parameters() -> text {
+  p: u8 = 250; set200(p);
+  q: i8 = -128; dec8(q);
+  r: u8? = 3; setn(r);
+  z: u8 = 1; rp = repoint_to_local(z);
+  "{p} {q} {r} {link_param(9)} {rp} {z}"
+}
+
+fn main() {
+  assert(edges() == "255 0|-1 -128 127|null true 254 true|1000 1100|65535 0|-2147483647 2147483647|4294967294 0", "edges: {edges()}");
+  assert(repoint() == "3 7", "a re-point between two linked locals: {repoint()}");
+  assert(loop_variable() == "999", "a loop variable linked in the body: {loop_variable()}");
+  assert(arm_pre_init(1) == "-4" && arm_pre_init(0) == "6", "a local first bound in an arm: {arm_pre_init(1)} {arm_pre_init(0)}");
+  assert(seams() == "250 1250 500 250 251 251", "the decode seams: {seams()}");
+  assert(unlinked_neighbour() == "7 6", "the unlinked neighbour keeps its slot: {unlinked_neighbour()}");
+  assert(parameters() == "200 0 null 33 33 251 1", "parameters: {parameters()}");
+  println("a linked narrow local holds its field encoding");
+}

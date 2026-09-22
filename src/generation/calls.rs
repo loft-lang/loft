@@ -336,7 +336,7 @@ impl Output<'_> {
         {
             // A scalar field or element handed to a `&` parameter: the pointer into its store
             // slot, built as a local link to the same place builds it (@FR-B-Ref-Lvalue).
-            let base = rust_type(inner.base(), &Context::Variable);
+            let base = crate::generation::link_base_type(inner);
             write!(w, "unsafe {{ ")?;
             self.output_place_pointer(w, v, &base)?;
             write!(w, " }}")?;

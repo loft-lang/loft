@@ -5714,7 +5714,10 @@ impl Parser {
                 }
             } else {
                 let orig = std::mem::replace(code, Value::Null);
-                if matches!(orig, Value::Var(_)) {
+                if let Value::Var(v) = orig {
+                    // @PLN167 decision 1 — handed to a `&` parameter, a narrow local holds its
+                    // field encoding from here on (`Variable::linked_narrow`).
+                    self.vars.set_linked_narrow(v);
                     *code = self.cl("OpCreateStack", &[orig]);
                 } else if crate::data::is_scalar(ref_tp)
                     && Self::is_amp_place(&orig, &self.data)

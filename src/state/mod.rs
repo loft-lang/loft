@@ -2914,6 +2914,37 @@ impl State {
         ) = value;
     }
 
+    /// `OpVarNarrow` — read a LINKED narrow local's frame slot in its field encoding
+    /// (`data::NarrowSlot`, @PLN167 decision 1) and push the wide value.  The slot is the
+    /// 8-byte one every local has; the encoded bytes sit at its start, where the `DbRef` a
+    /// link to it names.  Same addressing as [`Self::get_var`].
+    pub fn var_narrow(&mut self, pos: u16, min: i16, kind: u8) -> i64 {
+        let at = self.stack_cur.pos + self.stack_pos - u32::from(pos);
+        let rec = self.stack_cur.rec;
+        let store = self.database.store(&self.stack_cur);
+        let bits = match crate::narrow::width(kind) {
+            1 => u32::from(store.read::<u8>(rec, at)),
+            2 => u32::from(store.read::<u16>(rec, at)),
+            _ => store.read::<u32>(rec, at),
+        };
+        crate::narrow::decode(kind, i32::from(min), bits)
+    }
+
+    /// `OpPutNarrow` — the write twin of [`Self::var_narrow`]: the popped wide value, encoded,
+    /// into the slot's low bytes.  Same addressing as [`Self::put_var`] for an 8-byte value.
+    pub fn put_narrow(&mut self, pos: u16, min: i16, kind: u8, value: i64) {
+        let step = self.stack_step(size_of::<i64>() as u32);
+        let at = self.stack_cur.pos + self.stack_pos + step - u32::from(pos);
+        let rec = self.stack_cur.rec;
+        let bits = crate::narrow::encode(kind, i32::from(min), value);
+        let store = self.database.store_mut(&self.stack_cur);
+        match crate::narrow::width(kind) {
+            1 => store.write(rec, at, bits as u8),
+            2 => store.write(rec, at, bits as u16),
+            _ => store.write(rec, at, bits),
+        }
+    }
+
     /// Plan-04 Phase 2h: positional variant of `conv_ref_from_null`.
     /// Writes a null `DbRef` (12 bytes) at the frame slot reached by
     /// `self.stack_pos - pos` (matches `get_var::<DbRef>`'s

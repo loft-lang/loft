@@ -3681,6 +3681,9 @@ use a separate collection or add after the loop"
                 s_type = self.vars.tp(src).clone();
             } else if let Some(src) = stack_src {
                 amp_unlowered = false;
+                // @PLN167 decision 1 — a `&` names this local, so a narrow one holds its
+                // field encoding from here on (`Variable::linked_narrow`).
+                self.vars.set_linked_narrow(src);
                 let mut inner = self.vars.tp(src).clone();
                 // tuples.md T-Ref — a linked tuple local with a heap element is the
                 // `__tuple<…>` record.  On pass 1 its bind has not been rewritten yet (the fact

@@ -48,6 +48,8 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     var_int,
     var_character,
     put_int,
+    var_narrow,
+    put_narrow,
     put_character,
     conv_int_from_null,
     conv_bool_from_null,
@@ -484,6 +486,22 @@ fn put_int(s: &mut State) {
     let v_pos = s.code::<u16>();
     let v_value = s.get_stack::<i64>();
     s.put_var(v_pos, v_value);
+}
+
+fn var_narrow(s: &mut State) {
+    let v_pos = s.code::<u16>();
+    let v_min = s.code::<i16>();
+    let v_kind = s.code::<u8>();
+    let new_value = s.var_narrow(v_pos, v_min, v_kind);
+    s.put_stack(new_value);
+}
+
+fn put_narrow(s: &mut State) {
+    let v_pos = s.code::<u16>();
+    let v_min = s.code::<i16>();
+    let v_kind = s.code::<u8>();
+    let v_value = s.get_stack::<i64>();
+    s.put_narrow(v_pos, v_min, v_kind, v_value);
 }
 
 fn put_character(s: &mut State) {

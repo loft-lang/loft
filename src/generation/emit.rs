@@ -12,7 +12,7 @@ use std::io::Write;
 use super::text::count_format_ops;
 use super::{
     Output, block_needs_i64_widen, block_tail_cast, default_native_value, default_native_value_in,
-    narrow_int_cast, rust_type, sanitize,
+    narrow_int_cast, sanitize,
 };
 
 impl Output<'_> {
@@ -278,10 +278,11 @@ impl Output<'_> {
                         continue;
                     }
                     let name = sanitize(variables.name(v));
-                    let ty = rust_type(tp, &Context::Variable);
+                    let ty = self.local_rust_type(v, tp);
+                    let (eo, ec) = self.narrow_local_enc(v);
                     let init = default_native_value_in(tp, &Context::Variable);
                     use std::fmt::Write as _;
-                    let _ = write!(preamble, "let mut var_{name}: {ty} = {init}; ");
+                    let _ = write!(preamble, "let mut var_{name}: {ty} = {eo}{init}{ec}; ");
                 }
                 write!(w, "n_parallel_block_native(cell, &[")?;
                 for arm in arms.iter() {
@@ -362,7 +363,9 @@ impl Output<'_> {
                         }
                         return write!(w, "*var_{var_name}");
                     }
-                    return write!(w, "var_{var_name}");
+                    // @PLN167 decision 1 — a by-value narrow parameter something links is
+                    // re-encoded at entry and reads as its decoded value from then on.
+                    return write!(w, "{}", self.narrow_local_dec(var, &var_name));
                 } else if let Type::RefVar(inner) = variables.tp(var)
                     && matches!(
                         inner.base(),
@@ -397,13 +400,19 @@ impl Output<'_> {
                     // interpreter's `OpGet*` answers for a `rec == 0` reference (C80: nothing
                     // stops a running calculation).  A `&boolean` answers its storage byte, so
                     // an absent one reads as null here as it does there.
+                    // @PLN167 decision 1 — a link to a NARROW integer place reads the field
+                    // encoding behind the pointer.
+                    let deref = match crate::data::NarrowSlot::of_type(inner) {
+                        Some(slot) => slot.decode_rust(&format!("*var_{var_name}")),
+                        None => format!("*var_{var_name}"),
+                    };
                     if let Some(absent) = crate::generation::absent_link_value(inner.base()) {
                         return write!(
                             w,
-                            "unsafe {{ if var_{var_name}.is_null() {{ {absent} }} else {{ *var_{var_name} }} }}"
+                            "unsafe {{ if var_{var_name}.is_null() {{ {absent} }} else {{ {deref} }} }}"
                         );
                     }
-                    return write!(w, "unsafe {{ *var_{var_name} }}");
+                    return write!(w, "unsafe {{ {deref} }}");
                 } else if let Type::RefVar(inner) = variables.tp(var)
                     && matches!(inner.base(), Type::Reference(..))
                     && self.local_record_link.contains(&var)
@@ -424,7 +433,8 @@ impl Output<'_> {
                     // borrowed to `&str` too; inert gate-OFF (no `Optional` exists).
                     return write!(w, "&var_{var_name}");
                 }
-                return write!(w, "var_{var_name}");
+                // @PLN167 decision 1 — a LINKED narrow local reads as its decoded value.
+                return write!(w, "{}", self.narrow_local_dec(var, &var_name));
             }
             ValueType::Tuple => {
                 write!(w, "(")?;
@@ -2161,9 +2171,10 @@ impl Output<'_> {
         for &v in &t_vars {
             if f_vars.contains(&v) && !self.declared.contains(&v) {
                 let name = sanitize(variables.name(v));
-                let tp_str = rust_type(variables.tp(v), &Context::Variable);
+                let tp_str = self.local_rust_type(v, variables.tp(v));
+                let (eo, ec) = self.narrow_local_enc(v);
                 let default = default_native_value_in(variables.tp(v), &Context::Variable);
-                writeln!(w, "let mut var_{name}: {tp_str} = {default};")?;
+                writeln!(w, "let mut var_{name}: {tp_str} = {eo}{default}{ec};")?;
                 self.indent(w)?;
                 self.declared.insert(v);
             }

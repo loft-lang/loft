@@ -520,7 +520,7 @@ impl Output<'_> {
                     && let [src_arg] = cargs.as_slice()
                     && let Value::Var(src) = src_arg.unspan()
                 {
-                    let base = rust_type(inner.base(), &Context::Variable);
+                    let base = crate::generation::link_base_type(inner);
                     let src_name = sanitize(variables.name(*src));
                     let ptr = if variables.is_argument(*src) {
                         format!("(&mut *var_{src_name}) as *mut {base}")
@@ -535,7 +535,7 @@ impl Output<'_> {
                     && let Value::Call(d_nr, cargs) = to.unspan()
                 {
                     let op = self.data.def(*d_nr).name().to_string();
-                    let base = rust_type(inner.base(), &Context::Variable);
+                    let base = crate::generation::link_base_type(inner);
                     if matches!(op.as_str(), "OpGetField" | "OpGetVector" | "OpVectorRef") {
                         write!(w, "var_{name} = unsafe {{ &mut *{{ ")?;
                         self.output_place_pointer(w, to, &base)?;
@@ -693,8 +693,9 @@ impl Output<'_> {
             // internal unchecked-aliasing model.  Scalars don't move, so the pointer
             // stays valid for the source's scope.
             // The SLOT's Rust type, for the same reason: a `&integer?` local is a
-            // `*mut i64` exactly as a `&integer` one is (loft#1372).
-            let base = rust_type(inner.base(), &Context::Variable);
+            // `*mut i64` exactly as a `&integer` one is (loft#1372).  A NARROW integer's
+            // slot is its storage width (@PLN167 decision 1).
+            let base = crate::generation::link_base_type(inner);
             // Dispatch on the construction VALUE, which is in the IR (so it survives a
             // snapshot round-trip) — no per-variable flag needed: an `OpGetField` value
             // is an L3 struct-field link, `OpGetVector`/`OpVectorRef` an L4 element link,
@@ -793,10 +794,20 @@ impl Output<'_> {
                 // lands nowhere, as the interpreter's `OpSet*` drops a write to a `rec == 0`
                 // reference.  The value is still computed: it may have effects.
                 let may_be_absent = crate::generation::absent_link_value(inner.base()).is_some();
+                // @PLN167 decision 1 — a link to a NARROW integer place writes the field
+                // encoding.
+                let (enc_open, enc_close) = match crate::data::NarrowSlot::of_type(inner) {
+                    Some(slot) => {
+                        let both = slot.encode_rust("\u{0}");
+                        let (a, b) = both.split_once('\u{0}').expect("marker");
+                        (a.to_string(), b.to_string())
+                    }
+                    None => (String::new(), String::new()),
+                };
                 if may_be_absent {
-                    write!(w, "{{ let __lw = ")?;
+                    write!(w, "{{ let __lw = {enc_open}")?;
                 } else {
-                    write!(w, "unsafe {{ *var_{name} = ")?;
+                    write!(w, "unsafe {{ *var_{name} = {enc_open}")?;
                 }
                 if bool_link {
                     write!(w, "u8::from(")?;
@@ -816,6 +827,7 @@ impl Output<'_> {
                 if text_link {
                     write!(w, ").to_string()")?;
                 }
+                write!(w, "{enc_close}")?;
                 if may_be_absent {
                     write!(
                         w,
@@ -1727,8 +1739,15 @@ impl Output<'_> {
             && is_scalar(variables.tp(var))
             && matches!(to.unspan(), Value::Block(bl) if is_scalar(&bl.result));
         let first_assign = !self.declared.contains(&var) || self.predeclared.remove(&var);
+        // @PLN167 decision 1 — a LINKED narrow local takes its value encoded; the suffix
+        // closes the call at the end of this arm.
+        let (narrow_open, narrow_close) = if discard_loop_var {
+            (String::new(), String::new())
+        } else {
+            self.narrow_local_enc(var)
+        };
         if self.declared.contains(&var) && !discard_loop_var {
-            write!(w, "var_{name} = ")?;
+            write!(w, "var_{name} = {narrow_open}")?;
         } else {
             self.declared.insert(var);
             let var_tp = if discard_loop_var && let Value::Block(bl) = to.unspan() {
@@ -1737,7 +1756,7 @@ impl Output<'_> {
                 variables.tp(var).clone()
             };
             let tp_str = self.local_rust_type(var, &var_tp);
-            write!(w, "let mut var_{name}: {tp_str} = ")?;
+            write!(w, "let mut var_{name}: {tp_str} = {narrow_open}")?;
         }
         // @PLN157 § V-ah — a value local's DECLARATION (`x = null` in the IR) binds the
         // tuple's zero, not a null `DbRef`: the local never names a store.
@@ -2056,6 +2075,7 @@ impl Output<'_> {
                 }
             }
         }
+        write!(w, "{narrow_close}")?;
         Ok(())
     }
 

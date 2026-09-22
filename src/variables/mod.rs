@@ -216,6 +216,13 @@ pub struct Variable {
     /// indirection parameters use, slowing every access to carry a compile-time fact.
     /// See loft#779 / `formal/binding.md` D-bind-8.
     amp_link: bool,
+    /// Does a `&` name this narrow integer local — a `&` bind, a `&` argument or a re-point?
+    ///
+    /// Such a local holds its type's FIELD encoding (`data::NarrowSlot`, @PLN167 decision 1),
+    /// so the `&u8` that names it is the byte pointer that names a field too.  Set on the
+    /// second pass at the `&`; read by both emitters, which run after the parse, so a use
+    /// written before the `&` in the body is emitted with the fact as well.
+    linked_narrow: bool,
     /// Was this bound with an explicit `&` at a COLLECTION — `d = &cv.data`, `a = &s.h`?
     ///
     /// The collection sibling of `amp_link`, kept apart from it because their READERS are
@@ -752,6 +759,7 @@ impl Function {
                 const_binding: false,
                 value_const: false,
                 amp_link: false,
+                linked_narrow: false,
                 amp_container_link: false,
                 iteration_source: false,
                 first_def: u32::MAX,
@@ -2268,6 +2276,7 @@ impl Function {
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
+            linked_narrow: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2314,6 +2323,7 @@ impl Function {
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: self.variables[var as usize].amp_link,
+            linked_narrow: self.variables[var as usize].linked_narrow,
             amp_container_link: self.variables[var as usize].amp_container_link,
             iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
@@ -2353,6 +2363,7 @@ impl Function {
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
+            linked_narrow: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2389,6 +2400,7 @@ impl Function {
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
+            linked_narrow: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -3191,6 +3203,31 @@ impl Function {
     /// otherwise invisible after parsing: `c = &v[0]` and `c = v[0]` emit the same IR.
     pub fn is_amp_link(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].amp_link
+    }
+
+    /// Record that a `&` names narrow local `var_nr` (see `Variable::linked_narrow`).  A local
+    /// whose type is not narrow takes no flag: it links as the 8-byte slot it is.
+    pub fn set_linked_narrow(&mut self, var_nr: u16) {
+        if (var_nr as usize) < self.variables.len()
+            && crate::data::NarrowSlot::of_type(self.tp(var_nr)).is_some()
+        {
+            self.variables[var_nr as usize].linked_narrow = true;
+        }
+    }
+
+    /// The field encoding `var_nr` holds, when it is a linked narrow local — or every narrow
+    /// local under `LOFT_LINK_ALL_NARROW=1`, the generation-time switch that makes the whole
+    /// corpus exercise the linked shape (@PLN167 A1's instrument).  `None` for every other
+    /// variable: the 8-byte slot, read and written as today.
+    #[must_use]
+    pub fn linked_narrow_slot(&self, var_nr: u16) -> Option<crate::data::NarrowSlot> {
+        if (var_nr as usize) >= self.variables.len() {
+            return None;
+        }
+        if !self.variables[var_nr as usize].linked_narrow && !link_all_narrow() {
+            return None;
+        }
+        crate::data::NarrowSlot::of_type(self.tp(var_nr))
     }
 
     /// Mark `var_nr` as bound with an explicit `&` at a COLLECTION — `d = &cv.data`,
@@ -4903,4 +4940,12 @@ mod loop_binding_dep_tests {
 #[must_use]
 pub fn owns_literal_backing_store(name: &str) -> bool {
     name.starts_with("__vdb") || name.starts_with("__kvb")
+}
+
+/// `LOFT_LINK_ALL_NARROW=1`: treat every narrow integer local as linked, so the linked
+/// representation is exercised by every program rather than by the few that write a `&` to
+/// one.  Read once per process.
+fn link_all_narrow() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))
 }

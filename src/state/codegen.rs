@@ -372,6 +372,22 @@ impl State {
                 stack.add_op("OpInitRefSentinel", self);
                 self.code_add(slot_offset);
             }
+            // @PLN167 decision 1 — a narrow by-value PARAMETER something in this body links
+            // arrives as the caller's 8-byte value and holds its field encoding from here on:
+            // re-encode it in place once, at entry.  The calling convention is untouched.
+            if stack.function.is_argument(v)
+                && stack.function.stack(v) != u16::MAX
+                && let Some(slot) = stack.function.linked_narrow_slot(v)
+            {
+                let read_pos = stack.var_pos(v);
+                stack.add_op("OpVarInt", self);
+                self.code_add(read_pos);
+                let put_pos = stack.var_pos(v);
+                stack.add_op("OpPutNarrow", self);
+                self.code_add(put_pos);
+                self.code_add(slot.min as i16);
+                self.code_add(slot.kind.code());
+            }
         }
         if console {
             println!("{} ", stack.data.def(def_nr).header(stack.data, def_nr));
@@ -3418,7 +3434,10 @@ impl State {
             // @PLN25 slice (b): an `Optional(τ)` var's first-Set uses the base put-op (same
             // sentinel storage) — peel the marker.
             let tp = tp.base().clone();
+            // @PLN167 decision 1 — a LINKED narrow local is written in its field encoding.
+            let narrow_slot = stack.function.linked_narrow_slot(v);
             match tp {
+                Type::Integer(_) if narrow_slot.is_some() => stack.add_op("OpPutNarrow", self),
                 Type::Integer(_) => stack.add_op("OpPutInt", self),
                 Type::Character => stack.add_op("OpPutCharacter", self),
                 Type::Enum(_, false, _) => stack.add_op("OpPutEnum", self),
@@ -3451,6 +3470,10 @@ impl State {
                 ),
             }
             self.code_add(var_pos);
+            if let Some(slot) = narrow_slot {
+                self.code_add(slot.min as i16);
+                self.code_add(slot.kind.code());
+            }
         }
     }
 
@@ -4638,7 +4661,11 @@ impl State {
         self.vars.insert(code, variable);
         // @PLN25 slice (b): an `Optional(τ)` var loads exactly like `τ` (same sentinel
         // storage) — peel the marker so each op-emission arm sees the base type.
+        // @PLN167 decision 1 — a LINKED narrow local is read in its field encoding; the op
+        // takes the slot's `min` and kind after the position.
+        let narrow_slot = stack.function.linked_narrow_slot(variable);
         match stack.function.tp(variable).base() {
+            Type::Integer(_) if narrow_slot.is_some() => stack.add_op("OpVarNarrow", self),
             Type::Integer(_) => stack.add_op("OpVarInt", self),
             Type::Function(..) => {
                 stack.add_op("OpVarFnRef", self);
@@ -4729,7 +4756,15 @@ impl State {
             ),
         }
         self.code_add(var_pos);
+        if let Some(slot) = narrow_slot {
+            self.code_add(slot.min as i16);
+            self.code_add(slot.kind.code());
+        }
         if let Type::RefVar(tp) = stack.function.tp(variable) {
+            // @PLN167 — a link to a NARROW integer place (a linked local, a field, an element)
+            // reads the field encoding through the kind's own op, which takes the `min`
+            // after the field offset; every other integer link reads the 8-byte slot.
+            let narrow_link = crate::data::NarrowSlot::of_type(tp);
             // loft#1372 — through `base()`: `Optional(τ)` shares `τ`'s storage exactly, so a
             // `&τ?` link reads at the same op as its `&τ` twin and the null travels in the
             // slot's own sentinel.  Asked bare, `Optional` matched no arm and the read fell
@@ -4740,6 +4775,9 @@ impl State {
             // FIELD operand, because the blob sits at the link's own position.
             let txt = matches!(tp, Type::Text(_) | Type::Function(..));
             match tp {
+                Type::Integer(_) if narrow_link.is_some() => {
+                    stack.add_op(narrow_link.expect("checked").kind.get_op(), self);
+                }
                 Type::Integer(_) => stack.add_op("OpGetInt", self),
                 Type::Character => stack.add_op("OpGetCharacter", self),
                 Type::Single => stack.add_op("OpGetSingle", self),
@@ -4802,6 +4840,11 @@ impl State {
             }
             if !txt {
                 self.code_add(0u16);
+            }
+            if let Some(slot) = narrow_link
+                && slot.kind.takes_min()
+            {
+                self.code_add(slot.min as i16);
             }
         }
         self.insert_types(stack.function.tp(variable).clone(), code, stack)
@@ -5243,7 +5286,17 @@ impl State {
             stack.add_op("OpVarRef", self);
             self.code_add(var_pos);
             self.generate(value, stack, false);
+            // @PLN167 — a link to a NARROW integer place writes the field encoding through the
+            // kind's own op (its `min` follows the field offset); the slot's nullability is
+            // read off the link's inner type before the peel below took it.
+            let narrow_link = match stack.function.tp(var) {
+                Type::RefVar(inner) => crate::data::NarrowSlot::of_type(inner),
+                _ => None,
+            };
             match *tp {
+                Type::Integer(_) if narrow_link.is_some() => {
+                    stack.add_op(narrow_link.expect("checked").kind.set_op(), self);
+                }
                 Type::Integer(_) => stack.add_op("OpSetInt", self),
                 Type::Character => stack.add_op("OpSetCharacter", self),
                 Type::Single => stack.add_op("OpSetSingle", self),
@@ -5270,6 +5323,11 @@ impl State {
                 _ => panic!("Unknown reference variable type"),
             }
             self.code_add(0u16);
+            if let Some(slot) = narrow_link
+                && slot.kind.takes_min()
+            {
+                self.code_add(slot.min as i16);
+            }
             if amp_owned_writeback {
                 // free OLD unless the install kept it (witness = *o's NEW store)
                 let var_pos = stack.var_pos(var);
@@ -5437,7 +5495,10 @@ impl State {
         // @PLN25: an `Optional(τ)` reassignment uses the base put-op (same sentinel storage)
         // — peel the marker (mirrors the first-Set `gen_set_first_at_tos`). Without this a
         // nullable local reassignment (`x: integer? = 5; x = 9`) panicked "Unknown var type".
+        // @PLN167 decision 1 — a LINKED narrow local is written in its field encoding.
+        let narrow_slot = stack.function.linked_narrow_slot(var);
         match stack.function.tp(var).base() {
+            Type::Integer(_) if narrow_slot.is_some() => stack.add_op("OpPutNarrow", self),
             Type::Integer(_) => stack.add_op("OpPutInt", self),
             Type::Function(..) => {
                 stack.add_op("OpPutFnRef", self);
@@ -5488,6 +5549,10 @@ impl State {
             ),
         }
         self.code_add(var_pos);
+        if let Some(slot) = narrow_slot {
+            self.code_add(slot.min as i16);
+            self.code_add(slot.kind.code());
+        }
     }
 
     /// Generate the argument pushes for a destination-passing native call

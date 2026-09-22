@@ -1568,6 +1568,18 @@ pub(crate) fn absent_link_value(inner: &Type) -> Option<&'static str> {
     }
 }
 
+/// The Rust type behind a scalar `&τ` pointer — `link_base_type(τ)` — which for a NARROW
+/// integer is the storage width the field encoding uses (`data::NarrowSlot`, @PLN167
+/// decision 1), so one `*mut u8` names a linked local and a field alike; every other τ is
+/// its variable type.
+#[must_use]
+pub(crate) fn link_base_type(inner: &Type) -> String {
+    match crate::data::NarrowSlot::of_type(inner) {
+        Some(slot) => slot.rust_type().to_string(),
+        None => rust_type(inner.base(), &Context::Variable),
+    }
+}
+
 #[must_use]
 pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
     matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
@@ -1712,7 +1724,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
     }
     if let Type::RefVar(in_tp) = tp {
         if is_raw_scalar_ref(tp) {
-            return format!("*mut {}", rust_type(in_tp, &Context::Variable));
+            return format!("*mut {}", link_base_type(in_tp));
         }
         return format!("&mut {}", rust_type(in_tp, &Context::Variable));
     }
@@ -4469,7 +4481,53 @@ impl Output<'_> {
         {
             return t.clone();
         }
+        // @PLN167 decision 1 — a LINKED narrow local is declared at its storage width and
+        // holds its field encoding; `narrow_local_enc` wraps every write, `narrow_local_dec`
+        // every read.
+        if let Some(slot) = self
+            .data
+            .def(self.def_nr)
+            .variables()
+            .linked_narrow_slot(var)
+        {
+            return slot.rust_type().to_string();
+        }
         rust_type(tp, &Context::Variable)
+    }
+
+    /// The `(prefix, suffix)` that encode a wide value written to linked narrow local `var`,
+    /// or two empty strings for any other variable (@PLN167 decision 1).
+    #[must_use]
+    pub(crate) fn narrow_local_enc(&self, var: u16) -> (String, String) {
+        match self
+            .data
+            .def(self.def_nr)
+            .variables()
+            .linked_narrow_slot(var)
+        {
+            Some(slot) => {
+                let both = slot.encode_rust("\u{0}");
+                let (a, b) = both
+                    .split_once('\u{0}')
+                    .expect("the marker is in the template");
+                (a.to_string(), b.to_string())
+            }
+            None => (String::new(), String::new()),
+        }
+    }
+
+    /// The wide value of linked narrow local `var`'s Rust variable, or its bare name.
+    #[must_use]
+    pub(crate) fn narrow_local_dec(&self, var: u16, name: &str) -> String {
+        match self
+            .data
+            .def(self.def_nr)
+            .variables()
+            .linked_narrow_slot(var)
+        {
+            Some(slot) => slot.decode_rust(&format!("var_{name}")),
+            None => format!("var_{name}"),
+        }
     }
 
     /// The ZERO a value local's declaration binds (@PLN157 § V-ah): the tuple's own
@@ -8677,14 +8735,45 @@ extern crate loft;"
                     continue;
                 }
                 use std::fmt::Write as _;
+                // @PLN167 decision 1 — a LINKED narrow local is bound at its storage width,
+                // its default encoded: this is the pre-init an arm-bound `i8` reads when no
+                // arm ran, and a raw `0` byte would decode as the type's minimum.
+                // Asked of THIS function's table: the prologue is built before `self.def_nr`
+                // moves to it.
+                let (ty, eo, ec) = match vars.linked_narrow_slot(v) {
+                    Some(slot) => {
+                        let both = slot.encode_rust("\u{0}");
+                        let (a, b) = both.split_once('\u{0}').expect("marker");
+                        (slot.rust_type().to_string(), a.to_string(), b.to_string())
+                    }
+                    None => (
+                        rust_type(vars.tp(v), &Context::Variable),
+                        String::new(),
+                        String::new(),
+                    ),
+                };
                 let _ = write!(
                     vdb_prologue,
-                    "\n  let mut var_{}: {} = {};",
+                    "\n  let mut var_{}: {ty} = {eo}{}{ec};",
                     sanitize(vars.name(v)),
-                    rust_type(vars.tp(v), &Context::Variable),
                     default_native_value_in(vars.tp(v), &Context::Variable)
                 );
                 self.declared.insert(v);
+            }
+            // @PLN167 decision 1 — a narrow by-value PARAMETER something in this body links
+            // arrives as the caller's `i64` and holds its field encoding from here on: one
+            // shadowing `let` at entry re-encodes it; the calling convention is untouched.
+            for v in vars.arguments() {
+                if let Some(slot) = vars.linked_narrow_slot(v) {
+                    use std::fmt::Write as _;
+                    let name = sanitize(vars.name(v));
+                    let _ = write!(
+                        vdb_prologue,
+                        "\n  let mut var_{name}: {} = {};",
+                        slot.rust_type(),
+                        slot.encode_rust(&format!("var_{name}"))
+                    );
+                }
             }
             // Entry-buffer witness for each hidden return buffer (retbuf): stash
             // the caller's buffer at function entry as `_rb_w_<name>`.  A
@@ -8788,11 +8877,25 @@ extern crate loft;"
                 if !crate::data::is_scalar(tp) {
                     continue;
                 }
-                let tp_str = rust_type(tp, &Context::Variable);
+                // @PLN167 decision 1 — a LINKED narrow local is hoisted at its storage width
+                // with its default ENCODED: this is the pre-init an arm-bound `i8` reads when
+                // no arm ran, and a raw `0` byte would decode as the type's minimum.
+                let (tp_str, eo, ec) = match vars.linked_narrow_slot(v) {
+                    Some(slot) => {
+                        let both = slot.encode_rust("\u{0}");
+                        let (a, b) = both.split_once('\u{0}').expect("marker");
+                        (slot.rust_type().to_string(), a.to_string(), b.to_string())
+                    }
+                    None => (
+                        rust_type(tp, &Context::Variable),
+                        String::new(),
+                        String::new(),
+                    ),
+                };
                 use std::fmt::Write as _;
                 let _ = write!(
                     vdb_prologue,
-                    "\n  let mut var_{}: {tp_str} = {};",
+                    "\n  let mut var_{}: {tp_str} = {eo}{}{ec};",
                     sanitize(vars.name(v)),
                     default_native_value(tp),
                 );
