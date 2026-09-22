@@ -2780,6 +2780,12 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
+(2026-09-22, loft#1600 and #1601 on `tuxedo-1562-layout-gate`, re-measured at its end:
+**933 · 604 · 5 · 324**, and `--check-ratchet` pinned at opaque 324, opaque tests 1310 — the
+figures 53d8d5d4a carried.  An intermediate commit had pinned 323 off a spelling of the
+struct-enum element check that was reverted; that check now lives in
+`Parser::variant_fills_element`, and `scopes::leaves_as_value` peels its block's result.)
+
 (2026-09-22, loft#1597 on `tuxedo-1562-layout-gate`, joined with ../loft2's tip @ dc5bbb3b3 and
 re-measured at its end: **927 · 598 · 5 · 324**, and `--check-ratchet` pinned lower at opaque 324,
 opaque tests 1310.  `Parser::unique_elm_var` gained a struct-enum arm and peels it, which moved

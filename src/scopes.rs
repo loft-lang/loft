@@ -6633,7 +6633,7 @@ pub(crate) fn var_mentions_in(node: &Value) -> HashMap<u16, usize> {
 fn leaves_as_value(val: &Value, v: u16) -> bool {
     match val.unspan() {
         Value::Block(bl) => {
-            !matches!(bl.result, Type::Void)
+            !matches!(bl.result.base(), Type::Void)
                 && bl
                     .operators
                     .last()
