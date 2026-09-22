@@ -3351,15 +3351,25 @@ impl Output<'_> {
             if is_text_result {
                 writeln!(w, "Str::new(_ret)")?;
             } else if matches!(bl.result, Type::Text(_)) {
-                // @P321e / @P323 — a TEXT value-block's `_ret` is typically a
-                // `&str` borrowing a block-local (the `??`/#ncc block's inner
-                // `_ncc` String; a format-string work buffer; etc.).  Yielding
-                // the borrow lets the consumer's `.to_string()` run AFTER the
-                // local drops at the block's `}` — rustc E0597 ("does not live
-                // long enough"), or a dangling raw ptr at runtime.  Materialise
-                // to an OWNED String inside the block (where the local is still
-                // alive); `.to_string()` accepts &str / String / Str alike.
-                writeln!(w, "_ret.to_string()")?;
+                // `@FR-R-TextBorrow`'s discharge clause — an `#ncc` block whose temp
+                // BORROWS a split table's slice yields the slice: it points into the
+                // table's source, which outlives the block and the statement.
+                let borrowed_discharge = bl.name.starts_with("ncc")
+                    && matches!(bl.operators.first().map(Value::unspan), Some(Value::Set(v, _))
+                        if self.borrowed_text_locals.contains_key(v));
+                if borrowed_discharge {
+                    writeln!(w, "_ret")?;
+                } else {
+                    // @P321e / @P323 — a TEXT value-block's `_ret` is typically a
+                    // `&str` borrowing a block-local (the `??`/#ncc block's inner
+                    // `_ncc` String; a format-string work buffer; etc.).  Yielding
+                    // the borrow lets the consumer's `.to_string()` run AFTER the
+                    // local drops at the block's `}` — rustc E0597 ("does not live
+                    // long enough"), or a dangling raw ptr at runtime.  Materialise
+                    // to an OWNED String inside the block (where the local is still
+                    // alive); `.to_string()` accepts &str / String / Str alike.
+                    writeln!(w, "_ret.to_string()")?;
+                }
             } else if let Some(cast) = block_tail_cast(&bl.result, is_fn_body) {
                 writeln!(w, "_ret as {cast}")?;
             } else {

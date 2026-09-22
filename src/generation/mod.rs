@@ -2434,7 +2434,13 @@ impl Output<'_> {
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
         } else {
-            hoist::borrowed_text_walks(self.data, def_nr, &sliced)
+            let mut walks = hoist::borrowed_text_walks(self.data, def_nr, &sliced);
+            walks.extend(hoist::borrowed_discharge_temps(
+                self.data,
+                def_nr,
+                &self.split_tables,
+            ));
+            walks
         };
         self.char_walks = if self.char_walk_disabled {
             BTreeMap::new()

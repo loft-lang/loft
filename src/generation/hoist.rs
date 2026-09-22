@@ -2968,16 +2968,118 @@ pub fn borrowed_text_walks(
     out
 }
 
+/// `@FR-R-TextBorrow`'s discharge clause — the `__ncc_N` temps of this function that hold a
+/// split TABLE's element read for a `?` / `??` discharge (`parts[i]?`, `parts[i] ?? d`),
+/// where every mention of the temp is a text-value read: the temp BORROWS the slice the
+/// read answers.  The slice points into the table's source — a borrowed parameter or the
+/// block-long copy — which outlives the temp's block and every consumer of the discharge's
+/// value (an expression of the same statement), so no store condition applies, as for a
+/// walk over a sliced vector.  The temp's own bind is the one `Set` admitted; a second
+/// bind, a link, a capture or a return declines it, as for a loop variable.
+#[must_use]
+pub fn borrowed_discharge_temps(
+    data: &Data,
+    def_nr: u32,
+    tables: &BTreeMap<u16, SplitTable>,
+) -> HashMap<u16, TextBorrow> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_TEXT_BORROW").is_ok();
+    let mut out = HashMap::new();
+    if tables.is_empty() || body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    let names: BTreeSet<u16> = tables
+        .iter()
+        .flat_map(|(t, st)| std::iter::once(*t).chain(st.aliases.iter().copied()))
+        .collect();
+    let table_read = |to: &Value| {
+        call_named(to, data, "OpGetText")
+            .and_then(|a| a.first())
+            .and_then(|elem| {
+                call_named(elem, data, "OpGetVectorNullable")
+                    .or_else(|| call_named(elem, data, "OpGetVector"))
+            })
+            .and_then(|inner| as_var(inner.first()))
+            .is_some_and(|v| names.contains(&v))
+    };
+    body.any_node(&mut |n| {
+        let Value::Set(v, to) = n else {
+            return false;
+        };
+        if !vars.name(*v).starts_with("__ncc_")
+            || !matches!(vars.tp(*v).base(), Type::Text(_))
+            || !table_read(to)
+        {
+            return false;
+        }
+        let mut binds = 0u32;
+        body.any_node(&mut |m| {
+            if matches!(m, Value::Set(x, t) if x == v && !matches!(t.unspan(), Value::Null)) {
+                binds += 1;
+            }
+            false
+        });
+        let verdict = if binds != 1 {
+            Err("bound more than once")
+        } else if let Some(why) = text_escapes_with(body, *v, data, &table_read) {
+            Err(why)
+        } else {
+            Ok(())
+        };
+        match verdict {
+            Ok(()) => {
+                out.insert(*v, TextBorrow { read: None });
+                if trace {
+                    eprintln!(
+                        "[text-borrow] {}: `{}` borrows the table's slice",
+                        def.name(),
+                        vars.name(*v)
+                    );
+                }
+            }
+            Err(why) if trace => {
+                eprintln!(
+                    "[text-borrow] {}: `{}` declined — {why}",
+                    def.name(),
+                    vars.name(*v)
+                );
+            }
+            Err(_) => {}
+        }
+        false
+    });
+    out
+}
+
 /// The first mention of text variable `p` under `node` that is NOT a text-value read, as
 /// [`borrowed_text_walks`] defines one — or `None` when every mention is.  Walks the tree
 /// by hand rather than through `any_node` because the question is about a mention's
 /// PARENT: the same `Var(p)` is a value read as a call's `text` operand and an escape as a
 /// link's.
 fn text_escapes(node: &Value, p: u16, data: &Data) -> Option<&'static str> {
+    text_escapes_with(node, p, data, &|_| false)
+}
+
+/// [`text_escapes`] with the ONE bind of `p` the caller admits: a `Set(p, to)` for which
+/// `bind_ok(to)` holds is the borrow's own binding, not a rebind.  A walk's loop variable
+/// is bound in the loop head the walk never hands here; a discharge temp
+/// ([`borrowed_discharge_temps`]) is bound by a statement inside the body it reads.
+fn text_escapes_with(
+    node: &Value,
+    p: u16,
+    data: &Data,
+    bind_ok: &dyn Fn(&Value) -> bool,
+) -> Option<&'static str> {
+    let text_escapes = |n: &Value, p: u16, data: &Data| text_escapes_with(n, p, data, bind_ok);
     match node {
         Value::Var(v) if *v == p => Some("read outside a text-value position"),
         Value::Set(v, to) => {
             if *v == p {
+                if bind_ok(to) {
+                    return text_escapes(to, p, data);
+                }
                 return Some("rebound in the body");
             }
             // The whole source of a bind into another slot is converted at the bind.
@@ -3022,9 +3124,23 @@ fn text_escapes(node: &Value, p: u16, data: &Data) -> Option<&'static str> {
         Value::Block(b) => b.operators.iter().find_map(|o| text_escapes(o, p, data)),
         Value::Loop(b) => b.operators.iter().find_map(|o| text_escapes(o, p, data)),
         Value::Insert(ops) => ops.iter().find_map(|o| text_escapes(o, p, data)),
-        Value::If(c, t, e) => text_escapes(c, p, data)
-            .or_else(|| text_escapes(t, p, data))
-            .or_else(|| text_escapes(e, p, data)),
+        // The `?` discharge's own value arm — `if OpConvBoolFromText(p) { p } else { d }`
+        // — reads `p` as the value its parent consumes within the statement.
+        Value::If(cond, then, otherwise) => {
+            let discharge = matches!(then.unspan(), Value::Var(s) if *s == p)
+                && call_named(cond, data, "OpConvBoolFromText")
+                    .and_then(|a| as_var(a.first()))
+                    .is_some_and(|s| s == p);
+            text_escapes(cond, p, data)
+                .or_else(|| {
+                    if discharge {
+                        None
+                    } else {
+                        text_escapes(then, p, data)
+                    }
+                })
+                .or_else(|| text_escapes(otherwise, p, data))
+        }
         Value::Drop(inner) => text_escapes(inner, p, data),
         Value::Return(inner) => {
             if matches!(inner.unspan(), Value::Var(s) if *s == p) {

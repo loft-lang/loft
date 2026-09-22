@@ -107,6 +107,19 @@ impl Output<'_> {
         {
             return write!(w, "() /* @FR-R-SplitTable walk of the table */");
         }
+        // `@FR-R-TextBorrow`'s discharge clause — the `?` / `??` temp of a table's element
+        // read binds the slice the read answers and reads bare (`text_borrowed`); its
+        // block's value is then that slice, not a copy of it.
+        if !self.in_coroutine_body
+            && !self.declared.contains(&var)
+            && self.borrowed_text_locals.contains_key(&var)
+            && matches!(to.unspan(), Value::Call(..))
+        {
+            let name = sanitize(self.data.def(self.def_nr).variables().name(var));
+            self.declared.insert(var);
+            write!(w, "let var_{name}: &str = ")?;
+            return self.output_code_inner(w, to);
+        }
         // `@FR-R-CharWalk` — the step of `for c in T` takes an ASCII byte other than NUL in
         // one move: `c` is the byte, `#index` the byte's offset, `#next` one past it — what
         // the step as written answers for such a byte (the character read, width 1, a

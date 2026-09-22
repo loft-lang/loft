@@ -1474,6 +1474,14 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  text value on native is a `&str` or a `String`, never a store.
                  Every other walk — a body that writes a store or `p`, a generator,
                  a body that runs arms in parallel — keeps the copy.
+                 DISCHARGE CLAUSE: the temp of a `?` / `?? d` over a split TABLE's
+                 element read (R-SplitTable) — `parts[i]?`, `parts[i] ?? d` — whose
+                 every mention is a text-value read, its own null test and its
+                 own value arm included, is likewise a BORROW of the slice, and
+                 the discharge's value is that slice: the slice points into the
+                 table's source, which outlives the temp's block and the
+                 statement that consumes the value.  A rebind, a link, a capture
+                 or a return declines it, as for `p`.
 ```
 
 **In words.**  `for p in words` bound `p` as `{ … get_str(…) }.to_string()` — an
@@ -1495,9 +1503,16 @@ generator would carry it across the iteration.  The interpreter takes the copy t
 spells and is the oracle.  Switch `LOFT_NO_TEXT_BORROW`; trace `LOFT_TRACE_TEXT_BORROW`
 (each walk admitted and each declined with its reason); falsifier `LOFT_HOIST_VERIFY=1`,
 whose checking form re-reads the element after the body and panics when the borrow no
-longer names it.  Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
-`hoist::native_op_is_store_free` (the text-value clause), `Output::text_borrowed`, the
-bind in `Output::output_set`.
+longer names it.  The discharge clause is what takes the `split` row from 6.5 to 3.4 µs
+(the twin 2.7): `parts[i]?` was one copy into the temp and a second at the block's tail,
+where `_ret.to_string()` materialised a value that might borrow a block-local — the
+temp is now the block-local it might have borrowed, and points outside the block.  It
+has no runtime check to arm: the pins say what is emitted, and the cells of
+`158-split-table.loft` that discharge (s1, s4, s6, s10, s13, s14, s16) are the values.
+Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
+`hoist::native_op_is_store_free` (the text-value clause), `hoist::borrowed_discharge_temps`
+and the discharge arm of `hoist::text_escapes_with`, `Output::text_borrowed`, the bind and
+the discharge bind in `Output::output_set`, the `#ncc` tail in `Output::output_block`.
 
 ### A character walk steps an ASCII byte in one move
 

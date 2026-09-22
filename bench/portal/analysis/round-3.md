@@ -28,6 +28,58 @@ what they are, with what was learned.
 
 ## Built
 
+### The split table — `(R-SplitTable)` + `(R-TextBorrow)`'s discharge clause, 2026-09-22
+
+Built as the rule `(R-SplitTable)` (`formal/rewrites.md`), switch `LOFT_NO_SPLIT_TABLE`,
+trace `LOFT_TRACE_SPLIT_TABLE`, cells `tests/scripts/158-split-table.loft` s1–s21 (identical
+on the interpreter and on native under every falsifier; falsified by a getter answering the
+slice at `from + 1`), pins `tests/split_table.rs`.  Hand-priced first on the lane's own
+emission, then built to the price:
+
+| `split` row (200 pieces) | µs | ratio |
+|---|---:|---|
+| before | 21.2 | 7.8× |
+| the table alone — `Vec<&str>` at the bind, `len` and `v[i]` from it | 6.5 (−69 %) | 2.4× |
+| + the `?`-discharge temp BORROWING its slice (the two copies gone) | **3.1 (−85 %)** | **~1.15×** |
+
+The twin is 2.7 µs.  Two units, each a rule:
+
+1. **The table** is `(R-LazySplit)`'s sibling for the shape it declines — the vector bound
+   to a name — and the shape every library bind takes (14 binds, all local, walked / indexed
+   / `len`'d).  The bind collects the lazy split's own iterator (`lazy_split(src, c)
+   .collect()`), so the pieces are the same by construction; `len` is the table's length;
+   `v[i]` goes through `codegen_runtime::split_table_get` / `_or_raise`, which answer what
+   the two element-read twins answer (negative from the end; the null text + the oob note for
+   the nullable read; the recoverable `IndexOutOfBounds` / `NegativeIndex` for the raising
+   one — `LOFT_DEV_SOFT_HALT` halts both forms alike, checked); the walk `for p in parts` is
+   the parser's `_vector_N = parts` plus the two readers, read as an ALIAS of the table, so
+   `p` borrows its slice with no store condition and — the table being random access — a
+   `rev` and a comprehension over the name are walks too, where the lazy iterator must
+   decline them.  Every mention must stand inside the binding block after the bind (the
+   table is a Rust `let`); a `parts` returned, appended, written, handed to a call, copied,
+   rebound, a variable separator, a generator decline and keep the vector.  It rides on
+   `(R-Wrapper)`: with `LOFT_NO_WRAPPER_INLINE` `len` stays a call and no table is admitted.
+2. **The discharge clause** of `(R-TextBorrow)`: `parts[i]?` was one copy into the `__ncc`
+   temp and a second at the block's tail, where `_ret.to_string()` materialised a value that
+   MIGHT borrow a block-local.  The temp is now the block-local it might have borrowed — a
+   `&str` into the table's source, which outlives the block and the statement — so the
+   temp binds the slice, the null test reads it bare, the block yields it, and the void form
+   (`x = parts[i] ?? d`) copies once into the local that owns it.  `hoist::text_escapes`
+   learned the discharge's own value arm (`if bool(p) { p } else { d }`) and the one bind the
+   caller admits; nothing else in the walk rule moved.
+
+What it found on the way: (a) the parser picks between TWO element-read twins by the site —
+`q: text? = parts[1]` followed by a null test is the nullable read, the same bind formatted
+untested is the RAISING one — so a table that answered only the nullable twin declined the
+"all readers" cell; both are served now, each by its own getter mirroring its op's
+template.  (b) The nullable read's template notes an oob fault for the `(oob)` suffix a
+formatted hole renders; the getter notes it too, and the text hole never rendered the
+suffix on either backend (a cell pins `null` bare), so the note is parity kept, not a
+value seen.  (c) `LOFT_NO_LAZY_SPLIT`'s pin grepped for `lazy_split(` — which the table
+now emits under its own switch; the pin keys on the loop form's marker.  (d) A NULL text
+under `?` is `""` (`?` is the type's default), where the walk's piece is the null text of
+size 1: the first s2 expectation was hand-computed wrong and the interpreter corrected it.
+
 ### W2 — `(R-TextBorrow)`, 2026-09-22
 
 Built as the rule `(R-TextBorrow)` (`formal/rewrites.md`), switch `LOFT_NO_TEXT_BORROW`,
@@ -348,8 +400,8 @@ first generated instance — no more hand-written iterators per builder.
 
 Built, in this order: W2 (`join` 1.96×, four more text rows to ~1×), W1 (`char_walk` 2.48×,
 `split` 7.8×), the single-row harness (`--names`), `mesh_aabb` attributed and moved
-(2.73×), `enum_match` attributed and moved a step (3.97×).  **Left, in order: the split
-table** (§ above — recommended ahead of the two below after the owner's question), **C1+**
+(2.73×), `enum_match` attributed and moved a step (3.97×), **the split table** (`split`
+7.8× → ~1.15×, § Built).  **Left, in order: C1+**
 (`fibonacci`, its CORRECTED condition in `vector-build.md` § C1's condition), **P1**
 (`chunk_lookup`).  Levers this round FOUND and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read

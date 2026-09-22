@@ -170,6 +170,42 @@ fn every_reader_answers_from_the_table() {
 }
 
 #[test]
+fn a_discharged_element_read_borrows_its_slice() {
+    let rust = emit("discharge", &[]);
+    // `parts[i]?` in a value position: the temp is the slice, the null test reads it bare,
+    // and the block yields the slice — no `String` is built on either side.
+    let indexed = body(&rust, "n_indexed");
+    assert!(
+        indexed.contains("let var___ncc_1: &str = loft::codegen_runtime::split_table_get(&__st_")
+            && indexed.contains("_ret = if (((var___ncc_1) != loft::state::STRING_NULL) as u8) == 1 {&*(var___ncc_1)} else {&*(\"\")};")
+            && !indexed.contains("_ret.to_string()")
+            && !indexed.contains("var___ncc_1: String"),
+        "indexed: the `?` temp borrows the slice and the block yields it"
+    );
+    // `parts[i] ?? d` into a local: the temp is the slice; the arm copies it into the
+    // local, which owns its text.
+    let at = body(&rust, "n_at");
+    assert!(
+        at.contains("let var___ncc_1: &str = ")
+            && at.contains("(var___ncc_1).to_string()")
+            && !at.contains("var___ncc_1.clone()"),
+        "at: the `??` temp borrows the slice, the local takes a copy"
+    );
+    // A discharge of a VECTOR's element (no table) keeps the owned temp.
+    let s17 = body(&rust, "n_s17");
+    assert!(
+        s17.contains("var___ncc_1: String = ") && !s17.contains("var___ncc_1: &str"),
+        "s17: a discharge of a real vector's element still copies"
+    );
+    let off = emit("discharge_off", &[("LOFT_NO_TEXT_BORROW", "1")]);
+    assert!(
+        !off.contains(": &str = loft::codegen_runtime::split_table_get(")
+            && body(&off, "n_indexed").contains("_ret.to_string()"),
+        "LOFT_NO_TEXT_BORROW=1 keeps every discharge temp an owned String"
+    );
+}
+
+#[test]
 fn an_unwritten_parameter_is_borrowed_and_any_other_source_is_a_copy() {
     let rust = emit("source", &[]);
     for name in [
