@@ -960,7 +960,9 @@ fn lt_single(s: &mut State) {
     let new_value = {
         let _a = v_v1;
         let _b = v_v2;
-        !_b.is_nan() && !(_a >= _b)
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        let _lt = !_b.is_nan() && !(_a >= _b);
+        _lt
     };
     s.put_stack(new_value);
 }
@@ -1181,7 +1183,9 @@ fn lt_float(s: &mut State) {
     let new_value = {
         let _a = v_v1;
         let _b = v_v2;
-        !_b.is_nan() && !(_a >= _b)
+        #[allow(clippy::neg_cmp_op_on_partial_ord)]
+        let _lt = !_b.is_nan() && !(_a >= _b);
+        _lt
     };
     s.put_stack(new_value);
 }
