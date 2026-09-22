@@ -2840,7 +2840,7 @@ impl Output<'_> {
             return Ok(ChainGuard::None);
         };
         let variables = data.def(self.def_nr).variables();
-        let written = hoist::written_vars(lp);
+        let written = hoist::written_vars(lp, variables);
         let mut escaped: HashSet<u16> = HashSet::new();
         non_sentinel::collect_escapes(data, data.def(self.def_nr).code(), &mut escaped);
         let own: Vec<u16> = std::iter::once(rc.loop_var)
@@ -3692,7 +3692,8 @@ impl Output<'_> {
         let mut invariant_frame: HashMap<usize, std::rc::Rc<(String, Value)>> = HashMap::new();
         if !self.invariant_hoist_disabled {
             let trace = std::env::var("LOFT_TRACE_INVARIANT").is_ok();
-            for ch in hoist::invariant_chains(lp, self.data) {
+            for ch in hoist::invariant_chains(lp, self.data, self.data.def(self.def_nr).variables())
+            {
                 if ch
                     .nodes
                     .iter()

@@ -360,8 +360,8 @@ pub fn nested_counted_loops<'a>(
 
 /// The variables `body` rebinds anywhere — a `Set`, a `TuplePut`, an `Iter` binding.
 #[must_use]
-pub fn written_vars(body: &Block) -> HashSet<u16> {
-    let mut w = rebound_vars(body);
+pub fn written_vars(body: &Block, vars: &crate::variables::Function) -> HashSet<u16> {
+    let mut w = rebound_vars(body, vars);
     for op in &body.operators {
         op.any_node(&mut |n| {
             if let Value::Iter(v, ..) = n {
@@ -373,7 +373,12 @@ pub fn written_vars(body: &Block) -> HashSet<u16> {
     w
 }
 
-fn rebound_vars(body: &Block) -> HashSet<u16> {
+/// The variables `body` rebinds — a `Set` or a `TuplePut` — closed over LINKS: a `&`-bound
+/// local reads whatever its target holds NOW, so a rebind of the target repoints every path
+/// rooted at the link, and the link counts as rebound too ([`close_over_links`]).  The one
+/// home of the question every hoist asks of its root; a site that asks it of a single
+/// variable uses [`rebinds_root`].
+fn rebound_vars(body: &Block, vars: &crate::variables::Function) -> HashSet<u16> {
     let mut rebound: HashSet<u16> = HashSet::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
@@ -383,7 +388,58 @@ fn rebound_vars(body: &Block) -> HashSet<u16> {
             false
         });
     }
+    close_over_links(&mut rebound, vars);
     rebound
+}
+
+/// The variables `v` LINKS to: a `g = &e` local's type is a `RefVar` whose deps name its
+/// target, and a link to a link follows through.  Empty for a variable that is no link.
+fn link_targets(vars: &crate::variables::Function, v: u16) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::new();
+    let mut todo = vec![v];
+    while let Some(x) = todo.pop() {
+        if x >= vars.count() || !matches!(vars.tp(x).base(), Type::RefVar(_)) {
+            continue;
+        }
+        for d in vars.tp(x).depend() {
+            if d != v && !out.contains(&d) {
+                out.push(d);
+                todo.push(d);
+            }
+        }
+    }
+    out
+}
+
+/// Add to `rebound` every link whose target — or whose target's target — is in it.  A
+/// header, a base, an address or a memo hoisted off `g.tags` with `g = &e` describes the
+/// record `e` named on the way in; once the body rebinds `e`, `g` reads another record
+/// while the hoisted fact still describes the first (measured 2026-09-22: `link_view`
+/// answered 15 for 16 on native, with every switch on or off).
+fn close_over_links(rebound: &mut HashSet<u16>, vars: &crate::variables::Function) {
+    loop {
+        let mut grew = false;
+        for v in 0..vars.count() {
+            if !rebound.contains(&v) && link_targets(vars, v).iter().any(|t| rebound.contains(t)) {
+                rebound.insert(v);
+                grew = true;
+            }
+        }
+        if !grew {
+            return;
+        }
+    }
+}
+
+/// Does statement node `n` rebind `root` — or a variable `root` links to?  The
+/// single-variable form of [`rebound_vars`]'s question.
+fn rebinds_root(n: &Value, root: u16, vars: &crate::variables::Function) -> bool {
+    match n {
+        Value::Set(v, _) | Value::TuplePut(v, _, _) => {
+            *v == root || link_targets(vars, root).contains(v)
+        }
+        _ => false,
+    }
 }
 
 /// The vector paths `body` indexes, in the order they appear, minus those whose root the
@@ -391,9 +447,9 @@ fn rebound_vars(body: &Block) -> HashSet<u16> {
 /// field itself is an `OpSetRef`, which is not in [`IN_PLACE_SET_OPS`] and blocks outright).
 /// Enforces `@FR-R-Header`: which paths a loop derives a header for.
 fn vector_candidates(body: &Block, data: &Data, def_nr: u32) -> Vec<(PathKey, Value)> {
-    let rebound = rebound_vars(body);
-    let mut found: Vec<(PathKey, Value)> = Vec::new();
     let vars = data.def(def_nr).variables();
+    let rebound = rebound_vars(body, vars);
+    let mut found: Vec<(PathKey, Value)> = Vec::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
             if let Value::Call(d, args) = n
@@ -585,7 +641,7 @@ pub fn hoistable(
         growth_free: false,
     };
     let vars = data.def(def_nr).variables();
-    let rebound = rebound_vars(body);
+    let rebound = rebound_vars(body, vars);
     // (key, record type, the call) in first-appearance order.
     let mut found: Vec<(ScalarKey, u16, Value)> = Vec::new();
     if tiers.scalars {
@@ -1319,7 +1375,7 @@ fn callee_inputs_inner(
     }
     let vars = def.variables();
     let params = u16::try_from(def.attributes().len()).ok()?;
-    let rebound = rebound_vars(body);
+    let rebound = rebound_vars(body, vars);
     // What the body writes, as the caller's gate accounts it (`@FR-R-Callee`): a
     // return-buffer writer (§ V-ac — `brush_sample` answering a `Smp` through its buffer)
     // reaches its buffer's record type WHOLE, which no parameter's field shares; any other
@@ -1531,7 +1587,7 @@ pub fn view_def_header(
     for op in rest {
         op.any_node(&mut |n| {
             match n {
-                Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == *d => rebound = true,
+                _ if rebinds_root(n, *d, vars) => rebound = true,
                 Value::Call(op_nr, args)
                     if args.len() == 3
                         && is_element_address(data, *op_nr)
@@ -1959,7 +2015,7 @@ fn view_extent_verdict(
     for op in rest {
         op.any_node(&mut |n| {
             match n {
-                Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == *r => rebound = true,
+                _ if rebinds_root(n, *r, vars) => rebound = true,
                 Value::Call(g, args) if (*g as usize) < data.definitions.len() => {
                     let name = data.def(*g).name();
                     let on_r =
@@ -4222,7 +4278,7 @@ pub fn mint_group(
                 }
                 continue;
             }
-            Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == path.0 => return None,
+            n if rebinds_root(n, path.0, vars) => return None,
             _ => {}
         }
         // A statement of the group that is not one of its mints or finishes: admitted on
@@ -10934,7 +10990,11 @@ fn same_chain(a: &Value, b: &Value) -> bool {
 /// every entry — the form LLVM peels the first-use test out of (measured: declared one
 /// loop out, the flag's state at entry is unknown and the test stays in every tap).
 #[must_use]
-pub fn invariant_chains(lp: &Block, data: &Data) -> Vec<InvariantChain> {
+pub fn invariant_chains(
+    lp: &Block,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> Vec<InvariantChain> {
     if lp
         .operators
         .iter()
@@ -10942,7 +11002,7 @@ pub fn invariant_chains(lp: &Block, data: &Data) -> Vec<InvariantChain> {
     {
         return Vec::new();
     }
-    let mut banned = rebound_vars(lp);
+    let mut banned = rebound_vars(lp, vars);
     for op in &lp.operators {
         super::non_sentinel::collect_escapes(data, op, &mut banned);
     }

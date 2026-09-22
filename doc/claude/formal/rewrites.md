@@ -501,6 +501,13 @@ in-place write moves nothing, so no header, aliased or not, can go stale; that i
 why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
 `hoist::blocks_header_hoist`.
+**The link clause** (2026-09-22): a hoist's ROOT is loop-invariant only while nothing the
+root LINKS to is rebound — `g = &e` reads whatever `e` holds now, so a rebind of `e` in
+the body repoints every path rooted at `g`, and `g` counts as rebound (`hoist::rebound_vars`
+closes the set over links, `hoist::rebinds_root` answers the single-root form for a view's
+header, a record's address and a mint group's path).  Measured before it: `g.tags`' header
+hoisted across `e = h[i]`, native read `h[0]`'s tags on every pass (15 for 16, every
+switch on or off); cells `tests/scripts/158-link-rebind.loft` l1–l7.
 **The hidden-buffer allowance** (@PLN157 § V-ad): the allow-list also admits
 `OpDatabase`/`OpDatabaseNP` into a null-discharge buffer — the hidden `__ref_p2_N` that
 `e = tbl[i]?` mints an ABSENT record element into — whatever the record holds.  The
