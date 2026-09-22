@@ -15,7 +15,23 @@ previous step's binary over the corpus; `G-Select` is in `formal/interfaces.md`.
 BUILT too (C1–C4; `G-Key` written).  Arc D BUILT (D1–D11; `G-Type` and `G-Regular`
 written): a generic struct or enum, its instances, methods, self-reference and several
 variables, across a library boundary, and the goal program — `map_grid<T, U>` with a short
-lambda whose return binds `U`.**
+lambda whose return binds `U`.  Arc E BUILT (E1–E7, 2026-09-22): `insert`, `sort`, `reverse`,
+`reserve`, `filter`, `map` and `reduce` are stdlib `#builtin` METHODS on `vector` — one call
+in either spelling, a program adds its own for its own types, and the special form stays the
+lowering where it takes the call.  The whole plan is built; the branch is rebased onto `main`
+@ `ffb66a58b` and its gate passes (5 256 tests).**
+
+⚠ **What arc E cost, which is the part worth reading before the next arc of this kind.**
+Declaring three stdlib generics changed answers no probe of the arc asked for, and each was
+found by a gate or a peer rather than by the step that caused it: a generic's `-> T?` at a
+tuple (wrong or leaking on every path but the single tail read), a keyed `a = add(a, x)`
+reading back EMPTY on `main` too, a bare `[]` at a keyed type variable, `U` becoming a
+reserved name wherever a parse shares the stdlib's source id, and a program's `<T>` failing to
+reach the stdlib's generics wherever a parser CONTINUES another's Data — which had arc E's own
+guard red in the corpus runner while green under the binary.  Each has its own commit and
+guard.  The lesson for the next arc: a stdlib DECLARATION is a change to every program's
+namespace and to every parse path, so the arc's verification has to include the paths the
+binary does not take (the corpus runner's cached stdlib, the REPL, `<host>`).
 The design is [DESIGN.md](DESIGN.md) and the ordered work is [STEPS.md](STEPS.md); both were
 written against `9f5cf6a96` with every claim about today's compiler run, and the programs are
 in [`probes/`](probes/), each with the answer it gave at the top.
