@@ -844,6 +844,16 @@ pub struct Output<'a> {
     /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
     /// variable of `for p in vector<text>` on native.
     pub text_borrow_disabled: bool,
+    /// `@FR-R-CharWalk` — the `for c in T` walks of the function being emitted, keyed by
+    /// the loop's scope ([`hoist::char_walks`]); rebuilt per function.
+    pub char_walks: BTreeMap<u16, hoist::CharWalk>,
+    /// The same walks keyed by LOOP VARIABLE, for the bind in `output_set`.
+    pub char_walk_binds: HashMap<u16, hoist::CharWalk>,
+    /// `LOFT_NO_CHAR_WALK=1` — every character walk takes its step as written and asks
+    /// its null test per iteration again, as before `@FR-R-CharWalk`; the bisect step for
+    /// a wrong character, a wrong byte offset or a missed fault out of `for c in text` on
+    /// native.
+    pub char_walk_disabled: bool,
     /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
     /// function that build once per activation ([`hoist::invariant_literals`]): each is
     /// pre-declared at function top and its declaration statement wrapped in an
@@ -2055,6 +2065,9 @@ impl<'a> Output<'a> {
             lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
+            char_walks: BTreeMap::new(),
+            char_walk_binds: HashMap::new(),
+            char_walk_disabled: std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0"),
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
@@ -2393,6 +2406,16 @@ impl Output<'_> {
         } else {
             hoist::borrowed_text_walks(self.data, def_nr, &self.lazy_splits)
         };
+        self.char_walks = if self.char_walk_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::char_walks(self.data, def_nr)
+        };
+        self.char_walk_binds = self
+            .char_walks
+            .values()
+            .map(|w| (w.loop_var, w.clone()))
+            .collect();
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
@@ -4557,23 +4580,9 @@ impl Output<'_> {
         if !self.text_borrowed(*s) {
             return false;
         }
-        // A write is a `Set`, a by-reference hand-off, or the variable as the DESTINATION
-        // (first operand) of a text-building op.  Anything this does not recognise as a
-        // write is a read of an immutable `&str`, which the borrow permits.
-        !def.code().any_node(&mut |n| match n {
-            Value::Set(v, _) => v == s,
-            Value::Call(d, args) if (*d as usize) < self.data.definitions.len() => {
-                let name = self.data.def(*d).name();
-                let first =
-                    matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if v == s);
-                first
-                    && (name == "OpCreateStack"
-                        || name.starts_with("OpAppend")
-                        || name.starts_with("OpClear")
-                        || name.starts_with("OpFormat"))
-            }
-            _ => false,
-        })
+        // One home for "is this text written?" — `hoist::text_written`, which
+        // `(R-CharWalk)`'s hoisted null test asks too.
+        !hoist::text_written(def.code(), *s, self.data)
     }
 
     pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {

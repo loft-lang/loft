@@ -1372,6 +1372,22 @@ pub fn text_borrow_verify(held: &str, fresh: &str) {
     );
 }
 
+/// `@FR-R-CharWalk` under `LOFT_HOIST_VERIFY=1` — the fast arm's answer for an ASCII byte
+/// (`#index`, `#next`, the character) against what the step as written left behind.
+///
+/// # Panics
+///
+/// When they differ — a byte the arm took in one move that the written step reads
+/// otherwise.  Never in the emitted default.
+#[inline]
+pub fn char_walk_verify(fast: (i64, i64, i32), written: (i64, i64, i32)) {
+    assert!(
+        fast == written,
+        "character walk fast arm disagrees with the step as written \
+         (fast (index, next, c) {fast:?}, written {written:?})"
+    );
+}
+
 /// `@FR-R-RecPtr`'s path clause under `LOFT_HOIST_VERIFY=1` — a field read through a record
 /// address at a SUMMED offset (`v.pos.x`), compared with the unrewritten read that walks the
 /// path.  [`rec_get`]'s own check re-reads the store at the offset it was given, so it

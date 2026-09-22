@@ -1441,6 +1441,43 @@ longer names it.  Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
 `hoist::native_op_is_store_free` (the text-value clause), `Output::text_borrowed`, the
 bind in `Output::output_set`.
 
+### A character walk steps an ASCII byte in one move
+
+```
+  (R-CharWalk)   in `for c in T { … }` where T is a text VARIABLE, the walk's step — bind
+                 `c` to the character at `c#next` and advance `c#next` by its width —
+                 takes an ASCII byte other than NUL in ONE move: `c` is that byte and
+                 `c#next` steps by one, which is exactly what the character read, the
+                 width and the checked add answer for such a byte; every other byte (a
+                 multi-byte lead, a continuation, a NUL — whose read notes a fault — or
+                 an index at or past the end) takes the step as written.  And where no
+                 statement of the loop writes T, the walk's null test — is T the null
+                 text — is asked ONCE before the loop instead of on every iteration,
+                 since nothing in the loop can change its answer; the size test stays
+                 per iteration, because a body may grow T.  A generator declines
+                 whole: its loop variables live on the state machine.
+```
+
+**In words.**  `for c in src` paid, per character, `text_character` (a bounds test, a
+byte load, its own ASCII arm), a fault note, a CALL for the width the byte already told it,
+a checked add, a `next <= index` guard, a content compare of the whole text against the
+null sentinel, and a length test — 2.7 ns a character against the Rust twin's 0.6, with the
+profile FLAT (`round-3.md` § W1: inlining the width or making the body's compares plain
+moved nothing on its own; LLVM folded those already).  The fast arm is a re-spelling with
+no condition: for a byte in `1..=0x7F` at an in-range index the step as written answers
+that byte, width 1 and no fault, so the arm answers the same and the slow arm is the step
+verbatim.  NUL is excluded on purpose — `text_character` answers it as the null character
+and the walk's fault note fires, which the fast arm would silence.  The null test is a
+CONTENT compare (`T != "\0"`) LLVM does not hoist past the step's calls; asked once it
+costs one compare per walk, and the condition — T not written in the loop — is
+`(R-LazySplit)`'s borrow condition over the loop's statements.  Together 23.5 → 12.9 µs on
+the `char_walk` row (4.6× → ~2.5×); the two checked accumulator adds of the body are what
+remains, C120's territory.  Switch `LOFT_NO_CHAR_WALK`; falsifier `LOFT_HOIST_VERIFY=1`,
+whose checking form runs the step as written beside the fast arm and panics when the two
+disagree, and keeps the per-iteration null test as an assertion.  Sites:
+`hoist::char_walks`, `hoist::text_written` (shared with the lazy split's borrow), the bind
+in `Output::output_set`, the guard in the `Loop` arm of `Output::output_code_inner`.
+
 ### A lookup by one integer key takes the typed entry
 
 ```
