@@ -4498,17 +4498,12 @@ fn all_scalar_record(data: &Data, def_nr: u32) -> bool {
 }
 
 /// @PLN157 § V-ad — `OpDatabase`/`OpDatabaseNP` into a hidden null-discharge buffer
-/// (`__ref_p2_N`, the record `e = tbl[i]?` mints an ABSENT element into): the allocation
-/// takes a store of its own from a null slot, or clears the buffer's OWN store — a store
-/// only the site's `__ncc_N` temp reaches, and the site rebinds that temp on every run, so
-/// no loop-invariant path names anything in it and no header or base can go stale, whatever
-/// the record holds; a scalar hoist can be reached only through the buffer's own type, which
-/// the caller reads as written whole.  Answers that type.  (Until 2026-09-22 an all-scalar
-/// record was required — the `Chunk { …, hexes: vector<Hex> }` a game's chunk lookup
-/// discharges kept its loop on no header at all; a growth of the buffer's vector field from
-/// the body is a push through a non-pure path, which the gate declines on its own.)  Only
-/// the pass-2 discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and a
-/// return buffer may be a record the caller offered.
+/// (`__ref_p2_N`, the record `e = tbl[i]?` mints an ABSENT element into) whose record is
+/// all-scalar: the allocation takes a store of its own from a null slot, or clears the
+/// buffer's OWN store, and that store hosts no vector, text or reference — so no header
+/// can go stale and no scalar hoist can be reached except through the buffer's own type.
+/// Answers that type.  Only the pass-2 discharge buffers qualify: a `__ref_N` work-ref may
+/// be a return buffer, and a return buffer may be a record the caller offered.
 /// Enforces `@FR-R-InPlace` (the hidden-buffer allowance).
 fn null_buffer_alloc(
     name: &str,
@@ -4528,7 +4523,9 @@ fn null_buffer_alloc(
     if *b >= vars.count() || !vars.name(*b).starts_with("__ref_p2_") {
         return None;
     }
-    plain_record_type(data, vars.tp(*b))
+    let tp = plain_record_type(data, vars.tp(*b))?;
+    let def_nr = vars.tp(*b).heap_def_nr()?;
+    all_scalar_record(data, def_nr).then_some(tp)
 }
 
 fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
