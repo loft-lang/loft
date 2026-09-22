@@ -1,0 +1,88 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1598, `@FR-H-Move` — A VECTOR MOVED OUT AND THEN REFILLED RELEASES THE MOVED ELEMENTS ONCE.
+// `w = v` of a vector the function owns moves its elements, and `v = [..]` refills `v`.  The
+// copy hands the elements' release over by flagging the backing store they live in.  It flagged
+// the backing `v`'s type names, which is the one of its LAST binding.  At the copy `v` still
+// held its first, so that backing kept its release and `w` had one too.  The copy now flags
+// every literal backing `v` is bound to.  Only the one it holds is live, since a rebind releases
+// the others, and a refill's re-mint hands its own backing its release back.
+//
+// Every expected sequence is worked out by hand: `M<id>` a make, `D<id>` a release, `R<n>` a
+// read.  The scope end releases in reverse declaration order.  `g4` is scored by count, because
+// a local bound by a copy inside an arm releases at the function's end instead of the arm's — a
+// placement of its own (loft#1600).  The last cell is a control that was right before: a move
+// with no refill.
+//
+// @falsified-at: 875d6fe94 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1598-a-vector-moved-out-and-refilled-releases-the-moved-elements-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — the doubled
+//   release is a second `D20` in the trace; the stores are right on both trees.
+// ARMED: no instrument — each make, release and read is written to this guard's own trace file.
+// WITNESS: on the control, measured with a print in place of the assertion: the first cell traces
+//   `M20,M21,D20,R11,D20,D21`, 20 released at the refill and again with `w`.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_vector_move_refill_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct Mh { id: integer }
+fn OpDrop(self: Mh) { note("D{self.id}"); }
+fn mmk(id: integer) -> Mh { note("M{id}"); Mh { id: id } }
+
+fn g1() { v: vector<Mh> = [mmk(20)]; w = v; v = [mmk(21)]; note("R{len(w)}{len(v)}"); }
+fn g2() { v: vector<Mh> = [mmk(30)]; w = v; v = []; note("R{len(w)}{len(v)}"); }
+fn g3() { v: vector<Mh> = [mmk(40)]; w = v; v = [mmk(41)]; v = [mmk(42)]; note("R{len(w)}{len(v)}"); }
+fn g4() { v: vector<Mh> = [mmk(50)]; c = len(v) > 0; if c { w = v; note("R{len(w)}"); } v = [mmk(51)]; note("R{len(v)}"); }
+fn g5() { v: vector<Mh> = [mmk(60)]; c = len(v) > 9; if c { w = v; note("R{len(w)}"); } v = [mmk(61)]; note("R{len(v)}"); }
+fn k1() { v: vector<Mh> = [mmk(70)]; w = v; note("R{len(w)}"); }
+
+fn check(nm: text, want: text) {
+  got = drain();
+  assert(got == want, "{nm}: {got}");
+}
+
+fn count(trace: text, id: text) -> integer {
+  n = 0;
+  for part in trace.split(',') { if part == id { n += 1; } }
+  n
+}
+
+// Each of `ids` exactly once, in any order.
+fn check_once(nm: text, ids: vector<text>) {
+  got = drain();
+  ok = true;
+  for id in ids { if count(got, id) != 1 { ok = false; } }
+  assert(ok, "{nm}: {got}");
+}
+
+fn main() {
+  drain();
+  g1(); check("g1 moved, refilled       ", "M20,M21,R11,D20,D21");
+  g2(); check("g2 moved, emptied        ", "M30,R10,D30");
+  g3(); check("g3 moved, refilled twice ", "M40,M41,M42,D41,R11,D40,D42");
+  g4(); check_once("g4 moved in an arm that ran", ["M50", "D50", "M51", "D51"]);
+  g5(); check("g5 an arm that did not run", "M60,M61,D60,R1,D61");
+  k1(); check("k1 control: no refill     ", "M70,R1,D70");
+  println("a vector moved out and refilled releases the moved elements once: every cell holds");
+}

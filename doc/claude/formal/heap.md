@@ -796,6 +796,25 @@ CLOSED 2026-09-17, below.
   its inner elements (loft#1597), and a vector moved out and then refilled releases the moved
   elements twice (loft#1598).
 
+### D-heap-32 — OPENED AND CLOSED (2026-09-22, loft#1598): a vector moved out and then refilled released the moved elements twice
+
+- **Violates:** (H-Move) — a collection the function owns moves wherever it is placed, and each
+  element is released once.
+- **Where:** a whole-collection copy hands the elements' release over by flagging the backing
+  store they live in (`collection_copy_handoff`, `D-heap-23`).  It named the backing the
+  source's TYPE names, which is the one of its LAST binding.  At the copy, a source rebound
+  later still held an earlier one.
+- **Effect:** measured on both backends, identical: `v = [mk(20)]; w = v; v = [mk(21)]` released
+  20 twice, from `v`'s first backing and from `w`.  A move with no refill was clean.
+- **Status:** CLOSED 2026-09-22 — found the same day with `D-heap-26`'s matrix.
+- **Closed:** the copy flags every literal backing its source is bound to
+  (`collection_copy_backings`, over `vector_literal_backings`).  Only the one it holds is live:
+  a rebind releases the others and sets them to the sentinel (`D-heap-26`), and a refill's re-mint
+  gives its own backing its release back.  Guard
+  `tests/scripts/1598-a-vector-moved-out-and-refilled-releases-the-moved-elements-once.loft`.
+  Found beside it: a vector moved into a local inside an `if` arm is released at the function's
+  end rather than the arm's (loft#1600).
+
 ### D-heap-31 — OPENED AND CLOSED (2026-09-22, loft#1596): a vector local rebound away from a call's result never released it
 
 - **Violates:** (H-Drop), its reassignment clause.

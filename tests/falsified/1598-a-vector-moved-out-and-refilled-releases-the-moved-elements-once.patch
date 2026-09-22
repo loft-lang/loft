@@ -1,0 +1,140 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 5a18db0d9..371472ba5 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -3106,60 +3106,18 @@ fn collection_copy_handoff(
+     drop_hook(function, backing, data).map(|_| backing)
+ }
+ 
+-/// Every store a whole-collection copy may move its elements out of: the one
+-/// [`collection_copy_handoff`] names, and every other literal backing its source is bound to
+-/// (`backings`, [`vector_literal_backings`]) whose elements carry a hook.  A source's type names
+-/// only the backing of its LAST binding, while at the copy it may still hold an earlier one — a
+-/// rebind after the copy is what makes them differ.  Only the one it holds is live, since a
+-/// rebind releases the others and sets them to the sentinel, so marking them all is exact.
+-fn collection_copy_backings(
+-    d_nr: u32,
+-    args: &[Value],
+-    function: &Function,
+-    data: &Data,
+-    backings: &HashMap<u16, Vec<u16>>,
+-) -> Vec<u16> {
+-    let Some(first) = collection_copy_handoff(d_nr, args, function, data) else {
+-        return Vec::new();
+-    };
+-    let mut out = vec![first];
+-    let (Some(Value::Var(dst)), Some(Value::Var(src))) = (
+-        args.first().map(Value::unspan),
+-        args.get(1).map(Value::unspan),
+-    ) else {
+-        return out;
+-    };
+-    let dst_deps = function.tp(*dst).depend();
+-    for &b in backings.get(src).map(Vec::as_slice).unwrap_or_default() {
+-        if b != *dst
+-            && !dst_deps.contains(&b)
+-            && !out.contains(&b)
+-            && drop_hook(function, b, data).is_some()
+-        {
+-            out.push(b);
+-        }
+-    }
+-    out
+-}
+-
+ /// Every store [`collection_copy_handoff`] answers for a copy anywhere in `code`.  Each is decided
+ /// per path, whether or not the copy sits under a branch: the backing still holds the elements
+ /// the copy moved until a re-mint replaces them, so its release is skipped exactly on the paths
+ /// the copy ran, and a re-mint gives it back (`Scopes::in_place_rebuild`).
+-fn collection_handoffs(
+-    code: &Value,
+-    function: &Function,
+-    data: &Data,
+-    backings: &HashMap<u16, Vec<u16>>,
+-) -> Vec<u16> {
++fn collection_handoffs(code: &Value, function: &Function, data: &Data) -> Vec<u16> {
+     let mut out: Vec<u16> = Vec::new();
+     code.walk(&mut |n| {
+-        if let Value::Call(d, args) = n.unspan() {
+-            for backing in collection_copy_backings(*d, args, function, data, backings) {
+-                if !out.contains(&backing) {
+-                    out.push(backing);
+-                }
+-            }
++        if let Value::Call(d, args) = n.unspan()
++            && let Some(backing) = collection_copy_handoff(*d, args, function, data)
++            && !out.contains(&backing)
++        {
++            out.push(backing);
+         }
+     });
+     out.sort_unstable();
+@@ -5377,7 +5335,7 @@ fn run_scan_phase(
+     }
+     // D-heap-23 — the store behind a collection the function owns, whose elements a
+     // whole-collection copy moved elsewhere, stops releasing them on the path the copy ran.
+-    for backing in collection_handoffs(orig_code, &function, data, &scopes.vector_backings) {
++    for backing in collection_handoffs(orig_code, &function, data) {
+         scopes.per_path_pairs.insert((u16::MAX, backing));
+         scopes.mint_handoff_flag(&mut function, backing);
+     }
+@@ -9659,30 +9617,26 @@ fn check_arg_ref_allocs(ir: &Value, function: &Function, fn_name: &str) {
+ }
+ 
+ impl Scopes<'_> {
+-    /// The per-path flags a copy sets when it runs, empty where the copy hands nothing over per
+-    /// path: an `OpCopyRecord` written in a branch arm (`arm_container_handoffs`, D-heap-14), or
+-    /// a whole-collection copy of a collection the function owns (`collection_handoffs`,
+-    /// D-heap-23), which sets one flag per store it may have moved out of
+-    /// ([`collection_copy_backings`]).
+-    fn arm_handoff_flags(
++    /// The per-path flag a copy sets when it runs, or `None` where the copy hands nothing over
++    /// per path: an `OpCopyRecord` written in a branch arm (`arm_container_handoffs`, D-heap-14),
++    /// or a whole-collection copy of a collection the function owns (`collection_handoffs`,
++    /// D-heap-23).
++    fn arm_handoff_flag(
+         &self,
+         d_nr: u32,
+         args: &[Value],
+         function: &Function,
+         data: &Data,
+-    ) -> Vec<u16> {
++    ) -> Option<u16> {
+         let stopped = if d_nr == data.def_nr("OpCopyRecord") && args.len() >= 3 {
+-            copy_record_handoff(args, function, data)
+-                .into_iter()
+-                .collect()
++            copy_record_handoff(args, function, data)?
+         } else {
+-            collection_copy_backings(d_nr, args, function, data, &self.vector_backings)
++            collection_copy_handoff(d_nr, args, function, data)?
+         };
+-        stopped
+-            .into_iter()
+-            .filter(|s| self.per_path_pairs.contains(&(u16::MAX, *s)))
+-            .filter_map(|s| self.handed_off.get(&s).copied())
+-            .collect()
++        if !self.per_path_pairs.contains(&(u16::MAX, stopped)) {
++            return None;
++        }
++        self.handed_off.get(&stopped).copied()
+     }
+ 
+     /// The per-path flag of the store behind collection `args[0]` when this call GROWS it — an
+@@ -10202,14 +10156,11 @@ impl Scopes<'_> {
+                 // D-heap-14 — a copy that hands a droppable over inside a branch ARM records that
+                 // it RAN on the source's per-path flag (loft#1515), right after it: the source
+                 // keeps its release on every path where this copy did not run.
+-                let flags = self.arm_handoff_flags(*d_nr, args, function, data);
+-                if !flags.is_empty() {
++                if let Some(flag) = self.arm_handoff_flag(*d_nr, args, function, data) {
+                     let mut ops = preamble;
+                     ops.push(call);
+                     ops.extend(postamble);
+-                    for flag in flags {
+-                        ops.push(v_set(flag, Value::Boolean(true)));
+-                    }
++                    ops.push(v_set(flag, Value::Boolean(true)));
+                     return Value::Insert(ops);
+                 }
+                 // A collection whose elements a copy moved out, GROWN again: its store holds
