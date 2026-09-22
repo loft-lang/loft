@@ -2528,6 +2528,13 @@ impl Stores {
         if let Parts::Enum(values) = &mut self.types[known_type as usize].parts {
             let num = values.len() as u16;
             values.push((value_type, name.to_string()));
+            // The variant's row names its enum in `parents`, as `enum_value` writes it on the
+            // parse path: a native program's `init()` registers its variants HERE, and without
+            // the link `enum_parent_size` answered the variant's own size (16) for its enum's
+            // (24) — an undersized record, visible only to the debug oracle beside it.
+            if value_type != u16::MAX && (value_type as usize) < self.types.len() {
+                self.types[value_type as usize].parents.insert(known_type);
+            }
             num
         } else {
             panic!(
@@ -3574,6 +3581,55 @@ mod typevar_row_tests {
             s.enum_parent_size(tp) > 0,
             "a real struct named `T` is not the type-variable row and must size normally"
         );
+    }
+}
+
+#[cfg(test)]
+mod enum_parent_tests {
+    use super::Stores;
+
+    /// An enum `E { Small { a }, Big { a, b, c } }`, its variants registered the way `via`
+    /// says: `value` is a native program's `init()` replay, `enum_value` the parse path.
+    fn two_variant_enum(via_value: bool) -> (Stores, u16, u16) {
+        let mut s = Stores::new();
+        let int_c = s.name("integer");
+        let e = s.enumerate("E");
+        let small = s.structure("Small", 1);
+        s.field(small, "a", int_c);
+        let big = s.structure("Big", 2);
+        s.field(big, "a", int_c);
+        s.field(big, "b", int_c);
+        s.field(big, "c", int_c);
+        if via_value {
+            s.value(e, "Small", small);
+            s.value(e, "Big", big);
+        } else {
+            s.value(e, "Small", u16::MAX);
+            s.value(e, "Big", u16::MAX);
+            s.enum_value(e, "Small", small);
+            s.enum_value(e, "Big", big);
+        }
+        s.finish();
+        (s, small, big)
+    }
+
+    /// A record of the SMALL variant is sized as its enum, whichever route registered the
+    /// variants.  The native replay's `value` left the variant's `parents` empty, so
+    /// `enum_parent_size` answered the variant's own size for its enum's — a check the
+    /// debug oracle `enum_parent_size_by_scan` made only under `-C debug-assertions=on`,
+    /// which no native gate runs.
+    #[test]
+    fn a_variant_registered_by_the_native_replay_sizes_as_its_enum() {
+        let (s, small, big) = two_variant_enum(true);
+        assert!(s.types[small as usize].size < s.types[big as usize].size);
+        assert_eq!(s.enum_parent_size(small), s.enum_parent_size(big));
+    }
+
+    /// The control: the parse path, which links the variant in `enum_value`.
+    #[test]
+    fn a_variant_registered_by_the_parse_path_sizes_as_its_enum() {
+        let (s, small, big) = two_variant_enum(false);
+        assert_eq!(s.enum_parent_size(small), s.enum_parent_size(big));
     }
 }
 
