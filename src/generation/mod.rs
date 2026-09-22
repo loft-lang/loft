@@ -2840,7 +2840,7 @@ impl Output<'_> {
             return Ok(ChainGuard::None);
         };
         let variables = data.def(self.def_nr).variables();
-        let written = hoist::written_vars(lp, variables);
+        let written = hoist::written_vars(lp, data, variables);
         let mut escaped: HashSet<u16> = HashSet::new();
         non_sentinel::collect_escapes(data, data.def(self.def_nr).code(), &mut escaped);
         let own: Vec<u16> = std::iter::once(rc.loop_var)
@@ -3887,11 +3887,16 @@ impl Output<'_> {
         if self.wrapper_inline_disabled {
             return None;
         }
-        // Only LEAF arguments: the op's operands are emitted from a fresh list, and the
-        // pre-evaluation map keys on the original nodes' addresses — a cloned block or call
-        // argument would miss its `_pre_N` binding and be emitted raw (a `let` inside an
-        // expression) or run a second time.  A call whose argument is an expression stays a
-        // call, as before.
+        // LEAF arguments, or a PURE VECTOR PATH (`m.chunks`: constant `OpGetField`s over a
+        // variable) the pre-evaluation map does not hold: the op's operands are emitted from
+        // a fresh list, and that map keys on the original nodes' addresses — a cloned block
+        // or call argument it holds would miss its `_pre_N` binding and be emitted raw (a
+        // `let` inside an expression) or run a second time.  A pure path is side-effect
+        // free and carries no binding of its own, so its clone emits what the original
+        // would; and as the op's operand it is what a held header serves — `len(m.chunks)`
+        // as a loop's bound then reads `__vh_N.len` instead of resolving the store through
+        // a call per iteration (88 loops in the corpus and the libraries are bounded that
+        // way).  Every other argument shape keeps the call.
         if !vals.iter().all(|v| {
             matches!(
                 v.unspan(),
@@ -3901,7 +3906,10 @@ impl Output<'_> {
                     | Value::Float(_)
                     | Value::Single(_)
                     | Value::Boolean(_)
-            )
+            ) || (hoist::vector_path(self.data, v).is_some_and(|p| !p.1.is_empty())
+                && !self
+                    .active_pre_eval
+                    .contains_key(&(std::ptr::from_ref(v) as usize)))
         }) {
             return None;
         }

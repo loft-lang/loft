@@ -67,13 +67,15 @@ fn a_wrapper_call_is_its_op_and_the_header_serves_its_length() {
             "{name} with leaf arguments must be emitted as its op, not called"
         );
     }
-    // … and one whose argument is an EXPRESSION stays a call, because the op's operands are
-    // emitted from a fresh list the pre-evaluation map cannot see: `len(cv.data)` (a field
-    // path) in c2's print, `sqrt(-1.0)` (a negation) in c6.
+    // … a PURE VECTOR PATH argument is its op too (since @PLN158 round 3): `len(cv.data)`
+    // (a field path) in c2's print emits `OpLengthVector` over the path, which a held
+    // header serves — the op's operands are emitted from a fresh list the pre-evaluation
+    // map cannot see, and a pure path holds no binding there.  An EXPRESSION argument
+    // stays a call: `sqrt(-1.0)` (a negation) in c6.
     assert_eq!(
         calls(&rust, "t_6vector_len"),
-        1,
-        "`len(cv.data)` keeps its call"
+        0,
+        "`len(cv.data)` is its op over the path"
     );
     assert_eq!(
         calls(&rust, "t_5float_sqrt"),
