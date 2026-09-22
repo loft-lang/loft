@@ -1,0 +1,157 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1624, `@FR-O-Buffer` / `formal/closures.md` D-clo-7 — A CAPTURED DEFAULT ARM IS
+// DELIVERED INTO THE BUFFER.  A `vector<T>` return is delivered into the store the CALLER
+// owns, on every arm.  An arm that answers something else gives one return two provenances,
+// and a caller cannot tell them apart: it releases what it was handed, so an arm answering
+// the closure's own store has the CAPTURE released under it.
+//
+// `materialize_vector_arms_collect` delivers each arm and its `If` leg answers `a || b2` —
+// ANY arm delivered.  A capture read is `OpGetDbRef(__closure, off)` and had no leg at all:
+// not the `Var` leg, not `is_projection_op`, and the generic `Call` leg finds no hidden
+// `__ref` to substitute.  So a branch whose other arm DID deliver reported itself
+// materialised while one of its two answers still named the closure's store.
+//
+// D-clo-7 calls a capture "a separate route" — it reaches the return through `__closure` and
+// has no argument witness.  What was missing is that `(O-Buffer)` still applies to it: the
+// read is a projection out of the closure record exactly as `OpGetField` is one out of a
+// struct, so it is delivered on the same terms and the closure keeps its own store.
+//
+// It took loft#1618's `.base()` widening to make it REACHABLE — before that neither arm
+// delivered, so the provenance was uniform and wrong only by the leak loft#1618 closed.  The
+// cells below are written against the shape and not against that commit: they hold on
+// `origin/main` as well, which is what says this guard measures the rule rather than one
+// branch's mistake.
+//
+// The axis that separates the two arms is CALL ORDER through one site: the capture loop alone
+// is clean, and so is one call of each without a loop.  It takes a present-arm call and a
+// capture-arm call through the same site with the buffer reused — `c1` is that cell, and `k2`
+// and `k3` are the two halves that were always clean.
+//
+// `len(cap)` is asserted in every cell.  The value reads alone do not say it: an emptied
+// capture answers null, and a cell that only summed the present arm would pass over it.
+//
+// @falsified-at: cbd332641 — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// CHANNEL: assertion failures, both backends — the capture arm's sum and the capture's length.
+// HOLDS: leak and panic are unmoved; `k1`–`k3` are right before and after.
+// WITNESS: on the control, `c1 capture sum: got null, want 455` and
+//   `c1 the capture's length: got 0, want 2`.
+
+fn pick1624(v: vector<vector<integer>>, i: integer) -> vector<integer>? { v[i] }
+
+fn ok(nm: text, got: integer, want: integer) {
+  assert(got == want, "{nm}: got {got}, want {want}");
+}
+
+// 1 — the shape: a present-arm loop and a capture-arm loop through ONE call site.
+fn c1() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  cap: vector<integer> = [90, 91];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap };
+  s = 0;
+  for _ in 0..5 { s += g(pick1624(vs, 0))[1]; }
+  t = 0;
+  for _ in 0..5 { t += g(pick1624(vs, 9))[1]; }
+  ok("c1 present sum         ", s, 210);
+  ok("c1 capture sum         ", t, 455);
+  ok("c1 the capture's length", len(cap), 2);
+  ok("c1 the source's length ", len(vs), 2);
+}
+
+// 2 — the capture arm FIRST, so the buffer is reused the other way round.
+fn c2() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  cap: vector<integer> = [90, 91];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap };
+  t = 0;
+  for _ in 0..5 { t += g(pick1624(vs, 9))[1]; }
+  s = 0;
+  for _ in 0..5 { s += g(pick1624(vs, 0))[1]; }
+  ok("c2 capture sum         ", t, 455);
+  ok("c2 present sum         ", s, 210);
+  ok("c2 the capture's length", len(cap), 2);
+}
+
+// 3 — the two arms ALTERNATING in one loop, which is where a buffer reused across
+//     provenances shows soonest.
+fn c3() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  cap: vector<integer> = [90, 91];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap };
+  s = 0;
+  for i in 0..6 { s += g(pick1624(vs, if i % 2 == 0 { 0 } else { 9 }))[1]; }
+  ok("c3 alternating sum     ", s, 399);
+  ok("c3 the capture's length", len(cap), 2);
+}
+
+// 4 — the capture is written AFTER the calls, which reads the store the arm handed back:
+//     delivered, the lambda's answers are copies and the write reaches only `cap`.
+fn c4() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  cap: vector<integer> = [90, 91];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap };
+  a = g(pick1624(vs, 9));
+  b = g(pick1624(vs, 0));
+  cap[1] = 77;
+  ok("c4 the capture's answer", a[1], 91);
+  ok("c4 the present answer  ", b[1], 42);
+  ok("c4 the capture's length", len(cap), 2);
+}
+
+// 5 — a capture of VECTORS, so the delivered elements are themselves heap values.
+fn c5() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  capv: vector<integer> = [60, 61];
+  h = fn(q: vector<integer>?) -> vector<integer> { q ?? capv };
+  s = 0;
+  for _ in 0..3 { s += h(pick1624(vs, 0))[1]; }
+  for _ in 0..3 { s += h(pick1624(vs, 9))[1]; }
+  ok("c5 mixed sum           ", s, 309);
+  ok("c5 the capture's length", len(capv), 2);
+}
+
+// Controls — the shapes that were clean throughout.
+// k1: a FRESH default rather than a capture, which always had a leg of its own.
+fn k1() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for _ in 0..5 { s += g(pick1624(vs, 0))[1]; }
+  t = 0;
+  for _ in 0..5 { t += g(pick1624(vs, 9))[1]; }
+  ok("k1 present sum", s, 210);
+  ok("k1 default sum", t, 40);
+}
+// k2: the capture arm ALONE — no present call, so the provenance was never mixed.
+fn k2() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  cap: vector<integer> = [90, 91];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap };
+  t = 0;
+  for _ in 0..5 { t += g(pick1624(vs, 9))[1]; }
+  ok("k2 capture sum         ", t, 455);
+  ok("k2 the capture's length", len(cap), 2);
+}
+// k3: one call of each with NO loop, so the buffer is not reused.
+fn k3() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  cap: vector<integer> = [90, 91];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap };
+  p = g(pick1624(vs, 0))[1];
+  a = g(pick1624(vs, 9))[1];
+  ok("k3 present             ", p, 42);
+  ok("k3 capture             ", a, 91);
+  ok("k3 the capture's length", len(cap), 2);
+}
+
+fn main() {
+  c1();
+  c2();
+  c3();
+  c4();
+  c5();
+  k1();
+  k2();
+  k3();
+  println("a captured default arm is delivered into the buffer: every cell holds");
+}

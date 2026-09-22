@@ -200,9 +200,34 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 2** — `D-clo-36` and `D-clo-37` (both opened 2026-09-22 with `D-clo-35`, which closed
+**OPEN: 2** — `D-clo-36` and `D-clo-37` (`D-clo-38`, loft#1624, opened and CLOSED 2026-09-23;
+both of the others opened 2026-09-22 with `D-clo-35`, which closed
 the same day; `D-clo-27` closed 2026-09-12).
 
+- **D-clo-38** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1624)* — `(O-Buffer)` for a
+  collection `??` whose chosen arm is a CAPTURE.  A `vector<T>` return is delivered into the
+  store the CALLER owns, on every arm; the capture arm was delivered on none.  A capture read
+  is `OpGetDbRef(__closure, off)`, and `materialize_vector_arms_collect` had no leg for it —
+  not the `Var` leg, not `is_projection_op`, and the generic `Call` leg finds no hidden `__ref`
+  to substitute — so the function handed back the closure's own store.
+  **D-clo-7's own closing text is what this falsifies.**  It recorded *"a collection `??` over a
+  capture turned out never to hand the capture back at all — its chosen arm is COPIED into the
+  caller's `__retbuf`"*, and closed on that premise.  Measured 2026-09-23 on `origin/main`:
+  `g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap }`, then `a = g(absent)` and
+  `cap[1] = 77`, reads `a[1] == 77` — the caller holds the capture, not a copy.  The premise was
+  never measured, and no cell could disturb it: the oracle beside D-clo-7 asks whether the
+  capture is RELEASED twice, and an alias releases nothing.  An `OPEN: 0` is only as strong as
+  the questions its oracle asks (README § the register).
+  Its second face needed loft#1618's `.base()` widening to appear and is a release rather than an
+  alias: with the sibling arm delivered and this one not, one return carries two provenances, and
+  the caller — which cannot tell them apart — releases the capture.  `len(cap) == 0` after a loop
+  of calls, every later read null, both backends, no diagnostic.
+  **Closed** by giving the capture read the leg the rule already described: it is a projection
+  out of the closure record exactly as `OpGetField` is one out of a struct, delivered on the same
+  terms, and the closure keeps its own store — so nothing is freed at the arm.  The copy is what
+  every sibling arm already pays.  Guard
+  `tests/scripts/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft`, whose `c4` is
+  the alias cell and fails on `origin/main`.
 - **D-clo-37** *(opened 2026-09-22, loft#1610)* — `(L-CapOwn)` for a closure over a LOOP-BODY
   vector.  The vector's backing is minted at the function's head and reused on every pass, and
   the capture is a `DbRef` to that backing's slot.  So the previous pass's record, when its
