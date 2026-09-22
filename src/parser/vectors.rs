@@ -3596,7 +3596,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if let Some(idx_var) = pre_var {
             for_steps.push(v_set(idx_var, Value::Int(0)));
         }
-        for_steps.push(create_iter);
+        for_steps.extend(super::collections::iter_init_steps(create_iter));
         for_steps.push(v_loop(lp, "For comprehension"));
         let mut ls: Vec<Value> = Vec::new();
         if block {

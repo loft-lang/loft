@@ -3,7 +3,7 @@
 //! `@FR-R-CharWalk` — the EMISSION pins.  `for c in T` over a text VARIABLE takes an ASCII
 //! byte in one move and keeps the written step as its `else` arm; where nothing in the
 //! loop writes T the null test is asked once before the loop and not inside it; a call or
-//! literal source keeps the written step alone; `LOFT_NO_CHAR_WALK=1` restores the written
+//! literal source is bound once and walked like a variable; `LOFT_NO_CHAR_WALK=1` restores the written
 //! step everywhere; `LOFT_HOIST_VERIFY=1` runs the written step beside the fast arm.  The
 //! guard (`tests/scripts/158-char-walk.loft`) says the VALUES hold on both backends; this
 //! pins what is emitted.
@@ -65,8 +65,9 @@ const EXPECTED: [(&str, usize, usize, usize); 9] = [
     ("n_w7", 1, 1, 0),
     ("n_w8", 1, 1, 1),
     ("n_w9", 2, 2, 2),
-    // A call source and a literal source keep the written step alone.
-    ("n_w10", 2, 0, 0),
+    // A call source and a literal source are bound ONCE to a hidden local (`@FR-I-Text`,
+    // 2026-09-23) and walked as the variable that local is: fast step, null test hoisted.
+    ("n_w10", 2, 2, 2),
     ("n_w11", 1, 1, 1),
     // The standard library's own walk, which `split` is built on.
     ("t_4text_split", 1, 1, 1),
