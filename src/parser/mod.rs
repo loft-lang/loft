@@ -11265,7 +11265,7 @@ impl Parser {
     /// clear-and-append lowering, not a record copy, so it stays out of
     /// [`Self::is_rewritable_vector_element_target`].
     fn is_rewritable_append_target(tp: &Type) -> bool {
-        Self::is_rewritable_vector_element_target(tp) || matches!(tp, Type::Vector(_, _))
+        Self::is_rewritable_vector_element_target(tp) || matches!(tp.base(), Type::Vector(_, _))
     }
 
     /// P241 fix slice 3 — build the per-type primitive setter Call
@@ -11569,7 +11569,7 @@ impl Parser {
         (new_record_d, copy_record_d, finish_record_d, pre_alloc_d): (u32, u32, u32, u32),
     ) {
         let is_struct_target = matches!(concrete, Type::Reference(_, _));
-        let is_vector_target = matches!(concrete, Type::Vector(_, _));
+        let is_vector_target = matches!(concrete.base(), Type::Vector(_, _));
         // Look up the concrete vector-element record type-id.
         // Mirrors `vectors.rs:1532-1535` — `database.vector(content_db_type)`
         // returns the synthetic vector<concrete> type id (registers
@@ -11606,7 +11606,7 @@ impl Parser {
                 // types it for the concrete append.
                 vars.set_type(
                     elm_var,
-                    if let Type::Vector(inner, _) = concrete {
+                    if let Type::Vector(inner, _) = concrete.base() {
                         Type::Vector(inner.clone(), Deps::frame1(out_var))
                     } else {
                         Type::Reference(content_def_nr, Deps::frame1(out_var))

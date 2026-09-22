@@ -1309,25 +1309,27 @@ impl Output<'_> {
             // `(i64, String)` in its slot and `(i64, &str)` as a parameter, so a direct call
             // re-spells it (`calls.rs`) and this binding must too — `f(x)` with `x = (1,
             // "ab")` did not compile on `--native`, while `g(x)` did.
-            let tuple_place = match (arg.unspan(), param_types.get(i)) {
-                (Value::Var(var), Some(Type::Tuple(param_elems)))
-                    if matches!(
-                        self.data.def(self.def_nr).variables().tp(*var),
-                        Type::Tuple(_)
-                    ) && crate::generation::dispatch::tuple_has_text_leaf(param_elems) =>
-                {
-                    let name = self
-                        .data
-                        .def(self.def_nr)
-                        .variables()
-                        .name(*var)
-                        .to_string();
-                    Some(crate::generation::dispatch::borrowed_tuple_from_owned(
-                        &format!("var_{name}"),
-                        param_elems,
-                    ))
-                }
-                _ => None,
+            let tuple_place = if let Value::Var(var) = arg.unspan()
+                && let Some(param) = param_types.get(i)
+                && let Type::Tuple(param_elems) = param.base()
+                && matches!(
+                    self.data.def(self.def_nr).variables().tp(*var).base(),
+                    Type::Tuple(_)
+                )
+                && crate::generation::dispatch::tuple_has_text_leaf(param_elems)
+            {
+                let name = self
+                    .data
+                    .def(self.def_nr)
+                    .variables()
+                    .name(*var)
+                    .to_string();
+                Some(crate::generation::dispatch::borrowed_tuple_from_owned(
+                    &format!("var_{name}"),
+                    param_elems,
+                ))
+            } else {
+                None
             };
             if let Some(respelled) = tuple_place {
                 write!(w, "let _farg_{i} = {respelled}; ")?;
