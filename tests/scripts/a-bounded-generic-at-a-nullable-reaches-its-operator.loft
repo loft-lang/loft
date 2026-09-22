@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-N-Shape, @FR-G-Mono — a generic bounded by an operator interface (`T: Ordered`,
+// `Equatable`, `Addable`), instantiated at a NULLABLE scalar, calls the scalar's own operator,
+// as its hand-written twin does: a `τ?` has `τ`'s shape and `τ`'s operators.  The instance
+// looked the operator up on the wrapped type, found nothing, and kept the bound's stub:
+// `smaller(4, 2)` over `integer?` answered 4 on the interpreter and did not compile on
+// `--native`, and `min_of` over a `vector<integer?>` read a corrupt reference.  The answers
+// are `(E-NullArg)`'s: a comparison is definite and null sorts first; arithmetic with a null
+// is null.  Found building @PLN165 E4, whose `sort` orders a nullable element this way.
+
+fn smaller<T: Ordered>(a: T, b: T) -> T { if b < a { b } else { a } }
+fn same<T: Equatable>(a: T, b: T) -> boolean { a == b }
+fn plus<T: Addable>(a: T, b: T) -> T { a + b }
+
+fn test_ordered() {
+  x: integer? = 4;
+  y: integer? = 2;
+  z: integer? = null;
+  f: float? = 1.5;
+  g: float? = 0.5;
+  s: text? = "b";
+  r: text? = "a";
+  assert(smaller(x, y) == 2 && smaller(z, y) == null && smaller(y, z) == null,
+    "{smaller(x, y)} {smaller(z, y)} {smaller(y, z)}");
+  assert(smaller(f, g) == 0.5 && smaller(s, r) == "a", "{smaller(f, g)} {smaller(s, r)}");
+  q: vector<integer?> = [3, null, 1];
+  w: vector<integer?> = [3, 5, 1];
+  assert(min_of(q) == null && max_of(q) == 3 && min_of(w) == 1, "{min_of(q)} {max_of(q)} {min_of(w)}");
+}
+
+fn test_equatable_and_addable() {
+  x: integer? = 4;
+  y: integer? = 2;
+  z: integer? = null;
+  assert(!same(x, y) && same(x, x) && same(z, z) && !same(x, z), "same");
+  assert(plus(x, y) == 6 && plus(x, z) == null, "{plus(x, y)} {plus(x, z)}");
+}

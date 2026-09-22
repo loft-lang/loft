@@ -9386,8 +9386,15 @@ impl Parser {
             return d_nr;
         }
         // Resolve the concrete first-arg type by substituting tv_nr in the attribute type.
+        // @FR-N-Shape — a `τ?` has `τ`'s shape, and its operators and methods are `τ`'s: the
+        // concrete `x < y` on two `integer?` IS `OpLtInt`.  Looked up wrapped, `integer?` found
+        // nothing and the bound stub stayed in the instance — `smaller<T: Ordered>(a, b)` at
+        // `integer?` answered its first argument on the interpreter and did not compile on
+        // native, and `min_of` over a `vector<integer?>` read a corrupt reference.
         let concrete_arg =
-            Self::substitute_type(def.attributes()[0].typedef.clone(), tv_nr, concrete);
+            Self::substitute_type(def.attributes()[0].typedef.clone(), tv_nr, concrete)
+                .base()
+                .clone();
         // Extract the user-facing function name from the mangled definition name.
         // Mangled names: "t_<LEN><Type>_<name>" or "n_<name>" or operator names.
         let name = def.name();
