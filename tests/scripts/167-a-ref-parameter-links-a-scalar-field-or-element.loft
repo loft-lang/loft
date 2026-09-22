@@ -16,6 +16,10 @@
 // record parameter, which alias the caller's record; a guarded index; and an element of a
 // vector the callee grows when the vector is NOT the element's (`w`), which compiles.
 //
+// @falsified-at: 92bdca3d9 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/167-a-ref-parameter-links-a-scalar-field-or-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: the assertions — each place's value after the calls.
 
 enum Col { Red, Blue, Green }

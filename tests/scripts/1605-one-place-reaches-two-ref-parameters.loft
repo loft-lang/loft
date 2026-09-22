@@ -23,6 +23,12 @@
 // `boolean`, `character`, a value enum and `u8` parameters; a re-point inside the callee; a
 // `&integer?` and a `&boolean?` written null and read back.
 //
+// @falsified-at: d619ebb91 — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1605-one-place-reaches-two-ref-parameters.patch — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: the assertions, on the native build (the control does not compile there).
 
 struct P { n: integer }

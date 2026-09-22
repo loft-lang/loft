@@ -19,6 +19,10 @@
 // expression" — the right verdict under the wrong rule — and they must stay refused now that
 // the argument itself is admitted.
 //
+// @falsified-at: 92bdca3d9 — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/167-a-ref-parameter-refuses-a-place-it-cannot-link.patch — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: the expected diagnostics, one per refused argument.
 //
 // @EXPECT_ERROR: Cannot pass a literal or expression to a '&' parameter

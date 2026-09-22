@@ -16,6 +16,10 @@
 //
 // Every expected error below is matched exactly once.
 //
+// @falsified-at: 92bdca3d9 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1602-a-text-place-to-a-ref-text-parameter-is-refused.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: the expected diagnostics, one per refused text place.
 //
 // @EXPECT_ERROR: a `&text` parameter cannot link to a text field or element

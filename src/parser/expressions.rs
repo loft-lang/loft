@@ -7883,6 +7883,11 @@ use a separate collection or add after the loop"
                     None
                 }
             }
+            // The other spelling of a projection, declined on purpose: a tuple member is read
+            // element by element into a value, so there is no reference to hand out (D-tup-2 —
+            // the `&` of a tuple place is refused rather than linked to a copy).
+            Value::TupleGet(..) => None,
+            // Anything else is a value, not a place: a literal, a computed value, a call result.
             _ => None,
         }
     }

@@ -1,0 +1,226 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 518820b65..f09095f25 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3662,7 +3662,31 @@ use a separate collection or add after the loop"
+                 && is_scalar(&s_type)
+                 && !Self::is_narrow_store_place(&s_type, code)
+             {
+-                self.scalar_place_ref(code)
++                match code.unspan() {
++                    // The bare element op IS the place.  An enum element arrives in this
++                    // spelling on the first pass, before its enum getter wraps it; without
++                    // this arm the first pass typed the local as the enum and the second as
++                    // its link.  It sits above the `OpGet*` arm, whose prefix test would
++                    // otherwise take `OpGetVector` itself.
++                    Value::Call(g, _)
++                        if matches!(self.data.def(*g).name(), "OpGetVector" | "OpVectorRef") =>
++                    {
++                        Some(code.unspan().clone())
++                    }
++                    Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
++                        if gargs.first().is_some_and(|a| {
++                            matches!(a.unspan(), Value::Call(d, _)
++                                if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
++                        }) {
++                            Some(gargs[0].clone())
++                        } else if let [base, fld] = gargs.as_slice() {
++                            Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))
++                        } else {
++                            None
++                        }
++                    }
++                    _ => None,
++                }
+             } else {
+                 None
+             };
+@@ -7852,41 +7876,6 @@ use a separate collection or add after the loop"
+         (*cond.unspan() == expected).then_some(v)
+     }
+ 
+-    /// The place a scalar read names, as the reference a `&` link to it holds: a vector
+-    /// element's own `OpGetVector` / `OpVectorRef`, or `OpGetField(base, fld)` for a field read
+-    /// `OpGet*(base, fld)`.  `None` for a read that names no place this way.
+-    ///
+-    /// @FR-B-Ref-Lvalue — the ONE lowering of a scalar field or element to a link, asked by the
+-    /// `&` bind (`c = &p.n`) and by a `&` parameter's argument (`bump(p.n)`), so the two cannot
+-    /// link to different places.  The caller decides whether the place may be linked at all
+-    /// (a narrow store place may not: D-bind-39).
+-    pub(crate) fn scalar_place_ref(&mut self, code: &Value) -> Option<Value> {
+-        match code.unspan() {
+-            // The bare element op IS the place.  An enum element arrives in this spelling on
+-            // the first pass, before its enum getter wraps it; without this arm the first pass
+-            // typed the local as the enum and the second as its link.  It sits above the
+-            // `OpGet*` arm, whose prefix test would otherwise take `OpGetVector` itself.
+-            Value::Call(g, _)
+-                if matches!(self.data.def(*g).name(), "OpGetVector" | "OpVectorRef") =>
+-            {
+-                Some(code.unspan().clone())
+-            }
+-            Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
+-                if gargs.first().is_some_and(|a| {
+-                    matches!(a.unspan(), Value::Call(d, _)
+-                        if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
+-                }) {
+-                    Some(gargs[0].clone())
+-                } else if let [base, fld] = gargs.as_slice() {
+-                    Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))
+-                } else {
+-                    None
+-                }
+-            }
+-            _ => None,
+-        }
+-    }
+-
+     pub(crate) fn guard_declared_range(
+         &mut self,
+         code: &mut Value,
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index be30725ee..3621eeb92 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -5701,14 +5701,6 @@ impl Parser {
+                 let orig = std::mem::replace(code, Value::Null);
+                 if matches!(orig, Value::Var(_)) {
+                     *code = self.cl("OpCreateStack", &[orig]);
+-                } else if crate::data::is_scalar(ref_tp)
+-                    && Self::is_amp_place(&orig, &self.data)
+-                    && let Some(place) = self.scalar_place_ref(&orig)
+-                {
+-                    // A scalar field or element: the parameter links to the place itself, the
+-                    // reference the `&` bind would hold (@FR-B-Ref-Lvalue).  A copy in a work
+-                    // variable would take the callee's write and drop it.
+-                    *code = place;
+                 } else {
+                     // produce a `Value::Insert` so that scope
+                     // analysis (`scopes::scan_args`) hoists the
+@@ -14726,52 +14718,9 @@ impl Parser {
+             // also accept "addressable" expressions — vector element access
+             // (`v[i]`), field access (`s.field`), and chains thereof — since these
+             // produce a DbRef into existing mutable storage.
+-            // @FR-B-Ref-Lvalue — a SCALAR field or element is a place too, and a `&` parameter
+-            // links to it through the lowering the `&` bind uses (`scalar_place_ref`, in
+-            // `convert`) — except a narrow integer store place, which no link can honour yet
+-            // (D-bind-39), refused here in the bind's own words.
+-            let scalar_place = matches!(&tp, Type::RefVar(inner) if crate::data::is_scalar(inner))
+-                && !matches!(actual_code.unspan(), Value::Var(_))
+-                && Self::is_amp_place(&actual_code, &self.data);
+-            // loft#1602 — a `&text` parameter handed a text FIELD or ELEMENT.  A text place is a
+-            // string record in a store, and a `&text` parameter today reaches only a text
+-            // variable, so `convert` would hand the callee a work copy and drop its write.
+-            // `(B-Ref-Reshape)`: refuse a link that cannot be honoured rather than downgrade it
+-            // to a copy.  A temporary (a literal, a computed text) keeps its work copy: nothing
+-            // names it, so nothing can miss the write.
+-            if matches!(&tp, Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+-                && self.is_text_place(&actual_code)
+-            {
+-                if !self.first_pass {
+-                    diagnostic!(
+-                        self.lexer,
+-                        Level::Error,
+-                        "a `&text` parameter cannot link to a text field or element, so the \
+-                         function's write would be lost. Copy it into a local, pass the local and \
+-                         write it back (`t = o.s; f(t); o.s = t`)"
+-                    );
+-                }
+-                actual.push(actual_code);
+-                continue;
+-            }
+-            if scalar_place && Self::is_narrow_store_place(actual_type, &actual_code) {
+-                if !self.first_pass {
+-                    diagnostic!(
+-                        self.lexer,
+-                        Level::Error,
+-                        "`&` cannot link to an integer element or field that is stored in fewer \
+-                         than 8 bytes, because a link reads and writes a whole integer. Copy it \
+-                         into a local and write it back (`x = v[i]; ...; v[i] = x`), or declare \
+-                         the element or field as `integer`"
+-                    );
+-                }
+-                actual.push(actual_code);
+-                continue;
+-            }
+             if let Type::RefVar(inner) = &tp
+                 && !matches!(inner.as_ref(), Type::Text(_))
+                 && !matches!(&actual_code, Value::Var(_))
+-                && !scalar_place
+                 && !Self::is_addressable(&actual_code, &self.data)
+             {
+                 // Defer on pass 1 (#375): a field access on a struct whose
+@@ -14879,29 +14828,7 @@ impl Parser {
+             // is not null-transparent; an overload TRIAL (`!report`) and a null-transparent
+             // callee (`abs(x)` propagates the null through a runtime guard) only test the fit.
+             let arg_at = actual_code.span_pos().cloned();
+-            // A scalar PLACE is linked, not stored, so @FR-N-Store's "a nullable value becomes
+-            // null there" does not describe it, and its cure (`?`) would turn the place into a
+-            // value.  What can go wrong is that the element is absent: a link to an absent place
+-            // reads null (C80), so a callee whose `&τ` is non-null would see one.
+-            let linked_place = scalar_place && report && !self.first_pass;
+-            if linked_place
+-                && matches!(actual_type, Type::Optional(_))
+-                && matches!(&tp, Type::RefVar(pointee) if !matches!(pointee.as_ref(), Type::Optional(_)))
+-            {
+-                let msg = diagnostic_format(
+-                    Level::Warning,
+-                    format_args!(
+-                        "the element handed to parameter {} of `{callee_name}` may not exist, and \
+-                         the parameter is the non-null `{}` — a link to an absent element reads \
+-                         null; guard the index (`if i < len(v)`) or declare the parameter `{}?`",
+-                        nr + 1,
+-                        tp.source_name(&self.data),
+-                        tp.source_name(&self.data),
+-                    ),
+-                );
+-                self.nstore_diag(arg_at.as_ref(), Level::Warning, &msg);
+-            }
+-            let accepted = if report && callarg_nstore && !linked_place {
++            let accepted = if report && callarg_nstore {
+                 self.convert_store(
+                     &mut actual_code,
+                     actual_type,
+@@ -18794,14 +18721,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// Is this a read of a text FIELD or ELEMENT — `OpGetText(<place>, fld)` over a variable, a
+-    /// field or an element, the spelling `o.s` and `v[i]` of a `text` take?
+-    fn is_text_place(&self, code: &Value) -> bool {
+-        matches!(code.unspan(), Value::Call(d, args)
+-            if self.data.def(*d).name() == "OpGetText"
+-                && args.first().is_some_and(|a| Self::is_amp_place(a, &self.data)))
+-    }
+-
+     /// Is this `&` operand an integer STORE place narrower than 8 bytes — an element or a field
+     /// of `u8`, `i8`, `u16`, `i32` or any range that stores in fewer bytes?
+     ///
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 9a34c831f..553268ac3 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2765,21 +2765,18 @@ fn def_reshape_refusals(
+                 if j == k || reported.contains(&(k, j)) {
+                     continue;
+                 }
+-                // Only a parameter that can NAME an element is a hazard; a plain scalar or a
+-                // text copies, so there is nothing pinned to a position.  A scalar `&`
+-                // parameter links to the element itself (@FR-B-Ref-Lvalue), so it names one.
++                // Only a parameter that can NAME an element is a hazard; a scalar or a text
++                // copies, so there is nothing pinned to a position.
+                 let Some(attr) = cdef.attributes.get(j) else {
+                     continue;
+                 };
+-                let scalar_link =
+-                    matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
+                 let ptp = match &attr.typedef {
+                     Type::RefVar(inner) => inner.as_ref(),
+                     other => other,
+                 };
+                 // `@FR-N-Shape` — `heap_def_nr`, which peels `τ?`: a nullable record or
+                 // struct-enum parameter aliases its element exactly as the dense one does.
+-                if ptp.heap_def_nr().is_none() && !scalar_link {
++                if ptp.heap_def_nr().is_none() {
+                     continue;
+                 }
+                 if !arg_references_element_in(arg, place, &def.code, function, data) {
