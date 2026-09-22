@@ -397,23 +397,6 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 2.**
 
-* **D-bind-50** *(opened 2026-09-22, CLOSED 2026-09-22; loft#1612)* — `(B-Copy)` for the
-  destination of a `??` CHAIN of three or more operands.  A plain bind copies a heap whole
-  value, and the two-operand spelling does: it is lowered per arm, and an arm's bind is that
-  copy.  `??` is left-associative, so a longer chain hoisted its subject into a `__ncc_N` temp
-  and bound the destination to THAT — and the temp views the operand it chose, by the rule that
-  makes it a borrow (loft#723: freeing it would be a use-after-free).  So the destination shared
-  the chosen operand's store: on the interpreter for a record, on BOTH backends for a vector and
-  for a chain whose first operand is a call.  Silent — the shared store reads right until the
-  operand is rebound, and then the destination reads the new value, or freed memory once both
-  release it.  `(O-NoDiverge)` was broken with it, since `--native` copies a record's temp.
-  **Closed** by right-associating every chain before any analysis reads it
-  (`scopes::reassociate_coalesce_chains`, which loft#1591 built for a chain that names its
-  destination): each operand becomes an arm, so the arm's bind is the copy.  An operand that is
-  not a variable keeps a temp of its own — the one the hoisted form gave it, reused rather than
-  minted, because that one carries what the parse decided about an owned call result — and the
-  arm binds that temp, which is adopted rather than viewed.  Guard
-  `tests/scripts/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft`.
 * **D-bind-49** *(opened 2026-09-21, CLOSED 2026-09-21; loft#1554)* — the CALL-SITE half of
   `(B-Ref-Reshape)` read one spelling of one event.  A call handed both a container and a
   reference into it (`shift(v[2], v)`) was refused only where the callee REMOVES through a bare
