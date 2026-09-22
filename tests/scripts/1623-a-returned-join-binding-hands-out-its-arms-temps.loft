@@ -1,0 +1,149 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1623, `@FR-H-Move` / `@FR-H-Drop` — A RETURNED JOIN BINDING HANDS OUT ITS ARMS' TEMPS.
+// `(H-Move)` ends a function's own variables with it and moves what a `return` answers to the
+// caller: one lease, one release.  A binding whose value branch declined the per-arm write-out
+// is NOT one of those variables — it BORROWS a temp per arm and releases nothing itself — so
+// the return moves what those TEMPS hold, and their hook belongs to the caller from there on.
+// They kept it, and the resource was released twice: once in the callee and once at the caller,
+// the second on memory the first had freed.
+//
+// The temps come from three places and the third is why the fix records them rather than
+// reading the binding's deps: the arm LIFTS, the minting-call arms the scope pass gives a temp,
+// and the arms the PARSER already owns — whose `join-arm-owner` `__ref_N` the dep list never
+// names and which hooks all the same (`c3`).
+//
+// **Two cells are the ones that say the cure is not "suppress the callee's hook".**
+//
+// `c4` chooses the FIELD arm, so the binding views `s.h` and the caller gets a COPY of a
+// member.  `s` is a container the frame KEEPS, its release is its own, and the callee's hook
+// there is correct — it is not a holder and must not be suppressed.  Its trace carries a `d7`
+// in the callee that every other failing cell does not.
+//
+// `c7` takes a SECOND exit that returns something else.  The temps then hold a value nobody
+// took, and their hook is the only release it gets.  So the suppression is PER EXIT, not a
+// hand-off recorded once — which is what `arm_dropped` already is, and why the fix reads the
+// holders at the return instead of marking them when they are made.
+//
+// Every cell's trace is exact and hand-computed, mints included, because a lost release and a
+// doubled one produce traces of the same LENGTH in different places: `m2,d7,G7,d7` against
+// `m2,G7,d7` differs by where the hook sits relative to the caller's read, not by a count the
+// eye catches.
+//
+// @falsified-at: dbbcdaa5b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertion failures, both backends — the callee releases what it handed out.
+// HOLDS: leak and panic are unmoved (clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1` before
+//   and after); `c4`, `c7`, `k1` and `k2` are right before and after.
+// WITNESS: on the control, `c1 lift returned: m2,d7,G7,d7, want m2,G7,d7`.
+
+struct H { id: integer }
+struct SN { h: H? }
+struct W { h: H }
+struct SW { w: W? }
+
+fn OpDrop(self: H) { note("d{self.id}"); }
+fn mk(id: integer) -> H { note("m{id}"); return H { id: id }; }
+fn wmk(id: integer) -> W { note("m{id}"); return W { h: H { id: id } }; }
+
+fn trace_path() -> text { return "loft_1623_join_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// The callees.  `f_lift` and friends decline the per-arm write-out — an arm that VIEWS makes
+// `ncc_arms_are_all_owned` false — so the binding borrows its arms' temps.
+fn f_lift() -> H { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; return x; }
+fn f_arm(k: integer) -> H { s = SN { h: null }; b = mk(2); x: H = if k > 0 { s.h ?? b } else { mk(3) }; x.id = 7; return x; }
+fn f_field() -> H { s = SN { h: mk(5) }; b = mk(2); x: H = s.h ?? b; x.id = 7; return x; }
+fn f_member() -> W { s = SW { w: null }; b = wmk(2); x: W = s.w ?? b; x.h.id = 7; return x; }
+fn f_two(k: integer) -> H { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; if k > 5 { return mk(9); } return x; }
+// Controls: a plain owned local, and a branch whose arms are all owned so it writes out per arm.
+fn k_local() -> H { b = mk(2); b.id = 7; return b; }
+fn k_sunk(k: integer) -> H { b = mk(2); x: H = if k > 0 { b } else { mk(3) }; x.id = 7; return x; }
+
+// 1 — the shape: the lift form returned.  `b` is moved into the lift, the lift is moved out.
+fn c1() { y = f_lift(); note("G{y.id}"); }
+
+// 2 — the same inside an `if` arm, the chain path taken.
+fn c2() { y = f_arm(1); note("G{y.id}"); }
+
+// 3 — the CALL arm taken, whose owner is a parser-made `join-arm-owner` `__ref_N` the binding's
+//     dep list never names.  `b` is untouched on this path and keeps its own release (`d2`).
+fn c3() { y = f_arm(0); note("G{y.id}"); }
+
+// 4 — the FIELD arm chosen: the binding VIEWS `s.h`, the caller gets a copy of a member, and
+//     `s` keeps its own release.  The callee's `d7` here is `s.h`'s and is CORRECT — the cell
+//     that says a holder is not simply "whatever the callee would have released".
+fn c4() { y = f_field(); note("G{y.id}"); }
+
+// 5 — the droppable reached through a CASCADE rather than a direct hook.
+fn c5() { y = f_member(); note("G{y.h.id}"); }
+
+// 6 — two exits, the VIEW taken: the temps are handed out and must not release.
+fn c6() { y = f_two(1); note("G{y.id}"); }
+
+// 7 — two exits, the OTHER taken: the temps hold a value nobody took, and their hook is the
+//     only release it gets.  Per exit, not per binding.
+fn c7() { y = f_two(9); note("G{y.id}"); }
+
+// 8 — in a LOOP, so the second pass reads what the first would have freed.
+fn c8() { for i in 0..2 { y = f_lift(); note("G{y.id}"); } }
+
+// 9 — the caller REBINDS the result, which separates the two records: the release must name
+//     what the caller holds, and a doubled one would fire on the callee's id.
+fn c9() { y = f_lift(); z: H = y; z.id = 8; note("G{y.id}|Z{z.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+
+  c1();
+  ok("c1 lift returned          ", drain(), "m2,G7,d7");
+  c2();
+  ok("c2 lift in an if arm      ", drain(), "m2,G7,d7");
+  c3();
+  ok("c3 the call arm's owner   ", drain(), "m2,m3,d2,G7,d7");
+  c4();
+  ok("c4 the field arm, s keeps ", drain(), "m5,m2,d2,d7,G7,d7");
+  c5();
+  ok("c5 through a cascade      ", drain(), "m2,G7,d7");
+  c6();
+  ok("c6 two exits, view taken  ", drain(), "m2,G7,d7");
+  c7();
+  ok("c7 two exits, other taken ", drain(), "m2,m9,d7,G9,d9");
+  c8();
+  ok("c8 in a loop, twice       ", drain(), "m2,G7,d7,m2,G7,d7");
+  c9();
+  ok("c9 rebound at the caller  ", drain(), "m2,G7|Z8,d8");
+
+  // Controls — right before and after.
+  k1();
+  ok("k1 control, owned local   ", drain(), "m2,G7,d7");
+  k2();
+  ok("k2 control, sunk branch   ", drain(), "m2,G7,d7");
+
+  delete(trace_path());
+  println("a returned join binding hands out its arms' temps: every cell holds");
+}
+
+fn k1() { y = k_local(); note("G{y.id}"); }
+fn k2() { y = k_sunk(1); note("G{y.id}"); }

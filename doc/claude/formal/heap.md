@@ -597,7 +597,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-39`,
+OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-41`,
+loft#1623, opened and CLOSED 2026-09-23: a returned join binding released what it handed out —
+the half `D-heap-39` filed beside itself rather than closing.  `D-heap-39`,
 loft#1617, and `D-heap-40`, loft#1622, both opened and CLOSED 2026-09-22: a lifted arm's hook
 handed the SOURCE's record, and the cascade key that ICEd on two droppable types behind nullable
 fields — the second found while building the first's matrix.  `D-heap-39` leaves loft#1623 beside
@@ -664,6 +666,49 @@ freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a ref
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
+
+### D-heap-41 — OPENED AND CLOSED (2026-09-23, loft#1623): a returned join binding released what it handed out
+
+- **Violates:** (H-Move) — a `return` moves what it answers to the caller, and the function's own
+  variables end with it — with (H-Drop)'s *"a hook that runs twice closes a handle the author
+  already closed"*.
+- **Where:** a binding whose value branch declined the per-arm write-out BORROWS a temp per arm
+  and releases nothing itself (`Scopes::lift_join_arm_tails`), so at a `materialized_view_return`
+  the value the return moves is the TEMPS', not the binding's.  `return_copies_whole_local`
+  answers the owned-local spelling and declines a view — correctly, since a view owes no release
+  — and nothing answered for the temps behind it, so they released at the callee's exit what the
+  caller had just adopted.
+- **Effect:** one lease, two releases — the second on memory the first had freed.  Measured
+  2026-09-23, both backends identical, no diagnostic: `fn f() -> H { s = SN { h: null };
+  b = mk(2); x: H = s.h ?? b; x.id = 7; return x; }` traces `m2,d7,G7,d7` where the owned-local
+  spelling `return b` traces `m2,G7,d7`.  A caller that rebinds the result separates the two
+  records and shows the doubled hook firing on the callee's id.
+- **Status:** CLOSED 2026-09-23.  Found while measuring loft#1617's matrix (cell A15) and filed
+  rather than fixed there, because the cure needed a design the identity fix did not.
+- **What made it more than a suppression.**  The temps come from THREE places and the third is
+  why the fix records them where they are made rather than reading the binding's deps: the arm
+  lifts, the minting-call arms the scope pass gives a temp, and the arms the PARSER already owns
+  — whose `join-arm-owner` `__ref_N` the dep list never names and which hooks all the same.
+  Two cells then say what a holder is NOT:
+  - a container the frame KEEPS is not one.  On the path where `x = s.h ?? b` chooses `s.h`, the
+    binding views `s.h`, the caller gets a COPY of a member, and `s` still owes its own release
+    — so the callee's hook there is correct.  Guard cell `c4`, which carries a release in the
+    callee that every failing cell does not.
+  - a temp whose value nobody took is not one either, which makes the fact PER EXIT rather than
+    a hand-off recorded once: a second exit returning something else leaves the temps holding a
+    value the caller never saw, and there their hook is the only release it gets.  Guard cell
+    `c7`.
+- **Closed:** `Scopes::join_holders` records the temps against the binding that borrows them, and
+  `return_copies_view_holders` reads them at the return into `arm_dropped` — the per-exit
+  mechanism loft#1515 shape 2 already established, so the suppression lasts exactly one exit.
+  Guard `tests/scripts/1623-a-returned-join-binding-hands-out-its-arms-temps.loft`, 9 cells and
+  2 controls, clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1` before and after.
+- **Left open beside it:** a join binding REBOUND to a fresh value and then returned releases
+  that fresh value in the callee AND at the caller (`x: H = s.h ?? b; x.id = 7; x = mk(9);
+  return x`).  The lift's own release is correct there — nobody took it — and the double is on
+  the REBOUND value, so it is the rebind axis rather than this one.  Pre-existing by
+  construction: this fix only ever REMOVES a hook at a return and cannot produce a second.
+  Filed separately.
 
 ### D-heap-39 — OPENED AND CLOSED (2026-09-22, loft#1617): a lifted arm's hook is handed the SOURCE's record, not the one the binding holds
 
