@@ -312,6 +312,35 @@ own retbuf), a `__vdb`/`OpReplaceVector` wrapper (the proven path has neither), 
 `skip_free`. The fix the diff *specifies*: make the delivery `["__retbuf"]`-typed
 (route through the proven machinery), not re-derive a near-miss.
 
+## Which PASS owns a copy — the scopes pass cannot make one
+
+A `Value::Set(dest, value)` synthesised in `src/scopes.rs` **binds what it is given**.  The
+copy a bind owes is emitted by the PARSER and is already decided by the time the scopes pass
+runs: a vector bind mints a backing store and emits `OpReplaceVector`; a record bind emits the
+`__disp_N` snapshot, `OpCopyRecord` and the `__hoff_<src>` hand-off flags that suppress the
+source's release.
+
+So a cure for an ALIASING bug that writes a new `Set` in the scopes pass aliases.  Measured
+twice while closing loft#1612, in both directions:
+
+- writing a `??` chain out per arm (`Set(dest, Var(x))` inside each arm) lost the vector copy —
+  `bv = xv ?? yv ?? vmk(9)` then answered `2 2` where the rule gives `1 2`, because `bv`'s type
+  already carried a dep on `xv` and nothing copied it;
+- sinking a chain BLOCK into an `if` arm lost the record copy — `x: H = if k > 0 { s.h ?? b }
+  else { mk(3) }` aliased `b` (`R9|B9`, where the same program on the previous build reads
+  `R2|B9`).
+
+**The rule this gives.** Fix an aliasing or copy defect in the parser, or at whatever decides
+which SHAPE the parser builds — loft#1612's cure is one line of associativity, after which
+every operand is an arm and the parser's own per-arm bind is the copy.  Where a scopes-level
+rewrite is unavoidable, keep the parser's `Set` and rewrite only the VALUE inside it, so the
+copy machinery around that statement still applies.
+
+**The instrument.** `cargo test --release --test ownership_drop_gate` — its copy census names
+the copy each cell owes and is what caught the second case.  A value cell cannot see a release
+at all, and `every_cell_releases_each_resource_once` cannot see WHICH record was released
+(loft#1617 lives in exactly that blind spot).
+
 ## What this rules out
 
 - Heuristic forests at the generation site (the `has_ref_params && … && …` shape).

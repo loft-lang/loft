@@ -15,14 +15,16 @@
 //
 // Every cell's value is worked out by hand; the leak is the channel the runner reports.
 //
-// @falsified-at: 9789ef07c — interpret leak none -> 5 stores
+// @falsified-at: 9789ef07c — interpret leaked kt=32 main_vector<integer>×2, kt=39 main_vector<text>×1 -> clean, native leaked kt=32 main_vector<integer>×2, kt=39 main_vector<text>×1 -> clean
 // @falsified-by: tests/falsified/1618-a-returned-nullable-vector-local-is-delivered.patch —
 //   the same channel.
-// CHANNEL: leak, the INTERPRETER only — the values are right on both backends before and
-//   after, which is what says the delivery and not the answer was missing.
+// CHANNEL: leak, on both backends through the corpus runner's entry point — the VALUES are
+//   right before and after, which is what says the delivery and not the answer was missing.
+//   Run as a program, `--native` is clean and the interpreter is not, so the same defect is
+//   also an `(O-NoDiverge)` asymmetry from that direction.
 // HOLDS: exit, assertions and panic are unmoved; `k1`–`k3` are the controls beside it.
 // WITNESS: on the control, `Warning: N stores not freed at program exit:
-//   kt=35 main_vector<integer>` after the run's output.
+//   kt=32 main_vector<integer>` after the run's output.
 
 fn ok(nm: text, got: text, want: text) {
   assert(got == want, "{nm}: {got}, want {want}");
