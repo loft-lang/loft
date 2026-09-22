@@ -10,7 +10,7 @@ what they are, with what was learned.
 
 | # | lever | rows it moves | hand-priced |
 |---|---|---|---|
-| **W1** | `for c in text` walks bytes with an ASCII fast path; the body's compares against a literal are plain | `char_walk`, every character walk | **−65 %** (4.58× → ~1.6×) |
+| **W1** | `for c in text` walks bytes with an ASCII fast path; the body's compares against a literal are plain | `char_walk`, every character walk | **−65 %** (4.58× → ~1.6×).  **BUILT** 2026-09-22: −47 %, 2.48× (§ Built — the last step was the checked accumulator adds) |
 | **W2** | `for p in vector<text>` borrows its element AND iterates through a held header | `join`, `word_count`'s walk, every walk of texts | **−75 %** (5.40× → ~1.4×) — T1's borrow alone is −45 %.  **BUILT** 2026-09-22: −64 %, 1.96× (§ Built) |
 | **C1+** | no fn-ref buffer guard where no registrant is reachable, and the depth count replaced by a stack-pointer check | `fibonacci`, every recursive function | **−39 %** (4.09× → ~2.4×) |
 | **P1** | an in-place scalar set through ANY store-free element address does not decline a loop's headers | `chunk_lookup`, every `find-then-write` loop over records | **−30 %** (2.87× → ~2.0×) |
@@ -73,6 +73,67 @@ no output, the crash the rule prevents.  (c) `hand-price`'s 7.8 µs for join was
 reached (11.2): each element still resolves `stores.store(&db)` for its `get_str` — a text
 element read through the held BASE (the position word one load, the text one slice) is
 the remaining step, unpriced.
+
+### W1 — `(R-CharWalk)`, 2026-09-22
+
+Built as the rule `(R-CharWalk)` (`formal/rewrites.md`), switch `LOFT_NO_CHAR_WALK`,
+falsifier `LOFT_HOIST_VERIFY=1` (the written step run beside the fast arm), cells
+`tests/scripts/158-char-walk.loft` w1–w11, pins `tests/char_walk.rs`.  Measured with
+`bench/stats.py --only 13`:
+
+| row | before | after | ratio |
+|---|---:|---:|---|
+| `char_walk` | 23.4 µs | **12.5 µs** (−47 %) | 4.62× → **2.48×** |
+| `split` (the stdlib walks its text with `for c in self`) | 34.0 µs | **21.1 µs** (−38 %) | 12.5× → 7.8× |
+
+Re-priced by hand before building, one piece at a time, on the lane's own emission — which
+is how the ledger's 8.2 µs came apart: the iterator's ASCII fast arm alone 23.5 → 17.7
+(−25 %); the body's compares plain on top → 17.2 (−3 %, LLVM folds them, as § W1 below
+says); the null test — `src != "\0"`, a CONTENT compare LLVM does not hoist past the step's
+calls — asked once before the loop → **12.9 (−25 %)**; and the two checked accumulator adds
+of the body plain → 8.3.  That last step is the ledger's 8.2 and is NOT admissible: `n += 1`
+on an unbounded accumulator has no range proof today (`(R-BoundedNest)`'s trip-count bound
+over a text walk would be the rule — trips ≤ size(T) ≤ u32::MAX, term ≤ 2 — a lever of its
+own, unpriced beyond this number).  So W1 ships the two admissible pieces; the compares are
+left as they are.
+
+The fast arm carries NO condition — it is a re-spelling exact for a byte in `1..=0x7F` at an
+in-range index — and NUL is excluded on purpose: `text_character` answers it as the null
+character and the walk's fault note fires, which the arm would silence.  The null test moves
+only where `hoist::text_written` finds no write of the text in the loop (the predicate
+`(R-LazySplit)`'s borrow already asked, now shared).  A call source (`for c in s.trim()`) is
+evaluated PER ITERATION by the parser's lowering — three times per character, counting the
+two bound tests — and keeps the written step; that lowering is a cost of its own, not
+priced here.
+
+### The single-row harness, 2026-09-22 — and what it attributed
+
+`loft --native-release --names` already existed (loft#954, the browser build's frame
+naming) and only needed the flag routed to the host-native path: every generated function
+is `#[inline(never)]`, a row has a symbol, `perf annotate` attributes it.  Recipe in
+`PERFORMANCE.md` § Attributing a bench ROW.  The named build times `mesh_aabb` and
+`enum_match` the same as the plain one (37.7 / 41.3 µs both), so the instrument does not
+move what it measures.
+
+**`mesh_aabb` attributed (the row "no proof could beat"):** the loop was six null-aware
+float compares, each `(a.is_nan() && !b.is_nan()) || (!a.is_nan() && !b.is_nan() && a < b)`
+— two to three `ucomisd` self-compares and a chain of data-dependent branches per compare,
+where the Rust twin is six branchless `minsd`/`maxsd`.  The truth table (b null → false;
+a null → true; else `a < b`) is `!b.is_nan() && !(a >= b)`: one null test, one compare.
+Hand-priced by editing the emitted twin: **37.8 → 21.5 µs**, hash unchanged.  Built as the
+`#rust` template of `OpLtFloat` / `OpLtSingle` (both backends: `fill.rs` is generated from
+it), proven against the pre-change interpreter over every pair of {null, ±1e300, −1, ±0,
+1.5} and {null, −2, 0, 3} for `<`, `>`, `<=`, `>=`, `==`, `!=` — IDENTICAL on both backends
+— and measured **38.7 → 20.9 µs, 4.81× → 2.73×** (`stats.py --only 16`).  One trap on the
+way: the first template spelled `!@v2.is_nan() && !(@v1 >= @v2)`, and a template operand
+used ONCE is inlined — the field read landed inside the `&&`, conditional on the null
+test, and LLVM kept the branch before the load (29.4 µs).  Binding both operands first
+(`{{ let _a = @v1; let _b = @v2; … }}`, the interpreter's left-then-right order) gave the
+hand-priced form.  The earlier hand-price of "the plain IEEE compare, no change" was made
+without attribution and with the operand still conditional; that is the number this
+harness exists to correct.
+
+**`enum_match` (4.49×) is attributed next** — not yet read.
 
 ## W1 — a character walk pays for its bookkeeping, not for any one thing
 
@@ -155,7 +216,9 @@ scalars must still be evicted by the write's TYPE (the target's record type is w
 
 ## Priced and NOT moved — and the instrument that is missing
 
-**`mesh_aabb` (4.81×).**  The analysis on record said the cost is the null-aware float
+**`mesh_aabb` (4.81×) — ATTRIBUTED and moved to 2.73× on 2026-09-22 (§ Built, the
+harness): the null-aware compare WAS the cost; the hand-price below missed it because the
+operand it made plain stayed conditional.**  The analysis on record said the cost is the null-aware float
 compare on fields no proof calls non-null.  Measured: the compare simplified to its
 truth-table equivalent (`a < b || (a.is_nan() && !b.is_nan())`) — no change; the field read
 twice (once for the test, once for the assignment) CSE'd — no change; **the plain IEEE

@@ -957,8 +957,11 @@ fn ne_single(s: &mut State) {
 fn lt_single(s: &mut State) {
     let v_v2 = s.get_stack::<f32>();
     let v_v1 = s.get_stack::<f32>();
-    let new_value =
-        (v_v1.is_nan() && !v_v2.is_nan()) || (!v_v1.is_nan() && !v_v2.is_nan() && v_v1 < v_v2);
+    let new_value = {
+        let _a = v_v1;
+        let _b = v_v2;
+        !_b.is_nan() && !(_a >= _b)
+    };
     s.put_stack(new_value);
 }
 
@@ -1175,8 +1178,11 @@ fn ne_float(s: &mut State) {
 fn lt_float(s: &mut State) {
     let v_v2 = s.get_stack::<f64>();
     let v_v1 = s.get_stack::<f64>();
-    let new_value =
-        (v_v1.is_nan() && !v_v2.is_nan()) || (!v_v1.is_nan() && !v_v2.is_nan() && v_v1 < v_v2);
+    let new_value = {
+        let _a = v_v1;
+        let _b = v_v2;
+        !_b.is_nan() && !(_a >= _b)
+    };
     s.put_stack(new_value);
 }
 
