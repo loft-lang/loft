@@ -21,6 +21,8 @@
 //   exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1594-a-tuple-member-is-released-once.patch — the same channels.
 // CHANNEL: assertion failures, both backends — the traces carry the extra hooks.
+// HOLDS: exit code aside, leak and panic are unmoved; `c6` (a returned literal, a plain `for`) is
+//   the control, right before and after.
 // WITNESS: on the control, `c1 returned local: m1,d1,b1,d1, want m1,b1,d1` — the member's hook
 //   at the callee's end, before the caller reads it, and again at the caller's.
 
