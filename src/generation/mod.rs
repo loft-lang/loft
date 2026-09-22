@@ -4664,6 +4664,7 @@ impl Output<'_> {
         } else {
             let map = std::rc::Rc::new(range::range_vars(
                 self.data,
+                self.data.def(self.def_nr).variables(),
                 self.data.def(self.def_nr).code(),
                 &nn,
             ));

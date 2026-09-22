@@ -216,6 +216,78 @@ fn b6() {
   assert(acc == 18, "b6");
 }
 
+// ── The TYPE clause (loft#1593's other half): a static type that is a FACT is a leaf ─────
+// c1 — declared `u8` parameters: `b0 * 256 + b1` is [0, 65535], both ops plain.
+fn c1_join(b0: u8, b1: u8) -> integer { b0 * 256 + b1 }
+fn c1() { println("c1 {c1_join(1, 2)} {c1_join(255, 255)}"); assert(c1_join(1, 2) == 258 && c1_join(255, 255) == 65535, "c1"); }
+
+// c2 — declared `limit(lo, hi)` parameters, the cbor encoder's `major * 32 + k`: plain.
+fn c2_head(major: integer limit(0, 7), k: integer limit(24, 27)) -> integer { major * 32 + k }
+fn c2() { println("c2 {c2_head(3, 24)} {c2_head(7, 27)}"); assert(c2_head(3, 24) == 120 && c2_head(7, 27) == 251, "c2"); }
+
+// c3 — the cbor DECODER's reassembly: the join `bytes[p] ?? 0` over a `u8` vector is typed
+// integer(0, 255) by the compiler, so `* 256` and the `+` of two are plain; the index
+// arithmetic `p + 1` is over a plain integer and stays checked.
+fn c3_read(bytes: const vector<u8>, p: integer) -> integer { (bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0) }
+fn c3() {
+  v: vector<u8> = [1, 2, 3, 255];
+  println("c3 {c3_read(v, 0)} {c3_read(v, 2)} {c3_read(v, 3)}");
+  assert(c3_read(v, 0) == 258 && c3_read(v, 2) == 1023 && c3_read(v, 3) == 65280, "c3");
+}
+
+// c4 — a narrow LOCAL stepped past its range by its own arithmetic: the slot takes its
+// default (0), which is in range, so the plain product after it answers what the checked
+// one does.  200 + 100 does not fit a byte -> 0; 0 * 1000 = 0.
+fn c4() {
+  x: u8 = 200;
+  x += 100;
+  y = x * 1000;
+  z: u8 = 7;
+  z += 8;
+  println("c4 {x} {y} {z * 3}");
+  assert(x == 0 && y == 0 && z * 3 == 45, "c4");
+}
+
+// c5 — NOT facts, each for its own reason: an `i32` keeps a code for null that an overflow
+// writes, a nullable `u8?` can hold null (its bare `??` lowers to an `if` whose then arm is
+// the nullable parameter, so the join ranges nothing), and a plain `integer` reports a range
+// it does not hold.  All three stay checked, and the i32 overflow answers null on both
+// backends — as does every read of the slot after it.
+fn c5_i32(a: i32, b: i32) -> integer { a * 2 + b }
+fn c5_opt(a: u8?, b: u8?) -> integer { (a ?? 0) * 2 + (b ?? 0) }
+fn c5() {
+  big: i32 = 2147483647;
+  big += 1;
+  // The slot now HOLDS the sentinel, and every read of it must propagate null: a proof that
+  // trusted `i32`'s declared range would add 5 to the sentinel plain and answer a number.
+  after = big + 5;
+  println("c5 {c5_i32(3, 4)} {big} {after} {c5_opt(3, null)} {c5_opt(null, 5)}");
+  assert(c5_i32(3, 4) == 10 && big == null && after == null && c5_opt(3, null) == 6 && c5_opt(null, 5) == 5, "c5");
+}
+
+// c6 — a `u8` local written only through the checked cast's fallback stays a fact.
+fn c6(v: integer) -> integer {
+  b: u8 = (v as u8?) ?? 255;
+  b * 3 + 1
+}
+fn c6_run() { println("c6 {c6(10)} {c6(1000)}"); assert(c6(10) == 31 && c6(1000) == 766, "c6"); }
+
+// c7 — a captured (boxed) narrow local written past its range inside a closure: the box
+// holds the type's default and the arithmetic on it is right — and stays CHECKED, measured:
+// a boxed capture is read through its box, a record field no type ranges.  (A refinement,
+// not a defect: the value is the language's either way.)
+fn c7_call(f: fn(integer), d: integer) { f(d); }
+fn c7() {
+  a: u8 = 1;
+  f = fn(d: integer) { a += 199; };
+  c7_call(f, 0);
+  g: u8 = 1;
+  h = fn(d: integer) { g += 255; };   // 256 does not fit: the box takes the default
+  c7_call(h, 0);
+  println("c7 {a} {a * 5 + 3} {g} {g * 5 + 3}");
+  assert(a == 200 && a * 5 + 3 == 1003 && g == 0 && g * 5 + 3 == 3, "c7");
+}
+
 fn main() {
   a1(); a2(); a3(); a4(); a5(); a6(); a7(); a8(); a9();
   b1(); b2(); b3(); b4();
@@ -223,5 +295,6 @@ fn main() {
   println("b5 {r5}");
   assert(r5 == 15, "b5");
   b6();
+  c1(); c2(); c3(); c4(); c5(); c6_run(); c7();
   println("range arith ok");
 }
