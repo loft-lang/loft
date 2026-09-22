@@ -3258,7 +3258,22 @@ impl Parser {
             rhs = pending;
             pending_tp
         } else {
-            self.parse_operators(rhs_hint, &mut rhs, parent_tp, precedence + 1)
+            // loft#1612, `@FR-G-Assoc` — `??` is RIGHT-associative, so its RHS parses at its
+            // OWN level and a following `?? d` is consumed there.  `??` is associative as a
+            // VALUE (either grouping answers the first present operand, in the same order,
+            // short-circuiting the same way), so this changes no program's meaning; what it
+            // changes is the SHAPE.  Left-associated, `x ?? y ?? d` is `(x ?? y) ?? d`, whose
+            // subject is not a variable, so it is hoisted into a `__ncc_N` temp — and that
+            // temp VIEWS the operand it chose, which the destination then binds.  Right-
+            // associated, every operand is an ARM of a plain `if`, and an arm's bind is the
+            // one `(B-Copy)` describes: the two-operand spelling has always been right for
+            // exactly this reason, and this gives the longer chains the same lowering.
+            let rhs_precedence = if crate::keys::coalesce_left_assoc() {
+                precedence + 1
+            } else {
+                precedence
+            };
+            self.parse_operators(rhs_hint, &mut rhs, parent_tp, rhs_precedence)
         };
         // loft#1003 — the default's END, for the `redundant-coalesce` deletion span.
         // Taken HERE and not at the caller's tail: by then the cursor has moved past the

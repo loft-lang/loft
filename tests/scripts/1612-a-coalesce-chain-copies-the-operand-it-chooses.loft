@@ -1,0 +1,238 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1612, `@FR-B-Copy` / `@FR-O-NoDiverge` — A `??` CHAIN COPIES THE OPERAND IT CHOOSES.  A
+// plain bind copies a heap whole value, so the destination of `b = x ?? y ?? d` is independent
+// of `x`: rebinding or mutating `x` afterwards must not reach `b`.
+//
+// `??` is left-associative, so a chain of THREE or more operands hoisted its subject into a
+// `__ncc_N` temp and bound the destination to that temp.  The temp VIEWS the operand it chose
+// (`(B-Copy)`'s copy is not taken), so the destination shared that operand's store: on the
+// interpreter for a record, on BOTH backends for a vector, and on both for a chain whose first
+// operand is a call.  Silent — the shared store still reads right until the operand is rebound,
+// and then the destination reads the new value, or freed memory once both release it.
+// The two-operand spelling was always right: it is lowered per arm, and an arm's bind copies.
+//
+// `??` is now RIGHT-associative (`formal/grammar.md` (G-Assoc)), so there is no chain subject to
+// hoist: every operand is an arm — `if present(x) { x } else if present(y) { y } else { d }` —
+// and an arm's bind is the copy.  Either grouping answers the same operand in the same order, so
+// no program's VALUE moves with it.
+//
+// A SECOND defect was in the way, pre-existing and reachable by hand as `b = x ?? (c() ?? d())`:
+// a chain BLOCK as an arm is not a tail a plain bind may take, so the write-out of the whole
+// branch declined — and then the chosen VARIABLE's arm recorded no hand-off, releasing its
+// record from the destination AND from the variable.  Cells `c17`–`c19`, which only a droppable
+// can witness.
+//
+// Every value is worked out by hand; each cell reads its destination AFTER the source moves on.
+//
+// @falsified-at: 9789ef07c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1612-a-coalesce-chain-copies-the-operand-it-chooses.patch —
+//   the same channels.
+// CHANNEL: assertion failures, both backends — a cell reads the source's NEW value.
+// HOLDS: leak and panic are unmoved; the controls `k1`–`k3` are right before and after.
+// WITNESS: on the control, `c1 three operands: 5 5, want 8 5` on the interpreter, and
+//   `c8 a call first: 5 5, want 8 5` on both.
+
+// The droppable twin of the same chains: a type with an `OpDrop` hook says how many times the
+// value was released, which a value cell cannot — the release is the half a shared store gets
+// wrong twice over (the alias releases the same store from two owners, and the per-arm form is
+// only right if the chosen VARIABLE's arm records its hand-off).  Its trace is a FILE, as
+// `139-drop-cascade.loft` does and for its reason.
+struct Dh { id: integer }
+fn OpDrop(self: Dh) { note("d{self.id}"); }
+fn dmk(id: integer) -> Dh { note("m{id}"); return Dh { id: id }; }
+fn dnone(id: integer) -> Dh? { note("q{id}"); return null; }
+
+fn trace_path() -> text { return "loft_1612_chain_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+// A droppable whose hook records the RELEASE alone, never which record it was handed: the
+// cells below ask how MANY times a chain's chosen operand is released, and loft#1617 is the
+// separate, pre-existing question of WHICH record the one release names (a `??` chain in an
+// `if` arm hands the hook the source's record, where a plain bind hands it the destination's).
+struct Eh { id: integer }
+fn OpDrop(self: Eh) { note("e"); }
+fn emk(id: integer) -> Eh { note("n{id}"); return Eh { id: id }; }
+fn enone(id: integer) -> Eh? { note("p{id}"); return null; }
+
+struct Qh { id: integer }
+struct Box1612 { q: Qh? }
+fn qmk(id: integer) -> Qh { return Qh { id: id }; }
+fn qnone(id: integer) -> Qh? { return null; }
+fn vmk(n: integer) -> vector<integer> { return [n]; }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// 1 — three operands, the head chosen: the destination is a copy, so rebinding the head leaves it.
+fn c1() -> text { x: Qh? = qmk(8); y: Qh? = null; b = x ?? y ?? qmk(9); x = qmk(5); return "{b.id} {x.id}"; }
+
+// 2 — the MIDDLE operand chosen.
+fn c2() -> text { x: Qh? = qmk(8); y: Qh? = null; b = y ?? x ?? qmk(9); x = qmk(5); return "{b.id} {x.id}"; }
+
+// 3 — four operands.
+fn c3() -> text { x: Qh? = qmk(8); y: Qh? = null; z: Qh? = null; b = y ?? x ?? z ?? qmk(9); x = qmk(5); return "{b.id} {x.id}"; }
+
+// 4 — the source MUTATED rather than rebound: a copy does not see the write.
+fn c4() -> text { x: Qh? = qmk(8); y: Qh? = null; b = x ?? y ?? qmk(9); x.id = 7; return "{b.id} {x.id}"; }
+
+// 5 — a VECTOR chain: this one shared on both backends.
+fn c5() -> text { xv: vector<integer>? = vmk(3); yv: vector<integer>? = null; bv = xv ?? yv ?? vmk(9); xv += [7]; return "{len(bv)} {len(xv)}"; }
+
+// 6 — a vector chain, the middle operand chosen.
+fn c6() -> text { xv: vector<integer>? = vmk(3); yv: vector<integer>? = null; bv = yv ?? xv ?? vmk(9); xv += [7]; return "{len(bv)} {len(xv)}"; }
+
+// 7 — a CALL in the middle: it keeps a temp of its own, evaluated once.
+fn c7() -> text { x: Qh? = qmk(8); b = x ?? qnone(1) ?? qmk(9); x = qmk(5); return "{b.id} {x.id}"; }
+
+// 8 — a call FIRST, so the chain's own temp holds it and the variable is chosen.
+fn c8() -> text { x: Qh? = qmk(8); b = qnone(1) ?? x ?? qmk(9); x = qmk(5); return "{b.id} {x.id}"; }
+
+// 9 — every operand absent: the default, which owns its store.
+fn c9() -> text { y: Qh? = null; z: Qh? = null; b = y ?? z ?? qmk(9); return "{b.id}"; }
+
+// 10 — the destination is a FIELD.
+fn c10() -> text { x: Qh? = qmk(8); y: Qh? = null; o = Box1612 { q: null }; o.q = x ?? y ?? qmk(9); x = qmk(5); return "{o.q.id} {x.id}"; }
+
+// 11 — the destination is the chain's own head, absent, so a later operand moves into it.
+fn c11() -> text { a: Qh? = null; x: Qh? = qmk(8); a = a ?? x ?? qmk(9); x = qmk(5); return "{a.id} {x.id}"; }
+
+// 12 — a TEXT chain, which copies by value and was right before.
+fn c12() -> text { xt: text? = "hello"; yt: text? = null; bt = xt ?? yt ?? "zz"; xt = "w"; return "{bt} {xt}"; }
+
+// 13 — a droppable, all operands variables: the chosen one MOVES into the destination, which
+//      releases it once.
+fn c13() { b: Dh? = null; x: Dh? = dmk(8); y: Dh? = null; b = x ?? y ?? dmk(9); note("r{b.id}"); }
+
+// 14 — a droppable with a CALL in the middle: the chain short-circuits before it, and the
+//      chosen variable's arm still records its hand-off, so the record is released ONCE.
+fn c14() { b: Dh? = null; x: Dh? = dmk(8); b = x ?? dnone(1) ?? dmk(9); note("r{b.id}"); }
+
+// 15 — the same with the destination at the head, absent.
+fn c15() { a: Dh? = null; x: Dh? = dmk(8); a = a ?? x ?? dnone(1) ?? dmk(9); note("r{a.id}"); }
+
+// 16 — a droppable where the DEFAULT wins: the call runs, answers absent, and the default's own
+//      record is the one released.
+fn c16() { y: Dh? = null; b = y ?? dnone(1) ?? dmk(9); note("r{b.id}"); }
+
+// 17 — the second defect, spelled by hand: the default is a PARENTHESISED chain, and the
+//      destination is declared before the assignment.  `x` is present, so the parenthesised
+//      chain never runs — and its record was released twice all the same.
+fn c17() { b: Dh? = null; x: Dh? = dmk(8); b = x ?? (dnone(1) ?? dmk(9)); note("r{b.id}"); }
+
+// 18 — the same shape the chain spelling now lowers to: a pre-declared destination, a call in
+//      the middle.
+fn c18() { b: Dh? = null; x: Dh? = dmk(8); b = x ?? dnone(1) ?? dmk(9); note("r{b.id}"); }
+
+// 19 — a pre-declared destination with every operand a variable: the control for `c17`/`c18`,
+//      which held before and must still.
+fn c19() { b: Dh? = null; x: Dh? = dmk(8); y: Dh? = null; b = x ?? y ?? dmk(9); note("r{b.id}"); }
+
+// 20 — the value half of `c17`: a hand-grouped chain is the same value as the flat one.
+fn c20() -> text { x: Qh? = qmk(8); y: Qh? = null; b = x ?? (y ?? qmk(9)); x = qmk(5); return "{b.id} {x.id}"; }
+
+// 21 — a vector chain of FOUR operands, the middle one chosen.
+fn c21() -> text { xv: vector<integer>? = vmk(3); yv: vector<integer>? = null; zv: vector<integer>? = null; bv = yv ?? xv ?? zv ?? vmk(9); xv += [7]; return "{len(bv)} {len(xv)}"; }
+
+// 22 — the chain as an ARM of a user `if` (the composition the axis tool named missing, and
+//      the shape that caught a cure of this very issue: written out per arm, the destination
+//      bound the chain's temp and ALIASED the operand it chose).
+fn c22(k: integer) -> text { x: Qh? = qmk(8); y: Qh? = null; b: Qh = if k > 0 { x ?? y ?? qmk(9) } else { qmk(3) }; x = qmk(5); return "{b.id} {x.id}"; }
+
+// 23 — the droppable twin of `c22`: the chosen operand is released ONCE.
+fn c23(k: integer) { x: Eh? = emk(8); y: Eh? = null; b: Eh = if k > 0 { x ?? y ?? emk(9) } else { emk(3) }; note("r{b.id}"); }
+
+// 24 — the same with a CALL among the operands, which is what makes the arm a chain BLOCK.
+fn c24(k: integer) { x: Eh? = emk(8); b: Eh = if k > 0 { x ?? enone(1) ?? emk(9) } else { emk(3) }; note("r{b.id}"); }
+
+// 25 — a chain in a LOOP body: the destination is rebound per pass, and each pass releases
+//      what the previous one held.
+fn c25() { x: Eh? = emk(8); for i in 0..2 { b: Eh = x ?? emk(20 + i); note("r{b.id}"); } }
+
+// 26 — ELEMENT reads as operands, which is the shape a chain over a collection has
+//      (`kids[k] ?? Leaf { … }`): out of range, then in range.
+fn c26() -> text { v: vector<Qh> = [qmk(4)]; b = v[9] ?? v[0] ?? qmk(9); return "{b.id}"; }
+
+// 27 — a chain whose operands are THEMSELVES chains, both parenthesised.
+fn c27() -> text { x: Qh? = null; y: Qh? = qmk(6); z: Qh? = null; b = (x ?? y) ?? (z ?? qmk(9)); y = qmk(5); return "{b.id} {y.id}"; }
+
+// 28 — a KEYED collection's lookup as the chain's subject.
+fn c28() -> text { h: hash<Qh[id]> = []; h += [qmk(3)]; b = h[7] ?? h[3] ?? qmk(9); return "{b.id}"; }
+
+// Controls — right before and after.
+// k1: the two-operand chain, lowered per arm since it was written.
+fn k1() -> text { x: Qh? = qmk(8); b = x ?? qmk(9); x = qmk(5); return "{b.id} {x.id}"; }
+// k2: a plain bind of the same shape.
+fn k2() -> text { x: Qh? = qmk(8); b = x; x = qmk(5); return "{b.id} {x.id}"; }
+// k3: a chain of calls alone — nothing to alias, and the last default answers.
+fn k3() -> text { b = qnone(1) ?? qnone(2) ?? qmk(9); return "{b.id}"; }
+
+fn main() {
+  ok("c1 three operands     ", c1(), "8 5");
+  ok("c2 the middle chosen  ", c2(), "8 5");
+  ok("c3 four operands      ", c3(), "8 5");
+  ok("c4 the source mutated ", c4(), "8 7");
+  ok("c5 a vector chain     ", c5(), "1 2");
+  ok("c6 a vector, middle   ", c6(), "1 2");
+  ok("c7 a call in the middle", c7(), "8 5");
+  ok("c8 a call first       ", c8(), "8 5");
+  ok("c9 every operand absent", c9(), "9");
+  ok("c10 a field destination", c10(), "8 5");
+  ok("c11 the head, absent  ", c11(), "8 5");
+  ok("c12 a text chain      ", c12(), "hello w");
+  ok("c20 hand-grouped      ", c20(), "8 5");
+  ok("c22 a chain in an arm ", c22(1), "8 5");
+  ok("c22 the other arm     ", c22(0), "3 5");
+  ok("c26 element operands  ", c26(), "4");
+  ok("c27 chains as operands", c27(), "6 5");
+  ok("c28 a keyed subject   ", c28(), "3");
+  ok("c21 a vector, four    ", c21(), "1 2");
+  ok("k1 control, two       ", k1(), "8 5");
+  ok("k2 control, plain bind", k2(), "8 5");
+  ok("k3 control, calls only", k3(), "9");
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  c13();
+  ok("c13 droppable, variables", drain(), "m8,r8,d8");
+  c14();
+  ok("c14 droppable, a call   ", drain(), "m8,r8,d8");
+  c15();
+  ok("c15 droppable, the head ", drain(), "m8,r8,d8");
+  c16();
+  ok("c16 droppable, default  ", drain(), "q1,m9,r9,d9");
+  c17();
+  ok("c17 hand-grouped default", drain(), "m8,r8,d8");
+  c18();
+  ok("c18 pre-declared, a call", drain(), "m8,r8,d8");
+  c19();
+  ok("c19 pre-declared, vars  ", drain(), "m8,r8,d8");
+  c23(1);
+  ok("c23 a chain in an arm   ", drain(), "n8,r8,e");
+  c23(0);
+  ok("c23 the other arm       ", drain(), "n8,n3,r3,e,e");
+  c24(1);
+  ok("c24 an arm with a call  ", drain(), "n8,r8,e");
+  c25();
+  ok("c25 a chain in a loop   ", drain(), "n8,r8,r8,e");
+  delete(trace_path());
+  println("a coalesce chain copies the operand it chooses: every cell holds");
+}

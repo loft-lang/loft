@@ -947,7 +947,10 @@ count = map_lookup ?? 0
 first = a ?? b ?? c    // chains: first non-null of a, b, c
 ```
 
-The operator is left-associative and chains: `a ?? b ?? c` is `(a ?? b) ?? c`.
+The operator is right-associative and chains: `a ?? b ?? c` is `a ?? (b ?? c)` — the same value
+either way (the first non-null operand, evaluated left to right and stopping there), and the
+grouping that makes every operand an arm whose bind COPIES (loft#1612, `formal/grammar.md`
+(G-Assoc)).
 If `lhs` has a statically-known `null` type (the bare `null` literal), `??` returns `rhs` directly.
 
 **Result type — the discharge is only as complete as the fallback.** `a ?? b` yields `a` when

@@ -1460,6 +1460,23 @@ guard in `--native-release`, since there the frame is only a depth count (parse 
 **`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
 the named tiers never elide a non-leaf.
 
+**A `??` chain is RIGHT-associated (loft#1612, `@FR-G-Assoc`, `@FR-B-Copy`, default-ON, both
+backends, parse time):** `x ?? y ?? d` parses as `x ?? (y ?? d)`, so every operand is an ARM of a
+plain `if` and an arm's bind is the copy `(B-Copy)` describes.  Left-associated, `(x ?? y) ?? d`
+has a subject that is not a variable, which is hoisted into a `__ncc_N` temp that VIEWS the
+operand it chose — so the destination shared that operand's store (a record on the interpreter, a
+vector and a call-first chain on both).  Either grouping answers the same operand in the same
+order, so no program's value moves with it.  **`LOFT_COALESCE_LEFT_ASSOC=1`** parses the old form
+and is the first bisect step for a wrong value, a leak or a double release out of a chain of three
+or more operands.  A chain the AUTHOR parenthesised still hands the parser a hoisted subject, and
+is right-associated in the SCOPES pass instead (**`LOFT_NO_COALESCE_REASSOC=1`** keeps loft#1591's
+destination gate, the bisect step for that spelling).  Beside them,
+**`LOFT_NO_CHAIN_ARM_SINK=1`** stops a chain BLOCK being a sunk ARM of a branch — with it off,
+`x: H = if c { s.h ?? b } else { mk(3) }` writes the chain out as a statement of its own, but ONLY
+where every arm of that chain is owned, since an arm that views a place the program can still
+reach owes the destination a copy the written-out `Set` cannot make — and is the bisect step for a
+double release, a leak or an aliased record out of a branch with a `??` chain in one of its arms.
+
 **A nested literal is written into its field (@PLN164 C6, `@FR-R-InPlaceLiteral`, default-ON,
 both backends, parse time):** `sc.ops += [Op { paint: Paint { … } }]` writes `Paint`'s fields
 into the element's `paint` field instead of building a store of its own and copying it —
