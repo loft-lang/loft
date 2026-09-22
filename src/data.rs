@@ -2336,6 +2336,10 @@ impl Type {
             // it `reference<Node<T>>?` in `Node<integer>` became an inline self field.
             Type::Reference(d, deps) if d == holder && deps.is_pointer_marker() => match bound {
                 Type::Reference(b, _) => Type::Reference(*b, deps),
+                Type::Optional(inner) => match inner.base() {
+                    Type::Reference(b, _) => Type::Optional(Box::new(Type::Reference(*b, deps))),
+                    _ => bound.clone(),
+                },
                 other => other.clone(),
             },
             Type::Reference(d, _) if d == holder => bound.clone(),
@@ -8850,8 +8854,12 @@ impl Data {
     }
 
     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
+        // Not a stub a GENERIC struct adopted: its target would be the bare template, where
+        // each use names an instance whose arguments the paths that read them resolve
+        // (@PLN165 D7).
         let adopted: Vec<(u32, Type)> = std::mem::take(&mut self.adopted_stubs)
             .into_iter()
+            .filter(|d| self.definitions[*d as usize].def_type != DefType::TypeTemplate)
             .map(|d| (d, self.definitions[d as usize].returned.clone()))
             .filter(|(_, ret)| !matches!(ret, Type::Unknown(_)))
             .collect();
@@ -9209,7 +9217,7 @@ impl Data {
     /// template before its arguments can be read, @PLN165 D7)?
     #[must_use]
     pub fn names_unresolved(&self, tp: &Type) -> bool {
-        tp.any_node(&mut |t| match t {
+        tp.any_node(&mut |t| match t.base() {
             Type::Unknown(_) => true,
             Type::Reference(d, _) => {
                 (*d as usize) < self.definitions.len()
@@ -10747,7 +10755,7 @@ impl Data {
     /// `Some(new_type)` when the subtree contained `Type::Unknown(stub)`
     /// and was rewritten, or `None` when the subtree is unchanged.
     #[allow(clippy::only_used_in_recursion)] // kept as associated fn for clarity
-    fn rewrite_type_opt(t: &Type, stub: u32, target: &Type) -> Option<Type> {
+    pub(crate) fn rewrite_type_opt(t: &Type, stub: u32, target: &Type) -> Option<Type> {
         match t {
             Type::Unknown(n) if *n == stub => Some(target.clone()),
             Type::Vector(inner, deps) => Self::rewrite_type_opt(inner, stub, target)

@@ -169,6 +169,13 @@ impl Parser {
             t = inner.as_ref().clone();
         }
         let enr = self.data.type_elm(&t);
+        // Pass 1 may hold a receiver typed by a forward reference it cannot resolve yet — a
+        // generic struct declared below reads `Unknown` until pass 2 names its instance
+        // (@PLN165 D7) — which is the unknown receiver the early return above stays quiet on,
+        // behind a `?`.
+        if enr == u32::MAX && self.first_pass && self.data.names_unresolved(&t) {
+            return Type::Unknown(0);
+        }
         if enr == u32::MAX {
             let shown = t.show(&self.data, &self.vars);
             if let Some(s) = self.suggest_type_name(&shown) {

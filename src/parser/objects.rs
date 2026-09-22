@@ -2113,6 +2113,9 @@ impl Parser {
             if self.data.is_open_instance(inst) {
                 return self.open_literal(inst, code);
             }
+            // The expected instance never passed `instance_def` here; one whose layout waited
+            // for pass 2 (a field naming a generic struct declared below) is laid out now.
+            self.lay_out_instance(inst);
             d_nr = inst;
         }
         if d_nr != u32::MAX {

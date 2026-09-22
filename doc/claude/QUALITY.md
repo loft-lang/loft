@@ -2769,12 +2769,16 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **333** |
+| **332** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, @PLN165 D7 on `tuxedo-165-generics`: **875 · 538 · 5 · 332**, re-pinned at opaque 332,
+opaque tests 1314 — `Type::substitute` gained an `Optional` arm for a pointer's bound, which
+the census counts as seeing through the wrapper.)
 
 (2026-09-22, @PLN165 D4 on `tuxedo-165-generics`: **867 · 529 · 5 · 333**, and `--check-ratchet`
 re-pinned at opaque 333, opaque tests 1314.  The fall is the D4 unit peeling each `never` test it

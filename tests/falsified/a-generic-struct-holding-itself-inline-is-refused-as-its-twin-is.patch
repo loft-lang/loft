@@ -1,0 +1,722 @@
+diff --git b/src/data.rs a/src/data.rs
+index 356445740..d4c11a86b 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -2331,13 +2331,6 @@ impl Type {
+     #[must_use]
+     pub fn substitute(self, holder: u32, bound: &Type) -> Type {
+         match self {
+-            // `reference<X>` at a substituted `X` stays a POINTER: the marker lives in the
+-            // replaced reference's deps, and a record bound in its place keeps it — without
+-            // it `reference<Node<T>>?` in `Node<integer>` became an inline self field.
+-            Type::Reference(d, deps) if d == holder && deps.is_pointer_marker() => match bound {
+-                Type::Reference(b, _) => Type::Reference(*b, deps),
+-                other => other.clone(),
+-            },
+             Type::Reference(d, _) if d == holder => bound.clone(),
+             other => other.map_children(&mut |c| c.clone().substitute(holder, bound)),
+         }
+@@ -5529,10 +5522,6 @@ pub struct Data {
+     /// aliased via a DbRef, non-null. A thin marker (a set, not a Definition field — those
+     /// serialize) consulted by the few value-semantics chokepoints.
+     pub value_structs: HashSet<u32>,
+-    /// @PLN165 D7 — generic structs refused at their declaration for an irregular self-mention
+-    /// (`D-Regular`): `instance_def` mints none of them, so closing their fields cannot descend
+-    /// forever.  A refused program does not run, so this needs no place in the image.
+-    pub refused_type_templates: HashSet<u32>,
+     /// @PLN165 B2 — the bound set each type-variable placeholder stands for, as its sorted
+     /// interface names joined with `+` (`"Ordered+Printable"`; `""` unbounded).  A placeholder
+     /// is minted per (spelling, bound set), so this is what tells two variables of one bound set
+@@ -6131,7 +6120,6 @@ impl Data {
+             adopted_stubs: Vec::new(),
+             source: STD_SOURCE,
+             value_structs: HashSet::new(),
+-            refused_type_templates: HashSet::new(),
+             type_var_bound_keys: HashMap::new(),
+             used_definitions: HashSet::new(),
+             used_attributes: HashSet::new(),
+@@ -8850,12 +8838,8 @@ impl Data {
+     }
+ 
+     pub fn resolve_adopted_stubs(&mut self, lexer: &mut Lexer) -> Vec<(u32, Type)> {
+-        // Not a stub a GENERIC struct adopted: its target would be the bare template, where
+-        // each use names an instance whose arguments the paths that read them resolve
+-        // (@PLN165 D7).
+         let adopted: Vec<(u32, Type)> = std::mem::take(&mut self.adopted_stubs)
+             .into_iter()
+-            .filter(|d| self.definitions[*d as usize].def_type != DefType::TypeTemplate)
+             .map(|d| (d, self.definitions[d as usize].returned.clone()))
+             .filter(|(_, ret)| !matches!(ret, Type::Unknown(_)))
+             .collect();
+@@ -9086,10 +9070,6 @@ impl Data {
+     /// `instance_args`).  `u32::MAX` too for an argument count the template does not take;
+     /// the caller reports that.
+     pub fn instance_def(&mut self, lexer: &mut Lexer, template: u32, args: &[Type]) -> u32 {
+-        // A template refused at its declaration (`D-Regular`) has no instances to mint.
+-        if self.refused_type_templates.contains(&template) {
+-            return u32::MAX;
+-        }
+         let params = self.definitions[template as usize].type_params.clone();
+         // `never` is a poisoned site's type (@P376), not an argument: no instance holds one.
+         // An argument mentioning a type variable mints an OPEN instance (@PLN165 D5,
+@@ -9110,13 +9090,6 @@ impl Data {
+         if let Some(&nr) = self.def_names.get(&(name.clone(), STD_SOURCE)) {
+             return nr;
+         }
+-        // Termination (@PLN165 D7): a template mentioning itself IRREGULARLY
+-        // (`Bad<vector<T>>` inside `Bad<T>`) has no finite set of instances, and closing its
+-        // fields would mint deeper ones forever.  The declaration refuses it (`D-Regular`);
+-        // this bound is what keeps the compiler finite until that report is read.
+-        if name.matches('<').count() > Self::MAX_INSTANCE_NESTING {
+-            return u32::MAX;
+-        }
+         let position = self.definitions[template as usize].position.clone();
+         let d = self.add_def(&name, &position, DefType::Struct);
+         self.def_names.entry((name, STD_SOURCE)).or_insert(d);
+@@ -9125,132 +9098,29 @@ impl Data {
+         self.definitions[d as usize].instance_of = template;
+         self.definitions[d as usize].instance_args.clone_from(&args);
+         let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+-        for f in &self.template_fields(template) {
+-            self.copy_instance_field(lexer, d, f, &bindings);
++        let fields = self.definitions[template as usize].attributes.clone();
++        for f in fields {
++            let a_nr = self.add_attribute(
++                lexer,
++                d,
++                &f.name,
++                f.typedef.clone().substitute_all(&bindings),
++            );
++            let a = &mut self.definitions[d as usize].attributes[a_nr];
++            a.mutable = f.mutable;
++            a.constant = f.constant;
++            a.const_field = f.const_field;
++            a.value_const = f.value_const;
++            a.init = f.init;
++            a.nullable = f.nullable;
++            a.hidden = f.hidden;
++            a.value = f.value;
++            a.check = f.check;
++            a.check_message = f.check_message;
+         }
+         d
+     }
+ 
+-    /// A generic struct's FIELDS, which each instance copies — not its method members, which
+-    /// stay on the template, where a method call on any instance finds them (@PLN165 D6).
+-    fn template_fields(&self, template: u32) -> Vec<Attribute> {
+-        self.definitions[template as usize]
+-            .attributes
+-            .iter()
+-            .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
+-            .cloned()
+-            .collect()
+-    }
+-
+-    /// Deeper than this an instance's arguments stop being spelled — the bound behind
+-    /// `D-Regular` (see [`Data::instance_def`]).
+-    const MAX_INSTANCE_NESTING: usize = 48;
+-
+-    /// Give instance `d` the template field `f`: its type with the instance's bindings applied
+-    /// and every open instance in it closed ([`Data::close_open`]), and the field's flags.
+-    fn copy_instance_field(
+-        &mut self,
+-        lexer: &mut Lexer,
+-        d: u32,
+-        f: &Attribute,
+-        bindings: &[(u32, Type)],
+-    ) {
+-        let tp = self.close_open(lexer, &f.typedef, bindings);
+-        let a_nr = self.add_attribute(lexer, d, &f.name, tp);
+-        let a = &mut self.definitions[d as usize].attributes[a_nr];
+-        a.mutable = f.mutable;
+-        a.constant = f.constant;
+-        a.const_field = f.const_field;
+-        a.value_const = f.value_const;
+-        a.init = f.init;
+-        a.nullable = f.nullable;
+-        a.hidden = f.hidden;
+-        a.value = f.value.clone();
+-        a.check = f.check.clone();
+-        a.check_message = f.check_message.clone();
+-    }
+-
+-    /// `tp` with `bindings` applied and every OPEN instance in it closed — replaced by the
+-    /// instance its arguments name once the bindings decide them (@PLN165 D7).  An instance's
+-    /// fields are its template's through this: `Tree<text>`'s `kids: vector<Tree<T>>` is
+-    /// `vector<Tree<text>>`.  Regular recursion ends because `instance_def` registers a name
+-    /// before it fills the fields, so `Tree<text>` inside `Tree<text>` finds itself.  An
+-    /// argument still mentioning a variable afterwards keeps an open instance.
+-    pub fn close_open(&mut self, lexer: &mut Lexer, tp: &Type, bindings: &[(u32, Type)]) -> Type {
+-        // The open instances the type WRITES — collected before the bindings apply, because
+-        // one a binding brings in (`T ↦ Box<T>` for `Box<Box<T>>`'s field `v: T`) is already
+-        // the answer: closing it again under the same bindings recursed without end.
+-        let tp = tp.clone();
+-        let mut opens: Vec<u32> = Vec::new();
+-        tp.any_node(&mut |t| {
+-            if let Type::Reference(r, _) = t.base()
+-                && self.is_open_instance(*r)
+-                && !opens.contains(r)
+-            {
+-                opens.push(*r);
+-            }
+-            false
+-        });
+-        let mut pairs: Vec<(u32, Type)> = Vec::new();
+-        for o in opens {
+-            let template = self.definitions[o as usize].instance_of;
+-            let args: Vec<Type> = self.definitions[o as usize]
+-                .instance_args
+-                .clone()
+-                .iter()
+-                .map(|a| self.close_open(lexer, a, bindings))
+-                .collect();
+-            let closed = self.instance_def(lexer, template, &args);
+-            if closed != u32::MAX && closed != o {
+-                pairs.push((o, Type::Reference(closed, Deps::none())));
+-            }
+-        }
+-        tp.substitute_all(&pairs).substitute_all(bindings)
+-    }
+-
+-    /// Does `tp` still name something unresolved — a forward stub, or a generic struct's bare
+-    /// TEMPLATE, which is never a type (a stub inside `reference<…>` is adopted as the
+-    /// template before its arguments can be read, @PLN165 D7)?
+-    #[must_use]
+-    pub fn names_unresolved(&self, tp: &Type) -> bool {
+-        tp.any_node(&mut |t| match t {
+-            Type::Unknown(_) => true,
+-            Type::Reference(d, _) => {
+-                (*d as usize) < self.definitions.len()
+-                    && self.definitions[*d as usize].def_type == DefType::TypeTemplate
+-            }
+-            _ => false,
+-        })
+-    }
+-
+-    /// Give every instance of `template` the fields the template gained after it was minted —
+-    /// an instance its OWN declaration mints (`Tree<T>` in `kids: vector<Tree<T>>`) copied
+-    /// only the fields parsed before that mention — and re-close a field that was a forward
+-    /// stub when it was copied (@PLN165 D7).
+-    pub fn refresh_instances(&mut self, lexer: &mut Lexer, template: u32) {
+-        let fields = self.template_fields(template);
+-        let params = self.definitions[template as usize].type_params.clone();
+-        for d in 0..self.definitions() {
+-            if self.definitions[d as usize].instance_of != template {
+-                continue;
+-            }
+-            let args = self.definitions[d as usize].instance_args.clone();
+-            let bindings: Vec<(u32, Type)> = params.iter().copied().zip(args).collect();
+-            for f in &fields {
+-                let a = self.attr(d, &f.name);
+-                if a == usize::MAX {
+-                    self.copy_instance_field(lexer, d, f, &bindings);
+-                } else if self.names_unresolved(&self.definitions[d as usize].attributes[a].typedef)
+-                {
+-                    // A field whose template type was a forward stub when the instance was
+-                    // minted: closed again from the template's resolved field.
+-                    let tp = self.close_open(lexer, &f.typedef, &bindings);
+-                    self.definitions[d as usize].attributes[a].typedef = tp;
+-                }
+-            }
+-        }
+-    }
+-
+     pub fn tuple_def(&mut self, lexer: &mut Lexer, types: &[Type]) -> u32 {
+         // Refuse while any member is still an unresolved forward reference.  BOTH things
+         // this builds are derived from the members' spellings, and neither survives the
+@@ -10751,7 +10621,7 @@ impl Data {
+     /// `Some(new_type)` when the subtree contained `Type::Unknown(stub)`
+     /// and was rewritten, or `None` when the subtree is unchanged.
+     #[allow(clippy::only_used_in_recursion)] // kept as associated fn for clarity
+-    pub(crate) fn rewrite_type_opt(t: &Type, stub: u32, target: &Type) -> Option<Type> {
++    fn rewrite_type_opt(t: &Type, stub: u32, target: &Type) -> Option<Type> {
+         match t {
+             Type::Unknown(n) if *n == stub => Some(target.clone()),
+             Type::Vector(inner, deps) => Self::rewrite_type_opt(inner, stub, target)
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index dfa7ff252..dee431207 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -2032,7 +2032,6 @@ impl Parser {
+             }
+         }
+         let mut returned_not_null = false;
+-        self.pending_forward_return = None;
+         let mut result = if self.lexer.has_token("->") {
+             // Will be the correct def_nr on the second pass
+             if let Some(tp) = self.parse_type_full(self.data.def_nr(&fn_name), true) {
+@@ -2223,9 +2222,6 @@ impl Parser {
+         if self.first_pass {
+             self.data.set_returned(self.context, result);
+             self.data.definitions[self.context as usize].returned_not_null = returned_not_null;
+-            if let Some((stub, args)) = self.pending_forward_return.take() {
+-                self.forward_generic_returns.push((self.context, stub, args));
+-            }
+         }
+         // Dep inference for native methods: if a native fn (no body, `;`-terminated)
+         // has a `self` parameter and returns the same struct-enum type, the return
+@@ -2264,17 +2260,6 @@ impl Parser {
+                         }
+                     }
+                 } else {
+-                    // A parameter naming a generic struct declared BELOW (`l: Later<integer>`
+-                    // above `struct Later<T>`) was a stub on pass 1, which the signature and the
+-                    // variable kept; this pass names the instance (@PLN165 D7).
+-                    let ctx = self.context as usize;
+-                    if a_nr < self.data.definitions[ctx].attributes.len()
+-                        && self.data.names_unresolved(&self.data.definitions[ctx].attributes[a_nr].typedef)
+-                        && !self.data.names_unresolved(&a.typedef)
+-                    {
+-                        self.data.definitions[ctx].attributes[a_nr].typedef = a.typedef.clone();
+-                        self.vars.set_type(a_nr as u16, a.typedef.clone());
+-                    }
+                     self.change_var_type(a_nr as u16, &a.typedef);
+                     if a.constant {
+                         self.vars.set_value_const(a_nr as u16);
+@@ -3288,13 +3273,9 @@ impl Parser {
+                 self.data
+                     .add_def(type_name, self.lexer.pos(), DefType::Unknown)
+             };
+-            let args = self.skip_forward_type_args(on_d);
+-            self.note_forward_return(returned, u_nr, args);
+             return Some(Type::Unknown(u_nr));
+         }
+         if tp_nr != u32::MAX && self.data.def_type(tp_nr) == DefType::Unknown {
+-            let args = self.skip_forward_type_args(on_d);
+-            self.note_forward_return(returned, tp_nr, args);
+             return Some(Type::Unknown(tp_nr));
+         }
+         // `D-Template` — an INSTANCE in type position (@PLN165 D3): `Box<integer>` names the
+@@ -3679,19 +3660,7 @@ impl Parser {
+             }
+             let element_is_template =
+                 dn != u32::MAX && self.data.def_type(dn) == DefType::TypeTemplate;
+-            self.forward_template_args = false;
+             if let Some(tp) = self.parse_type(on_d, &sub_name, false) {
+-                // `reference<B<T>>` naming a generic struct declared BELOW: its arguments were
+-                // read and set aside (`skip_forward_type_args`), so on this pass the pointer
+-                // has no target yet — `Unknown`, as the plain `B<T>` spelling is.  A pointer to
+-                // the stub would name the bare template once it is adopted (@PLN165 D7).
+-                if std::mem::take(&mut self.forward_template_args)
+-                    && type_name == "reference"
+-                    && let Type::Unknown(d) = tp
+-                {
+-                    self.lexer.closing_angle();
+-                    return Some(Type::Unknown(d));
+-                }
+                 // @PLN165 D3 — a template element (`vector<Box<integer>?>`) writes its `?`
+                 // after its own arguments, which `parse_type` has just read.
+                 if element_is_template && !nullable_elem && self.lexer.has_token("?") {
+@@ -3888,12 +3857,10 @@ impl Parser {
+                         // could not exist at all.  Non-field positions
+                         // (locals, parameters, return types) keep the plain
+                         // shape — their semantics are unchanged by #328.
+-                        // A generic struct's field is a struct field too (@PLN165 D7):
+-                        // `next: reference<Node<T>>?` is the list terminator in every instance.
+                         if on_d != u32::MAX
+                             && matches!(
+                                 self.data.def_type(on_d),
+-                                DefType::Struct | DefType::EnumValue | DefType::TypeTemplate
++                                DefType::Struct | DefType::EnumValue
+                             )
+                         {
+                             Type::Reference(sub_nr, crate::data::Deps::pointer_marker())
+@@ -4467,16 +4434,6 @@ impl Parser {
+         }
+         self.lexer.token("}");
+         self.lexer.has_token(";");
+-        // @PLN165 D7 — an instance this declaration minted (`Tree<T>` in `kids:
+-        // vector<Tree<T>>`) copied only the fields parsed before it; and a template may
+-        // mention itself only regularly.
+-        if self.data.def_type(d_nr) == DefType::TypeTemplate
+-            && self.template_is_regular(d_nr, &field_at)
+-        {
+-            self.data.refresh_instances(&mut self.lexer, d_nr);
+-        } else if !self.first_pass {
+-            crate::typedef::lay_out_late(&mut self.data, &mut self.database, d_nr);
+-        }
+         self.link_shared_nullable_views(d_nr);
+         self.advise_group_apart(d_nr, &field_at);
+         // #91: check for circular init dependencies (second pass, all fields known).
+@@ -5558,18 +5515,6 @@ impl Parser {
+             }
+         } else {
+             let a = self.data.attr(d_nr, a_name);
+-            // A field that named a generic struct declared BELOW was a stub on pass 1
+-            // (`skip_forward_type_args`); now it is the instance it names.  Upgrading the stub
+-            // in place — what a concrete forward reference takes — would give the bare
+-            // template rather than `B<T>` (@PLN165 D7).
+-            if a != usize::MAX
+-                && self.data.names_unresolved(&self.data.attr_type(d_nr, a))
+-                && !self.data.names_unresolved(&a_type)
+-            {
+-                // Written directly: `set_attr_type` refuses a second write, and pass 1 may
+-                // already have resolved the stub — to the bare template, which is the point.
+-                self.data.definitions[d_nr as usize].attributes[a].typedef = a_type.clone();
+-            }
+             if value_const {
+                 self.data.definitions[d_nr as usize].attributes[a].value_const = true;
+             }
+@@ -5597,101 +5542,6 @@ impl Parser {
+     /// One home for both field-type branches of `parse_field`.  Answers whether a check
+     /// was consumed, so the identifier branch can keep using it as the head of its
+     /// if-chain while the tuple branch, which ends the field itself, calls it directly.
+-    /// @PLN165 D7 — `D-Regular`: a generic struct may name itself in its fields only at its
+-    /// own type variables, unchanged (`kids: vector<Tree<T>>`), for then every instance is a
+-    /// finite type.  At other arguments (`Bad<vector<T>>` inside `Bad<T>`) it has no finite
+-    /// set of instances: refused here, on the pass that parses it first, and marked so no
+-    /// instance of it is ever minted — closing its fields would descend forever.  (An INLINE
+-    /// self field is each instance's own cycle, reported by the layout in the instance's words,
+-    /// as its twin's is.)  Answers whether the declaration is regular.
+-    fn template_is_regular(
+-        &mut self,
+-        d_nr: u32,
+-        field_at: &[(String, crate::lexer::Position)],
+-    ) -> bool {
+-        let own: Vec<u32> = self.data.def(d_nr).type_params.clone();
+-        let fields: Vec<(String, Type)> = self
+-            .data
+-            .def(d_nr)
+-            .attributes()
+-            .iter()
+-            .filter(|a| !matches!(a.typedef.base(), Type::Routine(_)))
+-            .map(|a| (a.name.clone(), a.typedef.clone()))
+-            .collect();
+-        for (name, tp) in fields {
+-            let mut irregular: Option<u32> = None;
+-            tp.any_node(&mut |t| {
+-                if let Type::Reference(r, _) = t.base()
+-                    && self.data.def(*r).instance_of == d_nr
+-                    && irregular.is_none()
+-                {
+-                    let args = &self.data.def(*r).instance_args;
+-                    let is_own = args.len() == own.len()
+-                        && args
+-                            .iter()
+-                            .zip(&own)
+-                            .all(|(a, p)| matches!(a.base(), Type::Reference(ad, _) if ad == p));
+-                    if !is_own {
+-                        irregular = Some(*r);
+-                    }
+-                }
+-                false
+-            });
+-            let Some(r) = irregular else {
+-                continue;
+-            };
+-            self.data.refused_type_templates.insert(d_nr);
+-            let tname = self.data.def(d_nr).name().to_string();
+-            let vars: Vec<String> = own
+-                .iter()
+-                .map(|p| crate::data::Data::type_var_spelling(self.data.def(*p).name()).to_string())
+-                .collect();
+-            let regular = format!("{tname}<{}>", vars.join(", "));
+-            let shown = Type::Reference(r, crate::data::Deps::none()).source_name(&self.data);
+-            let at = field_at
+-                .iter()
+-                .find(|(n, _)| *n == name)
+-                .map_or_else(|| self.lexer.pos().clone(), |(_, p)| p.clone());
+-            diagnostic_at!(
+-                self.lexer,
+-                &at,
+-                Level::Error,
+-                "`{shown}` inside `{regular}` has no finite set of instances — a struct may \
+-                 name itself only at its own type variables, unchanged: `{regular}`"
+-            );
+-            return false;
+-        }
+-        true
+-    }
+-
+-    /// A forward reference to a generic struct declared BELOW (`b: B<T>?` above `struct
+-    /// B<T>`): its name is still a stub, so its argument list is read and set aside — pass 2,
+-    /// where the name is a template, parses it as the instance (@PLN165 D7).
+-    fn skip_forward_type_args(&mut self, on_d: u32) -> Vec<Type> {
+-        let mut args = Vec::new();
+-        if !self.lexer.has_token("<") {
+-            return args;
+-        }
+-        self.forward_template_args = true;
+-        while let Some(t) = self.parse_type_full(on_d, false) {
+-            args.push(t);
+-            if !self.lexer.has_token(",") {
+-                break;
+-            }
+-        }
+-        self.lexer.closing_angle();
+-        args
+-    }
+-
+-    /// A RETURN type naming a generic struct declared below keeps its arguments until the
+-    /// declaration is seen: between the passes it becomes the instance (`between_passes`),
+-    /// early enough for the record return's `__retbuf` to be reserved there (@PLN165 D7).
+-    fn note_forward_return(&mut self, returned: bool, stub: u32, args: Vec<Type>) {
+-        if returned && self.first_pass && !args.is_empty() {
+-            self.pending_forward_return = Some((stub, args));
+-        }
+-    }
+-
+     pub(crate) fn parse_field_assert(&mut self, check: &mut Value, message: &mut Value) -> bool {
+         if !self.lexer.has_token("assert") {
+             return false;
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index f682a5a88..5882642ce 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -169,13 +169,6 @@ impl Parser {
+             t = inner.as_ref().clone();
+         }
+         let enr = self.data.type_elm(&t);
+-        // Pass 1 may hold a receiver typed by a forward reference it cannot resolve yet — a
+-        // generic struct declared below reads `Unknown` until pass 2 names its instance
+-        // (@PLN165 D7) — which is the unknown receiver the early return above stays quiet on,
+-        // behind a `?`.
+-        if enr == u32::MAX && self.first_pass && self.data.names_unresolved(&t) {
+-            return Type::Unknown(0);
+-        }
+         if enr == u32::MAX {
+             let shown = t.show(&self.data, &self.vars);
+             if let Some(s) = self.suggest_type_name(&shown) {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index afc3189dd..bf6eb3da6 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -990,18 +990,6 @@ pub struct Parser {
+     /// the return buffers of the calls it made, which [`Parser::fill_monomorph_body`] declares
+     /// at the instance's top level as the function parse declares its own (@PLN165 B3b).
+     pub(crate) set_call_refs: Vec<u16>,
+-    /// @PLN165 D7 — instances of generic structs found to contain themselves when first laid
+-    /// out on pass 2, each reported once.
+-    pub(crate) cyclic_instances: std::collections::HashSet<u32>,
+-    /// A forward reference to a generic struct just had its `<…>` read and set aside
+-    /// (`skip_forward_type_args`); read by the `reference<…>` arm.
+-    pub(crate) forward_template_args: bool,
+-    /// A return type's forward generic struct and its arguments, parked until the function's
+-    /// definition is known (`note_forward_return`).
+-    pub(crate) pending_forward_return: Option<(u32, Vec<Type>)>,
+-    /// `(function, stub, arguments)` of every forward generic return, resolved between the
+-    /// passes (`resolve_forward_generic_returns`).
+-    pub(crate) forward_generic_returns: Vec<(u32, u32, Vec<Type>)>,
+     /// The variables a `struct` / `enum` header wrote where the language refuses one: its
+     /// fields may name them, and the header's refusal already covers that.
+     pub(crate) refused_header_vars: Vec<String>,
+@@ -1572,10 +1560,6 @@ impl Parser {
+             cur_type_vars: Vec::new(),
+             instance_bindings: Vec::new(),
+             set_call_refs: Vec::new(),
+-            cyclic_instances: std::collections::HashSet::new(),
+-            forward_template_args: false,
+-            pending_forward_return: None,
+-            forward_generic_returns: Vec::new(),
+             refused_header_vars: Vec::new(),
+             context_type_template: u32::MAX,
+             type_var_holders: std::collections::HashMap::new(),
+@@ -2697,7 +2681,6 @@ impl Parser {
+         // the real type, then promote the tuple RETURNS that could not be judged while a
+         // member was unresolved — both before `reserve_late_return_buffers` below, so a
+         // newly-heap return gets its `__retbuf` in the same breath.
+-        self.resolve_forward_generic_returns();
+         let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
+         self.refuse_forward_tuple_returns(&adopted);
+         self.refuse_forward_ref_tuple_params(&adopted);
+@@ -2710,30 +2693,6 @@ impl Parser {
+         self.reserve_late_return_buffers();
+     }
+ 
+-    /// @PLN165 D7 — a return type naming a generic struct declared below was a stub on pass
+-    /// 1 (`note_forward_return`).  Every declaration is seen now: the return becomes the
+-    /// instance its arguments name, laid out here, before `reserve_late_return_buffers` gives
+-    /// the record return the `__retbuf` its callers push on pass 2.
+-    fn resolve_forward_generic_returns(&mut self) {
+-        for (f, stub, args) in std::mem::take(&mut self.forward_generic_returns) {
+-            if self.data.def_type(stub) != DefType::TypeTemplate
+-                || args.iter().any(|a| self.data.names_unresolved(a))
+-            {
+-                continue;
+-            }
+-            let inst = self.data.instance_def(&mut self.lexer, stub, &args);
+-            if inst == u32::MAX {
+-                continue;
+-            }
+-            crate::typedef::lay_out_late(&mut self.data, &mut self.database, inst);
+-            let target = Type::Reference(inst, crate::data::Deps::none());
+-            let ret = self.data.def(f).returned().clone();
+-            if let Some(t) = Data::rewrite_type_opt(&ret, stub, &target) {
+-                self.data.definitions[f as usize].returned = t;
+-            }
+-        }
+-    }
+-
+     fn promote_par_worker_tuple_returns(&mut self) {
+         let mut workers: Vec<u32> = self.par_worker_defs.iter().copied().collect();
+         workers.sort_unstable(); // deterministic `__tuple<…>` def order across runs
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 5eaba0ff1..8de185ac5 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -2113,9 +2113,6 @@ impl Parser {
+             if self.data.is_open_instance(inst) {
+                 return self.open_literal(inst, code);
+             }
+-            // The expected instance never passed `instance_def` here; one whose layout waited
+-            // for pass 2 (a field naming a generic struct declared below) is laid out now.
+-            self.lay_out_instance(inst);
+             d_nr = inst;
+         }
+         if d_nr != u32::MAX {
+@@ -4277,10 +4274,7 @@ impl Parser {
+                 match &bound {
+                     None => bound = Some((f.clone(), got)),
+                     Some((first, b)) => {
+-                        // Closed: `vector<Tree<T>>` at `T = integer` is `vector<Tree<integer>>`.
+-                        let expected =
+-                            self.data
+-                                .close_open(&mut self.lexer, declared, &[(v, b.clone())]);
++                        let expected = declared.clone().substitute(v, b);
+                         let mut trial = Value::Null;
+                         if refusal.is_none()
+                             && !self.convert_admitting(&mut trial, value, &expected)
+@@ -4385,26 +4379,6 @@ impl Parser {
+ 
+     fn lay_out_instance(&mut self, inst: u32) {
+         if !self.first_pass && inst != u32::MAX && self.data.def(inst).known_type() == u16::MAX {
+-            // A record that contains itself has no layout: the check `fill_all` makes at the end
+-            // of pass 1, made here for an instance first laid out on pass 2 (one whose field
+-            // named a generic struct declared below), and reported as its twin would be.
+-            let mut visiting = std::collections::HashSet::new();
+-            if !self.data.is_open_instance(inst) && self.data.has_value_cycle(inst, &mut visiting) {
+-                if self.cyclic_instances.insert(inst) {
+-                    let shown =
+-                        Type::Reference(inst, crate::data::Deps::none()).source_name(&self.data);
+-                    let at = self.data.def(inst).position().clone();
+-                    self.lexer.pos_diagnostic(
+-                        Level::Error,
+-                        &at,
+-                        &format!(
+-                            "Struct '{shown}' contains itself (directly or indirectly) — use \
+-                             reference<{shown}> to break the cycle"
+-                        ),
+-                    );
+-                }
+-                return;
+-            }
+             crate::typedef::fill_database(&mut self.data, &mut self.database, inst);
+             self.database
+                 .lay_out_record(self.data.def(inst).known_type());
+diff --git b/src/typedef.rs a/src/typedef.rs
+index 33e9bb813..3728f2d27 100644
+--- b/src/typedef.rs
++++ a/src/typedef.rs
+@@ -185,12 +185,6 @@ pub(crate) fn synth_nullable_target(data: &Data, struct_d: u32) -> bool {
+ }
+ 
+ fn copy_unknown_fields(data: &mut Data, d: u32) {
+-    // An instance of a generic struct takes its fields from its template, closed per instance
+-    // (`Data::refresh_instances`, @PLN165 D7): a forward stub resolved here would name the
+-    // bare TEMPLATE (`b: B` for `b: B<integer>`), which then reached layout.
+-    if data.def(d).instance_of != u32::MAX {
+-        return;
+-    }
+     for nr in 0..data.attributes(d) {
+         // `Unknown(was)` names the forward-referenced type's STUB def — except for
+         // `Unknown(0)`, which is the codebase-wide "no type known" sentinel and names
+@@ -210,19 +204,14 @@ fn copy_unknown_fields(data: &mut Data, d: u32) {
+             Type::Optional(inner) => (*inner, true),
+             other => (other, false),
+         };
+-        // A stub adopted by a GENERIC struct is not its type: the field names an instance whose
+-        // arguments pass 1 set aside (`skip_forward_type_args`), retyped on pass 2 (@PLN165 D7).
+-        let is_template = |w: u32| data.def_type(w) == DefType::TypeTemplate;
+         if let Type::Unknown(was) = attr_type
+             && was != 0
+-            && !is_template(was)
+         {
+             let resolved = data.def(was).returned.clone();
+             set_attr_type_keeping_optional(data, d, nr, resolved, optional);
+         } else if let Type::Vector(content, dep) = &attr_type
+             && let Type::Unknown(was) = **content
+             && was != 0
+-            && !is_template(was)
+         {
+             let dep = dep.clone();
+             // Forward-ref element resolves DENSE — the dense-default invariant
+@@ -319,11 +308,7 @@ pub fn actual_types_deferred(
+             }
+             DefType::Function => {
+                 copy_unknown_fields(data, d);
+-                // A return naming a generic struct declared below is not the bare template:
+-                // `between_passes` makes it the instance its arguments name (@PLN165 D7).
+-                if let Type::Unknown(was) = data.def(d).returned
+-                    && data.def_type(was) != DefType::TypeTemplate
+-                {
++                if let Type::Unknown(was) = data.def(d).returned {
+                     data.set_returned(d, data.def(was).returned.clone());
+                 }
+             }
+@@ -414,23 +399,6 @@ pub fn sync_capture_ownership(data: &Data, database: &mut Stores) {
+ /// The answer is transitive.  An inline struct field stores its content's bytes, so a
+ /// host whose field type is itself waiting cannot be laid out either — laying it out
+ /// would register the field with content id `u16::MAX`.
+-/// Lay out a concrete struct whose layout waited for pass 2 — a field naming a generic struct
+-/// declared below is only an instance once pass 2 re-reads it (@PLN165 D7) — as soon as its
+-/// declaration is complete there, before code that writes its fields is parsed.  Nothing for
+-/// a struct already laid out, one still blocked, or one containing itself (`fill_all` reports
+-/// that).
+-pub(crate) fn lay_out_late(data: &mut Data, database: &mut Stores, d: u32) {
+-    if data.def(d).known_type != u16::MAX
+-        || data.def_type(d) != DefType::Struct
+-        || layout_blocked(data, d, &mut Vec::new())
+-        || data.has_value_cycle(d, &mut std::collections::HashSet::new())
+-    {
+-        return;
+-    }
+-    fill_database(data, database, d);
+-    database.lay_out_record(data.def(d).known_type);
+-}
+-
+ fn layout_blocked(data: &Data, d: u32, seen: &mut Vec<u32>) -> bool {
+     if d == u32::MAX {
+         return true;
+@@ -516,10 +484,7 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
+     // has no finite size either, and with no struct anywhere in it nothing else would ask.
+     let mut found_cycle = false;
+     for d_nr in start_def..data.definitions() {
+-        // An open instance (@PLN165 D5) is never laid out, so it has no size to be infinite.
+-        if matches!(data.def_type(d_nr), DefType::Struct | DefType::Enum)
+-            && !data.is_open_instance(d_nr)
+-        {
++        if matches!(data.def_type(d_nr), DefType::Struct | DefType::Enum) {
+             let mut visiting = std::collections::HashSet::new();
+             if data.has_value_cycle(d_nr, &mut visiting) {
+                 // Whether or not this def is one to REPORT, its layout is now unreachable —
+@@ -539,14 +504,13 @@ pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start
+                 } else {
+                     "Struct"
+                 };
+-                // An instance of a generic struct is named as the reader writes it
+-                // (`Node<integer>`, not its key), which is what its twin's report names.
+-                let shown = Type::Reference(d_nr, Deps::none()).source_name(data);
+                 lexer.pos_diagnostic(
+                     Level::Error,
+                     &data.def(d_nr).position,
+                     &format!(
+-                        "{noun} '{shown}' contains itself (directly or indirectly) — use reference<{shown}> to break the cycle",
++                        "{noun} '{}' contains itself (directly or indirectly) — use reference<{}> to break the cycle",
++                        data.def(d_nr).name,
++                        data.def(d_nr).name,
+                     ),
+                 );
+             }
+@@ -850,11 +814,6 @@ fn synth_nullable_struct_fields(data: &mut Data, database: &mut Stores, lexer: &
+             if data.def(host).synthetic.is_some() {
+                 continue;
+             }
+-            // An open instance (@PLN165 D5) is never laid out, so its fields need no wrapper —
+-            // one over it would embed a fieldless row, which has no layout either.
+-            if data.is_open_instance(host) {
+-                continue;
+-            }
+             if !(matches!(data.def_type(host), DefType::Struct)
+                 || (matches!(data.def_type(host), DefType::EnumValue) && data.attributes(host) > 0))
+             {

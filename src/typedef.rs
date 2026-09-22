@@ -210,14 +210,19 @@ fn copy_unknown_fields(data: &mut Data, d: u32) {
             Type::Optional(inner) => (*inner, true),
             other => (other, false),
         };
+        // A stub adopted by a GENERIC struct is not its type: the field names an instance whose
+        // arguments pass 1 set aside (`skip_forward_type_args`), retyped on pass 2 (@PLN165 D7).
+        let is_template = |w: u32| data.def_type(w) == DefType::TypeTemplate;
         if let Type::Unknown(was) = attr_type
             && was != 0
+            && !is_template(was)
         {
             let resolved = data.def(was).returned.clone();
             set_attr_type_keeping_optional(data, d, nr, resolved, optional);
         } else if let Type::Vector(content, dep) = &attr_type
             && let Type::Unknown(was) = **content
             && was != 0
+            && !is_template(was)
         {
             let dep = dep.clone();
             // Forward-ref element resolves DENSE — the dense-default invariant
@@ -314,7 +319,11 @@ pub fn actual_types_deferred(
             }
             DefType::Function => {
                 copy_unknown_fields(data, d);
-                if let Type::Unknown(was) = data.def(d).returned {
+                // A return naming a generic struct declared below is not the bare template:
+                // `between_passes` makes it the instance its arguments name (@PLN165 D7).
+                if let Type::Unknown(was) = data.def(d).returned
+                    && data.def_type(was) != DefType::TypeTemplate
+                {
                     data.set_returned(d, data.def(was).returned.clone());
                 }
             }
@@ -405,6 +414,23 @@ pub fn sync_capture_ownership(data: &Data, database: &mut Stores) {
 /// The answer is transitive.  An inline struct field stores its content's bytes, so a
 /// host whose field type is itself waiting cannot be laid out either — laying it out
 /// would register the field with content id `u16::MAX`.
+/// Lay out a concrete struct whose layout waited for pass 2 — a field naming a generic struct
+/// declared below is only an instance once pass 2 re-reads it (@PLN165 D7) — as soon as its
+/// declaration is complete there, before code that writes its fields is parsed.  Nothing for
+/// a struct already laid out, one still blocked, or one containing itself (`fill_all` reports
+/// that).
+pub(crate) fn lay_out_late(data: &mut Data, database: &mut Stores, d: u32) {
+    if data.def(d).known_type != u16::MAX
+        || data.def_type(d) != DefType::Struct
+        || layout_blocked(data, d, &mut Vec::new())
+        || data.has_value_cycle(d, &mut std::collections::HashSet::new())
+    {
+        return;
+    }
+    fill_database(data, database, d);
+    database.lay_out_record(data.def(d).known_type);
+}
+
 fn layout_blocked(data: &Data, d: u32, seen: &mut Vec<u32>) -> bool {
     if d == u32::MAX {
         return true;

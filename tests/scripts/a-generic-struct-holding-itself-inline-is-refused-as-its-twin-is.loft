@@ -1,0 +1,21 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D7 — `next: Node<T>?` stores the record INLINE, so `Node<integer>` contains itself,
+// which its twin `struct NodeInt { v: integer, next: NodeInt? }` is refused for in the same
+// words.
+//
+// @falsified-at: f5db133f1 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-generic-struct-holding-itself-inline-is-refused-as-its-twin-is.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//   CHANNEL: expectations — the control's refusal does not name `Node<integer>`.
+//   ARMED: nothing.
+//   WITNESS: none recorded beyond the channel.
+//   HOLDS: the program is refused on both trees.
+// @EXPECT_ERROR: Struct 'Node<integer>' contains itself (directly or indirectly) — use reference<Node<integer>> to break the cycle
+
+struct Node<T> { v: T, next: Node<T>? }
+
+fn main() {
+  n = Node { v: 1 };
+  println("{n.v}");
+}

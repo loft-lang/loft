@@ -742,6 +742,32 @@ the declaration (`D-Regular`).
 - **Red on its own:** `struct Node<T> { v: T, next: Node<T>? }` — push three, read back,
   length, leak; `struct Bad<T> { n: Bad<vector<T>>? }` is refused, and the compiler
   terminates (the cell runs under `LOFT_TIMEOUT`).
+- **Built** (2026-09-22).  The plan's example was measured against its twin first: an INLINE
+  `next: NodeInt?` is refused (*"contains itself — use reference<NodeInt>"*); the list is
+  `reference<Node<T>>?` and the tree `vector<Tree<T>>`.  So the red cells became those two
+  shapes plus the refusals.  An instance's field types are its template's with the bindings
+  applied and each open instance the field WRITES closed (`Data::close_open`; closing ones a
+  binding brought in recursed without end on `Box<Box<T>>`); regular recursion ends because
+  the name is registered before the fields.  An instance the template's own declaration
+  mints copies only the fields parsed so far, so the declaration's end refreshes them
+  (`refresh_instances`) — FIELDS only, methods stay on the template (copying one on pass 2
+  broke H5).  `D-Regular` refuses an irregular self-mention on the pass that parses it
+  first and marks the template so no instance is minted; a nesting bound in `instance_def`
+  keeps compilation finite regardless.  An inline self field is each instance's own cycle,
+  reported in the instance's words (`Node<integer>`) as the twin's is — the cycle check
+  skips open instances and also runs for an instance first laid out on pass 2.
+  `Type::substitute` keeps a `reference<…>` pointer marker, and a template's `reference<…>`
+  field is a pointer field.  A mutual pair needs a FORWARD reference to a generic struct,
+  which was a syntax error: pass 1 now reads and sets aside the arguments of a name still a
+  stub; the stub adoption and `resolve_adopted_stubs` no longer point it at the bare
+  template (`names_unresolved` counts a bare template as unresolved); a template's or a
+  concrete struct's field and a parameter are retyped on pass 2 (a concrete struct laid out
+  as soon as its declaration completes, `lay_out_late`); a RETURN is resolved between the
+  passes (`resolve_forward_generic_returns`) so its `__retbuf` is reserved in time; a
+  literal lays out the expected instance it takes.  Cells [self-reference/](probes/self-reference/)
+  s01–s07 green on both backends under `LOFT_STRICT_STORES` + `LOFT_POISON`; refusals
+  x01–x04 read by hand; four guards falsified at f5db133f1.  Corpus against D6: one file
+  differs, the D6 guard, whose `init()` no longer replays method names as fields.
 
 ### D8 — a generic enum  ·  M
 

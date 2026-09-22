@@ -996,6 +996,12 @@ pub struct Parser {
     /// A forward reference to a generic struct just had its `<…>` read and set aside
     /// (`skip_forward_type_args`); read by the `reference<…>` arm.
     pub(crate) forward_template_args: bool,
+    /// A return type's forward generic struct and its arguments, parked until the function's
+    /// definition is known (`note_forward_return`).
+    pub(crate) pending_forward_return: Option<(u32, Vec<Type>)>,
+    /// `(function, stub, arguments)` of every forward generic return, resolved between the
+    /// passes (`resolve_forward_generic_returns`).
+    pub(crate) forward_generic_returns: Vec<(u32, u32, Vec<Type>)>,
     /// The variables a `struct` / `enum` header wrote where the language refuses one: its
     /// fields may name them, and the header's refusal already covers that.
     pub(crate) refused_header_vars: Vec<String>,
@@ -1568,6 +1574,8 @@ impl Parser {
             set_call_refs: Vec::new(),
             cyclic_instances: std::collections::HashSet::new(),
             forward_template_args: false,
+            pending_forward_return: None,
+            forward_generic_returns: Vec::new(),
             refused_header_vars: Vec::new(),
             context_type_template: u32::MAX,
             type_var_holders: std::collections::HashMap::new(),
@@ -2689,6 +2697,7 @@ impl Parser {
         // the real type, then promote the tuple RETURNS that could not be judged while a
         // member was unresolved — both before `reserve_late_return_buffers` below, so a
         // newly-heap return gets its `__retbuf` in the same breath.
+        self.resolve_forward_generic_returns();
         let adopted = self.data.resolve_adopted_stubs(&mut self.lexer);
         self.refuse_forward_tuple_returns(&adopted);
         self.refuse_forward_ref_tuple_params(&adopted);
@@ -2699,6 +2708,30 @@ impl Parser {
         self.refresh_bound_method_stubs();
         self.promote_late_text_buffers();
         self.reserve_late_return_buffers();
+    }
+
+    /// @PLN165 D7 — a return type naming a generic struct declared below was a stub on pass
+    /// 1 (`note_forward_return`).  Every declaration is seen now: the return becomes the
+    /// instance its arguments name, laid out here, before `reserve_late_return_buffers` gives
+    /// the record return the `__retbuf` its callers push on pass 2.
+    fn resolve_forward_generic_returns(&mut self) {
+        for (f, stub, args) in std::mem::take(&mut self.forward_generic_returns) {
+            if self.data.def_type(stub) != DefType::TypeTemplate
+                || args.iter().any(|a| self.data.names_unresolved(a))
+            {
+                continue;
+            }
+            let inst = self.data.instance_def(&mut self.lexer, stub, &args);
+            if inst == u32::MAX {
+                continue;
+            }
+            crate::typedef::lay_out_late(&mut self.data, &mut self.database, inst);
+            let target = Type::Reference(inst, crate::data::Deps::none());
+            let ret = self.data.def(f).returned().clone();
+            if let Some(t) = Data::rewrite_type_opt(&ret, stub, &target) {
+                self.data.definitions[f as usize].returned = t;
+            }
+        }
     }
 
     fn promote_par_worker_tuple_returns(&mut self) {
