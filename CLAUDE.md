@@ -836,6 +836,22 @@ never minted (the drawing bench's `parse` row −9 %: its outer loop is
 extra piece out of a loop over a `split` on native.  A variable separator, a `rev`, a
 split bound to a name first and a generator keep the vector.  `LOFT_TRACE_LAZY_SPLIT=1`
 names each loop admitted and each declined with its reason.
+**`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time, `--native`
+only) makes the loop variable of `for p in vector<text>` — and of a lazily split text —
+copy its element into a `String` again — with it off, `p` is bound as the `&str` the
+element read answers and read bare, where the body reads it only as a text VALUE (an
+operand at a `text` position, the source of a bind into another slot), never writes,
+links or captures it, and (for a vector) writes no store; a text VALUE op — scalar and
+text operands, a scalar or text result, or a write to a text VARIABLE — is no store write
+to that condition, and `OpGetText` is a reader, so the walk holds its header, length and
+base like any other (the stdlib `join` 5.40× → 1.96× of Rust, `split_walk` 1.80× →
+1.01×, `parse_num` 1.46× → 0.98×) — and is the first bisect step for a wrong, stale or
+crashing text read through such a loop variable on native.  `LOFT_HOIST_VERIFY=1`
+re-reads the element at the walk's release and panics when the borrow no longer names it
+(address first, so a dangling borrow is never read); `LOFT_TRACE_TEXT_BORROW=1` names each
+walk admitted and each declined with its reason.  A `&p` link, `p += …`, `p` handed to a
+`&text` parameter, tupled or returned, a store written in the body and a generator keep
+the copy.
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
 with it off, a loop that grows no store (no push and no mint, whether or not the mint

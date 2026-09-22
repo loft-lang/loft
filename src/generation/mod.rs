@@ -834,10 +834,16 @@ pub struct Output<'a> {
     /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
     /// the bisect step for a wrong or missing piece out of a loop over a `split`.
     pub lazy_split_disabled: bool,
-    /// The text LOCALS of the function being emitted whose Rust slot is a borrowed `&str`
-    /// rather than an owned `String`; rebuilt per function.  [`Output::text_borrowed`] is
-    /// the one predicate that reads it, beside the text parameters it always answers.
-    pub borrowed_text_locals: HashSet<u16>,
+    /// `@FR-R-TextBorrow` — the text LOCALS of the function being emitted whose Rust slot
+    /// is a borrowed `&str` rather than an owned `String`: the loop variables of the walks
+    /// of texts that borrow their element ([`hoist::borrowed_text_walks`]); rebuilt per
+    /// function.  [`Output::text_borrowed`] is the one predicate that reads it, beside the
+    /// text parameters it always answers.
+    pub borrowed_text_locals: HashMap<u16, hoist::TextBorrow>,
+    /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
+    /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
+    /// variable of `for p in vector<text>` on native.
+    pub text_borrow_disabled: bool,
     /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
     /// function that build once per activation ([`hoist::invariant_literals`]): each is
     /// pre-declared at function top and its declaration statement wrapped in an
@@ -2047,7 +2053,8 @@ impl<'a> Output<'a> {
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
             lazy_splits: BTreeMap::new(),
             lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
-            borrowed_text_locals: HashSet::new(),
+            borrowed_text_locals: HashMap::new(),
+            text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
@@ -2380,7 +2387,12 @@ impl Output<'_> {
         } else {
             hoist::lazy_splits(self.data, def_nr)
         };
-        self.borrowed_text_locals.clear();
+        // `@FR-R-TextBorrow` — after the lazy splits, whose walks need no store condition.
+        self.borrowed_text_locals = if self.text_borrow_disabled {
+            HashMap::new()
+        } else {
+            hoist::borrowed_text_walks(self.data, def_nr, &self.lazy_splits)
+        };
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
@@ -3495,6 +3507,13 @@ impl Output<'_> {
             if self.coroutine_persistent_fields.contains_key(&path.0) {
                 continue;
             }
+            // `@FR-R-LazySplit` — the hidden vector of a lazy split is never declared: the
+            // loop walks the text's pieces, so there is no header to derive.  (Until
+            // `@FR-R-TextBorrow` made `OpGetText` a reader, the element read itself kept
+            // such a loop out of the hoist; now the exclusion is stated.)
+            if self.lazy_splits.contains_key(&path.0) {
+                continue;
+            }
             self.hoist_counter += 1;
             let name = format!("__vh_{}", self.hoist_counter);
             // The path expression is pure (a Var, or const `OpGetField`s over one —
@@ -4509,7 +4528,7 @@ impl Output<'_> {
         let vars = self.data.def(self.def_nr).variables();
         // `@FR-N-Shape` — `.base()`: a `text?` variable is the same slot, its null the sentinel.
         matches!(vars.tp(v).base(), Type::Text(_))
-            && (vars.is_argument(v) || self.borrowed_text_locals.contains(&v))
+            && (vars.is_argument(v) || self.borrowed_text_locals.contains_key(&v))
     }
 
     /// The complement of [`Output::text_borrowed`] over text variables: `v` is a text

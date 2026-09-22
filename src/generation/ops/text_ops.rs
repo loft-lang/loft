@@ -86,6 +86,27 @@ impl OpEmitter for TextDispatchEmitter {
             }
             "OpClearVector" => ctx.output.clear_vector(&mut *ctx.w, args),
             "OpAppendVector" => ctx.output.append_vector(&mut *ctx.w, args),
+            // `@FR-R-TextBorrow`'s checking form — the walk's release of a borrowed loop
+            // variable is where the borrow ends, so under LOFT_HOIST_VERIFY=1 the element is
+            // read again there and compared with what the iteration held.  The release
+            // itself emits nothing: a `&str` owns nothing.
+            "OpFreeText"
+                if ctx.output.hoist_verify
+                    && let [arg] = args
+                    && let Value::Var(p) = arg.unspan()
+                    && let Some(read) = ctx
+                        .output
+                        .borrowed_text_locals
+                        .get(p)
+                        .and_then(|b| b.read.clone()) =>
+            {
+                let name = super::super::sanitize(
+                    ctx.output.data.def(ctx.output.def_nr).variables().name(*p),
+                );
+                write!(ctx.w, "vector::text_borrow_verify(var_{name}, ")?;
+                ctx.output.output_code_inner(&mut *ctx.w, &read)?;
+                write!(ctx.w, ")")
+            }
             "OpFreeText" | "OpCreateStack" => Ok(()),
             "OpFormatDatabase" | "OpFormatStackDatabase" => {
                 // OpFormatDatabase takes a &mut String as the output buffer.

@@ -1396,6 +1396,15 @@ impl Output<'_> {
             // @PLN25: peel `Optional(Text)` — a `text?` block-assigned local is `String`-typed.
             if matches!(var_tp.base(), Type::Text(_)) {
                 self.declared.insert(var);
+                // `@FR-R-TextBorrow` — a walk's loop variable admitted to borrow its
+                // element binds the `&str` the element read answers, and every read of it
+                // reads bare (`text_borrowed`).  The block is the parser's iterator: the
+                // index step and the element read, nothing that could own the text.
+                if self.text_borrowed(var) {
+                    write!(w, "let var_{name}: &str = ")?;
+                    self.output_code_inner(w, to)?;
+                    return Ok(());
+                }
                 write!(w, "let mut var_{name} = ")?;
                 self.output_code_inner(w, to)?;
                 if needs_to_string {

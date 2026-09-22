@@ -1398,6 +1398,49 @@ to re-derive at run time, so `(R-Switch)`'s second form applies: cells
 in `Output::collect_pre_evals_inner`, the null decl in `Output::emit_null_dbref`,
 `codegen_runtime::lazy_split`.
 
+### A walk of texts borrows each element
+
+```
+  (R-TextBorrow) in `for p in W { … }` where W is a `vector<text>` — the plain forward
+                 walk the parser gives a vector, `p` bound to the text of the element
+                 at `p#index` — or a split the loop takes lazily (R-LazySplit), and
+                 the body reads `p` only as a text VALUE (an operand of an op or a
+                 call at a `text` position; the whole source of a bind or a tuple
+                 write into ANOTHER slot; the walk's own release), never writes,
+                 links (`&p`) or captures it, and — for a vector — writes no store
+                 (R-Header's condition), `p` is a BORROW of the element for the
+                 iteration: no copy is taken, and every read of `p` reads the text as
+                 W holds it, which is what the copy held.  A text VALUE op — one
+                 whose operands are scalars and texts and whose result is one or
+                 nothing, or one that writes a text VARIABLE — writes no store: a
+                 text value on native is a `&str` or a `String`, never a store.
+                 Every other walk — a body that writes a store or `p`, a generator,
+                 a body that runs arms in parallel — keeps the copy.
+```
+
+**In words.**  `for p in words` bound `p` as `{ … get_str(…) }.to_string()` — an
+allocation and a copy per element — and the loop hoisted NOTHING, because its element read
+`OpGetText` and every text op in its body (`size(p)`, `result += p`, `p == "x"`) read as
+store writers to `(R-Header)`'s condition.  The standard library's `join` paid 30.8 µs for
+2 000 words against its Rust twin's 5.7.  A text local's Rust slot is decided at every site
+that spells it by ONE predicate (`Output::text_borrowed`: a text parameter, or a local this
+rule admits), so the borrowed loop variable reads bare where an owned local reads `&var`,
+converts with `.to_string()` where an owned local clones, and needs no site of its own.
+The vector's condition is the one `(R-Header)` already states, sharpened by the text-value
+clause: an op on text values touches no store, so `OpAppendText(result, p)` and
+`OpEqText(p, "x")` are no longer writers, and the walk's header, length and base follow
+from the rules that already hold them.  A lazy split's piece borrows the iterator's source
+— a borrowed parameter or a loop-long copy — and needs no store condition at all.  The
+escape conditions are what keeps the borrow a text VALUE: a `&p` link, a rebind or a
+text-building op with `p` as its destination would need a `String` slot, and a capture or a
+generator would carry it across the iteration.  The interpreter takes the copy the IR
+spells and is the oracle.  Switch `LOFT_NO_TEXT_BORROW`; trace `LOFT_TRACE_TEXT_BORROW`
+(each walk admitted and each declined with its reason); falsifier `LOFT_HOIST_VERIFY=1`,
+whose checking form re-reads the element after the body and panics when the borrow no
+longer names it.  Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
+`hoist::native_op_is_store_free` (the text-value clause), `Output::text_borrowed`, the
+bind in `Output::output_set`.
+
 ### A lookup by one integer key takes the typed entry
 
 ```

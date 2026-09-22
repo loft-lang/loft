@@ -4,13 +4,14 @@ Taken 2026-09-22 on x86-64 from the portal re-measured at `8009e8c5b` (every rou
 **1.85×**, shipped routines **1.63×**, 30 rows at or over 2×, 17 over 3×).  An ANALYSIS: every
 figure below is a HAND-PRICE — the emitted Rust of the routine edited to the form a rewrite
 would emit, compiled with the `--native-release` flags, run on one core with the result hash
-unchanged — and nothing here is built.  Two rows were priced and DID NOT MOVE; they are
-listed as what they are, with what was learned.
+unchanged — and nothing here was built when it was taken; § Built records what has been
+since, with the measurement.  Two rows were priced and DID NOT MOVE; they are listed as
+what they are, with what was learned.
 
 | # | lever | rows it moves | hand-priced |
 |---|---|---|---|
 | **W1** | `for c in text` walks bytes with an ASCII fast path; the body's compares against a literal are plain | `char_walk`, every character walk | **−65 %** (4.58× → ~1.6×) |
-| **W2** | `for p in vector<text>` borrows its element AND iterates through a held header | `join`, `word_count`'s walk, every walk of texts | **−75 %** (5.40× → ~1.4×) — T1's borrow alone is −45 % |
+| **W2** | `for p in vector<text>` borrows its element AND iterates through a held header | `join`, `word_count`'s walk, every walk of texts | **−75 %** (5.40× → ~1.4×) — T1's borrow alone is −45 %.  **BUILT** 2026-09-22: −64 %, 1.96× (§ Built) |
 | **C1+** | no fn-ref buffer guard where no registrant is reachable, and the depth count replaced by a stack-pointer check | `fibonacci`, every recursive function | **−39 %** (4.09× → ~2.4×) |
 | **P1** | an in-place scalar set through ANY store-free element address does not decline a loop's headers | `chunk_lookup`, every `find-then-write` loop over records | **−30 %** (2.87× → ~2.0×) |
 
@@ -24,6 +25,54 @@ listed as what they are, with what was learned.
 | the call frame | `fibonacci` 4.1× | C1+ |
 | `par` | 5.3× | another subsystem, one row, not looked at |
 | the rest | `copy` 2.65×, `parse` 2.6×, `sort` 2.5×, `grid` 2.5×, `catalog_churn` 2.4×, `newton_sqrt` 2.2×, `sum` 2.2× (done, 2× accepted), `collatz` 2.0× | each its own mechanism, none priced this round |
+
+## Built
+
+### W2 — `(R-TextBorrow)`, 2026-09-22
+
+Built as the rule `(R-TextBorrow)` (`formal/rewrites.md`), switch `LOFT_NO_TEXT_BORROW`,
+falsifier `LOFT_HOIST_VERIFY=1` (the element re-read at the walk's release), cells
+`tests/scripts/158-text-borrow.loft` t1–t18, pins `tests/text_borrow.rs`.  Measured with
+`bench/stats.py --only 13` on this box, before (portal at `8009e8c5b`) → after:
+
+| row | before | after | ratio |
+|---|---:|---:|---|
+| `join` | 30.97 µs | **11.21 µs** (−64 %) | 5.40× → **1.96×** |
+| `split_walk` | 4.44 µs | **2.51 µs** (−43 %) | 1.80× → **1.01×** |
+| `parse_num` | 61.4 µs | **41.2 µs** (−33 %) | 1.46× → **0.98×** |
+| `trim_lower` | 9.82 µs | 7.99 µs (−19 %) | 1.66× → 1.36× |
+| `find_contains` | 15.8 µs | 13.4 µs (−15 %) | 1.60× → 1.35× |
+
+Three pieces, in the order the ledger asked for:
+
+1. **T1's refactor first** (`8fc2ed578`): `Output::text_borrowed` is the one home of
+   *"this text variable is a `&str`"*, asked by the six sites that spelled it inline;
+   proven by `scripts/introspect_diff.sh` IDENTICAL 1629/1629.  The borrowed loop variable
+   then needed no site of its own — the bind is the only new emission.
+2. **The borrow**: `let var_p: &str = { …get_str(…) }` where the body reads `p` only as a
+   text value and writes no store.  `hoist::text_escapes` is the escape walk, and it is
+   deliberately conservative — a shape it does not read declines rather than compiles.
+3. **The walk through a held header** came for free from the rules that already hold
+   headers, once two facts were stated: `OpGetText` is a READER, and a text-VALUE op (scalar
+   and text operands, scalar/text/void result; or a write to a text VARIABLE) touches no
+   store — `native_op_is_store_free`'s text-value clause.  That clause is what took the
+   lazy split's piece too (`split_walk`, `parse_num`, `trim_lower`, `find_contains`): its
+   piece borrows the iterator's source and needs no store condition at all.  The ledger's
+   *"`iteration_head` taught the text element's head"* was NOT needed: the header hoist
+   reads pure paths from the body, not the iteration head.
+
+What it found on the way: (a) the lazy split's hidden vector had been kept out of the
+header hoist only by accident — `OpGetText` reading as a writer — and once that fell the
+emitter derived a header for a vector the lazy form never declares (rustc E0425 on the
+whole text lane); the exclusion is now stated at the candidate loop.  (b) The value
+channel cannot see a SHORT overwrite of the borrowed element: `words[p#index] = "zz"`
+writes a new position and the old bytes survive the iteration, so the sabotaged build
+answered every cell right — only the checking form (address compared first) saw it.  The
+cell grows the store with a 64 KiB overwrite, which makes the sabotaged build exit 1 with
+no output, the crash the rule prevents.  (c) `hand-price`'s 7.8 µs for join was not
+reached (11.2): each element still resolves `stores.store(&db)` for its `get_str` — a text
+element read through the held BASE (the position word one load, the text one slice) is
+the remaining step, unpriced.
 
 ## W1 — a character walk pays for its bookkeeping, not for any one thing
 

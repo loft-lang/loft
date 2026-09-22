@@ -21,8 +21,10 @@ const EXPECTED: &[(&str, Row, Row)] = &[
     // The copy is the loop's only whole-type write, and it evicts `first`'s scalars: the
     // header hoists, no scalar does.
     ("n_c3b", (1, 0, 0), (0, 0, 0)),
-    // A heap-owning record and a call's freed result: still store writers.
-    ("n_c4", (0, 0, 0), (0, 0, 0)),
+    // A heap-owning record and a call's freed result: still store writers.  c4's one
+    // hoist is its READ walk (`len(n.nm)` is a text-value op, no writer since
+    // `@FR-R-TextBorrow`), not the copy loop, so the clause does not move it.
+    ("n_c4", (1, 1, 0), (1, 1, 0)),
     ("n_c5", (0, 0, 0), (0, 0, 0)),
     // Two vectors: both headers held across the copy (the read walk hoisted before too).
     ("n_c6", (2, 3, 0), (1, 1, 0)),
