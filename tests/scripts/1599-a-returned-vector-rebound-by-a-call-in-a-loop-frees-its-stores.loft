@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1599, `@FR-O-Complete` — A RETURNED VECTOR REBOUND BY A CALL IN A LOOP FREES ITS STORES.  A
+// vector local that a function returns is renamed onto the caller's return buffer, and every
+// rebind of it must then fill that buffer.  A rebind on the straight line hands its call the
+// buffer itself.  A rebind inside a loop or a branch handed the call a buffer of its own and
+// pointed the local at it, so the function answered a store the caller never handed in.  The
+// caller, which frees only its own buffer, leaked it: one store per call.  Such a local now keeps
+// its own store and is copied into the buffer once, at the return.
+//
+// The harness's leak check is what this file asserts on the interpreter; the values are checked
+// too, so a cure that dropped a rebind would fail.  The last cells are controls that were right
+// before: rebinds on the straight line, and appends.
+//
+// @falsified-at: b6fa4d950 — interpret leaked kt=29 main_vector<integer>×14 -> clean, native leaked
+//   kt=29 main_vector<integer>×14 -> clean
+// @falsified-by: tests/falsified/1599-a-returned-vector-rebound-by-a-call-in-a-loop-frees-its-stores.patch —
+//   interpret leaked kt=29 main_vector<integer>×14 -> clean, native leaked kt=29
+//   main_vector<integer>×14 -> clean
+// CHANNEL: the leak check alone, on both backends — the values are right on both trees, which is
+//   why they are asserted (a cure that dropped a rebind would move them).
+// ARMED: the harness's store census at exit, which names each store left behind by type.
+// WITNESS: 14 `main_vector<integer>` stores left on the control, one per call of `q1`, `q2` and
+//   `q3` that took a nested rebind.
+// HOLDS: exit, assertions, panic, refusals and expectations are unmoved on both trees.
+
+fn lmkv(id: integer) -> vector<integer> { [id, id + 100] }
+
+fn q1() -> vector<integer> { v = lmkv(1); for i in 0..3 { v = lmkv(2 + i); } v }
+fn q2(c: boolean) -> vector<integer> { v = lmkv(10); if c { v = lmkv(11); } v }
+fn q3(n: integer) -> vector<integer> { v = lmkv(20); for i in 0..n { if i % 2 == 0 { v = lmkv(21 + i); } } v }
+fn k1() -> vector<integer> { v = lmkv(30); v = lmkv(31); v }
+fn k2() -> vector<integer> { v = lmkv(40); for i in 0..2 { v += [i]; } v }
+
+fn main() {
+  a = q1();
+  assert(len(a) == 2 && a[0] == 4 && a[1] == 104, "q1 loop: {a}");
+  b = q2(true);
+  assert(len(b) == 2 && b[0] == 11, "q2 arm taken: {b}");
+  c = q2(false);
+  assert(len(c) == 2 && c[0] == 10, "q2 arm not taken: {c}");
+  d = q3(5);
+  assert(len(d) == 2 && d[0] == 25, "q3 nested: {d}");
+  for _ in 0..10 { e = q1(); assert(e[0] == 4, "q1 repeated: {e}"); }
+  f = k1();
+  assert(f[0] == 31, "k1 control: {f}");
+  g = k2();
+  assert(len(g) == 4 && g[2] == 0 && g[3] == 1, "k2 control: {g}");
+  println("a returned vector rebound by a call in a loop frees its stores: every cell holds");
+}

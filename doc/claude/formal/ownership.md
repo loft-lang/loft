@@ -493,7 +493,9 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-47` (a local a `match` statement's arms first assign died at the block
+**OPEN: 0.**  `D-own-48` (a returned vector local rebound by a call inside a loop or a branch
+answered a store its caller never handed in, loft#1599) opened and CLOSED 2026-09-22, below.
+`D-own-47` (a local a `match` statement's arms first assign died at the block
 the lowering wraps the arms in, and was read after it) opened and CLOSED 2026-09-21, below.
 `D-own-46` (a view leaf admitted where the element was not the value's copy on
 every path — the opt-in `LOFT_VIEW_FIELD` unit only) opened and CLOSED 2026-09-17, below.
@@ -528,6 +530,29 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-48 — OPENED AND CLOSED (2026-09-22, loft#1599): a returned vector local rebound by a call inside a loop or a branch answered a store its caller never handed in
+
+`(O-Owner)` for a local renamed onto the RETURN BUFFER: the caller hands in a buffer, frees that
+buffer, and owns what the function answered in it.  Every rebind of the renamed local must
+therefore fill that buffer.  A rebind on the straight line hands its call the buffer itself
+(`nrvo_collapse_tail_set`, `nrvo_collapse_defining_call`).  A rebind by a call inside a loop or a
+branch handed the call a buffer of its own and pointed the local at it, so the function answered
+that store:
+
+```loft
+fn build() -> vector<integer> { v = mkv(1); for i in 0..2 { v = mkv(2 + i); } v }
+```
+
+The caller freed only its own buffer, so one store leaked per call, identically on both backends
+(the interpreter's leak check names it; native leaks in silence).  The value was right.
+
+**Closed** where the promotion is decided: such a local is not renamed
+(`Parser::var_call_rebound_nested`, beside `var_bound_to_branch` in the same rung, whose reason it
+shares), so it keeps its own store and is copied into the buffer once at the return, the
+delivery a join at the tail already takes.  A literal, a copy and `[]` refill the buffer in place
+and keep the rename, as does a call rebind on the straight line.  Guard
+`tests/scripts/1599-a-returned-vector-rebound-by-a-call-in-a-loop-frees-its-stores.loft`.
 
 ### D-own-47 — OPENED AND CLOSED (2026-09-21): a local a `match` statement's arms first assign died at the match's block, and was read after it
 

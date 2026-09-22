@@ -13128,6 +13128,38 @@ impl Parser {
     /// hidden buffer argument, so a verdict that differed would move the ABI between them.
     /// `match` lowers to nested `If`, so one shape covers both spellings.  (loft#1081,
     /// D-own-8 in `formal/ownership.md`.)
+    /// Is the vector local `v` rebound, inside a LOOP or a BRANCH, from a call handed a return
+    /// buffer of its own (`v = f(…, __ref_N)`)?  Such a rebind points `v` at that buffer's store
+    /// instead of filling `v`'s, and the collapse that hands the call `v` itself fires only for
+    /// a rebind on the straight line.  So a local renamed onto the return buffer would answer a
+    /// store its caller never handed in, and the caller, freeing only its own buffer, leaks it
+    /// (loft#1599).  A literal, a copy and `[]` refill the buffer in place and are not asked.
+    fn var_call_rebound_nested(&self, l: &[Value], v: u16) -> bool {
+        fn own_buffer(a: &Value, this: &Parser) -> bool {
+            let Value::Var(b) = a.unspan() else {
+                return false;
+            };
+            let vector = matches!(this.vars.tp(*b).base(), Type::Vector(_, _));
+            vector && this.vars.name(*b).starts_with("__ref_")
+        }
+        fn walk(op: &Value, v: u16, nested: bool, this: &Parser) -> bool {
+            match op.unspan() {
+                Value::Set(w, rhs) if *w == v && nested => {
+                    let Value::Call(_, args) = rhs.unspan() else {
+                        return false;
+                    };
+                    args.iter().any(|a| own_buffer(a, this))
+                }
+                Value::Loop(bl) => bl.operators.iter().any(|o| walk(o, v, true, this)),
+                Value::If(_, t, f) => walk(t, v, true, this) || walk(f, v, true, this),
+                Value::Block(bl) => bl.operators.iter().any(|o| walk(o, v, nested, this)),
+                Value::Insert(ops) => ops.iter().any(|o| walk(o, v, nested, this)),
+                _ => false,
+            }
+        }
+        l.iter().any(|op| walk(op, v, false, self))
+    }
+
     fn var_bound_to_branch(l: &[Value], v: u16) -> bool {
         fn rhs_is_branch(node: &Value) -> bool {
             match node.unspan() {
@@ -15821,6 +15853,7 @@ impl Parser {
         // has nothing to abandon there.
         let bound_to_vector_join = matches!(ctx.ret.ret_promo_base(), Type::Vector(_, _))
             && (Self::var_bound_to_branch(body, v)
+                || self.var_call_rebound_nested(body, v)
                 || self
                     .branch_sunk_vectors
                     .contains(&(self.context, n.to_string())));
