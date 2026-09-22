@@ -23,7 +23,9 @@
 // The cells are the four corners of the boundary: what it takes is two distinct DROPPABLE
 // types each behind a NULLABLE field.  `k1` and `k2` compiled before and must still.
 //
-// @falsified-at: 6814cb829 — interpret exit 101 -> 0, native exit 101 -> 0.
+// @falsified-at: 6814cb829 — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/1622-a-drop-cascade-key-names-the-variants-enum.patch —
+//   the same channels.
 // CHANNEL: exit code, both backends — the compiler aborts on the dual-definition assert.
 // HOLDS: assertion failures, leak and panic are unmoved once it compiles at all.
 // WITNESS: on the control, `Dual definition of t_4Some_OpDropAll [src/data.rs:6746]`.

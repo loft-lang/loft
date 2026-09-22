@@ -17,11 +17,15 @@
 // read is a projection out of the closure record exactly as `OpGetField` is one out of a
 // struct, so it is delivered on the same terms and the closure keeps its own store.
 //
-// It took loft#1618's `.base()` widening to make it REACHABLE — before that neither arm
-// delivered, so the provenance was uniform and wrong only by the leak loft#1618 closed.  The
-// cells below are written against the shape and not against that commit: they hold on
-// `origin/main` as well, which is what says this guard measures the rule rather than one
-// branch's mistake.
+// The defect has TWO faces and the cells split across them, which is worth reading before
+// scoring this file.  On `origin/main` it is an ALIAS: the capture arm is not delivered, so the
+// caller holds the capture rather than a copy, and a later write through it reaches a value the
+// caller already took — `c4` is that cell and it FAILS on `origin/main`.  loft#1618's `.base()`
+// widening gave the sibling arm a different provenance from this one and turned it into a
+// RELEASE: `c1`–`c3` and `c5` fail only on the branch, where the caller frees the capture.
+// `k1`–`k3` are clean on both.  So this guard is not scored against one commit — the receipt
+// below names the branch tip, and `c4` is the cell that says the rule was already unmet before
+// any of it.
 //
 // The axis that separates the two arms is CALL ORDER through one site: the capture loop alone
 // is clean, and so is one call of each without a loop.  It takes a present-arm call and a
@@ -31,7 +35,9 @@
 // `len(cap)` is asserted in every cell.  The value reads alone do not say it: an emptied
 // capture answers null, and a cell that only summed the present arm would pass over it.
 //
-// @falsified-at: cbd332641 — interpret exit 1 -> 0, interpret 2 assertion failures -> 0, native exit 1 -> 0, native 2 assertion failures -> 0
+// @falsified-at: cbd332641 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1624-a-captured-default-arm-is-delivered-into-the-buffer.patch —
+//   the same channels.
 // CHANNEL: assertion failures, both backends — the capture arm's sum and the capture's length.
 // HOLDS: leak and panic are unmoved; `k1`–`k3` are right before and after.
 // WITNESS: on the control, `c1 capture sum: got null, want 455` and

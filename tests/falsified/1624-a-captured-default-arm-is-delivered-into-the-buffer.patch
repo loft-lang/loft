@@ -1,0 +1,30 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 0e33362d1..40017ed53 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -15186,25 +15186,6 @@ impl Parser {
+                 *op = Value::Insert(vec![clear, append, Value::Var(w)]);
+                 true
+             }
+-            // A CAPTURE read (`OpGetDbRef(__closure, off)`) is a projection out of the
+-            // closure record exactly as `OpGetField` is one out of a struct, and `(O-Buffer)`
+-            // asks every arm of a vector return to be delivered into the caller's buffer.
+-            // `formal/closures.md` D-clo-7 calls a capture "a separate route" and it was left
+-            // with NO leg at all, so a branch with a captured default answered its own
+-            // closure's store on that arm while the sibling arm answered the buffer — one
+-            // return, two provenances, which no caller can tell apart.  Measured (loft#1621):
+-            // `g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap }` called in a loop
+-            // left `len(cap) == 0` and every later read null, on both backends.  The copy is
+-            // what the sibling arm already pays; the closure keeps its own store, so nothing
+-            // is freed here — the same terms as the projection leg below.
+-            Value::Call(d, _) if self.data.def(*d).name() == "OpGetDbRef" => {
+-                let rec_tp = self.append_elem_tp(elm);
+-                let proj = std::mem::replace(op, Value::Null);
+-                let clear = self.cl("OpClearVector", &[Value::Var(w)]);
+-                let append = self.cl("OpAppendVector", &[Value::Var(w), proj, Value::Int(rec_tp)]);
+-                *op = Value::Insert(vec![clear, append, Value::Var(w)]);
+-                true
+-            }
+             Value::Call(d, _) if crate::use_analysis::is_projection_op(&self.data, *d) => {
+                 let rec_tp = self.append_elem_tp(elm);
+                 let proj = std::mem::replace(op, Value::Null);

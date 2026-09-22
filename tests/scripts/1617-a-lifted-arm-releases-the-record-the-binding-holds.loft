@@ -44,7 +44,11 @@
 // and not a rule; it is pinned here because a guard that accepted either could not tell a
 // reordering from a lost hook.
 //
-// @falsified-at: 6814cb829 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-at: a93fa5966 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1617-a-lifted-arm-releases-the-record-the-binding-holds.patch —
+//   the same channels.  The REF is loft#1622's fix and NOT the commit before both: this
+//   guard's `c9` needs two droppable types behind nullable fields, which ICEs before it,
+//   and a guard scored against a tree that cannot compile it measures the ICE.
 // CHANNEL: assertion failures, both backends — a cell's hook is handed the source's record.
 // HOLDS: leak and panic are unmoved; the controls `k1`/`k2` are right before and after.
 // WITNESS: on the control, `c2 a chain at statement level: m2,R7|B2,d2, want m2,R7|B2,d7`.
