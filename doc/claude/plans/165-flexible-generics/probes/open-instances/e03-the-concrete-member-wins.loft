@@ -1,0 +1,9 @@
+// D5 — a concrete `show(b: Box<integer>)` beside `show<T: Printable>(b: Box<T>)`: the
+// concrete one takes a Box<integer>, the generic every other instance.
+// @EXPECT: int 3|any x|any 2.5
+struct Box<T> { v: T }
+fn show(b: Box<integer>) -> text { "int {b.v}" }
+fn show<T: Printable>(b: Box<T>) -> text { "any {b.v}" }
+fn main() {
+  println("{show(Box { v: 3 })}|{show(Box { v: "x" })}|{show(Box { v: 2.5 })}");
+}

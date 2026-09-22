@@ -1,0 +1,69 @@
+diff --git b/src/lexer.rs a/src/lexer.rs
+index 278a6139a..54d0a1509 100644
+--- b/src/lexer.rs
++++ a/src/lexer.rs
+@@ -2376,46 +2376,32 @@ impl Lexer {
+     /// variable as its build accumulator the way a parenthesised expression legitimately
+     /// does.
+     ///
+-    /// One thing stops the walk short of the closer, and answers `false`: a depth-0 `;`, or
+-    /// end of input — inside parentheses that means the source is malformed, and stopping
+-    /// keeps the scan STATEMENT-LOCAL.  That bound is not only about speed:
+-    /// [`revert`](Self::revert) restores the token STREAM and not the reporting cursor (a
+-    /// replayed token deliberately leaves `position` where the scan reached), so however far
+-    /// this walks is how far a diagnostic raised inside the replayed region has its caret
+-    /// pushed.  Unbounded, an unclosed `(` moved its caret from the offending line to the end
+-    /// of the function.
++    /// Two things stop the walk short of the closer, and both answer `false`:
+     ///
+-    /// A string literal WITHOUT an interpolation hole is crossed like any other token: a comma
+-    /// or bracket inside it is part of the string's one token.  Stopping at every string, as
+-    /// the walk did, answered `false` for a group whose member 0 held a string ANYWHERE —
+-    /// `(["a"], 1)`, a struct literal with a text field — and member 0 then adopted the
+-    /// assignment's destination as its build accumulator, which typed the local as the member
+-    /// and refused a legal program.
+-    ///
+-    /// A string that OPENS a hole still stops it, answering `false`.  The hole's closing `}`
+-    /// resumes the string only once the parser has read the hole's expression and switched
+-    /// the lexer back ([`set_mode`](Self::set_mode)), and a spec after a `:` is read in
+-    /// `Formatting` mode, where whitespace is a token; walked without the parser, that `}` is
+-    /// an ordinary token, the rest of the string is scanned as code, and the tokens a revert
+-    /// then replays are the mis-scanned ones.  Neither answer is free there: `false` refuses
+-    /// `t = (["{x}"], 1)` (the destination is typed as the member), and `true` refuses
+-    /// `v = (["{x}"] + w)`, a parenthesised concatenation that needs the destination as its
+-    /// accumulator.  `false` is the answer this walk always gave, so the vector literal in
+-    /// member 0 holding an interpolated string is the shape left open (loft#1590).
++    /// * a depth-0 `;`, or end of input — inside parentheses that means the source is
++    ///   malformed, and stopping keeps the scan STATEMENT-LOCAL.  That bound is not only
++    ///   about speed: [`revert`](Self::revert) restores the token STREAM and not the
++    ///   reporting cursor (a replayed token deliberately leaves `position` where the scan
++    ///   reached), so however far this walks is how far a diagnostic raised inside the
++    ///   replayed region has its caret pushed.  Unbounded, an unclosed `(` moved its caret
++    ///   from the offending line to the end of the function.
++    /// * a string literal, stopped BEFORE it is consumed.  A string may carry an
++    ///   interpolation HOLE, and the scanner's hole state (`in_format_expr`,
++    ///   `open_strings`, the backtick dedent stack) is not part of what a revert restores —
++    ///   crossing one and coming back leaves the lexer describing a string it is no longer
++    ///   inside, and the enclosing group then fails to close.  The answer given up costs
++    ///   nothing: a text member does not adopt the destination, so a `(` group led by a
++    ///   string was already correct without this.  A vector LITERAL whose first element is
++    ///   an interpolated string is the shape this concedes.
+     ///
+     /// Deliberately not [`recover_to`](Self::recover_to), whose depth walk this otherwise
+-    /// mirrors: recovery may cross anything, and this stops at the statement's end.
++    /// mirrors: recovery is allowed to cross a string, and this is not.
+     pub fn peek_tuple_literal(&mut self) -> bool {
+         let saved = self.link();
+         let mut depth: i32 = 0;
+         let mut found = false;
+         loop {
+-            if matches!(self.peek.has, LexItem::None) {
+-                break;
+-            }
+-            // `in_format_expr` is the scanner state of the token in hand, fresh or replayed:
+-            // a string that just opened a hole.
+-            if matches!(self.peek.has, LexItem::CString(_)) && self.in_format_expr {
++            if matches!(self.peek.has, LexItem::None | LexItem::CString(_)) {
+                 break;
+             }
+             if depth == 0 {

@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D5 — inside a template, `Box<T>` is an OPEN instance: a type whose argument is the
+// template's own variable.  A call binds `T` through it (`Box<T>` against `Box<integer>`),
+// and each monomorph substitutes the concrete instance wherever the template named the open
+// one — its signature, its locals, its field reads and writes, the literals it builds, the
+// element strides over a `vector<Box<T>>` — so each instance equals its hand-written twin
+// over `struct BoxInteger { v: integer }` (their bytecode is identical, a `-> Box<T>`
+// literal return built into the caller's `__retbuf` included).  A concrete overload beside
+// the generic takes the instance it names; a field after one typed by `T` sits at a
+// different offset per instance.
+//
+// @falsified-at: 1dcaaa1ec — interpret exit 1 -> 0, native exit 1 -> 0
+//   (no patch receipt: the step is 992 source lines, past `falsify.sh`'s bound for one.)
+//   CHANNEL: exit on both backends — the control has no open instance.
+//   ARMED: nothing.
+//   WITNESS: on the control `b: Box<T>` in a generic's header is "Expecting a clear type,
+//     found unknown".
+//   HOLDS: nothing else.
+
+struct Box<T> { v: T }
+struct Pair<T> { a: T, n: integer }
+struct Stack<T> { items: vector<T> }
+
+fn get<T>(b: Box<T>) -> T { b.v }
+fn put<T>(b: Box<T>, x: T) { b.v = x; }
+fn wrap<T>(x: T) -> Box<T> { Box { v: x } }
+fn map_box<T>(b: Box<T>, f: fn(T) -> T) -> Box<T> { Box { v: f(b.v) } }
+fn unwrap2<T>(b: Box<Box<T>>) -> T { b.v.v }
+fn outer<T>(b: Box<T>) -> T { get(b) }
+fn bump<T>(p: Pair<T>) -> integer { p.n + 1 }
+fn top<T>(s: Stack<T>) -> T { s.items[len(s.items) - 1] }
+fn count<T>(v: vector<Box<T>>) -> integer { len(v) }
+fn joined<T: Printable>(v: vector<Box<T>>) -> text {
+  s = "";
+  for b in v { s += "{b.v}"; }
+  s
+}
+fn show(b: Box<integer>) -> text { "int {b.v}" }
+fn show<T: Printable>(b: Box<T>) -> text { "any {b.v}" }
+
+fn test_a_field_read_and_write_through_the_variable() {
+  a = Box { v: 7 };
+  t: Box<text> = Box { v: "seven" };
+  put(a, get(a) + 1);
+  put(t, "eight");
+  assert(get(a) == 8 && get(t) == "eight" && get(Box { v: 1.5 }) == 1.5, "{get(a)} {get(t)}");
+}
+
+fn test_a_literal_built_and_returned_by_the_template() {
+  a = wrap(9);
+  n = wrap(wrap("in"));
+  m = map_box(Box { v: 7 }, |x| { x * 2 });
+  assert(a.v == 9 && n.v.v == "in" && m.v == 14, "{a.v} {n.v.v} {m.v}");
+}
+
+fn test_nested_and_forwarded() {
+  assert(unwrap2(Box { v: Box { v: 5 } }) == 5, "unwrap2");
+  assert(outer(Box { v: 11 }) == 11 && outer(Box { v: "z" }) == "z", "outer");
+}
+
+fn test_an_offset_that_depends_on_the_variable() {
+  x = Pair { a: "text", n: 10 };
+  y = Pair { a: 3.5, n: 20 };
+  z: Pair<u8> = Pair { a: 7, n: 30 };
+  assert(bump(x) == 11 && bump(y) == 21 && bump(z) == 31, "{bump(x)} {bump(y)} {bump(z)}");
+}
+
+fn test_collections_of_and_in_the_instance() {
+  n: vector<Box<integer>> = [Box { v: 10 }, Box { v: 20 }, Box { v: 30 }];
+  t: vector<Box<text>> = [Box { v: "a" }, Box { v: "b" }, Box { v: "c" }];
+  s = Stack { items: ["p", "q", "r"] };
+  assert(count(n) == 3 && joined(t) == "abc" && joined(n) == "102030", "{joined(t)}");
+  assert(top(s) == "r" && top(Stack { items: [4, 5] }) == 5, "{top(s)}");
+}
+
+fn test_the_concrete_member_takes_its_instance() {
+  assert(show(Box { v: 3 }) == "int 3", "{show(Box { v: 3 })}");
+  assert(show(Box { v: "x" }) == "any x" && show(Box { v: 2.5 }) == "any 2.5", "generic");
+}

@@ -1,0 +1,83 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D4 — a literal of a generic struct with no expected type builds the instance its
+// field values bind: `Box { v: 1 }` is a `Box<integer>`, the one an annotation names, as
+// `id(1)` instantiates `id<integer>`.  The variable binds through a collection field's
+// element, through a nested literal and from a value only typed on pass 2 (a function or
+// a struct declared below — that instance is minted and laid out on pass 2).  The values
+// are read once to learn their types and parsed again to build: a lambda value is minted
+// once, on both passes.
+//
+// @falsified-at: b6f497728 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-literal-infers-its-instance-from-its-field-values.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control infers no instance.
+//   ARMED: nothing.
+//   WITNESS: on the control `Box { v: 1 }` is "`Box { … }` needs its type arguments".
+//   HOLDS: nothing else.
+
+struct Pt { x: integer, y: integer }
+struct Box<T> { v: T }
+struct Stack<T> { items: vector<T>, name: text }
+
+fn twice(b: Box<integer>) -> integer { b.v * 2 }
+
+fn test_each_literal_builds_the_instance_its_value_binds() {
+  b = Box { v: 1 };
+  b.v = b.v + 5;
+  t = Box { v: "a" };
+  t.v += "b";
+  f = Box { v: 1.5 };
+  assert("{b.v}|{t.v}|{f.v}" == "6|ab|1.5", "{b.v}|{t.v}|{f.v}");
+}
+
+fn test_the_inferred_instance_is_the_annotated_one() {
+  b = Box { v: 4 };
+  c: Box<integer> = Box { v: 9 };
+  b = c;
+  d = Box { v: 6 };
+  assert(b.v == 9 && twice(d) == 12, "{b.v} {twice(d)}");
+}
+
+fn test_through_a_collection_field_and_a_nested_literal() {
+  s = Stack { items: [10, 20, 30], name: "s" };
+  total = 0;
+  for x in s.items { total += x; }
+  n = Box { v: Box { v: 7 } };
+  assert(len(s.items) == 3 && total == 60 && n.v.v == 7, "{total} {n.v.v}");
+}
+
+fn test_a_record_value_is_copied_in() {
+  p = Pt { x: 3, y: 4 };
+  b = Box { v: p };
+  b.v.x += 2;
+  assert(p.x == 3 && b.v.x == 5 && b.v.y == 4, "{p.x} {b.v.x}");
+}
+
+fn test_a_lambda_value() {
+  b = Box { v: fn(x: integer) -> integer { x + 1 } };
+  c = Box { v: fn(x: integer) -> integer { x * 2 } };
+  assert(b.v(2) == 3 && c.v(5) == 10, "{b.v(2)} {c.v(5)}");
+}
+
+fn test_as_a_receiver_and_in_a_vector() {
+  n = Box { v: 12 }.v;
+  v = [Box { v: 0 }];
+  for i in 1..3 { v += [Box { v: i }]; }
+  s = 0;
+  for e in v { s += e.v; }
+  assert(n == 12 && len(v) == 3 && s == 3, "{n} {len(v)} {s}");
+}
+
+fn test_a_value_typed_on_the_second_pass() {
+  b = Box { v: later() };
+  q: Box<Later> = Box { v: Later { k: 5 } };
+  r = Box { v: Later { k: 6 } };
+  s = Stack { items: [Later { k: 1 }, Later { k: 2 }], name: "q" };
+  s.items += [Later { k: 3 }];
+  assert(b.v == 41 && q.v.k == 5 && r.v.k == 6, "{b.v} {q.v.k} {r.v.k}");
+  assert(len(s.items) == 3 && s.items[2].k == 3, "{len(s.items)}");
+}
+
+fn later() -> integer { 41 }
+struct Later { k: integer }

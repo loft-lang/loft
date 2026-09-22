@@ -1,0 +1,10 @@
+// D5 — the return type names the open instance; T binds from the plain parameter.
+// @EXPECT: 9|nine|2
+struct Box<T> { v: T }
+fn wrap<T>(x: T) -> Box<T> { Box { v: x } }
+fn main() {
+  a = wrap(9);
+  t = wrap("nine");
+  n = wrap(wrap(2));
+  println("{a.v}|{t.v}|{n.v.v}");
+}

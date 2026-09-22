@@ -1,0 +1,12 @@
+// D4 — an inferred literal and an annotated one are ONE type: assignable, and taken by a
+// parameter that names the instance.
+// @EXPECT: 9|12
+struct Box<T> { v: T }
+fn twice(b: Box<integer>) -> integer { b.v * 2 }
+fn main() {
+  b = Box { v: 4 };
+  c: Box<integer> = Box { v: 9 };
+  b = c;
+  d = Box { v: 6 };
+  println("{b.v}|{twice(d)}");
+}

@@ -1,0 +1,7 @@
+// D5 — `Box<Box<T>>` is an open instance whose argument is an open instance.
+// @EXPECT: 5|in
+struct Box<T> { v: T }
+fn unwrap2<T>(b: Box<Box<T>>) -> T { b.v.v }
+fn main() {
+  println("{unwrap2(Box { v: Box { v: 5 } })}|{unwrap2(Box { v: Box { v: "in" } })}");
+}

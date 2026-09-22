@@ -626,6 +626,36 @@ cure, which is D3's annotation.
 
 - **Red on its own:** [d1](probes/d1-generic-struct.loft) answers `1|a`; an empty `Box {}`
   with no annotation is refused.
+- **Built** (2026-09-22).  `Parser::literal_instance`: with no expected instance the field
+  values are read once (`expression()`, nothing expected) to learn their types and the lexer
+  is put back — the abandon path `parse_object`'s hint retry already takes — then each header
+  variable binds through `resolve_type_var` over (declared field type, value type), the first
+  field that relates deciding, and the literal is built against the instance exactly as an
+  annotated one.  The first read's diagnostics are REWOUND (`Diagnostics::mark`/`rewind`,
+  new), so a value's warning is said once.  Refused on pass 2 at the literal's name: a
+  variable no value binds (`null`, a void call and a poisoned value bind nothing) — *"`Box
+  { … }` cannot tell what T is — no field value names it; give the binding its type"* — and
+  one variable given two types by two fields, named both (C1's predicate,
+  `convert_admitting`); a value that itself reported adds nothing (@P376).  An instance whose
+  argument is only typed on pass 2 (a function or struct declared BELOW the use) is minted
+  after the file's layout ran: H5 admits it as the seventh legal pass-2 append (a
+  `__tuple`'s shape), and the parser's `instance_def` wrapper registers and lays it out on
+  the spot as the closure record's registration does — this also closes the same hole in
+  D3's type position (`x: Box<Q>` above `struct Q` answered *"field has no storage"*).
+  `instance_def` refuses a `never` argument.
+  Found on the way and fixed (pre-existing on main, `hit-by:loft`): a struct field's value
+  and a vector literal's element are parsed through `parse_operators`, which never met
+  `expression()`'s check that a name READ resolves — a bare unknown name there read
+  *"Cannot assign unknown(0)"*, *"`main_vector<unknown>` never resolved"*, or NOTHING for a
+  collection field, whose in-place append then reached codegen (*"Incorrect var
+  undefined[65535]"*, an internal compiler error).  `known_var_or_type` now answers whether
+  it reported, both sites check and poison, `expression()` answers `never` for a name it
+  reported, and four cascades behind it are closed: a call on a poisoned argument
+  (*"Unknown function len"*), `+=` of a poisoned source, a vector field assigned a reported
+  name (said twice), a format width.  Exact-list tests in `tests/parse_errors.rs`.
+  Cells [inferred/](probes/inferred/) i01–i12 green on both backends under
+  `LOFT_STRICT_STORES` + `LOFT_POISON`, refusals [inferred-refused/](probes/inferred-refused/)
+  x01–x06 read by hand.  Corpus against D3: the new guard alone differs.
 
 ### D5 — a generic function over a generic struct  ·  M
 
@@ -641,6 +671,36 @@ arguments.
 - **The alarm:** an open instance reaching layout is loft#1536's class (a zero-width
   `__typevar_T`).  Make it loud: the layout pass refuses a definition whose recorded
   arguments mention a variable.
+- **Built** (2026-09-22).  An open instance is a def `instance_def` now mints for arguments
+  that mention a variable (`Data::is_open_instance`).  It gets a ROW and no layout —
+  `fill_database` registers it fieldless under the placeholder's internal prefix, and the
+  native `init()` replays it fieldless (a replayed field minted `vector<__typevar_T>` and
+  shifted every later id; `LOFT_STRICT_SCHEMA_IDS=1` caught it).  Binding: `resolve_type_var`
+  takes `&Data` and pairs an open instance's recorded arguments with a concrete one's;
+  `template_vars`, the every-variable check and the type-variable questions read through
+  open instances (`type_mentions`, `placeholders_in`).  Substitution: a monomorph's bindings
+  gain `(open ↦ concrete)` pairs (`open_instance_bindings`) — the plan's *"`substitute_all`
+  over an open instance answers `instance_def` of the substituted arguments"*, reached by the
+  substitution the variable already takes — so signatures, locals, body types, predicted
+  returns and selection ranks see the concrete instance; `retarget_parametric_type_rows`
+  maps the open row to the concrete one, and a monomorph still naming an open row after it
+  is an internal error (the alarm).  Deferred sites for what the layout decides:
+  `TV_FIELD` (read, at `get_field`), `TV_FIELD_SET` (write, at `towards_set`), `TV_OBJECT`
+  (a literal), each lowered per instance by the ordinary helper; an element stride over a
+  `vector<Box<T>>` names the open instance.  A `-> Box<T>` template declares the twin's
+  `__retbuf` (the shape is a record whatever `T` is, so `return_shape_depends_on_type_var`
+  stays structural), and the monomorph replays the twin's tail delivery
+  (`promote_monomorph_record_return`: `BuildIntoBuffer`, and literal mid-body exits).  A
+  literal passed to a generic infers its own instance rather than the parameter's open one;
+  messages show an instance as written (`Box<T>`, not the `Box<T#5>` key).
+  Twins: `get`, `put`, `wrap` (literal return) and `bump` (an offset after a `T` field) are
+  byte-identical to their hand-written twins over `BoxInteger` / `PairText`.  Cells
+  [open-instances/](probes/open-instances/) e01–e10 green on both backends under
+  `LOFT_STRICT_STORES` + `LOFT_POISON`, and on native under `LOFT_STRICT_SCHEMA_IDS`.
+  Corpus against D4: IDENTICAL but for the new guard.
+  Found on the way (next): a field `assert(…)` on a generic struct is refused *"Unknown
+  variable 'n'"* where the twin's check holds, and `instance_def` copies the template's
+  check code into each instance.
 
 ### D6 — a method on a generic struct  ·  S
 

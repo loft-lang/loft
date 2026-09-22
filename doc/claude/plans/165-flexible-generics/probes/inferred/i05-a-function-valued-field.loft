@@ -1,0 +1,10 @@
+// D4 — a lambda as the value: the read that learns the types and the build must not
+// mint two lambdas, on either pass.
+// @EXPECT: 3|10
+struct Box<T> { v: T }
+fn main() {
+  b = Box { v: fn(x: integer) -> integer { x + 1 } };
+  k = 5;
+  c = Box { v: fn(x: integer) -> integer { x * 2 } };
+  println("{b.v(2)}|{c.v(k)}");
+}

@@ -1,0 +1,12 @@
+// D3/D4 — as i11, with a collection field: the pass-2 instance's vector field is laid
+// out and grows.
+// @EXPECT: 3|3|7|9
+struct Stack<T> { items: vector<T>, n: integer }
+fn main() {
+  s = Stack { items: [Q { k: 1 }, Q { k: 2 }], n: 9 };
+  s.items += [Q { k: 3 }];
+  t: Stack<Q> = Stack { items: [], n: 1 };
+  t.items += [Q { k: 7 }];
+  println("{len(s.items)}|{s.items[2].k}|{t.items[0].k}|{s.n}");
+}
+struct Q { k: integer }

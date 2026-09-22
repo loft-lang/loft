@@ -1,0 +1,10 @@
+// D3/D4 — an argument declared below the use: the instance is minted on pass 2 and laid
+// out there (the file's layout ran at the end of pass 1).  Annotated and inferred.
+// @EXPECT: 5|6
+struct Box<T> { v: T }
+fn main() {
+  b: Box<Q> = Box { v: Q { n: 5 } };
+  c = Box { v: Q { n: 6 } };
+  println("{b.v.n}|{c.v.n}");
+}
+struct Q { n: integer }

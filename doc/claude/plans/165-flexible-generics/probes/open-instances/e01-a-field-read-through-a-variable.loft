@@ -1,0 +1,9 @@
+// D5 — `get<T>(b: Box<T>) -> T` reads the field of whichever instance it is called with.
+// @EXPECT: 7|seven|1.5
+struct Box<T> { v: T }
+fn get<T>(b: Box<T>) -> T { b.v }
+fn main() {
+  a = Box { v: 7 };
+  t: Box<text> = Box { v: "seven" };
+  println("{get(a)}|{get(t)}|{get(Box { v: 1.5 })}");
+}

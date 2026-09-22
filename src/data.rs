@@ -3031,6 +3031,19 @@ impl Type {
                     data.def(*t).name
                 )
             }
+            // An instance of a generic struct (@PLN165 D3/D5) is SHOWN as its template applied to
+            // its arguments, each spelled as the reader wrote it — `Box<T>` for the open
+            // instance keyed `Box<T#5>`, `Box<u8>` where the key carries the width.  The key
+            // keeps the def name.
+            Type::Reference(t, _) if source && data.def(*t).instance_of != u32::MAX => {
+                let d = data.def(*t);
+                let args: Vec<String> = d
+                    .instance_args
+                    .iter()
+                    .map(|a| a.render(data, true))
+                    .collect();
+                format!("{}<{}>", data.def(d.instance_of).name, args.join(", "))
+            }
             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
             Type::Text(_) => "text".to_string(),
             Type::Vector(tp, _) if matches!(tp as &Type, Type::Unknown(_)) => "vector".to_string(),
@@ -9032,9 +9045,12 @@ impl Data {
     /// the caller reports that.
     pub fn instance_def(&mut self, lexer: &mut Lexer, template: u32, args: &[Type]) -> u32 {
         let params = self.definitions[template as usize].type_params.clone();
+        // `never` is a poisoned site's type (@P376), not an argument: no instance holds one.
+        // An argument mentioning a type variable mints an OPEN instance (@PLN165 D5,
+        // `is_open_instance`), which is never laid out.
         if params.len() != args.len()
             || args.iter().any(Self::type_has_unresolved)
-            || args.iter().any(|a| self.mentions_type_var(a))
+            || args.iter().any(|a| matches!(a.base(), Type::Never))
         {
             return u32::MAX;
         }
@@ -9466,8 +9482,104 @@ impl Data {
     pub fn mentions_type_var(&self, tp: &Type) -> bool {
         tp.any_node(&mut |t| {
             matches!(t.base(), Type::Reference(d, _) if (*d as usize) < self.definitions.len()
-                && self.is_type_var_placeholder(*d))
+                && (self.is_type_var_placeholder(*d) || self.is_open_instance(*d)))
         })
+    }
+
+    /// An OPEN instance (@PLN165 D5): an instance of a generic struct whose recorded
+    /// arguments mention a type variable — `Box<T>` written inside a template.  It is a type
+    /// only inside that template: never laid out, and a monomorph substitutes the concrete
+    /// instance its bindings name ([`Data::open_instance_bindings`]).
+    #[must_use]
+    pub fn is_open_instance(&self, d_nr: u32) -> bool {
+        let Some(d) = self.definitions.get(d_nr as usize) else {
+            return false;
+        };
+        d.instance_of != u32::MAX && d.instance_args.iter().any(|a| self.mentions_type_var(a))
+    }
+
+    /// Does `tp` mention the definition `d` — directly, or through an open instance's
+    /// arguments?  `Box<T>` is `Reference(Box<T>)`: its `T` lives in the instance's recorded
+    /// arguments, where [`Type::contains_def`]'s structural walk does not look, so a question
+    /// about a type VARIABLE asks this.
+    #[must_use]
+    pub fn type_mentions(&self, tp: &Type, d: u32) -> bool {
+        tp.contains_def(d)
+            || tp.any_node(&mut |t| {
+                matches!(t.base(), Type::Reference(r, _) if self.is_open_instance(*r)
+                    && self.definitions[*r as usize]
+                        .instance_args
+                        .iter()
+                        .any(|a| self.type_mentions(a, d)))
+            })
+    }
+
+    /// Every type-variable placeholder `tp` mentions, in first-seen order — through open
+    /// instances' arguments as [`Data::type_mentions`] reads them.
+    pub fn placeholders_in(&self, tp: &Type, out: &mut Vec<u32>) {
+        let mut found: Vec<u32> = Vec::new();
+        tp.any_node(&mut |t| {
+            if let Type::Reference(r, _) = t.base()
+                && (*r as usize) < self.definitions.len()
+                && (self.is_type_var_placeholder(*r) || self.is_open_instance(*r))
+            {
+                found.push(*r);
+            }
+            false
+        });
+        for r in found {
+            if self.is_type_var_placeholder(r) {
+                if !out.contains(&r) {
+                    out.push(r);
+                }
+            } else {
+                for a in &self.definitions[r as usize].instance_args {
+                    self.placeholders_in(a, out);
+                }
+            }
+        }
+    }
+
+    /// The `(open instance ↦ concrete instance)` pairs a monomorph with `bindings` adds to
+    /// its substitution (@PLN165 D5): every open instance whose arguments mention a bound
+    /// variable, in creation order so a nested one (`Box<Box<T>>`) finds its inner argument
+    /// already paired.  `substitute_all` replaces `Reference(holder)` wherever it sits, so the
+    /// signature, the variable table and the body's types reach the concrete instance by the
+    /// substitution the variable itself takes — `[T ↦ integer]` over `Box<T>` is
+    /// `Box<integer>`, `instance_def` of the substituted arguments.  One whose arguments still
+    /// mention a variable afterwards (a template instantiated at another's variable) pairs
+    /// with the open instance of those arguments.
+    pub fn open_instance_bindings(
+        &mut self,
+        lexer: &mut Lexer,
+        bindings: &[(u32, Type)],
+    ) -> Vec<(u32, Type)> {
+        let mut pairs: Vec<(u32, Type)> = Vec::new();
+        for d in 0..self.definitions() {
+            if !self.is_open_instance(d)
+                || !bindings.iter().any(|(h, _)| {
+                    self.definitions[d as usize]
+                        .instance_args
+                        .iter()
+                        .any(|a| self.type_mentions(a, *h))
+                })
+            {
+                continue;
+            }
+            let template = self.definitions[d as usize].instance_of;
+            let all: Vec<(u32, Type)> = bindings.iter().chain(pairs.iter()).cloned().collect();
+            let args: Vec<Type> = self.definitions[d as usize]
+                .instance_args
+                .clone()
+                .into_iter()
+                .map(|a| a.substitute_all(&all))
+                .collect();
+            let bound = self.instance_def(lexer, template, &args);
+            if bound != u32::MAX && bound != d {
+                pairs.push((d, Type::Reference(bound, Deps::none())));
+            }
+        }
+        pairs
     }
 
     /// A generic type-variable placeholder: the attribute-less, self-referential

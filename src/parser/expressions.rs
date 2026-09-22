@@ -1382,8 +1382,14 @@ impl Parser {
             // (`in_tuple_lhs`, cursor on the `,` or `)`).  A destructuring the
             // parser cannot lower is still refused below — "Cannot destructure a
             // non-tuple value" — so nothing is silenced, only re-homed.
-            if !self.at_binding_name() {
-                self.known_var_or_type(val, &expr_pos);
+            // A name reported here is poisoned (@P376), so the statement that takes the value
+            // does not explain it a second time — `w.f = undefined` reported the name once as
+            // the right-hand side and again as the whole statement's value.
+            if !self.at_binding_name()
+                && !matches!(res.base(), Type::Never)
+                && self.known_var_or_type(val, &expr_pos)
+            {
+                return Type::Never;
             }
             res
         }
@@ -3839,8 +3845,12 @@ use a separate collection or add after the loop"
         // "Unknown variable 'qqq'" still fires.
         let code_is_target = matches!(code, Value::Var(c) if *c == var_nr);
         let skip_rhs_check = matches!(s_type, Type::Never) || (poison && code_is_target);
-        if !skip_rhs_check {
-            self.known_var_or_type(code, &rhs_pos);
+        if !skip_rhs_check && self.known_var_or_type(code, &rhs_pos) {
+            // The name is reported; left in `code` it is the statement's value too, and a
+            // lowering that keeps it there (a vector field's) had `expression()` report it a
+            // second time at the statement's start.
+            *code = Value::Null;
+            s_type = Type::Never;
         }
         if poison {
             s_type = Type::Never;
@@ -4306,6 +4316,13 @@ use a separate collection or add after the loop"
                     content,
                     content
                 );
+                *code = Value::Insert(Vec::new());
+                return Type::Void;
+            }
+            if kind == crate::parser::vectors::AppendSource::Unrelated
+                && matches!(s_type.base(), Type::Never)
+            {
+                // A source poisoned by a reported error (@P376) is not a second one.
                 *code = Value::Insert(Vec::new());
                 return Type::Void;
             }

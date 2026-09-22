@@ -1,0 +1,6 @@
+// D4 — a diagnostic raised inside a value is said ONCE, not once per read.
+struct Box<T> { v: T }
+fn main() {
+  b = Box { v: 1 / 0 };
+  println("{b.v}");
+}

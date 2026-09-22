@@ -33,6 +33,10 @@
 //   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
 //   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
 //   both. The native side was not scored in this sweep.
+//
+// The ORDER within one tuple is reverse member order, as a struct's fields are (loft#1588): the
+// cells with two droppables pinned the forward order until then, which is what the backings'
+// registration at the function's head produced, not a rule.
 
 fn trace_path() -> text { return "loft_tupdrop_trace.tmp"; }
 
@@ -89,7 +93,7 @@ fn main() {
   assert(got == "alive1,1", "c1 a whole-tuple bind moves the release to the copy: {got}");
 
   c2(); got = drain();
-  assert(got == "alive2122,21,22", "c2 two droppable members, each released once: {got}");
+  assert(got == "alive2122,22,21", "c2 two droppable members, each released once: {got}");
 
   c3(); got = drain();
   assert(got == "alive3,3", "c3 the member at index 1, a scalar before it: {got}");

@@ -196,6 +196,10 @@ impl Parser {
         if !self.satisfies(r, &bindings) {
             return None;
         }
+        // `Box<T>` ranks as the instance the binding names (@PLN165 D5).
+        let mut bindings = bindings;
+        let open = self.open_instance_bindings(&bindings);
+        bindings.extend(open);
         let declared: Vec<Type> = self
             .data
             .def(r)

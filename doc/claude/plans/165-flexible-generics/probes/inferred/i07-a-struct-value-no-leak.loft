@@ -1,0 +1,10 @@
+// D4 — a record value: the instance holds a struct, copied in, freed once.
+// @EXPECT: 3,4|5
+struct Point { x: integer, y: integer }
+struct Box<T> { v: T }
+fn main() {
+  p = Point { x: 3, y: 4 };
+  b = Box { v: p };
+  b.v.x += 2;
+  println("{p.x},{p.y}|{b.v.x}");
+}

@@ -2068,30 +2068,47 @@ impl Parser {
         if d_nr != u32::MAX && matches!(self.data.def_type(d_nr), DefType::Unknown) {
             d_nr = u32::MAX;
         }
-        // @PLN165 D3 — a literal of a generic struct names the INSTANCE it builds: the one the
-        // expected type (a binding's annotation, a parameter) is, as `v: vector<integer> = []`
-        // takes its element type from the annotation.
+        // @PLN165 D3/D4 — a literal of a generic struct names the INSTANCE it builds: the one
+        // the expected type (a binding's annotation, a parameter) is, as `v: vector<integer> =
+        // []` takes its element type from the annotation, or else the one its field values
+        // bind.
         if d_nr != u32::MAX
             && self.data.def_type(d_nr) == DefType::TypeTemplate
             && self.lexer.peek_token("{")
         {
+            // An OPEN expected instance (`Box<T>`) is the literal's own only inside the
+            // template that names it; a call's argument reaching a generic `f(b: Box<T>)` is
+            // expected as the parameter's open instance, and infers from its values instead.
+            let in_template =
+                self.context != u32::MAX && self.data.def_type(self.context) == DefType::Generic;
             let expected = match self.expected.base() {
-                Type::Reference(inst, _) if self.data.def(*inst).instance_of == d_nr => *inst,
+                Type::Reference(inst, _)
+                    if self.data.def(*inst).instance_of == d_nr
+                        && (in_template || !self.data.is_open_instance(*inst)) =>
+                {
+                    *inst
+                }
                 _ => u32::MAX,
             };
-            if expected == u32::MAX {
-                if !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "`{name} {{ … }}` needs its type arguments — give the binding its type, \
-                         `x: {name}<integer> = {name} {{ … }}`"
-                    );
-                }
+            let inst = if expected == u32::MAX {
+                self.literal_instance(d_nr, name_pos)
+            } else {
+                Some(expected)
+            };
+            let Some(inst) = inst else {
                 self.skip_braced();
-                return Type::Never;
+                return if self.first_pass {
+                    Type::Unknown(0)
+                } else {
+                    Type::Never
+                };
+            };
+            // @PLN165 D5 — an open instance has no layout: its literal is deferred to each
+            // monomorph (`Parser::TV_OBJECT`).
+            if self.data.is_open_instance(inst) {
+                return self.open_literal(inst, code);
             }
-            d_nr = expected;
+            d_nr = inst;
         }
         if d_nr != u32::MAX {
             self.data.def_used(d_nr);
@@ -2378,13 +2395,15 @@ impl Parser {
         looks_like_struct
     }
 
-    pub(crate) fn known_var_or_type(&mut self, code: &Value, pos: &Position) {
+    /// Report a name READ that resolves to nothing; answers whether it reported, so a caller
+    /// that goes on to use the value can poison it (@P376) instead of explaining it again.
+    pub(crate) fn known_var_or_type(&mut self, code: &Value, pos: &Position) -> bool {
         if let Value::Var(nr) = code {
             if !self.vars.exists(*nr) {
-                return;
+                return false;
             }
             if self.default && matches!(self.vars.tp(*nr), Type::Vector(_, _)) {
-                return;
+                return false;
             }
             if !self.first_pass && (self.vars.tp(*nr).is_unknown() || !self.vars.is_defined(*nr)) {
                 let name = self.vars.name(*nr).to_string();
@@ -2400,7 +2419,7 @@ impl Parser {
                         "`_` discards the value assigned to it — there is nothing to read \
                          back; give the value a name if you need it"
                     );
-                    return;
+                    return true;
                 }
                 // loft#826 — a file-scope constant declared by the file that
                 // `use`d this one reaches here as an unknown VARIABLE, because
@@ -2410,7 +2429,7 @@ impl Parser {
                 // while looking straight at `TOP` in the importing file.
                 if let Some(note) = self.importer_boundary_note(&name) {
                     diagnostic_at!(self.lexer, pos, Level::Error, "{note}");
-                    return;
+                    return true;
                 }
                 let candidates: Vec<&str> = (0..self.vars.count())
                     .filter(|&v| {
@@ -2434,7 +2453,7 @@ impl Parser {
                 // which would otherwise offer the nearest local.
                 if let Some(msg) = self.generic_value_refusal(&name) {
                     diagnostic_at!(self.lexer, pos, Level::Error, "{msg}");
-                    return;
+                    return true;
                 }
                 let receivers = self.method_receivers_named(&name);
                 if !receivers.is_empty() {
@@ -2448,7 +2467,7 @@ impl Parser {
                          declare the function with a plain first-parameter name (not `self` / \
                          `both`), which makes it a free function and a usable fn-ref"
                     );
-                    return;
+                    return true;
                 }
                 let suggestion = if name.chars().count() <= 1 {
                     None
@@ -2484,8 +2503,10 @@ impl Parser {
                 } else {
                     diagnostic_at!(self.lexer, pos, Level::Error, "Unknown variable '{}'", name);
                 }
+                return true;
             }
         }
+        false
     }
 
     /// `Type.parse(arg)` — populate a struct from a JsonValue.
@@ -2773,9 +2794,11 @@ impl Parser {
                         // LITERAL, which `append_data_fp` splits into width and
                         // precision; a float VARIABLE is not that spelling and is refused
                         // with the rest.
-                        let width_is_a_number = matches!(w_tp, Type::Integer(_) | Type::Unknown(_))
-                            || (matches!(w_tp, Type::Float)
-                                && matches!(state.width, Value::Float(_)));
+                        // `never` is a width that already reported (@P376).
+                        let width_is_a_number =
+                            matches!(w_tp, Type::Integer(_) | Type::Unknown(_) | Type::Never)
+                                || (matches!(w_tp, Type::Float)
+                                    && matches!(state.width, Value::Float(_)));
                         if !self.first_pass && !width_is_a_number {
                             if matches!(w_tp, Type::Boolean) {
                                 diagnostic!(
@@ -4107,6 +4130,7 @@ impl Parser {
                         std::mem::replace(&mut self.rebuild_watch_hit, false),
                     )
                 });
+                let value_pos = self.lexer.peek_pos().clone();
                 let mut t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
                 if let Some((w, hit)) = outer_watch {
                     if self.rebuild_watch_hit {
@@ -4135,6 +4159,14 @@ impl Parser {
                         parent_tp = parent_tp.depending(*v);
                     }
                     t = self.parse_operators(&td, &mut value, &mut parent_tp, 0);
+                }
+                // A name READ must resolve — the check `expression()` makes of its operand,
+                // which a value parsed straight through `parse_operators` never met: a bare
+                // unknown name reported "Cannot assign unknown(0)" for a scalar field and
+                // nothing at all for a collection one, whose in-place append then reached
+                // codegen with the unresolved variable (an internal compiler error).
+                if !matches!(t.base(), Type::Never) && self.known_var_or_type(&value, &value_pos) {
+                    t = Type::Never;
                 }
                 self.expected = saved_expected;
                 self.amp_head = AmpHead::No;
@@ -4226,18 +4258,215 @@ impl Parser {
         orig
     }
 
+    /// @PLN165 D4 — the instance a literal of the generic struct `template` builds when no
+    /// expected type names one.  Each variable binds to what the first field value whose
+    /// declared type mentions it relates to — [`Parser::resolve_type_var`], the pairing a
+    /// call's arguments bind through — so `Box { v: 1 }` builds `Box<integer>` as
+    /// `id(1)` instantiates `id<integer>`.
+    ///
+    /// The values are read once to learn their types and the lexer is put back, the abandon
+    /// path `parse_object`'s hint retry takes; the literal is then built against the instance
+    /// exactly as an annotated one is, and what its values report is reported by that second
+    /// read.  `None` when a variable stays unbound or two fields bind it to two types — on
+    /// pass 2 reported, naming the variable and the annotation that cures it, unless a value
+    /// already reported (@P376: the site is poisoned, not explained twice).
+    fn literal_instance(&mut self, template: u32, at: &Position) -> Option<u32> {
+        let link = self.lexer.link();
+        let work = self.vars.work_ref();
+        let work_p2 = self.vars.work_ref_p2();
+        let mark = self.lexer.diagnostics().mark();
+        let errors = self.lexer.diagnostics().error_count();
+        let mut values: Vec<(String, Type)> = Vec::new();
+        self.lexer.token("{");
+        while !self.lexer.peek_token("}") {
+            let Some(field) = self
+                .lexer
+                .has_identifier()
+                .or_else(|| self.lexer.has_cstring())
+            else {
+                break;
+            };
+            if !self.lexer.has_token(":") {
+                break;
+            }
+            let outer = std::mem::replace(&mut self.expected, Type::Unknown(0));
+            let mut value = Value::Null;
+            let tp = self.expression(&mut value);
+            self.expected = outer;
+            values.push((field, tp));
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        let reported = self.lexer.diagnostics().error_count() > errors;
+        self.lexer.revert(link);
+        self.vars.clean_work_refs(work);
+        self.vars.clean_work_refs_p2(work_p2);
+        let name = self.data.def(template).name().to_string();
+        // (field, its declared type, its value's type) — an unknown field is the second
+        // read's to report.
+        let fields: Vec<(String, Type, Type)> = values
+            .into_iter()
+            .filter_map(|(f, value)| {
+                let nr = self.data.attr(template, &f);
+                (nr != usize::MAX).then(|| {
+                    let declared = self.data.attr_type(template, nr);
+                    (f, declared, value)
+                })
+            })
+            .collect();
+        let mut bindings: Vec<(u32, Type)> = Vec::new();
+        let mut refusal = None;
+        for v in self.data.def(template).type_params.clone() {
+            let spelled = crate::data::Data::type_var_spelling(self.data.def(v).name()).to_string();
+            let mut bound: Option<(String, Type)> = None;
+            for (f, declared, value) in &fields {
+                if !self.data.type_mentions(declared, v) {
+                    continue;
+                }
+                // `null`, a call answering nothing and a value poisoned by its own report
+                // (@P376) name no type; they bind nothing.
+                let got = Self::resolve_type_var(&self.data, declared, v, value);
+                if got.is_unknown() || matches!(got.base(), Type::Null | Type::Void | Type::Never) {
+                    continue;
+                }
+                match &bound {
+                    None => bound = Some((f.clone(), got)),
+                    Some((first, b)) => {
+                        let expected = declared.clone().substitute(v, b);
+                        let mut trial = Value::Null;
+                        if refusal.is_none()
+                            && !self.convert_admitting(&mut trial, value, &expected)
+                        {
+                            refusal = Some(format!(
+                                "`{name} {{ … }}` binds {spelled} to {} through `{first}` and to \
+                                 {} through `{f}` — a type variable is one type in a literal; give \
+                                 `{f}` a value of the same type, or give the two fields a variable \
+                                 each",
+                                b.source_name(&self.data),
+                                got.source_name(&self.data),
+                            ));
+                        }
+                    }
+                }
+            }
+            if let Some((_, b)) = bound {
+                bindings.push((v, b));
+            } else if refusal.is_none() {
+                refusal = Some(format!(
+                    "`{name} {{ … }}` cannot tell what {spelled} is — no field value names it; \
+                     give the binding its type, `x: {name}<integer> = {name} {{ … }}`"
+                ));
+            }
+        }
+        if let Some(message) = refusal {
+            if !self.first_pass && !reported {
+                self.lexer.rewind_diagnostics(mark);
+                // At the literal's name: after the lexer is put back, `prev_end` still
+                // reads where the first read stopped (the `Lexer::revert` note in
+                // `parse_object`).
+                diagnostic_at!(self.lexer, at, Level::Error, "{message}");
+            }
+            return None;
+        }
+        self.lexer.rewind_diagnostics(mark);
+        let args: Vec<Type> = bindings.into_iter().map(|(_, b)| b).collect();
+        let inst = self.instance_def(template, &args);
+        (inst != u32::MAX).then_some(inst)
+    }
+
+    /// A literal of the OPEN instance `open` (@PLN165 D5): its field values, parsed each
+    /// against its declared field type, deferred as a [`Parser::TV_OBJECT`] each monomorph
+    /// builds into a fresh record of the instance it names (`lower_open_object`).
+    fn open_literal(&mut self, open: u32, code: &mut Value) -> Type {
+        let mut fields = vec![Value::Int(open as i32)];
+        self.lexer.token("{");
+        while !self.lexer.peek_token("}") {
+            let Some(field) = self
+                .lexer
+                .has_identifier()
+                .or_else(|| self.lexer.has_cstring())
+            else {
+                break;
+            };
+            self.lexer.token(":");
+            let nr = self.data.attr(open, &field);
+            if nr == usize::MAX && !self.first_pass {
+                let shown = self.data.def(open).name().to_string();
+                diagnostic!(self.lexer, Level::Error, "Unknown field {shown}.{field}");
+            }
+            let declared = if nr == usize::MAX {
+                Type::Unknown(0)
+            } else {
+                self.data.attr_type(open, nr)
+            };
+            let outer = std::mem::replace(&mut self.expected, declared);
+            let mut value = Value::Null;
+            let tp = self.expression(&mut value);
+            self.expected = outer;
+            fields.push(v_block(
+                vec![Value::Text(field), value],
+                tp,
+                Self::TV_OBJECT_FIELD,
+            ));
+            if !self.lexer.has_token(",") {
+                break;
+            }
+        }
+        self.lexer.token("}");
+        let tp = Type::Reference(open, crate::data::Deps::none());
+        *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
+        tp
+    }
+
+    /// [`Data::open_instance_bindings`](crate::data::Data::open_instance_bindings), with each
+    /// concrete instance it mints on pass 2 laid out as [`Parser::instance_def`] lays one out.
+    pub(crate) fn open_instance_bindings(&mut self, bindings: &[(u32, Type)]) -> Vec<(u32, Type)> {
+        let pairs = self.data.open_instance_bindings(&mut self.lexer, bindings);
+        for (_, bound) in &pairs {
+            if let Type::Reference(d, _) = bound.base() {
+                self.lay_out_instance(*d);
+            }
+        }
+        pairs
+    }
+
+    fn lay_out_instance(&mut self, inst: u32) {
+        if !self.first_pass && inst != u32::MAX && self.data.def(inst).known_type() == u16::MAX {
+            crate::typedef::fill_database(&mut self.data, &mut self.database, inst);
+            self.database
+                .lay_out_record(self.data.def(inst).known_type());
+        }
+    }
+
+    /// [`Data::instance_def`](crate::data::Data::instance_def), and on pass 2 the layout an
+    /// instance minted there has missed: the file's `fill_all` ran at the end of pass 1, so an
+    /// instance whose argument was a forward reference then (`Box { v: later() }`, `x: Box<Q>`
+    /// above `struct Q`) is registered and laid out here, before the code that reads its field
+    /// positions — the closure record's on-demand registration.
+    pub(crate) fn instance_def(&mut self, template: u32, args: &[Type]) -> u32 {
+        let inst = self.data.instance_def(&mut self.lexer, template, args);
+        self.lay_out_instance(inst);
+        inst
+    }
+
     /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —
     /// what a literal refused before its fields are typed leaves behind, so the parser stays
     /// aligned for the next statement.
     fn skip_braced(&mut self) {
-        if !self.lexer.has_token("{") {
-            return;
+        if self.lexer.has_token("{") {
+            self.skip_to_close("{", "}");
         }
+    }
+
+    /// Consume the rest of a group whose `open` is already read, through its `close`, nested
+    /// groups of the same kind included and stopping at the end of input.
+    pub(crate) fn skip_to_close(&mut self, open: &'static str, close: &'static str) {
         let mut depth = 1u32;
         while depth > 0 {
-            if self.lexer.has_token("{") {
+            if self.lexer.has_token(open) {
                 depth += 1;
-            } else if self.lexer.has_token("}") {
+            } else if self.lexer.has_token(close) {
                 depth -= 1;
             } else if matches!(self.lexer.peek().has, crate::lexer::LexItem::None) {
                 return;

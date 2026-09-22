@@ -1,0 +1,8 @@
+// D4 — the literal is a receiver, not the whole right-hand side.
+// @EXPECT: 12|b
+struct Box<T> { v: T }
+fn main() {
+  n = Box { v: 12 }.v;
+  t = Box { v: "b" }.v;
+  println("{n}|{t}");
+}

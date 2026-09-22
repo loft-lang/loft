@@ -2769,12 +2769,19 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **332** |
+| **331** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, the SECOND join that day — `157-native-4x` and `tuxedo-165-generics` into ../loft2 —
+re-measured at its end: **885 · 549 · 5 · 331**, and `--check-ratchet` pinned lower at opaque 331,
+opaque tests 1313.  The sides read 332 (../loft2) and 333 (the generics line); the joined tree
+read 331 · 1314, and the one extra test was ../loft2's own — a bare `Type::Tuple` test in
+`Scopes::scan_set` that loft#1588 added beside an older one — which peels, since a nullable tuple
+local holds the same members.)
 
 (2026-09-22, the join of `tuxedo-1562-layout-gate`, `157-native-4x` and `tuxedo-165-generics` into
 ../loft2, re-measured at its end: **876 · 539 · 5 · 332**, and `--check-ratchet` pinned lower —
@@ -2782,6 +2789,10 @@ opaque 332, opaque tests 1313.  The sides read 333 (../loft2) and 334 (the 157 l
 generics line), each true of its own base.  The joined tree read 333 · 1314 with
 `output_coroutine`'s closure test bare, as loft#1586 brought it in; it peels, because a nullable
 fn-ref still captures, and the join reads 332 · 1313.)
+(2026-09-22, @PLN165 D4 on `tuxedo-165-generics`: **867 · 529 · 5 · 333**, and `--check-ratchet`
+re-pinned at opaque 333, opaque tests 1314.  The fall is the D4 unit peeling each `never` test it
+added (`.base()`) — a function that asked `matches!(t, Type::Never)` beside a peeled test was
+counted opaque — while the census's growth since the second join is the @PLN165 arcs A–D.)
 
 (2026-09-17, the SECOND join, re-measured at its end: **847 · 507 · 6 · 334**, and
 `--check-ratchet` reports *at baseline* — opaque 334, opaque tests 1314.  The opaque column is

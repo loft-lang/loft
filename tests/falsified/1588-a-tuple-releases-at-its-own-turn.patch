@@ -1,0 +1,346 @@
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 0e3e9bf46..4dd59537c 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -6166,7 +6166,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             return None;
+         }
+         self.vars.defined(o);
+-        let mut ops = self.vector_db(&elm, o);
++        let mut ops = self.vector_db(tp, o);
+         // The clear says once, where the replace is: a no-op on a fresh store and correct on a
+         // reused one — the same reason the match-arm copy beside this one clears.
+         ops.push(self.cl("OpClearVector", &[Value::Var(o)]));
+diff --git b/src/scopes.rs a/src/scopes.rs
+index a74ee609e..750fcd838 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -240,13 +240,6 @@ struct Scopes<'s> {
+     /// [`Self::owned_refs`]: intersect-merged at every join, so a pairing that holds on one
+     /// path only is dropped (losing the hook, never doubling it).
+     tuple_call_mint: HashMap<u16, HashMap<u16, Option<u16>>>,
+-    /// loft#1588 — the backing each VECTOR member of a tuple variable's CURRENT value lives in,
+-    /// read off the literal that assigned it: the pairing a whole-tuple move hands the release
+-    /// of.  The variable's type cannot answer it, because it carries only the LATEST
+-    /// assignment's deps.  Recorded for an assignment in the variable's own scope and dropped by
+-    /// one in a nested scope, and intersect-merged at every join like
+-    /// [`Self::tuple_call_mint`], so a move that cannot know which backing it copies declines.
+-    tuple_member_now: HashMap<u16, HashMap<u16, u16>>,
+     /// loft#1532 — the `(tuple, element)` pairs a member ASSIGNMENT (`t.1 = …`) writes in this
+     /// function, by the variable numbers of the unscanned body.  Such an element is handed to
+     /// the tuple ALONE at the literal that builds it: the construction or call that delivered it
+@@ -3799,75 +3792,6 @@ fn outer_collection_backing(
+     .then_some(b)
+ }
+ 
+-/// The backing each VECTOR member of a tuple literal lives in, by member index — read off the
+-/// member's own block, whose result type names it ([`member_backing`]).  `None` where `rhs` is
+-/// not a tuple literal.
+-fn tuple_member_backings_of(rhs: &Value, function: &Function) -> Option<HashMap<u16, u16>> {
+-    let Value::Tuple(members) = rhs.unspan() else {
+-        return None;
+-    };
+-    let mut out = HashMap::new();
+-    for (idx, m) in members.iter().enumerate() {
+-        if let Value::Block(b) = m.unspan()
+-            && matches!(b.result.base(), Type::Vector(_, _))
+-            && let Some(backing) = member_backing(function, &b.result)
+-        {
+-            out.insert(idx as u16, backing);
+-        }
+-    }
+-    Some(out)
+-}
+-
+-/// The backing a tuple member's value lives in, where that is one `__vdb_N` or `__ref_N`: named in
+-/// the member's type directly, or through the compiler temp a whole-tuple bind copied a vector
+-/// member into (`_tupcopy_N`, loft#1361), whose own one dep is the copy's backing.
+-fn member_backing(function: &Function, member: &Type) -> Option<u16> {
+-    let [b] = member.depend()[..] else {
+-        return None;
+-    };
+-    let n = function.name(b);
+-    if n.starts_with("__vdb_") || n.starts_with("__ref_") {
+-        return Some(b);
+-    }
+-    if function.is_compiler_generated(b) && matches!(function.tp(b).base(), Type::Vector(_, _)) {
+-        let [inner] = function.tp(b).depend()[..] else {
+-            return None;
+-        };
+-        let n = function.name(inner);
+-        return (n.starts_with("__vdb_") || n.starts_with("__ref_")).then_some(inner);
+-    }
+-    None
+-}
+-
+-/// The members of a TUPLE local whose values live in a backing registered in an OUTER scope,
+-/// as `(member index, backing)`: a vector member's `__vdb_N`, or the `__ref_N` a whole-tuple
+-/// bind copied a record member into (loft#1361).  Both are minted at the function's head so the
+-/// store is reused, so a tuple in a block or a loop body released them after the block had moved
+-/// on (loft#1588) — the tuple twin of [`outer_collection_backing`].  Only a local the program
+-/// declared, never an argument backing, and a member whose ONE dep is that backing.
+-fn outer_tuple_backings(
+-    function: &Function,
+-    v: u16,
+-    exited: &std::collections::HashSet<u16>,
+-) -> Vec<(u16, u16)> {
+-    let Type::Tuple(elems) = function.tp(v).base() else {
+-        return Vec::new();
+-    };
+-    if function.is_compiler_generated(v) {
+-        return Vec::new();
+-    }
+-    let mut out = Vec::new();
+-    for (idx, e) in elems.iter().enumerate() {
+-        if let Some(b) = member_backing(function, e)
+-            && !exited.contains(&b)
+-            && !function.is_argument(b)
+-        {
+-            out.push((idx as u16, b));
+-        }
+-    }
+-    out
+-}
+-
+ /// The work-ref whose record `rhs` delivers to its target: a construction bound directly
+ /// ([`construction_work_ref`]), or one handed to a function whose body hands that parameter
+ /// back WHOLE — `s = me(Bx { … })` with `fn me(self: Bx) -> Bx { self }`, where the call returns
+@@ -5063,7 +4987,6 @@ fn run_scan_phase(
+         // body is the exception — see the `Value::Loop` arm of `scan_inner`.
+         drop_transferred: HashSet::new(),
+         tuple_call_mint: HashMap::new(),
+-        tuple_member_now: HashMap::new(),
+         written_tuple_members: written_tuple_members_in(orig_code),
+         view_backing: HashMap::new(),
+         construction_backing: HashMap::new(),
+@@ -9761,7 +9684,6 @@ impl Scopes<'_> {
+                 let views_before = self.view_backing.clone();
+                 let backing_before = self.construction_backing.clone();
+                 let mints_before = self.tuple_call_mint.clone();
+-                let now_before = self.tuple_member_now.clone();
+                 // A loop body's hand-offs are armed BEFORE its statements are scanned, not in
+                 // scan order: on the next iteration an earlier statement displaces what a LATER
+                 // one handed off — `for … { x = mk(); x = p; }` reaches `x = mk()` holding the
+@@ -9788,8 +9710,6 @@ impl Scopes<'_> {
+                     .retain(|k, w| backing_before.get(k) == Some(w));
+                 self.tuple_call_mint
+                     .retain(|k, m| mints_before.get(k) == Some(m));
+-                self.tuple_member_now
+-                    .retain(|k, m| now_before.get(k) == Some(m));
+                 self.loops.pop();
+                 self.exit_scope();
+                 Value::Loop(Box::new(Block {
+@@ -10138,7 +10058,6 @@ impl Scopes<'_> {
+                 let views_before = self.view_backing.clone();
+                 let backing_before = self.construction_backing.clone();
+                 let mints_before = self.tuple_call_mint.clone();
+-                let now_before = self.tuple_member_now.clone();
+                 let scanned_next = self.scan(next, function, data);
+                 let scanned_extra = self.scan(extra, function, data);
+                 self.owned_refs
+@@ -10149,8 +10068,6 @@ impl Scopes<'_> {
+                     .retain(|k, w| backing_before.get(k) == Some(w));
+                 self.tuple_call_mint
+                     .retain(|k, m| mints_before.get(k) == Some(m));
+-                self.tuple_member_now
+-                    .retain(|k, m| now_before.get(k) == Some(m));
+                 Value::Iter(
+                     *idx,
+                     Box::new(scanned_create),
+@@ -10660,18 +10577,6 @@ impl Scopes<'_> {
+         {
+             self.view_backing.insert(v, (base, path));
+         }
+-        // loft#1588 — which backing each vector member of this value lives in, where the
+-        // assignment runs in the variable's own scope (a first binding registers it there).
+-        if matches!(function.tp(v), Type::Tuple(_)) {
+-            match tuple_member_backings_of(value, function) {
+-                Some(now) if self.var_scope.get(&v).is_none_or(|s| *s == self.scope) => {
+-                    self.tuple_member_now.insert(v, now);
+-                }
+-                _ => {
+-                    self.tuple_member_now.remove(&v);
+-                }
+-            }
+-        }
+         // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
+         // own call, for the element frees at reassignment and scope exit.
+         if matches!(function.tp(v), Type::Tuple(_)) {
+@@ -10773,15 +10678,9 @@ impl Scopes<'_> {
+             // local's, whatever the order they were declared in (D-heap-21).  The store is minted
+             // where the local is bound, so its place in the sweep is there.  A RECORD local
+             // releases through itself, and its buffer's free is guarded by identity, so a record
+-            // buffer keeps the place it has.  A TUPLE local releases through its members'
+-            // backings — a vector member's `__vdb_N`, a record member a whole-tuple bind copied
+-            // into a `__ref_N` (loft#1361) — so those take its place too (loft#1588).
+-            let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
+-            let mut backings = function.tp(v).depend().clone();
+-            if let Type::Tuple(elems) = function.tp(v).base() {
+-                backings.extend(elems.iter().filter_map(|e| member_backing(function, e)));
+-            }
+-            for d in backings {
++            // buffer keeps the place it has.
++            let collection = matches!(function.tp(v).base(), Type::Vector(_, _));
++            for d in function.tp(v).depend().clone() {
+                 let name = function.name(d);
+                 if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
+                     && let Some(pos) = self.var_order.iter().position(|&x| x == d)
+@@ -11449,23 +11348,6 @@ impl Scopes<'_> {
+         if first_binding {
+             self.binding_now.pop();
+         }
+-        // loft#1588 — the backings a tuple's vector members live in take the TUPLE's turn in the
+-        // sweep, just ahead of it.  Scanning the literal placed each one at its own temp
+-        // (`_vec_N`, D-heap-21), which for a REFILL is this statement rather than where the
+-        // tuple was declared; reading them after the scan is what lets this have the last word.
+-        if matches!(function.tp(v).base(), Type::Tuple(_))
+-            && let Some(now) = tuple_member_backings_of(value, function)
+-        {
+-            let mut now: Vec<u16> = now.into_values().collect();
+-            now.sort_unstable();
+-            for b in now {
+-                if let Some(bpos) = self.var_order.iter().position(|&x| x == b) {
+-                    self.var_order.remove(bpos);
+-                    let at = self.var_order.iter().position(|&x| x == v).unwrap_or(bpos);
+-                    self.var_order.insert(at, b);
+-                }
+-            }
+-        }
+         // Flatten: if the scanned value is Insert([preamble..., final_call]),
+         // hoist the preamble out so the IR becomes
+         // Insert([preamble..., Set(v, final_call)]) instead of
+@@ -12198,13 +12080,11 @@ impl Scopes<'_> {
+         let backing_before = self.construction_backing.clone();
+         let views_before = self.view_backing.clone();
+         let mints_before = self.tuple_call_mint.clone();
+-        let now_before = self.tuple_member_now.clone();
+         let scanned_true = self.scan(t_val, function, data);
+         let owned_after_true = std::mem::replace(&mut self.owned_refs, owned_before);
+         let backing_after_true = std::mem::replace(&mut self.construction_backing, backing_before);
+         let views_after_true = std::mem::replace(&mut self.view_backing, views_before);
+         let mints_after_true = std::mem::replace(&mut self.tuple_call_mint, mints_before);
+-        let now_after_true = std::mem::replace(&mut self.tuple_member_now, now_before);
+         let scanned_false = self.scan(f_val, function, data);
+         self.owned_refs
+             .retain(|k, depth| owned_after_true.get(k) == Some(depth));
+@@ -12214,8 +12094,6 @@ impl Scopes<'_> {
+             .retain(|k, b| views_after_true.get(k) == Some(b));
+         self.tuple_call_mint
+             .retain(|k, m| mints_after_true.get(k) == Some(m));
+-        self.tuple_member_now
+-            .retain(|k, m| now_after_true.get(k) == Some(m));
+         let scanned_if = Value::If(
+             Box::new(scanned_test),
+             Box::new(scanned_true),
+@@ -12356,7 +12234,6 @@ impl Scopes<'_> {
+                     arm_lift_temps,
+                     per_path_pairs,
+                     tuple_call_mint,
+-                    tuple_member_now,
+                     var_scope,
+                     scope,
+                     ..
+@@ -12383,36 +12260,25 @@ impl Scopes<'_> {
+                     .filter(|(t, _)| var_scope.get(t) == Some(scope))
+                     .map(|(t, m)| (*t, m.clone()))
+                     .collect();
+-                let copy_d = data.def_nr("OpCopyRecord");
+-                let append_d = data.def_nr("OpAppendVector");
+-                walk_unconditional(v, &mut |n| {
+-                    let Value::Block(b) = n else { return };
+-                    if b.name != "tuple_member_move" {
+-                        return;
+-                    }
+-                    walk_unconditional(n, &mut |c| {
+-                        let Value::Call(d, args) = c else { return };
+-                        if *d == copy_d
+-                            && args.len() >= 3
+-                            && let Some(b) =
+-                                call_minted_member_handoff(args, function, data, &certain)
+-                        {
+-                            drop_transferred.insert(b);
+-                        }
+-                        // A VECTOR member is copied by an append into the copy's own backing, and
+-                        // its elements' release moves from the member's backing the same way
+-                        // (loft#1588), read off the assignment the tuple holds now
+-                        // (`tuple_member_now`) and only where the copy is certain to run.
+-                        if *d == append_d
+-                            && let Some(Value::TupleGet(base, idx)) = args.get(1).map(Value::unspan)
+-                            && var_scope.get(base) == Some(scope)
+-                            && let Some(&b) = tuple_member_now.get(base).and_then(|m| m.get(idx))
+-                            && drop_hook(function, b, data).is_some()
+-                        {
+-                            drop_transferred.insert(b);
++                if !certain.is_empty() {
++                    let copy_d = data.def_nr("OpCopyRecord");
++                    walk_unconditional(v, &mut |n| {
++                        let Value::Block(b) = n else { return };
++                        if b.name != "tuple_member_move" {
++                            return;
+                         }
++                        walk_unconditional(n, &mut |c| {
++                            if let Value::Call(d, args) = c
++                                && *d == copy_d
++                                && args.len() >= 3
++                                && let Some(b) =
++                                    call_minted_member_handoff(args, function, data, &certain)
++                            {
++                                drop_transferred.insert(b);
++                            }
++                        });
+                     });
+-                });
++                }
+             }
+             if let Some((pre, _)) = &rebuilt {
+                 ls.extend(pre.iter().cloned());
+@@ -13986,49 +13852,6 @@ impl Scopes<'_> {
+                 ls.push(hook);
+                 ls.push(call("OpClearVector", v, data));
+             }
+-            // The same clause for a TUPLE local's members (loft#1588).  A vector member is
+-            // released and emptied as above.  A record member's backing is released, freed and
+-            // reset to the null sentinel, as a loop's call buffer is: the next pass then mints
+-            // afresh and the function's own sweep of the backing finds nothing.  Declined where a
+-            // variable of a scope that stays OPEN views the backing — freeing it would free a
+-            // record in use.  A temp of a block that already ended (the literal's own `_vec_N`)
+-            // is still in `var_scope`, and is not a viewer.
+-            for (idx, backing) in outer_tuple_backings(function, v, &exited) {
+-                let viewed = self.var_scope.iter().any(|(&x, s)| {
+-                    x != backing
+-                        && x != v
+-                        && !exited.contains(&x)
+-                        && (self.stack.contains(s) || *s == self.scope)
+-                        && function.tp(x).depend().contains(&backing)
+-                });
+-                if viewed {
+-                    continue;
+-                }
+-                let hook = self.scope_end_drop(function, backing, data, None);
+-                if matches!(function.tp(backing).base(), Type::Vector(_, _))
+-                    || function.name(backing).starts_with("__vdb_")
+-                {
+-                    // Emptied even where a hand-off stopped the hook: the copy that took the
+-                    // release holds the elements now, and a re-mint of this backing on the next
+-                    // pass must not release them again.
+-                    if hook.is_some() || self.drop_transferred.contains(&backing) {
+-                        ls.extend(hook);
+-                        ls.push(Value::Call(
+-                            data.def_nr("OpClearVector"),
+-                            vec![Value::TupleGet(v, idx)],
+-                        ));
+-                    }
+-                } else if matches!(function.tp(backing).base(), Type::Reference(_, _))
+-                    && let Some(hook) = hook
+-                {
+-                    ls.push(hook);
+-                    ls.push(call("OpFreeRef", backing, data));
+-                    ls.push(v_set(
+-                        backing,
+-                        Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+-                    ));
+-                }
+-            }
+             // loft#1336 / @FR-O-Witness — a witnessed local's store is released through its
+             // witness, which names it only while the local still holds it; the local itself
+             // is never-free.  A returned local is skipped above like any other: the store is

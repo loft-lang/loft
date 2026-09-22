@@ -1,0 +1,9 @@
+// D4 — a variable under a collection field binds through the element.
+// @EXPECT: 3|60
+struct Stack<T> { items: vector<T>, name: text }
+fn main() {
+  s = Stack { items: [10, 20, 30], name: "s" };
+  t = 0;
+  for x in s.items { t += x; }
+  println("{len(s.items)}|{t}");
+}

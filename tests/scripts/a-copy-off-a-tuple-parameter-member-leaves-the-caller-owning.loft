@@ -56,6 +56,10 @@
 //
 // The trace file is this guard's own — and its own means THIS file, not this family: several
 // corpus guards write one, and two concurrent runs of the SAME guard clobber each other's.
+//
+// The ORDER within one tuple is reverse member order, as a struct's fields are (loft#1588): the
+// cells with two droppables pinned the forward order until then, which is what the backings'
+// registration at the function's head produced, not a rule.
 
 fn trace_path() -> text { return "loft_paramember_trace.tmp"; }
 
@@ -140,7 +144,7 @@ fn main() {
   assert(got == "a1,1", "a copy off a tuple parameter member releases once: {got}");
 
   c_two_members(); got = drain();
-  assert(got == "a1112,11,12", "two droppable members, each once: {got}");
+  assert(got == "a1112,12,11", "two droppable members, each once: {got}");
 
   c_nested_param(); got = drain();
   assert(got == "a21,21", "a nested tuple parameter releases once: {got}");
