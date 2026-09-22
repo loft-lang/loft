@@ -1,0 +1,10 @@
+// D4 — the read that learns the types declares nothing: a vector VALUE read there took the
+// `_vec_1` name a later vector ARGUMENT of another element type needed on pass 2.
+// @EXPECT: 5|3
+struct Grid<T> { cells: vector<T>, w: integer }
+fn gl<T>(cells: vector<T>) -> integer { len(cells) }
+fn main() {
+  m = Grid { cells: [5], w: 1 };
+  t = gl(["a", "b", "c"]);
+  println("{m.cells[0]}|{t}");
+}

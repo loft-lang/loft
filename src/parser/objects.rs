@@ -1107,26 +1107,37 @@ impl Parser {
                         // slot), so there is nothing here to read back.  Say that rather
                         // than "Unknown variable '_'", which reads as a typo in the one
                         // case where the name is deliberate.
-                        diagnostic!(
+                        diagnostic_at!(
                             self.lexer,
+                            name_pos,
                             Level::Error,
                             "`_` discards the value assigned to it — there is nothing to \
                              read back; give the value a name if you need it"
                         );
                     } else {
+                        // At the name, as the sibling arms above report: the cursor has run on
+                        // to the token after it.  A name no pass-1 read declared reaches only
+                        // this arm — a generic literal's first read declares none (@PLN165 D4).
+                        //
                         // loft#1008 — a METHOD is registered as `t_<len><Type>_<name>`, so its
                         // bare name has no definition to bind and reads as unknown wherever a
                         // VALUE is wanted (a fn-ref argument, `map(v, f)`). Naming what it is
                         // beats reporting that the file's own function does not exist.
                         let receivers = self.method_receivers_named(name);
                         if let Some(msg) = self.generic_value_refusal(name) {
-                            diagnostic!(self.lexer, Level::Error, "{msg}");
+                            diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                         } else if receivers.is_empty() {
-                            diagnostic!(self.lexer, Level::Error, "Unknown variable '{}'", name);
+                            diagnostic_at!(
+                                self.lexer,
+                                name_pos,
+                                Level::Error,
+                                "Unknown variable '{name}'"
+                            );
                         } else {
                             let on = receivers.join("`, `");
-                            diagnostic!(
+                            diagnostic_at!(
                                 self.lexer,
+                                name_pos,
                                 Level::Error,
                                 "`{name}` is a method on `{on}`, and a method is not a function \
                                  VALUE — there is nothing to bind here. Wrap it: \
@@ -2096,28 +2107,16 @@ impl Parser {
             // expected as the parameter's open instance, and infers from its values instead.
             let in_template =
                 self.context != u32::MAX && self.data.def_type(self.context) == DefType::Generic;
-            // The expected type is the literal's own only when the literal IS the value: one
-            // followed by `.` or `[` is a RECEIVER (`Pair { k: 1, v: "a" }.swap()`), and the
-            // expected type is its method's result — taken, it built `Pair<text, integer>` for
-            // that literal (loft#1304's postfix class, for the instance a literal builds).
-            let receiver = self.literal_is_a_receiver();
             let expected = match self.expected.base() {
                 Type::Reference(inst, _) | Type::Enum(inst, _, _)
-                    if !receiver
-                        && self.data.def(*inst).instance_of == template
+                    if self.data.def(*inst).instance_of == template
                         && (in_template || !self.data.is_open_instance(*inst)) =>
                 {
                     *inst
                 }
                 _ => u32::MAX,
             };
-            let inst = if expected == u32::MAX {
-                self.literal_instance(d_nr, template, name_pos)
-            } else {
-                Some(expected)
-            };
-            let Some(inst) = inst else {
-                self.skip_braced();
+            let Some(inst) = self.literal_instance(d_nr, template, name_pos, expected) else {
                 return if self.first_pass {
                     Type::Unknown(0)
                 } else {
@@ -4226,25 +4225,50 @@ impl Parser {
         orig
     }
 
-    /// @PLN165 D4 — the instance a literal of the generic struct `template` builds when no
-    /// expected type names one.  Each variable binds to what the first field value whose
-    /// declared type mentions it relates to — [`Parser::resolve_type_var`], the pairing a
-    /// call's arguments bind through — so `Box { v: 1 }` builds `Box<integer>` as
-    /// `id(1)` instantiates `id<integer>`.
+    /// @PLN165 D4 — the instance a literal of the generic struct `template` builds.  The
+    /// `expected` instance (a binding's annotation, a parameter) where one applies, as `v:
+    /// vector<integer> = []` takes its element type from the annotation — unless the literal
+    /// is the RECEIVER of a postfix (`Pair { k: 1, v: "a" }.swap()`), whose expected type is
+    /// the method's result: taken, it built `Pair<text, integer>` for that literal (loft#1304's
+    /// postfix class, for the instance a literal builds).  Otherwise each variable binds to
+    /// what the first field value whose declared type mentions it relates to —
+    /// [`Parser::resolve_type_var`], the pairing a call's arguments bind through — so `Box {
+    /// v: 1 }` builds `Box<integer>` as `id(1)` instantiates `id<integer>`.
     ///
-    /// The values are read once to learn their types and the lexer is put back, the abandon
-    /// path `parse_object`'s hint retry takes; the literal is then built against the instance
-    /// exactly as an annotated one is, and what its values report is reported by that second
-    /// read.  `None` when a variable stays unbound or two fields bind it to two types — on
-    /// pass 2 reported, naming the variable and the annotation that cures it, unless a value
-    /// already reported (@P376: the site is poisoned, not explained twice).
-    fn literal_instance(&mut self, fields_of: u32, template: u32, at: &Position) -> Option<u32> {
+    /// The values are read once to learn their types, and the token after the literal says
+    /// whether it is a receiver: the end of a real read, never a walk past the body, which
+    /// records tokens a parse would not read (a format string's holes) and leaves the caret
+    /// where it stopped (`Parser::inplace_hint_declined`).  With an instance the lexer is put
+    /// back and the literal built against it exactly as an annotated one is, and what its
+    /// values report is reported by that second read.  `None` when a variable stays unbound
+    /// or two fields bind it to two types: the first read was the literal's whole read, and
+    /// on pass 2 the refusal names the variable and the annotation that cures it, unless a
+    /// value already reported (@P376: the site is poisoned, not explained twice).
+    ///
+    /// The first read leaves no trace, because pass 2 may not repeat it: a bound variable's
+    /// pass-1 type is the literal's expected instance there.  Whatever it numbers per pass
+    /// would renumber what follows — a `_vec_N` temporary left standing took the name the
+    /// next vector wanted (`_vec_1` met `vector<Mine>` under a `vector<text>`), and a lambda
+    /// is a definition numbered by `lambda_counter`.  So the variable table is put back
+    /// whole, and while [`Parser::discovering`] a lambda defines nothing: the long form
+    /// answers the type its header spells, and a short one — whose parameter types come from
+    /// the very type this read is after — answers nothing, and its field binds nothing.
+    fn literal_instance(
+        &mut self,
+        fields_of: u32,
+        template: u32,
+        at: &Position,
+        expected: u32,
+    ) -> Option<u32> {
         let link = self.lexer.link();
-        let work = self.vars.work_ref();
-        let work_p2 = self.vars.work_ref_p2();
+        let table = self.vars.clone();
+        let closure_work = self.last_closure_work_var;
+        self.discovering += 1;
         let mark = self.lexer.diagnostics().mark();
         let errors = self.lexer.diagnostics().error_count();
         let mut values: Vec<(String, Type)> = Vec::new();
+        // Fields whose value held a short lambda the read stepped over.
+        let mut lambdas: Vec<String> = Vec::new();
         self.lexer.token("{");
         while !self.lexer.peek_token("}") {
             let Some(field) = self
@@ -4258,18 +4282,33 @@ impl Parser {
                 break;
             }
             let outer = std::mem::replace(&mut self.expected, Type::Unknown(0));
+            let skipped = std::mem::replace(&mut self.discovery_skipped_lambda, false);
             let mut value = Value::Null;
             let tp = self.expression(&mut value);
             self.expected = outer;
+            let tp = if self.discovery_skipped_lambda {
+                lambdas.push(field.clone());
+                Type::Unknown(0)
+            } else {
+                tp
+            };
+            self.discovery_skipped_lambda = skipped;
             values.push((field, tp));
             if !self.lexer.has_token(",") {
                 break;
             }
         }
+        self.discovering -= 1;
         let reported = self.lexer.diagnostics().error_count() > errors;
-        self.lexer.revert(link);
-        self.vars.clean_work_refs(work);
-        self.vars.clean_work_refs_p2(work_p2);
+        let closed = self.lexer.has_token("}");
+        let receiver = closed && (self.lexer.peek_token(".") || self.lexer.peek_token("["));
+        self.vars = table;
+        self.last_closure_work_var = closure_work;
+        if expected != u32::MAX && !receiver {
+            self.lexer.revert(link);
+            self.lexer.rewind_diagnostics(mark);
+            return Some(expected);
+        }
         let name = self.data.def(fields_of).name().to_string();
         // (field, its declared type, its value's type) — an unknown field is the second
         // read's to report.
@@ -4324,22 +4363,37 @@ impl Parser {
             if let Some((_, b)) = bound {
                 bindings.push((v, b));
             } else if refusal.is_none() {
-                refusal = Some(format!(
-                    "`{name} {{ … }}` cannot tell what {spelled} is — no field value names it; \
-                     give the binding its type, `x: {name}<integer> = {name} {{ … }}`"
-                ));
+                let through_lambda = fields.iter().find(|(f, declared, _)| {
+                    lambdas.contains(f) && self.data.type_mentions(declared, v)
+                });
+                refusal = Some(if let Some((f, _, _)) = through_lambda {
+                    format!(
+                        "`{name} {{ … }}` cannot tell what {spelled} is — the `|…|` lambda in \
+                         `{f}` takes its types from the field; spell it `fn(…) -> <type> {{ … }}`, \
+                         or give the binding its type, `x: {name}<integer> = {name} {{ … }}`"
+                    )
+                } else {
+                    format!(
+                        "`{name} {{ … }}` cannot tell what {spelled} is — no field value names it; \
+                         give the binding its type, `x: {name}<integer> = {name} {{ … }}`"
+                    )
+                });
             }
         }
         if let Some(message) = refusal {
+            if !closed {
+                // A value the read could not finish: the rest of the body is stepped over.
+                self.lexer.revert(link);
+                self.skip_braced();
+            }
             if !self.first_pass && !reported {
                 self.lexer.rewind_diagnostics(mark);
-                // At the literal's name: after the lexer is put back, `prev_end` still
-                // reads where the first read stopped (the `Lexer::revert` note in
-                // `parse_object`).
+                // At the literal's name: the read has run on to the token after it.
                 diagnostic_at!(self.lexer, at, Level::Error, "{message}");
             }
             return None;
         }
+        self.lexer.revert(link);
         self.lexer.rewind_diagnostics(mark);
         let args: Vec<Type> = bindings.into_iter().map(|(_, b)| b).collect();
         let inst = self.instance_def(template, &args);
@@ -4492,17 +4546,6 @@ impl Parser {
             }
         });
         code
-    }
-
-    /// Is the `{ … }` literal at the cursor followed by `.` or `[` — the receiver of a postfix,
-    /// not the whole value?  One balanced look-ahead, put back: the literal is parsed right
-    /// after over the same tokens, so the lexer's position ends where that parse leaves it.
-    fn literal_is_a_receiver(&mut self) -> bool {
-        let link = self.lexer.link();
-        self.skip_braced();
-        let receiver = self.lexer.peek_token(".") || self.lexer.peek_token("[");
-        self.lexer.revert(link);
-        receiver
     }
 
     /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —

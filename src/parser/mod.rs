@@ -1002,6 +1002,12 @@ pub struct Parser {
     /// `(function, stub, arguments)` of every forward generic return, resolved between the
     /// passes (`resolve_forward_generic_returns`).
     pub(crate) forward_generic_returns: Vec<(u32, u32, Vec<Type>)>,
+    /// How many generic literals are reading their values to learn their instance
+    /// (`literal_instance`) — a read that must define nothing, so a lambda met there is not
+    /// parsed as one (`lambda_signature`, `skip_short_lambda`).
+    pub(crate) discovering: u32,
+    /// A short lambda was stepped over by that read: the value it sits in binds nothing.
+    pub(crate) discovery_skipped_lambda: bool,
     /// The variables a `struct` / `enum` header wrote where the language refuses one: its
     /// fields may name them, and the header's refusal already covers that.
     pub(crate) refused_header_vars: Vec<String>,
@@ -1576,6 +1582,8 @@ impl Parser {
             forward_template_args: false,
             pending_forward_return: None,
             forward_generic_returns: Vec::new(),
+            discovering: 0,
+            discovery_skipped_lambda: false,
             refused_header_vars: Vec::new(),
             context_type_template: u32::MAX,
             type_var_holders: std::collections::HashMap::new(),

@@ -825,13 +825,37 @@ step is cells and whatever they find.
   discovery read, which leaves a dead temporary behind for a collection value (declared null,
   freed, never read).  That is a difference in FORM from the twin, not in value; its cure is
   a variable-table rollback for a discarded read, which touches every side map keyed by a
-  variable number.
+  variable number — built in D10, where the temporary turned out to break programs too.
 
 ### D10 — across the boundary  ·  S
 
 A library exports a generic struct and a consumer instantiates it at its own type;
 `api_surface` golden; `ir_schema_roundtrip`; `--native-release`; the debugger and the LSP
 show `Grid<integer>`.
+
+- **Found on the way** (2026-09-22).  The first consumer cell failed: `t: Grid<text> =
+  grid(["a", "b", "c"], 3)` after `m = Grid { cells: [Mine { n: 5 }], w: 1 }` was refused,
+  `_vec_2` changing type from `vector<Mine>` to `vector<text>`.  No library was needed — D4's
+  first read (the values read to learn the instance) is not repeated on pass 2 where a bound
+  variable's pass-1 type is the expected instance, so whatever it NUMBERED renumbered what
+  followed: its `_vec_N` temporary took the name the next vector wanted, and a lambda value's
+  definition shifted every later lambda (`x` met `s: text`).  The matrix
+  ([inferred/](probes/inferred/) i13–i21, [x07](probes/inferred-refused/)) found two more:
+  a format string in a generic literal failed outright (`Expect token }`, inferred since D4
+  and annotated since D9), and D9's receiver look-ahead was a walk over tokens.  One cause
+  under both: `Lexer::revert` replayed tokens but not the state around them — the cursor a
+  caret is read from, the end of the consumed source, the mode a string literal leaves, and
+  the rest of a string a hole's `}` resumes — and a token walk records what no parse reads.
+  So the replay now carries all four (`Recorded`), the first read puts the variable table
+  back whole and defines no lambda (a long one answers its header's type; a `|…|` one takes
+  its types from the field and binds nothing — refused alone, naming both cures), and the
+  receiver question is the one token after that read's closing brace.  Every generic literal
+  is read that way now, so the answer is one per program, not one per pass.  A caret raised
+  during a replay moved to the parse's own position: three corpus pins moved (the INC#30
+  typo, two slice-pattern refusals), each onto the construct it names or the token the parse
+  is stuck on; the unknown-name arm of `parse_var` reports at the name, as its siblings do.
+  Corpus against D9: the new guard, dead temporaries and two orphan lambdas gone from the
+  D4–D7 guards, and the three moved carets.
 
 ### D11 — the goal program  ·  XS  (waits for arc C)
 

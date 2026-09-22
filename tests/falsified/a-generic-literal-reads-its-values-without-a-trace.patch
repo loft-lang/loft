@@ -1,0 +1,577 @@
+diff --git b/src/lexer.rs a/src/lexer.rs
+index a56a50542..13bffbfd9 100644
+--- b/src/lexer.rs
++++ a/src/lexer.rs
+@@ -108,25 +108,6 @@ impl LexResult {
+     }
+ }
+ 
+-/// A token as the read that scanned it left the lexer — what [`Lexer::revert`] replays.
+-///
+-/// The token alone is not the whole of it.  The parser raises a diagnostic at the scan
+-/// CURSOR and at the end of the source it consumed ([`Lexer::report_pos`]), and asks the
+-/// MODE whether a string literal left a `{…}` hole open (`parse_string`); a replay that
+-/// served only the tokens left all three where the first read stopped.  So a caret raised
+-/// while a generic literal was built again pointed past its closing brace, and a format
+-/// string read a second time kept `Formatting` after its closing quote — `Expect token }`.
+-#[derive(Debug, Clone)]
+-struct Recorded {
+-    res: LexResult,
+-    /// The scan cursor once the token was read.
+-    cursor: (u32, u32),
+-    /// Where the consumed source ended when the token became the one held.
+-    prev_end: (u32, u32),
+-    /// The mode the read left: a literal that opens a hole leaves `Formatting`.
+-    mode: Mode,
+-}
+-
+ /// A lexer that can remember a state via a link and then optionally return to that state.
+ ///
+ /// It defaults to reading all found data into Text elements but has a list of TOKENS and
+@@ -145,10 +126,7 @@ pub struct Lexer {
+     iter: Peekable<IntoIter<char>>,
+     peek: LexResult,
+     /// Keep the scanned items in memory when a Link is created to return when reverted to this link.
+-    memory: Vec<Recorded>,
+-    /// The scan cursor a replay from [`memory`](Self#structfield.memory) left, restored when
+-    /// the source is scanned again: while a token is replayed, the cursor is the one it had.
+-    replay_return: Option<(u32, u32)>,
++    memory: Vec<LexResult>,
+     /// Keep track of the number of currently in use links
+     links: Rc<RefCell<u32>>,
+     /// Keep track of where we are in the current memory structure
+@@ -449,7 +427,6 @@ impl Default for Lexer {
+                 pos: 0,
+             },
+             memory: Vec::new(),
+-            replay_return: None,
+             link: 0,
+             links: Rc::new(RefCell::new(0)),
+             seek_return: None,
+@@ -521,7 +498,6 @@ impl Lexer {
+                 pos: 0,
+             },
+             memory: Vec::new(),
+-            replay_return: None,
+             link: 0,
+             links: Rc::new(RefCell::new(0)),
+             seek_return: None,
+@@ -588,23 +564,10 @@ impl Lexer {
+             let n = self.memory[self.link].clone();
+             self.link += 1;
+             lex_trace(format_args!(
+-                "replay {:?} @ {}:{} (cursor {}:{} -> {}:{})",
+-                n.res.has,
+-                n.res.position.line,
+-                n.res.position.pos,
+-                self.position.line,
+-                self.position.pos,
+-                n.cursor.0,
+-                n.cursor.1
++                "replay {:?} @ {}:{} (cursor stays {}:{})",
++                n.has, n.position.line, n.position.pos, self.position.line, self.position.pos
+             ));
+-            return Some(self.replay(n));
+-        }
+-        // Scanning fresh source after a replay: the cursor the replay moved is the scan's
+-        // own again — and a seek made during the replay moved a replayed cursor, not it.
+-        if let Some((line, pos)) = self.replay_return.take() {
+-            self.seek_return = None;
+-            self.position.line = line;
+-            self.position.pos = pos;
++            return Some(n);
+         }
+         // Scanning fresh source: the read cursor is authoritative again, so a
+         // reporting seek that was never undone ends here rather than shifting every
+@@ -944,68 +907,12 @@ impl Lexer {
+     pub fn set_mode(&mut self, mode: Mode) {
+         if mode == Mode::Formatting && self.peek_token("}") {
+             self.mode = mode;
+-            // The `}` closing a hole is exchanged for the rest of the string.  A replay
+-            // serves the rest the first read resumed — the source it was scanned from is
+-            // behind the cursor now — and a read being recorded keeps it for one.
+-            if self.link < self.memory.len()
+-                && matches!(self.memory[self.link].res.has, LexItem::CString(_))
+-            {
+-                let n = self.memory[self.link].clone();
+-                self.link += 1;
+-                self.peek = self.replay(n);
+-            } else {
+-                self.peek = self.resume_string();
+-                if self.link == self.memory.len() && self.count_links() > 0 {
+-                    let rest = self.recorded(&self.peek);
+-                    self.memory.push(rest);
+-                    self.link += 1;
+-                }
+-            }
++            self.peek = self.resume_string();
+         } else {
+             self.mode = mode;
+         }
+     }
+ 
+-    /// The token just read, as [`Recorded`] keeps it.
+-    fn recorded(&self, res: &LexResult) -> Recorded {
+-        Recorded {
+-            res: res.clone(),
+-            cursor: (self.position.line, self.position.pos),
+-            prev_end: (self.prev_end.line, self.prev_end.pos),
+-            mode: self.mode.clone(),
+-        }
+-    }
+-
+-    /// Queue a token a scan read beyond the one it returns (the `..` after `1`): served next,
+-    /// as it would be read, with the cursor and consumed end the scan leaves.
+-    fn queue(&mut self, res: LexResult) {
+-        let at = (self.position.line, self.position.pos);
+-        self.memory.push(Recorded {
+-            res,
+-            cursor: at,
+-            prev_end: at,
+-            mode: self.mode.clone(),
+-        });
+-    }
+-
+-    /// Serve a recorded token as the read that scanned it left the lexer: its cursor, the
+-    /// end of the source consumed before it, and its mode.
+-    fn replay(&mut self, n: Recorded) -> LexResult {
+-        if self.replay_return.is_none() {
+-            self.replay_return = Some(
+-                self.seek_return
+-                    .take()
+-                    .unwrap_or((self.position.line, self.position.pos)),
+-            );
+-        }
+-        self.position.line = n.cursor.0;
+-        self.position.pos = n.cursor.1;
+-        self.prev_end.line = n.prev_end.0;
+-        self.prev_end.pos = n.prev_end.1;
+-        self.mode = n.mode;
+-        n.res
+-    }
+-
+     #[allow(dead_code)]
+     pub fn whitespace(&mut self) {
+         while self.peek_token(" ") || self.peek_token("\t") {
+@@ -1825,7 +1732,7 @@ impl Lexer {
+             if let Some('.') = self.iter.peek() {
+                 self.next_char();
+                 self.link = self.memory.len();
+-                self.queue(LexResult::new(
++                self.memory.push(LexResult::new(
+                     LexItem::Token("..".to_string()),
+                     pos.clone(),
+                 ));
+@@ -1863,7 +1770,7 @@ impl Lexer {
+                 // the following token (digit, identifier, or whatever)
+                 // re-lexes fresh.
+                 self.link = self.memory.len();
+-                self.queue(LexResult::new(
++                self.memory.push(LexResult::new(
+                     LexItem::Token(".".to_string()),
+                     self.position.clone(),
+                 ));
+@@ -2082,7 +1989,6 @@ impl Lexer {
+             position: self.position.clone(),
+         };
+         self.memory.clear();
+-        self.replay_return = None;
+         self.link = 0;
+         self.links = Rc::new(RefCell::new(0));
+         self.iter = LINE.chars().collect::<Vec<_>>().into_iter().peekable();
+@@ -2302,7 +2208,7 @@ impl Lexer {
+         // (`link_revert_repeatable_same_region`).
+         if at_edge && self.link == self.memory.len() {
+             if self.count_links() > 0 {
+-                self.memory.push(self.recorded(&res));
++                self.memory.push(res.clone());
+                 self.link += 1;
+             } else {
+                 self.memory.clear();
+@@ -2319,7 +2225,7 @@ impl Lexer {
+             // Insert it BEFORE the queued token and step over it, which leaves the live
+             // sequence unchanged — the next `cont()` still replays the follow-up — and
+             // makes the buffer say what was actually read.
+-            self.memory.insert(self.link, self.recorded(&res));
++            self.memory.insert(self.link, res.clone());
+             self.link += 1;
+         }
+         self.peek = res;
+@@ -2331,7 +2237,7 @@ impl Lexer {
+         let cur: u32 = *self.links.borrow();
+         self.links.replace(cur + 1);
+         if self.memory.is_empty() {
+-            self.memory.push(self.recorded(&self.peek));
++            self.memory.push(self.peek.clone());
+             self.link += 1;
+         }
+         Link {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 222a2e50b..afc3189dd 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -1002,12 +1002,6 @@ pub struct Parser {
+     /// `(function, stub, arguments)` of every forward generic return, resolved between the
+     /// passes (`resolve_forward_generic_returns`).
+     pub(crate) forward_generic_returns: Vec<(u32, u32, Vec<Type>)>,
+-    /// How many generic literals are reading their values to learn their instance
+-    /// (`literal_instance`) — a read that must define nothing, so a lambda met there is not
+-    /// parsed as one (`lambda_signature`, `skip_short_lambda`).
+-    pub(crate) discovering: u32,
+-    /// A short lambda was stepped over by that read: the value it sits in binds nothing.
+-    pub(crate) discovery_skipped_lambda: bool,
+     /// The variables a `struct` / `enum` header wrote where the language refuses one: its
+     /// fields may name them, and the header's refusal already covers that.
+     pub(crate) refused_header_vars: Vec<String>,
+@@ -1582,8 +1576,6 @@ impl Parser {
+             forward_template_args: false,
+             pending_forward_return: None,
+             forward_generic_returns: Vec::new(),
+-            discovering: 0,
+-            discovery_skipped_lambda: false,
+             refused_header_vars: Vec::new(),
+             context_type_template: u32::MAX,
+             type_var_holders: std::collections::HashMap::new(),
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 77d73ae21..99cf2547c 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -1107,37 +1107,26 @@ impl Parser {
+                         // slot), so there is nothing here to read back.  Say that rather
+                         // than "Unknown variable '_'", which reads as a typo in the one
+                         // case where the name is deliberate.
+-                        diagnostic_at!(
++                        diagnostic!(
+                             self.lexer,
+-                            name_pos,
+                             Level::Error,
+                             "`_` discards the value assigned to it — there is nothing to \
+                              read back; give the value a name if you need it"
+                         );
+                     } else {
+-                        // At the name, as the sibling arms above report: the cursor has run on
+-                        // to the token after it.  A name no pass-1 read declared reaches only
+-                        // this arm — a generic literal's first read declares none (@PLN165 D4).
+-                        //
+                         // loft#1008 — a METHOD is registered as `t_<len><Type>_<name>`, so its
+                         // bare name has no definition to bind and reads as unknown wherever a
+                         // VALUE is wanted (a fn-ref argument, `map(v, f)`). Naming what it is
+                         // beats reporting that the file's own function does not exist.
+                         let receivers = self.method_receivers_named(name);
+                         if let Some(msg) = self.generic_value_refusal(name) {
+-                            diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
++                            diagnostic!(self.lexer, Level::Error, "{msg}");
+                         } else if receivers.is_empty() {
+-                            diagnostic_at!(
+-                                self.lexer,
+-                                name_pos,
+-                                Level::Error,
+-                                "Unknown variable '{name}'"
+-                            );
++                            diagnostic!(self.lexer, Level::Error, "Unknown variable '{}'", name);
+                         } else {
+                             let on = receivers.join("`, `");
+-                            diagnostic_at!(
++                            diagnostic!(
+                                 self.lexer,
+-                                name_pos,
+                                 Level::Error,
+                                 "`{name}` is a method on `{on}`, and a method is not a function \
+                                  VALUE — there is nothing to bind here. Wrap it: \
+@@ -2107,16 +2096,28 @@ impl Parser {
+             // expected as the parameter's open instance, and infers from its values instead.
+             let in_template =
+                 self.context != u32::MAX && self.data.def_type(self.context) == DefType::Generic;
++            // The expected type is the literal's own only when the literal IS the value: one
++            // followed by `.` or `[` is a RECEIVER (`Pair { k: 1, v: "a" }.swap()`), and the
++            // expected type is its method's result — taken, it built `Pair<text, integer>` for
++            // that literal (loft#1304's postfix class, for the instance a literal builds).
++            let receiver = self.literal_is_a_receiver();
+             let expected = match self.expected.base() {
+                 Type::Reference(inst, _) | Type::Enum(inst, _, _)
+-                    if self.data.def(*inst).instance_of == template
++                    if !receiver
++                        && self.data.def(*inst).instance_of == template
+                         && (in_template || !self.data.is_open_instance(*inst)) =>
+                 {
+                     *inst
+                 }
+                 _ => u32::MAX,
+             };
+-            let Some(inst) = self.literal_instance(d_nr, template, name_pos, expected) else {
++            let inst = if expected == u32::MAX {
++                self.literal_instance(d_nr, template, name_pos)
++            } else {
++                Some(expected)
++            };
++            let Some(inst) = inst else {
++                self.skip_braced();
+                 return if self.first_pass {
+                     Type::Unknown(0)
+                 } else {
+@@ -4225,50 +4226,25 @@ impl Parser {
+         orig
+     }
+ 
+-    /// @PLN165 D4 — the instance a literal of the generic struct `template` builds.  The
+-    /// `expected` instance (a binding's annotation, a parameter) where one applies, as `v:
+-    /// vector<integer> = []` takes its element type from the annotation — unless the literal
+-    /// is the RECEIVER of a postfix (`Pair { k: 1, v: "a" }.swap()`), whose expected type is
+-    /// the method's result: taken, it built `Pair<text, integer>` for that literal (loft#1304's
+-    /// postfix class, for the instance a literal builds).  Otherwise each variable binds to
+-    /// what the first field value whose declared type mentions it relates to —
+-    /// [`Parser::resolve_type_var`], the pairing a call's arguments bind through — so `Box {
+-    /// v: 1 }` builds `Box<integer>` as `id(1)` instantiates `id<integer>`.
+-    ///
+-    /// The values are read once to learn their types, and the token after the literal says
+-    /// whether it is a receiver: the end of a real read, never a walk past the body, which
+-    /// records tokens a parse would not read (a format string's holes) and leaves the caret
+-    /// where it stopped (`Parser::inplace_hint_declined`).  With an instance the lexer is put
+-    /// back and the literal built against it exactly as an annotated one is, and what its
+-    /// values report is reported by that second read.  `None` when a variable stays unbound
+-    /// or two fields bind it to two types: the first read was the literal's whole read, and
+-    /// on pass 2 the refusal names the variable and the annotation that cures it, unless a
+-    /// value already reported (@P376: the site is poisoned, not explained twice).
++    /// @PLN165 D4 — the instance a literal of the generic struct `template` builds when no
++    /// expected type names one.  Each variable binds to what the first field value whose
++    /// declared type mentions it relates to — [`Parser::resolve_type_var`], the pairing a
++    /// call's arguments bind through — so `Box { v: 1 }` builds `Box<integer>` as
++    /// `id(1)` instantiates `id<integer>`.
+     ///
+-    /// The first read leaves no trace, because pass 2 may not repeat it: a bound variable's
+-    /// pass-1 type is the literal's expected instance there.  Whatever it numbers per pass
+-    /// would renumber what follows — a `_vec_N` temporary left standing took the name the
+-    /// next vector wanted (`_vec_1` met `vector<Mine>` under a `vector<text>`), and a lambda
+-    /// is a definition numbered by `lambda_counter`.  So the variable table is put back
+-    /// whole, and while [`Parser::discovering`] a lambda defines nothing: the long form
+-    /// answers the type its header spells, and a short one — whose parameter types come from
+-    /// the very type this read is after — answers nothing, and its field binds nothing.
+-    fn literal_instance(
+-        &mut self,
+-        fields_of: u32,
+-        template: u32,
+-        at: &Position,
+-        expected: u32,
+-    ) -> Option<u32> {
++    /// The values are read once to learn their types and the lexer is put back, the abandon
++    /// path `parse_object`'s hint retry takes; the literal is then built against the instance
++    /// exactly as an annotated one is, and what its values report is reported by that second
++    /// read.  `None` when a variable stays unbound or two fields bind it to two types — on
++    /// pass 2 reported, naming the variable and the annotation that cures it, unless a value
++    /// already reported (@P376: the site is poisoned, not explained twice).
++    fn literal_instance(&mut self, fields_of: u32, template: u32, at: &Position) -> Option<u32> {
+         let link = self.lexer.link();
+-        let table = self.vars.clone();
+-        let closure_work = self.last_closure_work_var;
+-        self.discovering += 1;
++        let work = self.vars.work_ref();
++        let work_p2 = self.vars.work_ref_p2();
+         let mark = self.lexer.diagnostics().mark();
+         let errors = self.lexer.diagnostics().error_count();
+         let mut values: Vec<(String, Type)> = Vec::new();
+-        // Fields whose value held a short lambda the read stepped over.
+-        let mut lambdas: Vec<String> = Vec::new();
+         self.lexer.token("{");
+         while !self.lexer.peek_token("}") {
+             let Some(field) = self
+@@ -4282,33 +4258,18 @@ impl Parser {
+                 break;
+             }
+             let outer = std::mem::replace(&mut self.expected, Type::Unknown(0));
+-            let skipped = std::mem::replace(&mut self.discovery_skipped_lambda, false);
+             let mut value = Value::Null;
+             let tp = self.expression(&mut value);
+             self.expected = outer;
+-            let tp = if self.discovery_skipped_lambda {
+-                lambdas.push(field.clone());
+-                Type::Unknown(0)
+-            } else {
+-                tp
+-            };
+-            self.discovery_skipped_lambda = skipped;
+             values.push((field, tp));
+             if !self.lexer.has_token(",") {
+                 break;
+             }
+         }
+-        self.discovering -= 1;
+         let reported = self.lexer.diagnostics().error_count() > errors;
+-        let closed = self.lexer.has_token("}");
+-        let receiver = closed && (self.lexer.peek_token(".") || self.lexer.peek_token("["));
+-        self.vars = table;
+-        self.last_closure_work_var = closure_work;
+-        if expected != u32::MAX && !receiver {
+-            self.lexer.revert(link);
+-            self.lexer.rewind_diagnostics(mark);
+-            return Some(expected);
+-        }
++        self.lexer.revert(link);
++        self.vars.clean_work_refs(work);
++        self.vars.clean_work_refs_p2(work_p2);
+         let name = self.data.def(fields_of).name().to_string();
+         // (field, its declared type, its value's type) — an unknown field is the second
+         // read's to report.
+@@ -4363,37 +4324,22 @@ impl Parser {
+             if let Some((_, b)) = bound {
+                 bindings.push((v, b));
+             } else if refusal.is_none() {
+-                let through_lambda = fields.iter().find(|(f, declared, _)| {
+-                    lambdas.contains(f) && self.data.type_mentions(declared, v)
+-                });
+-                refusal = Some(if let Some((f, _, _)) = through_lambda {
+-                    format!(
+-                        "`{name} {{ … }}` cannot tell what {spelled} is — the `|…|` lambda in \
+-                         `{f}` takes its types from the field; spell it `fn(…) -> <type> {{ … }}`, \
+-                         or give the binding its type, `x: {name}<integer> = {name} {{ … }}`"
+-                    )
+-                } else {
+-                    format!(
+-                        "`{name} {{ … }}` cannot tell what {spelled} is — no field value names it; \
+-                         give the binding its type, `x: {name}<integer> = {name} {{ … }}`"
+-                    )
+-                });
++                refusal = Some(format!(
++                    "`{name} {{ … }}` cannot tell what {spelled} is — no field value names it; \
++                     give the binding its type, `x: {name}<integer> = {name} {{ … }}`"
++                ));
+             }
+         }
+         if let Some(message) = refusal {
+-            if !closed {
+-                // A value the read could not finish: the rest of the body is stepped over.
+-                self.lexer.revert(link);
+-                self.skip_braced();
+-            }
+             if !self.first_pass && !reported {
+                 self.lexer.rewind_diagnostics(mark);
+-                // At the literal's name: the read has run on to the token after it.
++                // At the literal's name: after the lexer is put back, `prev_end` still
++                // reads where the first read stopped (the `Lexer::revert` note in
++                // `parse_object`).
+                 diagnostic_at!(self.lexer, at, Level::Error, "{message}");
+             }
+             return None;
+         }
+-        self.lexer.revert(link);
+         self.lexer.rewind_diagnostics(mark);
+         let args: Vec<Type> = bindings.into_iter().map(|(_, b)| b).collect();
+         let inst = self.instance_def(template, &args);
+@@ -4548,6 +4494,17 @@ impl Parser {
+         code
+     }
+ 
++    /// Is the `{ … }` literal at the cursor followed by `.` or `[` — the receiver of a postfix,
++    /// not the whole value?  One balanced look-ahead, put back: the literal is parsed right
++    /// after over the same tokens, so the lexer's position ends where that parse leaves it.
++    fn literal_is_a_receiver(&mut self) -> bool {
++        let link = self.lexer.link();
++        self.skip_braced();
++        let receiver = self.lexer.peek_token(".") || self.lexer.peek_token("[");
++        self.lexer.revert(link);
++        receiver
++    }
++
+     /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —
+     /// what a literal refused before its fields are typed leaves behind, so the parser stays
+     /// aligned for the next statement.
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 6c940594c..564bc2a11 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -1360,9 +1360,6 @@ or build a local and use that."
+     }
+ 
+     pub(crate) fn parse_lambda(&mut self, code: &mut Value) -> Type {
+-        if self.discovering > 0 {
+-            return self.lambda_signature();
+-        }
+         let lambda_name = format!("__lambda_{}", self.lambda_counter);
+         self.lambda_counter += 1;
+         let stored_name = format!("n_{lambda_name}");
+@@ -1578,75 +1575,6 @@ or build a local and use that."
+         Type::Function(arg_types, Box::new(ret_type), dep, consts)
+     }
+ 
+-    /// The type a `fn(…) -> τ { … }` lambda's header spells, for a generic literal reading its
+-    /// values to learn its instance (`Parser::discovering`): that read defines nothing, and a
+-    /// lambda parsed as one is a definition.  The body is still READ — a walk over its tokens
+-    /// would record ones no parse reads (a format string's holes) for the literal's second
+-    /// read to replay — against a table of its own, which the literal's read puts back.
+-    fn lambda_signature(&mut self) -> Type {
+-        let file = self.lexer.pos().file.clone();
+-        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", &file));
+-        self.lexer.token("(");
+-        let mut arguments = Vec::new();
+-        self.parse_arguments("__lambda", &mut arguments);
+-        self.lexer.token(")");
+-        let result = if self.lexer.has_token("->") {
+-            self.parse_type_full(self.context, true)
+-                .unwrap_or(Type::Void)
+-        } else {
+-            Type::Void
+-        };
+-        let result = self.boxed_tuple_return(result);
+-        self.read_lambda_body(&arguments);
+-        self.vars = outer_vars;
+-        let arg_types: Vec<Type> = arguments.iter().map(|a| a.typedef.clone()).collect();
+-        let consts = crate::data::ConstParams::from_flags(arguments.iter().map(|a| a.constant));
+-        Type::Function(arg_types, Box::new(result), Deps::none(), consts)
+-    }
+-
+-    /// A `|…| { … }` lambda for the same read: its parameter types come from the type that
+-    /// read is looking for, so it answers none, and the value holding it binds nothing
+-    /// (`Parser::discovery_skipped_lambda`).  Read as [`Self::lambda_signature`] reads a body.
+-    fn skip_short_lambda(&mut self, expect_close: bool) {
+-        let file = self.lexer.pos().file.clone();
+-        let outer_vars = std::mem::replace(&mut self.vars, Function::new("__lambda", &file));
+-        let mut arguments = Vec::new();
+-        if expect_close {
+-            while let Some(name) = self.lexer.has_identifier() {
+-                arguments.push(Argument {
+-                    name,
+-                    typedef: Type::Unknown(0),
+-                    default: Value::Null,
+-                    constant: false,
+-                    ref_pos: (0, 0),
+-                    const_pos: (0, 0),
+-                });
+-                if !self.lexer.has_token(",") {
+-                    break;
+-                }
+-            }
+-            self.lexer.token("|");
+-        }
+-        self.read_lambda_body(&arguments);
+-        self.vars = outer_vars;
+-        self.discovery_skipped_lambda = true;
+-    }
+-
+-    /// Read a discovered lambda's body with its parameters in scope; what it reports is the
+-    /// lambda's own second read's to say.
+-    fn read_lambda_body(&mut self, arguments: &[Argument]) {
+-        let mark = self.lexer.diagnostics().mark();
+-        for a in arguments {
+-            self.create_var(&a.name, &a.typedef);
+-        }
+-        let outer_loop = self.in_loop;
+-        self.in_loop = false;
+-        let mut body = Value::Null;
+-        self.parse_block("lambda", &mut body, &Type::Unknown(0));
+-        self.in_loop = outer_loop;
+-        self.lexer.rewind_diagnostics(mark);
+-    }
+-
+     // <short-lambda> ::= '||' ['->' type] block              (expect_close=false)
+     //                  | '|' [param {',' param}] '|' ['->' type] block  (expect_close=true)
+     // param ::= ident [':' type]
+@@ -1656,10 +1584,6 @@ or build a local and use that."
+     // Produces Type::Function; runtime representation is d_nr as i32, same as fn-ref.
+     #[allow(clippy::too_many_lines)] // single context save/restore spans the whole body; splitting would need unsafe borrowing
+     pub(crate) fn parse_lambda_short(&mut self, code: &mut Value, expect_close: bool) -> Type {
+-        if self.discovering > 0 {
+-            self.skip_short_lambda(expect_close);
+-            return Type::Unknown(0);
+-        }
+         let lambda_name = format!("__lambda_{}", self.lambda_counter);
+         self.lambda_counter += 1;
+         let stored_name = format!("n_{lambda_name}");

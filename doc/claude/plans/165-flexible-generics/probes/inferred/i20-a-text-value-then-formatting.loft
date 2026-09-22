@@ -1,0 +1,9 @@
+// D4 — a formatted text value declares work text in the read; the table is put back.
+// @EXPECT: n=7/8
+struct Box<T> { v: T }
+fn main() {
+  n = 7;
+  b = Box { v: "n={n}" };
+  t = "{b.v}/{n + 1}";
+  println(t);
+}

@@ -1,0 +1,75 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 D4, D10 — a literal of a generic struct reads its values once to learn the
+// instance it builds, and that read leaves nothing behind: no variable, no lambda, and a
+// lexer that replays exactly what it read.  Pass 2 does not repeat it where a bound
+// variable's pass-1 type is the literal's expected instance, so whatever the read numbered
+// renumbered what followed — a vector value's `_vec_1` met a later vector argument of
+// another element type, and a lambda value's definition shifted every later lambda.  And a
+// format string read a second time kept the lexer in its string mode past the closing
+// quote.
+//
+// @falsified-at: d156a9d91 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-literal-reads-its-values-without-a-trace.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control refuses the file.
+//   ARMED: nothing.
+//   WITNESS: the control stops first at the format string (`Expect token }`); every cell also
+//   fails ALONE there, each on its own defect — probes/inferred i13–i20 (`_vec_1` changes
+//   type, a later lambda's `x` changes type, an unknown capture, a mixed capture shape).
+//   HOLDS: nothing else.
+
+struct Grid<T> { cells: vector<T>, w: integer }
+struct Fb<T> { f: fn(T) -> T, v: T }
+struct Fs<T> { f: fn(T) -> text, v: T }
+struct Box<T> { v: T }
+
+fn count<T>(cells: vector<T>) -> integer { len(cells) }
+
+fn test_a_vector_value_then_a_vector_argument_of_another_type() {
+  m = Grid { cells: [5], w: 1 };
+  t = count(["a", "b", "c"]);
+  assert(m.cells[0] == 5 && t == 3, "{m.cells[0]}|{t}");
+}
+
+fn test_a_lambda_value_then_a_lambda_of_another_type() {
+  a = Fb { f: fn(x: integer) -> integer { x + 1 }, v: 4 };
+  g = fn(s: text) -> text { "{s}!" };
+  b = Fb { f: g, v: "hi" };
+  h = fn(n: integer) -> integer { n * 10 };
+  r = "{a.f(a.v)}|{b.f(b.v)}|{h(3)}";
+  assert(r == "5|hi!|30", r);
+}
+
+fn test_a_short_lambda_beside_the_field_that_binds() {
+  a = Fb { f: |x| { x + 1 }, v: 4 };
+  k = 2;
+  b = Fb { f: |x| { x * k }, v: 5 };
+  g = fn(s: text) -> text { "{s}?" };
+  r = "{a.f(a.v)}|{b.f(b.v)}|{g("q")}";
+  assert(r == "5|10|q?", r);
+}
+
+fn test_a_format_string_value() {
+  n = 7;
+  b = Box { v: "n={n}" };
+  c: Box<text> = Box { v: "c={n + 1}" };
+  s = Box { v: "r={n * 2}" }.v;
+  r = "{b.v}/{c.v}/{s}";
+  assert(r == "n=7/c=8/r=14", r);
+}
+
+fn test_a_format_string_inside_a_lambda_value() {
+  a = Fs { f: |x| { "{x}!" }, v: 4 };
+  g = fn(n: integer) -> integer { n + 1 };
+  r = "{a.f(a.v)}|{g(7)}";
+  assert(r == "4!|8", r);
+}
+
+fn test_a_capturing_lambda_inside_a_nested_literal() {
+  k = 3;
+  p = Box { v: Box { v: fn(x: integer) -> integer { x + k } } };
+  q = fn(s: text) -> text { "{s}{s}" };
+  r = "{p.v.v(10)}|{q("t")}";
+  assert(r == "13|tt", r);
+}
