@@ -20,13 +20,17 @@ const CELLS: &str =
 const HEADERS: &[(&str, usize, usize)] = &[
     ("n_d1", 2, 0), // t and v
     ("n_d2", 2, 0), // the default arm taken changes nothing at generation time
-    ("n_d3", 0, 1), // a heap-owning record: the LOOP is blocked (no vector header); the one
-    //                  push header is the literal `h = [Hv {…}, Hv {…}]`'s own group header
-    //                  (`@FR-R-GroupPush`, 2026-09-18 — a heap-owning element takes it too).
-    //                  @PLN158 P1 lifted the block for a heap-owning record and this pin read
-    //                  (2, 1) for it; that clause is reverted on this tree, because it reads a
-    //                  stale header on `1575`'s `c3` (a local rebound from a call in a loop:
-    //                  `null(oob)` for `1` on native, passing under LOFT_NO_NULL_BUFFER_HOIST)
+    ("n_d3", 2, 1), // a heap-owning record: @PLN158 P1's lift means the discharge buffer's
+    //                  mint no longer blocks the loop whatever the record holds, so h and v
+    //                  hold their headers; the one push header is the literal
+    //                  `h = [Hv {…}, Hv {…}]`'s own group header (`@FR-R-GroupPush`).
+    //                  This row read (0, 1) for a day on the quality branch, where P1 was
+    //                  REVERTED because it read a stale header on `1575`'s `c3` — a local
+    //                  rebound from a call in a loop, `null(oob)` for `1` on native.  P1 is
+    //                  back since the join of 2026-09-23 and that cell passes on both
+    //                  backends again, because the same line brought `@PLN158`'s later fix:
+    //                  a hoist's root is invariant only while what it LINKS to is.  The pair
+    //                  is re-measured here rather than carried from either side.
     ("n_d4", 3, 0),  // t and v in the loop, v again in the summing loop
     ("n_d5", 1, 1),  // v read, out pushed; t is a call result and leaves the read list
     ("n_d6", 2, 0),  // derived by the outer loop once
@@ -39,9 +43,10 @@ const HEADERS: &[(&str, usize, usize)] = &[
     // element takes it too), bound before the loop and closed at the literal's last finish.
     ("n_d11", 0, 1), // a heap-owning record: blocked
     ("n_d12", 0, 1), // the alias shape over a record with a default vector: blocked
-    ("n_d13", 0, 1), // the alias falsifier proper: heap-owning, no default, blocked — @PLN158
-                     //                  P1's lift of that block is reverted on this tree (see n_d3), so the
-                     //                  LINK clause it was measured beside has nothing to keep out here
+    ("n_d13", 1, 1), // the alias falsifier proper: heap-owning, no default — with P1 the
+                     //                  discharge no longer blocks the loop, and the LINK clause keeps
+                     //                  `g.tags` out (g links to e, which the body rebinds): the one header
+                     //                  is `h`'s, and the values test reads 7
 ];
 
 /// The cells whose loop is blocked without the admission: under the switch none derives a
