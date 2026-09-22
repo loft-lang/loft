@@ -1080,6 +1080,11 @@ fn OpSetShortRaw(v1: reference, fld: const u16, min: const i16, val: integer);
 // `OpGetShortRaw`'s `u16::MAX` both swallow the max value as null).  The write
 // reuses `OpSetShortRaw` (same `(val - min)` store); only the read differs
 // (no sentinel decode).  Nullable `u16`/`i16` fields stay on `OpGetShort`.
+// @PLN167 — a LINK to a non-null two-byte place whose type kept a spare top code
+// (`limit(-1000, 1000) size(2)`): the overflow's `u16::MAX` reads as null (C85), as the
+// local it may name answers; every other code is a value.
+fn OpGetShortSpare(v1: reference, fld: const u16, min: const i16) -> integer;
+#rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).read::<u16>(db.rec, db.pos + u32::from(@fld)); crate::narrow::dec_short_spare(r, i32::from(@min)) }} }}"
 fn OpGetShortFull(v1: reference, fld: const u16, min: const i16) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ i64::from(stores.store(&db).get_short_full(db.rec, db.pos + u32::from(@fld), i32::from(@min))) }} }}"
 fn OpSetText(v1: reference, fld: const u16, val: text);

@@ -3224,7 +3224,12 @@ impl Function {
         if (var_nr as usize) >= self.variables.len() {
             return None;
         }
-        if !self.variables[var_nr as usize].linked_narrow && !link_all_narrow() {
+        // The switch stands for "as if a `&` named it", which only a variable the author can
+        // write a `&` to can be: a compiler temp (a `??` or `as τ?` lowering's `__ncc_N`,
+        // `__dn4_N`) never is, and several lowerings declare their temps on paths of their
+        // own, so treating one as linked measures nothing the rule can produce.
+        let as_if_linked = link_all_narrow() && !self.is_compiler_generated(var_nr);
+        if !self.variables[var_nr as usize].linked_narrow && !as_if_linked {
             return None;
         }
         crate::data::NarrowSlot::of_type(self.tp(var_nr))

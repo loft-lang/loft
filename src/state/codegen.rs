@@ -386,7 +386,7 @@ impl State {
                 stack.add_op("OpPutNarrow", self);
                 self.code_add(put_pos);
                 self.code_add(slot.min as i16);
-                self.code_add(slot.kind.code());
+                self.code_add(slot.code());
             }
         }
         if console {
@@ -3472,7 +3472,7 @@ impl State {
             self.code_add(var_pos);
             if let Some(slot) = narrow_slot {
                 self.code_add(slot.min as i16);
-                self.code_add(slot.kind.code());
+                self.code_add(slot.code());
             }
         }
     }
@@ -4758,7 +4758,7 @@ impl State {
         self.code_add(var_pos);
         if let Some(slot) = narrow_slot {
             self.code_add(slot.min as i16);
-            self.code_add(slot.kind.code());
+            self.code_add(slot.code());
         }
         if let Type::RefVar(tp) = stack.function.tp(variable) {
             // @PLN167 — a link to a NARROW integer place (a linked local, a field, an element)
@@ -4776,7 +4776,7 @@ impl State {
             let txt = matches!(tp, Type::Text(_) | Type::Function(..));
             match tp {
                 Type::Integer(_) if narrow_link.is_some() => {
-                    stack.add_op(narrow_link.expect("checked").kind.get_op(), self);
+                    stack.add_op(narrow_link.expect("checked").get_op(), self);
                 }
                 Type::Integer(_) => stack.add_op("OpGetInt", self),
                 Type::Character => stack.add_op("OpGetCharacter", self),
@@ -5295,7 +5295,7 @@ impl State {
             };
             match *tp {
                 Type::Integer(_) if narrow_link.is_some() => {
-                    stack.add_op(narrow_link.expect("checked").kind.set_op(), self);
+                    stack.add_op(narrow_link.expect("checked").set_op(), self);
                 }
                 Type::Integer(_) => stack.add_op("OpSetInt", self),
                 Type::Character => stack.add_op("OpSetCharacter", self),
@@ -5551,7 +5551,7 @@ impl State {
         self.code_add(var_pos);
         if let Some(slot) = narrow_slot {
             self.code_add(slot.min as i16);
-            self.code_add(slot.kind.code());
+            self.code_add(slot.code());
         }
     }
 

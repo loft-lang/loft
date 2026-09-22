@@ -24,13 +24,18 @@ pub const SHORT_FULL: u8 = 4;
 pub const INT4: u8 = 5;
 pub const INT4_RAW: u8 = 6;
 pub const INT4_FULL: u8 = 7;
+/// A non-nullable byte whose type kept a spare code (`limit(-100, 100) size(1)`, 201 values
+/// in 256): an overflow writes `255` and the slot reads null (C85).
+pub const BYTE_SPARE: u8 = 8;
+/// The two-byte twin: `u16::MAX` is the overflow's code.
+pub const SHORT_SPARE: u8 = 9;
 
 /// The storage width of a kind, in bytes.
 #[must_use]
 pub const fn width(kind: u8) -> u32 {
     match kind {
-        BYTE | BYTE_NULLABLE => 1,
-        SHORT_RAW | SHORT | SHORT_FULL => 2,
+        BYTE | BYTE_NULLABLE | BYTE_SPARE => 1,
+        SHORT_RAW | SHORT | SHORT_FULL | SHORT_SPARE => 2,
         _ => 4,
     }
 }
@@ -54,6 +59,17 @@ pub fn enc_byte_nullable(v: i64, min: i32) -> u8 {
 }
 #[must_use]
 pub fn dec_byte_nullable(b: u8, min: i32) -> i64 {
+    if b == 255 { i64::MIN } else { dec_byte(b, min) }
+}
+
+/// A non-nullable byte with a spare top code: `255` is the overflow's null (C85), every
+/// other code a value.  What `Store::set_byte` writes for `i32::MIN`.
+#[must_use]
+pub fn enc_byte_spare(v: i64, min: i32) -> u8 {
+    if v == i64::MIN { 255 } else { enc_byte(v, min) }
+}
+#[must_use]
+pub fn dec_byte_spare(b: u8, min: i32) -> i64 {
     if b == 255 { i64::MIN } else { dec_byte(b, min) }
 }
 
@@ -105,6 +121,25 @@ pub fn dec_short_raw(s: u16, min: i32) -> i64 {
         i64::MIN
     } else {
         i64::from(s) + i64::from(min)
+    }
+}
+
+/// A non-nullable short with a spare top code: `u16::MAX` is the overflow's null (C85).
+/// What `Store::set_i16_raw` writes for `i32::MIN`.
+#[must_use]
+pub fn enc_short_spare(v: i64, min: i32) -> u16 {
+    if v == i64::MIN {
+        u16::MAX
+    } else {
+        enc_short_full(v, min)
+    }
+}
+#[must_use]
+pub fn dec_short_spare(s: u16, min: i32) -> i64 {
+    if s == u16::MAX {
+        i64::MIN
+    } else {
+        dec_short_full(s, min)
     }
 }
 
@@ -161,6 +196,8 @@ pub fn encode(kind: u8, min: i32, v: i64) -> u32 {
         SHORT_FULL => u32::from(enc_short_full(v, min)),
         INT4 => enc_int4(v) as u32,
         INT4_RAW => enc_int4_raw(v),
+        BYTE_SPARE => u32::from(enc_byte_spare(v, min)),
+        SHORT_SPARE => u32::from(enc_short_spare(v, min)),
         _ => enc_int4_full(v),
     }
 }
@@ -176,6 +213,8 @@ pub fn decode(kind: u8, min: i32, bits: u32) -> i64 {
         SHORT_FULL => dec_short_full(bits as u16, min),
         INT4 => dec_int4(bits as i32),
         INT4_RAW => dec_int4_raw(bits),
+        BYTE_SPARE => dec_byte_spare(bits as u8, min),
+        SHORT_SPARE => dec_short_spare(bits as u16, min),
         _ => dec_int4_full(bits),
     }
 }
@@ -206,6 +245,8 @@ mod tests {
             ),
             (INT4_RAW, 0, 0, i64::from(u32::MAX) - 1),
             (INT4_FULL, 0, 0, i64::from(u32::MAX)),
+            (BYTE_SPARE, -100, -100, 100),
+            (SHORT_SPARE, -1000, -1000, 1000),
         ] {
             for v in [lo, lo + 1, (lo + hi) / 2, hi - 1, hi] {
                 assert_eq!(
@@ -214,7 +255,10 @@ mod tests {
                     "kind {kind} value {v}"
                 );
             }
-            if matches!(kind, BYTE_NULLABLE | SHORT | SHORT_RAW | INT4 | INT4_RAW) {
+            if matches!(
+                kind,
+                BYTE_NULLABLE | SHORT | SHORT_RAW | INT4 | INT4_RAW | BYTE_SPARE | SHORT_SPARE
+            ) {
                 assert_eq!(
                     decode(kind, min, encode(kind, min, i64::MIN)),
                     i64::MIN,

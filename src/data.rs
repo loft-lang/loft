@@ -6010,6 +6010,11 @@ pub struct NarrowSlot {
     /// The `min` operand of the kind's ops; `0` for a kind that takes none.
     pub min: i32,
     pub width: u8,
+    /// A NON-nullable 1- or 2-byte type that kept a spare top code
+    /// (`IntegerSpec::reserves_sentinel_unconditionally`): an overflow writes that code and
+    /// the slot reads null (C85), which is what a LOCAL of the type answers today.  The
+    /// encoding maps null to the code and back; the kind's own ops do not.
+    pub spare: bool,
 }
 
 impl NarrowSlot {
@@ -6029,7 +6034,47 @@ impl NarrowSlot {
         } else {
             0
         };
-        Some(Self { kind, min, width })
+        let spare = !nullable && matches!(width, 1 | 2) && spec.reserves_sentinel_unconditionally();
+        Some(Self {
+            kind,
+            min,
+            width,
+            spare,
+        })
+    }
+
+    /// The kind as the interpreter's op operand spells it.
+    #[must_use]
+    pub fn code(self) -> u8 {
+        match (self.spare, self.width) {
+            (true, 1) => crate::narrow::BYTE_SPARE,
+            (true, _) => crate::narrow::SHORT_SPARE,
+            _ => self.kind.code(),
+        }
+    }
+
+    /// The interpreter op a LINK to a place of this kind reads through: the kind's own, except
+    /// that a spare-code kind reads through the op that decodes its top code as null.
+    #[must_use]
+    pub fn get_op(self) -> &'static str {
+        match (self.spare, self.width) {
+            (true, 1) => "OpGetByteNullable",
+            (true, _) => "OpGetShortSpare",
+            _ => self.kind.get_op(),
+        }
+    }
+
+    /// The write twin of [`Self::get_op`].  A spare-code BYTE writes through the nullable
+    /// setter: the plain one casts its value `as i32` before the store sees it, which turns
+    /// the null `i64::MIN` into `0` — a value — where the nullable one maps it to the code
+    /// first (the field half of that truncation is loft#1615).  The two-byte setter and every
+    /// other kind's already map null to their code.
+    #[must_use]
+    pub fn set_op(self) -> &'static str {
+        match (self.spare, self.width) {
+            (true, 1) => "OpSetByteNullable",
+            _ => self.kind.set_op(),
+        }
     }
 
     /// The Rust type a native local of this kind is declared as: the storage width, unsigned
@@ -6048,6 +6093,13 @@ impl NarrowSlot {
     /// The `crate::narrow` function pair for this kind, `(enc, dec)`, and whether it takes
     /// the `min` argument.
     fn fns(self) -> (&'static str, &'static str, bool) {
+        if self.spare {
+            return if self.width == 1 {
+                ("enc_byte_spare", "dec_byte_spare", true)
+            } else {
+                ("enc_short_spare", "dec_short_spare", true)
+            };
+        }
         match self.kind {
             NarrowIntKind::Byte => ("enc_byte", "dec_byte", true),
             NarrowIntKind::ByteNullable => ("enc_byte_nullable", "dec_byte_nullable", true),

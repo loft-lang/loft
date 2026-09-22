@@ -225,6 +225,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     get_int4_full,
     get_short_raw,
     set_short_raw,
+    get_short_spare,
     get_short_full,
     set_text,
     var_vector,
@@ -2102,6 +2103,25 @@ fn set_short_raw(s: &mut State) {
             );
         }
     }
+}
+
+fn get_short_spare(s: &mut State) {
+    let v_fld = s.code::<u16>();
+    let v_min = s.code::<i16>();
+    let v_v1 = s.get_stack::<DbRef>();
+    let new_value = {
+        let db = v_v1;
+        if db.rec == 0 {
+            i64::MIN
+        } else {
+            let r = s
+                .database
+                .store(&db)
+                .read::<u16>(db.rec, db.pos + u32::from(v_fld));
+            crate::narrow::dec_short_spare(r, i32::from(v_min))
+        }
+    };
+    s.put_stack(new_value);
 }
 
 fn get_short_full(s: &mut State) {
