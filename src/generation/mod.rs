@@ -4956,6 +4956,7 @@ impl Output<'_> {
                 self.data.def(self.def_nr).variables(),
                 self.data.def(self.def_nr).code(),
                 &nn,
+                &self.char_walks,
             ));
             self.range_cache.insert(self.def_nr, map.clone());
             map

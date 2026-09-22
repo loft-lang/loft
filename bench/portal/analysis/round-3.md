@@ -468,9 +468,18 @@ last pass was a CALL in the loop either way; answering it as the null text witho
 (what `get_vector` answers for any non-negative index past the length) gave 6.6, under the
 hand price.  `bench/stats.py --only 13` pins it: **`join` 6,032 ns vs 5,716, 1.06× (range
 1.05–1.06)**; the text lane's median is 1.19×, nine of its ten rows within 2× and only
-`char_walk` (3.14×) over.  Next: the trip-count bound
-for a text walk's accumulator (`char_walk` 3.14×), the record push window under a branch
-(`enum_match` 3.98×), the per-iteration call source in `for c in s.trim()`.  Levers this round FOUND and left unpriced, each with its number: a
+`char_walk` (3.14×) over.
+**The trip-count bound for a text walk's accumulator** — BUILT as `(R-Range)`'s
+accumulator clause (`range::seed_accumulators`): a local seeded once by a ranged value and
+stepped only by literals inside a character walk over an unwritten text is ranged by
+`seed ± Σ|c| · u32::MAX`, so its steps emit plain; `char_walk` 12.5 → **10.45 µs** (−17 %),
+hash `2e18` — the W1 ledger's 8.3 was measured on an older emission and is not reached: the
+row's remaining cost is the two null-aware character compares against literals, which LLVM
+folds already (W1's finding).  Cells a1–a11 walk the admissions (a negative step, two walks,
+an `if`, an outer loop re-seeding) and the declines (the seed outside the enclosing loop, a
+non-literal step, an appended text, a second seed, a counted loop, a parameter seed).
+Next: `enum_match`'s record push window under a branch (3.98×), `for c in s.trim()`'s
+per-iteration call source.  Levers this round FOUND and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
 through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
 walk's accumulator (`char_walk`'s 12.9 → 8.3), and the parser's per-iteration evaluation of

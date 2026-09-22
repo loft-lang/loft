@@ -1249,6 +1249,22 @@ end (`0..=10` against `0..=9`, `i * 1e18` crossing i64::MAX between them), so th
 verdict is a claim about the counter's top bound and nothing else — a top taken one too LOW
 is the only unsound direction, and it turns b3 red and makes `LOFT_HOIST_VERIFY=1` panic
 naming the operator.
+**The accumulator clause** (2026-09-22, @PLN158 round 4): a second self-stepping shape
+read off a loop, after the counters.  A local seeded ONCE by a ranged value (`n = 0`) and
+stepped only by LITERALS (`n += 1`, `n -= 2`), every step either straight-line after the
+seed in the seed's own block or inside ONE loop there that is a character walk `(R-CharWalk)`
+over a text the body never writes, is ranged: such a walk makes at most `size(T)` trips (a
+`u32` word), so per run of the block `n` moves by at most `Σ|c| · u32::MAX` over the walked
+steps plus `Σ|c|` over the straight ones, and the seed plus that bound is `n`'s range
+whenever it fits the type — the checked step cannot fault, so the processor's operator
+answers what the template would.  The seed's block may itself sit in a loop (each pass
+re-seeds); a step under a second loop, under a loop that is not such a walk (a counted loop:
+its trips are not a text's size; a walk over a text the body appends to), a step by a
+non-literal, a second seed, a write to `n` anywhere else, a parameter seed or `n` handed out
+by reference declines.  Measured: the stdlib bench's `char_walk` (`n += 1` / `n += 2` under
+`for c in src`) 12.5 → 10.45 µs (−17 %), hash `2e18`; `LOFT_HOIST_VERIFY=1` compares every
+plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a11, pins
+`tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
 
