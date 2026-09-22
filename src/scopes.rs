@@ -5558,6 +5558,7 @@ fn rewrite_written_out(code: &mut Value, vars: &mut Function, written: &[(usize,
     hit
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_scan_phase(
     data: &mut Data,
     database: &mut crate::database::Stores,
