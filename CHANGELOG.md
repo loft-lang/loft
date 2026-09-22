@@ -14,6 +14,12 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A `for` over a text that a call answers evaluates the call once.**  `for c in line.trim()`
+and `for c in "a" + b` used to re-evaluate their source three times per character — a side
+effect in the call ran with every one of them, and a text the call builds was built again
+and again.  The source is now evaluated once, before the loop, in the statement and in
+`[for c in f() { … }]` alike; a text variable or a field is walked as before.
+
 **A store written by an older version of your program is refused, not misread, by every
 way of opening it.**  A struct that gained, lost or changed a field lays its records out
 differently, and `store_load` already refused a store written with the old layout.

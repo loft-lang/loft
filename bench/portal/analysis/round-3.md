@@ -538,8 +538,18 @@ record MINT GROUPS under `if` arms of a counted loop — at most one mint per pa
 trip-count reservation bounds the total and the window never grows inside the loop.
 **BUILT** as the record clause (§ Built): 35.9 → 23.2–23.6 µs, the fast path forced inline;
 `stats.py --only 16` pins it at **2.58× mode to mode** (the row is bimodal on both lanes, §
-Built has the samples), down from 3.98×.  Next: `for c in s.trim()`'s per-iteration call
-source.  Levers this round FOUND
+Built has the samples), down from 3.98×.  **`for c in s.trim()`'s per-iteration call source
+— BUILT as a SEMANTICS fix, not a rewrite** (no switch, both backends, parse time): the walk
+re-spelled its source at three sites per round, so a call source ran three times per
+character (twelve calls for three characters, side effects included; a comprehension the
+same) — `(I-Text)`'s `it := ⟨0, src⟩` says once.  A non-place source is now bound to a
+hidden local in the walk's prelude at the one home every text walk builds its iterator in
+(`Parser::iterator`), and `(R-CharWalk)` then takes the walk (fast step + hoisted null test:
+`158-char-walk` w10).  No bench row carries the shape (34 corpus sites, one in the
+libraries), so it has no price here; cells `tests/scripts/iter-text-source-once.loft`
+s1–s15.  What it left OPEN, for the owner (`iteration.md` D-iter-5): a place source the
+body writes (`for c in s { s = … }`) and a range bound (`0..len(v)` under appends) are
+RE-READ per round, which the rule's letter does not say.  Levers this round FOUND
 and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
 through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text

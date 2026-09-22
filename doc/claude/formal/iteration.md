@@ -99,6 +99,18 @@ that jumps by each codepoint's UTF-8 width (a 4-byte emoji advances by 4), so `c
 expose byte offsets and the offset sequence is not `0,1,2,…` for non-ASCII text. Same cursor
 shape as a vector, differing only in `elem` (decode one codepoint) and the stride (its width).
 
+**The source is evaluated ONCE.** `it := ⟨0, src⟩` — the `for` evaluates `src` before the
+first round and never again; only the cursor is re-read.  Measured 2026-09-23, both backends
+alike: a text source that was a CALL was evaluated three times per round — the character
+read, the null test and the length test each re-spelled the expression — so `for c in f()`
+called `f` twelve times for three characters, a side effect in `f` ran with every call, and
+`[for c in f() { … }]` did the same.  Fixed at the one home every text walk builds its
+iterator in (`Parser::iterator`, cited `@FR-I-Text`): a source that is not a PLACE — a call,
+a literal, an operator expression, an element read, a branch — is bound to a hidden local in
+the walk's prelude and the walk reads the local.  A variable and a field path are still read
+per round (the cheap re-read of a place), which is observable only when the body writes the
+walked place — D-iter-5 below.  Pinned by `tests/scripts/iter-text-source-once.loft`.
+
 > **Combinators are vector methods, not text methods.** `t.map(…)` / `t.filter(…)` are **not**
 > valid — `.map`/`.filter`/`.reduce` (`I-Map`/`I-Filter`/`I-Reduce`) dispatch on a vector (or a
 > keyed collection), and text is `Unknown field text.map`. Text participates in the combinator
@@ -158,8 +170,27 @@ case past it (QUALITY.md B8i).
 
 ## Deviations
 
-**OPEN: 0.**  Every deviation this doc has carried is closed; the record is in
-the companion [iteration-history.md](iteration-history.md).
+**OPEN: 1.**  Every earlier deviation is closed; the record is in the companion
+[iteration-history.md](iteration-history.md).
+
+> **D-iter-5 — OPEN (2026-09-23, loft#1619). A PLACE source, and a range bound, are RE-READ per round.**
+> `it := ⟨0, src⟩` and `(I-Range)`'s "the integers a, …, b-1" read `src` and `b` as VALUES
+> taken once; the code re-reads a place every round.  Measured, both backends alike:
+> `s = "hello"; for c in s { s = "zz" }` walks two characters (the new text from the second
+> round on), `for c in st.s { st.s = "zz" }` the same; `w = [1,2,3]; for i in 0..len(w)
+> { w += [9] }` runs five rounds, `m = 3; for i in 0..m { m = 10 }` ten, and `for i in
+> 0..=f()` calls `f` nine times for three rounds — `0..f()` four.  A VALUE source (a call, a
+> literal, an expression) is settled and evaluated once since 2026-09-23 (the paragraph
+> under `I-Text`); the place cases are a language choice the rule's letter does not make
+> and the code does: `(I-For)`'s own prose keeps the cursor's LENGTH re-read "as it is at
+> that step" on purpose, the queue idiom `for i in 0..len(q) { …; q += [next] }` is written
+> against that, and `(R-PushFill)` / `(R-Range)` on native are built on a range end that may
+> vary.  So this is the OWNER's to decide — extend the rule to say a place source and a
+> range bound are read per round (then close as settled), or keep the letter and change the
+> lowering (a bound-once range end, and a text place copied at entry only where the body
+> writes it), with the corpus's queue loops re-measured first.  Cells: the s15 row of
+> `tests/scripts/iter-text-source-once.loft` pins the place case AS IT STANDS, so the
+> decision moves one number, not a search.
 
 ## Conformance
 
