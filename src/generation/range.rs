@@ -77,19 +77,21 @@ const U32_MAX: i64 = u32::MAX as i64;
 /// what the range does not describe.
 #[must_use]
 pub fn type_range(tp: &crate::data::Type) -> Option<Range> {
-    if matches!(tp, crate::data::Type::Optional(_)) {
-        return None;
+    match tp {
+        // The nullability question, spelled (`@FR-N-Shape`): a `τ?` slot can hold what the
+        // range does not describe, so it is not a fact — deliberately NOT peeled through.
+        crate::data::Type::Optional(_) => None,
+        crate::data::Type::Integer(spec) => {
+            if spec.is_signed32_template()
+                || spec.is_wide_template()
+                || spec.reserves_sentinel_unconditionally()
+            {
+                return None;
+            }
+            fits(i128::from(spec.min), i128::from(spec.max))
+        }
+        _ => None,
     }
-    let crate::data::Type::Integer(spec) = tp else {
-        return None;
-    };
-    if spec.is_signed32_template()
-        || spec.is_wide_template()
-        || spec.reserves_sentinel_unconditionally()
-    {
-        return None;
-    }
-    fits(i128::from(spec.min), i128::from(spec.max))
 }
 
 /// Make a range from `i128` ends, or `None` when it does not fit the type (the sentinel
