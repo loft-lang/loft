@@ -597,8 +597,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **6** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-26`, `D-heap-28` and `D-heap-29`
-(both found 2026-09-22 while closing `D-heap-15`'s `p_i2`; `D-heap-27`, the tuple twin of
+OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-26` and `D-heap-28` (`D-heap-28` and
+`D-heap-29` found 2026-09-22 while closing `D-heap-15`'s `p_i2`, the second closed that day; `D-heap-27`, the tuple twin of
 `D-heap-21` and `D-heap-22`, opened and closed 2026-09-22; `D-heap-22` and `D-heap-24`
 closed 2026-09-21, `D-heap-25`, found in D-heap-24's controls, and `D-heap-26`, found in
 D-heap-22's, both opened that day and the first closed; `D-heap-13`
@@ -799,7 +799,7 @@ CLOSED 2026-09-17, below.
   and copies at an owning rebind, as the interpreter does, or the interpreter copies at the hoist.
   The witness's store-identity test then agrees across backends.
 
-### D-heap-29 — OPEN (2026-09-22, loft#1592): in a loop, a join over a source declared outside it, moved on, releases twice
+### D-heap-29 — OPENED AND CLOSED (2026-09-22, loft#1592): in a loop, a join over a source declared outside it, moved on, released twice
 
 - **Violates:** (H-Move), and `@FR-O-Complete`.
 - **Where:** in a loop, `Scopes::arm_source_outlives_loop` declines to write a first-bind join out
@@ -813,9 +813,16 @@ CLOSED 2026-09-17, below.
   interpreter and panic on `--native` (`allocation.rs:1622`, store index 65535).  Clean on both
   backends: the unrolled form, `a` declared in the loop, the join without `a = x`, and a plain
   `x = mk(); a = x` in the same loop.
-- **Status:** OPEN — found 2026-09-22 while closing `p_i2`.
-- **Removal:** write the join out per arm where the source is refilled on every path through the
-  body, or give the lifted binding a hand-off to the local it is moved into.
+- **Status:** CLOSED 2026-09-22 — found the same day while closing `p_i2`.
+- **Closed:** the scan records, for each loop it enters, the variables the body assigns on
+  EVERY pass (`loop_body_refills`): a `Set` among the loop's own statements or those of its body
+  block, in a body with no `continue` that could skip it.  `arm_source_outlives_loop` no longer
+  counts such a source, so the join is written out per arm, and the move into `x` and back into
+  `a` is the one-pass move the per-path flags already decide.  Measured clean on both backends:
+  one and two passes, the refill before the join, the refill from another value, a nested loop
+  refilled inside, a `break` after the refill, `while`, and the `if` spelling.  A source spent on
+  every pass (a program `(H-Spent)` refuses) keeps the lift.  Guard
+  `tests/scripts/1592-a-join-in-a-loop-over-a-refilled-source-releases-once.loft`.
 
 ### D-heap-27 — OPENED AND CLOSED (2026-09-22, loft#1588): a tuple's member backings were released at the function's head turn, not the tuple's
 
