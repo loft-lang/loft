@@ -4358,20 +4358,24 @@ impl Parser {
         // FULL integer is the one target nothing narrows to, and it has two bound encodings
         // (`IntegerSpec`'s i32/u32 bounds cannot hold the i64 range: the `signed32` template
         // ends at i32::MAX, the `wide` one at u32::MAX), so it is recognised by the two
-        // template predicates `source_name` already reads.  Every other spec — a width
-        // alias with a `forced_size`, or a user-written `limit(lo, hi)` without one — is a
-        // narrow target: `src` narrows into it iff `[s.min, s.max] ⊄ [d.min, d.max]`, the
-        // range+sign test codegen's `narrow_int_cast` uses, so the two width derivations
-        // agree (D2/D3/D5); containment also makes signedness visible (`i8` is not
-        // contained in `u8`).
+        // template predicates `source_name` already reads — AND by carrying no
+        // `forced_size`: the `i32` ALIAS has the signed-32 template's exact range and a
+        // 4-byte storage, and by range alone it read as the full integer, which let
+        // `10000000000 as i32` compile and print 10000000000 (the error-message golden
+        // `24_runtime_narrow_cast_overflow` is the guard that caught it).  Every other spec
+        // — a width alias with a `forced_size`, or a user-written `limit(lo, hi)` without
+        // one — is a narrow target: `src` narrows into it iff `[s.min, s.max] ⊄ [d.min,
+        // d.max]`, the range+sign test codegen's `narrow_int_cast` uses, so the two width
+        // derivations agree (D2/D3/D5); containment also makes signedness visible (`i8` is
+        // not contained in `u8`).
         //
-        // Keying this on `forced_size` instead — "no forced size means the full integer" —
+        // Keying this on `forced_size` ALONE — "no forced size means the full integer" —
         // left every user-written `limit` outside all three narrowing rules at once: an
         // unranged store, call or literal into `integer limit(0, 7)` compiled, and the
         // runtime range guard then answered a legal in-range DEFAULT that nothing reports in
         // an ordinary run, where the same store into `u8` is refused with the cure named;
         // and the checked cast `as integer limit(0, 7)?` was a no-op (loft#1593).
-        if d.is_signed32_template() || d.is_wide_template() {
+        if d.forced_size.is_none() && (d.is_signed32_template() || d.is_wide_template()) {
             return false;
         }
         s.min < d.min || s.max > d.max
