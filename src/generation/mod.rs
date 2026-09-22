@@ -1549,7 +1549,7 @@ pub(crate) fn is_raw_tuple_link(vars: &crate::variables::Function, var: u16) -> 
 /// name an absent place: a text, a tuple and a fn-ref link only ever link a local.
 #[must_use]
 pub(crate) fn absent_link_value(inner: &Type) -> Option<&'static str> {
-    match inner {
+    match inner.base() {
         Type::Integer(_) => Some("i64::MIN"),
         Type::Float => Some("f64::NAN"),
         Type::Single => Some("f32::NAN"),
