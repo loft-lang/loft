@@ -4,7 +4,9 @@ Taken 2026-09-21 on x86-64, right after the record shapes (`records.md` § Built
 portal's 24 rows still over 3×.  An ANALYSIS: every figure below is a HAND-PRICE — the
 emitted Rust of the routine edited to the form a rewrite would emit, compiled with the
 `--native-release` flags, run in-process with the result hash unchanged.  **V1–V3 and F1 are BUILT
-(§ Built, § F1 built); T1 and C1 are priced and not built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
+(§ Built, § F1 built); T1 is re-sized (it needs a refactor first — § T1 re-priced) and C1
+is priced with its condition CORRECTED (§ C1's condition — the premise below is false);
+neither is built.**  Two candidates priced NEGATIVE or not at all are listed as such; they are not
 work.
 
 | # | lever | rows it moves | hand-priced |
@@ -170,6 +172,34 @@ stores` in the body.  Where the body writes no store the borrow is sound, which 
 writes.  Priced on the stdlib's `join`: **31.4 → 16.7 µs, 5.36× → ~2.9×**, before hoisting
 the walk.
 
+### T1 re-priced in its emitted form, and re-SIZED (2026-09-22, not built)
+
+The price holds: `let var_p: &str = { …get_str… };` for `let mut var_p = { … }.to_string();`
+and `&*(var_p)` for `&*(&var_p)` at its one use — `join` 30.8 → 16.8–17.6 µs (−45 %), hash
+`2df9` unchanged, three runs.  It compiles because `join`'s body touches only its `&mut String`
+result, never `stores`.
+
+The COST is not what this page said.  "A text variable is a `&str`" is a notion with NO HOME:
+it is spelled inline as `vars.is_argument(v) && matches!(vars.tp(v).base(), Type::Text(_))` at
+six sites and more (`dispatch.rs` ×2, `emit.rs` ×3, `mod.rs`; a ±3-line grep, so a lower
+bound), it decides the use-site spelling (`&*(var_sep)` for a parameter, `&*(&var_p)` for a
+local), and the sites have already disagreed three times in shipped code (loft#1004, loft#1006,
+loft#1278 — *"the two spellings of the same write disagreed about the same source"*).  T1 adds
+a THIRD class, a LOCAL that is a `&str`, to every one of them.  Patching the sites that can be
+found is how loft#1278 happened; the failure is loud (rustc refuses the emitted program) but
+it is a program that compiled yesterday refusing today, on one backend.
+
+So T1 is two units, in this order: **(1)** one predicate for "this text variable is borrowed"
+asked by every site — a behaviour-preserving refactor whose proof is an EMPTY
+`scripts/introspect_diff.sh` over the corpus (the loft-codegen skill's Mode B); **(2)** the
+loop variable of `for p in vector<text>` joins that class where the body writes no store.
+The second condition is the emitter's to PROVE and not rustc's to catch: a user call is handed
+the raw `cell` and takes its own `&mut Stores` from it, so a callee reallocating the store
+under a live `&str` is invisible to the borrow checker (`hoist::may_write_store`, as
+`(R-Header)` and the push window use it).  The walk itself is a third, separate piece: a text
+element's head is `OpGetText(OpGetVectorNullable(…), 0)`, which `hoist::iteration_head` does
+not read, so the loop holds no header either.
+
 ## C1: every call constructs a guard for fn-ref buffers it cannot have
 
 A `--native-release` function enters with `cr_call_push_lean`, a `CallGuard` and
@@ -181,6 +211,42 @@ can reach the function.  Priced by removing it from `fib`: **11.8 → 8.67 ms (�
 4.36× → ~3.2×**.  A further −3 % from plain `n - 1` / `n - 2` needs a fact the range proof
 does not carry today — a branch condition (`n > 1` in the arm that subtracts) — and is not
 proposed on this row's evidence alone.
+
+### C1's condition CORRECTED before it was built (2026-09-22)
+
+The paragraph above says the fn-ref guard is *"owed only where a fn-ref dispatch can reach the
+function"*, which reads as the predicate *no `CallRef` reachable from F*.  **That predicate is
+not sufficient.**  Three emission sites register a store against the running frame, and only
+two sit behind a `CallRef` node: the fn-ref dispatch (`emit.rs`: `cr_fnref_buf`,
+`cr_fnref_minted`) — and `OpFreeRefOrHandUp` (`ops/ref_ops.rs`), an ordinary op.  Found by
+asking the second-spelling question of the PUSHERS rather than of the call nodes.
+
+What is KNOWN about that op, read from `scopes.rs`: it replaces `OpFreeRefIfDistinct` only in a
+function whose published return BORROWS ITS `__closure` (`return_borrows_closure`) — a capturing
+lambda's body, the shape `tests/scripts/1186-a-join-tail-hands-its-mint-an-owner.loft` guards.
+Such a body need hold no `CallRef` in its OWN tree, so the predicate above would elide ITS
+guard — and that frame's guard is the one that takes the mark and hands the registered store
+up at exit.
+
+What is NOT known, and is not claimed: whether eliding that particular guard would be
+OBSERVABLE.  The entry might simply be released by the caller's guard (the caller holds the
+`CallRef`, so it keeps one) at the same moment the hand-up would have delivered it.  The
+hand-up protocol (`hands_up`, the watermark) was not traced, and reasoning about it unread is
+how the false premise got written.  So the rule C1 is built on is the conservative one, right
+either way: NOTHING THAT REGISTERS is reachable from the function — no `CallRef`, no
+`parallel`, no `yield`, no native (not loft-bodied) user function, no `OpFreeRefOrHandUp` —
+over the whole reachable call tree, cycles INCLUDED (the closure of the call graph, not
+`frameless_chain_from`, which answers `false` on a cycle because the DEPTH count needs the
+frame there; the guard does not).  Then no entry can stand above the mark the guard would
+take and its drop is empty every time — the reasoning `is_frameless_chain`'s own doc gives,
+which never depended on acyclicity.  `fib` satisfies it, so the −27 % stands for that row.
+
+Falsifiers when it is built: `LOFT_NATIVE_LEAK_CHECK=1` and `LOFT_STRICT_STORES=1` over cell
+1186's shape with C1 ON (the body that registers must keep its guard), beside a recursive
+fn-ref-free function that returns a heap value (its guard goes; nothing may leak).  An earlier
+draft of this note prescribed *"a store handed up through a RECURSIVE function with no
+fn-ref"* as the cell that must exist first — that cell was never constructed and, the op
+living in lambda bodies, may not be constructible; do not chase it.
 
 ## Priced negative, or not a clear case
 

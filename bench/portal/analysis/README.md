@@ -8,13 +8,12 @@ The files here say WHY, price what could be done about it, and record what was b
 |---|---|---|
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
 | `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found) |
-| `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); T1, C1 priced, not built — the next work, in that order |
+| `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); C1 priced, not built — the next work, ON ITS CORRECTED CONDITION ("no `CallRef` reachable" is not sufficient: `OpFreeRefOrHandUp`, in a capturing lambda's body, registers a store too — list every registrant as a blocker); T1 priced (−45 %) but RE-SIZED: it needs the "text variable is a `&str`" notion given one home first (six inline sites, three shipped bugs) |
 
-## Where to resume (2026-09-21, branch `157-native-4x`)
+## Where to resume (2026-09-22, branch `157-native-4x`)
 
-**1. Read the gate's verdict first.**  The record-shapes arc (R1–R7) is pushed; the local
-`make ci` cannot run on the measuring laptop (killed for memory during its compile), so the
-gate is the GitHub one, run without a PR:
+**1. The gates are green.**  The local `make ci` cannot run on the measuring laptop (killed
+for memory during its compile), so the gate is the GitHub one, run without a PR:
 
 ```bash
 gh run list --workflow ci.yml --branch 157-native-4x --limit 3
@@ -23,10 +22,12 @@ gh run view <id> --log-failed | sed 's/\x1b\[[0-9;]*m//g' | grep -E "^\S.*\s+FAI
 gh workflow run ci.yml --ref 157-native-4x -f os=ubuntu-latest                          # a fresh one
 ```
 
-Run `35654730666` (head `d66652a4b`) was in progress, with no failed job, when this was
-written; one doc-only commit and this handoff followed it.  The run before it was red for
-reasons that are all fixed on the branch — read them as the things to check FIRST if a new
-run is red:
+Green, 21 jobs each, ASan included: R1–R7 (`35654730666`), V1–V3 (`35660794064`, head
+`ccfd90fd2`) and F1 (`35663137897`, head `1e458f9f8`).  The commits after `1e458f9f8` are
+analysis docs only.  ⚠ Read a run's `createdAt` beside `date -u` before calling it slow: a
+healthy six-minute-old run was nearly reported as hung on a wrong sense of elapsed time.
+
+If a new run is red, check these FIRST — each made an earlier run red:
 
 - **pins moved by a LATER lever.**  A pin suite was last run before the lever that moved
   its counts (R4's mint windows on the R2/R3 cells' own appends, R5 on `v.nrm = v.pos`, R7
@@ -47,8 +48,10 @@ run is red:
 - `browser_kernel_one_script_differential` failed ONCE on a first try and passed on retry
   in that run; treat a single first-try failure there as a flake, a repeated one as real.
 
-**2. Then build `vector-build.md`, in its own order: V1–V3, F1, T1, C1.**  Everything in it
-is hand-priced with the result hash unchanged; V1 alone is −76…78 % on three rows.  Build
+**2. Then the rest of `vector-build.md`: C1 on its CORRECTED condition, then T1 (a
+one-predicate refactor first), then one full `make perf-portal` run alone on the box — the
+generated `doc/claude/PERF_PORTAL.md` is stale against V1–V3 and F1, and a partial re-render
+mixes sessions.**  V1–V3 and F1 are built.  Build
 each as the record-shapes levers were built — a clause of an existing rule, a switch, cells
 (`tests/scripts/158-*.loft`), emission pins (`tests/*.rs`), a sabotage whose result is
 written into the cell file as MEASURED.
