@@ -7584,6 +7584,9 @@ impl Parser {
     /// A `reverse(v)` whose element type is still a TYPE VARIABLE: the width it walks is the
     /// element's, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
     pub(crate) const TV_REVERSE: &'static str = "tvreverse";
+    /// A `reserve(v, n)` whose element type is still a TYPE VARIABLE: the claim is sized in
+    /// the element's width, so it is lowered per monomorph like [`TV_INSERT`](Parser::TV_INSERT).
+    pub(crate) const TV_RESERVE: &'static str = "tvreserve";
     /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
     /// template's closure record lays a capture typed by a type variable out at no width, so
     /// the read is re-lowered by NAME against the instance's own record
@@ -10649,19 +10652,26 @@ impl Parser {
             // substitution, so it is the CONCRETE vector type by now, and the same parse
             // function the concrete spelling uses lowers it — width, row and setter from one
             // home.  A nested generic re-stamps through that call and stays deferred.
-            Value::Block(bl) if bl.name == Self::TV_INSERT || bl.name == Self::TV_REVERSE => {
+            Value::Block(bl)
+                if bl.name == Self::TV_INSERT
+                    || bl.name == Self::TV_REVERSE
+                    || bl.name == Self::TV_RESERVE =>
+            {
                 let bl = *bl;
                 let list: Vec<Value> = bl
                     .operators
                     .into_iter()
                     .map(|a| self.rewrite_generic_type_defaults(a))
                     .collect();
-                let types = [bl.result.clone()];
                 let mut out = Value::Null;
                 if bl.name == Self::TV_INSERT {
-                    self.parse_insert(&mut out, &list, &types);
+                    self.parse_insert(&mut out, &list, &[bl.result.clone()]);
+                } else if bl.name == Self::TV_REVERSE {
+                    self.parse_reverse(&mut out, &list, &[bl.result.clone()]);
                 } else {
-                    self.parse_reverse(&mut out, &list, &types);
+                    // The count was checked an integer where the template stamped the site.
+                    let count = Type::Integer(crate::data::IntegerSpec::wide());
+                    self.parse_reserve(&mut out, &list, &[bl.result.clone(), count]);
                 }
                 out
             }

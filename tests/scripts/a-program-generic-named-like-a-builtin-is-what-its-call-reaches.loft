@@ -25,11 +25,11 @@
 
 interface Named { fn tag(self: Self) -> text }
 
-// (`reverse` was the first shape here; it is a stdlib METHOD on `vector` since @PLN165 E1, so a
-// program's own is for its own types — `a-built-in-is-a-method-a-program-extends-for-its-own-types`.)
+// (`reverse` and `reserve` were shapes here; each is a stdlib METHOD on `vector` since @PLN165
+// E1/E2, so a program's own is for its own types — `a-built-in-is-a-method-a-program-extends-
+// for-its-own-types`, `a-generic-reserves-at-its-elements-width`.)
 fn any<T>(v: vector<T>, f: fn(T) -> boolean) -> boolean { false }
 fn all<U>(v: vector<U>) -> integer { len(v) * 10 }
-fn reserve<T>(v: vector<T>) -> integer { 5 }
 fn count_if<T>(a: T, b: T, c: T) -> integer { 7 }
 fn sort<T: Named>(v: vector<T>) -> text { "mine" }
 
@@ -49,8 +49,8 @@ fn test_where_the_program_generic_does_not_take_the_call() {
   v: vector<integer> = [3, 1, 2];
   sort(v);
   assert("{v}" == "[1,2,3]", "{v}");
-  reserve(v, 100);
-  assert(len(v) == 3 && reserve(v) == 5, "{len(v)} {reserve(v)}");
+  // An arity the program's `all<U>(v)` does not take: the builtin answers.
+  assert(all(v, |x| { x > 0 }) && all(v) == 30, "{all(v)}");
   // A lambda argument where the program's `count_if` has no `fn(…)` parameter: the builtin's
   // own hint types `x`, and the builtin answers.
   assert(count_if(v, |x| { x > 1 }) == 2, "{count_if(v, |x| { x > 1 })}");

@@ -1,0 +1,95 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 E2 — `reserve` is a stdlib `#builtin` METHOD on `vector`: `reserve(v, n)` and
+// `v.reserve(n)` are one call, a `hash` keeps `reserve(h, n)`, and a program adds its own
+// `reserve` for its own types beside it.
+//
+// And a `reserve(v, n)` inside a GENERIC claims `n` elements at the INSTANCE's element width,
+// as its hand-written twin does (@FR-G-Mono).  The claim was sized in the template, where the
+// element is still the type variable's placeholder: every instance reserved at the
+// placeholder's 12 bytes — a `vector<u8>` twelve times what it asked for, a `vector<Pt>`
+// three quarters of it — and nothing said so, because a capacity is not a value.  It is
+// read here off `store_memory()`, the one place a claim is visible.
+//
+// @falsified-at: b12b98eb3 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-reserves-at-its-elements-width.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control has no method: "Unknown field
+//     vector<T>.reserve — did you mean 'reverse'?".
+//   ARMED: nothing.
+//   WITNESS: the width cells alone (`room_m` spelled `reserve(v, n)`) on the control read
+//     "u8: 0.046 Dir: 0.046" on both backends — every width at the placeholder's 12 bytes.
+//   HOLDS: the bare spelling, the `hash`, and the program's own `reserve` for its type.
+
+struct Pt { x: integer, y: integer }
+enum Dir { North, South }
+struct Pool { n: integer }
+struct Tags { id: integer, name: text }
+struct Book { tags: hash<Tags[id]> }
+
+fn reserve(self: Pool, n: integer) -> integer { self.n + n }
+fn room<T>(v: vector<T>, n: integer) { reserve(v, n) }
+fn room_m<T>(v: vector<T>, n: integer) { v.reserve(n) }
+
+// The size in MB of the store holding a vector of `kind` — its line in `store_memory()`.
+fn store_mb(kind: text) -> float {
+  for line in store_memory().split('\n') {
+    if line.contains("type {kind} ") {
+      for w in line.split(' ') {
+        if w != "" && !w.starts_with("#") {
+          return w as float ?? -1.0;
+        }
+      }
+    }
+  }
+  -1.0
+}
+
+// One `main`, so every store is fresh — a test binary running several functions recycles
+// stores, and a recycled store keeps the capacity it had.  Each vector stays in use to the end
+// (a vector is freed after its last use), and they are made smallest claim first, so each one
+// measured is among the eight largest stores the report lists.  4000 elements at the width in
+// the comment; the placeholder's 12 bytes read 0.046 for every one of them.
+fn main() {
+  b: vector<u8> = [1];
+  room(b, 4000);
+  mb_b = store_mb("main_vector<integer(0, 255)>");   // 1 byte
+  d = [Dir.North];
+  room_m(d, 4000);
+  mb_d = store_mb("main_vector<Dir>");                // 1 byte
+  t = ["x"];
+  room_m(t, 4000);
+  mb_t = store_mb("main_vector<text>");               // 4 bytes
+  a = [1];
+  room(a, 4000);
+  mb_a = store_mb("main_vector<integer>");            // 8 bytes
+  f = [1.5];
+  room(f, 4000);
+  mb_f = store_mb("main_vector<float>");              // 8 bytes
+  n = [[1]];
+  room(n, 4000);
+  mb_n = store_mb("main_vector<vector<integer>>");    // 8 bytes
+  p = [Pt { x: 1, y: 2 }];
+  room_m(p, 4000);
+  mb_p = store_mb("main_vector<Pt>");                 // 16 bytes
+  assert(mb_b > 0.0 && mb_b < 0.01 && mb_d > 0.0 && mb_d < 0.01, "u8: {mb_b} Dir: {mb_d}");
+  assert(mb_t > 0.01 && mb_t < 0.02, "text: {mb_t}");
+  assert(mb_a > 0.025 && mb_a < 0.04 && mb_f > 0.025 && mb_f < 0.04, "integer: {mb_a} float: {mb_f}");
+  assert(mb_n > 0.025 && mb_n < 0.04, "nested: {mb_n}");
+  assert(mb_p > 0.055 && mb_p < 0.065, "Pt: {mb_p}");
+  assert("{b}|{len(d)}|{t}|{a}|{f}|{n}|{len(p)}" == "[1]|1|[\"x\"]|[1]|[1.5]|[[1]]|1", "{b} {t} {a} {f} {n}");
+
+  // Both spellings, and a `hash`, which keeps the bare one.
+  v = [5, 6];
+  v.reserve(100);
+  reserve(v, 200);
+  v += [7];
+  k = Book { tags: [] };
+  reserve(k.tags, 64);
+  k.tags += [Tags { id: 3, name: "c" }];
+  assert("{v}|{len(k.tags)}" == "[5,6,7]|1", "{v}|{len(k.tags)}");
+
+  // A program's own `reserve` for its own type, in both spellings.
+  q = Pool { n: 2 };
+  assert(reserve(q, 3) == 5 && q.reserve(4) == 6, "{reserve(q, 3)} {q.reserve(4)}");
+}

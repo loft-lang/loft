@@ -1033,6 +1033,25 @@ two-variable generics, which the no-observable-special-names rule cannot retire 
   Measuring note: every binary reads `default/` from the tree, so a corpus diff of a
   `default/` change needs the OLD `default/` on the before side — two step binaries over one
   tree read the same stdlib and reported IDENTICAL while the guard above was refused.
+- **E2 Built** (2026-09-22).  `pub fn reserve<T>(self: vector<T>, n: integer)` + `#builtin`;
+  `reserve(h, n)` on a `hash` stays the special form's.  Found and fixed on the way: a
+  `reserve(v, n)` inside a GENERIC sized its claim in the template, at the placeholder's 12
+  bytes, in every instance — the twin reserves at 1, 4, 8 or 16 (`@FR-G-Mono`; silent, since a
+  capacity is not a value).  `parse_reserve` now stamps the site `TV_RESERVE` and the monomorph
+  lowers it, as `TV_INSERT`/`TV_REVERSE` do.  Corpus, masked, before side on E1's `default/`:
+  identical but for the new guard.  Guard `a-generic-reserves-at-its-elements-width` reads each
+  claim off `store_memory()` at seven element types (one `main`: a test binary running several
+  functions recycles stores, and a recycled store keeps its old capacity), falsified at
+  `b12b98eb3`.  The special-names guard's arity cell moved from `reserve` to `all`.
+- **Measured for E3–E7 before they start** — each special form inside a generic against its
+  twin, both backends: `insert` and `any`/`all`/`count_if` answer right; **`filter` and `map`
+  CRASH** for every scalar element (interpreter: "DbRef store_nr … out of range", `text`:
+  SIGSEGV; native: E0610, `OpCopyRecord` on an `i64`) — the template lowers the element as a
+  record, the class `TV_INSERT` closed for `insert` (loft#1537); a struct element is right.
+  `sort` is refused ("not supported for vector<T>"), and `reduce` into a `U` is refused
+  ("yet").  So E4–E7 each start with the per-monomorph lowering.  And `sort<T: Ordered>` must
+  hold what its bound says: a non-scalar `T` with `op <` needs a loft body to fall back to,
+  since the special form sorts scalars and `text` only.
 - **Owed by E2–E7 from E1's design.**  The special-names guard above still defines `sort<T:
   Named>(v: vector<T>)` and `reserve<T>(v: vector<T>)`; E2 and E4 refuse both, so their cells
   move to a name that stays a special form (`all`, `count_if`).  The METHOD spelling of `map`,

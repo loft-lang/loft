@@ -6433,8 +6433,8 @@ use #count instead"
 
     /// Is a collection's element type still a TYPE VARIABLE — a template's `T`, whose
     /// placeholder is an attribute-less struct?  A builtin whose lowering is a function of the
-    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE))
-    /// defers itself to the monomorph there.
+    /// element type ([`TV_INSERT`](Parser::TV_INSERT), [`TV_REVERSE`](Parser::TV_REVERSE),
+    /// [`TV_RESERVE`](Parser::TV_RESERVE)) defers itself to the monomorph there.
     pub(crate) fn is_type_var_element(&self, elm: &Type) -> bool {
         matches!(elm.base(), Type::Reference(d, _) if self.data.is_type_var_placeholder(*d))
     }
@@ -6645,6 +6645,13 @@ use #count instead"
             );
             return Type::Void;
         };
+        // The claim is sized in the element's width, and a type variable has none yet
+        // (@FR-G-Mono): lowered in the template, every instance reserved at the placeholder's
+        // 12 bytes, where its twin reserves at 8, 1 or 16.
+        if self.is_type_var_element(elm) {
+            *val = v_block(list.to_vec(), types[0].clone(), Self::TV_RESERVE);
+            return Type::Void;
+        }
         let elm_size = self.element_store_size(elm);
         *val = self.cl(
             "OpReserveVector",

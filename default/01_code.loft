@@ -1912,6 +1912,14 @@ pub fn reverse < T > (self: vector<T>) {
 }
 #builtin
 
+// Give a vector room for `n` elements, so filling it does not grow it step by step:
+// `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count
+// the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
+pub fn reserve < T > (self: vector<T>, n: integer) {
+  reserve(self, n)
+}
+#builtin
+
 // Sum of all integer elements. Returns 0 for an empty vector.
 // Superseded by the general `sum(v, init)`; kept as a shim over it
 // (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the

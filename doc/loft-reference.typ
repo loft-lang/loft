@@ -8414,6 +8414,12 @@ pub fn reverse < T > (self: vector<T>)
 Reverse a vector's elements in place: `reverse(v)` or `v.reverse()`.  A method on `vector`, so a program may define its own `reverse` for its own types beside it.
 
 ```rust
+pub fn reserve < T > (self: vector<T>, n: integer)
+```
+
+Give a vector room for `n` elements, so filling it does not grow it step by step: `reserve(v, n)` or `v.reserve(n)`.  Changes neither `len(v)` nor what is in it, and a count the vector already covers does nothing.  A `hash` takes `reserve(h, n)` too.
+
+```rust
 pub fn sum_of(v: const vector<integer>) -> integer
 ```
 
