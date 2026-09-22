@@ -1,0 +1,108 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1592, `@FR-H-Move` — A JOIN IN A LOOP OVER A SOURCE THE BODY REFILLS RELEASES ONCE.
+// `x = a ?? mk(); a = x` in a loop, with `a` declared before it, moves `a` into `x` and `x` back
+// into `a` on every pass.  So each record has one owner at a time and one release.  In a loop the
+// join over a source declared outside it is not written out per arm: moving that source on
+// every pass would spend it, which `(H-Spent)` refuses.  A body that REFILLS the source on every
+// pass does not spend it, and there the per-arm form is the right one.  Before, the binding stayed
+// a borrow of per-arm temps, and `a = x` copied the borrow, so both released the record — and
+// on `--native` both freed its store, which panicked on the second pass.
+//
+// Only releases and reads are traced (`<id>`, `R<id>`), and every expected count is worked out by
+// hand, with each read made before the release of the record it read.  The refill is varied: after
+// the join, before it, from another value, in a nested loop, before a `break`, in a `while` and
+// with the join spelled as an `if`.  The last cell is a control that was right before: the source
+// declared inside the loop.
+//
+// @falsified-at: 87d036243 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1592-a-join-in-a-loop-over-a-refilled-source-releases-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends — the first cell
+//   already releases twice, so the run stops before the two-pass cell that panicked on native.
+// ARMED: no instrument — each hook call and read is written to this guard's own trace file.
+// WITNESS: on the control, measured with a print in place of the assertion: one pass traces
+//   `M11 R11 11 11`, two passes `M11 R11 11 R11 11 11` on the interpreter and a panic in
+//   `allocation.rs` on native, and the nested cell releases `60` five times.
+// HOLDS: leak, panic, refusals and expectations are unmoved on both trees.
+
+fn trace_path() -> text { return "loft_join_refilled_source_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn count(trace: text, id: text) -> integer {
+  n = 0;
+  for part in trace.split(',') { if part == id { n += 1; } }
+  n
+}
+
+// The position of the LAST `id` in the trace, or -1.
+fn last(trace: text, id: text) -> integer {
+  i = 0;
+  found = -1;
+  for part in trace.split(',') {
+    if part == id { found = i; }
+    i += 1;
+  }
+  found
+}
+
+struct Rh { id: integer }
+fn OpDrop(self: Rh) { note("{self.id}"); }
+fn rmk(id: integer) -> Rh { return Rh { id: id }; }
+
+fn f1() { a: Rh? = null; for i in 0..1 { x = a ?? rmk(11 + i); a = x; note("R{a.id}"); } }
+fn f2() { a: Rh? = null; for i in 0..2 { x = a ?? rmk(21 + i); a = x; note("R{a.id}"); } }
+fn f3() { a: Rh? = rmk(31); for i in 0..2 { a = rmk(32 + i); x = a ?? rmk(40 + i); note("R{x.id}"); } }
+fn f4() { a: Rh? = null; for i in 0..2 { x = a ?? rmk(51 + i); a = rmk(55 + i); note("R{x.id}"); } }
+fn f5() { a: Rh? = null; for j in 0..2 { for i in 0..2 { x = a ?? rmk(60 + 2 * j + i); a = x; note("R{a.id}"); } } }
+fn f6() { a: Rh? = null; for i in 0..3 { x = a ?? rmk(71 + i); a = x; if i == 1 { break; } } note("R{a.id}"); }
+fn f7() { a: Rh? = null; i = 0; while i < 2 { x = a ?? rmk(81 + i); a = x; i += 1; } note("R{a.id}"); }
+fn f8() { a: Rh? = null; for i in 0..2 { x = if a == null { rmk(91 + i) } else { a }; a = x; note("R{a.id}"); } }
+fn k1() { for i in 0..2 { a: Rh? = null; x = a ?? rmk(101 + i); a = x; note("R{a.id}"); } }
+
+// Every id in `ids` released once, every read in `reads` made `n` times, and each read made
+// before the release of the record it read.
+fn check(nm: text, ids: vector<text>, reads: vector<text>, n: integer) {
+  got = drain();
+  ok = true;
+  for id in ids { if count(got, id) != 1 { ok = false; } }
+  for r in reads {
+    if count(got, r) != n { ok = false; }
+    rid = r[1..];
+    if last(got, rid) < last(got, r) { ok = false; }
+  }
+  assert(ok, "{nm}: {got}");
+}
+
+fn main() {
+  drain();
+  f1(); check("f1 one pass              ", ["11"], ["R11"], 1);
+  f2(); check("f2 two passes            ", ["21"], ["R21"], 2);
+  f3(); check("f3 refilled before       ", ["31", "32", "33"], ["R32", "R33"], 1);
+  f4(); check("f4 refilled from another ", ["51", "55", "56"], ["R51", "R55"], 1);
+  f5(); check("f5 nested, inner refills ", ["60"], ["R60"], 4);
+  f6(); check("f6 break after refill    ", ["71"], ["R71"], 1);
+  f7(); check("f7 while                 ", ["81"], ["R81"], 1);
+  f8(); check("f8 if-spelled join       ", ["91"], ["R91"], 2);
+  k1(); check("k1 control: declared in  ", ["101", "102"], ["R101", "R102"], 1);
+  println("a join in a loop over a refilled source releases once: every cell holds");
+}

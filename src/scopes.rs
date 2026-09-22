@@ -63,6 +63,9 @@ struct Scopes<'s> {
     confined: HashMap<u16, u16>,
     /// The scopes of the currently traversed loops.
     loops: Vec<u16>,
+    /// Beside each entry of `loops`: the variables its body REFILLS on every pass
+    /// ([`loop_body_refills`]).
+    loop_refills: Vec<HashSet<u16>>,
     /// Recursion depth counter for `scan`; reset to 0 when scope analysis starts.
     scan_depth: usize,
     /// Counter for `__lift_N` temporary variables created to own inline struct
@@ -3289,6 +3292,39 @@ fn assigns_a_self_stopping_copy(code: &Value, function: &Function, data: &Data, 
 /// accepted, so every block on a tail path is already known to be a value block and is not
 /// tested again here.  Any other node is a tail that is not a variable (a call, `null`), so it
 /// names no source whose release could move.
+/// The variables a loop body assigns on EVERY pass: a `Set` among the loop's own statements, or
+/// the statements of a block that is one of them, so no branch can skip it.  A body with a
+/// `continue` anywhere in it answers none, since a `continue` before the `Set` skips it on that
+/// pass.
+fn loop_body_refills(lp: &Block) -> HashSet<u16> {
+    let mut out = HashSet::new();
+    let mut continues = false;
+    for op in &lp.operators {
+        op.walk(&mut |n| {
+            if matches!(n.unspan(), Value::Continue(_)) {
+                continues = true;
+            }
+        });
+    }
+    if continues {
+        return out;
+    }
+    let mut take = |ops: &[Value]| {
+        for op in ops {
+            if let Value::Set(v, _) = op.unspan() {
+                out.insert(*v);
+            }
+        }
+    };
+    take(&lp.operators);
+    for op in &lp.operators {
+        if let Value::Block(bl) = op.unspan() {
+            take(&bl.operators);
+        }
+    }
+    out
+}
+
 fn branch_tail_vars(node: &Value) -> Vec<u16> {
     fn walk(n: &Value, out: &mut Vec<u16>) {
         match n.unspan() {
@@ -5026,6 +5062,7 @@ fn run_scan_phase(
         var_mapping: HashMap::new(),
         confined: confined.clone(),
         loops: vec![],
+        loop_refills: vec![],
         scan_depth: 0,
         lift_counter: 0,
         lift_vars: Vec::new(),
@@ -9753,6 +9790,7 @@ impl Scopes<'_> {
             Value::Loop(lp) => {
                 let scope = self.enter_scope();
                 self.loops.push(scope);
+                self.loop_refills.push(loop_body_refills(lp));
                 function.mark_loop_scope(scope);
                 // #316 — a loop body executes repeatedly: any ownership entry
                 // the body touches is unreliable afterwards.  Keep only the
@@ -9791,6 +9829,7 @@ impl Scopes<'_> {
                 self.tuple_member_now
                     .retain(|k, m| now_before.get(k) == Some(m));
                 self.loops.pop();
+                self.loop_refills.pop();
                 self.exit_scope();
                 Value::Loop(Box::new(Block {
                     operators: ls,
@@ -10325,6 +10364,11 @@ impl Scopes<'_> {
             // sources, because the first arm reads that type to decide whether it owns the record
             // it displaces.
             for src in branch_tail_vars(value) {
+                // The identity arm hands nothing over, and the binding does not view itself.
+                if src == v || src == ov {
+                    function.make_independent(v, src);
+                    continue;
+                }
                 let Some(stopped) = per_path_stops(function, data, v, src) else {
                     continue;
                 };
@@ -15785,11 +15829,10 @@ impl Scopes<'_> {
     ) -> Option<Value> {
         fn sinkable(tail: &Value, v: u16, ov: u16, function: &Function) -> bool {
             match tail.unspan() {
+                // The binding itself: written out, that arm is `v = v`, the identity (#330).
+                Value::Var(x) if *x == v || *x == ov => true,
                 Value::Var(x) => {
-                    *x != v
-                        && *x != ov
-                        && (*x as usize) < function.count() as usize
-                        && !function.is_compiler_generated(*x)
+                    (*x as usize) < function.count() as usize && !function.is_compiler_generated(*x)
                 }
                 Value::Null | Value::Call(_, _) | Value::CallRef(_, _) => true,
                 Value::If(_, t, f) => sinkable(t, v, ov, function) && sinkable(f, v, ov, function),
@@ -15859,7 +15902,15 @@ impl Scopes<'_> {
             walk(node, &mut owner, &mut other);
             !owner || !other
         }
-        fn sink(node: &mut Value, ov: u16) {
+        fn sink(node: &mut Value, v: u16, ov: u16) {
+            // An arm that hands back the binding itself keeps the value it already holds: it
+            // moves nothing, displaces nothing and releases nothing (`formal/heap.md` (H-Move)).
+            if let Value::Var(x) = node.unspan()
+                && (*x == v || *x == ov)
+            {
+                *node = Value::Insert(Vec::new());
+                return;
+            }
             if let Value::Block(bl) = node
                 && bl.name == crate::parser::Parser::JOIN_ARM_OWNER
                 && let Some(call) = owner_block_call(bl).cloned()
@@ -15875,22 +15926,22 @@ impl Scopes<'_> {
                 return;
             }
             match node {
-                Value::Span(b) => sink(&mut b.1, ov),
+                Value::Span(b) => sink(&mut b.1, v, ov),
                 Value::If(_, t, f) => {
-                    sink(t, ov);
-                    sink(f, ov);
+                    sink(t, v, ov);
+                    sink(f, v, ov);
                     block_arm(t);
                     block_arm(f);
                 }
                 Value::Block(bl) => {
                     if let Some(last) = bl.operators.last_mut() {
-                        sink(last, ov);
+                        sink(last, v, ov);
                     }
                     bl.result = Type::Void;
                 }
                 Value::Insert(ops) => {
                     if let Some(last) = ops.last_mut() {
-                        sink(last, ov);
+                        sink(last, v, ov);
                     }
                 }
                 tail => {
@@ -15908,7 +15959,7 @@ impl Scopes<'_> {
             return None;
         }
         let mut out = value.clone();
-        sink(&mut out, ov);
+        sink(&mut out, v, ov);
         Some(out)
     }
 
@@ -16057,7 +16108,9 @@ impl Scopes<'_> {
     /// innermost loop this statement runs in — or a parameter, which every loop is inside?
     ///
     /// Moving such a variable into the binding moves it once per iteration, so from the second
-    /// iteration on the arm reads a name `(H-Spent)` has already spent.
+    /// iteration on the arm reads a name `(H-Spent)` has already spent.  Not a variable the
+    /// loop's body refills on every pass (`x = a ?? mk(); a = x`): the next pass reads the new
+    /// value, so that move is the one-pass move the written-out arms already decide.
     fn arm_source_outlives_loop(&self, value: &Value, function: &Function) -> bool {
         !self.loops.is_empty()
             && branch_tail_vars(value).iter().any(|&src| {
@@ -16066,6 +16119,10 @@ impl Scopes<'_> {
                         .var_scope
                         .get(&src)
                         .is_none_or(|&home| self.loop_depth_at(home) < self.loops.len())
+                    && !self
+                        .loop_refills
+                        .last()
+                        .is_some_and(|refilled| refilled.contains(&src))
             })
     }
 

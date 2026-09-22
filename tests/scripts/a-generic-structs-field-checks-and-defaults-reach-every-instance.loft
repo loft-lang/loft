@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN165 — a generic struct's declaration may carry a field `assert(…)` and a stored
+// default that reads the record (`$`), as any struct's may.  Their field reads are deferred
+// in the template, whose offsets depend on the arguments, and bound to each instance where
+// the code is replayed — so `n` after a field typed by `T` is read at the instance's own
+// offset, on a literal the program writes, one a generic builds, and a write through the
+// field.  (That a FAILING check stops the program where its twin's does is pinned in
+// tests/runtime_errors.rs, `a_generic_structs_field_check_fails_where_its_twins_does`.)
+//
+// @falsified-at: d1b288357 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-structs-field-checks-and-defaults-reach-every-instance.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control cannot declare the checks.
+//   ARMED: nothing.
+//   WITNESS: on the control the field `assert(n > 0, …)` of a generic struct is "Unknown
+//     variable 'n'".
+//   HOLDS: nothing else.
+
+struct Box<T> { v: T, n: integer assert(n > 0, "n must be positive") }
+struct Pair<T> { a: T, n: integer assert(n > 5, "n") }
+struct Tally<T> { v: T, n: integer, m: integer = $.n + 1 }
+
+fn mk<T>(x: T, k: integer) -> Box<T> { Box { v: x, n: k } }
+
+fn test_a_check_that_holds_passes_on_every_construction() {
+  a: Box<text> = Box { v: "a", n: 3 };
+  b = Box { v: 2.5, n: 4 };
+  c = mk("q", 5);
+  c.n = 6;
+  assert(a.n == 3 && b.n == 4 && c.n == 6, "{a.n} {b.n} {c.n}");
+}
+
+fn test_a_check_after_a_field_typed_by_the_variable() {
+  x = Pair { a: "long text", n: 7 };
+  y = Pair { a: 1.5, n: 8 };
+  z: Pair<u8> = Pair { a: 3, n: 9 };
+  assert(x.n == 7 && y.n == 8 && z.n == 9 && z.a == 3, "{x.n} {y.n} {z.n}");
+}
+
+fn test_a_default_reading_the_record() {
+  a = Tally { v: "a", n: 3 };
+  b: Tally<float> = Tally { v: 1.0, n: 9 };
+  assert(a.m == 4 && b.m == 10, "{a.m} {b.m}");
+}

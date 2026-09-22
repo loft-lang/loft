@@ -28,7 +28,6 @@ c_tuple_tuplem DOUBLE
 c_tuple_veclit DOUBLE
 p_e1 DOUBLE
 p_e2 DOUBLE
-p_i2 DOUBLE,EARLY
 p_o1 DOUBLE
 p_o3 DOUBLE,EARLY
 p_o4 DOUBLE,EARLY

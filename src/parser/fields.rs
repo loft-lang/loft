@@ -220,11 +220,23 @@ impl Parser {
         // `fn(integer, integer) -> integer` whose type-change diagnostic three lines away
         // spells it in full (loft#1500, loft#1498's class).  Use it to LOOK THINGS UP; render
         // `t` for anything a person reads.
-        let dnr = self.data.type_def_nr(&t);
+        let mut dnr = self.data.type_def_nr(&t);
         if matches!(t, Type::Vector(_, _)) && self.vector_operations(code, &field, e_tp, &t) {
             return Type::Boolean;
         }
-        let fnr = self.data.attr(dnr, &field);
+        let mut fnr = self.data.attr(dnr, &field);
+        // A method of a generic struct is a member of its TEMPLATE (@PLN165 D6); an instance
+        // minted before the method was declared has no copy of the member.
+        if fnr == usize::MAX && dnr != u32::MAX {
+            let family = self.data.method_family(dnr);
+            let member = self.data.attr(family, &field);
+            if family != dnr
+                && member != usize::MAX
+                && matches!(self.data.attr_type(family, member).base(), Type::Routine(_))
+            {
+                (dnr, fnr) = (family, member);
+            }
+        }
         // @PLN86 P6.4 (F4) — record a sandboxed READ of a host field that carries a
         // `#read` capability link, so admission can gate it.  Reads are default-allow,
         // so only a `#read`-linked field is ever recorded.  Second pass only (the base

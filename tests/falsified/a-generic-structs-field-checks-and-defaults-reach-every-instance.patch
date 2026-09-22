@@ -1,0 +1,270 @@
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index dee431207..5bf7cde2b 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -6731,9 +6731,6 @@ pub(crate) fn default_replayable_in_place(value: &crate::data::Value, site: Defa
+         }
+     );
+     match value.unspan() {
+-        // A generic struct's field read, deferred to each instance (@PLN165,
+-        // `Parser::TV_FIELD`): a pure read of its receiver, as the call it becomes.
+-        Value::Block(b) if b.name == crate::parser::Parser::TV_FIELD => every(&b.operators),
+         // The block `object_init` re-homes by hand — `EnumUnitLit` goes to a fresh
+         // work-ref, so it never writes through the record at all.
+         Value::Block(b) => {
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index a391bbd55..bfc666e4a 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -6086,11 +6086,13 @@ use a separate collection or add after the loop"
+             for a_nr in 0..self.data.def(sd).attributes().len() {
+                 let nm = self.data.attr_name(sd, a_nr);
+                 let fpos = self.database.position(self.data.def(sd).known_type(), &nm);
+-                if i32::from(fpos) == off && self.field_check(sd, a_nr) != Value::Null {
+-                    let check = self.field_check(sd, a_nr);
++                if i32::from(fpos) == off
++                    && self.data.def(sd).attributes()[a_nr].check != Value::Null
++                {
++                    let check = self.data.def(sd).attributes()[a_nr].check.clone();
+                     let ref_val = to_args[0].clone();
+                     let bound = Self::replace_record_ref(check, &ref_val);
+-                    let msg = match &self.field_check_message(sd, a_nr) {
++                    let msg = match &self.data.def(sd).attributes()[a_nr].check_message {
+                         Value::Text(s) => Value::Text(s.clone()),
+                         _ => Value::Text(format!(
+                             "field constraint failed on {}.{nm}",
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index bf6eb3da6..3451a144b 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -7542,8 +7542,7 @@ impl Parser {
+     /// receiver, TV_SELECT_ARG(value)]`, lowered through `towards_set` per instance.
+     pub(crate) const TV_FIELD_SET: &'static str = "tvfieldset";
+     /// A LITERAL of an open instance (`Box { v: x }` in a `-> Box<T>` template):
+-    /// `[Int(open instance), Text(file), Int(line), TV_OBJECT_FIELD…]`, built per instance
+-    /// into a fresh record; the position is the literal's, which its field checks report.
++    /// `[Int(open instance), TV_OBJECT_FIELD…]`, built per instance into a fresh record.
+     pub(crate) const TV_OBJECT: &'static str = "tvobject";
+     /// One field of a [`Parser::TV_OBJECT`]: `[Text(field), value]`, its `result` the
+     /// value's static type.
+@@ -10647,15 +10646,8 @@ impl Parser {
+             return Value::Null;
+         };
+         let d = self.bound_instance(*open as u32);
+-        let (file, line) = match (
+-            bl.operators.get(1).map(Value::unspan),
+-            bl.operators.get(2).map(Value::unspan),
+-        ) {
+-            (Some(Value::Text(f)), Some(Value::Int(l))) => (f.clone(), *l),
+-            _ => (self.lexer.pos().file.clone(), self.lexer.pos().line as i32),
+-        };
+         let mut given: Vec<(String, Value, Type)> = Vec::new();
+-        for op in &bl.operators[3..] {
++        for op in &bl.operators[1..] {
+             if let Value::Block(f) = op.unspan()
+                 && f.name == Self::TV_OBJECT_FIELD
+                 && let [name, value] = &f.operators[..]
+@@ -10668,7 +10660,7 @@ impl Parser {
+         let tp = Type::Reference(d, crate::data::Deps::none());
+         if self.data.is_open_instance(d) {
+             // A template instantiated at another's variable: still open, still deferred.
+-            let mut out = vec![Value::Int(d as i32), Value::Text(file), Value::Int(line)];
++            let mut out = vec![Value::Int(d as i32)];
+             for (name, value, t) in given {
+                 out.push(v_block(
+                     vec![Value::Text(name), value],
+@@ -10715,27 +10707,6 @@ impl Parser {
+             &std::collections::HashSet::new(),
+         );
+         list.append(&mut fills);
+-        // The field checks a literal of the twin runs once it is built (`parse_object`).
+-        let assert_dnr = self.data.def_nr("n_assert");
+-        for a_nr in 0..self.data.def(d).attributes().len() {
+-            let check = self.field_check(d, a_nr);
+-            if check == Value::Null {
+-                continue;
+-            }
+-            let bound = Self::replace_record_ref(check, &code);
+-            let msg = match self.field_check_message(d, a_nr) {
+-                Value::Text(s) => Value::Text(s),
+-                _ => Value::Text(format!(
+-                    "field constraint failed on {}.{}",
+-                    self.data.def(d).name(),
+-                    self.data.attr_name(d, a_nr)
+-                )),
+-            };
+-            list.push(Value::Call(
+-                assert_dnr,
+-                vec![bound, msg, Value::Text(file.clone()), Value::Int(line)],
+-            ));
+-        }
+         list.push(Value::Var(w));
+         // The type `parse_object` gives a fresh record: it names the work-ref it is built in,
+         // which the return delivery re-points at the caller's buffer.
+@@ -11713,13 +11684,8 @@ impl Parser {
+ 
+     fn get_field(&mut self, d_nr: u32, f_nr: usize, code: Value) -> Value {
+         // @PLN165 D5 — a field of an OPEN instance has no position until a monomorph names
+-        // the instance; the read is deferred to it.  So is one a generic struct's OWN
+-        // declaration reads (a field `assert`, a default over `$`), bound to each instance
+-        // where that code is replayed (`bind_instance_code`).
+-        if f_nr != usize::MAX
+-            && (self.data.is_open_instance(d_nr)
+-                || self.data.def_type(d_nr) == DefType::TypeTemplate)
+-        {
++        // the instance; the read is deferred to it.
++        if f_nr != usize::MAX && self.data.is_open_instance(d_nr) {
+             let tp = self.data.attr_type(d_nr, f_nr);
+             self.expr_not_null = !self.data.attr_nullable(d_nr, f_nr);
+             self.expr_not_null_name.clear();
+@@ -13075,8 +13041,12 @@ impl Parser {
+         let has_check = emit_check
+             && f_nr != usize::MAX
+             && !self.first_pass
+-            && f_nr < self.data.def(d_nr).attributes.len()
+-            && self.field_check(d_nr, f_nr) != Value::Null;
++            && self
++                .data
++                .def(d_nr)
++                .attributes
++                .get(f_nr)
++                .is_some_and(|a| a.check != Value::Null);
+         let ref_for_check = if has_check {
+             Some(ref_code.clone())
+         } else {
+@@ -13442,9 +13412,9 @@ impl Parser {
+         let Some(ref_val) = ref_for_check else {
+             return set_op;
+         };
+-        let check = self.field_check(d_nr, f_nr);
++        let check = self.data.def(d_nr).attributes()[f_nr].check.clone();
+         let bound = Self::replace_record_ref(check, &ref_val);
+-        let msg = if let Value::Text(s) = &self.field_check_message(d_nr, f_nr) {
++        let msg = if let Value::Text(s) = &self.data.def(d_nr).attributes()[f_nr].check_message {
+             Value::Text(s.clone())
+         } else {
+             Value::Text(format!(
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 8de185ac5..d677089f7 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -258,14 +258,7 @@ impl Parser {
+         name_pos: &Position,
+     ) -> Type {
+         // '$' refers to the current record in struct field default expressions
+-        // …and in a generic struct's own declaration (@PLN165), where a field read defers to
+-        // each instance (`Parser::TV_FIELD`, bound by `bind_instance_code`).
+-        if name == "$"
+-            && matches!(
+-                self.data.def_type(self.context),
+-                DefType::Struct | DefType::TypeTemplate
+-            )
+-        {
++        if name == "$" && matches!(self.data.def_type(self.context), DefType::Struct) {
+             // Noted HERE rather than at the field it selects: a `$.x` naming a field
+             // declared later in the struct does not resolve in pass 1, and a default that
+             // reads the record must be recognised as one in BOTH passes.
+@@ -966,10 +959,8 @@ impl Parser {
+                     Type::Null
+                 };
+             }
+-        } else if matches!(
+-            self.data.def_type(self.context),
+-            DefType::Struct | DefType::TypeTemplate
+-        ) && self.data.attr(self.context, name) != usize::MAX
++        } else if matches!(self.data.def_type(self.context), DefType::Struct)
++            && self.data.attr(self.context, name) != usize::MAX
+         {
+             let fnr = self.data.attr(self.context, name);
+             *code = self.get_field(self.context, fnr, Value::Var(0));
+@@ -4355,11 +4346,6 @@ impl Parser {
+             }
+         }
+         self.lexer.token("}");
+-        // Where the literal is — what its field checks report, as the twin's do
+-        // (`parse_object` reads the position here too) — the lowering runs at the call.
+-        let pos = self.lexer.pos().clone();
+-        fields.insert(1, Value::Text(pos.file.clone()));
+-        fields.insert(2, Value::Int(pos.line as i32));
+         let tp = Type::Reference(open, crate::data::Deps::none());
+         *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
+         tp
+@@ -4396,54 +4382,6 @@ impl Parser {
+         inst
+     }
+ 
+-    /// Bind code a generic struct's declaration lowered — a field `assert`, a stored default
+-    /// that reads the record — to its instance `d` (@PLN165): each field read the template
+-    /// deferred (`Parser::TV_FIELD` naming the template, whose positions depend on the
+-    /// arguments) becomes the instance's own read, as its twin's declaration lowered it.
+-    /// Any other definition's code is returned as it is.
+-    /// The `assert(…)` on field `a` of `d`, bound to `d`.  An instance runs its TEMPLATE's:
+-    /// the copy `instance_def` took can predate the template's pass-2 parse, which is when a
+-    /// field check is stored.
+-    pub(crate) fn field_check(&mut self, d: u32, a: usize) -> Value {
+-        let template = self.data.def(d).instance_of;
+-        let owner = if template != u32::MAX && a < self.data.def(template).attributes().len() {
+-            template
+-        } else {
+-            d
+-        };
+-        let code = self.data.def(owner).attributes()[a].check.clone();
+-        self.bind_instance_code(code, d)
+-    }
+-
+-    /// The message of that check, read where [`Parser::field_check`] reads the check.
+-    pub(crate) fn field_check_message(&self, d: u32, a: usize) -> Value {
+-        let template = self.data.def(d).instance_of;
+-        let owner = if template != u32::MAX && a < self.data.def(template).attributes().len() {
+-            template
+-        } else {
+-            d
+-        };
+-        self.data.def(owner).attributes()[a].check_message.clone()
+-    }
+-
+-    pub(crate) fn bind_instance_code(&mut self, mut code: Value, d: u32) -> Value {
+-        let template = self.data.def(d).instance_of;
+-        if template == u32::MAX || code == Value::Null {
+-            return code;
+-        }
+-        code.map_nodes(&mut |v| {
+-            if let Value::Block(bl) = v.unspan()
+-                && bl.name == Self::TV_FIELD
+-                && let [Value::Int(open), Value::Int(f_nr), receiver] = &bl.operators[..]
+-                && *open as u32 == template
+-            {
+-                let (f_nr, receiver) = (*f_nr as usize, receiver.clone());
+-                *v = self.get_field(d, f_nr, receiver);
+-            }
+-        });
+-        code
+-    }
+-
+     /// Consume a `{ … }` body whole, nested braces included, stopping at the end of input —
+     /// what a literal refused before its fields are typed leaves behind, so the parser stays
+     /// aligned for the next statement.
+@@ -4877,11 +4815,11 @@ impl Parser {
+             // emit all field constraint checks after construction completes.
+             let assert_dnr = self.data.def_nr("n_assert");
+             for a_nr in 0..self.data.def(td_nr).attributes().len() {
+-                let check = self.field_check(td_nr, a_nr);
++                let check = self.data.def(td_nr).attributes()[a_nr].check.clone();
+                 if check != Value::Null {
+                     let bound = Self::replace_record_ref(check, code);
+                     let nm = self.data.attr_name(td_nr, a_nr);
+-                    let msg = match &self.field_check_message(td_nr, a_nr) {
++                    let msg = match &self.data.def(td_nr).attributes()[a_nr].check_message {
+                         Value::Text(s) => Value::Text(s.clone()),
+                         _ => Value::Text(format!(
+                             "field constraint failed on {}.{nm}",
+@@ -5355,8 +5293,7 @@ impl Parser {
+             {
+                 continue;
+             }
+-            let default = self.data.attr_value(td_nr, aid);
+-            let mut default = self.bind_instance_code(default, td_nr);
++            let mut default = self.data.attr_value(td_nr, aid);
+             // #697 — a COLLECTION field MENTIONED in the literal is primed first: the
+             // mentioned-field path emits `OpSetInt4(pos, 0)` to zero the 4-byte header
+             // before anything writes through it (see `sinks.vector_headers`).  A field

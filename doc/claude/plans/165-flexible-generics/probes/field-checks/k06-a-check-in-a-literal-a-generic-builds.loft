@@ -1,0 +1,11 @@
+// A literal of `Box<T>` inside a generic runs the instance's check, as the twin's literal
+// inside `fn mk_text(x: text, k: integer) -> BoxText` does.
+// @EXPECT: 5
+struct Box<T> { v: T, n: integer assert(n > 0, "n must be positive") }
+fn mk<T>(x: T, k: integer) -> Box<T> { Box { v: x, n: k } }
+fn main() {
+  a = mk("q", 5);
+  println("{a.n}");
+  b = mk("r", -3);
+  println("unreachable {b.n}");
+}

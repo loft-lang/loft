@@ -698,9 +698,16 @@ arguments.
   [open-instances/](probes/open-instances/) e01–e10 green on both backends under
   `LOFT_STRICT_STORES` + `LOFT_POISON`, and on native under `LOFT_STRICT_SCHEMA_IDS`.
   Corpus against D4: IDENTICAL but for the new guard.
-  Found on the way (next): a field `assert(…)` on a generic struct is refused *"Unknown
-  variable 'n'"* where the twin's check holds, and `instance_def` copies the template's
-  check code into each instance.
+  Found on the way, and fixed after it (a D2 gap): a field `assert(…)` on a generic struct
+  was refused *"Unknown variable 'n'"* where the twin's check holds, and a `$`-reading
+  default with it.  In a template's own declaration a field name now reads through a
+  deferred `TV_FIELD` naming the template (its offsets depend on the arguments), and every
+  place the code is replayed — a literal, a field write, `object_init`'s default, a
+  literal a generic builds — binds it to the instance (`bind_instance_code`), reading the
+  TEMPLATE's check (`field_check`: the copy an instance took on pass 1 predates the
+  template's pass-2 parse, which is when a check is stored).  A literal a generic builds
+  reports its failed check at the literal, as the twin does.  Cells
+  [field-checks/](probes/field-checks/) k01–k06 green on both backends.
 
 ### D6 — a method on a generic struct  ·  S
 
@@ -709,6 +716,22 @@ name, `t_4Grid_at` — loft#1539's mechanism with `Grid` where `vector` stood.
 
 - **Red on its own:** `g.at(2)` and `at(g, 2)` answer alike and equal the twin's, the
   out-of-range read included.
+- **Built** (2026-09-22).  Three homes answered "which receiver is this?" and each named the
+  instance: the KEY (`key_type_name` — now the template's name for any instance, as every
+  `vector<τ>` keys on `vector`), MEMBERSHIP (`add_fn` put the method's `Routine` attribute on
+  the open instance; now on the template, `Data::method_family`, and a field lookup on an
+  instance falls back to its template's method members — an instance minted before the
+  method is declared has no copy), and the loft#850 foreign-receiver check
+  (`method_receives`, which rejected the concrete instance against the open one; now one
+  family).  A concrete method on one instance beside the template shares the key and forms
+  one overload set; its pass-2 lookup tried the full-spelling key only for two or more
+  parameters ("with one parameter the two keys are one"), which is false once a key names a
+  family — so the template re-parsed as the concrete member.  Asked whenever the two differ,
+  which also fixed one-parameter `vector` method overloads (`fn head(self: vector<integer>)`
+  beside `fn head<T>(self: vector<T>)`), broken the same way on this branch and refused on
+  main.  Twins: `at` and `widen` are byte-identical to `GridInteger`'s.  Cells
+  [struct-methods/](probes/struct-methods/) m01–m09 green on both backends under
+  `LOFT_STRICT_STORES` + `LOFT_POISON`; corpus against D5 IDENTICAL.
 
 ### D7 — a template that mentions itself  ·  S
 
