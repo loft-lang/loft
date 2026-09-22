@@ -2792,8 +2792,13 @@ The fall is the drop-cascade key moving to one home: three inline rebuilds in `d
 one call, and the two that discriminated went with them.  The row is re-measured here rather
 than carried, which is the rule a derived count owes every tree it lands on.)
 
-(2026-09-23, both of the above joined here — the row is RE-MEASURED on this tree below,
-because neither side's count describes it: a derived row cannot be cherry-picked.)
+(2026-09-23, both of the above joined here, plus @PLN167 A0–A2 and loft#1615 / loft#1620 /
+loft#1624, and RE-MEASURED on the join: **953 · 629 · 4 · 320**, opaque tests 1307, and
+`--check-ratchet` re-pinned at 320 · 1307.  Neither side's count describes this tree — a
+derived row cannot be cherry-picked — and the two counts move in opposite directions here: the
+function total rises with the three lines' new walkers while the OPAQUE count holds at the
+lower of the two pins, because the drop-cascade key's one home survives the join and the
+narrow arc's own shape tests read through `NarrowSlot`, which takes a `Type` and peels.)
 
 (2026-09-22, the third line of the same join — `tuxedo-1562-layout-gate` (loft#1597, #1600,
 #1601) — re-measured at its end: **941 · 615 · 4 · 322**, opaque tests 1311, at the pin the two-line
