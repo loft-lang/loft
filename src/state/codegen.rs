@@ -5010,13 +5010,21 @@ impl State {
             // The arms below match a spec's exact `min`/`max`, which is why the declared
             // width has to be asked for first: `i32`'s range is `i32::MIN + 1 ..= i32::MAX`
             // and matches none of them.
+            // A `Value::Long` reaches a constant operand as readily as a `Value::Int` (the
+            // wide arm at the foot of this ladder takes both), and an arm that writes
+            // NOTHING for one of them desynchronises the whole stream rather than answering
+            // wrong: measured on the join as `DbRef store_nr 8200 is out of range` and
+            // `field 4294959425 is not aligned`, three subsystems away from here.
             Type::Integer(s) if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) => {
-                if let Value::Int(nr) = p {
-                    if s.min >= 0 {
-                        self.code_add(*nr as u32);
-                    } else {
-                        self.code_add(*nr);
-                    }
+                let v = match p {
+                    Value::Int(nr) => i64::from(*nr),
+                    Value::Long(val) => *val,
+                    _ => return,
+                };
+                if s.min >= 0 {
+                    self.code_add(v as u32);
+                } else {
+                    self.code_add(v as i32);
                 }
             }
             Type::Integer(IntegerSpec {
