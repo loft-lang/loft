@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-G-Mono — a slice materialised inside a GENERIC (`out += v[a..b]`, `m = v[a..b]`) copies
+// each element at the INSTANCE's element type, as its hand-written twin does.  The template
+// wrote the element through a field read of a record — its element is the type variable's
+// placeholder, a struct — and the per-instance rewrite of an element write did not match that
+// shape, so every scalar instance kept a RECORD copy of its integer: the interpreter wrote into
+// the constant store ("Write to read-only store") and `--native` did not compile (E0610,
+// `OpCopyRecord` on an `i64`).  A struct element was right.  Found building @PLN165 E4, whose
+// `sort` body merges through slices.
+
+struct Pt { x: integer, y: integer }
+
+fn tail<T>(v: vector<T>, from: integer) -> vector<T> {
+  out: vector<T> = [];
+  out += v[from..len(v)];
+  out
+}
+
+fn mid<T>(v: vector<T>) -> vector<T> {
+  m = v[1..3];
+  m
+}
+
+fn test_each_element_kind() {
+  a = tail([1, 2, 3], 1);
+  b: vector<u8> = [7, 8, 9];
+  bt = tail(b, 2);
+  t = tail(["p", "q"], 1);
+  f = tail([1.5, 2.5], 1);
+  p = tail([Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }], 1);
+  n: vector<integer?> = [null, 4, null];
+  nt = tail(n, 1);
+  vv = tail([[1], [2, 3]], 1);
+  assert("{a}|{bt}|{t}|{f}|{p[0].x},{p[0].y},{len(p)}|{nt}|{vv}" ==
+    "[2,3]|[9]|[\"q\"]|[2.5]|3,4,1|[4,null]|[[2,3]]", "{a}|{bt}|{t}|{f}|{nt}|{vv}");
+}
+
+fn test_a_slice_bound_to_a_local() {
+  a = mid([5, 6, 7, 8]);
+  t = mid(["a", "b", "c"]);
+  p = mid([Pt { x: 1, y: 0 }, Pt { x: 2, y: 0 }, Pt { x: 3, y: 0 }]);
+  assert("{a}|{t}|{p[0].x}{p[1].x}" == "[6,7]|[\"b\",\"c\"]|23", "{a}|{t}");
+}

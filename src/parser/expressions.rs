@@ -8929,6 +8929,20 @@ use a separate collection or add after the loop"
                     "OpCopyRecord",
                     &[Value::Var(for_var), Value::Var(elm_var), element_id],
                 ));
+            } else if self.is_type_var_element(&elm_tp) {
+                // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
+                // `v += [x]` writes it (`OpCopyRecord(src, elm, row)` on the fresh element),
+                // which each monomorph re-lowers at its concrete element type
+                // (`rewrite_vector_write_triplets`).  `set_field` below wraps the destination
+                // in a field read the rewrite does not match, so every scalar instance kept a
+                // RECORD copy of its integer: `dst += v[i..j]` inside a generic wrote into the
+                // constant store on the interpreter and was E0610 on native.
+                let row = i32::from(self.data.def(ed_nr).known_type())
+                    | i32::from(crate::keys::COPY_FRESH_DEST);
+                lp.push(self.cl(
+                    "OpCopyRecord",
+                    &[Value::Var(for_var), Value::Var(elm_var), Value::Int(row)],
+                ));
             } else if let Some(op) = self.narrow_elm_set(&elm_tp, elm_var, &Value::Var(for_var)) {
                 // #624 — a narrow element needs the WIDTH-matched store op; `set_field`
                 // below peels to the wide `OpSetInt`, whose 8-byte write covers eight
