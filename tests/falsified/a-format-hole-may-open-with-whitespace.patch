@@ -1,0 +1,27 @@
+diff --git b/src/lexer.rs a/src/lexer.rs
+index d9b72fe7b..8be047748 100644
+--- b/src/lexer.rs
++++ a/src/lexer.rs
+@@ -963,6 +963,7 @@ impl Lexer {
+         }
+     }
+ 
++    #[allow(dead_code)]
+     pub fn whitespace(&mut self) {
+         while self.peek_token(" ") || self.peek_token("\t") {
+             self.cont();
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index c0b0de9de..0c393137d 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -2640,10 +2640,6 @@ impl Parser {
+         }
+         while self.lexer.mode() == Mode::Formatting {
+             self.lexer.set_mode(Mode::Code);
+-            // The hole's first token was read in the string's mode, where whitespace is a
+-            // token; the expression is code, so a space after the `{` is not part of it
+-            // (`@FR-F-Interp`: a hole holds an expression parsed at full language level).
+-            self.lexer.whitespace();
+             let mut format = Value::Null;
+             // @PLN124 — `in_format_expr` also gates the interpolation TARGET (see
+             // `constant` in vectors.rs): a hole is not the destination, so a string

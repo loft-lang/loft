@@ -2640,6 +2640,10 @@ impl Parser {
         }
         while self.lexer.mode() == Mode::Formatting {
             self.lexer.set_mode(Mode::Code);
+            // The hole's first token was read in the string's mode, where whitespace is a
+            // token; the expression is code, so a space after the `{` is not part of it
+            // (`@FR-F-Interp`: a hole holds an expression parsed at full language level).
+            self.lexer.whitespace();
             let mut format = Value::Null;
             // @PLN124 — `in_format_expr` also gates the interpolation TARGET (see
             // `constant` in vectors.rs): a hole is not the destination, so a string
