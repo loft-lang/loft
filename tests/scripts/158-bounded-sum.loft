@@ -20,6 +20,23 @@
 // the other way round).  NO PRELUDE: s_float (a float accumulate), s_join (a `?`-discharged
 // read — its operand is a join), s_two (a second statement in the body), s_step (a computed
 // index), s_walk (a `for x in v` walk, no counted range).
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-22) — each of the proof's two clauses
+// switched off in turn, on --native:
+//   - the ROOM test (the running total far enough from the edge): s5 answers
+//     -9223372036854773861 for null — a wrapped garbage number, exactly what C85 exists to
+//     forbid — and its assert fails.
+//   - the element BOUND: s2 answers 9223372036854775807 for null (the MAX + 1 prefix
+//     overflow is summed plain and cancelled), and s3's null element would be summed as
+//     MIN.  Its assert fails.
+// LOFT_HOIST_VERIFY=1 SEES both: it re-runs every admitted block through the checked add,
+// and panics "an admitted block overflowed the checked add" under either sabotage — this
+// clause's verifier is the proof itself, re-run, so it has no blind spot here.  THREE
+// expectations in this file were written by hand and were wrong (s4's 2000 * (2^40 - 1),
+// s5's total, s_step's 1499 * 1500); every number now stands as Python computed it, and
+// the interpreter agreed with Python each time.  Restored byte-identically (`git diff`
+// empty against the pre-sabotage commit): interpret / native / every switch / every
+// falsifier green.
 
 fn tot(v: const vector<integer>) -> integer { t = 0; for x in v { t += x; } t }
 

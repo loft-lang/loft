@@ -1008,6 +1008,20 @@ wrong accumulate or index out of such a loop on native; `LOFT_HOIST_VERIFY=1` co
 plain operator's answer with the checked template's and every raw read with the checked read,
 panicking on a disagreement; `LOFT_TRACE_NEST=1` names every admission and decline and whether
 the reads are raw.
+**`LOFT_NO_BOUNDED_SUM=1`** (`@FR-R-BoundedNest`'s reduction clause, default-ON, generation
+time, `--native` only) makes `acc = acc + v[i]` over an integer vector pay the checked add on
+every element again — with it off, a counted loop that is one such accumulate over a held
+header and base sums what it can PLAIN first, a block of 1024 at a time, admitted when every
+element lies in `[−2^40, 2^40)` and the running total is more than `2^50` from the i64 edge
+(the nest's magnitude-bound proof, taken from the data per block in the same pass, so no
+prefix in the block can overflow and the plain sum IS the checked answer), and the checked
+loop resumes where the first block declines (the stdlib `sum` 11.9 → 3.7 µs, 6.45× → 2.06× of
+Rust, pinned; no answer changes on any input, a null element and a large element take the checked
+loop) — and is the first bisect step for a wrong sum out of such a loop on native.
+`LOFT_HOIST_VERIFY=1` re-runs every admitted block through the checked add and panics on a
+disagreement — the proof itself, so it has no blind spot.  The bound test is spelled in
+add / shift / or on purpose: baseline x86-64 is SSE2, with a packed 64-bit add and no packed
+64-bit signed compare, and written as two compares the loop stays scalar and gains nothing.
 **`LOFT_NO_RANGE_ARITH=1`** (`@FR-R-Range`, default-ON, generation time, `--native` only)
 makes every integer operator keep its checked template again — with it off, an operator
 whose RESULT provably fits the type (a literal, a mask of a non-sentinel value, `len`/`size`

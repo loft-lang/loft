@@ -286,9 +286,17 @@ header and base (`acc = acc + v[i]`, the stdlib `sum`'s shape) with a run-time p
 instead of a static one.  `min_of` / `max_of` need no proof (a compare cannot overflow);
 `product` is multiplicative and is not this; a dot product (`acc += a[i] * b[i]`) is the same
 clause with a tighter element bound (`2^20`) and is the next candidate once `sum` is built.
-Cells owed: the `a`/`b` prefix-overflow pair (`[MAX, 1, −1]` → null on both backends today,
-and must stay null), a null element mid-vector, elements at `±2^40` exactly, a running total
-near the edge, an empty vector, and a vector shorter than one block.
+**BUILT 2026-09-22** as `(R-BoundedNest)`'s reduction clause, switch `LOFT_NO_BOUNDED_SUM`,
+cells `tests/scripts/158-bounded-sum.loft` s1–s9 (the `[MAX, 1, −1]` pair stays null, a null
+element mid-vector, elements at exactly `±2^40`, a total within `2^50` of MAX, empty, one
+element, shorter than a block, the hand-written loop, the operands reversed, and the five
+shapes that must keep the checked loop), pins `tests/bounded_sum.rs`.  Built form 3.65–3.73
+µs against the hand-price's 3.66–3.74; pinned 6.45× → **2.06×** (lane 14 median 1.78×, its
+worst row now `grid` at 2.76×).  Sabotage: each clause has a cell that fails without
+it (room → s5 wrapped garbage; bound → s2 `MAX` for null), and `LOFT_HOIST_VERIFY=1` catches
+both, since its check IS the proof re-run.  Three expectations in the cell file were written
+by hand and were wrong — the same lesson as the record shapes, and the fix is the same:
+compute every number.
 
 - **`split` (12.27×)** collects `vector<text>`: one owned text per piece against the twin's
   `Vec<&str>`, which allocates nothing.  A representation question (text slices as views),

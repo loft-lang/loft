@@ -1111,18 +1111,24 @@ pub unsafe fn sum_blocks_i64<const VERIFY: bool>(
     if base.is_null() || from < 0 || from >= to {
         return (acc, from);
     }
-    // SAFETY: the caller's contract — `elems` elements of 8 bytes at `base`, in a store the
-    // loop cannot grow; `to <= elems` keeps every read inside them.
-    let all: &[i64] = unsafe { std::slice::from_raw_parts(base.cast::<i64>(), elems as usize) };
+    // Element `i` is read as `get_elem_at` reads it — an unaligned load at `base + i * 8`,
+    // the file's one spelling for an element read (loft#1481) — and LLVM vectorises those
+    // as it would a slice: `movdqu` in place of `movdqa`, the same throughput.
+    let elem = |i: usize| -> i64 {
+        // SAFETY: the caller's contract — `elems` elements of 8 bytes at `base`, in a store
+        // the loop cannot grow; every `i` below is under `to <= elems`.
+        unsafe { base.add(i * 8).cast::<i64>().read_unaligned() }
+    };
     let mut at = from as usize;
     let end = to as usize;
     while at < end {
-        let block = &all[at..(at + SUM_BLOCK).min(end)];
+        let stop = (at + SUM_BLOCK).min(end);
         let room = acc != i64::MIN
             && acc.unsigned_abs() < (i64::MAX as u64) - (SUM_BLOCK as u64) * (SUM_BOUND as u64);
         let mut high: u64 = 0;
         let mut sum: i64 = 0;
-        for &x in block {
+        for i in at..stop {
+            let x = elem(i);
             high |= (x.wrapping_add(SUM_BOUND) as u64) >> 41;
             sum = sum.wrapping_add(x);
         }
@@ -1131,9 +1137,9 @@ pub unsafe fn sum_blocks_i64<const VERIFY: bool>(
         }
         if VERIFY {
             let mut checked = acc;
-            for &x in block {
+            for i in at..stop {
                 checked = checked
-                    .checked_add(x)
+                    .checked_add(elem(i))
                     .expect("bounded sum: an admitted block overflowed the checked add");
             }
             assert_eq!(
@@ -1143,7 +1149,7 @@ pub unsafe fn sum_blocks_i64<const VERIFY: bool>(
             );
         }
         acc = acc.wrapping_add(sum);
-        at += block.len();
+        at = stop;
     }
     (acc, at as i64)
 }

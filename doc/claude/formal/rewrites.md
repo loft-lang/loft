@@ -1496,7 +1496,28 @@ loop.  Sites: `hoist::fill_loop`, `Output::fill_fast_path`, `Stores::fill_hoiste
                  for every read; then each read is one load through the held
                  base with no bounds test and no null select — the element
                  bound has already ruled out a stored null.  A read outside the
-                 range at either end declines the nest whole.
+                 range at either end declines the nest whole.  THE REDUCTION
+                 CLAUSE: a counted, exclusive, literal-start loop that is ONE
+                 integer accumulate of a scalar vector's elements — `acc = acc +
+                 v[i]` (or the operands the other way round), an 8-byte `OpGetInt`
+                 at field 0 over a pure path with `i` the loop variable, the
+                 stdlib `sum`'s loop — in a loop that holds the path's header and
+                 base, sums what it can PLAIN before the loop: a block of 1024
+                 elements at a time, admitted when every element lies in
+                 `[−2^40, 2^40)` and the running total is more than `2^50` from
+                 the i64 edge — the magnitude-bound proof above, taken from the
+                 DATA per block in the same pass — so no prefix inside the block
+                 can leave the type and the plain block sum is the checked
+                 answer; the first block that fails ends the plain part, the
+                 `#index` is advanced to one below the first element not summed,
+                 and the checked loop, emitted unchanged, resumes there (a null
+                 element fails the bound and is left to it, which propagates
+                 it).  Every answer is the loop's own on every input.  The bound
+                 test is spelled `(x + B) as u64 >> 41`, OR-accumulated, and the
+                 sum `wrapping_add`, because the baseline target has a packed
+                 64-bit add and no packed 64-bit signed compare.  A float
+                 accumulate, a `?`-discharged read, a second statement, a computed
+                 index or a computed start keeps the checked loop.
 ```
 
 **In words.**  @PLN157's guarded plain nest, the admissible successor C120 names: the
@@ -1523,6 +1544,37 @@ with the checked read); trace `LOFT_TRACE_NEST=1`.  Sites: `hoist::bounded_nest`
 `hoist::nest_read_paths`, `Output::nest_fast_path`, `nest_bound_expr`, `nest_chain_at`,
 `ops::int_arith::nest_form`, `ops::vector_ops` (the raw read), `Output::output_if_inner` (the
 select), `vector::abs_bound_i64`.
+
+**The reduction clause, in words.**  2026-09-22, @PLN158 (`bench/portal/analysis/vector-build.md`
+§ `sum` re-priced).  The stdlib `sum` was 6.45× its Rust twin: every element paid the checked,
+null-propagating add — a sentinel test on each operand and a `checked_add` — which cannot
+vectorise, against a twin's wrapping add that runs 2-wide on SSE2.  The ledger had the row as
+"priced negative, the gap is the language's semantics" from an attempt that made the bound a
+SEPARATE, CHECKED pass and edited `t_7integer_sum` while the row runs its callee twin; and an
+i128 accumulator that would have closed the gap by CHANGING the answer for a prefix overflow
+that later cancels was rejected by the owner on principle (slower on many targets) — and is
+unnecessary.  The correct problem is the per-element check, and the answer is this rule's
+own: prove from a bound that the checked answer is the plain one, then run plain — per block,
+at run time, in the same pass.  Priced on the emitted twin before any emitter code, then
+built: `sum` 11.9 → 3.7 µs, hash unchanged, pinned **6.45× → 2.06×** of Rust (range
+2.06–2.08); the built form matches the price to the microsecond.  The remaining 2× is the op count (add, shift, or, add per element against
+the twin's add), and the owner has said 2× is fine for a routine an optimised program caches
+the result of.  Switch `LOFT_NO_BOUNDED_SUM` (and `LOFT_NO_VECTOR_BASE` /
+`LOFT_NO_VECTOR_HOIST`, one rule); trace `LOFT_TRACE_NEST=1` names each reduction admitted
+and each counted loop declined with why; falsifier `LOFT_HOIST_VERIFY=1` re-runs every
+admitted block through the checked add and panics on a disagreement — the proof itself,
+re-run, so unlike the join clause's verifier it has no blind spot here: sabotaged on the ROOM
+test, s5 answers `−9223372036854773861` for null (wrapped garbage, exactly what C85 forbids)
+and the verifier panics; sabotaged on the element BOUND, s2 answers `MAX` for null (the
+`MAX + 1` prefix overflow summed plain and cancelled) and the verifier panics.  Three of the
+cells' expectations were first written by hand and were wrong; every number stands as
+computed, and the interpreter agreed with the computation each time.  Sites:
+`hoist::bounded_sum` (the shape), `Output::sum_fast_path` (the prelude, emitted before the
+guards so both copies of a guarded loop resume from the advanced counter),
+`vector::sum_blocks_i64` with `SUM_BLOCK` / `SUM_BOUND`.  Cells
+`tests/scripts/158-bounded-sum.loft` s1–s9, pins `tests/bounded_sum.rs`.  Next of the same
+clause, not built: a dot product (`acc += a[i] * b[i]`, bound `2^20`); `min_of` / `max_of`
+need no proof, and `product` is multiplicative and is not this.
 
 ### A witnessed buffer is allocated once, not minted per call
 
