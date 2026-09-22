@@ -263,11 +263,93 @@ guessed at again.
 Keyed (ten rows) is store-format work; `split` is a text-representation question; `par` is
 a subsystem no analysis has entered.  `sum` at 2.16× is the owner's accepted 2×.
 
+## `split` and the vector it returns — the owner's question, answered (2026-09-22)
+
+Asked: *can `split` return slices? I am not married to the vector of texts it returns.*
+And the wider one: *can't every vector be a lazy iterator, materialised only when it is
+stored in a way that demands it?*
+
+**The answer the rules give: keep the API, take the representation.**  `(R-Escape)` (C121)
+already says a construction that does not ESCAPE the unit may be represented any way its
+conditions allow — the vector `split` promises is the contract at a library API and nowhere
+else.  A count of every use in the repo and the library checkouts (`grep` over `*.loft`,
+2026-09-22): repo — 36 walks `for p in x.split(c)` (lazy since `(R-LazySplit)`), 3 binds,
+1 inline index; libraries — 14 binds, 2 inline indexes, 1 walk.  **Every bind is a LOCAL
+that never leaves its function**: `lines = src.split('\n'); for line in lines`,
+`nl = len(lines)`, `lines[0] ?? ""`, `parts[i] ?? ""`, and the `nth_word` idiom
+`line.split(' ')[i] ?? ""`.  None is returned, stored in a record, appended to or handed to
+a call.  Changing the API to an iterator would break those 14 sites (an iterator has no
+`[i]` and no `len`) to reach a representation the compiler may take without asking.
+
+**The unit — the split TABLE, `(R-LazySplit)`'s sibling.**  `parts = src.split(c)` where
+`parts`'s only mentions are `len(parts)`, `parts[i]` / `parts[i]?` / `?? d`, `for p in
+parts` and `parts#…`: on native the vector is never built — one pass over the source records
+the piece offsets (the Rust twin's own `collect::<Vec<&str>>` work), `len` is the table's
+length, `parts[i]` is a `&str` slice served like `(R-TextBorrow)`'s element, and the walk
+through the name is today's lazy split (which currently DECLINES a vector bound to a name
+first — that decline goes).  The source is borrowed where nothing writes it or copied ONCE
+at the bind, `(R-LazySplit)`'s condition verbatim; a NUL separator, an element write, an
+append, a return, a call taking `parts`, a second binding — decline and keep the vector.
+The `nth` shape `x.split(c)[i]` needs no table: walk to the i-th piece.  The interpreter
+keeps the vector and is the oracle.  Expected, unpriced: `split` 20 µs toward the twin's
+2.7 (7.5× → near 1×) — the table pass IS what the twin does.  Hand-price on `t_split` first.
+
+**Slices as a TEXT representation — recorded, not proposed.**  A text element that is a
+view into another text ((base, offset, length) in a store) is what "return slices" means
+literally, and it is the only route for a split that ESCAPES (returned, kept in a struct
+beyond the source's life).  It is a store-format change touching every text op on both
+backends — the keyed rows' class of work — and nothing found needs it.
+
+**The general question — `(R-Fuse)`, a rewrite rule, never a semantics.**  "Every vector
+is lazy until stored" as language SEMANTICS makes evaluation ORDER observable: the
+producer's work interleaves with the consumer's (`for x in build(v) { touch(v) }` reads a
+different `v`; a producer's prints or store writes reorder), so C120 and the feature freeze
+rule it out as a default, and it would leave no oracle (an eager interpreter would disagree
+with native; a lazy one would check nothing).  As a REWRITE it is what `(R-Escape)`
+licences and what the tree is half-way to: `(R-LazySplit)` is this rule for one function —
+`split`'s body is a builder (`out = []; for c in self { … out += [piece] }; out`), the
+consumer one forward walk, the vector never built — and `(R-RetAdopt)`, `(R-MoveAppend)`,
+`(R-Place)`, `(R-ValueRecord)`, `(O-Buffer)` are the same idea one representation each.
+The generalisation:
+
+```
+  (R-Fuse)       a vector built by a loft-bodied BUILDER (one append loop over an
+                 invariant source, no effect a consumer could reorder) and consumed by
+                 exactly ONE forward walk, whose body writes no store the builder reads,
+                 is never materialised: the builder's loop body is emitted at the
+                 consumer's element read.  Random access materialises the builder's
+                 RECIPE (the source and its offsets), never its elements.  Every other
+                 use — returned, stored in a field, appended, captured, handed to a
+                 call, consumed twice, indexed out of order, `rev` — DECLINES and keeps
+                 the vector: the vector is the safe default, and a half-consumed
+                 producer is never replayed or buffered.
+```
+
+Three conditions, each with a home already: the builder shape (`push_loop`, the
+comprehension recogniser), the effect condition (`may_write_store`, `call_writes_store`,
+`in_place_only_writer`), and non-escape (`(R-Escape)`'s escape walk).  **Where it pays:**
+an eager builder consumed once already costs little for SCALARS (the buffer is adopted and
+reused, its capacity kept — `comprehension` 1.70×, `push` 0.50×; fusion would reach ~1.2×);
+the cost concentrates where the elements OWN HEAP — `split`'s 7.5× is its per-piece text
+copies, not the vector — so the rule pays first on builders of texts and heap records
+(`split`, `lines`, `words`, tokenisers), which is where the two library shapes live.
+
+**Order recommended:** (1) the split table now — the worst row, a bounded unit, and it
+settles the recipe representation the general rule reuses; (2) a `@PLN` issue for
+`(R-Fuse)` (claim the number FIRST, `loft-lang/plans`, one `status:*` + one `subject:*`
+label) opened with a CENSUS before any design: a script over the corpus and the library
+checkouts counting `v = build(…); for x in v` by element kind (scalar / text /
+heap-record) and consumer shape, then a price on one real row before the emitter is
+touched.  The test of the general rule is that it RE-DERIVES the special case: if `(R-Fuse)`
+is right, the stdlib's `split` body is the spec and `codegen_runtime::lazy_split` its
+first generated instance — no more hand-written iterators per builder.
+
 ## Order — and where it stands after 2026-09-22
 
 Built, in this order: W2 (`join` 1.96×, four more text rows to ~1×), W1 (`char_walk` 2.48×,
 `split` 7.8×), the single-row harness (`--names`), `mesh_aabb` attributed and moved
-(2.73×), `enum_match` attributed and moved a step (3.97×).  **Left, in order: C1+**
+(2.73×), `enum_match` attributed and moved a step (3.97×).  **Left, in order: the split
+table** (§ above — recommended ahead of the two below after the owner's question), **C1+**
 (`fibonacci`, its CORRECTED condition in `vector-build.md` § C1's condition), **P1**
 (`chunk_lookup`).  Levers this round FOUND and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
