@@ -473,13 +473,25 @@ hand price.  `bench/stats.py --only 13` pins it: **`join` 6,032 ns vs 5,716, 1.0
 accumulator clause (`range::seed_accumulators`): a local seeded once by a ranged value and
 stepped only by literals inside a character walk over an unwritten text is ranged by
 `seed ± Σ|c| · u32::MAX`, so its steps emit plain; `char_walk` 12.5 → **10.45 µs** (−17 %),
-hash `2e18` — the W1 ledger's 8.3 was measured on an older emission and is not reached: the
+hash `2e18` — `stats.py --only 13` pins it at **10,495 ns vs 5,063, 2.07× (range 2.07–2.08)**,
+down from 3.14×; the text lane's median is 1.20× and its worst row is this one — the W1 ledger's 8.3 was measured on an older emission and is not reached: the
 row's remaining cost is the two null-aware character compares against literals, which LLVM
 folds already (W1's finding).  Cells a1–a11 walk the admissions (a negative step, two walks,
 an `if`, an outer loop re-seeding) and the declines (the seed outside the enclosing loop, a
 non-literal step, an appended text, a second seed, a counted loop, a parameter seed).
-Next: `enum_match`'s record push window under a branch (3.98×), `for c in s.trim()`'s
-per-iteration call source.  Levers this round FOUND and left unpriced, each with its number: a
+**The record push window under a branch — HAND-PRICED** (the emitted `c_enum_match` build
+loop edited by script: the vector reserved for its 3 000 trips before the loop, a
+`vector::push_window` opened on the header, each arm's mint taking its slot from the window
+— `base + len·32`, zeroed through it — its address the same pointer, its finish `len += 1`,
+and the record's length written once by `push_window_close` after the loop, on every copy
+the guarded chain emits): **35.9 → 20.4 µs (−43 %, 3.98× → ~2.3×)**, hash `1493`.  The
+first placement closed only the checked copy of the loop and read hash `0` — a window whose
+close does not run leaves the length at 0, which the consumer loop reads as empty; the
+price stands only with the hash.  To build: `(R-PushFill)`'s window clause extended to
+record MINT GROUPS under `if` arms of a counted loop — at most one mint per pass, so the
+trip-count reservation bounds the total and the window never grows inside the loop.
+Next: that window; `for c in s.trim()`'s per-iteration call source.  Levers this round FOUND
+and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
 through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
 walk's accumulator (`char_walk`'s 12.9 → 8.3), and the parser's per-iteration evaluation of
