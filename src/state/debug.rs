@@ -1114,6 +1114,18 @@ impl State {
     */
     pub(super) fn dump_attribute(&mut self, a: &Attribute) -> String {
         match a.typedef {
+            // The `size(4)` rung, matching `compile::encode_const` and `variables::size`
+            // (loft#654, loft#1620).  Without it a four-byte constant — every narrow field
+            // op's `min` bias — is DUMPED as eight bytes while being emitted as four, and
+            // the disassembly walks off into the next operand.
+            Type::Integer(s)
+                if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) && s.min >= 0 =>
+            {
+                format!("{}", self.code::<u32>())
+            }
+            Type::Integer(s) if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) => {
+                format!("{}", self.code::<i32>())
+            }
             Type::Integer(s) if s.range() - 1 <= 256 && s.min == 0 => {
                 format!("{}", i32::from(self.code::<u8>()))
             }

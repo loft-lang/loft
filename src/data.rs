@@ -6039,7 +6039,6 @@ impl NarrowSlot {
     /// A width of 8 is the wide `integer`, which answers [`NarrowIntKind::Int`] and takes no
     /// `min`: the two store-place callers pass every supported width here, so this is total
     /// rather than an `Option` (`of_type`, which asks about a LOCAL, keeps its own `None`).
-    #[must_use]
     pub fn of_slot(
         width: u8,
         nullable: bool,

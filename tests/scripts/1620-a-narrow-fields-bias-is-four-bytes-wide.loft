@@ -1,0 +1,91 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A narrow field's BIAS is four bytes wide, so a type whose minimum falls outside
+// `-32768..=32767` reads and writes the values it declares.
+//
+// Every 1- and 2-byte store op takes the type's minimum as an operand (`OpGetByte`,
+// `OpGetByteNullable`, `OpSetByte`, `OpSetByteNullable`, `OpGetShort`, `OpSetShort`,
+// `OpGetShortRaw`, `OpSetShortRaw`, `OpGetShortFull`, `OpGetShortSpare`, and the two frame
+// ops `OpVarNarrow` / `OpPutNarrow`).  Before loft#1620 that operand was `const i16` while
+// the minimum itself is an `i32`, so the bias was truncated at EMISSION and no run could
+// recover it: `limit(40000, 40100) size(1)` read `-25536` for every one of its 101 values on
+// the interpreter — the same number whatever the field held, so the slot was not observable
+// at all — and `--native` did not compile, its generated Rust carrying `(40000_i16)`.  The
+// two backends disagreed about whether the program existed (`@FR-O-NoDiverge`).
+//
+// The bias is four bytes because the type system already bounds it there: a `limit(lo, hi)`
+// beyond `i32` is refused at the declaration (`limit(2147483700, …) size(1)` does not
+// compile), while `limit(2147483000, 2147483100) size(1)` does — which is the far edge this
+// file pins.
+//
+// Widening one operand moved a fact FIVE sites re-derive — how many bytes a constant
+// operand occupies.  `variables::size` and `Data::rust_type` already had the `size(4)` rung
+// (loft#654 added it for the word-sized jump displacement, with the comment that says what
+// its absence costs); `State::add_const`, `compile::encode_const` and
+// `State::dump_attribute` did not, and each failure looks different:
+//
+//   * `add_const` reserved four bytes and wrote eight, so every operand after the bias was
+//     read off the wrong offset — the interpreter walked past the end of the function
+//     (`index out of bounds: the len is 310 but the index is 510`);
+//   * `encode_const` / `dump_attribute` are the disassembly round-trip, so a dump would have
+//     re-assembled to different bytecode than it came from.
+//
+// The cells therefore have to reach BOTH narrow widths, both signs of the bias, a field and
+// an element, and a local — the frame ops carry the same operand.
+//
+// The controls are the biases that already fitted: `limit(1000, 1100) size(1)` and
+// `limit(-1000, 1000) size(2)` are what every other narrow test uses, and a fix that
+// mis-sizes the operand in the other direction moves them.  `u8` and `i16` are the built-in
+// spellings, whose bias is `0` and `-32768`.
+//
+// CHANNEL: the assertions.
+
+type B40  = integer limit(40000, 40100) size(1);      // 1 byte, min  40000 >  i16::MAX
+type S40  = integer limit(-40000, 20000) size(2);     // 2 bytes, min -40000 <  i16::MIN
+type Far  = integer limit(2147483000, 2147483100) size(1);  // the far edge the parser admits
+type Bok  = integer limit(1000, 1100) size(1);        // control: a bias that already fitted
+type Sok  = integer limit(-1000, 1000) size(2);       // control: the same, two bytes
+
+struct P { b: B40, s: S40, f: Far, c: Bok, d: Sok, u: u8, i: i16 }
+
+fn fields() -> text {
+  lo = P { b: 40000, s: -40000, f: 2147483000, c: 1000, d: -1000, u: 0, i: -32768 };
+  hi = P { b: 40100, s: 20000, f: 2147483100, c: 1100, d: 1000, u: 255, i: 32767 };
+  "{lo.b},{hi.b} {lo.s},{hi.s} {lo.f},{hi.f} {lo.c},{hi.c} {lo.d},{hi.d} {lo.u},{hi.u} {lo.i},{hi.i}"
+}
+
+fn written() -> text {
+  p = P { b: 40000, s: -40000, f: 2147483000, c: 1000, d: -1000, u: 0, i: -32768 };
+  p.b = 40050; p.s = 0; p.f = 2147483050; p.c = 1050; p.d = 0;
+  p.b += 10; p.s += 7; p.d -= 3;
+  "{p.b} {p.s} {p.f} {p.c} {p.d}"
+}
+
+fn elements() -> text {
+  vb: vector<B40> = [40000, 40050, 40100];
+  vs: vector<S40> = [-40000, 0, 20000];
+  vb[1] += 5;
+  vs[1] -= 5;
+  "{vb[0] ?? -1},{vb[1] ?? -1},{vb[2] ?? -1} {vs[0] ?? -1},{vs[1] ?? -1},{vs[2] ?? -1}"
+}
+
+// The frame ops carry the same operand: a narrow LOCAL a `&` names holds its type's field
+// encoding (@PLN167 decision 1), and `OpVarNarrow` / `OpPutNarrow` are handed the same bias.
+fn linked_local() -> text {
+  x: B40 = 40000; c = &x; a = "{c}"; c = 40100; b = "{x}";
+  y: S40 = -40000; d = &y; e = "{d}"; d = 20000; f = "{y}";
+  "{a},{b} {e},{f}"
+}
+
+fn main() {
+  assert(fields() == "40000,40100 -40000,20000 2147483000,2147483100 1000,1100 -1000,1000 0,255 -32768,32767",
+         "a narrow field at each edge of its declared range: {fields()}");
+  assert(written() == "40060 7 2147483050 1050 -3",
+         "a write and a compound step through a wide bias: {written()}");
+  assert(elements() == "40000,40055,40100 -40000,-5,20000",
+         "the same through vector elements: {elements()}");
+  assert(linked_local() == "40000,40100 -40000,20000",
+         "the frame ops take the same bias: {linked_local()}");
+  println("a narrow field's bias is four bytes wide");
+}

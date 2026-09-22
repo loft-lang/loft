@@ -385,7 +385,7 @@ impl State {
                 let put_pos = stack.var_pos(v);
                 stack.add_op("OpPutNarrow", self);
                 self.code_add(put_pos);
-                self.code_add(slot.min as i16);
+                self.code_add(slot.min);
                 self.code_add(slot.code());
             }
         }
@@ -3471,7 +3471,7 @@ impl State {
             }
             self.code_add(var_pos);
             if let Some(slot) = narrow_slot {
-                self.code_add(slot.min as i16);
+                self.code_add(slot.min);
                 self.code_add(slot.code());
             }
         }
@@ -4757,7 +4757,7 @@ impl State {
         }
         self.code_add(var_pos);
         if let Some(slot) = narrow_slot {
-            self.code_add(slot.min as i16);
+            self.code_add(slot.min);
             self.code_add(slot.code());
         }
         if let Type::RefVar(tp) = stack.function.tp(variable) {
@@ -4844,7 +4844,7 @@ impl State {
             if let Some(slot) = narrow_link
                 && slot.kind.takes_min()
             {
-                self.code_add(slot.min as i16);
+                self.code_add(slot.min);
             }
         }
         self.insert_types(stack.function.tp(variable).clone(), code, stack)
@@ -5001,6 +5001,24 @@ impl State {
 
     pub(super) fn add_const(&mut self, tp: &Type, p: &Value, stack: &Stack, before_stack: u16) {
         match tp {
+            // loft#654's `size(4)` rung, which `variables::size` (the WIDTH this operand is
+            // reserved at), `Data::rust_type` (what the interpreter reads it back as) and
+            // `compile::encode_const` already carry.  Without it a `size(4)` alias — `i32`
+            // / `u32`, the `min` bias of every narrow field op since loft#1620 — is
+            // reserved four bytes and WRITTEN eight, so the operands after it are read off
+            // the wrong offsets and the bytecode walk runs past the end of the function.
+            // The arms below match a spec's exact `min`/`max`, which is why the declared
+            // width has to be asked for first: `i32`'s range is `i32::MIN + 1 ..= i32::MAX`
+            // and matches none of them.
+            Type::Integer(s) if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) => {
+                if let Value::Int(nr) = p {
+                    if s.min >= 0 {
+                        self.code_add(*nr as u32);
+                    } else {
+                        self.code_add(*nr);
+                    }
+                }
+            }
             Type::Integer(IntegerSpec {
                 min: 0, max: 255, ..
             }) => {
@@ -5326,7 +5344,7 @@ impl State {
             if let Some(slot) = narrow_link
                 && slot.kind.takes_min()
             {
-                self.code_add(slot.min as i16);
+                self.code_add(slot.min);
             }
             if amp_owned_writeback {
                 // free OLD unless the install kept it (witness = *o's NEW store)
@@ -5550,7 +5568,7 @@ impl State {
         }
         self.code_add(var_pos);
         if let Some(slot) = narrow_slot {
-            self.code_add(slot.min as i16);
+            self.code_add(slot.min);
             self.code_add(slot.code());
         }
     }

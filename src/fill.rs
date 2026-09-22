@@ -491,7 +491,7 @@ fn put_int(s: &mut State) {
 
 fn var_narrow(s: &mut State) {
     let v_pos = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_kind = s.code::<u8>();
     let new_value = s.var_narrow(v_pos, v_min, v_kind);
     s.put_stack(new_value);
@@ -499,7 +499,7 @@ fn var_narrow(s: &mut State) {
 
 fn put_narrow(s: &mut State) {
     let v_pos = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_kind = s.code::<u8>();
     let v_value = s.get_stack::<i64>();
     s.put_narrow(v_pos, v_min, v_kind, v_value);
@@ -1696,18 +1696,18 @@ fn get_float(s: &mut State) {
 
 fn get_byte(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_v1 = s.get_stack::<DbRef>();
     let new_value = {
         let db = v_v1;
         if db.rec == 0 {
             i64::MIN
         } else {
-            i64::from(s.database.store(&db).get_byte(
-                db.rec,
-                db.pos + u32::from(v_fld),
-                i32::from(v_min),
-            ))
+            i64::from(
+                s.database
+                    .store(&db)
+                    .get_byte(db.rec, db.pos + u32::from(v_fld), (v_min)),
+            )
         }
     };
     s.put_stack(new_value);
@@ -1715,18 +1715,18 @@ fn get_byte(s: &mut State) {
 
 fn get_byte_nullable(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_v1 = s.get_stack::<DbRef>();
     let new_value = {
         let db = v_v1;
         if db.rec == 0 {
             i64::MIN
         } else {
-            let r =
-                s.database
-                    .store(&db)
-                    .get_byte(db.rec, db.pos + u32::from(v_fld), i32::from(v_min));
-            if r == i32::from(v_min) + 255 {
+            let r = s
+                .database
+                .store(&db)
+                .get_byte(db.rec, db.pos + u32::from(v_fld), (v_min));
+            if r == (v_min) + 255 {
                 i64::MIN
             } else {
                 i64::from(r)
@@ -1804,18 +1804,17 @@ fn set_boolean(s: &mut State) {
 
 fn get_short(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_v1 = s.get_stack::<DbRef>();
     let new_value = {
         let db = v_v1;
         if db.rec == 0 {
             i64::MIN
         } else {
-            let r = s.database.store(&db).get_short(
-                db.rec,
-                db.pos + u32::from(v_fld),
-                i32::from(v_min),
-            );
+            let r = s
+                .database
+                .store(&db)
+                .get_short(db.rec, db.pos + u32::from(v_fld), (v_min));
             if r == i32::MIN {
                 i64::MIN
             } else {
@@ -1903,7 +1902,7 @@ fn set_float(s: &mut State) {
 
 fn set_byte(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_val = s.get_stack::<i64>();
     let v_v1 = s.get_stack::<DbRef>();
     {
@@ -1913,7 +1912,7 @@ fn set_byte(s: &mut State) {
             s.database.store_mut(&db).set_byte(
                 db.rec,
                 db.pos + u32::from(v_fld),
-                i32::from(v_min),
+                (v_min),
                 v as i32,
             );
         }
@@ -1922,7 +1921,7 @@ fn set_byte(s: &mut State) {
 
 fn set_byte_nullable(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_val = s.get_stack::<i64>();
     let v_v1 = s.get_stack::<DbRef>();
     {
@@ -1934,14 +1933,14 @@ fn set_byte_nullable(s: &mut State) {
         };
         if db.rec != 0 {
             s.database
-                .set_byte_nullable(&db, db.pos + u32::from(v_fld), i32::from(v_min), v);
+                .set_byte_nullable(&db, db.pos + u32::from(v_fld), (v_min), v);
         }
     }
 }
 
 fn set_short(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_val = s.get_stack::<i64>();
     let v_v1 = s.get_stack::<DbRef>();
     {
@@ -1953,7 +1952,7 @@ fn set_short(s: &mut State) {
         };
         if db.rec != 0 {
             s.database
-                .set_short_nullable(&db, db.pos + u32::from(v_fld), i32::from(v_min), v);
+                .set_short_nullable(&db, db.pos + u32::from(v_fld), (v_min), v);
         }
     }
 }
@@ -2060,18 +2059,17 @@ fn get_int4_full(s: &mut State) {
 
 fn get_short_raw(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_v1 = s.get_stack::<DbRef>();
     let new_value = {
         let db = v_v1;
         if db.rec == 0 {
             i64::MIN
         } else {
-            let r = s.database.store(&db).get_i16_raw(
-                db.rec,
-                db.pos + u32::from(v_fld),
-                i32::from(v_min),
-            );
+            let r = s
+                .database
+                .store(&db)
+                .get_i16_raw(db.rec, db.pos + u32::from(v_fld), (v_min));
             if r == i32::MIN {
                 i64::MIN
             } else {
@@ -2084,7 +2082,7 @@ fn get_short_raw(s: &mut State) {
 
 fn set_short_raw(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_val = s.get_stack::<i64>();
     let v_v1 = s.get_stack::<DbRef>();
     {
@@ -2095,19 +2093,16 @@ fn set_short_raw(s: &mut State) {
             v_val as i32
         };
         if db.rec != 0 {
-            s.database.store_mut(&db).set_i16_raw(
-                db.rec,
-                db.pos + u32::from(v_fld),
-                i32::from(v_min),
-                v,
-            );
+            s.database
+                .store_mut(&db)
+                .set_i16_raw(db.rec, db.pos + u32::from(v_fld), (v_min), v);
         }
     }
 }
 
 fn get_short_spare(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_v1 = s.get_stack::<DbRef>();
     let new_value = {
         let db = v_v1;
@@ -2118,7 +2113,7 @@ fn get_short_spare(s: &mut State) {
                 .database
                 .store(&db)
                 .read::<u16>(db.rec, db.pos + u32::from(v_fld));
-            crate::narrow::dec_short_spare(r, i32::from(v_min))
+            crate::narrow::dec_short_spare(r, (v_min))
         }
     };
     s.put_stack(new_value);
@@ -2126,7 +2121,7 @@ fn get_short_spare(s: &mut State) {
 
 fn get_short_full(s: &mut State) {
     let v_fld = s.code::<u16>();
-    let v_min = s.code::<i16>();
+    let v_min = s.code::<i32>();
     let v_v1 = s.get_stack::<DbRef>();
     let new_value = {
         let db = v_v1;
@@ -2136,7 +2131,7 @@ fn get_short_full(s: &mut State) {
             i64::from(s.database.store(&db).get_short_full(
                 db.rec,
                 db.pos + u32::from(v_fld),
-                i32::from(v_min),
+                (v_min),
             ))
         }
     };
