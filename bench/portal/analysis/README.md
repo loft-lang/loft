@@ -9,6 +9,7 @@ The files here say WHY, price what could be done about it, and record what was b
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
 | `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found) |
 | `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); C1 priced, not built — the next work, ON ITS CORRECTED CONDITION ("no `CallRef` reachable" is not sufficient: `OpFreeRefOrHandUp`, in a capturing lambda's body, registers a store too — list every registrant as a blocker); T1 priced (−45 %) but RE-SIZED: it needs the "text variable is a `&str`" notion given one home first (six inline sites, three shipped bugs) |
+| `round-3.md` | after the five units — text walks, the call frame, a nested in-place write; two rows measured UNATTRIBUTABLE | **PRICED, NOTHING BUILT** — W1 −65 %, W2 −75 %, C1+ −39 %, P1 −30 %; the single-row harness is the instrument this round lacked |
 
 ## Where to resume (2026-09-22, branch `157-native-4x`)
 
@@ -52,11 +53,9 @@ If a new run is red, check these FIRST — each made an earlier run red:
 - `browser_kernel_one_script_differential` failed ONCE on a first try and passed on retry
   in that run; treat a single first-try failure there as a flake, a repeated one as real.
 
-**2. Then the rest of `vector-build.md`: C1 on its CORRECTED condition, then T1 (a
-one-predicate refactor first), then a dot product as the bounded sum's next row, then one
-full `make perf-portal` run alone on the box — the generated `doc/claude/PERF_PORTAL.md`
-was re-measured at `33ab9d2d7` and is stale against the bounded sum and E, and a partial
-re-render mixes sessions.**  V1–V3, F1, the bounded sum and E are built; loft#1593 is fixed
+**2. Then `round-3.md`, in its own order: W1 + W2 (the text walks; W2 carries T1's
+refactor), the single-row harness, then C1+ and P1.**  The portal was re-measured at
+`8009e8c5b` after all five units (every routine 1.85×, shipped 1.63×).  V1–V3, F1, the bounded sum and E are built; loft#1593 is fixed
 on the way (a tightening — the `imaging` library's own tests owe seven `?? 0` cures, its src
 none; reported in `types-history.md` D-Narrow-Limit, not edited there).  Build
 each as the record-shapes levers were built — a clause of an existing rule, a switch, cells
