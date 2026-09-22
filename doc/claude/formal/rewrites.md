@@ -510,15 +510,23 @@ hoisted across `e = h[i]`, native read `h[0]`'s tags on every pass (15 for 16, e
 switch on or off); cells `tests/scripts/158-link-rebind.loft` l1–l7.
 **The hidden-buffer allowance** (@PLN157 § V-ad): the allow-list also admits
 `OpDatabase`/`OpDatabaseNP` into a null-discharge buffer — the hidden `__ref_p2_N` that
-`e = tbl[i]?` mints an ABSENT record element into — when the record is all-scalar.
-The allocation takes a store of its own from a null slot or clears the buffer's OWN
-store, and that store hosts no vector, text or reference, so no header can name
-anything in it; the field sets that follow are (R-InPlace) sets and walk on their own,
-and the scalar tier reads the allocation as the record's type whole (R-Scalar).  Only
-the pass-2 discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and
-a return buffer may be a record the caller offered (R-Callee's second half carries
-that case).  Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`.
-Site: `hoist::null_buffer_alloc`.
+`e = tbl[i]?` mints an ABSENT record element into — whatever the record holds.  The
+allocation takes a store of its own from a null slot or clears the buffer's OWN store,
+and that store is reachable only through the site's `__ncc_N` temp, which the site
+rebinds on every run: no loop-invariant path names anything in it, so no header and no
+base can go stale; the field sets that follow are (R-InPlace) sets and walk on their own,
+and the scalar tier reads the allocation as the record's type whole (R-Scalar).  A growth
+of the buffer's own store from the body — an append to the absent element's vector
+field — is a push through a non-pure path, which the gate declines on its own.  Until
+2026-09-22 (@PLN158 round 3, P1) the record had to be ALL-SCALAR, on the reading that a
+store hosting no vector could not be named by a header; the invariant-path argument is
+the one that holds, and the restriction had kept `map_set`'s loop — three
+`m.chunks[i]?` joins over `Chunk { …, hexes: vector<Hex> }` — on no header at all, each
+join a store resolution and `len(m.chunks)` a call per iteration.  Only the pass-2
+discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and a return
+buffer may be a record the caller offered (R-Callee's second half carries that case).
+Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`; cells
+`tests/scripts/158-heap-discharge-buffer.loft`.  Site: `hoist::null_buffer_alloc`.
 **The copy clause** (2026-09-21, @PLN158 R5).  A consumer writes the copy-out / mutate /
 write-back a Rust or C author writes — `e = ents[i]?; e.energy += e.speed; …; ents[i] = e`.
 In loft `e` is a VIEW of `ents[i]` (`(B-View)`), so the last statement copies the element
