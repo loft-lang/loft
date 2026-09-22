@@ -1371,6 +1371,28 @@ pub fn hoisted_scalar_verify<T: HoistEq>(hoisted: T, fresh: T) -> T {
     hoisted
 }
 
+/// `@FR-R-TextBorrow` under `LOFT_HOIST_VERIFY=1` — at the walk's release of its loop
+/// variable, the borrowed element (`held`) against the element read again (`fresh`).
+///
+/// # Panics
+///
+/// When the borrow no longer names the element — its address or its length moved — which
+/// is what a store write in the body the admission did not classify would do.  The
+/// address is compared FIRST, without reading through `held`: a moved store leaves the
+/// borrow dangling, and a dangling read is not a check.  Never in the emitted default.
+#[inline]
+pub fn text_borrow_verify(held: &str, fresh: &str) {
+    assert!(
+        std::ptr::eq(held.as_ptr(), fresh.as_ptr()) && held.len() == fresh.len(),
+        "borrowed text element is stale — the loop moved the element it was borrowed from \
+         (held {} bytes at {:p}, now {} bytes at {:p})",
+        held.len(),
+        held.as_ptr(),
+        fresh.len(),
+        fresh.as_ptr()
+    );
+}
+
 /// `@FR-R-RecPtr`'s path clause under `LOFT_HOIST_VERIFY=1` — a field read through a record
 /// address at a SUMMED offset (`v.pos.x`), compared with the unrewritten read that walks the
 /// path.  [`rec_get`]'s own check re-reads the store at the offset it was given, so it

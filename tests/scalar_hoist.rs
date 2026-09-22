@@ -34,7 +34,7 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_c14", 1, 1), // an element write of ANOTHER type at the offset
     ("n_c15", 0, 1), // an element write of the SAME type: conservative eviction (pts keeps its header)
     ("n_c16", 1, 0), // a nested-path write of another root
-    ("n_c17", 0, 0), // a text read keeps the loop off the allow-list
+    ("n_c17", 1, 0), // the text read is a reader since `@FR-R-TextBorrow`: as c11
     ("n_c18", 2, 1), // narrow integers
     ("n_c19", 2, 0), // a read as a call argument in an if-arm
 ];

@@ -1,0 +1,72 @@
+// W2 unit 1 — the one-fn-per-path corpus for the "a text variable is BORROWED" predicate.
+//
+// Every function below reaches one emitter site that used to spell the notion inline as
+// `is_argument(v) && Type::Text`.  The refactor that folds those spellings into
+// `Output::text_borrowed` is proven by an EMPTY `loft introspect` diff over this file (and
+// then over the whole corpus, `scripts/introspect_diff.sh`).  `main` runs every function so
+// the file is a clean end-to-end check on both backends as well.
+
+// Var read — a text PARAMETER reads bare (`&str`); a text LOCAL reads `&var` (`String`).
+fn c1_param_read(s: text) -> integer { size(s) + len(s) }
+fn c2_local_read() -> integer { t = "local-text"; size(t) + len(t) }
+
+// TuplePut — a text parameter into an owned tuple slot converts (`.to_string()`, loft#1278);
+// a text local source does not.
+fn c3_tupleput_param(p: (integer, text), s: text) -> (integer, text) { q = p; q.1 = s; q }
+fn c4_tupleput_local(p: (integer, text)) -> (integer, text) { q = p; t = "loc"; q.1 = t; q }
+
+// Set from a text variable — a LOCAL source clones (`var.clone()`), a PARAMETER source
+// converts (`.to_string()`), a by-reference parameter converts through its `&mut String`.
+fn c5_set_from_local() -> text { a = "alpha"; b = a; b }
+fn c6_set_from_param(a: text) -> text { b = a; b }
+fn c7_set_from_ref(a: &text) -> text { b = a; a += "!"; b }
+
+// Return of a text variable — a LOCAL routes through the scratch buffer (`__ret_N`), a
+// PARAMETER does not.
+fn c8_return_local(k: integer) -> text {
+  r = match k { 0 => "zero", _ => "many" };
+  r
+}
+fn c9_return_param(s: text, k: integer) -> text { if k > 0 { return s; } "none" }
+
+// Lazy split — over a text PARAMETER nothing writes the walk borrows; over a LOCAL it copies.
+fn c10_split_param(src: text) -> integer { n = 0; for p in src.split(',') { n += size(p); } n }
+fn c11_split_local() -> integer { src = "a,bb,ccc"; n = 0; for p in src.split(',') { n += size(p); } n }
+
+// A `&text` LOCAL link written through (raw pointer) beside a `&text` PARAMETER written through.
+fn c12_link_local() -> integer { c = "x"; pc = &c; pc += "yz"; size(c) }
+fn c13_link_param(pc: &text) { pc += "yz"; }
+
+// The walk this unit prepares for: `for p in vector<text>`, the loop variable read, sized,
+// compared and handed to a stdlib call.
+fn c14_walk(words: vector<text>) -> integer {
+  n = 0;
+  for p in words {
+    n += size(p);
+    if p.starts_with("w1") { n += 100; }
+    if p == "alpha" { n += 1000; }
+  }
+  n
+}
+
+fn main() {
+  assert(c1_param_read("héllo") == 11, "c1 {c1_param_read("héllo")}");
+  assert(c2_local_read() == 20, "c2 {c2_local_read()}");
+  assert(c3_tupleput_param((1, "a"), "bee").1 == "bee", "c3");
+  assert(c4_tupleput_local((1, "a")).1 == "loc", "c4");
+  assert(c5_set_from_local() == "alpha", "c5");
+  assert(c6_set_from_param("beta") == "beta", "c6");
+  x = "gamma";
+  assert(c7_set_from_ref(x) == "gamma" && x == "gamma!", "c7 {x}");
+  assert(c8_return_local(0) == "zero" && c8_return_local(3) == "many", "c8");
+  assert(c9_return_param("pp", 1) == "pp" && c9_return_param("pp", 0) == "none", "c9");
+  assert(c10_split_param("a,bb,ccc") == 6, "c10 {c10_split_param("a,bb,ccc")}");
+  assert(c11_split_local() == 6, "c11 {c11_split_local()}");
+  assert(c12_link_local() == 3, "c12 {c12_link_local()}");
+  y = "q";
+  c13_link_param(y);
+  assert(y == "qyz", "c13 {y}");
+  ws: vector<text> = ["w17", "w1x", "alpha", "w"];
+  assert(c14_walk(ws) == 1212, "c14 {c14_walk(ws)}");
+  println("ok");
+}

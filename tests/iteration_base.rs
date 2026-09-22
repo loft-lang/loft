@@ -34,8 +34,10 @@ const EXPECTED: &[(&str, usize, usize, usize, usize)] = &[
     ("n_w7", 1, 1, 2, 0),
     ("n_w8", 1, 0, 1, 0),
     ("n_w9", 1, 0, 1, 0),
-    // Heap-owning elements: the reads are not fused, so no address is bound.
-    ("n_w11", 0, 0, 1, 0),
+    // Heap-owning elements: the text and vector field reads are not fused, but the walk
+    // holds its base (`len(it.nm)` is a text-value op, no writer since `@FR-R-TextBorrow`)
+    // and `it.k` is read through the iteration's address.
+    ("n_w11", 1, 0, 1, 0),
     ("n_w12", 1, 0, 1, 0),
     // A vector of scalars is another iterator: its step stays checked.
     ("n_w13", 0, 0, 0, 1),

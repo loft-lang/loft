@@ -72,7 +72,7 @@ const PURE_NULLARY_OPS: [&str; 15] = [
 /// direction: a reader left out of this list only means a loop that keeps re-deriving its
 /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
 /// that a measurement said was slow.
-const READ_ONLY_COLLECTION_OPS: [&str; 24] = [
+const READ_ONLY_COLLECTION_OPS: [&str; 25] = [
     // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
     // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body), and
     // the copy of one (@PLN164 B1b: the entry witness snapshots every promoted buffer)
@@ -102,6 +102,9 @@ const READ_ONLY_COLLECTION_OPS: [&str; 24] = [
     "OpGetRef",
     "OpGetField",
     "OpGetDbRef",
+    // a text field read through a reference: the position word, then the text at it
+    // (`@FR-R-TextBorrow` — what let a walk of texts hoist nothing)
+    "OpGetText",
 ];
 
 /// The scalar in-place setters (@PLN157 P4a): each writes one fixed-width value through
@@ -2571,6 +2574,48 @@ pub struct VectorIteration<'a> {
 /// and the caller keeps the general emission.
 #[must_use]
 pub fn iteration_head<'a>(stmt: &'a Value, data: &Data) -> Option<VectorIteration<'a>> {
+    let (loop_var, index, read) = iteration_step(stmt, data)?;
+    // The element, possibly behind `OpGetField(element, const off, _)` wrappers: each adds a
+    // constant to the element's position and leaves its record alone (a struct-enum
+    // element is bound through one at offset 0).
+    let mut read: &Value = read;
+    let mut offset: i64 = 0;
+    while let Value::Call(gd, gargs) = read.unspan()
+        && (*gd as usize) < data.definitions.len()
+        && data.def(*gd).name() == "OpGetField"
+        && gargs.len() == 3
+        && let Value::Int(off) = gargs[1].unspan()
+    {
+        offset += i64::from(*off);
+        read = &gargs[0];
+    }
+    let Value::Call(rd, rargs) = read.unspan() else {
+        return None;
+    };
+    if (*rd as usize) >= data.definitions.len()
+        || data.def(*rd).name() != "OpGetVectorNullable"
+        || rargs.len() != 3
+        || !matches!(rargs[2].unspan(), Value::Var(c) if *c == index)
+    {
+        return None;
+    }
+    let Value::Int(size) = rargs[1].unspan() else {
+        return None;
+    };
+    Some(VectorIteration {
+        loop_var,
+        index,
+        vector: &rargs[0],
+        size: u32::try_from(*size).ok()?,
+        offset: u32::try_from(offset).ok()?,
+    })
+}
+
+/// The half of [`iteration_head`] every vector walk shares: the binding
+/// `e = { idx = idx + 1; <read> }` — its loop variable, the `#index` it steps and the
+/// element read — with the read's shape left to the caller (a record element, or a text
+/// element's `OpGetText` over one).  Shape only; anything else answers `None`.
+fn iteration_step<'a>(stmt: &'a Value, data: &Data) -> Option<(u16, u16, &'a Value)> {
     let Value::Set(loop_var, iter) = stmt.unspan() else {
         return None;
     };
@@ -2599,40 +2644,207 @@ pub fn iteration_head<'a>(stmt: &'a Value, data: &Data) -> Option<VectorIteratio
     {
         return None;
     }
-    // The element, possibly behind `OpGetField(element, const off, _)` wrappers: each adds a
-    // constant to the element's position and leaves its record alone (a struct-enum
-    // element is bound through one at offset 0).
-    let mut read: &Value = read;
-    let mut offset: i64 = 0;
-    while let Value::Call(gd, gargs) = read.unspan()
-        && (*gd as usize) < data.definitions.len()
-        && data.def(*gd).name() == "OpGetField"
-        && gargs.len() == 3
-        && let Value::Int(off) = gargs[1].unspan()
+    Some((*loop_var, *index, read))
+}
+
+/// `@FR-R-TextBorrow` — the head of a walk of TEXTS, as the parser lowers
+/// `for p in words` over a `vector<text>`: the loop variable, its `#index`, the vector
+/// variable and the element read, `OpGetText(OpGetVectorNullable(vec, size, index), 0)`.  Shape only,
+/// like [`iteration_head`]; a record walk, a reversed walk or a text iterator answers
+/// `None`.  The vector operand must be a VARIABLE: the hidden `_vector_N` the parser binds
+/// before the loop, which is what a lazy split is keyed by too.
+#[must_use]
+pub fn text_walk_head<'a>(stmt: &'a Value, data: &Data) -> Option<(u16, u16, u16, &'a Value)> {
+    let (loop_var, index, read) = iteration_step(stmt, data)?;
+    let Value::Call(td, targs) = read.unspan() else {
+        return None;
+    };
+    if (*td as usize) >= data.definitions.len()
+        || data.def(*td).name() != "OpGetText"
+        || targs.len() != 2
+        || !matches!(targs[1].unspan(), Value::Int(0))
     {
-        offset += i64::from(*off);
-        read = &gargs[0];
+        return None;
     }
-    let Value::Call(rd, rargs) = read.unspan() else {
+    let Value::Call(rd, rargs) = targs[0].unspan() else {
         return None;
     };
     if (*rd as usize) >= data.definitions.len()
         || data.def(*rd).name() != "OpGetVectorNullable"
         || rargs.len() != 3
-        || !matches!(rargs[2].unspan(), Value::Var(c) if c == index)
+        || !matches!(rargs[2].unspan(), Value::Var(c) if *c == index)
     {
         return None;
     }
-    let Value::Int(size) = rargs[1].unspan() else {
+    let Value::Var(vec) = rargs[0].unspan() else {
         return None;
     };
-    Some(VectorIteration {
-        loop_var: *loop_var,
-        index: *index,
-        vector: &rargs[0],
-        size: u32::try_from(*size).ok()?,
-        offset: u32::try_from(offset).ok()?,
-    })
+    Some((loop_var, index, *vec, read))
+}
+
+/// `@FR-R-TextBorrow` — one admitted walk's loop variable: the element read the walk
+/// binds it to, kept for the checking form (`LOFT_HOIST_VERIFY=1` re-reads it at the
+/// walk's release), or `None` for a lazy split's piece, which borrows no store and has
+/// nothing to re-derive.
+#[derive(Clone, Debug)]
+pub struct TextBorrow {
+    pub read: Option<Value>,
+}
+
+/// `@FR-R-TextBorrow` — the loop variables of this function's walks of texts that BORROW
+/// their element: `for p in words` where the loop's rest — the parser's two bound tests,
+/// the body and the walk's release — reads `p` only as a text value, and (for a vector the
+/// loop really walks) writes no store.  A walk over a lazy split (`lazy`) needs no store
+/// condition: its pieces borrow the iterator's source, a borrowed parameter or a loop-long
+/// copy, never a store.  A generator declines whole, as `(R-LazySplit)` does: its loops are
+/// re-entered across `next`, and a borrow cannot cross the state machine.
+///
+/// A mention of `p` is a text VALUE where it is an operand of a call at a `text` position
+/// (an op or a user function; a text-writer's `pos: const u16` destination is not one, so
+/// `p += "x"` declines here), the whole source of a bind or a tuple write into ANOTHER
+/// slot (the one site converts it, `Output::text_borrowed`), or the operand of the walk's
+/// own `OpFreeText`.  Every other mention — a rebind, a `&p` link, a `return p`, a tuple
+/// literal, a capture — declines: the failure a missed shape would produce is rustc
+/// refusing the program, but a decline costs a copy and refuses nothing.
+#[must_use]
+pub fn borrowed_text_walks(
+    data: &Data,
+    def_nr: u32,
+    lazy: &BTreeMap<u16, LazySplit>,
+) -> HashMap<u16, TextBorrow> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_TEXT_BORROW").is_ok();
+    let mut out = HashMap::new();
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    let mut cache: HashMap<u32, bool> = HashMap::new();
+    body.any_node(&mut |n| {
+        let Value::Loop(lp) = n else {
+            return false;
+        };
+        if lp.name != "For loop" || lp.operators.is_empty() {
+            return false;
+        }
+        let Some((p, _index, vec, read)) = text_walk_head(&lp.operators[0], data) else {
+            return false;
+        };
+        let rest = &lp.operators[1..];
+        let verdict = if !matches!(vars.tp(p).base(), Type::Text(_)) {
+            Err("the loop variable is not a text")
+        } else if !lazy.contains_key(&vec)
+            && rest.iter().any(|s| may_write_store(s, data, &mut cache))
+        {
+            Err("the body may write a store")
+        } else if let Some(why) = rest.iter().find_map(|s| text_escapes(s, p, data)) {
+            Err(why)
+        } else {
+            Ok(())
+        };
+        match verdict {
+            Ok(()) => {
+                // A lazy split's piece has no store to re-read: nothing to verify.
+                let read = (!lazy.contains_key(&vec)).then(|| read.clone());
+                out.insert(p, TextBorrow { read });
+                if trace {
+                    eprintln!(
+                        "[text-borrow] {}: `{}` borrows its element",
+                        def.name(),
+                        vars.name(p)
+                    );
+                }
+            }
+            Err(why) if trace => {
+                eprintln!(
+                    "[text-borrow] {}: `{}` declined — {why}",
+                    def.name(),
+                    vars.name(p)
+                );
+            }
+            Err(_) => {}
+        }
+        false
+    });
+    out
+}
+
+/// The first mention of text variable `p` under `node` that is NOT a text-value read, as
+/// [`borrowed_text_walks`] defines one — or `None` when every mention is.  Walks the tree
+/// by hand rather than through `any_node` because the question is about a mention's
+/// PARENT: the same `Var(p)` is a value read as a call's `text` operand and an escape as a
+/// link's.
+fn text_escapes(node: &Value, p: u16, data: &Data) -> Option<&'static str> {
+    match node {
+        Value::Var(v) if *v == p => Some("read outside a text-value position"),
+        Value::Set(v, to) => {
+            if *v == p {
+                return Some("rebound in the body");
+            }
+            // The whole source of a bind into another slot is converted at the bind.
+            if matches!(to.unspan(), Value::Var(s) if *s == p) {
+                return None;
+            }
+            text_escapes(to, p, data)
+        }
+        Value::TuplePut(t, _, to) => {
+            if matches!(to.unspan(), Value::Var(s) if *s == p) {
+                return None;
+            }
+            if *t == p {
+                return Some("written as a tuple");
+            }
+            text_escapes(to, p, data)
+        }
+        Value::Call(d, args) => {
+            let known = (*d as usize) < data.definitions.len();
+            let name = if known { data.def(*d).name() } else { "" };
+            let attrs = if known {
+                data.def(*d).attributes()
+            } else {
+                &[]
+            };
+            for (i, a) in args.iter().enumerate() {
+                if matches!(a.unspan(), Value::Var(s) if *s == p) {
+                    let value_position = name == "OpFreeText"
+                        || attrs.get(i).is_some_and(|at| {
+                            !at.constant && matches!(at.typedef.base(), Type::Text(_))
+                        });
+                    if !value_position {
+                        return Some("handed to a call outside a text-value position");
+                    }
+                } else if let Some(why) = text_escapes(a, p, data) {
+                    return Some(why);
+                }
+            }
+            None
+        }
+        Value::Span(inner) => text_escapes(&inner.1, p, data),
+        Value::Block(b) => b.operators.iter().find_map(|o| text_escapes(o, p, data)),
+        Value::Loop(b) => b.operators.iter().find_map(|o| text_escapes(o, p, data)),
+        Value::Insert(ops) => ops.iter().find_map(|o| text_escapes(o, p, data)),
+        Value::If(c, t, e) => text_escapes(c, p, data)
+            .or_else(|| text_escapes(t, p, data))
+            .or_else(|| text_escapes(e, p, data)),
+        Value::Drop(inner) => text_escapes(inner, p, data),
+        Value::Return(inner) => {
+            if matches!(inner.unspan(), Value::Var(s) if *s == p) {
+                return Some("returned");
+            }
+            text_escapes(inner, p, data)
+        }
+        // A fn-ref call, a parallel body, a yield, a keyed cursor, a tuple literal, a
+        // link: any mention of `p` under these is an escape, and a subtree without one
+        // is not — so the walk continues through them by the generic mention test.
+        _ => {
+            if node.any_node(&mut |n| matches!(n, Value::Var(v) if *v == p)) {
+                Some("mentioned under a shape the borrow does not read")
+            } else {
+                None
+            }
+        }
+    }
 }
 
 /// `@FR-R-Counter`'s iteration clause — the `#index` of a `for e in v` loop whose step
@@ -4230,20 +4442,51 @@ fn retbuf_only_writer(
     })
 }
 
+/// `@FR-R-TextBorrow`'s text-value clause — the ops that write a text VARIABLE named by
+/// their `pos: const u16` operand, or release one.  On native that variable is a Rust
+/// `String` (an owned local, a `&mut String` work buffer, the `*mut String` a local link
+/// holds) and its release is nothing at all (`text_ops.rs` emits `OpFreeText` as no code),
+/// so none of these touches a store: a header, a base or a borrowed element survives every
+/// one.  A writer whose `pos` names a RECORD (`OpSetText`) is not here — it takes a
+/// reference and allocates in that reference's store.
+const TEXT_VARIABLE_OPS: [&str; 16] = [
+    "OpAppendText",
+    "OpAppendCharacter",
+    "OpPutText",
+    "OpClearText",
+    "OpFreeText",
+    "OpFormatText",
+    "OpFormatInt",
+    "OpFormatSingle",
+    "OpFormatFloat",
+    "OpAppendStackText",
+    "OpAppendStackCharacter",
+    "OpClearStackText",
+    "OpFormatStackText",
+    "OpFormatStackInt",
+    "OpFormatStackSingle",
+    "OpFormatStackFloat",
+];
+
 /// Can this native op be ruled out as a writer?
 ///
-/// Two ways to qualify, and everything else is assumed to write:
+/// Three ways to qualify, and everything else is assumed to write:
 ///
-/// * it is named above as a constant or a reader; or
-/// * it takes at least one parameter and every parameter is a plain runtime scalar.
+/// * it is named above as a constant, a reader or a text-variable writer; or
+/// * it takes at least one parameter, every parameter is a plain runtime scalar or a text
+///   VALUE, and its result is one too, or nothing (`@FR-R-TextBorrow`'s text-value
+///   clause: a text value on native is a `&str` or a `String`, never a store — but a
+///   result that is a collection is a store the op minted, `list_dir(path) ->
+///   vector<text>` being one, which is why the result is asked).
 ///
-/// The second is the arithmetic, comparison and conversion bulk. What it turns on is that
-/// a **`const` parameter is not a value** — it is a compile-time slot number, type id or
+/// The second is the arithmetic, comparison, conversion and text bulk. What it turns on is
+/// that a **`const` parameter is not a value** — it is a compile-time slot number, type id or
 /// field offset, and that is precisely the channel through which the scalar-signature ops
 /// that DO touch state reach it: `OpDatabase(pos, db_tp)` allocates a store,
 /// `OpCoroutineNext(value_size)` resumes a generator that can append to anything,
-/// `OpFreeText(pos)` releases one. Read by signature alone those three are
-/// indistinguishable from `OpAddInt`; read this way none of them qualifies.
+/// `OpCastVectorFromText(val, db_tp)` mints one. Read by signature alone those are
+/// indistinguishable from `OpAddInt`; read this way none of them qualifies, and the
+/// text-variable writers that share the `pos` spelling are admitted by NAME above.
 ///
 /// Parameters come from `attributes()`. A native op has no body and therefore no variable
 /// table, so `variables().arguments()` answers the empty list — which "are they all
@@ -4251,14 +4494,19 @@ fn retbuf_only_writer(
 /// is how the first cut of this gate let `v.remove(0)` run inside a hoisted loop.
 /// `parameters_declared` is the guard that keeps it from coming back.
 fn native_op_is_store_free(def: &crate::data::Definition) -> bool {
-    if PURE_NULLARY_OPS.contains(&def.name()) || READ_ONLY_COLLECTION_OPS.contains(&def.name()) {
+    if PURE_NULLARY_OPS.contains(&def.name())
+        || READ_ONLY_COLLECTION_OPS.contains(&def.name())
+        || TEXT_VARIABLE_OPS.contains(&def.name())
+    {
         return true;
     }
+    let value = |tp: &Type| is_scalar(tp) || matches!(tp.base(), Type::Text(_));
     !def.attributes().is_empty()
         && def
             .attributes()
             .iter()
-            .all(|a| !a.constant && is_scalar(&a.typedef))
+            .all(|a| !a.constant && value(&a.typedef))
+        && (matches!(def.returned(), Type::Void) || value(def.returned()))
 }
 
 /// True for the types that cannot name a store. Anything else — a reference, a collection,

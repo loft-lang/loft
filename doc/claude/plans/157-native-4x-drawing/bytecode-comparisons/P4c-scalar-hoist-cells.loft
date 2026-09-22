@@ -57,9 +57,10 @@ fn c15() { l = mk_lay(5); pts: vector<Lay> = [mk_lay(0), mk_lay(0), mk_lay(0)]; 
 // c16 — a write through a nested PATH of another root (h2.sub.x0 is (Sub, 0)) beside h1.n: h1.n hoists.
 fn c16() { h1 = Holder { sub: Sub { x0: 1 }, n: 5 }; h2 = Holder { sub: Sub { x0: 0 }, n: 0 }; s = 0; for i in 0..3 { s += h1.n; h2.sub.x0 = h2.sub.x0 + i; } println("c16 {s} {h2.sub.x0}"); }
 
-// c17 — c11 plus a TEXT field read: not a candidate itself, and today `OpGetText` /
-// `t_4text_len` / `OpFreeText` are off the read-only allow-list, so the whole loop declines
-// (hoist.rs doctrine: an op missing from the list costs the hoist, never correctness).
+// c17 — c11 plus a TEXT field read: not a candidate itself, and since `@FR-R-TextBorrow`
+// made `OpGetText` a reader and `len(text)` a text-value op, the loop hoists as c11 does
+// (before, the whole loop declined — hoist.rs doctrine: an op missing from the allow-list
+// costs the hoist, never correctness).
 fn c17() { l = mk_lay(2); s = 0; for i in 0..3 { set_lw(l, i as float); s += (l.lw as integer) + l.x0 + len(l.tag); } println("c17 {s}"); }
 // c18 — NARROW integer fields (`i32` → OpGetInt4, `u8` → OpGetByte with a `min` operand).
 struct N { w: i32, b: u8, xs: vector<integer> }

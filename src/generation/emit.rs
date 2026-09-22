@@ -338,6 +338,9 @@ impl Output<'_> {
                         return write!(w, "&self.var_{field}");
                     }
                     return write!(w, "self.var_{field}");
+                } else if self.text_borrowed(var) {
+                    // A borrowed text reads as the `&str` it holds.
+                    return write!(w, "var_{var_name}");
                 } else if variables.is_argument(var) {
                     if let Type::RefVar(inner) = variables.tp(var) {
                         // By-ref argument: holds &mut T — dereference to read.
@@ -596,11 +599,8 @@ impl Output<'_> {
                 // (loft#1278).  The tuple LITERAL arm has always converted a `Var` here;
                 // only this arm carved it out, so the two spellings of the same write
                 // disagreed about the same source.
-                let borrowed_var_src = matches!(node.tupleput_inner().kind(), ValueType::Var) && {
-                    let v = node.tupleput_inner().var_nr();
-                    let vars = self.data.def(self.def_nr).variables();
-                    vars.is_argument(v) && matches!(vars.tp(v).base(), Type::Text(_))
-                };
+                let borrowed_var_src = matches!(node.tupleput_inner().kind(), ValueType::Var)
+                    && self.text_borrowed(node.tupleput_inner().var_nr());
                 if elem_is_text
                     && (!matches!(node.tupleput_inner().kind(), ValueType::Var) || borrowed_var_src)
                 {
@@ -946,9 +946,8 @@ impl Output<'_> {
                         // back `Str::new(&var___ret_N)` into a dropped String
                         // (loft#740).  Non-null `text` was unaffected, which is
                         // why it stayed hidden.
-                        let returns_local_text = matches!((**val).unspan(), Value::Var(v)
-                            if matches!(def.variables().tp(*v).base(), Type::Text(_))
-                                && !def.variables().is_argument(*v));
+                        let returns_local_text =
+                            matches!((**val).unspan(), Value::Var(v) if self.text_owned(*v));
                         // @PLAN52 cluster VI (2026-05-30): closures returning text
                         // have a `__work_ret: &mut String` parameter but the
                         // closure body's `??` value-block doesn't write into it —

@@ -1410,6 +1410,15 @@ impl Output<'_> {
             // @PLN25: peel `Optional(Text)` — a `text?` block-assigned local is `String`-typed.
             if matches!(var_tp.base(), Type::Text(_)) {
                 self.declared.insert(var);
+                // `@FR-R-TextBorrow` — a walk's loop variable admitted to borrow its
+                // element binds the `&str` the element read answers, and every read of it
+                // reads bare (`text_borrowed`).  The block is the parser's iterator: the
+                // index step and the element read, nothing that could own the text.
+                if self.text_borrowed(var) {
+                    write!(w, "let var_{name}: &str = ")?;
+                    self.output_code_inner(w, to)?;
+                    return Ok(());
+                }
                 write!(w, "let mut var_{name} = ")?;
                 self.output_code_inner(w, to)?;
                 if needs_to_string {
@@ -1714,14 +1723,11 @@ impl Output<'_> {
                 // Detect this case and emit `.clone()` on the owned String directly.
                 // Unspan the RHS so the detection fires for Span-wrapped Var
                 // (the common case for assignment RHS — same shape as P228).
-                let text_local_clone = needs_to_string
-                    && matches!(to.unspan(), Value::Var(v) if {
-                        let vars = self.data.def(self.def_nr).variables();
-                        // @PLN25 slice (c): `.base()` — a `text?` local source is a `String`
-                        // just like plain `text`, so it must emit `var.clone()` here. Without
-                        // the peel it fell through to `&var.to_string()` (E0308: `&String`).
-                        !vars.is_argument(*v) && matches!(vars.tp(*v).base(), Type::Text(_))
-                    });
+                // @PLN25 slice (c): `text_owned` peels — a `text?` local source is a
+                // `String` just like plain `text`, so it must emit `var.clone()` here.
+                // Without the peel it fell through to `&var.to_string()` (E0308: `&String`).
+                let text_local_clone =
+                    needs_to_string && matches!(to.unspan(), Value::Var(v) if self.text_owned(*v));
                 // @P283 — source is a `RefVar(Text)` argument (`&mut String`).
                 // `output_code_inner` for `Value::Var` in this case emits
                 // `&*var_X` (emit.rs:141); appending `.to_string()` then parses

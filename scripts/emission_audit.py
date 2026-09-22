@@ -46,7 +46,8 @@ BIND_BASE = re.compile(r"^\s*let (__vb_\d+): \*const u8 = vector::vec_base\(&([\
 BIND_VIEW_BASE = re.compile(r"^\s*let (__vb_\d+) = (__[iv]b_\d+); //@FR-R-Base view base for (\S+?)(?:,| |$)")
 # R-RecPtr: a record VIEW's address, bound right after the binding and live to the block's
 # end; every `rec_get`/`rec_set` through it must name a live one.
-BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\((\S+?)\), &stores\.allocations\); //@FR-R-RecPtr record view address for")
+# The view's operand may carry spaces: a `&`-link local reads as `unsafe { *var_al }`.
+BIND_RECPTR = re.compile(r"^\s*let (__pa_\d+): \*const u8 = vector::rec_ptr\(&\((.+?)\), &stores\.allocations\); //@FR-R-RecPtr record view address for")
 # R-RecPtr's base clause: the loop variable of `for e in v` takes its address from the element
 # base the loop holds — the header and the base it names must both be live, on one path.
 BIND_RECPTR_BASE = re.compile(r"^\s*let (__pa_\d+): \*const u8 = if \(var_\w+ as u64\) < u64::from\(([\w.]+)\.len\) \{ unsafe \{ (__vb_\d+)\.add\(var_\w+ as usize \* \d+(?: \+ \d+)?\) \} \} else \{ std::ptr::null\(\) \}; //@FR-R-RecPtr record view address for (\S+?),")
