@@ -46,7 +46,21 @@ window's bump) and closes it once after every copy of the loop:
 | before | 35.9 | 3.98× |
 | hand price (the emission edited by script) | 20.4 | ~2.3× |
 | built, the fast path a CALL | 23.4 | — |
-| built, `push_record_windowed` `#[inline(always)]` | **23.4 → see the pin** | **~2.6×** |
+| built, `push_record_windowed` `#[inline(always)]` | **23.2–23.6** | **2.58×** |
+
+`bench/stats.py --only 16` pins it, and the row is BIMODAL on both lanes — three runs, 7–9
+interleaved samples each, the box idle (load 0.5): native alternates 23.2–23.6k and
+27.2–27.4k ns, its Rust twin 8.9–9.0k and 13.1k, the modes visibly alternating across the
+interleaved samples (`--show-samples`: native `23,246 27,369 27,197 27,211 23,609 27,292
+23,232`, Rust `9,011 13,086 13,135 9,031 8,971 8,913 8,989`).  Mode to mode the ratio is
+**2.58×** (fast / fast) and **2.08×** (slow / slow); the harness's median-of-medians reads
+2.59–3.02× depending on which mode each lane's median lands in, and flags the row noisy at
+14–16 %.  `mesh_emit` shows the same two modes on both lanes (native 104k / 116k, Rust 37k /
+61–67k).  Both are the lane's rows that GROW a vector to thousands of elements across
+several reallocations; the earlier window-clause ledger met the same bimodality on
+`record_append` and left its cause unestablished, and so does this one — it is a property of
+the measurement on this box, not of the emission (byte-identical across runs), and the fast
+mode's figure is the row's price.
 
 The declines are cells: a group whose literal fills the element's own vector field (r4 — a
 claim in the store the base is held in), a read of the vector in the body (r7), a `break`
@@ -522,9 +536,10 @@ close does not run leaves the length at 0, which the consumer loop reads as empt
 price stands only with the hash.  To build: `(R-PushFill)`'s window clause extended to
 record MINT GROUPS under `if` arms of a counted loop — at most one mint per pass, so the
 trip-count reservation bounds the total and the window never grows inside the loop.
-**BUILT** as the record clause (§ Built): 35.9 → 23.4 µs on the harness, the fast path
-forced inline; `stats.py --only 16` pins it below.  Next: `for c in s.trim()`'s
-per-iteration call source.  Levers this round FOUND
+**BUILT** as the record clause (§ Built): 35.9 → 23.2–23.6 µs, the fast path forced inline;
+`stats.py --only 16` pins it at **2.58× mode to mode** (the row is bimodal on both lanes, §
+Built has the samples), down from 3.98×.  Next: `for c in s.trim()`'s per-iteration call
+source.  Levers this round FOUND
 and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
 through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
