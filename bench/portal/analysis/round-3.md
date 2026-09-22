@@ -263,9 +263,20 @@ guessed at again.
 Keyed (ten rows) is store-format work; `split` is a text-representation question; `par` is
 a subsystem no analysis has entered.  `sum` at 2.16× is the owner's accepted 2×.
 
-## Order
+## Order — and where it stands after 2026-09-22
 
-**W1 and W2 first**: two rows in one subsystem, −65 % and −75 %, the largest prices here,
+Built, in this order: W2 (`join` 1.96×, four more text rows to ~1×), W1 (`char_walk` 2.48×,
+`split` 7.8×), the single-row harness (`--names`), `mesh_aabb` attributed and moved
+(2.73×), `enum_match` attributed and moved a step (~4.0×).  **Left, in order: C1+**
+(`fibonacci`, its CORRECTED condition in `vector-build.md` § C1's condition), **P1**
+(`chunk_lookup`).  Levers this round FOUND and left unpriced, each with its number: a
+record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
+through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
+walk's accumulator (`char_walk`'s 12.9 → 8.3), and the parser's per-iteration evaluation of
+a call source in `for c in s.trim()`.  The closing step is unchanged: one full
+`make perf-portal` ALONE on the box.
+
+**The order as written:** W1 and W2 first: two rows in one subsystem, −65 % and −75 %, the largest prices here,
 and W2 carries T1's refactor, which every text lever after it needs.  **Then the single-row
 harness** — it decides what `mesh_aabb`, `enum_match` and `entity_tick` are actually paying
 before another price is guessed.  **Then C1+** (one row, but every recursive function) and
