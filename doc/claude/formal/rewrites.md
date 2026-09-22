@@ -1398,6 +1398,64 @@ to re-derive at run time, so `(R-Switch)`'s second form applies: cells
 in `Output::collect_pre_evals_inner`, the null decl in `Output::emit_null_dbref`,
 `codegen_runtime::lazy_split`.
 
+### A split bound to a name is a table of its pieces
+
+```
+  (R-SplitTable) `V = T.split(c)` — the standard library's `split`, `c` a character
+                 CONSTANT other than the null character — where V is a plain LOCAL
+                 `vector<text>`, that bind is its only binding, and every other
+                 mention of V is a READ the table can answer: `len(V)`, the element
+                 read `V[i]` (bare, under `?`, under `?? d`, bound to a `text?`), or
+                 the source of the walk `for p in V` (the hidden vector the parser
+                 binds from V, itself read by nothing but its element read and its
+                 length test), all of them inside the block that binds V and after
+                 the bind — the vector is never built: at the bind ONE pass over T
+                 records its pieces as a TABLE of slices, the pieces (R-LazySplit)
+                 names in the order it names them; `len(V)` is the table's length,
+                 `V[i]` is the slice at `i` (a negative `i` from the end, a null or
+                 out-of-range `i` the null text — what the element read answers past
+                 the end), and the walk iterates the table.  T is evaluated ONCE,
+                 where the call stood: a plain text PARAMETER the function never
+                 writes is borrowed for the block; every other T is copied there.
+                 Every other mention — V returned, appended to, written, linked,
+                 captured, tupled, handed to a call, rebound, a second binding, a
+                 mention outside the binding block, a generator — DECLINES and
+                 keeps the vector.  The call's hidden buffer, when it serves that
+                 call alone, is never minted.
+```
+
+**In words.**  `parts = src.split('\n'); n = len(parts); for i in 0..len(parts) { … parts[i]? … }`
+is how a library reads a line-oriented text when it needs the count or the i-th line, and it
+is the ONE shape `(R-LazySplit)` declines — a vector bound to a name first.  Every such bind
+in the repo and the library checkouts is a local that never leaves its function (14 binds,
+walked, indexed or `len`'d: `round-3.md` § `split`), so `(R-Escape)` licenses the
+representation and the API stays what it is.  The table is what the Rust reference does
+(`split(c).collect::<Vec<&str>>()`), one pass over T with no record and no text copy per
+piece; the readers are the three the analysis admits and the emitter answers, so a shape
+the rule has not met declines rather than compiles to a read of a vector nobody filled.
+The walk through the name is the parser's `_vector_N = V` followed by the two readers of
+`(R-LazySplit)`'s loop, and is read as an ALIAS of the table — so `p` in `for p in parts`
+borrows its slice under `(R-TextBorrow)` with no store condition, as a lazy split's piece
+does; and because the table is random access, a `rev` and a comprehension over V are walks
+too, where the lazy split's forward iterator has to decline them.  The element read comes
+in the parser's two twins — the nullable read under `?`, `??` and a null-tested bind, and
+the RAISING read of a bare `v[i]` — and the table answers each as its op does: the null
+text and the out-of-bounds note for the first, the recoverable `IndexOutOfBounds` /
+`NegativeIndex` fault for the second (`LOFT_DEV_SOFT_HALT` halts both forms alike).  The binding-block condition is the Rust scope of the `let` the table becomes; a
+mention outside it would not compile.  `len` reaches the emitter through `(R-Wrapper)`,
+so the switch that keeps the wrapper a call (`LOFT_NO_WRAPPER_INLINE`) keeps every table a
+vector too.  Priced by hand first on the `split` row: 21.2 → 6.3 µs (−70 %, hash `21bd`),
+and 3.3 with the `?`-discharged piece borrowed instead of copied twice — the twin is 2.7.
+Switch `LOFT_NO_SPLIT_TABLE`; trace `LOFT_TRACE_SPLIT_TABLE` (each table admitted, each
+declined with its reason, and whether the buffer is minted).  The interpreter keeps the
+vector and is the oracle; `LOFT_NO_SPLIT_TABLE=1` is the same-build oracle on native.
+Cells `tests/scripts/158-split-table.loft`; pins `tests/split_table.rs`.  Sites:
+`hoist::split_tables`, `Output::split_table_of`, the bind and the alias bind in
+`Output::output_set`, the element read in `LazySplitNextEmitter`, the length in
+`HoistedLengthEmitter`, the pre-eval exemption in `Output::collect_pre_evals_inner`, the
+null decl in `Output::emit_null_dbref`, the header exclusion in
+`Output::bind_loop_headers`, `codegen_runtime::split_table_get`.
+
 ### A walk of texts borrows each element
 
 ```
@@ -1416,6 +1474,14 @@ in `Output::collect_pre_evals_inner`, the null decl in `Output::emit_null_dbref`
                  text value on native is a `&str` or a `String`, never a store.
                  Every other walk — a body that writes a store or `p`, a generator,
                  a body that runs arms in parallel — keeps the copy.
+                 DISCHARGE CLAUSE: the temp of a `?` / `?? d` over a split TABLE's
+                 element read (R-SplitTable) — `parts[i]?`, `parts[i] ?? d` — whose
+                 every mention is a text-value read, its own null test and its
+                 own value arm included, is likewise a BORROW of the slice, and
+                 the discharge's value is that slice: the slice points into the
+                 table's source, which outlives the temp's block and the
+                 statement that consumes the value.  A rebind, a link, a capture
+                 or a return declines it, as for `p`.
 ```
 
 **In words.**  `for p in words` bound `p` as `{ … get_str(…) }.to_string()` — an
@@ -1437,9 +1503,53 @@ generator would carry it across the iteration.  The interpreter takes the copy t
 spells and is the oracle.  Switch `LOFT_NO_TEXT_BORROW`; trace `LOFT_TRACE_TEXT_BORROW`
 (each walk admitted and each declined with its reason); falsifier `LOFT_HOIST_VERIFY=1`,
 whose checking form re-reads the element after the body and panics when the borrow no
-longer names it.  Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
-`hoist::native_op_is_store_free` (the text-value clause), `Output::text_borrowed`, the
-bind in `Output::output_set`.
+longer names it.  The discharge clause is what takes the `split` row from 6.5 to 3.4 µs
+(the twin 2.7): `parts[i]?` was one copy into the temp and a second at the block's tail,
+where `_ret.to_string()` materialised a value that might borrow a block-local — the
+temp is now the block-local it might have borrowed, and points outside the block.  It
+has no runtime check to arm: the pins say what is emitted, and the cells of
+`158-split-table.loft` that discharge (s1, s4, s6, s10, s13, s14, s16) are the values.
+Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
+`hoist::native_op_is_store_free` (the text-value clause), `hoist::borrowed_discharge_temps`
+and the discharge arm of `hoist::text_escapes_with`, `Output::text_borrowed`, the bind and
+the discharge bind in `Output::output_set`, the `#ncc` tail in `Output::output_block`.
+
+### A character walk steps an ASCII byte in one move
+
+```
+  (R-CharWalk)   in `for c in T { … }` where T is a text VARIABLE, the walk's step — bind
+                 `c` to the character at `c#next` and advance `c#next` by its width —
+                 takes an ASCII byte other than NUL in ONE move: `c` is that byte and
+                 `c#next` steps by one, which is exactly what the character read, the
+                 width and the checked add answer for such a byte; every other byte (a
+                 multi-byte lead, a continuation, a NUL — whose read notes a fault — or
+                 an index at or past the end) takes the step as written.  And where no
+                 statement of the loop writes T, the walk's null test — is T the null
+                 text — is asked ONCE before the loop instead of on every iteration,
+                 since nothing in the loop can change its answer; the size test stays
+                 per iteration, because a body may grow T.  A generator declines
+                 whole: its loop variables live on the state machine.
+```
+
+**In words.**  `for c in src` paid, per character, `text_character` (a bounds test, a
+byte load, its own ASCII arm), a fault note, a CALL for the width the byte already told it,
+a checked add, a `next <= index` guard, a content compare of the whole text against the
+null sentinel, and a length test — 2.7 ns a character against the Rust twin's 0.6, with the
+profile FLAT (`round-3.md` § W1: inlining the width or making the body's compares plain
+moved nothing on its own; LLVM folded those already).  The fast arm is a re-spelling with
+no condition: for a byte in `1..=0x7F` at an in-range index the step as written answers
+that byte, width 1 and no fault, so the arm answers the same and the slow arm is the step
+verbatim.  NUL is excluded on purpose — `text_character` answers it as the null character
+and the walk's fault note fires, which the fast arm would silence.  The null test is a
+CONTENT compare (`T != "\0"`) LLVM does not hoist past the step's calls; asked once it
+costs one compare per walk, and the condition — T not written in the loop — is
+`(R-LazySplit)`'s borrow condition over the loop's statements.  Together 23.5 → 12.9 µs on
+the `char_walk` row (4.6× → ~2.5×); the two checked accumulator adds of the body are what
+remains, C120's territory.  Switch `LOFT_NO_CHAR_WALK`; falsifier `LOFT_HOIST_VERIFY=1`,
+whose checking form runs the step as written beside the fast arm and panics when the two
+disagree, and keeps the per-iteration null test as an assertion.  Sites:
+`hoist::char_walks`, `hoist::text_written` (shared with the lazy split's borrow), the bind
+in `Output::output_set`, the guard in the `Loop` arm of `Output::output_code_inner`.
 
 ### A lookup by one integer key takes the typed entry
 

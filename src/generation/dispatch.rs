@@ -73,6 +73,100 @@ impl Output<'_> {
             }
             return write!(w, "; let mut __ls_done_{var} = false /* @FR-R-LazySplit */");
         }
+        // `@FR-R-SplitTable` — the bind of a table's local records the pieces of its source
+        // as slices, once, exactly where the call stood: a parameter nothing writes is
+        // borrowed for the block; any other source is copied here, so no later write can
+        // reach what the slices point into.  The walk's alias binds nothing: its readers
+        // answer from the table.
+        if !self.in_coroutine_body
+            && let Some(st) = self.split_tables.get(&var).cloned()
+            && let Value::Call(_, cargs) = to.unspan()
+            && let Some(src) = cargs.first()
+        {
+            let sep = st.separator;
+            if self.lazy_split_borrows(src) {
+                write!(
+                    w,
+                    "let __st_{var}: Vec<&str> = loft::codegen_runtime::lazy_split(&*("
+                )?;
+                self.output_code_inner(w, src)?;
+                write!(w, "), {sep:?}).collect()")?;
+            } else {
+                write!(w, "let __st_src_{var}: String = (")?;
+                self.output_code_inner(w, src)?;
+                write!(
+                    w,
+                    ").to_string(); let __st_{var}: Vec<&str> = loft::codegen_runtime::lazy_split(&__st_src_{var}, {sep:?}).collect()"
+                )?;
+            }
+            return write!(w, " /* @FR-R-SplitTable */");
+        }
+        if !self.in_coroutine_body
+            && self.split_table_aliases.contains_key(&var)
+            && matches!(to.unspan(), Value::Var(t) if self.split_tables.contains_key(t))
+        {
+            return write!(w, "() /* @FR-R-SplitTable walk of the table */");
+        }
+        // `@FR-R-TextBorrow`'s discharge clause — the `?` / `??` temp of a table's element
+        // read binds the slice the read answers and reads bare (`text_borrowed`); its
+        // block's value is then that slice, not a copy of it.
+        if !self.in_coroutine_body
+            && !self.declared.contains(&var)
+            && self.borrowed_text_locals.contains_key(&var)
+            && matches!(to.unspan(), Value::Call(..))
+        {
+            let name = sanitize(self.data.def(self.def_nr).variables().name(var));
+            self.declared.insert(var);
+            write!(w, "let var_{name}: &str = ")?;
+            return self.output_code_inner(w, to);
+        }
+        // `@FR-R-CharWalk` — the step of `for c in T` takes an ASCII byte other than NUL in
+        // one move: `c` is the byte, `#index` the byte's offset, `#next` one past it — what
+        // the step as written answers for such a byte (the character read, width 1, a
+        // checked add that cannot fault, a guard that cannot fire, no fault note).  Every
+        // other byte and an index at or past the end take the step as written, in the
+        // `else` arm.  The checking form runs the written step in the fast arm too and
+        // compares the three values it leaves.
+        if let Some(walk) = self.char_walk_binds.get(&var).cloned()
+            && let Value::Block(b) = to
+            && b.name == "for text next"
+        {
+            let variables = self.data.def(self.def_nr).variables();
+            let name = sanitize(variables.name(var));
+            let index = sanitize(variables.name(walk.index));
+            let next = sanitize(variables.name(walk.next));
+            if self.declared.contains(&var) {
+                write!(w, "var_{name} = ")?;
+            } else {
+                self.declared.insert(var);
+                write!(w, "let mut var_{name}: i32 = ")?;
+            }
+            // The written step is emitted ONCE (its `let`s are declaration state) and
+            // written into both arms under the checking form.
+            let written = {
+                let mut buf: Vec<u8> = Vec::new();
+                self.output_code_inner(&mut buf, to)?;
+                String::from_utf8_lossy(&buf).into_owned()
+            };
+            write!(w, "{{ let __tb = (")?;
+            self.output_code_inner(w, &Value::Var(walk.src))?;
+            write!(
+                w,
+                ").as_bytes(); let __ti = var_{next} as usize; if __ti < __tb.len() && __tb[__ti].wrapping_sub(1) < 0x7F {{ "
+            )?;
+            if self.hoist_verify {
+                write!(
+                    w,
+                    "let __cw_fast = (var_{next}, var_{next} + 1, i32::from(__tb[__ti])); let __cw_c: i32 = {written}; vector::char_walk_verify(__cw_fast, (var_{index}, var_{next}, __cw_c)); __cw_c "
+                )?;
+            } else {
+                write!(
+                    w,
+                    "var_{index} = var_{next}; var_{next} = var_{next} + 1; i32::from(__tb[__ti]) "
+                )?;
+            }
+            return write!(w, "}} else {written} }} /*@FR-R-CharWalk*/");
+        }
         if crate::keys::join_own_enabled() && self.witness_vars.contains(&var) {
             return self.output_set_witnessed(w, var, to);
         }
@@ -1976,6 +2070,17 @@ impl Output<'_> {
         // text is handed to no call: it stays the null sentinel, and its frees release
         // nothing.
         if self.lazy_splits.values().any(|ls| ls.dead_buf == Some(var)) {
+            write!(w, "DbRef::NULL")?;
+            return Ok(());
+        }
+        // `@FR-R-SplitTable` — the same for a table's buffer; and the table's own local
+        // and its walk's alias, which are never a vector, bind nothing here either.
+        if self
+            .split_tables
+            .values()
+            .any(|st| st.dead_buf == Some(var))
+            || self.split_table_var(var).is_some()
+        {
             write!(w, "DbRef::NULL")?;
             return Ok(());
         }

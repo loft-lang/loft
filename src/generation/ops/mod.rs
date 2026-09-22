@@ -250,7 +250,7 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // @PLN157 P4b — scalar element writes fuse against a hoisted header;
     // the same ops fall back to their template for record-field writes and
     // outside hoisted loops.
-    for op in ["OpSetInt", "OpSetSingle", "OpSetFloat"] {
+    for op in ["OpSetInt", "OpSetSingle", "OpSetFloat", "OpSetEnum"] {
         r.insert(op, Box::new(vector_ops::FusedElementWriteEmitter));
     }
     // @PLN157 § V-q — a scalar push goes through the loop's push header; the same ops
@@ -556,9 +556,13 @@ mod tests {
         // result the range proof bounds (or a chain the guard admits) emits plain there too.
         // `@FR-R-LazySplit` adds one, `LazySplitNextEmitter` for `OpGetText`: the element
         // read of a loop over a lazy split is the iterator's next piece, and every other
-        // `OpGetText` falls through to the template unchanged.
+        // `OpGetText` falls through to the template unchanged.  `@FR-R-RecPtr`'s enum clause
+        // adds one, `FusedElementWriteEmitter` for `OpSetEnum`: a struct-enum's tag and a
+        // value-enum field are one byte, written through the record's address like the
+        // three scalar kinds (`enum_match`'s build −11 %); every other `OpSetEnum` falls
+        // through to the template.
         assert!(
-            count <= 122,
+            count <= 123,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

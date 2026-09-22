@@ -6,7 +6,7 @@ use crate::data::{Context, Data, DefType, Type, Value};
 use crate::data_store::ValueType;
 use crate::database::Stores;
 use crate::ir_node::{IrBlock, IrNode};
-use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::io::Write;
 mod calls;
 mod coroutine;
@@ -865,6 +865,16 @@ pub struct Output<'a> {
     /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
     /// the bisect step for a wrong or missing piece out of a loop over a `split`.
     pub lazy_split_disabled: bool,
+    /// `@FR-R-SplitTable` — the `parts = text.split(c)` binds of the function being
+    /// emitted whose vector is never built, keyed by the local ([`hoist::split_tables`]);
+    /// rebuilt per function.  The table is `__st_<var>: Vec<&str>` at the bind.
+    pub split_tables: BTreeMap<u16, hoist::SplitTable>,
+    /// The hidden `_vector_N` of each `for p in parts` walk over a table, mapped to its
+    /// table — the walk's two readers answer from the table under the alias's name.
+    pub split_table_aliases: BTreeMap<u16, u16>,
+    /// `LOFT_NO_SPLIT_TABLE=1` — every such bind builds its `vector<text>` again; the
+    /// bisect step for a wrong length, piece or walk out of a split bound to a name.
+    pub split_table_disabled: bool,
     /// `@FR-R-TextBorrow` — the text LOCALS of the function being emitted whose Rust slot
     /// is a borrowed `&str` rather than an owned `String`: the loop variables of the walks
     /// of texts that borrow their element ([`hoist::borrowed_text_walks`]); rebuilt per
@@ -875,6 +885,16 @@ pub struct Output<'a> {
     /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
     /// variable of `for p in vector<text>` on native.
     pub text_borrow_disabled: bool,
+    /// `@FR-R-CharWalk` — the `for c in T` walks of the function being emitted, keyed by
+    /// the loop's scope ([`hoist::char_walks`]); rebuilt per function.
+    pub char_walks: BTreeMap<u16, hoist::CharWalk>,
+    /// The same walks keyed by LOOP VARIABLE, for the bind in `output_set`.
+    pub char_walk_binds: HashMap<u16, hoist::CharWalk>,
+    /// `LOFT_NO_CHAR_WALK=1` — every character walk takes its step as written and asks
+    /// its null test per iteration again, as before `@FR-R-CharWalk`; the bisect step for
+    /// a wrong character, a wrong byte offset or a missed fault out of `for c in text` on
+    /// native.
+    pub char_walk_disabled: bool,
     /// @PLN157 § V-x (`@FR-R-LitHoist`) — the loop-body vector literals of the CURRENT
     /// function that build once per activation ([`hoist::invariant_literals`]): each is
     /// pre-declared at function top and its declaration statement wrapped in an
@@ -2107,8 +2127,14 @@ impl<'a> Output<'a> {
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
             lazy_splits: BTreeMap::new(),
             lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
+            split_tables: BTreeMap::new(),
+            split_table_aliases: BTreeMap::new(),
+            split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
+            char_walks: BTreeMap::new(),
+            char_walk_binds: HashMap::new(),
+            char_walk_disabled: std::env::var("LOFT_NO_CHAR_WALK").is_ok_and(|v| v != "0"),
             invariant_lits: hoist::LitHoist::default(),
             literal_hoist_disabled: std::env::var("LOFT_NO_LITERAL_HOIST").is_ok_and(|v| v != "0"),
             complete_writes: hoist::CompleteWrites::default(),
@@ -2441,12 +2467,45 @@ impl Output<'_> {
         } else {
             hoist::lazy_splits(self.data, def_nr)
         };
-        // `@FR-R-TextBorrow` — after the lazy splits, whose walks need no store condition.
+        self.split_tables = if self.split_table_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::split_tables(self.data, def_nr)
+        };
+        self.split_table_aliases = self
+            .split_tables
+            .iter()
+            .flat_map(|(t, st)| st.aliases.iter().map(move |a| (*a, *t)))
+            .collect();
+        // `@FR-R-TextBorrow` — after the lazy splits and the split tables, whose walks
+        // need no store condition: their pieces are slices of a text, never store records.
+        let sliced: BTreeSet<u16> = self
+            .lazy_splits
+            .keys()
+            .chain(self.split_table_aliases.keys())
+            .copied()
+            .collect();
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
         } else {
-            hoist::borrowed_text_walks(self.data, def_nr, &self.lazy_splits)
+            let mut walks = hoist::borrowed_text_walks(self.data, def_nr, &sliced);
+            walks.extend(hoist::borrowed_discharge_temps(
+                self.data,
+                def_nr,
+                &self.split_tables,
+            ));
+            walks
         };
+        self.char_walks = if self.char_walk_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::char_walks(self.data, def_nr)
+        };
+        self.char_walk_binds = self
+            .char_walks
+            .values()
+            .map(|w| (w.loop_var, w.clone()))
+            .collect();
         self.active_move_vars.clear();
         self.in_adopt_delivery = 0;
         // @PLN157 § V-u — does this function's result local adopt the return buffer?
@@ -3568,6 +3627,10 @@ impl Output<'_> {
             if self.lazy_splits.contains_key(&path.0) {
                 continue;
             }
+            // `@FR-R-SplitTable` — a table and its walk's alias have no vector either.
+            if self.split_table_var(path.0).is_some() {
+                continue;
+            }
             self.hoist_counter += 1;
             let name = format!("__vh_{}", self.hoist_counter);
             // The path expression is pure (a Var, or const `OpGetField`s over one —
@@ -3743,6 +3806,8 @@ impl Output<'_> {
         let path: hoist::PathKey = (d, Vec::new());
         if self.vec_headers.iter().any(|f| f.contains_key(&path))
             || self.coroutine_persistent_fields.contains_key(&d)
+            // `@FR-R-SplitTable` — a walk's alias of a table is no vector: no header.
+            || self.split_table_var(d).is_some()
         {
             return Ok(false);
         }
@@ -4596,6 +4661,51 @@ impl Output<'_> {
         ) && !self.text_borrowed(v)
     }
 
+    /// `@FR-R-SplitTable` — the split table whose local `v` reads through the op `reader`,
+    /// or `None`: `v` must be `reader(Var(x), …)` with `x` a table of the function being
+    /// emitted or the hidden vector of a walk over one.  Answers the TABLE's variable, whose
+    /// `__st_<var>` the walk's alias shares.  The readers are the element read
+    /// (`OpGetVectorNullable`) and the length (`OpLengthVector`); the analysis proved they
+    /// are the local's only mentions, so answering them is answering every use.
+    #[must_use]
+    pub fn split_table_of(&self, v: &Value, reader: &str) -> Option<u16> {
+        if self.split_tables.is_empty() || self.in_coroutine_body {
+            return None;
+        }
+        let Value::Call(d, args) = v.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= self.data.definitions.len() || self.data.def(*d).name() != reader {
+            return None;
+        }
+        let Value::Var(x) = args.first()?.unspan() else {
+            return None;
+        };
+        self.split_table_var(*x)
+    }
+
+    /// The table an element read `elem` reads, with whether the read is the RAISING
+    /// `OpGetVector` (`true`) or the nullable `OpGetVectorNullable` (`false`) — the two
+    /// twins the parser picks between for `v[i]`, which the emitter answers apart.
+    #[must_use]
+    pub fn split_table_read(&self, elem: &Value) -> Option<(u16, bool)> {
+        self.split_table_of(elem, "OpGetVectorNullable")
+            .map(|t| (t, false))
+            .or_else(|| self.split_table_of(elem, "OpGetVector").map(|t| (t, true)))
+    }
+
+    /// The table `x` names — itself, or the one it is a walk's alias of.
+    #[must_use]
+    pub fn split_table_var(&self, x: u16) -> Option<u16> {
+        if self.split_tables.is_empty() || self.in_coroutine_body {
+            None
+        } else if self.split_tables.contains_key(&x) {
+            Some(x)
+        } else {
+            self.split_table_aliases.get(&x).copied()
+        }
+    }
+
     /// `@FR-R-LazySplit` — whether the lazy form may BORROW its source text `src` for the
     /// whole loop: a borrowed text ([`Output::text_borrowed`] — a plain text parameter)
     /// nothing in the function writes.  Such a text is a `&str` of the caller's, which no
@@ -4611,23 +4721,9 @@ impl Output<'_> {
         if !self.text_borrowed(*s) {
             return false;
         }
-        // A write is a `Set`, a by-reference hand-off, or the variable as the DESTINATION
-        // (first operand) of a text-building op.  Anything this does not recognise as a
-        // write is a read of an immutable `&str`, which the borrow permits.
-        !def.code().any_node(&mut |n| match n {
-            Value::Set(v, _) => v == s,
-            Value::Call(d, args) if (*d as usize) < self.data.definitions.len() => {
-                let name = self.data.def(*d).name();
-                let first =
-                    matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if v == s);
-                first
-                    && (name == "OpCreateStack"
-                        || name.starts_with("OpAppend")
-                        || name.starts_with("OpClear")
-                        || name.starts_with("OpFormat"))
-            }
-            _ => false,
-        })
+        // One home for "is this text written?" — `hoist::text_written`, which
+        // `(R-CharWalk)`'s hoisted null test asks too.
+        !hoist::text_written(def.code(), *s, self.data)
     }
 
     pub fn move_pair_for_block(&self, bl: &crate::data::Block) -> Option<&hoist::MoveAppend> {

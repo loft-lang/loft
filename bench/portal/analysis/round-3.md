@@ -10,7 +10,7 @@ what they are, with what was learned.
 
 | # | lever | rows it moves | hand-priced |
 |---|---|---|---|
-| **W1** | `for c in text` walks bytes with an ASCII fast path; the body's compares against a literal are plain | `char_walk`, every character walk | **−65 %** (4.58× → ~1.6×) |
+| **W1** | `for c in text` walks bytes with an ASCII fast path; the body's compares against a literal are plain | `char_walk`, every character walk | **−65 %** (4.58× → ~1.6×).  **BUILT** 2026-09-22: −47 %, 2.48× (§ Built — the last step was the checked accumulator adds) |
 | **W2** | `for p in vector<text>` borrows its element AND iterates through a held header | `join`, `word_count`'s walk, every walk of texts | **−75 %** (5.40× → ~1.4×) — T1's borrow alone is −45 %.  **BUILT** 2026-09-22: −64 %, 1.96× (§ Built) |
 | **C1+** | no fn-ref buffer guard where no registrant is reachable, and the depth count replaced by a stack-pointer check | `fibonacci`, every recursive function | **−39 %** (4.09× → ~2.4×) |
 | **P1** | an in-place scalar set through ANY store-free element address does not decline a loop's headers | `chunk_lookup`, every `find-then-write` loop over records | **−30 %** (2.87× → ~2.0×) |
@@ -27,6 +27,61 @@ what they are, with what was learned.
 | the rest | `copy` 2.65×, `parse` 2.6×, `sort` 2.5×, `grid` 2.5×, `catalog_churn` 2.4×, `newton_sqrt` 2.2×, `sum` 2.2× (done, 2× accepted), `collatz` 2.0× | each its own mechanism, none priced this round |
 
 ## Built
+
+### The split table — `(R-SplitTable)` + `(R-TextBorrow)`'s discharge clause, 2026-09-22
+
+Built as the rule `(R-SplitTable)` (`formal/rewrites.md`), switch `LOFT_NO_SPLIT_TABLE`,
+trace `LOFT_TRACE_SPLIT_TABLE`, cells `tests/scripts/158-split-table.loft` s1–s21 (identical
+on the interpreter and on native under every falsifier; falsified by a getter answering the
+slice at `from + 1`), pins `tests/split_table.rs`.  Hand-priced first on the lane's own
+emission, then built to the price:
+
+| `split` row (200 pieces) | µs | ratio |
+|---|---:|---|
+| before | 21.2 | 7.8× |
+| the table alone — `Vec<&str>` at the bind, `len` and `v[i]` from it | 6.5 (−69 %) | 2.4× |
+| + the `?`-discharge temp BORROWING its slice (the two copies gone) | **3.1 (−85 %)** | **~1.15×** |
+
+The twin is 2.7 µs; `bench/stats.py --only 13` pins it at **3,175 ns vs 2,753, 1.15× (range
+1.05–1.24)**.  (That run read `char_walk` at 3.16× against its pinned 2.48×; its emission
+is byte-identical before and after, and the two binaries time 12.5–12.9 µs back to back —
+every row of the run was flagged noisy, so the box, not the row.)  Two units, each a rule:
+
+1. **The table** is `(R-LazySplit)`'s sibling for the shape it declines — the vector bound
+   to a name — and the shape every library bind takes (14 binds, all local, walked / indexed
+   / `len`'d).  The bind collects the lazy split's own iterator (`lazy_split(src, c)
+   .collect()`), so the pieces are the same by construction; `len` is the table's length;
+   `v[i]` goes through `codegen_runtime::split_table_get` / `_or_raise`, which answer what
+   the two element-read twins answer (negative from the end; the null text + the oob note for
+   the nullable read; the recoverable `IndexOutOfBounds` / `NegativeIndex` for the raising
+   one — `LOFT_DEV_SOFT_HALT` halts both forms alike, checked); the walk `for p in parts` is
+   the parser's `_vector_N = parts` plus the two readers, read as an ALIAS of the table, so
+   `p` borrows its slice with no store condition and — the table being random access — a
+   `rev` and a comprehension over the name are walks too, where the lazy iterator must
+   decline them.  Every mention must stand inside the binding block after the bind (the
+   table is a Rust `let`); a `parts` returned, appended, written, handed to a call, copied,
+   rebound, a variable separator, a generator decline and keep the vector.  It rides on
+   `(R-Wrapper)`: with `LOFT_NO_WRAPPER_INLINE` `len` stays a call and no table is admitted.
+2. **The discharge clause** of `(R-TextBorrow)`: `parts[i]?` was one copy into the `__ncc`
+   temp and a second at the block's tail, where `_ret.to_string()` materialised a value that
+   MIGHT borrow a block-local.  The temp is now the block-local it might have borrowed — a
+   `&str` into the table's source, which outlives the block and the statement — so the
+   temp binds the slice, the null test reads it bare, the block yields it, and the void form
+   (`x = parts[i] ?? d`) copies once into the local that owns it.  `hoist::text_escapes`
+   learned the discharge's own value arm (`if bool(p) { p } else { d }`) and the one bind the
+   caller admits; nothing else in the walk rule moved.
+
+What it found on the way: (a) the parser picks between TWO element-read twins by the site —
+`q: text? = parts[1]` followed by a null test is the nullable read, the same bind formatted
+untested is the RAISING one — so a table that answered only the nullable twin declined the
+"all readers" cell; both are served now, each by its own getter mirroring its op's
+template.  (b) The nullable read's template notes an oob fault for the `(oob)` suffix a
+formatted hole renders; the getter notes it too, and the text hole never rendered the
+suffix on either backend (a cell pins `null` bare), so the note is parity kept, not a
+value seen.  (c) `LOFT_NO_LAZY_SPLIT`'s pin grepped for `lazy_split(` — which the table
+now emits under its own switch; the pin keys on the loop form's marker.  (d) A NULL text
+under `?` is `""` (`?` is the type's default), where the walk's piece is the null text of
+size 1: the first s2 expectation was hand-computed wrong and the interpreter corrected it.
 
 ### W2 — `(R-TextBorrow)`, 2026-09-22
 
@@ -73,6 +128,85 @@ no output, the crash the rule prevents.  (c) `hand-price`'s 7.8 µs for join was
 reached (11.2): each element still resolves `stores.store(&db)` for its `get_str` — a text
 element read through the held BASE (the position word one load, the text one slice) is
 the remaining step, unpriced.
+
+### W1 — `(R-CharWalk)`, 2026-09-22
+
+Built as the rule `(R-CharWalk)` (`formal/rewrites.md`), switch `LOFT_NO_CHAR_WALK`,
+falsifier `LOFT_HOIST_VERIFY=1` (the written step run beside the fast arm), cells
+`tests/scripts/158-char-walk.loft` w1–w11, pins `tests/char_walk.rs`.  Measured with
+`bench/stats.py --only 13`:
+
+| row | before | after | ratio |
+|---|---:|---:|---|
+| `char_walk` | 23.4 µs | **12.5 µs** (−47 %) | 4.62× → **2.48×** |
+| `split` (the stdlib walks its text with `for c in self`) | 34.0 µs | **21.1 µs** (−38 %) | 12.5× → 7.8× |
+
+Re-priced by hand before building, one piece at a time, on the lane's own emission — which
+is how the ledger's 8.2 µs came apart: the iterator's ASCII fast arm alone 23.5 → 17.7
+(−25 %); the body's compares plain on top → 17.2 (−3 %, LLVM folds them, as § W1 below
+says); the null test — `src != "\0"`, a CONTENT compare LLVM does not hoist past the step's
+calls — asked once before the loop → **12.9 (−25 %)**; and the two checked accumulator adds
+of the body plain → 8.3.  That last step is the ledger's 8.2 and is NOT admissible: `n += 1`
+on an unbounded accumulator has no range proof today (`(R-BoundedNest)`'s trip-count bound
+over a text walk would be the rule — trips ≤ size(T) ≤ u32::MAX, term ≤ 2 — a lever of its
+own, unpriced beyond this number).  So W1 ships the two admissible pieces; the compares are
+left as they are.
+
+The fast arm carries NO condition — it is a re-spelling exact for a byte in `1..=0x7F` at an
+in-range index — and NUL is excluded on purpose: `text_character` answers it as the null
+character and the walk's fault note fires, which the arm would silence.  The null test moves
+only where `hoist::text_written` finds no write of the text in the loop (the predicate
+`(R-LazySplit)`'s borrow already asked, now shared).  A call source (`for c in s.trim()`) is
+evaluated PER ITERATION by the parser's lowering — three times per character, counting the
+two bound tests — and keeps the written step; that lowering is a cost of its own, not
+priced here.
+
+### The single-row harness, 2026-09-22 — and what it attributed
+
+`loft --native-release --names` already existed (loft#954, the browser build's frame
+naming) and only needed the flag routed to the host-native path: every generated function
+is `#[inline(never)]`, a row has a symbol, `perf annotate` attributes it.  Recipe in
+`PERFORMANCE.md` § Attributing a bench ROW.  The named build times `mesh_aabb` and
+`enum_match` the same as the plain one (37.7 / 41.3 µs both), so the instrument does not
+move what it measures.
+
+**`mesh_aabb` attributed (the row "no proof could beat"):** the loop was six null-aware
+float compares, each `(a.is_nan() && !b.is_nan()) || (!a.is_nan() && !b.is_nan() && a < b)`
+— two to three `ucomisd` self-compares and a chain of data-dependent branches per compare,
+where the Rust twin is six branchless `minsd`/`maxsd`.  The truth table (b null → false;
+a null → true; else `a < b`) is `!b.is_nan() && !(a >= b)`: one null test, one compare.
+Hand-priced by editing the emitted twin: **37.8 → 21.5 µs**, hash unchanged.  Built as the
+`#rust` template of `OpLtFloat` / `OpLtSingle` (both backends: `fill.rs` is generated from
+it), proven against the pre-change interpreter over every pair of {null, ±1e300, −1, ±0,
+1.5} and {null, −2, 0, 3} for `<`, `>`, `<=`, `>=`, `==`, `!=` — IDENTICAL on both backends
+— and measured **38.7 → 20.9 µs, 4.81× → 2.73×** (`stats.py --only 16`).  One trap on the
+way: the first template spelled `!@v2.is_nan() && !(@v1 >= @v2)`, and a template operand
+used ONCE is inlined — the field read landed inside the `&&`, conditional on the null
+test, and LLVM kept the branch before the load (29.4 µs).  Binding both operands first
+(`{{ let _a = @v1; let _b = @v2; … }}`, the interpreter's left-then-right order) gave the
+hand-priced form.  The earlier hand-price of "the plain IEEE compare, no change" was made
+without attribution and with the operand still conditional; that is the number this
+harness exists to correct.
+
+**`enum_match` attributed (4.49×):** its own samples are 75 % of the row and FLAT (nothing
+above 6 %), which is the signature of work spread over every operator; `LOFT_RELEASE_PASS_PROBE`
+moved it only 41 → 34.5 µs, so the checks are not the ceiling.  Timed in four parts in a
+scratch copy: the BUILD of 3 000 struct-enum records **26 µs** (8.8 ns each, linear in the
+count — allocation is not it), the match walk 5.5 (1.8 ns an edit, already the R7 form: tag
+and payload through the element's address, the element write fused), the sum 6.0 (F1's join
+read plus checked adds), the two 4 096-fills 2.4.  Per appended record the emission did one
+`rec_ptr` lookup for the three field writes and a SECOND store lookup for the TAG alone:
+`OpSetEnum` was not a fusable setter.  Made one (`u8`, the byte `set_byte(…, 0, v)` writes;
+`HoistScalar for u8` for the element-write path, on `append_byte`): the build −11 %, the
+row **41.3 → 36.0 µs (−13 %), 4.49× → 3.97×** (`stats.py --only 16`, pinned).  What remains per record is four
+`allocations[store]` lookups (the push, the zeroing, the address, the finish) around a
+32-byte zero and five stores — the lever is a record push WINDOW under a branch, the
+`(R-PushFill)` window clause extended from scalars in a counted loop to record mints under
+an `if`, unpriced.
+
+**Also found by the harness:** `entity_tick` runs 12 % SLOWER under `LOFT_RELEASE_PASS_PROBE`
+(160 → 178 µs): a build with every check removed made an inlining decision worse.  Not
+chased; noted so the probe is read as a ceiling per row and never as a bound.
 
 ## W1 — a character walk pays for its bookkeeping, not for any one thing
 
@@ -155,7 +289,9 @@ scalars must still be evicted by the write's TYPE (the target's record type is w
 
 ## Priced and NOT moved — and the instrument that is missing
 
-**`mesh_aabb` (4.81×).**  The analysis on record said the cost is the null-aware float
+**`mesh_aabb` (4.81×) — ATTRIBUTED and moved to 2.73× on 2026-09-22 (§ Built, the
+harness): the null-aware compare WAS the cost; the hand-price below missed it because the
+operand it made plain stayed conditional.**  The analysis on record said the cost is the null-aware float
 compare on fields no proof calls non-null.  Measured: the compare simplified to its
 truth-table equivalent (`a < b || (a.is_nan() && !b.is_nan())`) — no change; the field read
 twice (once for the test, once for the assignment) CSE'd — no change; **the plain IEEE
@@ -182,9 +318,102 @@ guessed at again.
 Keyed (ten rows) is store-format work; `split` is a text-representation question; `par` is
 a subsystem no analysis has entered.  `sum` at 2.16× is the owner's accepted 2×.
 
-## Order
+## `split` and the vector it returns — the owner's question, answered (2026-09-22)
 
-**W1 and W2 first**: two rows in one subsystem, −65 % and −75 %, the largest prices here,
+Asked: *can `split` return slices? I am not married to the vector of texts it returns.*
+And the wider one: *can't every vector be a lazy iterator, materialised only when it is
+stored in a way that demands it?*
+
+**The answer the rules give: keep the API, take the representation.**  `(R-Escape)` (C121)
+already says a construction that does not ESCAPE the unit may be represented any way its
+conditions allow — the vector `split` promises is the contract at a library API and nowhere
+else.  A count of every use in the repo and the library checkouts (`grep` over `*.loft`,
+2026-09-22): repo — 36 walks `for p in x.split(c)` (lazy since `(R-LazySplit)`), 3 binds,
+1 inline index; libraries — 14 binds, 2 inline indexes, 1 walk.  **Every bind is a LOCAL
+that never leaves its function**: `lines = src.split('\n'); for line in lines`,
+`nl = len(lines)`, `lines[0] ?? ""`, `parts[i] ?? ""`, and the `nth_word` idiom
+`line.split(' ')[i] ?? ""`.  None is returned, stored in a record, appended to or handed to
+a call.  Changing the API to an iterator would break those 14 sites (an iterator has no
+`[i]` and no `len`) to reach a representation the compiler may take without asking.
+
+**The unit — the split TABLE, `(R-LazySplit)`'s sibling.**  `parts = src.split(c)` where
+`parts`'s only mentions are `len(parts)`, `parts[i]` / `parts[i]?` / `?? d`, `for p in
+parts` and `parts#…`: on native the vector is never built — one pass over the source records
+the piece offsets (the Rust twin's own `collect::<Vec<&str>>` work), `len` is the table's
+length, `parts[i]` is a `&str` slice served like `(R-TextBorrow)`'s element, and the walk
+through the name is today's lazy split (which currently DECLINES a vector bound to a name
+first — that decline goes).  The source is borrowed where nothing writes it or copied ONCE
+at the bind, `(R-LazySplit)`'s condition verbatim; a NUL separator, an element write, an
+append, a return, a call taking `parts`, a second binding — decline and keep the vector.
+The `nth` shape `x.split(c)[i]` needs no table: walk to the i-th piece.  The interpreter
+keeps the vector and is the oracle.  Expected, unpriced: `split` 20 µs toward the twin's
+2.7 (7.5× → near 1×) — the table pass IS what the twin does.  Hand-price on `t_split` first.
+
+**Slices as a TEXT representation — recorded, not proposed.**  A text element that is a
+view into another text ((base, offset, length) in a store) is what "return slices" means
+literally, and it is the only route for a split that ESCAPES (returned, kept in a struct
+beyond the source's life).  It is a store-format change touching every text op on both
+backends — the keyed rows' class of work — and nothing found needs it.
+
+**The general question — `(R-Fuse)`, a rewrite rule, never a semantics.**  "Every vector
+is lazy until stored" as language SEMANTICS makes evaluation ORDER observable: the
+producer's work interleaves with the consumer's (`for x in build(v) { touch(v) }` reads a
+different `v`; a producer's prints or store writes reorder), so C120 and the feature freeze
+rule it out as a default, and it would leave no oracle (an eager interpreter would disagree
+with native; a lazy one would check nothing).  As a REWRITE it is what `(R-Escape)`
+licences and what the tree is half-way to: `(R-LazySplit)` is this rule for one function —
+`split`'s body is a builder (`out = []; for c in self { … out += [piece] }; out`), the
+consumer one forward walk, the vector never built — and `(R-RetAdopt)`, `(R-MoveAppend)`,
+`(R-Place)`, `(R-ValueRecord)`, `(O-Buffer)` are the same idea one representation each.
+The generalisation:
+
+```
+  (R-Fuse)       a vector built by a loft-bodied BUILDER (one append loop over an
+                 invariant source, no effect a consumer could reorder) and consumed by
+                 exactly ONE forward walk, whose body writes no store the builder reads,
+                 is never materialised: the builder's loop body is emitted at the
+                 consumer's element read.  Random access materialises the builder's
+                 RECIPE (the source and its offsets), never its elements.  Every other
+                 use — returned, stored in a field, appended, captured, handed to a
+                 call, consumed twice, indexed out of order, `rev` — DECLINES and keeps
+                 the vector: the vector is the safe default, and a half-consumed
+                 producer is never replayed or buffered.
+```
+
+Three conditions, each with a home already: the builder shape (`push_loop`, the
+comprehension recogniser), the effect condition (`may_write_store`, `call_writes_store`,
+`in_place_only_writer`), and non-escape (`(R-Escape)`'s escape walk).  **Where it pays:**
+an eager builder consumed once already costs little for SCALARS (the buffer is adopted and
+reused, its capacity kept — `comprehension` 1.70×, `push` 0.50×; fusion would reach ~1.2×);
+the cost concentrates where the elements OWN HEAP — `split`'s 7.5× is its per-piece text
+copies, not the vector — so the rule pays first on builders of texts and heap records
+(`split`, `lines`, `words`, tokenisers), which is where the two library shapes live.
+
+**Order recommended:** (1) the split table now — the worst row, a bounded unit, and it
+settles the recipe representation the general rule reuses; (2) a `@PLN` issue for
+`(R-Fuse)` (claim the number FIRST, `loft-lang/plans`, one `status:*` + one `subject:*`
+label) opened with a CENSUS before any design: a script over the corpus and the library
+checkouts counting `v = build(…); for x in v` by element kind (scalar / text /
+heap-record) and consumer shape, then a price on one real row before the emitter is
+touched.  The test of the general rule is that it RE-DERIVES the special case: if `(R-Fuse)`
+is right, the stdlib's `split` body is the spec and `codegen_runtime::lazy_split` its
+first generated instance — no more hand-written iterators per builder.
+
+## Order — and where it stands after 2026-09-22
+
+Built, in this order: W2 (`join` 1.96×, four more text rows to ~1×), W1 (`char_walk` 2.48×,
+`split` 7.8×), the single-row harness (`--names`), `mesh_aabb` attributed and moved
+(2.73×), `enum_match` attributed and moved a step (3.97×), **the split table** (`split`
+7.8× → ~1.15×, § Built).  **Left, in order: C1+**
+(`fibonacci`, its CORRECTED condition in `vector-build.md` § C1's condition), **P1**
+(`chunk_lookup`).  Levers this round FOUND and left unpriced, each with its number: a
+record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
+through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
+walk's accumulator (`char_walk`'s 12.9 → 8.3), and the parser's per-iteration evaluation of
+a call source in `for c in s.trim()`.  The closing step is unchanged: one full
+`make perf-portal` ALONE on the box.
+
+**The order as written:** W1 and W2 first: two rows in one subsystem, −65 % and −75 %, the largest prices here,
 and W2 carries T1's refactor, which every text lever after it needs.  **Then the single-row
 harness** — it decides what `mesh_aabb`, `enum_match` and `entity_tick` are actually paying
 before another price is guessed.  **Then C1+** (one row, but every recursive function) and

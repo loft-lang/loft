@@ -10832,6 +10832,13 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 out.emit_live = false;
                 out.lean_tier = true;
             }
+            // `--names` on the host-native path — the single-row measurement instrument
+            // (@PLN158): every generated function is `#[inline(never)]`, so it has a
+            // symbol of its own and `perf record` attributes a bench row's samples to
+            // the row's function instead of to the `main` rustc inlined it into.  A
+            // MEASUREMENT build, never one that ships: the attribute costs the inlining
+            // it names.  PERFORMANCE.md § Attributing a row.
+            out.keep_fn_names = html_names;
             let result = if native_release {
                 let main_nr = p.data.def_nr("n_main");
                 let entry_defs: Vec<u32> = if main_nr < end_def {

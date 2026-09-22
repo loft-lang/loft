@@ -1,0 +1,339 @@
+// `@FR-R-SplitTable` — a `parts = text.split(c)` bound to a name and then only `len`'d,
+// indexed or walked never builds its `vector<text>` on `--native`: one pass over the text
+// records the pieces as a table of slices and every reader answers from it.  Every cell
+// hand-computes its count, its pieces and its element at each index; the interpreter keeps
+// the vector form and is the oracle.  The cells walk the axes the rewrite has: what the
+// READERS are (`len`, `v[i]?`, `v[i] ?? d`, `v[i]` into a `text?`, the walk through the
+// name, all of them together), what the INDEX is (a counter, a literal, negative, past the
+// end, null), what the PIECES are (empty text, NULL text, trailing / leading / doubled
+// separators, multi-byte), what the SOURCE is (a parameter, a local written AFTER the bind,
+// a by-reference text, a field, a call, a slice), where the bind STANDS (a loop body, an
+// `if` arm read inside it, two tables in one function), and the shapes that must DECLINE
+// and still answer right (returned, appended to, an element written, handed to a call,
+// copied to another local, rebound, a variable separator, a mention outside the binding
+// block, a generator).  `LOFT_NO_SPLIT_TABLE=1`, `LOFT_POISON=1`,
+// `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+//
+// @falsified-at: hand-measured (2026-09-22) — `codegen_runtime::split_table_get` sabotaged
+// to answer the slice at `from + 1`: native `assertion failed: s1 3|bb||a` for `s1 3|a|bb|`
+// — the VALUE channel sees it at the first cell; the interpreter and `LOFT_NO_SPLIT_TABLE=1`
+// answer `s1 3|a|bb|` on the same build.
+
+struct Line { raw: text, nr: integer }
+
+// s1 — the bench shape: a parameter source, `len` twice, `v[i]?` under a counter.
+fn indexed(src: text) -> text {
+  parts = src.split('|');
+  out = "{len(parts)}";
+  for i in 0..len(parts) { out += "|{parts[i]?}"; }
+  out
+}
+
+fn s1() {
+  r = indexed("a|bb|");
+  assert(r == "3|a|bb|", "s1 {r}");
+  println("s1 {r}");
+}
+
+// s2 — an EMPTY text has no pieces; a NULL text is its sentinel's one character and is
+// its own only piece (as `split` answers, `(R-LazySplit)`'s edge).  `len` says so; the
+// walk answers the piece itself (the null text, size 1), and the discharged element read
+// `parts[0]?` reads that null as "" — as it reads the absent element of the empty split.
+fn count_first(src: text) -> text {
+  parts = src.split(',');
+  out = "{len(parts)} [{parts[0]?}] [{size(parts[0]?)}]";
+  for p in parts { out += " <{p}|{size(p)}>"; }
+  out
+}
+
+fn s2() {
+  nothing: text? = null as text?;
+  a = count_first("");
+  b = count_first(nothing);
+  c = count_first("x");
+  assert(a == "0 [] [0]" && b == "1 [] [0] <null|1>" && c == "1 [x] [1] <x|1>", "s2 {a} / {b} / {c}");
+  println("s2 {a} / {b} / {c}");
+}
+
+// s3 — where the separators sit: trailing, leading, doubled, only separators, none.
+fn shape(src: text) -> text {
+  parts = src.split(',');
+  out = "{len(parts)}:";
+  for p in parts { out += "[{p}]"; }
+  out
+}
+
+fn s3() {
+  a = shape("a,b,");
+  b = shape(",a,b");
+  c = shape("a,,b");
+  d = shape(",,");
+  e = shape("abc");
+  assert(a == "3:[a][b][]" && b == "3:[][a][b]" && c == "3:[a][][b]" && d == "3:[][][]" && e == "1:[abc]",
+    "s3 {a} {b} {c} {d} {e}");
+  println("s3 {a} {b} {c} {d} {e}");
+}
+
+// s4 — the INDEX: a literal, a negative one from the end, one past the end, one before the
+// start, the null integer — each under `?? d`, and the count beside them.
+fn at(src: text, i: integer) -> text {
+  parts = src.split(' ');
+  parts[i] ?? "<none>"
+}
+
+fn s4() {
+  none: integer? = null as integer?;
+  a = at("one two three", 0);
+  b = at("one two three", 2);
+  c = at("one two three", -1);
+  d = at("one two three", -3);
+  e = at("one two three", 3);
+  f = at("one two three", -4);
+  g = at("one two three", none ?? 99);
+  assert(a == "one" && b == "three" && c == "three" && d == "one" && e == "<none>" && f == "<none>" && g == "<none>",
+    "s4 {a} {b} {c} {d} {e} {f} {g}");
+  println("s4 {a} {b} {c} {d} {e} {f} {g}");
+}
+
+// s5 — `v[i]` bound to a `text?`: tested for null (the parser's NULLABLE read) and
+// formatted untested (its RAISING read, which notes the fault and answers null).
+fn second(src: text) -> text {
+  parts = src.split('/');
+  p: text? = parts[1];
+  if p == null { "<null>" } else { "<{p}>" }
+}
+
+fn third(src: text) -> text {
+  parts = src.split('/');
+  q: text? = parts[2];
+  "{q}"
+}
+
+fn s5() {
+  a = second("a/b/c");
+  b = second("a");
+  c = second("a/");
+  d = third("a/b/c");
+  e = third("a");
+  assert(a == "<b>" && b == "<null>" && c == "<>" && d == "c" && e == "null", "s5 {a} {b} {c} {d} {e}");
+  println("s5 {a} {b} {c} {d} {e}");
+}
+
+// s6 — MULTI-BYTE: a multi-byte separator, multi-byte pieces, `size` and `len` of a piece.
+fn s6() {
+  parts = "héllo→wörld→→ü".split('→');
+  a = len(parts);
+  b = parts[1] ?? "";
+  c = size(parts[0]?);
+  d = len(parts[0]?);
+  e = parts[-1] ?? "";
+  assert(a == 4 && b == "wörld" && c == 6 && d == 5 && e == "ü", "s6 {a} {b} {c} {d} {e}");
+  println("s6 {a} {b} {c} {d} {e}");
+}
+
+// s7 — a LOCAL source WRITTEN after the bind: the table is of the text as it was.
+fn s7() {
+  s = "a,b";
+  parts = s.split(',');
+  s += ",c,d";
+  n = len(parts);
+  last = parts[-1] ?? "";
+  assert(n == 2 && last == "b" && s == "a,b,c,d", "s7 {n} {last} {s}");
+  println("s7 {n} {last} {s}");
+}
+
+// s8 — a BY-REFERENCE source the function writes after the bind, seen by the caller.
+fn grow(s: &text) -> integer {
+  parts = s.split(';');
+  s += ";more";
+  len(parts)
+}
+
+fn s8() {
+  t = "x;y;z";
+  n = grow(t);
+  assert(n == 3 && t == "x;y;z;more", "s8 {n} {t}");
+  println("s8 {n} {t}");
+}
+
+// s9 — sources that are EXPRESSIONS: a field, a call, a slice, a format string.
+fn mk(n: integer) -> text { "{n},{n + 1},{n + 2}" }
+
+fn s9() {
+  l = Line { raw: "p.q.r.s", nr: 4 };
+  a = l.raw.split('.');
+  b = mk(7).split(',');
+  c = "xx-a-b-c-yy".split('-')[1..4];
+  d = "{l.nr}:{l.nr * 2}".split(':');
+  r = "{len(a)} {a[3]?} {len(b)} {b[2]?} {len(c)} {c[0]?}{c[1]?}{c[2]?} {len(d)} {d[1]?}";
+  assert(r == "4 s 3 9 3 abc 2 8", "s9 {r}");
+  println("s9 {r}");
+}
+
+// s10 — the bind INSIDE a loop body: a fresh table per pass, the pieces of that pass.
+fn s10() {
+  out = "";
+  for line in ["a=1", "bb=22", "=3"] {
+    kv = line.split('=');
+    out += "{kv[0]?}:{kv[1]?}({len(kv)}) ";
+  }
+  assert(out == "a:1(2) bb:22(2) :3(2) ", "s10 {out}");
+  println("s10 {out}");
+}
+
+// s11 — the bind inside an `if` arm, every read inside the arm; and the fall-through arm.
+fn head(src: text, want: boolean) -> text {
+  if want {
+    parts = src.split(',');
+    "{len(parts)}:{parts[0]?}"
+  } else {
+    "-"
+  }
+}
+
+fn s11() {
+  a = head("m,n,o", true);
+  b = head("m,n,o", false);
+  assert(a == "3:m" && b == "-", "s11 {a} {b}");
+  println("s11 {a} {b}");
+}
+
+// s12 — TWO tables in one function, one walked, one indexed, read interleaved.
+fn s12() {
+  keys = "k1,k2,k3".split(',');
+  vals = "v1,v2,v3,v4".split(',');
+  out = "";
+  for k in keys { out += "{k}={vals[k#index]?};"; }
+  out += "{len(keys)}/{len(vals)}/{vals[-1]?}";
+  assert(out == "k1=v1;k2=v2;k3=v3;3/4/v4", "s12 {out}");
+  println("s12 {out}");
+}
+
+// s13 — all the readers on ONE table: `len`, the walk, `v[i]?`, `v[i] ?? d`, a `text?`.
+fn s13() {
+  parts = "w1 w2 w3".split(' ');
+  n = len(parts);
+  joined = "";
+  for p in parts { joined += p; }
+  mid = parts[1]?;
+  none = parts[9] ?? "none";
+  q: text? = parts[0];
+  r = "{n} {joined} {mid} {none} {q ?? "?"}";
+  assert(r == "3 w1w2w3 w2 none w1", "s13 {r}");
+  println("s13 {r}");
+}
+
+// s14 — a piece copied OUT of the table outlives it: the copy is the local's own text.
+fn pick(src: text) -> text {
+  parts = src.split(',');
+  kept = parts[1]?;
+  kept += "!";
+  kept
+}
+
+fn s14() {
+  r = pick("a,b,c");
+  assert(r == "b!", "s14 {r}");
+  println("s14 {r}");
+}
+
+// s15 — the same function entered again and again: nothing is carried between calls.
+fn s15() {
+  out = "";
+  for i in 0..4 { out += indexed("{i}|{i * i}"); out += " "; }
+  assert(out == "2|0|0 2|1|1 2|2|4 2|3|9 ", "s15 {out}");
+  println("s15 {out}");
+}
+
+// s16 — MANY pieces: a thousand separators are a thousand and one pieces, the last empty.
+fn s16() {
+  s = "";
+  for i in 0..1000 { s += "{i}|"; }
+  parts = s.split('|');
+  n = len(parts);
+  sum = 0;
+  for i in 0..n { sum += size(parts[i]?); }
+  last = parts[-1] ?? "?";
+  before = parts[-2] ?? "?";
+  assert(n == 1001 && sum == 2890 && last == "" && before == "999", "s16 {n} {sum} [{last}] {before}");
+  println("s16 {n} {sum} [{last}] {before}");
+}
+
+// s17 — DECLINES that keep the vector and answer the same: the vector RETURNED, APPENDED
+// to, an ELEMENT written, HANDED to a call, COPIED to another local, REBOUND.
+fn returned(src: text) -> vector<text> {
+  parts = src.split(',');
+  parts
+}
+
+fn s17() {
+  a = returned("r1,r2");
+  b = "x,y".split(',');
+  b += ["z"];
+  c = "p,q".split(',');
+  c[0] = "P";
+  d = "j,k,l".split(',');
+  dj = join(d, "+");
+  e = "m,n".split(',');
+  e2 = e;
+  f = "s,t".split(',');
+  f = "u,v,w".split(',');
+  r = "{len(a)} {a[1]?} {len(b)} {b[2]?} {c[0]?}{c[1]?} {dj} {len(e2)} {e2[0]?} {len(f)} {f[2]?}";
+  assert(r == "2 r2 3 z Pq j+k+l 2 m 3 w", "s17 {r}");
+  println("s17 {r}");
+}
+
+// s18 — a VARIABLE separator DECLINES; a `rev` and a comprehension over the vector are
+// walks of the table — its reads are random access, so the order they read in is free.
+fn s18() {
+  sep = ',';
+  a = "1,2,3".split(sep);
+  b = "4,5,6".split(',');
+  out = "";
+  for p in rev(b) { out += p; }
+  c = "7,8,9".split(',');
+  long = [for p in c if p != "8" { p }];
+  r = "{len(a)} {a[2]?} {out} {len(long)} {long[1]?}";
+  assert(r == "3 3 654 2 9", "s18 {r}");
+  println("s18 {r}");
+}
+
+// s19 — DECLINE: a mention OUTSIDE the binding block (bound in an `if`, read after it).
+fn s19() {
+  parts = [] as vector<text>;
+  if size("ab") == 2 { parts = "a,b".split(','); }
+  n = len(parts);
+  assert(n == 2 && parts[1]? == "b", "s19 {n} {parts[1]?}");
+  println("s19 {n} {parts[1]?}");
+}
+
+// s20 — DECLINE: a GENERATOR that binds a table: its locals live on the state machine.
+fn pieces(src: text) -> iterator<text> {
+  parts = src.split(',');
+  for i in 0..len(parts) { yield parts[i] ?? ""; }
+}
+
+fn s20() {
+  out = "";
+  for p in pieces("g,h,,i") { out += "{p}."; }
+  assert(out == "g.h..i.", "s20 {out}");
+  println("s20 {out}");
+}
+
+// s21 — the walk's `#index`, `#first` and `#count` over a table; a `break` mid-walk.
+fn s21() {
+  parts = "a0,a1,a2,a3".split(',');
+  out = "";
+  for p in parts {
+    if p#index == 3 { break; }
+    out += "{p}:{p#index}:{p#first}:{p#count} ";
+  }
+  assert(out == "a0:0:true:0 a1:1:false:1 a2:2:false:2 ", "s21 {out}");
+  println("s21 {out}");
+}
+
+fn main() {
+  s1(); s2(); s3(); s4(); s5(); s6(); s7(); s8(); s9(); s10();
+  s11(); s12(); s13(); s14(); s15(); s16(); s17(); s18(); s19(); s20();
+  s21();
+}

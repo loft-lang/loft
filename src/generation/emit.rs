@@ -665,6 +665,27 @@ impl Output<'_> {
                         self.declared.insert(v);
                     }
                 }
+                // `@FR-R-CharWalk` — a character walk over a text nothing in the loop
+                // writes asks its null test ONCE, here, and the loop skips the statement;
+                // the checking form keeps the statement as an assertion.  Opened before
+                // every guarded copy of the loop and closed after the loop's frees, inside
+                // the hoist block `begin_vector_hoist` opened.
+                let char_walk = self
+                    .char_walks
+                    .get(&lp.scope)
+                    .filter(|cw| cw.hoist_null)
+                    .cloned();
+                if let Some(cw) = &char_walk
+                    && let Value::If(test, _, _) = lp.operators[cw.null_test].unspan()
+                {
+                    self.indent(w)?;
+                    write!(w, "if ((")?;
+                    self.output_code_inner(w, test)?;
+                    writeln!(
+                        w,
+                        ") as u8) != 1 {{ //@FR-R-CharWalk the null test, asked once"
+                    )?;
+                }
                 // @PLN157 § V-am (`@FR-R-PushFill`) — a counted push loop reserves its
                 // pushes times its trip count first, and where its body reaches the vector
                 // through those pushes alone it opens a push window.  BEFORE the guards
@@ -711,6 +732,23 @@ impl Output<'_> {
                 // and its address serves the body once per iteration.
                 let mut ptr_frames = 0usize;
                 for (at, v) in lp.operators.iter().enumerate() {
+                    if let Some(cw) = &char_walk
+                        && at == cw.null_test
+                    {
+                        // Asked once above.  The checking form asserts it still holds.
+                        if self.hoist_verify
+                            && let Value::If(test, _, _) = v.unspan()
+                        {
+                            self.indent(w)?;
+                            write!(w, "assert!(((")?;
+                            self.output_code_inner(w, test)?;
+                            writeln!(
+                                w,
+                                ") as u8) != 1, \"@FR-R-CharWalk: the text became null inside the walk\");"
+                            )?;
+                        }
+                        continue;
+                    }
                     self.indent(w)?;
                     self.indent += 1;
                     self.output_code_inner(w, v)?;
@@ -757,6 +795,11 @@ impl Output<'_> {
                         w,
                         "OpFreeRef(cell,var_{name}, \"var_{name}\"); var_{name}.store_nr = u16::MAX /*@FR-R-LoopRecord freed after the loop*/"
                     )?;
+                }
+                if char_walk.is_some() {
+                    writeln!(w)?;
+                    self.indent(w)?;
+                    write!(w, "}} /*@FR-R-CharWalk*/")?;
                 }
                 self.end_vector_hoist(w, hoisted)?;
             }
@@ -3320,15 +3363,25 @@ impl Output<'_> {
             if is_text_result {
                 writeln!(w, "Str::new(_ret)")?;
             } else if matches!(bl.result, Type::Text(_)) {
-                // @P321e / @P323 — a TEXT value-block's `_ret` is typically a
-                // `&str` borrowing a block-local (the `??`/#ncc block's inner
-                // `_ncc` String; a format-string work buffer; etc.).  Yielding
-                // the borrow lets the consumer's `.to_string()` run AFTER the
-                // local drops at the block's `}` — rustc E0597 ("does not live
-                // long enough"), or a dangling raw ptr at runtime.  Materialise
-                // to an OWNED String inside the block (where the local is still
-                // alive); `.to_string()` accepts &str / String / Str alike.
-                writeln!(w, "_ret.to_string()")?;
+                // `@FR-R-TextBorrow`'s discharge clause — an `#ncc` block whose temp
+                // BORROWS a split table's slice yields the slice: it points into the
+                // table's source, which outlives the block and the statement.
+                let borrowed_discharge = bl.name.starts_with("ncc")
+                    && matches!(bl.operators.first().map(Value::unspan), Some(Value::Set(v, _))
+                        if self.borrowed_text_locals.contains_key(v));
+                if borrowed_discharge {
+                    writeln!(w, "_ret")?;
+                } else {
+                    // @P321e / @P323 — a TEXT value-block's `_ret` is typically a
+                    // `&str` borrowing a block-local (the `??`/#ncc block's inner
+                    // `_ncc` String; a format-string work buffer; etc.).  Yielding
+                    // the borrow lets the consumer's `.to_string()` run AFTER the
+                    // local drops at the block's `}` — rustc E0597 ("does not live
+                    // long enough"), or a dangling raw ptr at runtime.  Materialise
+                    // to an OWNED String inside the block (where the local is still
+                    // alive); `.to_string()` accepts &str / String / Str alike.
+                    writeln!(w, "_ret.to_string()")?;
+                }
             } else if let Some(cast) = block_tail_cast(&bl.result, is_fn_body) {
                 writeln!(w, "_ret as {cast}")?;
             } else {

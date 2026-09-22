@@ -854,6 +854,19 @@ re-reads the element at the walk's release and panics when the borrow no longer 
 walk admitted and each declined with its reason.  A `&p` link, `p += …`, `p` handed to a
 `&text` parameter, tupled or returned, a store written in the body and a generator keep
 the copy.
+**`LOFT_NO_CHAR_WALK=1`** (`@FR-R-CharWalk`, default-ON, generation time, `--native` only)
+makes `for c in text` take every character through the step as written again — with it
+off, an ASCII byte other than NUL is one move (the byte is `c`, `c#next` steps by one;
+every other byte, a NUL — whose read notes a fault — and the end take the written step in
+the `else` arm), and where nothing in the loop writes the text its null test — a content
+compare of the whole text LLVM does not hoist — is asked ONCE before the loop
+(`char_walk` 4.62× → 2.48× of Rust; the stdlib `split`, built on such a walk, 12.5× →
+7.8×) — and is the first bisect step for a wrong character, a wrong `c#index` or a missed
+fault out of a character walk on native.  `LOFT_HOIST_VERIFY=1` runs the written step
+beside the fast arm and panics when they disagree, and asserts the hoisted null test
+inside the loop; `LOFT_TRACE_CHAR_WALK=1` names each walk and whether its null test moved.
+A call or literal source keeps the written step (the lowering evaluates such a source per
+iteration).
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
 with it off, a loop that grows no store (no push and no mint, whether or not the mint

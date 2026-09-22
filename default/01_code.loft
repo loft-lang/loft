@@ -451,8 +451,17 @@ fn OpEqSingle(v1: single, v2: single) -> boolean;
 #rust"(@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1)"
 fn OpNeSingle(v1: single, v2: single) -> boolean;
 #rust"!((@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1))"
+// Null sorts first: a null left is less than any non-null right, a null right is greater
+// than nothing.  Spelled as ONE null test and one compare — `!(a >= b)` is `a < b` for
+// non-null operands and true for a null left — with both operands bound FIRST, left then
+// right, so an operand that is a field read is loaded unconditionally and a loop of such
+// compares stays branchless (`mesh_aabb` −46 %; the four-test spelling cost a NaN test per
+// operand per compare, and an operand inlined into the `&&` a branch before its load).
+// The negated compare is load-bearing, which is why the lint is allowed rather than
+// obeyed: `a.is_nan() || a < b` and `(a < b) | a.is_nan()` both measured 2.2× SLOWER on
+// the same row — LLVM lowers `!(a >= b)` to one compare and the others to two.
 fn OpLtSingle(v1: single, v2: single) -> boolean;
-#rust"(@v1.is_nan() && !@v2.is_nan()) || (!@v1.is_nan() && !@v2.is_nan() && @v1 < @v2)"
+#rust"{{ let _a = @v1; let _b = @v2; #[allow(clippy::neg_cmp_op_on_partial_ord)] let _lt = !_b.is_nan() && !(_a >= _b); _lt }}"
 fn OpLeSingle(v1: single, v2: single) -> boolean;
 #rust"@v1.is_nan() || (!@v2.is_nan() && @v1 <= @v2)"
 fn OpFormatSingle(pos: const u16, val: single, width: integer, precision: integer, token: const u8, plus: const boolean, dir: const i8);
@@ -672,8 +681,10 @@ fn OpEqFloat(v1: float, v2: float) -> boolean;
 #rust"(@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1)"
 fn OpNeFloat(v1: float, v2: float) -> boolean;
 #rust"!((@v1.is_nan() && @v2.is_nan()) || (@v1 <= @v2 && @v2 <= @v1))"
+// Null sorts first, spelled as one null test and one compare over operands bound first —
+// see `OpLtSingle`.
 fn OpLtFloat(v1: float, v2: float) -> boolean;
-#rust"(@v1.is_nan() && !@v2.is_nan()) || (!@v1.is_nan() && !@v2.is_nan() && @v1 < @v2)"
+#rust"{{ let _a = @v1; let _b = @v2; #[allow(clippy::neg_cmp_op_on_partial_ord)] let _lt = !_b.is_nan() && !(_a >= _b); _lt }}"
 fn OpLeFloat(v1: float, v2: float) -> boolean;
 #rust"@v1.is_nan() || (!@v2.is_nan() && @v1 <= @v2)"
 fn OpFormatFloat(pos: const u16, val: float, width: integer, precision: integer, token: const u8, plus: const boolean, dir: const i8);

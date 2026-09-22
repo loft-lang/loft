@@ -749,6 +749,19 @@ impl HoistScalar for f64 {
     }
 }
 
+/// A value enum, and a struct-enum's tag: one byte, its null 255 — the calls `OpSetEnum`'s
+/// template and `append_byte` make with `min` 0, so the off-fast-path write is the same.
+impl HoistScalar for u8 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_byte(rec, fld, 0, i32::from(val));
+    }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_byte(db, i32::from(val));
+    }
+}
+
 /// A vector header a loop PUSHES through (@PLN157 § V-q, `@FR-R-Push`): the header plus the
 /// record's capacity in elements, so a push that fits is a bounds test, one store and a
 /// length bump, and only the growth step re-enters the runtime's append and re-derives.
@@ -1390,6 +1403,22 @@ pub fn text_borrow_verify(held: &str, fresh: &str) {
         held.as_ptr(),
         fresh.len(),
         fresh.as_ptr()
+    );
+}
+
+/// `@FR-R-CharWalk` under `LOFT_HOIST_VERIFY=1` — the fast arm's answer for an ASCII byte
+/// (`#index`, `#next`, the character) against what the step as written left behind.
+///
+/// # Panics
+///
+/// When they differ — a byte the arm took in one move that the written step reads
+/// otherwise.  Never in the emitted default.
+#[inline]
+pub fn char_walk_verify(fast: (i64, i64, i32), written: (i64, i64, i32)) {
+    assert!(
+        fast == written,
+        "character walk fast arm disagrees with the step as written \
+         (fast (index, next, c) {fast:?}, written {written:?})"
     );
 }
 

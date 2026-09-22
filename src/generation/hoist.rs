@@ -2691,13 +2691,211 @@ pub struct TextBorrow {
     pub read: Option<Value>,
 }
 
+/// Does any statement under `node` WRITE text variable `v`?  A write is a `Set`, a
+/// by-reference hand-off (`OpCreateStack`), or `v` as the DESTINATION (first operand) of a
+/// text-building op.  Anything this does not recognise as a write is a read of an
+/// immutable text, which a borrow permits — the question `(R-LazySplit)`'s borrow and
+/// `(R-CharWalk)`'s hoisted null test both ask.
+#[must_use]
+pub fn text_written(node: &Value, v: u16, data: &Data) -> bool {
+    node.any_node(&mut |n| match n {
+        Value::Set(w, _) => *w == v,
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            let first = matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == v);
+            first
+                && (name == "OpCreateStack"
+                    || name.starts_with("OpAppend")
+                    || name.starts_with("OpClear")
+                    || name.starts_with("OpFormat"))
+        }
+        _ => false,
+    })
+}
+
+/// `@FR-R-CharWalk` — one `for c in T` walk over a text VARIABLE: the loop variable, the
+/// `#index` and `#next` the step keeps, the text, the position of the walk's null test
+/// among the loop's statements, and whether that test may be asked once before the loop.
+#[derive(Clone, Debug)]
+pub struct CharWalk {
+    pub loop_var: u16,
+    pub index: u16,
+    pub next: u16,
+    pub src: u16,
+    pub null_test: usize,
+    pub hoist_null: bool,
+}
+
+/// `@FR-R-CharWalk` — this function's character walks, keyed by the loop's scope.
+///
+/// The shape is the parser's lowering of `for c in T`, matched whole: the loop's first
+/// statement binds `c` to a `for text next` block of five statements (`index = next`; the
+/// character at `next`; `next` advanced by its width; the zero-width guard; the character),
+/// and its second is the null test `if !T { break }`.  T must be a text VARIABLE (a call
+/// source is evaluated per iteration by the lowering itself, and stays as it is).  The
+/// fast arm needs no condition; the null test moves out of the loop only where no
+/// statement of the loop writes T ([`text_written`]).
+#[must_use]
+pub fn char_walks(data: &Data, def_nr: u32) -> BTreeMap<u16, CharWalk> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let trace = std::env::var("LOFT_TRACE_CHAR_WALK").is_ok();
+    let mut out = BTreeMap::new();
+    // A generator declines whole, as `(R-LazySplit)` does: its loop variables live on the
+    // state machine (`self.var_c`), which the bind below does not spell.
+    if def.code().any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    // The operands of `v` when it is a call of the op `name`; a slice of `v`, so the
+    // answer lives as long as `v` does (a closure cannot say so, a fn can).
+    fn is_op<'v>(v: &'v Value, data: &Data, name: &str) -> Option<&'v [Value]> {
+        match v.unspan() {
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len() && data.def(*d).name() == name =>
+            {
+                Some(args.as_slice())
+            }
+            _ => None,
+        }
+    }
+    let var_of = |v: &Value| -> Option<u16> {
+        match v.unspan() {
+            Value::Var(x) => Some(*x),
+            _ => None,
+        }
+    };
+    def.code().any_node(&mut |n| {
+        let Value::Loop(lp) = n else {
+            return false;
+        };
+        if lp.name != "For loop" || lp.operators.len() < 2 {
+            return false;
+        }
+        let Value::Set(loop_var, it) = lp.operators[0].unspan() else {
+            return false;
+        };
+        let Value::Block(it) = it.unspan() else {
+            return false;
+        };
+        if it.name != "for text next" {
+            return false;
+        }
+        let ops: Vec<&Value> = it
+            .operators
+            .iter()
+            .filter(|o| !matches!(o, Value::Line(_)))
+            .collect();
+        let [s_index, s_read, s_step, s_guard, s_result] = ops[..] else {
+            return false;
+        };
+        // index = next
+        let Value::Set(index, next_v) = s_index.unspan() else {
+            return false;
+        };
+        let Some(next) = var_of(next_v) else {
+            return false;
+        };
+        // res = OpTextCharacterNullable(src, next)
+        let Value::Set(res, read) = s_read.unspan() else {
+            return false;
+        };
+        let Some([src_v, at_v]) = is_op(read, data, "OpTextCharacterNullable") else {
+            return false;
+        };
+        let (Some(src), Some(at)) = (var_of(src_v), var_of(at_v)) else {
+            return false;
+        };
+        if at != next || !matches!(vars.tp(src).base(), Type::Text(_)) {
+            return false;
+        }
+        // next = next + OpLengthCharacter(res)
+        let Value::Set(n2, stepped) = s_step.unspan() else {
+            return false;
+        };
+        let Some([step_from, width]) = is_op(stepped, data, "OpAddInt") else {
+            return false;
+        };
+        let Some([width_of]) = is_op(width, data, "OpLengthCharacter") else {
+            return false;
+        };
+        if *n2 != next || var_of(step_from) != Some(next) || var_of(width_of) != Some(*res) {
+            return false;
+        }
+        // if next <= index { next = index + 1 }
+        let Value::If(guard, g_then, g_else) = s_guard.unspan() else {
+            return false;
+        };
+        let Some([ga, gb]) = is_op(guard, data, "OpLeInt") else {
+            return false;
+        };
+        if var_of(ga) != Some(next) || var_of(gb) != Some(*index) {
+            return false;
+        }
+        let Value::Set(n3, bump) = g_then.unspan() else {
+            return false;
+        };
+        let Some([ba, bb]) = is_op(bump, data, "OpAddInt") else {
+            return false;
+        };
+        if *n3 != next
+            || var_of(ba) != Some(*index)
+            || !matches!(bb.unspan(), Value::Int(1))
+            || !matches!(g_else.unspan(), Value::Null)
+            || var_of(s_result) != Some(*res)
+        {
+            return false;
+        }
+        // the null test: if !T { break }
+        let Value::If(test, _, t_else) = lp.operators[1].unspan() else {
+            return false;
+        };
+        let Some([inner]) = is_op(test, data, "OpNot") else {
+            return false;
+        };
+        let Some([tsrc]) = is_op(inner, data, "OpConvBoolFromText") else {
+            return false;
+        };
+        if var_of(tsrc) != Some(src) || !matches!(t_else.unspan(), Value::Null) {
+            return false;
+        }
+        let hoist_null = !lp.operators[1..].iter().any(|s| text_written(s, src, data));
+        if trace {
+            eprintln!(
+                "[char-walk] {}: `{}` over `{}` — fast step; null test {}",
+                def.name(),
+                vars.name(*loop_var),
+                vars.name(src),
+                if hoist_null {
+                    "asked once"
+                } else {
+                    "per iteration (the text is written in the loop)"
+                }
+            );
+        }
+        out.insert(
+            lp.scope,
+            CharWalk {
+                loop_var: *loop_var,
+                index: *index,
+                next,
+                src,
+                null_test: 1,
+                hoist_null,
+            },
+        );
+        false
+    });
+    out
+}
+
 /// `@FR-R-TextBorrow` — the loop variables of this function's walks of texts that BORROW
 /// their element: `for p in words` where the loop's rest — the parser's two bound tests,
 /// the body and the walk's release — reads `p` only as a text value, and (for a vector the
-/// loop really walks) writes no store.  A walk over a lazy split (`lazy`) needs no store
-/// condition: its pieces borrow the iterator's source, a borrowed parameter or a loop-long
-/// copy, never a store.  A generator declines whole, as `(R-LazySplit)` does: its loops are
-/// re-entered across `next`, and a borrow cannot cross the state machine.
+/// loop really walks) writes no store.  A walk over a SLICED vector (`sliced`: a lazy
+/// split's hidden vector, or a split table's walk alias) needs no store condition: its
+/// pieces borrow the split's source, a borrowed parameter or a block-long copy, never a
+/// store.  A generator declines whole, as `(R-LazySplit)` does: its loops are re-entered
+/// across `next`, and a borrow cannot cross the state machine.
 ///
 /// A mention of `p` is a text VALUE where it is an operand of a call at a `text` position
 /// (an op or a user function; a text-writer's `pos: const u16` destination is not one, so
@@ -2710,7 +2908,7 @@ pub struct TextBorrow {
 pub fn borrowed_text_walks(
     data: &Data,
     def_nr: u32,
-    lazy: &BTreeMap<u16, LazySplit>,
+    sliced: &BTreeSet<u16>,
 ) -> HashMap<u16, TextBorrow> {
     let def = data.def(def_nr);
     let vars = def.variables();
@@ -2734,7 +2932,7 @@ pub fn borrowed_text_walks(
         let rest = &lp.operators[1..];
         let verdict = if !matches!(vars.tp(p).base(), Type::Text(_)) {
             Err("the loop variable is not a text")
-        } else if !lazy.contains_key(&vec)
+        } else if !sliced.contains(&vec)
             && rest.iter().any(|s| may_write_store(s, data, &mut cache))
         {
             Err("the body may write a store")
@@ -2745,8 +2943,8 @@ pub fn borrowed_text_walks(
         };
         match verdict {
             Ok(()) => {
-                // A lazy split's piece has no store to re-read: nothing to verify.
-                let read = (!lazy.contains_key(&vec)).then(|| read.clone());
+                // A sliced vector's piece has no store to re-read: nothing to verify.
+                let read = (!sliced.contains(&vec)).then(|| read.clone());
                 out.insert(p, TextBorrow { read });
                 if trace {
                     eprintln!(
@@ -2770,16 +2968,118 @@ pub fn borrowed_text_walks(
     out
 }
 
+/// `@FR-R-TextBorrow`'s discharge clause — the `__ncc_N` temps of this function that hold a
+/// split TABLE's element read for a `?` / `??` discharge (`parts[i]?`, `parts[i] ?? d`),
+/// where every mention of the temp is a text-value read: the temp BORROWS the slice the
+/// read answers.  The slice points into the table's source — a borrowed parameter or the
+/// block-long copy — which outlives the temp's block and every consumer of the discharge's
+/// value (an expression of the same statement), so no store condition applies, as for a
+/// walk over a sliced vector.  The temp's own bind is the one `Set` admitted; a second
+/// bind, a link, a capture or a return declines it, as for a loop variable.
+#[must_use]
+pub fn borrowed_discharge_temps(
+    data: &Data,
+    def_nr: u32,
+    tables: &BTreeMap<u16, SplitTable>,
+) -> HashMap<u16, TextBorrow> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_TEXT_BORROW").is_ok();
+    let mut out = HashMap::new();
+    if tables.is_empty() || body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    let names: BTreeSet<u16> = tables
+        .iter()
+        .flat_map(|(t, st)| std::iter::once(*t).chain(st.aliases.iter().copied()))
+        .collect();
+    let table_read = |to: &Value| {
+        call_named(to, data, "OpGetText")
+            .and_then(|a| a.first())
+            .and_then(|elem| {
+                call_named(elem, data, "OpGetVectorNullable")
+                    .or_else(|| call_named(elem, data, "OpGetVector"))
+            })
+            .and_then(|inner| as_var(inner.first()))
+            .is_some_and(|v| names.contains(&v))
+    };
+    body.any_node(&mut |n| {
+        let Value::Set(v, to) = n else {
+            return false;
+        };
+        if !vars.name(*v).starts_with("__ncc_")
+            || !matches!(vars.tp(*v).base(), Type::Text(_))
+            || !table_read(to)
+        {
+            return false;
+        }
+        let mut binds = 0u32;
+        body.any_node(&mut |m| {
+            if matches!(m, Value::Set(x, t) if x == v && !matches!(t.unspan(), Value::Null)) {
+                binds += 1;
+            }
+            false
+        });
+        let verdict = if binds != 1 {
+            Err("bound more than once")
+        } else if let Some(why) = text_escapes_with(body, *v, data, &table_read) {
+            Err(why)
+        } else {
+            Ok(())
+        };
+        match verdict {
+            Ok(()) => {
+                out.insert(*v, TextBorrow { read: None });
+                if trace {
+                    eprintln!(
+                        "[text-borrow] {}: `{}` borrows the table's slice",
+                        def.name(),
+                        vars.name(*v)
+                    );
+                }
+            }
+            Err(why) if trace => {
+                eprintln!(
+                    "[text-borrow] {}: `{}` declined — {why}",
+                    def.name(),
+                    vars.name(*v)
+                );
+            }
+            Err(_) => {}
+        }
+        false
+    });
+    out
+}
+
 /// The first mention of text variable `p` under `node` that is NOT a text-value read, as
 /// [`borrowed_text_walks`] defines one — or `None` when every mention is.  Walks the tree
 /// by hand rather than through `any_node` because the question is about a mention's
 /// PARENT: the same `Var(p)` is a value read as a call's `text` operand and an escape as a
 /// link's.
 fn text_escapes(node: &Value, p: u16, data: &Data) -> Option<&'static str> {
+    text_escapes_with(node, p, data, &|_| false)
+}
+
+/// [`text_escapes`] with the ONE bind of `p` the caller admits: a `Set(p, to)` for which
+/// `bind_ok(to)` holds is the borrow's own binding, not a rebind.  A walk's loop variable
+/// is bound in the loop head the walk never hands here; a discharge temp
+/// ([`borrowed_discharge_temps`]) is bound by a statement inside the body it reads.
+fn text_escapes_with(
+    node: &Value,
+    p: u16,
+    data: &Data,
+    bind_ok: &dyn Fn(&Value) -> bool,
+) -> Option<&'static str> {
+    let text_escapes = |n: &Value, p: u16, data: &Data| text_escapes_with(n, p, data, bind_ok);
     match node {
         Value::Var(v) if *v == p => Some("read outside a text-value position"),
         Value::Set(v, to) => {
             if *v == p {
+                if bind_ok(to) {
+                    return text_escapes(to, p, data);
+                }
                 return Some("rebound in the body");
             }
             // The whole source of a bind into another slot is converted at the bind.
@@ -2824,9 +3124,23 @@ fn text_escapes(node: &Value, p: u16, data: &Data) -> Option<&'static str> {
         Value::Block(b) => b.operators.iter().find_map(|o| text_escapes(o, p, data)),
         Value::Loop(b) => b.operators.iter().find_map(|o| text_escapes(o, p, data)),
         Value::Insert(ops) => ops.iter().find_map(|o| text_escapes(o, p, data)),
-        Value::If(c, t, e) => text_escapes(c, p, data)
-            .or_else(|| text_escapes(t, p, data))
-            .or_else(|| text_escapes(e, p, data)),
+        // The `?` discharge's own value arm — `if OpConvBoolFromText(p) { p } else { d }`
+        // — reads `p` as the value its parent consumes within the statement.
+        Value::If(cond, then, otherwise) => {
+            let discharge = matches!(then.unspan(), Value::Var(s) if *s == p)
+                && call_named(cond, data, "OpConvBoolFromText")
+                    .and_then(|a| as_var(a.first()))
+                    .is_some_and(|s| s == p);
+            text_escapes(cond, p, data)
+                .or_else(|| {
+                    if discharge {
+                        None
+                    } else {
+                        text_escapes(then, p, data)
+                    }
+                })
+                .or_else(|| text_escapes(otherwise, p, data))
+        }
         Value::Drop(inner) => text_escapes(inner, p, data),
         Value::Return(inner) => {
             if matches!(inner.unspan(), Value::Var(s) if *s == p) {
@@ -3989,10 +4303,15 @@ fn struct_enum_view(data: &Data, tp: &Type) -> bool {
     !data.def(d).name().starts_with("__nullable<")
 }
 
-const FUSABLE_SETTERS: [(&str, &str); 3] = [
+const FUSABLE_SETTERS: [(&str, &str); 4] = [
     ("OpSetInt", "i64"),
     ("OpSetSingle", "f32"),
     ("OpSetFloat", "f64"),
+    // A struct-enum's TAG (and any value-enum field): one byte, its null 255 — the byte
+    // `set_byte(…, 0, v)` writes for a `u8` operand, so the store through the address is
+    // the same write (`@FR-R-RecPtr`'s enum clause; `enum_match`'s build paid a second
+    // store lookup per element for the tag alone).
+    ("OpSetEnum", "u8"),
 ];
 
 /// An element write the emitter can collapse into ONE store: a scalar setter writing
@@ -4623,33 +4942,7 @@ pub fn lazy_splits(data: &Data, def_nr: u32) -> BTreeMap<u16, LazySplit> {
     // is lazy all the same.
     for (vec, ls) in &mut out {
         let buf = bufs[vec];
-        let mut total = 0u32;
-        let mut call_args = 0u32;
-        let mut benign = 0u32;
-        let mut rebound = false;
-        body.any_node(&mut |n| {
-            match n {
-                Value::Var(v) if *v == buf => total += 1,
-                Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
-                    let hits = args
-                        .iter()
-                        .filter(|a| matches!(a.unspan(), Value::Var(v) if *v == buf))
-                        .count() as u32;
-                    let name = data.def(*d).name();
-                    if name == "OpFreeRef" || name == "OpFreeRefTag" || name == "OpRefIsNull" {
-                        benign += hits;
-                    } else {
-                        call_args += hits;
-                    }
-                }
-                Value::Set(v, to) if *v == buf && !matches!(to.unspan(), Value::Null) => {
-                    rebound = true;
-                }
-                _ => {}
-            }
-            false
-        });
-        if call_args == 1 && total == call_args + benign && !rebound {
+        if buffer_serves_one_call(body, data, buf) {
             ls.dead_buf = Some(buf);
         }
         if trace {
@@ -4693,33 +4986,7 @@ fn lazy_split_block(
     let Value::Set(vec, call) = bind.unspan() else {
         return Err("");
     };
-    let Some([_src, sep, buf]) = call_named(call, data, "t_4text_split") else {
-        return Err("");
-    };
-    let Value::Call(d, _) = call.unspan() else {
-        return Err("");
-    };
-    if !crate::portable_path::is_stdlib_source(&data.def(*d).position.file) {
-        return Err("`split` is not the standard library's");
-    }
-    let Some(code) = call_named(sep, data, "OpConvCharacterFromInt")
-        .and_then(|a| a.first())
-        .and_then(|a| match a.unspan() {
-            Value::Int(k) => u32::try_from(*k).ok(),
-            _ => None,
-        })
-    else {
-        return Err("the separator is not a character constant");
-    };
-    let Some(separator) = char::from_u32(code).filter(|c| *c != '\0') else {
-        return Err("the separator is the null character");
-    };
-    let Some(buf) = as_var(Some(buf)) else {
-        return Err("the call's buffer is not a variable");
-    };
-    if buf >= vars.count() || !vars.name(buf).starts_with("__ref") {
-        return Err("the call's buffer is not a hidden return buffer");
-    }
+    let (buf, separator) = split_call(call, data, vars)?;
     let Value::Set(idx, start) = seed.unspan() else {
         return Err("the block does not seed an index");
     };
@@ -4757,6 +5024,364 @@ fn lazy_split_block(
         return Err("the loop does not end on the vector's length");
     }
     Ok((*vec, buf, separator))
+}
+
+/// Does the hidden buffer `buf` serve ONE call and nothing else, so that a rewrite which
+/// drops that call may leave the buffer unminted?  Its every mention must be accounted
+/// for — the one call argument, its frees, its null declaration, and the null test that
+/// guards a mint at first use (`@FR-O-LazyBuffer`) — as `move_appends` reconciles a placed
+/// buffer.  A buffer with any other use keeps its mint, and the rewrite stands all the same.
+fn buffer_serves_one_call(body: &Value, data: &Data, buf: u16) -> bool {
+    let mut total = 0u32;
+    let mut call_args = 0u32;
+    let mut benign = 0u32;
+    let mut rebound = false;
+    body.any_node(&mut |n| {
+        match n {
+            Value::Var(v) if *v == buf => total += 1,
+            Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+                let hits = args
+                    .iter()
+                    .filter(|a| matches!(a.unspan(), Value::Var(v) if *v == buf))
+                    .count() as u32;
+                let name = data.def(*d).name();
+                if name == "OpFreeRef" || name == "OpFreeRefTag" || name == "OpRefIsNull" {
+                    benign += hits;
+                } else {
+                    call_args += hits;
+                }
+            }
+            Value::Set(v, to) if *v == buf && !matches!(to.unspan(), Value::Null) => {
+                rebound = true;
+            }
+            _ => {}
+        }
+        false
+    });
+    call_args == 1 && total == call_args + benign && !rebound
+}
+
+/// `@FR-R-SplitTable` — one `V = T.split(c)` bound to a local whose every other mention
+/// the TABLE of its pieces answers: the vector is never built.
+#[derive(Clone, Debug)]
+pub struct SplitTable {
+    /// The hidden `__ref` buffer the call would have filled, when it serves this call
+    /// alone: it is then never minted.  A buffer another call shares keeps its mint.
+    pub dead_buf: Option<u16>,
+    /// The separator: a character constant that is not the null character.
+    pub separator: char,
+    /// The hidden `_vector_N` locals the parser binds from V for a `for p in V` walk —
+    /// aliases of the table, read by the walk's element read and length test alone.
+    pub aliases: Vec<u16>,
+}
+
+/// The split tables of `def_nr`'s body, keyed by the local the call's result is bound to
+/// (`@FR-R-SplitTable`).
+///
+/// `parts = src.split(c)` followed by `len(parts)`, `parts[i]` and `for p in parts` is the
+/// shape [`lazy_splits`] declines — the vector bound to a name — and the one a library
+/// takes when it needs the count or the i-th piece.  Nothing but those readers can name
+/// the local, so one pass over the text records its pieces as a table of slices and each
+/// reader answers from the table: the same pieces, the same count, the same element at
+/// each index.  Every gate is an under-approximation — a declined bind keeps the vector,
+/// which is always correct:
+///
+/// - the call is the STANDARD LIBRARY's `split(self: text, separator: character)` with a
+///   character CONSTANT other than the null character ([`lazy_splits`]' conditions), bound
+///   to a plain local `vector<text>` that is not a parameter and not the hidden vector of
+///   a `for … in T.split(c)` — that one is `(R-LazySplit)`'s;
+/// - that bind is the local's ONLY binding, and every other mention is one of the three
+///   reads the emitter answers ([`table_mentions`]): the length, the element read, or the
+///   walk's alias bind — whose own mentions are the same two reads and nothing else;
+/// - every mention stands inside the block that holds the bind, after it: the table is a
+///   Rust `let` at the bind, and a mention outside that block would not compile;
+/// - the function is not a generator: the table is a local of the activation, not of the
+///   state machine;
+/// - `len` reaches the emitter as its op through `(R-Wrapper)`, so with the wrapper kept a
+///   call (`LOFT_NO_WRAPPER_INLINE`) no table is admitted at all.
+///
+/// The source text needs no gate: the emitter borrows it where nothing can write it and
+/// copies it once at the bind everywhere else (`Output::lazy_split_borrows`).
+#[must_use]
+pub fn split_tables(data: &Data, def_nr: u32) -> BTreeMap<u16, SplitTable> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_SPLIT_TABLE").is_ok();
+    let mut out: BTreeMap<u16, SplitTable> = BTreeMap::new();
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    if std::env::var("LOFT_NO_WRAPPER_INLINE").is_ok_and(|v| v != "0") {
+        if trace {
+            eprintln!(
+                "[split-table] {}: no table — `len` stays a call under LOFT_NO_WRAPPER_INLINE",
+                def.name()
+            );
+        }
+        return out;
+    }
+    // Every bind of a plain local from a constant split, with its buffer and separator.
+    let mut binds: Vec<(u16, u16, char)> = Vec::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, call) = n
+            && let Ok((buf, separator)) = split_call(call, data, vars)
+            && !vars.is_argument(*v)
+            && !vars.name(*v).starts_with("_vector_")
+            && matches!(vars.tp(*v), Type::Vector(el, _) if matches!(el.base(), Type::Text(_)))
+        {
+            binds.push((*v, buf, separator));
+        }
+        false
+    });
+    for (v, buf, separator) in binds {
+        let mut m = TableMentions::default();
+        let verdict = table_mentions(body, v, data, vars, &mut m)
+            .and_then(|()| {
+                if m.binds != 1 {
+                    return Err(format!("`{}` is bound {} times", vars.name(v), m.binds));
+                }
+                Ok(())
+            })
+            .and_then(|()| {
+                // Every alias reads the table the way the walk does, and nothing else.
+                for a in &m.aliases {
+                    let mut am = TableMentions::default();
+                    table_mentions(body, *a, data, vars, &mut am)?;
+                    if am.binds != 1 || !am.aliases.is_empty() {
+                        return Err(format!(
+                            "`{}` is not a plain walk of the table",
+                            vars.name(*a)
+                        ));
+                    }
+                }
+                Ok(())
+            })
+            .and_then(|()| bind_block_holds_every_mention(body, v));
+        match verdict {
+            Ok(()) => {
+                let dead_buf = buffer_serves_one_call(body, data, buf).then_some(buf);
+                if trace {
+                    eprintln!(
+                        "[split-table] {}: `{}` is a table, separator {separator:?}, {} reads, {} walks, buffer {} {}",
+                        def.name(),
+                        vars.name(v),
+                        m.reads,
+                        m.aliases.len(),
+                        vars.name(buf),
+                        if dead_buf.is_some() {
+                            "never minted"
+                        } else {
+                            "shared, keeps its mint"
+                        }
+                    );
+                }
+                out.insert(
+                    v,
+                    SplitTable {
+                        dead_buf,
+                        separator,
+                        aliases: m.aliases,
+                    },
+                );
+            }
+            Err(why) => {
+                if trace {
+                    eprintln!(
+                        "[split-table] {}: `{}` declined — {why}",
+                        def.name(),
+                        vars.name(v)
+                    );
+                }
+            }
+        }
+    }
+    out
+}
+
+/// The buffer and the separator of a call that is the standard library's `split` with a
+/// constant, non-null separator and a hidden return buffer — the call both
+/// `(R-LazySplit)` and `(R-SplitTable)` replace — or why it is not one.
+fn split_call(
+    call: &Value,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> Result<(u16, char), &'static str> {
+    let Some([_src, sep, buf]) = call_named(call, data, "t_4text_split") else {
+        return Err("");
+    };
+    let Value::Call(d, _) = call.unspan() else {
+        return Err("");
+    };
+    if !crate::portable_path::is_stdlib_source(&data.def(*d).position.file) {
+        return Err("`split` is not the standard library's");
+    }
+    let Some(code) = call_named(sep, data, "OpConvCharacterFromInt")
+        .and_then(|a| a.first())
+        .and_then(|a| match a.unspan() {
+            Value::Int(k) => u32::try_from(*k).ok(),
+            _ => None,
+        })
+    else {
+        return Err("the separator is not a character constant");
+    };
+    let Some(separator) = char::from_u32(code).filter(|c| *c != '\0') else {
+        return Err("the separator is the null character");
+    };
+    let Some(buf) = as_var(Some(buf)) else {
+        return Err("the call's buffer is not a variable");
+    };
+    if buf >= vars.count() || !vars.name(buf).starts_with("__ref") {
+        return Err("the call's buffer is not a hidden return buffer");
+    }
+    Ok((buf, separator))
+}
+
+/// What [`table_mentions`] counted for one local.
+#[derive(Default)]
+struct TableMentions {
+    /// Bindings of the local from a value (a `= null` declaration is not one).
+    binds: u32,
+    /// Length and element reads.
+    reads: u32,
+    /// Hidden `_vector_N` locals bound from it — the walks `for p in V`.
+    aliases: Vec<u16>,
+}
+
+/// Walk `node` classifying every mention of `v` as one the split table answers, or answer
+/// why the first other mention is not.  Walks the tree by hand because the question is
+/// about a mention's PARENT: `Var(v)` as the vector of `OpLengthVector` is a read the table
+/// answers, and the same `Var(v)` as a call's argument is the vector handed away.
+///
+/// The reads: `OpLengthVector(v)` — or the stdlib wrapper `(R-Wrapper)` emits as that op —
+/// and the element read `OpGetText(OpGetVectorNullable(v, _, i), _)` or its raising twin
+/// `OpGetVector`, which is what every spelling of `v[i]` lowers to (bare, under `?`, under
+/// `?? d`, bound to a `text?`; the parser picks the twin by the site).  The
+/// alias: `Set(_vector_N, Var(v))`, the parser's first statement of `for p in v`.  The
+/// bind: `Set(v, <split call>)`; a `Set(v, Null)` is the hoisted null declaration and
+/// binds nothing.
+fn table_mentions(
+    node: &Value,
+    v: u16,
+    data: &Data,
+    vars: &crate::variables::Function,
+    m: &mut TableMentions,
+) -> Result<(), String> {
+    let is_v = |x: &Value| matches!(x.unspan(), Value::Var(u) if *u == v);
+    match node.unspan() {
+        Value::Var(u) if *u == v => Err(format!(
+            "`{}` is read outside a table position",
+            vars.name(v)
+        )),
+        Value::Set(x, to) => {
+            if *x == v {
+                return match to.unspan() {
+                    Value::Null => Ok(()),
+                    Value::Call(..) if split_call(to, data, vars).is_ok() => {
+                        m.binds += 1;
+                        table_mentions(to, v, data, vars, m)
+                    }
+                    // An alias's one bind is `Set(alias, Var(table))`.
+                    Value::Var(_) if vars.name(v).starts_with("_vector_") => {
+                        m.binds += 1;
+                        Ok(())
+                    }
+                    _ => Err(format!("`{}` is rebound", vars.name(v))),
+                };
+            }
+            if is_v(to) {
+                if vars.name(*x).starts_with("_vector_") {
+                    m.aliases.push(*x);
+                    return Ok(());
+                }
+                return Err(format!(
+                    "`{}` is copied into `{}`",
+                    vars.name(v),
+                    vars.name(*x)
+                ));
+            }
+            table_mentions(to, v, data, vars, m)
+        }
+        Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
+            let name = data.def(*d).name();
+            let length_read = (name == "OpLengthVector" && args.len() == 1)
+                || one_op_wrapper(data, *d).is_some_and(|(op, operands)| {
+                    data.def(op).name() == "OpLengthVector"
+                        && matches!(operands.as_slice(), [WrapperOperand::Param(0)])
+                });
+            if length_read && args.first().is_some_and(is_v) {
+                m.reads += 1;
+                return Ok(());
+            }
+            if name == "OpGetText"
+                && let Some(elem) = args.first()
+                && let Some(inner) = call_named(elem, data, "OpGetVectorNullable")
+                    .or_else(|| call_named(elem, data, "OpGetVector"))
+                && inner.first().is_some_and(is_v)
+            {
+                m.reads += 1;
+                // The index may hold anything but the table itself.
+                for a in inner.iter().skip(1).chain(args.iter().skip(1)) {
+                    table_mentions(a, v, data, vars, m)?;
+                }
+                return Ok(());
+            }
+            if args.iter().any(is_v) {
+                return Err(format!("`{}` is handed to `{name}`", vars.name(v)));
+            }
+            for a in args {
+                table_mentions(a, v, data, vars, m)?;
+            }
+            Ok(())
+        }
+        _ => {
+            let mut verdict = Ok(());
+            node.for_each_child(&mut |child| {
+                if verdict.is_ok() {
+                    verdict = table_mentions(child, v, data, vars, m);
+                }
+            });
+            verdict
+        }
+    }
+}
+
+/// Does the block that binds `v` from its split hold every other mention of `v`, after
+/// the bind?  The table is a Rust `let` where the bind stands, so this is its scope.
+fn bind_block_holds_every_mention(body: &Value, v: u16) -> Result<(), String> {
+    let is_bind = |op: &Value| matches!(op.unspan(), Value::Set(x, to) if *x == v && !matches!(to.unspan(), Value::Null));
+    let count = |n: &Value| {
+        let mut c = 0u32;
+        n.any_node(&mut |x| {
+            if matches!(x, Value::Var(u) if *u == v) {
+                c += 1;
+            }
+            false
+        });
+        c
+    };
+    let total = count(body);
+    let mut after: Option<u32> = None;
+    body.any_node(&mut |n| {
+        let ops = match n {
+            Value::Block(bl) => &bl.operators,
+            Value::Loop(lp) => &lp.operators,
+            _ => return false,
+        };
+        if let Some(k) = ops.iter().position(&is_bind) {
+            after = Some(ops[k + 1..].iter().map(count).sum());
+            return true;
+        }
+        false
+    });
+    match after {
+        Some(a) if a == total => Ok(()),
+        Some(a) => Err(format!(
+            "{} of {total} mentions lie outside the binding block",
+            total - a
+        )),
+        None => Err("the bind is not a statement of a block".to_string()),
+    }
 }
 
 /// @PLN157 § V-j (`@FR-R-MoveAppend`) — one paired move-append: a `for f in call(…)` whose
