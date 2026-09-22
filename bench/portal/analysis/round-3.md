@@ -458,8 +458,15 @@ claimed (`c3` read `null(oob)` for `1`; `LOFT_NO_NULL_BUFFER_HOIST=1` and
 restriction had hidden it.  Fixed at the one home: a pass-2 buffer's re-mint counts as a
 rebind of the buffer (`hoist::rebound_vars`), so no holder is taken off a path rooted at
 it; the rule text carries the clause, and two pins read P1's admissions (`copy_in_place`
-c8's nested-record write-back loop, `null_buffer_hoist` d13).  Next: a text element read
-through the held base (`join` 2.11×), the trip-count bound
+c8's nested-record write-back loop, `null_buffer_hoist` d13).  **The text element read through the held base** — BUILT as `(R-Base)`'s text clause:
+the element's record number through the base, the text sliced off the store's data span
+derived once beside it; `join` 11.0 → **6.6 µs** (−40 %, 2.11× → ~1.15×), hash `2df9`.
+Three prices on the way, each a lesson: the helper resolving the store per element gave
+10.2 (a bounds-checked index LLVM could not hoist); with the span hoisted but the helper's
+cold half folded in, 8.4, and OUTLINED, 9.0 — the past-the-end read a walk makes on its
+last pass was a CALL in the loop either way; answering it as the null text without a call
+(what `get_vector` answers for any non-negative index past the length) gave 6.6, under the
+hand price.  Next: the trip-count bound
 for a text walk's accumulator (`char_walk` 3.14×), the record push window under a branch
 (`enum_match` 3.98×), the per-iteration call source in `for c in s.trim()`.  Levers this round FOUND and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read

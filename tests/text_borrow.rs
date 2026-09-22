@@ -134,6 +134,33 @@ fn a_walk_that_writes_a_store_or_lets_its_variable_escape_keeps_the_copy() {
     }
 }
 
+/// `@FR-R-Base`'s text clause — the walk's element read goes through the held base and the
+/// store's span derived once beside it; `LOFT_NO_TEXT_BASE=1` resolves the store per element.
+#[test]
+fn a_text_element_is_read_through_the_held_base_and_span() {
+    let rust = emit("text_base", &[]);
+    // t1's walk (`for w in words`) holds a header and a base: the element read is one
+    // `text_elem_at` over them, with the span bound beside the base.
+    let t1 = body(&rust, "n_t1");
+    assert!(
+        t1.contains("vector::text_span_of(&__vh_")
+            && t1.contains("vector::text_elem_at::<false>(&__vh_")
+            && !t1.contains("get_str("),
+        "t1: the walk's element read slices off the held span:\n{t1}"
+    );
+    let off = emit("text_base_off", &[("LOFT_NO_TEXT_BASE", "1")]);
+    let t1 = body(&off, "n_t1");
+    assert!(
+        !t1.contains("text_elem_at") && t1.contains("get_str("),
+        "LOFT_NO_TEXT_BASE=1: the element read resolves the store per element again"
+    );
+    let verify = emit("text_base_verify", &[("LOFT_HOIST_VERIFY", "1")]);
+    assert!(
+        body(&verify, "n_t1").contains("vector::text_elem_at::<true>(&__vh_"),
+        "LOFT_HOIST_VERIFY=1 picks the checking monomorphisation"
+    );
+}
+
 #[test]
 fn the_switch_restores_the_copy_everywhere() {
     let rust = emit("off", &[("LOFT_NO_TEXT_BORROW", "1")]);

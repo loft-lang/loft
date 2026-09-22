@@ -354,6 +354,19 @@ impl OpEmitter for LazySplitNextEmitter {
                 "(match __ls_{vec}.next() {{ Some(__piece) => __piece, None => {{ __ls_done_{vec} = true; loft::state::STRING_NULL }} }})"
             );
         }
+        // `@FR-R-Base`'s text clause — the element's record number through the held base,
+        // the text sliced off the vector's own store; out of range takes the unfused path.
+        if let Some((header, base, span, vector, index)) = ctx.output.fused_text_read(args) {
+            let verify = verify(ctx);
+            write!(
+                ctx.w,
+                "unsafe {{ vector::text_elem_at::<{verify}>(&{header}, {base}, {span}, &("
+            )?;
+            ctx.emit(vector)?;
+            write!(ctx.w, "), (")?;
+            ctx.emit(index)?;
+            return write!(ctx.w, ") as i64, &stores.allocations) }}");
+        }
         if let Some(elem) = args.first()
             && let Some((t, raising)) = ctx.output.split_table_read(elem)
             && let Value::Call(_, inner) = elem.unspan()

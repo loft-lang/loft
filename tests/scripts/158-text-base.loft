@@ -1,0 +1,123 @@
+// `@FR-R-Base`'s text clause — a TEXT element read (`v[i]`, the walk's element) inside a
+// loop that holds the vector's header and element base reads the element's record number
+// through the base and slices the text off the store's span, derived once beside the base:
+// no store resolution per element on `--native`.  The interpreter is the oracle; every cell
+// hand-computes its value and must answer the same under `LOFT_NO_TEXT_BASE=1` (the
+// per-element resolution again), `LOFT_HOIST_VERIFY=1` (header, base and span re-derived at
+// every read), `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1`.
+// The cells walk the axes of the read: the index in range, past the end (the walk's own
+// last read, and `v[i + 1] ?? d`), NEGATIVE (counts from the end, as `get_vector` does),
+// the null integer, computed; the element null, empty, multi-byte; the vector a field, a
+// view, empty; the read consumed as a value, compared, sized, appended, formatted; a
+// nested loop over a second text vector; and the standard library's `join`.
+//
+// @falsified-at: hand-measured (2026-09-22) — `vector::text_elem_at`'s past-the-end arm
+// sabotaged to answer the element at `from - 1` instead of the null text: native
+// `assertion failed: b2 bb/ccc ccc/a ccc/bb` for `bb/ccc ccc/a <none>/bb` (the
+// `v[i + 1] ?? "<none>"` read at the last index answered the last element); b1 passed
+// under the sabotage — a walk's past-the-end read is discarded by the length test that
+// breaks right after it, so only an INDEXED read past the end sees this arm.  The
+// interpreter and `LOFT_NO_TEXT_BASE=1` answered `<none>/bb` on the same build.
+
+struct Bag { names: vector<text>, tags: vector<text>, n: integer }
+
+// b1 — the walk (the loop's element read is the clause's shape): join-like, with the
+// walk's last read landing past the end before the length test breaks.
+fn b1() {
+  v = ["a", "bb", "ccc", ""];
+  out = ""; n = 0;
+  for p in v { out += "[{p}]"; n += size(p); }
+  assert(out == "[a][bb][ccc][]" && n == 6, "b1 {out} {n}");
+  println("b1 {out} {n}");
+}
+
+// b2 — an indexed read PAST the end (the null text, discharged by `??`) and one BEFORE the
+// start inside a hoisting loop: `v[i - 1]` at i = 0 is `v[-1]`, the LAST element — a
+// negative index counts from the end, as `get_vector` does — so the first pass reads
+// `bb/ccc`.
+fn b2() {
+  v = ["a", "bb", "ccc"];
+  out = ""; last = "";
+  for i in 0..len(v) {
+    nxt = v[i + 1] ?? "<none>";
+    prv = v[i - 1] ?? "<none>";
+    out += "{nxt}/{prv} ";
+    last = v[-1] ?? "?";
+  }
+  assert(out == "bb/ccc ccc/a <none>/bb " && last == "ccc", "b2 {out} {last}");
+  println("b2 {v[1]?} {v[3] ?? "<none>"} {out}| {last}");
+}
+
+// b3 — the NULL integer as the index, and a computed index.
+fn b3() {
+  v = ["x", "yy", "zzz", "wwww"];
+  none: integer? = null as integer?;
+  s = 0; t = "";
+  for i in 0..4 {
+    k = (i * 3) % 4;
+    t += v[k] ?? "-";
+    s += size(v[none ?? 99] ?? "");
+  }
+  assert(t == "xwwwwzzzyy" && s == 0, "b3 {t} {s}");
+  println("b3 {t} {s}");
+}
+
+// b4 — the element EMPTY, MULTI-BYTE, and read as a value that is compared and sized.
+fn b4() {
+  v = ["", "héllo", "→", "a"];
+  hits = 0; bytes = 0; chars = 0;
+  for i in 0..len(v) {
+    e = v[i]?;
+    if e == "→" { hits += 1; }
+    bytes += size(e); chars += len(e);
+  }
+  assert(hits == 1 && bytes == 10 && chars == 7, "b4 {hits} {bytes} {chars}");
+  println("b4 {hits} {bytes} {chars}");
+}
+
+// b5 — the vector a record's FIELD, and a NESTED loop over a second text vector of the
+// same record, both loops holding their own header and base.
+fn b5() {
+  b = Bag { names: ["ann", "bo"], tags: ["x", "yy", "zzz"], n: 0 };
+  out = "";
+  for i in 0..len(b.names) {
+    for j in 0..len(b.tags) { out += "{b.names[i]?}:{b.tags[j]?} "; }
+  }
+  assert(out == "ann:x ann:yy ann:zzz bo:x bo:yy bo:zzz ", "b5 {out}");
+  println("b5 {out}");
+}
+
+// b6 — an EMPTY vector and a vector with one element: the loop's reads at the edges —
+// `one[i + 1]` past the end is the null text (`.`), `one[i - 1]` is `one[-1]`, the element.
+fn b6() {
+  e: vector<text> = [];
+  one = ["solo"];
+  out = "";
+  for i in 0..len(e) { out += e[i]?; }
+  for i in 0..len(one) { out += "{one[i]?}{one[i + 1] ?? "."}{one[i - 1] ?? "."}"; }
+  assert(out == "solo.solo", "b6 {out}");
+  println("b6 {out}");
+}
+
+// b7 — the standard library's `join`, and a walk that formats each element.
+fn b7() {
+  v = ["p", "qq", "rrr"];
+  j = join(v, ", ");
+  f = "";
+  for p in v { f += "<{p}|{size(p)}>"; }
+  assert(j == "p, qq, rrr" && f == "<p|1><qq|2><rrr|3>", "b7 {j} {f}");
+  println("b7 {j} {f}");
+}
+
+// b8 — a VIEW of a field's vector bound before the loop (a view base shared from the held
+// path), read through the view.
+fn b8() {
+  b = Bag { names: ["u", "vv"], tags: [], n: 2 };
+  d = &b.names;
+  out = "";
+  for i in 0..len(d) { out += "{d[i]?}{d[i]?}"; }
+  assert(out == "uuvvvv", "b8 {out}");
+  println("b8 {out}");
+}
+
+fn main() { b1(); b2(); b3(); b4(); b5(); b6(); b7(); b8(); }
