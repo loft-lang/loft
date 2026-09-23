@@ -13148,40 +13148,62 @@ impl Scopes<'_> {
             if *d != set_dbref {
                 return;
             }
-            let (Some(Value::Var(rec)), Some(Value::Var(x))) = (
+            let (Some(Value::Var(rec)), Some(off), Some(Value::Var(x))) = (
                 args.first().map(Value::unspan),
+                args.get(1),
                 args.get(2).map(Value::unspan),
             ) else {
                 return;
             };
-            if !builds.rebuilt_in_loop.contains(x) {
+            // Only a record with a drop cascade releases what it adopted when its rebuild
+            // displaces it (`displaced_drop`'s snapshot: the hook, then the store).  A record
+            // with nothing to drop is rebuilt in place and frees nothing, so there the frame's
+            // holder stays the store's release — detached, the store would leak.
+            let cascade = function
+                .tp(*rec)
+                .base()
+                .heap_def_nr()
+                .is_some_and(|r| data.drop_cascade_nr(r) != u32::MAX);
+            if !cascade || !builds.rebuilt_in_loop.contains(x) {
                 return;
             }
-            let sentinel = || Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
             // A collection capture: a view over the literal's backing, which is the store.
-            if let Some(&b) = builds.backing.get(x) {
-                if function.name(b).starts_with("__vdb_")
-                    && owning_record_locals(data, function, self.d_nr, builds, b).contains(rec)
-                {
-                    let detach = v_set(b, sentinel());
-                    if !out.contains(&detach) {
-                        out.push(detach);
+            // A struct capture: the pooled buffer a call delivered it through, which the next
+            // pass's call clears and refills.
+            let holders: Vec<u16> = match builds.backing.get(x) {
+                Some(&b) => {
+                    if function.name(b).starts_with("__vdb_")
+                        && owning_record_locals(data, function, self.d_nr, builds, b).contains(rec)
+                    {
+                        vec![b]
+                    } else {
+                        Vec::new()
                     }
                 }
-                return;
-            }
-            // A struct capture a call delivered through a pooled return buffer, which the next
-            // pass's call clears and refills.  The local may have been bound from elsewhere on
-            // this path, so only a buffer still naming the adopted store lets go of it.
-            if !owning_record_locals(data, function, self.d_nr, builds, *x).contains(rec) {
-                return;
-            }
-            for &b in self.witness_buffer.get(x).into_iter().flatten() {
-                let same = Value::Call(
-                    data.def_nr("OpDistinctStore"),
-                    vec![Value::Var(b), Value::Var(*x)],
+                None => {
+                    if owning_record_locals(data, function, self.d_nr, builds, *x).contains(rec) {
+                        self.witness_buffer.get(x).cloned().unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                }
+            };
+            // The holder lets go only while it still names the store the record adopted, read
+            // back out of the record's own capture field.  The detach runs after the WHOLE
+            // statement, and a build inside the statement that rebinds the capture
+            // (`v = build_v(|i| v[0] + i)`) leaves the holder naming the NEW value by then.
+            for b in holders {
+                let adopted = Value::Call(
+                    data.def_nr("OpGetDbRef"),
+                    vec![Value::Var(*rec), off.clone()],
                 );
-                out.push(v_if(same, Value::Null, v_set(b, sentinel())));
+                let distinct =
+                    Value::Call(data.def_nr("OpDistinctStore"), vec![Value::Var(b), adopted]);
+                let sentinel = Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+                let detach = v_if(distinct, Value::Null, v_set(b, sentinel));
+                if !out.contains(&detach) {
+                    out.push(detach);
+                }
             }
         });
         out
