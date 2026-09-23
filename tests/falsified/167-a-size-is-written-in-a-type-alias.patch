@@ -1,0 +1,82 @@
+diff --git b/src/data.rs a/src/data.rs
+index b38c7b756..283f94950 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -6031,13 +6031,10 @@ impl NarrowSlot {
+     /// (`IntegerSpec::reserves_sentinel_unconditionally`): C85 says an overflow writes that
+     /// code and the slot then reads null, which is what a LOCAL of the type answers — so the
+     /// place reads and writes through the op that maps the code to null (loft#1615).  It is
+-    /// never a narrow-vector element, and `@FR-L-Narrow-Alias` is why: a stored width is a
+-    /// property of a NAMED type, so `size(n)` is written in a `type` alias and nowhere else,
+-    /// while `narrow_vec` requires no alias.  The two are therefore mutually exclusive by the
+-    /// RULE rather than by an accident of the parser — which is what the `debug_assert` below
+-    /// now rests on.  (It rested on the accident until 2026-09-23: nothing REFUSES an inline
+-    /// `size`, the parser simply never looks for one, so a future production that admitted it
+-    /// would have walked into the assert with no rule to warn it.)
++    /// never a narrow-vector element: the only spelling of such a type is a `type` ALIAS
++    /// (`integer limit(-100, 100) size(1)` does not parse inline), and `narrow_vec` requires
++    /// no alias — so the two are mutually exclusive by construction, and the `debug_assert`
++    /// below is what says so if that ever stops being true.
+     ///
+     /// A width of 8 is the wide `integer`, which answers [`NarrowIntKind::Int`] and takes no
+     /// `min`: the two store-place callers pass every supported width here, so this is total
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index db642d3c1..6fba88adc 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -3418,41 +3418,6 @@ impl Parser {
+         let mut max = i32::MAX as u32;
+         if type_name == "integer" {
+             let has_limit = self.parse_type_limit(&mut min, &mut max);
+-            // `@FR-L-Narrow-Alias` — a stored WIDTH is a property of a named type, so `size(n)`
+-            // is written in a `type` alias and nowhere else.  `parse_typedef` is the only reader
+-            // of it; here the parser simply never looked, so an inline `size(1)` drew three
+-            // errors about the punctuation after it (`Expect token )`, `Tuple types require at
+-            // least 2 elements`, `Expect token }`) and named neither the modifier nor its home.
+-            // Refusing it by name is also what `NarrowSlot::of_slot`'s spare-code assertion
+-            // rests on: the rule is what makes a spare-code type reachable only through an
+-            // alias, and an inline spelling that parsed would walk into that assert.
+-            // PEEKED, never consumed: `parse_typedef` is the site that legitimately reads
+-            // `size`, and taking the token here made the stdlib's own `type i32 = integer
+-            // size(4)` stop parsing.  `on_d` is what tells the two apart — inside a `type`
+-            // alias it names the TYPE being defined, and the `size` ahead is that alias's.
+-            let in_alias =
+-                on_d != u32::MAX && self.data.def_type(on_d) == crate::data::DefType::Type;
+-            // Reported on BOTH passes, unlike most refusals: the parse derails at the `size`
+-            // token itself, so pass 2 never runs and a `!first_pass` gate made this silent
+-            // while three punctuation errors stood in for it.
+-            if !in_alias
+-                && self.lexer.peek().has == crate::lexer::LexItem::Identifier("size".to_string())
+-            {
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "`size(…)` is a property of a NAMED type — write it in a `type` alias \
+-                     (`type Small = integer limit(0, 200) size(1);`) and use that name here"
+-                );
+-                // CONSUME it and carry on as the plain range, the way `parse_type_limit`
+-                // recovers from a bound it refuses: left in the stream the modifier drew
+-                // three further errors about the punctuation after it, and the reader had to
+-                // decide which of the four was theirs.
+-                self.lexer.has_keyword("size");
+-                self.lexer.token("(");
+-                self.lexer.has_long();
+-                self.lexer.token(")");
+-            }
+             // T1.7: check for `not null` annotation after the integer type
+             let not_null = self.has_deprecated_not_null();
+             if has_limit || not_null {
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index b5cb721c5..3f5ca1792 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -223,8 +223,7 @@ pub struct Variable {
+     /// second pass at the `&`; read by both emitters, which run after the parse, so a use
+     /// written before the `&` in the body is emitted with the fact as well.
+     linked_narrow: bool,
+-    /// `@FR-B-Ref-Lvalue`, `@FR-O-Borrow-Scalar` — the `&` LINK variable that names this local
+-    /// as its place, or
++    /// `@FR-B-Ref-Lvalue` — the `&` LINK variable that names this local as its place, or
+     /// `u16::MAX`.  Recorded on the TARGET rather than on the link, because a re-point
+     /// (`c = &x; c = &y`) gives one link two places and both must outlive it, while each
+     /// place is bound by a `&` once.

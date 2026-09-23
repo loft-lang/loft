@@ -23,6 +23,12 @@
 // integer size(4)` is that shape, and a refusal that reached it stopped the standard library
 // parsing (measured, while building this).
 //
+// @falsified-at: fae64225f — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/167-a-size-is-written-in-a-type-alias.patch — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 0/2 (the suite's verdict, not a count of matches)
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends, and BOTH
+//   backends move — the refusal is a parse-time diagnostic, so unlike a runtime divergence
+//   neither side is inert here.
+//
 // CHANNEL: the expected diagnostics, one per inline `size`.
 
 type Ok1 = integer limit(-100, 100) size(1);   // the control: the alias spelling
