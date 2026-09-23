@@ -235,6 +235,25 @@ the same day; `D-clo-27` closed 2026-09-12).
   old contents too.  `for i in 0..2 { w = [mk(70 + i)]; f = fn() { len(w) }; … }` releases `71`
   three times, identical on both backends.  The cure needs a decision: either the record dies
   with its loop-body fn-ref, or a captured loop-body vector gets a backing of its own per pass.
+  ⚠ **NARROWED 2026-09-23 — the CONFINED record is closed.**  `(L-CapOwn)` frees a captured
+  store "by whichever of the two outlives the other", and the unit is the captured local's
+  SCOPE, not the function.  A record built in a loop body into a fn-ref local that appears
+  nowhere outside that loop, and there only as a callee, dies with the pass.  So it outlives
+  nothing it captured: it BORROWS every capture (`strip_borrowed_capture_walk`), and the frame
+  keeps its own release at the local's scope end, exactly as the no-closure spelling does.
+  `pass_confined_records` computes the fact once into `CaptureBuilds::pass_confined`, and both
+  deciders read it: `record_adopts_capture` for the record and `capture_adoption_owns_free` for
+  the frame.  So suppressing and adopting stay one decision.  The class was wider than filed: a
+  loop-body RECORD capture (`M70 F70 M71 D71 F71 X D71`), a FUNCTION-scope capture rebuilt each
+  pass (`D70` three times) and a `break` (`D70` twice) had the same cause, and all four read
+  exactly once, at the scope end, on both backends
+  (`tests/scripts/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft`).
+  **Still open:** a record that is NOT confined still adopts through a backing the next pass
+  reuses.  Three shapes: a closure passed as an argument inside the loop (`run(f)`, or inline
+  `run(fn() { len(w) })`: `D70 D71 … D71 D71`), whose callee may keep it, and a record held by a
+  local declared OUTSIDE the loop (`g = fn() { len(w) }` in the body), which really outlives the
+  pass.  The first two need the callee's retention (a `&` parameter, a returned fn-ref) read,
+  and the third needs the per-pass backing the original entry names.
 - **D-clo-36** *(opened 2026-09-22, loft#1609)* — `(L-CapOwn)`'s hand-over for a record that
   LEAVES its frame covers the store and not the HOOKS.  The caller's fn-ref is released by
   `OpFreeRef`, whose store cascade frees the captured vector, and no hook runs.  The hook
