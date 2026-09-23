@@ -200,9 +200,20 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — (`D-clo-38`, loft#1624, opened and CLOSED 2026-09-23; `D-clo-36` and
-`D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed
-2026-09-12).
+**OPEN: 1** — `D-clo-39` (opened 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same
+day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23;
+`D-clo-27` closed 2026-09-12).
+
+- **D-clo-39** *(opened 2026-09-23, loft#1636)* — `(L-CapScalar)` for a closure KEPT from one
+  loop pass.  The closure record local (`___clos_N`) is minted once per frame, and each pass
+  rebuilds it IN PLACE.  So a fn-ref kept from an earlier pass in a local declared outside the
+  loop holds the same store, and reads the LATEST pass's captures:
+  `for i in 0..2 { f = fn() { i * 10 + 1 }; if i == 0 { g = f; } }` answers `g() == 11` for
+  `1`, on both backends, with no diagnostic.  Building the closure straight into the outer
+  local is right, and collections of capturing closures are refused (#318), so the reach is a
+  pass's fn-ref kept in an outer local.  The contract is settled; the open part is the
+  mechanism: a record that escapes on SOME passes needs a store of its own per build, released
+  by whoever kept it, or at the pass end on a pass where nobody did.
 
 - **D-clo-38** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1624)* — `(O-Buffer)` for a
   collection `??` whose chosen arm is a CAPTURE.  A `vector<T>` return is delivered into the
