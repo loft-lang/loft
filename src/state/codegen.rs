@@ -5269,6 +5269,9 @@ impl State {
                 // `OpVarRef(b)` is a re-point to the link `b` holds, for every kind of link.
                 matches!(def.name(), "OpCreateStack" | "OpVarRef")
                     || (scalar_link && matches!(def.returned.base(), Type::Reference(_, _)))
+                    // @PLN167 decision 2 — every write through a store-kind text link was
+                    // parsed as the field's setter, so a `Set` of one is always its bind.
+                    || stack.function.is_store_text_link(var)
             } else {
                 false
             };

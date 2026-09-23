@@ -689,6 +689,13 @@ impl Parser {
                     return t;
                 }
                 self.iter_op(code, name, &mut t, index_var);
+            } else if self.vars.is_store_text_link(index_var) {
+                // @PLN167 decision 2 — a link to a text field or element is spelled as that
+                // field wherever it is mentioned, so a read is the field read and an assignment
+                // the field's setter, both backends.  Its text borrows from the link.
+                self.var_usages(index_var, true);
+                *code = self.store_text_link_place(index_var);
+                t = Type::Text(crate::data::Deps::frame1(index_var));
             } else if let Value::Var(into) = code {
                 let v_nr = self.vars.var(name);
                 if matches!(self.vars.tp(v_nr), Type::Text(_)) {

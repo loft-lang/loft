@@ -772,6 +772,10 @@ pub struct Parser {
     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+    /// @PLN167 C1 — the kind of each `&text` link bound so far on pass 2, keyed by
+    /// `(function, variable)`: `true` for a text field or element (the store kind), `false` for
+    /// a text variable (the stack kind).  A second bind of the other kind is refused.
+    text_link_kinds: std::collections::HashMap<(u32, u16), bool>,
     /// loft#1371 — vector LOCALS bound by a `&` link (`pe = &e`, `pe: &vector<T> = e`),
     /// keyed `(function, name)`.  The bind SHARES the source's `DbRef`, which already
     /// aliases every element write and every append; a WHOLE-VALUE write is the one
@@ -1576,6 +1580,7 @@ impl Parser {
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
+            text_link_kinds: std::collections::HashMap::new(),
             amp_vector_locals: std::collections::HashSet::new(),
             amp_vector_link_partners: std::collections::HashMap::new(),
             literal_chain_lhs: std::collections::HashSet::new(),
@@ -19177,6 +19182,10 @@ impl Parser {
                         | "OpGetRef"
                         | "OpGetDbRef"
                         | "OpGetVectorNullable"
+                        // A text field or element (@PLN167 C1), and the base of a mention of
+                        // a store-kind text link (`OpGetText(OpVarRef(t), 0)`).
+                        | "OpGetText"
+                        | "OpVarRef"
                 );
                 // loft#1567 — every NARROW read op, asked from the one home that names them
                 // (`NarrowIntKind::get_op`) rather than re-listed here.  The hand-kept list
@@ -19198,6 +19207,69 @@ impl Parser {
         matches!(code.unspan(), Value::Call(d, args)
             if self.data.def(*d).name() == "OpGetText"
                 && args.first().is_some_and(|a| Self::is_amp_place(a, &self.data)))
+    }
+
+    /// A mention of store-kind text link `v`, spelled as the field it names:
+    /// `OpGetText(OpVarRef(v), 0)`.  The link holds the slot's `DbRef`, so this is the field
+    /// read `o.s` already is, and an assignment to it is the field's setter (@PLN167 decision 2:
+    /// the store kind reads and writes through the field ops, the stack kind is untouched).
+    pub(crate) fn store_text_link_place(&self, v: u16) -> Value {
+        Value::Call(
+            self.data.def_nr("OpGetText"),
+            vec![
+                Value::Call(self.data.def_nr("OpVarRef"), vec![Value::Var(v)]),
+                Value::Int(0),
+            ],
+        )
+    }
+
+    /// The store-kind text link a value is a mention of — the shape
+    /// [`Self::store_text_link_place`] builds — or `None`.  Anything else, a field read
+    /// included, is not a link and answers `None`.
+    pub(crate) fn store_text_link_of(&self, code: &Value) -> Option<u16> {
+        if let Value::Call(g, args) = code.unspan()
+            && self.data.def(*g).name() == "OpGetText"
+            && let [r, Value::Int(0)] = args.as_slice()
+            && let Value::Call(vr, vargs) = r.unspan()
+            && self.data.def(*vr).name() == "OpVarRef"
+            && let [Value::Var(v)] = vargs.as_slice()
+            && self.vars.is_store_text_link(*v)
+        {
+            Some(*v)
+        } else {
+            None
+        }
+    }
+
+    /// Record the kind a `&text` bind gives link `var_nr`: `store` for a text field or element,
+    /// otherwise a text variable.  One link names texts of ONE kind (`@FR-B-Ref-Repoint`: a
+    /// re-point keeps the link's `τ`, and the kind is part of what the link is), so a bind of
+    /// the other kind is refused, on any path — the kind is the variable's, never a path's.
+    pub(crate) fn bind_text_link_kind(&mut self, var_nr: u16, store: bool) {
+        if var_nr == u16::MAX {
+            return;
+        }
+        if store {
+            self.vars.set_store_text_link(var_nr);
+        }
+        if self.first_pass {
+            return;
+        }
+        match self.text_link_kinds.insert((self.context, var_nr), store) {
+            Some(prev) if prev != store => {
+                let name = self.vars.name(var_nr).to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{name}` links a {}, so it cannot also link a {} — a text field or element \
+                     and a text variable are different places to a link. Use a second link \
+                     for the other one",
+                    if prev { "text field or element" } else { "text variable" },
+                    if store { "text field or element" } else { "text variable" }
+                );
+            }
+            _ => {}
+        }
     }
 
     /// Is this `&` operand an integer STORE place narrower than 8 bytes — an element or a field

@@ -652,6 +652,21 @@ impl Output<'_> {
             }
             return Ok(());
         }
+        // @PLN167 decision 2 — a link to a text field or element is the slot's `DbRef`, bound
+        // by value: the place (`OpGetField` / the element op) or the `DbRef` another store-kind
+        // link holds.  Every other write through it was parsed as the field's setter, so a bind
+        // is the only `Set` such a link receives.
+        if variables.is_store_text_link(var) {
+            let name = sanitize(variables.name(var));
+            if self.declared.contains(&var) || variables.is_argument(var) {
+                write!(w, "var_{name} = ")?;
+            } else {
+                self.declared.insert(var);
+                write!(w, "let mut var_{name}: DbRef = ")?;
+            }
+            self.output_code_inner(w, to)?;
+            return Ok(());
+        }
         // @PLN87 L1 — a local SCALAR `&`-link.  `b = &a` lowers to
         // `b: &T = OpCreateStack(a)`; native represents it as a Rust mutable borrow
         // (`&mut i64`), so reads/writes of `b` deref to `a`'s slot (the same shape a

@@ -1,0 +1,308 @@
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index 0e7b69809..1a6773f24 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -652,21 +652,6 @@ impl Output<'_> {
+             }
+             return Ok(());
+         }
+-        // @PLN167 decision 2 — a link to a text field or element is the slot's `DbRef`, bound
+-        // by value: the place (`OpGetField` / the element op) or the `DbRef` another store-kind
+-        // link holds.  Every other write through it was parsed as the field's setter, so a bind
+-        // is the only `Set` such a link receives.
+-        if variables.is_store_text_link(var) {
+-            let name = sanitize(variables.name(var));
+-            if self.declared.contains(&var) || variables.is_argument(var) {
+-                write!(w, "var_{name} = ")?;
+-            } else {
+-                self.declared.insert(var);
+-                write!(w, "let mut var_{name}: DbRef = ")?;
+-            }
+-            self.output_code_inner(w, to)?;
+-            return Ok(());
+-        }
+         // @PLN87 L1 — a local SCALAR `&`-link.  `b = &a` lowers to
+         // `b: &T = OpCreateStack(a)`; native represents it as a Rust mutable borrow
+         // (`&mut i64`), so reads/writes of `b` deref to `a`'s slot (the same shape a
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 0f3c7cc21..22ab6c040 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -46,29 +46,9 @@ impl Output<'_> {
+         {
+             return self.emit_invariant_use(w, &memo);
+         }
+-        // @PLN167 decision 2 — a store-kind text link IS the slot's `DbRef`, so the link a
+-        // mention of it names (`OpGetText(OpVarRef(t), 0)`) is the variable itself.
+-        if let Some(v) = self.store_text_link_ref(code) {
+-            let name = sanitize(self.data.def(self.def_nr).variables().name(v));
+-            return write!(w, "var_{name}");
+-        }
+         self.output_code_node(w, IrNode::Native(code))
+     }
+ 
+-    /// The store-kind text link `OpVarRef(t)` names, or `None` for any other value.
+-    pub(super) fn store_text_link_ref(&self, code: &Value) -> Option<u16> {
+-        if let Value::Call(d, args) = code.unspan()
+-            && self.data.def(*d).name() == "OpVarRef"
+-            && let [arg] = args.as_slice()
+-            && let Value::Var(v) = arg.unspan()
+-            && self.data.def(self.def_nr).variables().is_store_text_link(*v)
+-        {
+-            Some(*v)
+-        } else {
+-            None
+-        }
+-    }
+-
+     /// Central recursive dispatch from an IR node to its Rust representation
+     /// (@PLN11 G2/M4).  Dispatches on `node.kind()` and reads payloads through
+     /// the `IrNode` handle; arms not yet converted fall to the `match
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index ad408b843..37b85de6d 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -4668,15 +4668,6 @@ impl Output<'_> {
+         {
+             return slot.rust_type().to_string();
+         }
+-        // @PLN167 decision 2 — a link to a text field or element holds the slot's `DbRef`.
+-        if self
+-            .data
+-            .def(self.def_nr)
+-            .variables()
+-            .is_store_text_link(var)
+-        {
+-            return "DbRef".to_string();
+-        }
+         rust_type(tp, &Context::Variable)
+     }
+ 
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 455184ecf..d0223434d 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3738,23 +3738,6 @@ use a separate collection or add after the loop"
+             } else {
+                 None
+             };
+-            // @PLN167 C1 — a text FIELD or ELEMENT (`t = &o.s`, `t = &a[0]`): the STORE kind of
+-            // a text link.  It holds the slot's `DbRef`, the place `scalar_place_ref` gives a
+-            // scalar, and every later mention of the link is parsed as that field
+-            // (`Parser::store_text_link_place`).  The annotated spelling (`t: &text = o.s`)
+-            // arrives with `s_type` already the link type, hence the peel.
+-            let text_place_ref = if stack_src.is_none()
+-                && heap_ref.is_none()
+-                && matches!(
+-                    if let Type::RefVar(inner) = &s_type { inner.base() } else { s_type.base() },
+-                    Type::Text(_)
+-                )
+-                && self.is_text_place(code)
+-            {
+-                self.scalar_place_ref(code)
+-            } else {
+-                None
+-            };
+             // `c = &b` where `b` is itself a link: `c` takes the link `b` holds — a re-point on a
+             // reassignment (`@FR-B-Ref-Repoint`), a link copy on a first bind.  Spelled
+             // `OpVarRef(b)` so it cannot be read as `c = b`, which writes `b`'s value through `c`
+@@ -3762,18 +3745,10 @@ use a separate collection or add after the loop"
+             // (`formal/binding.md` D-bind-41).
+             let link_src = match *code.unspan() {
+                 Value::Var(src) if matches!(self.vars.tp(src).base(), Type::RefVar(_)) => Some(src),
+-                // A store-kind text link is parsed as its field, so `c = &t` arrives in that
+-                // spelling rather than as `Var(t)`.
+-                _ => self.store_text_link_of(code),
++                _ => None,
+             };
+             if let Some(src) = link_src {
+                 amp_unlowered = false;
+-                if self.vars.is_store_text_link(src) {
+-                    self.bind_text_link_kind(var_nr, true);
+-                } else if matches!(self.vars.tp(src), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+-                {
+-                    self.bind_text_link_kind(var_nr, false);
+-                }
+                 *code = self.cl("OpVarRef", &[Value::Var(src)]);
+                 s_type = self.vars.tp(src).clone();
+             } else if let Some(src) = stack_src {
+@@ -3786,9 +3761,6 @@ use a separate collection or add after the loop"
+                 // publishes it below as a dep; a SCALAR one owns no store and carries none,
+                 // so it is recorded here for both.
+                 self.vars.record_amp_link(var_nr, src);
+-                if matches!(self.vars.tp(src).base(), Type::Text(_)) {
+-                    self.bind_text_link_kind(var_nr, false);
+-                }
+                 let mut inner = self.vars.tp(src).clone();
+                 // tuples.md T-Ref — a linked tuple local with a heap element is the
+                 // `__tuple<…>` record.  On pass 1 its bind has not been rewritten yet (the fact
+@@ -3835,16 +3807,6 @@ use a separate collection or add after the loop"
+                 } else {
+                     self.ref_var_type(linked)
+                 };
+-            } else if let Some(eref) = text_place_ref {
+-                amp_unlowered = false;
+-                self.bind_text_link_kind(var_nr, true);
+-                *code = eref;
+-                let text = if let Type::RefVar(inner) = &s_type {
+-                    inner.base().clone()
+-                } else {
+-                    s_type.base().clone()
+-                };
+-                s_type = Type::RefVar(Box::new(text));
+             } else if let Some(eref) = heap_ref {
+                 amp_unlowered = false;
+                 // `c`/`r` holds the field/element DbRef; interp reads/writes it via the
+@@ -7241,16 +7203,6 @@ use a separate collection or add after the loop"
+         let mut to = code.clone();
+         for op in ["=", "+=", "-=", "*=", "%=", "/="] {
+             if self.lexer.has_token(op) {
+-                // @PLN167 C1 — `t = &…` BINDS the link: its target is the variable itself,
+-                // not the text field every other mention of a store-kind link is spelled as.
+-                if op == "="
+-                    && self.lexer.peek_token("&")
+-                    && let Some(link) = self.store_text_link_of(&to)
+-                {
+-                    to = Value::Var(link);
+-                    *code = Value::Var(link);
+-                    f_type = self.vars.tp(link).clone();
+-                }
+                 // loft#1212 — an EXPLICIT `??` coalesce is not a place.  `(E-Asgn-Discharge)`
+                 // (@FR-E-Asgn-Discharge) says so in as many words: *"an explicit `(a ?? d)`
+                 // names two values and no place; it takes no assignment at all"*, and
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index adc762d85..2ee828e56 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -772,10 +772,6 @@ pub struct Parser {
+     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
+     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
+     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+-    /// @PLN167 C1 — the kind of each `&text` link bound so far on pass 2, keyed by
+-    /// `(function, variable)`: `true` for a text field or element (the store kind), `false` for
+-    /// a text variable (the stack kind).  A second bind of the other kind is refused.
+-    text_link_kinds: std::collections::HashMap<(u32, u16), bool>,
+     /// loft#1371 — vector LOCALS bound by a `&` link (`pe = &e`, `pe: &vector<T> = e`),
+     /// keyed `(function, name)`.  The bind SHARES the source's `DbRef`, which already
+     /// aliases every element write and every append; a WHOLE-VALUE write is the one
+@@ -1580,7 +1576,6 @@ impl Parser {
+             infer_ret_defs: std::collections::HashSet::new(),
+             adopted_ret_defs: std::collections::HashSet::new(),
+             ref_linked_tuple_locals: std::collections::HashSet::new(),
+-            text_link_kinds: std::collections::HashMap::new(),
+             amp_vector_locals: std::collections::HashSet::new(),
+             amp_vector_link_partners: std::collections::HashMap::new(),
+             literal_chain_lhs: std::collections::HashSet::new(),
+@@ -19182,10 +19177,6 @@ impl Parser {
+                         | "OpGetRef"
+                         | "OpGetDbRef"
+                         | "OpGetVectorNullable"
+-                        // A text field or element (@PLN167 C1), and the base of a mention of
+-                        // a store-kind text link (`OpGetText(OpVarRef(t), 0)`).
+-                        | "OpGetText"
+-                        | "OpVarRef"
+                 );
+                 // loft#1567 — every NARROW read op, asked from the one home that names them
+                 // (`NarrowIntKind::get_op`) rather than re-listed here.  The hand-kept list
+@@ -19209,69 +19200,6 @@ impl Parser {
+                 && args.first().is_some_and(|a| Self::is_amp_place(a, &self.data)))
+     }
+ 
+-    /// A mention of store-kind text link `v`, spelled as the field it names:
+-    /// `OpGetText(OpVarRef(v), 0)`.  The link holds the slot's `DbRef`, so this is the field
+-    /// read `o.s` already is, and an assignment to it is the field's setter (@PLN167 decision 2:
+-    /// the store kind reads and writes through the field ops, the stack kind is untouched).
+-    pub(crate) fn store_text_link_place(&self, v: u16) -> Value {
+-        Value::Call(
+-            self.data.def_nr("OpGetText"),
+-            vec![
+-                Value::Call(self.data.def_nr("OpVarRef"), vec![Value::Var(v)]),
+-                Value::Int(0),
+-            ],
+-        )
+-    }
+-
+-    /// The store-kind text link a value is a mention of — the shape
+-    /// [`Self::store_text_link_place`] builds — or `None`.  Anything else, a field read
+-    /// included, is not a link and answers `None`.
+-    pub(crate) fn store_text_link_of(&self, code: &Value) -> Option<u16> {
+-        if let Value::Call(g, args) = code.unspan()
+-            && self.data.def(*g).name() == "OpGetText"
+-            && let [r, Value::Int(0)] = args.as_slice()
+-            && let Value::Call(vr, vargs) = r.unspan()
+-            && self.data.def(*vr).name() == "OpVarRef"
+-            && let [Value::Var(v)] = vargs.as_slice()
+-            && self.vars.is_store_text_link(*v)
+-        {
+-            Some(*v)
+-        } else {
+-            None
+-        }
+-    }
+-
+-    /// Record the kind a `&text` bind gives link `var_nr`: `store` for a text field or element,
+-    /// otherwise a text variable.  One link names texts of ONE kind (`@FR-B-Ref-Repoint`: a
+-    /// re-point keeps the link's `τ`, and the kind is part of what the link is), so a bind of
+-    /// the other kind is refused, on any path — the kind is the variable's, never a path's.
+-    pub(crate) fn bind_text_link_kind(&mut self, var_nr: u16, store: bool) {
+-        if var_nr == u16::MAX {
+-            return;
+-        }
+-        if store {
+-            self.vars.set_store_text_link(var_nr);
+-        }
+-        if self.first_pass {
+-            return;
+-        }
+-        match self.text_link_kinds.insert((self.context, var_nr), store) {
+-            Some(prev) if prev != store => {
+-                let name = self.vars.name(var_nr).to_string();
+-                diagnostic!(
+-                    self.lexer,
+-                    Level::Error,
+-                    "`{name}` links a {}, so it cannot also link a {} — a text field or element \
+-                     and a text variable are different places to a link. Use a second link \
+-                     for the other one",
+-                    if prev { "text field or element" } else { "text variable" },
+-                    if store { "text field or element" } else { "text variable" }
+-                );
+-            }
+-            _ => {}
+-        }
+-    }
+-
+     /// Is this `&` operand an integer STORE place narrower than 8 bytes — an element or a field
+     /// of `u8`, `i8`, `u16`, `i32` or any range that stores in fewer bytes?
+     ///
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index f195fcb6d..a4d4e20bc 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -689,13 +689,6 @@ impl Parser {
+                     return t;
+                 }
+                 self.iter_op(code, name, &mut t, index_var);
+-            } else if self.vars.is_store_text_link(index_var) {
+-                // @PLN167 decision 2 — a link to a text field or element is spelled as that
+-                // field wherever it is mentioned, so a read is the field read and an assignment
+-                // the field's setter, both backends.  Its text borrows from the link.
+-                self.var_usages(index_var, true);
+-                *code = self.store_text_link_place(index_var);
+-                t = Type::Text(crate::data::Deps::frame1(index_var));
+             } else if let Value::Var(into) = code {
+                 let v_nr = self.vars.var(name);
+                 if matches!(self.vars.tp(v_nr), Type::Text(_)) {
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 15bccc1d9..0d28cc714 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -5269,9 +5269,6 @@ impl State {
+                 // `OpVarRef(b)` is a re-point to the link `b` holds, for every kind of link.
+                 matches!(def.name(), "OpCreateStack" | "OpVarRef")
+                     || (scalar_link && matches!(def.returned.base(), Type::Reference(_, _)))
+-                    // @PLN167 decision 2 — every write through a store-kind text link was
+-                    // parsed as the field's setter, so a `Set` of one is always its bind.
+-                    || stack.function.is_store_text_link(var)
+             } else {
+                 false
+             };

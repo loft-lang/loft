@@ -910,7 +910,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   (loft#1567) CLOSED the same week: a link to a narrow STORE place now links, and the
   representation decision its entry asked for turned out to have been made already.
 
-* **D-bind-38** *(opened 2026-09-14, loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
+* **D-bind-38** *(opened 2026-09-14, CLOSED 2026-09-23; loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
   vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
   addressable operand — a variable, struct field, or vector element", on both backends and already
   on the first bind, while the same spellings over an integer, float, enum or struct place link.  The
@@ -921,6 +921,22 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   link needs a representation for a text that lives in a store.  (The `u16` and `i32` places this
   entry first carried are narrow integer places and left with D-bind-39, which closed 2026-09-23;
   text is the only face of this rule still refused.)  Found while probing D-bind-36's repoint over every element kind.
+  **Closed** by @PLN167 C1: a text field or element is a place, and a `&` bind to one makes the
+  STORE kind of a text link — a link holding the slot's `DbRef` (the place `scalar_place_ref`
+  already gives a scalar), whose every mention is parsed as that field
+  (`OpGetText(OpVarRef(t), 0)`), so its read is the field read and its write the field's setter on
+  both backends.  The kind is a fact of the VARIABLE (`Variable::store_text_link`), carried
+  through the IR snapshot, and a bind of the other kind is refused — in either order and across
+  the arms of an `if` — because `(B-Ref-Repoint)` keeps a link's type.  A link to a text VARIABLE
+  is unchanged and its emission byte-identical.  Guards:
+  `tests/scripts/167-a-text-link-into-a-store.loft`,
+  `tests/scripts/167-a-text-link-keeps-its-kind.loft`.  The PARAMETER face is D-bind-55.
+* **D-bind-55** *(opened 2026-09-23; loft#1566, @PLN167 C3)* — `(B-Ref-Lvalue)` with
+  `(F-ParamRef)`: a text field or element — or a store-kind text link — handed to a `&text`
+  PARAMETER is refused ("a `&text` parameter cannot link to a text field or element"), where the
+  rules say the parameter links to the place as the `&` bind now does.  The refusal is loft#1602's
+  loud stopgap and stays until a `&text` parameter is instantiated per kind (C3); before it the
+  call copied and dropped the callee's write.  Found when D-bind-38 closed.
 * **D-bind-37** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a
   `&τ` PARAMETER: `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-pointed the parameter's link
   on `--interpret` (after D-bind-36) and did not compile on `--native` — rustc E0308 for an element or
