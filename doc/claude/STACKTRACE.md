@@ -100,6 +100,7 @@ fn assert_positive(n: integer) {
 | ST-3 | Native calls (via `library`) do not appear as frames |
 | ST-4 | `line` is `0` for compiler-synthesised call sites |
 | ST-5 | `stack_trace()` in a `par(...)` worker returns only the worker's frames |
+| ST-6 | Under `--native` each frame's `variables` is empty: a compiled frame has no reader for its locals, so only the interpreter reports them |
 
 ---
 

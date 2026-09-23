@@ -894,6 +894,42 @@ fn repl_interactive_edit_scalar_types() {
     assert!(!s.debug_continue());
 }
 
+/// loft#1629 — a NULLABLE scalar local is editable like its non-null twin, and `null` is a
+/// value it can be given.  `(N-Shape)`: `τ?` is `τ`'s slot with the absence spelled as the null
+/// sentinel, so the edit is the twin's write.  The writer had no `Optional` arm and discarded the
+/// edit in silence; the program's assert holds only if every edit reached the frame.
+#[test]
+fn repl_interactive_edit_nullable_scalars() {
+    let mut s = session();
+    assert!(matches!(
+        s.eval(
+            "fn pick(a: integer?, f: float?, b: boolean?, c: character?, z: integer?) -> text {\n  \
+             \"{a ?? -1}|{f ?? -1.0}|{b ?? false}|{c ?? 'q'}|{z ?? -9}\"\n}"
+        ),
+        Eval::Ran
+    ));
+    s.debug_stepping(true);
+    s.add_breakpoint("pick");
+    assert!(matches!(
+        s.eval("assert(pick(null, null, null, null, 5) == \"42|2.5|true|x|-9\", \"edited\")"),
+        Eval::Paused
+    ));
+    assert!(s.debug_set("a", "42"), "integer? from null");
+    assert!(s.debug_set("f", "2.5"), "float? from null");
+    assert!(s.debug_set("b", "true"), "boolean? from null");
+    assert!(s.debug_set("c", "'x'"), "character? from null");
+    assert!(s.debug_set("z", "null"), "integer? to null");
+    assert_eq!(s.debug_eval("a").as_deref(), Some("42"));
+    assert_eq!(s.debug_eval("z").as_deref(), Some("null"));
+    // A literal the local's type cannot hold is still refused, and changes nothing.
+    assert!(!s.debug_set("a", "3.5"), "type-mismatched edit rejected");
+    assert_eq!(s.debug_eval("a").as_deref(), Some("42"), "a unchanged");
+    assert!(
+        !s.debug_continue(),
+        "the run finished with every edit in place"
+    );
+}
+
 /// Without stepping enabled, breakpoints stay in **record-and-continue** mode: an
 /// observing run completes (`Eval::Ran`, not `Paused`) and the hits land in
 /// `last_hits` — the programmatic mode the conditional-breakpoint sweep relies on.

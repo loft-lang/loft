@@ -1131,6 +1131,9 @@ impl State {
                                             pos: r.pos as i32,
                                         }
                                     }
+                                    crate::state::debug::VariableValue::Null => {
+                                        crate::database::VarValueSnapshot::Null
+                                    }
                                     crate::state::debug::VariableValue::OutOfFrame => {
                                         crate::database::VarValueSnapshot::Other(
                                             "<out-of-frame>".to_string(),
@@ -4133,6 +4136,27 @@ impl State {
             return false;
         };
         let lit = literal.trim();
+        // loft#1629, `@FR-N-Shape` — a nullable scalar local is its non-null twin's slot with
+        // the absence spelled as the type's null sentinel, so an edit is the twin's write, and
+        // `null` writes the sentinel.  The same sentinels `render_frame_local` reads.  A
+        // nullable local of any other former keeps the refusal it had, now said out loud.
+        let (tp, nullable) = match tp {
+            Type::Optional(inner) => (inner.base().clone(), true),
+            other => (other, false),
+        };
+        if nullable
+            && !matches!(
+                tp,
+                Type::Integer(_)
+                    | Type::Float
+                    | Type::Single
+                    | Type::Boolean
+                    | Type::Character
+                    | Type::Enum(_, false, _)
+            )
+        {
+            return false;
+        }
         // @PLN16 M2 — snapshot the slot for undo before the typed write.  Width by type
         // (text arg = 16-byte `Str`, text local = 24-byte `String`); a heap `_` slot
         // gets 0 here and returns below — that case is `set_frame_dbref`'s.  A failing
@@ -4152,6 +4176,26 @@ impl State {
             _ => 0,
         };
         let before = self.edit_before(store_nr, rec, at, len);
+        if nullable && lit == "null" {
+            // A LINKED narrow local holds its field encoding, whose null code is the
+            // encoding's own (`crate::narrow`); a wide sentinel written here would read back
+            // as a value.  Refused, which the prompt reports, rather than guessed.
+            if self.frame_narrow(name, data).is_some() {
+                return false;
+            }
+            let store = self.database.store_mut(&self.stack_cur);
+            match &tp {
+                Type::Integer(_) => *store.addr_mut::<i64>(rec, at) = i64::MIN,
+                Type::Float => *store.addr_mut::<f64>(rec, at) = f64::NAN,
+                Type::Single => *store.addr_mut::<f32>(rec, at) = f32::NAN,
+                Type::Character => *store.addr_mut::<u32>(rec, at) = 0,
+                // 255 is the three-state boolean's null (C73); a simple enum's null is 0.
+                Type::Boolean => *store.addr_mut::<u8>(rec, at) = 255,
+                _ => *store.addr_mut::<u8>(rec, at) = 0,
+            }
+            self.edit_after(store_nr, rec, at, before);
+            return true;
+        }
         match &tp {
             Type::Integer(_) => {
                 let Ok(v) = lit.parse::<i64>() else {
