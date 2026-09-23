@@ -136,8 +136,7 @@ registry cache — copied to a scratch directory, since `--check` may write cach
 diagnostics.  A regex over source answers a different question: measured on loft#1600, three
 independent scanner bugs (braces inside string literals, no function boundary, a name re-bound
 by a later loop) turned 4 real files into 29, 93 and 218 reported sites across two agents'
-scans, and hid a real site the compiler found.  A scan is a way to find candidates to read, not
-a count. (Caveat: a *runtime* fault a program can **catch** is observable
+scans.  A scan is a way to find candidates to read, not a count. (Caveat: a *runtime* fault a program can **catch** is observable
 both ways — dropping one can change a program that handled it — so the clean "drop is always
 safe" rule is sharpest for **compile-time** errors; runtime faults still follow the general
 "functioning program unchanged" test.)
