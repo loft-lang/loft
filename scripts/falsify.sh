@@ -77,7 +77,10 @@ else
 fi
 
 ROOT=$(git rev-parse --show-toplevel)
-CACHE="${LOFT_FALSIFY_CACHE:-${TMPDIR:-/tmp}/loft-falsify}"
+# On DISK, never in TMPDIR: a control plus the HERE build is a full debug `target/` each
+# (~2 GB), and `/tmp` is a RAM tmpfs on many Linux boxes — one run filled a 7.5 GB one, and
+# the build then failed as "this tree does not build" before the LRU below could run.
+CACHE="${LOFT_FALSIFY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/loft-falsify}"
 
 # Resolve a control ref to a commit, reaching into `refs/pull/*/head` when the clone does not
 # already hold it.
