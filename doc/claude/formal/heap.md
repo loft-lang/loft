@@ -599,7 +599,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-42`,
+OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-36` and `D-heap-38` (`D-heap-15` CLOSED as
+reclassified 2026-09-23: its last cell, `p_v2`, reads a name `(H-Spent)` makes an error, so it is
+`D-heap-8`'s.  `D-heap-42`,
 loft#1628, opened and CLOSED 2026-09-23: a returned witnessed local released the record it handed
 out, and a rebind released what it displaced before the new value and at the wrong owner's scope
 end — the half `D-heap-41` left open.  `D-heap-41`,
@@ -1378,7 +1380,9 @@ CLOSED 2026-09-17, below.
   measured, both backends).  A SECOND half is open with no implementation at all: `(H-Spent)`'s
   error for reading a name after its value moved.  Today that is silent — `c = open(1);
   if c { v += [c]; } … c.id` reads a value whose hook has already run, and no store instrument can
-  see it because the memory is intact and only the resource is gone.  ⚠ The refusal built behind
+  see it because the memory is intact and only the resource is gone.  The drop gate's `p_v2`
+  (`d = v; v += […]`) is that error's cell, `CENSUS_BLIND` until it is built (reclassified from
+  `D-heap-15` 2026-09-23).  ⚠ The refusal built behind
   `LOFT_LEASE_REFUSE` still implements the PRE-ruling population, so it is now WIDER than the
   rules: it refuses the 156 owned-local placements the rules permit.  Narrowing it to the
   not-yours cases, and adding the spent-name error, is what closes this entry.
@@ -1644,7 +1648,7 @@ CLOSED 2026-09-17, below.
   of its 56 cells lost the source on the tree before, on both backends, and none does after.
   Guard `tests/scripts/a-move-in-one-arm-leaves-the-other-path-releasing.loft`.
 
-### D-heap-15 — OPEN (2026-09-17, NARROWED 2026-09-21, loft#1563): a value the rules MOVE is still copied, and both structures release it
+### D-heap-15 — CLOSED (2026-09-17, NARROWED 2026-09-21, CLOSED as reclassified 2026-09-23, loft#1563): a value the rules MOVE is still copied, and both structures release it
 
 - **Violates:** (H-Move), and through it (H-Lease).
 - **Where:** not established.  What is measured is the population, below; the shapes share that
@@ -1730,6 +1734,16 @@ CLOSED 2026-09-17, below.
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.
 
+- **CLOSED as reclassified 2026-09-23.**  The one cell left was `p_v2`,
+  `v: vector<H> = [mk(81)]; d = v; v += [mk(82)]`.  It was re-read against the rules rather than
+  against the gate's own verdict.  `d = v` places a value the function OWNS, so `(H-Move)` moves
+  it and `v` is SPENT from the end of that statement, and `v += …` reads it, which `(H-Spent)`
+  makes a compile-time error.  So `p_v2` is a program the rules REFUSE, and its releases are not
+  this entry's to judge: the gate's `PILOT_ONCE` verdict was the oracle's error, and the cell
+  moves to `PILOT_REFUSED` under `D-heap-8`, whose unbuilt second half is exactly that
+  spent-name error (loft#1568, open).  `rule_tags.py registers --issues` flagged the entry
+  because it named the closed loft#1563 while still reading OPEN.  That was right to re-measure,
+  and the measurement is this reclassification, not a fix.
 ### D-heap-16 — OPENED 2026-09-17, CLOSED 2026-09-21: the fresh value of a `??` DEFAULT arm is never released
 
 - **Violates:** (H-Drop).
