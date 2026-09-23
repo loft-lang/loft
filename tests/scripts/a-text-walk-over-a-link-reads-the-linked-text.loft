@@ -1,0 +1,56 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `for c in t` over a `&text` link walks the text the link names (`@FR-I-Text`,
+// `@FR-B-Ref-Read`): a local link, a `&text` parameter and a comprehension alike, with
+// `c#index` the byte position in that text.  The source is read ONCE, before the first
+// round (`@FR-I-For`), so a write through the link inside the body does not move the walk.
+//
+// Every one of these spellings stopped with an internal compiler error on both backends:
+// the loop set-up asked whether the source type was `text` without looking through the
+// link, while the walk it then built did look through it.
+//
+// CHANNEL: exit (the control does not compile).
+// @falsified-at: 3256f6889 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-text-walk-over-a-link-reads-the-linked-text.patch — interpret exit 1 -> 0, native exit 1 -> 0
+
+fn walk(t: &text) -> text {
+  w = "";
+  for c in t { w += "{c}{c#index}."; }
+  t += "!";
+  w
+}
+
+fn test_a_local_link() {
+  s = "héllo";
+  t = &s;
+  w = "";
+  for c in t { w += "{c}{c#index}."; }
+  assert(w == "h0.é1.l3.l4.o5.", "local link walk: {w}");
+}
+
+fn test_a_parameter() {
+  s = "héllo";
+  w = walk(s);
+  assert(w == "h0.é1.l3.l4.o5.", "parameter walk: {w}");
+  assert(s == "héllo!", "the write through the parameter landed: {s}");
+}
+
+fn test_a_comprehension() {
+  s = "aé!";
+  t = &s;
+  k = [for c in t { "{c}{c}" }];
+  assert("{k}" == "[\"aa\",\"éé\",\"!!\"]", "comprehension: {k}");
+}
+
+fn test_a_write_in_the_body() {
+  s = "abcd";
+  t = &s;
+  n = 0;
+  for c in t {
+    t = "z";
+    n += 1;
+  }
+  assert(n == 4, "the walk read its source once: {n}");
+  assert(s == "z", "the write through the link landed: {s}");
+}
