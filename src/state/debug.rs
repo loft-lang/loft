@@ -656,7 +656,13 @@ impl State {
             {
                 VariableValue::OutOfFrame
             } else {
-                self.read_variable_value(&typedef, abs_pos, size_bytes, is_arg)
+                self.read_variable_value(
+                    &typedef,
+                    abs_pos,
+                    size_bytes,
+                    is_arg,
+                    vars.linked_narrow_slot(v_nr),
+                )
             };
             out.push(FrameVariable {
                 var_nr: v_nr,
@@ -687,8 +693,25 @@ impl State {
         abs_pos: u32,
         _size: u16,
         is_arg: bool,
+        narrow: Option<crate::data::NarrowSlot>,
     ) -> VariableValue {
         match tp {
+            // @PLN167 decision 1 — a LINKED narrow local holds its type's FIELD encoding, so
+            // both integer arms below would report the stored CODE: `stack_trace()` reached
+            // this from ordinary loft code with no debugger attached and reported `127` for an
+            // `i8` holding `-1`.  Checked before the width arms because the encoding, not the
+            // declared width, decides how many bytes carry the value.
+            Type::Integer(_) if narrow.is_some() => {
+                let slot = narrow.expect("checked by the guard");
+                let bits = match slot.width {
+                    1 => self.peek_at::<u8>(abs_pos).map(u32::from),
+                    2 => self.peek_at::<u16>(abs_pos).map(u32::from),
+                    _ => self.peek_at::<u32>(abs_pos),
+                };
+                bits.map_or(VariableValue::Unreadable("oob"), |b| {
+                    VariableValue::Long(crate::narrow::decode(slot.code(), slot.min, b))
+                })
+            }
             // Post-2c round 10c: wide Type::Integer (former Type::Long) is i64.
             Type::Integer(s) if s.is_wide() => self
                 .peek_at::<i64>(abs_pos)

@@ -3397,6 +3397,27 @@ impl State {
         ))
     }
 
+    /// The decode a LINKED narrow local's slot needs, for a reader or writer that has the
+    /// local's NAME (@PLN167 decision 1).  `None` for every other local, which keeps its
+    /// full-width slot.
+    ///
+    /// Beside [`Self::frame_slot`] rather than folded into its tuple, because that tuple is
+    /// read at a dozen sites and only the scalar ones can act on this; a widened tuple would
+    /// make every caller carry a fact it does not use.
+    fn frame_narrow(
+        &self,
+        name: &str,
+        data: &crate::data::Data,
+    ) -> Option<crate::data::NarrowSlot> {
+        let frame = self.call_stack.last()?;
+        if frame.d_nr == u32::MAX {
+            return None;
+        }
+        let vars = &data.def(frame.d_nr).variables;
+        let i = (0..vars.count()).find(|&i| vars.name(i) == name)?;
+        vars.linked_narrow_slot(i)
+    }
+
     /// @PLN14 arc D — the live frame's slot for local `name`, as a [`DbRef`]
     /// addressing it inside the stack store, plus its declared type and whether it
     /// is an argument.  `None` when there is no current frame or no such local.
@@ -4057,6 +4078,13 @@ impl State {
         if !matches!(tp, crate::data::Type::Integer(_)) {
             return false;
         }
+        // A LINKED narrow local holds its type's FIELD encoding, so a wide write would be
+        // read back through the decode as a different number: setting `-5` on an `i8`
+        // resumed the run with `123`.
+        if let Some(slot) = self.frame_narrow(name, data) {
+            self.write_narrow_slot(rec, at, slot, value);
+            return true;
+        }
         *self
             .database
             .store_mut(&self.stack_cur)
@@ -4129,10 +4157,15 @@ impl State {
                 let Ok(v) = lit.parse::<i64>() else {
                     return false;
                 };
-                *self
-                    .database
-                    .store_mut(&self.stack_cur)
-                    .addr_mut::<i64>(rec, at) = v;
+                // The encoding half of the same edit — see `set_frame_value`.
+                if let Some(slot) = self.frame_narrow(name, data) {
+                    self.write_narrow_slot(rec, at, slot, v);
+                } else {
+                    *self
+                        .database
+                        .store_mut(&self.stack_cur)
+                        .addr_mut::<i64>(rec, at) = v;
+                }
             }
             Type::Float => {
                 let Ok(v) = lit.parse::<f64>() else {
@@ -4491,9 +4524,24 @@ impl State {
 
     /// @PLN16 M3 — render a scalar region's raw bytes as a value, for a watchpoint's
     /// `old → new` report.  Dispatched by the primitive type number.
-    fn render_scalar_bytes(bytes: &[u8], content: u16) -> String {
+    fn render_scalar_bytes(
+        bytes: &[u8],
+        content: u16,
+        narrow: Option<crate::data::NarrowSlot>,
+    ) -> String {
         let b4 = |b: &[u8]| <[u8; 4]>::try_from(&b[..4]).unwrap_or([0; 4]);
         let b8 = |b: &[u8]| <[u8; 8]>::try_from(&b[..8]).unwrap_or([0; 8]);
+        // A LINKED narrow local's slot holds its field encoding, and the region is that
+        // encoding's width — so the value is the decode of those bytes, not an `i64` read.
+        if let Some(slot) = narrow {
+            let bits = match slot.width {
+                1 if !bytes.is_empty() => u32::from(bytes[0]),
+                2 if bytes.len() >= 2 => u32::from(u16::from_le_bytes([bytes[0], bytes[1]])),
+                4 if bytes.len() >= 4 => u32::from_le_bytes(b4(bytes)),
+                _ => return "?".to_string(),
+            };
+            return crate::narrow::decode(slot.code(), slot.min, bits).to_string();
+        }
         match content {
             0 if bytes.len() >= 8 => i64::from_le_bytes(b8(bytes)).to_string(),
             2 if bytes.len() >= 4 => format!("{}f", f32::from_le_bytes(b4(bytes))),
@@ -4521,6 +4569,7 @@ impl State {
         u32,
         u16,
         Option<crate::debugger::StackWatchFrame>,
+        Option<crate::data::NarrowSlot>,
     )> {
         let (store_nr, rec, off, content) = if let Some(open) = expr.find('[') {
             let base = expr[..open].trim();
@@ -4544,7 +4593,12 @@ impl State {
             // isn't a stable target across frame exit, so it carries a `StackWatchFrame`.
             let (rec, at, tp, _is_arg) = self.frame_slot(expr.trim(), data)?;
             let content = Self::scalar_content(&tp)?;
-            let len = Self::scalar_len(content)?;
+            // A LINKED narrow local's slot is its field encoding, so the region is the
+            // encoding's WIDTH — snapshotting the full eight bytes would both render the
+            // stored code and fire on the neighbouring bytes.
+            let narrow = self.frame_narrow(expr.trim(), data);
+            let len =
+                narrow.map_or_else(|| Self::scalar_len(content), |s| Some(u32::from(s.width)))?;
             let frame = self.call_stack.last()?;
             let watch_frame = crate::debugger::StackWatchFrame {
                 d_nr: frame.d_nr,
@@ -4558,10 +4612,13 @@ impl State {
                 len,
                 content,
                 Some(watch_frame),
+                narrow,
             ));
         };
         let len = Self::scalar_len(content)?;
-        Some((store_nr, rec, off, len, content, None))
+        // A heap region is a FIELD, whose own op already decodes it — only a stack slot
+        // carries the encoding raw.
+        Some((store_nr, rec, off, len, content, None, None))
     }
 
     /// The scalar primitive type number (the `Watchpoint.content` / `ShowDb` code) for a
@@ -4583,7 +4640,8 @@ impl State {
     /// pauses when a later write changes it.  Returns `false` for an unwatchable
     /// expression (a bare local, a non-scalar / null / out-of-range target).
     pub fn add_watchpoint(&mut self, expr: &str, data: &crate::data::Data) -> bool {
-        let Some((store_nr, rec, off, len, content, frame)) = self.resolve_watch_region(expr, data)
+        let Some((store_nr, rec, off, len, content, frame, narrow)) =
+            self.resolve_watch_region(expr, data)
         else {
             return false;
         };
@@ -4597,6 +4655,7 @@ impl State {
             content,
             last,
             frame,
+            narrow,
         };
         self.enable_debug();
         if let Some(d) = self.debug.as_deref_mut() {
@@ -4626,9 +4685,9 @@ impl State {
         }
         let count = self.debug.as_deref().map_or(0, |d| d.watchpoints.len());
         for i in 0..count {
-            let (store_nr, rec, off, len, content) = {
+            let (store_nr, rec, off, len, content, narrow) = {
                 let w = &self.debug.as_deref()?.watchpoints[i];
-                (w.store_nr, w.rec, w.off, w.len, w.content)
+                (w.store_nr, w.rec, w.off, w.len, w.content, w.narrow)
             };
             if store_nr as usize >= self.database.allocations.len()
                 || self.database.allocations[store_nr as usize].free
@@ -4640,8 +4699,8 @@ impl State {
             if *old != *cur {
                 let hit = crate::debugger::WatchHit {
                     label: self.debug.as_deref()?.watchpoints[i].label.clone(),
-                    old: Self::render_scalar_bytes(&old, content),
-                    new: Self::render_scalar_bytes(&cur, content),
+                    old: Self::render_scalar_bytes(&old, content, narrow),
+                    new: Self::render_scalar_bytes(&cur, content, narrow),
                 };
                 self.debug.as_deref_mut()?.watchpoints[i].last = cur;
                 return Some(hit);
@@ -5114,12 +5173,15 @@ impl State {
             if e.state == LocalState::OutOfScope {
                 continue;
             }
-            let rendered = match e.state.marker() {
-                Some(m) => {
-                    unheld.push(e.name.clone());
-                    m
-                }
-                None => self.render_frame_local(frame_base, e.slot, &e.tp, e.is_argument, data),
+            let rendered = if let Some(m) = e.state.marker() {
+                unheld.push(e.name.clone());
+                m
+            } else {
+                // The decode a LINKED narrow local's slot needs (@PLN167 decision 1).
+                // `FrameEntry` carries the variable number precisely so a reader can ask
+                // this; nothing else in the frame view can.
+                let narrow = data.def(d_nr).variables.linked_narrow_slot(e.var_nr);
+                self.render_frame_local(frame_base, e.slot, &e.tp, e.is_argument, data, narrow)
             };
             locals.push((e.name, rendered));
         }
@@ -5140,6 +5202,37 @@ impl State {
     /// (struct / vector / struct-enum) via [`show_loft`](crate::database::Stores),
     /// and a simple enum via its discriminant byte — the same dispatch the REPL's
     /// value-snapshot uses, but reading a frame slot instead of the stack top.
+    /// The low `width` bytes of a frame slot, as the encoded value `crate::narrow` decodes.
+    ///
+    /// One home for the width→read, so the renderer and the absence test cannot disagree
+    /// about how many bytes a kind occupies (`Store::read` is width-typed, and a `u8` read
+    /// of a two-byte kind would answer the low half of a code).
+    fn narrow_bits(store: &crate::store::Store, rec: u32, at: u32, width: u8) -> u32 {
+        match width {
+            1 => u32::from(store.read::<u8>(rec, at)),
+            2 => u32::from(store.read::<u16>(rec, at)),
+            _ => store.read::<u32>(rec, at),
+        }
+    }
+
+    /// Write `value` into a linked narrow local's slot in its own encoding — the write twin
+    /// of [`Self::read_narrow_slot`], so an edit and the read that follows it cannot disagree
+    /// about the bytes.
+    fn write_narrow_slot(&mut self, rec: u32, at: u32, slot: crate::data::NarrowSlot, value: i64) {
+        let bits = crate::narrow::encode(slot.code(), slot.min, value);
+        let store = self.database.store_mut(&self.stack_cur);
+        match slot.width {
+            1 => *store.addr_mut::<u8>(rec, at) = bits as u8,
+            2 => *store.addr_mut::<u16>(rec, at) = bits as u16,
+            _ => *store.addr_mut::<u32>(rec, at) = bits,
+        }
+    }
+
+    /// [`Self::narrow_bits`] against this frame's own store.
+    fn read_narrow_slot(&self, rec: u32, at: u32, width: u8) -> u32 {
+        Self::narrow_bits(self.database.store(&self.stack_cur), rec, at, width)
+    }
+
     fn render_frame_local(
         &self,
         frame_base: u32,
@@ -5147,6 +5240,7 @@ impl State {
         tp: &crate::data::Type,
         is_arg: bool,
         data: &crate::data::Data,
+        narrow: Option<crate::data::NarrowSlot>,
     ) -> String {
         use crate::data::Type;
         let rec = self.stack_cur.rec;
@@ -5154,11 +5248,25 @@ impl State {
         // Each scalar read takes a fresh `store` borrow (released at the end of the
         // arm) so the heap arms can re-borrow `self.database` for `show_loft`.
         match tp {
-            Type::Integer(_) => self
-                .database
-                .store(&self.stack_cur)
-                .read::<i64>(rec, at)
+            // @PLN167 decision 1 — a LINKED narrow local holds its type's FIELD encoding in
+            // the low bytes of its slot, so the wide read below would report the stored CODE:
+            // an `i8` holding `-1` rendered `127`, a `limit(1000, 1100)` holding `1050`
+            // rendered `50`, and a `u8?` holding null rendered `255`.  `u8` and `u16` were
+            // right by accident, their bias being zero — which is why a test written with
+            // either could not see this.
+            Type::Integer(_) => match narrow {
+                Some(slot) => crate::narrow::decode(
+                    slot.code(),
+                    slot.min,
+                    self.read_narrow_slot(rec, at, slot.width),
+                )
                 .to_string(),
+                None => self
+                    .database
+                    .store(&self.stack_cur)
+                    .read::<i64>(rec, at)
+                    .to_string(),
+            },
             // 255 is @PLN17's three-state-boolean null sentinel (C73); rendering it as
             // "null" is inert pre-merge (two-state writes only 0/1) and correct after.
             Type::Boolean => match self.database.store(&self.stack_cur).read::<u8>(rec, at) {
@@ -5260,10 +5368,12 @@ impl State {
             // `data::to_null` names and `set_default_value_nullable` writes — rather than
             // re-derived here, because a renderer that guesses one wrong reports a real
             // value as `null`, which is the one lie a debugger must not tell.  A frame
-            // LOCAL is a full-width slot whatever its declared narrow width, which is why
-            // the integer arm above reads `i64` and this may test `i64::MIN` for all of
-            // them.  `Boolean` needs no arm: its own renderer already answers `null` for
-            // the 255 tri-state byte.
+            // LOCAL is a full-width slot EXCEPT where a `&` names it: @PLN167 decision 1
+            // gives a linked narrow local its type's field encoding in the slot's low
+            // bytes, so both the integer arm above and the absence test below take the
+            // decode when one is handed in, and the wide read only when it is not.
+            // `Boolean` needs no arm: its own renderer already answers `null` for the 255
+            // tri-state byte.
             //
             // Everything else DELEGATES: a heap handle's zero already reads as null
             // through `show_loft_bounded`, and a `text` renders its empty handle.  That
@@ -5273,7 +5383,16 @@ impl State {
                 let absent = {
                     let store = self.database.store(&self.stack_cur);
                     match inner.base() {
-                        Type::Integer(_) => store.read::<i64>(rec, at) == i64::MIN,
+                        // A linked narrow local spells absence as its KIND's code — 255
+                        // for a nullable byte, 0 for a nullable short — never `i64::MIN`,
+                        // so the wide test answered "a value" for every absent one.
+                        Type::Integer(_) => match narrow {
+                            Some(slot) => {
+                                let bits = Self::narrow_bits(store, rec, at, slot.width);
+                                crate::narrow::decode(slot.code(), slot.min, bits) == i64::MIN
+                            }
+                            None => store.read::<i64>(rec, at) == i64::MIN,
+                        },
                         Type::Float => store.read::<f64>(rec, at).is_nan(),
                         Type::Single => store.read::<f32>(rec, at).is_nan(),
                         Type::Character => store.read::<u32>(rec, at) == 0,
@@ -5298,7 +5417,8 @@ impl State {
                 if absent {
                     return "null".to_string();
                 }
-                let rendered = self.render_frame_local(frame_base, off, inner, is_arg, data);
+                let rendered =
+                    self.render_frame_local(frame_base, off, inner, is_arg, data, narrow);
                 // A null `text` is the `STRING_NULL` sentinel — a single NUL byte — and the
                 // Text arm renders it as a literal that LOOKS like a one-character string
                 // (`" "` on a terminal).  That is worse than printing the type: it claims a
