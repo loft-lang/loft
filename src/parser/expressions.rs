@@ -3746,7 +3746,11 @@ use a separate collection or add after the loop"
             let text_place_ref = if stack_src.is_none()
                 && heap_ref.is_none()
                 && matches!(
-                    if let Type::RefVar(inner) = &s_type { inner.base() } else { s_type.base() },
+                    if let Type::RefVar(inner) = &s_type {
+                        inner.base()
+                    } else {
+                        s_type.base()
+                    },
                     Type::Text(_)
                 )
                 && self.is_text_place(code)

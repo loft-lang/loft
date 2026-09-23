@@ -61,7 +61,11 @@ impl Output<'_> {
             && self.data.def(*d).name() == "OpVarRef"
             && let [arg] = args.as_slice()
             && let Value::Var(v) = arg.unspan()
-            && self.data.def(self.def_nr).variables().is_store_text_link(*v)
+            && self
+                .data
+                .def(self.def_nr)
+                .variables()
+                .is_store_text_link(*v)
         {
             Some(*v)
         } else {

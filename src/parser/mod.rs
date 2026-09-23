@@ -19264,8 +19264,16 @@ impl Parser {
                     "`{name}` links a {}, so it cannot also link a {} — a text field or element \
                      and a text variable are different places to a link. Use a second link \
                      for the other one",
-                    if prev { "text field or element" } else { "text variable" },
-                    if store { "text field or element" } else { "text variable" }
+                    if prev {
+                        "text field or element"
+                    } else {
+                        "text variable"
+                    },
+                    if store {
+                        "text field or element"
+                    } else {
+                        "text variable"
+                    }
                 );
             }
             _ => {}
