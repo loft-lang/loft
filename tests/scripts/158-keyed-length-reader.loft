@@ -12,11 +12,11 @@
 // `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
 // @falsified-by: tests/falsified/158-keyed-length-reader.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
 //   CHANNEL: the VALUE channel, native only — the patch admits `OpClearVector` beside the
-//   length readers, so k8's loop holds its header across the clear and walks the stale
-//   length; the first assertion to see it is k8's.
-//   WITNESS: under the patch native prints `k … 18 72 7` where this file says `k … 18 14 7`
-//   — 14 + (20 + 4) + (30 + 4), the cleared vector read three times — and exits 1 at
-//   `assert(r8 == 14, "k8")`.
+//   length readers, so k8's loop holds its header across the clear and reads the cleared
+//   vector's old elements through it; the first assertion to see it is k8's.
+//   WITNESS: under the patch native prints `k … 18 72 7` where this file says `k … 18 22 7`
+//   — 14 + (20 + 4) + (30 + 4) through the stale header, where the cleared vector's `v[i]?`
+//   is 0 — and exits 1 at `assert(r8 == 22, "k8")`.
 //   HOLDS: the interpreter is exact on both trees, k1–k7 are exact on both, and leak, panic
 //   and free-refusal are clean on both — only native's k8 moves.
 struct Eh { k: integer }
@@ -88,7 +88,8 @@ fn k7(r: const Rv) -> integer {
   acc
 }
 
-// k8 — the loop clears the vector it reads: i=0 adds 10+4, the clear ends the loop → 14.
+// k8 — the loop clears the vector it reads.  The range end is taken once (`(I-For)`), so
+// three passes run: 10+4, then the cleared vector's `v[1]?` and `v[2]?` are 0 → 14+4+4 = 22.
 fn k8(v: vector<integer>, hb: const Hb) -> integer {
   acc = 0;
   for i in 0..len(v) { acc += v[i]? + len(hb.h); if i == 0 { v.clear(); } }
@@ -118,6 +119,6 @@ fn main() {
   assert(r5 == 78, "k5");
   assert(r6 == 5050, "k6");
   assert(r7 == 18, "k7");
-  assert(r8 == 14, "k8");
+  assert(r8 == 22, "k8");
   assert(len(hb.h) == 7, "k5 grew the caller's hash");
 }

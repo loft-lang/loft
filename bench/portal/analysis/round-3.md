@@ -65,7 +65,7 @@ borrow of the allocations and `OpSizeStruct` answers its constant, so `(R-Base)`
 `tests/scripts/158-keyed-length-reader.loft` k1–k8 (exact on both backends under
 `LOFT_HOIST_VERIFY`, `LOFT_POISON`, `LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`),
 falsified by `OpClearVector` admitted beside them (`tests/falsified/158-keyed-length-reader.patch`
-— k8 clears the vector it reads and must stop at 14), pin in `tests/hoisted_length.rs`.
+— k8 clears the vector it reads and must read 22: it takes its range end once, `(I-For)`, and the cleared vector answers 0), pin in `tests/hoisted_length.rs`.
 Before, all eight loops declined; after, k1–k4 and k7 hold their header, k6's push loop
 takes its window, and k5 (the hash grows) and k8 (the clear) still decline.  The
 store-read clause's a7 flips with it: its `last` now borrows.  No bench row spells the

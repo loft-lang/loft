@@ -1,8 +1,8 @@
---- b/src/generation/hoist.rs	2026-09-23 07:59:48.185040851 +0200
-+++ a/src/generation/hoist.rs	2026-09-23 07:59:48.211799779 +0200
-@@ -3257,7 +3257,9 @@
-     let mut active: HashSet<u32> = HashSet::new();
-     for v in temps.iter().chain(locals.iter()).copied().collect::<Vec<_>>() {
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -3297,7 +3297,9 @@
+         .collect::<Vec<_>>()
+     {
          let scope = mention_scope(body, v);
 -        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
 +        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active)
