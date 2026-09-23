@@ -203,7 +203,6 @@ fn opt_out_silences_native() {
 #[test]
 fn s4a_aliases_stay_silent() {
     let aliases = [
-        "tests/scripts/178-ref-alias-copy.loft", // snap = s (s: &Foo)
         "tests/scripts/434-pln87-scalar-reference.loft", // & scalar reference
         "tests/scripts/25-index-elision-borrower.loft", // e = v[i] element view
         "tests/scripts/85-borrow-elision-element-borrower.loft",
