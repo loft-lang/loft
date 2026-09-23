@@ -117,6 +117,27 @@ fn fits() -> text {
 
 fn no_spare_code() -> text { "{plain_i8(500)} {plain_u8(500)}" }
 
+// A CLOSURE is a frame boundary too, and the only one whose local is reached through a box.
+//
+// `157-range-arith`'s c7 already overflows a captured `u8` and asserts `0` — but `u8`'s
+// default IS zero, and so is what a truncation gives, so that cell cannot tell the two
+// apart.  `Hi` can: its default is 1000 and a truncated read is not.  That is the whole
+// reason this exists, and it is why the `u8` row stays beside it rather than being replaced
+// — the pair is the discrimination.
+//
+// Found by `matrix_axes.py`, whose `A10 closure capture … reaches none` said this file's
+// lambda captures nothing.
+fn run(f: fn(integer), k: integer) { f(k); }
+fn captures() -> text {
+  a: Hi = 1050;   f = fn(d: integer) { a += 5000; }; run(f, 0);
+  b: Spare8 = 1;  g = fn(d: integer) { b += 500;  }; run(g, 0);
+  c: u8 = 250;    h = fn(d: integer) { c += 10;   }; run(h, 0);
+  // and read BACK through the capture after the overflow, not just from the outer frame
+  d: Hi = 1050;   seen = "";
+  i = fn(z: integer) { d += 5000; seen = "{d}"; }; run(i, 0);
+  "{a} {b} {c} {d} {seen}"
+}
+
 fn main() {
   assert(crossings() == "0 0 0 0 0 0 0 0",
          "a narrow type's default is the same at every frame boundary: {crossings()}");
@@ -132,5 +153,7 @@ fn main() {
          "an unfitting value handed INTO a call is the default there too");
   assert(no_spare_code() == "0 0",
          "a type that fills its width answers the same default: {no_spare_code()}");
+  assert(captures() == "1000 0 0 1000 1000",
+         "a captured local takes the same default, read from either frame: {captures()}");
   println("a narrow type's default is the same at every frame boundary");
 }
