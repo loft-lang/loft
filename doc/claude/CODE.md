@@ -70,6 +70,12 @@ correctly on the same file.
   limit(0,255)?` have a spare code outside their range and give up nothing.
   `IntegerSpec::usable_min` / `usable_max` is the one home that answers which spec spends
   what.
+- **A spare code is not a null (C127).** A DECLARED range that leaves codes unused inside its
+  width — `limit(-100, 100) size(1)`, 201 values in 256 — has no null in its non-nullable
+  form: a value that does not fit takes the type's DEFAULT, like one whose range fills the
+  width. Only the plain `integer` and `i32` TEMPLATES keep a sentinel, because theirs lies
+  outside the range they report. `IntegerSpec::non_null_reads_null` is the one home for that
+  split, read by the stored value and by `redundant-null-negation` alike.
 - **The reservation is a property of the TYPE**, so it holds wherever a value is KEPT — local,
   field, element, parameter, return alike (`formal/types.md` `@FR-N-Reserve`). An expression
   in FLIGHT is not a slot and spends nothing: `e as u8?` yields `255` and `(e as u8?) ?? d`

@@ -101,7 +101,7 @@ Routed by the lightest workflow that holds each item, not swept into one plan.
 | | item | home |
 |---|---|---|
 | **O1** | `D-op-5` — two spellings of a following null-check still report differently. The last null-specific open deviation; `types.md` is at OPEN: 0. | [formal/operational.md](formal/operational.md) |
-| ~~**O2**~~ **DONE** | Is `u32` a third case? No — deliberate, and now stated once instead of derived. Its spare code sits at the TOP, where no non-null read tests for it, so an overflow answers `0` like the other four; `IntegerSpec::non_null_reads_null` is the one home that says so, and `@PLN152` step 5 fuses `u32` with the four on that answer rather than on a variant list. | [formal/types.md](formal/types.md) |
+| ~~**O2**~~ **DONE** | Is `u32` a third case? No — deliberate, and now stated once instead of derived. Its spare code sits at the TOP, where no non-null read tests for it, so an overflow answers `0` like the other four; `IntegerSpec::non_null_reads_null` is the one home that says so, and `@PLN152` step 5 fuses `u32` with the four on that answer rather than on a variant list. C127 widened the same answer to every DECLARED range, spare code or not, so the predicate is now the whole split rather than one case in it. | [formal/types.md](formal/types.md) |
 | **O3** | No capacity control for `sorted`/`index`/`spatial`/`trie` — item 5 of the census, and the refusal message claims they have *"no capacity to set"* while their arena grows 7/3 and holds 43 % slack. | [STDLIB.md](STDLIB.md) § `reserve` |
 
 ### The one plan-sized item

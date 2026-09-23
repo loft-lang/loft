@@ -214,6 +214,18 @@ pub struct ArmMismatch {
 #[allow(clippy::struct_excessive_bools)]
 pub struct Parser {
     pub todo_files: Vec<(String, u16)>,
+    /// loft#1621 — the last `limit(…)` refused one of its bounds.  The declaration then
+    /// recovers as plain `integer`, and a `size(…)` checked against that recovery would name
+    /// a missing `limit(…)` over a line that wrote one — so the size check stands down and the
+    /// bound's own refusal is the message.
+    ///
+    /// ⚠ Reset in `parse_typedef`, per DECLARATION, and NOT in `parse_type_limit`.  That
+    /// function is reached only for the literal type name `integer`, so resetting there leaves
+    /// the flag standing for a following alias declaration that never calls it: `type Neg =
+    /// integer limit(-100, -1) size(1); type S = i32 size(1);` measured the second one SILENT,
+    /// where it reports its own error alone.  Pinned by
+    /// `parse_errors::a_refused_limit_does_not_silence_the_next_declaration`.
+    limit_refused: bool,
     /// @PLN11 arc E — set by the driver (`main.rs`) only when the whole-program
     /// startup cache is enabled; gates [`Parser::parsed_sources`] tracking so a
     /// normal (non-cache) run pays nothing.
@@ -444,16 +456,6 @@ pub struct Parser {
     /// Set at the compound-assignment seam, promoted by [`Self::parse_block_inner`] when the
     /// pushed statement really carries the `OpRangeDefault` guard, and dropped at the next
     /// statement boundary — so nothing survives past the pair the author wrote.
-    /// loft#1638 — the `limit(…)` just parsed was REFUSED (a bound the spec cannot carry),
-    /// so the declaration recovered as the plain `integer` its message recommends.
-    ///
-    /// Read by [`Parser::check_declared_size`], whose `is_signed32_template()` branch means
-    /// *"the author wrote no `limit`"* and is a PROXY for that: after a refusal the spec
-    /// reads exactly like a plain `integer`, and the size check then told an author who HAD
-    /// written a limit that *"a plain `integer` has more"* values — a message about a
-    /// declaration they did not make, and the only one they saw, because the real refusal is
-    /// pass-2 and a pass-1 error aborts before pass 2 runs.
-    pub(crate) limit_refused: bool,
     pub(crate) fit_candidate: Option<crate::parser::fit::FitFusion>,
     /// The promoted [`Self::fit_candidate`], live across exactly the following statement.
     pub(crate) fit_armed: Option<crate::parser::fit::FitFusion>,

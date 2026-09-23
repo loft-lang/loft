@@ -5027,7 +5027,7 @@ fn a_generic_literal_reports_where_its_twin_does() {
         .error("Cannot assign text to field Box<integer>.w of type integer at a_generic_literal_reports_where_its_twin_does:4:21");
 }
 
-/// loft#1638 — a REFUSED `limit(…)` must not be re-reported by `size(n)` as a MISSING one.
+/// loft#1621 — a REFUSED `limit(…)` must not be re-reported by `size(n)` as a MISSING one.
 ///
 /// A bound the spec cannot carry is refused and the declaration RECOVERS as the plain
 /// `integer` its message recommends. `Parser::check_declared_size` then read that recovered
@@ -5042,7 +5042,9 @@ fn a_generic_literal_reports_where_its_twin_does() {
 /// error is gone. A `.loft` `@EXPECT_ERROR` cannot pin this — it asserts presence, the fix is
 /// an absence, and both refusal messages are already pinned by cells in
 /// `102-expected-errors.loft` that carry no `size`, so an annotation there would match those
-/// and assert nothing.
+/// and assert nothing.  (loft#1621 also carries a sized-alias cell in that file, where the
+/// channel is the whole file's error COUNT: before the fix the pass-1 size error aborted the
+/// parse and every other annotation in it went unmatched.  Two channels, one fact.)
 #[test]
 fn refused_limit_with_size_reports_the_refusal_and_not_the_size() {
     code!("type Narrow1638 = integer limit(-1100, -900) size(2);\nfn test() { x: Narrow1638 = -1000; print(\"{x}\"); }")
@@ -5068,7 +5070,7 @@ fn unrepresentable_limit_with_size_reports_the_bound_and_not_the_size() {
         );
 }
 
-/// The CONTROL, and the reason the branch removed above is not removable: a `size(n)` with no
+/// The CONTROL, and the reason the branch guarded above is not removable: a `size(n)` with no
 /// `limit(…)` at all still reports exactly that message. A fix that silenced the size check
 /// whenever the spec read as a plain `integer` would pass both tests above and lose this one.
 #[test]
@@ -5079,4 +5081,34 @@ fn size_with_no_limit_still_names_the_missing_limit() {
          type holds with `limit(lo, hi)`, or drop the `size(…)` at \
          size_with_no_limit_still_names_the_missing_limit:1:35",
         );
+}
+
+/// The second control, and the reason the flag is reset in `parse_typedef` rather than in
+/// `parse_type_limit`: a refusal must not silence the NEXT declaration.
+///
+/// `parse_type_limit` is reached only for the literal type name `integer`, so a reset there
+/// never runs for an ALIAS declaration — and the flag, still standing from the refusal above,
+/// suppresses its size check. Measured: `type S = i32 size(1)` reports
+/// *"`size(1)` holds 256 values and a plain `integer` has more"* on its own and reported
+/// NOTHING after a refused declaration. Written as a `code!` cell rather than a `.loft` one
+/// because the fact is an error that must still appear, and the file it would live in aborts
+/// on the first pass-1 error — which is the refusal.
+///
+/// Only the SECOND declaration's error is asserted, and that is the whole cell: this source
+/// reports exactly one diagnostic, because the size check is pass-1 and its error aborts
+/// before pass 2 ever reaches the refusal.  The refusal's own message is pinned by
+/// `refused_limit_with_size_reports_the_refusal_and_not_the_size` above, where nothing
+/// follows it to abort first.
+#[test]
+fn a_refused_limit_does_not_silence_the_next_declaration() {
+    code!(
+        "type Narrow1621a = integer limit(-100, -1) size(1);\n\
+         type Narrow1621b = i32 size(1);\n\
+         fn test() { print(\"x\"); }"
+    )
+    .error(
+        "`size(1)` holds 256 values and a plain `integer` has more — say which values this \
+         type holds with `limit(lo, hi)`, or drop the `size(…)` at \
+         a_refused_limit_does_not_silence_the_next_declaration:2:31",
+    );
 }

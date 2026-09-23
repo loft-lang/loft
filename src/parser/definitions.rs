@@ -1071,6 +1071,7 @@ impl Parser {
         } else {
             self.data.def_nr(&type_name)
         };
+        self.limit_refused = false;
         if self.lexer.has_token("=") {
             if let Some(tp) = self.parse_type_full(d_nr, false) {
                 if self.first_pass && !conflict && d_nr != u32::MAX {
@@ -1086,7 +1087,7 @@ impl Parser {
             // `LexItem::Integer` left `size(9999999999)` unconsumed and the reader got
             // `Expect token )` — a punctuation error about a width they wrote deliberately.
             let width = self.lexer.has_long();
-            if self.first_pass && d_nr != u32::MAX {
+            if self.first_pass && d_nr != u32::MAX && !self.limit_refused {
                 self.check_declared_size(d_nr, width);
             }
             // Only 1/2/4/8 are storage widths.  A non-integer type keeps the old silence —
@@ -4155,13 +4156,6 @@ impl Parser {
         if spec.range_fits_width(width as u8, nullable) {
             return;
         }
-        // loft#1638 — a REFUSED `limit(…)` leaves a spec that reads exactly like a plain
-        // `integer`, so the branch below would report the author's declaration as one they did
-        // not write.  The refusal is the cause and it is reported on pass 2; saying nothing
-        // here is what lets it be the error they see, because a pass-1 error aborts the run.
-        if self.limit_refused {
-            return;
-        }
         let codes = 1i64 << (8 * width);
         if spec.is_signed32_template() {
             // No `limit(…)` at all, so the range is the whole `integer` and no narrow width
@@ -4198,7 +4192,6 @@ impl Parser {
     /// check for itself, so an unrepresentable one is a compile error naming the
     /// representable edge and the type that does hold the value.
     pub(crate) fn parse_type_limit(&mut self, min: &mut i32, max: &mut u32) -> bool {
-        self.limit_refused = false;
         if self.lexer.has_keyword("limit") {
             self.lexer.token("(");
             // A bound the type cannot carry is refused, and the declaration then RECOVERS as
@@ -4252,6 +4245,7 @@ impl Parser {
                          it plain `integer`"
                     );
                 }
+                self.limit_refused = true;
                 // Consume the digits so the `)` below still lines up and the file's other
                 // errors are reported rather than buried under a cascade.
                 let _ = self
@@ -4259,7 +4253,6 @@ impl Parser {
                     .has_integer()
                     .or_else(|| self.lexer.has_long().and_then(|n| u32::try_from(n).ok()));
                 self.lexer.token(")");
-                self.limit_refused = true;
                 return false;
             }
             // C54.A incremental 2a — accept both Integer and Long literals.
@@ -4285,7 +4278,7 @@ impl Parser {
                 }
             }
             self.lexer.token(")");
-            self.limit_refused = refused;
+            self.limit_refused |= refused;
             !refused
         } else {
             false
