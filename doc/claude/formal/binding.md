@@ -12,9 +12,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > τ-lvalue); the `&` belongs to the **variable's type**, fixed at its binding — it is
 > not something the expression grammar applies per use. The @PLN87 ladder (built in the
 > `loft2` worktree, branch `tuxedo-work2`) **realises this model** and landed via PR#436
-> (merged into this branch); D-bind-7, its last residual, was fixed that cycle. **D-bind: 0
-> open** — `B-Ref-Reshape` (2026-08-05) declines a container disturbance under a live `&`, and
-> all three of its disturbances are enforced. This doc's SECOND axis,
+> (merged into this branch); D-bind-7, its last residual, was fixed that cycle. The open count
+> is the one § Deviations states — `B-Ref-Reshape` (2026-08-05) declines a container disturbance
+> under a live `&`, and all three of its disturbances are enforced. This doc's SECOND axis,
 > `const` (@PLN40, shipped), completes the binding table alongside `&`/copy/view — its
 > deviation list is now **closed (D-const: 0 open)**; D-const-1 (enum-variant enforcement
 > scope) was fixed via @PLN102 K1 (see § Deviations), unrelated to the `&`-ladder.
@@ -395,7 +395,26 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 3.**
+
+* **D-bind-51** *(opened 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD read through a link.
+  `y = e` with `e = &z` (and `y = p` with `p: &P` a parameter) binds `y` with a borrow dep on the
+  link, so `y` VIEWS the record and `y.n = 9` writes `z` — where a whole-value bind copies and a
+  plain local source (`y = z`) does.  Both backends agree.  The `&`-parameter peel's borrow is
+  deliberate (loft#772: without it `w` became an owner of the shared store), so the fix decides
+  where a whole read of a borrowed base stands between `(B-Copy)` and `(B-View-Base)`.  Found
+  while closing D-bind-50, whose scalar, text and nullable cells copy.
+* **D-bind-50** *(opened 2026-09-23, CLOSED 2026-09-23)* — `(B-Copy)` with `(C-Ref)` for a plain
+  bind from a LOCAL link.  `y = e` with `e = &z` kept the link's `&τ` type into the bind, so `y`
+  became a second link: `z = 9` afterwards read 9 through `y`, and `y = 4` wrote `z`, on both
+  backends; the annotated `y: integer = e` was refused as "cannot change type from integer to
+  &integer"; and a record there panicked the interpreter's allocator and emitted Rust that did not
+  compile.  **Where (measured).**  `parse_assign_op_inner` peels a bare link read to its value
+  type, but asked only of a `&` PARAMETER — its comment took every other `RefVar` source for an
+  explicit `&` bind, which by then has already been lowered to `OpCreateStack` / `OpVarRef` and is
+  no bare `Var`.  **Closed** by peeling a local link's read the same way.  Guard
+  `tests/scripts/a-plain-bind-from-a-link-copies-the-value-it-reads.loft`.  Found while fixing
+  loft#1614.
 
 * **D-bind-50** *(opened 2026-09-22, CLOSED 2026-09-22; loft#1612)* — `(B-Copy)` for the
   destination of a `??` CHAIN of three or more operands.  A plain bind copies a heap whole

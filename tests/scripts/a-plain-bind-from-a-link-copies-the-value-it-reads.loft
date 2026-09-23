@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A plain bind from a link, `y = e` with `e = &z`, COPIES the value the link reads: `(C-Ref)`
+// reads a `&τ` as its `τ`, and `(B-Copy)` makes the bind of that value independent — the `&` that
+// would make `y` a second link is not written.  `y: τ = e` is the same bind annotated.  Only the
+// `&` makes a link (`y = &e`, `(B-Ref-Repoint)`), and that spelling is pinned beside this one in
+// `a-link-re-pointed-to-another-link-takes-what-that-link-names.loft`.
+//
+// A bare read of a LOCAL link kept its link type into the bind, so `y = e` built a second link:
+// `z = 9` afterwards read 9 through `y`, and `y = 4` wrote `z`.  The annotated spelling was
+// refused as "cannot change type from integer to &integer".  A `&` PARAMETER read was already
+// peeled to its value (`w = p` copies), so the two sources answered differently.
+//
+// Axes this file MOVES:  the pointee kind (integer, a narrow `u8` widened into `integer`,
+//                        text, nullable integer, nullable text), the spelling (inferred,
+//                        annotated, and a rebind of an existing local), the direction of the
+//                        later write (through the source, through the copy), and the source
+//                        (a local link, a `&` parameter).
+// Axes it HOLDS FIXED:   the pointee is not a RECORD or a COLLECTION.  A vector link is a plain
+//                        vector local and copies on its own path.  A record read through a
+//                        link VIEWS its source, for a local link and a `&` parameter alike,
+//                        where `(B-Copy)` says a whole-value bind copies; that is its own
+//                        question, loft#1631 (`binding.md` D-bind-51).
+//
+// @falsified-at: 333ccd7e5 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-plain-bind-from-a-link-copies-the-value-it-reads.patch — interpret exit 1 -> 0, native exit 1 -> 0
+
+fn int_inferred() -> text { z = 3; e = &z; y = e; z = 9; "{y},{e}" }
+fn int_write_copy() -> text { z = 3; e = &z; y = e; y += 4; "{y},{z}" }
+fn int_annotated() -> text { z = 3; e = &z; y: integer = e; z = 9; "{y},{e}" }
+fn int_rebind() -> text { z = 3; e = &z; y: integer = 1; t = y; y = e; z = 9; "{t},{y},{e}" }
+fn narrow_widened() -> text { z: u8 = 3; e = &z; y: integer = e; z = 200; "{y},{e}" }
+fn text_inferred() -> text { z = "a"; e = &z; y = e; z = "q"; "{y},{e}" }
+fn text_write_copy() -> text { z = "a"; e = &z; y = e; y += "b"; "{y},{z}" }
+fn nullable_inferred() -> text { z: integer? = 3; e = &z; y = e; z = null; "{y},{e}" }
+fn nullable_null() -> text { z: integer? = null; e = &z; y = e; z = 5; "{y},{e}" }
+fn nullable_text() -> text { z: text? = "a"; e = &z; y = e; z = null; "{y},{e}" }
+fn from_param(p: &integer) -> integer { y = p; p = 5; y }
+
+fn main() {
+  assert(int_inferred() == "3,9", "a plain bind copies: {int_inferred()}");
+  assert(int_write_copy() == "7,3", "a write to the copy leaves the source: {int_write_copy()}");
+  assert(int_annotated() == "3,9", "the annotated bind copies: {int_annotated()}");
+  assert(int_rebind() == "1,3,9", "a rebind from a link copies: {int_rebind()}");
+  assert(narrow_widened() == "3,200", "a narrow link widens into the copy: {narrow_widened()}");
+  assert(text_inferred() == "a,q", "a text bind copies: {text_inferred()}");
+  assert(text_write_copy() == "ab,a", "an append to the copy leaves the source: {text_write_copy()}");
+  assert(nullable_inferred() == "3,null", "a nullable bind copies: {nullable_inferred()}");
+  assert(nullable_null() == "null,5", "a null copy stays null: {nullable_null()}");
+  assert(nullable_text() == "a,null", "a nullable text bind copies: {nullable_text()}");
+  q = 3;
+  r = from_param(q);
+  assert(r == 3 && q == 5, "a `&` parameter read copies too: {r},{q}");
+}

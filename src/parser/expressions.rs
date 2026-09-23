@@ -4512,9 +4512,12 @@ use a separate collection or add after the loop"
         // appended into nothing), an ICE, or a SIGSEGV depending on what the body did
         // with it next (loft#772's sibling).
         //
-        // Only a bare read of a `&` PARAMETER peels.  An explicit `&`-binding (`d = &c`,
-        // @PLN87 L1/L2) runs the other way — the source is an ordinary local and the `&`
-        // is what MAKES the reference — so it keeps `RefVar` and stays a live link.
+        // A bare read of a LOCAL link peels too, to the bare value: `y = e` with `e = &z`
+        // copies what the link reads (@FR-B-Copy through @FR-C-Ref), where keeping `&τ` made
+        // `y` a second link (`binding.md` D-bind-50).  A record there still views through the
+        // pointee's own deps — D-bind-51, loft#1631.  An explicit `&`-binding (`d = &c`,
+        // `d = &b`) never reaches this match as a bare `Var`: it is lowered above to
+        // `OpCreateStack` / `OpVarRef`, which is what keeps it a live link.
         let s_type = match (&s_type, code.unspan()) {
             (Type::RefVar(inner), Value::Var(src))
                 if self.vars.is_argument(*src)
@@ -4522,6 +4525,11 @@ use a separate collection or add after the loop"
                     && !matches!(to.unspan(), Value::Var(d) if self.vars.is_argument(*d)) =>
             {
                 inner.depending(*src)
+            }
+            (Type::RefVar(inner), Value::Var(src))
+                if matches!(self.vars.tp(*src), Type::RefVar(_)) =>
+            {
+                (**inner).clone()
             }
             _ => s_type,
         };
