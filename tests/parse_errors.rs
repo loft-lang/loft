@@ -5026,3 +5026,57 @@ fn a_generic_literal_reports_where_its_twin_does() {
     code!("struct Box<T> { v: T, w: integer }\nfn test() {\n  b = Box { v: 1,\n            w: \"x\" };\n  assert(b.v == 1, \"\");\n}")
         .error("Cannot assign text to field Box<integer>.w of type integer at a_generic_literal_reports_where_its_twin_does:4:21");
 }
+
+/// loft#1638 — a REFUSED `limit(…)` must not be re-reported by `size(n)` as a MISSING one.
+///
+/// A bound the spec cannot carry is refused and the declaration RECOVERS as the plain
+/// `integer` its message recommends. `Parser::check_declared_size` then read that recovered
+/// spec, matched `is_signed32_template()` — a PROXY for *"the author wrote no `limit`"*, which
+/// cannot tell a recovery from a declaration — and reported the size against the whole
+/// `integer` range. That check runs on PASS 1 and a pass-1 error aborts before pass 2, so the
+/// wrong message was the ONLY one the author saw: *"`size(2)` holds 65536 values and a plain
+/// `integer` has more"*, about a declaration whose 201-value limit fits `size(2)` many times.
+///
+/// The channel is the harness's own intolerance, not the assertion: `code!` fails on any
+/// diagnostic a test does not assert, so asserting the refusal ALONE is what says the size
+/// error is gone. A `.loft` `@EXPECT_ERROR` cannot pin this — it asserts presence, the fix is
+/// an absence, and both refusal messages are already pinned by cells in
+/// `102-expected-errors.loft` that carry no `size`, so an annotation there would match those
+/// and assert nothing.
+#[test]
+fn refused_limit_with_size_reports_the_refusal_and_not_the_size() {
+    code!("type Narrow1638 = integer limit(-1100, -900) size(2);\nfn test() { x: Narrow1638 = -1000; print(\"{x}\"); }")
+        .error(
+            "`limit(...)`'s upper bound cannot be negative, so a range lying entirely below \
+             zero cannot be declared; widen it to zero (`limit(-1100, 0)`) and check the upper \
+             edge in code, or declare it plain `integer` at \
+             refused_limit_with_size_reports_the_refusal_and_not_the_size:1:44",
+        );
+}
+
+/// The other refusal reaching the same recovery: an upper bound past what `IntegerSpec` can
+/// carry. It reported the SIZE before and names the bound now — the second shape is what says
+/// the fix is at the recovery rather than at one message.
+#[test]
+fn unrepresentable_limit_with_size_reports_the_bound_and_not_the_size() {
+    code!("type Narrow1638b = integer limit(0, 5000000000) size(4);\nfn test() { x: Narrow1638b = 5; print(\"{x}\"); }")
+        .error(
+            "upper bound 5000000000 is outside the range `limit(...)` can carry (up to \
+             4294967295); declare it plain `integer`, which holds the full 64-bit range, and \
+             check the bound in code at \
+             unrepresentable_limit_with_size_reports_the_bound_and_not_the_size:1:48",
+        );
+}
+
+/// The CONTROL, and the reason the branch removed above is not removable: a `size(n)` with no
+/// `limit(…)` at all still reports exactly that message. A fix that silenced the size check
+/// whenever the spec read as a plain `integer` would pass both tests above and lose this one.
+#[test]
+fn size_with_no_limit_still_names_the_missing_limit() {
+    code!("type Narrow1638c = integer size(1);\nfn test() { x: Narrow1638c = 5; print(\"{x}\"); }")
+        .error(
+            "`size(1)` holds 256 values and a plain `integer` has more — say which values this \
+         type holds with `limit(lo, hi)`, or drop the `size(…)` at \
+         size_with_no_limit_still_names_the_missing_limit:1:35",
+        );
+}

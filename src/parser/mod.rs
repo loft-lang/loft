@@ -444,6 +444,16 @@ pub struct Parser {
     /// Set at the compound-assignment seam, promoted by [`Self::parse_block_inner`] when the
     /// pushed statement really carries the `OpRangeDefault` guard, and dropped at the next
     /// statement boundary — so nothing survives past the pair the author wrote.
+    /// loft#1638 — the `limit(…)` just parsed was REFUSED (a bound the spec cannot carry),
+    /// so the declaration recovered as the plain `integer` its message recommends.
+    ///
+    /// Read by [`Parser::check_declared_size`], whose `is_signed32_template()` branch means
+    /// *"the author wrote no `limit`"* and is a PROXY for that: after a refusal the spec
+    /// reads exactly like a plain `integer`, and the size check then told an author who HAD
+    /// written a limit that *"a plain `integer` has more"* values — a message about a
+    /// declaration they did not make, and the only one they saw, because the real refusal is
+    /// pass-2 and a pass-1 error aborts before pass 2 runs.
+    pub(crate) limit_refused: bool,
     pub(crate) fit_candidate: Option<crate::parser::fit::FitFusion>,
     /// The promoted [`Self::fit_candidate`], live across exactly the following statement.
     pub(crate) fit_armed: Option<crate::parser::fit::FitFusion>,
@@ -1519,6 +1529,7 @@ impl Parser {
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
             stmt_if_pending: false,
+            limit_refused: false,
             fit_candidate: None,
             fit_armed: None,
             fit_in_condition: false,

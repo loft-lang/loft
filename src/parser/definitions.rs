@@ -3423,9 +3423,9 @@ impl Parser {
             // of it; here the parser simply never looked, so an inline `size(1)` drew three
             // errors about the punctuation after it (`Expect token )`, `Tuple types require at
             // least 2 elements`, `Expect token }`) and named neither the modifier nor its home.
-            // Refusing it by name is also what `NarrowSlot::of_slot`'s spare-code assertion
-            // rests on: the rule is what makes a spare-code type reachable only through an
-            // alias, and an inline spelling that parsed would walk into that assert.
+            // (It once also propped up a `NarrowSlot::of_slot` assertion about spare-code
+            // types reaching only through an alias; C127 retired both the mechanism and the
+            // assertion, and the rule stands on its own.)
             // PEEKED, never consumed: `parse_typedef` is the site that legitimately reads
             // `size`, and taking the token here made the stdlib's own `type i32 = integer
             // size(4)` stop parsing.  `on_d` is what tells the two apart — inside a `type`
@@ -4155,6 +4155,13 @@ impl Parser {
         if spec.range_fits_width(width as u8, nullable) {
             return;
         }
+        // loft#1638 — a REFUSED `limit(…)` leaves a spec that reads exactly like a plain
+        // `integer`, so the branch below would report the author's declaration as one they did
+        // not write.  The refusal is the cause and it is reported on pass 2; saying nothing
+        // here is what lets it be the error they see, because a pass-1 error aborts the run.
+        if self.limit_refused {
+            return;
+        }
         let codes = 1i64 << (8 * width);
         if spec.is_signed32_template() {
             // No `limit(…)` at all, so the range is the whole `integer` and no narrow width
@@ -4191,6 +4198,7 @@ impl Parser {
     /// check for itself, so an unrepresentable one is a compile error naming the
     /// representable edge and the type that does hold the value.
     pub(crate) fn parse_type_limit(&mut self, min: &mut i32, max: &mut u32) -> bool {
+        self.limit_refused = false;
         if self.lexer.has_keyword("limit") {
             self.lexer.token("(");
             // A bound the type cannot carry is refused, and the declaration then RECOVERS as
@@ -4251,6 +4259,7 @@ impl Parser {
                     .has_integer()
                     .or_else(|| self.lexer.has_long().and_then(|n| u32::try_from(n).ok()));
                 self.lexer.token(")");
+                self.limit_refused = true;
                 return false;
             }
             // C54.A incremental 2a — accept both Integer and Long literals.
@@ -4276,6 +4285,7 @@ impl Parser {
                 }
             }
             self.lexer.token(")");
+            self.limit_refused = refused;
             !refused
         } else {
             false
