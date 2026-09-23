@@ -48,6 +48,14 @@ pair `⟨code, env⟩`: the lambda body plus a captured environment (the outer v
              does not bind.  The two forms are equivalent modulo type-annotation ergonomics.
   (L-FnRef)  a bare function name f (in a value position / fn-typed context) is a fn-ref value —
              a closure with an empty environment.
+  (L-FnAbsent)  a fn-ref read where nothing is — an element of a `vector<fn(…)>` out of range —
+             is the ABSENT function.  A function type has no null (types.md `(N-Opt)`), so the
+             absence is not a value a program can test: `f != null` and `f ?? g` are both
+             refused, alike.  Calling the absent function is a fault in the sense of C80: the
+             call answers its return type's null (nothing for `void`) and the program goes on.
+             Its arguments are evaluated first, exactly as for a call that dispatches.  To fall
+             back to another function, check the index, or keep the function in a struct field
+             and discharge the struct (`(acts[k] ?? fallback).f(x)`).
 ```
 
 **In words.** Both `fn(y) -> integer { y + x }` and `|y| { y + x }` build a closure that
@@ -212,10 +220,23 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+**OPEN: 0** — `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
 CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
 2026-09-23; `D-clo-27` closed 2026-09-12).
 
+- **D-clo-40** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1642)* — `(L-FnAbsent)`, and C66: a
+  production program never aborts on a user-attributable edge.  Calling a `vector<fn(…)>`
+  element read out of range panicked the interpreter (`fn_call_ref: d_nr=… is negative`) and hit
+  `unreachable!` on `--native`, with or without `??`.  And the two ways to ask about the absence
+  disagreed: `g != null` was refused while `fs[9] ?? double` was accepted, then panicked on the
+  interpreter and did not compile on `--native` (the null test emitted as `if <fn-ref tuple>`,
+  the fallback as a bare `i64`).  Owner ruling 2026-09-23: a function type stays NON-nullable
+  (`(N-Opt)` unchanged) — `??` on a fn-ref is refused like `!= null`, and a call through the
+  absent function answers its return type's null.  The interpreter tests the fn-ref's `d_nr`
+  after the arguments and, when absent, drops them and pushes the typed null
+  (`generate_call_ref`); `--native`'s dispatch `match` answers the same null in its catch-all
+  arm.  `LOFT_NO_ABSENT_FNREF=1` removes the interpreter's test.  Guard:
+  `tests/scripts/1642-calling-an-absent-function-answers-null.loft`.
 - **D-clo-39** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1636)* — `(L-CapScalar)` for a closure KEPT from one
   loop pass.  The closure record local (`___clos_N`) is minted once per frame, and each pass
   rebuilds it IN PLACE.  So a fn-ref kept from an earlier pass in a local declared outside the

@@ -3733,12 +3733,7 @@ use a separate collection or add after the loop"
                 let name = self.vars.name(src).to_string();
                 self.ref_linked_tuple_locals.insert((self.context, name));
             }
-            // A narrow integer store place is refused at the `&` itself on the second pass; the
-            // first pass must not link it either, or the two passes type the local differently.
-            let heap_ref = if stack_src.is_none()
-                && is_scalar(&s_type)
-                && !Self::is_narrow_store_place(&s_type, code)
-            {
+            let heap_ref = if stack_src.is_none() && is_scalar(&s_type) {
                 self.scalar_place_ref(code)
             } else {
                 None
@@ -8040,13 +8035,36 @@ use a separate collection or add after the loop"
                 Some(code.unspan().clone())
             }
             Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
+                // The FIELD operand, which every `OpGet*` place read carries second.  A NARROW
+                // read carries a third as well — the `min` its encoding is biased by
+                // (`OpGetByte(v1, fld, min)`) — and that one is decoding information, not part
+                // of the address, so every arm below reads `gargs[1]` and ignores the arity
+                // (loft#1567).  Written as one test rather than a narrow-only arm beside the
+                // two-argument one, because the address question is the same at every width and
+                // two arms would have to agree about it forever.
+                let fld_zero = matches!(gargs.get(1).map(Value::unspan), Some(Value::Int(0)));
                 if gargs.first().is_some_and(|a| {
                     matches!(a.unspan(), Value::Call(d, _)
                         if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
                 }) {
-                    Some(gargs[0].clone())
-                } else if let [base, fld] = gargs.as_slice() {
-                    Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))
+                    // A read THROUGH an element accessor.  The element is the place only when
+                    // the field operand is zero, where the element's base address and the
+                    // field's ARE the same address — which is what lets `vector<integer>`'s
+                    // `&v[0]` and a struct element's `&v[0].f` share one IR shape.  At any
+                    // other offset the field has to be named, and dropping it wrote a
+                    // DIFFERENT field of the right element: with `E { a: u8, b: u8, c: integer }`
+                    // (whose layout puts `c` at 0, `a` at 8, `b` at 9) `&v[0].a` and `&v[0].b`
+                    // both wrote `c`, on both backends, and `&v[0].c` was right by accident
+                    // because its offset is zero.  Found by loft3-ca (D-bind-53) on the wide
+                    // spelling; the narrow spelling reached it only once loft#1567 stopped
+                    // refusing a narrow store place, so the lift is what made it reachable.
+                    if fld_zero {
+                        Some(gargs[0].clone())
+                    } else {
+                        Some(self.cl("OpGetField", &[gargs[0].clone(), gargs[1].clone()]))
+                    }
+                } else if gargs.len() >= 2 {
+                    Some(self.cl("OpGetField", &[gargs[0].clone(), gargs[1].clone()]))
                 } else {
                     None
                 }

@@ -415,7 +415,11 @@ impl Parser {
     /// Check whether `val` is a call to a user-defined function that returns a struct
     /// via a temporary store.  Used by `copy_ref` and the vector-append
     /// emit path (`vectors.rs`) to decide whether to free the source
-    /// store after the deep copy.  The free bit's behaviour differs
+    /// store after the deep copy.  A callee that can hand back an ARGUMENT's record
+    /// (`fn same(w: S) -> S { w }`, `returns_borrowed_view`) does not answer a store of
+    /// its own, so the bit is never set for it: its call binds a private copy in the
+    /// scope pass's lift, which that lift's own scope exit releases once (loft#1647).
+    /// The free bit's behaviour differs
     /// under WASM but the query is the same on every target — call
     /// sites in expressions.rs / objects.rs / vectors.rs / collections.rs
     /// are not feature-gated, so this helper must not be either.
@@ -429,6 +433,7 @@ impl Parser {
                 // User function with code (not a built-in op)
                 def.name().starts_with("n_")
                     && *def.code() != Value::Null
+                    && !def.returns_borrowed_view()
                     && !self.answers_caller_buffer(*fn_nr, args)
             }
             // Struct constructor blocks allocate a store too — when assigned
@@ -1269,14 +1274,25 @@ impl Parser {
                              parameter type); do not use `&` in an argument or sub-expression"
                         );
                         self.amp_pending = false;
-                    } else if Self::is_narrow_store_place(&t, code) {
+                    } else if let Some((want, got)) = self.amp_annotation_mismatch(var_tp, &t) {
+                        // loft#1639 — `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so
+                        // the link's type comes from the TARGET; `(C-Ref)` converts `τ ↔ &τ` at
+                        // ONE τ and has no conversion for a different one.  Unenforced, the link
+                        // read and wrote the target's slot at the ANNOTATION's width and bias and
+                        // handed the stored code back as a value: `pb: &u16 = &(b: i8 = -1)` read
+                        // `127`, the raw byte, and `pf = 5` through it left `f == -123`.
+                        // `--native` did not compile at all (`*mut u16 = addr_of_mut!(var_a)`).
+                        //
+                        // `u8` was the one shape that read correctly, because its bias is zero and
+                        // its encoding is the identity — the covered spelling is the one that
+                        // cannot fail, which is why this survived.
                         diagnostic!(
                             self.lexer,
                             Level::Error,
-                            "`&` cannot link to an integer element or field that is stored in fewer \
-                             than 8 bytes, because a link reads and writes a whole integer. Copy it \
-                             into a local and write it back (`x = v[i]; ...; v[i] = x`), or declare \
-                             the element or field as `integer`"
+                            "a `&` link takes its target's type, so the annotation `&{want}` cannot \
+                             re-type a link to a `{got}` — they are different ranges, and the link \
+                             would read the stored bytes at the wrong width. Drop the annotation \
+                             (`p = &x` takes the target's type), or write `&{got}`"
                         );
                         self.amp_pending = false;
                     } else if !Self::is_amp_place(code, &self.data) {
@@ -2689,6 +2705,7 @@ impl Parser {
             && !matches!(ctp, Type::Optional(_))
             && !narrowing_fallback
             && !Self::is_existing_tuple(&self.data, ctp)
+            && !matches!(ctp.base(), Type::Function(..))
             && !self.call_declares_nullable(code)
         {
             diagnostic!(
@@ -2766,6 +2783,20 @@ impl Parser {
                 "`??` has nothing to discharge — `{}` is a tuple that EXISTS, and only a tuple \
                  read out of range is absent.  Discharge the member you mean (`t.0 ?? d`)",
                 ctp.source_name(&self.data)
+            );
+        }
+        // `@FR-N-Opt` — a FUNCTION type has no null, so `??` has nothing to test on one, exactly
+        // as `f != null` has nothing to compare.  Refused so the two spellings agree; an
+        // absent fn-ref (an element read out of range) is callable and answers its return
+        // type's null (`@FR-L-FnAbsent`).  Reported and then allowed to proceed, for the
+        // reason the tuple refusal above gives.
+        if !self.first_pass && matches!(ctp.base(), Type::Function(..)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`??` has nothing to test — a function value has no null.  To fall back to \
+                 another function, check the index (`if i < len(fs) {{ fs[i] }} else {{ d }}`), \
+                 or keep the function in a struct field and discharge the struct (`(acts[k] ?? fallback).f(x)`)"
             );
         }
         *ctp = match &*ctp {

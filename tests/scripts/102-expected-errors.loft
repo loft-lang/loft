@@ -528,6 +528,16 @@ fn limit_with_an_upper_bound_below_the_window() {
 // @EXPECT_ERROR: holds no value: the lower bound is above the upper one
 type PeInvertedRange = integer limit(10, 3) size(1);
 
+// loft#1642, `@FR-L-FnAbsent` — a function type has no null, so `??` has nothing to test on a
+// fn-ref, exactly as `f != null` has nothing to compare; the two spellings agree.
+// @EXPECT_ERROR: `??` has nothing to test — a function value has no null
+fn pe_double(v: integer) -> integer { v * 2 }
+fn coalesce_on_a_function() {
+  fs: vector<fn(integer) -> integer> = [pe_double];
+  g = fs[9] ?? pe_double;
+  _ = g(4);
+}
+
 // @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/48 -> 54/48
 //   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
 //   FAIL/48 -> 54/48.
@@ -590,4 +600,42 @@ fn pe_tuple_member_out_of_range_wide() {
   w: (u16, u16) = (1, 2);
   w.0 = 999999;
   assert(w.0 == 0, "unreached");
+}
+
+// @falsified-at: 95dd0110a — interpret exit 1 -> 0, interpret expectations FAIL/54 -> 58/54, native exit 1 -> 0, native expectations FAIL/54 -> 58/54
+// @falsified-by: tests/falsified/102-expected-errors.patch — interpret exit 1 -> 0, interpret expectations FAIL/54 -> 58/54, native exit 1 -> 0, native expectations FAIL/54 -> 58/54
+// HOLDS: this receipt is the whole FILE's, and the two cells below are the reason it moved —
+//   loft#1639's refusal and loft#1640's, both added today.  A per-cell receipt is not a thing
+//   this harness can produce; the companion floors carry their own
+//   (`1639-a-link-takes-its-targets-type-not-its-annotations`, INERT by design, and
+//   `1640-a-tuple-member-is-a-narrow-slot-like-any-other`, falsified with a patch).
+//
+// ── loft#1639 — a `&` annotation cannot re-type the link ──────────────────────────
+//
+// `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so an annotation naming a different
+// type is a mismatch `(C-Ref)` has no conversion for.  Unenforced, the link read and wrote the
+// target's slot at the ANNOTATION's width and bias.  What must still LINK is
+// `tests/scripts/1639-a-link-takes-its-targets-type-not-its-annotations.loft`.
+//
+// @EXPECT_ERROR: a `&` link takes its target's type
+fn pe_amp_annotation_wider_than_target() {
+  a: u8 = 7;
+  pa: &u16 = &a;
+  assert(pa == 7, "unreached");
+}
+
+// The other direction — an annotation NARROWER than its target — so the cell is not pinned to
+// one side of the width.
+//
+// It draws TWO errors for one mistake: the refusal, and then the ordinary narrowing check
+// seeing a `u16` target flow into a `&u8` binding.  The second is a true statement about the
+// same line rather than a wrong one, and it is pinned here rather than suppressed because a
+// cascade nobody has written down is how a message gets "fixed" by deleting the wrong one.
+// The wider direction above draws one error, which is why both directions are cells.
+// @EXPECT_ERROR: a `&` link takes its target's type
+// @EXPECT_ERROR: cannot implicitly narrow u16 to u8
+fn pe_amp_annotation_narrower_than_target() {
+  h: u16 = 65535;
+  ph: &u8 = &h;
+  assert(ph == 65535, "unreached");
 }

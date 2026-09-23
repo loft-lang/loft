@@ -6843,7 +6843,7 @@ mod p318_hash_deepcopy {
     /// entries.  The gap `(room, room*4/3]` is tiny for small rooms (e.g. (9,12],
     /// (17,22]), so a freed record easily lands in it.  This test forces the
     /// over-size deterministically — claim `big, gap=room+1, big` contiguously
-    /// then delete the middle, so `fl_take_ge(room)` returns the gap block — and
+    /// then delete the middle, so `claim_best_fit(room)` claims from the gap block — and
     /// asserts every key survives the deep copy.
     /// Positive control for the hash arm of `validate_claims` (the walk behind
     /// `store_verify`) — a green check is only evidence once the detector is

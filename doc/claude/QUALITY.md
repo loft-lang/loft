@@ -2780,9 +2780,22 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
-(2026-09-23, the JOIN of `tuxedo-pr1632-red`, `tuxedo-1562-layout-gate`, `tuxedo-165-generics`
-and `157-native-4x`, measured on the joined tree: **964 · 646 · 4 · 314**, opaque tests 1303,
-`--check-ratchet` re-pinned there.
+(2026-09-23, the SECOND join — `main` @ 6c188b612 (the #1644 merge) plus `tuxedo-165-generics`,
+`157-native-4x` and `tuxedo-1562-layout-gate`, with @PLN167 A3 on top — RE-MEASURED on the joined
+tree: **970 · 652 · 4 · 314**, opaque tests **1306**, `--write-ratchet` re-pinned there.  The
+opaque count holds at 314 while the population grew by six functions, so the ratio improved
+without the pin moving; the opaque TESTS rose 1303 → 1306, which is the three branches' own new
+sites and not a regression in anything already counted.
+
+⚠ Neither side's number was right for this join and neither was carried: this branch read 314 /
+1303 and `tuxedo-1562-layout-gate` read 318 / 1304, both measured on trees that did not contain
+the others.  The earlier note below is kept because it is a true record OF ITS TREE, not because
+it describes this one — a derived row means "measured on THIS tree", so it is re-derived per join
+rather than picked.
+
+(2026-09-23, the FIRST join of `tuxedo-pr1632-red`, `tuxedo-1562-layout-gate`,
+`tuxedo-165-generics` and `157-native-4x`, measured on that tree: **964 · 646 · 4 · 314**, opaque
+tests 1303, `--check-ratchet` re-pinned there.
 
 That figure is lower than every branch it was built from — `tuxedo-165-generics` 316 / 1306,
 `tuxedo-1562-layout-gate` 318 / 1304, an earlier join of the same four 317 / 1308 — because the
@@ -2806,6 +2819,13 @@ test now asks `type_def.base()` — a nullable heap local pre-inits exactly as i
 does — and the new link tests peel before they match `RefVar`.  The whole-record copy question
 moved into `Function::record_copy_source`, which peels; `generation::classify_set` is opaque
 again, as it was before the session, on its bare `vars.tp(v)` candidate test.)
+
+(2026-09-23, loft#1628 / loft#1629 / loft#1621 on `tuxedo-1562-layout-gate`, rebased onto
+`main` @ `6c79912b5` and RE-MEASURED there: **954 · 632 · 4 · 318**, opaque tests 1304, and
+`--check-ratchet` re-pinned DOWN from main's 320 · 1307.  The fall is loft#1629: the debugger's
+frame reader and writer now peel `τ?` to its scalar base, which is the arm `render_frame_local`
+already had.  The branch's own pre-rebase figure (943 · 621 · 4 · 318, 1306) described a tree
+without @PLN167 and was not carried.)
 
 (2026-09-22, @PLN165 E5–E7 on `tuxedo-165-generics`, rebased onto `main` @ ffb66a58b and
 re-measured there: **946 · 620 · 4 · 322**, and `--check-ratchet` re-pinned at opaque 322,

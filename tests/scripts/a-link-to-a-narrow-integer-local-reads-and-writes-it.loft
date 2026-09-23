@@ -4,12 +4,13 @@
 // A `&` link to a narrow integer LOCAL reads and writes it (`binding.md (B-Ref-Read)`,
 // `(B-Ref-Write)`), on both backends: a narrow local lives in an 8-byte frame slot, whatever range
 // its type declares, so a link that reads and writes a whole integer is right there.  The same
-// holds through a `&` parameter and for a tuple local with a narrow member.  These are the cases
-// the refusal of a link to a narrow STORE place must leave alone
-// (`a-link-to-a-narrow-integer-store-place-is-refused.loft`); a full-width element is the other
-// side of that line.
+// holds through a `&` parameter and for a tuple local with a narrow member.  A narrow STORE place
+// links too since loft#1567 (`1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`,
+// which replaced the refusal this file was once the exempt side of); what this file still pins is
+// the FRAME half — a narrow local is an 8-byte slot whatever its declared range, so it links for a
+// reason the store place does not share.
 //
-// @falsified-at: none — these links were already right before the refusal of a narrow store place (measured on b3b36cf2d, both backends); the guard pins what that refusal must leave alone
+// @falsified-at: none — these links were already right before the refusal of a narrow store place, and stayed right when loft#1567 lifted it (measured on b3b36cf2d and again on the lift, both backends); the guard pins the frame half, which neither change moved
 //
 // CHANNEL: the assertions — each linked local and the local declared after it.
 

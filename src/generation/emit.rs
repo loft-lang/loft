@@ -1207,7 +1207,6 @@ impl Output<'_> {
         args: &[Value],
     ) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
-        let var_name = sanitize(variables.name(v_nr));
         // The slot's PLACE: `self.var_<field>` for a generator's persistent fn-ref, which has
         // no local of its own — spelling the local named a Rust identifier no state declared
         // (loft#1587).  Outside a coroutine this is the bare local, as before.
@@ -1566,10 +1565,16 @@ impl Output<'_> {
             }
             write!(w, ",")?;
         }
-        write!(
-            w,
-            " _ => unreachable!(\"invalid fn-ref: {{}} in {var_name}\", {place}.0) }}"
-        )?;
+        // `@FR-L-FnAbsent` — no candidate matches an ABSENT fn-ref (an element read out of
+        // range), and the call answers the return type's null, as the interpreter's guard in
+        // `generate_call_ref` does; the program continues (C80).
+        write!(w, " _ => ")?;
+        match ret_type.base() {
+            Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
+            Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
+            _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
+        }
+        write!(w, " }}")?;
         if heap_return {
             // The match is the block's value; bind it so the store can be asked about, then
             // yield it unchanged.

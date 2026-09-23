@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` link takes its TARGET's type.  `(B-Ref-Intro)` says so in as many words — a
+// `&`-annotated binding gives the bound variable `&(typeof a)` — and `(C-Ref)` converts
+// `τ ↔ &τ` at ONE τ, so it has no conversion for an annotation naming a different one.
+//
+// Before loft#1639 the annotation won, and the link then read and WROTE the target's slot at
+// the annotation's width and bias, handing the stored code back as a value.  Measured on both
+// backends:
+//
+//   b: i8 = -1;      pb: &u16 = &b        read 127     `enc_byte(-1, -128)`, the raw byte
+//   d: Lim = 1050;   pd: &u8  = &d        read 50      the bias 1000 not applied
+//   h: u16 = 65535;  ph: &u8  = &h        read 255     truncated to one byte
+//   a: u8 = 7;       pa: &u16 = &a        read 7       <- the ONLY correct row
+//
+// and the writes corrupted the target: `pf: &u16` over an `i8 = -1`, `pf = 5` left `f == -123`;
+// `pg: &u8` over a `Lim = 1050`, `pg = 200` left `g == 1200`; `pi: &u8` over a `u16 = 65535`,
+// `pi = 200` left `i == 65480`, one byte written over two.  `--native` did not compile at all
+// (`*mut u16 = addr_of_mut!(var_a)`, rustc E0308 per link), so the two backends were wrong in
+// different ways.
+//
+// `u8` is the single shape that read correctly, and only because its bias is zero and its
+// encoding is the identity — the covered spelling is the one that cannot fail, which is why
+// this survived.  That is also why the cells below use `i8` and a `limit` alias: a matrix
+// written with the type a probe reaches for first proves nothing here.
+//
+// The REFUSAL cells are in `tests/scripts/102-expected-errors.loft`, since this file must
+// compile.  What is here is what must still LINK once the refusal exists, and the controls
+// that catch a cure reaching too far.
+//
+// @falsified-at: 95dd0110a — INERT on both backends, deliberately, and the reason is the
+//   shape of the defect rather than a weak cell: every behaviour loft#1639 changes is a
+//   REFUSAL, and a refusal cannot live in a file that must compile.  This file is the
+//   REGRESSION FLOOR — what must still link once the refusal exists — and it answered the
+//   same before the fix because those spellings were always correct.  The falsifiable channel
+//   is `tests/scripts/102-expected-errors.loft`, whose two `@EXPECT_ERROR` cells do not match
+//   on the control; its receipt carries this defect.
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends, and the
+//   assertions pass on both — which is the floor's whole claim.  Nothing here can move without
+//   the refusal changing, and the refusal's own movement is scored in `102-expected-errors`.
+//
+// CHANNEL: the assertions.
+
+type Lim = integer limit(1000, 1100);
+
+fn test_an_unannotated_link_takes_the_target_and_decodes_it() {
+  // The form the cure names, and the one every correct program already writes.
+  b: i8 = -1;      pb = &b;
+  d: Lim = 1050;   pd = &d;
+  h: u16 = 65535;  ph = &h;
+  assert(pb == -1, "an i8 link reads the value, not `enc_byte`'s 127: {pb}");
+  assert(pd == 1050, "a limit alias applies its bias: {pd}");
+  assert(ph == 65535, "a two-byte target is not truncated: {ph}");
+}
+
+fn test_a_matching_annotation_still_links() {
+  // The control against over-reach: an annotation that AGREES is not a mismatch.
+  a: u8 = 7;    pa: &u8 = &a;
+  b: i8 = -1;   pb: &i8 = &b;
+  assert(pa == 7, "an agreeing `&u8` links");
+  assert(pb == -1, "and an agreeing `&i8`");
+}
+
+fn test_a_write_through_the_link_reaches_the_target_at_its_own_width() {
+  f: i8 = -1;   pf = &f;   pf = 5;
+  g: Lim = 1050; pg = &g;  pg = 1090;
+  i: u16 = 65535; pi = &i; pi = 200;
+  assert(f == 5, "5 through an i8 link is 5, not -123: {f}");
+  assert(g == 1090, "1090 through a Lim link is 1090, not 2090: {g}");
+  assert(i == 200, "200 through a u16 link is 200, not 65480: {i}");
+}
+
+fn test_the_wide_integer_link_is_unmoved() {
+  // The control for the type that has no width question at all.
+  w: integer = 77;  pw: &integer = &w;
+  assert(pw == 77, "a wide link with a matching annotation");
+  pw = 78;
+  assert(w == 78, "and the write reaches it");
+}

@@ -323,6 +323,26 @@ conflict to either side to unblock, keep a list, and re-run every instrument onc
 end — `ir_walker_audit.py optional --write-ratchet`, `o_proxy_check.py`,
 `rule_tags.py check` — in one commit, so the baseline in the diff is the receipt.
 
+**`git show --cc` cannot audit a join, and reading it as if it could is how a reverted fix
+ships.**  A combined diff prints only the lines that differ from BOTH parents, so a conflict
+resolved by taking one side WHOLESALE — the most common resolution there is — appears nowhere
+in it.  The join at `b5c179e5e` had eleven conflicted files where `--cc` showed ten
+resolutions, five of them files `--cc` never mentioned, and three of its choices were the
+stale side: `main` already had `i64::from(i32::MAX)` in `IntegerSpec::i32` and the join put
+`as i64` back, reddening the next gate at clippy; `IntegerSpec::u32` was resolved to a THIRD
+form that was neither parent; and `index/target_surface.json` went back to listing
+`store_load_url` as unavailable in the browser, undoing a re-derivation on the same branch.
+
+The instrument is to recompute the merge: `git merge-tree --write-tree <p1> <p2>` names every
+conflicted file and writes a tree whose conflict markers show both sides, and each resolution
+is then checked against `git show <parent>:<file>`.  Two cheap readings make it quick — a file
+that IS in the `--cc` output was edited by hand and is a deliberate act, while a conflicted
+file that is NOT is the dangerous kind, chosen silently.  For a DERIVED artefact do not read
+either side at all: re-derive it, because it has no side to choose (`make surface-gen`, the two
+clippy variants, `make optional-ratchet`, `scripts/wasm_bundle_stamp.sh`).  Run the same
+recompute over the branch's OTHER merges while you are there — a merge with zero conflicts
+needs none of this, and knowing which merges those are is one command.
+
 **Build after EACH source, not once at the end.**  A join can hold a defect neither branch
 could see: one branch gives an enum a third variant and makes every reader dispose of it
 explicitly, the other adds a reader, and only the union fails to compile.  Neither

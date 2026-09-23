@@ -28,6 +28,78 @@ what they are, with what was learned.
 
 ## Built
 
+### A best-fit claim carves its node in place — `(H-Carve)`, 2026-09-23
+
+Profiled first (`perf` on a single-routine build of `hash_text_keys`): the store allocator
+was ~10 % of the row's self time and the free-tree walks alone (delete, insert, balance,
+rotations, color flips, the find) ~6.6 % — the ceiling for this lever; hashing is the row's
+bulk (SipHash 12 %, `hash::find` 11 %, `keys::hash` 9 %).  A claim that takes a tree block and
+splits it deleted the node and inserted the remainder.  Built as the heap rule `(H-Carve)`
+(`formal/heap.md`, beside `(H-Wilderness)`): when the block is at least twice the request the
+remainder takes the node's place — links, color, parent pointer — because the node is the
+smallest that fits, so every node before it is smaller than the request and a remainder of at
+least the request keeps its order.  One iterative descent finds the node and its parent
+(`Store::claim_best_fit`, replacing `fl_take_ge` + `fl_find_ge`).  Switch
+`LOFT_NO_CARVE_IN_PLACE`; the unit test `a_carve_in_place_takes_the_blocks_the_delete_and_insert_take`
+runs 24 seeded sequences of 600 claims, deletes and resizes on a carving and a non-carving store,
+with and without a wilderness, asserting the same positions, block chain, tree keys and a valid
+LLRB after every step, and more than 500 in-place carves; it fails on a carve that breaks the
+order (the chain diverges at seed 1 step 20) and on a dropped color bit.
+
+A/B on one binary, five interleaved rounds, pinned core, every hash unchanged:
+
+| row | on (ns/op) | off | |
+|---|---:|---:|---|
+| `hash_text_keys` | 561 835 | 610 855 | **−8.0 %** |
+| `grouped_fill_find` | 772 970 | 796 040 | **−2.9 %** |
+| every other row of lanes 14, 15, 16 | | | within ±1–3 % (noise) |
+
+### A collection's length is a read — the keyed readers, 2026-09-23
+
+`READ_ONLY_COLLECTION_OPS` named `OpLengthVector` and no other collection's count, so one
+`len(h)` of a hash, sorted, index, spatial or trie in a loop read as a store WRITER and
+declined every header the loop could hold, and a push loop's window with them.  Each of
+`OpLength{Sorted,Hash,Index,Spatial,Trie}` and `OpSize{Vector,Hash}` reads through a shared
+borrow of the allocations and `OpSizeStruct` answers its constant, so `(R-Base)`'s
+"store-free ops" already covered them; the list now says so.  Cells
+`tests/scripts/158-keyed-length-reader.loft` k1–k8 (exact on both backends under
+`LOFT_HOIST_VERIFY`, `LOFT_POISON`, `LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`),
+falsified by `OpClearVector` admitted beside them (`tests/falsified/158-keyed-length-reader.patch`
+— k8 clears the vector it reads and must read 22: it takes its range end once, `(I-For)`, and the cleared vector answers 0), pin in `tests/hoisted_length.rs`.
+Before, all eight loops declined; after, k1–k4 and k7 hold their header, k6's push loop
+takes its window, and k5 (the hash grows) and k8 (the clear) still decline.  The
+store-read clause's a7 flips with it: its `last` now borrows.  No bench row spells the
+shape, so it moves no portal figure; it removes a cliff a consumer's loop would have fallen
+off the moment it read a table's size.
+
+### A parameter's text borrowed — `(R-TextBorrow)`'s store-read clause, 2026-09-23
+
+Built as the store-read clause of `(R-TextBorrow)` (`formal/rewrites.md`), under the rule's
+own switch `LOFT_NO_TEXT_BORROW`, cells `tests/scripts/158-text-borrow-store.loft` a1–a7 /
+d1–d7 (identical on the interpreter and on native under `LOFT_HOIST_VERIFY`, `LOFT_POISON`,
+`LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`), pins `tests/text_borrow.rs`.  `w =
+words[i]?` over a `const vector<text>` parameter copied its text twice (the temp's
+`.to_string()`, the bind's `.clone()`) and a third time as a hash key, where the twin
+borrows `&str` throughout.  The borrow is sound while nothing in its scope can grow, free
+or rewrite a store the frame did not mint — read off the operands, since `(H-Alloc)` makes
+a frame-minted store distinct from every parameter's.  Hand-priced first, then built:
+
+| row | before | after | |
+|---|---:|---:|---|
+| `word_count` (ns/op) | 58.5 | **44.4** | −24 % (the temp alone −14 %) |
+| `hash_text_keys` (µs) | 657 | **603** | −8 % |
+
+Hashes unchanged.  Falsified by the store condition dropped
+(`tests/falsified/158-text-borrow-store.patch`, scored by `falsify.sh --patch`): native d1
+reads `world:2` for `helloworld:2` and d4 two stale bytes for `up`.  d3 — a sibling field of
+the source's record grown — reads right under the patch too, because that growth happens
+not to move `names`'s buffer; it guards the admission through the pins, not the value.
+Two lessons: a type test on a parameter or a block result wants `.base()` like every other
+site here (four of the clause's tests were spelled bare, and `ir_walker_audit.py optional`'s
+ratchet caught the last one); and `OpLengthHash`, with the other keyed `OpLength*` ops, is
+missing from `READ_ONLY_COLLECTION_OPS`, so a `len(h)` in a loop declines every hoist in it
+(cell a7 spells the shape) — built next, below.
+
 ### The record push window under a branch — `(R-PushFill)`'s record clause, 2026-09-22
 
 Built as the record clause of `(R-PushFill)` (`formal/rewrites.md`, the in-words paragraph

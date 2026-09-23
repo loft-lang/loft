@@ -276,8 +276,8 @@ fn the_store_census_drops() {
     // 2026-09-23 with `@FR-B-Scope` (loft#1600): r26 and r28 now bind their local before the
     // block (a read after the block that first binds it is refused), r26 is cheaper for it
     // (10 → 6 on the interpreter, measured against the build before the rule on the same
-    // text); r28's author-written null costs 3 mints over the compiler's pre-init it replaces,
-    // its rebind taking no pool pairing — loft#1643, fixed before this arc's PR.
+    // text).  r28's author-written null takes the pool pairing the compiler's pre-init took
+    // (loft#1643: 3 mints fewer on each backend, back to the one it had).
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -290,7 +290,7 @@ fn the_store_census_drops() {
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),
-        (197, 303, 173, 269),
+        (194, 303, 170, 269),
         "mints (interpret on, off, native on, off)"
     );
 }

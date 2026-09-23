@@ -65,6 +65,14 @@ fn wilderness_enabled() -> bool {
     static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     *FLAG.get_or_init(|| !std::env::var("LOFT_NO_WILDERNESS").is_ok_and(|v| v != "0"))
 }
+/// `LOFT_NO_CARVE_IN_PLACE=1` makes every best-fit claim delete the node it takes and insert
+/// the remainder again, as before `@FR-H-Carve`; the bisect step for a store-layout fault or a
+/// claim that hands out a live block.  Read once; each store copies it at construction, so a
+/// unit test can build one of each in a process.
+fn carve_enabled() -> bool {
+    static FLAG: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *FLAG.get_or_init(|| !std::env::var("LOFT_NO_CARVE_IN_PLACE").is_ok_and(|v| v != "0"))
+}
 /// Byte offset of a record's PAYLOAD — past the 8-byte size header at word 0.
 ///
 /// A field's `position` in a struct type is an offset from HERE, so any `DbRef`
@@ -375,7 +383,7 @@ pub struct Store {
     /// @PLN164 (`@FR-H-Wilderness`) — the WILDERNESS: the free block that ends at the store's
     /// end, held here instead of in the tree (0 = none, or a tail too small to track).  The
     /// tree's three entry points divert it — `fl_insert` of a block ending at `size` lands
-    /// here, `fl_remove` of it clears this, and `fl_take_ge` weighs it against the best tree
+    /// here, `fl_remove` of it clears this, and `claim_best_fit` weighs it against the best tree
     /// fit by the tree's own `(size, position)` order — so every caller keeps its code and the
     /// block chosen, and with it the layout, is the one the tree would have chosen.  What it
     /// saves is the delete, split-insert and rebalance of the one node most claims and many
@@ -383,6 +391,9 @@ pub struct Store {
     wild: u32,
     /// Whether this store keeps a wilderness (`LOFT_NO_WILDERNESS`), read at construction.
     wilderness: bool,
+    /// Whether a best-fit claim whose remainder is at least the request carves the taken
+    /// node IN PLACE (`@FR-H-Carve`, `LOFT_NO_CARVE_IN_PLACE`), read at construction.
+    carve: bool,
     /// P6: set by `delete` whenever a free block is produced; cleared by
     /// `coalesce_free`.  `claim` runs the lazy coalescing sweep only when
     /// this is set (something was freed since the last sweep), so an
@@ -903,6 +914,7 @@ impl Store {
             free_root: 0,
             wild: 0,
             wilderness: wilderness_enabled(),
+            carve: carve_enabled(),
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -1022,6 +1034,7 @@ impl Store {
             free_root: 0,
             wild: 0,
             wilderness: wilderness_enabled(),
+            carve: carve_enabled(),
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -1108,6 +1121,7 @@ impl Store {
             free_root: 0,
             wild: 0,
             wilderness: wilderness_enabled(),
+            carve: carve_enabled(),
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -1209,6 +1223,7 @@ impl Store {
             free_root: 0,
             wild: 0,
             wilderness: wilderness_enabled(),
+            carve: carve_enabled(),
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -1245,7 +1260,7 @@ impl Store {
         // Indicate the complete store as empty
         self.set_free_header(1, self.size as i32 - 1);
         // Reset the LLRB free-space tree and claims to match the fresh store layout.
-        // Without this, a re-used store's stale tree would cause fl_take_ge to allocate
+        // Without this, a re-used store's stale tree would cause claim_best_fit to allocate
         // from old split blocks at positions other than 1, breaking the rec=1 invariant
         // relied upon by database-level code.
         self.free_root = 0;
@@ -1351,9 +1366,8 @@ impl Store {
             self.fl_validate();
             return self.finish_claim(pos);
         }
-        // Fast path: find the smallest tracked free block that fits.
-        if let Some(pos) = self.fl_take_ge(size as i32) {
-            let result = self.claim_block(pos, size);
+        // Fast path: claim from the smallest tracked free block that fits.
+        if let Some(result) = self.claim_best_fit(size) {
             #[cfg(debug_assertions)]
             self.fl_validate();
             return self.finish_claim(result);
@@ -1366,8 +1380,7 @@ impl Store {
         // by `needs_coalesce` so an alloc-only workload never sweeps.
         if self.needs_coalesce {
             self.coalesce_free();
-            if let Some(pos) = self.fl_take_ge(size as i32) {
-                let result = self.claim_block(pos, size);
+            if let Some(result) = self.claim_best_fit(size) {
                 #[cfg(debug_assertions)]
                 self.fl_validate();
                 // This coalesce path reuses a freed block too — zero its payload like the other
@@ -1510,7 +1523,7 @@ impl Store {
             #[cfg(debug_assertions)]
             self.validate(0);
         }
-        // The walk may stop on the wilderness only when `fl_take_ge` declined it, which it does
+        // The walk may stop on the wilderness only when `claim_best_fit` declined it, which it does
         // not for a block that fits; claimed here, it must not stay the wilderness.
         if pos == self.wild {
             self.wild = 0;
@@ -2327,6 +2340,7 @@ impl Store {
             free_root: 0, // workers never claim/delete; no free tree needed
             wild: 0,
             wilderness: self.wilderness,
+            carve: self.carve,
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -2379,6 +2393,7 @@ impl Store {
             free_root: self.free_root,
             wild: self.wild,
             wilderness: self.wilderness,
+            carve: self.carve,
             needs_coalesce: self.needs_coalesce,
             released_bytes: 0,
             claimed_end: 0,
@@ -2418,6 +2433,7 @@ impl Store {
             free_root: self.free_root,
             wild: self.wild,
             wilderness: self.wilderness,
+            carve: self.carve,
             needs_coalesce: false,
             released_bytes: 0,
             claimed_end: 0,
@@ -2687,41 +2703,83 @@ impl Store {
 
     /// Find the position of the smallest free block with size >= `min_size`.
     /// Returns 0 when no suitable block exists.
-    fn fl_find_ge(&self, h: u32, min_size: i32) -> u32 {
-        if h == 0 {
-            return 0;
+    /// Claim `size` words from the smallest free block that fits — the best fit by the
+    /// tree's `(size, position)` order, the wilderness weighed against it as the node it
+    /// would have been (`@FR-H-Wilderness`: it has the highest position of any free block,
+    /// so a tree fit of equal size precedes it).  `None` when no tracked block fits.
+    ///
+    /// `@FR-H-Carve`: when the block is at least twice the request, the remainder takes the
+    /// taken node's place in the tree — its links, its color, its parent's pointer — instead
+    /// of a delete and an insert.  That is sound because the block is the SMALLEST node of at
+    /// least `size` words, so every node before it in the tree's order is smaller than
+    /// `size`; a remainder of at least `size` words therefore still follows its predecessor,
+    /// and being smaller than the block it still precedes its successor.  A node whose key
+    /// keeps its place between its neighbours keeps the order, and unchanged links and
+    /// colors keep the balance.  The key SET is the one the delete and insert would leave,
+    /// so every later claim takes the same block and the layout is unchanged.
+    fn claim_best_fit(&mut self, size: u32) -> Option<u32> {
+        let req = size as i32;
+        // The lower bound of `size` words, and the parent it hangs from.
+        let (mut h, mut parent) = (self.free_root, 0);
+        let (mut found, mut found_parent) = (0, 0);
+        while h != 0 {
+            let next = if self.fl_size(h) < req {
+                self.fl_right(h)
+            } else {
+                (found, found_parent) = (h, parent);
+                self.fl_left(h)
+            };
+            parent = h;
+            h = next;
         }
-        if self.fl_size(h) < min_size {
-            return self.fl_find_ge(self.fl_right(h), min_size);
-        }
-        let left_result = self.fl_find_ge(self.fl_left(h), min_size);
-        if left_result != 0 { left_result } else { h }
-    }
-
-    /// Remove and return the smallest free block with size >= `min_size`.
-    fn fl_take_ge(&mut self, min_size: i32) -> Option<u32> {
-        // The wilderness is a candidate like any node, ordered by the tree's key: it has the
-        // highest position of any free block, so a tree fit of equal size precedes it.
         let wild = self.wild;
-        let wild_fits = wild != 0 && self.fl_size(wild) >= min_size;
-        let found = if self.free_root == 0 {
-            0
-        } else {
-            self.fl_find_ge(self.free_root, min_size)
-        };
-        if wild_fits && (found == 0 || self.fl_size(wild) < self.fl_size(found)) {
+        if wild != 0
+            && self.fl_size(wild) >= req
+            && (found == 0 || self.fl_size(wild) < self.fl_size(found))
+        {
             self.wild = 0;
-            return Some(wild);
+            return Some(self.claim_block(wild, size));
         }
         if found == 0 {
             return None;
+        }
+        let rest = self.fl_size(found) - req;
+        if self.carve && rest >= req && rest >= MIN_FREE_TREE {
+            return Some(self.carve_in_place(found, found_parent, size, rest));
         }
         let root = self.free_root;
         self.free_root = self.fl_delete_node(root, found);
         if self.free_root != 0 {
             self.fl_set_red(self.free_root, false);
         }
-        Some(found)
+        Some(self.claim_block(found, size))
+    }
+
+    /// Claim the front `size` words of tree node `node` and put the `rest`-word remainder in
+    /// its place (`@FR-H-Carve`; `claim_best_fit` has checked that the order allows it).
+    fn carve_in_place(&mut self, node: u32, parent: u32, size: u32, rest: i32) -> u32 {
+        // Read the links first: the remainder's header lands on the word that holds the
+        // node's right link when the claim is one word.
+        let left = self.fl_left(node);
+        let right = self.read::<u32>(node, FL_RIGHT);
+        self.write(node, 0, size as i32);
+        let rem = node + size;
+        self.set_free_header(rem, rest);
+        self.write::<u32>(rem, FL_LEFT, left);
+        self.write::<u32>(rem, FL_RIGHT, right);
+        if parent == 0 {
+            self.free_root = rem;
+        } else if self.fl_left(parent) == node {
+            self.fl_set_left(parent, rem);
+        } else {
+            self.fl_set_right(parent, rem);
+        }
+        self.claims.insert(node);
+        self.claimed_end = self.claimed_end.max(rem);
+        if let Some(log) = self.recording.as_mut() {
+            log.push(StoreChange::Insert { pos: node, size });
+        }
+        node
     }
 
     /// Remove `rec` from the free tree if it is currently tracked.
@@ -5392,6 +5450,118 @@ mod tests {
         store.init();
         store.free = false;
         store
+    }
+
+    /// The free tree read independently of debug assertions (this crate's test profile turns
+    /// them off): its nodes in order, each a free block, ascending by `(size, position)`, no
+    /// red right link or red-red pair, the root black and every path the same black height.
+    fn tree_in_order(store: &Store) -> Vec<(i32, u32)> {
+        fn walk(store: &Store, h: u32, out: &mut Vec<(i32, u32)>) -> u32 {
+            if h == 0 {
+                return 1;
+            }
+            assert!(store.read::<i32>(h, 0) < 0, "tree node {h} is claimed");
+            let (l, r) = (store.fl_left(h), store.fl_right(h));
+            assert!(r == 0 || !store.fl_red(r), "a red right link under {h}");
+            if store.fl_red(h) {
+                assert!(l == 0 || !store.fl_red(l), "two red links in a row at {h}");
+            }
+            let bl = walk(store, l, out);
+            out.push((store.fl_size(h), h));
+            let br = walk(store, r, out);
+            assert_eq!(bl, br, "unequal black height under {h}");
+            bl + u32::from(!store.fl_red(h))
+        }
+        let mut out = Vec::new();
+        if store.free_root != 0 {
+            assert!(!store.fl_red(store.free_root), "a red root");
+        }
+        walk(store, store.free_root, &mut out);
+        assert!(
+            out.windows(2).all(|w| w[0] < w[1]),
+            "the tree is out of order"
+        );
+        out
+    }
+
+    /// `@FR-H-Carve` — carving the taken node in place changes HOW the tree is updated, never
+    /// which block a claim takes or which blocks the tree holds: the same seeded sequence of
+    /// claims, deletes and resizes on a store that carves and one that does not answers the
+    /// same position every time and leaves the same block chain and the same tree KEYS after
+    /// every step, with and without a wilderness, and the carving store's tree stays a valid
+    /// LLRB throughout.  Counts the in-place carves, so a sequence that never took the new
+    /// path cannot pass.
+    #[test]
+    fn a_carve_in_place_takes_the_blocks_the_delete_and_insert_take() {
+        for wilderness in [true, false] {
+            let mut carves = 0;
+            for seed in 1..=24u64 {
+                let mut state = seed.wrapping_mul(0x9E37_79B9_7F4A_7C15) | 1;
+                let mut next = move |n: u64| {
+                    state ^= state << 13;
+                    state ^= state >> 7;
+                    state ^= state << 17;
+                    state % n
+                };
+                let mut plain = store_with(wilderness);
+                plain.carve = false;
+                let mut carve = store_with(wilderness);
+                carve.carve = true;
+                let mut live: Vec<u32> = Vec::new();
+                for step in 0..600 {
+                    let op = next(10);
+                    if op < 5 || live.is_empty() {
+                        let bound = if next(4) == 0 { 60 } else { 12 };
+                        let size = 1 + next(bound) as u32;
+                        // The block the claim will carve, read off the tree before it.
+                        let req = size as i32;
+                        if let Some(&(block, _)) =
+                            tree_in_order(&carve).iter().find(|(s, _)| *s >= req)
+                        {
+                            let wild_first = carve.wild != 0
+                                && carve.fl_size(carve.wild) >= req
+                                && carve.fl_size(carve.wild) < block;
+                            if !wild_first
+                                && block - req >= req
+                                && block - req >= super::MIN_FREE_TREE
+                            {
+                                carves += 1;
+                            }
+                        }
+                        let a = plain.claim(size);
+                        let b = carve.claim(size);
+                        assert_eq!(a, b, "{wilderness} seed {seed} step {step}: claim({size})");
+                        live.push(a);
+                    } else if op < 8 {
+                        let i = next(live.len() as u64) as usize;
+                        let rec = live.swap_remove(i);
+                        plain.delete(rec);
+                        carve.delete(rec);
+                    } else {
+                        let i = next(live.len() as u64) as usize;
+                        let rec = live[i];
+                        let grow = plain.read::<i32>(rec, 0) as u32 + 1 + next(8) as u32;
+                        let a = plain.resize(rec, grow);
+                        let b = carve.resize(rec, grow);
+                        assert_eq!(a, b, "{wilderness} seed {seed} step {step}: resize");
+                        live[i] = a;
+                    }
+                    let at = format!("{wilderness} seed {seed} step {step}");
+                    assert_eq!(plain.size, carve.size, "{at}: store size");
+                    assert_eq!(chain(&plain), chain(&carve), "{at}: block chain");
+                    assert_eq!(tree_in_order(&plain), tree_in_order(&carve), "{at}: tree");
+                    assert_eq!(plain.wild, carve.wild, "{at}: wilderness");
+                    for rec in &live {
+                        assert!(carve.claims.contains(*rec), "{at}: {rec} claimed");
+                    }
+                    check_wilderness(&carve);
+                }
+            }
+            assert!(
+                carves > 500,
+                "wilderness={wilderness}: only {carves} in-place carves"
+            );
+        }
     }
 
     /// `@FR-H-Wilderness` in the window that had NO oracle: after `init`, before the first

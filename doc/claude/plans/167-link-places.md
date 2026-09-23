@@ -7,10 +7,35 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Open — P0, A0, A1, A2 and B0–B4 landed 2026-09-22; A3, C1–C3 and D remain.**  Every measurement
-the design rests on is recorded below and was taken on both backends at
-`tuxedo-quality-2026-09-21` @ `53d8d5d4a`.  Tracker: [@PLN167](https://github.com/loft-lang/plans/issues/167).
+**Open — P0, A0–A3 and B0–B4 landed (A0–A2 and B 2026-09-22, A3 2026-09-23); C1–C3 and D
+remain.**  Every measurement the design rests on is recorded below and was taken on both backends
+at `tuxedo-quality-2026-09-21` @ `53d8d5d4a`.  Tracker: [@PLN167](https://github.com/loft-lang/plans/issues/167).
 Closes loft#1566 (`D-bind-38`), loft#1567 (`D-bind-39`), loft#1602, loft#1603, loft#1604 and loft#1605.
+
+**Arc C is loft3-ca's (2026-09-23), and the owner has RULED that it is built to decision 2.**
+They had started loft#1566 independently, on `tuxedo-1562-layout-gate` @
+`979a77118..df6155481`, before reading this plan — and what they built is decision 2's
+*rejected* option, measured rather than argued: a runtime-kind `codegen_runtime::TextLink` (a
+pointer to a `String` **or** a slot `DbRef`, branched on at every access) whose `edit()` guard
+copies a slot's text out and writes it back at the statement end.  That is both rejected shapes
+at once — a runtime branch per link access, and copy-in/write-back — and it also cost the stack
+kind its byte-identical emission, since every user `&text` became a `TextLink`.  The owner's
+ruling (2026-09-23) is **rebuild per decision 2**, and those four commits are reverted at
+`ed429181d`; they are joined nowhere and are not to be picked.  C1 starts at its open probe —
+which sites rebuild a `Text`'s `Deps` from scratch.
+
+The episode is worth keeping for the reason it happened, not for who was right: the design was
+decided and written down a day earlier, and it was re-derived anyway because the work was found
+through the ISSUE (loft#1566) and the issue does not say that a plan owns it.  An issue a plan
+has taken is worth a line saying so.
+
+Two findings of theirs are representation-independent and stand either way: `is_amp_place` admits
+a text place, and `for c in t` over any `&text` (a plain parameter included) was an ICE at
+`collections.rs` `iter_text`, because the loop set-up tested `Type::Text` without unwrapping
+`RefVar` at four sites — fixed at `40488e943` (`walks_text`, guard
+`a-text-walk-over-a-link-reads-the-linked-text.loft`, falsified on both backends).  A third,
+their `D-bind-53`, is fixed here instead — see A3's row — and their hunk was reverted with the
+TextLink commits, so `D-bind-54` is the only version.
 
 ## Goal
 
@@ -23,7 +48,7 @@ link is done and the `DbRef` or pointer alone choosing where.
 - **Effort:** M (P0 XS · A XS+M+S+XS · B S+XS+XS · C M+S+S · D XS) — A1 grew from S to M
   in P0, see § P0
 - **Design:** ✓ — the three decisions are made; decision 1's scope settled 2026-09-22 (linked locals only)
-- **Last touched:** 2026-09-22
+- **Last touched:** 2026-09-23
 
 ## What is measured, and what the rules say
 
@@ -47,12 +72,15 @@ type picks (`OpGetInt`/`OpSetInt`, `OpGetEnum`/`OpSetEnum`, …).  **No stack-ve
 exists anywhere for these types, and none is needed: the type gives the width, the pointer or
 `DbRef` gives the place.**
 
-**Why narrow integers cannot join that today** (`D-bind-39`): a `u8` local is widened — `let mut
-var_x: i64` on native, an 8-byte frame slot on the interpreter (`OpVarInt`/`OpPutInt` are the only
-frame-slot ops) — while a `u8` field or element is 1 byte in a store (`OpGetByte`/`OpSetByte`,
-`addr_mut::<u8>`).  One type, two widths.  A link that writes 8 bytes into a store overwrote the
-neighbouring bytes (the measured `2042` for `250`); a link that writes 1 byte into a widened
-`i8` local leaves its upper bytes stale.
+**Why narrow integers could not join that** (`D-bind-39`, closed 2026-09-23 by A1–A3): a `u8` local
+was widened — `let mut var_x: i64` on native, an 8-byte frame slot on the interpreter
+(`OpVarInt`/`OpPutInt` were the only frame-slot ops) — while a `u8` field or element is 1 byte in a
+store (`OpGetByte`/`OpSetByte`, `addr_mut::<u8>`).  One type, two widths.  A link that writes 8
+bytes into a store overwrote the neighbouring bytes (the measured `2042` for `250`); a link that
+writes 1 byte into a widened `i8` local leaves its upper bytes stale.  **A1/A2 dissolved this**: a
+LINKED narrow local holds its type's field encoding, so there is one width, not two, and A3 then
+found that what still blocked the store place was not representation at all but two gates written
+to this paragraph's premise.
 
 **Why text cannot** (`D-bind-38`): a text local is a Rust `String` (`*mut String` when linked;
 `OpGetStackText` on the interpreter), a text field is a string record in a store, read today as
@@ -266,16 +294,16 @@ recorded here with the phase that must carry it as a cell, so none depends on me
 | **A0** — loft#1604: the narrowing refusal and the range guard look through a link, so a write through `&u8` (a local link or a parameter) is checked like a write to the `u8` | loft#1604, `(B-Ref-Uniform)` | the issue's cell: `x = x + 10` through a link or parameter refused, `+=` takes the slot's default, both backends; falsified against P0's tip | **Done** e0cb48964 |
 | **A1** — native: a LINKED narrow local's Rust type is its field encoding's storage type (`u8`/`u16`/`i32`/`u32`), decoded at each read, encoded at each write; a linked by-value parameter re-encoded once at entry by a shadowing `let` | decision 1, § P0 | the guard on both backends plain and under the switch; the corpus under `LOFT_LINK_ALL_NARROW=1` | **Done** 545243bdb + 1fbca93eb — `src/narrow.rs` is the one home for the bytes (both backends), `data::NarrowSlot` the one home for which kind a type takes, `Variables::linked_narrow_slot` the flag (set on pass 2 at the three `&` sites; no pass-1 record needed, the emitters run after the parse). Guard `167-a-linked-narrow-local-holds-its-field-encoding.loft`. The switch exercises every USER narrow local; a compiler temp is never linked and is spared. Two cells differ under the switch by design: `931b`'s "a local keeps the 8-byte slot" (an unlinked `i32` truncates to 4 bytes only under the switch) — recorded here so a sweep reads it as expected |
 | **A2** — interpreter: `OpVarNarrow(pos, min, kind)` / `OpPutNarrow(pos, min, kind)` read and write a linked narrow local's 8-byte slot in the field encoding through `crate::narrow`; a linked by-value parameter re-encoded at entry; a link to a narrow place reads and writes through the kind's own field op (`NarrowSlot::get_op`/`set_op`) | decision 1, § P0 | value parity of the corpus across backends; the old local-link guard unmoved | **Done** with A1, and the FRAME READERS with it. A census of every non-codegen reader of a frame slot found four sites wrong and two right, measured rather than assumed: `render_frame_local` (behind `:vars`, the DAP and RPC surfaces, the browser debugger and the REPL's frame seed) rendered the stored CODE — `127` for an `i8` holding `-1`, `50` for a `limit(1000, 1100)` holding `1050`, `255` for a `u8?` holding null; `read_variable_value` carried the same into userland through `stack_trace()`, with no debugger attached; `set_frame_literal` / `set_frame_value` wrote a WIDE value the next read decoded, so typing `-5` resumed the run with `123`; and the bare-local watchpoint snapshotted eight bytes of a one-byte slot and reported `127 → 133 → 121` for `-1 → 5 → -7`. `eval_frame_reenter` and the REPL's expression evaluation were MEASURED and are correct untouched — the census predicted otherwise, and the probe is what settled it. `u8` and `u16` were right at every site throughout, their bias being zero, which is why each cell uses `i8`, `limit(1000, 1100)` or `u8?` as well. Guards: `tests/frame_readers.rs` (the four debugger entries, driving the real CLI over a pipe) and `tests/scripts/167-a-frame-reader-decodes-a-linked-narrow-local.loft` (the `stack_trace()` entry, both backends). `State::frame_narrow` is the one lookup for a reader that has a NAME, `FrameEntry::var_nr` for one that has the frame view. Two gaps recorded, neither narrow-specific: `read_variable_value` has no `Optional` arm at all (every nullable scalar reaches `stack_trace()` as `<unsupported>`), and the debugger silently discards an edit to any nullable local (loft#1629) |
-| **A3** — retire `is_narrow_store_place`; `&u8` to a field or element links | decision 1 | `tests/scripts/167-a-narrow-link-into-a-store.loft`, both backends, falsified against A2's tip; `a-link-to-a-narrow-integer-store-place-is-refused.loft` retired; `D-bind-39` closed | Open |
+| **A3** — retire `is_narrow_store_place`; `&u8` to a field or element links | decision 1 | `tests/scripts/1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`, both backends; `a-link-to-a-narrow-integer-store-place-is-refused.loft` retired; `D-bind-39` closed | **Done** — and A1/A2 had already done the representation half, so the work was finding TWO GATES WRITTEN TO THE OLD PREMISE, each citing `D-bind-39` by number and so reading as settled. (1) `Parser::scalar_place_ref` matched an `OpGet*` of exactly two arguments, and a narrow read carries a third (the `min` its encoding is biased by), so the place came back `None`, the `&` was silently dropped and the local was typed a plain `int` — which is why writes were "lost": there was no link, only a copy. (2) `set_var`'s re-point test read `byte_width(false) == 8`, so with (1) fixed a re-point fell through to the write-through path and wrote the 12-byte stack CELL through the kind's own `set_op` — the interpreter panicked in the store for an element and wrote the CONST store for a field, while native, which routes a re-point by the value's shape, was already right. Both refusal sites (the `&` bind and the `&` argument) ride the one fix; `is_narrow_store_place` is gone. 17 cells, both backends, neighbours and lengths read back in each.  **And lifting the refusal admitted a silent-wrong one layer down** (`D-bind-54`, 911f96983, found by loft3-ca on the wide and text spellings): `p = &v[0].f` was given the ELEMENT as its place — the field operand was not mis-offset, it was DROPPED, so two different fields of one element produced byte-identical IR and `&v[0].a` and `&v[0].b` both wrote `c`, while `&v[0].c` was right BY ACCIDENT because its offset is zero. The narrow spelling could not reach that path until this row lifted the refusal, so shipping A3 alone would have made a FIX introduce a silent-wrong — which is `(B-Ref-Reshape)`'s own objection to a link that cannot be honoured, so it was closed here rather than filed. The cure names the field unless its operand is literally zero, written once for reads of ANY arity, so a narrow read's third operand (the `min`) rides the same code instead of a second arm that would have to agree with the first forever. 28 more cells. **The lesson arc C owes:** B3's `&text`-place refusal is the same kind of lid, so measure what C1 ADMITS, not only what it builds |
 | **B0** — loft#1605: a scalar `&τ` parameter is `*mut τ` on native, the type a `&` local link already has; a local argument passes `addr_of_mut!`, a link passes itself, a forwarded parameter passes itself | R0, loft#1605 | the R0 cells on both backends, native compiling each; `add2(x, x)` answers `12` on both; falsified against A0's tip | **Done** — `generation::is_raw_scalar_ref` is the one predicate; parameters take the local-link read, write and re-point arms. Found and fixed with it: a `&boolean?` link read the two-state `bool`, so `l == null` was never true (silent, on `main`), and a `&boolean?` parameter in `if b` / `b && …` did not compile — `infer_type` now reports a scalar link's read as the linked type. Guard `1605-one-place-reaches-two-ref-parameters.loft` |
-| **B1** — a `&` parameter takes a scalar field or element (the bind's lowering at the call; `is_addressable` asks the place set `is_amp_place` asks) | decision 3 | `bump(p.n)`, `bump(v[i])`, `bump(o.inner.k)` write through, both backends; the refusal keeps a literal and a call result out | **Done** — `Parser::scalar_place_ref` is the one lowering, asked by the bind and by `convert`; the argument check admits a scalar place and refuses a narrow store place in the bind's words; the `(B-Ref-Reshape)` call-site half counts a scalar `&` parameter as one that names an element (R10); a possibly-absent element to a non-null `&τ` gets its own warning (the N-Store cure `?` would turn the place into a value). Guards `167-a-ref-parameter-links-a-scalar-field-or-element.loft`, `167-a-ref-parameter-refuses-a-place-it-cannot-link.loft` |
+| **B1** — a `&` parameter takes a scalar field or element (the bind's lowering at the call; `is_addressable` asks the place set `is_amp_place` asks) | decision 3 | `bump(p.n)`, `bump(v[i])`, `bump(o.inner.k)` write through, both backends; the refusal keeps a literal and a call result out | **Done** — `Parser::scalar_place_ref` is the one lowering, asked by the bind and by `convert`; the argument check admits a scalar place (it refused a narrow store place in the bind's words until A3 lifted both refusals together); the `(B-Ref-Reshape)` call-site half counts a scalar `&` parameter as one that names an element (R10); a possibly-absent element to a non-null `&τ` gets its own warning (the N-Store cure `?` would turn the place into a value). Guards `167-a-ref-parameter-links-a-scalar-field-or-element.loft`, `167-a-ref-parameter-refuses-a-place-it-cannot-link.loft` |
 | **B2** — loft#1603: a `&`-bound scalar local passed to a `&` parameter compiles on native — after B0 the link IS the parameter's type and is passed as it is | loft#1603 | the issue's cell answers `6 11` on both backends | **Done with B0** — the issue's cell is in B0's guard |
 | **B3** — loft#1602, the loud stopgap: a text FIELD or ELEMENT handed to a `&text` parameter is refused, naming the cure | loft#1602 | `app(o.s)` refused; falsified (both backends answered `cc` silently before) | **Done** — narrowed by measurement: a TEMPORARY keeps its read-only work copy, because the stdlib's `directory(v: &text = "")` and its two siblings are called with literals by design; only a place (`Parser::is_text_place`) is refused. Guard `1602-a-text-place-to-a-ref-text-parameter-is-refused.loft` |
 | **B4** — a link to an ABSENT scalar place (`c = &v[10]`, `bump(v[10])`, a field of a null record) reads null and drops its writes on native as on the interpreter (C80: nothing stops a running calculation); native panicked in the allocator (`index 65535`), on `main` too for the bind | found in B1 (R10's raise-parity cell) | the bind and the argument cells answer alike on both backends: a read is null, a write lands nowhere, a later read is still null; no panic | **Done** — `output_place_pointer` yields a null pointer for an absent place; a scalar link's read answers `generation::absent_link_value` (each getter's `rec == 0` answer) and its write is dropped; a `&boolean` reads its storage byte in every case. No measurable cost on a hot `&` accumulator. Guard `167-a-link-to-an-absent-place-reads-null.loft` |
-| **C1** — `RefVar(Text)` carries its kind; the bind `t = &o.s` / `t = &v[0]` makes the store kind; reads and writes through it on both backends; cross-kind re-point refused | decision 2 | `tests/scripts/167-a-text-link-into-a-store.loft`, both backends; the stack-kind emission of every text-returning guard byte-identical before/after (`--native-emit` diff); `D-bind-38` closed | Open |
-| **C2** — the store-text slice joins the disturbance check | decision 2 | a cell that dangles under `LOFT_POISON=1` before the check is refused after; growth of another store stays allowed | Open |
-| **C3** — a `&text` parameter instantiated per kind; `app(o.s)` links, `app(local)` unchanged | decision 2, @PLN165 | the aliasing cell reads the written value inside the callee; the stack instance byte-identical to C1's; loft#1602 closed | Open |
-| **D** — formal + docs: `binding.md` gains the text-kind rule and closes `D-bind-38`/`39`; `DIAGNOSTICS.md` rows for the two new refusals; `CHANGELOG.md` | — | `rule_tags.py check` + `registers`; `check_doc_drift.sh` | Open |
+| **C1** — `RefVar(Text)` carries its kind; the bind `t = &o.s` / `t = &v[0]` makes the store kind; reads and writes through it on both backends; cross-kind re-point refused | decision 2 | `tests/scripts/167-a-text-link-into-a-store.loft`, both backends; the stack-kind emission of every text-returning guard byte-identical before/after (`--native-emit` diff); `D-bind-38` closed | Open — **loft3-ca** |
+| **C2** — the store-text slice joins the disturbance check | decision 2 | a cell that dangles under `LOFT_POISON=1` before the check is refused after; growth of another store stays allowed | Open — **loft3-ca** |
+| **C3** — a `&text` parameter instantiated per kind; `app(o.s)` links, `app(local)` unchanged | decision 2, @PLN165 | the aliasing cell reads the written value inside the callee; the stack instance byte-identical to C1's; loft#1602 closed | Open — **loft3-ca** |
+| **D** — formal + docs: `binding.md` gains the text-kind rule and closes `D-bind-38`/`39`; `DIAGNOSTICS.md` rows for the two new refusals; `CHANGELOG.md` | — | `rule_tags.py check` + `registers`; `check_doc_drift.sh` | Open — split: the narrow half here, the text half with C3 (loft3-ca) |
 
 ## Phase ordering
 
