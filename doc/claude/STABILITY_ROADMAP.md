@@ -35,6 +35,37 @@ days, `L` a plan with phases).  Every M+ design round runs
 [DESIGN_PROTOCOL](DESIGN_PROTOCOL.md) (the `design-protocol` skill); every
 fix runs matrix-first (CLAUDE.md § Debugging policy).
 
+## The owner's directive (2026-09-23) — the horizon, and the meters that say "stable"
+
+**Attention goes to the engine; loft's job is to stop needing it.** No hurry: the end of
+the year is the horizon for a stable loft. What loft must do meanwhile is minimise owner
+interrupts — so a question the written rules already answer is answered by the agent that
+meets it (the standing ruling in [DEVELOPMENT.md § Where a rule's letter and the code
+disagree](DEVELOPMENT.md#where-a-rules-letter-and-the-code-disagree)), and only three kinds
+reach the owner: a rule that does not exist yet, a change to a shipped surface, or two rules
+in conflict. The months, in order: **October** closes the language walk (`heap.md` is the
+least-walked core chapter); **November** is the library pass the freeze doc already owes
+([COMPATIBILITY.md § The road to contract 1](COMPATIBILITY.md)); **December** is the read.
+The perf stream continues — optimisation is the usability measure game developers judge by —
+pointed WIDE, not deep ([PERFORMANCE.md § Wide before deep](PERFORMANCE.md#wide-before-deep)).
+
+**The meters, read weekly — together they are the definition of "stable" the owner uses.**
+No figure is written here: each is a query, and a figure in prose is stale the day after.
+
+| meter | stable when | read it with |
+|---|---|---|
+| `contract:strained` share of the week's judged fixes | **0 for two consecutive weeks** | `make bug-review` § 5 (weekly window) |
+| owner rulings asked for | **0** — a ruling the rules already gave is a process defect | the week's `Contract: strained — letter applied` trailers, read in one sitting |
+| the consumer gate | **green with no cure needed, two weeks running** | the `consumer-main-health` nightly |
+| `silent-wrong` open **on main** | **0** — `fixed-pending-merge` does not count; the freeze binds what main ships | `gh issue list -R loft-lang/loft --state open --label silent-wrong` minus `fixed-pending-merge` |
+
+**The raw issue count is not a meter.** It is effort-driven: a walk reaching a chapter nobody
+had read files dozens in days, and a quiet month can mean nobody ran anything. The measured
+case (2026-09-23): consumer-found issues fell from ~120 in August to 5 in September — because
+the consumers made no commits after 2026-08-31, not because loft stabilised. Run against
+main from scratch copies, their suites went red on three causes, two of them loft moving under
+code nobody was running; the gate that sees that is the consumer nightly, not the tracker.
+
 ## The wide-release bar — what must be true before loft goes to many people
 
 > This roadmap exists to clear **one** thing: the GOALS.md promise of **"a floor that

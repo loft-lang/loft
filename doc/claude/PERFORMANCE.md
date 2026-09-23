@@ -533,6 +533,38 @@ at 1–2 %, taken only because the code was already open, did not.  When a row's
 FLAT — nothing over about 5 % — that is the finding to record: the row is bound by a class
 (DESIGN.md § V-an's table for `parse`), and the unit is the class, not a spot.
 
+### Wide before deep
+
+**The owner's direction for the perf stream (2026-09-23): WIDE, not deep.** Optimisation stays
+— it is the usability measure game developers judge a language by — but it is aimed at the
+breadth of what programs do, not at the next increment on a row that is already measured.
+Before any existing portal row is taken deeper, every mechanism class gets a measured row per
+library from [PERF_PORTAL.md](PERF_PORTAL.md)'s waiting table (the routines surveyed and not
+yet benched), so the portal says where native stands across the classes a consumer will hit:
+keyed, `par`, the call frame and the native (C) boundary before another record or text clause.
+"The clear case first" still ranks candidates WITHIN that order.
+
+**Prefer runtime work over new generator rewrites.** A runtime lever — a store's allocator
+(`@FR-H-Carve`), the keyed class's fast order and one-probe insert — changes no emitted
+program, lands behind one switch and one verify form (`LOFT_KEYED_VERIFY` is the model), and
+adds almost no rules.  A generator rewrite adds a `formal/rewrites.md` clause, a switch, pins
+and a cell corpus each time, and only rewrites add to the contract's rule count and to the
+strained trailers the stability meters read.  Choose the rewrite when the runtime cannot reach
+the cost, and say so in the ledger.
+
+**A rewrite shared by BOTH backends lands only with its switch A/B green.** For the
+ownership / buffer family — `@FR-O-LazyBuffer`, `@FR-O-Move`'s adopt, `@FR-O-Buffer`'s reuse,
+`@FR-R-Place`, `@FR-R-InPlaceLiteral`, `@FR-R-ValueRecord` — there is no in-process checking
+form: `LOFT_STRICT_STORES` and `LOFT_POISON` catch a leak or a double free, not a stale VALUE,
+and the interpreter runs the same rewrite, so it is no oracle.  loft#1647 is exactly that
+hole: a lazily minted buffer met a latent double release and read the first pass's value on
+both backends, six days on main, seen by nothing in this suite.  The gate that sees it is the
+switch A/B nightly (`.github/workflows/switch-ab.yml`): the script corpus and the consumer
+suites run twice per rewrite switch, off and on, and any output difference is a defect by
+definition — C122, a rewrite is free only where its conditions hold.  The landing rule is in
+[formal/rewrites.md § Every rewrite is switchable and
+falsifiable](formal/rewrites.md#every-rewrite-is-switchable-and-falsifiable).
+
 ## Benchmark results
 
 Wall-clock milliseconds, **best of 3 warm runs**, single core, Linux x86-64, **refreshed

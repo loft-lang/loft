@@ -1,0 +1,142 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# switch-ab — every rewrite BOTH backends run, off against on, every night.
+#
+# A rewrite the parser, the scope pass or the runtime applies gives the interpreter and
+# native the SAME answer, right or wrong, so their agreement proves nothing, and
+# LOFT_STRICT_STORES / LOFT_POISON catch a leak or a double free, not a stale value.  Its
+# switch is the only second answer there is — and by C122 a complete one: a rewrite is free
+# exactly where its conditions hold, so any output that moves with the switch is a defect.
+# loft#1647 read a loop's first pass on both backends for six days on main, seen by nothing;
+# `LOFT_NO_LAZY_BUFFER=1` told the difference at once.
+#
+# The rule this enforces is `(R-Switch)`'s both-backend clause (doc/claude/formal/rewrites.md):
+# such a rewrite lands only with this A/B green.  Each leg runs `scripts/switch_ab.sh` —
+# the tests/scripts corpus with the switch off and on, plus the public consumers' suites —
+# and reports DEFECT / NOISE / TIMEOUT per program.  The same script runs locally.
+#
+# The list is the rewrites whose switch CLAUDE.md documents as applying on BOTH backends;
+# a native-only rewrite has the interpreter as its oracle and is not listed.  A new
+# both-backend rewrite adds its switch here in the commit that lands it.
+name: switch-ab
+
+on:
+  schedule:
+    - cron: '45 6 * * *'   # after consumer-main-health (06:15)
+  workflow_dispatch:
+    inputs:
+      switch:
+        description: 'One LOFT_NO_<REWRITE> to run alone (default: every listed switch)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ab:
+    runs-on: ubuntu-latest
+    timeout-minutes: 150
+    strategy:
+      fail-fast: false   # one moving rewrite must not hide the state of the others
+      matrix:
+        switch:
+          # the ownership / buffer family — no in-process checking form at all
+          - LOFT_NO_LAZY_BUFFER
+          - LOFT_NO_ADOPT_FIRST_BIND
+          - LOFT_NO_ADOPT_BUFFER_REUSE
+          - LOFT_NO_PLACE_RESULT
+          - LOFT_NO_ELEMENT_IN_PLACE
+          - LOFT_NO_NESTED_IN_PLACE
+          - LOFT_NO_BUFFER_IS_PLACE
+          - LOFT_NO_LITERAL_EXIT_BUFFER
+          - LOFT_NO_CALLEE_DISTURB
+          - LOFT_NO_JOIN_BUFFER_WITNESS
+          - LOFT_NO_OWNER_WITNESS
+          - LOFT_NO_CONF_RECOVER
+          - LOFT_NO_APPEND_STAGING
+          - LOFT_NO_NEXT_COUNTER
+          - LOFT_NO_FIELD_FILL
+          # runtime levers — the store allocator, vector fills, the keyed class
+          - LOFT_NO_BLOCK_REPEAT
+          - LOFT_NO_SELF_APPEND_BLOCK
+          - LOFT_NO_FAST_ORDER
+          - LOFT_NO_ONE_PROBE_INSERT
+          - LOFT_NO_HALF_LOAD
+          - LOFT_NO_STORE_RESET_CLEAR
+          - LOFT_NO_RESET_CAPACITY
+          - LOFT_NO_CLEAR_RELEASE
+          - LOFT_NO_PREFILL_IMAGE
+          - LOFT_NO_FREE_FOOTER
+          - LOFT_NO_WILDERNESS
+          - LOFT_NO_CARVE_IN_PLACE
+    steps:
+      - name: Selected?
+        id: sel
+        env:
+          ONLY: ${{ inputs.switch }}
+        run: |
+          if [ -z "${ONLY:-}" ] || [ "$ONLY" = "${{ matrix.switch }}" ]; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout loft
+        if: steps.sel.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          path: loft-src
+
+      - name: Checkout the public consumers
+        if: steps.sel.outputs.run == 'true'
+        run: |
+          git clone --quiet --depth 1 https://github.com/jjstwerff/moros.git moros
+          git clone --quiet --depth 1 https://github.com/jjstwerff/dryopea.git dryopea
+          mkdir -p dryopea/tests/actual
+
+      - name: Install mold
+        if: steps.sel.outputs.run == 'true'
+        run: sudo apt-get update -y && sudo apt-get install -y mold
+
+      - name: Cache cargo + loft build
+        if: steps.sel.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            loft-src/target
+          key: switch-ab-${{ hashFiles('loft-src/Cargo.lock') }}
+          restore-keys: switch-ab-
+
+      - name: Build loft
+        if: steps.sel.outputs.run == 'true'
+        working-directory: loft-src
+        run: cargo build --release --lib --bin loft
+
+      - name: A/B ${{ matrix.switch }}
+        if: steps.sel.outputs.run == 'true'
+        run: |
+          set -u
+          consumers=()
+          for d in moros/lib/* dryopea; do
+            [ -d "$d/tests" ] && [ -f "$d/loft.toml" ] && consumers+=(--consumer "$PWD/$d")
+          done
+          loft="$PWD/loft-src/target/release/loft"
+          for d in moros/lib/* dryopea; do ( cd "$d" 2>/dev/null && "$loft" install >/dev/null 2>&1 ) || true; done
+          set +e
+          JOBS=4 loft-src/scripts/switch_ab.sh "${{ matrix.switch }}" "${consumers[@]}" | tee ab.log
+          rc=${PIPESTATUS[0]}
+          {
+            echo "### ${{ matrix.switch }} — off vs on, loft@${{ github.sha }}"
+            echo
+            echo '```'
+            grep -E '^(DEFECT|NOISE|TIMEOUT)|programs,' ab.log | head -60
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $rc
