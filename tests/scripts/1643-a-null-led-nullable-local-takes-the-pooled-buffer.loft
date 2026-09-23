@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1643, `@FR-O-Buffer`, `@FR-R-Reuse`, `@FR-O-Move` — A NULLABLE LOCAL WHOSE ONE REAL BIND
+// FOLLOWS ITS NULL ON EVERY PASS takes the pooled return buffer.  `x: T? = null; if c { x = mk() }`
+// inside a loop body is the spelling `(B-Scope)` requires for a local an arm assigns and a later
+// statement reads.  Its call bind is a FIRST bind — the null in front of it runs on every path and
+// every pass — so it takes the bare local's witness pairing, and the call's buffer is minted once
+// per activation instead of once per call.  The mint count is pinned by
+// `tests/adopt_buffer_reuse.rs::the_store_census_drops` (cell r28); this file pins the values,
+// stores and releases of the widened pairing across the shapes it reaches and the ones it keeps
+// on the old route: a null written only OUTSIDE the loop (c2), a null in a SIBLING arm (c3), and
+// a null in an outer loop with the bind in an inner one (c6).  c1, c4, c7 and c8 pool (a
+// fresh-store callee, a promoted-local callee, a text-owning record, a struct-enum); c5 has no
+// loop.  Every value is hand-computed.  `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`,
+// `LOFT_POISON_CLAIM=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+//
+// @falsified-at: none — the fix moves no value, store or release, only how many stores are
+//   minted, so no channel of this file can tell the two trees apart.  Its falsifiable guard is
+//   the census pin, which reads (197, 303, 173, 269) with the fix reverted.  Measured too: with
+//   the enclosing-null test removed, c2, c3 and c6 still answer right under
+//   `LOFT_STRICT_STORES=1` and `LOFT_POISON=1`, and so do nested-loop binds that then pool
+//   (75 mints / 75 frees where the test keeps 99 / 99) — the rebind's own guarded free covers
+//   them.  So that test is caution in the safe direction: it costs pooling, never a release.
+//
+struct Mk { matched: boolean, pts: vector<integer> }
+struct Tx { name: text, n: integer }
+enum Sh { Ci { r: integer }, Sq { s: integer, tag: text } }
+fn scan_mk(n: integer, k: integer) -> Mk { if k > 1 { return Mk { matched: true, pts: [k, n] }; } Mk { matched: false, pts: [] } }
+fn prom(n: integer) -> Mk { o = Mk { matched: true, pts: [n, n + 1, n + 2] }; o.pts += [n * 10]; o }
+fn tx(n: integer) -> Tx { if n > 3 { return Tx { name: "big{n}", n: n }; } Tx { name: "s{n}", n: n } }
+fn sh(n: integer) -> Sh { if n % 3 == 0 { return Ci { r: n }; } Sq { s: n, tag: "q{n}" } }
+
+// c1, the issue: lines 0,2,4,6 → k=0 → 0 pts, 2,4,6 → 2 pts each = 6
+fn c1() -> integer { total = 0; for line in 0..8 { even = line % 2 == 0; mf: Mk? = null; if even { mf = scan_mk(4, line); } if even { total += len(mf?.pts); } } total }
+// 2: null outside loop; last even line 6 → 2*100 + 6
+fn c2() -> integer { mf: Mk? = null; for line in 0..8 { if line % 2 == 0 { mf = scan_mk(4, line); } } len(mf?.pts) * 100 + (mf?.pts[0] ?? 0) }
+// 3: sibling-arm null, mf outside loop: lines 0..5, odd → scan(line) else null; ends line 4 → null → -1
+fn c3() -> integer { mf: Mk? = null; t = 0; for line in 0..5 { if line % 2 == 1 { mf = scan_mk(7, line + 2); } else { mf = null; } t += len(mf?.pts); } t * 10 + len(mf?.pts) }
+// 4: promoted-local callee; sum of pts[3] over even lines 0,2,4,6 = 0+20+40+60 = 120
+fn c4() -> integer { total = 0; for line in 0..8 { mf: Mk? = null; if line % 2 == 0 { mf = prom(line); } if line % 2 == 0 { total += mf?.pts[3] ?? 0; } } total }
+// 5: returned
+fn f5(c: boolean) -> Mk? { x: Mk? = null; if c { x = scan_mk(9, 5); } x }
+fn c5() -> integer { a = f5(true); b = f5(false); (a?.pts[1] ?? 0) * 10 + len(b?.pts) + (if b { 1000 } else { 0 }) }
+// 6: null in outer loop, bind in inner loop; per outer i: last inner j=2 → scan(i,2) pts [2,i] → sum pts[1] over i 0..3 = 0+1+2 = 3
+fn c6() -> integer { t = 0; for i in 0..3 { mf: Mk? = null; for j in 0..3 { if j > 0 { mf = scan_mk(i, j + 0); } } t += mf?.pts[1] ?? 100; } t }
+// 7: text record; lines 0..6 even → tx(line): 0 s0, 2 s2, 4 big4 → names joined lengths 2+2+4 = 8, n sum 6
+fn c7() -> integer { t = 0; for line in 0..6 { mf: Tx? = null; if line % 2 == 0 { mf = tx(line); } if line % 2 == 0 { t += len(mf?.name) * 100 + mf?.n; } } t }
+// 8: struct enum; lines 0..7: n=line: 0 Ci r0, 1 Sq, 2 Sq, 3 Ci r3, 4 Sq, 5 Sq, 6 Ci r6 → Ci sum r = 9, Sq count 4
+fn c8() -> integer { ci = 0; sq = 0; for line in 0..7 { m: Sh? = null; if line >= 0 { m = sh(line); } if line >= 0 { match m { Ci { r } => ci += r, Sq { s, tag } => sq += 1 + len(tag) - len(tag) } } } ci * 100 + sq }
+fn main() {
+  assert(c1() == 6, "c1 {c1()}");
+  assert(c2() == 206, "c2 {c2()}");
+  assert(c3() == 40, "c3 {c3()}");
+  assert(c4() == 120, "c4 {c4()}");
+  assert(c5() == 90, "c5 {c5()}");
+  assert(c6() == 3, "c6 {c6()}");
+  assert(c7() == 806, "c7 {c7()}");
+  assert(c8() == 904, "c8 {c8()}");
+  println("ok {c1()} {c2()} {c3()} {c4()} {c5()} {c6()} {c7()} {c8()}");
+}

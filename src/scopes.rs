@@ -145,6 +145,9 @@ struct Scopes<'s> {
     /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
     /// arm assigns and a later statement reads.
     null_led: HashSet<u16>,
+    /// The locals whose one real bind follows an enclosing null on every path and every pass
+    /// ([`null_led_first_binds_in`]): that bind displaces no store.
+    null_led_first: HashSet<u16>,
     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
     /// `scan_if` a local whose every mention lies inside one arm.
     mentions: HashMap<u16, usize>,
@@ -268,6 +271,14 @@ struct Scopes<'s> {
     /// [`Self::owned_refs`]: intersect-merged at every join, so a pairing that holds on one
     /// path only is dropped (losing the hook, never doubling it).
     tuple_call_mint: HashMap<u16, HashMap<u16, Option<u16>>>,
+    /// loft#1645 — the per-path flag of a tuple MEMBER a whole-tuple move written in an `if` arm
+    /// moves (`if c { u = t }`): `false` at function entry, set where the move runs, read by
+    /// the source's release (which then skips the hook the move took) and reset by a rebind or
+    /// a member write, after which the tuple holds a value of its own again.
+    tuple_moved: HashMap<(u16, u16), u16>,
+    /// The loop depth a tuple local was first bound at: a move of it under a deeper loop moves
+    /// it once per pass, which `(H-Spent)` refuses, and takes no per-path flag.
+    tuple_depth: HashMap<u16, usize>,
     /// loft#1588 — the backing each VECTOR member of a tuple variable's CURRENT value lives in,
     /// read off the literal that assigned it: the pairing a whole-tuple move hands the release
     /// of.  The variable's type cannot answer it, because it carries only the LATEST
@@ -5072,15 +5083,38 @@ pub(crate) fn collect_fnref_captures(
 /// loft#1004 was the operand arithmetic underflowing before it got that far).  The
 /// bytes a tuple element views belong to whatever built them: a literal, or a `__ncc_N`
 /// temp its consumer frees.
+/// What the scan knows about a tuple's members when it releases them: which the tuple's latest
+/// assignment minted (`Scopes::tuple_call_mint`), which buffers a copy took the release from
+/// (`Scopes::drop_transferred`), and which members a move in an arm may have taken
+/// (`Scopes::tuple_moved`).  `NONE` knows nothing: the bare release.
+#[derive(Clone, Copy)]
+struct MemberFacts<'a> {
+    call_mints: Option<&'a HashMap<u16, Option<u16>>>,
+    handed: Option<&'a HashSet<u16>>,
+    moved: Option<&'a HashMap<(u16, u16), u16>>,
+}
+
+impl MemberFacts<'_> {
+    const NONE: MemberFacts<'static> = MemberFacts {
+        call_mints: None,
+        handed: None,
+        moved: None,
+    };
+}
+
 fn tuple_owned_elem_frees(
     elems: &[Type],
     v: u16,
     data: &Data,
     function: &crate::variables::Function,
-    call_mints: Option<&HashMap<u16, Option<u16>>>,
-    handed: &HashSet<u16>,
+    facts: MemberFacts,
     only: Option<usize>,
 ) -> Vec<Value> {
+    let MemberFacts {
+        call_mints,
+        handed,
+        moved,
+    } = facts;
     let mut out = Vec::new();
     for &(_offset, idx) in crate::data::owned_elements(elems).iter().rev() {
         // loft#1532 — a member ASSIGNMENT asks for its ONE element: the same ownership test,
@@ -5104,8 +5138,22 @@ fn tuple_owned_elem_frees(
         // the question has TWO subjects where that predicate has one (@PLN155 phase 1).
         // Folding it would have to invent a dep list for the element, which is the very thing
         // a tuple does not have.
+        //
+        // A member the tuple's LATEST assignment minted is owned whatever the tuple's type
+        // says: that type is one per binding and names the deps of whichever assignment parsed
+        // last, so after `u = (mk(1), 0); … u = t` it read the first bind's minted member as a
+        // view of the move's backing and released nothing (D-heap-15).  The scan's
+        // `tuple_call_mint` is per assignment (`@FR-O-Latest`) and answers it.  A member whose
+        // deps name its own claimant is that claimant's record, released through the
+        // claimant's own free (the move's backing), so only a claimant the deps do NOT name
+        // overrides them.
+        let deps = elems[idx].depend();
+        let minted = call_mints
+            .and_then(|m| m.get(&(idx as u16)))
+            .is_some_and(|claim| claim.is_none_or(|w| !deps.contains(&w)));
+        // @FR-O-Proxy asks free — the element release below, vetoed by @FR-O-Override.
         if function.is_skip_free(v)
-            || !elems[idx].depend().is_empty()
+            || (!minted && !deps.is_empty())
             || matches!(elems[idx].base(), Type::Text(_))
         {
             continue;
@@ -5121,15 +5169,20 @@ fn tuple_owned_elem_frees(
             let elem = || Value::TupleGet(v, idx as u16);
             // A member whose release a copy took (`call_minted_member_handoff`) keeps its free
             // and loses only the hook: the copy is the member's owner now.
-            let handed_off = buf.is_some_and(|b| handed.contains(&b));
+            let handed_off = buf.is_some_and(|b| handed.is_some_and(|h| h.contains(&b)));
             if !handed_off && let Some(d) = elems[idx].base().heap_def_nr() {
                 let cascade = data.drop_cascade_nr(d);
                 if cascade != u32::MAX {
-                    out.push(v_if(
+                    let hook = v_if(
                         Value::Call(data.def_nr("OpConvBoolFromRef"), vec![elem()]),
                         Value::Call(cascade, vec![elem()]),
                         Value::Null,
-                    ));
+                    );
+                    // A move written in an arm took the hook on the path that ran it (loft#1645).
+                    out.push(match moved.and_then(|m| m.get(&(v, idx as u16))) {
+                        Some(&flag) => v_if(Value::Var(flag), Value::Null, hook),
+                        None => hook,
+                    });
                 }
             }
             out.push(Value::Call(data.def_nr("OpFreeRef"), vec![elem()]));
@@ -5187,6 +5240,61 @@ fn tuple_call_mints(
         }
     }
     Some(out)
+}
+
+/// loft#1645 — [`tuple_call_mints`] for a value BRANCH whose every tail is a tuple literal
+/// (`u = if c { (mk(1), 0) } else { (mk(2), 1) }`): a member every tail mints is the binding's
+/// own.  Where the tails name the same claimant it stays; where they differ the member joins
+/// as a sole owner, and each claimant is disarmed after the bind (the returned statements) —
+/// a claimant's live record can only be that member, since each is the buffer of the one call
+/// or construction that filled it.  `None` when a tail is not a literal: nothing is proven.
+fn branch_tuple_call_mints(
+    rhs: &Value,
+    function: &Function,
+    data: &Data,
+    sentinel: u32,
+) -> Option<(HashMap<u16, Option<u16>>, Vec<Value>)> {
+    fn tails<'a>(v: &'a Value, out: &mut Vec<&'a Value>) {
+        match v.unspan() {
+            Value::If(_, a, b) => {
+                tails(a, out);
+                tails(b, out);
+            }
+            Value::Block(bl) => match bl.operators.last() {
+                Some(last) => tails(last, out),
+                None => out.push(v),
+            },
+            _ => out.push(v),
+        }
+    }
+    let mut ends = Vec::new();
+    tails(rhs, &mut ends);
+    let maps: Vec<HashMap<u16, Option<u16>>> = ends
+        .iter()
+        .map(|t| tuple_call_mints(t, function, data))
+        .collect::<Option<_>>()?;
+    let (first, rest) = maps.split_first()?;
+    let mut out = HashMap::new();
+    let mut claimants: Vec<u16> = Vec::new();
+    for (&idx, &claim) in first {
+        let others: Vec<Option<u16>> = rest.iter().filter_map(|m| m.get(&idx).copied()).collect();
+        if others.len() != rest.len() {
+            continue;
+        }
+        if others.iter().all(|&o| o == claim) {
+            out.insert(idx, claim);
+        } else {
+            out.insert(idx, None);
+            claimants.extend(std::iter::once(claim).chain(others).flatten());
+        }
+    }
+    claimants.sort_unstable();
+    claimants.dedup();
+    let disarms = claimants
+        .into_iter()
+        .map(|w| v_set(w, Value::Call(sentinel, vec![])))
+        .collect();
+    Some((out, disarms))
 }
 
 /// What delivered a tuple member's record, where [`member_mint`] can PROVE it.
@@ -5279,7 +5387,9 @@ fn written_tuple_members_in(code: &Value) -> HashSet<(u16, u16)> {
 /// each backend's set lowering, not by this scan, and under reuse the displaced store is
 /// the buffer's: the next call then writes a store that is back in the pool (measured, a
 /// use-after-free on every turn after the first).  Guarding that free against the buffer is
-/// the widening that lifts this condition; until then the buffer stays null there.
+/// the widening that lifts this condition; until then the buffer stays null there.  The
+/// nulls in front of a local's one real bind on every pass (`null_led_first_binds_in`) are
+/// not such a second assignment: they displace nothing.
 /// The calls at the VALUE positions of a branch (@PLN157 § V-af, `@FR-O-Buffer`): an `if`'s two arms, a
 /// value block's last statement, recursively; a `Call` is its own tail.  Anything else — a
 /// variable, a literal, a null — contributes no call.
@@ -5303,7 +5413,7 @@ fn reuse_record_buffers(
     fn_nr: u32,
     witness_buffer: &HashMap<u16, Vec<u16>>,
     minted_pairs: &HashSet<u16>,
-    multi_assigned: &HashSet<u16>,
+    reassigned: &HashSet<u16>,
 ) {
     if !crate::keys::retbuf_reuse_enabled() {
         return;
@@ -5380,7 +5490,7 @@ fn reuse_record_buffers(
         if !ungated
             && fed_locals
                 .get(&av)
-                .is_some_and(|vs| vs.iter().any(|v| multi_assigned.contains(v)))
+                .is_some_and(|vs| vs.iter().any(|v| reassigned.contains(v)))
         {
             // The result local is reassigned somewhere: its set lowering frees the store
             // it displaces, which would be this buffer's.
@@ -5783,6 +5893,7 @@ fn run_scan_phase(
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
         null_led: null_led_in(orig_code, data),
+        null_led_first: null_led_first_binds_in(orig_code, data),
         mentions: var_mentions_in(orig_code),
         sunk: sunk.clone(),
         assigned: assigned_in(orig_code),
@@ -5813,6 +5924,8 @@ fn run_scan_phase(
         // body is the exception — see the `Value::Loop` arm of `scan_inner`.
         drop_transferred: HashSet::new(),
         tuple_call_mint: HashMap::new(),
+        tuple_moved: HashMap::new(),
+        tuple_depth: HashMap::new(),
         tuple_member_now: HashMap::new(),
         fnref_bound: Vec::new(),
         written_tuple_members: written_tuple_members_in(orig_code),
@@ -5998,7 +6111,8 @@ fn run_scan_phase(
             break;
         }
     }
-    let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
+    let displace_locals =
+        nullable_locals_that_displace(orig_code, &function, data, &scopes.null_led_first);
     for &v in &displace_locals {
         // loft#1522 — keyed by the VAR, not by its name.  `add_temp_var` identifies a temp by
         // name and hands back the existing one, so two locals of the same name in SIBLING
@@ -6066,6 +6180,15 @@ fn run_scan_phase(
     // loft#1515 — and every hand-off flag, for the same reason: before the branch runs no
     // copy has taken the source's release, so an uninitialised slot would read as garbage and
     // suppress a release that is owed.
+    if !scopes.tuple_moved.is_empty()
+        && let Some(bl) = body_block_mut(&mut code)
+    {
+        let mut flags: Vec<u16> = scopes.tuple_moved.values().copied().collect();
+        flags.sort_unstable();
+        for flag in flags.into_iter().rev() {
+            bl.operators.insert(0, v_set(flag, Value::Boolean(false)));
+        }
+    }
     if !scopes.handed_off.is_empty()
         && let Some(bl) = body_block_mut(&mut code)
     {
@@ -6130,7 +6253,13 @@ fn run_scan_phase(
         d_nr,
         &scopes.witness_buffer,
         &scopes.minted_pairs,
-        &scopes.multi_assigned,
+        // A local whose other binds are the nulls in front of it on every pass displaces
+        // nothing (`null_led_first_binds_in`, loft#1643).
+        &scopes
+            .multi_assigned
+            .difference(&scopes.null_led_first)
+            .copied()
+            .collect(),
     );
     lazy_buffer_mints(&mut code, &mut function, data);
     data.definitions[d_nr as usize].code = code;
@@ -6809,6 +6938,98 @@ pub(crate) fn null_led_in(node: &Value, data: &Data) -> HashSet<u16> {
     counts
         .into_iter()
         .filter(|&(_, (nulls, real))| nulls >= 1 && real == 1)
+        .map(|(v, _)| v)
+        .collect()
+}
+
+/// Variables whose one real bind can hold nothing but the sentinel it overwrites: every bind
+/// but one writes `null`, and a null is written EARLIER in a block that ENCLOSES that real bind
+/// with no loop between the two.  So every path to the real bind wrote the null first, on
+/// every pass, and the bind displaces no store — the author's `x: T? = null; if c { x = mk() }`
+/// inside a loop body, which `(B-Scope)` makes the spelling of a local an arm assigns and a
+/// later statement reads.  Two nulls that do not qualify: one written only OUTSIDE the loop
+/// the real bind sits in (the second pass's bind displaces the first pass's store), and one in
+/// a sibling arm (the path through the other arm reaches the bind without it).
+///
+/// Stricter than [`null_led_in`], which counts binds and reads no position.
+pub(crate) fn null_led_first_binds_in(node: &Value, data: &Data) -> HashSet<u16> {
+    fn is_null(v: &Value, data: &Data) -> bool {
+        match v.unspan() {
+            Value::Null => true,
+            Value::Call(d, a) => a.is_empty() && data.def(*d).name() == "OpNullRefSentinel",
+            _ => false,
+        }
+    }
+    /// A region is a block, a loop body or an `if` arm: `(id, is_loop)`.
+    type Regions = Vec<(usize, bool)>;
+    #[derive(Default)]
+    struct Binds {
+        nulls: Vec<Regions>,
+        reals: usize,
+        led: bool,
+        null_after_real: bool,
+    }
+    struct Walk<'a> {
+        data: &'a Data,
+        regions: Regions,
+        next: usize,
+        out: HashMap<u16, Binds>,
+    }
+    impl Walk<'_> {
+        fn region(&mut self, node: &Value, is_loop: bool) {
+            self.next += 1;
+            self.regions.push((self.next, is_loop));
+            self.node(node);
+            self.regions.pop();
+        }
+        fn node(&mut self, node: &Value) {
+            match node.unspan() {
+                Value::If(test, t, f) => {
+                    self.node(test);
+                    self.region(t, false);
+                    self.region(f, false);
+                    return;
+                }
+                Value::Loop(_) | Value::Block(_) => {
+                    let is_loop = matches!(node.unspan(), Value::Loop(_));
+                    self.next += 1;
+                    self.regions.push((self.next, is_loop));
+                    node.unspan().for_each_child(&mut |c| self.node(c));
+                    self.regions.pop();
+                    return;
+                }
+                _ => {}
+            }
+            node.unspan().for_each_child(&mut |c| self.node(c));
+            if let Value::Set(v, value) = node.unspan() {
+                let here = self.regions.clone();
+                let e = self.out.entry(*v).or_default();
+                if is_null(value, self.data) {
+                    if e.reals == 0 {
+                        e.nulls.push(here);
+                    } else {
+                        e.null_after_real = true;
+                    }
+                } else {
+                    e.reals += 1;
+                    e.led = e
+                        .nulls
+                        .iter()
+                        .any(|n| here.starts_with(n) && here[n.len()..].iter().all(|&(_, lp)| !lp));
+                }
+            }
+        }
+    }
+    let mut w = Walk {
+        data,
+        regions: Vec::new(),
+        next: 0,
+        out: HashMap::new(),
+    };
+    w.node(node);
+    w.out
+        .into_iter()
+        .filter(|(_, b)| b.reals == 1 && b.led && !b.null_after_real)
         .map(|(v, _)| v)
         .collect()
 }
@@ -10572,6 +10793,19 @@ impl Scopes<'_> {
     /// variable however many copies share it — a source handed out by one arm and a destination
     /// filled off a parameter by another ask the same question of the same record — so a second
     /// request returns the first.
+    /// The per-path flag of tuple member `(t, idx)` ([`Self::tuple_moved`]), minted on first use.
+    fn tuple_moved_flag(&mut self, function: &mut Function, (t, idx): (u16, u16)) -> u16 {
+        if let Some(&flag) = self.tuple_moved.get(&(t, idx)) {
+            return flag;
+        }
+        let name = format!("__tmov_{}#{t}_{idx}", function.name(t));
+        let flag = function.add_temp_var(&name, &Type::Boolean);
+        self.var_scope.insert(flag, 0);
+        self.var_order.push(flag);
+        self.tuple_moved.insert((t, idx), flag);
+        flag
+    }
+
     fn mint_handoff_flag(&mut self, function: &mut Function, var: u16) -> u16 {
         if let Some(&flag) = self.handed_off.get(&var) {
             return flag;
@@ -11475,11 +11709,27 @@ impl Scopes<'_> {
                 v,
                 data,
                 function,
-                self.tuple_call_mint.get(&v),
-                &self.drop_transferred,
+                MemberFacts {
+                    call_mints: self.tuple_call_mint.get(&v),
+                    handed: Some(&self.drop_transferred),
+                    moved: Some(&self.tuple_moved),
+                },
                 None,
             );
             frees.extend(self.tuple_handle_frees(v, function, data));
+            // What the tuple holds after this rebind is its own again.
+            let mut resets: Vec<(u16, u16)> = self
+                .tuple_moved
+                .iter()
+                .filter(|((t, _), _)| *t == v)
+                .map(|(&(_, i), &f)| (i, f))
+                .collect();
+            resets.sort_unstable();
+            frees.extend(
+                resets
+                    .into_iter()
+                    .map(|(_, f)| v_set(f, Value::Boolean(false))),
+            );
             if !frees.is_empty() {
                 transition_free = Some(Value::Insert(frees));
             }
@@ -11788,7 +12038,15 @@ impl Scopes<'_> {
         // loft#1511 — remember which elements of a tuple-literal RHS were minted by their
         // own call, for the element frees at reassignment and scope exit.
         if matches!(function.tp(v), Type::Tuple(_)) {
-            match tuple_call_mints(value, function, data) {
+            let joined = if matches!(value.unspan(), Value::If(..)) {
+                branch_tuple_call_mints(value, function, data, data.def_nr("OpNullRefSentinel"))
+            } else {
+                tuple_call_mints(value, function, data).map(|m| (m, Vec::new()))
+            };
+            if let Some((_, disarms)) = &joined {
+                handoff_disarm.extend(disarms.iter().cloned());
+            }
+            match joined.map(|(m, _)| m) {
                 Some(mut m) => {
                     // loft#1532 — an element a later member assignment writes is handed to the
                     // tuple ALONE here: its claimant is disarmed after the `Set`, with the other
@@ -11804,8 +12062,7 @@ impl Scopes<'_> {
                                 v,
                                 data,
                                 function,
-                                None,
-                                &HashSet::new(),
+                                MemberFacts::NONE,
                                 Some(idx as usize),
                             )
                             .is_empty();
@@ -11877,6 +12134,9 @@ impl Scopes<'_> {
             }
         }
         let first_binding = !self.var_scope.contains_key(&v);
+        if first_binding && matches!(function.tp(v).base(), Type::Tuple(_)) {
+            self.tuple_depth.insert(v, self.loops.len());
+        }
         if first_binding {
             self.register_binding(v, function);
         }
@@ -12016,7 +12276,20 @@ impl Scopes<'_> {
                 }
             }
         }
-        if (record_shaped || vector_shaped)
+        // loft#1643 — a NULLABLE record local whose one real bind follows its null on every
+        // pass (`x: T? = null; if c { x = mk() }`, the spelling `(B-Scope)` requires) is a
+        // first bind of the call's answer exactly as the bare local's is, so it takes that
+        // bind's witness PAIRING: its free declines against the call's buffer by identity.  Only the pairing: the dep strips below stay
+        // bare-record-only for the reason `record_target` gives.
+        let nullable_first_adopt = !record_shaped
+            && !publishes_through_ref
+            && matches!(function.tp(v), Type::Optional(_))
+            && matches!(
+                function.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            && self.null_led_first.contains(&ov);
+        if (record_shaped || vector_shaped || nullable_first_adopt)
             && matches!(unspanned_value, Value::Call(_, _) | Value::CallRef(_, _))
             && let Some(fn_nr) = crate::use_analysis::callee_of(data, self.d_nr, unspanned_value)
             // A loft-defined callee — an `n_` global OR a `t_` method / generic
@@ -13051,8 +13324,7 @@ impl Scopes<'_> {
             v,
             data,
             function,
-            None,
-            &HashSet::new(),
+            MemberFacts::NONE,
             Some(idx as usize),
         );
         if release.is_empty() {
@@ -13064,6 +13336,9 @@ impl Scopes<'_> {
             ops.extend(release);
         }
         ops.push(put(value));
+        if let Some(&flag) = self.tuple_moved.get(&(v, idx)) {
+            ops.push(v_set(flag, Value::Boolean(false)));
+        }
         match claim {
             Some(MemberMint::Claimed(w)) => ops.push(v_set(
                 w,
@@ -14219,7 +14494,7 @@ impl Scopes<'_> {
         let backing_after_true = std::mem::replace(&mut self.construction_backing, backing_before);
         let binds_after_true = std::mem::replace(&mut self.bind_backing, binds_before);
         let views_after_true = std::mem::replace(&mut self.view_backing, views_before);
-        let mints_after_true = std::mem::replace(&mut self.tuple_call_mint, mints_before);
+        let mut mints_after_true = std::mem::replace(&mut self.tuple_call_mint, mints_before);
         let now_after_true = std::mem::replace(&mut self.tuple_member_now, now_before);
         let scanned_false = self.scan(f_val, function, data);
         self.owned_refs
@@ -14230,6 +14505,63 @@ impl Scopes<'_> {
             .retain(|k, w| binds_after_true.get(k) == Some(w));
         self.view_backing
             .retain(|k, b| views_after_true.get(k) == Some(b));
+        // Two arms that agree a tuple member is MINTED and disagree only on WHICH claimant
+        // minted it (`u = (mk(1), 0); if c { u = (mk(2), 5) }`) join to a sole owner: every
+        // claimant is disarmed after the `if`, so the member's own release runs the hook on
+        // whichever path ran.  A claimant's live record can only be that member — each is the
+        // buffer of the one call, construction or move that filled it — so the disarm leaves
+        // nothing unreleased.  Dropped from the join instead, the member fell to the bare
+        // free on both paths and no hook ran (loft#1645).  A statement `if` only: after a
+        // value `if` a statement would change its value.
+        let statement_if = [&scanned_true, &scanned_false].iter().all(|arm| {
+            matches!(arm.unspan(), Value::Null)
+                || matches!(arm.unspan(), Value::Block(b) if matches!(b.result, Type::Void))
+        });
+        let mut disarms: Vec<Value> = Vec::new();
+        if statement_if {
+            let mut joined: Vec<(u16, u16)> = Vec::new();
+            for (k, m) in &self.tuple_call_mint {
+                let Some(t) = mints_after_true.get(k) else {
+                    continue;
+                };
+                if t == m {
+                    continue;
+                }
+                for (idx, claim) in m {
+                    if let Some(other) = t.get(idx)
+                        && other != claim
+                    {
+                        joined.push((*k, *idx));
+                        for w in [claim, other].into_iter().flatten() {
+                            if !disarms
+                                .iter()
+                                .any(|d| matches!(d, Value::Set(x, _) if x == w))
+                            {
+                                disarms.push(v_set(
+                                    *w,
+                                    Value::Call(data.def_nr("OpNullRefSentinel"), vec![]),
+                                ));
+                            }
+                        }
+                    }
+                }
+            }
+            joined.sort_unstable();
+            for (k, idx) in joined {
+                let (Some(m), Some(t)) = (
+                    self.tuple_call_mint.get_mut(&k),
+                    mints_after_true.get_mut(&k),
+                ) else {
+                    continue;
+                };
+                m.insert(idx, None);
+                t.insert(idx, None);
+            }
+            disarms.sort_by_key(|d| match d {
+                Value::Set(x, _) => *x,
+                _ => u16::MAX,
+            });
+        }
         self.tuple_call_mint
             .retain(|k, m| mints_after_true.get(k) == Some(m));
         self.tuple_member_now
@@ -14239,6 +14571,13 @@ impl Scopes<'_> {
             Box::new(scanned_true),
             Box::new(scanned_false),
         );
+        let scanned_if = if disarms.is_empty() {
+            scanned_if
+        } else {
+            let mut stmts = vec![scanned_if];
+            stmts.extend(disarms);
+            Value::Insert(stmts)
+        };
 
         if pre_inits.is_empty() {
             return scanned_if;
@@ -14255,7 +14594,10 @@ impl Scopes<'_> {
                 stmts.push(v_set(v, Value::Null));
             }
         }
-        stmts.push(scanned_if);
+        match scanned_if {
+            Value::Insert(ops) => stmts.extend(ops),
+            other => stmts.push(other),
+        }
         Value::Insert(stmts)
     }
 
@@ -14523,6 +14865,8 @@ impl Scopes<'_> {
             }
             let sv = self.scan(v, function, data);
             self.keep_build_target = outer_target;
+            let loop_depth = self.loops.len();
+            let mut arm_moved: Vec<(u16, u16)> = Vec::new();
             // Arm the hand-offs this statement makes, AFTER it is scanned: its own displaced
             // release and its retirement read the facts of the assignments before it, and what
             // it hands off applies to the value it has just assigned (`@FR-O-Latest`).  Armed
@@ -14535,6 +14879,7 @@ impl Scopes<'_> {
                     per_path_pairs,
                     tuple_call_mint,
                     tuple_member_now,
+                    tuple_depth,
                     var_scope,
                     scope,
                     ..
@@ -14577,6 +14922,7 @@ impl Scopes<'_> {
                     if !matches!(b.name, "tuple_member_move" | "synthetic_tuple_return") {
                         return;
                     }
+                    let whole_move = b.name == "tuple_member_move";
                     // A NULLABLE member is written through a stash (`__ref_2 = a.1`) and copied
                     // under its own null test; the stash names the member it holds.
                     let mut stash: HashMap<u16, (u16, u16)> = HashMap::new();
@@ -14595,6 +14941,21 @@ impl Scopes<'_> {
                             Some(Value::Var(t)) => stash.get(t).copied(),
                             _ => None,
                         };
+                        // loft#1645 — the same move of a tuple bound OUTSIDE this block, with no
+                        // loop between: it runs on some paths only, so it takes a per-path flag.
+                        if whole_move
+                            && *d == copy_d
+                            && args.len() >= 3
+                            && let Some(member) = member
+                            && !certain.contains_key(&member.0)
+                            && tuple_depth.get(&member.0) == Some(&loop_depth)
+                            && tuple_call_mint
+                                .get(&member.0)
+                                .is_some_and(|m| m.contains_key(&member.1))
+                            && !arm_moved.contains(&member)
+                        {
+                            arm_moved.push(member);
+                        }
                         if *d == copy_d
                             && args.len() >= 3
                             && let Some(member) = member
@@ -14648,6 +15009,11 @@ impl Scopes<'_> {
                 }
             } else {
                 ls.push(sv);
+            }
+            arm_moved.sort_unstable();
+            for member in arm_moved {
+                let flag = self.tuple_moved_flag(function, member);
+                ls.push(v_set(flag, Value::Boolean(true)));
             }
             if let Some((_, post)) = rebuilt {
                 // A vector literal's backing re-minted in place is REFILLED by the statements
@@ -16401,8 +16767,11 @@ impl Scopes<'_> {
                     v,
                     data,
                     function,
-                    self.tuple_call_mint.get(&v),
-                    &self.drop_transferred,
+                    MemberFacts {
+                        call_mints: self.tuple_call_mint.get(&v),
+                        handed: Some(&self.drop_transferred),
+                        moved: Some(&self.tuple_moved),
+                    },
                     None,
                 ));
                 ls.extend(self.tuple_handle_frees(v, function, data));
@@ -20368,7 +20737,12 @@ fn nullable_view_locals(code: &Value, function: &Function, data: &Data) -> Vec<u
     out
 }
 
-fn nullable_locals_that_displace(code: &Value, function: &Function, data: &Data) -> Vec<u16> {
+fn nullable_locals_that_displace(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+    null_led_first: &HashSet<u16>,
+) -> Vec<u16> {
     fn walk(node: &Value, seen: &mut HashSet<u16>, out: &mut Vec<u16>, data: &Data) {
         if let Value::Set(t, val) = node.unspan() {
             // A SECOND assignment is what displaces; the first allocates.
@@ -20386,9 +20760,12 @@ fn nullable_locals_that_displace(code: &Value, function: &Function, data: &Data)
     let mut seen = HashSet::new();
     walk(code, &mut seen, &mut out, data);
     // @FR-O-Proxy asks free — the locals this returns are the ones whose DISPLACED store is
-    // released, so the proxy's answer is what licenses that free.
+    // released, so the proxy's answer is what licenses that free.  A local whose earlier binds
+    // are nulls in front of the minting one on every pass displaces nothing: that bind is a
+    // first bind (`@FR-O-Move`) and takes the first bind's pairing (loft#1643).
     out.retain(|&v| {
-        v < function.count()
+        !null_led_first.contains(&v)
+            && v < function.count()
             && matches!(function.tp(v), Type::Optional(_))
             && matches!(
                 function.tp(v).base(),
