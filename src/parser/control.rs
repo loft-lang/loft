@@ -16512,6 +16512,16 @@ impl Parser {
                         let placeholder = self.vars.var("__retbuf");
                         if placeholder != u16::MAX {
                             self.vars.retire_argument(placeholder);
+                            // loft#1651 — a retired placeholder OWNS NOTHING from here on.
+                            // The buffer role has just moved to `*v`, so whatever any later
+                            // site emits for this variable must release nothing: it holds no
+                            // store of its own, and the argument prologue that used to
+                            // reserve its slot no longer covers it, so a release would read
+                            // an unreserved slot.  An unreserved ref slot reads as store 0 —
+                            // the EVALUATION STACK — and the free is refused as `BUG (#306)`,
+                            // with only the allocator's guard between that and a whole-store
+                            // free of every live frame.
+                            self.vars.set_skip_free(placeholder);
                         }
                         self.vars.become_argument(*v);
                         dep.push(buf_attr as u16);
