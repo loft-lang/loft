@@ -104,6 +104,15 @@ semantics is judged by the line) · the mutable-by-default choice itself is **�
 
 **Verified by.** `tests/docs/01-keywords.loft` · **`tests/comparisons/variables.loft`**
 
+**⚠ In flight — do not write a scope cell against today's behaviour.** loft#1600 (owner ruling,
+rustc's rule) makes a local bound inside a block end at its `}`; reading it after is the hard
+error `local-out-of-scope`. That half is live. An extension ruled the same day takes the LOOP
+VARIABLE with it — `for i in 0..3 { } i` becomes out of scope — and is not live yet: measured
+2026-09-23 it still answers `2`, the last value, which is Python's behaviour and the opposite
+of the rule about to land. Scope is a real axis of this subject and both comparison pages
+should carry it; the cell is worth writing **after** the extension lands, not against a value
+that is about to change.
+
 **Seen from.** vs Rust §1 · vs Python §1
 
 ---
