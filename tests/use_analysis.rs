@@ -316,9 +316,13 @@ fn dflt() -> M { M{hp:0, name:""} }
 // to owned) makes both correct regardless of which branch runs.
 fn pick(t: vector<M>, i: integer) -> M { t[i] ?? dflt() }
 
-// elem_accumulate FREE SITE: `out += [pick(t,i)]` lowers to an OpCopyRecord with
-// the 0x8000 source-free bit on pick's Join return — the AppendSource site.
+// elem_accumulate, CLOSED by construction (loft#1647): `out += [pick(t,i)]` carries no
+// 0x8000 source-free bit, because a callee that may return its argument's record does not
+// answer a store of its own — so there is no AppendSource site to resolve.
 fn collect(t: vector<M>) -> vector<M> { out: vector<M> = []; for i in 0..len(t) { out += [pick(t, i)]; } out }
+// The interprocedural base the old site exercised, kept observable on a REASSIGN: `c`
+// first owns dflt(), then takes pick's JOIN return, whose base is the caller's `t`.
+fn relay(t: vector<M>) -> M { c = dflt(); c = pick(t, 0); c }
 
 // local_source ROOT (#462 leak): `chosen` first OWNS dflt(), then is reassigned to
 // a JOIN — the displaced owned store leaks. The over-free shape = prior Owned, rhs
@@ -408,11 +412,10 @@ fn ownership_classifies_the_over_free_shapes() {
 fn ownership_surfaces_free_sites() {
     let stderr = dump(OWN_SRC);
 
-    // elem_accumulate: `out += [pick(t,i)]` source-frees pick's JOIN return. The
-    // source is the inline `pick(…)` call; the unification oracle resolves its base
-    // INTERPROCEDURALLY to the CALLER's argument `t` (pick's return borrows param `t`)
-    // — exactly the witness the Stage-3 runtime guard needs.
-    assert_free_site(&stderr, "collect", "AppendSource", "Join", "t");
+    // elem_accumulate: `out += [pick(t,i)]` no longer source-frees pick's JOIN return —
+    // the move bit is set only for a call answering a store of its own (loft#1647), so
+    // the over-free site this shape used to be does not exist.
+    assert_no_free_site(&stderr, "collect");
 
     // match_return: the retbuf `_mv_items_1` is reassigned to a BORROWED enum-field
     // view (`OpGetField(e,…)`) → freeing the buffer over-frees `e`'s field. The
@@ -454,10 +457,17 @@ fn ownership_resolves_the_borrow_base() {
     assert_return_own(&stderr, "deliver", "Join(base=e)"); // match arm of e
     assert_return_own(&stderr, "nested", "Borrowed(base=o)"); // o.inner.rows — chain → o
 
-    // INTERPROCEDURAL: `out += [pick(t,i)]`'s source is the `pick` CALL; the oracle
-    // maps pick's borrowed param `t` to collect's argument `t`. (Also asserted as a
-    // free site above — pinned here as the return/base contract.)
-    assert_free_site(&stderr, "collect", "AppendSource", "Join", "t");
+    // INTERPROCEDURAL: `c = pick(t, 0)`'s rhs is the `pick` CALL; the oracle maps pick's
+    // borrowed param `t` to relay's argument `t`.
+    assert_reassign(&stderr, "relay", "c", "Owned", "Join");
+    let relay_line = stderr
+        .lines()
+        .find(|l| l.contains("fn=n_relay reassign") && l.contains("(c)"))
+        .unwrap();
+    assert!(
+        relay_line.ends_with("rhs=Join(base=t)"),
+        "relay c rhs base: {relay_line}"
+    );
 
     // the displaced-owned reassign's borrow arm roots to the local `pool`.
     assert_reassign(&stderr, "pick_cond", "chosen", "Owned", "Join"); // rhs base = pool

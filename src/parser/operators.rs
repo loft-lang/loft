@@ -415,11 +415,7 @@ impl Parser {
     /// Check whether `val` is a call to a user-defined function that returns a struct
     /// via a temporary store.  Used by `copy_ref` and the vector-append
     /// emit path (`vectors.rs`) to decide whether to free the source
-    /// store after the deep copy.  A callee that can hand back an ARGUMENT's record
-    /// (`fn same(w: S) -> S { w }`, `returns_borrowed_view`) does not answer a store of
-    /// its own, so the bit is never set for it: its call binds a private copy in the
-    /// scope pass's lift, which that lift's own scope exit releases once (loft#1647).
-    /// The free bit's behaviour differs
+    /// store after the deep copy.  The free bit's behaviour differs
     /// under WASM but the query is the same on every target — call
     /// sites in expressions.rs / objects.rs / vectors.rs / collections.rs
     /// are not feature-gated, so this helper must not be either.
@@ -433,7 +429,6 @@ impl Parser {
                 // User function with code (not a built-in op)
                 def.name().starts_with("n_")
                     && *def.code() != Value::Null
-                    && !def.returns_borrowed_view()
                     && !self.answers_caller_buffer(*fn_nr, args)
             }
             // Struct constructor blocks allocate a store too — when assigned
@@ -441,6 +436,20 @@ impl Parser {
             Value::Block(bl) => bl.name == "Object",
             _ => false,
         }
+    }
+
+    /// The `0x8000` move-bit decision for a RECORD copy (`OpCopyRecord`): the source is a
+    /// call answering a store of its OWN.  A callee that can hand back an argument's record
+    /// (`fn same(w: S) -> S { w }`, `returns_borrowed_view`) does not, and no record-copy
+    /// site brackets the call's arguments against a free — so the bit is never set for it.
+    /// The scope pass lifts the call and binds the lift through `OpBindOrCopy`, which
+    /// adopts a fresh store and copies a borrowed one, so the lift owns what it holds and
+    /// its one scope-exit free is right on both arms (loft#1647).  A KEYED replace site
+    /// asks `call_return_frees_source` instead: it brackets the arguments, so there the
+    /// bit is safe for a join and is what releases its minted arm.
+    pub(crate) fn moves_fresh_record(&self, val: &Value) -> bool {
+        self.is_struct_returning_call(val)
+            && !matches!(val.unspan(), Value::Call(f, _) if self.data.def(*f).returns_borrowed_view())
     }
 
     /// loft#1154 — the `0x8000` source-free decision for a JOIN right-hand side, and the
@@ -1021,12 +1030,12 @@ impl Parser {
         // churn).  Same shape as the @P311 OpSetKeyed fix, here on the
         // whole-value element-set path.
         #[cfg(not(feature = "wasm"))]
-        let tp_val =
-            if matches!(code.unspan(), Value::Call(_, _)) && self.is_struct_returning_call(code) {
-                i32::from(tp) | 0x8000
-            } else {
-                i32::from(tp)
-            };
+        let tp_val = if matches!(code.unspan(), Value::Call(_, _)) && self.moves_fresh_record(code)
+        {
+            i32::from(tp) | 0x8000
+        } else {
+            i32::from(tp)
+        };
         #[cfg(feature = "wasm")]
         let tp_val = i32::from(tp);
         self.cl(

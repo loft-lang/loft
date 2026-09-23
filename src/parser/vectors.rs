@@ -5722,9 +5722,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     // -> S { p }`) answers a store the caller still owns: the copy must not
                     // release it.  Today's path is protected by the lift's private copy;
                     // here the answer is read directly, so the callee's own fact decides.
-                    let free_source_bit: i32 = if self.is_struct_returning_call(p)
-                        && !self.data.def(fn_nr).returns_borrowed_view()
-                    {
+                    let free_source_bit: i32 = if self.moves_fresh_record(p) {
                         0x8000
                     } else {
                         0
@@ -5756,12 +5754,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     // under WASM where frame yield/resume creates store
                     // aliases that cannot yet be tracked.
                     #[cfg(not(feature = "wasm"))]
-                    let free_source_bit: i32 =
-                        if !self.first_pass && self.is_struct_returning_call(p) {
-                            0x8000
-                        } else {
-                            0
-                        };
+                    let free_source_bit: i32 = if !self.first_pass && self.moves_fresh_record(p) {
+                        0x8000
+                    } else {
+                        0
+                    };
                     #[cfg(feature = "wasm")]
                     let free_source_bit: i32 = 0;
                     let type_nr = if self.first_pass {
