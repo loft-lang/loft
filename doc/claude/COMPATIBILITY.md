@@ -128,7 +128,16 @@ tighten."** The audit question for the error surface is precisely *"do we need *
 — every place loft is *too permissive* (silently accepts something dubious, or produces a
 plausible-wrong value where it should reject or fault) is a **last-chance-to-add**: add the error
 while contract 0 allows, convert the programs it catches, and the freeze then locks in a strict
-floor we can only ever loosen. (Caveat: a *runtime* fault a program can **catch** is observable
+floor we can only ever loosen.
+
+**Count "the programs it catches" with the compiler, never a text scan.** Land the refusal first
+and run `loft --check` over every `.loft` it could reach (this repo, the consumer checkouts, the
+registry cache — copied to a scratch directory, since `--check` may write caches), then read the
+diagnostics.  A regex over source answers a different question: measured on loft#1600, three
+independent scanner bugs (braces inside string literals, no function boundary, a name re-bound
+by a later loop) turned 4 real files into 29, 93 and 218 reported sites across two agents'
+scans, and hid a real site the compiler found.  A scan is a way to find candidates to read, not
+a count. (Caveat: a *runtime* fault a program can **catch** is observable
 both ways — dropping one can change a program that handled it — so the clean "drop is always
 safe" rule is sharpest for **compile-time** errors; runtime faults still follow the general
 "functioning program unchanged" test.)
