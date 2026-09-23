@@ -1269,6 +1269,27 @@ impl Parser {
                              parameter type); do not use `&` in an argument or sub-expression"
                         );
                         self.amp_pending = false;
+                    } else if let Some((want, got)) = self.amp_annotation_mismatch(var_tp, &t) {
+                        // loft#1639 — `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so
+                        // the link's type comes from the TARGET; `(C-Ref)` converts `τ ↔ &τ` at
+                        // ONE τ and has no conversion for a different one.  Unenforced, the link
+                        // read and wrote the target's slot at the ANNOTATION's width and bias and
+                        // handed the stored code back as a value: `pb: &u16 = &(b: i8 = -1)` read
+                        // `127`, the raw byte, and `pf = 5` through it left `f == -123`.
+                        // `--native` did not compile at all (`*mut u16 = addr_of_mut!(var_a)`).
+                        //
+                        // `u8` was the one shape that read correctly, because its bias is zero and
+                        // its encoding is the identity — the covered spelling is the one that
+                        // cannot fail, which is why this survived.
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "a `&` link takes its target's type, so the annotation `&{want}` cannot \
+                             re-type a link to a `{got}` — they are different ranges, and the link \
+                             would read the stored bytes at the wrong width. Drop the annotation \
+                             (`p = &x` takes the target's type), or write `&{got}`"
+                        );
+                        self.amp_pending = false;
                     } else if Self::is_narrow_store_place(&t, code) {
                         diagnostic!(
                             self.lexer,

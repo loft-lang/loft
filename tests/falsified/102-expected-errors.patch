@@ -1,418 +1,79 @@
-diff --git b/src/data.rs a/src/data.rs
-index 5a44bd686..203b7b55a 100644
---- b/src/data.rs
-+++ a/src/data.rs
-@@ -431,30 +431,6 @@ impl IntegerSpec {
-         i64::from(self.max) - i64::from(self.min) + 1
-     }
- 
--    /// Can `width` bytes hold every value this range admits? — `@FR-L-Narrow`, read as the
--    /// question a DECLARED width has to answer.
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index b77cc6166..021cd35ee 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -19213,42 +19213,6 @@ impl Parser {
+     /// (`formal/binding.md` D-bind-39).  A plain variable is not a store place — a narrow local, a
+     /// parameter and a tuple local all live in an 8-byte frame slot and link correctly — so it
+     /// answers no for a `Var`.
+-    /// loft#1639 — does an explicit `&τ` ANNOTATION name a different integer type than the
+-    /// target does?  `Some((annotation, target))` when it does, spelled as the author would.
 -    ///
--    /// The narrow encodings store the OFFSET `value - min` ([`NarrowIntKind`]'s
--    /// `(val - min)` stores), so a range of `range()` distinct values needs
--    /// `range() <= 256^width` codes.  A declared `size(…)` narrower than that is a
--    /// CONTRADICTION rather than a tight fit: the type promises values its storage cannot
--    /// represent, and every one past the window is lost with nothing said — measured on
--    /// `integer limit(0, 100000) size(1)`, where `300` and `100000` both read back as the
--    /// range's own `min` on both backends (loft#1501).
+-    /// `(B-Ref-Intro)` gives a `&`-annotated binding the type `&(typeof a)`, so the annotation
+-    /// cannot choose: one that disagrees is a mismatch `(C-Ref)` has no conversion for, since
+-    /// it converts `τ ↔ &τ` at ONE τ.  An UNANNOTATED `p = &x` already arrives here with
+-    /// `var_tp` inferred from the target, so it compares equal and is never refused.
 -    ///
--    /// The companion of [`Self::range_to_width`], which answers the same relation the other
--    /// way round; it is a separate method because it cannot borrow that one's answer —
--    /// `range_to_width` maps to 1, 2 or 8 and has no 4, so asking it about a `size(4)` type
--    /// (`u32`, `i32`) would report a contradiction that is not there.  `nullable` reserves a
--    /// code exactly as it does there, so the two count the same codes.
--    #[must_use]
--    pub fn range_fits_width(&self, width: u8, nullable: bool) -> bool {
--        if width >= 8 {
--            return true;
+-    /// ⚠ Compared on (min, max, forced_size) and NOT with `==`, because `IntegerSpec` also
+-    /// carries `not_null` — a claim about the SLOT that a declaration and an annotation can
+-    /// disagree on without naming different types.  The same flag caught `non_null_reads_null`
+-    /// and `Data::integer_alias` out on the same day (C127, loft#1641).
+-    ///
+-    /// Scoped to INTEGERS, which is what loft#1639 measured and what the width argument is
+-    /// about.  A mismatch at another type is left to the machinery that already handles it
+-    /// rather than widened into blind: a refusal earns its reach by the cell that proves it.
+-    fn amp_annotation_mismatch(&self, var_tp: &Type, target: &Type) -> Option<(String, String)> {
+-        let Type::RefVar(want) = var_tp else {
+-            return None;
+-        };
+-        let (Type::Integer(w), Type::Integer(g)) = (want.base(), target.base()) else {
+-            return None;
+-        };
+-        if w.min == g.min && w.max == g.max && w.forced_size == g.forced_size {
+-            return None;
 -        }
--        self.range() + i64::from(nullable) <= 1i64 << (8 * u32::from(width))
+-        // Named through `int_type_name`, which is loft#1641's fix: a type is spelled `u8` only
+-        // when its values ARE `u8`'s, and the author's own alias otherwise.  A message that
+-        // said `integer(0, 65535)` would be true and unwritable — the cure it names has to be
+-        // something the reader can type back in.
+-        Some((
+-            self.int_type_name(want.base()),
+-            self.int_type_name(target.base()),
+-        ))
 -    }
 -
-     /// True when this is the I32 template (plain `integer` post-2c).
-     #[must_use]
-     pub fn is_signed32_template(&self) -> bool {
-diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
-index 64cffba26..d53d60d56 100644
---- b/src/parser/definitions.rs
-+++ a/src/parser/definitions.rs
-@@ -929,23 +929,14 @@ impl Parser {
-         }
-         if self.lexer.has_keyword("size") {
-             self.lexer.token("(");
--            // Read as a LONG.  The lexer switches token kind at `i32::MAX`, so matching only
--            // `LexItem::Integer` left `size(9999999999)` unconsumed and the reader got
--            // `Expect token )` — a punctuation error about a width they wrote deliberately.
--            let width = self.lexer.has_long();
--            if self.first_pass && d_nr != u32::MAX {
--                self.check_declared_size(d_nr, width);
--            }
--            // Only 1/2/4/8 are storage widths.  A non-integer type keeps the old silence —
--            // `size(12)` on the built-in `reference` alias is deliberate, and `forced_size`
--            // is only consulted for integer types — which is what `check_declared_size`
--            // decides before this runs.
--            if let Some(n) = width
--                && matches!(n, 1 | 2 | 4 | 8)
--                && self.first_pass
--                && d_nr != u32::MAX
--            {
--                self.data.definitions[d_nr as usize].forced_size = Some(n as u8);
-+            if let Some(n) = self.lexer.has_integer() {
-+                // Only 1/2/4/8 are meaningful for integer subtypes.  Larger
-+                // values (e.g. size(12) on the built-in `reference` alias)
-+                // are accepted silently — forced_size is only consulted for
-+                // integer types, so non-integer annotations are harmless.
-+                if matches!(n, 1 | 2 | 4 | 8) && self.first_pass && d_nr != u32::MAX {
-+                    self.data.definitions[d_nr as usize].forced_size = Some(n as u8);
-+                }
-             }
-             self.lexer.token(")");
-         }
-@@ -3471,76 +3462,6 @@ impl Parser {
-     /// out-of-range write.  A bound is the one thing in a declaration a program cannot
-     /// check for itself, so an unrepresentable one is a compile error naming the
-     /// representable edge and the type that does hold the value.
--    /// Does a declared `size(…)` agree with the range the same declaration promises?
--    ///
--    /// `@FR-L-Narrow` says a range-annotated integer stores in the SMALLEST width that HOLDS
--    /// its range, and `@FR-L-Narrow-Decode` says the bytes carry `value - start`.  A
--    /// `size(…)` that cannot hold the range satisfies neither: it is not the smallest such
--    /// width because there is no such width below it, and the offset it would store does
--    /// not fit.  The rule already decided this; what was missing is a site that asks.
--    ///
--    /// `limit(…)` says which values the type HOLDS and `size(…)` says how many bytes it gets,
--    /// and nothing checked them against each other. A narrow integer stores the offset
--    /// `value - min`, so `integer limit(0, 100000) size(1)` promises 100001 values and gives
--    /// them 256 codes: `300` and `100000` both read back as `0`, in a struct field, a vector
--    /// element, a vector literal and an element write, on both backends, with no diagnostic
--    /// anywhere (loft#1501). The declaration is where that is decidable, and it is the only
--    /// place the two halves are both in view.
--    ///
--    /// Only INTEGER types are judged. `size(12)` on the built-in `reference` alias is
--    /// deliberate and `forced_size` is never consulted for it, so a non-integer annotation
--    /// keeps the silence it had.
--    fn check_declared_size(&mut self, d_nr: u32, width: Option<u64>) {
--        // Through `base()` (`@FR-N-Shape`): the question is which FORMER this is, and a bare
--        // `Type::Integer` match answers "no" for every `?` spelling of one.  No declaration
--        // reaches here as an `Optional` today — `type T = integer? limit(0, 255) size(1)` does
--        // not parse — so this is the shape the rule asks for rather than a case observed; the
--        // reserved sentinel travels with it so the code COUNT stays right if it ever does.
--        let declared = self.data.attr_type(d_nr, usize::MAX);
--        let nullable = matches!(declared, Type::Optional(_));
--        let Type::Integer(spec) = declared.base().clone() else {
--            return;
--        };
--        let Some(width) = width.filter(|n| matches!(n, 1 | 2 | 4 | 8)) else {
--            // Anything else is not a storage width. It used to be dropped in silence, so
--            // `size(3)` laid the type out as the 8-byte default while the declaration said
--            // three — one more way for a declaration to describe something the layout does
--            // not do.
--            diagnostic!(
--                self.lexer,
--                Level::Error,
--                "a narrow integer is 1, 2, 4 or 8 bytes wide — `size(…)` names one of those"
--            );
--            return;
--        };
--        #[allow(clippy::cast_possible_truncation)]
--        if spec.range_fits_width(width as u8, nullable) {
--            return;
--        }
--        let codes = 1i64 << (8 * width);
--        if spec.is_signed32_template() {
--            // No `limit(…)` at all, so the range is the whole `integer` and no narrow width
--            // can hold it. This is loft#931's shape for a type the stdlib does not declare:
--            // `i32` is the one alias that fits, because 4 bytes hold exactly its range.
--            diagnostic!(
--                self.lexer,
--                Level::Error,
--                "`size({width})` holds {codes} values and a plain `integer` has more — say \
--                 which values this type holds with `limit(lo, hi)`, or drop the `size(…)`"
--            );
--        } else {
--            diagnostic!(
--                self.lexer,
--                Level::Error,
--                "`size({width})` holds {codes} values and `limit({}, {})` needs {} — widen \
--                 the size or narrow the limit",
--                spec.min,
--                spec.max,
--                spec.range()
--            );
--        }
--    }
--
-     pub(crate) fn parse_type_limit(&mut self, min: &mut i32, max: &mut u32) -> bool {
-         if self.lexer.has_keyword("limit") {
-             self.lexer.token("(");
-diff --git b/src/parser/fields.rs a/src/parser/fields.rs
-index f0377a246..f21fc7431 100644
---- b/src/parser/fields.rs
-+++ a/src/parser/fields.rs
-@@ -110,43 +110,7 @@ impl Parser {
-             .record_resolutions
-             .then(|| self.lexer.peek_pos().clone());
-         let Some(field) = self.lexer.has_identifier() else {
--            // `.<digits>` is the TUPLE spelling and nothing else (`@FR-T-Proj`), so reaching
--            // here with one means the receiver is not a tuple — a fact only this site knows,
--            // and *"Expect a field name"* reports the token instead of it.  loft#1461 already
--            // replaced that wording where the receiver WAS a tuple; this is the other half.
--            //
--            // The likely causes are two, and the type tells them apart.  On a collection the
--            // author wants `v[0]`.  Otherwise it is `@FR-T-Paren`: `(e)` is grouping, not a
--            // 1-tuple, so `x = (5); x.0` reads a tuple element off an `integer` — the trap
--            // the rule exists to warn about, met with no help at all until now.
--            //
--            // The index is CONSUMED before reporting, for the reason `@FR-T-Proj`'s own
--            // refusal consumes it: a member left in the stream reaches the statement parser
--            // and earns a second `Expect token ;` behind the error that is true.
--            if let Some(idx) = self.lexer.has_long() {
--                let ty = t.source_name(&self.data);
--                // The cure is per receiver KIND, because the three ways an author gets here
--                // want three different edits and a single generic line helps only one of them.
--                let cure = match t.peel_link() {
--                    Type::Vector(_, _) => format!("index it instead: `[{idx}]`"),
--                    Type::Reference(_, _) => "name the field instead".to_string(),
--                    _ => "`(e)` is grouping, not a 1-tuple — a tuple needs 2 or more elements"
--                        .to_string(),
--                };
--                diagnostic!(
--                    self.lexer,
--                    Level::Error,
--                    "`.{idx}` reads a TUPLE element, and `{ty}` is not a tuple — {cure}"
--                );
--                // Consuming the index leaves `s.0 = 9` reading as `s = 9`, which earns a
--                // second error — *"cannot change type from `text` to integer"* — about an
--                // assignment the author did not write.  `Value::Drop` is what the unknown-
--                // receiver path above marks such a place with, and the assignment path
--                // reads it.
--                *code = Value::Drop(Box::new(code.clone()));
--            } else {
--                diagnostic!(self.lexer, Level::Error, "Expect a field name");
--            }
-+            diagnostic!(self.lexer, Level::Error, "Expect a field name");
-             return t;
-         };
-         // `@FR-N-Chain-Place` — the receiver of a MUTATING method is a PLACE, so it reads as
-@@ -209,13 +173,6 @@ impl Parser {
-         {
-             self.read_through_tag(code, &mut t);
-         }
--        // ⚠ `dnr` is the receiver's DEF, and the two are not the same thing to a reader:
--        // `type_def_nr` answers the def a type is REPRESENTED by, so a fn-ref's is `i32` and a
--        // record-backed tuple's is `__tuple<…>`.  Naming it in a diagnostic reports a type the
--        // author cannot write — *"Unknown field `i32`.nope"* about a
--        // `fn(integer, integer) -> integer` whose type-change diagnostic three lines away
--        // spells it in full (loft#1500, loft#1498's class).  Use it to LOOK THINGS UP; render
--        // `t` for anything a person reads.
-         let dnr = self.data.type_def_nr(&t);
-         if matches!(t, Type::Vector(_, _)) && self.vector_operations(code, &field, e_tp, &t) {
-             return Type::Boolean;
-@@ -522,7 +479,7 @@ impl Parser {
-                             self.lexer,
-                             Level::Error,
-                             "Unknown field {}.{field} — did you mean the free function `{field}(…)` ? ({declared_by}; see LOFT.md § Methods and function calls)",
--                            t.source_name(&self.data)
-+                            self.data.def(dnr).name()
-                         );
-                     } else if let Some(s) = self.suggest_field_name(dnr, &field) {
-                         diagnostic!(
-@@ -530,7 +487,7 @@ impl Parser {
-                             Level::Error,
-                             code = "unknown-field",
-                             "Unknown field {}.{field} — did you mean '{s}'?",
--                            t.source_name(&self.data)
-+                            self.data.def(dnr).name()
-                         );
-                         self.lexer.suggest_last(&s);
-                         // This site reports at the lexer CURSOR, which sits one past the
-@@ -558,7 +515,7 @@ impl Parser {
-                             self.lexer,
-                             Level::Error,
-                             "Unknown field {}.{field}",
--                            t.source_name(&self.data)
-+                            self.data.def(dnr).name()
-                         );
-                     }
-                 }
+     fn is_narrow_store_place(tp: &Type, code: &Value) -> bool {
+         matches!(tp.base(), Type::Integer(spec) if spec.byte_width(false) < 8)
+             && !matches!(code.unspan(), Value::Var(_))
 diff --git b/src/parser/operators.rs a/src/parser/operators.rs
-index 60f8e1a49..3c6ebcf66 100644
+index 4c71faee4..4b71a6855 100644
 --- b/src/parser/operators.rs
 +++ a/src/parser/operators.rs
-@@ -1560,16 +1560,17 @@ impl Parser {
-                 // `Optional(Tuple)` the rule says cannot exist, so the members are bare inside
-                 // it.  That is the rest of D-tup-10 and it is plan-sized (the flip removes the
-                 // `Optional` that `?` and `??` syntactically trigger on).
--                // `@FR-T-Proj`: `t.i` reads the i-th element, `i` is a COMPILE-TIME literal,
--                // and an out-of-range `i` is a STATIC error.  One of THREE sites answering
--                // this for the three homes a tuple has — the stack tuple here, a `&(…)`
--                // reference tuple in `parse_ref_tuple_elem`, and the record-backed
--                // `__tuple<…>` below; all three must answer it alike.
-                 if let Type::Tuple(ref elems) = *t.base() {
-                     let elems = elems.clone();
--                    if let Some(idx) = self.lexer.has_long() {
-+                    if let Some(idx) = self.lexer.has_integer() {
-                         let idx = idx as usize;
--                        if self.tuple_index_out_of_range(idx, elems.len()) {
-+                        if idx >= elems.len() {
-+                            diagnostic!(
-+                                self.lexer,
-+                                Level::Error,
-+                                "Tuple index {idx} out of range — tuple has {} elements",
-+                                elems.len()
-+                            );
-                             t = Type::Unknown(0);
-                         } else {
-                             // P197: propagate parent tuple's deps into the
-@@ -1626,7 +1627,11 @@ impl Parser {
-                             }
-                         }
-                     } else {
--                        self.tuple_member_not_a_literal(code);
-+                        diagnostic!(
-+                            self.lexer,
-+                            Level::Error,
-+                            "Tuple element access requires a numeric index (e.g. .0, .1)"
-+                        );
-                     }
-                 } else if let Type::RefVar(ref inner) = t
-                     && let Type::Tuple(ref elems) = **inner
-@@ -1634,7 +1639,9 @@ impl Parser {
-                     // T1.5: element access through a reference-tuple parameter — pair.0, pair.1.
-                     let elems = elems.clone();
-                     self.parse_ref_tuple_elem(&mut t, code, &elems);
--                } else if let Some(d_nr) = Self::record_tuple_def(&self.data, &t) {
-+                } else if let Some(d_nr) = Self::record_tuple_def(&self.data, &t)
-+                    && matches!(self.lexer.peek().has, crate::lexer::LexItem::Integer(_, _))
-+                {
-                     // P189b: vector-of-tuple loop var / index result —
-                     // the loop variable is typed as `Reference(__tuple<…>)`
-                     // pointing at inline tuple bytes inside the vector
-@@ -1650,9 +1657,15 @@ impl Parser {
-                         .iter()
-                         .map(|a| a.typedef.clone())
-                         .collect();
--                    if let Some(idx) = self.lexer.has_long() {
-+                    if let Some(idx) = self.lexer.has_integer() {
-                         let idx = idx as usize;
--                        if self.tuple_index_out_of_range(idx, elems.len()) {
-+                        if idx >= elems.len() {
-+                            diagnostic!(
-+                                self.lexer,
-+                                Level::Error,
-+                                "Tuple index {idx} out of range — tuple has {} elements",
-+                                elems.len()
-+                            );
-                             t = Type::Unknown(0);
-                         } else {
-                             // Stored-tuple field offset goes through the
-@@ -1696,22 +1709,6 @@ impl Parser {
-                                 t = t.depending(nr);
-                             }
-                         }
--                    } else {
--                        // `@FR-T-Proj` spells a projection `.i` with a LITERAL index, and
--                        // that is the only member a tuple has.  A record-backed tuple is
--                        // carried as the synthetic struct `__tuple<…>`, whose attributes are
--                        // named `_0`, `_1`, … — so without this arm a named member fell to
--                        // the struct-field reader, and the two spellings answered a tuple
--                        // differently depending on where it LIVED.  `t._0` read and WROTE a
--                        // loop variable's element while the same source over a plain local
--                        // was refused, and `t.name` reported *"Unknown field
--                        // `__tuple<integer,text>`.name"* — a type the author cannot write,
--                        // about a member kind a tuple does not have (loft#1498's class:
--                        // `Data::def_is_authored`).  The two sibling sites — the stack
--                        // tuple and `parse_ref_tuple_elem` — already answer this question
--                        // exactly this way; this one asked it as a GUARD on the next token
--                        // instead, so its non-literal case had no answer at all.
--                        self.tuple_member_not_a_literal(code);
-                     }
-                 } else {
-                     t = self.field(code, t);
-@@ -1960,64 +1957,16 @@ impl Parser {
-         data.def(d).name().starts_with("__tuple<").then_some(d)
-     }
- 
--    /// `@FR-T-Proj`: a tuple's member is a LITERAL index and nothing else — report a member
--    /// that is not one, and CONSUME it.
--    ///
--    /// The three sites read the index with [`Lexer::has_long`] rather than `has_integer`,
--    /// because the lexer splits a numeric literal at `i32::MAX`: above it the token is
--    /// `LexItem::Long`, which `has_integer` does not match.  So `t.2147483648` reached THIS
--    /// refusal — *"requires a numeric index"* about a literal that plainly is one — while
--    /// `t.2147483647` reported the out-of-range error it shares a fault with.  An index that
--    /// large is out of range for every tuple; which of the two answers it gets should not
--    /// turn on the width the lexer picked.
--    ///
--    /// The one home for that question, which the three projection sites (stack tuple,
--    /// record-backed `__tuple<…>`, `&(…)` reference tuple) each used to answer for
--    /// themselves.  Consuming the offending name is the half that was missing everywhere: a
--    /// member left in the stream reaches the statement parser, which reports `Expect token ;`
--    /// about a statement whose real fault has already been named — the cascade loft#868
--    /// removed from the unknown-receiver path, still standing here.
--    fn tuple_member_not_a_literal(&mut self, code: &mut Value) {
--        diagnostic!(
--            self.lexer,
--            Level::Error,
--            "Tuple element access requires a numeric index (e.g. .0, .1)"
--        );
--        if self.lexer.has_identifier().is_some() {
--            // Consuming the name is not enough on the LEFT of an assignment: `t._0 = 9`
--            // then reads as `t = 9`, and the reader is told their tuple *"cannot change
--            // type from `__tuple<integer,text>` to integer"* — a second error, about a type
--            // they cannot write, in place of the one that is true.  `Value::Drop` is the
--            // marker `fields.rs` already uses to keep an errored member access from
--            // collapsing into a plain `Value::Var`, and the assignment path reads it.
--            *code = Value::Drop(Box::new(code.clone()));
--        }
--    }
--
--    /// `@FR-T-Proj`: an out-of-range index is a STATIC error, never a runtime null — the
--    /// second half of the same question, and the same three sites ask it.
--    ///
--    /// Reports and answers `true` when `idx` names no element, leaving the caller to pick
--    /// its own recovery type.
--    fn tuple_index_out_of_range(&mut self, idx: usize, arity: usize) -> bool {
--        if idx >= arity {
--            diagnostic!(
--                self.lexer,
--                Level::Error,
--                "Tuple index {idx} out of range — tuple has {arity} elements"
--            );
--            return true;
--        }
--        false
--    }
--
--    /// Read one element of a `&(…)` reference tuple — `@FR-T-Proj` for the reference home,
--    /// the third of the three sites that answer it (see the stack-tuple site in
--    /// [`Parser::operators`] for the other two).
-     fn parse_ref_tuple_elem(&mut self, t: &mut Type, code: &mut Value, elems: &[Type]) {
--        if let Some(idx) = self.lexer.has_long() {
-+        if let Some(idx) = self.lexer.has_integer() {
-             let idx = idx as usize;
--            if self.tuple_index_out_of_range(idx, elems.len()) {
-+            if idx >= elems.len() {
-+                diagnostic!(
-+                    self.lexer,
-+                    Level::Error,
-+                    "Tuple index {idx} out of range — tuple has {} elements",
-+                    elems.len()
-+                );
-                 *t = Type::Unknown(0);
-             } else {
-                 *t = elems[idx].clone();
-@@ -2026,7 +1975,11 @@ impl Parser {
-                 }
-             }
-         } else {
--            self.tuple_member_not_a_literal(code);
-+            diagnostic!(
-+                self.lexer,
-+                Level::Error,
-+                "Tuple element access requires a numeric index (e.g. .0, .1)"
-+            );
-         }
-     }
- 
+@@ -1269,27 +1269,6 @@ impl Parser {
+                              parameter type); do not use `&` in an argument or sub-expression"
+                         );
+                         self.amp_pending = false;
+-                    } else if let Some((want, got)) = self.amp_annotation_mismatch(var_tp, &t) {
+-                        // loft#1639 — `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so
+-                        // the link's type comes from the TARGET; `(C-Ref)` converts `τ ↔ &τ` at
+-                        // ONE τ and has no conversion for a different one.  Unenforced, the link
+-                        // read and wrote the target's slot at the ANNOTATION's width and bias and
+-                        // handed the stored code back as a value: `pb: &u16 = &(b: i8 = -1)` read
+-                        // `127`, the raw byte, and `pf = 5` through it left `f == -123`.
+-                        // `--native` did not compile at all (`*mut u16 = addr_of_mut!(var_a)`).
+-                        //
+-                        // `u8` was the one shape that read correctly, because its bias is zero and
+-                        // its encoding is the identity — the covered spelling is the one that
+-                        // cannot fail, which is why this survived.
+-                        diagnostic!(
+-                            self.lexer,
+-                            Level::Error,
+-                            "a `&` link takes its target's type, so the annotation `&{want}` cannot \
+-                             re-type a link to a `{got}` — they are different ranges, and the link \
+-                             would read the stored bytes at the wrong width. Drop the annotation \
+-                             (`p = &x` takes the target's type), or write `&{got}`"
+-                        );
+-                        self.amp_pending = false;
+                     } else if Self::is_narrow_store_place(&t, code) {
+                         diagnostic!(
+                             self.lexer,

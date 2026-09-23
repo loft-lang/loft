@@ -19213,6 +19213,42 @@ impl Parser {
     /// (`formal/binding.md` D-bind-39).  A plain variable is not a store place — a narrow local, a
     /// parameter and a tuple local all live in an 8-byte frame slot and link correctly — so it
     /// answers no for a `Var`.
+    /// loft#1639 — does an explicit `&τ` ANNOTATION name a different integer type than the
+    /// target does?  `Some((annotation, target))` when it does, spelled as the author would.
+    ///
+    /// `(B-Ref-Intro)` gives a `&`-annotated binding the type `&(typeof a)`, so the annotation
+    /// cannot choose: one that disagrees is a mismatch `(C-Ref)` has no conversion for, since
+    /// it converts `τ ↔ &τ` at ONE τ.  An UNANNOTATED `p = &x` already arrives here with
+    /// `var_tp` inferred from the target, so it compares equal and is never refused.
+    ///
+    /// ⚠ Compared on (min, max, forced_size) and NOT with `==`, because `IntegerSpec` also
+    /// carries `not_null` — a claim about the SLOT that a declaration and an annotation can
+    /// disagree on without naming different types.  The same flag caught `non_null_reads_null`
+    /// and `Data::integer_alias` out on the same day (C127, loft#1641).
+    ///
+    /// Scoped to INTEGERS, which is what loft#1639 measured and what the width argument is
+    /// about.  A mismatch at another type is left to the machinery that already handles it
+    /// rather than widened into blind: a refusal earns its reach by the cell that proves it.
+    fn amp_annotation_mismatch(&self, var_tp: &Type, target: &Type) -> Option<(String, String)> {
+        let Type::RefVar(want) = var_tp else {
+            return None;
+        };
+        let (Type::Integer(w), Type::Integer(g)) = (want.base(), target.base()) else {
+            return None;
+        };
+        if w.min == g.min && w.max == g.max && w.forced_size == g.forced_size {
+            return None;
+        }
+        // Named through `int_type_name`, which is loft#1641's fix: a type is spelled `u8` only
+        // when its values ARE `u8`'s, and the author's own alias otherwise.  A message that
+        // said `integer(0, 65535)` would be true and unwritable — the cure it names has to be
+        // something the reader can type back in.
+        Some((
+            self.int_type_name(want.base()),
+            self.int_type_name(target.base()),
+        ))
+    }
+
     fn is_narrow_store_place(tp: &Type, code: &Value) -> bool {
         matches!(tp.base(), Type::Integer(spec) if spec.byte_width(false) < 8)
             && !matches!(code.unspan(), Value::Var(_))

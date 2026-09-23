@@ -418,7 +418,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 3.**
+**OPEN: 2.**
 
 * **D-bind-52** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD
   read through a link.  `y = e` with `e = &z`, and `y = p` with `p: &P` a parameter, bound `y`
@@ -816,7 +816,10 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   `tests/scripts/a-link-to-a-narrow-integer-store-place-is-refused.loft` (one error per `&`) and
   `tests/scripts/a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` (what must still link).
   Found while checking D-bind-36's cells against a middle element.
-* **D-bind-44** *(opened 2026-09-23, loft#1639)* — `(B-Ref-Intro)` says a `&`-annotated binding
+* **D-bind-53** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1639)* — ⚠ opened as `D-bind-44`,
+  a number already taken by a CLOSED entry of 2026-09-15 that lived on a branch this tree had
+  not yet joined.  Renumbered on the join: a deviation number is repo-WIDE, and the check has
+  to span every in-flight branch rather than the tree in hand. — `(B-Ref-Intro)` says a `&`-annotated binding
   gives the variable type `&(typeof a)`, so the link's type comes from the TARGET and an explicit
   annotation naming a different type is a mismatch `(C-Ref)` has no conversion for.  It is not
   refused: the link reads and writes the target's slot at the ANNOTATION's width and bias, handing
@@ -833,7 +836,21 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   nothing caught it.  Same class as the frame readers @PLN167 A0–A2 closed (#1632): a reader taking
   the stored code for a value, here with the wrong width supplied by the annotation rather than by
   the reader.  Belongs to A3 with D-bind-38 and D-bind-39.  Found when a peer's rules-side read
-  predicted the spelling was already refused.
+  predicted the spelling was already refused.  **Closed** the same day: an annotation naming a
+  different integer type than the target is now REFUSED, which is what `(B-Ref-Intro)`'s
+  `b : &(typeof a)` and `(C-Ref)`'s single τ already required.  One home,
+  `Parser::amp_annotation_mismatch`, asked at the `&` site.  It compares (min, max,
+  `forced_size`) and deliberately NOT `IntegerSpec` whole, because `not_null` is a claim about
+  the SLOT that an annotation and a declaration can disagree on without naming different types
+  — the same flag that caught `non_null_reads_null` and `Data::integer_alias` out the same day.
+  An UNANNOTATED `p = &x` arrives with its type already inferred from the target, compares
+  equal, and is never refused.  Scoped to integers, which is what was measured.  The message
+  names both types through loft#1641's `int_type_name`, so the cure it offers can be typed back
+  in.  Guards `tests/scripts/1639-a-link-takes-its-targets-type-not-its-annotations.loft` for
+  what must still link, and two `@EXPECT_ERROR` cells in `102-expected-errors.loft` — the
+  narrower direction pinning a two-message cascade rather than hiding it.  **D-bind-39**
+  (loft#1567) stays OPEN: a link to a narrow STORE place is still refused, and lifting it needs
+  the representation decision its own entry names.
 
 * **D-bind-38** *(opened 2026-09-14, loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
   vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
