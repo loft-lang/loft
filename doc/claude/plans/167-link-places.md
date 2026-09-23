@@ -12,21 +12,30 @@ remain.**  Every measurement the design rests on is recorded below and was taken
 at `tuxedo-quality-2026-09-21` @ `53d8d5d4a`.  Tracker: [@PLN167](https://github.com/loft-lang/plans/issues/167).
 Closes loft#1566 (`D-bind-38`), loft#1567 (`D-bind-39`), loft#1602, loft#1603, loft#1604 and loft#1605.
 
-**Arc C is claimed by loft3-ca (2026-09-23), pending an owner ruling on decision 2.**  They had
-started loft#1566 independently, on `tuxedo-1562-layout-gate` @ `979a77118..df6155481`, before
-reading this plan — and what they built is decision 2's *rejected* option, measured rather than
-argued: a runtime-kind `codegen_runtime::TextLink` (a pointer to a `String` **or** a slot `DbRef`,
-branched on at every access) whose `edit()` guard copies a slot's text out and writes it back at
-the statement end.  That is both rejected shapes at once — a runtime branch per link access, and
-copy-in/write-back — and it also costs the stack kind its byte-identical emission, since every
-user `&text` becomes a `TextLink`.  Those four commits are joined nowhere and are not to be
-picked.  The owner is being asked whether to rebuild C1–C3 to decision 2 or to revise decision 2;
-the C rows below are written to decision 2 until that comes back.
+**Arc C is loft3-ca's (2026-09-23), and the owner has RULED that it is built to decision 2.**
+They had started loft#1566 independently, on `tuxedo-1562-layout-gate` @
+`979a77118..df6155481`, before reading this plan — and what they built is decision 2's
+*rejected* option, measured rather than argued: a runtime-kind `codegen_runtime::TextLink` (a
+pointer to a `String` **or** a slot `DbRef`, branched on at every access) whose `edit()` guard
+copies a slot's text out and writes it back at the statement end.  That is both rejected shapes
+at once — a runtime branch per link access, and copy-in/write-back — and it also cost the stack
+kind its byte-identical emission, since every user `&text` became a `TextLink`.  The owner's
+ruling (2026-09-23) is **rebuild per decision 2**, and those four commits are reverted at
+`ed429181d`; they are joined nowhere and are not to be picked.  C1 starts at its open probe —
+which sites rebuild a `Text`'s `Deps` from scratch.
+
+The episode is worth keeping for the reason it happened, not for who was right: the design was
+decided and written down a day earlier, and it was re-derived anyway because the work was found
+through the ISSUE (loft#1566) and the issue does not say that a plan owns it.  An issue a plan
+has taken is worth a line saying so.
 
 Two findings of theirs are representation-independent and stand either way: `is_amp_place` admits
 a text place, and `for c in t` over any `&text` (a plain parameter included) was an ICE at
 `collections.rs` `iter_text`, because the loop set-up tested `Type::Text` without unwrapping
-`RefVar` at four sites.  A third, their `D-bind-53`, is fixed here instead — see A3's row.
+`RefVar` at four sites — fixed at `40488e943` (`walks_text`, guard
+`a-text-walk-over-a-link-reads-the-linked-text.loft`, falsified on both backends).  A third,
+their `D-bind-53`, is fixed here instead — see A3's row — and their hunk was reverted with the
+TextLink commits, so `D-bind-54` is the only version.
 
 ## Goal
 
@@ -291,10 +300,10 @@ recorded here with the phase that must carry it as a cell, so none depends on me
 | **B2** — loft#1603: a `&`-bound scalar local passed to a `&` parameter compiles on native — after B0 the link IS the parameter's type and is passed as it is | loft#1603 | the issue's cell answers `6 11` on both backends | **Done with B0** — the issue's cell is in B0's guard |
 | **B3** — loft#1602, the loud stopgap: a text FIELD or ELEMENT handed to a `&text` parameter is refused, naming the cure | loft#1602 | `app(o.s)` refused; falsified (both backends answered `cc` silently before) | **Done** — narrowed by measurement: a TEMPORARY keeps its read-only work copy, because the stdlib's `directory(v: &text = "")` and its two siblings are called with literals by design; only a place (`Parser::is_text_place`) is refused. Guard `1602-a-text-place-to-a-ref-text-parameter-is-refused.loft` |
 | **B4** — a link to an ABSENT scalar place (`c = &v[10]`, `bump(v[10])`, a field of a null record) reads null and drops its writes on native as on the interpreter (C80: nothing stops a running calculation); native panicked in the allocator (`index 65535`), on `main` too for the bind | found in B1 (R10's raise-parity cell) | the bind and the argument cells answer alike on both backends: a read is null, a write lands nowhere, a later read is still null; no panic | **Done** — `output_place_pointer` yields a null pointer for an absent place; a scalar link's read answers `generation::absent_link_value` (each getter's `rec == 0` answer) and its write is dropped; a `&boolean` reads its storage byte in every case. No measurable cost on a hot `&` accumulator. Guard `167-a-link-to-an-absent-place-reads-null.loft` |
-| **C1** — `RefVar(Text)` carries its kind; the bind `t = &o.s` / `t = &v[0]` makes the store kind; reads and writes through it on both backends; cross-kind re-point refused | decision 2 | `tests/scripts/167-a-text-link-into-a-store.loft`, both backends; the stack-kind emission of every text-returning guard byte-identical before/after (`--native-emit` diff); `D-bind-38` closed | Open |
-| **C2** — the store-text slice joins the disturbance check | decision 2 | a cell that dangles under `LOFT_POISON=1` before the check is refused after; growth of another store stays allowed | Open |
-| **C3** — a `&text` parameter instantiated per kind; `app(o.s)` links, `app(local)` unchanged | decision 2, @PLN165 | the aliasing cell reads the written value inside the callee; the stack instance byte-identical to C1's; loft#1602 closed | Open |
-| **D** — formal + docs: `binding.md` gains the text-kind rule and closes `D-bind-38`/`39`; `DIAGNOSTICS.md` rows for the two new refusals; `CHANGELOG.md` | — | `rule_tags.py check` + `registers`; `check_doc_drift.sh` | Open |
+| **C1** — `RefVar(Text)` carries its kind; the bind `t = &o.s` / `t = &v[0]` makes the store kind; reads and writes through it on both backends; cross-kind re-point refused | decision 2 | `tests/scripts/167-a-text-link-into-a-store.loft`, both backends; the stack-kind emission of every text-returning guard byte-identical before/after (`--native-emit` diff); `D-bind-38` closed | Open — **loft3-ca** |
+| **C2** — the store-text slice joins the disturbance check | decision 2 | a cell that dangles under `LOFT_POISON=1` before the check is refused after; growth of another store stays allowed | Open — **loft3-ca** |
+| **C3** — a `&text` parameter instantiated per kind; `app(o.s)` links, `app(local)` unchanged | decision 2, @PLN165 | the aliasing cell reads the written value inside the callee; the stack instance byte-identical to C1's; loft#1602 closed | Open — **loft3-ca** |
+| **D** — formal + docs: `binding.md` gains the text-kind rule and closes `D-bind-38`/`39`; `DIAGNOSTICS.md` rows for the two new refusals; `CHANGELOG.md` | — | `rule_tags.py check` + `registers`; `check_doc_drift.sh` | Open — split: the narrow half here, the text half with C3 (loft3-ca) |
 
 ## Phase ordering
 
