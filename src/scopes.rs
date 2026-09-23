@@ -13119,6 +13119,65 @@ impl Scopes<'_> {
         Some((pre, post))
     }
 
+    /// `@FR-L-CapOwn` at a REBIND of a fn-ref local that holds a CALL's closure: `(before,
+    /// after)` the statement, or `None` where it is not such a rebind (loft#1609).
+    ///
+    /// A closure record that left its frame is released by the fn-ref holding it, and once the
+    /// local names the new value nothing names the old one.  Before the statement the old
+    /// value is copied into a displaced temp; after it, the temp gives up a closure it shares
+    /// with the new value (`OpFnRefDetachShared` — `f = keep(f)` hands the same record back),
+    /// runs the record's cascade and frees its store, and is set to null so the scope-end
+    /// sweep of the temp releases nothing.  Declined where the old value may be a record this
+    /// frame built (the record releases through itself) or another local shares the fn-ref
+    /// (`g = f`: releasing it here would leave `g` a freed closure).
+    fn fnref_call_rebind(
+        &mut self,
+        stmt: &Value,
+        function: &mut Function,
+        data: &Data,
+    ) -> Option<(Vec<Value>, Vec<Value>)> {
+        let Value::Set(ov, _) = stmt.unspan() else {
+            return None;
+        };
+        let v = *self.var_mapping.get(ov).unwrap_or(ov);
+        if !matches!(function.tp(v), Type::Function(..))
+            || !self.var_scope.contains_key(&v)
+            || function.is_argument(v)
+            || function.is_captured(v)
+            || function.is_compiler_generated(v)
+            || function.is_skip_free(v)
+        {
+            return None;
+        }
+        let count = function.count();
+        // Every entry a callee's tagged note (a call result), never a local of this frame.
+        if function.tp(v).depend().iter().any(|&r| r < count) {
+            return None;
+        }
+        if (0..count).any(|u| {
+            u != v
+                && matches!(function.tp(u).base(), Type::Function(..))
+                && function.tp(u).depend().contains(&v)
+        }) {
+            return None;
+        }
+        let tp = function.tp(v).clone();
+        self.lift_counter += 1;
+        let tmp = function.add_temp_var(&format!("__fdisp_{}", self.lift_counter), &tp);
+        self.var_scope.insert(tmp, self.scope);
+        let pre = vec![v_set(tmp, Value::Var(v))];
+        let mut post = vec![Value::Call(
+            data.def_nr("OpFnRefDetachShared"),
+            vec![Value::Var(tmp), Value::Var(v)],
+        )];
+        if data.any_closure_drop() {
+            post.push(call("OpDropFnRef", tmp, data));
+        }
+        post.push(call("OpFreeRef", tmp, data));
+        post.push(v_set(tmp, Value::Null));
+        Some((pre, post))
+    }
+
     /// `@FR-H-Drop`, the reassignment clause, for a vector local promoted onto the RETURN
     /// BUFFER: `(before, after, waits)` a statement that refills it, or `None`.
     ///
@@ -13725,7 +13784,9 @@ impl Scopes<'_> {
             // construction of a local (outside a loop) displaces nothing.
             let rebuilt = self.in_place_rebuild(v, function, data);
             let rebind_release = self.vector_rebind_release(v, function, data);
-            let call_rebind = self.vector_call_rebind(v, function, data);
+            let call_rebind = self
+                .vector_call_rebind(v, function, data)
+                .or_else(|| self.fnref_call_rebind(v, function, data));
             let promoted_refill = self.promoted_vector_refill(v, function, data);
             // A literal's `Set` heads the statements that fill its new backing, so its release
             // waits for the statement's end; any other rebind is a whole statement already.
@@ -15417,6 +15478,9 @@ impl Scopes<'_> {
         // it standing, `--native` nulls `store_nr`), so a guard placed after it would decline on
         // one and double-free on the other.
         let mut guarded: Vec<Value> = Vec::new();
+        // The owners whose drop a conditional release below already carries — one hook per
+        // store, on the FIRST release of it (a view and its backing free one store).
+        let mut guarded_hooks: std::collections::HashSet<u16> = std::collections::HashSet::new();
         let vars = self.variables(to_scope);
         if scope_debug {
             eprintln!(
@@ -15550,7 +15614,7 @@ impl Scopes<'_> {
                     )
                     && !records.is_empty()
                 {
-                    guarded.push(free_unless_record_built(v, &records, Some(w), data));
+                    guarded.push(free_unless_record_built(v, &records, Some(w), None, data));
                 }
                 ls.push(release_witness(
                     w,
@@ -15832,7 +15896,20 @@ impl Scopes<'_> {
                     )
                     && !records.is_empty()
                 {
-                    guarded.push(free_unless_record_built(v, &records, None, data));
+                    // The release this stands in for is the frame's whole one, hook included
+                    // (`@FR-H-Drop`): on a run that skips the build nothing else releases the
+                    // elements.  The hook is the OWNER's — a vector local viewing its backing
+                    // (`w` over `__vdb_N`) frees the same store — and it runs once, ahead of
+                    // whichever of the two is released first.
+                    let owner = match function.tp(v).depend().as_slice() {
+                        [] => Some(v),
+                        [b] => Some(*b),
+                        _ => None,
+                    };
+                    let hook = owner
+                        .filter(|o| guarded_hooks.insert(*o))
+                        .and_then(|o| self.scope_end_drop(function, o, data, None));
+                    guarded.push(free_unless_record_built(v, &records, None, hook, data));
                 }
                 if function.is_skip_free(v) && inject_free_skipfree() == Some(function.name(v)) {
                     ls.push(Value::Call(
@@ -16146,6 +16223,17 @@ impl Scopes<'_> {
                             function.name(v),
                             self.var_scope.get(&v).copied().unwrap_or(u16::MAX),
                         );
+                    }
+                    // `@FR-L-CapOwn` — a fn-ref no local record releases (a call result, a
+                    // parameter) holds a record that LEFT its frame, and the release it took
+                    // over runs the hooks as well as freeing the store.  Which lambda it holds
+                    // is a run-time fact, so the cascade is dispatched on its `d_nr`
+                    // (loft#1609).  A local record releases through itself and needs no op.
+                    let local_record = carried
+                        .iter()
+                        .any(|&r| r < function.count() && function.name(r).starts_with("___clos_"));
+                    if !local_record && data.any_closure_drop() {
+                        ls.push(call("OpDropFnRef", v, data));
                     }
                     ls.push(call("OpFreeRef", v, data));
                 }
@@ -20186,7 +20274,15 @@ fn adoption_build_is_conditional(builds: &CaptureBuilds, v: u16) -> bool {
 /// `witness` is the local's OWNER WITNESS where it has one (`@FR-O-Witness`): the sweep
 /// releases that separately, so the release here declines by store identity where the two
 /// would name one store.  Without the witness the free is plain.
-fn free_unless_record_built(v: u16, records: &[u16], witness: Option<u16>, data: &Data) -> Value {
+///
+/// `hook` is the release's drop (`@FR-H-Drop`), run ahead of the free on the same path.
+fn free_unless_record_built(
+    v: u16,
+    records: &[u16],
+    witness: Option<u16>,
+    hook: Option<Value>,
+    data: &Data,
+) -> Value {
     // ANY of them being there is the fact: where several records can hold this store they are
     // mutually exclusive builds, so on a given run at most one exists — and that one's cascade
     // is the release this free stands down for.  Folded right so the last record is the base
@@ -20209,6 +20305,10 @@ fn free_unless_record_built(v: u16, records: &[u16], witness: Option<u16>, data:
             vec![Value::Var(v), Value::Var(w)],
         ),
         None => call("OpFreeRef", v, data),
+    };
+    let release = match hook {
+        Some(hook) => Value::Insert(vec![hook, release]),
+        None => release,
     };
     v_if(present, Value::Null, release)
 }

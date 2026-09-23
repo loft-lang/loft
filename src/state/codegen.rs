@@ -2106,6 +2106,15 @@ impl State {
             Type::Reference(_, _) | Type::Enum(_, true, _) => {
                 self.emit_push_sentinel(stack);
             }
+            // A fn-ref's null is the PAIR the first-Set path writes (`gen_set_first`'s
+            // `Type::Function` arm): the null `d_nr`, then the null-closure sentinel.  Given
+            // the catch-all's lone DbRef, `OpPutFnRef` popped twenty bytes off a push of
+            // sixteen and the frame ran eight bytes short from there on.
+            Type::Function(..) => {
+                stack.add_op("OpConstInt", self);
+                self.code_add(i64::MIN);
+                self.emit_push_sentinel(stack);
+            }
             Type::Integer(_) => {
                 stack.add_op("OpConstInt", self);
                 self.code_add(i64::MIN);
@@ -4080,6 +4089,25 @@ impl State {
             stack.add_op("OpVarRef", self);
             self.code_add(var_pos - 8);
             stack.add_op("OpFreeRef", self);
+            return Type::Void;
+        }
+        // loft#1609 — `OpDropFnRef(f)` names the fn-ref VARIABLE; the op reads the slot in
+        // place (`d_nr` and the closure half), so nothing is pushed, only its distance.
+        if stack.data.def(op).name() == "OpDropFnRef"
+            && let Some(Value::Var(v)) = parameters.first()
+        {
+            let var_pos = stack.var_pos(*v);
+            stack.add_op("OpDropFnRef", self);
+            self.code_add(var_pos);
+            return Type::Void;
+        }
+        if stack.data.def(op).name() == "OpFnRefDetachShared"
+            && let [Value::Var(old), Value::Var(new)] = parameters
+        {
+            let (old_pos, new_pos) = (stack.var_pos(*old), stack.var_pos(*new));
+            stack.add_op("OpFnRefDetachShared", self);
+            self.code_add(old_pos);
+            self.code_add(new_pos);
             return Type::Void;
         }
         // @PLN118 — free a heap variable that took an unconditional pre-build free

@@ -281,6 +281,11 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // templates (pure-expr / literal, no non-rewritable `s.`) are native-valid
     // via DefaultEmitter.
     r.insert("OpFreeRef", Box::new(ref_ops::OpFreeRefEmitter));
+    r.insert("OpDropFnRef", Box::new(ref_ops::OpDropFnRefEmitter));
+    r.insert(
+        "OpFnRefDetachShared",
+        Box::new(ref_ops::OpFnRefDetachSharedEmitter),
+    );
     r.insert(
         "OpFreeRefIfDistinct",
         Box::new(ref_ops::OpFreeRefIfDistinctEmitter),

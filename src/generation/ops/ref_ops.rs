@@ -27,6 +27,81 @@ use std::io;
 ///   - an fn-ref (`Type::Function`) → free only its closure component when set;
 ///   - otherwise → `OpFreeRef(cell, <db>, "var")` plus a `store_nr = u16::MAX`
 ///     reset when the operand is a variable.
+/// `OpDropFnRef(f)` (`@FR-L-CapOwn`, loft#1609) — run the drop cascade of the closure record
+/// a fn-ref holds, ahead of the `OpFreeRef` that releases its store.  Which lambda the value
+/// holds is a run-time fact, so this is a `match` on its `d_nr` whose arms are the lambdas a
+/// value of this fn-ref TYPE can be ([`super::super::fnref::dispatch_arms`], the same set a
+/// call through it dispatches over) that have a cascade ([`crate::data::Data::closure_drops`]).
+/// A null closure, a released store and every other `d_nr` run nothing — the interpreter's
+/// `State::fn_drop_ref` answers the same three the same way.
+pub struct OpDropFnRefEmitter;
+
+impl OpEmitter for OpDropFnRefEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let Some(Value::Var(v)) = args.first().map(Value::unspan) else {
+            return write!(ctx.w, "()");
+        };
+        let tp = ctx
+            .output
+            .data
+            .def(ctx.output.def_nr)
+            .variables()
+            .tp(*v)
+            .clone();
+        let Type::Function(params, ..) = tp.base() else {
+            return write!(ctx.w, "()");
+        };
+        let candidates: Vec<u32> = super::super::fnref::dispatch_arms(
+            ctx.output.data,
+            &ctx.output.reachable,
+            tp.base(),
+            params.len(),
+        )
+        .unwrap_or_default()
+        .iter()
+        .map(|a| a.d_nr)
+        .collect();
+        let arms: Vec<(u32, String)> = ctx
+            .output
+            .data
+            .closure_drops()
+            .into_iter()
+            .filter(|(lambda, _)| candidates.contains(lambda))
+            .map(|(lambda, cascade)| (lambda, ctx.output.fn_ident(ctx.output.data.def(cascade))))
+            .collect();
+        if arms.is_empty() {
+            return write!(ctx.w, "()");
+        }
+        let (_, vn) = free_label_lvalue(ctx, *v);
+        write!(
+            ctx.w,
+            "{{ let __df = {vn}; if __df.1.rec != 0 && stores.allocations.get(__df.1.store_nr as usize).is_some_and(|s| !s.is_free()) {{ match __df.0 {{ "
+        )?;
+        for (lambda, cascade) in arms {
+            write!(ctx.w, "{lambda}_u32 => {cascade}(cell, __df.1), ")?;
+        }
+        write!(ctx.w, "_ => {{}} }} }} }}")
+    }
+}
+
+/// `OpFnRefDetachShared(old, new)` — null the closure half of `old` when it shares a store
+/// with `new`'s, the native twin of `State::fn_ref_detach_shared` (loft#1609).
+pub struct OpFnRefDetachSharedEmitter;
+
+impl OpEmitter for OpFnRefDetachSharedEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let [Value::Var(old), Value::Var(new)] = args else {
+            return write!(ctx.w, "()");
+        };
+        let (_, o) = free_label_lvalue(ctx, *old);
+        let (_, n) = free_label_lvalue(ctx, *new);
+        write!(
+            ctx.w,
+            "if {o}.1.store_nr == {n}.1.store_nr {{ {o}.1 = DbRef {{ store_nr: u16::MAX, rec: 0, pos: 0 }}; }}"
+        )
+    }
+}
+
 pub struct OpFreeRefEmitter;
 
 /// The debug LABEL and the reset LVALUE of a freed local: `("var_x", "var_x")`, or

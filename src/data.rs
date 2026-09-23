@@ -10405,6 +10405,33 @@ impl Data {
         Self::mangle_method(def.name(), method)
     }
 
+    /// Every lambda whose closure record has a drop cascade, paired with that cascade: the
+    /// arms `OpDropFnRef` dispatches over (`@FR-L-CapOwn`, loft#1609).  A fn-ref's run-time
+    /// `d_nr` names the lambda; a lambda absent here has nothing to drop.
+    #[must_use]
+    pub fn closure_drops(&self) -> Vec<(u32, u32)> {
+        (0..self.definitions())
+            .filter_map(|d| {
+                let record = self.def(d).closure_record();
+                if record == u32::MAX {
+                    return None;
+                }
+                let cascade = self.drop_cascade_nr(record);
+                (cascade != u32::MAX).then_some((d, cascade))
+            })
+            .collect()
+    }
+
+    /// Does any lambda's closure record have a drop cascade?  Gates `OpDropFnRef`, which is
+    /// a no-op in a program where [`Self::closure_drops`] is empty.
+    #[must_use]
+    pub fn any_closure_drop(&self) -> bool {
+        (0..self.definitions()).any(|d| {
+            let record = self.def(d).closure_record();
+            record != u32::MAX && self.drop_cascade_nr(record) != u32::MAX
+        })
+    }
+
     #[must_use]
     pub fn drop_cascade_nr(&self, type_def: u32) -> u32 {
         if type_def == u32::MAX || type_def as usize >= self.definitions.len() {

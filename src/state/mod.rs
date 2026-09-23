@@ -1010,6 +1010,63 @@ impl State {
         self.fn_call(d_nr as u32, total, code_pos);
     }
 
+    /// Run the drop cascade of the closure record the fn-ref at `fn_var` holds
+    /// (`@FR-L-CapOwn`: a record that leaves its frame takes over the release, hooks
+    /// included).  Which lambda the fn-ref holds is a run-time fact, so the cascade is looked
+    /// up from the slot's `d_nr` through that lambda's `closure_record`.  Nothing runs for a
+    /// null fn-ref, a fn-ref with no closure, a released closure store, or a record type
+    /// with no cascade.  The cascade is entered as an ordinary call and returns to the next
+    /// op, which is the `OpFreeRef` that releases the store.
+    pub fn fn_drop_ref(&mut self, fn_var: u16) {
+        if self.data_ptr.is_null() {
+            return;
+        }
+        let d_nr_i64 = self.get_var::<i64>(fn_var);
+        let closure = self.get_var::<DbRef>(fn_var - 8);
+        // SAFETY: the `Data` outlives this `State` — see `data_ptr`.
+        let data = unsafe { &*self.data_ptr };
+        let Ok(d_nr) = u32::try_from(d_nr_i64) else {
+            return;
+        };
+        if d_nr >= data.definitions() || closure.rec == 0 {
+            return;
+        }
+        let record = data.def(d_nr).closure_record();
+        if record == u32::MAX {
+            return;
+        }
+        let cascade = data.drop_cascade_nr(record);
+        if cascade == u32::MAX
+            || self
+                .database
+                .allocations
+                .get(closure.store_nr as usize)
+                .is_none_or(crate::store::Store::is_free)
+        {
+            return;
+        }
+        let before = self.stack_pos;
+        self.put_stack(closure);
+        let span = u16::try_from(self.stack_pos - before).unwrap_or(0);
+        let code_pos = i64::from(self.fn_positions[cascade as usize]);
+        self.fn_call(cascade, span, code_pos);
+    }
+
+    /// Null the closure half of the fn-ref at `old` when it shares a store with the fn-ref at
+    /// `new` — the displaced value of a rebind that handed the same closure back owns nothing
+    /// the rebind released (loft#1609).  Both are slot distances from the top of the stack.
+    pub fn fn_ref_detach_shared(&mut self, old: u16, new: u16) {
+        let o = self.get_var::<DbRef>(old - 8);
+        let n = self.get_var::<DbRef>(new - 8);
+        if o.store_nr == n.store_nr {
+            *self.mut_var::<DbRef>(old - 8) = DbRef {
+                store_nr: u16::MAX,
+                rec: 0,
+                pos: 0,
+            };
+        }
+    }
+
     pub fn static_call(&mut self) {
         let call = self.code::<u16>();
         // Fix #87: resolve n_stack_trace index lazily, then only snapshot for that call.

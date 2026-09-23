@@ -1651,6 +1651,17 @@ fn OpSetStackFnRef(pos: const u16, v1: text);
 // reference names the link's slot; the 20-byte STACK blob lives where it points.  Declared
 // `text` for the blob like `OpVarFnRef`, whose signature carries the same 16-vs-20 gap.
 fn OpGetStackFnRef(r: reference) -> text;
+// Run the drop cascade of the closure record a fn-ref holds, before the fn-ref's own
+// `OpFreeRef` releases that record's store (@FR-L-CapOwn, loft#1609).  Emitted only for a
+// fn-ref no local closure record releases (a call result, a parameter): which lambda such a
+// value holds is a run-time fact, so the cascade is found from the fn-ref's own `d_nr`.  A
+// fn-ref holding no closure, or a lambda whose record owns nothing droppable, runs nothing.
+// `fn_var` is the fn-ref slot's distance from the top of the stack, as `OpCallRef`'s is.
+fn OpDropFnRef(fn_var: const u16);
+// Null the closure half of the fn-ref at `old` when it shares a store with the one at `new`:
+// a rebind that hands the same closure back (`f = keep(f)`) displaces nothing, so the release
+// of the displaced value that follows must find nothing to release (loft#1609).
+fn OpFnRefDetachShared(old: const u16, new: const u16);
 // Append a text to a stack text variable.
 fn OpAppendStackText(pos: const u16, v1: text);
 // Append a character to a stack text variable.
