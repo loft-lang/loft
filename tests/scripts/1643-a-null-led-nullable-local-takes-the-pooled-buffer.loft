@@ -6,13 +6,21 @@
 // statement reads.  Its call bind is a FIRST bind — the null in front of it runs on every path and
 // every pass — so it takes the bare local's witness pairing, and the call's buffer is minted once
 // per activation instead of once per call.  The mint count is pinned by
-// `tests/adopt_buffer_reuse.rs::the_store_census_drops` (cell r28); this file pins what the
-// widening must NOT reach, where the bind displaces a store and pooling it would free that store
-// under the pooled buffer: a null written only OUTSIDE the loop (c2), a null in a SIBLING arm
-// (c3), and a null in an outer loop with the bind in an inner one (c6).  c1, c4, c7 and c8 pool
-// (a fresh-store callee, a promoted-local callee, a text-owning record, a struct-enum); c5 has no
+// `tests/adopt_buffer_reuse.rs::the_store_census_drops` (cell r28); this file pins the values,
+// stores and releases of the widened pairing across the shapes it reaches and the ones it keeps
+// on the old route: a null written only OUTSIDE the loop (c2), a null in a SIBLING arm (c3), and
+// a null in an outer loop with the bind in an inner one (c6).  c1, c4, c7 and c8 pool (a
+// fresh-store callee, a promoted-local callee, a text-owning record, a struct-enum); c5 has no
 // loop.  Every value is hand-computed.  `LOFT_STRICT_STORES=1`, `LOFT_POISON=1`,
 // `LOFT_POISON_CLAIM=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+//
+// @falsified-at: none — the fix moves no value, store or release, only how many stores are
+//   minted, so no channel of this file can tell the two trees apart.  Its falsifiable guard is
+//   the census pin, which reads (197, 303, 173, 269) with the fix reverted.  Measured too: with
+//   the enclosing-null test removed, c2, c3 and c6 still answer right under
+//   `LOFT_STRICT_STORES=1` and `LOFT_POISON=1`, and so do nested-loop binds that then pool
+//   (75 mints / 75 frees where the test keeps 99 / 99) — the rebind's own guarded free covers
+//   them.  So that test is caution in the safe direction: it costs pooling, never a release.
 //
 struct Mk { matched: boolean, pts: vector<integer> }
 struct Tx { name: text, n: integer }
