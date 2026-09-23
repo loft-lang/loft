@@ -839,6 +839,41 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   scored by value instead of by diagnostic.  `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft`
   still pins the frame half.  D-bind-38, the TEXT face of the same rule, stays open.
 
+* **D-bind-54** *(opened 2026-09-23, CLOSED 2026-09-23; found by loft3-ca on the wide spelling,
+  where it was recorded as D-bind-53 — a number this tree had already given loft#1639's entry, so
+  the two were reconciled on contact rather than on the join)* — `(B-Ref-Lvalue)` for a field of a
+  STRUCT ELEMENT: `p = &v[0].f`.  The place a link is given is built by `Parser::scalar_place_ref`,
+  whose first arm answered the ELEMENT for any read through an element accessor — **the field
+  operand was not mis-offset, it was dropped**.  The introspect is the whole story, two different
+  fields of one element yielding byte-identical places:
+  `p1(1):&integer(0, 255) = OpGetVector(v(1), 10i32, 0i32);` beside
+  `q1(1):&integer = OpGetVector(v(1), 10i32, 0i32);`, and natively
+  `addr_mut::<u8>(__ed.rec, __ed.pos)` with no offset added.
+  **Measured**, both backends identical, with `struct E { a: u8, b: u8, c: integer }` — whose
+  layout puts `c` at offset 0, `a` at 8 and `b` at 9: `&v[0].a` and `&v[0].b` each wrote `c`, and
+  `&v[0].c` was **right by accident**, its offset being zero.  With
+  `struct W { a: integer, b: u8, c: integer }`, `&x[0].b` wrote `a`.  loft3-ca reached it from the
+  text side (`&v[0].s` with `struct O { s: text, n: integer }` lands on `n`) and reported `49 2 3`
+  for `1 42 9` on a wide field — the same defect seen through a layout whose wide field was not at
+  offset zero.
+  **Closed** by naming the field unless its operand is literally zero, where the element's base
+  address and the field's ARE the same address — which is exactly what lets `vector<integer>`'s
+  `&v[0]` and a struct element's `&v[0].f` share one IR shape without ambiguity.  Written once, for
+  reads of ANY arity, so a NARROW read's third operand (the `min` its encoding is biased by) is
+  covered by the same code rather than by a second arm that would have to agree with the first
+  forever — that reconciliation was the join hazard loft3-ca flagged, and removing the second arm
+  removes it.
+  **Why it surfaced now.**  The narrow spelling was unreachable while D-bind-39 refused a link to a
+  narrow store place; lifting that refusal in the same commit admitted it onto this broken path.  So
+  a refusal was hiding a defect one layer down, and the lift is what made it reachable — the reason
+  the lift's own guard scores neighbours rather than targets, and the reason it is closed here
+  rather than filed: shipping the lift without it would have been a silent-wrong introduced by a
+  fix, which is `(B-Ref-Reshape)`'s own objection to a link that cannot be honoured.
+  Guard `tests/scripts/1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`, six
+  cells linking every field of both layouts in turn and reading all three fields back each time, so
+  a write landing on a neighbour is caught BY the neighbour.  loft3-ca's `#1566` guard keeps the
+  integer and text cells on the same rule.
+
 * **D-bind-53** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1639)* — ⚠ opened as `D-bind-44`,
   a number already taken by a CLOSED entry of 2026-09-15 that lived on a branch this tree had
   not yet joined.  Renumbered on the join: a deviation number is repo-WIDE, and the check has

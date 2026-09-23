@@ -17,6 +17,24 @@
 // A narrow LOCAL is the other side of the line and keeps its own guard,
 // `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft`.
 //
+// @falsified-at: 3e61c2971 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// TWO controls, because this file closes two defects and they cannot be falsified by one build.
+// The receipt above is the D-bind-54 half (a field of a struct element), taken on the commit where
+// D-bind-39's refusal is already lifted and the field operand is still dropped — the only build on
+// which those cells can fail BY VALUE, which is why it is the recorded one.  One assertion failure
+// rather than eleven: the first failed assert ends the run.
+//
+// The D-bind-39 half (the refusal itself) was falsified separately against 6c188b612 — interpret
+// exit 1 -> 0, native exit 1 -> 0 — and moves the EXIT channel alone, because there the `&` is
+// still refused and the file does not compile.  ⚠ That means the D-bind-54 cells are VACUOUS
+// against that control: the refusal masks the very defect they exist to catch, so a single receipt
+// taken there would have read as proof for cells that were never scored.
+//
+// CHANNEL: the assertions.  The exit channel belongs to the D-bind-39 control alone.
+//
 // @EXPECT_WARNING: Advice[narrow-fallback]
 // @EXPECT_WARNING: Advice[narrow-fallback]
 
@@ -26,6 +44,14 @@ struct W { a: u8, b: i8, c: u16, d: i16, h: integer limit(1000, 1100) }
 struct Inner { q: i16 }
 struct Nest { e: Inner, n: integer }
 struct N { v: u8?, n: integer }
+// Two layouts whose field ORDER differs from their offset order, so a dropped field operand
+// cannot hide: in `E` the wide `c` takes offset 0 and the two bytes follow it, and `Wd` has two
+// wide fields, so they cannot both sit at zero.
+struct E { a: u8, b: u8, c: integer }
+struct In { p: u8, q: integer }
+struct Out { m: u8, inner: In, n: integer }
+struct Holder { v: vector<In>, tag: integer }
+struct Wd { a: integer, b: u8, c: integer }
 
 fn bump(p: &u8) { p += 1; }
 
@@ -65,6 +91,27 @@ fn unfitting_step_at_the_place() -> text { o = B{a: 250, b: 9, n: 7}; o.a += 10;
 // --- absence survives a link to a nullable narrow field, both ways ---
 fn null_through_the_link() -> text { o = N{v: 3, n: 7}; p = &o.v; s = "{p ?? -1}"; p = null; t = "{o.v ?? -1}"; p = 8; "{s},{t},{o.v ?? -1},{o.n}" }
 
+// --- a field of a STRUCT ELEMENT, every field of two layouts linked in turn (D-bind-53) ---
+// A read through an element accessor names the element AND the field, and the field operand was
+// dropped: the element is the place only where the field's offset is zero, and there the two
+// addresses coincide.  Each cell writes one link and reads all three fields back, so a write that
+// lands on a neighbour is caught by the neighbour rather than by the target.
+fn struct_element_narrow_field_a() -> text { v: vector<E> = [E{a: 1, b: 42, c: 9}]; p = &v[0].a; p = 7; "{v[0].a},{v[0].b},{v[0].c}" }
+fn struct_element_narrow_field_b() -> text { v: vector<E> = [E{a: 1, b: 42, c: 9}]; p = &v[0].b; p = 7; "{v[0].a},{v[0].b},{v[0].c}" }
+fn struct_element_wide_field_c() -> text { v: vector<E> = [E{a: 1, b: 42, c: 9}]; p = &v[0].c; p = 7; "{v[0].a},{v[0].b},{v[0].c}" }
+fn struct_element_wide_field_first() -> text { v: vector<Wd> = [Wd{a: 1, b: 42, c: 9}]; p = &v[0].a; p = 7; "{v[0].a},{v[0].b},{v[0].c}" }
+fn struct_element_narrow_after_wide() -> text { v: vector<Wd> = [Wd{a: 1, b: 42, c: 9}]; p = &v[0].b; p = 7; "{v[0].a},{v[0].b},{v[0].c}" }
+fn struct_element_wide_field_last() -> text { v: vector<Wd> = [Wd{a: 1, b: 42, c: 9}]; p = &v[0].c; p = 7; "{v[0].a},{v[0].b},{v[0].c}" }
+
+// --- the same place question one layer further out, where a dropped field also hides ---
+fn element_of_a_vector_in_a_field() -> text { h = Holder { v: [In{p: 1, q: 5}, In{p: 2, q: 6}], tag: 99 }; n = &h.v[1].p; n = 7; "{h.v[0].p},{h.v[0].q},{h.v[1].p},{h.v[1].q},{h.tag}" }
+fn narrow_field_under_a_nested_record_of_an_element() -> text { o: vector<Out> = [Out{m: 1, inner: In{p: 2, q: 5}, n: 9}]; r = &o[0].inner.p; r = 7; "{o[0].m},{o[0].inner.p},{o[0].inner.q},{o[0].n}" }
+fn narrow_field_of_an_element_beside_a_nested_one() -> text { o: vector<Out> = [Out{m: 1, inner: In{p: 2, q: 5}, n: 9}]; r = &o[0].m; r = 7; "{o[0].m},{o[0].inner.p},{o[0].inner.q},{o[0].n}" }
+// A VARIABLE index, so the element is not a constant the emitter can fold.
+fn narrow_field_of_an_element_at_a_variable_index() -> text { q: vector<In> = [In{p: 1, q: 5}, In{p: 2, q: 6}]; i = 1; r = &q[i].p; r = 7; "{q[0].p},{q[0].q},{q[1].p},{q[1].q}" }
+// The shape that must NOT move: a plain integer element, whose field operand IS zero.
+fn plain_integer_element_is_unchanged() -> text { a: vector<integer> = [1, 2, 3]; k = &a[1]; k = 7; "{a[0]},{a[1]},{a[2]}" }
+
 fn main() {
   assert(u8_element() == "250,1,200,7,3", "a u8 element reads and writes through its link: {u8_element()}");
   assert(i8_element() == "1,-100,7,3", "an i8 element: {i8_element()}");
@@ -83,5 +130,16 @@ fn main() {
   assert(unfitting_step_through_the_link() == "0,0,9", "an unfitting step answers the type's default through the link: {unfitting_step_through_the_link()}");
   assert(unfitting_step_at_the_place() == "0,9", "and the same step at the place answers the same: {unfitting_step_at_the_place()}");
   assert(null_through_the_link() == "3,-1,8,7", "absence survives a link to a nullable narrow field: {null_through_the_link()}");
+  assert(struct_element_narrow_field_a() == "7,42,9", "a narrow field of a struct element writes ITSELF: {struct_element_narrow_field_a()}");
+  assert(struct_element_narrow_field_b() == "1,7,9", "and so does the next one along: {struct_element_narrow_field_b()}");
+  assert(struct_element_wide_field_c() == "1,42,7", "the wide field of the same element, whose offset is zero: {struct_element_wide_field_c()}");
+  assert(struct_element_wide_field_first() == "7,42,9", "a wide field of an element in a layout with two of them: {struct_element_wide_field_first()}");
+  assert(struct_element_narrow_after_wide() == "1,7,9", "a narrow field following a wide one: {struct_element_narrow_after_wide()}");
+  assert(struct_element_wide_field_last() == "1,42,7", "and the wide field after that: {struct_element_wide_field_last()}");
+  assert(element_of_a_vector_in_a_field() == "1,5,7,6,99", "a field of an element of a vector held in a field: {element_of_a_vector_in_a_field()}");
+  assert(narrow_field_under_a_nested_record_of_an_element() == "1,7,5,9", "a narrow field under a nested record of an element: {narrow_field_under_a_nested_record_of_an_element()}");
+  assert(narrow_field_of_an_element_beside_a_nested_one() == "7,2,5,9", "and the element's own narrow field beside it: {narrow_field_of_an_element_beside_a_nested_one()}");
+  assert(narrow_field_of_an_element_at_a_variable_index() == "1,5,7,6", "a narrow field of an element at a variable index: {narrow_field_of_an_element_at_a_variable_index()}");
+  assert(plain_integer_element_is_unchanged() == "1,7,3", "a plain integer element is what the fld-zero test keeps: {plain_integer_element_is_unchanged()}");
   println("narrow store place link ok");
 }
