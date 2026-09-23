@@ -43,6 +43,13 @@
 //   * the values printed by the program itself are asserted beside the reported ones, so a
 //     cell where BOTH are wrong in the same way cannot pass.
 //
+// @falsified-at: 16a74ef69 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT
+// @falsified-by: tests/falsified/167-a-frame-reader-decodes-a-linked-narrow-local.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.  Native is
+//   INERT because the reported half does not exist there at all — `stack_trace().variables`
+//   is the interpreter's `variables_snapshot`, and a native run answers `no-frame` before and
+//   after.  That is the asymmetry this file pins rather than a channel asleep.
+//
 // CHANNEL: the assertions.
 
 type Lim = integer limit(1000, 1100);
