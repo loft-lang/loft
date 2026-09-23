@@ -314,6 +314,10 @@ struct Scopes<'s> {
     /// NOT in here, and must not be: the caller got a copy of a member and `s` still owes its
     /// own release.  That is the cell this map exists to keep apart from the rest.
     join_holders: HashMap<u16, Vec<u16>>,
+    /// loft#1628 — the plain locals a WITNESSED local was bound to as they are (a value
+    /// branch's arm `b` in `x = s.h ?? b`), keyed by that local.  Such a local may hold one of
+    /// their records at a return, and then that record is what the return hands out.
+    witness_aliases: HashMap<u16, Vec<u16>>,
     /// The `__lift_N` temps an arm lift built — the destinations whose hand-off is PER PATH.
     ///
     /// The fact belongs to the CONSTRUCTION and cannot be read back off the IR: by the time
@@ -5768,6 +5772,7 @@ fn run_scan_phase(
         construction_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
         join_holders: HashMap::new(),
+        witness_aliases: HashMap::new(),
         arm_lift_temps: HashSet::new(),
         handed_off: HashMap::new(),
         per_path_pairs: HashSet::new(),
@@ -12720,6 +12725,66 @@ impl Scopes<'_> {
                 ));
             }
         }
+        // loft#1628, `@FR-H-Drop` — a REBIND of a witnessed local that still holds a record it took
+        // over from a plain local (`x: H = s.h ?? b; …; x = mk(9)`) displaces THAT record, whose
+        // lease `(H-Move)` gave to `x`: its hook runs here, after the new value has landed, and
+        // the local's `__hoff_` flag keeps its scope-end hook from running it a second time.  The
+        // store is still freed at the local's scope end, with its call buffer, exactly as before.
+        if was_in_scope && self.owner_witness.contains_key(&v) {
+            for h in self.witness_aliases.get(&v).cloned().unwrap_or_default() {
+                let Some(hook) = drop_hook(function, h, data) else {
+                    continue;
+                };
+                let held = function.add_temp_var(
+                    &format!("__hdsp_{}_{}", function.name(v), function.name(h)),
+                    &Type::Boolean,
+                );
+                self.var_scope.insert(held, 0);
+                self.var_order.push(held);
+                let flag = self.mint_handoff_flag(function, h);
+                prefix.insert(
+                    0,
+                    v_set(
+                        held,
+                        Value::Call(data.def_nr("OpEqRef"), vec![Value::Var(v), Value::Var(h)]),
+                    ),
+                );
+                witness_ops.push(v_if(
+                    Value::Var(held),
+                    v_if(
+                        Value::Var(flag),
+                        Value::Null,
+                        Value::Insert(vec![hook, v_set(flag, Value::Boolean(true))]),
+                    ),
+                    Value::Null,
+                ));
+            }
+        }
+        // loft#1628, `(H-Move)` — the frame's own locals a witnessed local may ALIAS: a value
+        // branch whose arm is a plain local hands that local's record over as it is, so at a
+        // return of `v` it is that local's record the caller takes.  Read at the return by
+        // [`return_moved_holders`].
+        if self.owner_witness.contains_key(&v) {
+            let mut arms = Vec::new();
+            crate::use_analysis::join_var_arms(value, &mut arms);
+            for h in arms {
+                // @FR-O-Proxy asks free — a holder recorded here has its hook RUN at a rebind of
+                // `v` and guarded at a return, so only a local that owns its record may be one:
+                // a view arm (`__ncc_N` over `s.h`) holds no lease, and running its hook would
+                // release the container's member.  The @FR-O-Override veto rides inside
+                // `proxy_says_owned` as one question.
+                if h != v
+                    && !function.is_argument(h)
+                    && matches!(function.tp(h).base(), Type::Reference(_, _))
+                    && function.proxy_says_owned(h)
+                {
+                    let slot = self.witness_aliases.entry(v).or_default();
+                    if !slot.contains(&h) {
+                        slot.push(h);
+                    }
+                }
+            }
+        }
         if let Some(&w) = self.owner_witness.get(&v) {
             let kind = {
                 let d_nr = self.d_nr;
@@ -12739,14 +12804,11 @@ impl Scopes<'_> {
                 Value::Null,
             );
             match kind {
-                WitnessSet::Mint => {
-                    prefix.insert(
-                        0,
-                        release_witness(w, self.witness_hook(function, data, v, w), data),
-                    );
-                    witness_ops.push(witness_points_at(w, v, data));
-                }
-                WitnessSet::MintReading => {
+                // `(H-Drop)`: the record a reassignment displaces is released AFTER the new
+                // value has been computed — so a mint releases what the witness held exactly as
+                // a mint that reads the local does.  Every copy into a witnessed local lands in
+                // a fresh store (`(O-Witness)`), so the identity guard declines nothing here.
+                WitnessSet::Mint | WitnessSet::MintReading => {
                     witness_ops.push(guarded_release);
                     witness_ops.push(witness_points_at(w, v, data));
                 }
@@ -14200,6 +14262,17 @@ impl Scopes<'_> {
                 arm_dropped.insert(w);
             }
         }
+        let moved_out = if is_return {
+            return_moved_holders(
+                expr,
+                function,
+                data,
+                &self.owner_witness,
+                &self.witness_aliases,
+            )
+        } else {
+            None
+        };
         let ret_var = returned_var_null_unified(expr, data.def_nr("OpNullRefSentinel"));
         // @PLN85 cluster II / A.1 part i (OWNERSHIP_MODEL row 100, invariant #5
         // "per binding, per path, complete") — the return-source SET, not the
@@ -14549,6 +14622,7 @@ impl Scopes<'_> {
                 sources: return_sources,
                 field_skip: path_skip,
                 arm_dropped,
+                moved_out,
             },
         );
         // @PLN85 P4-records — at a RETURN site, a record work-ref's store may
@@ -15265,7 +15339,20 @@ impl Scopes<'_> {
             sources: return_sources,
             field_skip: path_skip,
             arm_dropped,
+            moved_out,
         } = delivered;
+        // loft#1628 — a holder's hook runs only where it holds a record other than the one
+        // this return hands out.
+        let unless_moved = |h: u16, hook: Option<Value>| match moved_out {
+            Some((x, holders)) if holders.contains(&h) => hook.map(|hook| {
+                v_if(
+                    Value::Call(data.def_nr("OpNeRef"), vec![Value::Var(h), Value::Var(*x)]),
+                    hook,
+                    Value::Null,
+                )
+            }),
+            _ => hook,
+        };
         let scope_debug = std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug");
         let mut ls = Vec::new();
         // The conditional releases of loft#1464, kept apart so they can go FIRST.  Each reads a
@@ -15412,7 +15499,7 @@ impl Scopes<'_> {
                 }
                 ls.push(release_witness(
                     w,
-                    self.witness_hook(function, data, v, w),
+                    unless_moved(w, self.witness_hook(function, data, v, w)),
                     data,
                 ));
                 continue;
@@ -15749,7 +15836,7 @@ impl Scopes<'_> {
                         // the caller's own store.  A `Join` is owned on one arm and a borrow
                         // on the other and they are the SAME call, so nothing static separates
                         // them; the store number does.
-                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
+                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, path_skip, arm_dropped)) {
                             ls.push(hook);
                         }
                         ls.push(Value::Call(
@@ -15847,7 +15934,7 @@ impl Scopes<'_> {
                         // The FREE is skipped in the adoption case; the DROP is not.
                         // The store surviving into the next iteration is a reuse
                         // optimisation, and the value it held is over either way.
-                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
+                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, path_skip, arm_dropped)) {
                             ls.push(hook);
                         }
                         // Several buffers — one per arm of the value branch `v` was bound
@@ -15874,7 +15961,7 @@ impl Scopes<'_> {
                         }
                     } else if let Some(w) = borrow_witness {
                         // Free ONLY when the local no longer names what its dep names.
-                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
+                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, path_skip, arm_dropped)) {
                             ls.push(hook);
                         }
                         ls.push(Value::Call(
@@ -15891,7 +15978,7 @@ impl Scopes<'_> {
                         // the value's life — unless `v` is a buffer whose witness already
                         // ran it.
                         if !is_buffer
-                            && let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped)
+                            && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, path_skip, arm_dropped))
                         {
                             ls.push(hook);
                         }
@@ -20911,6 +20998,9 @@ struct Delivered {
     /// its join, so the common sweep must not run it again. Their FREE is untouched: a store
     /// is freed once whichever arm ran. See [`move_join_hooks_into_arms`].
     arm_dropped: HashSet<u16>,
+    /// loft#1628 — the local a return copies out and the holders that may hold its record, whose
+    /// hooks run only where they hold a DIFFERENT record.  See [`return_moved_holders`].
+    moved_out: Option<(u16, Vec<u16>)>,
 }
 
 /// loft#1515 shape 2 — move a join-return's source hooks INTO its arms, so the arm is the path.
@@ -21263,32 +21353,58 @@ fn return_copies_view_holders(
     data: &Data,
     holders: &HashMap<u16, Vec<u16>>,
 ) -> Vec<u16> {
+    return_copied_local(expr, function, data)
+        .and_then(|src| holders.get(&src).cloned())
+        .unwrap_or_default()
+}
+
+/// The frame's own local a return COPIES onto the return buffer — the source of the
+/// `OpCopyRecord` inside a `materialized_view_return` — or `None` for any other return.
+fn return_copied_local(expr: &Value, function: &Function, data: &Data) -> Option<u16> {
     let Value::Block(bl) = return_tail(expr) else {
-        return Vec::new();
+        return None;
     };
     if bl.name != "materialized_view_return" && bl.name != ARMED_VIEW_RETURN {
-        return Vec::new();
+        return None;
     }
     let copy_nr = data.def_nr("OpCopyRecord");
-    bl.operators
-        .iter()
-        .find_map(|op| {
-            let Value::Call(d, args) = op.unspan() else {
-                return None;
-            };
-            if *d != copy_nr {
-                return None;
-            }
-            let (Value::Var(src), Some(Value::Var(dest))) =
-                (args.first()?.unspan(), args.get(1).map(Value::unspan))
-            else {
-                return None;
-            };
-            (src != dest && !function.is_argument(*src))
-                .then(|| holders.get(src).cloned())
-                .flatten()
-        })
-        .unwrap_or_default()
+    bl.operators.iter().find_map(|op| {
+        let Value::Call(d, args) = op.unspan() else {
+            return None;
+        };
+        if *d != copy_nr {
+            return None;
+        }
+        let (Value::Var(src), Some(Value::Var(dest))) =
+            (args.first()?.unspan(), args.get(1).map(Value::unspan))
+        else {
+            return None;
+        };
+        (src != dest && !function.is_argument(*src)).then_some(*src)
+    })
+}
+
+/// loft#1628, `@FR-H-Move` — the holders whose record a return may be handing out, when it copies
+/// a WITNESSED local onto the return buffer: the local's witness (a record it minted, after a
+/// rebind) and the plain locals it was bound to as they are (a value branch's arm).
+///
+/// Which of them holds the returned record is a per-RUN fact — `x: H = s.h ?? b; if c
+/// { x = mk(9) }; return x` hands out `mk(9)`'s record through the witness on one run and `b`'s
+/// on the other — so each holder's hook is guarded on RECORD identity with the returned local
+/// (`OpNeRef`), not suppressed.  Record identity and not store identity: a container whose
+/// MEMBER the local views shares its store and still owes its own release (#1623's `c4`).
+fn return_moved_holders(
+    expr: &Value,
+    function: &Function,
+    data: &Data,
+    witness: &HashMap<u16, u16>,
+    aliases: &HashMap<u16, Vec<u16>>,
+) -> Option<(u16, Vec<u16>)> {
+    let x = return_copied_local(expr, function, data)?;
+    let &w = witness.get(&x)?;
+    let mut holders = vec![w];
+    holders.extend(aliases.get(&x).into_iter().flatten().copied());
+    Some((x, holders))
 }
 
 /// D-heap-7 — the whole LOCAL a return copies onto the return buffer, when the copy owns that

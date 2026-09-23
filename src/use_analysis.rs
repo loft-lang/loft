@@ -674,6 +674,22 @@ pub enum MoveKind {
 }
 
 impl Uses {
+    /// Is `v` a release through a type's hook — the hook call itself, or a hook behind a guard
+    /// whose other arm does nothing (`if OpConvBoolFromRef(x) hook(x) else null`, a hand-off
+    /// flag's `if __hoff_x null else hook`, and the record-identity guard a return puts around
+    /// either, loft#1628)?  The guard's operands are
+    /// the release's own bookkeeping, never a use of the value.
+    fn is_hook_release(&self, v: &Value) -> bool {
+        match v.unspan() {
+            Value::Call(d, _) => self.drop_functions.contains(d),
+            Value::If(_, t, e) => match (t.unspan(), e.unspan()) {
+                (Value::Null, other) | (other, Value::Null) => self.is_hook_release(other),
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
     /// @PLN90 item 3 — record a real WRITE of `base` at `pos` (max). Only tracked when
     /// `track_pos` (read solely by `survival_class`), so the default path is unaffected.
     fn mark_write(&mut self, base: Option<u16>, pos: usize) {
@@ -782,10 +798,7 @@ impl Uses {
             // included — and the scope pass puts a loop-body local's at the pass end, AFTER a
             // `return x` in the pass in program order although no path reaches both.
             Value::Call(d, _) if self.frees.contains(d) || self.drop_functions.contains(d) => {}
-            Value::If(_, t, e)
-                if matches!(e.unspan(), Value::Null)
-                    && matches!(t.unspan(), Value::Call(d, _) if self.drop_functions.contains(d)) =>
-                {}
+            Value::If(..) if self.is_hook_release(node) => {}
             Value::Drop(_) => {}
             Value::Set(v, rhs) => {
                 *self.def_count.entry(*v).or_insert(0) += 1;
@@ -5429,7 +5442,7 @@ impl Census<'_> {
 /// The arms of the join `value` that are a bare variable, through nested joins and block tails.  An
 /// arm of any other shape — a call, a copy block, a projection — is not collected: the census judges
 /// it at the copy it makes, or it makes a fresh value.
-fn join_var_arms(value: &Value, out: &mut Vec<u16>) {
+pub(crate) fn join_var_arms(value: &Value, out: &mut Vec<u16>) {
     match value.unspan() {
         Value::Var(v) => out.push(*v),
         Value::If(_, then, els) => {
