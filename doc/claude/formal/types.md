@@ -520,7 +520,10 @@ old auto-`τ?` reading. Design record:
 (N-Reserve) a reserved null is a VALUE OF THE TYPE, so it is excluded from `τ?`'s non-null
             range — and excluded EVERYWHERE the value can be, not only where the bytes are
             packed.  `255` is a real `u8` and IS the null of a `u8?`, so a `u8?` ranges over
-            `0..=254` in a local, a field, an element, a parameter and a return alike.  What
+            `0..=254` in a local, a field, an element, a parameter and a return alike —
+            and in a TUPLE MEMBER, which that list does not name because it was written
+            before anyone asked, and which is where the rule currently does not hold
+            (D-types-2, loft#1640).  What
             spends the edge is a SLOT — a place a value is KEPT — and an expression in flight
             is not one: `e as u8?` yields `255` and `(e as u8?) ?? d` keeps it, because
             neither ever holds a `u8?`; assign the same cast into a `u8?` and it is null.
@@ -679,7 +682,27 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**  `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
+**OPEN: 1.**
+
+* **D-types-2** *(opened 2026-09-23, loft#1640)* — `(N-Reserve)`: a TUPLE MEMBER of a narrow
+  type is not bounded by its declared range on a plain assignment.  `t: (u8, u8) = (250, 7);
+  t.0 = 300` stores `300`, and `t.0 >= 0 and t.0 <= 255` — the type's own range, written out
+  — reads `false` for a value the type is holding; copying that tuple into a
+  `vector<(u8, u8)>` element then reads `44`, the low byte, with nothing reported at either
+  step.  `i8` takes `5000` and `u16` takes `999999` the same way.  The three slots the rule
+  DOES name refuse it: a local, a struct field and a vector element all answer *"cannot
+  implicitly narrow integer to u8"*.  **Where (measured).**  The COMPOUND path is correct —
+  `t.0 += 10` from 250 answers `0` like the local — because loft#1228 routed tuple members
+  through the one seam `Parser::guard_compound_range` sits at; it is the compile-time
+  `is_narrowing_int_store` check on the PLAIN assignment that does not see a tuple member as
+  a narrow store place.  Both backends agree, so a coverage gap and not a divergence.  A
+  tuple member inside a CONTAINER is a second, louder gap: `v: vector<(u8, u8)> = [(1, 2)];
+  v[0].0 += 10` is refused with *"Not implemented operation + for type integer(0, 255)"*, a
+  message about an operator that is plainly implemented — loft#1228's own shape one level
+  deeper.  Found by `scripts/matrix_axes.py`, which reports `A3 … MISSING tuple-element`
+  against the C127 guards.
+
+`D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
 so `(N-Domain)`'s one promise now holds over all three families.  A comparison against zero
 contributes a `Sign` for the slot, which is what makes the guard COMPOSE with the expression

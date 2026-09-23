@@ -52,10 +52,19 @@
 // through a by-value struct PARAMETER and out of a CALL's return, the read as a condition,
 // as a `??` subject, and repeated in a loop.
 //
-// `matrix_axes.py` reports this file missing `index`, `spatial` and `tuple` containers and
-// the float/boolean/enum element types: those are axes of the CONTAINER idioms, and this is
-// a question about one scalar slot's encoding, which every container reaches through the
-// same two parser sites the fix routes through.
+// `matrix_axes.py` reports this file missing `index` and `spatial` containers and the
+// float/boolean/enum element types: those are axes of the CONTAINER idioms, and this is a
+// question about one scalar slot's encoding, which every container reaches through the same
+// two parser sites the fix routes through.  Its `A2` row (parameter, callee-return) is
+// covered next door, in `1634-a-narrow-types-default-is-the-same-at-every-frame-boundary`.
+//
+// Its `A3 … MISSING tuple-element` was NOT a false gap and is why running the tool on a
+// finished guard is worth the minute: a TUPLE MEMBER is a slot kind `(N-Reserve)` does not
+// name, and a plain assignment into one is unbounded — `t: (u8, u8) = (250, 7); t.0 = 300`
+// stores 300, where the local, the field and the element this file already covers all refuse
+// it (loft#1640, `formal/types.md` D-types-2).  It is NOT added here: this file is about the
+// value an unfitting write TAKES, and there the write is not refused at all, which is a
+// different defect with a different cure.  The cell belongs with that fix.
 //
 // Two lints now fire on `contexts()`, and they are pinned rather than edited away: with C127
 // the compiler KNOWS a non-nullable narrow field cannot read null, so `s.a == null` is a
@@ -68,10 +77,21 @@
 //
 // @falsified-at: 53f2c6bd3 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // HOLDS: leak, panic and free-refusal are clean on both trees and both backends; no durable
-//   patch, because 53f2c6bd3 is 2548 source lines from this tree and a diff against it would
-//   reintroduce everything fixed in between rather than this defect.  At that ref the local
-//   answered null and the field `0`/`64535`; both halves are wrong against C127, so the
-//   receipt reads the same failure for a sharper expectation.
+//   patch, because 53f2c6bd3 is 4083 source lines from this tree and a diff against it would
+//   reintroduce everything fixed in between rather than this defect.
+//
+//   What the control actually answers, measured 2026-09-23 against the cached 53f2c6bd3
+//   build (both backends agreeing):
+//
+//     locals  x=null  y=null          the local answered C85's null
+//     fields  a=0     b=64535         the field answered the stored CODE as a value
+//
+//   Against C127 every one of those is wrong — the local for answering null at all, the
+//   two-byte field for reporting 64535 (63535 past the type's own maximum), and the
+//   one-byte field for reaching `0` by TRUNCATION rather than by default.  That last cell
+//   is the one worth naming: `a=0` equals what C127 requires, so it is the one cell in this
+//   file that would pass at the control and pass for the wrong reason.  A receipt built on
+//   it alone would be measuring nothing.
 //
 // CHANNEL: the assertions.
 
