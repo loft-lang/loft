@@ -2073,8 +2073,10 @@ impl Output<'_> {
                     }
                 } else if refvar_text_clone {
                     if let Value::Var(v) = to.unspan() {
-                        let src_name = sanitize(self.data.def(self.def_nr).variables().name(*v));
-                        write!(w, "var_{src_name}.to_string()")?;
+                        // `var_place` is the text a user `&text` link names (a `TextLink`,
+                        // loft#1566) and the variable itself for a `&mut String` work buffer.
+                        let src = self.var_place(*v);
+                        write!(w, "{src}.to_string()")?;
                     }
                 } else if tuple_text_elem_clone {
                     // P228: read through the same unspan as the detection above.
