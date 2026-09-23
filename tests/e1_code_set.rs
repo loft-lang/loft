@@ -47,8 +47,7 @@ const CODES: &[(&str, &str)] = &[
     ),
     // @PLN163 P3 — placing a value the function does NOT own. `c` is a parameter, so the caller
     // still owns what it passed and releases it, and the wrapper would release it again.
-    // Opt-in behind `LOFT_LEASE_REFUSE` while this repository's own corpus is converted, which
-    // `compact_output` and its two siblings arm.
+    // On by default since this repository's corpus was converted.
     //
     // ⚠ The trigger was `a = H { id: 1 }; b = a` until the owner's 2026-09-17 ruling, and that
     // shape no longer fires: a value the function OWNS now MOVES `(H-Move)`. A pinned trigger is
@@ -63,7 +62,7 @@ const CODES: &[(&str, &str)] = &[
     ),
     // @PLN163 P3 `(H-Spent)` — a name read after the statement that moved its value.  `a` is
     // this function's own, so `Hold { h: a }` MOVES it, and the read after reads a value the
-    // new structure releases.  Opt-in behind `LOFT_LEASE_REFUSE`, as `copy-of-droppable` is.
+    // new structure releases.  On by default, as `copy-of-droppable` is.
     (
         "read-after-move",
         "struct H { id: integer }\nfn OpDrop(self: H) { print(\"{self.id}\"); }\n\
@@ -546,11 +545,10 @@ fn compact_output(prog: &str) -> String {
         // @PLN102 case-D's index lint is opt-in, and one pinned code needs it. Harmless
         // elsewhere: it only fires on a loop bounded by another vector's `len`.
         .env("LOFT_LINT_STRICT_INDEX", "1")
-        // @PLN163 P3's refusal is opt-in too, while this repository's corpus is converted.
-        // It reaches only a program that copies a value owning a droppable, so the one other
-        // trigger declaring `OpDrop` (`double-move`) is the one to watch: its warning is
-        // raised before this error, so both still render.
-        .env("LOFT_LEASE_REFUSE", "1")
+        // @PLN163 P3's refusal is on by default.  It reaches only a program that copies a
+        // value owning a droppable, so the one other trigger declaring `OpDrop`
+        // (`double-move`) is the one to watch: its warning is raised before this error, so both
+        // still render.
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft binary");
@@ -579,7 +577,6 @@ fn fix_output(prog: &str) -> String {
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_LINT_STRICT_INDEX", "1")
-        .env("LOFT_LEASE_REFUSE", "1")
         .output()
         .expect("run loft fix");
     let _ = std::fs::remove_file(&path);
@@ -608,7 +605,6 @@ fn explain_output(prog: &str) -> String {
         .arg(&path)
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_LINT_STRICT_INDEX", "1")
-        .env("LOFT_LEASE_REFUSE", "1")
         .env("LOFT_TIMEOUT", "60")
         .output()
         .expect("failed to invoke loft binary");

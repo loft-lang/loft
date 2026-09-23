@@ -5053,6 +5053,37 @@ fn raise_spent_reads(
     }
 }
 
+/// The tuple local a `synthetic_tuple_return` block copies member by member, when it copies
+/// straight from the local rather than through a hold: the one root every member copy
+/// (`OpCopyRecord(TupleGet(t, i), …)`) reads.  `None` when the copies read no member or more
+/// than one tuple.
+fn tuple_returned_by_members(ops: &[Value], copy_d: u32) -> Option<u16> {
+    let mut roots: Vec<u16> = Vec::new();
+    for op in ops {
+        op.walk(&mut |n| {
+            let t = match n.unspan() {
+                // A member copied straight, or written through the stash a nullable member takes.
+                Value::Call(d, args) if *d == copy_d => match args.first().map(Value::unspan) {
+                    Some(Value::TupleGet(t, _)) => *t,
+                    _ => return,
+                },
+                Value::Set(_, rhs) => match rhs.unspan() {
+                    Value::TupleGet(t, _) => *t,
+                    _ => return,
+                },
+                _ => return,
+            };
+            if !roots.contains(&t) {
+                roots.push(t);
+            }
+        });
+    }
+    match roots.as_slice() {
+        [t] => Some(*t),
+        _ => None,
+    }
+}
+
 /// The walk behind [`drop_copy_census`] for one function.
 struct Census<'a> {
     data: &'a Data,
@@ -5095,6 +5126,24 @@ struct Census<'a> {
 }
 
 impl Census<'_> {
+    /// Is `src` one member of the whole tuple being copied (`whole_tuple`) — read straight
+    /// (`t.0`), or through the stash a nullable member is written through (`__ref_2 = t.1`)?
+    /// That tuple's copy is ONE site, judged as the whole; its member copies are its parts, a
+    /// record's by `OpCopyRecord` and a vector's by an append.
+    fn member_of_whole_tuple(&self, src: &Value) -> bool {
+        let Some(whole) = self.whole_tuple else {
+            return false;
+        };
+        match src.unspan() {
+            Value::TupleGet(b, _) => self.frame.resolve_view(*b).0 == whole,
+            Value::Var(v) => {
+                self.frame.resolve_view(*v) == (whole, true)
+                    || self.frame.stashes_member_of(*v, whole)
+            }
+            _ => false,
+        }
+    }
+
     /// Record for the copy-manifest check (@PLN163 P2b) that the copy into `dest` has a lease
     /// verdict — and, when `dest` is one of the function's return buffers, that its result does.
     fn note_destination(&self, dest: &Value) {
@@ -5143,15 +5192,23 @@ impl Census<'_> {
                 // hold of the tuple (`__ref_3 = t`): one whole-tuple copy of `t`.
                 "synthetic_tuple_return" => {
                     self.placement = Placement::Return;
-                    if let Some(hold) = bl.operators.iter().find_map(|o| match o.unspan() {
-                        Value::Set(h, rhs)
-                            if matches!(rhs.unspan(), Value::Var(_))
-                                && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
-                        {
-                            Some(*h)
-                        }
-                        _ => None,
-                    }) {
+                    // The tuple is reached through a hold of it (`__ref_3 = t`) or, where the
+                    // return names the local itself (`a = (1, mk(1)); a`, `return t`), straight
+                    // from the member copies: every one reads a member of that one local.
+                    let hold = bl
+                        .operators
+                        .iter()
+                        .find_map(|o| match o.unspan() {
+                            Value::Set(h, rhs)
+                                if matches!(rhs.unspan(), Value::Var(_))
+                                    && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
+                            {
+                                Some(*h)
+                            }
+                            _ => None,
+                        })
+                        .or_else(|| tuple_returned_by_members(&bl.operators, self.copy_d));
+                    if let Some(hold) = hold {
                         let (root, through_member) = self.frame.resolve_view(hold);
                         let (lease, liveness) = if through_member {
                             let refused = Lease::Refuse(Refusal::Container(root));
@@ -5186,8 +5243,7 @@ impl Census<'_> {
                 if *d == self.copy_d
                     && args.len() >= 3
                     && copied_record_releases(self.data, &args[2])
-                    && !matches!(args[0].unspan(), Value::TupleGet(b, _)
-                        if self.whole_tuple == Some(self.frame.resolve_view(*b).0)) =>
+                    && !self.member_of_whole_tuple(&args[0]) =>
             {
                 let (kind, into) = match args[1].unspan() {
                     Value::Var(v) => {
@@ -5252,6 +5308,7 @@ impl Census<'_> {
             Value::Call(d, args)
                 if *d == self.op_append
                     && args.len() >= 2
+                    && !self.member_of_whole_tuple(&args[1])
                     && matches!(args[0].unspan(), Value::Var(v)
                         if self.data.type_owns_droppable_anywhere(self.func.tp(*v).base())) =>
             {
@@ -5437,7 +5494,23 @@ impl Census<'_> {
         if is_block {
             self.blocks.push(std::ptr::from_ref(node));
         }
-        node.for_each_child(&mut |c| self.scan(c));
+        // A member of a call result handed to a FUNCTION as an argument is lowered as a copy
+        // into a temporary the call reads (`take(mk().h)`, an `inline ref copy` block): passing
+        // binds without copying (calls.md F-ParamHeap), so nothing the author wrote places the
+        // value in a new structure.  Only that argument reads through; another argument that
+        // builds a structure (`take(S { h: p })`) is judged as written.
+        let user_call = matches!(node, Value::Call(op, _)
+            if !self.data.def(*op).name().starts_with("Op"));
+        node.for_each_child(&mut |c| {
+            if user_call && matches!(c.unspan(), Value::Block(b) if b.name == "inline ref copy") {
+                let saved = self.placement;
+                self.placement = Placement::ReadThrough;
+                self.scan(c);
+                self.placement = saved;
+            } else {
+                self.scan(c);
+            }
+        });
         if is_block {
             self.blocks.pop();
         }

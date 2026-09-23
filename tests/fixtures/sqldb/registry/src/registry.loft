@@ -403,13 +403,17 @@ fn OpDrop(self: AnyRows) { self.close(); }
 // as `refuse` above does for `AnyDb`. And the ARM must assign rather than
 // evaluate to a value: an arm whose value is a typed local of its own compiles
 // and then answers null for the first arm, silently.
+//
+// Each arm MOVES its cursor into `out` (`formal/heap.md` (H-Move)): `out` holds the
+// only lease on the handle and releases it, and the arm's local is spent.  So nothing
+// here disowns the local — it releases nothing, and a read of it would be refused.
 pub fn db_select(self: AnyDb, sql: text) -> AnyRows {
   out: AnyRows = RowsNone;
   match self {
-    DbSqlite { sq } => { cs = sq.db_select(sql); out = RowsSqlite { rs: cs }; cs.disown() },
-    DbPostgres { pg } => { cp = pg.db_select(sql); out = RowsPostgres { rp: cp }; cp.disown() },
-    DbMaria { my } => { cm = my.db_select(sql); out = RowsMaria { rm: cm }; cm.disown() },
-    DbDuck { dk } => { cd = dk.db_select(sql); out = RowsDuck { rd: cd }; cd.disown() },
+    DbSqlite { sq } => { cs = sq.db_select(sql); out = RowsSqlite { rs: cs } },
+    DbPostgres { pg } => { cp = pg.db_select(sql); out = RowsPostgres { rp: cp } },
+    DbMaria { my } => { cm = my.db_select(sql); out = RowsMaria { rm: cm } },
+    DbDuck { dk } => { cd = dk.db_select(sql); out = RowsDuck { rd: cd } },
     DbNone => {},
   }
   return out;
@@ -448,10 +452,10 @@ pub fn db_run(self: AnyDb, q: SqlText) -> boolean {
 pub fn db_rows(self: AnyDb, q: SqlText) -> AnyRows {
   out: AnyRows = RowsNone;
   match self {
-    DbSqlite { sq } => { cs = sq.db_rows(q); out = RowsSqlite { rs: cs }; cs.disown() },
-    DbPostgres { pg } => { cp = pg.db_rows(q); out = RowsPostgres { rp: cp }; cp.disown() },
-    DbMaria { my } => { cm = my.db_rows(q); out = RowsMaria { rm: cm }; cm.disown() },
-    DbDuck { dk } => { cd = dk.db_rows(q); out = RowsDuck { rd: cd }; cd.disown() },
+    DbSqlite { sq } => { cs = sq.db_rows(q); out = RowsSqlite { rs: cs } },
+    DbPostgres { pg } => { cp = pg.db_rows(q); out = RowsPostgres { rp: cp } },
+    DbMaria { my } => { cm = my.db_rows(q); out = RowsMaria { rm: cm } },
+    DbDuck { dk } => { cd = dk.db_rows(q); out = RowsDuck { rd: cd } },
     DbNone => {},
   }
   return out;

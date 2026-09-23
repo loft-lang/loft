@@ -977,10 +977,19 @@ fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
+/// Every loft the gate runs has the lease errors switched OFF: a cell measures how many times its
+/// shape releases, and the shapes `(H-Copy-Refuse)` and `(H-Spent)` refuse are the population
+/// @PLN163 P5 is verified against — refused, they would compile to nothing and measure nothing.
+fn gate_command() -> Command {
+    let mut cmd = Command::new(loft_bin());
+    cmd.env("LOFT_NO_LEASE_REFUSE", "1");
+    cmd
+}
+
 fn run_cell(dir: &Path, c: &Cell, mode: &str, timeout: &str) -> Verdict {
     let path = dir.join(format!("{}.loft", c.name));
     std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = gate_command();
     cmd.arg(mode)
         .arg(&path)
         .current_dir(dir)
@@ -1220,7 +1229,7 @@ fn census(dir: &Path, c: &Cell, prelude: &str) -> Option<(Vec<String>, String)> 
     let path = dir.join(format!("{}.loft", c.name));
     let text = program(c).replacen(PRELUDE, prelude, 1);
     std::fs::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
-    let out = Command::new(loft_bin())
+    let out = gate_command()
         .arg("--interpret")
         .arg(&path)
         .current_dir(dir)
@@ -1701,7 +1710,7 @@ fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
     let reports = for_each_cell(&cells, "lease_manifest", workers(16), |dir, c| {
         let path = dir.join(format!("{}.loft", c.name));
         std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
-        let out = Command::new(loft_bin())
+        let out = gate_command()
             .arg("--native-emit")
             .arg(dir.join(format!("{}.rs", c.name)))
             .arg(&path)

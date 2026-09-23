@@ -424,6 +424,12 @@ impl<'a> Frame<'a> {
         }
         let var = match leaf {
             Leaf::Fresh => return Lease::Move,
+            // A vector literal's value is a projection of its `__vdb_N` backing, and that store
+            // is the literal's own storage, not a container something else owns: the value is
+            // fresh (`member_container` says the same of a vector LOCAL's backing).
+            Leaf::Member(root) if self.is_vector_backing(self.resolve_view(root).0) => {
+                return Lease::Move;
+            }
             Leaf::Member(root) => {
                 return Lease::Refuse(self.member_owner(self.resolve_view(root).0));
             }
@@ -491,6 +497,29 @@ impl<'a> Frame<'a> {
 
     /// Who holds a member of `root`: the caller when `root` is reached through a parameter, and
     /// otherwise the container itself.
+    /// Is `var` a compiler temp given nothing but members of the tuple `whole` (its null
+    /// initialiser aside) — the stash a nullable tuple member is copied through?
+    #[must_use]
+    pub fn stashes_member_of(&self, var: u16, whole: u16) -> bool {
+        if !self.func.is_compiler_generated(var) || self.func.is_argument(var) {
+            return false;
+        }
+        let given: Vec<Leaf> = self
+            .assigned(var)
+            .into_iter()
+            .filter(|l| *l != Leaf::Fresh)
+            .collect();
+        !given.is_empty()
+            && given
+                .iter()
+                .all(|l| matches!(l, Leaf::Member(x) if self.resolve_view(*x).0 == whole))
+    }
+
+    /// A vector's own backing store, which the compiler names `__vdb_N`.
+    fn is_vector_backing(&self, var: u16) -> bool {
+        self.func.is_compiler_generated(var) && self.func.name(var).starts_with("__vdb_")
+    }
+
     fn member_owner(&self, root: u16) -> Refusal {
         let holder = self.member_container(root).unwrap_or(root);
         if self.caller_holds(holder) {
