@@ -570,3 +570,36 @@ fn a_warm_run_keeps_the_owner_witness() {
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_dir_all(&cache_dir);
 }
+
+/// A per-variable fact the emitters read must survive the warm load, which is a second
+/// decoder of the parsed program.  A narrow local a `&` names holds its type's FIELD
+/// encoding (@PLN167 decision 1); the snapshot did not carry that fact, so a warm run read
+/// the encoded slot as the value — `-135` for the `-7` the cold run printed — with no
+/// diagnostic.  `i8` and a `limit` range both carry a non-zero bias, which is what makes
+/// the encoding differ from the value (`u8`'s is zero and reads the same either way).
+#[test]
+fn a_linked_narrow_local_reads_the_same_warm() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_linked_narrow_{pid}.loft"));
+    std::fs::write(
+        &script,
+        "fn main() {\n  x: i8 = -1;\n  p = &x;\n  p = -7;\n  h: integer limit(1000, 1100) = 1050;\n  q = &h;\n  q = 1020;\n  println(\"{x} {p} {h} {q}\");\n}\n",
+    )
+    .expect("write script");
+    let cache_dir = tmp.join(format!("loft_linked_narrow_cache_{pid}"));
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
+    assert!(ok_cold, "cold run failed: {out_cold}");
+    assert_eq!(out_cold.trim(), "-7 -7 1020 1020", "cold output");
+    for nth in ["first", "second"] {
+        let (ok_warm, out_warm) = run(&script, Some(&cache_dir));
+        assert!(ok_warm, "{nth} warm run failed: {out_warm}");
+        assert_eq!(
+            out_warm, out_cold,
+            "{nth} warm run of a linked narrow local"
+        );
+    }
+    let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}
