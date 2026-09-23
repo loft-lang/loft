@@ -84,7 +84,12 @@ fn main() {
   both_arms(true, true); got = drain();
   assert(got == "131,R130,R130,R130,130", "a parameter copy from an arm, handed on in another arm: {got}");
   both_arms(false, true); got = drain();
-  assert(got == "R131,R131,131,R130,130", "the carrier kept its own record, handed on: {got}");
+  // `y = x` HANDS `x`'s record to `y` (`__hoff_x`), and `y` is the `if d` arm's local, so it
+  // releases the record at that arm's `}` (`@FR-B-Scope`, loft#1600).  `x` is then SPENT, and
+  // reading it after the arm is what `(H-Spent)` refuses — `formal/heap.md` D-heap-8
+  // (loft#1568, @PLN163), where nothing refuses the hand-on yet.  Until the arm became the
+  // scope, the release waited for the function's end and hid that read.
+  assert(got == "R131,131,R131,R130,130", "the carrier kept its own record, handed on: {got}");
   after_branch(true); got = drain();
   assert(got == "141,R140,R140,140", "handed on after the branch, the arm copied the parameter: {got}");
   after_branch(false); got = drain();
@@ -94,7 +99,9 @@ fn main() {
   chain(true); got = drain();
   assert(got == "161,R160,R160,160", "handed on twice: {got}");
   arm_then_copy(true); got = drain();
-  assert(got == "R181,R181,181", "a record an arm handed to another copy, copied again: {got}");
+  // The same: `z` takes the record in the arm and releases it at the arm's `}`; `y = x`
+  // after it reads a spent `x` (D-heap-8).
+  assert(got == "R181,181,R181", "a record an arm handed to another copy, copied again: {got}");
   arm_then_copy(false); got = drain();
   assert(got == "R181,181", "the arm did not run, copied once: {got}");
 

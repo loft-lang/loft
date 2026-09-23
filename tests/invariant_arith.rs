@@ -104,8 +104,11 @@ fn the_tap_shape_memoises_its_invariant_part_at_the_innermost_loop() {
     // innermost loop with a chain, emitted twice under its chain guard
     // (`@FR-R-GuardedChain`, 2026-09-20), so its memo is read twice too.
     assert_eq!(memos(b), (2, 4), "m1 memos:\n{b}");
+    // Plain since loft#1619: the counter `yy`'s end `ih` is taken once into a local the
+    // range proof ranges, so `yy * iw + xmin` is proven in range (`@FR-R-Range`) and the
+    // memo holds the processor's operators in both arms.
     assert!(
-        b.contains("((var_yy), (var_iw))), (var_xmin))); __ia_"),
+        b.contains("__ia_7 = (((((var_yy).wrapping_mul(var_iw))).wrapping_add(var_xmin)));"),
         "the tap's memo evaluates `yy * iw + xmin` at its first use:\n{b}"
     );
     // m7: `a * b + i * 10` is invariant in the j loop (i is the outer counter) — one memo,
@@ -150,7 +153,6 @@ fn one_chain_spelled_twice_is_one_memo_and_every_loop_shape_takes_one() {
     assert_eq!(memos(b8), (1, 4), "m8: one memo, two uses:\n{b8}");
     for (name, what) in [
         ("n_m9", "a while loop"),
-        ("n_m10", "the range's end in the loop's own test"),
         ("n_m11", "a vector iteration"),
         ("n_m12", "negation and the bitwise ops"),
         ("n_m14", "parameters as leaves"),
@@ -158,6 +160,14 @@ fn one_chain_spelled_twice_is_one_memo_and_every_loop_shape_takes_one() {
         let b = body(&rust, name);
         assert_eq!(memos(b).0, 1, "{name} ({what}) declares one memo:\n{b}");
     }
+    // m10's chain is the range's END: `(I-Range)` takes it once, before the first round, into
+    // the loop's end local (loft#1619), so there is nothing left to memoise.
+    let b10 = body(&rust, "n_m10");
+    assert_eq!(memos(b10).0, 0, "m10 needs no memo:\n{b10}");
+    assert!(
+        b10.contains("let mut var__range_end_1: i64 = ((var_n).wrapping_mul(4_i64));"),
+        "m10's end `n * 4` is evaluated once, before the loop:\n{b10}"
+    );
     assert!(
         body(&rust, "n_m12").contains("//@PLN157 § V-ao invariant chain, 4 ops"),
         "m12's memo is the whole `((-a) & 255) | (b ^ 7)` chain"

@@ -102,7 +102,8 @@ fn p8() {
   println("p8 {len(v)} {s} {v[4]?}");
 }
 
-// p9 — the range's end is a CALL: the loop is declined, values exact.
+// p9 — the range's end is a CALL, taken once before the first round (loft#1619): the loop
+// is a fill like any other, values exact.
 fn hi9(k: integer) -> integer { k + 2 }
 fn p9() {
   v: vector<integer> = [];

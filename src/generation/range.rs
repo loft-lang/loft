@@ -374,7 +374,16 @@ pub fn range_vars(
             }
         }
         if !changed {
-            return rv;
+            // A counter whose END is a local the fixpoint has only now ranged — the hidden
+            // `_range_end` a non-literal bound is taken into (`@FR-I-Range`: once, before the
+            // first round) — is seeded here, and the fixpoint resumes with it.  Seeding is
+            // monotone: a counter enters the map once both its seed and its end are ranged,
+            // and neither leaves it.
+            let before = rv.len();
+            seed_counters(data, code, code, nn, &mut rv, &mut counters);
+            if rv.len() == before {
+                return rv;
+            }
         }
     }
 }

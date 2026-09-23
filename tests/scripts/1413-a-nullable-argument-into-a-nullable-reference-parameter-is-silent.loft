@@ -26,13 +26,11 @@
 // for `&S` and NOT for `&S?`, so the nullable spelling of an unnecessary `&` goes unadvised.
 // The advice's own shape test is a separate reach question from this gate's.
 //
-// Axes it HOLDS FIXED:   the pointee is not a COLLECTION.  A `&vector<T>?` still reports, from
-//                        a different site — `un_ref` converts `RefVar(τ?)` to `τ?` and
-//                        `convert` peels the destination's `Optional` before the `RefVar`, so
-//                        it ends up asking "store `vector<T>?` into `vector<T>`", a
-//                        nullability question the dereference never posed.  That is a
-//                        recursion-order defect in `convert` rather than this gate, and it is
-//                        filed rather than bundled.
+// Axes it HOLDS FIXED:   the pointee is not a COLLECTION.  A `&vector<T>?` read goes through
+//                        a different site — `un_ref` converts `RefVar(τ?)` to `τ?` — whose
+//                        recursion order in `convert` (target's `Optional` peeled before the
+//                        source's `RefVar`) was its own defect, loft#1614, guarded in
+//                        `tests/callarg_nstore.rs::formatting_a_nullable_link_is_silent`.
 //
 // @falsified-at: none — the defect's channel is a spurious WARNING, and `make falsify` compares
 //   exit, asserts, leak, panic and refusals, none of which a warning moves; run against 7dde4d4b

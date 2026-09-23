@@ -547,7 +547,7 @@ hidden local in the walk's prelude at the one home every text walk builds its it
 (`Parser::iterator`), and `(R-CharWalk)` then takes the walk (fast step + hoisted null test:
 `158-char-walk` w10).  No bench row carries the shape (34 corpus sites, one in the
 libraries), so it has no price here; cells `tests/scripts/iter-text-source-once.loft`
-s1–s15.  What it left OPEN, for the owner (`iteration.md` D-iter-5): a place source the
+s1–s15.  What it left OPEN, for the owner (`iteration.md` D-iter-5, renumbered D-iter-6 and closed 2026-09-23 by owner ruling: bound once): a place source the
 body writes (`for c in s { s = … }`) and a range bound (`0..len(v)` under appends) are
 RE-READ per round, which the rule's letter does not say.  Levers this round FOUND
 and left unpriced, each with its number: a

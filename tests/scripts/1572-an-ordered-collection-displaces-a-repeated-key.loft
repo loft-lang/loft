@@ -185,6 +185,8 @@ fn relink1572() {
 // where one round left it.  Unreleased, each replacement strands the record AND its text.
 fn leak1572() {
   l = Rows1572 { rows: [] };
+  // Bound before the loop: a local first bound inside the `if` would end at its `}`.
+  first = 0;
   for k in 0..3 {
     for i in 0..100 { l.rows += [T1572 { id: i, s: "value {i} round {k} padded out" }]; }
     if k == 0 { first = records1572(); }

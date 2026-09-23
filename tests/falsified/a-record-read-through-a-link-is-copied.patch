@@ -1,0 +1,229 @@
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index 6e48e9e2a..198bc1dd7 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -189,7 +189,7 @@ impl Output<'_> {
+         // reports the SOURCE var as Borrowed — mirror collect_witness_vars.
+         let is_var_copy = matches!(
+             to.unspan(),
+-            Value::Var(src) if variables.tp(*src).peel_link().heap_def_nr().is_some()
++            Value::Var(src) if variables.tp(*src).heap_def_nr().is_some()
+         );
+         let owned = is_var_copy
+             || matches!(
+@@ -1413,18 +1413,10 @@ impl Output<'_> {
+         // read (`tests/scripts/157-value-tail.loft` t14 — E0308 without this line).
+         if let (Some(d_nr), Value::Var(src)) =
+             (variables.tp(var).base().heap_def_nr(), to_unspanned)
+-            && variables.tp(*src).peel_link().heap_def_nr().is_some()
++            && variables.tp(*src).base().heap_def_nr().is_some()
+             && !self.value_record_locals.contains_key(&var)
+         {
+-            // The source READ, rendered by the Var emitter rather than spelled `var_<src>`: a
+-            // `&S` link holds `*mut DbRef` and reads as the record behind it (@FR-C-Ref), so
+-            // `y = e` with `e = &z` copies `z`'s record (`binding.md` D-bind-52).
+-            let src_expr = if matches!(variables.tp(*src).base(), Type::RefVar(_)) {
+-                format!("({})", self.generate_expr_buf(&Value::Var(*src))?)
+-            } else {
+-                format!("var_{}", sanitize(variables.name(*src)))
+-            };
+-            let variables = self.data.def(self.def_nr).variables();
++            let src_name = sanitize(variables.name(*src));
+             let tp_nr = self.data.def(d_nr).known_type();
+             let first_bind = !self.declared.contains(&var);
+             if self.declared.contains(&var) {
+@@ -1486,9 +1478,9 @@ impl Output<'_> {
+                 let target = copy_target(&format!("var_{name}"), first_bind);
+                 write!(
+                     w,
+-                    "if {src_expr}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
++                    "if var_{src_name}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
+                      else {{ var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32); \
+-                     OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32); }}"
++                     OpCopyRecord(cell,var_{src_name}, var_{name}, {tp_nr}_i32); }}"
+                 )?;
+                 crate::copy_manifest::record(
+                     self.def_nr,
+@@ -1501,7 +1493,10 @@ impl Output<'_> {
+             let target = copy_target(&format!("var_{name}"), first_bind);
+             writeln!(w, "var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32);")?;
+             self.indent(w)?;
+-            write!(w, "OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32)")?;
++            write!(
++                w,
++                "OpCopyRecord(cell,var_{src_name}, var_{name}, {tp_nr}_i32)"
++            )?;
+             // @PLN130 — native's whole-record bind deep-copies unconditionally (it has no
+             // last-use move; that asymmetry with the interpreter is @PLN130 cluster V).
+             crate::copy_manifest::record(
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index d39952de6..0de89510c 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -2294,7 +2294,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
+             // A whole-value copy of another heap var — native emits `OpCopyRecord`
+             // into a fresh store, so r OWNS the result (C86), regardless of the
+             // source's own ownership.
+-            Value::Var(src) if vars.tp(*src).peel_link().heap_def_nr().is_some() => true,
++            Value::Var(src) if vars.tp(*src).heap_def_nr().is_some() => true,
+             // An owned call / struct literal is Owned; an `?? `/ncc block is a
+             // Borrow/Join view — the oracle carries the distinction.
+             Value::Block(_) | Value::Call(_, _) | Value::Insert(_) => matches!(
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 66b2031d9..be38447ed 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -4506,8 +4506,8 @@ use a separate collection or add after the loop"
+         //
+         // A bare read of a LOCAL link peels too, to the bare value: `y = e` with `e = &z`
+         // copies what the link reads (@FR-B-Copy through @FR-C-Ref), where keeping `&τ` made
+-        // `y` a second link (`binding.md` D-bind-51).  A record is COPIED there, so `y` owns
+-        // the copy and carries no dep (D-bind-52).  An explicit `&`-binding (`d = &c`,
++        // `y` a second link (`binding.md` D-bind-50).  A record there still views through the
++        // pointee's own deps — D-bind-51, loft#1631.  An explicit `&`-binding (`d = &c`,
+         // `d = &b`) never reaches this match as a bare `Var`: it is lowered above to
+         // `OpCreateStack` / `OpVarRef`, which is what keeps it a live link.
+         let s_type = match (&s_type, code.unspan()) {
+@@ -4516,18 +4516,12 @@ use a separate collection or add after the loop"
+                     && matches!(self.vars.tp(*src), Type::RefVar(_))
+                     && !matches!(to.unspan(), Value::Var(d) if self.vars.is_argument(*d)) =>
+             {
+-                // A RECORD is copied at this bind (@FR-B-Copy — codegen reads the source through
+-                // the link, `binding.md` D-bind-52), so `w` OWNS that copy and borrows nothing.
+-                if inner.heap_def_nr().is_some() {
+-                    inner.without_deps()
+-                } else {
+-                    inner.depending(*src)
+-                }
++                inner.depending(*src)
+             }
+             (Type::RefVar(inner), Value::Var(src))
+-                if matches!(self.vars.tp(*src).base(), Type::RefVar(_)) =>
++                if matches!(self.vars.tp(*src), Type::RefVar(_)) =>
+             {
+-                inner.without_deps()
++                (**inner).clone()
+             }
+             _ => s_type,
+         };
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 21be05978..3e9080afa 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -5357,8 +5357,8 @@ impl Parser {
+             // `RefVar(Optional(Integer))`, and peeling the target alone sent it to a dense
+             // `integer`, reporting a store no program makes — formatting `"{e}"` with
+             // `e = &z; z: integer?` warned that a nullable "becomes null there" (loft#1614).
+-            if let Type::RefVar(pointee) = is_type.base()
+-                && pointee.peel_optional().1
++            if let Type::RefVar(pointee) = is_type
++                && matches!(pointee.as_ref(), Type::Optional(_))
+             {
+                 return self.convert(code, pointee, should);
+             }
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 3ef82fe91..8e9bb1dc2 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -2883,7 +2883,7 @@ impl State {
+                 if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
+                     && let Value::Var(src) = value.unspan()
+                     && *src != v
+-                    && let Some(src_d) = stack.function.tp(*src).peel_link().heap_def_nr()
++                    && let Some(src_d) = stack.function.tp(*src).base().heap_def_nr()
+                     && stack.data.copies_as(d_nr, src_d)
+                 {
+                     let tp_nr = stack.data.def(d_nr).known_type();
+@@ -2898,13 +2898,11 @@ impl State {
+                     let slot_offset = stack.var_pos(v);
+                     stack.add_op("OpInitRef", self);
+                     self.code_add(slot_offset);
+-                    // A `&S?` link is as nullable as an `S?` local: the `?` sits under the `&`.
+-                    let (outer, src_nullable) = stack.function.tp(*src).peel_optional();
+-                    let src_nullable = src_nullable
+-                        || matches!(outer, Type::RefVar(inner) if inner.peel_optional().1);
+-                    if src_nullable {
++                    if matches!(stack.function.tp(*src), Type::Optional(_)) {
+                         self.generate(&Value::Var(*src), stack, false);
+-                        self.push_copy_witness(stack, *src);
++                        let witness_pos = stack.var_pos(*src);
++                        stack.add_op("OpVarRef", self);
++                        self.code_add(witness_pos);
+                         stack.add_op("OpBindOrCopy", self);
+                         self.code_add(stack.var_pos(v));
+                         self.code_add(tp_nr);
+@@ -3131,9 +3129,7 @@ impl State {
+             self.gen_set_first_ref_copy(stack, v, d_nr, value);
+         } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
+             && let Value::Var(src) = value
+-            // Through `peel_link`: a `&S` source reads as its `S` (@FR-C-Ref), so `y = e` with
+-            // `e = &z` copies the record the link names (@FR-B-Copy, `binding.md` D-bind-52).
+-            && let Some(src_d_nr) = stack.function.tp(*src).peel_link().heap_def_nr()
++            && let Some(src_d_nr) = stack.function.tp(*src).base().heap_def_nr()
+             && stack.data.copies_as(d_nr, src_d_nr)
+         {
+             // First assignment `d = c` where both hold the same heap RECORD type — a struct
+@@ -3541,26 +3537,6 @@ impl State {
+     /// pattern that works the same whether slot-move is active or not
+     /// (v.stack_pos keeps V1's value when OpVarRef just pushes a copy
+     /// of src's DbRef).
+-    /// Push the WITNESS `OpBindOrCopy` compares a whole-record bind's source against: the
+-    /// record `src` names.  A present source equal to its witness is materialised into a
+-    /// fresh store (@FR-B-Copy); an absent one is adopted as the null it is.
+-    ///
+-    /// A plain local's slot holds that record, so its witness is the slot (`OpVarRef`).  A
+-    /// `&S` link's slot holds the stack cell it links, and the record is one deref further
+-    /// (@FR-C-Ref) — the read `generate` emits for the variable, so that is its witness
+-    /// (`binding.md` D-bind-52).
+-    fn push_copy_witness(&mut self, stack: &mut Stack, src: u16) {
+-        if matches!(stack.function.tp(src).base(), Type::RefVar(_)) {
+-            self.generate(&Value::Var(src), stack, false);
+-        } else {
+-            // A PUSH op reads at the PRE-push position, so the offset is taken BEFORE
+-            // `add_op`.
+-            let witness_pos = stack.var_pos(src);
+-            stack.add_op("OpVarRef", self);
+-            self.code_add(witness_pos);
+-        }
+-    }
+-
+     fn gen_set_first_ref_var_copy(&mut self, stack: &mut Stack, v: u16, src: u16, d_nr: u32) {
+         // O-B1: last-use move — if source is only read once (this assignment),
+         // transfer the DbRef instead of deep copying. Skip the source's OpFreeRef.
+@@ -3639,9 +3615,12 @@ impl State {
+         // `nullref`, and a nullable destination has to receive it as absence.
+         if stack.function.bind_admits_absence(v, src) {
+             self.generate(&Value::Var(src), stack, false);
+-            // The slot the opcode POPS into is taken after, at the post-pop position.  Same
+-            // order as the `Join` emission in `generate_set`.
+-            self.push_copy_witness(stack, src);
++            // A PUSH op reads at the PRE-push position, so the witness offset is taken
++            // BEFORE `add_op`; the slot the opcode POPS into is taken after, at the
++            // post-pop position.  Same order as the `Join` emission in `generate_set`.
++            let witness_pos = stack.var_pos(src);
++            stack.add_op("OpVarRef", self);
++            self.code_add(witness_pos);
+             stack.add_op("OpBindOrCopy", self);
+             self.code_add(stack.var_pos(v));
+             self.code_add(tp_nr);
+diff --git b/src/variables/intervals.rs a/src/variables/intervals.rs
+index afe5e0002..76763e829 100644
+--- b/src/variables/intervals.rs
++++ a/src/variables/intervals.rs
+@@ -99,15 +99,9 @@ pub fn compute_intervals(
+             // struct-enum ref (OpConvRefFromNull).  Float (8 B), Long (8 B), and Vector do
+             // NOT have pre-init opcodes; setting first_def early for them causes spurious
+             // interval overlaps with variables defined inside the value expression.
+-            //
+-            // Through `base()`: a NULLABLE one pre-inits the same way (`S?` is the same storage
+-            // behind a nullability marker, @FR-L-Null — its first bind opens with `OpInitRef`).
+-            // Read bare, `y: S? = e` took its `first_def` after the value and was handed the slot
+-            // of `e`, which the pre-init then zeroed before `e` was read — seen where `e` is a
+-            // `&S?` link, whose range ends at that read because a link frees nothing.
+             let needs_early_first_def = v < function.variables.len()
+                 && matches!(
+-                    function.variables[v].type_def.base(),
++                    function.variables[v].type_def,
+                     Type::Text(_) | Type::Reference(_, _) | Type::Enum(_, true, _)
+                 );
+             if needs_early_first_def && function.variables[v].first_def == u32::MAX {

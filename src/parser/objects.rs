@@ -254,6 +254,68 @@ impl Parser {
     }
 
     #[allow(clippy::too_many_lines)]
+    /// `@FR-B-Scope` — a local bound by a statement inside a block ends at that block's `}`,
+    /// as in Rust: a read of it from outside the block is refused.  The block path of the
+    /// statement that last bound it is recorded at every binding position; a bind from outside
+    /// that path starts a new binding there (`w = 3` after the block is legal and makes `w`
+    /// the outer block's).  Parameters and loop variables are bound by their construct, not by
+    /// a statement, and are not tracked; nor are the compiler's own locals.  The question is
+    /// asked of the VARIABLE's name, not the spelling: a text parameter written in a block
+    /// is promoted to a `__tp_<name>` copy the spelling then resolves to, and that copy is
+    /// still the parameter.
+    fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
+        let own = self.vars.name(var);
+        if self.vars.is_argument(var) || self.vars.was_loop_var(var) || own.starts_with("__") {
+            return;
+        }
+        let key = (self.context, var);
+        let visible = self
+            .bound_in_block
+            .get(&key)
+            .is_none_or(|p| self.block_path.starts_with(p));
+        if self.at_binding_name() {
+            if !visible || !self.bound_in_block.contains_key(&key) {
+                self.bound_in_block.insert(key, self.block_path.clone());
+            }
+            return;
+        }
+        if !visible {
+            diagnostic_at!(
+                self.lexer,
+                name_pos,
+                Level::Error,
+                code = "local-out-of-scope",
+                "`{name}` was bound inside a block that has ended, so it does not exist here — \
+                 bind it before the block, or give the block a value: \
+                 `{name} = if … {{ … }} else {{ … }}`"
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!("bind `{name}` before the block and assign it inside"),
+                condition: Some(
+                    "if every path should leave a value behind; the binding before the block \
+                     is the value on a path that assigns nothing"
+                        .to_string(),
+                ),
+                edit: None,
+                concept: "`if` as an expression",
+                concept_ref: "@F27",
+            });
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!(
+                    "make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"
+                ),
+                condition: Some(
+                    "if each arm computes the value, so the `if` itself can answer it".to_string(),
+                ),
+                edit: None,
+                concept: "`if` as an expression",
+                concept_ref: "@F27",
+            });
+        }
+    }
+
     pub(crate) fn parse_var(
         &mut self,
         code: &mut Value,
@@ -567,6 +629,9 @@ impl Parser {
             t = Type::Unknown(0);
         } else if self.vars.name_exists(name) {
             let index_var = self.vars.var(name);
+            if !self.first_pass {
+                self.check_block_scope(index_var, name, name_pos);
+            }
             // on pass 2, if a variable has Unknown type, it may be a pass-1
             // placeholder for a forward-declared function. Try fn-ref resolution.
             //
@@ -3517,6 +3582,37 @@ impl Parser {
                 self.vars.set_loop_len_bound(vk);
             }
         }
+        // @FR-I-For, @FR-I-Range — `it := ⟨0, src⟩`: a range's bounds are VALUES, taken once
+        // before the first round.  The lowering spells the end in the per-round test (and the
+        // start too, in the reverse and null-encoded forms), so a bound that is not a literal
+        // is bound to a hidden local here and every spelling reads the local.  Before, a
+        // bound was re-read each round: `for i in 0..m { m = 10 }` ran ten rounds, and
+        // `0..=f()` called `f` nine times for three rounds, on both backends.  The variables a
+        // bound reads are recorded on the loop, so a body that writes one is told the write
+        // no longer moves the end (`loop-source-written`).  A slice clamps and binds its own
+        // bounds below.
+        if *data == Value::Null {
+            for bound in [&*expr, &till] {
+                self.record_source_places(bound);
+            }
+            // A bound that folds to a constant (`-3`, `2 * 4`) is written as that literal: the
+            // lowering's literal-start forms and the native range proofs key on a literal.
+            for bound in [&mut *expr, &mut till] {
+                if let Some(c @ (Value::Int(_) | Value::Long(_))) =
+                    crate::const_eval::const_eval(bound, &self.data)
+                {
+                    *bound = c;
+                }
+            }
+            if !matches!(expr.unspan(), Value::Int(_) | Value::Long(_)) {
+                let lo = self.create_unique("range_start", &in_type);
+                iter_prelude.push(v_set(lo, std::mem::replace(expr, Value::Var(lo))));
+            }
+            if !matches!(till.unspan(), Value::Int(_) | Value::Long(_)) {
+                let hi = self.create_unique("range_end", &till_tp);
+                iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+            }
+        }
         // loft#384: a vector slice (`data` present, not a pure `0..n` range) must
         // resolve negative bounds from the end and clamp into `[0, len]`, else the
         // iteration endpoints run off an edge: a negative end breaks immediately
@@ -3702,7 +3798,7 @@ impl Parser {
             // and taking the test it does not need.
             let end_can_reach_max = !matches!(
                 (till.unspan(), in_type.base()),
-                (Value::Int(t), Type::Integer(spec)) if i64::from(*t) < i64::from(spec.max)
+                (Value::Int(t), Type::Integer(spec)) if i64::from(*t) < spec.max
             );
             if incl && end_can_reach_max {
                 let reached = self.conv_op(
@@ -3776,6 +3872,40 @@ impl Parser {
             self.reverse_iterator = false;
         }
         Type::Iterator(Box::new(in_type), Box::new(Type::Null))
+    }
+
+    /// `@FR-I-For` — record on the current loop every PLACE a loop source reads: a variable,
+    /// or a field path rooted at one, found through operators and `len` / `size`.  A user
+    /// function's result is a value the loop takes once, so its arguments are not recorded:
+    /// a write to them changes nothing the loop could have re-read.
+    pub(crate) fn record_source_places(&mut self, v: &Value) {
+        if Self::is_source_place(v, &self.data) {
+            self.vars.add_loop_source_place(v);
+            return;
+        }
+        if let Value::Call(d, args) = v.unspan() {
+            let def = self.data.def(*d);
+            if def.name().starts_with("Op")
+                || matches!(def.original_name().as_str(), "len" | "size")
+            {
+                for a in args {
+                    self.record_source_places(a);
+                }
+            }
+        }
+    }
+
+    fn is_source_place(v: &Value, data: &crate::data::Data) -> bool {
+        match v.unspan() {
+            Value::Var(_) => true,
+            Value::Call(d, args) => {
+                data.def(*d).name().starts_with("OpGet")
+                    && args
+                        .first()
+                        .is_some_and(|root| Self::is_source_place(root, data))
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn parse_in_range(

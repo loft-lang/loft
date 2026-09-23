@@ -1639,6 +1639,63 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// `@FR-I-For` — warn when a loop body writes a place its loop's source read.  The loop
+    /// took its range bounds and its text source once, before the first round, so the write
+    /// cannot change how many rounds run or what text is walked; a program that expected it
+    /// to (a queue grown under `0..len(q)`) now computes something else, which is why this is
+    /// a warning and not advice.  Asked at the assignment path's one entry, beside the const
+    /// guard, so every route that lowers a write is covered.  A write through a callee is not
+    /// seen: the loop's answer is still the rule's, only the notice is missing.
+    fn check_loop_source_write(&mut self, to: &Value) {
+        if self.first_pass {
+            return;
+        }
+        let Some(place) = self.vars.loop_source_written(to) else {
+            return;
+        };
+        let root = lhs_base_var(&place, &self.data);
+        if root == u16::MAX {
+            return;
+        }
+        let name = self.vars.written_name(root).to_string();
+        let what = if matches!(place.unspan(), Value::Var(_)) {
+            format!("`{name}`")
+        } else {
+            format!("a field of `{name}`")
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Warning,
+            code = "loop-source-written",
+            "the loop read {what} once, before its first round, so this write does not change \
+             what the loop walks — to loop until a condition changes, use `while`"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("take {what} into a local before the loop"),
+            condition: Some(
+                "if the loop is meant to run over the value it started with, the local says so \
+                 and the write no longer reads as if it moved the loop"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "for loops",
+            concept_ref: "@F28",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "loop with `while`, testing the end each round".to_string(),
+            condition: Some(
+                "if the loop is meant to follow the end as the body moves it — a queue that \
+                 grows while it is read"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "for loops",
+            concept_ref: "@F28",
+        });
+    }
+
     /// Validate `d#lock = expr` assignment; returns true if handled (caller should return Void).
     pub(crate) fn validate_lock_assign(&mut self, code: &Value, to: &Value) -> bool {
         if self.first_pass {
@@ -3095,6 +3152,7 @@ use a separate collection or add after the loop"
         skip_validate: bool,
     ) -> Type {
         self.check_iter_safety(to, f_type, op);
+        self.check_loop_source_write(to);
         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
         // every route below.  Whether a write is allowed is a property of the BINDING, not
         // of the route that lowers it, so a guard held inside a route is only as complete
@@ -4542,16 +4600,30 @@ use a separate collection or add after the loop"
         // appended into nothing), an ICE, or a SIGSEGV depending on what the body did
         // with it next (loft#772's sibling).
         //
-        // Only a bare read of a `&` PARAMETER peels.  An explicit `&`-binding (`d = &c`,
-        // @PLN87 L1/L2) runs the other way — the source is an ordinary local and the `&`
-        // is what MAKES the reference — so it keeps `RefVar` and stays a live link.
+        // A bare read of a LOCAL link peels too, to the bare value: `y = e` with `e = &z`
+        // copies what the link reads (@FR-B-Copy through @FR-C-Ref), where keeping `&τ` made
+        // `y` a second link (`binding.md` D-bind-51).  A record is COPIED there, so `y` owns
+        // the copy and carries no dep (D-bind-52).  An explicit `&`-binding (`d = &c`,
+        // `d = &b`) never reaches this match as a bare `Var`: it is lowered above to
+        // `OpCreateStack` / `OpVarRef`, which is what keeps it a live link.
         let s_type = match (&s_type, code.unspan()) {
             (Type::RefVar(inner), Value::Var(src))
                 if self.vars.is_argument(*src)
                     && matches!(self.vars.tp(*src), Type::RefVar(_))
                     && !matches!(to.unspan(), Value::Var(d) if self.vars.is_argument(*d)) =>
             {
-                inner.depending(*src)
+                // A RECORD is copied at this bind (@FR-B-Copy — codegen reads the source through
+                // the link, `binding.md` D-bind-52), so `w` OWNS that copy and borrows nothing.
+                if inner.heap_def_nr().is_some() {
+                    inner.without_deps()
+                } else {
+                    inner.depending(*src)
+                }
+            }
+            (Type::RefVar(inner), Value::Var(src))
+                if matches!(self.vars.tp(*src).base(), Type::RefVar(_)) =>
+            {
+                inner.without_deps()
             }
             _ => s_type,
         };
@@ -7967,7 +8039,7 @@ use a separate collection or add after the loop"
         // Already inside the slot's range for every value the source can take → no guard.
         if let Type::Integer(src) = source.base()
             && i64::from(src.min) >= lo
-            && i64::from(src.max) <= hi
+            && src.max <= hi
         {
             return;
         }

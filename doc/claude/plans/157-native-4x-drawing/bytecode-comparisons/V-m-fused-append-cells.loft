@@ -15,7 +15,9 @@ fn c6() { v: vector<integer?> = []; v += [4]; v += [null]; v += [6]; n = 0; s = 
 fn c7() { b = Box { xs: [], ws: [], tag: "t" }; for i in 0..40 { b.xs += [i * 2]; b.ws += [1.5]; } println("c7 {len(b.xs)} {isum(b.xs)} {len(b.ws)} {fsum(b.ws)} {b.tag}"); }
 fn c8() { b = Box { xs: [1], ws: [], tag: "" }; d = &b.xs; for i in 0..30 { d += [i]; } println("c8 {len(b.xs)} {isum(b.xs)}"); }
 fn c9() { v: vector<integer> = []; for i in 0..5 { v += [i, i * 10, i * 100]; } println("c9 {len(v)} {isum(v)}"); }
-fn c10() { v: vector<integer> = [7, 8, 9]; s = 0; for i in 0..len(v) { s += v[i]?; v += [s]; if len(v) > 12 { break; } } println("c10 {len(v)} {isum(v)}"); }
+// c10 — a queue: the loop reads what it appended, so its end moves — a `while` (a `for`
+// takes its range end once, `(I-For)`, loft#1619).
+fn c10() { v: vector<integer> = [7, 8, 9]; s = 0; i = 0; while i < len(v) { s += v[i]?; v += [s]; if len(v) > 12 { break; } i += 1; } println("c10 {len(v)} {isum(v)}"); }
 fn c11() { v: vector<integer> = []; reserve(v, 100); for i in 0..50 { v += [i]; } println("c11 {len(v)} {isum(v)}"); }
 fn twice(x: integer) -> integer { x * 2 }
 fn c12() { v: vector<integer> = []; for i in 0..20 { v += [twice(i)]; } println("c12 {len(v)} {isum(v)}"); }

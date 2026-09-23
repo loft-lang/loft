@@ -720,7 +720,11 @@ impl Parser {
         // statements that produced it, so it is saved across every block this one contains
         // and restored for the loop that is still in the middle of that pair.
         let outer_fit = self.fit_armed.take();
+        // `@FR-B-Scope` — this block is open while its statements parse.
+        self.block_ord = self.block_ord.wrapping_add(1);
+        self.block_path.push(self.block_ord);
         let cc_ret = self.parse_block_inner(context, val, result);
+        self.block_path.pop();
         self.fit_armed = outer_fit;
         if cc.is_some() {
             self.cc_nest -= 1;
@@ -1116,7 +1120,16 @@ impl Parser {
                 // `x: void` in first_pass, which then tripped the
                 // "cannot change type from void to S" diagnostic in
                 // second_pass when the real Reference(S) type arrived.
-                if !matches!(t, Type::Rewritten(_)) {
+                //
+                // …and preserve `Type::Never` for the same reason: a `return` whose value is
+                // COPIED into the caller's buffer (`return b.items`, a projection of a local)
+                // is lowered as an Insert of copy, frees and the `return` itself, and the
+                // statement still diverges.  Reset to Void, the arm read as a statement and
+                // the `if` around it as one too, so a sibling `else { head(n) }` had its
+                // value dropped and the function answered an empty vector — silently, on
+                // both backends, while the diverging arm's own path (the only one loft#1495's
+                // guard ran) was right.
+                if !matches!(t, Type::Rewritten(_) | Type::Never) {
                     t = Type::Void;
                 }
             } else if !matches!(t, Type::Void | Type::Never)
@@ -5564,22 +5577,20 @@ impl Parser {
             if valid_enum && (synth_null_elem || heap_null_subject) && self.lexer.has_token("null")
             {
                 self.expect_match_arm_arrow();
-                let arm_write_state = self.vars.save_and_clear_write_state();
-                self.vars.clear_write_state();
                 let mut arm_body = Value::Null;
                 let arm_expected = Self::match_arm_expected(&result_type);
                 let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-                self.vars.restore_write_state(&arm_write_state);
                 // loft#978 — every arm can deliver this match's value, so the result carries
                 // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
                 result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
                 self.match_void_arm |= matches!(arm_type, Type::Void);
-                if result_type == Type::Void || result_type == Type::Null {
+                if matches!(result_type, Type::Void | Type::Null | Type::Never) {
                     result_type = arm_type.clone();
                 } else if !self.first_pass
                     && arm_type != Type::Void
                     && arm_type != Type::Null
+                    && arm_type != Type::Never
                     && !self.arm_convert_reported
                     && !self.match_arms_unify(&result_type, &arm_type)
                 {
@@ -6087,12 +6098,9 @@ impl Parser {
             // the closing `}` is not confused with the match's `}`.
             // Save/restore write tracking so writes in one arm don't cause
             // false dead-assignment warnings in sibling arms.
-            let arm_write_state = self.vars.save_and_clear_write_state();
-            self.vars.clear_write_state();
             let mut arm_body = Value::Null;
             let arm_expected = Self::match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-            self.vars.restore_write_state(&arm_write_state);
             // @PLN85 match_return (LOFT_JOIN_OWN): if this arm yields a borrowed-view
             // vector field binding DIRECTLY (`Filled { items } => { items }`), wrap it in
             // an owned copy `{ o = []; o += items; o }` so the value ESCAPES OWNED — the
@@ -6125,11 +6133,12 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if result_type == Type::Void || result_type == Type::Null {
+            if matches!(result_type, Type::Void | Type::Null | Type::Never) {
                 result_type = arm_type.clone();
             } else if !self.first_pass
                 && arm_type != Type::Void
                 && arm_type != Type::Null
+                && arm_type != Type::Never
                 && !self.arm_convert_reported
                 && !self.match_arms_unify(&result_type, &arm_type)
             {
@@ -6392,7 +6401,8 @@ impl Parser {
     /// either the initial value or a statement `match` whose arms yield nothing — the
     /// same "expect nothing" an `else if` chain passes down for a `Void` then arm.
     fn match_arm_expected(result_type: &Type) -> Type {
-        if result_type.is_unknown() || matches!(result_type, Type::Void | Type::Null) {
+        if result_type.is_unknown() || matches!(result_type, Type::Void | Type::Null | Type::Never)
+        {
             Type::Unknown(0)
         } else {
             result_type.clone()
@@ -6413,6 +6423,18 @@ impl Parser {
     /// so the same conversion is asked here through the same `convert_admitting` /
     /// `validate_convert` pair, and the carve-outs are restated in the same order.
     fn parse_match_arm_body(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
+        // Each arm runs INSTEAD of its siblings, so the dead-store tracking starts every arm from
+        // the state before the `match` and leaves it there — as `parse_if` does for its arms.
+        // Asked here, the one body every arm kind parses through: held at the arm sites, three
+        // of seven had it, and in the others one arm's write read as overwritten by the next.
+        let arm_write_state = self.vars.save_and_clear_write_state();
+        self.vars.clear_write_state();
+        let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        self.vars.restore_write_state(&arm_write_state);
+        tp
+    }
+
+    fn parse_match_arm_body_inner(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
         // Cleared AFTER the body is parsed on both paths, never at entry: a nested `match`
         // inside this arm runs its own arms through here, so a flag set at entry would still
         // carry that inner arm's answer when THIS one is asked about.  From each clear to the
@@ -6509,10 +6531,11 @@ impl Parser {
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
         *result_type = joined;
         self.match_void_arm |= matches!(arm_type, Type::Void);
-        if *result_type == Type::Void {
+        if matches!(*result_type, Type::Void | Type::Never) {
             *result_type = arm_type.clone();
         } else if !self.first_pass
             && arm_type != Type::Void
+            && arm_type != Type::Never
             && !self.arm_convert_reported
             && !self.match_arms_unify(result_type, &arm_type)
         {
@@ -6594,7 +6617,7 @@ impl Parser {
         let arm_expected = Self::match_arm_expected(result_type);
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
-        if *result_type == Type::Void {
+        if matches!(result_type.base(), Type::Void | Type::Never) {
             *result_type = arm_type;
         }
         let (guard, exhaustive) = if field_conditions.is_empty() {
@@ -9491,7 +9514,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if result_type == Type::Void || result_type == Type::Null {
+            if matches!(result_type, Type::Void | Type::Null | Type::Never) {
                 result_type = arm_type.clone();
             }
             // P209 — when the arm has both a guard and pattern bindings
@@ -10589,7 +10612,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if result_type == Type::Void {
+            if matches!(result_type, Type::Void | Type::Never) {
                 result_type = arm_type.clone();
             }
             // Without a guard the bindings fold into the body exactly as before; with one they
@@ -10920,13 +10943,9 @@ impl Parser {
             }
 
             self.expect_match_arm_arrow();
-
-            let arm_write_state = self.vars.save_and_clear_write_state();
-            self.vars.clear_write_state();
             let mut arm_body = Value::Null;
             let arm_expected = Self::match_arm_expected(&result_type);
             let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-            self.vars.restore_write_state(&arm_write_state);
 
             // Combine element conditions with AND (short-circuit: if a { b } else { false })
             let cond: Option<Value> = if elem_conds.is_empty() {

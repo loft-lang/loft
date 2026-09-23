@@ -186,7 +186,8 @@ fn each_cell_emits_exactly_the_forms_predicted() {
 }
 
 /// g11/g12 — the write-set half of the rebound clause: the loop past a per-pass loop buffer
-/// hoists the parameter's scalars (`sp.a`, `sp.b`, and `sp.n` for the range end), and the
+/// hoists the parameter's scalars (`sp.a`, `sp.b`; `sp.n`, the range end, is taken once into
+/// the loop's end local before it, `@FR-I-Range`, loft#1619), and the
 /// loop beside a loop record keeps the vector's header while the record's mint — a write of
 /// its whole type — evicts the scalars of that type (`sp` is a `Spec` too: none hoist there,
 /// the type-keyed conservatism `(R-Scalar)` already has).
@@ -195,9 +196,9 @@ fn an_owned_mint_leaves_the_scalar_write_set_typed() {
     let rust = emit("scalars", &[]);
     let g11 = body(&rust, "n_g11_run");
     assert_eq!(
-        g11.matches("let __vs_").count(),
+        g11.matches("let __vs_").count() + g11.matches("let mut var__range_end_").count(),
         3,
-        "g11: sp's three fields hoist past the loop buffer's mint:\n{g11}"
+        "g11: sp's three fields are read before the loop, past the loop buffer's mint:\n{g11}"
     );
     assert_eq!(
         g11.matches("loft#885 loop-invariant vector headers")

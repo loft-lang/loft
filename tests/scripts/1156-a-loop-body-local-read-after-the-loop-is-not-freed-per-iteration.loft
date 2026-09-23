@@ -3,7 +3,14 @@
 //
 // A local a loop BODY assigns and something after the loop READS survives the loop.
 //
-// It was scoped to the body block, so `get_free_vars` released its store at the end of every
+// ⚠ A local first BOUND in the body now ends at the body's `}`, so reading it after the loop
+// is refused (`local-out-of-scope`) — the shape this file was filed on no longer compiles.
+// Every cell is therefore written the legal way: the local is bound BEFORE the loop (`e: T? =
+// null`) and REASSIGNED by the body.  That is the same property from the other side: a local
+// reassigned on every pass and read after the loop must not be released per iteration, and
+// must release what it last held at the end of the scope that binds it — now the enclosing one.
+//
+// Filed on the body-bound spelling, the local was scoped to the body block, so `get_free_vars` released its store at the end of every
 // iteration and the later read landed on a freed record.  ⚠ **The obvious repro does not show
 // it**: with nothing allocated in between, the freed slot still holds the last value and the
 // read answers correctly.  Put a CHURN between the loop and the read and the record is
@@ -15,16 +22,13 @@
 // time of the read, so no detector is being violated — the read simply lands on whatever the
 // allocator handed out next.  Nothing stood between a user and the wrong number.
 //
-// The cure is the SCOPE, not the free.  Hoisted to the enclosing scope the local gets ONE
-// store that each iteration copies into — byte-for-byte the IR a hand-written `e: A = A { … }`
-// before the loop already produces, which is the strongest evidence available that the target
-// shape is right: it is a program that already ran correctly on both backends.
+// The cure was the SCOPE, not the free: at the enclosing scope the local gets ONE store that
+// each iteration copies into.  The rule now makes the author write that scope, and these cells
+// are exactly that spelling.
 //
-// ⚠ `--native` used to REFUSE these programs (`E0425: cannot find value var_e`) and that was
-// the honest backend: the free analysis had already put the local's death at the block's end
-// and native additionally scoped the Rust `let` there — one decision expressed twice, half of
-// it visible.  Making it compile WITHOUT moving the scope would have shipped the interpreter's
-// use-after-free to native.  Every cell therefore runs on both.
+// ⚠ `--native` used to REFUSE the body-bound programs (`E0425: cannot find value var_e`): the
+// free analysis put the local's death at the block's end and native scoped the Rust `let`
+// there too.  Every cell runs on both backends.
 //
 // ⚠ `loop_var_after` is the exclusion cell, and it guards loft#1135: a loop's own VARIABLE is
 // read after the loop routinely (`LOFT.md` documents it) and must NOT be hoisted — its header
@@ -37,9 +41,15 @@
 // fails to COMPILE and so has no assertion to fail.
 //
 // @falsified-at: 8d3245eb — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
-//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
-//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
-//   both. The native side was not scored in this sweep.
+//   (taken against the FIRST-BOUND-IN-THE-LOOP spelling).  Re-scored 2026-09-23 against the
+//   same ref after loft#1600: INERT — interpret exit 0 -> 0, native exit 0 -> 0.  That verdict
+//   is the rule working, not the guard failing: the defect lived in the hoist of a local a loop
+//   body FIRST binds and a later statement reads, and `(B-Scope)` now refuses that program
+//   (`local-out-of-scope`, pinned by `1600b-…`).  The bound-before-the-loop spelling these
+//   cells now use never reached the hoist, so the control answers it correctly too; the cells
+//   stay as the ownership check of that spelling (the null-bound local reassigned per pass,
+//   read after the loop, released once).
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees.
 
 struct Ba1156A { ba_v: integer }
 struct Ba1156Item { ba_q: integer }
@@ -57,7 +67,8 @@ fn ba_churn() -> integer {
 fn main() {
   ba_as: vector<Ba1156A> = [Ba1156A { ba_v: 1 }, Ba1156A { ba_v: 2 }, Ba1156A { ba_v: 3 }];
 
-  // ---- the filed shape: a COPY-bound body local read after the loop ----
+  // ---- a COPY-assigned body local read after the loop (the filed shape, bound before) ----
+  ba_e: Ba1156A? = null;
   for ba_p in ba_as { ba_e = ba_p; }
   assert(ba_churn() == 40, "churn ran");
   assert(ba_e.ba_v == 3, "a body local survives its loop; got {ba_e.ba_v}");
@@ -69,23 +80,26 @@ fn main() {
     Ba1156Holder { ba_items: [Ba1156Item { ba_q: 7 }] },
     Ba1156Holder { ba_items: [Ba1156Item { ba_q: 9 }] },
   ];
+  ba_f: vector<Ba1156Item>? = null;
   for ba_h in ba_hs { ba_f = ba_h.ba_items; }
   assert(ba_churn() == 40, "churn ran");
-  assert(len(ba_f) == 1, "the view keeps its length; got {len(ba_f)}");
-  assert((ba_f[0] ?? Ba1156Item { ba_q: -1 }).ba_q == 9,
-    "and the LAST iteration's contents; got {(ba_f[0] ?? Ba1156Item { ba_q: -1 }).ba_q}");
+  assert(len(ba_f?) == 1, "the view keeps its length; got {len(ba_f?)}");
+  assert((ba_f?[0] ?? Ba1156Item { ba_q: -1 }).ba_q == 9,
+    "and the LAST iteration's contents; got {(ba_f?[0] ?? Ba1156Item { ba_q: -1 }).ba_q}");
 
-  // ---- ZERO iterations: the body never runs, so the local is absent ----
-  // `null` is the answer loft#915 gives for a loop VARIABLE after an empty loop; a pre-init
-  // answering a zero instead would be a quiet second contract.
+  // ---- ZERO iterations: the body never runs, so the local keeps its binding's null ----
+  // The pre-init is now the author's own `= null`; the cell checks that an empty loop does
+  // not overwrite it with a zero record.
   ba_empty: vector<Ba1156A> = [];
+  ba_g: Ba1156A? = null;
   for ba_p in ba_empty { ba_g = ba_p; }
   assert(ba_g == null, "a body local of a loop that never ran is null");
 
-  // ---- NESTED: first assigned in the INNER body, read after the OUTER loop ----
-  // Hoisting only ONE level would put it in the outer loop's body, where it is still freed
-  // per outer iteration — and every single-loop cell above would still pass.
+  // ---- NESTED: assigned in the INNER body, read after the OUTER loop ----
+  // Two loop levels between the binding and the assignment: a release at either body's end
+  // would free it, and every single-loop cell above would still pass.
   ba_inner: vector<Ba1156A> = [Ba1156A { ba_v: 10 }, Ba1156A { ba_v: 20 }];
+  ba_deep: Ba1156A? = null;
   for _ in ba_as { for ba_i in ba_inner { ba_deep = ba_i; } }
   assert(ba_churn() == 40, "churn ran");
   assert(ba_deep.ba_v == 20, "an inner-body local survives the OUTER loop; got {ba_deep.ba_v}");

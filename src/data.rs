@@ -140,6 +140,9 @@ impl IntegerSpec {
     pub const fn signed32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
+            // `as`, not `i64::from`: this is a `const fn` and `From` is not a const trait
+            // yet (rust-lang#143874).  Clippy's cast lint does not fire here for that
+            // reason; it fires on the non-const `i32()` below, which does use `From`.
             max: i32::MAX as i64,
             not_null: false,
             forced_size: None,
@@ -190,7 +193,7 @@ impl IntegerSpec {
     pub fn i32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as i64,
+            max: i64::from(i32::MAX),
             not_null: false,
             forced_size: NonZeroU8::new(4),
         }
@@ -200,7 +203,7 @@ impl IntegerSpec {
     pub fn u32() -> Self {
         IntegerSpec {
             min: 0,
-            max: i64::from(u32::MAX as i64) - 1,
+            max: i64::from(u32::MAX) - 1,
             not_null: false,
             forced_size: None,
         }
@@ -278,7 +281,7 @@ impl IntegerSpec {
     /// loft#1246 already recorded two of them drifting apart; loft#1254 found the third.
     #[must_use]
     pub fn default_value(&self) -> i64 {
-        let (lo, hi) = (i64::from(self.min), i64::from(self.max));
+        let (lo, hi) = (i64::from(self.min), self.max);
         if lo <= 0 && 0 <= hi {
             0
         } else if lo > 0 {
@@ -294,9 +297,9 @@ impl IntegerSpec {
     #[must_use]
     pub fn usable_max(&self, nullable: bool) -> i64 {
         if self.reserves_narrow_sentinel(nullable) && self.min >= 0 {
-            i64::from(self.max) - 1
+            self.max - 1
         } else {
-            i64::from(self.max)
+            self.max
         }
     }
 
@@ -440,7 +443,7 @@ impl IntegerSpec {
     /// Number of distinct representable values (inclusive range + 1).
     #[must_use]
     pub fn range(&self) -> i64 {
-        i64::from(self.max) - i64::from(self.min) + 1
+        self.max - i64::from(self.min) + 1
     }
 
     /// Can `width` bytes hold every value this range admits? — `@FR-L-Narrow`, read as the

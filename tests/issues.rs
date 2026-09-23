@@ -10844,6 +10844,28 @@ fn test() {
     .result(Value::Null);
 }
 
+/// `dead-assignment` reads `match` arms as ALTERNATIVES, as it reads an `if`'s: a write in one
+/// arm is not overwritten by the next arm's.  Until 2026-09-23 four of seven arm paths (the
+/// boolean, scalar, struct and wildcard arms) carried the tracking state from one arm into the
+/// next, so `acc = 1` in the first arm was reported dead — and `(B-Scope)` (loft#1600) makes this
+/// bind-before-the-match spelling the way a local a later statement reads is written.  No
+/// warning is declared, so any warning fails the test.
+#[test]
+fn dead_assignment_reads_match_arms_as_alternatives() {
+    code!(
+        "struct DaS { k: integer }
+fn da_bool(c: boolean) -> integer { acc = 0; match c { true => { acc = 1; }, false => { acc = 2; } } acc }
+fn da_int(c: integer) -> integer { acc = 0; match c { 1 => { acc = 3; }, _ => { acc = 4; } } acc }
+fn da_struct(s: DaS) -> integer { acc = 0; match s { DaS { k: 1 } => { acc = 5; }, _ => { acc = 6; } } acc }
+fn test() {
+    assert(da_bool(true) + da_bool(false) == 3, \"bool\");
+    assert(da_int(1) + da_int(2) == 7, \"int\");
+    assert(da_struct(DaS { k: 1 }) + da_struct(DaS { k: 2 }) == 11, \"struct\");
+}"
+    )
+    .result(Value::Null);
+}
+
 /// P170 guard — three-way: the same shape but with a conditional
 /// assignment between the placeholder and the vec-elem reassign.
 #[test]

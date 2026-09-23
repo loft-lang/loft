@@ -537,13 +537,16 @@ fn r25() {
   println("r25 {u}");
 }
 
-// r26 — a local bound inside a loop from a chain callee and read after the loop: the loop
-// pre-init makes every bind after the first a real rebind.
+// r26 — a local bound before a loop, rebound inside it from a chain callee and read after the
+// loop: every bind in the loop is a real rebind.  (A local first bound inside the loop body
+// ends at its `}` — `local-out-of-scope` — so the null-init the loop pre-init used to supply
+// is written here.)
 fn r26() {
   t = 0;
+  lm: Mk? = null;
   for i in 0..5 {
     lm = scan_mk(3, i);
-    t += len(lm.pts);
+    t += len(lm?.pts);
   }
   // i = 1, 2, 3 match (2 each); after the loop `lm` is i = 4's empty answer
   t += lm.pts[1]? * 100;
@@ -573,15 +576,17 @@ fn r27() {
   println("r27 {s}");
 }
 
-// r28 — the same callee, bound inside an `if` in a loop and read in a LATER `if`: the local is
-// the loop body's, so the scope pass puts a null-init in front of the first `if` and the bind
-// is a REBIND that follows it on every path — twice per activation.
+// r28 — the same callee, assigned inside an `if` in a loop and read in a LATER `if`: the local
+// is the loop body's, bound null in front of the first `if` (a local the `if` itself bound
+// would end at its `}` — `local-out-of-scope`), so the call's bind is a REBIND that follows it
+// on every path — twice per activation.
 fn r28() {
   total = 0;
   for line in 0..8 {
     even = md(line, 2) == 0;
+    mf: Mk? = null;
     if even { mf = scan_mk(4, md(line, 5)); }
-    if even { if mf.matched { total += mf.pts[1]? } else { total += 50 + len(mf.pts) } } else { total += 1 }
+    if even { if mf.matched { total += mf.pts[1]? } else { total += 50 + len(mf?.pts) } } else { total += 1 }
   }
   // even lines hit 0, 2, 4, 1: 50 + 4 + 8 + 2; odd lines 4 × 1
   assert(total == 68, "r28 {total}");

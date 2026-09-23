@@ -91,15 +91,20 @@ fn computed_pushes_reserve_their_trip_count_before_the_loop() {
 }
 
 #[test]
-fn an_early_exit_or_a_call_for_the_end_declines() {
+fn an_early_exit_declines_and_a_call_for_the_end_does_not() {
     let rust = emit("decline", &[]);
-    for name in ["n_p5", "n_p9"] {
-        let b = body(&rust, name);
-        assert!(
-            !b.contains("push_fill::<") && !b.contains("reserve_more"),
-            "{name}: a `break` in the body or a call for the range's end takes no fast path"
-        );
-    }
+    let p5 = body(&rust, "n_p5");
+    assert!(
+        !p5.contains("push_fill::<") && !p5.contains("reserve_more"),
+        "p5: a `break` in the body takes no fast path"
+    );
+    // A call for the range's end is taken ONCE, before the first round (`@FR-I-Range`,
+    // loft#1619), so the end is invariant and the loop is the fill it looks like.
+    let p9 = body(&rust, "n_p9");
+    assert!(
+        p9.contains("push_fill::<") || p9.contains("reserve_more"),
+        "p9: a call for the end is taken once, so the loop takes the fast path:\n{p9}"
+    );
 }
 
 #[test]

@@ -111,7 +111,7 @@ fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
         Type::Integer(spec) => {
             slot.set_discriminant(stores, ds::TY_INTEGER);
             slot.set_field_int(stores, ds::TYINTEGER_MIN, i64::from(spec.min));
-            slot.set_field_int(stores, ds::TYINTEGER_MAX, i64::from(spec.max));
+            slot.set_field_int(stores, ds::TYINTEGER_MAX, spec.max);
             slot.set_field_bool(stores, ds::TYINTEGER_NOT_NULL, spec.not_null);
             // Option<NonZeroU8> -> sentinel 0 = None.
             let fs = spec.forced_size.map_or(0, |n| i64::from(n.get()));

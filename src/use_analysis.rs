@@ -5924,6 +5924,26 @@ impl GroupAppends<'_> {
     }
 }
 
+/// Is `v` a whole-record COPY of the parameter `base`, though `ownership_of` reads it as a
+/// borrow of that parameter?
+///
+/// `v = p` from a record parameter — plain or `&` — deep-copies (`@FR-B-Copy`, C86; through a
+/// `&` by `@FR-C-Ref`): both emitters copy it, and `v`'s own type carries no dep, which is the
+/// fact they read to free it.  `ownership_of` follows the bind back to the parameter and answers
+/// `Borrowed`, the answer for a PROJECTION off it (`m = w.f`, `(B-View)`), whose type keeps the
+/// dep and whose write does reach the caller.  A local with an owner witness is left out: it
+/// holds a view on some paths, and its dep list does not say which.
+fn copies_a_parameter(func: &crate::variables::Function, v: u16, base: u16) -> bool {
+    base != u16::MAX
+        && func.is_argument(base)
+        && !func.is_argument(v)
+        && func.tp(v).heap_def_nr().is_some()
+        // @FR-O-Proxy asks copy — an empty dep list is the verdict that `v` owns a copy
+        // rather than viewing the parameter; the emitters copy on the same fact.
+        && func.tp(v).depend().is_empty()
+        && func.owner_witness(v).is_none()
+}
+
 pub fn warn_dead_stores(
     data: &Data,
     diags: &mut crate::diagnostics::Diagnostics,
@@ -6000,6 +6020,7 @@ pub fn warn_dead_stores(
                             || (base != u16::MAX
                                 && is_synth_buffer(func.name(base))
                                 && !is_shared_backing(data, d_nr, func, v, base))
+                            || copies_a_parameter(func, v, base)
                     }
                 };
             if !owns {

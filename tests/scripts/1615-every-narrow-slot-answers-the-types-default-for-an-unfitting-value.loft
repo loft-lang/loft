@@ -72,14 +72,13 @@
 // before C127 while firing for `limit(-128, 127) size(1)` next door, so their presence here
 // is the compile-time half of the same answer the assertions check at run time.
 //
-// ⏳ OWED ON THE JOIN with loft#1630 (loft3-ca, `tuxedo-1562-layout-gate`): a range wholly
-// BELOW zero becomes declarable there, and it is the third shape of "the type's default".
-// This file has zero-in-range (default 0) and `limit(1000, 1100)` (default 1000, the bound
-// nearest zero from above); `limit(-100, -1)` defaults to `-1`, the bound nearest zero from
-// BELOW, and no cell here reaches a NEGATIVE default.  Measured on their tree it answers
-// `null`, because the spare code is still counted there; under C127 it must answer `-1`.
-// The cell cannot be written on this tree — `limit(-100, -1)` does not parse here — so it is
-// recorded rather than stubbed, and it is the first thing to add when the branches meet.
+// The THIRD shape of "the type's default", and the one that took two branches to exist: a
+// range wholly BELOW zero.  `limit(-100, -1)` defaults to `-1`, the bound nearest zero from
+// BELOW, where this file's other cells have zero-in-range (0) and `limit(1000, 1100)` (1000,
+// the bound nearest zero from ABOVE).  It could not be written until loft#1630 made such a
+// range declarable, and on that branch alone it answered `null`, because the spare-code
+// mechanism was still counted there.  C127 and loft#1630 met on 2026-09-23; `negative_default`
+// below is the cell, and it is the one a cure reaching for `lo` unconditionally fails.
 //
 // @EXPECT_WARNING: Warning[redundant-null-check]
 // @EXPECT_WARNING: Warning[redundant-coalesce]
@@ -220,6 +219,18 @@ fn templates() -> text {
   + "elem {vw[0] == null} {vi[0] == null} {vu[0] ?? -1}"
 }
 
+type Neg = integer limit(-100, -1) size(1);
+struct NegF { v: Neg }
+fn ret_neg(k: integer) -> Neg { r: Neg = -50; r += k; r }
+
+fn negative_default() -> text {
+  l: Neg = -50; l += 60;
+  f = NegF { v: -50 }; f.v += 60;
+  v: vector<Neg> = [-50]; v[0] += 60;
+  t: Neg = -50; t += 10;
+  "{l} {f.v} {v[0] ?? -99} {ret_neg(60)} fits={t}"
+}
+
 fn take(v: F) -> text { "{show("pa", v.a)} {show("pb", v.b)}" }
 fn make() -> F { g = F { a: 100, b: -1000 }; g.a += 50; g.b -= 1; g }
 fn provenance() -> text { "{take(make())} {show("ra", make().a)}" }
@@ -252,6 +263,8 @@ fn main() {
          "a type that fills its width answers the same default: {fullwidth()}");
   assert(templates() == "local true true 0 field true true 0 elem true true 0",
          "templates keep C85's sentinel, `u32` takes the default: {templates()}");
+  assert(negative_default() == "-1 -1 -1 -1 fits=-40",
+         "a range wholly below zero defaults to its MAXIMUM: {negative_default()}");
   assert(keyed() == "hid=100/false hb=-1000/false sid=-100/false",
          "a narrow key and element field: {keyed()}");
   assert(provenance() == "pa=0/false pb=0/false ra=0/false",

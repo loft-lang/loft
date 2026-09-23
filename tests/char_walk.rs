@@ -60,9 +60,10 @@ const NULL_EACH: &str = "!= loft::state::STRING_NULL) as u8) != 1) as u8) == 1 {
 const EXPECTED: [(&str, usize, usize, usize); 9] = [
     ("n_trace", 1, 1, 1),
     ("n_w5", 1, 1, 1),
-    // The body grows / rebinds the walked local: the null test stays per iteration.
-    ("n_w6", 1, 1, 0),
-    ("n_w7", 1, 1, 0),
+    // The body grows / rebinds the walked local.  The walk takes its source once, into a
+    // hidden local nothing writes (`@FR-I-For`, loft#1619), so its null test is hoisted too.
+    ("n_w6", 1, 1, 1),
+    ("n_w7", 1, 1, 1),
     ("n_w8", 1, 1, 1),
     ("n_w9", 2, 2, 2),
     // A call source and a literal source are bound ONCE to a hidden local (`@FR-I-Text`,

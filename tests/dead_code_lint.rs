@@ -203,9 +203,8 @@ fn opt_out_silences_native() {
 #[test]
 fn s4a_aliases_stay_silent() {
     let aliases = [
-        "tests/scripts/178-ref-alias-copy.loft", // snap = s (s: &Foo)
         "tests/scripts/434-pln87-scalar-reference.loft", // & scalar reference
-        "tests/scripts/25-index-elision-borrower.loft", // e = v[i] element view
+        "tests/scripts/25-index-elision-borrower.loft",  // e = v[i] element view
         "tests/scripts/85-borrow-elision-element-borrower.loft",
     ];
     for rel in aliases {
@@ -881,4 +880,62 @@ fn an_unknown_method_with_a_named_argument_reports_one_error() {
         errors, 2,
         "one diagnostic plus the `aborting due to` line — a named argument must not cascade\n{err}"
     );
+}
+
+// ── loft#1633: a mutated COPY of a parameter is a lost write ─────────────────────────────────
+//
+// `v = p` from a record parameter — plain or `&` — deep-copies (`@FR-B-Copy`; through a `&` by
+// `@FR-C-Ref`), so `v.a = 7` with `v` never read goes nowhere.  `ownership_of` follows the bind
+// to the parameter and answers `Borrowed`, the answer for a PROJECTION off it (`m = w.f`), whose
+// write does reach the caller — so the lint stayed silent on the copy.  The pair is the claim:
+// both copies warn, and the projection, whose write is not lost, stays silent.
+
+const PARAM_COPY: &str = "struct Foo { a: integer, b: integer }\n\
+fn plain(s: Foo) { snap = s; snap.a = 7; }\n\
+fn linked(s: &Foo) { snap = s; snap.a = 7; s.b = 1; }\n\
+fn main() { f = Foo { a: 0, b: 5 }; plain(f); linked(f); print(\"r={f.a},{f.b}\"); }\n";
+const PARAM_PROJECTION: &str = "struct Foo { a: integer, b: integer }\n\
+struct W { f: Foo }\n\
+fn g(w: W) { m = w.f; m.a = 7; }\n\
+fn main() { x = W { f: Foo { a: 0, b: 5 } }; g(x); print(\"r={x.f.a}\"); }\n";
+
+fn run_body(body: &str, backend: &str, tag: &str) -> (String, String) {
+    let path = std::env::temp_dir().join(format!("loft_dcl_{}_{tag}.loft", std::process::id()));
+    std::fs::write(&path, body).expect("write script");
+    let (out, diag, _code) = run_env(backend, &path, &[]);
+    let _ = std::fs::remove_file(&path);
+    (out, diag)
+}
+
+#[test]
+fn a_mutated_copy_of_a_parameter_is_a_lost_write() {
+    for backend in ["--interpret", "--native"] {
+        let (out, diag) = run_body(PARAM_COPY, backend, &format!("pcopy_{backend}"));
+        assert!(
+            out.contains("r=0,1"),
+            "[{backend}] both binds copy: {out:?}\n{diag}"
+        );
+        assert_eq!(
+            dead_stores(&diag),
+            2,
+            "[{backend}] a copy of a plain AND of a `&` record parameter, mutated and never \
+             read, are lost writes (loft#1633)\n{diag}"
+        );
+    }
+}
+
+#[test]
+fn a_mutated_projection_of_a_parameter_stays_silent() {
+    for backend in ["--interpret", "--native"] {
+        let (out, diag) = run_body(PARAM_PROJECTION, backend, &format!("pproj_{backend}"));
+        assert!(
+            out.contains("r=7"),
+            "[{backend}] a projection is a view: {out:?}\n{diag}"
+        );
+        assert_eq!(
+            dead_stores(&diag),
+            0,
+            "[{backend}] the write reaches the caller\n{diag}"
+        );
+    }
 }

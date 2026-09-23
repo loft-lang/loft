@@ -1439,7 +1439,7 @@ fn native_narrow_int(s: &crate::data::IntegerSpec) -> Option<&'static str> {
     // for those; C127 retired that null, so the range is again exactly what a value of the
     // type can be.  loft#1634's guard keeps the cell either way: what changes is the value
     // every frame boundary must agree on, from null to the type's default.
-    let (min, max) = (i64::from(s.min), i64::from(s.max));
+    let (min, max) = (i64::from(s.min), s.max);
     if min >= 0 && max <= 255 {
         Some("u8")
     } else if min >= 0 && max <= 65535 {
@@ -2356,7 +2356,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
             // A whole-value copy of another heap var — native emits `OpCopyRecord`
             // into a fresh store, so r OWNS the result (C86), regardless of the
             // source's own ownership.
-            Value::Var(src) if vars.tp(*src).heap_def_nr().is_some() => true,
+            Value::Var(src) if vars.record_copy_source(v, *src).is_some() => true,
             // An owned call / struct literal is Owned; an `?? `/ncc block is a
             // Borrow/Join view — the oracle carries the distinction.
             Value::Block(_) | Value::Call(_, _) | Value::Insert(_) => matches!(

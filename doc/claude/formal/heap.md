@@ -599,9 +599,17 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-36` and `D-heap-38` (`D-heap-15` CLOSED as
+OPEN: **2** — `D-heap-8` and `D-heap-9`.  The count is the UNION of two branches that each
+closed entries the other still listed, and neither side's number was right for the join: this
+branch read 4 (`D-heap-8`, `9`, `36`, `38`) and `tuxedo-165-generics` read 3 (`D-heap-8`, `9`,
+`15`).  Taken per ENTRY rather than per side — `D-heap-15` closed here, `D-heap-36` and
+`D-heap-38` closed there, so only `D-heap-8` and `D-heap-9` are open on both.
+
+(`D-heap-15` CLOSED as
 reclassified 2026-09-23: its last cell, `p_v2`, reads a name `(H-Spent)` makes an error, so it is
-`D-heap-8`'s.  `D-heap-42`,
+`D-heap-8`'s.  `D-heap-38`, loft#1607, CLOSED 2026-09-23: a
+vector bound in both arms releases the backing its own arm filled.  `D-heap-36`, loft#1600, CLOSED
+2026-09-23 by owner ruling: the arm is the scope, `(B-Scope)`.  `D-heap-42`,
 loft#1628, opened and CLOSED 2026-09-23: a returned witnessed local released the record it handed
 out, and a rebind released what it displaced before the new value and at the wrong owner's scope
 end — the half `D-heap-41` left open.  `D-heap-41`,
@@ -962,21 +970,23 @@ CLOSED 2026-09-17, below.
   its inner elements (loft#1597), and a vector moved out and then refilled releases the moved
   elements twice (loft#1598).
 
-### D-heap-38 — OPEN (2026-09-22, loft#1607): under the arm-scope rule, a vector local bound in both arms of an `if` is released at the end of the scope around it
+### D-heap-38 — CLOSED (opened 2026-09-22, closed 2026-09-23, loft#1607): under the arm-scope rule, a vector local bound in both arms of an `if` was released at the end of the scope around it
 
-- **Violates:** (H-Drop), its scope-end clause — an arm's owner dies at the arm's end.
-- **Where:** `D-heap-36`'s opt-in rule (`LOFT_ARM_SCOPE=1`) makes a local bound in BOTH arms
-  each arm's own for a record or a text, and not for a vector or a tuple.  Each arm's bind lands in a backing of its own
-  (`__vdb_2`, `__vdb_3`), and the variable's type names one of them, the LAST bind's
-  (`@FR-O-Latest`).  The arm-end release reads that one dep (`scopes::outer_collection_backing`),
-  so the other arm would release the wrong backing.  Measured when the case was allowed: the
-  true arm released the false arm's empty `__vdb_3`, and `D50` never ran.  So the case keeps the
-  pre-init in front of the `if`.
+- **Violates:** (H-Drop), its scope-end clause — an arm's owner dies at the arm's end, and since
+  `D-heap-36`'s ruling the arm IS the scope (`(B-Scope)`).
+- **Where:** each arm's bind lands in a backing of its own (`__vdb_2`, `__vdb_3`), and the
+  variable's type names one of them, the LAST bind's (`@FR-O-Latest`).  The arm-end release read
+  that one dep (`scopes::outer_collection_backing`), so the arm scope declined the case and it
+  kept the pre-init in front of the `if`.
 - **Effect:** measured on both backends, identical: `if c { w = v; … } else { w = v; … }` released
-  `v`'s element after the `if`'s successor ran.  The count is right.
-- **Status:** OPEN.  The cure is a per-path fact, the backing the local's latest bind on THIS
-  path names, snapshotted per arm as `construction_backing` is for records; or both arms' binds
-  sharing one backing.
+  `v`'s element after the `if`'s successor ran.  The count was right.
+- **Closed:** the per-path fact the entry named — `Scopes::bind_backing`, the backing the latest
+  vector bind on THIS path filled (`w = OpGetField(__vdb_N, …)`), saved per arm and merged by
+  intersection as `construction_backing` is; the scope-end release reads it first, and
+  `confined_to_one_arm` admits a vector bound in both arms when each arm's one bind names its
+  backing that way.  An arm that binds twice still declines.  Guard:
+  `tests/scripts/1607-a-vector-bound-in-both-arms-is-released-at-its-arms-end.loft` (b1–b8, both
+  backends, strict stores and poison).
 
 ### D-heap-37 — OPENED AND CLOSED (2026-09-22, found with loft#1600): a local hoisted out of an `if`, a loop or a block was released after the locals declared before it
 
@@ -994,30 +1004,28 @@ CLOSED 2026-09-17, below.
   bind and the three hoists call.  Guard
   `tests/scripts/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.loft` `a9`–`a11`.
 
-### D-heap-36 — OPEN (2026-09-22, loft#1600): which scope does a local every mention of which lies in one `if` arm die at?
+### D-heap-36 — CLOSED (opened 2026-09-22, closed 2026-09-23 by owner ruling, loft#1600): which scope does a local every mention of which lies in one `if` arm die at?
 
 - **The question.** (H-Drop) releases at *"the owner's scope end (@PLAN125 arc B)"*, and arc B
-  HOISTS a local written inside an `if` block to the function's scope: `pln125-b-drop.loft`'s
-  `if_block_local` pins its drop at the function's end, *"the drop is wherever the free is"*.
-  A block local stays readable after its block (`{ n = 5 } n` is legal), so the function IS its
-  owner's scope by that reading.  loft#1600 asks for the arm's end instead, and `D-heap-27`'s
-  paraphrase of the clause ("for a loop body's or a block's owner, THAT scope's end") reads the
-  same way.  The implementation answers both: a vector LITERAL bound in an arm is released at
-  the arm's end (its backing is not registered when `Scopes::scan_if` asks), every other heap
-  local at the end of the scope around the `if`.
-- **Status:** OPEN, a design call for the owner — may such a local be released at the arm's end,
-  for memory only, or for drops too?  The arm-scope rule is built and OPT-IN:
-  `LOFT_ARM_SCOPE=1` makes a local the program declared, every mention of which lies inside the
-  `if`'s arms, the arm's (`Scopes::confined_to_one_arm`, counted by `var_mentions_in`).  Any
-  mention elsewhere keeps the pre-init, and so do these: a local the arm hands out as its value
-  or through a `return`; a value-branch bind the scan wrote out into the arms (`sunk`); and a
-  compiler temp.  Bound in both arms, a record or a text is each arm's own; a vector is
-  `D-heap-38`.  Default-on, it regressed `1495-a-diverging-arm-beside-a-value-arm-still-yields`
-  (a value `if` whose return the parser rewrote into a buffer copy: value-wrong and an
-  interpreter panic) and `a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer`
-  (release order), and it contradicts `pln125-b-drop`.  The arm cells of
-  `tests/scripts/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.loft` assert
-  it when the switch is set.
+  HOISTED a local written inside an `if` block to the function's scope: `pln125-b-drop.loft`'s
+  `if_block_local` pinned its drop at the function's end.  A block local stayed readable after
+  its block (`{ n = 5 } n` compiled), so by that reading the function was its owner's scope;
+  loft#1600 asked for the arm's end.
+- **Ruling (owner, 2026-09-23):** rustc's rule.  A local a statement binds inside a block ends at
+  the block's `}` — [binding.md](binding.md) `(B-Scope)` — so a read after it is refused
+  (`local-out-of-scope`, a hard error, also when every arm binds it) and the arm's `}` is where
+  its owner dies, drops included.  With no read possible after the arm, the question the
+  pre-init answered is gone.
+- **Closed:** the refusal at name resolution (`Parser::check_block_scope`); the arm scope
+  (`Scopes::confined_to_one_arm`) default-on, `LOFT_NO_ARM_SCOPE=1` the bisect switch; the
+  corpus's post-block reads rewritten to the legal spellings.  The two regressions the
+  default-on attempt of 2026-09-22 met are closed: `1495-…` was a diverging arm whose `Never`
+  the block's Insert flattening reset to `Void` — silently wrong on both backends WITHOUT the arm
+  scope too, on the value arm its guard never took — and `a-copy-of-a-local-that-may-not-own-…`
+  moved two cells to the rule's order, where an arm local takes a record by hand-off and the
+  read of the spent source after the arm is `D-heap-8`'s.  Guards:
+  `tests/scripts/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.loft` (every
+  arm cell asserted unconditionally), `tests/scripts/1600b-a-local-read-after-its-block-is-refused.loft`.
 
 ### D-heap-35 — OPENED AND CLOSED (2026-09-22, found with loft#1597): a struct-enum vector released a unit variant's literal twice
 

@@ -27,6 +27,7 @@ use std::io;
 ///   - an fn-ref (`Type::Function`) → free only its closure component when set;
 ///   - otherwise → `OpFreeRef(cell, <db>, "var")` plus a `store_nr = u16::MAX`
 ///     reset when the operand is a variable.
+///
 /// `OpDropFnRef(f)` (`@FR-L-CapOwn`, loft#1609) — run the drop cascade of the closure record
 /// a fn-ref holds, ahead of the `OpFreeRef` that releases its store.  Which lambda the value
 /// holds is a run-time fact, so this is a `match` on its `d_nr` whose arms are the lambdas a

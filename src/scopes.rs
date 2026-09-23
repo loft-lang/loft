@@ -141,6 +141,10 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// Variables every bind of which but ONE writes `null` ([`null_led_in`]): the author's
+    /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
+    /// arm assigns and a later statement reads.
+    null_led: HashSet<u16>,
     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
     /// `scan_if` a local whose every mention lies inside one arm.
     mentions: HashMap<u16, usize>,
@@ -302,6 +306,12 @@ struct Scopes<'s> {
     /// discipline as [`Self::owned_refs`]; an entry that does not survive a join falls back
     /// to the bare free (losing the hook, never doubling it).
     construction_backing: HashMap<u16, u16>,
+    /// loft#1607 / `formal/heap.md` D-heap-38 — a VECTOR local's latest bind on THIS path, mapped
+    /// to the backing that bind filled (`w = OpGetField(__vdb_N, …)`).  The variable's type names
+    /// one backing, the LAST bind's (`@FR-O-Latest`), which is the wrong one for an arm that bound
+    /// an earlier one; the scope-end release reads this first.  Same per-arm save and intersect
+    /// merge as [`Self::construction_backing`].
+    bind_backing: HashMap<u16, u16>,
     /// D-heap-3 (loft#1506) — `__lift_N` temps ONE of whose fields a materialising copy took
     /// over, keyed to that field's byte offset: the temp's scope-end release runs the type's
     /// `…OpDropAllExcept` cascade so every OTHER member is still released exactly once while
@@ -4467,18 +4477,42 @@ fn outer_collection_backing(
     function: &Function,
     v: u16,
     exited: &std::collections::HashSet<u16>,
+    on_this_path: Option<u16>,
 ) -> Option<u16> {
     if !matches!(function.tp(v).base(), Type::Vector(_, _)) || function.is_compiler_generated(v) {
         return None;
     }
-    let [b] = function.tp(v).depend()[..] else {
-        return None;
+    // The backing the latest bind on THIS path filled, where the scan recorded one (loft#1607);
+    // else the one the type names.
+    let b = if let Some(b) = on_this_path {
+        b
+    } else {
+        let [b] = function.tp(v).depend()[..] else {
+            return None;
+        };
+        b
     };
+    (is_backing_name(function, b) && !exited.contains(&b) && !function.is_argument(b)).then_some(b)
+}
+
+/// Is `b` a hidden backing a vector local's elements live in — its `__vdb_N`, or the `__ref_N`
+/// buffer a call delivered it through?  Both are minted at the function's head.
+fn is_backing_name(function: &Function, b: u16) -> bool {
     let n = function.name(b);
-    ((n.starts_with("__vdb_") || n.starts_with("__ref_"))
-        && !exited.contains(&b)
-        && !function.is_argument(b))
-    .then_some(b)
+    n.starts_with("__vdb_") || n.starts_with("__ref_")
+}
+
+/// The backing a vector bind fills: `OpGetField(<backing>, …)`, the shape the parser lowers a
+/// vector copy into.  `None` for any other bind.
+fn bind_backing_of(value: &Value, function: &Function, data: &Data) -> Option<u16> {
+    if let Value::Call(d, args) = value.unspan()
+        && data.def(*d).name() == "OpGetField"
+        && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+        && is_backing_name(function, *b)
+    {
+        return Some(*b);
+    }
+    None
 }
 
 /// The backing each VECTOR member of a tuple literal lives in, by member index — read off the
@@ -5748,6 +5782,7 @@ fn run_scan_phase(
         lift_join_witness: HashMap::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        null_led: null_led_in(orig_code, data),
         mentions: var_mentions_in(orig_code),
         sunk: sunk.clone(),
         assigned: assigned_in(orig_code),
@@ -5783,6 +5818,7 @@ fn run_scan_phase(
         written_tuple_members: written_tuple_members_in(orig_code),
         view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
+        bind_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
         join_holders: HashMap::new(),
         witness_aliases: HashMap::new(),
@@ -6745,6 +6781,38 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
         .collect()
 }
 
+/// Variables with exactly ONE bind that is not a `null` (a `Value::Null` or the
+/// `OpNullRefSentinel` an explicit `x: T? = null` lowers to), and at least one that is.
+/// On every path that reaches the one real bind the local holds the sentinel, so that bind
+/// is a FIRST bind in `@FR-O-Move`'s sense, whoever wrote the null before it.
+pub(crate) fn null_led_in(node: &Value, data: &Data) -> HashSet<u16> {
+    fn is_null(v: &Value, data: &Data) -> bool {
+        match v.unspan() {
+            Value::Null => true,
+            Value::Call(d, a) => a.is_empty() && data.def(*d).name() == "OpNullRefSentinel",
+            _ => false,
+        }
+    }
+    fn count(node: &Value, data: &Data, out: &mut HashMap<u16, (usize, usize)>) {
+        if let Value::Set(v, value) = node.unspan() {
+            let e = out.entry(*v).or_insert((0, 0));
+            if is_null(value, data) {
+                e.0 += 1;
+            } else {
+                e.1 += 1;
+            }
+        }
+        node.for_each_child(&mut |c| count(c, data, out));
+    }
+    let mut counts = HashMap::new();
+    count(node, data, &mut counts);
+    counts
+        .into_iter()
+        .filter(|&(_, (nulls, real))| nulls >= 1 && real == 1)
+        .map(|(v, _)| v)
+        .collect()
+}
+
 /// How many nodes of `node` name each variable: a read, a write, a tuple member read or
 /// write, a fn-ref's closure slot or projection, a call through a fn-ref local and an
 /// iterator's own variable.  A count, so a region's share of it says whether a variable is
@@ -6837,6 +6905,25 @@ fn only_bind_in_arms<'a>(t_val: &'a Value, f_val: &'a Value, v: u16) -> Option<&
     find(f_val, v, &mut found);
     match found.as_slice() {
         [one] => Some(one),
+        _ => None,
+    }
+}
+
+/// The backing the ONE bind of `v` inside `arm` fills ([`bind_backing_of`]); `None` when the arm
+/// binds `v` other than once or through another shape.
+fn arm_bind_backing(arm: &Value, v: u16, function: &Function, data: &Data) -> Option<u16> {
+    fn find<'a>(node: &'a Value, v: u16, out: &mut Vec<&'a Value>) {
+        if let Value::Set(w, value) = node.unspan()
+            && *w == v
+        {
+            out.push(value);
+        }
+        node.for_each_child(&mut |c| find(c, v, out));
+    }
+    let mut found = Vec::new();
+    find(arm, v, &mut found);
+    match found.as_slice() {
+        [one] => bind_backing_of(one, function, data),
         _ => None,
     }
 }
@@ -11793,6 +11880,16 @@ impl Scopes<'_> {
         if first_binding {
             self.register_binding(v, function);
         }
+        if matches!(function.tp(v).base(), Type::Vector(_, _)) {
+            match bind_backing_of(value, function, data) {
+                Some(b) => {
+                    self.bind_backing.insert(v, b);
+                }
+                None => {
+                    self.bind_backing.remove(&v);
+                }
+            }
+        }
         // When a Reference variable is assigned from a user-function call,
         // codegen has two sub-paths (state/codegen.rs gen_set_first_at_tos /
         // gen_set_first_ref_call_copy), keyed on the SAME carried adopt-vs-copy
@@ -11939,6 +12036,7 @@ impl Scopes<'_> {
             // home decides it for the two backends' bind arms too.
             let adopts_minted =
                 crate::use_analysis::adopts_minted_at_bind(data, function, v, unspanned_value);
+
             // @PLN85 `local_source` over-free fix (LOFT_JOIN_OWN): `v` holds an OWNED
             // store (this adopts-fresh call) that a later borrow/join reassignment
             // displaces. Strip `v`'s declared deps so it is OWNED everywhere — the
@@ -13903,8 +14001,17 @@ impl Scopes<'_> {
         let mut pre_inits: Vec<u16> = Vec::new();
         self.find_first_ref_vars(t_val, function, &mut pre_inits);
         self.find_first_ref_vars(f_val, function, &mut pre_inits);
+        // The arm-scoped ones are kept aside: each is its arm's own local, so its one bind
+        // there is a FIRST bind on every path — the adoption below offers it the same.
+        let mut arm_scoped: Vec<u16> = Vec::new();
         if crate::keys::arm_scope_enabled() {
-            pre_inits.retain(|&v| !self.confined_to_one_arm(v, t_val, f_val, function));
+            pre_inits.retain(|&v| {
+                let confined = self.confined_to_one_arm(v, t_val, f_val, function, data);
+                if confined {
+                    arm_scoped.push(v);
+                }
+                !confined
+            });
         }
 
         // Also find small variables assigned in BOTH branches (or an else-if chain).
@@ -13928,8 +14035,21 @@ impl Scopes<'_> {
         // When that bind is the local's only assignment it follows the pre-init on every
         // path that reaches it, so the local holds the sentinel there: it is a first bind.
         if crate::keys::adopt_first_bind_enabled() {
-            for &v in &pre_inits {
-                if !self.multi_assigned.contains(&v)
+            // …and the same fact when the AUTHOR wrote the null: `(B-Scope)` refuses a read of
+            // a local an arm first binds, so `x: T? = null; if c { x = mk() } … x` is how such a
+            // local is spelled now, and every bind of it but the arm's writes the sentinel.
+            let null_led: Vec<u16> = self
+                .null_led
+                .iter()
+                .copied()
+                .filter(|v| !pre_inits.contains(v))
+                .collect();
+            for &v in pre_inits
+                .iter()
+                .chain(null_led.iter())
+                .chain(arm_scoped.iter())
+            {
+                if (!self.multi_assigned.contains(&v) || self.null_led.contains(&v))
                     && let Some(value) = only_bind_in_arms(t_val, f_val, v)
                     && crate::use_analysis::adopts_minted_at_bind(data, function, v, value)
                 {
@@ -13963,12 +14083,14 @@ impl Scopes<'_> {
         // reconcile intersects rather than unions.
         let owned_before = self.owned_refs.clone();
         let backing_before = self.construction_backing.clone();
+        let binds_before = self.bind_backing.clone();
         let views_before = self.view_backing.clone();
         let mints_before = self.tuple_call_mint.clone();
         let now_before = self.tuple_member_now.clone();
         let scanned_true = self.scan(t_val, function, data);
         let owned_after_true = std::mem::replace(&mut self.owned_refs, owned_before);
         let backing_after_true = std::mem::replace(&mut self.construction_backing, backing_before);
+        let binds_after_true = std::mem::replace(&mut self.bind_backing, binds_before);
         let views_after_true = std::mem::replace(&mut self.view_backing, views_before);
         let mints_after_true = std::mem::replace(&mut self.tuple_call_mint, mints_before);
         let now_after_true = std::mem::replace(&mut self.tuple_member_now, now_before);
@@ -13977,6 +14099,8 @@ impl Scopes<'_> {
             .retain(|k, depth| owned_after_true.get(k) == Some(depth));
         self.construction_backing
             .retain(|k, w| backing_after_true.get(k) == Some(w));
+        self.bind_backing
+            .retain(|k, w| binds_after_true.get(k) == Some(w));
         self.view_backing
             .retain(|k, b| views_after_true.get(k) == Some(b));
         self.tuple_call_mint
@@ -14066,6 +14190,7 @@ impl Scopes<'_> {
         t_val: &Value,
         f_val: &Value,
         function: &Function,
+        data: &Data,
     ) -> bool {
         let total = self.mentions.get(&v).copied().unwrap_or(0);
         if total == 0
@@ -14081,7 +14206,12 @@ impl Scopes<'_> {
         // variable, so the arm that bound another backing would release the wrong one.
         let (in_t, in_f) = (mentions_of(t_val, v), mentions_of(f_val, v));
         let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
-        if in_t + in_f != total || (collection && in_t > 0 && in_f > 0) {
+        // A VECTOR bound in both arms is each arm's own when each arm's bind names the backing it
+        // fills (`bind_backing`, loft#1607): the arm's release then reads that one.
+        let per_arm_backing = matches!(function.tp(v).base(), Type::Vector(_, _))
+            && arm_bind_backing(t_val, v, function, data).is_some()
+            && arm_bind_backing(f_val, v, function, data).is_some();
+        if in_t + in_f != total || (collection && in_t > 0 && in_f > 0 && !per_arm_backing) {
             return false;
         }
         // A local the arm hands OUT — as the arm's value (`w = if c { a = …; a } else { … }`) or
@@ -16038,7 +16168,8 @@ impl Scopes<'_> {
             // A CAPTURED local's store is the closure record's to release (`@FR-L-CapOwn`,
             // `capture_adoption_owns_free`), at every scope's end as at the function's: released
             // here as well, its hooks ran twice (loft#1606).
-            if let Some(backing) = outer_collection_backing(function, v, &exited)
+            if let Some(backing) =
+                outer_collection_backing(function, v, &exited, self.bind_backing.get(&v).copied())
                 && !capture_adoption_owns_free(data, function, &self.capture_build_backing, v)
                 && let Some(hook) = self.scope_end_drop(function, backing, data, None)
             {
@@ -16690,8 +16821,11 @@ impl Scopes<'_> {
                 // is decided by store identity (`@FR-L-CapKeep`), where reading `"{g()}"`
                 // as a delivery left the record `g` alone holds unreleased.
                 let keep_holder = self.closure_keep.gated && self.closure_keep.holders.contains(&v);
+                // De Morgan of `!(keep_holder && !is_fn)`, which clippy reads as non-minimal.
+                // Written this way round on purpose: the dep test leads, and the exception
+                // reads as "unless this is a kept holder that is not itself a function".
                 let dep_delivers = tp.depend().contains(&v)
-                    && !(keep_holder && !matches!(tp.base(), Type::Function(..)));
+                    && (!keep_holder || matches!(tp.base(), Type::Function(..)));
                 let in_ret = dep_delivers
                     || ret_carries
                     || link_carries
@@ -20555,37 +20689,41 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
     let mut built_in_loop = false;
     let mut shared = false;
     let mut foreign: HashSet<u16> = HashSet::new();
+    // The three `&mut` out-params are one answer taken in one pass; bundling them into a
+    // struct would name a type that exists only to satisfy the count.  Same reading as the
+    // other 27 sites that carry this allow.
+    #[allow(clippy::too_many_arguments)]
     fn walk(
-        n: &Value,
+        node: &Value,
         in_loop: bool,
-        k: &ClosureKeep,
+        keep: &ClosureKeep,
         data: &Data,
         database: u32,
         built_in_loop: &mut bool,
         shared: &mut bool,
         foreign: &mut HashSet<u16>,
     ) {
-        let inner = in_loop || matches!(n.unspan(), Value::Loop(_));
-        match n.unspan() {
+        let inner = in_loop || matches!(node.unspan(), Value::Loop(_));
+        match node.unspan() {
             Value::Call(d, args)
                 if in_loop
                     && *d == database
-                    && matches!(args.first().map(Value::unspan), Some(Value::Var(r)) if k.records.contains(r)) =>
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(r)) if keep.records.contains(r)) =>
             {
                 *built_in_loop = true;
             }
             Value::Set(p, rhs)
-                if k.links.contains(p)
-                    && matches!(rhs.unspan(), Value::Var(x) if k.holders.contains(x)) =>
+                if keep.links.contains(p)
+                    && matches!(rhs.unspan(), Value::Var(x) if keep.holders.contains(x)) =>
             {
                 *shared = true;
             }
-            Value::Set(h, rhs) if k.holders.contains(h) => match rhs.unspan() {
-                Value::Var(x) if k.holders.contains(x) => *shared = true,
+            Value::Set(h, rhs) if keep.holders.contains(h) => match rhs.unspan() {
+                Value::Var(x) if keep.holders.contains(x) => *shared = true,
                 Value::Call(d, args) if !data.def(*d).name().starts_with("Op") => {
                     if args
                         .iter()
-                        .any(|a| matches!(a.unspan(), Value::Var(x) if k.holders.contains(x)))
+                        .any(|a| matches!(a.unspan(), Value::Var(x) if keep.holders.contains(x)))
                     {
                         *shared = true;
                     }
@@ -20598,8 +20736,17 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
             },
             _ => {}
         }
-        n.unspan().for_each_child(&mut |ch| {
-            walk(ch, inner, k, data, database, built_in_loop, shared, foreign);
+        node.unspan().for_each_child(&mut |ch| {
+            walk(
+                ch,
+                inner,
+                keep,
+                data,
+                database,
+                built_in_loop,
+                shared,
+                foreign,
+            );
         });
     }
     walk(
