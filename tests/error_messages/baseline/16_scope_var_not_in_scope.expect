@@ -1,3 +1,12 @@
-==== exit: 0 ====
+==== exit: 1 ====
 ==== stdout ====
-42==== stderr ====
+==== stderr ====
+error[local-out-of-scope]: `inner` was bound inside a block that has ended, so it does not exist here — bind it before the block, or give the block a value: `inner = if … { … } else { … }`
+  --> <cases>/16_scope_var_not_in_scope.loft:5:11
+  |
+5 |   print("{inner}");
+  |           ^
+
+note: 1 diagnostic above suggests what to write instead — re-run with `--explain`
+
+error: aborting due to 1 previous error

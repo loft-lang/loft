@@ -141,6 +141,10 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// Variables every bind of which but ONE writes `null` ([`null_led_in`]): the author's
+    /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
+    /// arm assigns and a later statement reads.
+    null_led: HashSet<u16>,
     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
     /// `scan_if` a local whose every mention lies inside one arm.
     mentions: HashMap<u16, usize>,
@@ -5734,6 +5738,7 @@ fn run_scan_phase(
         lift_join_witness: HashMap::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        null_led: null_led_in(orig_code, data),
         mentions: var_mentions_in(orig_code),
         sunk: sunk.clone(),
         assigned: assigned_in(orig_code),
@@ -6723,6 +6728,38 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
     counts
         .into_iter()
         .filter(|&(_, n)| n >= 2)
+        .map(|(v, _)| v)
+        .collect()
+}
+
+/// Variables with exactly ONE bind that is not a `null` (a `Value::Null` or the
+/// `OpNullRefSentinel` an explicit `x: T? = null` lowers to), and at least one that is.
+/// On every path that reaches the one real bind the local holds the sentinel, so that bind
+/// is a FIRST bind in `@FR-O-Move`'s sense, whoever wrote the null before it.
+pub(crate) fn null_led_in(node: &Value, data: &Data) -> HashSet<u16> {
+    fn is_null(v: &Value, data: &Data) -> bool {
+        match v.unspan() {
+            Value::Null => true,
+            Value::Call(d, a) => a.is_empty() && data.def(*d).name() == "OpNullRefSentinel",
+            _ => false,
+        }
+    }
+    fn count(node: &Value, data: &Data, out: &mut HashMap<u16, (usize, usize)>) {
+        if let Value::Set(v, value) = node.unspan() {
+            let e = out.entry(*v).or_insert((0, 0));
+            if is_null(value, data) {
+                e.0 += 1;
+            } else {
+                e.1 += 1;
+            }
+        }
+        node.for_each_child(&mut |c| count(c, data, out));
+    }
+    let mut counts = HashMap::new();
+    count(node, data, &mut counts);
+    counts
+        .into_iter()
+        .filter(|&(_, (nulls, real))| nulls >= 1 && real == 1)
         .map(|(v, _)| v)
         .collect()
 }
@@ -13299,8 +13336,17 @@ impl Scopes<'_> {
         let mut pre_inits: Vec<u16> = Vec::new();
         self.find_first_ref_vars(t_val, function, &mut pre_inits);
         self.find_first_ref_vars(f_val, function, &mut pre_inits);
+        // The arm-scoped ones are kept aside: each is its arm's own local, so its one bind
+        // there is a FIRST bind on every path — the adoption below offers it the same.
+        let mut arm_scoped: Vec<u16> = Vec::new();
         if crate::keys::arm_scope_enabled() {
-            pre_inits.retain(|&v| !self.confined_to_one_arm(v, t_val, f_val, function));
+            pre_inits.retain(|&v| {
+                let confined = self.confined_to_one_arm(v, t_val, f_val, function);
+                if confined {
+                    arm_scoped.push(v);
+                }
+                !confined
+            });
         }
 
         // Also find small variables assigned in BOTH branches (or an else-if chain).
@@ -13324,8 +13370,17 @@ impl Scopes<'_> {
         // When that bind is the local's only assignment it follows the pre-init on every
         // path that reaches it, so the local holds the sentinel there: it is a first bind.
         if crate::keys::adopt_first_bind_enabled() {
-            for &v in &pre_inits {
-                if !self.multi_assigned.contains(&v)
+            // …and the same fact when the AUTHOR wrote the null: `(B-Scope)` refuses a read of
+            // a local an arm first binds, so `x: T? = null; if c { x = mk() } … x` is how such a
+            // local is spelled now, and every bind of it but the arm's writes the sentinel.
+            let null_led: Vec<u16> = self
+                .null_led
+                .iter()
+                .copied()
+                .filter(|v| !pre_inits.contains(v))
+                .collect();
+            for &v in pre_inits.iter().chain(null_led.iter()).chain(arm_scoped.iter()) {
+                if (!self.multi_assigned.contains(&v) || self.null_led.contains(&v))
                     && let Some(value) = only_bind_in_arms(t_val, f_val, v)
                     && crate::use_analysis::adopts_minted_at_bind(data, function, v, value)
                 {
