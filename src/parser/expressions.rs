@@ -6179,28 +6179,7 @@ use a separate collection or add after the loop"
         // @PLN152 — a `??` in the stored expression names what happens when the value does
         // not fit, so guard inside the discharge and leave this store alone: neither the
         // refusal below nor the outside-the-expression guard after it applies.
-        let discharged =
-            op == "=" && !self.first_pass && self.range_guard_inside_discharge(code, store_tp);
-        if !discharged
-            && op == "="
-            && !self.first_pass
-            && Self::is_narrowing_int_store(&s_type, store_tp)
-        {
-            let dst = self.int_type_name(store_tp);
-            if let Some(hint) = self.nullable_sentinel_hint(code, store_tp, &dst) {
-                // The literal fits the type but lands on the reserved null
-                // sentinel of a nullable narrow FIELD — explain that, not "too big".
-                diagnostic!(self.lexer, Level::Error, "{hint}");
-            } else if !self.int_value_fits(code, store_tp) {
-                let src = self.int_type_name(&s_type);
-                let cures = Self::narrowing_cures(code, &dst);
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "cannot implicitly narrow {src} to {dst} (may lose data) — {cures}"
-                );
-            }
-        }
+        let discharged = op == "=" && self.narrow_store_checks(code, store_tp, &s_type);
         // loft#984 — a store into a slot that DECLARES a range guards the value: one
         // outside `lo..=hi` takes the slot's default rather than being wrapped, aliased
         // or dropped.  This site is deliberately the same one the narrowing check above
@@ -7182,6 +7161,22 @@ use a separate collection or add after the loop"
             if let Some(member) = member_for_null.as_ref() {
                 self.tuple_member_owned_copy(&mut rhs, member);
             }
+            // loft#1640 — a tuple MEMBER is a slot, so it owes the same two checks every
+            // other narrow slot does, and this branch returns before the general assign path
+            // that applies them.  Without them `t: (u8, u8); t.0 = 300` stored `300`, and
+            // copying that tuple into a `vector<(u8, u8)>` read `44` — the low byte — with
+            // nothing said at either step.  Same shape as loft#1284 reaching in here for
+            // `(N-Store)`, which is why the refusal now lives in one method rather than being
+            // copied a third time.
+            if let Some(member) = member_for_null.as_ref() {
+                let discharged = self.narrow_store_checks(&mut rhs, member, &rhs_tp);
+                if !discharged && !self.first_pass {
+                    // The parent is the TUPLE, which is never nullable `(N-Tuple)`, so the
+                    // member's own nullability is the whole answer.
+                    let holds_null = matches!(member, Type::Optional(_));
+                    self.guard_declared_range(&mut rhs, member, &rhs_tp, holds_null);
+                }
+            }
             *code = build_nested_tuple_assign(code, &lhs, rhs);
             return Type::Void;
         }
@@ -7844,6 +7839,53 @@ use a separate collection or add after the loop"
             );
         }
         out
+    }
+
+    /// The narrowing refusal every narrow STORE owes, in ONE place — answers whether the
+    /// value was DISCHARGED (a `??` inside it already named what happens when it does not
+    /// fit), which is what the caller's range guard keys off.
+    ///
+    /// It is a method because the assignment dispatcher is not the only site that stores into
+    /// a slot, and the ones that are not it have to ask by hand.  A TUPLE MEMBER is the case
+    /// that proved it: `t.0 = …` is handled on its own branch that returns before the general
+    /// path, so it reached neither this refusal nor loft#984's range guard, and
+    /// `t: (u8, u8); t.0 = 300` stored `300` — with `t.0 <= 255`, the type's own range written
+    /// out, reading FALSE for a value the type was holding (loft#1640).
+    ///
+    /// That branch already carried the same repair for a DIFFERENT question: loft#1284 had to
+    /// reach into it to ask `(N-Store)`, whose comment records the shape — *"`(N-Store)`
+    /// covers the direct store, the field, the call-argument site and the branch join, and a
+    /// TUPLE ELEMENT reached none of them"*.  Two questions, one hole, patched once each.
+    /// This is the second one given a home rather than a second copy, so the third slot kind
+    /// that reaches neither has one place to be added to.
+    ///
+    /// `(N-Reserve)` is why a tuple member is a slot at all: it names "a local, a field, an
+    /// element, a parameter and a return alike", and a member is one of those in everything
+    /// but that list — `layout.md` `(L-Tuple)` makes it a field.
+    fn narrow_store_checks(&mut self, code: &mut Value, store_tp: &Type, s_type: &Type) -> bool {
+        if self.first_pass {
+            return false;
+        }
+        if self.range_guard_inside_discharge(code, store_tp) {
+            return true;
+        }
+        if Self::is_narrowing_int_store(s_type, store_tp) {
+            let dst = self.int_type_name(store_tp);
+            if let Some(hint) = self.nullable_sentinel_hint(code, store_tp, &dst) {
+                // The literal fits the type but lands on the reserved null
+                // sentinel of a nullable narrow FIELD — explain that, not "too big".
+                diagnostic!(self.lexer, Level::Error, "{hint}");
+            } else if !self.int_value_fits(code, store_tp) {
+                let src = self.int_type_name(s_type);
+                let cures = Self::narrowing_cures(code, &dst);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot implicitly narrow {src} to {dst} (may lose data) — {cures}"
+                );
+            }
+        }
+        false
     }
 
     /// Is this expression itself a null discharge (`a ?? b`)?

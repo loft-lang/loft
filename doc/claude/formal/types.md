@@ -522,8 +522,8 @@ old auto-`τ?` reading. Design record:
             packed.  `255` is a real `u8` and IS the null of a `u8?`, so a `u8?` ranges over
             `0..=254` in a local, a field, an element, a parameter and a return alike —
             and in a TUPLE MEMBER, which that list does not name because it was written
-            before anyone asked, and which is where the rule currently does not hold
-            (D-types-2, loft#1640).  What
+            before anyone asked — `layout.md` `(L-Tuple)` makes a member a field, and since
+            loft#1640 it is bounded like one.  What
             spends the edge is a SLOT — a place a value is KEPT — and an expression in flight
             is not one: `e as u8?` yields `255` and `(e as u8?) ?? d` keeps it, because
             neither ever holds a `u8?`; assign the same cast into a `u8?` and it is null.
@@ -682,9 +682,9 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-* **D-types-2** *(opened 2026-09-23, loft#1640)* — `(N-Reserve)`: a TUPLE MEMBER of a narrow
+* **D-types-2** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1640)* — `(N-Reserve)`: a TUPLE MEMBER of a narrow
   type is not bounded by its declared range on a plain assignment.  `t: (u8, u8) = (250, 7);
   t.0 = 300` stores `300`, and `t.0 >= 0 and t.0 <= 255` — the type's own range, written out
   — reads `false` for a value the type is holding; copying that tuple into a
@@ -700,7 +700,15 @@ capture typing is a new *source* of the types loft already has; `match` also sta
   v[0].0 += 10` is refused with *"Not implemented operation + for type integer(0, 255)"*, a
   message about an operator that is plainly implemented — loft#1228's own shape one level
   deeper.  Found by `scripts/matrix_axes.py`, which reports `A3 … MISSING tuple-element`
-  against the C127 guards.
+  against the C127 guards.  **Closed** the same day: the narrowing refusal and loft#984's range
+  guard now live in one method (`Parser::narrow_store_checks`) that the general assign path and
+  the tuple branch both call, so a tuple member is bounded like every other slot and the third
+  slot kind that reaches neither has one place to be added to.  Guard
+  `tests/scripts/1640-a-tuple-member-is-a-narrow-slot-like-any-other.loft` for what must still
+  be true, and two `@EXPECT_ERROR` cells in `102-expected-errors.loft` for the refusal itself.
+  The second half — `v[0].0 += 10` on a `vector<(u8, u8)>` refused as *"Not implemented
+  operation +"* — is a tuple-in-a-container ROUTING question rather than a narrowing one and
+  stays open on the issue.
 
 `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,

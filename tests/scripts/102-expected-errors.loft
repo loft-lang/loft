@@ -567,3 +567,27 @@ fn unknown_field_on_a_fn_ref_names_the_fn_type(a: integer, b: integer) -> intege
 fn pe_add_for_fn_ref(a: integer, b: integer) -> integer {
   a + b
 }
+
+// ── loft#1640 — a tuple MEMBER is a narrow slot, so an unfitting write is refused ──
+//
+// The same value into the three slots `(N-Reserve)` names — a local, a struct field, a vector
+// element — has always been refused.  A tuple member reached neither the refusal nor
+// loft#984's range guard, because `t.0 = …` is handled on a branch that returns before the
+// general assign path, and stored 300 in a `u8`.  The TRUE half of the cell — what must still
+// work once the refusal exists — is
+// `tests/scripts/1640-a-tuple-member-is-a-narrow-slot-like-any-other.loft`.
+//
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+fn pe_tuple_member_out_of_range() {
+  t: (u8, u8) = (250, 7);
+  t.0 = 300;
+  assert(t.0 == 0, "unreached");
+}
+
+// The wider member, so the cell is not pinned to one width.
+// @EXPECT_ERROR: cannot implicitly narrow integer to u16
+fn pe_tuple_member_out_of_range_wide() {
+  w: (u16, u16) = (1, 2);
+  w.0 = 999999;
+  assert(w.0 == 0, "unreached");
+}
