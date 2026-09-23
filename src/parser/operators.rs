@@ -1290,16 +1290,6 @@ impl Parser {
                              (`p = &x` takes the target's type), or write `&{got}`"
                         );
                         self.amp_pending = false;
-                    } else if Self::is_narrow_store_place(&t, code) {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Error,
-                            "`&` cannot link to an integer element or field that is stored in fewer \
-                             than 8 bytes, because a link reads and writes a whole integer. Copy it \
-                             into a local and write it back (`x = v[i]; ...; v[i] = x`), or declare \
-                             the element or field as `integer`"
-                        );
-                        self.amp_pending = false;
                     } else if !Self::is_amp_place(code, &self.data) {
                         // #1 — a valid binding RHS still needs a PLACE operand.
                         diagnostic!(

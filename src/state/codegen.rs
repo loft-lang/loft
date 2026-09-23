@@ -5207,19 +5207,25 @@ impl State {
             // a reference (`OpGetVector` / `OpGetField`), where a write-through of a value reads
             // that place (`OpGetInt(OpGetVector(..))`) and is typed as the scalar.  For a record or
             // collection link an element's VALUE is a reference too, so the type cannot tell them
-            // apart and only the install op is routed here.  An integer stored narrower than 8
-            // bytes is left out: a link does not yet honour a narrow place's width
-            // (binding.md D-bind-39), and routed it would read that wrong width silently.
-            let link_base = tp.base();
-            let scalar_link = match link_base {
-                Type::Integer(spec) => spec.byte_width(false) == 8,
-                Type::Boolean
-                | Type::Float
-                | Type::Single
-                | Type::Character
-                | Type::Enum(_, false, _) => true,
-                _ => false,
-            };
+            // apart and only the install op is routed here.  A NARROW integer place joins every
+            // other width here (loft#1567, D-bind-39 closed): the exclusion read
+            // `byte_width(false) == 8` while a link could not honour a narrow place, and left a
+            // re-point to fall through to the write-through path below — which wrote the 12-byte
+            // stack CELL through the kind's own `set_op`, so the interpreter read a corrupt
+            // reference (`k = &r[0]; k = &r[1]` panicked in the store for an element and wrote the
+            // CONST store for a field) while native, which routes a re-point by the value's shape,
+            // was correct.  A re-point is not a value write at any width.
+            // Every scalar, at every width — the arms became uniform when loft#1567 dropped the
+            // narrow integer's, which is the shape of the fix as much as its effect.
+            let scalar_link = matches!(
+                tp.base(),
+                Type::Integer(_)
+                    | Type::Boolean
+                    | Type::Float
+                    | Type::Single
+                    | Type::Character
+                    | Type::Enum(_, false, _)
+            );
             let repoints = if let Value::Call(d, _) = value.unspan() {
                 let def = stack.data.def(*d);
                 // `OpVarRef(b)` is a re-point to the link `b` holds, for every kind of link.

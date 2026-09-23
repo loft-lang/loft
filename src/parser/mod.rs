@@ -15157,20 +15157,6 @@ impl Parser {
                 actual.push(actual_code);
                 continue;
             }
-            if scalar_place && Self::is_narrow_store_place(actual_type, &actual_code) {
-                if !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "`&` cannot link to an integer element or field that is stored in fewer \
-                         than 8 bytes, because a link reads and writes a whole integer. Copy it \
-                         into a local and write it back (`x = v[i]; ...; v[i] = x`), or declare \
-                         the element or field as `integer`"
-                    );
-                }
-                actual.push(actual_code);
-                continue;
-            }
             if let Type::RefVar(inner) = &tp
                 && !matches!(inner.as_ref(), Type::Text(_))
                 && !matches!(&actual_code, Value::Var(_))
@@ -19256,11 +19242,6 @@ impl Parser {
             self.int_type_name(want.base()),
             self.int_type_name(target.base()),
         ))
-    }
-
-    fn is_narrow_store_place(tp: &Type, code: &Value) -> bool {
-        matches!(tp.base(), Type::Integer(spec) if spec.byte_width(false) < 8)
-            && !matches!(code.unspan(), Value::Var(_))
     }
 
     /// Plan-06 PRIORITY.md spine step 5 — par-result use-site analyser.

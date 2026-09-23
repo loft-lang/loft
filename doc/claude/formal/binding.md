@@ -418,7 +418,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 1.**
 
 * **D-bind-52** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD
   read through a link.  `y = e` with `e = &z`, and `y = p` with `p: &P` a parameter, bound `y`
@@ -793,51 +793,52 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   variant resolver read through `peel_link`.  Guard
   `tests/scripts/an-enum-link-reads-and-writes-through-its-own-op.loft`.  Found while measuring
   D-bind-39's enum element face.
-* **D-bind-39** *(opened 2026-09-14, loft#1567; silent until the refusal the same day, now loud)* —
+* **D-bind-39** *(opened 2026-09-14, loft#1567; CLOSED 2026-09-23)* —
   `(B-Ref-Lvalue)` for an integer STORE place stored in fewer than 8 bytes — an element or a field
-  of `u8`, `i8`, `u16`, `i32`, or a narrow range: `c = &u[1]`, `c = &o.a`.  The rule says such a place
-  links, and it is refused on both backends with one error per `&` ("`&` cannot link to an integer
-  element or field that is stored in fewer than 8 bytes…"), naming the two ways out: copy into a
-  local and write it back, or declare the element or field `integer`.  A narrow LOCAL, a `&` parameter
-  and a tuple local are 8-byte frame slots and still link.
-  **Before the refusal (measured, silent).**  A `u8`/`i8` element link read 2042 for 250 on
-  `--interpret`, and a write through it reached the next element (`1,200,0`); `--native` panicked in
-  the store (`addr_mut`: not aligned for `i64`).  A `u8` field link was a plain copy, so its write was
-  lost on both backends.  `u16` and `i32` places were already refused, under a message that called
-  them temporaries.
-  **Why a refusal and not a link.**  Reading and writing through a link picks the op by the kind alone
-  (`OpGetInt` / `OpSetInt` for every integer in `state/codegen.rs`, a `*mut i64` natively), and the
-  type cannot choose better: a link to a `u8` local (an 8-byte frame slot) and a link to a `u8`
-  element (a 1-byte store slot) have the same type, `&integer(0, 255)`, and a link can be re-pointed
-  from one to the other, so the width belongs to the target at run time.  `(B-Ref-Reshape)` prefers
-  refusing a link it cannot honour to a silent copy.  **Closes when** a link carries its target's
-  width — a representation decision — and the refusal is lifted.
-  **Half of that is now built, measured 2026-09-23 by lifting the refusal behind a temporary
-  switch and putting it straight back.**  READS are correct on both backends: a `&` to a `u8`,
-  `i8`, `u16` or `limit(1000, 1100)` FIELD and to a `vector<u8>` ELEMENT answered `250 -1 1050
-  65535` and `1`.  The representation question the entry above calls open is therefore ANSWERED
-  for reading — `@PLN167` decision 1 dissolved its premise.  That premise was *"a link to a `u8`
-  local (an 8-byte frame slot) and a link to a `u8` element (a 1-byte store slot) have the same
-  type"*, and a linked narrow local now holds its type's FIELD encoding, so the two are one
-  representation; `state/codegen.rs` already reads through `NarrowSlot::of_type` for *"a linked
-  local, a field, an element"* and `generation::link_base_type` already says *"one `*mut u8`
-  names a linked local and a field alike"*.
-  **WRITES are the remaining half and are still lost** — `pa = 7` through a `&u8` field link
-  left the field at 250 on both backends, which is this entry's own pre-refusal measurement
-  (*"a `u8` field link was a plain copy, so its write was lost"*).  So the refusal STAYS: a
-  lifted refusal with reads right and writes silently dropped is worse than the refusal, which
-  is `(B-Ref-Reshape)`'s own reasoning.
-  **And one gate behind it is fixed rather than left to be re-found.**  With the refusal lifted,
-  every narrow place fell to *"`&` requires an addressable operand"*: `Parser::is_amp_place`
-  kept a hand-written list of readable place ops carrying `OpGetByte` and `OpGetShort` while a
-  `u16` field reads `OpGetShortFull`, an `i32` field `OpGetInt4` and a `u8` element
-  `OpGetVectorNullable`.  It now asks `NarrowIntKind::is_get_op`, derived from the same match
-  `get_op` is, so a new kind cannot be missed; adding seven more names by hand is the failure
-  mode rather than the cure.  One home decides the refused set,
-  `Parser::is_narrow_store_place`, asked at the `&` and by the lowering on both passes.  Guards
-  `tests/scripts/a-link-to-a-narrow-integer-store-place-is-refused.loft` (one error per `&`) and
-  `tests/scripts/a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` (what must still link).
-  Found while checking D-bind-36's cells against a middle element.
+  of `u8`, `i8`, `u16`, `i32`, or a narrow range: `c = &u[1]`, `c = &o.a`.  The rule says such a
+  place links; it was refused on both backends with one error per `&`, at the `&` bind and at a
+  `&` parameter, naming two ways out (copy into a local and write it back, or declare the place
+  `integer`).  **The refusal is lifted and every such place now links**, measured on both backends
+  across 17 cells: each narrow kind read and written through a field link and an element link, a
+  nested field, a nullable element and field (absence survives both ways), two links naming one
+  place, a re-point between two elements and between two fields, and a bare `&u8` parameter taking
+  a field and an element — with the neighbouring field, the neighbouring element and the length
+  read back untouched in every cell.
+  **What the entry said had to happen first, and what actually did.**  It said the deviation
+  *"closes when a link carries its target's width — a representation decision"*, on the premise
+  that *"a link to a `u8` local (an 8-byte frame slot) and a link to a `u8` element (a 1-byte store
+  slot) have the same type"*.  `@PLN167` decision 1 dissolved that premise — a linked narrow local
+  holds its type's FIELD encoding, so the two are one representation — and `state/codegen.rs`
+  already read and wrote through `NarrowSlot::of_type` for *"a linked local, a field, an element"*.
+  So no representation work remained.  What remained were **two gates that had been written to the
+  old premise**, and finding them is the whole of this closure:
+  1. `Parser::scalar_place_ref`, which turns a place expression into the link's target, matched an
+     `OpGet*` with exactly TWO arguments (`else if let [base, fld] = gargs.as_slice()`).  A narrow
+     read carries a THIRD — the `min` its encoding is biased by, `OpGetByte(v1, fld, min)` — so it
+     fell to `None`, the `&` was silently dropped, and the local was typed a plain `int`
+     (`LOFT_VAR_TABLE` reads `pa int` beside `pn &int`).  That is why writes were "lost": there was
+     no link to write through, only a copy.  The `min` is decoding information and not part of the
+     address, so the place is the same `OpGetField(base, fld)` every other field read yields.
+  2. The re-point branch's `scalar_link` test read `spec.byte_width(false) == 8`, excluding narrow
+     integers on purpose — *"a link does not yet honour a narrow place's width (D-bind-39)"*.  With
+     the first gate fixed, a re-point fell through to the write-through path and wrote the 12-byte
+     stack CELL through the kind's own `set_op`: the interpreter panicked in the store for an
+     element (`rec=1748762626`, a corrupt reference) and wrote the read-only CONST store for a
+     field, while **native was already correct**, because it routes a re-point by the value's shape
+     rather than by the target's width.  A re-point is not a value write at any width.
+  **Both gates cited this entry by number, and that is the lesson.**  Each was a correct guard
+  against a defect that no longer existed, and each read as settled because it named the deviation
+  it was protecting.  A deviation's closure has to sweep its own citations rather than only its
+  headline behaviour — the second gate was reachable only through the first, so fixing the
+  first is what made the interpreter crash where it had merely refused.
+  **Uniformity is what the guard scores**, not just success: an unfitting compound step answers the
+  type's default through the link exactly as it does at the place (C127), drawing the same
+  `narrow-fallback` advice, and a direct write beside two links reaches both.  Guard
+  `tests/scripts/1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`, which
+  replaces `a-link-to-a-narrow-integer-store-place-is-refused.loft` and keeps its seven shapes,
+  scored by value instead of by diagnostic.  `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft`
+  still pins the frame half.  D-bind-38, the TEXT face of the same rule, stays open.
+
 * **D-bind-53** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1639)* — ⚠ opened as `D-bind-44`,
   a number already taken by a CLOSED entry of 2026-09-15 that lived on a branch this tree had
   not yet joined.  Renumbered on the join: a deviation number is repo-WIDE, and the check has
@@ -871,8 +872,8 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   in.  Guards `tests/scripts/1639-a-link-takes-its-targets-type-not-its-annotations.loft` for
   what must still link, and two `@EXPECT_ERROR` cells in `102-expected-errors.loft` — the
   narrower direction pinning a two-message cascade rather than hiding it.  **D-bind-39**
-  (loft#1567) stays OPEN: a link to a narrow STORE place is still refused, and lifting it needs
-  the representation decision its own entry names.
+  (loft#1567) CLOSED the same week: a link to a narrow STORE place now links, and the
+  representation decision its entry asked for turned out to have been made already.
 
 * **D-bind-38** *(opened 2026-09-14, loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
   vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
@@ -883,8 +884,8 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   and `Parser::is_amp_place` does not list it.  Lifting the refusal is not the whole cure: a local
   `&text` link is a `*mut String` on `--native`, and a store's text slot is not a `String`, so the
   link needs a representation for a text that lives in a store.  (The `u16` and `i32` places this
-  entry first carried are narrow integer places and share D-bind-39's refusal, which now names them
-  correctly.)  Found while probing D-bind-36's repoint over every element kind.
+  entry first carried are narrow integer places and left with D-bind-39, which closed 2026-09-23;
+  text is the only face of this rule still refused.)  Found while probing D-bind-36's repoint over every element kind.
 * **D-bind-37** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a
   `&τ` PARAMETER: `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-pointed the parameter's link
   on `--interpret` (after D-bind-36) and did not compile on `--native` — rustc E0308 for an element or
@@ -906,8 +907,9 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   not to the install op D-bind-32 routed to the link's slot, so `set_var` took the write-through
   path.  For a link to a scalar the right-hand side's TYPE separates
   the two spellings: a place op is declared to return a reference, a value read out of the place is
-  the scalar.  `set_var` routes the former to the link's slot as well, except for an integer stored
-  narrower than 8 bytes, whose link reads the wrong width (D-bind-39).  A link to a record or a
+  the scalar.  `set_var` routes the former to the link's slot as well, at every integer width since
+  D-bind-39 closed — the exclusion of a narrow place was that deviation's, and outlived it by one
+  commit, during which a narrow re-point wrote a stack cell through the kind's own `set_op`.  A link to a record or a
   collection reads an element's VALUE as a reference too, so there the type cannot tell them apart
   and only the install op is routed.  (A struct element bound with `&` is typed as a view of its
   vector, `ref(P)`, rather than as a `&P` link; rebinding it already left the first element alone,

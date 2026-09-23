@@ -1,0 +1,87 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` link to a narrow integer STORE place — an element or a field of `u8`, `i8`, `u16`, `i32`
+// or a declared range — reads and writes that place, on both backends (`binding.md (B-Ref-Lvalue)`,
+// `(B-Ref-Read)`, `(B-Ref-Write)`, `(B-Ref-Uniform)`; loft#1567, D-bind-39 closed).  This file
+// REPLACES `a-link-to-a-narrow-integer-store-place-is-refused.loft` and keeps its seven shapes,
+// scored by value instead of by diagnostic: the refusal was the deviation, not the rule.
+//
+// The claim is the uniform one — a link to a narrow place is not special — so every cell pairs the
+// link against what the same program does AT the place: a neighbouring field and element are read
+// back untouched, a re-point moves the link and not the value, and an unfitting compound step
+// answers the type's default through the link exactly as it does directly (C127).  That last pair
+// is why the two `Advice[narrow-fallback]` pins are part of THIS channel rather than a second one:
+// the link must draw the same advice as the place, and a pin that never fires is fatal here.
+//
+// A narrow LOCAL is the other side of the line and keeps its own guard,
+// `a-link-to-a-narrow-integer-local-reads-and-writes-it.loft`.
+//
+// @EXPECT_WARNING: Advice[narrow-fallback]
+// @EXPECT_WARNING: Advice[narrow-fallback]
+
+struct B { a: u8, b: u8, n: integer }
+struct Q { a: i32, n: integer }
+struct W { a: u8, b: i8, c: u16, d: i16, h: integer limit(1000, 1100) }
+struct Inner { q: i16 }
+struct Nest { e: Inner, n: integer }
+struct N { v: u8?, n: integer }
+
+fn bump(p: &u8) { p += 1; }
+
+// --- the refused guard's own seven shapes, now scored by value ---
+fn u8_element() -> text { u: vector<u8> = [1, 250, 7]; c = &u[1]; s = "{c}"; c = 200; "{s},{u[0]},{u[1]},{u[2]},{len(u)}" }
+fn i8_element() -> text { e: vector<i8> = [1, -5, 7]; c = &e[1]; c = -100; "{e[0]},{e[1]},{e[2]},{len(e)}" }
+fn u16_element() -> text { u: vector<u16> = [1, 60000, 7]; c = &u[1]; c = 200; "{u[0]},{u[1]},{u[2]},{len(u)}" }
+fn nullable_u8_element() -> text { u: vector<u8?> = [1, null, 7]; c = &u[2]; c = 9; "{u[0] ?? -1},{u[1] ?? -1},{u[2] ?? -1},{len(u)}" }
+fn u8_field() -> text { o = B{a: 250, b: 9, n: 7}; c = &o.a; s = "{c}"; c = 200; "{s},{o.a},{o.b},{o.n}" }
+fn i32_field() -> text { o = Q{a: -5, n: 7}; c = &o.a; c = 200; "{o.a},{o.n}" }
+// A re-point between two narrow ELEMENTS moves the link, not the value.  Before loft#1567 the
+// re-point fell through to the write-through path and wrote the 12-byte stack CELL through the
+// kind's own `set_op`: the interpreter panicked in the store here and wrote the CONST store for
+// the field twin below, while native was already right — the shape that says it is a re-point
+// question and not a width question.
+fn u8_element_repoint() -> text { u: vector<u8> = [1, 250, 7]; c = &u[0]; c = &u[1]; c = 200; "{u[0]},{u[1]},{u[2]}" }
+fn u8_field_repoint() -> text { o = B{a: 1, b: 250, n: 7}; c = &o.a; c = &o.b; c = 200; "{o.a},{o.b},{o.n}" }
+
+// --- every narrow kind through one record, read then written, neighbours checked ---
+fn every_kind_reads() -> text { o = W{a: 250, b: -100, c: 65535, d: -32768, h: 1050}; pa = &o.a; pb = &o.b; pc = &o.c; pd = &o.d; ph = &o.h; "{pa},{pb},{pc},{pd},{ph}" }
+fn every_kind_writes() -> text { o = W{a: 250, b: -100, c: 65535, d: -32768, h: 1050}; pa = &o.a; pb = &o.b; pc = &o.c; pd = &o.d; ph = &o.h; pa = 7; pb = -1; pc = 2; pd = -2; ph = 1001; "{o.a},{o.b},{o.c},{o.d},{o.h}" }
+
+// --- a field reached through an inline sub-record ---
+fn nested_field() -> text { o = Nest{e: Inner{q: 7}, n: 5}; p = &o.e.q; s = "{p}"; p = -9; "{s},{o.e.q},{o.n}" }
+
+// --- two links naming ONE place, and a direct write beside them ---
+fn two_links_one_place() -> text { o = B{a: 20, b: 9, n: 7}; x1 = &o.a; x2 = &o.a; x1 = 30; s = "{x2},{o.a}"; o.a = 40; "{s},{x1},{x2}" }
+
+// --- a bare `&u8` parameter taking a field and an element ---
+fn narrow_field_parameter() -> text { o = B{a: 3, b: 9, n: 100}; bump(o.a); bump(o.a); "{o.a},{o.b},{o.n}" }
+fn narrow_element_parameter() -> text { v: vector<u8> = [10, 20, 30]; bump(v[1]); "{v[0]},{v[1]},{v[2]},{len(v)}" }
+
+// --- C127: an unfitting step answers the type's default, through the link as at the place ---
+fn unfitting_step_through_the_link() -> text { o = B{a: 250, b: 9, n: 7}; p = &o.a; p += 10; "{o.a},{p},{o.b}" }
+fn unfitting_step_at_the_place() -> text { o = B{a: 250, b: 9, n: 7}; o.a += 10; "{o.a},{o.b}" }
+
+// --- absence survives a link to a nullable narrow field, both ways ---
+fn null_through_the_link() -> text { o = N{v: 3, n: 7}; p = &o.v; s = "{p ?? -1}"; p = null; t = "{o.v ?? -1}"; p = 8; "{s},{t},{o.v ?? -1},{o.n}" }
+
+fn main() {
+  assert(u8_element() == "250,1,200,7,3", "a u8 element reads and writes through its link: {u8_element()}");
+  assert(i8_element() == "1,-100,7,3", "an i8 element: {i8_element()}");
+  assert(u16_element() == "1,200,7,3", "a u16 element: {u16_element()}");
+  assert(nullable_u8_element() == "1,-1,9,3", "a nullable u8 element, its absent neighbour kept: {nullable_u8_element()}");
+  assert(u8_field() == "250,200,9,7", "a u8 field, its neighbours untouched: {u8_field()}");
+  assert(i32_field() == "200,7", "an i32 field: {i32_field()}");
+  assert(u8_element_repoint() == "1,200,7", "a re-pointed element link writes its second element: {u8_element_repoint()}");
+  assert(u8_field_repoint() == "1,200,7", "a re-pointed field link writes its second field: {u8_field_repoint()}");
+  assert(every_kind_reads() == "250,-100,65535,-32768,1050", "every narrow kind reads its own encoding: {every_kind_reads()}");
+  assert(every_kind_writes() == "7,-1,2,-2,1001", "and writes it, five links over one record: {every_kind_writes()}");
+  assert(nested_field() == "7,-9,5", "a field under an inline sub-record: {nested_field()}");
+  assert(two_links_one_place() == "30,30,40,40", "two links name one place, and a direct write reaches both: {two_links_one_place()}");
+  assert(narrow_field_parameter() == "5,9,100", "a narrow field through a `&u8` parameter, twice: {narrow_field_parameter()}");
+  assert(narrow_element_parameter() == "10,21,30,3", "a narrow element through a `&u8` parameter: {narrow_element_parameter()}");
+  assert(unfitting_step_through_the_link() == "0,0,9", "an unfitting step answers the type's default through the link: {unfitting_step_through_the_link()}");
+  assert(unfitting_step_at_the_place() == "0,9", "and the same step at the place answers the same: {unfitting_step_at_the_place()}");
+  assert(null_through_the_link() == "3,-1,8,7", "absence survives a link to a nullable narrow field: {null_through_the_link()}");
+  println("narrow store place link ok");
+}

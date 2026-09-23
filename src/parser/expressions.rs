@@ -3733,12 +3733,7 @@ use a separate collection or add after the loop"
                 let name = self.vars.name(src).to_string();
                 self.ref_linked_tuple_locals.insert((self.context, name));
             }
-            // A narrow integer store place is refused at the `&` itself on the second pass; the
-            // first pass must not link it either, or the two passes type the local differently.
-            let heap_ref = if stack_src.is_none()
-                && is_scalar(&s_type)
-                && !Self::is_narrow_store_place(&s_type, code)
-            {
+            let heap_ref = if stack_src.is_none() && is_scalar(&s_type) {
                 self.scalar_place_ref(code)
             } else {
                 None
@@ -8047,6 +8042,17 @@ use a separate collection or add after the loop"
                     Some(gargs[0].clone())
                 } else if let [base, fld] = gargs.as_slice() {
                     Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))
+                } else if crate::data::NarrowIntKind::is_get_op(self.data.def(*g).name())
+                    && gargs.len() >= 2
+                {
+                    // loft#1567 — a NARROW read carries a third operand, the `min` its
+                    // encoding is biased by (`OpGetByte(v1, fld, min)`), so the two-argument
+                    // shape above does not match it and the place came back `None`: the `&`
+                    // was silently dropped and the local became a plain `int`, which is why
+                    // the write was "lost" — it was never a link.  The `min` is DECODING
+                    // information and not part of the address, so the place is the same
+                    // `OpGetField(base, fld)` every other field read yields.
+                    Some(self.cl("OpGetField", &[gargs[0].clone(), gargs[1].clone()]))
                 } else {
                     None
                 }
