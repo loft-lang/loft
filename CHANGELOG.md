@@ -14,6 +14,29 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A ranged type you declare yourself answers an out-of-range step the same way `u8` does.**
+`type Small = integer limit(-100, 100) size(1)` holds 201 values inside a byte's 256, and
+those 55 spare codes used to hold one more thing: a null, which an out-of-range `+=` wrote
+and every later read reported.  The same declaration one value wider —
+`limit(-128, 127) size(1)` — answered `0` instead, so whether your program could tell an
+overflow apart depended on arithmetic you never did, and widening a range for an unrelated
+reason turned a detectable overflow into a silent one.  Now every ranged type answers the
+same: a value that does not fit takes the type's **default**, which is zero where the range
+holds it and otherwise the bound nearest zero — `integer limit(1000, 1100)` gives `1000`.
+This holds in a local, a field, an element, a collection's key, a parameter and a return
+alike.  The plain `integer` and `i32` are unchanged and still read `null`, because the code
+each keeps back lies outside the range it reports and so is not one of its values.  Writing
+`τ?` is unchanged too: a nullable ranged type has a null and still answers it.
+
+**And a step that can leave its range now says what it falls back to.**  `x: u8 = 250;
+x += 10` used to answer `0` in silence; it now reports *"a step past `0..255` takes this
+type's default, `0`"*.  Writing out the same step (`x = x + 10`) has always been refused, so
+this is the one spelling where the language cannot ask you what an out-of-range result should
+become.  It is advice rather than a warning — the default is what loft promises for a value
+that does not fit — and it goes quiet as soon as you say what you want: `if !x { … }` as the
+very next statement reads whether the step fitted, and `x = (x + 10) ?? 255` names your own
+fallback.
+
 **A `for` over a text that a call answers evaluates the call once.**  `for c in line.trim()`
 and `for c in "a" + b` used to re-evaluate their source three times per character — a side
 effect in the call ran with every one of them, and a text the call builds was built again
