@@ -51,9 +51,10 @@ Uses [operational.md](operational.md)'s `⟨e, σ⟩ → ⟨e', σ'⟩` and [hea
 
 **In words.** `for x in src { … }` runs the body once per element, **in index order 0, 1, 2, …**,
 binding `x` to each element, and stops exactly when the cursor reaches the length. The cursor is
-re-read each round, so it observes the length **as it is at that step** — a body that appends to
-the very collection it iterates keeps seeing the new elements (loft does not snapshot the length;
-this is a deliberate, both-backends-shared choice). The loop is a pure desugaring to
+re-read each round, so it observes the length **as it is at that step** (loft does not snapshot
+the length of a collection it walks; a body cannot append to that collection — the parser refuses
+it — but it can remove the current element with `#remove`).  The SOURCE is not re-read: see
+*The source is evaluated ONCE* below. The loop is a pure desugaring to
 [operational.md](operational.md)'s `loop`/`break`/`if`, so its control flow is already pinned;
 `I-For` only fixes the ORDER and the stop condition.
 
@@ -100,97 +101,29 @@ expose byte offsets and the offset sequence is not `0,1,2,…` for non-ASCII tex
 shape as a vector, differing only in `elem` (decode one codepoint) and the stride (its width).
 
 **The source is evaluated ONCE.** `it := ⟨0, src⟩` — the `for` evaluates `src` before the
-first round and never again; only the cursor is re-read.  Measured 2026-09-23, both backends
-alike: a text source that was a CALL was evaluated three times per round — the character
-read, the null test and the length test each re-spelled the expression — so `for c in f()`
-called `f` twelve times for three characters, a side effect in `f` ran with every call, and
-`[for c in f() { … }]` did the same.  Fixed at the one home every text walk builds its
-iterator in (`Parser::iterator`, cited `@FR-I-Text`): a source that is not a PLACE — a call,
-a literal, an operator expression, an element read, a branch — is bound to a hidden local in
-the walk's prelude and the walk reads the local.  A variable and a field path are still read
-per round (the cheap re-read of a place), which is observable only when the body writes the
-walked place — D-iter-5 below.  Pinned by `tests/scripts/iter-text-source-once.loft`.
-
-> **Combinators are vector methods, not text methods.** `t.map(…)` / `t.filter(…)` are **not**
-> valid — `.map`/`.filter`/`.reduce` (`I-Map`/`I-Filter`/`I-Reduce`) dispatch on a vector (or a
-> keyed collection), and text is `Unknown field text.map`. Text participates in the combinator
-> world only as a **comprehension source**: `[for c in t { f(c) }]` builds a `vector<…>` of
-> per-codepoint results (this IS how you "map over text"). So text is a first-class `for` /
-> comprehension source but never a `.method` combinator receiver.
-
-### Combinators desugar to a comprehension over the same loop
-
-```
-  (I-Map)      src.map(f)         ≡  [ for x in src { f(x) } ]
-  (I-Filter)   src.filter(p)      ≡  [ for x in src { if p(x) { x } } ]     (keeps x where p(x))
-  (I-Reduce)   src.reduce(a, g)   ≡  { acc := a ; for x in src { acc := g(acc, x) } ; acc }
-  (I-Comp)     [ for x in src { e } ]
-                 ≡  out := alloc(vector) ;                    (a FRESH store, heap.md H-Alloc)
-                    for x in src { append(out, e) } ;         (per element, heap.md H-NewRec)
-                    out
-```
-
-**In words.** The combinators are not primitive — each is the same left-to-right `for` loop
-building a **fresh** result vector (`I-Comp`): `map` appends `f(x)` for every element; `filter`
-appends `x` only where the predicate holds; `reduce` folds a running accumulator and yields it
-(not a vector). The result is a new store ([heap.md](heap.md) `H-Alloc`), so the source is
-untouched — `xs.map(f)` never mutates `xs`. Because they all lower to `I-For`, they inherit its
-**deterministic order**: `map` preserves order, `filter` preserves relative order, `reduce`
-folds left. The lambda `f`/`p`/`g` is an ordinary closure ([capabilities.md](capabilities.md)
-gates its body when sandboxed). A combinator on a LITERAL receiver (`[1,2,3].map(f)`) is the
-same rule — the literal is a fresh source value (`#501` fixed the parser so the literal is a
-self-contained receiver, not a reuse of the assignment target).
-
-### Empty and null sources
-
-```
-  (I-Empty)    for x in src { body }   runs body ZERO times when len(src) = 0.
-  (I-NullSrc)  for x in nullref { body }   runs body ZERO times (a null source is empty,
-                                           consistent with heap.md H-ReadNull — no halt).
-```
-
-**In words.** An empty vector, an empty range, or a **null** source all iterate zero times and
-fall through — never a fault. A null source is treated as empty (the same null-continue
-discipline as a read through `nullref`).
-
-**`nullref` is a RUNTIME null of a NON-nullable type, and the distinction is the whole content
-of this rule.** A collection field never filled, or a call whose declared `vector<τ>` return
-answers null, is a `nullref`: it iterates zero times with no guard and no fault (measured, both
-sources). A source whose TYPE is `τ?` is a different question and is REFUSED — `for x in v` with
-`v: vector<integer>?` does not compile, because [types.md](types.md) `(N-Coal)`/`(N-Default)`
-admit no implicit unwrap and a `for` is not an exception to that. The discharge is one character
-and gives exactly this rule's answer: `for x in v?` and `for x in v ?? []` each run zero times.
-
-Until 2026-09-07 this paragraph ended *"so a `for` over a possibly-null collection is safe
-without a guard"*, which reads as a promise about the `?` spelling — the one spelling the rule
-does not cover and the compiler refuses. The formal line was right and its gloss reached one
-case past it (QUALITY.md B8i).
-
----
+first round and never again; only the cursor is re-read.  That holds for every spelling of the
+source: a text source (a call, a literal, an expression, and a PLACE — a variable or a field
+path) is bound to a hidden local in the walk's prelude (`Parser::iterator`, cited
+`@FR-I-Text`), and a range's bounds that are not literals are bound the same way
+(`parse_in_range_body`, cited `@FR-I-Range`), so `a` and `b` in `(I-Range)` are the values they
+had when the loop started.  A body that writes a place the source read therefore changes the
+place and not the loop: `m = 3; for i in 0..m { m = 10 }` runs three rounds, `for c in s { s =
+"zz" }` walks every character `s` held, and `for i in 0..=f()` calls `f` once.  Such a write is
+reported (`loop-source-written`, a warning: a loop written to follow a moving end computes
+something else), because the program that wrote it expected otherwise — a loop whose end moves
+is a `while`.  The warning reads the write's TARGET against the places the source read: the
+place itself, or a place holding it (`st` holds `st.n`); a write into the place (`w[0] = …`
+under `len(w)`), a sibling field, and a write through a callee are not reported, and the loop's
+answer is the rule's in all of them.  The cursor over a COLLECTION is the one re-read left, and
+a body cannot grow the collection it walks (`Cannot add elements to 'v' while it is being
+iterated`).  Pinned by `tests/scripts/iter-text-source-once.loft` and
+`tests/scripts/1619-a-loop-reads-its-bounds-and-its-text-once.loft`.
 
 ## Deviations
 
-**OPEN: 1.**  Every earlier deviation is closed; the record is in the companion
-[iteration-history.md](iteration-history.md).
-
-> **D-iter-5 — OPEN (2026-09-23, loft#1619). A PLACE source, and a range bound, are RE-READ per round.**
-> `it := ⟨0, src⟩` and `(I-Range)`'s "the integers a, …, b-1" read `src` and `b` as VALUES
-> taken once; the code re-reads a place every round.  Measured, both backends alike:
-> `s = "hello"; for c in s { s = "zz" }` walks two characters (the new text from the second
-> round on), `for c in st.s { st.s = "zz" }` the same; `w = [1,2,3]; for i in 0..len(w)
-> { w += [9] }` runs five rounds, `m = 3; for i in 0..m { m = 10 }` ten, and `for i in
-> 0..=f()` calls `f` nine times for three rounds — `0..f()` four.  A VALUE source (a call, a
-> literal, an expression) is settled and evaluated once since 2026-09-23 (the paragraph
-> under `I-Text`); the place cases are a language choice the rule's letter does not make
-> and the code does: `(I-For)`'s own prose keeps the cursor's LENGTH re-read "as it is at
-> that step" on purpose, the queue idiom `for i in 0..len(q) { …; q += [next] }` is written
-> against that, and `(R-PushFill)` / `(R-Range)` on native are built on a range end that may
-> vary.  So this is the OWNER's to decide — extend the rule to say a place source and a
-> range bound are read per round (then close as settled), or keep the letter and change the
-> lowering (a bound-once range end, and a text place copied at entry only where the body
-> writes it), with the corpus's queue loops re-measured first.  Cells: the s15 row of
-> `tests/scripts/iter-text-source-once.loft` pins the place case AS IT STANDS, so the
-> decision moves one number, not a search.
+**OPEN: 0.**  Every deviation is closed; the record is in the companion
+[iteration-history.md](iteration-history.md) — the latest, D-iter-6 (loft#1619, a place source
+and a range bound re-read per round), closed 2026-09-23 by owner ruling.
 
 ## Conformance
 
