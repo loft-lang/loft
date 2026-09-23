@@ -513,24 +513,20 @@ fn concat_mixed_offset_elements() {
   _ = x;
 }
 
-// `limit(lo, hi)`'s upper bound is stored in `IntegerSpec::max`, a `u32`, so a range
-// lying entirely below zero has no encoding.  Refusing it is the honest answer; what it
-// must NOT do is desync the parser, which read the `-` in no branch at all and reported
-// *"Expect token )"* — a punctuation error for a bound the type system cannot carry
-// (loft#1246's measurement; the lower bound's too-wide case was fixed the same way).
-// @EXPECT_ERROR: upper bound cannot be negative
-fn limit_with_a_negative_upper_bound() {
-  b: integer limit(-200, -10) = -50;
+// `limit(lo, hi)`'s upper bound is signed, and spans the same window as the lower bound
+// (loft#1630): a range lying wholly below zero is declarable, and a bound outside the window
+// is refused by name rather than desyncing the parser into *"Expect token )"* — a punctuation
+// error for a bound the type cannot carry (loft#1246's measurement).
+// @EXPECT_ERROR: upper bound -3000000000 is outside the range
+fn limit_with_an_upper_bound_below_the_window() {
+  b: integer limit(-100, -3000000000) = -50;
   _ = b;
 }
 
-// loft#1621 — the same bound in a sized ALIAS.  The refused bound recovers as plain `integer`,
-// and the pass-1 `size(…)` check read that recovery and said *"a plain `integer` has more — say
-// which values this type holds with `limit(lo, hi)`"* over a line that wrote one.  A pass-1
-// error here would also silence every pass-2 expectation in this file, so the whole file is
-// this cell's control.  The representation itself is loft#1630 (`formal/layout.md` D-layout-9).
-// @EXPECT_ERROR: upper bound cannot be negative
-type PeNegativeSized = integer limit(-100, -1) size(1);
+// An inverted range holds no value; it is refused at the declaration, not at the first store
+// with a message about narrowing.
+// @EXPECT_ERROR: holds no value: the lower bound is above the upper one
+type PeInvertedRange = integer limit(10, 3) size(1);
 
 // @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/48 -> 54/48
 //   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations

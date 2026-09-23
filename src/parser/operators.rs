@@ -4150,7 +4150,7 @@ impl Parser {
         if let Type::Integer(s) = ty
             && s.min >= 0
         {
-            return Some(s.max);
+            return u32::try_from(s.max).ok();
         }
         None
     }
@@ -4965,11 +4965,11 @@ impl Parser {
                 };
                 if let Some((nmin, nmax)) = narrowed
                     && nmin >= s.min
-                    && nmax <= s.max
+                    && i64::from(nmax) <= s.max
                 {
                     *ctp = Type::Integer(IntegerSpec {
                         min: nmin,
-                        max: nmax,
+                        max: i64::from(nmax),
                         ..*s
                     });
                 }

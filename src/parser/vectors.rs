@@ -7130,7 +7130,7 @@ fn cell_stem(tp: &Type, data: &crate::data::Data) -> Option<String> {
 /// has always carried; only a narrow width needs the encoded form.
 fn int_cell_stem(spec: &crate::data::IntegerSpec) -> String {
     if spec.forced_size.is_none() && spec.byte_width(true) == 8 {
-        return if spec.max == u32::MAX {
+        return if spec.max == i64::from(u32::MAX) {
             "long"
         } else {
             "integer"
@@ -7187,7 +7187,7 @@ fn cell_value_type(tp: &Type) -> Type {
             // type promises, and a box that widened any of them would answer a value the
             // author's type excludes (`@FR-L-CapBox`).
             if spec.forced_size.is_none() && spec.byte_width(true) == 8 {
-                if spec.max == u32::MAX {
+                if spec.max == i64::from(u32::MAX) {
                     crate::data::I64.clone()
                 } else {
                     crate::data::I32.clone()

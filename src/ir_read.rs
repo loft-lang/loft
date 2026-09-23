@@ -332,7 +332,7 @@ fn read_name_list(stores: &Stores, v: ds::RecVector) -> Vec<String> {
 fn read_int_spec(stores: &Stores, slot: Record) -> IntegerSpec {
     IntegerSpec {
         min: slot.field_int(stores, ds::TYINTEGER_MIN) as i32,
-        max: slot.field_int(stores, ds::TYINTEGER_MAX) as u32,
+        max: slot.field_int(stores, ds::TYINTEGER_MAX),
         not_null: slot.field_bool(stores, ds::TYINTEGER_NOT_NULL),
         forced_size: NonZeroU8::new(slot.field_int(stores, ds::TYINTEGER_FORCED) as u8),
     }

@@ -108,9 +108,10 @@ pub struct IntegerSpec {
     /// Inclusive lower bound.  `i32::MIN` is reserved as the null
     /// sentinel; plain-integer templates use `i32::MIN + 1`.
     pub min: i32,
-    /// Inclusive upper bound.  `u32` to allow the wide / former-`long`
-    /// template to use `u32::MAX` as a "wider than i32" sentinel.
-    pub max: u32,
+    /// Inclusive upper bound.  Signed, so a range lying wholly below zero has one
+    /// (`limit(-100, -1)`, loft#1630); the wide / former-`long` template keeps
+    /// `u32::MAX` as its "wider than i32" marker.
+    pub max: i64,
     /// When true, the value cannot be null — frees the null sentinel
     /// and widens the usable range by 1 on narrow types.
     pub not_null: bool,
@@ -129,7 +130,7 @@ impl IntegerSpec {
     pub const fn wide() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: u32::MAX,
+            max: u32::MAX as i64,
             not_null: false,
             forced_size: None,
         }
@@ -139,7 +140,7 @@ impl IntegerSpec {
     pub const fn signed32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            max: i32::MAX as i64,
             not_null: false,
             forced_size: None,
         }
@@ -189,7 +190,7 @@ impl IntegerSpec {
     pub fn i32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            max: i32::MAX as i64,
             not_null: false,
             forced_size: NonZeroU8::new(4),
         }
@@ -199,7 +200,7 @@ impl IntegerSpec {
     pub fn u32() -> Self {
         IntegerSpec {
             min: 0,
-            max: u32::MAX - 1,
+            max: i64::from(u32::MAX as i64) - 1,
             not_null: false,
             forced_size: None,
         }
@@ -458,7 +459,7 @@ impl IntegerSpec {
     /// True when the value range exceeds the signed-32-bit range.
     #[must_use]
     pub fn is_wide(&self) -> bool {
-        self.max > i32::MAX as u32
+        self.max > i64::from(i32::MAX)
     }
 
     /// Number of distinct representable values (inclusive range + 1).
@@ -494,13 +495,13 @@ impl IntegerSpec {
     /// True when this is the I32 template (plain `integer` post-2c).
     #[must_use]
     pub fn is_signed32_template(&self) -> bool {
-        self.min == i32::MIN + 1 && self.max == i32::MAX as u32
+        self.min == i32::MIN + 1 && self.max == i64::from(i32::MAX)
     }
 
     /// True when this is the wide I64 template.
     #[must_use]
     pub fn is_wide_template(&self) -> bool {
-        self.min == i32::MIN + 1 && self.max == u32::MAX
+        self.min == i32::MIN + 1 && self.max == i64::from(u32::MAX)
     }
 
     /// The loft-SOURCE spelling of this spec, or `None` when it has no name of
@@ -541,7 +542,7 @@ impl IntegerSpec {
     /// misroute every plain `integer`.
     #[must_use]
     pub fn unsigned_wide(&self) -> bool {
-        self.min >= 0 && self.max > i32::MAX as u32
+        self.min >= 0 && self.max > i64::from(i32::MAX)
     }
 }
 
@@ -10047,7 +10048,7 @@ impl Data {
             "_d_nr",
             Type::Integer(IntegerSpec {
                 min: i32::MIN + 1,
-                max: i32::MAX as u32,
+                max: i64::from(i32::MAX),
                 not_null: false,
                 forced_size: NonZeroU8::new(4),
             }),
