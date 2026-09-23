@@ -524,6 +524,14 @@ fn limit_with_a_negative_upper_bound() {
   _ = b;
 }
 
+// loft#1621 — the same bound in a sized ALIAS.  The refused bound recovers as plain `integer`,
+// and the pass-1 `size(…)` check read that recovery and said *"a plain `integer` has more — say
+// which values this type holds with `limit(lo, hi)`"* over a line that wrote one.  A pass-1
+// error here would also silence every pass-2 expectation in this file, so the whole file is
+// this cell's control.  The representation itself is loft#1630 (`formal/layout.md` D-layout-9).
+// @EXPECT_ERROR: upper bound cannot be negative
+type PeNegativeSized = integer limit(-100, -1) size(1);
+
 // @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/48 -> 54/48
 //   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
 //   FAIL/48 -> 54/48.

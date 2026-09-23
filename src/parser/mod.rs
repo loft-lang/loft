@@ -214,6 +214,11 @@ pub struct ArmMismatch {
 #[allow(clippy::struct_excessive_bools)]
 pub struct Parser {
     pub todo_files: Vec<(String, u16)>,
+    /// loft#1621 — the last `limit(…)` refused one of its bounds.  The declaration then
+    /// recovers as plain `integer`, and a `size(…)` checked against that recovery would name
+    /// a missing `limit(…)` over a line that wrote one — so the size check stands down and the
+    /// bound's own refusal is the message.
+    limit_refused: bool,
     /// @PLN11 arc E — set by the driver (`main.rs`) only when the whole-program
     /// startup cache is enabled; gates [`Parser::parsed_sources`] tracking so a
     /// normal (non-cache) run pays nothing.
@@ -1539,6 +1544,7 @@ impl Parser {
             default: false,
             context: u32::MAX,
             first_pass: true,
+            limit_refused: false,
             ambiguity_reported: std::collections::HashSet::new(),
             force_tret: std::collections::HashSet::new(),
             par_worker_defs: std::collections::HashSet::new(),

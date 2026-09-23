@@ -1071,6 +1071,7 @@ impl Parser {
         } else {
             self.data.def_nr(&type_name)
         };
+        self.limit_refused = false;
         if self.lexer.has_token("=") {
             if let Some(tp) = self.parse_type_full(d_nr, false) {
                 if self.first_pass && !conflict && d_nr != u32::MAX {
@@ -1086,7 +1087,7 @@ impl Parser {
             // `LexItem::Integer` left `size(9999999999)` unconsumed and the reader got
             // `Expect token )` — a punctuation error about a width they wrote deliberately.
             let width = self.lexer.has_long();
-            if self.first_pass && d_nr != u32::MAX {
+            if self.first_pass && d_nr != u32::MAX && !self.limit_refused {
                 self.check_declared_size(d_nr, width);
             }
             // Only 1/2/4/8 are storage widths.  A non-integer type keeps the old silence —
@@ -4244,6 +4245,7 @@ impl Parser {
                          it plain `integer`"
                     );
                 }
+                self.limit_refused = true;
                 // Consume the digits so the `)` below still lines up and the file's other
                 // errors are reported rather than buried under a cascade.
                 let _ = self
@@ -4276,6 +4278,7 @@ impl Parser {
                 }
             }
             self.lexer.token(")");
+            self.limit_refused |= refused;
             !refused
         } else {
             false
