@@ -3736,7 +3736,7 @@ use a separate collection or add after the loop"
             // A narrow integer store place is refused at the `&` itself on the second pass; the
             // first pass must not link it either, or the two passes type the local differently.
             let heap_ref = if stack_src.is_none()
-                && is_scalar(&s_type)
+                && (is_scalar(&s_type) || matches!(s_type.base(), Type::Text(_)))
                 && !Self::is_narrow_store_place(&s_type, code)
             {
                 self.scalar_place_ref(code)
@@ -8040,10 +8040,18 @@ use a separate collection or add after the loop"
                 Some(code.unspan().clone())
             }
             Value::Call(g, gargs) if self.data.def(*g).name().starts_with("OpGet") => {
-                if gargs.first().is_some_and(|a| {
+                // An element read at offset 0 IS the element; a FIELD of a struct element
+                // (`&v[0].c`) is the element's record at the field's offset, like any field.
+                // Taking the element for every offset linked `&v[0].c` to the element's FIRST
+                // field: `p = 9` wrote `a`, silently, on both backends.
+                let element_base = gargs.first().is_some_and(|a| {
                     matches!(a.unspan(), Value::Call(d, _)
                         if matches!(self.data.def(*d).name(), "OpGetVector" | "OpVectorRef"))
-                }) {
+                });
+                let at_zero = gargs
+                    .get(1)
+                    .is_none_or(|f| matches!(f.unspan(), Value::Int(0)));
+                if element_base && at_zero {
                     Some(gargs[0].clone())
                 } else if let [base, fld] = gargs.as_slice() {
                     Some(self.cl("OpGetField", &[base.clone(), fld.clone()]))

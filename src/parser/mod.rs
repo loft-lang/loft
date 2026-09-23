@@ -5769,6 +5769,13 @@ impl Parser {
                 let orig = std::mem::replace(code, Value::Null);
                 if let Value::Var(_) = &orig {
                     *code = self.cl("OpCreateStack", &[orig]);
+                } else if self.is_text_place(&orig)
+                    && let Some(place) = self.scalar_place_ref(&orig)
+                {
+                    // `@FR-B-Ref-Lvalue` — a text FIELD or ELEMENT is a place: the parameter
+                    // links to its slot, the reference the `&` bind would hold, so the
+                    // callee's write lands in it (loft#1566).
+                    *code = place;
                 } else {
                     let wv = self.vars.work_text(&mut self.lexer);
                     let mut ls = Vec::new();
@@ -15136,27 +15143,6 @@ impl Parser {
             let scalar_place = matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
                 && !matches!(actual_code.unspan(), Value::Var(_))
                 && Self::is_amp_place(&actual_code, &self.data);
-            // loft#1602 — a `&text` parameter handed a text FIELD or ELEMENT.  A text place is a
-            // string record in a store, and a `&text` parameter today reaches only a text
-            // variable, so `convert` would hand the callee a work copy and drop its write.
-            // `(B-Ref-Reshape)`: refuse a link that cannot be honoured rather than downgrade it
-            // to a copy.  A temporary (a literal, a computed text) keeps its work copy: nothing
-            // names it, so nothing can miss the write.
-            if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
-                && self.is_text_place(&actual_code)
-            {
-                if !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "a `&text` parameter cannot link to a text field or element, so the \
-                         function's write would be lost. Copy it into a local, pass the local and \
-                         write it back (`t = o.s; f(t); o.s = t`)"
-                    );
-                }
-                actual.push(actual_code);
-                continue;
-            }
             if scalar_place && Self::is_narrow_store_place(actual_type, &actual_code) {
                 if !self.first_pass {
                     diagnostic!(
@@ -19177,6 +19163,7 @@ impl Parser {
                 matches!(
                     name,
                     "OpGetField"
+                        | "OpGetText"
                         | "OpGetVector"
                         | "OpVectorRef"
                         | "OpGetInt"

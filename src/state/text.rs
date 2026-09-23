@@ -344,7 +344,15 @@ impl State {
     #[inline]
     pub fn get_stack_text(&mut self) {
         let r = self.get_stack::<DbRef>();
-        let t: &str = self.database.store(&r).addr::<String>(r.rec, r.pos);
+        // A link to a record's text slot (loft#1566) reads the slot's text, as `OpGetText` does.
+        let t: &str = if r.store_nr == self.stack_cur.store_nr {
+            self.database.store(&r).addr::<String>(r.rec, r.pos)
+        } else if r.rec == 0 {
+            crate::state::STRING_NULL
+        } else {
+            let store = self.database.store(&r);
+            store.get_str(store.get_u32_raw(r.rec, r.pos))
+        };
         self.put_stack(Str::new(t));
     }
 
@@ -413,6 +421,11 @@ impl State {
         let pos = self.code::<u16>();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let off = pos - size_ptr() as u16;
+        if self.text_link(off).store_nr != self.stack_cur.store_nr {
+            let v = text.str().to_string();
+            self.linked_text_mut(off, |d| d.push_str(&v));
+            return;
+        }
         // Same order as `append_text`: decide and copy before the `&mut` exists.
         let (dst_at, dst_cap) = {
             let d = self.string_ref_mut(off);
@@ -442,14 +455,13 @@ impl State {
             // @PLAN53 cluster 2 / S4: the char pop occupies a stepped span
             // (4 off, 8 aligned) — N = bytes the op's get_stack popped.
             let off = pos - self.stack_step(4) as u16;
-            self.string_ref_mut(off).push(c);
+            self.linked_text_mut(off, |d| d.push(c));
         }
     }
 
     pub fn clear_stack_text(&mut self) {
         let pos = self.code::<u16>();
-        let v1 = self.string_ref_mut(pos);
-        v1.clear();
+        self.linked_text_mut(pos, String::clear);
     }
 
     #[inline]
@@ -682,6 +694,46 @@ impl State {
         )
     }
 
+    /// The link a `&text` holds at stack distance `pos`.
+    fn text_link(&self, pos: u16) -> DbRef {
+        self.database.store(&self.stack_cur).read::<DbRef>(
+            self.stack_cur.rec,
+            self.stack_cur.pos + self.stack_pos - u32::from(pos),
+        )
+    }
+
+    /// Run `f` on the text a `&text` link at stack distance `pos` names (`@FR-B-Ref-Lvalue`).
+    ///
+    /// A link to a text VARIABLE names a `String` in a frame of the stack store, and `f` edits
+    /// it in place.  A link to a text FIELD or ELEMENT names the four-byte text slot of a record
+    /// (loft#1566): the slot's text is read out, `f` edits the copy, and the result is written
+    /// back to the slot the way `OpSetText` writes one, so a write through the link REPLACES the
+    /// place's value and never edits a text another place holds (`@FR-B-Ref-Write`).
+    pub(super) fn linked_text_mut<R>(&mut self, pos: u16, f: impl FnOnce(&mut String) -> R) -> R {
+        let r = self.text_link(pos);
+        if r.store_nr == self.stack_cur.store_nr {
+            return f(self.string_ref_mut(pos));
+        }
+        let mut text = if r.rec == 0 {
+            String::new()
+        } else {
+            let store = self.database.store(&r);
+            let cur = store.get_str(store.get_u32_raw(r.rec, r.pos));
+            if cur == crate::state::STRING_NULL {
+                String::new()
+            } else {
+                cur.to_string()
+            }
+        };
+        let out = f(&mut text);
+        if r.rec != 0 {
+            let store = self.database.store_mut(&r);
+            let at = store.set_str(&text);
+            store.set_u32_raw(r.rec, r.pos, at);
+        }
+        out
+    }
+
     pub(super) fn string_ref_mut(&mut self, pos: u16) -> &mut String {
         #[cfg(feature = "stack_align_guard")]
         self.check_stack_align::<DbRef>(self.stack_cur.pos + self.stack_pos - u32::from(pos));
@@ -767,9 +819,10 @@ impl State {
         let val = self.get_stack::<i64>();
         let tag = ops::take_format_fault();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
-        let s = self.string_ref_mut(pos - 16);
-        text_tl_fmt(tl_fn, s, |s| {
-            ops::format_long_with_tag(s, val, tag, radix, width, token, plus, note, dir)
+        self.linked_text_mut(pos - 16, |s| {
+            text_tl_fmt(tl_fn, s, |s| {
+                ops::format_long_with_tag(s, val, tag, radix, width, token, plus, note, dir)
+            });
         });
     }
 
@@ -797,9 +850,10 @@ impl State {
         let width = self.get_stack::<i64>();
         let val = self.get_stack::<f64>();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
-        let s = self.string_ref_mut(pos - 24); // f64(8)+i64(8)+i64(8) = 24 bytes popped
-        text_tl_fmt(tl_fn, s, |s| {
-            ops::format_float(s, val, width, precision, token, plus, dir)
+        self.linked_text_mut(pos - 24, |s| {
+            text_tl_fmt(tl_fn, s, |s| {
+                ops::format_float(s, val, width, precision, token, plus, dir)
+            });
         });
     }
 
@@ -832,9 +886,10 @@ impl State {
         // @PLAN53 cluster 2 / S4: stepped span of popped i64+i64+f32 (20/24).
         let n = (self.stack_step(8) + self.stack_step(8) + self.stack_step(4)) as u16;
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
-        let s = self.string_ref_mut(pos - n);
-        text_tl_fmt(tl_fn, s, |s| {
-            ops::format_single(s, val, width, precision, token, plus, dir)
+        self.linked_text_mut(pos - n, |s| {
+            text_tl_fmt(tl_fn, s, |s| {
+                ops::format_single(s, val, width, precision, token, plus, dir)
+            });
         });
     }
 
@@ -858,9 +913,10 @@ impl State {
         let width = self.get_stack::<i64>();
         let val = self.string();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
-        let s = self.string_ref_mut(pos - 8 - size_ptr() as u16);
-        text_tl_fmt(tl_fn, s, |s| {
-            ops::format_text(s, val.str(), width, dir, token)
+        self.linked_text_mut(pos - 8 - size_ptr() as u16, |s| {
+            text_tl_fmt(tl_fn, s, |s| {
+                ops::format_text(s, val.str(), width, dir, token)
+            });
         });
     }
 }

@@ -764,7 +764,7 @@ impl State {
         // @PLAN53 cluster 2 / S4 (2d): see format_database — back up by the stepped
         // DbRef width so the destination String slot is read on its 8-byte boundary.
         let off = pos - self.stack_step(size_ref()) as u16;
-        self.string_ref_mut(off).push_str(&s);
+        self.linked_text_mut(off, |d| d.push_str(&s));
     }
 
     pub fn sizeof_ref(&mut self) {
