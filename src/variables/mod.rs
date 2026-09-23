@@ -107,6 +107,11 @@ struct Iterator {
     /// is a bare `len(<addressable vector>)`; `None` for `0..n`, slices, or collection loops.
     /// Read by the gated `LOFT_LINT_STRICT_INDEX` warning to flag `w[i]` where `w != X`.
     len_bound: Option<crate::parser::operators::VecKey>,
+    /// `@FR-I-For` — the PLACES this loop's source reads: a variable, or a field path rooted
+    /// at one, in a range's bounds or as a text source.  The loop reads them once, before the
+    /// first round, so a write to one inside the body cannot change what the loop walks;
+    /// `loop-source-written` says so.
+    source_places: Vec<Value>,
     /// The I64 local holding this loop's packed iterator state (`cur << 32 | finish`), the
     /// one `OpStep` steps and `OpRemove` rewinds. `u16::MAX` when the loop has none (a
     /// range, a vector walk, a custom iterator).
@@ -979,6 +984,7 @@ impl Function {
             coll_var: u16::MAX,
             counter: u16::MAX,
             len_bound: None,
+            source_places: Vec::new(),
             state_var: u16::MAX,
         });
         self.current_loop = self.loops.len() as u16 - 1;
@@ -1068,6 +1074,43 @@ impl Function {
         if self.current_loop != u16::MAX && (self.current_loop as usize) < self.loops.len() {
             self.loops[self.current_loop as usize].len_bound = Some(vk);
         }
+    }
+
+    /// `@FR-I-For` — record a place the current loop's source reads (see
+    /// `Iterator::source_places`).  No-op when there is no active loop.
+    pub(crate) fn add_loop_source_place(&mut self, place: &Value) {
+        if self.current_loop == u16::MAX || self.current_loop as usize >= self.loops.len() {
+            return;
+        }
+        let places = &mut self.loops[self.current_loop as usize].source_places;
+        let place = place.unspan().clone();
+        if !places.contains(&place) {
+            places.push(place);
+        }
+    }
+
+    /// `@FR-I-For` — the place an ACTIVE loop's source reads that a write to `target` changes:
+    /// `target` is that place, or a place it lies inside (`st` holds `st.n`).  A write INTO a
+    /// place (`w[0] = …` under a `len(w)` bound) changes no value the source read.
+    pub(crate) fn loop_source_written(&self, target: &Value) -> Option<Value> {
+        let target = target.unspan();
+        let mut c = self.current_loop;
+        while c != u16::MAX {
+            for place in &self.loops[c as usize].source_places {
+                let mut p = place;
+                loop {
+                    if p.unspan() == target {
+                        return Some(place.clone());
+                    }
+                    match p.unspan() {
+                        Value::Call(_, args) if !args.is_empty() => p = &args[0],
+                        _ => break,
+                    }
+                }
+            }
+            c = self.loops[c as usize].inside;
+        }
+        None
     }
 
     /// @PLN102 strict-index lint — the `len(...)` bound recorded for the active for-loop

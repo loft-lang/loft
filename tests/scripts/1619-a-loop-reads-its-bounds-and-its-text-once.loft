@@ -1,0 +1,107 @@
+// `(I-For)` / `(I-Range)`: `it := ⟨0, src⟩` — a `for` loop's range bounds and its text source
+// are VALUES, taken once before the first round.  Measured before the fix, on both backends
+// alike: a bound or a text PLACE was re-read every round, so `for i in 0..m { m = 10 }` ran
+// ten rounds, `0..=f()` called `f` nine times for three rounds, and `for _ in s { s = "zz" }`
+// walked the new text from the second round on.  A body that writes a place the loop's
+// source read is told the write no longer moves the loop (`loop-source-written`, one per
+// written cell below).  The interpreter is the oracle and every value is hand-computed from
+// the rule.
+// Cells: a variable end written in the body (r1), an inclusive call end (r2), an exclusive
+// call end (r3), a `len(w)` end the body grows (r4), a `rev(a..b)` start the body writes (r5),
+// a text variable source written (r6), a text field source written (r7), a field end written
+// (r8), a field end written through a callee — the warning cannot see it, the value is still
+// the rule's (r9), an inner loop's end written in its body inside an outer loop (r10), a
+// SIBLING field written beside a field end — no warning (r11), an element written under a
+// `len` end — no warning (r12), a comprehension over a variable end (r13).
+// @EXPECT_WARNING: Warning[loop-source-written]
+// @falsified-at: pending
+struct St { calls: integer, n: integer, s: text, other: integer }
+fn f(st: St) -> integer { st.calls += 1; 3 }
+fn bump(st: St) { st.n = 10; }
+
+fn r1() {
+  m = 3; n = 0;
+  for _ in 0..m { n += 1; if n == 1 { m = 10; } }
+  println("r1 {n} {m}");
+  assert(n == 3 && m == 10, "r1");
+}
+fn r2() {
+  st = St { calls: 0, n: 0, s: "", other: 0 };
+  n = 0; for _ in 0..=f(st) { n += 1; }
+  println("r2 {n} {st.calls}");
+  assert(n == 4 && st.calls == 1, "r2");
+}
+fn r3() {
+  st = St { calls: 0, n: 0, s: "", other: 0 };
+  n = 0; for _ in 0..f(st) { n += 1; }
+  println("r3 {n} {st.calls}");
+  assert(n == 3 && st.calls == 1, "r3");
+}
+fn r4() {
+  w = [1, 2, 3]; n = 0;
+  for _ in 0..len(w) { n += 1; if n < 3 { w += [9]; } if n > 20 { break; } }
+  println("r4 {n} {len(w)}");
+  assert(n == 3 && len(w) == 5, "r4");
+}
+fn r5() {
+  a = 2; n = 0; s = 0;
+  for i in rev(a..6) { n += 1; s += i; a = 5; }
+  println("r5 {n} {s}");
+  assert(n == 4 && s == 14, "r5");
+}
+fn r6() {
+  s = "hello"; n = 0;
+  for _ in s { n += 1; if n == 1 { s = "zz"; } }
+  println("r6 {n} {s}");
+  assert(n == 5 && s == "zz", "r6");
+}
+fn r7() {
+  st = St { calls: 0, n: 0, s: "hello", other: 0 };
+  n = 0;
+  for _ in st.s { n += 1; if n == 1 { st.s = "zz"; } }
+  println("r7 {n} {st.s}");
+  assert(n == 5 && st.s == "zz", "r7");
+}
+fn r8() {
+  st = St { calls: 0, n: 3, s: "", other: 0 };
+  n = 0;
+  for _ in 0..st.n { n += 1; st.n = 10; }
+  println("r8 {n} {st.n}");
+  assert(n == 3 && st.n == 10, "r8");
+}
+fn r9() {
+  st = St { calls: 0, n: 3, s: "", other: 0 };
+  n = 0;
+  for _ in 0..st.n { n += 1; bump(st); }
+  println("r9 {n} {st.n}");
+  assert(n == 3 && st.n == 10, "r9");
+}
+fn r10() {
+  n = 0;
+  for _ in 0..2 { k = 2; for _ in 0..k { n += 1; k = 9; } }
+  println("r10 {n}");
+  assert(n == 4, "r10");
+}
+fn r11() {
+  st = St { calls: 0, n: 3, s: "", other: 0 };
+  n = 0;
+  for i in 0..st.n { n += 1; st.other += i; }
+  println("r11 {n} {st.other}");
+  assert(n == 3 && st.other == 3, "r11");
+}
+fn r12() {
+  w = [1, 2, 3]; n = 0;
+  for i in 0..len(w) { n += 1; w[i] = 7; }
+  println("r12 {n} {w[0] + w[1] + w[2]}");
+  assert(n == 3 && w[0] + w[1] + w[2] == 21, "r12");
+}
+fn r13() {
+  m = 4;
+  v = [for i in 0..m { i * 10 }];
+  println("r13 {len(v)} {v[3]}");
+  assert(len(v) == 4 && v[3] == 30, "r13");
+}
+
+fn main() {
+  r1(); r2(); r3(); r4(); r5(); r6(); r7(); r8(); r9(); r10(); r11(); r12(); r13();
+}

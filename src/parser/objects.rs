@@ -3517,6 +3517,28 @@ impl Parser {
                 self.vars.set_loop_len_bound(vk);
             }
         }
+        // @FR-I-For, @FR-I-Range — `it := ⟨0, src⟩`: a range's bounds are VALUES, taken once
+        // before the first round.  The lowering spells the end in the per-round test (and the
+        // start too, in the reverse and null-encoded forms), so a bound that is not a literal
+        // is bound to a hidden local here and every spelling reads the local.  Before, a
+        // bound was re-read each round: `for i in 0..m { m = 10 }` ran ten rounds, and
+        // `0..=f()` called `f` nine times for three rounds, on both backends.  The variables a
+        // bound reads are recorded on the loop, so a body that writes one is told the write
+        // no longer moves the end (`loop-source-written`).  A slice clamps and binds its own
+        // bounds below.
+        if *data == Value::Null {
+            for bound in [&*expr, &till] {
+                self.record_source_places(bound);
+            }
+            if !matches!(expr.unspan(), Value::Int(_) | Value::Long(_)) {
+                let lo = self.create_unique("range_start", &in_type);
+                iter_prelude.push(v_set(lo, std::mem::replace(expr, Value::Var(lo))));
+            }
+            if !matches!(till.unspan(), Value::Int(_) | Value::Long(_)) {
+                let hi = self.create_unique("range_end", &till_tp);
+                iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+            }
+        }
         // loft#384: a vector slice (`data` present, not a pure `0..n` range) must
         // resolve negative bounds from the end and clamp into `[0, len]`, else the
         // iteration endpoints run off an edge: a negative end breaks immediately
@@ -3776,6 +3798,40 @@ impl Parser {
             self.reverse_iterator = false;
         }
         Type::Iterator(Box::new(in_type), Box::new(Type::Null))
+    }
+
+    /// `@FR-I-For` — record on the current loop every PLACE a loop source reads: a variable,
+    /// or a field path rooted at one, found through operators and `len` / `size`.  A user
+    /// function's result is a value the loop takes once, so its arguments are not recorded:
+    /// a write to them changes nothing the loop could have re-read.
+    pub(crate) fn record_source_places(&mut self, v: &Value) {
+        if Self::is_source_place(v, &self.data) {
+            self.vars.add_loop_source_place(v);
+            return;
+        }
+        if let Value::Call(d, args) = v.unspan() {
+            let def = self.data.def(*d);
+            if def.name().starts_with("Op")
+                || matches!(def.original_name().as_str(), "len" | "size")
+            {
+                for a in args {
+                    self.record_source_places(a);
+                }
+            }
+        }
+    }
+
+    fn is_source_place(v: &Value, data: &crate::data::Data) -> bool {
+        match v.unspan() {
+            Value::Var(_) => true,
+            Value::Call(d, args) => {
+                data.def(*d).name().starts_with("OpGet")
+                    && args
+                        .first()
+                        .is_some_and(|root| Self::is_source_place(root, data))
+            }
+            _ => false,
+        }
     }
 
     pub(crate) fn parse_in_range(

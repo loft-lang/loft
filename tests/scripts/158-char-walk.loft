@@ -5,11 +5,12 @@
 // The cells walk the axes the rewrite has: what the BYTES are (ASCII, a multi-byte
 // character, an embedded NUL — read as the null character, one byte wide — an empty text,
 // a null text), what the SOURCE is (a parameter, an owned local, a borrowed loop variable
-// of an outer walk, a local the body grows, a local the body rebinds mid-walk), what
+// of an outer walk, a local the body grows or rebinds mid-walk — walked as it was), what
 // the body does (`c#index`, `break`, `continue`, a nested walk, compares against
 // literals), and the shapes the rewrite leaves alone (a call source, a literal source).
 // `LOFT_NO_CHAR_WALK=1`, `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`, `LOFT_STRICT_STORES=1`
 // and `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+// @EXPECT_WARNING: Warning[loop-source-written]
 //
 // @falsified-at: hand-measured (2026-09-22) — the fast arm sabotaged to step `#next` by
 // TWO: native answers `w1 a@0;c@2;` for `w1 a@0;b@1;c@2;` (every other byte skipped; the
@@ -54,8 +55,9 @@ fn w5(s: text) -> integer {
   n
 }
 
-// w6 — an owned local the body GROWS: the null test stays per iteration, the size test
-// sees the growth, and the walk ends when the body stops growing it.
+// w6 — an owned local the body GROWS: the walk took the text once, before its first round
+// (`@FR-I-For`, loft#1619), so it walks the two characters it was given and the growth
+// lands in `t` alone.
 fn w6() -> integer {
   t = "ab";
   n = 0;
@@ -66,10 +68,10 @@ fn w6() -> integer {
   n * 1000 + size(t)
 }
 
-// w7 — the body REBINDS the walked local to a shorter text: the null test stays per
-// iteration and the size test reads the new text, which ends the walk.  (A walked text
-// cannot be nullable — the language refuses `for c in text?` — so the null the test
-// guards against only ever arrives through a parameter, w4.)
+// w7 — the body REBINDS the walked local to a shorter text: the walk took the text once, so
+// it walks all six characters it was given.  (A walked text cannot be nullable — the
+// language refuses `for c in text?` — so the null the test guards against only ever
+// arrives through a parameter, w4.)
 fn w7() -> integer {
   t = "abcdef";
   n = 0;
@@ -120,10 +122,10 @@ fn main() {
   assert(w4() == "[][]", "w4 {w4()}");
   // "ab 3Z.q": a +1+10+0, b +1+10, ' ' skipped, '3' +0, 'Z' +10 (> '9'), '.' breaks → 32
   assert(w5("ab 3Z.q") == 32, "w5 {w5("ab 3Z.q")}");
-  // w6: t grows on turns 1–4 (n<5): "ab"→"abxxxx" (6 bytes); the walk runs 6 turns → 6006
-  assert(w6() == 6006, "w6 {w6()}");
-  // w7: a, b, c (t = "xy": 2 bytes, the offset is 3) → the size test ends it → 3
-  assert(w7() == 3, "w7 {w7()}");
+  // w6: the walk runs over "ab" → 2 turns, t grows on both: "abxx" (4 bytes) → 2004
+  assert(w6() == 2004, "w6 {w6()}");
+  // w7: a..f, the rebind to "xy" does not reach the walk → 6
+  assert(w7() == 6, "w7 {w7()}");
   ws: vector<text> = ["aa", "béa", "x"];
   assert(w8(ws) == 103, "w8 {w8(ws)}");
   // "aba": pairs (a,a)×4 + (b,b)×1 = 5

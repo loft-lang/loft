@@ -1620,6 +1620,39 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// `@FR-I-For` — warn when a loop body writes a place its loop's source read.  The loop
+    /// took its range bounds and its text source once, before the first round, so the write
+    /// cannot change how many rounds run or what text is walked; a program that expected it
+    /// to (a queue grown under `0..len(q)`) now computes something else, which is why this is
+    /// a warning and not advice.  Asked at the assignment path's one entry, beside the const
+    /// guard, so every route that lowers a write is covered.  A write through a callee is not
+    /// seen: the loop's answer is still the rule's, only the notice is missing.
+    fn check_loop_source_write(&mut self, to: &Value) {
+        if self.first_pass {
+            return;
+        }
+        let Some(place) = self.vars.loop_source_written(to) else {
+            return;
+        };
+        let root = lhs_base_var(&place, &self.data);
+        if root == u16::MAX {
+            return;
+        }
+        let name = self.vars.written_name(root).to_string();
+        let what = if matches!(place.unspan(), Value::Var(_)) {
+            format!("`{name}`")
+        } else {
+            format!("a field of `{name}`")
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Warning,
+            code = "loop-source-written",
+            "the loop read {what} once, before its first round, so this write does not change \
+             what the loop walks — to loop until a condition changes, use `while`"
+        );
+    }
+
     /// Validate `d#lock = expr` assignment; returns true if handled (caller should return Void).
     pub(crate) fn validate_lock_assign(&mut self, code: &Value, to: &Value) -> bool {
         if self.first_pass {
@@ -3076,6 +3109,7 @@ use a separate collection or add after the loop"
         skip_validate: bool,
     ) -> Type {
         self.check_iter_safety(to, f_type, op);
+        self.check_loop_source_write(to);
         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
         // every route below.  Whether a write is allowed is a property of the BINDING, not
         // of the route that lowers it, so a guard held inside a route is only as complete
