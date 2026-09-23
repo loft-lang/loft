@@ -8722,6 +8722,12 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             &mut seq,
             0,
         );
+        // `@FR-B-Ref-Lvalue` — a `&` link names a PLACE, so its target's slot may not be
+        // handed to another local while the link is live.  Runs right after the intervals
+        // are computed and before `assign_slots` reads them.
+        data.definitions[d_nr as usize]
+            .variables
+            .extend_links_to_their_targets();
         // `@FR-O-Buffer` — the interpreter reads a promoted buffer's entry witness at every
         // rebind of the buffer, outside the IR, so the witness lives as long as the buffer: a
         // slot handed on after the snapshot's own initialisation would answer another

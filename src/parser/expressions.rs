@@ -3684,6 +3684,11 @@ use a separate collection or add after the loop"
                 // @PLN167 decision 1 — a `&` names this local, so a narrow one holds its
                 // field encoding from here on (`Variable::linked_narrow`).
                 self.vars.set_linked_narrow(src);
+                // `@FR-B-Ref-Lvalue` — and the local it names must outlive the link, which
+                // the slot allocator can only know from a record of the pair.  A HEAP inner
+                // publishes it below as a dep; a SCALAR one owns no store and carries none,
+                // so it is recorded here for both.
+                self.vars.record_amp_link(var_nr, src);
                 let mut inner = self.vars.tp(src).clone();
                 // tuples.md T-Ref — a linked tuple local with a heap element is the
                 // `__tuple<…>` record.  On pass 1 its bind has not been rewritten yet (the fact

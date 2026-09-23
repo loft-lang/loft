@@ -223,6 +223,23 @@ pub struct Variable {
     /// second pass at the `&`; read by both emitters, which run after the parse, so a use
     /// written before the `&` in the body is emitted with the fact as well.
     linked_narrow: bool,
+    /// `@FR-B-Ref-Lvalue` — the `&` LINK variable that names this local as its place, or
+    /// `u16::MAX`.  Recorded on the TARGET rather than on the link, because a re-point
+    /// (`c = &x; c = &y`) gives one link two places and both must outlive it, while each
+    /// place is bound by a `&` once.
+    ///
+    /// A HEAP link publishes the same relation as a dep on its own type, because the borrow
+    /// fact rides `deps` (`@FR-O-Borrow`) and the free decision derives from it.  A SCALAR
+    /// link owns no store, has no free decision and so carries NO dep — which left the
+    /// relation with no channel at all for exactly the types the slot allocator needed it
+    /// for.  One question (who frees this) was answering for two; the second (how long must
+    /// the place live) is this field, kept apart so a scalar link does not read as a heap
+    /// borrow to every reader of `owns = dep.is_empty()`.
+    amp_linked_by: u16,
+    /// More than one `&` link named this local.  `amp_linked_by` then holds the last, so the
+    /// live range is extended conservatively to the widest link range in the function
+    /// instead — it can only EXTEND, so the answer stays sound where it is not tight.
+    amp_linked_many: bool,
     /// Was this bound with an explicit `&` at a COLLECTION — `d = &cv.data`, `a = &s.h`?
     ///
     /// The collection sibling of `amp_link`, kept apart from it because their READERS are
@@ -760,6 +777,8 @@ impl Function {
                 value_const: false,
                 amp_link: false,
                 linked_narrow: false,
+                amp_linked_by: u16::MAX,
+                amp_linked_many: false,
                 amp_container_link: false,
                 iteration_source: false,
                 first_def: u32::MAX,
@@ -1408,6 +1427,102 @@ impl Function {
         let until = self.variables[other as usize].last_use;
         let v = &mut self.variables[var_nr as usize];
         v.last_use = v.last_use.max(until);
+    }
+
+    /// Record that `link` was bound `&target`, a LOCAL.  Called at the one `&`-bind
+    /// lowering; a re-point calls it again for the second place and both are kept, because
+    /// the fact lives on the TARGET.
+    pub fn record_amp_link(&mut self, link: u16, target: u16) {
+        if link == u16::MAX || target == u16::MAX || link == target {
+            return;
+        }
+        let Some(t) = self.variables.get_mut(target as usize) else {
+            return;
+        };
+        if t.amp_linked_by != u16::MAX && t.amp_linked_by != link {
+            t.amp_linked_many = true;
+        }
+        t.amp_linked_by = link;
+    }
+
+    /// A `&` LINK's target lives at least as long as the link — `@FR-B-Ref-Lvalue`, whose
+    /// whole content is that the link names a PLACE, and a place whose slot has been handed
+    /// to another local is not that place any more.
+    ///
+    /// `compute_intervals` ends a local's range at its last use BY NAME, and after `c = &x`
+    /// every read and write goes through `c`, so `x` looked dead at its bind.  `assign_slots`
+    /// then gave `x`'s slot to a later local and the interpreter read — and WROTE — the
+    /// usurper's bytes through the link: `c` answered `7` for `250`, and `c = 99` silently
+    /// changed the unrelated live local that had taken the slot.  Native was correct
+    /// throughout, because a link there is a raw pointer to a Rust local the compiler keeps
+    /// alive, so this was an `@FR-O-NoDiverge` divergence as well as a wrong answer.
+    ///
+    /// Two channels answer "which link names this local": a HEAP link's own dep list, read
+    /// the way `generation::hoist::link_targets` reads it, and — for a SCALAR link, which
+    /// carries no dep — `Variable::amp_linked_by`, recorded on the target at the `&` bind.
+    /// The walk is transitive and runs to a fixpoint, because a link may name a link.  It
+    /// only ever EXTENDS a range, so a local nothing links to is untouched and ordinary slot
+    /// reuse is unaffected.
+    pub fn extend_links_to_their_targets(&mut self) {
+        // The widest range any `&` link in this function has, for the rare local named by
+        // more than one link (`amp_linked_many`): the exact answer would need the set, and a
+        // range that is too WIDE only declines a slot reuse, where one too narrow is the
+        // defect this exists to close.
+        let broadest = self
+            .variables
+            .iter()
+            .filter(|v| matches!(v.type_def.base(), Type::RefVar(_)))
+            .map(|v| v.last_use)
+            .max()
+            .unwrap_or(0);
+        // At most one round per link in the chain, and a round that moves nothing stops.
+        for _ in 0..self.variables.len().max(1) {
+            let mut moved = false;
+            // The scalar channel: each target names its link, so read the link's range.
+            for t in 0..self.variables.len() {
+                let (by, many) = (
+                    self.variables[t].amp_linked_by,
+                    self.variables[t].amp_linked_many,
+                );
+                if by == u16::MAX {
+                    continue;
+                }
+                let want = if many {
+                    broadest
+                } else {
+                    self.variables.get(by as usize).map_or(0, |l| l.last_use)
+                };
+                if self.variables[t].last_use < want {
+                    self.variables[t].last_use = want;
+                    moved = true;
+                }
+            }
+            // The heap channel: each link names its targets in its own dep list.
+            for v in 0..self.variables.len() {
+                if !matches!(self.variables[v].type_def.base(), Type::RefVar(_)) {
+                    continue;
+                }
+                let (first, last) = (self.variables[v].first_def, self.variables[v].last_use);
+                for d in self.variables[v].type_def.depend() {
+                    let Some(t) = self.variables.get_mut(d as usize) else {
+                        continue;
+                    };
+                    if t.last_use < last {
+                        t.last_use = last;
+                        moved = true;
+                    }
+                    // A link bound before its target is written holds the target's slot from
+                    // the link's own bind, so the two ranges cannot be disjoint at either end.
+                    if first != u32::MAX && (t.first_def == u32::MAX || t.first_def > first) {
+                        t.first_def = first;
+                        moved = true;
+                    }
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
     }
 
     pub fn scope(&self, var_nr: u16) -> u16 {
@@ -2316,6 +2431,8 @@ impl Function {
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
+            amp_linked_by: u16::MAX,
+            amp_linked_many: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2353,6 +2470,10 @@ impl Function {
             // asks a copy; the move is an optimisation).
             uses: self.variables[var as usize].uses,
             uses_at_write: self.variables[var as usize].uses_at_write,
+            // A SPLIT of a linked local is a second place, and the `&` names the original;
+            // the copy is not the place the link holds, so it inherits no link.
+            amp_linked_by: u16::MAX,
+            amp_linked_many: false,
             write_source: (0, 0),
             argument: false,
             defined: self.variables[var as usize].defined,
@@ -2403,6 +2524,8 @@ impl Function {
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
+            amp_linked_by: u16::MAX,
+            amp_linked_many: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2440,6 +2563,8 @@ impl Function {
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
+            amp_linked_by: u16::MAX,
+            amp_linked_many: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,

@@ -1,0 +1,67 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` link binds a PLACE (`binding.md (B-Ref-Lvalue)`), so the local it names keeps its
+// stack slot for as long as the link is live.
+//
+// Before loft#1627 the slot allocator ended a local's live range at its last use BY NAME,
+// and after `c = &x` every read and write goes through `c` — so `x` looked dead at its own
+// bind, `assign_slots` handed its slot to a later local, and the INTERPRETER read the
+// usurper's bytes through the link.  `--native` was correct throughout (a link there is a
+// raw pointer to a Rust local the compiler keeps alive), so the two backends disagreed about
+// the value as well (`@FR-O-NoDiverge`).
+//
+// A HEAP link was never affected: its target rides the link type's dep list, because the
+// borrow fact is `deps` (`@FR-O-Borrow`) and the free decision derives from it.  A SCALAR
+// link owns no store, has no free decision and so carries NO dep — one question (who frees
+// this) was answering for two, and the second (how long must the place live) had no channel
+// at all for exactly the types that needed it.  `Variable::amp_linked_by` is that channel,
+// recorded on the TARGET at the `&` bind because a re-point gives one link two places.
+//
+// Every cell states its expected value by hand, and each is written so the target's only use
+// after the bind is THROUGH the link — a by-name read is what made the old allocator keep
+// the slot, so a cell that has one cannot fail (`c3` is that control, kept deliberately).
+//
+// The cells that can FAIL:
+//   c1  a wide `integer` link                          — read `7`, the usurper's value
+//   c2  a `u8` and an `i8` link                        — read `7` and `-121`
+//   c4  a WRITE through the link                       — `c = 99` changed `u` to 99
+//   c6  a re-point `c = &x; c = &y`                    — read `1`, a THIRD local's value
+//   c8  a `float` link                                 — read `7.5` for `2.5`
+//
+// The controls, each of which a too-wide fix would move:
+//   c3  the target read BY NAME after the link         — the old boundary; still correct
+//   c5  a `&` ARGUMENT rather than a bind              — the call names the target
+//   c7  a target declared outside a LOOP, read inside  — the loop-carried extension covers it
+//   c9  a `text` link                                  — a heap link, dep-carried
+//   c12 two locals in sibling blocks, neither linked   — ordinary slot reuse MUST still happen,
+//       which is what says the cure did not simply stop the allocator sharing slots
+//
+// CHANNEL: the assertions.
+
+fn bump(p: &integer) { p = p + 1; }
+
+fn c1() -> text { x: integer = 250; c = &x; u: integer = 7; n = 0; n = n + 1; "{c} {u} {n}" }
+fn c2() -> text { x: u8 = 250; c = &x; y: i8 = -1; d = &y; u: u8 = 7; n = 0; n = n + 1; "{c} {d} {u} {n}" }
+fn c3() -> text { x: integer = 250; c = &x; u: integer = 7; n = 0; n = n + 1; "{c} {x} {u} {n}" }
+fn c4() -> text { x: integer = 250; c = &x; u: integer = 7; n = 0; n = n + 1; c = 99; "{u} {n} {c}" }
+fn c5() -> text { x: integer = 250; bump(x); u: integer = 7; n = 0; n = n + 1; "{x} {u} {n}" }
+fn c6() -> text { x: integer = 250; y: integer = 111; c = &x; c = &y; u: integer = 7; n = 0; n = n + 1; "{c} {u} {n}" }
+fn c7() -> text { x: integer = 250; c = &x; s: integer = 0; for i in 0..3 { s = s + c; } u: integer = 7; n = 0; n = n + 1; "{s} {u} {n}" }
+fn c8() -> text { x: float = 2.5; c = &x; u: float = 7.5; n = 0; n = n + 1; "{c} {u} {n}" }
+fn c9() -> text { t: text = "keep"; c = &t; u: text = "other"; n = 0; n = n + 1; "{c} {u} {n}" }
+fn c12() -> text { a = 0; { p: integer = 41; a += p; } { q: integer = 42; a += q; } "{a}" }
+
+fn main() {
+  assert(c1() == "250 7 1", "a wide link reads its own place: {c1()}");
+  assert(c2() == "250 -1 7 1", "a narrow link reads its own place: {c2()}");
+  assert(c3() == "250 250 7 1", "the by-name control is unmoved: {c3()}");
+  assert(c4() == "7 1 99", "a write through the link does not reach another local: {c4()}");
+  assert(c5() == "251 7 1", "a `&` argument is unmoved: {c5()}");
+  assert(c6() == "111 7 1", "a re-point reads the second place: {c6()}");
+  assert(c7() == "750 7 1", "a loop-carried target is unmoved: {c7()}");
+  assert(c8() == "2.5 7.5 1", "a float link reads its own place: {c8()}");
+  assert(c9() == "keep other 1", "a text link is unmoved: {c9()}");
+  assert(c12() == "83", "two unlinked locals in sibling blocks still share a slot: {c12()}");
+  println("a linked local's slot is not handed on");
+}
