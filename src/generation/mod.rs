@@ -1628,8 +1628,11 @@ pub(crate) fn is_user_text_link(data: &Data, def_nr: u32, v: u16) -> bool {
 /// The Rust type of a function parameter: [`rust_type`], except that a visible `&text`
 /// parameter is a `TextLink` (see [`is_user_text_link`]).
 pub(crate) fn attr_rust_type(def: &crate::data::Definition, a: &crate::data::Attribute) -> String {
+    // A compiler-generated parameter (`__work_N`, a dispatcher's `___acc_N`) is a work buffer
+    // even where its attribute is not marked hidden, as `is_user_text_link` reads a local.
     if emits_text_links(def)
         && !a.hidden
+        && !a.name.starts_with('_')
         && matches!(a.typedef.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
     {
         return "loft::codegen_runtime::TextLink".to_string();

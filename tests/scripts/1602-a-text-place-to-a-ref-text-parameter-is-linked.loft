@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A text field or element handed to a `&text` parameter is LINKED to it: the callee's write
+// lands in the place (`@FR-B-Ref-Lvalue`, `@FR-F-ParamRef`).
+//
+// Before loft#1602 both backends compiled `app(o.s)` with `fn app(t: &text) { t = t + "!" }`
+// and left `o.s` unchanged: a silent lost write.  loft#1602 refused the call as a stopgap;
+// loft#1566 (@PLN167 C3) links it, so the refusal this file used to pin is gone and the write
+// it guarded against now lands.
+//
+// A text VARIABLE still links, and a temporary (a literal, a computed text) still takes a
+// read-only work copy — nothing names it, so nothing can miss the write.  The standard
+// library's `directory("sub")` relies on that.  A text field reached through a `&O` parameter
+// links to the caller's record.
+//
+// CHANNEL: exit and assertion failures, both backends (the control refuses the calls).
+
+struct O { s: text }
+
+fn app(t: &text) { t = t + "!"; }
+fn via_ref(q: &O) { app(q.s); }
+
+fn main() {
+  o = O { s: "cc" };
+  app(o.s);
+  v: vector<text> = ["a"];
+  app(v[0]);
+  loc = "x";
+  app(loc);
+  app("lit");
+  d = directory("sub");
+  via_ref(o);
+  assert(o.s == "cc!!", "a field, then the same field through a &O parameter, got {o.s}");
+  assert(v[0] == "a!", "an element, got {v[0]}");
+  assert(loc == "x!", "a text variable still links, got {loc}");
+  assert(len(d) > 0, "a literal still takes its work copy");
+  println("a text place handed to a &text parameter is linked: every cell holds");
+}

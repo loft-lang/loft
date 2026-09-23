@@ -418,7 +418,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 3.**
+**OPEN: 2.**
 
 * **D-bind-52** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD
   read through a link.  `y = e` with `e = &z`, and `y = p` with `p: &P` a parameter, bound `y`
@@ -451,6 +451,15 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   `tests/scripts/a-plain-bind-from-a-link-copies-the-value-it-reads.loft`.  Found while fixing
   loft#1614.
 
+* **D-bind-53** *(opened 2026-09-23, CLOSED 2026-09-23; found with loft#1566)* — `(B-Ref-Lvalue)` for
+  a FIELD of a struct ELEMENT.  `v: vector<R> = [R { a: 1, b: 2, c: 3 }]; p = &v[0].c; p = 9` wrote
+  `a`, and `q = &v[0].b; q += 40` added to `a` as well: `49 2 3` for `1 42 9`, silently, on both
+  backends, the same on `bebca4155`.  **Where.**  `Parser::scalar_place_ref` took the element as
+  the place for every read through an element accessor, dropping the field offset — right only
+  for a field at offset 0, which is every `vector<integer>` element and so every probe that
+  reached for one.  **Closed** by taking the element itself only at offset 0, and
+  `OpGetField(element, fld)` otherwise, as a plain field already did.  Guard:
+  `tests/scripts/1566-a-link-to-a-text-field-or-element-writes-that-place.loft`.
 * **D-bind-50** *(opened 2026-09-22, CLOSED 2026-09-22; loft#1612)* — `(B-Copy)` for the
   destination of a `??` CHAIN of three or more operands.  A plain bind copies a heap whole
   value, and the two-operand spelling does: it is lowered per arm, and an arm's bind is that
@@ -835,7 +844,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   the reader.  Belongs to A3 with D-bind-38 and D-bind-39.  Found when a peer's rules-side read
   predicted the spelling was already refused.
 
-* **D-bind-38** *(opened 2026-09-14, loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
+* **D-bind-38** *(opened 2026-09-14, CLOSED 2026-09-23; loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
   vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
   addressable operand — a variable, struct field, or vector element", on both backends and already
   on the first bind, while the same spellings over an integer, float, enum or struct place link.  The
@@ -846,6 +855,20 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   link needs a representation for a text that lives in a store.  (The `u16` and `i32` places this
   entry first carried are narrow integer places and share D-bind-39's refusal, which now names them
   correctly.)  Found while probing D-bind-36's repoint over every element kind.
+  **Closed** — a text field or element is a place like any other, and a link to it names the
+  record's text SLOT.  The parser admits it at the `&` bind and hands a `&text` parameter the slot
+  (`scalar_place_ref`) instead of a work copy.  A write through the link replaces the slot's value
+  (`(B-Ref-Write)`'s heap clause); it never edits a text another place holds, so two elements
+  holding equal texts stay apart.  On the interpreter a link stays one `DbRef`, and the text ops
+  tell a frame's `String` from a record's slot by the store it names (`State::linked_text_mut`),
+  so no frame reader decodes anything new.  On `--native` a user `&text` local or parameter is a
+  `codegen_runtime::TextLink` — a pointer to a text variable's `String`, or the slot — and every
+  use goes through `TextLink::edit`, whose guard writes an edited slot text back when the
+  statement ends.  Hidden work buffers and runtime-implemented ops keep `&mut String`.  That also
+  closed a native-only divergence beside it: one text variable handed to two `&text` parameters
+  (`two(c, c)`) was rustc E0499 where the interpreter answered `a12`.  A null `text?` field reads
+  null through the link on both backends.  Guard:
+  `tests/scripts/1566-a-link-to-a-text-field-or-element-writes-that-place.loft`.
 * **D-bind-37** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a
   `&τ` PARAMETER: `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-pointed the parameter's link
   on `--interpret` (after D-bind-36) and did not compile on `--native` — rustc E0308 for an element or
