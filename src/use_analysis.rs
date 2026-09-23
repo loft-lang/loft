@@ -5925,6 +5925,8 @@ fn copies_a_parameter(func: &crate::variables::Function, v: u16, base: u16) -> b
         && func.is_argument(base)
         && !func.is_argument(v)
         && func.tp(v).heap_def_nr().is_some()
+        // @FR-O-Proxy asks copy — an empty dep list is the verdict that `v` owns a copy
+        // rather than viewing the parameter; the emitters copy on the same fact.
         && func.tp(v).depend().is_empty()
         && func.owner_witness(v).is_none()
 }

@@ -189,7 +189,7 @@ impl Output<'_> {
         // reports the SOURCE var as Borrowed — mirror collect_witness_vars.
         let is_var_copy = matches!(
             to.unspan(),
-            Value::Var(src) if variables.tp(*src).peel_link().heap_def_nr().is_some()
+            Value::Var(src) if variables.record_copy_source(var, *src).is_some()
         );
         let owned = is_var_copy
             || matches!(
@@ -1444,7 +1444,7 @@ impl Output<'_> {
         // read (`tests/scripts/157-value-tail.loft` t14 — E0308 without this line).
         if let (Some(d_nr), Value::Var(src)) =
             (variables.tp(var).base().heap_def_nr(), to_unspanned)
-            && variables.tp(*src).peel_link().heap_def_nr().is_some()
+            && variables.record_copy_source(var, *src).is_some()
             && !self.value_record_locals.contains_key(&var)
         {
             // The source READ, rendered by the Var emitter rather than spelled `var_<src>`: a

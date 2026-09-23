@@ -2340,7 +2340,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
             // A whole-value copy of another heap var — native emits `OpCopyRecord`
             // into a fresh store, so r OWNS the result (C86), regardless of the
             // source's own ownership.
-            Value::Var(src) if vars.tp(*src).peel_link().heap_def_nr().is_some() => true,
+            Value::Var(src) if vars.record_copy_source(v, *src).is_some() => true,
             // An owned call / struct literal is Owned; an `?? `/ncc block is a
             // Borrow/Join view — the oracle carries the distinction.
             Value::Block(_) | Value::Call(_, _) | Value::Insert(_) => matches!(

@@ -2773,17 +2773,19 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **320** |
+| **321** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
-(2026-09-23, loft#1614 and loft#1631 on `tuxedo-165-generics`: **948 · 624 · 4 · 320**, and
-`--check-ratchet` re-pinned at opaque 320, opaque tests 1308.  `intervals.rs`'s early-`first_def`
+(2026-09-23, loft#1614 and loft#1631 on `tuxedo-165-generics`: **949 · 624 · 4 · 321**, and
+`--check-ratchet` re-pinned at opaque 321, opaque tests 1308.  `intervals.rs`'s early-`first_def`
 test now asks `type_def.base()` — a nullable heap local pre-inits exactly as its non-null twin
-does — and the new link tests peel before they match `RefVar`.)
+does — and the new link tests peel before they match `RefVar`.  The whole-record copy question
+moved into `Function::record_copy_source`, which peels; `generation::classify_set` is opaque
+again, as it was before the session, on its bare `vars.tp(v)` candidate test.)
 
 (2026-09-22, @PLN165 E5–E7 on `tuxedo-165-generics`, rebased onto `main` @ ffb66a58b and
 re-measured there: **946 · 620 · 4 · 322**, and `--check-ratchet` re-pinned at opaque 322,
