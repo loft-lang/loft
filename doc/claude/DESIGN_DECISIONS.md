@@ -1956,14 +1956,34 @@ type's DEFAULT — zero where the range contains it, the bound nearest zero othe
 what `?` and a declared field default already answer.
 
 The scope is the declaration: `limit(lo, hi)` and the aliases `u8`/`i8`/`u16`/`i16` built on
-one.  The plain `integer` and `i32` TEMPLATES keep C85's sentinel, because theirs lies
-OUTSIDE the range they report (`[i64::MIN + 1, MAX]`, `[i32::MIN + 1, MAX]`) — it is not a
-value of the type, so it is a real absence rather than a code that would otherwise decode to
-a number, and no widening of a declaration can make it one.  That is the whole difference:
-`limit(-100, 100) size(1)`'s spare codes decode to `101 … 155`, numbers inside the storage
-width and outside the declared range, and turning one of them into a null is a choice the
-declaration never made.  `IntegerSpec::non_null_reads_null` is the one home for the split,
-read by the stored value and by the `redundant-null-negation` lint alike.
+one.  The plain `integer` and `i32` TEMPLATES keep C85's sentinel.
+
+**That exemption is PRAGMATIC, not principled, and the difference is the part to remember.**
+The principle above reaches `i32` perfectly well — it is a narrow type without a `?`, and by
+the sentence at the top of this decision it should take its default too.  It is exempted
+because the exemption is cheap: reserving `i32::MIN` costs ONE value out of 2^32, and what it
+buys is the only narrow type in which an overflow is detectable at all.  The owner allowed it
+on that basis and on no other (2026-09-23).
+
+So the reasons NOT to read into it:
+
+* it is not that `i32`'s reserved code is special.  It is true that `i32::MIN` read out of a
+  four-byte two's-complement slot already IS `i64::MIN` with nothing mapping it, while
+  `limit(-100, 100) size(1)`'s spare codes decode to `101 … 155` and had to be TAUGHT to mean
+  absence — but that is a description of the mechanism, not the reason for the decision.  Had
+  the cost been high, the mechanism would not have saved it;
+* it is not a line anyone should extend.  `u32` reserves a code too — `integer limit(0,
+  4294967294) size(4)`, its top one, and `default/01_code.loft` calls it *"the same
+  reservation"* — and `u32` takes the DEFAULT.  Two four-byte aliases, one reserved code each,
+  different answers, and that is admitted rather than justified;
+* it is REVISITABLE in a way the rest of C127 is not.  If the cost assessment changes — a
+  program that needs the whole 32-bit range, a use where the lost value bites — this is the
+  clause to move, and moving it is one predicate.  `tests/scripts/1615-…`'s `templates()` row
+  is pinned across `integer` / `i32` / `u32` × local / field / element precisely so that the
+  day it moves, every cell that must move with it says so.
+
+`IntegerSpec::non_null_reads_null` is the one home for where the split currently falls, read
+by the stored value and by the `redundant-null-negation` lint alike.
 
 Where the language CAN demand the author say what an unfitting value becomes, it does: that
 is the narrowing refusal, and `?` or `?? d` is the cure (loft#1593).  Where it cannot — a

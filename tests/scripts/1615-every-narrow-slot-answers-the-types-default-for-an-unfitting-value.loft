@@ -161,6 +161,16 @@ fn keyed() -> text {
 // element.  `u32` sits on the declared side (its range is `0..=u32::MAX - 1`, matching neither
 // template), which is what makes it the cell that cannot be passed by a rule about widths.
 //
+// This row pins a DECISION and not a mechanism, which is why it is worth its length.  The
+// `i32` exemption is PRAGMATIC (C127 § Decision, owner 2026-09-23): C127's rule reaches `i32`
+// perfectly well, and it is exempted because reserving `i32::MIN` costs one value in 2^32 and
+// buys the only narrow type whose overflow is detectable.  So the `i32` column here is
+// REVISITABLE in a way the others are not — `u32` is the proof that the split is not a
+// principle, since it reserves a code at the top of its range and takes the default anyway.
+// If that cost assessment ever changes, this is the row that moves, and having all three
+// types across all three slot kinds in one assertion is what makes the full extent of the
+// move visible in one failure instead of six.
+//
 // The axis this exists for is `not_null`.  Every non-nullable struct FIELD's spec carries that
 // flag, and it is a claim about the slot rather than about the bytes: a field declared `i: i32`
 // still has the range `[i32::MIN + 1, MAX]`, so `i32::MIN` is still spare in it.  Asking the

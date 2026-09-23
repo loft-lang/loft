@@ -306,16 +306,23 @@ impl IntegerSpec {
     /// code back for a failure, so `!x` on it is always false and a fit-failure leaves
     /// nothing in the value to see (@PLN152).
     ///
-    /// Two families, and the split is about which code the type kept back rather than
-    /// about the `?`:
+    /// Two families, and the split is a DECISION rather than a property — it is where C127's
+    /// pragmatic exemption falls, not a line the null model draws:
     ///
-    /// 1. the plain `integer` and `i32` templates reserve the BOTTOM code
-    ///    (`i64::MIN` / `i32::MIN`), which is exactly what a non-null read reports as
-    ///    null — so `!x` on either is a real test and must not be flagged;
+    /// 1. the plain `integer` and `i32` templates keep a code for absence, so `!x` on either
+    ///    is a real test and must not be flagged;
     /// 2. every other non-nullable spec is a declared NARROW range, and by C127 it has no
     ///    null at all: a value that does not fit takes the type's DEFAULT, so `!x` on it is
     ///    always false.  `not_null` is the same answer reached by declaration rather than by
     ///    width, and is kept as an early return because it also covers the wide templates.
+    ///
+    /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  `u32` keeps one
+    /// too — `limit(0, 4294967294) size(4)`, at the top of its range, which is what refuses
+    /// `u32 = 4294967295` — and it is in clause 2.  The reason `i32` is in clause 1 is that
+    /// the owner allowed the exemption on COST (one value in 2^32, for the only narrow type
+    /// whose overflow is detectable), so this boundary moves by decision and not by a fact
+    /// about representations (C127 § Decision; `tests/scripts/1615-…`'s `templates()` row
+    /// pins all three types across all three slot kinds for exactly that reason).
     ///
     /// ⚠ Before C127 clause 2 read *"kept a code back inside its width"* — a predicate
     /// (`reserves_sentinel_unconditionally`) that made the lint's answer depend on whether

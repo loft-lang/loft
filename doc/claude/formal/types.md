@@ -534,9 +534,12 @@ old auto-`τ?` reading. Design record:
             a value that does not fit takes the type's DEFAULT, by `(E-Uncomp-NN)`
             ([C127](../DESIGN_DECISIONS.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
             Spareness is arithmetic the author did not do, so it cannot decide semantics.
-            The plain `integer` and `i32` TEMPLATES are the other case and keep their
-            sentinel: theirs lies OUTSIDE the range they report, so it is not a value of the
-            type at all — which is the line the table below draws.
+            The plain `integer` and `i32` TEMPLATES keep their sentinel, and that is an
+            EXEMPTION rather than a distinction the rule draws: it costs one value in 2^32
+            and buys the only narrow type whose overflow is detectable, which is the whole
+            reason it stands (C127 § Decision).  `u32` reserves a code at the top of its
+            range and takes the DEFAULT, so the table below records where the split falls
+            and not a principle that puts it there.
 ```
 
 **Per-type null + store verdict** — the verdict follows the *representability* test, not
@@ -553,6 +556,7 @@ per-type taste ([C90](../DESIGN_DECISIONS.md) fixes the reserved value):
 | struct in `vector` | tagged `__nullable<S>` | yes | **warn** |
 | narrow `u8`/`i8`/`u16`/`i16`/`i32`/`u32` | top width value — reserved ONLY in the `τ?` form | **no** — non-null uses the full width (`255` is a real `u8`) | **error** |
 | narrow `limit(lo, hi) size(n)` — a range with codes to spare | top width value — reserved ONLY in the `τ?` form, exactly as above | **no** — a spare code is not a reserved one (C127) | **error** |
+| `u32` — `limit(0, 4294967294) size(4)`, a reserved TOP code | top width value, in the `τ?` form | **no** — the reserved code buys the refusal of `4294967295`, not a null: an overflow reads `0` | **error** |
 
 The narrow widths are the **sole error case**: they are the only types whose non-null form
 spends the whole width on real values (C90 gives them a sentinel only in `τ?`, to keep the

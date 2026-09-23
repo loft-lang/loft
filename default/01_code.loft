@@ -25,10 +25,20 @@ pub type u16 = integer limit(0, 65535) size(2);
 // -32768 – 32767, 2 bytes.
 pub type i16 = integer limit(-32768, 32767) size(2);
 // 4-byte signed: -2_147_483_647 – 2_147_483_647.  The bottom of the 32-bit range
-// (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold — the
-// same reservation `u32` makes at the top of its range.
+// (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold.
+//
+// `u32` reserves a code too, at the top of its range, and the two reservations LOOK alike
+// and do not behave alike: an `i32` overflow reads `null`, a `u32` overflow reads `0`, the
+// type's default.  That is not a claim that the reservations differ — it is C127's
+// pragmatic exemption, allowed because losing one value out of 2^32 is cheap and being the
+// one narrow type whose overflow is detectable is worth more (DESIGN_DECISIONS.md C127 §
+// Decision).  Pinned across both aliases by
+// `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
 pub type i32 = integer size(4);
-// 4-byte unsigned: 0 – 4_294_967_294.  size(4) forces 4-byte storage
+// 4-byte unsigned: 0 – 4_294_967_294.  The top code is reserved to buy the same refusal
+// `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is
+// NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32`
+// above says why the two differ).  size(4) forces 4-byte storage
 // and serialisation symmetric with `i32`.  Stored as Parts::Int so the
 // in-memory representation is signed i32; values in the upper half
 // (2^31..2^32-2) round-trip through file I/O via 4-byte raw bytes but

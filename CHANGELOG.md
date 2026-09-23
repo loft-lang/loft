@@ -24,9 +24,16 @@ reason turned a detectable overflow into a silent one.  Now every ranged type an
 same: a value that does not fit takes the type's **default**, which is zero where the range
 holds it and otherwise the bound nearest zero — `integer limit(1000, 1100)` gives `1000`.
 This holds in a local, a field, an element, a collection's key, a parameter and a return
-alike.  The plain `integer` and `i32` are unchanged and still read `null`, because the code
-each keeps back lies outside the range it reports and so is not one of its values.  Writing
-`τ?` is unchanged too: a nullable ranged type has a null and still answers it.
+alike.  Writing `τ?` is unchanged too: a nullable ranged type has a null and still answers
+it.
+
+The plain `integer` and `i32` are the deliberate exceptions and still read `null` after an
+overflow.  That is worth keeping straight, because it is not a claim that they are a
+different kind of thing: `i32` gives up exactly one value (`-2147483648`) to keep a code for
+absence, which costs one number in four billion and makes it the only compact integer type
+whose overflow your program can actually notice.  `u32` reserves a code as well — that is why
+`u32 = 4294967295` does not compile — and it is not a null there: a `u32` overflow reads `0`
+like every other ranged type.
 
 **And a step that can leave its range now says what it falls back to.**  `x: u8 = 250;
 x += 10` used to answer `0` in silence; it now reports *"a step past `0..255` takes this

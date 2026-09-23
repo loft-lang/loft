@@ -20,8 +20,14 @@ to silent.  The formal rules had said otherwise all along — `(N-Reserve)`'s *"
 sit in a non-null narrow slot"* and `(E-Uncomp-NN)`'s *"the next best thing is τ's
 DEFAULT"* — so the encodings were an unrecorded deviation from both.
 
-Scope is the DECLARATION.  The plain `integer` and `i32` templates keep C85's sentinel,
-because theirs lies outside the range they report.  ⚠ That split is NOT
+Scope is the DECLARATION.  The plain `integer` and `i32` templates keep C85's sentinel, and
+that is a PRAGMATIC exemption the owner allowed rather than a line the rule draws: C127
+reaches `i32`, and it is exempted because reserving `i32::MIN` costs one value in 2^32 and
+buys the only narrow type whose overflow is detectable.  `u32` reserves a code too and takes
+the default, which is the standing proof that the split is not a principle — so this is the
+clause to move if that cost assessment ever changes, and `1615-…`'s `templates()` row is
+pinned across `integer` / `i32` / `u32` × local / field / element to make the full extent of
+such a move visible in one failure.  ⚠ That split is NOT
 `IntegerSpec::non_null_reads_null`, which is the same two clauses behind an early
 `if self.not_null`: `not_null` is a claim about the SLOT and every non-nullable struct
 field's spec carries it, while the stored default asks what the REPRESENTATION keeps a code
