@@ -37,6 +37,14 @@
 //   c12 two locals in sibling blocks, neither linked   — ordinary slot reuse MUST still happen,
 //       which is what says the cure did not simply stop the allocator sharing slots
 //
+// @falsified-at: 1d01ea7bd — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT
+// @falsified-by: tests/falsified/1627-a-linked-locals-slot-is-not-handed-on.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.  Native is
+//   INERT by construction and that is the finding, not a gap: `--native` answered every cell
+//   correctly before the fix, because a link there is a raw pointer to a Rust local the
+//   compiler keeps alive.  Only the interpreter could move, so only the interpreter's channel
+//   scores — a guard for a backend DIVERGENCE has one side that cannot fail.
+//
 // CHANNEL: the assertions.
 
 fn bump(p: &integer) { p = p + 1; }
