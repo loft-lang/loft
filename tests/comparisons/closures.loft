@@ -38,13 +38,22 @@ fn test_same_scope_capture_works() {
 // limit the page states, and a reader who hears only "closures cannot go in a vector"
 // concludes too much — the table of plain functions works, and is asserted here.
 //
-// ⚠ Written with `for` and a bare index on purpose.  The obvious spelling — `fs[0] ?? double`,
-// which a C80 reader reaches for because an element read is nullable — is loft#1642: it
-// PANICS the interpreter when the index is out of range (`fn_call_ref: d_nr=… is negative`, a
-// raw Rust message) and does not compile at all on `--native` (the null test is emitted as
-// `if <the fn-ref tuple>` and the fallback as a bare `i64`).  Meanwhile `if g != null` on a
-// fn-ref is REFUSED.  Found by this file on its first run; restore the `??` spelling here when
-// loft#1642 closes, because that is the spelling the page should be able to show.
+// ⚠ Written with `for` and a bare index on purpose, and that is now the PERMANENT answer
+// rather than a workaround.  The obvious spelling — `fs[0] ?? double`, which a C80 reader
+// reaches for because an element read is nullable — was loft#1642: it panicked the interpreter
+// out of range (`fn_call_ref: d_nr=… is negative`, a raw Rust message) and did not compile on
+// `--native`, while `if g != null` on a fn-ref was REFUSED.  Found by this file on its first
+// run.
+//
+// The owner ruled that a function type stays NON-nullable (`(N-Opt)` unchanged), so the two
+// spellings agree by REFUSING together: `f ?? g` on a fn-ref is a compile error like
+// `f != null`.  An out-of-range read is the ABSENT function (`closures.md` `(L-FnAbsent)`),
+// and calling it is a C80 fault answering the return type's null — no panic, so C66 holds.
+// The two cures are the ones below: an index check, or the struct wrapper
+// (`(acts[k] ?? fallback).f(x)`) that `LUA_BAR.md` LC1 records as the real keyed idiom, where
+// the `??` discharges a RECORD and the fn-ref never has to be nullable.
+//
+// So do NOT restore the `??` here when loft#1642 lands — it is refused by design.
 fn test_a_plain_fn_ref_is_what_a_collection_holds() {
   fs: vector<fn(integer) -> integer> = [double, negate];
   got: vector<integer> = [];
