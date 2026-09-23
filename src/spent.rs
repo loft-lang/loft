@@ -1,6 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I60 — Scope & dependency/lifetime tracker (deps)
 
+//! @I60 — Scope & dependency/lifetime tracker (deps): the spent-name half.
+//!
 //! `formal/heap.md` `(H-Spent)`: a name whose value has MOVED to a new owner is spent from the
 //! end of the statement that moved it, and reading it is a compile-time error that names where
 //! the value went.
