@@ -1425,6 +1425,14 @@ parse row's tree claims took the tail; the row −6 % in cycles).  **`LOFT_NO_WI
 keeps the tail in the tree again (read per store at construction) and is the first bisect step
 for a store-layout fault or a claim that hands out a live block.
 
+**A best-fit claim carves its node in place (default-ON, both backends, `@FR-H-Carve`):** a
+claim from a free-tree block at least twice the request leaves the remainder in the block's
+place in the tree (links, color, parent pointer) instead of a delete and an insert — the block
+is the smallest that fits, so the remainder keeps its order, and every claim takes the block it
+always took (`hash_text_keys` −8 %).  **`LOFT_NO_CARVE_IN_PLACE=1`** deletes and inserts again
+(read per store at construction) and is the bisect step for a store-layout fault or a corrupt
+free tree after a claim.
+
 **Owner witness for a mixed-ownership local (loft#1336, default-ON, both backends):** a
 heap-record local that OWNS after one assignment (a copy, a minting call) and VIEWS after
 another carries a hidden `__own_<name>` naming the store it minted while it still holds it;

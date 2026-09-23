@@ -28,6 +28,32 @@ what they are, with what was learned.
 
 ## Built
 
+### A best-fit claim carves its node in place — `(H-Carve)`, 2026-09-23
+
+Profiled first (`perf` on a single-routine build of `hash_text_keys`): the store allocator
+was ~10 % of the row's self time and the free-tree walks alone (delete, insert, balance,
+rotations, color flips, the find) ~6.6 % — the ceiling for this lever; hashing is the row's
+bulk (SipHash 12 %, `hash::find` 11 %, `keys::hash` 9 %).  A claim that takes a tree block and
+splits it deleted the node and inserted the remainder.  Built as the heap rule `(H-Carve)`
+(`formal/heap.md`, beside `(H-Wilderness)`): when the block is at least twice the request the
+remainder takes the node's place — links, color, parent pointer — because the node is the
+smallest that fits, so every node before it is smaller than the request and a remainder of at
+least the request keeps its order.  One iterative descent finds the node and its parent
+(`Store::claim_best_fit`, replacing `fl_take_ge` + `fl_find_ge`).  Switch
+`LOFT_NO_CARVE_IN_PLACE`; the unit test `a_carve_in_place_takes_the_blocks_the_delete_and_insert_take`
+runs 24 seeded sequences of 600 claims, deletes and resizes on a carving and a non-carving store,
+with and without a wilderness, asserting the same positions, block chain, tree keys and a valid
+LLRB after every step, and more than 500 in-place carves; it fails on a carve that breaks the
+order (the chain diverges at seed 1 step 20) and on a dropped color bit.
+
+A/B on one binary, five interleaved rounds, pinned core, every hash unchanged:
+
+| row | on (ns/op) | off | |
+|---|---:|---:|---|
+| `hash_text_keys` | 561 835 | 610 855 | **−8.0 %** |
+| `grouped_fill_find` | 772 970 | 796 040 | **−2.9 %** |
+| every other row of lanes 14, 15, 16 | | | within ±1–3 % (noise) |
+
 ### A collection's length is a read — the keyed readers, 2026-09-23
 
 `READ_ONLY_COLLECTION_OPS` named `OpLengthVector` and no other collection's count, so one

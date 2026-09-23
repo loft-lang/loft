@@ -9,6 +9,19 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A best-fit claim carves its node in place (2026-09-23)
+
+`@FR-H-Carve`, both backends, default ON (`LOFT_NO_CARVE_IN_PLACE=1` deletes the node and
+inserts the remainder again, read per store at construction).  When the free block a claim
+takes is at least twice the request, the remainder takes the block's place in the free tree —
+its links, its color, its parent's pointer — instead of a tree delete and an insert: the block
+is the smallest that fits, so every node before it is smaller than the request and a remainder
+of at least the request keeps its place in the order.  The key set is the one the delete and
+insert leave, so every claim takes the block it always took (a seeded side-by-side unit test
+pins the layout and the tree's validity, and fails on a carve that breaks the order or drops
+the color).  `hash_text_keys` −8.0 %, `grouped_fill_find` −2.9 %, every other bench row within
+noise, every hash unchanged.
+
 ### C127 — a declared narrow range has no null; the spare-code encodings retired (2026-09-23)
 
 `uncomputable_default` answered `i64::MIN` for a non-nullable spec that left a code unused
