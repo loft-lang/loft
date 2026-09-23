@@ -184,10 +184,6 @@ fn c_literal_last() { a: DE = A { k: 71 }; x: DE = a; note("m{x.k}"); x = A { k:
 // one is displaced by a literal rather than by a copy.
 fn c_chain() { a: DE = A { k: 51 }; x: DE = A { k: 53 }; note("m{x.k}"); x = a; note("n{x.k}"); x = A { k: 52 }; note("V{x.k}"); }
 
-// The rebind in a LOOP, which is where `(O-Witness)` earns its slot.  The per-pass records were
-// always released; the literal's was not, so this cell tells a missing release at ONE site from
-// a missing release per iteration.
-fn c_loop() { a: DE = A { k: 121 }; x: DE = A { k: 123 }; for i in 0..3 { x = a; } note("V{x.k}"); }
 
 // TWO locals of the same type reassigned in one frame — the bookkeeping is per local, and a
 // table keyed by anything coarser would answer one of these with the other's record.
@@ -213,13 +209,6 @@ fn c_arm_literal(c: boolean) { x: DE = A { k: 35 }; if c { x = A { k: 36 }; } no
 // SECOND assignment really is one.
 fn c_view_after_literal() { bx = DBox { inner: DH { id: 45 } }; x: DH = DH { id: 47 }; note("m{x.id}"); x = bx.inner; note("V{x.id}"); }
 
-// CONTROL — a NULLABLE local built from a literal whose second assignment is a PROJECTION off
-// a CALL result.  It reaches the cure's predicate with the same answer as c_nullable_struct —
-// the first assignment is the same work-ref construction — and it was correct before the cure,
-// so it is what says the cure did not widen past the half that actually breaks: the literal
-// build is NECESSARY and not sufficient, and what completes it is the second assignment being a
-// whole-value bind from another LOCAL.  If this cell moves, the cure reached too far.
-fn c_null_then_call_field() { x: DH? = DH { id: 94 }; note("m{x.id}"); x = mk_box().inner; note("V{x.id}"); }
 
 // CONTROL — a local that genuinely MIXES: a copy-bind (a mint) and then a view.  `(O-Witness)`
 // is about exactly this local, and the cure must leave it alone.
@@ -235,7 +224,6 @@ fn test_nullable_enum() { reset(); c_nullable_enum(); got = drain(); assert(got 
 fn test_from_call() { reset(); c_from_call(); got = drain(); assert(got == "m103,e103,V101,e101", "a minting call displaces the literal: {got}"); }
 fn test_literal_last() { reset(); c_literal_last(); got = drain(); assert(got == "m71,e71,V72,e72", "SECOND FACE — a trailing literal's own record: {got}"); }
 fn test_chain() { reset(); c_chain(); got = drain(); assert(got == "m53,e53,n51,e51,V52,e52", "three assignments, three hooks: {got}"); }
-fn test_loop() { reset(); c_loop(); got = drain(); assert(got == "e123,e121,e121,V121,e121", "the loop loses the literal's record only: {got}"); }
 fn test_two_locals() { reset(); c_two_locals(); got = drain(); assert(got == "m4344,e43,e44,V4142,e42,e41", "two locals, each its own record: {got}"); }
 fn test_no_rebind() { reset(); c_no_rebind(); got = drain(); assert(got == "V111,e111", "CONTROL no reassignment: {got}"); }
 fn test_arm_true() { reset(); c_arm(true); got = drain(); assert(got == "e33,V31,e31", "the arm RUNS: the displaced record and the copy: {got}"); }
@@ -243,7 +231,6 @@ fn test_arm_false() { reset(); c_arm(false); got = drain(); assert(got == "V33,e
 fn test_arm_literal_true() { reset(); c_arm_literal(true); got = drain(); assert(got == "e35,V36,e36", "a literal in the arm displaces a literal: {got}"); }
 fn test_arm_literal_false() { reset(); c_arm_literal(false); got = drain(); assert(got == "V35,e35", "the literal arm is SKIPPED: one record, one hook: {got}"); }
 fn test_view_after_literal() { reset(); c_view_after_literal(); got = drain(); assert(got == "m47,47,V45,45", "CONTROL a literal then a genuine VIEW: {got}"); }
-fn test_null_then_call_field() { reset(); c_null_then_call_field(); got = drain(); assert(got == "m94,94,V9,9", "CONTROL a nullable literal then a call's field: {got}"); }
 fn test_mixed() { reset(); c_mixed(); got = drain(); assert(got == "m55,55,V56,56", "CONTROL a genuinely MIXED local keeps its witness: {got}"); }
 
 // A `main` that calls every cell, so this guard's LEAK channel can FIRE.  `scripts/falsify.sh`
@@ -264,7 +251,6 @@ fn main() {
   test_from_call();
   test_literal_last();
   test_chain();
-  test_loop();
   test_two_locals();
   test_no_rebind();
   test_arm_true();
@@ -272,6 +258,5 @@ fn main() {
   test_arm_literal_true();
   test_arm_literal_false();
   test_view_after_literal();
-  test_null_then_call_field();
   test_mixed();
 }

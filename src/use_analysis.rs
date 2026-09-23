@@ -4826,7 +4826,8 @@ pub fn post_scope_lints(
     // loft#1397 — a payload binding whose subject's place is overwritten with another variant.
     warn_variant_overwritten(data, diags, fallback_file);
     // @PLN163 P0/P3 — the census of copies of a record with a release (gated
-    // `LOFT_DROP_COPY_CENSUS`), and the refusal the same verdicts raise (`LOFT_LEASE_REFUSE`).
+    // `LOFT_DROP_COPY_CENSUS`), and the errors the same verdicts raise (on by default;
+    // `LOFT_NO_LEASE_REFUSE=1` switches them off).
     drop_copy_census(data, diags, fallback_file);
 }
 
@@ -4920,7 +4921,7 @@ pub fn drop_copy_census(
             sites += cx.sites;
             if refuse {
                 raise_copy_refusals(&mut cx, def, diags, fallback_file);
-                raise_spent_reads(d_nr, def, diags, fallback_file);
+                raise_spent_reads(def, diags, fallback_file);
             }
         }
     }
@@ -5006,7 +5007,6 @@ fn raise_copy_refusals(
 /// the value moved on and the cure the rule gives: read it through the structure it moved into,
 /// or give the name a new value first.
 fn raise_spent_reads(
-    d_nr: u32,
     def: &crate::data::Definition,
     diags: &mut crate::diagnostics::Diagnostics,
     fallback_file: &str,
@@ -5016,7 +5016,7 @@ fn raise_spent_reads(
     } else {
         def.position.file.as_str()
     };
-    for read in crate::spent::take(d_nr) {
+    for read in crate::spent::take(def) {
         let (file, line, col) = match &read.pos {
             Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),

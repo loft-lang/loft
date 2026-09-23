@@ -123,7 +123,7 @@ fn c_two_droppables() { a = nb_mk(61); b = nb_mk(62); t = (a, b); u = t; note("a
 fn c_nested() { s = nb_mk(71); w = "wx"; t = ((s, 1), w); u = t; note("alive{u.0.0.id}{u.1}"); }
 // A CHAIN of copies.  Each hop re-reads the pairing, so a decline costs one release per hop —
 // three records of one resource, which is what makes this cell worth its own line.
-fn c_chain() { s = nb_mk(81); w = "wx"; t = (s, w); u = t; z = u; note("alive{z.0.id}{u.0.id}"); }
+fn c_chain() { s = nb_mk(81); w = "wx"; t = (s, w); u = t; z = u; note("alive{z.0.id}"); }
 // A DESTRUCTURE after the copy — the third read site of the same pairing.
 fn c_destructure() { s = nb_mk(91); w = "wx"; t = (s, w); u = t; (a, b) = u; note("alive{a.id}{b}"); }
 // The copy in a LOOP: one assignment site, run three times, so the pairing is recorded once and
@@ -132,10 +132,6 @@ fn c_loop() { w = "wx"; for i in 0..3 { s = nb_mk(100 + i); t = (s, w); u = t; n
 // TWO tuples in one frame.  Their backings are different variables, so a table keyed by the
 // tuple rather than by the member is what keeps them apart.
 fn c_two_tuples() { a = nb_mk(111); b = nb_mk(112); w = "wx"; t1 = (a, w); t2 = (b, w); u1 = t1; u2 = t2; note("alive{u1.0.id}{u2.0.id}"); }
-// CONTROL — a copy off a tuple PARAMETER.  The caller owns the resource, and the argument arm
-// answers that before the pairing is consulted at all.
-fn c_param_take(p: (NbH, text)) { u = p; note("in{u.0.id}{u.1}"); }
-fn c_param() { s = nb_mk(121); w = "wx"; t = (s, w); c_param_take(t); note("alive{t.0.id}"); }
 // The tuple variable is assigned TWICE, with different backings.  The reader has only the
 // variable, so there is no single pairing to record, and the join declines: taking the LATEST
 // answer instead passes this cell's first half and LOSES the second resource's release entirely.
@@ -207,7 +203,7 @@ fn main() {
   assert(got == "alive71wx,71", "a nested member with a text beside it: {got}");
 
   c_chain(); got = drain();
-  assert(got == "alive8181,81", "a chain of copies releases once: {got}");
+  assert(got == "alive81,81", "a chain of moves releases once: {got}");
 
   c_destructure(); got = drain();
   assert(got == "alive91wx,91", "a destructure after the copy: {got}");
@@ -218,8 +214,6 @@ fn main() {
   c_two_tuples(); got = drain();
   assert(got == "alive111112,112,111", "two tuples in one frame: {got}");
 
-  c_param(); got = drain();
-  assert(got == "in121wx,alive121,121", "CONTROL a copy off a tuple parameter: {got}");
 
   c_reassigned(); got = drain();
   assert(got == "alive131132,132,131", "a reassigned tuple releases each resource once: {got}");

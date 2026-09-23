@@ -116,9 +116,6 @@ fn c_rebound_dest(c: boolean) { a = sh(111); b = sh(112); x = sh(113); if c { x 
 // The SOURCE is reassigned after the branch — `@FR-O-Latest`: what it holds from there on is
 // its own, whichever arm ran, so the hand-off has to be retired.
 fn c_rebound_src(c: boolean) { a = sh(121); b = sh(122); x = sh(123); if c { x = a; } else { x = b; } a = sh(124); note("V{x.id}{a.id}"); }
-// Both locals READ after the branch: the values must be intact, so the release is restored
-// without moving WHEN it happens.
-fn c_read_after(c: boolean) { a = sh(131); b = sh(132); x = sh(133); if c { x = a; } else { x = b; } note("V{x.id}{a.id}{b.id}"); }
 
 // CONTROL — an UNCONDITIONAL hand-off.  `(H-Drop)` moves the release to the copy and one hook
 // is the whole point; a rule that read every hand-off as per path would break this.
@@ -167,8 +164,6 @@ fn main() {
   c_rebound_src(true); got = drain();
   assert(got == "123,V121124,121,122,124", "the source is reassigned after the branch: {got}");
 
-  c_read_after(true); got = drain();
-  assert(got == "133,V131131132,131,132", "both locals read after the branch: {got}");
 
   c_unconditional(); got = drain();
   assert(got == "m142,142,V141,141", "CONTROL an unconditional hand-off moves the release: {got}");

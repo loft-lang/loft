@@ -1,0 +1,128 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `1506b-a-join-and-a-returned-projection-release-once.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: PENDING
+
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// D-heap-3's last two shapes: a `?`/`??` JOIN and a RETURNED projection each release the
+// record they hand away exactly ONCE (loft#1506).
+//
+// `heap.md (H-Drop)` runs a type's `OpDrop` once per resource and moves the responsibility
+// with a copy.  Both shapes gave one record TWO owners:
+//
+//   * the JOIN's value is `if __ncc_N { __ncc_N } else { <default> }` — both arms vars the
+//     frame owns and frees — while the block was typed as a bare owner, so the consumer
+//     adopted the store a second time.  The axis is NOT projection: `r = mk() ?? d` and
+//     `r = mk()?` doubled with no `.field` anywhere, and the second release read the FREED
+//     store (`LOFT_POISON=1` delivered the poison pattern into the author's `OpDrop`).
+//   * `d = mk(); return d.h` publishes an owned copy (`@FR-F-Ret`) and the source's cascade
+//     released the member again.  The transfer is read at the RETURN SITE — `two_exits`
+//     below is the cell that says why it cannot be keyed on the variable.
+//
+// The nested cells are load-bearing for the skip-capable cascade's PATH argument.  A member
+// at offset 0 of a nested record shares its owner's address, so `d.p` and `d.p.a` are the
+// same byte: an offset alone skipped the whole subtree, and `nested_member` lost `p.b`
+// entirely.  Keep all three of `nested_member` / `outer_member` / `whole_member` — each
+// pins a different answer, and the first two are what an offset-only skip cannot tell apart.
+//
+// `param_member` is the CONTROL that this did not widen: a copy off a PARAMETER moves
+// nothing (`(H-Drop)`: the caller owns), so it releases twice and that is D-heap-1's shape,
+// not this one.  Asserting it here pins the boundary rather than freezing the defect.
+//
+// @falsified-at: 6921f56ae — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1506b-a-join-and-a-returned-projection-release-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — the count cells fail on the control
+//     (the join reads two hooks where the guard demands one) and pass here.
+//   ARMED: nothing; a plain run scores it.  The leak channel is `none` on both trees.
+//   HOLDS: leak, panic, refusals and expectations are equal on both trees.
+fn trace_path() -> text { return "loft_1506b_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct JH { id: integer }
+
+fn OpDrop(self: JH) { note("{self.id}"); }
+
+struct JS { h: JH }
+
+struct JTwo { h: JH, g: JH }
+
+struct JMid { h: JH }
+
+struct JOuter { m: JMid }
+
+struct JPair { a: JH, b: JH }
+
+struct JBox { p: JPair, q: JH }
+
+fn mk_dense() -> JS { return JS { h: JH { id: 9 } }; }
+
+fn mk_two_dense() -> JTwo { return JTwo { h: JH { id: 1 }, g: JH { id: 2 } }; }
+
+fn mk_box() -> JBox {
+  return JBox { p: JPair { a: JH { id: 11 }, b: JH { id: 12 } }, q: JH { id: 13 } };
+}
+
+// The shape itself: the copy the return publishes owns the member from here on.
+// @EXPECT_ERROR: cannot copy a member of `d` here
+fn returned_member() -> JH { d = mk_dense(); return d.h; }
+
+// Why the transfer cannot be keyed on the VARIABLE.  `c` picks which exit runs, and the
+// path that does NOT hand the member out must still release it.
+// @EXPECT_ERROR: cannot copy a member of `d` here
+// @EXPECT_ERROR: cannot copy a member of `d` here
+fn two_exits(c: boolean) -> JH { d = mk_two_dense(); if c { return d.h; } return d.g; }
+
+// The sibling member is not the copy's: `g` stays the record's to release.
+// @EXPECT_ERROR: cannot copy a member of `d` here
+fn returned_of_two() -> JH { d = mk_two_dense(); return d.h; }
+
+// A member two levels down.  `q` and `p.b` are still the record's; only `p.a` moves.
+// @EXPECT_ERROR: cannot copy a member of `d` here
+fn nested_member() -> JH { d = mk_box(); return d.p.a; }
+
+// The same record, a member OUTSIDE the nested one: `p.a` and `p.b` both stay.
+// @EXPECT_ERROR: cannot copy a member of `d` here
+fn outer_member() -> JH { d = mk_box(); return d.q; }
+
+// The whole nested record moves, so everything under it goes with it and only `q` stays.
+// @EXPECT_ERROR: cannot copy a member of `d` here
+fn whole_member() -> JPair { d = mk_box(); return d.p; }
+
+// The same member reached through a VIEW local.  `(B-View)` makes `e = d.h` a view and the
+// return publishes the same copy of the same member, so the transfer is the same one — the
+// path just has to be carried from the bind to the return.
+// @EXPECT_ERROR: cannot copy a member of `d` here
+fn view_bound() -> JH { d = mk_dense(); e = d.h; return e; }
+
+// The view is REBOUND before the return: `(O-Latest)` says the fact belongs to the latest
+// assignment, so `g` is what leaves and `h` is still the record's.
+// @EXPECT_ERROR: cannot copy a member of `d` here
+fn view_rebound() -> JH { d = mk_two_dense(); e = d.h; e = d.g; return e; }
+
+// The CONTROL.  A copy off a PARAMETER moves nothing — the caller owns — so the caller
+// ends holding two records of one resource.  That is D-heap-1, deliberately unmoved here.
+// Both spellings, because the view one reaches this through a different reader.
+// @EXPECT_ERROR: cannot copy `p` here
+fn param_member(p: JS) -> JH { return p.h; }
+
+// @EXPECT_ERROR: cannot copy `p` here
+fn param_view_member(p: JS) -> JH { e = p.h; return e; }

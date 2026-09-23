@@ -1,0 +1,71 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `a-copy-off-a-tuple-parameter-member-leaves-the-caller-owning.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: PENDING
+
+fn trace_path() -> text { return "loft_paramember_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct PmH { id: integer }
+
+fn OpDrop(self: PmH) { note("{self.id}"); }
+
+struct PmS { h: PmH }
+
+struct PmPlain { n: integer }
+
+// The defect: the callee copies a member of its tuple parameter, and both records released.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_param(p: (PmS, integer)) { u = p; note("a{u.0.h.id}"); }
+
+// TWO droppable members: the suppression is per copy, so both must land.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_two(p: (PmS, PmS)) { u = p; note("a{u.0.h.id}{u.1.h.id}"); }
+
+// A NESTED tuple parameter — the member is reached through a hold, whose chain still ends at an
+// argument.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_nested(p: ((PmS, integer), integer)) { u = p; note("a{u.0.0.h.id}"); }
+
+// The parameter copied TWICE in one callee: three records of one resource before the fix.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_twice(p: (PmS, integer)) { u = p; w = p; note("a{u.0.h.id}{w.0.h.id}"); }
+
+// The copy inside a LOOP: the iteration count is invisible to the lint that reports a double
+// hand-off, so the suppression has to be right per copy rather than per statement.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_loop(p: (PmS, integer)) { for i in 0..2 { u = p; note("i{i}{u.0.h.id}"); } }
+
+// The caller passes a tuple LITERAL rather than a named local.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_lit(p: (PmS, integer)) { u = p; note("a{u.0.h.id}"); }
+
+// The callee called TWICE from one caller — one resource, one release.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_call(p: (PmS, integer)) { u = p; note("a{u.0.h.id}"); }
+
+// The parameter passed ON to another function that copies it: the chain of arguments does not
+// change who owns.
+// @EXPECT_ERROR: cannot copy `q` here
+fn f_inner(q: (PmS, integer)) { u = q; note("i{u.0.h.id}"); }
+
+// CONTROL — a plain STRUCT parameter: the sibling spelling of the same rule, always correct.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_plain(p: PmS) { u = p; note("a{u.h.id}"); }

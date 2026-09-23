@@ -163,9 +163,6 @@ fn c23(k: integer) { x: Eh? = emk(8); y: Eh? = null; b: Eh = if k > 0 { x ?? y ?
 // 24 — the same with a CALL among the operands, which is what makes the arm a chain BLOCK.
 fn c24(k: integer) { x: Eh? = emk(8); b: Eh = if k > 0 { x ?? enone(1) ?? emk(9) } else { emk(3) }; note("r{b.id}"); }
 
-// 25 — a chain in a LOOP body: the destination is rebound per pass, and each pass releases
-//      what the previous one held.
-fn c25() { x: Eh? = emk(8); for i in 0..2 { b: Eh = x ?? emk(20 + i); note("r{b.id}"); } }
 
 // 26 — ELEMENT reads as operands, which is the shape a chain over a collection has
 //      (`kids[k] ?? Leaf { … }`): out of range, then in range.
@@ -230,8 +227,6 @@ fn main() {
   ok("c23 the other arm       ", drain(), "n8,n3,r3,e,e");
   c24(1);
   ok("c24 an arm with a call  ", drain(), "n8,r8,e");
-  c25();
-  ok("c25 a chain in a loop   ", drain(), "n8,r8,r8,e");
   delete(trace_path());
   println("a coalesce chain copies the operand it chooses: every cell holds");
 }

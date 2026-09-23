@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `a-parameter-copy-handed-on-to-another-local-is-released-by-the-caller-only.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: PENDING
+
+fn trace_path() -> text { return "loft_param_handed_on_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct HoH { id: integer }
+
+fn OpDrop(self: HoH) { note("{self.id}"); }
+
+fn ho(id: integer) -> HoH { return HoH { id: id }; }
+
+struct HoS { h: HoH }
+
+// The copy handed on, both read.
+// @EXPECT_ERROR: cannot copy `p` here
+// @EXPECT_ERROR: cannot copy `x` here
+// @EXPECT_ERROR: `x` is read after its value moved
+fn handed_b(p: HoH) { x = p; y = x; note("R{y.id}"); note("R{x.id}"); }
+
+// Handed on into a witnessed local that is then given a view.
+// @EXPECT_ERROR: cannot copy `p` here
+// @EXPECT_ERROR: cannot copy `x` here
+fn witnessed_b(p: HoH) { s = HoS { h: ho(182) }; x = p; y = x; note("W{y.id}"); y = s.h; note("R{y.id}"); }
+
+// CONTROL — handed on, then the destination is rebound to a fresh record.
+// @EXPECT_ERROR: cannot copy `p` here
+// @EXPECT_ERROR: cannot copy `x` here
+fn rebound_b(p: HoH) { x = p; y = x; y = ho(151); note("R{y.id}"); }
+
+// CONTROL — the carrier keeps its own record on the path taken, and hands THAT on.
+// @EXPECT_ERROR: cannot copy `p` here
+fn own_b(p: HoH, c: boolean) { x = ho(161); if c { x = p; } y = x; note("R{y.id}"); }
+
+// CONTROL — a copy off the parameter in an arm, not handed on.
+// @EXPECT_ERROR: cannot copy `p` here
+fn not_handed_b(p: HoH, c: boolean) { x = ho(131); if c { x = p; } note("R{x.id}"); }
+
+// BOUNDARY — written through after the copy: the record now holds a resource the frame made.
+// @EXPECT_ERROR: cannot copy `p` here
+fn written_b(p: HoS) { x = p; x.h = ho(9); y = x; note("R{y.h.id}"); }

@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `a-parameter-copy-the-owner-witness-names-is-released-by-the-caller-only.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: PENDING
+
+fn trace_path() -> text { return "loft_param_witness_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct WpH { id: integer }
+
+fn OpDrop(self: WpH) { note("{self.id}"); }
+
+fn wm(id: integer) -> WpH { return WpH { id: id }; }
+
+struct WpS { h: WpH }
+
+fn wm_s(id: integer) -> WpS { return WpS { h: wm(id) }; }
+
+struct WpSS { s: WpS }
+
+// A parameter copy, then a FIELD view.
+// @EXPECT_ERROR: cannot copy `p` here
+fn field_b(p: WpH) { s = WpS { h: wm(192) }; x = p; note("W{x.id}"); x = s.h; note("R{x.id}"); }
+
+// A record of the local's own first, then the copy, then the view.
+// @EXPECT_ERROR: cannot copy `p` here
+fn own_first_b(p: WpH) { s = WpS { h: wm(182) }; x = wm(181); x = p; note("W{x.id}"); x = s.h; note("R{x.id}"); }
+
+// An ELEMENT view.
+// @EXPECT_ERROR: cannot copy `p` here
+fn element_b(p: WpH) { v: vector<WpH> = [wm(202)]; x = p; note("W{x.id}"); x = v[0]; note("R{x.id}"); }
+
+// The copy in a branch arm, both paths.
+// @EXPECT_ERROR: cannot copy `p` here
+fn branch_b(p: WpH, c: boolean) { s = WpS { h: wm(172) }; x = wm(171); if c { x = p; } note("W{x.id}"); x = s.h; note("R{x.id}"); }
+
+// A record that HOLDS the resource.
+// @EXPECT_ERROR: cannot copy `p` here
+fn holder_b(p: WpS) { t = WpSS { s: wm_s(252) }; x = p; note("W{x.h.id}"); x = t.s; note("R{x.h.id}"); }
+
+// Per ITERATION.
+// @EXPECT_ERROR: cannot copy `p` here
+fn loop_b(p: WpH) { s = WpS { h: wm(262) }; for _i in 0..2 { x = p; note("W{x.id}"); x = s.h; note("R{x.id}"); } }
+
+// Rebuilt IN PLACE by a literal after the copy: the literal is the local's own and keeps its hook.
+// @EXPECT_ERROR: cannot copy `p` here
+fn rebuild_b(p: WpH) { s = WpS { h: wm(272) }; x = s.h; note("W{x.id}"); x = p; note("W{x.id}"); x = WpH { id: 273 }; note("R{x.id}"); }
+
+// SCOPE EXIT still holding the copy.
+// @EXPECT_ERROR: cannot copy `p` here
+fn exit_b(p: WpH) { s = WpS { h: wm(282) }; x = s.h; note("W{x.id}"); x = p; note("R{x.id}"); }
+
+// CONTROL — a null displaces the copy.
+// @EXPECT_ERROR: cannot copy `p` here
+fn null_b(p: WpH) { x: WpH? = p; note("W{x.id}"); x = null; note("N{x == null}"); }
+
+// CONTROL — a fresh call displaces the copy.
+// @EXPECT_ERROR: cannot copy `p` here
+fn fresh_b(p: WpH) { x = p; note("W{x.id}"); x = wm(241); note("R{x.id}"); }

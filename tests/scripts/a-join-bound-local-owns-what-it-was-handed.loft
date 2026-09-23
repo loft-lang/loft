@@ -62,7 +62,6 @@ fn jo_mk(id: integer) -> JoH { return JoH { id: id }; }
 struct JoHold { h: JoH }
 
 fn jo1() { a: JoH? = null; x = a ?? jo_mk(1); note("alive{x.id}"); }
-fn jo2() { a: JoH? = null; for i in 0..2 { x = a ?? jo_mk(2 + i); note("alive{x.id}"); } }
 fn jo3() { a: JoH? = jo_mk(4); x = a ?? jo_mk(5); y = x; note("alive{y.id}"); }
 fn jo4() { a: JoH? = null; x = a ?? jo_mk(6); c = JoHold { h: x }; note("alive{c.h.id}"); }
 fn jo5() {
@@ -86,8 +85,6 @@ fn main() {
   jo1(); got = drain();
   assert(got == "alive1,1", "jo1 the default a call makes is released once: {got}");
 
-  jo2(); got = drain();
-  assert(got == "alive2,2,alive3,3", "jo2 once per iteration: {got}");
 
   jo3(); got = drain();
   assert(got == "alive4,4", "jo3 the present arm, placed again in a local: {got}");

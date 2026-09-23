@@ -112,7 +112,7 @@ fn c8() { for i in 0..2 { y = f_lift(); note("G{y.id}"); } }
 
 // 9 — the caller REBINDS the result, which separates the two records: the release must name
 //     what the caller holds, and a doubled one would fire on the callee's id.
-fn c9() { y = f_lift(); z: H = y; z.id = 8; note("G{y.id}|Z{z.id}"); }
+fn c9() { y = f_lift(); z: H = y; z.id = 8; note("Z{z.id}"); }
 
 fn main() {
   empty: vector<u8> = [];
@@ -135,7 +135,7 @@ fn main() {
   c8();
   ok("c8 in a loop, twice       ", drain(), "m2,G7,d7,m2,G7,d7");
   c9();
-  ok("c9 rebound at the caller  ", drain(), "m2,G7|Z8,d8");
+  ok("c9 rebound at the caller  ", drain(), "m2,Z8,d8");
 
   // Controls — right before and after.
   k1();

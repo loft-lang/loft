@@ -1,0 +1,53 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `a-record-local-reassigned-after-a-literal-build-releases-what-it-displaces.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: PENDING
+
+fn trace_path() -> text { return "loft_displaced_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct DH { id: integer }
+
+fn OpDrop(self: DH) { note("{self.id}"); }
+
+enum DE { A { k: integer }, B { k: integer } }
+
+fn OpDrop(self: DE) { note("e{self.k}"); }
+
+enum FE { F { h: DH }, G { n: integer } }
+
+struct DBox { inner: DH }
+
+fn mk_box() -> DBox { return DBox { inner: DH { id: 9 } }; }
+
+// The rebind in a LOOP, which is where `(O-Witness)` earns its slot.  The per-pass records were
+// always released; the literal's was not, so this cell tells a missing release at ONE site from
+// a missing release per iteration.
+// @EXPECT_ERROR: `a` is read after its value moved
+fn c_loop() { a: DE = A { k: 121 }; x: DE = A { k: 123 }; for i in 0..3 { x = a; } note("V{x.k}"); }
+
+// CONTROL — a NULLABLE local built from a literal whose second assignment is a PROJECTION off
+// a CALL result.  It reaches the cure's predicate with the same answer as c_nullable_struct —
+// the first assignment is the same work-ref construction — and it was correct before the cure,
+// so it is what says the cure did not widen past the half that actually breaks: the literal
+// build is NECESSARY and not sufficient, and what completes it is the second assignment being a
+// whole-value bind from another LOCAL.  If this cell moves, the cure reached too far.
+// @EXPECT_ERROR: cannot copy a member of the container here
+fn c_null_then_call_field() { x: DH? = DH { id: 94 }; note("m{x.id}"); x = mk_box().inner; note("V{x.id}"); }

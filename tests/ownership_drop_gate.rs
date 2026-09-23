@@ -1629,11 +1629,7 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
     ))
     .expect("read formal/heap.md");
     let mut wrong = Vec::new();
-    for dev in LEASE_DEVIATIONS
-        .iter()
-        .map(|(d, _)| *d)
-        .chain(["D-heap-8", "D-heap-9"])
-    {
+    for dev in LEASE_DEVIATIONS.iter().map(|(d, _)| *d).chain(["D-heap-9"]) {
         let header = format!("### {dev} — OPEN");
         // A closed entry's header — `— OPENED 2026-09-15, CLOSED 2026-09-17` — has the open
         // spelling as a PREFIX, so `starts_with` alone answers "it is open" about an entry that
@@ -1686,13 +1682,60 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
             }
         }
         eprintln!(
-            "  {backend}: {refused} of {} cells are refused by the lease rules (D-heap-8)",
+            "  {backend}: {refused} of {} cells are refused by the lease rules",
             cells.len()
         );
     }
     assert!(
         wrong.is_empty(),
         "\nlease verdicts:\n  {}\n",
+        wrong.join("\n  ")
+    );
+}
+
+/// The gate's verdicts ARE the compiler's: every cell the lease rules judge `Refused` fails to
+/// compile by default — `copy-of-droppable` or `read-after-move` — and every `Once` cell
+/// compiles.  The gate runs its cells with the errors switched off (`gate_command`), so without
+/// this the two could disagree in silence: a refused shape the compiler lets through is a copy
+/// released twice in a user's program, and a legal shape it refuses is a program broken.
+#[test]
+fn a_refused_cell_is_a_compile_error_and_a_once_cell_is_not() {
+    let cells = all_cells();
+    let answers = for_each_cell(&cells, "lease_default", workers(16), |dir, c| {
+        let path = dir.join(format!("{}.loft", c.name));
+        std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+        let out = Command::new(loft_bin())
+            .arg("--check")
+            .arg("--interpret")
+            .arg(&path)
+            .current_dir(dir)
+            .env("LOFT_TIMEOUT", "60")
+            .env("LOFT_ERRORS", "compact")
+            .env_remove("LOFT_NO_LEASE_REFUSE")
+            .output()
+            .expect("spawn loft");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        text.contains("[copy-of-droppable]") || text.contains("[read-after-move]")
+    });
+    let mut wrong = Vec::new();
+    for (c, refused) in cells.iter().zip(answers) {
+        match (lease_verdict(&c.name), refused) {
+            (Lease::Refused, false) => {
+                wrong.push(format!("{}: the rules refuse it and it compiles", c.name))
+            }
+            (Lease::Once, true) => {
+                wrong.push(format!("{}: the rules permit it and it is refused", c.name))
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "\nlease verdicts vs the compiler:\n  {}\n",
         wrong.join("\n  ")
     );
 }

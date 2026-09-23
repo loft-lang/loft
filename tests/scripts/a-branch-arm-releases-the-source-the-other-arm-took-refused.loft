@@ -1,0 +1,40 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `a-branch-arm-releases-the-source-the-other-arm-took.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: PENDING
+
+fn trace_path() -> text { return "loft_armdrop_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct ArH { id: integer }
+
+fn OpDrop(self: ArH) { note("{self.id}"); }
+
+fn ar(id: integer) -> ArH { return ArH { id: id }; }
+
+struct ArPair { p: ArH, q: ArH }
+
+enum ArPick { L, R, M }
+
+// Both locals READ after the branch: the values must be intact, so the release is restored
+// without moving when it happens.
+// @EXPECT_ERROR: `a` is read after its value moved
+// @EXPECT_ERROR: `b` is read after its value moved
+fn c_read_after(c: boolean) { a = ar(101); b = ar(102); t = if c { a } else { b }; note("V{t.id}{a.id}{b.id}"); }

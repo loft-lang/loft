@@ -8,9 +8,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 ## Status
 
 Active — P0 done; P1 rewritten 2026-09-15 to a rule read off the line (owner); P2's report
-reworked to that rule (P2r done); P3 — the report becomes a compile error — is IN PROGRESS: the
-refusal is built behind `LOFT_LEASE_REFUSE` (opt-in, 2026-09-17), and what remains is the corpus
-conversion and the flip to default-on.  Tracked as
+reworked to that rule (P2r done); P3 — the report becomes a compile error — is DONE (2026-09-23):
+`copy-of-droppable` and `read-after-move` (`(H-Spent)`, `src/spent.rs`) are on by default, the
+corpus is converted (refused cells moved to `<name>-refused.loft` companions), and
+`LOFT_NO_LEASE_REFUSE=1` is the drop gate's switch-off and the bisect step.  Next: P4 (`OpCopy`).  Tracked as
 [`@PLN163`](https://github.com/loft-lang/plans/issues/163).  Decided with the owner on 2026-09-15
 after the drop-release arc (`heap.md` D-heap-1, D-heap-7) kept meeting shapes where the compiler
 could not tell which copy should release a resource.

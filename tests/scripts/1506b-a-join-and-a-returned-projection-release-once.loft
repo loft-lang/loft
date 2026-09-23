@@ -112,39 +112,14 @@ fn in_a_loop() -> integer {
 
 // --- the RETURNED projection ---
 
-// The shape itself: the copy the return publishes owns the member from here on.
-fn returned_member() -> JH { d = mk_dense(); return d.h; }
 
-// Why the transfer cannot be keyed on the VARIABLE.  `c` picks which exit runs, and the
-// path that does NOT hand the member out must still release it.
-fn two_exits(c: boolean) -> JH { d = mk_two_dense(); if c { return d.h; } return d.g; }
 
-// The sibling member is not the copy's: `g` stays the record's to release.
-fn returned_of_two() -> JH { d = mk_two_dense(); return d.h; }
 
-// A member two levels down.  `q` and `p.b` are still the record's; only `p.a` moves.
-fn nested_member() -> JH { d = mk_box(); return d.p.a; }
 
-// The same record, a member OUTSIDE the nested one: `p.a` and `p.b` both stay.
-fn outer_member() -> JH { d = mk_box(); return d.q; }
 
-// The whole nested record moves, so everything under it goes with it and only `q` stays.
-fn whole_member() -> JPair { d = mk_box(); return d.p; }
 
-// The same member reached through a VIEW local.  `(B-View)` makes `e = d.h` a view and the
-// return publishes the same copy of the same member, so the transfer is the same one — the
-// path just has to be carried from the bind to the return.
-fn view_bound() -> JH { d = mk_dense(); e = d.h; return e; }
 
-// The view is REBOUND before the return: `(O-Latest)` says the fact belongs to the latest
-// assignment, so `g` is what leaves and `h` is still the record's.
-fn view_rebound() -> JH { d = mk_two_dense(); e = d.h; e = d.g; return e; }
 
-// The CONTROL.  A copy off a PARAMETER moves nothing — the caller owns — so the caller
-// ends holding two records of one resource.  That is D-heap-1, deliberately unmoved here.
-// Both spellings, because the view one reaches this through a different reader.
-fn param_member(p: JS) -> JH { return p.h; }
-fn param_view_member(p: JS) -> JH { e = p.h; return e; }
 
 fn main() {
   empty: vector<u8> = [];
@@ -194,54 +169,15 @@ fn main() {
   assert(lp == 19, "two iterations sum 9+0 + 9+1: got {lp}");
   assert(got == "9,9", "one release per iteration's record: got '{got}'");
 
-  rm = returned_member(); got = drain();
-  assert(rm.id == 9, "the returned member reads: got {rm.id}");
-  assert(got == "", "the source keeps nothing back at the return: got '{got}'");
-  rm = JH { id: 0 }; got = drain();
-  assert(got == "9", "the returned member releases ONCE, at its new owner: got '{got}'");
 
-  ta = two_exits(true); got = drain();
-  assert(ta.id == 1, "the true exit returns h: got {ta.id}");
-  assert(got == "2", "the exit that hands h out still releases g: got '{got}'");
-  tb = two_exits(false); got = drain();
-  assert(tb.id == 2, "the false exit returns g: got {tb.id}");
-  assert(got == "1", "the exit that hands g out still releases h: got '{got}'");
 
-  ro = returned_of_two(); got = drain();
-  assert(ro.id == 1, "the returned member of two reads: got {ro.id}");
-  assert(got == "2", "the sibling member is released by the record: got '{got}'");
 
-  nm = nested_member(); got = drain();
-  assert(nm.id == 11, "the nested member reads: got {nm.id}");
-  assert(got == "13,12" || got == "12,13",
-    "a member two levels down leaves `q` AND `p.b` to the record: got '{got}'");
 
-  om = outer_member(); got = drain();
-  assert(om.id == 13, "the outer member reads: got {om.id}");
-  assert(got == "12,11" || got == "11,12",
-    "a member beside the nested record leaves BOTH of its members: got '{got}'");
 
-  wm = whole_member(); got = drain();
-  assert(wm.a.id == 11, "the whole nested record reads: got {wm.a.id}");
-  assert(got == "13", "the whole member takes its own with it: got '{got}'");
 
-  vb = view_bound(); got = drain();
-  assert(vb.id == 9, "the view-bound member reads: got {vb.id}");
-  assert(got == "", "the source keeps nothing back behind a view: got '{got}'");
-  vb = JH { id: 0 }; got = drain();
-  assert(got == "9", "a view-bound member releases ONCE, at its new owner: got '{got}'");
 
-  vr = view_rebound(); got = drain();
-  assert(vr.id == 2, "the rebound view reads the LATEST member: got {vr.id}");
-  assert(got == "1", "the member the view no longer names is still the record's: got '{got}'");
 
   d = mk_dense();
-  pm = param_member(d); got = drain();
-  assert(pm.id == 9, "the parameter member reads: got {pm.id}");
-  assert(got == "", "nothing is released at the callee's return: got '{got}'");
-  pv = param_view_member(d); got = drain();
-  assert(pv.id == 9, "the parameter member through a view reads: got {pv.id}");
-  assert(got == "", "nothing is released behind a parameter view either: got '{got}'");
 
   println("1506b OK");
 }

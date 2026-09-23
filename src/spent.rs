@@ -37,9 +37,24 @@ pub struct SpentRead {
     pub moved_line: u32,
 }
 
-/// The reads found per function, by definition number: filled before the scope pass, taken by
-/// the census that raises the lease errors (`use_analysis::drop_copy_census`).
-static FOUND: Mutex<Option<HashMap<u32, Vec<SpentRead>>>> = Mutex::new(None);
+/// Which function a finding belongs to: its file, line and name.  NOT the definition number —
+/// one process parses many programs (the corpus runner does, one after another), and a number
+/// is reused by every one of them, so a finding recorded and never raised would be raised
+/// against another program's function.  Two definitions with one key are one function parsed
+/// twice, whose findings are the same.
+type Key = (String, u32, String);
+
+fn key(def: &crate::data::Definition) -> Key {
+    (
+        def.position.file.clone(),
+        def.position.line,
+        def.name.clone(),
+    )
+}
+
+/// The reads found per function: filled before the scope pass, taken by the census that raises
+/// the lease errors (`use_analysis::drop_copy_census`).
+static FOUND: Mutex<Option<HashMap<Key, Vec<SpentRead>>>> = Mutex::new(None);
 
 /// Record the spent reads of every function not yet through the scope pass.  Called at the top
 /// of `scopes::check`, while each body is still the parser's.
@@ -54,27 +69,29 @@ pub fn record_all(data: &Data) {
             continue;
         }
         let reads = spent_reads(data, d_nr);
-        if !reads.is_empty() {
-            found.push((d_nr, reads));
-        }
+        found.push((key(def), reads));
     }
     let mut guard = FOUND
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     let map = guard.get_or_insert_with(HashMap::new);
-    for (d_nr, reads) in found {
-        map.insert(d_nr, reads);
+    for (k, reads) in found {
+        if reads.is_empty() {
+            map.remove(&k);
+        } else {
+            map.insert(k, reads);
+        }
     }
 }
 
-/// The spent reads recorded for `d_nr`, removed so each is raised once.
-pub fn take(d_nr: u32) -> Vec<SpentRead> {
+/// The spent reads recorded for `def`, removed so each is raised once.
+pub fn take(def: &crate::data::Definition) -> Vec<SpentRead> {
     let mut guard = FOUND
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);
     guard
         .as_mut()
-        .and_then(|m| m.remove(&d_nr))
+        .and_then(|m| m.remove(&key(def)))
         .unwrap_or_default()
 }
 

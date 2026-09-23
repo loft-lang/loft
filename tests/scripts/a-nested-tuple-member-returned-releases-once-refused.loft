@@ -1,0 +1,61 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `a-nested-tuple-member-returned-releases-once.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: PENDING
+
+fn trace_path() -> text { return "loft_nestret_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct NrH { id: integer }
+
+fn OpDrop(self: NrH) { note("{self.id}"); }
+
+struct NrS { h: NrH }
+
+struct NrBox { s: NrS }
+
+fn nr_mk(id: integer) -> NrS { return NrS { h: NrH { id: id } }; }
+
+// The defect: the droppable sits in the INNER tuple and the member is RETURNED, so the read
+// materialises through a temp the walk had no entry for.
+// @EXPECT_ERROR: cannot copy a member of `t` here
+fn r_inner() -> NrS { s = nr_mk(1); t = ((s, 1), 2); return t.0.0; }
+
+// Depth three: the projection arrives wrapped in the lowered block of the level below it, which
+// a bare `TupleGet` match does not see.
+// @EXPECT_ERROR: cannot copy a member of `t` here
+fn r_depth3() -> NrS { s = nr_mk(11); t = (((s, 1), 2), 3); return t.0.0.0; }
+
+// The SECOND inner tuple's member — the cell a `first()`-shaped read gets wrong.
+// @EXPECT_ERROR: cannot copy a member of `t` here
+fn r_second_inner() -> NrS { a = nr_mk(21); b = nr_mk(22); t = ((a, 1), (b, 2)); return t.1.0; }
+
+// Two droppables in ONE inner tuple, member 1 returned.
+// @EXPECT_ERROR: cannot copy a member of `t` here
+fn r_both_in_one() -> NrS { a = nr_mk(31); b = nr_mk(32); t = ((a, b), 2); return t.0.1; }
+
+// The inner member written NULLABLE and returned as `NrS?`: `@FR-N-Shape` makes a `τ?` a
+// nullability bit over the same runtime shape, so the depth answer must not depend on it.
+// @EXPECT_ERROR: cannot copy a member of `t` here
+fn r_nullable_inner() -> NrS? { s = nr_mk(61); t: ((NrS?, integer), integer) = ((s, 1), 2); return t.0.0; }
+
+// CONTROL — the FLAT member returned: loft#1509's shape, closed, and it must stay closed.
+// @EXPECT_ERROR: cannot copy a member of `t` here
+fn r_flat() -> NrS { s = nr_mk(111); t = (s, 5); return t.0; }

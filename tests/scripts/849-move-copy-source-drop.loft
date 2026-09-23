@@ -91,17 +91,6 @@ fn c4() {
   assert((v[0].id ?? 0) == 28, "c4 element 0: {v[0].id ?? 0}");
 }
 
-// 5 — named locals into a vector. The locals stay READABLE afterwards (the data is copied),
-//     but ownership went with the copy: the elements release, in element order, and the
-//     locals do not. Without that the resource is released twice — once by the local and
-//     once by the element — which is the shape the `0x8000` bit cannot catch, since it only
-//     fires when the source is dead after the copy.
-fn c5() {
-  h1 = mk(21); h2 = mk(22);
-  v: vector<H> = [h1, h2];
-  assert(len(v) == 2, "c5 length: {len(v)}");
-  assert(h1.id == 21, "c5 source still readable after the copy: {h1.id}");
-}
 
 // 6 — CONTROL: plain locals, no container at all. Untouched by any of this.
 fn c6() {
@@ -137,9 +126,6 @@ fn main() {
   got = drain();
   assert(got == "28", "c4 a single moved element releases once: {got}");
 
-  c5();
-  got = drain();
-  assert(got == "21,22", "c5 the elements release, not the locals they came from: {got}");
 
   c6();
   got = drain();

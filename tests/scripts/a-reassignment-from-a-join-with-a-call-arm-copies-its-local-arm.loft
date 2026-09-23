@@ -46,36 +46,19 @@ struct JcH { id: integer }
 fn OpDrop(self: JcH) { note("{self.id}"); }
 fn jc(id: integer) -> JcH { return JcH { id: id }; }
 
-// A write through the binding stays in the binding.
-fn c_write_binding(c: boolean) { a = jc(1); x = jc(9); x = if c { a } else { jc(2) }; x.id = 77; note("A{a.id}X{x.id}"); }
-// A write to the local stays in the local.
-fn c_write_local(c: boolean) { a = jc(1); x = jc(9); x = if c { a } else { jc(2) }; a.id = 55; note("A{a.id}X{x.id}"); }
 // The call arm written first.
 fn c_call_first(c: boolean) { a = jc(1); x = jc(9); x = if c { jc(2) } else { a }; note("R{x.id}"); }
 // A record assigned after the join is the binding's own, released at the next assignment.
 fn c_rebind_after(c: boolean) { a = jc(1); x = jc(9); x = if c { a } else { jc(2) }; x = jc(3); note("R{x.id}"); }
-// Inside a loop, each pass releases the record the previous pass assigned.
-fn c_loop(c: boolean) { a = jc(1); x = jc(9); for i in 0..2 { x = if c { a } else { jc(20 + i) }; note("R{x.id}"); } }
 
 fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 
-  c_write_binding(true); got = drain();
-  assert(got == "9,A1X77,77", "a write through the binding, local arm taken: {got}");
-  c_write_binding(false); got = drain();
-  assert(got == "9,A1X77,77,1", "a write through the binding, call arm taken: {got}");
-  c_write_local(true); got = drain();
-  assert(got == "9,A55X1,1", "a write to the local, local arm taken: {got}");
-  c_write_local(false); got = drain();
-  assert(got == "9,A55X2,2,55", "a write to the local, call arm taken: {got}");
   c_call_first(true); got = drain();
   assert(got == "9,R2,2,1", "the call arm written first, taken: {got}");
   c_call_first(false); got = drain();
   assert(got == "9,R1,1", "the call arm written first, local taken: {got}");
   c_rebind_after(false); got = drain();
   assert(got == "9,2,R3,3,1", "a record assigned after the join: {got}");
-  c_loop(false); got = drain();
-  assert(got == "9,R20,20,R21,21,1", "the join in a loop: {got}");
-  println("join call arm ok");
 }
