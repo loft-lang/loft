@@ -21,7 +21,7 @@
 //                        vector local and copies on its own path.  A record read through a
 //                        link VIEWS its source, for a local link and a `&` parameter alike,
 //                        where `(B-Copy)` says a whole-value bind copies; that is its own
-//                        question, loft#1631 (`binding.md` D-bind-51).
+//                        question, loft#1631 (`binding.md` D-bind-52).
 //
 // @falsified-at: 333ccd7e5 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/a-plain-bind-from-a-link-copies-the-value-it-reads.patch — interpret exit 1 -> 0, native exit 1 -> 0

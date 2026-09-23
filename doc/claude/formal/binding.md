@@ -397,14 +397,14 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 3.**
 
-* **D-bind-51** *(opened 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD read through a link.
+* **D-bind-52** *(opened 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD read through a link.
   `y = e` with `e = &z` (and `y = p` with `p: &P` a parameter) binds `y` with a borrow dep on the
   link, so `y` VIEWS the record and `y.n = 9` writes `z` — where a whole-value bind copies and a
   plain local source (`y = z`) does.  Both backends agree.  The `&`-parameter peel's borrow is
   deliberate (loft#772: without it `w` became an owner of the shared store), so the fix decides
   where a whole read of a borrowed base stands between `(B-Copy)` and `(B-View-Base)`.  Found
-  while closing D-bind-50, whose scalar, text and nullable cells copy.
-* **D-bind-50** *(opened 2026-09-23, CLOSED 2026-09-23)* — `(B-Copy)` with `(C-Ref)` for a plain
+  while closing D-bind-51, whose scalar, text and nullable cells copy.
+* **D-bind-51** *(opened 2026-09-23, CLOSED 2026-09-23)* — `(B-Copy)` with `(C-Ref)` for a plain
   bind from a LOCAL link.  `y = e` with `e = &z` kept the link's `&τ` type into the bind, so `y`
   became a second link: `z = 9` afterwards read 9 through `y`, and `y = 4` wrote `z`, on both
   backends; the annotated `y: integer = e` was refused as "cannot change type from integer to
