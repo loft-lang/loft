@@ -18,11 +18,13 @@
 // Every trace is exact and hand-computed: a lost release and a doubled one both show as the
 // wrong sequence, not just the wrong count.
 //
-// @falsified-at: d4dacbbb2 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-at: 8bde81b68 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.patch —
 //   the same channels.
 // CHANNEL: assertion failures, both backends.
 // HOLDS: clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1` after; `k1`–`k3` right before and after.
+// `c1`–`c6` were falsified first at d4dacbbb2 (the same channels); the receipt above is the
+// adopting half's, `c7`–`c13`.
 
 struct H { id: integer }
 
