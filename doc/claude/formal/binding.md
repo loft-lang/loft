@@ -395,7 +395,7 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 3.**
 
 * **D-bind-50** *(opened 2026-09-22, CLOSED 2026-09-22; loft#1612)* — `(B-Copy)` for the
   destination of a `??` CHAIN of three or more operands.  A plain bind copies a heap whole
@@ -762,6 +762,25 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   `tests/scripts/a-link-to-a-narrow-integer-store-place-is-refused.loft` (one error per `&`) and
   `tests/scripts/a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` (what must still link).
   Found while checking D-bind-36's cells against a middle element.
+* **D-bind-44** *(opened 2026-09-23, loft#1639)* — `(B-Ref-Intro)` says a `&`-annotated binding
+  gives the variable type `&(typeof a)`, so the link's type comes from the TARGET and an explicit
+  annotation naming a different type is a mismatch `(C-Ref)` has no conversion for.  It is not
+  refused: the link reads and writes the target's slot at the ANNOTATION's width and bias, handing
+  the stored code back as a value.  `b: i8 = -1; pb: &u16 = &b` reads `127` (`enc_byte(-1, -128)`,
+  the raw byte); `d: integer limit(1000, 1100) = 1050; pd: &u8 = &d` reads `50`; `h: u16 = 65535;
+  ph: &u8 = &h` reads `255`.  The writes corrupt the target — `pf: &u16 = &(f: i8 = -1); pf = 5`
+  leaves `f == -123`, `pg: &u8 = &(g: Lim = 1050); pg = 200` leaves `g == 1200`, and
+  `pi: &u8 = &(i: u16 = 65535); pi = 200` leaves `i == 65480`, one byte written over two.  The
+  annotation IS consulted for the value check, against the wrong type: `pg = 1060` is refused as
+  not fitting `u8` over a slot that holds `1000..=1100`.  `--native` does not compile at all
+  (`*mut u16 = addr_of_mut!(var_a)` over a `u8`, rustc E0308 per link), so the backends diverge
+  too.  **Where (measured).**  `u8` is the one row that reads correctly, because its bias is zero
+  and its encoding is the identity — the covered spelling is the one that cannot fail, which is why
+  nothing caught it.  Same class as the frame readers @PLN167 A0–A2 closed (#1632): a reader taking
+  the stored code for a value, here with the wrong width supplied by the annotation rather than by
+  the reader.  Belongs to A3 with D-bind-38 and D-bind-39.  Found when a peer's rules-side read
+  predicted the spelling was already refused.
+
 * **D-bind-38** *(opened 2026-09-14, loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
   vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
   addressable operand — a variable, struct field, or vector element", on both backends and already
