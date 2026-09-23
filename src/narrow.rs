@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @F4 — Ranged/width integer types: the bytes one occupies at rest
 //! The encoding of a narrow integer at rest — the bytes a `u8`, `i8`, `u16`, `i16`, `i32`,
 //! `u32` or `limit(lo, hi)` value occupies in a store, spelled once for both backends.
 //!

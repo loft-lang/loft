@@ -91,11 +91,14 @@ store written by one build readable by another *of the same layout*.
               so it moves offsets and record size — a layout fact the golden pins.
   (L-Narrow-Alias)  a stored width is a property of a NAMED type.  `size(n)` is written in a
               `type` alias and nowhere else: `type Lim = integer limit(1000, 1100) size(1)`, never
-              inline on a field or a vector element.  So a type whose declared range leaves a
-              width's top code SPARE — the `(E-Uncomp-NN)` types — always reaches a slot through
-              an alias, and can therefore never be a narrow-VECTOR element, whose raw encoding
-              requires no alias.  That is what lets the field-sentinel and raw-element op families
-              stay separate (`data::NarrowSlot::of_slot`).
+              inline on a field or a vector element, and the parser refuses the inline spelling by
+              name.  So a type whose declared range leaves a width's top code SPARE — the
+              `(E-Uncomp-NN)` types — always reaches a slot through an alias.
+  (L-Narrow-Spare)  and it reaches EVERY kind of slot the same way.  A field, a vector element and
+              a local of such a type all answer C85's null after an overflow: `vector<Spare8>` is
+              a narrow vector whose ELEMENT type is the alias, so the spare-code encoding and the
+              raw narrow-vector encoding are not alternatives to choose between — the spare clause
+              applies on top of whichever kind the width picks (`data::NarrowSlot::of_slot`).
   (L-Narrow-Enc) a width does NOT determine how its bytes decode.  At 2 and 4 bytes a
               non-negative range running past the signed maximum stores UNSIGNED and reserves the
               TOP code for absence; a signed range stores two's-complement and reserves its own

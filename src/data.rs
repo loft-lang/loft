@@ -6030,14 +6030,23 @@ impl NarrowSlot {
     /// `spare` is a NON-nullable 1- or 2-byte type that kept a top code
     /// (`IntegerSpec::reserves_sentinel_unconditionally`): C85 says an overflow writes that
     /// code and the slot then reads null, which is what a LOCAL of the type answers — so the
-    /// place reads and writes through the op that maps the code to null (loft#1615).  It is
-    /// never a narrow-vector element, and `@FR-L-Narrow-Alias` is why: a stored width is a
-    /// property of a NAMED type, so `size(n)` is written in a `type` alias and nowhere else,
-    /// while `narrow_vec` requires no alias.  The two are therefore mutually exclusive by the
-    /// RULE rather than by an accident of the parser — which is what the `debug_assert` below
-    /// now rests on.  (It rested on the accident until 2026-09-23: nothing REFUSES an inline
-    /// `size`, the parser simply never looks for one, so a future production that admitted it
-    /// would have walked into the assert with no rule to warn it.)
+    /// place reads and writes through the op that maps the code to null (loft#1615).
+    ///
+    /// It applies to a narrow-vector ELEMENT as well, and deliberately: `vector<Spare8>` is a
+    /// narrow vector whose element type IS the alias, so the two are not exclusive, and an
+    /// element of such a type answers C85's null on overflow exactly as the field and the
+    /// local do (`@FR-L-Narrow-Spare`).  That uniformity is the whole point of the arc, and the guard
+    /// `1615-a-spare-code-field-reads-its-overflow-as-null` pins the element cell beside the
+    /// field one on both backends.
+    ///
+    /// ⚠ This carried a `debug_assert!(!(spare && narrow_vec))` for a day, on the reasoning
+    /// that `size(n)` is written only in a `type` alias (`@FR-L-Narrow-Alias`) while a narrow
+    /// vector "requires no alias".  The second half is false — `narrow_vec` asks whether the
+    /// FIELD's own type is an alias, not whether the element's is — and the assertion fired
+    /// on that guard's own element cell under `-C debug-assertions=on`, where a release build
+    /// had been answering correctly all along.  Kept as a comment rather than an assertion
+    /// because the fact it was guarding is not true; what IS true is the first half, and the
+    /// parser enforces that one by refusing an inline `size`.
     ///
     /// A width of 8 is the wide `integer`, which answers [`NarrowIntKind::Int`] and takes no
     /// `min`: the two store-place callers pass every supported width here, so this is total
@@ -6055,12 +6064,6 @@ impl NarrowSlot {
             0
         };
         let spare = !nullable && matches!(width, 1 | 2) && spec.reserves_sentinel_unconditionally();
-        debug_assert!(
-            !(spare && narrow_vec),
-            "a spare-code type reached a narrow-vector element — only a `type` alias can \
-             spell one, and a narrow vector has no alias; the two op families would now \
-             disagree about the same type"
-        );
         Self {
             kind,
             min,
