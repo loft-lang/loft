@@ -1,0 +1,49 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: parameters
+// @CLAIM: ownership is internal.  A collection parameter is already shared, so a callee's
+//         append reaches the caller; `const` makes a parameter read-only; `&` gives a scalar
+//         explicit write-back.  There is no user-facing borrow checker.
+// @SEEN-FROM: 00-vs-rust.html#parameters
+// @RATIONALE: DESIGN_DECISIONS.md C79 (ownership is internal), C77 (heap aliases by default;
+//         `&` binds a live reference), C86 (whole-value heap binds COPY)
+//
+// Rust, for the same three:
+//     fn push_two(v: &mut Vec<i32>)         { v.push(1); v.push(2); }
+//     fn count(v: &Vec<i32>) -> usize       { v.len() }
+//     fn add_to(n: &mut i32, delta: i32)    { *n += delta; }
+//
+// The trade the page states: loft asks for no lifetime and no `mut` at the call site, and in
+// exchange the sharing is a property of the TYPE rather than something the signature spells.
+
+fn push_two(v: &vector<integer>)                  { v += [1, 2]; }
+fn count(v: const vector<integer>) -> integer     { len(v) }
+fn add_to(n: &integer, delta: integer)            { n += delta; }
+fn append_plain(v: vector<integer>)               { v += [9]; }
+
+fn test_a_collection_parameter_is_already_shared() {
+  v: vector<integer> = [];
+  push_two(v);
+  assert(len(v) == 2, "the callee's append reached the caller");
+  assert((v[0] ?? -1) == 1 and (v[1] ?? -1) == 2, "and in order");
+}
+
+fn test_a_plain_collection_parameter_shares_too() {
+  // The half a Rust reader does NOT expect: no `&` is needed for the sharing itself.
+  // `&` is about REBINDING the parameter, not about reaching the caller's elements.
+  v: vector<integer> = [1];
+  append_plain(v);
+  assert(len(v) == 2, "a plain collection parameter still reaches the caller (C77)");
+}
+
+fn test_const_is_read_only_and_still_reads() {
+  v: vector<integer> = [1, 2, 3];
+  assert(count(v) == 3, "a const parameter reads without copying");
+}
+
+fn test_an_ampersand_scalar_writes_back() {
+  n = 10;
+  add_to(n, 5);
+  assert(n == 15, "`&integer` is the explicit write-back for a scalar");
+}

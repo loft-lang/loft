@@ -1,0 +1,34 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: variables
+// @CLAIM: first assignment declares AND infers; a variable is mutable; `const` is opt-in and
+//         is a semantic claim, not a hint.
+// @SEEN-FROM: 00-vs-rust.html#variables · 00-vs-python.html#variables
+// @RATIONALE: DESIGN_DECISIONS.md C124 (const reaches only a const parameter).  The
+//         mutable-by-default choice itself has NO recorded rationale — SUBJECTS.md § Subjects
+//         with no recorded rationale.
+//
+// Rust:  let mut x = 42; x += 1;      let y = 42;   // immutable unless you write `mut`
+// Python: x = 42; x += 1              # mutable, and the type is not checked at all
+
+fn takes_const(v: const vector<integer>) -> integer { len(v) }
+
+fn test_first_assignment_declares_and_infers() {
+  x = 42;
+  x += 1;
+  assert(x == 43, "no `let`, no `mut` — and the write lands");
+  // The inference is STATIC, which is the half that separates loft from Python: the type is
+  // fixed at the first assignment, and a later value of another type is a compile error, not
+  // a rebinding.  That refusal is pinned in tests/scripts/102-expected-errors.loft
+  // ("cannot change type"); it cannot also be pinned here, because this file must compile.
+  t = "forty-two";
+  assert(size(t) == 9, "a text local inferred from its first value");
+}
+
+fn test_const_is_opt_in_and_reaches_a_const_parameter() {
+  const y = 42;
+  assert(y == 42, "`const` marks a value that does not change");
+  const v: vector<integer> = [1, 2, 3];
+  assert(takes_const(v) == 3, "a const value reaches a const parameter (C124)");
+}

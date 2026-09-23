@@ -430,7 +430,14 @@ the bug-filing policy above). It never blocks.
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
 [INTERFACES.md](doc/claude/INTERFACES.md) traits/generics · [TUPLES.md](doc/claude/TUPLES.md) ·
 [COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md) ·
-[OCAML_BAR.md](doc/claude/OCAML_BAR.md) / [LUA_BAR.md](doc/claude/LUA_BAR.md) expressiveness probes against OCaml and
+[SUBJECTS.md](doc/claude/SUBJECTS.md) the axes loft made a choice on — one row per subject with its
+RATIONALE (a link to the `C` entry, never a restatement) and how the claim is VERIFIED; the
+comparison pages, the bars and the registers all link into it, and a row reading `— none
+recorded` is a decision nobody wrote down ·
+`tests/comparisons/*.loft` the comparison claims AS PROGRAMS (`wrap::comparisons`): until
+2026-09-23 `00-vs-rust.html` and `00-vs-python.html` were the only reference pages with no
+`.loft` source, so their 28 samples were the only published code nothing ran ·
+[bars/](doc/claude/bars/README.md) — [OCAML_BAR.md](doc/claude/bars/OCAML_BAR.md) / [LUA_BAR.md](doc/claude/bars/LUA_BAR.md) expressiveness probes against OCaml and
 Lua, measured (reports, never gates — and run a generator probe inside a memory cap).
 
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) parser/two-pass/types ·

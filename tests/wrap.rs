@@ -241,6 +241,43 @@ fn dir() -> std::io::Result<()> {
     Ok(())
 }
 
+/// Run every `.loft` file in `tests/comparisons/` — the language-comparison claims, as
+/// programs.
+///
+/// These back `doc/00-vs-rust.html` and `doc/00-vs-python.html`, which are the ONLY reference
+/// pages with no `tests/docs/` source: they are hand-written HTML, and until 2026-09-23 the 28
+/// loft samples on them were the only published code nothing executed.  A file here asserts one
+/// claim those pages make, so a claim that stops being true turns this test red instead of
+/// leaving a stale sentence on the page a newcomer reads first.
+///
+/// Same `run_test` as `dir()` and `loft_suite()`, so the entry-point rule and the
+/// `@EXPECT_WARNING` / `@EXPECT_ERROR` annotations behave identically.  There is deliberately
+/// no skip list: a comparison claim that cannot run is a claim to delete, not to except.
+///
+/// The contract each file follows is `tests/comparisons/README.md`; the subject index and the
+/// links to every rationale are `doc/claude/SUBJECTS.md`.
+#[test]
+fn comparisons() -> std::io::Result<()> {
+    let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+    let mut files: Vec<PathBuf> = std::fs::read_dir("tests/comparisons")?
+        .filter_map(|f| f.ok().map(|e| e.path()))
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|e| e.eq_ignore_ascii_case("loft"))
+        })
+        .collect();
+    files.sort();
+    assert!(
+        !files.is_empty(),
+        "tests/comparisons/ is empty — the directory exists to gate the comparison claims, \
+         and an empty one passes while proving nothing"
+    );
+    for entry in files {
+        run_test(entry, false, true)?;
+    }
+    Ok(())
+}
+
 /// Compile every `.loft` file in `tests/docs/` to WebAssembly (wasm32-wasip2),
 /// skipping files listed in `WASM_SKIP`.
 ///
@@ -347,10 +384,10 @@ fn loft_suite() -> std::io::Result<()> {
 
 /// Every `.loft` file the two corpus runners execute, in sorted order.
 ///
-/// `tests/docs/` runs through the same `run_test` as `tests/scripts/`, so the entry-point
-/// rule below applies identically to both.
+/// `tests/docs/` and `tests/comparisons/` run through the same `run_test` as
+/// `tests/scripts/`, so the entry-point rule below applies identically to all three.
 fn corpus_files() -> Vec<PathBuf> {
-    let mut files: Vec<PathBuf> = ["tests/scripts", "tests/docs"]
+    let mut files: Vec<PathBuf> = ["tests/scripts", "tests/docs", "tests/comparisons"]
         .iter()
         .filter_map(|d| std::fs::read_dir(d).ok())
         .flatten()

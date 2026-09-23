@@ -1,0 +1,74 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: enum-dispatch
+// @CLAIM: a function name may have several definitions distinguished by the CONCRETE types of
+//         all parameters, and the most specific applicable one is selected.  A struct-enum
+//         payload is a named field read directly; `match` is for the DECISION, never forced
+//         for extraction.
+// @SEEN-FROM: 00-vs-rust.html#enum-dispatch · 00-vs-python.html#enum-dispatch
+// @RATIONALE: DESIGN_DECISIONS.md C89 (no tuple-style variants; a matcher is never forced),
+//         C123 (one name has one body per receiver type).  Feature @F122; the non-goals are
+//         @PLN162 § What NOT to take from Julia.
+//
+// Rust needs a match per call site, or a trait per axis:
+//     match (a, b) { (Rock, Scissors) => …, (Paper, Rock) => …, … }
+// Python reaches for isinstance:
+//     if isinstance(a, Rock) and isinstance(b, Scissors): …
+//
+// ⚠ Note for anyone extending this file: `enum Hand { Rock, Paper, Scissors }` over
+// identically-named structs is a PLAIN enum whose members are names, not those structs —
+// `Rock` is then a value of `Hand` and not a type, and dispatch definitions taking it are
+// refused with that sentence.  The two forms below are the ones that work: plain structs for
+// dispatch, and an INLINE struct-enum for payloads.
+
+struct Rock { n: integer }
+struct Paper { n: integer }
+struct Scissors { n: integer }
+
+fn beats(a: Rock, b: Scissors) -> text { "rock blunts scissors" }
+fn beats(a: Paper, b: Rock) -> text { "paper covers rock" }
+fn beats(a: Scissors, b: Paper) -> text { "scissors cut paper" }
+
+enum Event {
+  Shot { dmg: integer },
+  Heal { amt: integer },
+}
+
+fn test_dispatch_reads_both_arguments() {
+  r = Rock { n: 1 };
+  p = Paper { n: 2 };
+  s = Scissors { n: 3 };
+  assert(beats(r, s) == "rock blunts scissors", "(Rock, Scissors)");
+  assert(beats(p, r) == "paper covers rock", "(Paper, Rock)");
+  assert(beats(s, p) == "scissors cut paper", "(Scissors, Paper)");
+}
+
+// C89 keeps direct payload access permanently: matching is for DISPATCH, never forced for
+// extraction.  But the access below also draws `variant-field-unchecked` (loft#980), and BOTH
+// are the answer — the field read is legal and is the design; the warning is that this one did
+// not establish WHICH variant `e` holds, and on another variant the read answers null.
+//
+// That pair is the honest comparison entry.  A Rust reader is told `match` is not compulsory;
+// what they are not told, unless it is written here, is that skipping it is a warning.
+// @EXPECT_WARNING: Warning[variant-field-unchecked]
+fn test_a_payload_is_a_named_field_read_directly() {
+  e: Event = Shot { dmg: 7 };
+  assert(e.dmg == 7, "the payload is read straight off the value");
+}
+
+fn test_the_checked_read_is_the_one_the_lint_names() {
+  e: Event = Shot { dmg: 7 };
+  got = -1;
+  if e is Shot { dmg } { got = dmg; }
+  assert(got == 7, "`is` establishes the variant and binds the field — no warning");
+}
+
+fn test_match_is_available_but_not_required() {
+  e: Event = Shot { dmg: 7 };
+  said = match e {
+    Shot { dmg } => "shot {dmg}",
+    Heal { amt } => "heal {amt}",
+  };
+  assert(said == "shot 7", "`match` is there when the DECISION is what you want");
+}

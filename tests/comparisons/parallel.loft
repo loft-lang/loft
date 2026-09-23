@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: parallel
+// @CLAIM: `par` is a built-in parallel for-loop.  A worker's captured parent state is
+//         READ-ONLY — a write to it is a compile error, not a race.
+// @SEEN-FROM: 00-vs-rust.html#parallel · 00-vs-python.html#parallel
+// @RATIONALE: DESIGN_DECISIONS.md C93 (a par worker's captured parent state is read-only),
+//         C3 (WASM par() runs sequentially)
+//
+// Rust:   xs.par_iter().map(…).collect()        // rayon, a crate, with Send/Sync bounds
+// Python: multiprocessing.Pool().map(…)         # processes, pickling, and the GIL as the reason
+//
+// The claim that separates loft from both: the safety is not a bound to satisfy or a GIL to
+// work around, it is a refusal at compile time.  This file asserts the VALUES; the refusal
+// itself cannot live here (the file must compile) and is pinned in
+// tests/scripts/102-expected-errors.loft.
+
+// `par` is a CLAUSE on a `for` loop, not a comprehension:
+//     for a in src par(b = func(a), threads) { body }
+// `a` is the element as in any loop, `b` is that element's result, and the body runs on the
+// main thread with both in hand.  The worker is a named function — which is the design, not a
+// restriction to work around: it is what makes the read-only capture rule (C93) checkable.
+fn square(v: integer) -> integer { v * v }
+
+fn test_par_computes_the_same_values_as_a_serial_loop() {
+  src: vector<integer> = [1, 2, 3, 4, 5, 6, 7, 8];
+  serial: vector<integer> = [];
+  for v in src { serial += [v * v]; }
+  par_out: vector<integer> = [];
+  for par_a in src par(par_b = square(par_a), 4) { par_out += [par_b]; }
+  assert(len(par_out) == len(serial), "same length");
+  same = true;
+  for i in 0..len(serial) {
+    if (par_out[i] ?? -1) != (serial[i] ?? -2) { same = false; }
+  }
+  assert(same, "same values, IN ORDER — `par` is a loop, not a bag");
+}
+
+fn test_the_body_sees_the_element_and_its_result_together() {
+  src: vector<integer> = [1, 2, 3];
+  pairs: vector<integer> = [];
+  for par_a in src par(par_b = square(par_a), 2) { pairs += [par_a + par_b]; }
+  assert(len(pairs) == 3, "three results");
+  assert((pairs[0] ?? -1) == 2, "1 + 1");
+  assert((pairs[2] ?? -1) == 12, "3 + 9 — the element is still readable beside its result");
+}

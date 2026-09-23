@@ -1,0 +1,59 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: closures
+// @CLAIM: capture is copy-at-definition and same-scope capture works.  The limits are real
+//         and are decisions: a mutated scalar may be captured by exactly ONE closure, and a
+//         capturing closure cannot be stored in a collection.
+// @SEEN-FROM: 00-vs-rust.html#closures · 00-vs-python.html#closures
+// @RATIONALE: DESIGN_DECISIONS.md C38 (copy-at-definition), C74 (one closure per mutated
+//         scalar), C75 (closure-carrying struct values are frame-bound), C115, C116
+//
+// Rust:   let add = |b| a + b;             // borrows or moves, checked
+// Python: add = lambda b: a + b           # captures the CELL, so a later `a = …` is seen
+//
+// The Python difference is the one asserted first: loft copies at DEFINITION, so a later
+// write to the captured variable is not seen by the closure.  Python's late binding is the
+// classic loop-variable surprise; loft does not have it, and that is the trade for not being
+// able to observe a caller's later state.
+
+fn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }
+
+fn test_capture_is_copy_at_definition() {
+  a = 10;
+  add_a = fn(b: integer) -> integer { a + b };
+  a = 100;                       // after the definition
+  assert(apply(add_a, 1) == 11, "the closure kept the value `a` had when it was made (C38)");
+  assert(a == 100, "and the variable itself moved on");
+}
+
+fn test_same_scope_capture_works() {
+  base = 5;
+  scale = 3;
+  f = fn(v: integer) -> integer { (v + base) * scale };
+  assert(apply(f, 1) == 18, "two same-scope captures, read together");
+}
+
+// C116: a collection element holds a plain fn-ref, never a capturing closure.  That is the
+// limit the page states, and a reader who hears only "closures cannot go in a vector"
+// concludes too much — the table of plain functions works, and is asserted here.
+//
+// ⚠ Written with `for` and a bare index on purpose.  The obvious spelling — `fs[0] ?? double`,
+// which a C80 reader reaches for because an element read is nullable — is loft#1642: it
+// PANICS the interpreter when the index is out of range (`fn_call_ref: d_nr=… is negative`, a
+// raw Rust message) and does not compile at all on `--native` (the null test is emitted as
+// `if <the fn-ref tuple>` and the fallback as a bare `i64`).  Meanwhile `if g != null` on a
+// fn-ref is REFUSED.  Found by this file on its first run; restore the `??` spelling here when
+// loft#1642 closes, because that is the spelling the page should be able to show.
+fn test_a_plain_fn_ref_is_what_a_collection_holds() {
+  fs: vector<fn(integer) -> integer> = [double, negate];
+  got: vector<integer> = [];
+  for f in fs { got += [apply(f, 4)]; }
+  assert(len(got) == 2, "two functions in the vector");
+  assert((got[0] ?? 0) == 8, "the first is `double`");
+  assert((got[1] ?? 0) == -4, "the second is `negate`");
+  assert(apply(fs[0], 4) == 8, "and a bare index reaches one directly");
+}
+
+fn double(v: integer) -> integer { v * 2 }
+fn negate(v: integer) -> integer { -v }
