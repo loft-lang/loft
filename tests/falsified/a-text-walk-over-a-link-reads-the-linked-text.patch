@@ -1,0 +1,66 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 4bc0288e3..a188a4812 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -285,17 +285,6 @@ fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
+     }
+ }
+ 
+-/// Whether a loop over a source of this type walks characters, and so needs the
+-/// `#next` / `#index` pair.  A `&text` link walks the text it names: `iterator` unwraps
+-/// the link before it builds the walk, and the pair must be asked the same question.
+-pub(crate) fn walks_text(in_type: &Type) -> bool {
+-    match in_type {
+-        Type::Text(_) => true,
+-        Type::RefVar(inner) => walks_text(inner),
+-        _ => false,
+-    }
+-}
+-
+ impl Parser {
+     pub(crate) fn iter_text(
+         &mut self,
+@@ -3194,7 +3183,7 @@ use #count instead"
+     ) -> (u16, Option<u16>, u16, Value, Value, Value) {
+         let var_tp = self.for_type(in_type);
+         // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
+-        let (iter_var, pre_var) = if walks_text(in_type) {
++        let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+             let pos_var = self.create_var(&format!("{id}#next"), &I32);
+             self.vars.defined(pos_var);
+             let index_var = self.create_var(&format!("{id}#index"), &I32);
+@@ -4328,7 +4317,7 @@ use #count instead"
+         }
+         // Iterator state vars — text drives a (pos, index) pair, every other
+         // iterator a single index — mirroring parse_vector_for.
+-        let (iter_var, pre_var) = if walks_text(in_type) {
++        let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+             let pos = mk(self, "mat_next", &I32);
+             let idx = mk(self, "mat_index", &I32);
+             (pos, Some(idx))
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index a4d4e20bc..40dbfd8fe 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -3371,7 +3371,7 @@ impl Parser {
+             let mut expr = Value::Null;
+             let in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
+             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
+-            let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
++            let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
+                 self.vars.defined(pos_var);
+                 (pos_var, Some(index_var))
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index d52a923d1..022c23d25 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3067,7 +3067,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             expr = Value::Var(vec_var);
+         }
+         let var_tp = self.for_type(&in_type);
+-        let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
++        let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+             let pos_var = self.create_var(&format!("{id}#next"), &I32);
+             self.vars.defined(pos_var);
+             let index_var = self.create_var(&format!("{id}#index"), &I32);

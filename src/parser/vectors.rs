@@ -3067,7 +3067,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             expr = Value::Var(vec_var);
         }
         let var_tp = self.for_type(&in_type);
-        let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+        let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
             let pos_var = self.create_var(&format!("{id}#next"), &I32);
             self.vars.defined(pos_var);
             let index_var = self.create_var(&format!("{id}#index"), &I32);

@@ -773,16 +773,21 @@ fn main() {
           br_mus_idx = 0;
         }
         if !br_mus_resting && br_mus_played < MUSIC_TRACKS {
-          if br_mus_song == 0 {
-            br_mnote = TRACK_A_NOTES[br_mus_idx];
-            br_mus_step = TRACK_A_DUR;
+          // Each is the value of its `if`: a local bound inside an arm ends with that arm.
+          br_mnote = if br_mus_song == 0 {
+            TRACK_A_NOTES[br_mus_idx]
           } else if br_mus_song == 1 {
-            br_mnote = TRACK_B_NOTES[br_mus_idx];
-            br_mus_step = TRACK_B_DUR;
+            TRACK_B_NOTES[br_mus_idx]
           } else {
-            br_mnote = TRACK_C_NOTES[br_mus_idx];
-            br_mus_step = TRACK_C_DUR;
-          }
+            TRACK_C_NOTES[br_mus_idx]
+          };
+          br_mus_step = if br_mus_song == 0 {
+            TRACK_A_DUR
+          } else if br_mus_song == 1 {
+            TRACK_B_DUR
+          } else {
+            TRACK_C_DUR
+          };
           if br_mnote > 0 {
             graphics::sfx_beep((br_mnote ?? 0) as single, br_mus_step, MUSIC_VOL);
           }

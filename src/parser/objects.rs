@@ -3371,7 +3371,7 @@ impl Parser {
             let mut expr = Value::Null;
             let in_type = self.parse_in_range(&mut expr, &mut Value::Null, &Type::Null, &id);
             // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
-            let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+            let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
                 let pos_var = self.create_var(&format!("{id}#next"), &I32);
                 self.vars.defined(pos_var);
                 (pos_var, Some(index_var))
