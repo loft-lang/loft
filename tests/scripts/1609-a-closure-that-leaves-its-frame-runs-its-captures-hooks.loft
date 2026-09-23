@@ -19,7 +19,11 @@
 // Every trace is exact and hand-computed: a lost release and a doubled one both show as the
 // wrong sequence, not just the wrong count.
 //
+// @falsified-at: 25ea32554 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.patch —
+//   the same channels.
 // CHANNEL: assertion failures, both backends.
+// HOLDS: clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1`; `k1`, `k2` right before and after.
 
 struct H { id: integer }
 
