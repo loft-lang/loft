@@ -109,9 +109,13 @@ esac
 #    classic release break, and nothing above asks the SHIPPED binary to resolve a
 #    package.  A fresh LOFT_HOME, so neither a cached index nor a package the box's own
 #    loft installed can answer for it.  (This was the by-hand `M-install-live` row.)
+#    And from a scratch PROJECT directory inside the prefix: `loft install` writes the
+#    dependency declaration (`loft.toml`, `.loft/api/`) into the directory it runs in, and
+#    run from the repo root it left a manifest there that re-scoped every bare-script test's
+#    diagnostics to a project that did not exist (two `lsp_diagnostics` tests went red).
 export LOFT_HOME="$PREFIX/home"
-mkdir -p "$LOFT_HOME"
-iout=$("$LOFT" install regex 2>&1)
+mkdir -p "$LOFT_HOME" "$PREFIX/project"
+iout=$(cd "$PREFIX/project" && "$LOFT" install regex 2>&1)
 icode=$?
 echo "$iout" | tail -3 | sed 's/^/    /'
 [ "$icode" = 0 ] || fail "the installed loft cannot install a library from the live registry (exit $icode)"
