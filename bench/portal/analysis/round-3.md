@@ -28,6 +28,34 @@ what they are, with what was learned.
 
 ## Built
 
+### A parameter's text borrowed — `(R-TextBorrow)`'s store-read clause, 2026-09-23
+
+Built as the store-read clause of `(R-TextBorrow)` (`formal/rewrites.md`), under the rule's
+own switch `LOFT_NO_TEXT_BORROW`, cells `tests/scripts/158-text-borrow-store.loft` a1–a7 /
+d1–d7 (identical on the interpreter and on native under `LOFT_HOIST_VERIFY`, `LOFT_POISON`,
+`LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`), pins `tests/text_borrow.rs`.  `w =
+words[i]?` over a `const vector<text>` parameter copied its text twice (the temp's
+`.to_string()`, the bind's `.clone()`) and a third time as a hash key, where the twin
+borrows `&str` throughout.  The borrow is sound while nothing in its scope can grow, free
+or rewrite a store the frame did not mint — read off the operands, since `(H-Alloc)` makes
+a frame-minted store distinct from every parameter's.  Hand-priced first, then built:
+
+| row | before | after | |
+|---|---:|---:|---|
+| `word_count` (ns/op) | 58.5 | **44.4** | −24 % (the temp alone −14 %) |
+| `hash_text_keys` (µs) | 657 | **603** | −8 % |
+
+Hashes unchanged.  Falsified by the store condition dropped
+(`tests/falsified/158-text-borrow-store.patch`, scored by `falsify.sh --patch`): native d1
+reads `world:2` for `helloworld:2` and d4 two stale bytes for `up`.  d3 — a sibling field of
+the source's record grown — reads right under the patch too, because that growth happens
+not to move `names`'s buffer; it guards the admission through the pins, not the value.
+Two lessons: a type test on a parameter or a block result wants `.base()` like every other
+site here (four of the clause's tests were spelled bare, and `ir_walker_audit.py optional`'s
+ratchet caught the last one); and `OpLengthHash`, with the other keyed `OpLength*` ops, is
+missing from `READ_ONLY_COLLECTION_OPS`, so a `len(h)` in a loop declines every hoist in it
+(cell a7 spells the shape — the next lever).
+
 ### The record push window under a branch — `(R-PushFill)`'s record clause, 2026-09-22
 
 Built as the record clause of `(R-PushFill)` (`formal/rewrites.md`, the in-words paragraph

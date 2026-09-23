@@ -1604,6 +1604,24 @@ null decl in `Output::emit_null_dbref`, the header exclusion in
                  table's source, which outlives the temp's block and the
                  statement that consumes the value.  A rebind, a link, a capture
                  or a return declines it, as for `p`.
+                 STORE-READ CLAUSE: a text read `OpGetText(R, f)` where R is a
+                 PARAMETER the function never rebinds, reached through field and
+                 element reads (`words[i]?`, `b.names[i] ?? d`), is BORROWED by the
+                 `?` / `??` temp bound to it and by every text LOCAL whose each
+                 binding is a text literal, such a read, a text parameter or
+                 another variable this clause admits — each variable's every
+                 other mention a text-value read (a trailing key of a keyed
+                 lookup is one) — provided that over the innermost statement
+                 block holding all of the variable's mentions, no step can grow,
+                 free or rewrite a store the frame did not MINT: every native
+                 store writer names only frame-minted stores (a store operand, or
+                 a slot operand spelled as a variable, each rooted at a local
+                 whose every binding is null, `OpDatabase`, or a field, element
+                 or record read through another such local) or is a scalar set in
+                 place; every user callee writes no store, or writes only in
+                 place; and no fn-ref call, parallel arm or yield runs.  A writer
+                 that names no store, or takes an operand of any other kind,
+                 declines.
 ```
 
 **In words.**  `for p in words` bound `p` as `{ … get_str(…) }.to_string()` — an
@@ -1635,6 +1653,27 @@ Sites: `hoist::borrowed_text_walks`, `hoist::text_walk_head`,
 `hoist::native_op_is_store_free` (the text-value clause), `hoist::borrowed_discharge_temps`
 and the discharge arm of `hoist::text_escapes_with`, `Output::text_borrowed`, the bind and
 the discharge bind in `Output::output_set`, the `#ncc` tail in `Output::output_block`.
+
+**The store-read clause.**  `w = words[i]?` over a `const vector<text>` parameter bound `w`
+through two copies (the temp's `.to_string()` and the bind's `.clone()`) and a third where
+it became a hash key, while the Rust twin borrows `&str` throughout; `word_count` is that
+loop 300 000 times.  A text read out of a store is a slice of that store's buffer, valid
+until the buffer grows, is freed, or the text's own block is released — so the question is
+which stores the borrow's scope can disturb.  The answer is read off the operands, because
+of `(H-Alloc)`: a store the frame MINTS is distinct from every store live when it is
+minted, so it is never a parameter's.  A stored reference names a record of its own store
+(`layout.md` § DbRef — the one 12-byte exception is a fn-ref's closure half, reachable only
+through the `CallRef` this clause refuses), so a place read through a frame-minted local is
+in a frame-minted store.  A scalar set in place moves no block, so it may land anywhere.
+The scope is the innermost statement block holding every mention of the variable: a value a
+statement computes does not outlive its block unless it is bound, and a bound borrow is a
+variable this clause judges on its own.  Priced by hand first: `word_count` 58.5 → 44.3
+ns/op (−24 %; the temp alone −14 %), `hash_text_keys` 657 → 603 µs (−8 %).  Cells
+`tests/scripts/158-text-borrow-store.loft` (a1–a7 admitted, d1–d7 declined, d1 the one that
+reads differently without the store condition); pins `tests/text_borrow.rs`.  Sites:
+`hoist::borrowed_store_texts`, `hoist::param_rooted`, `hoist::frame_minted_locals`,
+`hoist::mention_scope`, `hoist::foreign_store_writer`, the key arm of
+`hoist::text_escapes_with`, the local bind in `Output::output_set`.
 
 ### A character walk steps an ASCII byte in one move
 

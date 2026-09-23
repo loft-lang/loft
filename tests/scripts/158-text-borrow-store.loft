@@ -1,0 +1,227 @@
+// `@FR-R-TextBorrow`'s store-read clause — on `--native` a text read out of a PARAMETER's
+// store (`w = words[i]?`, `db.rows[words[i]?]`, `w = b.names[i] ?? "d"`) is BORROWED, not
+// copied, while nothing in the borrow's scope can grow, free or rewrite a store the frame
+// did not mint: the find-or-insert that fills a local table from a parameter's texts is the
+// shape (bench `word_count`, `hash_text_keys`).  Every cell hand-computes its value; the
+// interpreter copies as the IR spells it and is the oracle.  Admitted: the find-or-insert
+// (a1), the lookup key alone (a2), a `??` default taken past the end (a3), a rebind from a
+// literal (a4), a local declared before the loop and read after it (a5), a parameter
+// record's field (a6); a5 again with a stdlib call in the local's scope (a7, the local
+// declines, the temp borrows).  Declined, and still exact: the body grows the SOURCE vector
+// (d1 — the cell that reads differently the moment the store condition is dropped), a
+// source the frame minted and grows (d2), a sibling field of the source's record grown
+// (d3), a callee that grows it (d4), `w += "!"` (d5), a format source (d6), `w` returned
+// (d7).
+// `LOFT_NO_TEXT_BORROW=1`, `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` and
+// `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+// @falsified-by: tests/falsified/158-text-borrow-store.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch drops the store condition, so d1,
+//   d3 and d4 borrow a parameter's text across a growth of that parameter's store; d1 and
+//   d4 then read a moved buffer, and the first assertion to see it is d1's.
+//   WITNESS: under the patch native prints `d world:2 onetwo leftright ??down …` (d1's
+//   `hello` gone, d4's `up` two stale bytes) where this file says `d helloworld:2 onetwo
+//   leftright updown …`, and exits 1 at `assert(e1 == "helloworld:2", "d1")`.  d3 reads
+//   right under the patch too — its sibling growth happens not to move `names`'s buffer —
+//   so d3 guards the admission (the pins), not the value.
+//   HOLDS: the interpreter is exact on both trees (it copies as the IR spells it), every
+//   admitted cell (a1–a7) is exact on both, and leak, panic and free-refusal are clean on
+//   both — only native's d-line values move.
+struct W { word: text, count: integer }
+struct ByWord { rows: hash<W[word]> }
+struct Bag { names: vector<text>, other: vector<text> }
+
+// a1 — find-or-insert: a 2, b 3, c 1 → 3*100 + 2*10 + 3 entries = 323.
+fn a1(words: const vector<text>) -> integer {
+  db = ByWord { rows: [] };
+  for i in 0..len(words) {
+    w = words[i]?;
+    found = db.rows[w];
+    if found == null { db.rows += [W { word: w, count: 1 }]; } else { found.count += 1; }
+  }
+  (db.rows["b"]?.count) * 100 + (db.rows["a"]?.count) * 10 + len(db.rows)
+}
+
+// a2 — `hash_text_keys`: k1 6→7, k2 6, k3 6; the lookups 7 + 6 + 7 + 6 = 26.
+fn a2(words: const vector<text>, salt: integer) -> integer {
+  db = ByWord { rows: [] };
+  for i in 0..len(words) {
+    w = words[i]?;
+    found = db.rows[w];
+    if found == null { db.rows += [W { word: w, count: 1 + salt }]; }
+    else { found.count += 1; }
+  }
+  acc = 0;
+  for i in 0..len(words) { acc += db.rows[words[i]?]?.count; }
+  acc
+}
+
+// a3 — past the end the `??` default is the key: p, q, dflt (added), dflt (found).
+fn a3(words: const vector<text>) -> text {
+  db = ByWord { rows: [] };
+  out = "";
+  for i in 0..len(words) + 2 {
+    w = words[i] ?? "dflt";
+    if db.rows[w] == null { db.rows += [W { word: w, count: 1 }]; out += w; out += ","; }
+  }
+  out
+}
+
+// a4 — `skip` rebinds to `other`: other 3, a 1 → 3*10 + 2 entries = 32.
+fn a4(words: const vector<text>) -> integer {
+  db = ByWord { rows: [] };
+  for i in 0..len(words) {
+    w = words[i]?;
+    if w == "skip" { w = "other"; }
+    f = db.rows[w];
+    if f == null { db.rows += [W { word: w, count: 1 }]; } else { f.count += 1; }
+  }
+  (db.rows["other"]?.count) * 10 + len(db.rows)
+}
+
+// a5 — declared before the loop, read after it: the last word, and k2's count.
+fn a5(words: const vector<text>) -> text {
+  db = ByWord { rows: [] };
+  last = "";
+  for i in 0..len(words) {
+    last = words[i]?;
+    db.rows += [W { word: "k{i}", count: i }];
+  }
+  "{last}:{db.rows["k2"]?.count}"
+}
+
+// a7 — a5 with `len(db.rows)` in `last`'s scope: `len` of a hash is a stdlib CALL whose
+// `OpLengthHash` the store-free list does not name, so `last` keeps its copy — exact.
+fn a7(words: const vector<text>) -> text {
+  db = ByWord { rows: [] };
+  last = "";
+  for i in 0..len(words) {
+    last = words[i]?;
+    db.rows += [W { word: "k{i}", count: i }];
+  }
+  "{last}:{len(db.rows)}"
+}
+
+// a6 — a parameter record's field: ab 2, cde 3; the lookups 2 + 3 + 2 = 7.
+fn a6(b: const Bag) -> integer {
+  db = ByWord { rows: [] };
+  for i in 0..len(b.names) {
+    w = b.names[i]?;
+    if db.rows[w] == null { db.rows += [W { word: w, count: size(w) }]; }
+  }
+  sum = 0;
+  for i in 0..len(b.names) { sum += db.rows[b.names[i]?]?.count; }
+  sum
+}
+
+// d1 — the body grows the SOURCE vector while `w` is held: a borrow would dangle.
+fn d1(words: vector<text>) -> text {
+  db = ByWord { rows: [] };
+  out = "";
+  n = len(words);
+  for i in 0..n {
+    w = words[i]?;
+    for k in 0..2000 { words += ["pad-{k}-long-enough-to-grow-the-store-many-times-over"]; }
+    db.rows += [W { word: w, count: i }];
+    out += w;
+  }
+  "{out}:{len(db.rows)}"
+}
+
+// d2 — the source is a store the frame minted, and the body grows it.
+fn d2() -> text {
+  b = Bag { names: ["one", "two"], other: [] };
+  out = "";
+  for i in 0..2 {
+    w = b.names[i]?;
+    for k in 0..2000 { b.names += ["pad-{k}-long-enough-to-grow-the-store-many-times-over"]; }
+    out += w;
+  }
+  out
+}
+
+// d3 — a sibling field of the source's record grows: one store.
+fn d3(b: Bag) -> text {
+  out = "";
+  for i in 0..len(b.names) {
+    w = b.names[i]?;
+    for k in 0..2000 { b.other += ["pad-{k}-long-enough-to-grow-the-store-many-times-over"]; }
+    out += w;
+  }
+  out
+}
+
+// d4 — a callee grows it.
+fn grow(b: Bag) {
+  for k in 0..2000 { b.other += ["pad-{k}-long-enough-to-grow-the-store-many-times-over"]; }
+}
+fn d4(b: Bag) -> text {
+  out = "";
+  for i in 0..len(b.names) {
+    w = b.names[i]?;
+    grow(b);
+    out += w;
+  }
+  out
+}
+
+// d5 — `w` is written.
+fn d5(words: const vector<text>) -> text {
+  out = "";
+  for i in 0..len(words) {
+    w = words[i]?;
+    w += "!";
+    out += w;
+  }
+  out
+}
+
+// d6 — `w` is a format of the element, owned.
+fn d6(words: const vector<text>) -> text {
+  db = ByWord { rows: [] };
+  for i in 0..len(words) {
+    w = "<{words[i]?}>";
+    if db.rows[w] == null { db.rows += [W { word: w, count: i }]; }
+  }
+  "{db.rows["<a>"]?.count}{db.rows["<b>"]?.count}"
+}
+
+// d7 — `w` is the result.
+fn d7(words: const vector<text>) -> text {
+  db = ByWord { rows: [] };
+  w = words[1]?;
+  db.rows += [W { word: w, count: 1 }];
+  w
+}
+
+fn main() {
+  r1 = a1(["a", "b", "a", "b", "b", "c"]);
+  r2 = a2(["k1", "k2", "k1", "k3"], 5);
+  r3 = a3(["p", "q"]);
+  r4 = a4(["skip", "a", "skip", "other"]);
+  r5 = a5(["m", "n", "o"]);
+  r6 = a6(Bag { names: ["ab", "cde", "ab"], other: [] });
+  r7 = a7(["m", "n", "o"]);
+  println("a {r1} {r2} {r3} {r4} {r5} {r6} {r7}");
+  assert(r1 == 323, "a1");
+  assert(r2 == 26, "a2");
+  assert(r3 == "p,q,dflt,", "a3");
+  assert(r4 == 32, "a4");
+  assert(r5 == "o:2", "a5");
+  assert(r6 == 7, "a6");
+  assert(r7 == "o:3", "a7");
+  e1 = d1(["hello", "world"]);
+  e2 = d2();
+  e3 = d3(Bag { names: ["left", "right"], other: [] });
+  e4 = d4(Bag { names: ["up", "down"], other: [] });
+  e5 = d5(["a", "b"]);
+  e6 = d6(["a", "b"]);
+  e7 = d7(["x", "yz"]);
+  println("d {e1} {e2} {e3} {e4} {e5} {e6} {e7}");
+  assert(e1 == "helloworld:2", "d1");
+  assert(e2 == "onetwo", "d2");
+  assert(e3 == "leftright", "d3");
+  assert(e4 == "updown", "d4");
+  assert(e5 == "a!b!", "d5");
+  assert(e6 == "01", "d6");
+  assert(e7 == "yz", "d7");
+}

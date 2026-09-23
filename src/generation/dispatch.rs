@@ -120,6 +120,18 @@ impl Output<'_> {
             write!(w, "let var_{name}: &str = ")?;
             return self.output_code_inner(w, to);
         }
+        // `@FR-R-TextBorrow`'s store-read clause — a statement-bound text local that borrows
+        // a parameter's text: every binding is a literal, a borrowed variable or the read
+        // itself, each of which emits as a `&str`, so the slot is one.
+        if !self.in_coroutine_body && self.borrowed_store_locals.contains(&var) {
+            let name = sanitize(self.data.def(self.def_nr).variables().name(var));
+            if self.declared.insert(var) {
+                write!(w, "let mut var_{name}: &str = ")?;
+            } else {
+                write!(w, "var_{name} = ")?;
+            }
+            return self.output_code_inner(w, to);
+        }
         // `@FR-R-CharWalk` — the step of `for c in T` takes an ASCII byte other than NUL in
         // one move: `c` is the byte, `#index` the byte's offset, `#next` one past it — what
         // the step as written answers for such a byte (the character read, width 1, a

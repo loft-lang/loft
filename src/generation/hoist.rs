@@ -3149,6 +3149,470 @@ pub fn borrowed_discharge_temps(
     out
 }
 
+/// What [`borrowed_store_texts`] admits: the discharge temps and the statement-bound text
+/// locals that borrow a text read out of a PARAMETER's store.
+#[derive(Default)]
+pub struct StoreTextBorrows {
+    /// Every admitted variable, temps and locals alike, as [`Output::text_borrowed`] reads
+    /// them.
+    pub borrows: HashMap<u16, TextBorrow>,
+    /// The admitted LOCALS: bound by a statement of the body, so every `Set` of one binds a
+    /// `&str` slot (`Output::output_set`).
+    pub locals: HashSet<u16>,
+}
+
+/// `@FR-R-TextBorrow`'s store-read clause — the text variables of this function that BORROW
+/// a text read out of a parameter's store instead of copying it:
+///
+/// * a `?` / `??` discharge temp (`__ncc_N`) bound to `OpGetText(R, off)` where `R` is a
+///   parameter reached through field and element reads (`words[i]?`, `p.names[i] ?? ""`),
+///   every mention of it a text-value read;
+/// * a text LOCAL whose every binding is a text literal, such a read, a text parameter, or
+///   another variable this clause admits, and every other mention a text-value read.
+///
+/// The slice points into the parameter's store, and it stays valid while that store is
+/// neither grown, freed nor has the text's block released.  A parameter's store was live
+/// when this frame began, so it is none of the stores the frame mints (`(H-Alloc)`: a fresh
+/// store is distinct from every live one) — which lets the condition be read off the
+/// operands: over the innermost statement block that holds every mention of the borrow,
+/// every store writer must name only stores this frame minted ([`frame_minted_locals`]), or
+/// be a scalar set in place, which moves no block.  A parameter the body rebinds, a user
+/// callee that writes, a fn-ref call, a parallel arm and a generator decline.
+#[must_use]
+pub fn borrowed_store_texts(
+    data: &Data,
+    def_nr: u32,
+    already: &HashMap<u16, TextBorrow>,
+) -> StoreTextBorrows {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let body = def.code();
+    let trace = std::env::var("LOFT_TRACE_TEXT_BORROW").is_ok();
+    let mut out = StoreTextBorrows::default();
+    if body.any_node(&mut |n| matches!(n, Value::Yield(_))) {
+        return out;
+    }
+    let mut rebound: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, _) = n {
+            rebound.insert(*v);
+        }
+        false
+    });
+    let param_read = |to: &Value| {
+        call_named(to, data, "OpGetText")
+            .and_then(|a| a.first())
+            .is_some_and(|r| param_rooted(r, data, vars, &rebound))
+    };
+    let text_local = |v: u16| {
+        !vars.is_argument(v)
+            && !already.contains_key(&v)
+            && matches!(vars.tp(v).base(), Type::Text(_))
+    };
+    // The discharge temps: one bind, to a parameter's text.
+    let mut temps: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, to) = n
+            && vars.name(*v).starts_with("__ncc_")
+            && text_local(*v)
+            && param_read(to)
+        {
+            temps.insert(*v);
+        }
+        false
+    });
+    temps.retain(|t| {
+        let mut binds = 0u32;
+        body.any_node(&mut |m| {
+            if matches!(m, Value::Set(x, to) if x == t && !matches!(to.unspan(), Value::Null)) {
+                binds += 1;
+            }
+            false
+        });
+        binds == 1
+    });
+    // The locals: the greatest set whose every binding is a borrowable source.
+    let mut locals: HashSet<u16> = HashSet::new();
+    body.any_node(&mut |n| {
+        if let Value::Set(v, _) = n
+            && !vars.name(*v).starts_with("__")
+            && text_local(*v)
+        {
+            locals.insert(*v);
+        }
+        false
+    });
+    let mut why: HashMap<u16, &'static str> = HashMap::new();
+    loop {
+        let admitted: HashSet<u16> = temps.union(&locals).copied().collect();
+        let source_ok = |to: &Value| match to.unspan() {
+            Value::Text(_) => true,
+            Value::Var(s) => {
+                admitted.contains(s)
+                    || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
+            }
+            _ => param_read(to),
+        };
+        let temp_ok = |to: &Value| param_read(to);
+        let mut drop: Vec<(u16, &'static str)> = Vec::new();
+        for &v in &admitted {
+            let escape = if temps.contains(&v) {
+                text_escapes_with(body, v, data, &temp_ok)
+            } else {
+                text_escapes_with(body, v, data, &source_ok)
+            };
+            if let Some(w) = escape {
+                drop.push((v, w));
+            }
+        }
+        if drop.is_empty() {
+            break;
+        }
+        for (v, w) in drop {
+            temps.remove(&v);
+            locals.remove(&v);
+            why.insert(v, w);
+        }
+    }
+    // The store condition, over each borrow's scope.
+    let minted = frame_minted_locals(data, vars, body);
+    let mut cache: HashMap<u32, bool> = HashMap::new();
+    let mut active: HashSet<u32> = HashSet::new();
+    for v in temps
+        .iter()
+        .chain(locals.iter())
+        .copied()
+        .collect::<Vec<_>>()
+    {
+        let scope = mention_scope(body, v);
+        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
+            temps.remove(&v);
+            locals.remove(&v);
+            why.insert(v, w);
+        }
+    }
+    // A local whose source was just refused has lost its borrow's source: repeat the
+    // binding test until nothing moves.
+    loop {
+        let admitted: HashSet<u16> = temps.union(&locals).copied().collect();
+        let source_ok = |to: &Value| match to.unspan() {
+            Value::Text(_) => true,
+            Value::Var(s) => {
+                admitted.contains(s)
+                    || (vars.is_argument(*s) && matches!(vars.tp(*s).base(), Type::Text(_)))
+            }
+            _ => param_read(to),
+        };
+        let lost: Vec<u16> = locals
+            .iter()
+            .copied()
+            .filter(|&v| text_escapes_with(body, v, data, &source_ok).is_some())
+            .collect();
+        if lost.is_empty() {
+            break;
+        }
+        for v in lost {
+            locals.remove(&v);
+            why.insert(v, "bound from a text that does not borrow");
+        }
+    }
+    if trace {
+        for v in temps.iter().chain(locals.iter()) {
+            eprintln!(
+                "[text-borrow] {}: `{}` borrows a parameter's text",
+                def.name(),
+                vars.name(*v)
+            );
+        }
+        for (v, w) in &why {
+            eprintln!(
+                "[text-borrow] {}: `{}` declined — {w}",
+                def.name(),
+                vars.name(*v)
+            );
+        }
+    }
+    for v in temps.iter().chain(locals.iter()) {
+        out.borrows.insert(*v, TextBorrow { read: None });
+    }
+    out.locals = locals;
+    out
+}
+
+/// Is `r` a PARAMETER reached through field and element reads — a place in a store that was
+/// live when the frame began?  The parameter must be a plain one the body never rebinds.
+fn param_rooted(
+    r: &Value,
+    data: &Data,
+    vars: &crate::variables::Function,
+    rebound: &HashSet<u16>,
+) -> bool {
+    match r.unspan() {
+        Value::Var(a) => {
+            vars.is_argument(*a)
+                && !matches!(vars.tp(*a).base(), Type::RefVar(_))
+                && !rebound.contains(a)
+        }
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && matches!(
+                    data.def(*d).name(),
+                    "OpGetField" | "OpGetVector" | "OpGetVectorNullable"
+                ) =>
+        {
+            args.first()
+                .is_some_and(|a| param_rooted(a, data, vars, rebound))
+        }
+        _ => false,
+    }
+}
+
+/// Can a value of `tp` name a store?  The reference, the struct-enum and every collection.
+fn names_a_store(tp: &Type) -> bool {
+    matches!(
+        tp.base(),
+        Type::Reference(..)
+            | Type::Enum(_, true, _)
+            | Type::Vector(..)
+            | Type::Sorted(..)
+            | Type::Index(..)
+            | Type::Radix(..)
+            | Type::Trie(..)
+            | Type::Hash(..)
+    )
+}
+
+/// The locals of a body whose every value lies in a store the FRAME minted: the greatest set
+/// of non-parameter store locals whose every binding is null, another such local, or a
+/// field, element or record read through one — with `OpDatabase(v, tp)`, which gives `v` a
+/// store of its own, the one slot write admitted.  A local handed to anything else by its
+/// slot (a link, a `&` parameter) is out: what that does to it is not this body's to read.
+fn frame_minted_locals(
+    data: &Data,
+    vars: &crate::variables::Function,
+    body: &Value,
+) -> HashSet<u16> {
+    let mut set: HashSet<u16> = (0..vars.count())
+        .filter(|&v| !vars.is_argument(v) && names_a_store(vars.tp(v)))
+        .collect();
+    body.any_node(&mut |n| {
+        if let Value::Call(d, args) = n
+            && (*d as usize) < data.definitions.len()
+        {
+            let def = data.def(*d);
+            let slot_write = matches!(def.name(), "OpDatabase" | "OpDatabaseNP");
+            for (i, a) in args.iter().enumerate() {
+                if let Value::Var(x) = a.unspan() {
+                    let by_slot = def.attributes().get(i).is_some_and(|at| {
+                        (at.constant && !(slot_write && i == 0))
+                            || matches!(at.typedef.base(), Type::RefVar(_))
+                    });
+                    if by_slot {
+                        set.remove(x);
+                    }
+                }
+            }
+        }
+        false
+    });
+    loop {
+        let mut out: Vec<u16> = Vec::new();
+        body.any_node(&mut |n| {
+            if let Value::Set(v, to) = n
+                && set.contains(v)
+                && !matches!(to.unspan(), Value::Null)
+                && !minted_expr(to, data, &set)
+            {
+                out.push(*v);
+            }
+            false
+        });
+        if out.is_empty() {
+            return set;
+        }
+        for v in out {
+            set.remove(&v);
+        }
+    }
+}
+
+/// Is `e` a place in a store one of `minted`'s locals holds?
+fn minted_expr(e: &Value, data: &Data, minted: &HashSet<u16>) -> bool {
+    match e.unspan() {
+        Value::Var(v) => minted.contains(v),
+        Value::Call(d, args)
+            if (*d as usize) < data.definitions.len()
+                && matches!(
+                    data.def(*d).name(),
+                    "OpGetField"
+                        | "OpGetVector"
+                        | "OpGetVectorNullable"
+                        | "OpGetRecord"
+                        | "OpNewRecord"
+                ) =>
+        {
+            args.first().is_some_and(|a| minted_expr(a, data, minted))
+        }
+        _ => false,
+    }
+}
+
+/// The innermost statement block (a `void` block) holding every mention of `v` — the body
+/// itself when none does.  A value a statement block's statements compute does not outlive
+/// the block unless it is bound to a variable, and a bound borrow is a variable of its own.
+fn mention_scope(body: &Value, v: u16) -> &Value {
+    let count = |node: &Value| {
+        let mut c = 0usize;
+        node.any_node(&mut |n| {
+            if matches!(n, Value::Var(x) | Value::Set(x, _) if *x == v) {
+                c += 1;
+            }
+            false
+        });
+        c
+    };
+    let total = count(body);
+    let mut best: Option<(&Value, usize)> = None;
+    let size = |node: &Value| {
+        let mut s = 0usize;
+        node.any_node(&mut |_| {
+            s += 1;
+            false
+        });
+        s
+    };
+    let mut blocks: Vec<&Value> = Vec::new();
+    collect_void_blocks(body, &mut blocks);
+    for b in blocks {
+        if count(b) == total {
+            let s = size(b);
+            if best.is_none_or(|(_, bs)| s < bs) {
+                best = Some((b, s));
+            }
+        }
+    }
+    best.map_or(body, |(b, _)| b)
+}
+
+fn collect_void_blocks<'a>(node: &'a Value, out: &mut Vec<&'a Value>) {
+    match node {
+        Value::Block(b) => {
+            if matches!(b.result.base(), Type::Void) {
+                out.push(node);
+            }
+            for o in &b.operators {
+                collect_void_blocks(o, out);
+            }
+        }
+        Value::Loop(b) => {
+            for o in &b.operators {
+                collect_void_blocks(o, out);
+            }
+        }
+        Value::Span(inner) => collect_void_blocks(&inner.1, out),
+        Value::Set(_, to) => collect_void_blocks(to, out),
+        Value::Call(_, args) => {
+            for a in args {
+                collect_void_blocks(a, out);
+            }
+        }
+        Value::If(c, t, e) => {
+            collect_void_blocks(c, out);
+            collect_void_blocks(t, out);
+            collect_void_blocks(e, out);
+        }
+        Value::Insert(ops) => {
+            for o in ops {
+                collect_void_blocks(o, out);
+            }
+        }
+        Value::Drop(inner) | Value::Return(inner) => collect_void_blocks(inner, out),
+        _ => {}
+    }
+}
+
+/// The first reason running `node` might grow, free or rewrite a text block of a store the
+/// frame did NOT mint — or `None` when every store writer names only `minted` stores or sets
+/// a scalar in place.  A native writer must NAME what it writes: a store operand, or a slot
+/// operand spelled as a variable (`OpDatabase(v, tp)`), each one minted; a writer that names
+/// none (a generator's resume, a store-minting cast), or takes an operand of another kind (a
+/// fn-ref, a tuple), is refused.  A user callee may run only if it writes no store, or writes
+/// one only in place.
+fn foreign_store_writer(
+    node: &Value,
+    data: &Data,
+    minted: &HashSet<u16>,
+    cache: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+) -> Option<&'static str> {
+    let mut why = None;
+    node.any_node(&mut |n| match n {
+        Value::CallRef(_, _) => {
+            why = Some("a fn-ref call in its scope");
+            true
+        }
+        Value::Parallel(_) | Value::Yield(_) => {
+            why = Some("a parallel arm or a yield in its scope");
+            true
+        }
+        Value::Call(d, args) => {
+            if (*d as usize) >= data.definitions.len() {
+                why = Some("an unknown call in its scope");
+                return true;
+            }
+            let def = data.def(*d);
+            let name = def.name();
+            if !matches!(def.code(), Value::Null) {
+                if call_writes_store(*d, data, cache, active)
+                    && !in_place_only_writer(*d, data, cache, active)
+                {
+                    why = Some("a callee that writes a store in its scope");
+                    return true;
+                }
+                return false;
+            }
+            if native_op_is_store_free(def) || IN_PLACE_SET_OPS.contains(&name) {
+                return false;
+            }
+            let mut named = false;
+            for (i, a) in args.iter().enumerate() {
+                let Some(at) = def.attributes().get(i) else {
+                    if name == "OpGetRecord" {
+                        continue; // a trailing key value
+                    }
+                    why = Some("a writer with an untyped operand in its scope");
+                    return true;
+                };
+                if at.constant {
+                    if let Value::Var(x) = a.unspan() {
+                        if !minted.contains(x) {
+                            why = Some("a writer to a slot the frame did not mint in its scope");
+                            return true;
+                        }
+                        named = true;
+                    }
+                } else if names_a_store(&at.typedef) {
+                    if !minted_expr(a, data, minted) {
+                        why = Some("a writer to a store the frame did not mint in its scope");
+                        return true;
+                    }
+                    named = true;
+                } else if !(is_scalar(&at.typedef) || matches!(at.typedef.base(), Type::Text(_))) {
+                    why = Some("a writer with an operand of another kind in its scope");
+                    return true;
+                }
+            }
+            if !named {
+                why = Some("a writer that names no store in its scope");
+                return true;
+            }
+            false
+        }
+        _ => false,
+    });
+    why
+}
+
 /// The first mention of text variable `p` under `node` that is NOT a text-value read, as
 /// [`borrowed_text_walks`] defines one — or `None` when every mention is.  Walks the tree
 /// by hand rather than through `any_node` because the question is about a mention's
@@ -3203,7 +3667,10 @@ fn text_escapes_with(
             };
             for (i, a) in args.iter().enumerate() {
                 if matches!(a.unspan(), Value::Var(s) if *s == p) {
+                    // `OpGetRecord`'s keys trail its declared parameters, and each is read
+                    // into a `Content` at the call: a text VALUE.
                     let value_position = name == "OpFreeText"
+                        || (name == "OpGetRecord" && i >= attrs.len())
                         || attrs.get(i).is_some_and(|at| {
                             !at.constant && matches!(at.typedef.base(), Type::Text(_))
                         });

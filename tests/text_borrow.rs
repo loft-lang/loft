@@ -5,16 +5,22 @@
 //! per element; the walk holds the vector's header and length; a body that writes a store,
 //! rebinds `p`, links to it, hands it to a `&text` parameter, tuples it or returns it keeps
 //! the copy; `LOFT_NO_TEXT_BORROW=1` restores the copy everywhere; `LOFT_HOIST_VERIFY=1`
-//! re-reads the element at the walk's release.  The guard
-//! (`tests/scripts/158-text-borrow.loft`) says the VALUES hold on both backends; this pins
-//! what is emitted.
+//! re-reads the element at the walk's release.  The store-read clause binds a text read out
+//! of a PARAMETER's store — the `?` temp and the local it is bound to — as a `&str` while the
+//! frame writes only stores it minted.  The guards (`tests/scripts/158-text-borrow.loft`,
+//! `tests/scripts/158-text-borrow-store.loft`) say the VALUES hold on both backends; this
+//! pins what is emitted.
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 const CELLS: &str = "tests/scripts/158-text-borrow.loft";
 
 fn emit(tag: &str, env: &[(&str, &str)]) -> String {
-    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(CELLS);
+    emit_cells(CELLS, tag, env)
+}
+
+fn emit_cells(cells: &str, tag: &str, env: &[(&str, &str)]) -> String {
+    let src = Path::new(env!("CARGO_MANIFEST_DIR")).join(cells);
     let out =
         std::env::temp_dir().join(format!("loft_text_borrow_{}_{tag}.rs", std::process::id()));
     let mut cmd = Command::new(PathBuf::from(env!("CARGO_BIN_EXE_loft")));
@@ -195,5 +201,93 @@ fn the_checking_form_rereads_the_element_at_the_walks_release() {
         count(&off, "text_borrow_verify("),
         0,
         "the default emits no check"
+    );
+}
+
+const STORE_CELLS: &str = "tests/scripts/158-text-borrow-store.loft";
+
+/// The store-read clause's admissions: each function's borrowed discharge temps and the
+/// locals bound from them.
+const STORE_BORROWS: [(&str, &[&str], &[&str]); 7] = [
+    ("n_a1", &["__ncc_1"], &["w"]),
+    ("n_a2", &["__ncc_1", "__ncc_2"], &["w"]),
+    ("n_a3", &["__ncc_1"], &["w"]),
+    ("n_a4", &["__ncc_1"], &["w"]),
+    ("n_a5", &["__ncc_1"], &["last"]),
+    ("n_a6", &["__ncc_1", "__ncc_2"], &["w"]),
+    ("n_a7", &["__ncc_1"], &[]),
+];
+
+#[test]
+fn a_parameters_text_is_borrowed_while_the_frame_writes_only_stores_it_minted() {
+    let rust = emit_cells(STORE_CELLS, "store", &[]);
+    for (name, temps, locals) in STORE_BORROWS {
+        let b = body(&rust, name);
+        for t in temps {
+            assert_eq!(
+                count(b, &format!("let var_{t}: &str = ")),
+                1,
+                "{name}: the discharge temp `{t}` binds the parameter's text as a `&str`"
+            );
+        }
+        for l in locals {
+            assert_eq!(
+                count(b, &format!("let mut var_{l}: &str = ")),
+                1,
+                "{name}: the local `{l}` is a `&str` slot"
+            );
+            assert_eq!(
+                count(b, &format!("var_{l}.clone()")) + count(b, &format!("&var_{l}")),
+                0,
+                "{name}: `{l}` is read bare and never copied"
+            );
+        }
+    }
+    // The bench shape: `w = words[i]?` copies the element neither at the read nor at the
+    // bind.  (`OpSetText` still stages its value — `let s_val = (…).to_string()` — before
+    // claiming in the destination store; that copy is the setter's, not this clause's.)
+    let a1 = body(&rust, "n_a1");
+    assert_eq!(
+        count(a1, "}}.to_string()") + count(a1, ".clone()"),
+        0,
+        "a1: the find-or-insert copies no element text:\n{a1}"
+    );
+}
+
+#[test]
+fn a_parameters_text_is_copied_when_its_store_may_move() {
+    let rust = emit_cells(STORE_CELLS, "store_decline", &[]);
+    // d1 grows the source, d3 a sibling field of it, d4 through a callee: nothing borrows.
+    for name in ["n_d1", "n_d3", "n_d4"] {
+        let b = body(&rust, name);
+        assert_eq!(
+            count(b, ": &str = "),
+            0,
+            "{name}: nothing borrows the parameter's text:\n{b}"
+        );
+    }
+    // d2's source is a store the frame minted; d5 writes `w`; d6 formats it; a7 has a
+    // stdlib call in `last`'s scope: the local stays an owned `String`.
+    for (name, var) in [
+        ("n_d2", "w"),
+        ("n_d5", "w"),
+        ("n_d6", "w"),
+        ("n_a7", "last"),
+    ] {
+        let b = body(&rust, name);
+        assert_eq!(
+            count(b, &format!("var_{var}: &str")),
+            0,
+            "{name}: `{var}` keeps its copy"
+        );
+    }
+    let off = emit_cells(STORE_CELLS, "store_off", &[("LOFT_NO_TEXT_BORROW", "1")]);
+    let borrowed_locals = off
+        .lines()
+        .filter(|l| l.trim_start().starts_with("let ") && l.contains(": &str = "))
+        .count();
+    assert_eq!(
+        borrowed_locals, 0,
+        "LOFT_NO_TEXT_BORROW=1: no parameter's text is borrowed"
     );
 }
