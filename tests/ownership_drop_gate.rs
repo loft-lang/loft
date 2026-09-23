@@ -692,6 +692,12 @@ fn bound_cells() -> Vec<Cell> {
         };
         for &(sname, spelling) in BOUND_SPELL {
             for bind in ["first", "rebind"] {
+                // The author's statement form as a FIRST bind binds `x` inside each arm and reads
+                // it after the `if` — a program `(B-Scope)` refuses (loft#1600).  Its legal
+                // spellings are the `coal` and `value` rows; as a rebind it stays.
+                if sname == "stmt" && bind == "first" {
+                    continue;
+                }
                 for &(bname, bsetup, bexpr) in COAL_B {
                     for &(pname, place) in BOUND_PLACE {
                         idx += 1;
