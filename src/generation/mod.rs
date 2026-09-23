@@ -1423,6 +1423,17 @@ fn narrow_int_cast(tp: &Type) -> Option<&'static str> {
 /// so the span belongs to `bytes_for_range` and never to a register.  A value in flight is
 /// its plain number, which is what the interpreter's i64 slot already does.
 fn native_narrow_int(s: &crate::data::IntegerSpec) -> Option<&'static str> {
+    // A spec that kept a code back for C85's overflow carries one more value IN FLIGHT than
+    // its declared range holds: the null the overflow answers.  `limit(-100, 100) size(1)`
+    // fits `i8` by the test below and `i64::MIN` does not, so a return truncated the sentinel
+    // to `0` and a value that read null in its own frame read a NUMBER one call away —
+    // loft#1634, silent, and only on `--native`, since the interpreter keeps every value in
+    // flight at full width.  The paragraph above is the reason this belongs here rather than
+    // at the return site: the question is which values the range holds, and for these types
+    // null is one of them.
+    if s.reserves_sentinel_unconditionally() {
+        return None;
+    }
     let (min, max) = (i64::from(s.min), i64::from(s.max));
     if min >= 0 && max <= 255 {
         Some("u8")

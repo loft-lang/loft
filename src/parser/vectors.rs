@@ -20,10 +20,20 @@ use crate::data::Deps;
 /// raw-vs-full ENCODING for a 2-byte element (`ShortRaw` for a `u16`-style alias,
 /// `ShortFull` for a range that merely fits), and the storage side
 /// (`Data::narrow_vector_content`) registers the matching Part.
-fn narrow_elm_kind(elm_tp: &Type) -> Option<(crate::data::NarrowIntKind, i32)> {
+fn narrow_elm_kind(elm_tp: &Type) -> Option<crate::data::NarrowSlot> {
     // A nullable narrow element (`vector<u8?>`) reserves a sentinel, so it needs the
     // nullable store op — a raw `OpSetByte` would write null's low byte `0`,
-    // indistinguishable from the value 0.
+    // indistinguishable from the value 0.  A SPARE-code element (`limit(-100, 100) size(1)`)
+    // has the same shape one step over and used to miss it: the answer came from
+    // `NarrowIntKind` directly, which knows a width and a nullability and nothing about the
+    // code a declared range keeps back, so storing an already-null value into an element
+    // wrote `0` — `v: vector<Spare8> = [r]` with `r` null read `0` and `v[0] == null` was
+    // false, on BOTH backends (loft#1635).
+    //
+    // `data::NarrowSlot::of_slot` is the ONE home for which ops a store place takes
+    // (loft#1615), and this is its third caller beside `Parser::get_val` and
+    // `Parser::set_field_check`: an element is a store place like the other two, and the
+    // question it asks is the same one.
     let (spec, nullable) = match elm_tp {
         Type::Integer(spec) => (*spec, false),
         Type::Optional(inner) => match &**inner {
@@ -34,8 +44,9 @@ fn narrow_elm_kind(elm_tp: &Type) -> Option<(crate::data::NarrowIntKind, i32)> {
     };
     let narrow_vec = spec.forced_size.is_some() && spec.vector_narrow_width(nullable).is_some();
     let n = spec.vector_narrow_width(nullable)?;
-    let kind = crate::data::NarrowIntKind::of(n, nullable, narrow_vec, spec.unsigned_wide());
-    Some((kind, spec.usable_min(kind.reserves_sentinel())))
+    Some(crate::data::NarrowSlot::of_slot(
+        n, nullable, narrow_vec, &spec,
+    ))
 }
 
 /// The store op that writes one NARROW-integer vector element — a `vector<u8>`, `<u16>`, or a
@@ -57,14 +68,14 @@ pub(crate) fn narrow_elm_write(
     val: &Value,
     data: &crate::data::Data,
 ) -> Option<Value> {
-    let (kind, min) = narrow_elm_kind(elm_tp)?;
-    let d = data.def_nr(kind.set_op());
+    let slot = narrow_elm_kind(elm_tp)?;
+    let d = data.def_nr(slot.set_op());
     if d == u32::MAX {
         return None;
     }
     let pos = Value::Int(0);
-    Some(if kind.takes_min() {
-        Value::Call(d, vec![elm, pos, Value::Int(min), val.clone()])
+    Some(if slot.kind.takes_min() {
+        Value::Call(d, vec![elm, pos, Value::Int(slot.min), val.clone()])
     } else {
         Value::Call(d, vec![elm, pos, val.clone()])
     })
@@ -78,14 +89,14 @@ pub(crate) fn narrow_elm_read(
     code: Value,
     data: &crate::data::Data,
 ) -> Option<Value> {
-    let (kind, min) = narrow_elm_kind(elm_tp)?;
-    let d = data.def_nr(kind.get_op());
+    let slot = narrow_elm_kind(elm_tp)?;
+    let d = data.def_nr(slot.get_op());
     if d == u32::MAX {
         return None;
     }
     let pos = Value::Int(0);
-    Some(if kind.takes_min() {
-        Value::Call(d, vec![code, pos, Value::Int(min)])
+    Some(if slot.kind.takes_min() {
+        Value::Call(d, vec![code, pos, Value::Int(slot.min)])
     } else {
         Value::Call(d, vec![code, pos])
     })
