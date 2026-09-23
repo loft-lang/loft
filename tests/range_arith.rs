@@ -58,8 +58,15 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     // b4 stops at 9, `9 * 1e18` is exactly 9e18 and fits, so the multiply is ADMITTED.
     ("n_b4", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     // The TYPE clause (loft#1593's other half): declared `u8` / `limit` parameters and the
-    // compiler-typed join are ranged; a plain-integer index, an `i32`, a nullable, a boxed
-    // capture and a spare-code alias are not.
+    // compiler-typed join are ranged; a plain-integer index, an `i32`, a nullable and a boxed
+    // capture are not.
+    //
+    // ⚠ A range that leaves codes UNUSED inside its width used to be in that second list, on
+    // the reasoning that its overflow wrote a sentinel into the slot.  C127 retired that
+    // sentinel — such a slot takes the type's DEFAULT, which is in range — so the declared
+    // range is again exactly what the slot can hold and c8's row below flipped from checked to
+    // plain.  That flip IS the C127 fact on the emission side, and it is why this row is the
+    // one to read first if the ruling is ever narrowed.
     ("n_c1_join", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     ("n_c2_head", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     ("n_c3_read", [1, 0, 1, 0, 1, 0, 0, 0, 0, 0]),
@@ -69,7 +76,10 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     ("n_c5", [0, 0, 0, 0, 2, 0, 0, 0, 0, 0]),
     ("n_c6", [1, 0, 1, 0, 0, 0, 0, 0, 0, 0]),
     ("n_c7", [0, 0, 0, 0, 2, 2, 0, 0, 0, 2]),
-    ("n_c8", [0, 0, 0, 1, 2, 1, 0, 0, 0, 1]),
+    // c8: three declared ranges that leave codes spare — two signed byte/short aliases and
+    // `limit(1000, 1100)`, whose range excludes zero.  Every step and every read after it is
+    // PLAIN since C127; the one `wrapping_neg` is the negative literal in `y -= 1`.
+    ("n_c8", [5, 1, 2, 1, 0, 0, 0, 0, 0, 0]),
     // b5: an end that is a `size`, ranged at seed time — `k + 1` is plain beside the
     // counter's step (two), while `acc + …` self-steps and stays checked.
     ("n_b5", [2, 0, 0, 0, 1, 0, 0, 0, 0, 0]),
