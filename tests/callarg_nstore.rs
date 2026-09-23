@@ -272,3 +272,82 @@ fn legal_forms_stay_silent() {
         }
     }
 }
+
+// ── loft#1614: READING a `&τ?` link is not a store ────────────────────────────────────────────
+//
+// `(B-Ref-Read)` reads a link as its source, and `(C-Ref)` accepts a `&τ` wherever a `τ` is —
+// so formatting `"{e}"` with `e = &z; z: integer?` reads a `τ?` into a `τ?`, where
+// `(N-Store)` has nothing to ask.  `convert` peeled the TARGET's `Optional` before it looked
+// through the `RefVar`, and so asked "store `integer?` into `integer`" — a warning, on correct
+// code, at the tier that gates a library's CI.  The negative twin is the same link handed to a
+// NON-null parameter: that store is real, and it must still warn.
+
+/// `(compiled_and_ran_ok, every (N-Store) warning — any slot, stdout)`.
+fn run_any_slot(body: &str, backend: &str, tag: &str) -> (bool, usize, String) {
+    let script = std::env::temp_dir().join(format!("loft_ca_{}_{tag}.loft", std::process::id()));
+    std::fs::write(&script, body).expect("write script");
+    let out = Command::new(loft_bin())
+        .arg(backend)
+        .arg(&script)
+        .current_dir(workspace_root())
+        .env("LOFT_TIMEOUT", "120")
+        .env("LOFT_NO_CACHE", "1")
+        .output()
+        .expect("failed to invoke loft binary");
+    let _ = std::fs::remove_file(&script);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    (
+        out.status.success(),
+        stderr.matches("is stored into").count(),
+        String::from_utf8_lossy(&out.stdout).into_owned(),
+    )
+}
+
+// Each link is formatted before the next local is declared: a scalar link's target losing its
+// slot to a LATER local is loft#1627, a separate defect this pair must not depend on.
+const FORMAT_NULLABLE_LINK: &str = "fn show(p: &integer?) -> text { r = \"<{p}>\"; if p == 99 { p = 0 }; r }\n\
+fn main() {\n  z: integer? = null;\n  e = &z;\n  s = \"{e}\";\n  z = 41;\n  s += \" {e}\";\n\
+  b: u8? = null;\n  eb = &b;\n  s += \" {eb}\";\n  t: text? = null;\n  et = &t;\n  s += \" {et}\";\n\
+  v: vector<integer>? = null;\n  ev = &v;\n  s += \" {ev}\";\n  q: integer? = 7;\n  print(\"{s} {show(q)}\");\n}\n";
+const LINK_INTO_NONNULL_PARAM: &str = "fn take(v: integer) -> integer { v + 1 }\n\
+fn main() {\n  z: integer? = null;\n  e = &z;\n  print(\"n={take(e)}\");\n}\n";
+
+#[test]
+fn formatting_a_nullable_link_is_silent() {
+    for backend in ["--interpret", "--native"] {
+        let (ok, warns, out) = run_any_slot(
+            FORMAT_NULLABLE_LINK,
+            backend,
+            &format!("fmt_link_{backend}"),
+        );
+        assert!(
+            ok,
+            "[{backend}] formatting a nullable link must compile and run"
+        );
+        assert_eq!(
+            warns, 0,
+            "[{backend}] reading a `&τ?` link into a format is not a store (loft#1614)"
+        );
+        assert!(
+            out.contains("null 41 null null null <7>"),
+            "[{backend}] each link must read its source's CURRENT value, got {out:?}"
+        );
+    }
+}
+
+#[test]
+fn a_nullable_link_into_a_non_null_parameter_still_warns() {
+    for backend in ["--interpret", "--native"] {
+        let (ok, warns, out) = run_any_slot(
+            LINK_INTO_NONNULL_PARAM,
+            backend,
+            &format!("link_nonnull_{backend}"),
+        );
+        assert!(ok && out.contains("n=null"), "[{backend}] got {out:?}");
+        assert_eq!(
+            warns, 1,
+            "[{backend}] a nullable link into an `integer` parameter DOES become null there — \
+             looking through the `RefVar` must ask the rule of the pointee, not drop it"
+        );
+    }
+}

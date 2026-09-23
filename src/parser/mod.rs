@@ -5360,6 +5360,15 @@ impl Parser {
             if let Type::Optional(src_inner) = is_type {
                 return self.convert(code, src_inner, inner);
             }
+            // A LINK to a nullable is the same source read through `(C-Ref)`: `&integer?` is
+            // `RefVar(Optional(Integer))`, and peeling the target alone sent it to a dense
+            // `integer`, reporting a store no program makes — formatting `"{e}"` with
+            // `e = &z; z: integer?` warned that a nullable "becomes null there" (loft#1614).
+            if let Type::RefVar(pointee) = is_type
+                && matches!(pointee.as_ref(), Type::Optional(_))
+            {
+                return self.convert(code, pointee, should);
+            }
             return self.convert(code, is_type, inner);
         }
         if let Type::Optional(inner) = is_type {
