@@ -528,6 +528,16 @@ fn limit_with_an_upper_bound_below_the_window() {
 // @EXPECT_ERROR: holds no value: the lower bound is above the upper one
 type PeInvertedRange = integer limit(10, 3) size(1);
 
+// loft#1642, `@FR-L-FnAbsent` — a function type has no null, so `??` has nothing to test on a
+// fn-ref, exactly as `f != null` has nothing to compare; the two spellings agree.
+// @EXPECT_ERROR: `??` has nothing to test — a function value has no null
+fn pe_double(v: integer) -> integer { v * 2 }
+fn coalesce_on_a_function() {
+  fs: vector<fn(integer) -> integer> = [pe_double];
+  g = fs[9] ?? pe_double;
+  _ = g(4);
+}
+
 // @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/48 -> 54/48
 //   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
 //   FAIL/48 -> 54/48.

@@ -193,7 +193,7 @@ impl IntegerSpec {
     pub fn i32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: i64::from(i32::MAX),
+            max: i32::MAX as i64,
             not_null: false,
             forced_size: NonZeroU8::new(4),
         }
@@ -203,7 +203,7 @@ impl IntegerSpec {
     pub fn u32() -> Self {
         IntegerSpec {
             min: 0,
-            max: i64::from(u32::MAX) - 1,
+            max: u32::MAX as i64 - 1,
             not_null: false,
             forced_size: None,
         }
