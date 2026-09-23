@@ -19,6 +19,7 @@
 // CHANNEL: exit and assertion failures, both backends (the control refuses every `&`).
 // @falsified-at: ba778c9ac — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/167-a-text-link-into-a-store.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak and panic are clean on both trees and both backends.
 
 struct O { a: text, b: text }
 struct R { n: integer, s: text, k: integer }
