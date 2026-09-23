@@ -3845,7 +3845,7 @@ mod tuple_stack_layout_tests {
     fn integer() -> Type {
         Type::Integer(IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            max: i64::from(i32::MAX),
             not_null: false,
             forced_size: None,
         })

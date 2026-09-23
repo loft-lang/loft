@@ -79,7 +79,7 @@ fn tuple_element_offsets() {
     let types = [
         Type::Integer(IntegerSpec {
             min: i32::MIN,
-            max: i32::MAX as u32,
+            max: i64::from(i32::MAX),
             not_null: false,
             forced_size: None,
         }),
@@ -99,7 +99,7 @@ fn tuple_owned_elements() {
     let types = [
         Type::Integer(IntegerSpec {
             min: i32::MIN,
-            max: i32::MAX as u32,
+            max: i64::from(i32::MAX),
             not_null: false,
             forced_size: None,
         }),

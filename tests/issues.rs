@@ -17099,7 +17099,7 @@ fn pln114_alignment_tables_agree() {
     use loft::data::{IntegerSpec, Type, element_stack_align};
     let int = Type::Integer(IntegerSpec {
         min: i32::MIN + 1,
-        max: i32::MAX as u32,
+        max: i64::from(i32::MAX),
         not_null: false,
         forced_size: None,
     });
