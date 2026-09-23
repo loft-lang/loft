@@ -2773,12 +2773,21 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **314** |
+| **315** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-23, the THIRD join — `main` @ 6c188b612 plus `tuxedo-quality-2026-09-23` (which
+carried `tuxedo-165-generics` and `157-native-4x`), `tuxedo-1562-layout-gate` to its tip and
+the two branches' later tip commits — RE-MEASURED on the joined tree: functions discriminating
+on a `Type` variant **971**, opaque **315**; shape tests **2476**, opaque **1303**;
+`--write-ratchet` re-pinned there.  One function more than the second join's 314 and three
+tests fewer than its 1306: the layout-gate branch's `&text` link work brought one more opaque
+function and the join settled three tests — neither side's number described this tree, and
+neither was carried.)
 
 (2026-09-23, the SECOND join — `main` @ 6c188b612 (the #1644 merge) plus `tuxedo-165-generics`,
 `157-native-4x` and `tuxedo-1562-layout-gate`, with @PLN167 A3 on top — RE-MEASURED on the joined

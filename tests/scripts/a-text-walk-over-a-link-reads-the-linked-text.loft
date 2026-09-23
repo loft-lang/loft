@@ -13,6 +13,9 @@
 // CHANNEL: exit (the control does not compile).
 // @falsified-at: 3256f6889 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/a-text-walk-over-a-link-reads-the-linked-text.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//   Score it with `scripts/falsify.sh <this file> --patch <that patch>`.
+//   HOLDS: leak, panic and the assertion count — the control does not compile, so nothing
+//   but the exit code can move; every assertion passes on HERE and none runs on the control.
 
 fn walk(t: &text) -> text {
   w = "";
