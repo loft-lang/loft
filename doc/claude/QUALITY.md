@@ -2773,12 +2773,17 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **319** |
+| **316** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-23, loft#1600 on `tuxedo-165-generics`: **316**, opaque tests 1306, re-pinned with
+`--write-ratchet`.  The `match` arm joins ask their not-yet-settled question — `Void`, `Null` or
+`Never` — through `result_type.base()`; spelled as bare `matches!` they had grown the opaque tests
+by five, which `--check-ratchet` caught and the gate does not run.)
 
 (2026-09-23, loft#1614 and loft#1631 on `tuxedo-165-generics`, rebased onto `main` @ 6c79912b5
 (#1632) and re-measured there: **956 · 633 · 4 · 319**, and `--check-ratchet` re-pinned at opaque

@@ -5585,7 +5585,7 @@ impl Parser {
                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
                 result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
                 self.match_void_arm |= matches!(arm_type, Type::Void);
-                if matches!(result_type, Type::Void | Type::Null | Type::Never) {
+                if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                     result_type = arm_type.clone();
                 } else if !self.first_pass
                     && arm_type != Type::Void
@@ -6133,7 +6133,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if matches!(result_type, Type::Void | Type::Null | Type::Never) {
+            if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                 result_type = arm_type.clone();
             } else if !self.first_pass
                 && arm_type != Type::Void
@@ -6531,7 +6531,7 @@ impl Parser {
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
         *result_type = joined;
         self.match_void_arm |= matches!(arm_type, Type::Void);
-        if matches!(*result_type, Type::Void | Type::Never) {
+        if matches!(result_type.base(), Type::Void | Type::Never) {
             *result_type = arm_type.clone();
         } else if !self.first_pass
             && arm_type != Type::Void
@@ -9514,7 +9514,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if matches!(result_type, Type::Void | Type::Null | Type::Never) {
+            if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                 result_type = arm_type.clone();
             }
             // P209 — when the arm has both a guard and pattern bindings
@@ -10612,7 +10612,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if matches!(result_type, Type::Void | Type::Never) {
+            if matches!(result_type.base(), Type::Void | Type::Never) {
                 result_type = arm_type.clone();
             }
             // Without a guard the bindings fold into the body exactly as before; with one they

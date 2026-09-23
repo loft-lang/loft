@@ -19,7 +19,12 @@
 // @EXPECT_ERROR: `l3p` was bound inside a block that has ended
 // @EXPECT_ERROR: `l4r` was bound inside a block that has ended
 // @EXPECT_ERROR: `l5j` was bound inside a block that has ended
-// @falsified-at: pending
+// @falsified-at: 7a8162514 — interpret exit 1 -> 0, interpret expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/5 -> 0/5 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1600c-a-loop-variable-ends-with-its-loop.patch — the same channels.
+//   CHANNEL: the EXPECTATION channel — the control compiles every refused cell (a loop
+//   variable was readable after its loop), so none of the five refusals fires.
+//   WITNESS: on 7a8162514 `l1` compiles and reads `l1i == 2` after its loop.
+//   HOLDS: leak and panic are equal on both trees; the running cells o1–o8 answer the same.
 
 fn l1() { for l1i in 0..3 { } assert(l1i == 2, "l1"); }
 fn l2() { for l2x in [5, 6] { } assert(l2x#index == 1, "l2"); }
