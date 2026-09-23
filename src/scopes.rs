@@ -9833,6 +9833,14 @@ fn captured_only_by_confined(
     if built_with.pass_confined.is_empty() {
         return false;
     }
+    // A boxed `__cell_` a closure mutates is minted FOR the record, which adopts it confined
+    // or not (it is the cell's only owner): the frame's release would be a second one, and
+    // the next pass's displaced record released the store again after the frame had handed
+    // its number to the new cell (LOFT_POISON: the pass read a poisoned counter).
+    if matches!(function.tp(v).base(), Type::Reference(r, _) if data.def(*r).name.starts_with("__cell_"))
+    {
+        return false;
+    }
     let name = function.name(v);
     let mut any = false;
     for w in 0..function.next_var() {
@@ -13542,12 +13550,24 @@ impl Scopes<'_> {
                 }
             });
         }
+        // …unless a capture it reads is reassigned after the build (`s = build(|i| s.a + i)`):
+        // `(O-Latest)` hands that store back to the frame's release
+        // (`reassigned_after_build`), and releasing the record here would release it twice.
+        let reassigned = &self.capture_build_backing.reassigned_after_build;
         let inline: Vec<u16> = self
             .closure_keep
             .records
             .iter()
             .copied()
-            .filter(|r| !self.closure_keep.targets.contains_key(r) && built_here.contains(r))
+            .filter(|r| {
+                !self.closure_keep.targets.contains_key(r)
+                    && built_here.contains(r)
+                    && !self
+                        .closure_keep
+                        .captures
+                        .iter()
+                        .any(|(rec, _, x)| rec == r && reassigned.contains(x))
+            })
             .collect();
         if dead.is_empty() && inline.is_empty() {
             return Vec::new();
@@ -23339,7 +23359,6 @@ fn check_ref_leaks(
 
     let built_with = capture_build_backings(data, function, ir);
     let link_delivered = link_written_closure_records(data, function, fn_def_nr);
-    let keep = closure_keep_set(data, function, ir);
     for (&v, &scope) in var_scope {
         if scope == 0 {
             continue; // function parameter — caller frees
@@ -23378,7 +23397,11 @@ fn check_ref_leaks(
         // record and the frame owes no free.  The third suppression leg this mirror has had
         // to learn, and the reason each is a CALL to the emitter's own predicate rather than
         // a restatement of it.
-        if link_delivered.contains(&v) && !keep.decides_link(v) {
+        // A record written out through a link is skipped whether or not `(L-CapKeep)` decides
+        // the delivery at run time: on a frame where the write always happens the emitter owes
+        // no free, and where it does not, the free it emits is guarded by store identity — a
+        // static mirror can assert neither.
+        if link_delivered.contains(&v) {
             continue;
         }
         if v == direct_ret_var {
