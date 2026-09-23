@@ -500,15 +500,15 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">apply_fn</span>(negate_it, <span class="nm">3</span>) == -<span class="nm">3</span>, <span class="st">"fn-ref as arg (negate)"</span>);</code></pre>
 <p>Lambdas with map, filter, and reduce. Use |...| short form — types are inferred from the call site.</p>
 <pre><code>  nums = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>, <span class="nm">5</span>];
-  doubled = <span class="fn-call">map</span>(nums, |x| { x * <span class="nm">2</span> });
+  doubled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(nums, |x| { x * <span class="nm">2</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"lambda map first element"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">4</span>] == <span class="nm">10</span>, <span class="st">"lambda map last element"</span>);</code></pre>
 <p>filter keeps only elements where the lambda returns true.</p>
-<pre><code>  evens = <span class="fn-call">filter</span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
+<pre><code>  evens = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"filter evens first"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">1</span>] == <span class="nm">4</span>, <span class="st">"filter evens second"</span>);</code></pre>
 <p>reduce collapses the whole list into one value. The lambda receives the running total (acc) and the next element (x).</p>
-<pre><code>  total = <span class="fn-call">reduce</span>(nums, <span class="nm">0</span>, |acc, x| { acc + x });
+<pre><code>  total = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(nums, <span class="nm">0</span>, |acc, x| { acc + x });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total == <span class="nm">15</span>, <span class="st">"reduce sum: {total}"</span>);</code></pre>
 <p>Use fn(...) long form when you need explicit types — for example when storing a lambda in a variable or passing it without call-site context.</p>
 <pre><code>  negate = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { -x };
@@ -633,18 +633,18 @@
 <h2 id="higher-order-functions">Higher-order functions</h2>
 <p><code>map</code> applies a function to every element and returns a new vector.</p>
 <pre><code>  nums =[<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>, <span class="nm">5</span>];
-  tripled = <span class="fn-call">map</span>(nums,  triple);
+  tripled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(nums,  triple);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{tripled}"</span> == <span class="st">"[3,6,9,12,15]"</span>, <span class="st">"map triple: {tripled}"</span>);</code></pre>
 <p><code>filter</code> keeps only elements for which the predicate returns true.</p>
-<pre><code>  evens2 = <span class="fn-call">filter</span>(nums,  is_even_n);
+<pre><code>  evens2 = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums,  is_even_n);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{evens2}"</span> == <span class="st">"[2,4]"</span>, <span class="st">"filter evens: {evens2}"</span>);</code></pre>
 <p><code>reduce</code> folds all elements into a single value, starting from an initial accumulator. Argument order: reduce(vector, initial_value, combiner).</p>
-<pre><code>  total = <span class="fn-call">reduce</span>(nums, <span class="nm">0</span>,  sum_acc);
+<pre><code>  total = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(nums, <span class="nm">0</span>,  sum_acc);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total == <span class="nm">15</span>, <span class="st">"reduce sum: {total}"</span>);
-  product = <span class="fn-call">reduce</span>(nums, <span class="nm">1</span>,  mul_acc);
+  product = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(nums, <span class="nm">1</span>,  mul_acc);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(product == <span class="nm">120</span>, <span class="st">"reduce product: {product}"</span>);</code></pre>
 <p>You can chain these calls: filter first, then map, then reduce.</p>
-<pre><code>  result = <span class="fn-call">reduce</span>(<span class="fn-call">map</span>(<span class="fn-call">filter</span>(nums,  is_even_n),  triple), <span class="nm">0</span>,  sum_acc);
+<pre><code>  result = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(<span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(<span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums,  is_even_n),  triple), <span class="nm">0</span>,  sum_acc);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(result == <span class="nm">18</span>, <span class="st">"filter+map+reduce: {result}"</span>);
 }</code></pre>
 </section>
@@ -671,7 +671,7 @@
 }</code></pre>
 <p>A method can also return a completely new struct value. Write <code>-&gt; StructName</code> as the return type and construct the value in the body. The original struct is not modified — the caller gets a brand-new copy.</p>
 <pre><code><span class="kw">fn</span> <span class="fn-call">dimmed</span>(self: <span class="en">Colour</span>) -&gt; <span class="en">Colour</span> {
-  <span class="en">Colour</span> {r: self.r / <span class="nm">2</span>, g: self.g / <span class="nm">2</span>, b: self.b / <span class="nm">2</span> }
+  <span class="en">Colour</span> {r: self.r / <span class="nm">2</span> ?? <span class="nm">0</span>, g: self.g / <span class="nm">2</span> ?? <span class="nm">0</span>, b: self.b / <span class="nm">2</span> ?? <span class="nm">0</span> }
 }</code></pre>
 <h2 id="defaults-and-computed-fields">Defaults and Computed Fields</h2>
 <p>Write <code>= expression</code> after the type to set a stored default, filled at construction. Use <code>computed(expression)</code> for a field that recalculates every time you read it — it takes no space in the record and always reflects the current state. Inside both, <code>$</code> refers to the struct.</p>
@@ -724,10 +724,10 @@
 <p>Zero is a real value in a limited field — pure black needs nothing extra.</p>
 <pre><code>  black = <span class="en">Colour</span> {r: <span class="nm">0</span>, g: <span class="nm">0</span>, b: <span class="nm">0</span> };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span> <span class="kw">and</span> black.g == <span class="nm">0</span> <span class="kw">and</span> black.b == <span class="nm">0</span>, <span class="st">"pure black reads back as zeros"</span>);</code></pre>
-<p>A value outside the range takes the type's default rather than being rejected.</p>
+<p>A value the compiler cannot prove in range is REFUSED unless you say what it becomes: <code>?? 0</code> makes the fallback explicit, and 300 does not fit, so the fallback is stored.</p>
 <pre><code>  over = <span class="nm">300</span>;
-  black.r = over;
-  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span>, <span class="st">"out of range takes the default: {black.r}"</span>);</code></pre>
+  black.r = over ?? <span class="nm">0</span>;
+  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(black.r == <span class="nm">0</span>, <span class="st">"out of range takes the fallback you wrote: {black.r}"</span>);</code></pre>
 <p>Formatting a struct shows all fields compactly.</p>
 <pre><code>  <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="st">"{col}"</span> == <span class="st">"{{r:128,g:0,b:128}}"</span>, <span class="st">"Struct compact formatting"</span>);</code></pre>
 <p><code>:j</code> produces JSON output — a text format used by many web APIs and config tools.</p>
@@ -2427,7 +2427,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="kw">for</span> c <span class="kw">in</span> g.cells { out += [<span class="fn-call">f</span>(c)]; }
   <span class="en">Grid</span> { w: g.w, cells: out }
 }
-<span class="kw">fn</span> show&lt;<span class="en">T</span>: <span class="en">Printable</span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { r = <span class="st">""</span>; <span class="kw">for</span> c <span class="kw">in</span> g.cells { r += <span class="st">"[{c.to_text()}]"</span>; } r }
+<span class="kw">fn</span> show&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Printable</a></span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { r = <span class="st">""</span>; <span class="kw">for</span> c <span class="kw">in</span> g.cells { r += <span class="st">"[{c.to_text()}]"</span>; } r }
 <span class="kw">fn</span> <span class="fn-call">show</span>(g: <span class="en">Grid</span>&lt;<span class="en">Tile</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"tiles:{len(g.cells)}"</span> }
 <span class="kw">fn</span> <span class="fn-call">test_two_variables</span>() {
   tiles = <span class="en">Grid</span> { w: <span class="nm">2</span>, cells: [<span class="en">Tile</span> { height: <span class="nm">3</span>, name: <span class="st">"a"</span> }, <span class="en">Tile</span> { height: <span class="nm">5</span>, name: <span class="st">"b"</span> }] };
@@ -2550,21 +2550,21 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   scale = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x * factor };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">scale</span>(<span class="nm">5</span>) == <span class="nm">15</span>, <span class="st">"scale(5): {scale(5)}"</span>);</code></pre>
 <p>The same closure passed to map — <code>factor</code> travels with it.</p>
-<pre><code>  scaled = <span class="fn-call">map</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], scale);
+<pre><code>  scaled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], scale);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(scaled[<span class="nm">0</span>] == <span class="nm">3</span>, <span class="st">"scaled[0]: {scaled[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(scaled[<span class="nm">2</span>] == <span class="nm">9</span>, <span class="st">"scaled[2]: {scaled[2]}"</span>);</code></pre>
 <p>A capturing lambda written inline works too, in filter as well as map.</p>
 <pre><code>  <span class="kw">limit</span> = <span class="nm">2</span>;
-  big = <span class="fn-call">filter</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x &gt; <span class="kw">limit</span> });
+  big = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x &gt; <span class="kw">limit</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(big) == <span class="nm">2</span>, <span class="st">"len(big): {len(big)}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(big[<span class="nm">0</span>] == <span class="nm">3</span>, <span class="st">"big[0]: {big[0]}"</span>);</code></pre>
 <h2 id="non-capturing-lambdas-with-higher-order-functions">Non-capturing lambdas with higher-order functions</h2>
 <p>No capture needed here — the lambda uses only its own parameter.</p>
 <pre><code>  nums = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>, <span class="nm">5</span>];
-  doubled = <span class="fn-call">map</span>(nums, |x| { x * <span class="nm">2</span> });
+  doubled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(nums, |x| { x * <span class="nm">2</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"doubled[0]: {doubled[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">4</span>] == <span class="nm">10</span>, <span class="st">"doubled[4]: {doubled[4]}"</span>);</code></pre>
-<pre><code>  evens = <span class="fn-call">filter</span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
+<pre><code>  evens = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"evens[0]: {evens[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">1</span>] == <span class="nm">4</span>, <span class="st">"evens[1]: {evens[1]}"</span>);</code></pre>
 <h2 id="capturing-a-parameter">Capturing a <code>&amp;</code> parameter</h2>
@@ -4437,7 +4437,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub fn size(self: const hash) -&gt; integer</code></pre>
-<p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (load factor 0.75).  0 for an empty (unallocated) hash.</p>
+<p>The byte footprint of a hash: its full bucket table, holes included.  The table is the hash's own allocation — `elms` slots, each a 4-byte record-id (an empty slot is a hole and still counts, because open addressing's spare capacity IS the format).  Allocation-local: the entry records live in separate allocations and are not counted.  Grows in steps as the table rehashes (it is rebuilt at half full).  0 for an empty (unallocated) hash.</p>
 </div>
 <h2 id="stdlib-output-and-diagnostics">Output and Diagnostics</h2>
 <div class="item">
@@ -4516,6 +4516,18 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 <div class="item">
 <pre><code>pub fn sort &lt; T: Ordered &gt; (self: vector&lt;T&gt;)</code></pre>
 <p>Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `&lt;` (`Ordered`) — a struct defining `op &lt;` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.</p>
+</div>
+<div class="item">
+<pre><code>pub fn filter &lt; T &gt; (self: vector&lt;T&gt;, f: fn(T) -&gt; boolean) -&gt; vector&lt;T&gt;</code></pre>
+<p>Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn map &lt; T, U &gt; (self: vector&lt;T&gt;, f: fn(T) -&gt; U) -&gt; vector&lt;U&gt;</code></pre>
+<p>What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's element is what `f` returns, so a map can change the element type.</p>
+</div>
+<div class="item">
+<pre><code>pub fn reduce &lt; T, U &gt; (self: vector&lt;T&gt;, init: U, f: fn(U, T) -&gt; U) -&gt; U</code></pre>
+<p>Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.</p>
 </div>
 <div class="item">
 <pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>
@@ -4899,7 +4911,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
 </div>
 <div class="item">
 <pre><code>pub fn env_variable(name: text) -&gt; text env#read</code></pre>
-<p>Returns the value of the environment variable `name`, or `&quot;&quot;` when it is not set. An unset variable and one set to the empty string give the same answer, so this cannot tell them apart. Use to read configuration from the shell environment.</p>
+<p>Returns the value of the environment variable `name`, or `null` when it is not set. A variable set to the empty string answers `&quot;&quot;`, so `== null` tells the two apart. Use to read configuration from the shell environment.</p>
 </div>
 <div class="item">
 <pre><code>pub fn arguments() -&gt; vector&lt;text&gt;</code></pre>

@@ -620,6 +620,23 @@ impl NarrowIntKind {
         matches!(self, NarrowIntKind::ByteNullable | NarrowIntKind::Short)
     }
 
+    /// The kind as the interpreter's `OpVarNarrow` / `OpPutNarrow` operand spells it — the
+    /// constants in `crate::narrow`, which decode by this code.
+    #[must_use]
+    pub fn code(self) -> u8 {
+        match self {
+            NarrowIntKind::Byte => crate::narrow::BYTE,
+            NarrowIntKind::ByteNullable => crate::narrow::BYTE_NULLABLE,
+            NarrowIntKind::ShortRaw => crate::narrow::SHORT_RAW,
+            NarrowIntKind::Short => crate::narrow::SHORT,
+            NarrowIntKind::ShortFull => crate::narrow::SHORT_FULL,
+            NarrowIntKind::Int4 => crate::narrow::INT4,
+            NarrowIntKind::Int4Raw => crate::narrow::INT4_RAW,
+            NarrowIntKind::Int4Full => crate::narrow::INT4_FULL,
+            NarrowIntKind::Int => u8::MAX,
+        }
+    }
+
     /// The `OpGet*` op name for this kind.
     #[must_use]
     pub fn get_op(self) -> &'static str {
@@ -4953,11 +4970,21 @@ impl Definition {
     /// [`Self::monomorph_return_is_fresh`] for what the answer is used for and why it
     /// under-approximates.  `buf` is [`Self::value_return_buffer_var`] — the one argument
     /// that answers "owned" rather than "borrowed".
-    fn site_is_fresh(v: &Value, vars: &crate::variables::Function, buf: Option<u16>) -> bool {
+    fn site_is_fresh(
+        v: &Value,
+        vars: &crate::variables::Function,
+        buf: Option<u16>,
+        null_ref: u32,
+    ) -> bool {
         match v.unspan() {
-            // Null is a value, not a store — it can neither leak nor dangle.
+            // Null is a value, not a store — it can neither leak nor dangle.  So is the null
+            // REFERENCE (`OpNullRefSentinel()`, `null_ref`), which is how a record-typed
+            // `null` tail is spelled: read as "not proven", it refused every instance that
+            // ends `… null` after minting on another path, which then leaked one record per
+            // inline call where its hand-written twin was lifted and freed (@FR-G-Mono).
             Value::Null => true,
-            Value::Var(n) => *n < vars.count() && (!vars.is_argument(*n) || buf == Some(*n)),
+            Value::Call(nr, args) if *nr == null_ref && args.is_empty() => true,
+            Value::Var(n) => Self::local_owns(*n, vars, buf),
             // loft#1070 — a value-yielding `if` / `match` tail: fresh iff EVERY arm is.
             // Held back while an arm-local of a monomorph was built against the type
             // variable's row and answered a wrong number; with that fixed the arms are
@@ -4965,13 +4992,14 @@ impl Definition {
             // Both arms are required, so one borrowing arm still refuses the whole site —
             // the under-approximation composes rather than being widened away.
             Value::If(_, then, els) => {
-                Self::site_is_fresh(then, vars, buf) && Self::site_is_fresh(els, vars, buf)
+                Self::site_is_fresh(then, vars, buf, null_ref)
+                    && Self::site_is_fresh(els, vars, buf, null_ref)
             }
             // A block's value is its tail; an empty one yields nothing to own.
             Value::Block(bl) => bl
                 .operators
                 .last()
-                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf)),
+                .is_none_or(|tail| Self::site_is_fresh(tail, vars, buf, null_ref)),
             // A call THROUGH A FN-REF reaches the `_` arm below and answers "not proven",
             // and that is the honest answer HERE: the target is a runtime value, so this
             // body cannot read the callee's fact.  It is readable one frame up, where the
@@ -4990,11 +5018,40 @@ impl Definition {
             // one both read "capture-free".  The target's own BODY is what tells them
             // apart, which is why the resolution goes to the definition and not the type.
             other => match Self::root_var(other) {
-                Some(n) => n < vars.count() && (!vars.is_argument(n) || buf == Some(n)),
+                Some(n) => Self::local_owns(n, vars, buf),
                 // No readable root (a call, a literal-built aggregate): not proven fresh.
                 None => false,
             },
         }
+    }
+
+    /// Does local `n` OWN what it holds — the return buffer, or a non-parameter that does not
+    /// VIEW a parameter through its deps (`@FR-O-Proxy`, the fact the scope pass frees by)?
+    /// A loop's element (`for x in v { return x; }`) is a local too, but it depends on the
+    /// loop's copy of `v`, which depends on `v`: lifting it freed the caller's own record.
+    /// That was hidden while a `null` tail beside it refused the whole body; it is not the
+    /// tail that makes the site a borrow.  A dep on a store the frame minted (a vector
+    /// local's `__vdb_N`) is ownership, not a view.
+    fn local_owns(n: u16, vars: &crate::variables::Function, buf: Option<u16>) -> bool {
+        fn views_a_parameter(
+            n: u16,
+            vars: &crate::variables::Function,
+            buf: Option<u16>,
+            seen: &mut Vec<u16>,
+        ) -> bool {
+            if seen.contains(&n) {
+                return false;
+            }
+            seen.push(n);
+            vars.tp(n).depend().iter().any(|&d| {
+                d < vars.count()
+                    && buf != Some(d)
+                    && (vars.is_argument(d) || views_a_parameter(d, vars, buf, seen))
+            })
+        }
+        n < vars.count()
+            && (buf == Some(n)
+                || (!vars.is_argument(n) && !views_a_parameter(n, vars, buf, &mut Vec::new())))
     }
 
     /// Every value this body can hand back: each explicit `return`, PLUS the body's own
@@ -5041,7 +5098,7 @@ impl Definition {
     /// reads `None` as "no closure involved" gets the unsound half: a body with one
     /// readable fn-ref site and one site this cannot read also answers `None`.
     #[must_use]
-    pub fn monomorph_fnref_return_slots(&self) -> Option<Vec<u16>> {
+    pub fn monomorph_fnref_return_slots(&self, null_ref: u32) -> Option<Vec<u16>> {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let sites = self.return_sites();
@@ -5050,7 +5107,7 @@ impl Definition {
         }
         let mut slots: Vec<u16> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
                 continue;
             }
             match site.unspan() {
@@ -5089,7 +5146,7 @@ impl Definition {
     /// target — a body that hands back its own argument must NOT be lifted, or the free
     /// releases the caller's record while the variable holding it is still live.
     #[must_use]
-    pub fn monomorph_direct_call_return_targets(&self) -> Option<Vec<u32>> {
+    pub fn monomorph_direct_call_return_targets(&self, null_ref: u32) -> Option<Vec<u32>> {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let sites = self.return_sites();
@@ -5098,7 +5155,7 @@ impl Definition {
         }
         let mut targets: Vec<u32> = Vec::new();
         for site in &sites {
-            if Self::site_is_fresh(site.unspan(), vars, buf) {
+            if Self::site_is_fresh(site.unspan(), vars, buf, null_ref) {
                 continue;
             }
             match site.unspan() {
@@ -5137,7 +5194,7 @@ impl Definition {
     }
 
     #[must_use]
-    pub fn monomorph_return_is_fresh(&self) -> bool {
+    pub fn monomorph_return_is_fresh(&self, null_ref: u32) -> bool {
         let vars = &self.variables;
         let buf = self.value_return_buffer_var();
         let mut seen_return = false;
@@ -5148,7 +5205,7 @@ impl Definition {
             let inner = inner.unspan();
             // A bare `Var` is the shape both the owned and the borrowed monomorph end
             // with after the scope pass, and it is the one the answer turns on.
-            if !Self::site_is_fresh(inner, vars, buf) {
+            if !Self::site_is_fresh(inner, vars, buf, null_ref) {
                 all_fresh = false;
             }
         }
@@ -5938,6 +5995,190 @@ pub fn holds_dbref(tp: &Type) -> bool {
 /// still spelling this list inline — adopting them changes behaviour per site and each needs
 /// its own probe, which is why they are a checklist and not a sweep.
 #[must_use]
+/// How a LINKED narrow integer local holds its value — the encoding a FIELD of its type has
+/// (@PLN167 decision 1, `@FR-B-Ref-Uniform`), so that one `&u8` pointer or `DbRef` reads a
+/// local and a field alike.
+///
+/// A local is a slot like a field, never a narrow-vector element (`narrow_vec = false`), so
+/// a non-nullable two-byte type takes the full-range kind and a nullable one the `+1` kind;
+/// `min` is what the kind's read and write ops take.  `None` for a type that is not narrow:
+/// the full `integer`, which stays the 8-byte slot every local has.  The bytes themselves are
+/// written and read by `crate::narrow`, on both backends.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NarrowSlot {
+    pub kind: NarrowIntKind,
+    /// The `min` operand of the kind's ops; `0` for a kind that takes none.
+    pub min: i32,
+    pub width: u8,
+    /// A NON-nullable 1- or 2-byte type that kept a spare top code
+    /// (`IntegerSpec::reserves_sentinel_unconditionally`): an overflow writes that code and
+    /// the slot reads null (C85), which is what a LOCAL of the type answers today.  The
+    /// encoding maps null to the code and back; the kind's own ops do not.
+    pub spare: bool,
+}
+
+impl NarrowSlot {
+    /// The slot a STORE PLACE of this spec takes: a struct field, a vector element, a keyed
+    /// collection's element field — the one home for which read and write ops that place's
+    /// bytes pass through, and for the `min` they are handed.
+    ///
+    /// `width` is the caller's, because a field's width comes from the alias's `forced_size`
+    /// before the spec's own range (loft#1036), and `narrow_vec` says the place is a
+    /// narrow-vector ELEMENT, whose stride/value contract is the raw one rather than the
+    /// field-sentinel one.
+    ///
+    /// `spare` is a NON-nullable 1- or 2-byte type that kept a top code
+    /// (`IntegerSpec::reserves_sentinel_unconditionally`): C85 says an overflow writes that
+    /// code and the slot then reads null, which is what a LOCAL of the type answers — so the
+    /// place reads and writes through the op that maps the code to null (loft#1615).  It is
+    /// never a narrow-vector element, and `@FR-L-Narrow-Alias` is why: a stored width is a
+    /// property of a NAMED type, so `size(n)` is written in a `type` alias and nowhere else,
+    /// while `narrow_vec` requires no alias.  The two are therefore mutually exclusive by the
+    /// RULE rather than by an accident of the parser — which is what the `debug_assert` below
+    /// now rests on.  (It rested on the accident until 2026-09-23: nothing REFUSES an inline
+    /// `size`, the parser simply never looks for one, so a future production that admitted it
+    /// would have walked into the assert with no rule to warn it.)
+    ///
+    /// A width of 8 is the wide `integer`, which answers [`NarrowIntKind::Int`] and takes no
+    /// `min`: the two store-place callers pass every supported width here, so this is total
+    /// rather than an `Option` (`of_type`, which asks about a LOCAL, keeps its own `None`).
+    pub fn of_slot(
+        width: u8,
+        nullable: bool,
+        narrow_vec: bool,
+        spec: &crate::data::IntegerSpec,
+    ) -> Self {
+        let kind = NarrowIntKind::of(width, nullable, narrow_vec, spec.unsigned_wide());
+        let min = if kind.takes_min() {
+            spec.usable_min(kind.reserves_sentinel())
+        } else {
+            0
+        };
+        let spare = !nullable && matches!(width, 1 | 2) && spec.reserves_sentinel_unconditionally();
+        debug_assert!(
+            !(spare && narrow_vec),
+            "a spare-code type reached a narrow-vector element — only a `type` alias can \
+             spell one, and a narrow vector has no alias; the two op families would now \
+             disagree about the same type"
+        );
+        Self {
+            kind,
+            min,
+            width,
+            spare,
+        }
+    }
+
+    /// The slot a narrow integer LOCAL of this type takes — a slot like a field, never a
+    /// narrow-vector element, so [`Self::of_slot`] answers it with the type's own width.
+    /// `None` for the wide `integer`, which keeps the 8-byte slot every local has.
+    #[must_use]
+    pub fn of_type(tp: &Type) -> Option<Self> {
+        let nullable = matches!(tp, Type::Optional(_));
+        let Type::Integer(spec) = tp.base() else {
+            return None;
+        };
+        let width = spec.byte_width(nullable);
+        if width >= 8 {
+            return None;
+        }
+        Some(Self::of_slot(width, nullable, false, spec))
+    }
+
+    /// The kind as the interpreter's op operand spells it.
+    #[must_use]
+    pub fn code(self) -> u8 {
+        match (self.spare, self.width) {
+            (true, 1) => crate::narrow::BYTE_SPARE,
+            (true, _) => crate::narrow::SHORT_SPARE,
+            _ => self.kind.code(),
+        }
+    }
+
+    /// The interpreter op a LINK to a place of this kind reads through: the kind's own, except
+    /// that a spare-code kind reads through the op that decodes its top code as null.
+    #[must_use]
+    pub fn get_op(self) -> &'static str {
+        match (self.spare, self.width) {
+            (true, 1) => "OpGetByteNullable",
+            (true, _) => "OpGetShortSpare",
+            _ => self.kind.get_op(),
+        }
+    }
+
+    /// The write twin of [`Self::get_op`].  A spare-code BYTE writes through the nullable
+    /// setter: the plain one casts its value `as i32` before the store sees it, which turns
+    /// the null `i64::MIN` into `0` — a value — where the nullable one maps it to the code
+    /// first (the field half of that truncation is loft#1615).  The two-byte setter and every
+    /// other kind's already map null to their code.
+    #[must_use]
+    pub fn set_op(self) -> &'static str {
+        match (self.spare, self.width) {
+            (true, 1) => "OpSetByteNullable",
+            _ => self.kind.set_op(),
+        }
+    }
+
+    /// The Rust type a native local of this kind is declared as: the storage width, unsigned
+    /// where the encoding is a biased code.
+    #[must_use]
+    pub fn rust_type(self) -> &'static str {
+        match self.kind {
+            NarrowIntKind::Byte | NarrowIntKind::ByteNullable => "u8",
+            NarrowIntKind::ShortRaw | NarrowIntKind::Short | NarrowIntKind::ShortFull => "u16",
+            NarrowIntKind::Int4 => "i32",
+            NarrowIntKind::Int4Raw | NarrowIntKind::Int4Full => "u32",
+            NarrowIntKind::Int => "i64",
+        }
+    }
+
+    /// The `crate::narrow` function pair for this kind, `(enc, dec)`, and whether it takes
+    /// the `min` argument.
+    fn fns(self) -> (&'static str, &'static str, bool) {
+        if self.spare {
+            return if self.width == 1 {
+                ("enc_byte_spare", "dec_byte_spare", true)
+            } else {
+                ("enc_short_spare", "dec_short_spare", true)
+            };
+        }
+        match self.kind {
+            NarrowIntKind::Byte => ("enc_byte", "dec_byte", true),
+            NarrowIntKind::ByteNullable => ("enc_byte_nullable", "dec_byte_nullable", true),
+            NarrowIntKind::ShortRaw => ("enc_short_raw", "dec_short_raw", true),
+            NarrowIntKind::Short => ("enc_short", "dec_short", true),
+            NarrowIntKind::ShortFull => ("enc_short_full", "dec_short_full", true),
+            NarrowIntKind::Int4 => ("enc_int4", "dec_int4", false),
+            NarrowIntKind::Int4Raw => ("enc_int4_raw", "dec_int4_raw", false),
+            NarrowIntKind::Int4Full | NarrowIntKind::Int => {
+                ("enc_int4_full", "dec_int4_full", false)
+            }
+        }
+    }
+
+    /// Native: the stored bytes for the wide value `expr`.
+    #[must_use]
+    pub fn encode_rust(self, expr: &str) -> String {
+        let (enc, _, takes_min) = self.fns();
+        if takes_min {
+            format!("loft::narrow::{enc}(({expr}) as i64, {}_i32)", self.min)
+        } else {
+            format!("loft::narrow::{enc}(({expr}) as i64)")
+        }
+    }
+
+    /// Native: the wide value of the stored bytes `expr`.
+    #[must_use]
+    pub fn decode_rust(self, expr: &str) -> String {
+        let (_, dec, takes_min) = self.fns();
+        if takes_min {
+            format!("loft::narrow::{dec}({expr}, {}_i32)", self.min)
+        } else {
+            format!("loft::narrow::{dec}({expr})")
+        }
+    }
+}
+
 pub fn is_scalar(tp: &Type) -> bool {
     matches!(
         // `@FR-N-Shape` — a `τ?` scalar is stored in `τ`'s own width with an in-band sentinel
@@ -7976,6 +8217,32 @@ impl Data {
         self.def_names.keys().any(|(n, _)| n == name)
     }
 
+    /// The placeholder a header spelling `<T>` (or `<T: Ordered>`) already names, read off the
+    /// DATA rather than off the parser that minted it.
+    ///
+    /// `Parser::type_var_holders` answers this while one parser mints and then uses a
+    /// placeholder.  A parser that CONTINUES another's Data — a prepared or cached stdlib —
+    /// has an empty map, and fell back to the def the bare spelling resolves to: `T` is the
+    /// stdlib's BOUNDED `<T: Ordered>` holder since `sort` was declared, so an unbounded
+    /// program `<T>` could not reuse it and minted `T#4`, and its `vector<T#4>` then would not
+    /// convert to the stdlib `reduce`'s `vector<T#3>` — *"expected vector<T>, got vector<T>"*.
+    /// The bound key each holder carries (`type_var_bound_keys`) travels with the Data, so the
+    /// same question is answerable there: the lowest-numbered holder of this SPELLING whose
+    /// bounds match.
+    #[must_use]
+    pub fn holder_for_spelling(&self, spelling: &str, bounds_key: &str) -> Option<u32> {
+        self.type_var_bound_keys
+            .iter()
+            .filter(|(d, key)| {
+                key.as_str() == bounds_key
+                    && (**d as usize) < self.definitions.len()
+                    && self.definitions[**d as usize].def_type == DefType::Struct
+                    && Self::type_var_spelling(self.definitions[**d as usize].name()) == spelling
+            })
+            .map(|(d, _)| *d)
+            .min()
+    }
+
     /// The spelling a type-variable placeholder was DECLARED under.
     ///
     /// Two generic headers may both write `T` while binding different variables
@@ -9968,6 +10235,22 @@ impl Data {
         pairs
     }
 
+    /// Give up the flat NAME of a type-variable placeholder, so a declaration in another
+    /// file may take it (`Parser::placeholder_from_another_file`).
+    ///
+    /// The definition stays — every template that declared it holds it by NUMBER, and its
+    /// instances were bound to that number — only the `(name, source)` key it occupied is
+    /// released.  It exists because a REPL input, a `<host>` string and the test harness
+    /// parse at the stdlib's own source id on purpose, so a stdlib type variable and the
+    /// reader's own struct compete for one key there where a FILE gives them two.
+    ///
+    /// ⚠ `rebuild_indices` reconstructs `def_names` from the definitions, so a rollback
+    /// after this restores the placeholder's key; the declaration that took it is rolled
+    /// back with it, which is the state they were both in before.
+    pub(crate) fn release_def_name(&mut self, name: &str, source: u16) {
+        let _ = self.def_names.remove(&(name.to_string(), source));
+    }
+
     /// A generic type-variable placeholder: the attribute-less, self-referential
     /// `Struct` the parser registers for a `<T>` type parameter (e.g. stdlib
     /// `min_of<T>`) so the template body's types resolve.  It has store size 0 and
@@ -10097,13 +10380,38 @@ impl Data {
         self.def_nr(&bare.name(self))
     }
 
+    /// The definition key of `type_def`'s synthesized drop cascade —
+    /// `t_<LEN><spelling>_<method>`, for `OpDropAll` or `OpDropAllExcept`.
+    ///
+    /// ONE home for the name, so the parser's mint
+    /// ([`Parser::drop_cascade_name`](crate::parser::Parser::drop_cascade_name)) and every
+    /// lookup here spell the same key; two homes could only drift.
+    ///
+    /// An enum VARIANT is qualified by its enum (`E::Some`). A variant's name is unique only
+    /// WITHIN its enum — that is what [`Self::variant_of`] exists to say — so a bare `Some`
+    /// names no one type. Every `τ?` lowers to a `__nullable<τ>` whose variant is `Some`, so
+    /// two droppable types used as nullable FIELDS mint the same cascade key twice, and the
+    /// second trips the dual-definition guard.
+    #[must_use]
+    pub fn drop_cascade_key(&self, type_def: u32, method: &str) -> String {
+        let def = self.def(type_def);
+        if self.def_type(type_def) == DefType::EnumValue
+            && def.parent() != u32::MAX
+            && (def.parent() as usize) < self.definitions.len()
+        {
+            let owner = self.def(def.parent()).name();
+            return Self::mangle_method(&format!("{owner}::{}", def.name()), method);
+        }
+        Self::mangle_method(def.name(), method)
+    }
+
     #[must_use]
     pub fn drop_cascade_nr(&self, type_def: u32) -> u32 {
         if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = Self::mangle_method(&def.name, "OpDropAll");
+        let key = self.drop_cascade_key(type_def, "OpDropAll");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -10132,7 +10440,7 @@ impl Data {
             return u32::MAX;
         }
         let def = self.def(type_def);
-        let key = Self::mangle_method(&def.name, "OpDropAllExcept");
+        let key = self.drop_cascade_key(type_def, "OpDropAllExcept");
         let nr = self.source_nr(def.source, &key);
         if nr != u32::MAX {
             return nr;
@@ -10153,7 +10461,7 @@ impl Data {
             return false;
         }
         let def = self.def(type_def);
-        let key = Self::mangle_method(&def.name, "OpDropAll");
+        let key = self.drop_cascade_key(type_def, "OpDropAll");
         self.source_nr(def.source, &key) != u32::MAX || self.def_nr(&key) != u32::MAX
     }
 

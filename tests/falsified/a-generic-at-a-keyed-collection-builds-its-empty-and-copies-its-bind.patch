@@ -1,0 +1,112 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index b6676e8eb..023febd58 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -12147,16 +12147,13 @@ impl Parser {
+         let mut code =
+             std::mem::replace(&mut self.data.definitions[d_nr as usize].code, Value::Null);
+         // Which locals did the template type as the type variable?  Those are the binds the
+-        // record lowering was written for; a local the template already typed as a collection
+-        // got that lowering at the parse and is left alone.  Vector OR keyed: `acc = init` in
+-        // `fold<T, U>` is the same `@FR-B-Copy` whole-value bind at a `hash`, and left aliasing
+-        // the argument the caller freed its own collection through the result.
++        // record lowering was written for; a local the template already typed as a vector
++        // got the vector lowering at the parse and is left alone.
+         let tv_typed = |v: u16, vars: &crate::variables::Function| -> bool {
+             (v as usize) < tmpl_vars.count() as usize
+                 && matches!(tmpl_vars.tp(v).base(), Type::Reference(h, _) if holders.contains(h))
+                 && (v as usize) < vars.count() as usize
+-                && (matches!(vars.tp(v).base(), Type::Vector(_, _))
+-                    || crate::parser::vectors::is_keyed(vars.tp(v)))
++                && matches!(vars.tp(v).base(), Type::Vector(_, _))
+         };
+         if let Value::Block(bl) = &mut code {
+             // B-Copy: the whole-value vector binds.
+@@ -12199,39 +12196,6 @@ impl Parser {
+     /// The FIRST assignment of a local is also its declaration — the null-init that allocates
+     /// an owned vector local's store on both backends — so a first bind keeps a `Set(v, null)`
+     /// in front of the copy; a rebind copies into the store the local already has.
+-    /// The whole-value copy `@FR-B-Copy` asks of `d = v` at this INSTANCE's collection type:
+-    /// `OpReplaceVector` for a vector, `OpReplaceKeyed` for a keyed kind — the ops the
+-    /// concrete spelling of the same bind emits.  `None` where the source is neither, which
+-    /// leaves the bind alone.
+-    ///
+-    /// The keyed half is what `fold(v, [], add)`'s `acc = init` needed: the template lowered
+-    /// it while `U` was a record placeholder, so no keyed copy was emitted and the instance
+-    /// ALIASED the caller's collection — the caller then freed it through the result and
+-    /// still held it in the argument's own work-ref, and the NEXT call over a recycled store
+-    /// read records that were no longer there (a second fold beside it made the first one's
+-    /// answer shrink).  Its concrete twin copies.
+-    fn generic_collection_copy(&mut self, v: u16, u: u16) -> Option<Value> {
+-        let src = self.vars.tp(u).base().clone();
+-        if let Type::Vector(elm, _) = &src {
+-            let rec_tp = self.append_elem_tp(elm);
+-            return Some(self.cl(
+-                "OpReplaceVector",
+-                &[Value::Var(v), Value::Var(u), Value::Int(rec_tp)],
+-            ));
+-        }
+-        if crate::parser::vectors::is_keyed(&src)
+-            && let Some(kt) = self.keyed_known_type(&src)
+-        {
+-            // Source first, destination second — `OpReplaceKeyed(src, dest, tp)`, as the
+-            // keyed local's own assignment site spells it.
+-            return Some(self.cl(
+-                "OpReplaceKeyed",
+-                &[Value::Var(u), Value::Var(v), Value::Int(i32::from(kt))],
+-            ));
+-        }
+-        None
+-    }
+-
+     fn rewrite_generic_vector_binds(
+         &mut self,
+         node: &mut Value,
+@@ -12255,9 +12219,14 @@ impl Parser {
+                     // made for — `filter(vv, f)` inside a generic panicked at
+                     // `vector<vector<integer>>` — where the concrete twin aliases.
+                     && !self.vars.tp(*v).depend().contains(u)
+-                    && let Some(replace) = self.generic_collection_copy(*v, *u)
++                    && let Type::Vector(elm, _) = self.vars.tp(*u).base().clone()
+                 {
+-                    let v = *v;
++                    let (v, u) = (*v, *u);
++                    let rec_tp = self.append_elem_tp(&elm);
++                    let replace = self.cl(
++                        "OpReplaceVector",
++                        &[Value::Var(v), Value::Var(u), Value::Int(rec_tp)],
++                    );
+                     *node = if first {
+                         Value::Insert(vec![crate::data::v_set(v, Value::Null), replace])
+                     } else {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 6f76a3a36..3a865a3b6 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -15015,26 +15015,6 @@ impl Parser {
+                 all_types[nr] = tp.clone();
+                 continue;
+             }
+-            // … and at a KEYED parameter, the empty collection its concrete spelling builds
+-            // (`f([])` at a `hash<K[k]>` mints a `__kvb_N` store, loft#703).  A generic's
+-            // parameter learns it is keyed only here (`fold(v, [], add)` binds `U` from
+-            // `add`), and without this arm the `[]` reached the callee as a bare `null`: the
+-            // interpreter looped in the instance and `--native` did not compile (E0308), where
+-            // a typed empty local passed in its place was right.
+-            if matches!(&actual_code, Value::Insert(ops) if ops.len() <= 1)
+-                && crate::parser::vectors::is_keyed(&tp)
+-                && let Some(kt) = self.keyed_known_type(&tp)
+-            {
+-                let kvb = self.vars.work_keyed(&tp.without_deps(), &mut self.lexer);
+-                let ls = vec![
+-                    v_set(kvb, Value::Null),
+-                    self.cl("OpDatabase", &[Value::Var(kvb), Value::Int(i32::from(kt))]),
+-                    Value::Var(kvb),
+-                ];
+-                actual.push(v_block(ls, tp.clone(), "empty_vector_arg"));
+-                all_types[nr] = tp.clone();
+-                continue;
+-            }
+             // L4: reject non-variable expressions passed to `&` parameters (except &text
+             // which has its own work-text copy handling in convert()).  The `&` modifier
+             // means "mutations propagate back to the caller" — passing a literal means

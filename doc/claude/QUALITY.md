@@ -2773,12 +2773,37 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **322** |
+| **320** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-22, @PLN165 E5–E7 on `tuxedo-165-generics`, rebased onto `main` @ ffb66a58b and
+re-measured there: **946 · 620 · 4 · 322**, and `--check-ratchet` re-pinned at opaque 322,
+opaque tests 1309 — the method spelling's by-name recognition of `map`/`filter`/`reduce`
+(`parse_vector_method`) is retired, and its bare shape tests with it.  The two the arc added
+peel: the tuple result's own test reads `bl.result.base()`, and the keyed bind asks
+`is_keyed`, which peels.)
+(2026-09-22, loft#1617 / loft#1622 on `tuxedo-1562-layout-gate`, re-measured at their end:
+**943 · 619 · 4 · 320**, opaque tests 1309, and `--check-ratchet` re-pinned DOWN on both counts.
+The fall is the drop-cascade key moving to one home: three inline rebuilds in `data.rs` became
+one call, and the two that discriminated went with them.  The row is re-measured here rather
+than carried, which is the rule a derived count owes every tree it lands on.)
+
+(2026-09-23, both of the above joined here on `tuxedo-quality-2026-09-22` @ `880f8bc65`, plus
+@PLN167 A0–A2 and loft#1615 / loft#1620 / loft#1624, and RE-MEASURED on that tree:
+**953 · 629 · 4 · 320**, opaque tests 1307, and
+`--check-ratchet` re-pinned at 320 · 1307.  Neither side's count describes this tree — a
+derived row cannot be cherry-picked — and the two counts move in opposite directions here: the
+function total rises with the three lines' new walkers while the OPAQUE count holds at the
+lower of the two pins, because the drop-cascade key's one home survives the join and the
+narrow arc's own shape tests read through `NarrowSlot`, which takes a `Type` and peels.  The
+opaque-FUNCTION count agrees with the row above it at 320; the TEST count differs — 1307 here
+against 1309 there — because this tree carries @PLN167 work that one does not, which is why
+each note names the tree it was taken on rather than leaving a reader to guess which of two
+numbers is stale.)
 
 (2026-09-22, the third line of the same join — `tuxedo-1562-layout-gate` (loft#1597, #1600,
 #1601) — re-measured at its end: **941 · 615 · 4 · 322**, opaque tests 1311, at the pin the two-line
@@ -6678,6 +6703,22 @@ instance does not have; the cure is the buffer at instantiation, and the teammat
 `classify_reference_delivery`, `returns_borrowed_view`) each answer *is this leaf a view* by
 their own walk beside the oracle; the walk did not fold them, and it is the next question
 this rule asks.
+
+⚠ **Its TUPLE half is closed (2026-09-22), by never forming the join.**  A `-> T?` at a tuple
+returns a record reference (`(τ, σ)?` has no stack spelling), and an instance that reads the
+vector on one path and holds a tuple on the other was a borrow on one path and a mint on the
+other — the call read inline freed nothing.  Now a tuple element read in a result position
+keeps the element's reference only where EVERY result is such a read or absent; otherwise
+every path mints and the caller owns the result.  The same walk found four more: an `if` whose
+arms both read (arm blocks typed as the stack tuple while holding a reference — a store
+panic), a `null` arm (the run stopped after the call, nothing printed), a tuple local declared
+in an arm (the template's record copy of a view local ran on the tuple — a panic, E0308 on
+native), and a `null` tail beside a mint at ANY `T` (`monomorph_return_is_fresh` read the
+null reference as "not proven", so the mint leaked per inline call; accepting it exposed that
+the check called a loop's element — a view of the parameter — fresh, and a local now owns only
+where its deps reach no parameter).  Guard
+`a-generic-nullable-result-at-a-tuple-answers-on-every-path.loft`.  The RECORD join stays as
+recorded above.
 
 #### B7u — `@FR-O-Complete` walked: the statement form its guards never crossed, and four nullable locals not treated as the heap locals they are (2026-09-05)
 

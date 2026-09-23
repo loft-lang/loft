@@ -996,6 +996,12 @@ push, but CANNOT see what the admission exists to prevent — a runtime reader m
 lagging length changes no held fact — so there the interpreter is the falsifier.  The form
 is load-bearing: the window is three scalars whose address never reaches a call, because a
 counter whose address escaped to the growth arm lived on the stack and cost half the gain.
+Since 2026-09-22 the window also takes RECORD mint groups, at the top level or under `if`
+arms (the arms are exclusive, so the trip count bounds the appends): the slot is the
+window's next, the field sets and the mint address are that pointer, the finish is the
+window's bump (`enum_match` 35.9 → 23.4 µs, ~3.98× → ~2.6×); a group whose literal fills
+the element's own vector field, a read or a view of the vector in the body, a `break` and a
+second pushed vector keep the header mints.
 **`LOFT_NO_JOIN_READ=1`** (`@FR-R-Base`'s join clause, default-ON, generation time, `--native`
 only) makes `v[i]?.f` run its join on every pass and read the result through the store again
 — with it off, a scalar field of a `?`-discharged element (`i` a variable) in a loop that
@@ -1459,6 +1465,23 @@ callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry a
 guard in `--native-release`, since there the frame is only a depth count (parse row −12–14 %).
 **`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
 the named tiers never elide a non-leaf.
+
+**A `??` chain is RIGHT-associated (loft#1612, `@FR-G-Assoc`, `@FR-B-Copy`, default-ON, both
+backends, parse time):** `x ?? y ?? d` parses as `x ?? (y ?? d)`, so every operand is an ARM of a
+plain `if` and an arm's bind is the copy `(B-Copy)` describes.  Left-associated, `(x ?? y) ?? d`
+has a subject that is not a variable, which is hoisted into a `__ncc_N` temp that VIEWS the
+operand it chose — so the destination shared that operand's store (a record on the interpreter, a
+vector and a call-first chain on both).  Either grouping answers the same operand in the same
+order, so no program's value moves with it.  **`LOFT_COALESCE_LEFT_ASSOC=1`** parses the old form
+and is the first bisect step for a wrong value, a leak or a double release out of a chain of three
+or more operands.  A chain the AUTHOR parenthesised still hands the parser a hoisted subject, and
+is right-associated in the SCOPES pass instead (**`LOFT_NO_COALESCE_REASSOC=1`** keeps loft#1591's
+destination gate, the bisect step for that spelling).  Beside them,
+**`LOFT_NO_CHAIN_ARM_SINK=1`** stops a chain BLOCK being a sunk ARM of a branch — with it off,
+`x: H = if c { s.h ?? b } else { mk(3) }` writes the chain out as a statement of its own, but ONLY
+where every arm of that chain is owned, since an arm that views a place the program can still
+reach owes the destination a copy the written-out `Set` cannot make — and is the bisect step for a
+double release, a leak or an aliased record out of a branch with a `??` chain in one of its arms.
 
 **A nested literal is written into its field (@PLN164 C6, `@FR-R-InPlaceLiteral`, default-ON,
 both backends, parse time):** `sc.ops += [Op { paint: Paint { … } }]` writes `Paint`'s fields

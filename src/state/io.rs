@@ -1968,6 +1968,13 @@ impl State {
             self.database.mark_collection_absent(&dest);
             return;
         }
+        // `@FR-B-Copy` — a source that IS the destination (`a = add(a, x)`, where `add` writes
+        // its parameter and hands it back) is already the value the bind copies.  Clearing
+        // the destination first emptied the source with it: every keyed kind read back empty
+        // while the vector twin kept its elements, on both backends.
+        if src == dest {
+            return;
+        }
         self.database.remove_claims(&dest, tp);
         self.database.copy_claims(&src, &dest, tp);
         if self.database.copy_check_enabled() {

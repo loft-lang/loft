@@ -116,15 +116,15 @@
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">apply_fn</span>(negate_it, <span class="nm">3</span>) == -<span class="nm">3</span>, <span class="st">"fn-ref as arg (negate)"</span>);</code></pre>
 <p>Lambdas with map, filter, and reduce. Use |...| short form — types are inferred from the call site.</p>
 <pre><code>  nums = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>, <span class="nm">5</span>];
-  doubled = <span class="fn-call">map</span>(nums, |x| { x * <span class="nm">2</span> });
+  doubled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(nums, |x| { x * <span class="nm">2</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"lambda map first element"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">4</span>] == <span class="nm">10</span>, <span class="st">"lambda map last element"</span>);</code></pre>
 <p>filter keeps only elements where the lambda returns true.</p>
-<pre><code>  evens = <span class="fn-call">filter</span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
+<pre><code>  evens = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"filter evens first"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">1</span>] == <span class="nm">4</span>, <span class="st">"filter evens second"</span>);</code></pre>
 <p>reduce collapses the whole list into one value. The lambda receives the running total (acc) and the next element (x).</p>
-<pre><code>  total = <span class="fn-call">reduce</span>(nums, <span class="nm">0</span>, |acc, x| { acc + x });
+<pre><code>  total = <span class="fn-call"><a href="stdlib-vector-aggregates.html">reduce</a></span>(nums, <span class="nm">0</span>, |acc, x| { acc + x });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(total == <span class="nm">15</span>, <span class="st">"reduce sum: {total}"</span>);</code></pre>
 <p>Use fn(...) long form when you need explicit types — for example when storing a lambda in a variable or passing it without call-site context.</p>
 <pre><code>  negate = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { -x };

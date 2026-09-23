@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1606, `@FR-L-CapOwn` / `@FR-L-CapOne` / `@FR-H-Drop` — A CLOSURE RELEASES WHAT IT
+// CAPTURED, ONCE, HOOKS FIRST.  A captured store is freed once, by whichever of the record and
+// the local outlives the other; where no record leaves the frame the record keeps it, and among
+// records over one store exactly one does.  A value whose type declares `OpDrop` runs that hook
+// when its owner releases it.  Four mechanisms broke that, on both backends, with no diagnostic:
+//
+// - the fn-ref's free released the closure store first, and the record's own cascade then read
+//   the freed record (`c1`, `c2`, `c7`, `c9` — the hook ran on garbage, `D3` for `D61`);
+// - a captured VECTOR is stored as a `DbRef` spelled with its element's `Reference`, the
+//   spelling a captured RECORD has too, so the record's cascade released one element-typed
+//   record at the vector's slot instead of walking the vector (`c1`, `c3`, `c5`, `c9`);
+// - in a block the frame released the captured vector at its own end as well (`c3`, `c4`);
+// - two records over one store each walked it (`c5`), because the borrowed marker is decided
+//   after the cascade is built;
+// - the closure record's rebuild snapshot (`__disp_N`) was swept after the block's `FnRef` tail
+//   (E0425 / E0308 on native, a garbage fn-ref on the interpreter), and a snapshot counted as
+//   an adopter, which made the frame free the capture under the live record (`c4`).
+//
+// Out of scope here, filed apart: a closure RETURNED from its frame never runs its capture's hook
+// (loft#1609), and a closure over a LOOP-BODY vector whose backing is reused per pass (loft#1610).
+//
+// Every expected trace is worked out by hand.  The drop hook writes a trace FILE, as
+// `139-drop-cascade.loft` does and for its reason.
+//
+// @falsified-at: 9aafb74b7 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native
+//   exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1606-a-closure-releases-what-it-captured-once-hooks-first.patch
+//   — the same channels.
+// CHANNEL: assertion failures, both backends — the traces carry a wrong, doubled or lost hook.
+// HOLDS: leak and panic are unmoved; the controls `k1` and `k2` are right before and after.
+// WITNESS: on the control, `c1 captured vector: m61,f1,x,d3, want m61,f1,x,d61`.
+
+fn trace_path() -> text { return "loft_1606_capture_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+struct H { id: integer }
+fn OpDrop(self: H) { note("d{self.id}"); }
+fn mk(id: integer) -> H { note("m{id}"); return H { id: id }; }
+struct B { hs: vector<H>, n: integer }
+
+// 1 — a vector of droppables captured at function level.
+fn c1() { w = [mk(61)]; f = fn() -> integer { len(w) }; note("f{f()}"); note("x"); }
+
+// 2 — a droppable record captured.
+fn c2() { r = mk(62); f = fn() -> integer { r.id }; note("f{f()}"); note("x"); }
+
+// 3 — the capture inside a block: the record outlives the block, so it releases.
+fn c3() { { w = [mk(63)]; f = fn() -> integer { len(w) }; note("f{f()}"); } note("x"); }
+
+// 4 — the capture inside an `if` arm.
+fn c4(c: boolean) { if c { w = [mk(64)]; f = fn() -> integer { len(w) }; note("f{f()}"); } note("x"); }
+
+// 5 — two closures over one vector: one record keeps it, the other borrows.
+fn c5() {
+  w = [mk(65)];
+  f = fn() -> integer { len(w) };
+  g = fn() -> integer { len(w) + 1 };
+  note("f{f()}{g()}");
+  note("x");
+}
+
+// 7 — a struct holding a vector of droppables, captured.
+fn c7() { b = B { hs: [mk(67)], n: 1 }; f = fn() -> integer { len(b.hs) + b.n }; note("f{f()}"); note("x"); }
+
+// 9 — a droppable declared before the capture releases after it, in reverse declaration order.
+fn c9() { a = mk(60); w = [mk(61)]; f = fn() -> integer { len(w) }; note("f{f()}"); note("x"); }
+
+// Controls — right before and after.
+// k1: a vector of scalars captured (no hook anywhere).
+fn k1() { w: vector<integer> = [1, 2]; f = fn() -> integer { len(w) }; note("f{f()}"); note("x"); }
+// k2: the vector passed as a PARAMETER instead of captured.
+fn k2() { w = [mk(68)]; f = fn(v: vector<H>) -> integer { len(v) }; note("f{f(w)}"); note("x"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  c1();
+  ok("c1 captured vector    ", drain(), "m61,f1,x,d61");
+  c2();
+  ok("c2 captured record    ", drain(), "m62,f62,x,d62");
+  c3();
+  ok("c3 in a block         ", drain(), "m63,f1,x,d63");
+  c4(true);
+  ok("c4 in an if arm       ", drain(), "m64,f1,x,d64");
+  c5();
+  ok("c5 two closures, once ", drain(), "m65,f12,x,d65");
+  c7();
+  ok("c7 struct with vector ", drain(), "m67,f2,x,d67");
+  c9();
+  ok("c9 declaration order  ", drain(), "m60,m61,f1,x,d61,d60");
+  k1();
+  ok("k1 control, scalars   ", drain(), "f2,x");
+  k2();
+  ok("k2 control, parameter ", drain(), "m68,f1,x,d68");
+  delete(trace_path());
+  println("a closure releases what it captured once, hooks first: every cell holds");
+}

@@ -200,7 +200,67 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0.**  `D-clo-27` closed 2026-09-12, the last entry this chapter carried.
+**OPEN: 2** — `D-clo-36` and `D-clo-37` (`D-clo-38`, loft#1624, opened and CLOSED 2026-09-23;
+both of the others opened 2026-09-22 with `D-clo-35`, which closed
+the same day; `D-clo-27` closed 2026-09-12).
+
+- **D-clo-38** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1624)* — `(O-Buffer)` for a
+  collection `??` whose chosen arm is a CAPTURE.  A `vector<T>` return is delivered into the
+  store the CALLER owns, on every arm; the capture arm was delivered on none.  A capture read
+  is `OpGetDbRef(__closure, off)`, and `materialize_vector_arms_collect` had no leg for it —
+  not the `Var` leg, not `is_projection_op`, and the generic `Call` leg finds no hidden `__ref`
+  to substitute — so the function handed back the closure's own store.
+  **D-clo-7's own closing text is what this falsifies.**  It recorded *"a collection `??` over a
+  capture turned out never to hand the capture back at all — its chosen arm is COPIED into the
+  caller's `__retbuf`"*, and closed on that premise.  Measured 2026-09-23 on `origin/main`:
+  `g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap }`, then `a = g(absent)` and
+  `cap[1] = 77`, reads `a[1] == 77` — the caller holds the capture, not a copy.  The premise was
+  never measured, and no cell could disturb it: the oracle beside D-clo-7 asks whether the
+  capture is RELEASED twice, and an alias releases nothing.  An `OPEN: 0` is only as strong as
+  the questions its oracle asks (README § the register).
+  Its second face needed loft#1618's `.base()` widening to appear and is a release rather than an
+  alias: with the sibling arm delivered and this one not, one return carries two provenances, and
+  the caller — which cannot tell them apart — releases the capture.  `len(cap) == 0` after a loop
+  of calls, every later read null, both backends, no diagnostic.
+  **Closed** by giving the capture read the leg the rule already described: it is a projection
+  out of the closure record exactly as `OpGetField` is one out of a struct, delivered on the same
+  terms, and the closure keeps its own store — so nothing is freed at the arm.  The copy is what
+  every sibling arm already pays.  Guard
+  `tests/scripts/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft`, whose `c4` is
+  the alias cell and fails on `origin/main`.
+- **D-clo-37** *(opened 2026-09-22, loft#1610)* — `(L-CapOwn)` for a closure over a LOOP-BODY
+  vector.  The vector's backing is minted at the function's head and reused on every pass, and
+  the capture is a `DbRef` to that backing's slot.  So the previous pass's record, when its
+  rebuild releases it, walks the NEW pass's vector, and the backing's own rebuild releases the
+  old contents too.  `for i in 0..2 { w = [mk(70 + i)]; f = fn() { len(w) }; … }` releases `71`
+  three times, identical on both backends.  The cure needs a decision: either the record dies
+  with its loop-body fn-ref, or a captured loop-body vector gets a backing of its own per pass.
+- **D-clo-36** *(opened 2026-09-22, loft#1609)* — `(L-CapOwn)`'s hand-over for a record that
+  LEAVES its frame covers the store and not the HOOKS.  The caller's fn-ref is released by
+  `OpFreeRef`, whose store cascade frees the captured vector, and no hook runs.  The hook
+  cascade is per lambda, and which lambda a fn-ref value holds is a run-time fact, so this needs
+  a dispatch on the record's type (as `fnref::dispatch_arms` dispatches a call).
+- **D-clo-35** *(opened and CLOSED 2026-09-22, loft#1606)* — a closure over a value whose type
+  owns a droppable ran the hook on the wrong record, twice, or not at all, on both backends:
+  `w = [mk(61)]; f = fn() { len(w) }` ran `D3` for `D61`.  Four mechanisms:
+  - the fn-ref's free released the closure store BEFORE the record's own drop cascade, which then
+    read a freed record — the record now takes the fn-ref's turn in the sweep just ahead of it
+    (`Scopes::register_binding`);
+  - a captured VECTOR wears its element's `Reference` spelling (`closure_attr_type`), so the
+    cascade released one element-typed record at the vector's slot — the parser now notes the
+    shared-vector attributes (`Parser::closure_shared_vectors`) and the cascade walks them
+    through `OpGetDbRef` (`cascade_shared_vectors`);
+  - in a block the frame released the captured vector at its own end as well —
+    D-heap-22's release now stands down for a capture the record adopted
+    (`capture_adoption_owns_free`);
+  - two records over one store each walked it, because `mark_borrowed_captures` decides the
+    borrower after the cascade exists — the borrower's walks are now scrubbed from its cascade
+    (`strip_borrowed_capture_walk`), the hook-side half of `(L-CapOne)`.
+  Found with them: the rebuild snapshot `__disp_N` was swept after a `fn_ref_with_closure`
+  block's `FnRef` tail (E0425 / E0308 on native, a garbage fn-ref on the interpreter) — it is
+  homed at the function's scope now — and a snapshot counted as a store ADOPTER, which made the
+  frame free the capture under the live record.  Guard
+  `tests/scripts/1606-a-closure-releases-what-it-captured-once-hooks-first.loft`.
 
 - **D-clo-34** *(opened 2026-09-09, CLOSED 2026-09-09, loft#1489)* — `(F-Ret)` did not hold for
   a COLLECTION a lambda hands back out of its CAPTURE.  `fn() -> vector<S> { q }` and

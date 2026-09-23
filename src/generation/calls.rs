@@ -336,7 +336,7 @@ impl Output<'_> {
         {
             // A scalar field or element handed to a `&` parameter: the pointer into its store
             // slot, built as a local link to the same place builds it (@FR-B-Ref-Lvalue).
-            let base = rust_type(inner.base(), &Context::Variable);
+            let base = crate::generation::link_base_type(inner);
             write!(w, "unsafe {{ ")?;
             self.output_place_pointer(w, v, &base)?;
             write!(w, " }}")?;
@@ -874,8 +874,22 @@ impl Output<'_> {
                     // `as <narrow>` cast for non-literal expressions.
                     // Use Context::Result to get the precise narrow type (e.g. u16) since
                     // Context::Variable / Context::Argument widen to i32.
-                    let tp_str = rust_type(&a.typedef, &Context::Result);
-                    if matches!(tp_str.as_str(), "u8" | "u16" | "i8" | "i16") {
+                    // A DECLARED `size(4)` (`i32` / `u32` — the `min` bias of every narrow
+                    // field op since loft#1620) is asked for before `rust_type`, which
+                    // resolves a four-byte spec by its RANGE (`native_narrow_int` stops at
+                    // two bytes) and so answers `i64`: the literal came out `40000_i64`
+                    // where the runtime method wants an `i32`.  Asked here rather than in
+                    // `native_narrow_int`, which also decides every function's RETURN type
+                    // through `narrow_int_cast` and is not this question.
+                    let tp_str = match &a.typedef {
+                        Type::Integer(s)
+                            if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) =>
+                        {
+                            if s.min >= 0 { "u32" } else { "i32" }.to_string()
+                        }
+                        t => rust_type(t, &Context::Result),
+                    };
+                    if matches!(tp_str.as_str(), "u8" | "u16" | "i8" | "i16" | "i32" | "u32") {
                         let typed_with = if with.ends_with("_i32") || with.ends_with("_i64") {
                             format!("{}_{tp_str}", &with[..with.len() - 4])
                         } else {

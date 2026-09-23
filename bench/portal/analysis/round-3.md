@@ -28,6 +28,52 @@ what they are, with what was learned.
 
 ## Built
 
+### The record push window under a branch — `(R-PushFill)`'s record clause, 2026-09-22
+
+Built as the record clause of `(R-PushFill)` (`formal/rewrites.md`, the in-words paragraph
+beside the window clause's), switch `LOFT_NO_PUSH_WINDOW`, trace `LOFT_TRACE_PUSH_FILL`,
+cells `tests/scripts/158-record-window.loft` r1–r11 (identical on the interpreter and on
+native under `LOFT_HOIST_VERIFY`, `LOFT_POISON`, `LOFT_POISON_CLAIM`, `LOFT_STRICT_STORES`
+and `LOFT_NATIVE_LEAK_CHECK`; falsified by the finish emitted as nothing — r1 `0 0 0 0` for
+`300 7261 6400 6566`), pins `tests/record_window.rs`.  A counted loop whose pushes are
+record MINT GROUPS, at the top level or under `if` arms, reserves its trips, opens one
+window, mints every group through it (the slot `base + len·size`, zeroed through the held
+address; the field sets and `(R-RecPtr)`'s mint address are that pointer; the finish is the
+window's bump) and closes it once after every copy of the loop:
+
+| `enum_match` row (3 000 mints, three arms) | µs | ratio |
+|---|---:|---|
+| before | 35.9 | 3.98× |
+| hand price (the emission edited by script) | 20.4 | ~2.3× |
+| built, the fast path a CALL | 23.4 | — |
+| built, `push_record_windowed` `#[inline(always)]` | **23.2–23.6** | **2.58×** |
+
+`bench/stats.py --only 16` pins it, and the row is BIMODAL on both lanes — three runs, 7–9
+interleaved samples each, the box idle (load 0.5): native alternates 23.2–23.6k and
+27.2–27.4k ns, its Rust twin 8.9–9.0k and 13.1k, the modes visibly alternating across the
+interleaved samples (`--show-samples`: native `23,246 27,369 27,197 27,211 23,609 27,292
+23,232`, Rust `9,011 13,086 13,135 9,031 8,971 8,913 8,989`).  Mode to mode the ratio is
+**2.58×** (fast / fast) and **2.08×** (slow / slow); the harness's median-of-medians reads
+2.59–3.02× depending on which mode each lane's median lands in, and flags the row noisy at
+14–16 %.  `mesh_emit` shows the same two modes on both lanes (native 104k / 116k, Rust 37k /
+61–67k).  Both are the lane's rows that GROW a vector to thousands of elements across
+several reallocations; the earlier window-clause ledger met the same bimodality on
+`record_append` and left its cause unestablished, and so does this one — it is a property of
+the measurement on this box, not of the emission (byte-identical across runs), and the fast
+mode's figure is the row's price.
+
+The declines are cells: a group whose literal fills the element's own vector field (r4 — a
+claim in the store the base is held in), a read of the vector in the body (r7), a `break`
+(r8), groups on two vectors (r10), a view of the vector read inside the body (r11); a view
+read only AFTER the close is admitted (r9), and so is a nested-record element (r5) — its
+`pos.x` set has a field on the root, and the ROOT being the fresh element is what decides.
+Three lessons: the window's close must stand after EVERY guarded copy of the loop (the
+first hand placement closed the checked copy alone and read hash `0` — a length nothing
+wrote is an empty vector to the consumer, and only the value channel says so); a fast path
+LLVM keeps as a call costs 15 % of the gain until it is forced inline; and the finish's own
+element operand is a mention of the vector to a naive count, which would have declined
+every group.
+
 ### The split table — `(R-SplitTable)` + `(R-TextBorrow)`'s discharge clause, 2026-09-22
 
 Built as the rule `(R-SplitTable)` (`formal/rewrites.md`), switch `LOFT_NO_SPLIT_TABLE`,
@@ -270,6 +316,41 @@ arithmetic 1.3–2.5.
 
 ## P1 — one write declines a whole loop it cannot disturb
 
+**Diagnosis CORRECTED before it was built (2026-09-22).**  The paragraph below blames the
+setter's untypeable target; a four-variant probe (the loop with the setter removed, the same
+loop over an all-scalar record, the nested setter alone) under `LOFT_TRACE_HOIST_DECLINE` says
+otherwise.  The nested setter alone HOLDS the loop's header (`(R-InPlace)` admits an
+`IN_PLACE_SET_OPS` call whatever its target, and `element_target` types the target off the
+field's schema — `hexes: vector<Hex>` — so the scalar walk types it too).  What declines the
+headers is the three `m.chunks[i]?` JOINS: each mints its absent-arm buffer
+(`OpDatabaseNP(__ref_p2_N)`), and `null_buffer_alloc` admitted that mint only for an
+ALL-SCALAR record — `Chunk` holds `hexes: vector<Hex>`, so the mint read as a store writer.
+The restriction was over-conservative: the buffer's store is reachable only through the
+site's temp, rebound on every run, so no loop-invariant path names it and no header or base
+can go stale; a growth of its vector field from the body is a push through a non-pure path,
+declined on its own.  Built as the one-line relaxation of the hidden-buffer allowance
+(`hoist::null_buffer_alloc`; rule text in `formal/rewrites.md` § (R-InPlace)), cells
+`tests/scripts/158-heap-discharge-buffer.loft` h1–h6, pins `tests/heap_discharge.rs`.  The
+join reads then fold through the held base by `(R-Base)`'s join clause on their own.
+**Measured** (`bench/16_consumer_shapes`, `hand_price.sh` on the emission with the allowance on
+and `LOFT_NO_NULL_BUFFER_HOIST=1` as the before, one core, three runs each): `chunk_lookup`
+**1 777 → 816 µs per call (−54 %)**, hash `26d76` — past the ledger's −30 %, because the base
+and the folded joins came together.  Left on the row, unpriced: the range's bound
+`len(m.chunks)` is still a CALL per iteration — `(R-Wrapper)` inlines a one-op wrapper only
+over LEAF arguments (the pre-eval map keys on node addresses), and `m.chunks` is a field
+path; with the header held it should read `__vh_1.len`.
+**What it found on the way** — a pre-existing silent-wrong on native, independent of P1: a
+`&`-bound LINK to a view the loop rebinds passed for a loop-invariant root, so `g = &e; for
+i in … { e = h[i]; … g.tags[0] … }` hoisted `g.tags`' header before the loop and read
+`h[0]`'s tags on every pass (15 for 16 — with every switch on or off; `LOFT_HOIST_VERIFY=1`
+panicked on the stale header).  The all-scalar restriction had hidden the SCALAR twin of it
+(`g.b` over a `?`-discharged view) by declining the whole loop, which is how P1 surfaced it:
+`157-null-buffer-hoist.loft`'s `alias_no_default` answered 15 for 7.  Fixed at the one home
+— `hoist::rebound_vars` closes the rebind set over links (a link to a link included) and
+`hoist::rebinds_root` answers the single-root form for a view's header, a record's address
+and a mint group's path; cells `158-link-rebind.loft` l1–l7, and the `(R-InPlace)` rule
+text carries the link clause.
+
 `map_set` (the `chunk_lookup` row) is `for i in 0..len(m.chunks) { if m.chunks[i]?.cx == cx
 && … { m.chunks[i].hexes[k].h_material = mat; return } }`.  The loop hoists NOTHING: the
 write's target is an element of a vector that is itself a FIELD of an element — a path with
@@ -404,9 +485,72 @@ first generated instance — no more hand-written iterators per builder.
 Built, in this order: W2 (`join` 1.96×, four more text rows to ~1×), W1 (`char_walk` 2.48×,
 `split` 7.8×), the single-row harness (`--names`), `mesh_aabb` attributed and moved
 (2.73×), `enum_match` attributed and moved a step (3.97×), **the split table** (`split`
-7.8× → ~1.15×, § Built).  **Left, in order: C1+**
-(`fibonacci`, its CORRECTED condition in `vector-build.md` § C1's condition), **P1**
-(`chunk_lookup`).  Levers this round FOUND and left unpriced, each with its number: a
+7.8× → ~1.15×, § Built), **C1** as `(R-GuardFree)` (`fib` −34 %; the stack-pointer half
+DECLINED — `MAX_CALL_DEPTH` is a cap both backends report identically, D-op-1), **P1** as
+the relaxed hidden-buffer allowance (`chunk_lookup` −54 %, § P1's corrected diagnosis).
+The portal was re-measured at `9496b1622` (median 1.85× every routine, 1.60× shipped, 16
+over 3×).  **Round 4 (2026-09-22, evening)** takes the levers found on the way, smallest
+first: **`len(<field path>)` under a held header** — BUILT: `(R-Wrapper)` now inlines a
+one-op wrapper over a pure vector path (`hoist::vector_path`, no pre-evaluation binding),
+so `for i in 0..len(m.chunks)` reads `__vh_1.len` per iteration instead of calling
+`t_6vector_len` — `chunk_lookup` 816 → 751 µs (−8 %, hash `26d76`), six of the consumer
+bench's seven `len` calls gone; 88 loops in the corpus and the libraries are bounded that
+way.  **What the rebase onto main found**: main's join brought the loft#1575 cells, and P1
+on that tree lost one — a literal handed to a call (`s = me(Bx { v: [i], n: 7 })`) is built
+in a `__ref_p2_` buffer re-minted per pass, the IR spells the re-mint as a bare call, and a
+push header hoisted off the buffer's vector field pushed into the record the previous pass
+claimed (`c3` read `null(oob)` for `1`; `LOFT_NO_NULL_BUFFER_HOIST=1` and
+`LOFT_NO_VECTOR_HOIST=1` were the two switches that cured it).  The allowance's all-scalar
+restriction had hidden it.  Fixed at the one home: a pass-2 buffer's re-mint counts as a
+rebind of the buffer (`hoist::rebound_vars`), so no holder is taken off a path rooted at
+it; the rule text carries the clause, and two pins read P1's admissions (`copy_in_place`
+c8's nested-record write-back loop, `null_buffer_hoist` d13).  **The text element read through the held base** — BUILT as `(R-Base)`'s text clause:
+the element's record number through the base, the text sliced off the store's data span
+derived once beside it; `join` 11.0 → **6.6 µs** (−40 %, 2.11× → ~1.15×), hash `2df9`.
+Three prices on the way, each a lesson: the helper resolving the store per element gave
+10.2 (a bounds-checked index LLVM could not hoist); with the span hoisted but the helper's
+cold half folded in, 8.4, and OUTLINED, 9.0 — the past-the-end read a walk makes on its
+last pass was a CALL in the loop either way; answering it as the null text without a call
+(what `get_vector` answers for any non-negative index past the length) gave 6.6, under the
+hand price.  `bench/stats.py --only 13` pins it: **`join` 6,032 ns vs 5,716, 1.06× (range
+1.05–1.06)**; the text lane's median is 1.19×, nine of its ten rows within 2× and only
+`char_walk` (3.14×) over.
+**The trip-count bound for a text walk's accumulator** — BUILT as `(R-Range)`'s
+accumulator clause (`range::seed_accumulators`): a local seeded once by a ranged value and
+stepped only by literals inside a character walk over an unwritten text is ranged by
+`seed ± Σ|c| · u32::MAX`, so its steps emit plain; `char_walk` 12.5 → **10.45 µs** (−17 %),
+hash `2e18` — `stats.py --only 13` pins it at **10,495 ns vs 5,063, 2.07× (range 2.07–2.08)**,
+down from 3.14×; the text lane's median is 1.20× and its worst row is this one — the W1 ledger's 8.3 was measured on an older emission and is not reached: the
+row's remaining cost is the two null-aware character compares against literals, which LLVM
+folds already (W1's finding).  Cells a1–a11 walk the admissions (a negative step, two walks,
+an `if`, an outer loop re-seeding) and the declines (the seed outside the enclosing loop, a
+non-literal step, an appended text, a second seed, a counted loop, a parameter seed).
+**The record push window under a branch — HAND-PRICED** (the emitted `c_enum_match` build
+loop edited by script: the vector reserved for its 3 000 trips before the loop, a
+`vector::push_window` opened on the header, each arm's mint taking its slot from the window
+— `base + len·32`, zeroed through it — its address the same pointer, its finish `len += 1`,
+and the record's length written once by `push_window_close` after the loop, on every copy
+the guarded chain emits): **35.9 → 20.4 µs (−43 %, 3.98× → ~2.3×)**, hash `1493`.  The
+first placement closed only the checked copy of the loop and read hash `0` — a window whose
+close does not run leaves the length at 0, which the consumer loop reads as empty; the
+price stands only with the hash.  To build: `(R-PushFill)`'s window clause extended to
+record MINT GROUPS under `if` arms of a counted loop — at most one mint per pass, so the
+trip-count reservation bounds the total and the window never grows inside the loop.
+**BUILT** as the record clause (§ Built): 35.9 → 23.2–23.6 µs, the fast path forced inline;
+`stats.py --only 16` pins it at **2.58× mode to mode** (the row is bimodal on both lanes, §
+Built has the samples), down from 3.98×.  **`for c in s.trim()`'s per-iteration call source
+— BUILT as a SEMANTICS fix, not a rewrite** (no switch, both backends, parse time): the walk
+re-spelled its source at three sites per round, so a call source ran three times per
+character (twelve calls for three characters, side effects included; a comprehension the
+same) — `(I-Text)`'s `it := ⟨0, src⟩` says once.  A non-place source is now bound to a
+hidden local in the walk's prelude at the one home every text walk builds its iterator in
+(`Parser::iterator`), and `(R-CharWalk)` then takes the walk (fast step + hoisted null test:
+`158-char-walk` w10).  No bench row carries the shape (34 corpus sites, one in the
+libraries), so it has no price here; cells `tests/scripts/iter-text-source-once.loft`
+s1–s15.  What it left OPEN, for the owner (`iteration.md` D-iter-5): a place source the
+body writes (`for c in s { s = … }`) and a range bound (`0..len(v)` under appends) are
+RE-READ per round, which the rule's letter does not say.  Levers this round FOUND
+and left unpriced, each with its number: a
 record push WINDOW under a branch (`enum_match`'s build, 8 ns a record), a text element read
 through the held base (`join`'s remaining 11.2 → ~7.8), a trip-count range bound for a text
 walk's accumulator (`char_walk`'s 12.9 → 8.3), and the parser's per-iteration evaluation of

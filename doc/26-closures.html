@@ -123,21 +123,21 @@
   scale = <span class="kw">fn</span>(x: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> { x * factor };
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="fn-call">scale</span>(<span class="nm">5</span>) == <span class="nm">15</span>, <span class="st">"scale(5): {scale(5)}"</span>);</code></pre>
 <p>The same closure passed to map — <code>factor</code> travels with it.</p>
-<pre><code>  scaled = <span class="fn-call">map</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], scale);
+<pre><code>  scaled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>], scale);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(scaled[<span class="nm">0</span>] == <span class="nm">3</span>, <span class="st">"scaled[0]: {scaled[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(scaled[<span class="nm">2</span>] == <span class="nm">9</span>, <span class="st">"scaled[2]: {scaled[2]}"</span>);</code></pre>
 <p>A capturing lambda written inline works too, in filter as well as map.</p>
 <pre><code>  <span class="kw">limit</span> = <span class="nm">2</span>;
-  big = <span class="fn-call">filter</span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x &gt; <span class="kw">limit</span> });
+  big = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>([<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>], |x| { x &gt; <span class="kw">limit</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(<span class="bi"><a href="stdlib-text.html">len</a></span>(big) == <span class="nm">2</span>, <span class="st">"len(big): {len(big)}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(big[<span class="nm">0</span>] == <span class="nm">3</span>, <span class="st">"big[0]: {big[0]}"</span>);</code></pre>
 <h2 id="non-capturing-lambdas-with-higher-order-functions">Non-capturing lambdas with higher-order functions</h2>
 <p>No capture needed here — the lambda uses only its own parameter.</p>
 <pre><code>  nums = [<span class="nm">1</span>, <span class="nm">2</span>, <span class="nm">3</span>, <span class="nm">4</span>, <span class="nm">5</span>];
-  doubled = <span class="fn-call">map</span>(nums, |x| { x * <span class="nm">2</span> });
+  doubled = <span class="fn-call"><a href="stdlib-vector-aggregates.html">map</a></span>(nums, |x| { x * <span class="nm">2</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"doubled[0]: {doubled[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(doubled[<span class="nm">4</span>] == <span class="nm">10</span>, <span class="st">"doubled[4]: {doubled[4]}"</span>);</code></pre>
-<pre><code>  evens = <span class="fn-call">filter</span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
+<pre><code>  evens = <span class="fn-call"><a href="stdlib-vector-aggregates.html">filter</a></span>(nums, |x| { x % <span class="nm">2</span> == <span class="nm">0</span> });
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">0</span>] == <span class="nm">2</span>, <span class="st">"evens[0]: {evens[0]}"</span>);
   <span class="bi"><a href="stdlib-output-and-diagnostics.html">assert</a></span>(evens[<span class="nm">1</span>] == <span class="nm">4</span>, <span class="st">"evens[1]: {evens[1]}"</span>);</code></pre>
 <h2 id="capturing-a-parameter">Capturing a <code>&amp;</code> parameter</h2>

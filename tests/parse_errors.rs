@@ -1993,6 +1993,35 @@ fn op_drop_takes_only_self() {
     );
 }
 
+/// `@FR-F-Render` — a rendering that REACHES a tuple is refused, not only a bare one.
+///
+/// Asked of the formatted type alone, `"{v}"` over a vector of tuples took the record walker
+/// and printed the synthetic `__tuple`'s member names — `[{_0:1,_1:"a"}]`, an internal
+/// spelling the language does not have.  `:j` keeps the object the JSON chapter documents
+/// (`tests/docs/24-json.loft` pins it), so these pins are the PLAIN form.
+#[test]
+fn formatting_a_vector_of_tuples_is_refused() {
+    code!("fn test() { v = [(1, \"a\")]; print(\"{v}\"); }").error(
+        "Cannot format type vector<(integer, text)> \u{2014} it reaches the tuple \
+         (integer, text), and a tuple has no rendering; format the members you want (`.0`, \
+         `.1`) or give that tuple a named struct at formatting_a_vector_of_tuples_is_refused:1:40",
+    );
+}
+
+/// The same one level in: a struct whose FIELD is a tuple.
+#[test]
+fn formatting_a_struct_with_a_tuple_field_is_refused() {
+    code!(
+        "struct Holder { t: (integer, text) }
+fn test() { h = Holder { t: (1, \"a\") }; print(\"{h}\"); }"
+    )
+    .error(
+        "Cannot format type Holder \u{2014} it reaches the tuple (integer, text), and a tuple \
+         has no rendering; format the members you want (`.0`, `.1`) or give that tuple a \
+         named struct at formatting_a_struct_with_a_tuple_field_is_refused:2:52",
+    );
+}
+
 /// loft#845: `"{v}"` on an UNBOUNDED type variable is refused, and the message
 /// names the bound that renders it.
 ///
@@ -2078,13 +2107,14 @@ fn a_bounded_generic_does_not_lend_its_bound_to_an_unbounded_sibling() {
 
 // ── fix-tvscope — Type variable namespace ────────────────────────────────────
 
-/// fix-tvscope: defining a struct whose name clashes with a generic type variable
-/// produces a clear diagnostic instead of the confusing "Redefined struct T".
-#[test]
-fn struct_name_clashes_with_type_variable() {
-    code!("struct T { v: integer }\nfn test() {}")
-        .error("'T' is reserved as a generic type variable \u{2014} choose a different struct name at struct_name_clashes_with_type_variable:1:11");
-}
+// fix-tvscope's `struct T` pin is GONE, and its subject moved to
+// `issues::a_struct_named_like_a_stdlib_type_variable_compiles`.  It asserted that a struct
+// named after a stdlib type variable is refused — which a FILE never did (the reader's source
+// and the stdlib's are two namespaces) and only this harness, the REPL and a `<host>` string
+// saw, because all three parse at the stdlib's own source id on purpose.  @PLN165 E5–E7 made
+// `U` such a variable too and the asymmetry stopped being invisible: seven `struct U` tests
+// broke.  The placeholder now gives its flat name up to a declaration from another file, so
+// every path agrees, and the diagnostic is left for a same-FILE clash.
 
 // ── Fix #91 — Circular init detection ────────────────────────────────────────
 
@@ -4961,6 +4991,15 @@ fn sort_refuses_an_element_that_is_not_ordered() {
 fn sort_in_a_generic_needs_the_bound() {
     code!("fn g<T>(v: vector<T>) { sort(v) }\nfn test() { g([2, 1]); }")
         .error("'T' does not satisfy interface 'Ordered': missing OpLt at sort_in_a_generic_needs_the_bound:1:33");
+}
+
+/// @PLN165 E5 — a `#builtin` method's callback is typed by the special form's hint, in both
+/// spellings: over a const collection the element parameter is `const` (loft#1540), so a
+/// short lambda's write to it is refused in `v.filter(…)` as in `filter(v, …)`.
+#[test]
+fn a_builtin_methods_callback_over_a_const_collection_is_const() {
+    code!("struct Pt { x: integer, y: integer }\nfn f(v: const vector<Pt>) -> integer { len(v.filter(|p| { p.x = 3; true })) }\nfn test() { assert(f([Pt { x: 1, y: 2 }]) == 1, \"\"); }")
+        .error("Cannot modify const parameter 'p'; remove 'const' or use a local copy at a_builtin_methods_callback_over_a_const_collection_is_const:2:67");
 }
 
 /// @PLN165 arc E — `#builtin` sends a call to the compiler's special form of the name; it marks

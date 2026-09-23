@@ -435,27 +435,6 @@ impl Parser {
                     }
                 }
             }
-            // map/filter/reduce as method syntax on vectors: `v.map(fn)` → `map(v, fn)`.
-            // Unwrap `&vector<T>` so they work on ref params.
-            //
-            // loft#945 — on BOTH passes.  Pass 1 used to fall through to
-            // `skip_remaining_args` below, so the callback lambda was parsed with no
-            // element-type hint on pass 1 and with one on pass 2 — the two passes
-            // disagreed about the lambda's own signature, which is how `xs.map(…)` and
-            // `map(xs, …)` came to lower differently for the same program.  `parse_map`
-            // and friends already have their own pass-1 arms (type only, no variables
-            // minted), which is what makes running them here safe.
-            let vec_recv = if let Type::RefVar(inner) = &t {
-                inner.as_ref().clone()
-            } else {
-                t.clone()
-            };
-            if matches!(vec_recv, Type::Vector(_, _))
-                && matches!(field.as_str(), "map" | "filter" | "reduce")
-                && self.lexer.has_token("(")
-            {
-                return self.parse_vector_method(code, &vec_recv, &field);
-            }
             if self.first_pass && self.lexer.has_token("(") {
                 self.skip_remaining_args();
             } else if let Type::Enum(enum_d_nr, true, _) = t.base()
@@ -840,94 +819,6 @@ impl Parser {
             && self.tagged_pointer_type(elm_type).is_none()
         {
             *elm_type = Type::optional(elm_type.clone());
-        }
-    }
-
-    fn parse_vector_method(&mut self, code: &mut Value, t: &Type, method: &str) -> Type {
-        let mut list = vec![code.clone()];
-        let mut types = vec![t.clone()];
-        let mut m_arg_idx = 1usize;
-        loop {
-            if let Type::Vector(elm, _) = t {
-                let elem = *elm.clone();
-                // loft#1540 — an element of a const collection is read-only, so the callback's
-                // element parameter is hinted `const`: a short lambda's body may not write it,
-                // and a named function whose parameter is plain is reported at the hand-off.
-                let elem_const = self.const_view_place(&list[0], true).is_some();
-                let elem_at = |i: usize| {
-                    crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const))
-                };
-                let hint = match (method, m_arg_idx) {
-                    // loft#945 — `map` is `fn(T) -> U`, so only the PARAMETER is the
-                    // element type; the return is free.  Pinning it to `elem` type-checked
-                    // the lambda's body against `T`, which is why every `U != T` was
-                    // refused inside the user's own lambda ("expected integer, got text").
-                    // `Unknown` leaves the return to `parse_lambda_short`'s body inference.
-                    // `filter`/`reduce` keep their returns: a predicate really is `-> bool`,
-                    // and a fold really answers its accumulator's type.
-                    ("map", 1) => Some(Type::Function(
-                        vec![elem],
-                        Box::new(Type::Unknown(0)),
-                        crate::data::Deps::none(),
-                        elem_at(0),
-                    )),
-                    ("filter", 1) => Some(Type::Function(
-                        vec![elem],
-                        Box::new(Type::Boolean),
-                        crate::data::Deps::none(),
-                        elem_at(0),
-                    )),
-                    // @P288 — `v.reduce(init, |acc, x| {…})`: the lambda is ARG 2 (init is
-                    // arg 1), so the hint goes on m_arg_idx == 2.
-                    //
-                    // The declared signature is `fn(U, T) -> U`, so the ACCUMULATOR is the
-                    // INIT's type and only the second parameter is the element's.  This
-                    // used to hint `elem` for both, on the reasoning that every primitive
-                    // case (sum, max, min, count) keeps acc and elm in one numeric domain
-                    // — true, and it makes `U != T` unusable in the method form: on a
-                    // `vector<(integer, integer)>` with an `integer` init, `acc` was typed
-                    // as the TUPLE and `acc + t.0` was refused with "No matching operator
-                    // '+' on '(integer, integer)' and 'integer'" (loft#1074).
-                    //
-                    // Reading the init's own type costs nothing where the two agree — the
-                    // homogeneous cases hint exactly what they hinted before — and falls
-                    // back to `elem` when the init has not typed (an earlier parse error),
-                    // so a broken program still gets the old hint rather than `Unknown`.
-                    ("reduce", 2) => {
-                        let acc = types
-                            .get(1)
-                            .filter(|it| !matches!(it, Type::Unknown(_)))
-                            .cloned()
-                            .unwrap_or_else(|| elem.clone());
-                        Some(Type::Function(
-                            vec![acc.clone(), elem],
-                            Box::new(acc),
-                            crate::data::Deps::none(),
-                            elem_at(1),
-                        ))
-                    }
-                    _ => None,
-                };
-                if let Some(h) = hint {
-                    self.expected = h;
-                }
-            }
-            let mut p = Value::Null;
-            let pt = self.expression(&mut p);
-            self.expected = Type::Unknown(0);
-            list.push(p);
-            types.push(pt);
-            m_arg_idx += 1;
-            if !self.lexer.has_token(",") {
-                break;
-            }
-        }
-        self.lexer.token(")");
-        match method {
-            "map" => self.parse_map(code, &list, &types),
-            "filter" => self.parse_filter(code, &list, &types),
-            "reduce" => self.parse_reduce(code, &list, &types),
-            _ => unreachable!(),
         }
     }
 
@@ -1364,9 +1255,13 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
             if build == u32::MAX {
                 return false;
             }
-            // Named as a `for`'s snapshot is, which the scope pass releases with
-            // `OpFreeScratch` rather than as a record of the element type.
+            // Named as a `for`'s snapshot is, and released by this walk itself —
+            // `OpFreeScratch` after the loop, which nothing leaves early — so no scope-exit
+            // free is owed: `skip_free`, where a `for`'s snapshot is a VIEW typed with its
+            // collection's deps.  Owned and unmarked, it read as a leaked reference to the
+            // debug build's `check_ref_leaks`.
             let s = self.create_unique("hash_scratch", &elem_tp);
+            self.vars.set_skip_free(s);
             ops.push(v_set(
                 s,
                 Value::Call(build, vec![coll.clone(), Value::Int(i32::from(tp_id))]),

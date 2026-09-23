@@ -885,6 +885,19 @@ impl Parser {
     /// stdlib's `DefType::Type` at source 0) are NEVER shadowable (shadowing them
     /// would re-point the language's own types).  Every other prelude/import kind
     /// (const, struct, enum, library typedef) is shadowable.
+    /// Is `d_nr` a type-variable placeholder some OTHER file declared?
+    ///
+    /// Then a declaration here shadows it, exactly as it shadows a stdlib `<T>` reached
+    /// through the prelude.  Asked by FILE rather than by source id, because a REPL input, a
+    /// `<host>` string and the test harness parse at the stdlib's own source id and would
+    /// otherwise read a stdlib type variable as their own same-source clash — which the
+    /// dedicated diagnostic exists to report and they have not made.
+    fn placeholder_from_another_file(&self, d_nr: u32) -> bool {
+        d_nr != u32::MAX
+            && self.data.is_type_var_placeholder(d_nr)
+            && self.data.def(d_nr).position.file != self.lexer.pos().file
+    }
+
     fn prelude_shadowed(&self, name: &str) -> bool {
         let cur = self.data.source;
         // the stdlib itself (source 0) never shadows; and a name already in THIS
@@ -1667,7 +1680,9 @@ impl Parser {
         let claimed = self
             .type_var_holders
             .get(&(type_var_name.clone(), bounds_key.clone()))
-            .copied();
+            .copied()
+            // … and where this parser did not mint it, the Data it continues knows.
+            .or_else(|| self.data.holder_for_spelling(type_var_name, &bounds_key));
         let existing = self.data.def_nr(type_var_name);
         // A prior generic's type-var placeholder is an attribute-less `Struct`, safe to
         // reuse (that is how `<T>` is shared across functions). Any OTHER existing def
@@ -3403,6 +3418,41 @@ impl Parser {
         let mut max = i32::MAX as u32;
         if type_name == "integer" {
             let has_limit = self.parse_type_limit(&mut min, &mut max);
+            // `@FR-L-Narrow-Alias` — a stored WIDTH is a property of a named type, so `size(n)`
+            // is written in a `type` alias and nowhere else.  `parse_typedef` is the only reader
+            // of it; here the parser simply never looked, so an inline `size(1)` drew three
+            // errors about the punctuation after it (`Expect token )`, `Tuple types require at
+            // least 2 elements`, `Expect token }`) and named neither the modifier nor its home.
+            // Refusing it by name is also what `NarrowSlot::of_slot`'s spare-code assertion
+            // rests on: the rule is what makes a spare-code type reachable only through an
+            // alias, and an inline spelling that parsed would walk into that assert.
+            // PEEKED, never consumed: `parse_typedef` is the site that legitimately reads
+            // `size`, and taking the token here made the stdlib's own `type i32 = integer
+            // size(4)` stop parsing.  `on_d` is what tells the two apart — inside a `type`
+            // alias it names the TYPE being defined, and the `size` ahead is that alias's.
+            let in_alias =
+                on_d != u32::MAX && self.data.def_type(on_d) == crate::data::DefType::Type;
+            // Reported on BOTH passes, unlike most refusals: the parse derails at the `size`
+            // token itself, so pass 2 never runs and a `!first_pass` gate made this silent
+            // while three punctuation errors stood in for it.
+            if !in_alias
+                && self.lexer.peek().has == crate::lexer::LexItem::Identifier("size".to_string())
+            {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`size(…)` is a property of a NAMED type — write it in a `type` alias \
+                     (`type Small = integer limit(0, 200) size(1);`) and use that name here"
+                );
+                // CONSUME it and carry on as the plain range, the way `parse_type_limit`
+                // recovers from a bound it refuses: left in the stream the modifier drew
+                // three further errors about the punctuation after it, and the reader had to
+                // decide which of the four was theirs.
+                self.lexer.has_keyword("size");
+                self.lexer.token("(");
+                self.lexer.has_long();
+                self.lexer.token(")");
+            }
             // T1.7: check for `not null` annotation after the integer type
             let not_null = self.has_deprecated_not_null();
             if has_limit || not_null {
@@ -4441,7 +4491,23 @@ impl Parser {
         // shadows it just like the enum path does, so `T` is a usable type name.
         // (A SAME-SOURCE clash — the user's own `struct T` plus their own `fn foo<T>`
         // — keeps `prelude_shadowed` false, so it still hits the "reserved" arm below.)
+        // … and the same shadow where the parse SHARES the stdlib's source id: a REPL input,
+        // a `<host>` string and the test harness all parse at source 0 on purpose (`parse_str`:
+        // "the source stays the stdlib's"), so `prelude_shadowed` — which asks the source id —
+        // answers no for every one of them and the same-source arm below fired on a stdlib
+        // type variable.  `map<T, U>` and `reduce<T, U>` (@PLN165 E5–E7) made `U` such a
+        // variable, and seven `struct U` tests stopped compiling with *"'U' is reserved as a
+        // generic type variable"* — a name the SAME program compiles as a file.  The
+        // definition's FILE is what says whose declaration it is, which is what
+        // `Definition::position` is for ("only allow redefinitions within the same file").
         if self.prelude_shadowed(&id) {
+            d_nr = u32::MAX;
+        } else if self.placeholder_from_another_file(d_nr) {
+            // The same shadow where the parse SHARES the stdlib's source id.  There the two
+            // compete for ONE `(name, source)` key, so the placeholder gives its name up
+            // rather than a second definition being added beside it.
+            let source = self.data.source;
+            self.data.release_def_name(&id, source);
             d_nr = u32::MAX;
         }
         if d_nr == u32::MAX {
@@ -4449,10 +4515,12 @@ impl Parser {
             self.data.definitions[d_nr as usize].returned =
                 Type::Reference(d_nr, crate::data::Deps::none());
         } else if self.first_pass {
-            // fix-tvscope: a SAME-SOURCE type-var placeholder (the user's own
-            // `fn foo<T>` before their `struct T`) blocks the struct — a genuine
-            // clash worth the dedicated diagnostic rather than the confusing
-            // "Redefined struct".  (A cross-source stdlib `<T>` was shadowed above.)
+            // fix-tvscope: a SAME-FILE type-var placeholder blocks the struct — a genuine
+            // clash worth the dedicated diagnostic rather than the confusing "Redefined
+            // struct".  (A stdlib `<T>` is shadowed above, by source where the reader has one
+            // of their own and by FILE where the parse shares the stdlib's source id.)  A
+            // header's own variables are scoped to it and are not keyed here, so what reaches
+            // this arm is a placeholder keyed in the reader's own file.
             if self.data.is_type_var_placeholder(d_nr) {
                 diagnostic!(
                     self.lexer,
@@ -6230,16 +6298,17 @@ impl Parser {
     /// library's type resolves through that library's source the same way its hook does.
     /// The `_OpDropAll` suffix is deliberately not `_OpDrop`: `check_drop_signature` keys on
     /// the latter, and a synthesized function must not be validated as a user declaration.
+    ///
+    /// The spelling is [`Data::drop_cascade_key`](crate::data::Data::drop_cascade_key)'s, the
+    /// one home every lookup reads, so the name this mints is the name they find.
     pub(crate) fn drop_cascade_name(data: &crate::data::Data, type_def: u32) -> String {
-        let n = data.def(type_def).name();
-        crate::data::Data::mangle_method(n, "OpDropAll")
+        data.drop_cascade_key(type_def, "OpDropAll")
     }
 
     /// The mangled name of a type's skip-capable cascade — `t_<LEN><Type>_OpDropAllExcept`.
     /// See [`crate::data::Data::drop_cascade_except_nr`] for what it is for.
     pub(crate) fn drop_cascade_except_name(data: &crate::data::Data, type_def: u32) -> String {
-        let n = data.def(type_def).name();
-        crate::data::Data::mangle_method(n, "OpDropAllExcept")
+        data.drop_cascade_key(type_def, "OpDropAllExcept")
     }
 
     /// @PLN139 stage B — give every type that OWNS a droppable through a field a function
@@ -6286,6 +6355,7 @@ impl Parser {
                     self.data.def(d_nr).known_type() != u16::MAX
                         && (!self.cascade_fields(d_nr).is_empty()
                             || !self.cascade_vectors(d_nr).is_empty()
+                            || !self.cascade_shared_vectors(d_nr).is_empty()
                             || !self.cascade_keyed(d_nr).is_empty())
                 }
                 // An ENUM releases through whichever variant it currently holds.
@@ -6566,6 +6636,14 @@ impl Parser {
             let Some((fd, read_tp)) = self.cascade_field_target(&a.typedef) else {
                 continue;
             };
+            // A shared VECTOR capture wears its element's `Reference` spelling; it is walked by
+            // `cascade_shared_vectors`, never released as one record.
+            if self
+                .closure_shared_vectors
+                .contains_key(&(d_nr, self.data.attr_name(d_nr, a_nr)))
+            {
+                continue;
+            }
             if fd == d_nr || !self.data.owns_droppable(fd) {
                 continue; // a self-field cannot exist inline; skip defensively
             }
@@ -6610,6 +6688,37 @@ impl Parser {
                 continue;
             }
             out.push((off, a.typedef.base().clone(), elm, ed));
+        }
+        out
+    }
+
+    /// A CLOSURE record's shared vector captures (loft#1606): `(byte offset, vector type,
+    /// element type, element definition)` for each attribute [`Parser::closure_shared_vectors`]
+    /// names whose elements own a droppable.  The attribute holds the captured vector's own
+    /// `DbRef`, so the walk reads it with `OpGetDbRef` where [`Self::cascade_vectors`] reads an
+    /// inline field.
+    fn cascade_shared_vectors(&self, d_nr: u32) -> Vec<(u16, Type, Type, u32)> {
+        let kt = self.data.def(d_nr).known_type();
+        let mut out = Vec::new();
+        for a_nr in 0..self.data.def(d_nr).attributes().len() {
+            let name = self.data.attr_name(d_nr, a_nr);
+            let Some(vec_tp) = self.closure_shared_vectors.get(&(d_nr, name.clone())) else {
+                continue;
+            };
+            let Type::Vector(elm, _) = vec_tp.base() else {
+                continue;
+            };
+            let Some((elm, ed)) = self.cascade_element((**elm).clone()) else {
+                continue;
+            };
+            if !self.data.type_owns_droppable_anywhere(&elm) {
+                continue;
+            }
+            let off = self.database.position(kt, &name);
+            if off == u16::MAX {
+                continue;
+            }
+            out.push((off, vec_tp.clone(), elm, ed));
         }
         out
     }
@@ -6898,6 +7007,22 @@ impl Parser {
             );
             let loop_code = self.drop_elements_loop(&field, n, &elem_tp, target);
             ops.push(loop_code);
+        }
+        let inline = self.cascade_vectors(t).len();
+        for (n, (off, _, elem_tp, ed)) in
+            self.cascade_shared_vectors(t).into_iter().enumerate().rev()
+        {
+            let target = self.data.drop_cascade_nr(ed);
+            if target == u32::MAX {
+                continue;
+            }
+            let field = self.cl(
+                "OpGetDbRef",
+                &[Value::Var(self_var), Value::Int(i32::from(off))],
+            );
+            let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
+            let walk = self.drop_elements_loop(&field, inline + n, &elem_tp, target);
+            ops.push(v_if(live, walk, Value::Null));
         }
         // loft#1601 — a keyed field's records release the generator frames they hold, and
         // only those (`(H-Drop-Not)` keeps their hooks out).

@@ -301,6 +301,19 @@ struct Scopes<'s> {
     /// statement's scope — a pooled `__ref_N` work-ref must never land here, since its
     /// scope-end drop releases whatever record it holds LAST.
     lift_field_skip: HashMap<u16, (u16, u16)>,
+    /// loft#1623 — the frame-owned TEMPS a joined binding borrows, keyed by that binding.
+    ///
+    /// A binding whose value branch declined the per-arm write-out borrows a temp per arm and
+    /// releases nothing itself, so at a RETURN of it `(H-Move)`'s *"the function's own
+    /// variables end with it"* is about those temps and not about the binding.  The set cannot
+    /// be read back off the binding's deps: an arm the PARSER owns hands back a
+    /// `join-arm-owner` `__ref_N` that the dep list never names, and it hooks all the same.
+    /// Recorded where the temps are made, and read at the return.
+    ///
+    /// A container the frame keeps — `s` in `x = s.h ?? b` on the path that chose `s.h` — is
+    /// NOT in here, and must not be: the caller got a copy of a member and `s` still owes its
+    /// own release.  That is the cell this map exists to keep apart from the rest.
+    join_holders: HashMap<u16, Vec<u16>>,
     /// The `__lift_N` temps an arm lift built — the destinations whose hand-off is PER PATH.
     ///
     /// The fact belongs to the CONSTRUCTION and cannot be read back off the IR: by the time
@@ -3728,15 +3741,40 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
 /// lost the kept record's release on `--native` (D-heap-28).  In `If(present(p), p, q)` only
 /// the `q` arm can be absent, so `(p ?? q) ?? d` equals `if present(p) { p } else { q ?? d }`,
 /// with the same value, the same operands evaluated in the same order, and `d` still written
-/// once.  Only a chain that names its destination is rewritten; every other chain keeps the
-/// form both backends already agree on.
-fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data) {
+/// once.  EVERY chain is rewritten, not only one that names its destination (loft#1612): the
+/// hoisted form binds the destination to the temp, which VIEWS the operand it chose, where
+/// `(B-Copy)` gives the destination a copy — so `b = x ?? y ?? d` shared `x`'s store, on the
+/// interpreter for a record and on both backends for a vector.  Right-associated, every operand
+/// is an arm, and an arm's bind is that copy.  An operand that is not a variable keeps a temp of
+/// its own, so it is still evaluated once, and the arm binds the temp: a temp holding a call's
+/// own store is adopted rather than viewed.  That temp is the one the hoisted form gave it,
+/// reused — minting another loses what the parse decided about it, which for an owned call
+/// result is the release of its store.  A chain with an operand the parse left without a temp
+/// and that this cannot give one keeps its form.
+fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data: &Data) {
     let present = data.def_nr("OpConvBoolFromRef");
     if present == u32::MAX {
         return;
     }
-    let is_present = |c: &Value, v: u16| matches!(c.unspan(), Value::Call(d, a) if *d == present && matches!(a.as_slice(), [x] if matches!(x.unspan(), Value::Var(y) if *y == v)));
-    fn walk(n: &mut Value, f: &dyn Fn(&Value) -> Option<Value>) {
+    // A chain's presence test, in both spellings: `OpConvBoolFromRef(v)` for a record, and
+    // `OpNot(OpVectorIsNull(v))` for a collection (loft#1612 — read only the first, a vector
+    // chain was never recognised as one).
+    let not_op = data.def_nr("OpNot");
+    let vec_null = data.def_nr("OpVectorIsNull");
+    let is_present = move |c: &Value, v: u16| {
+        let names = |x: &Value| matches!(x.unspan(), Value::Var(y) if *y == v);
+        match c.unspan() {
+            Value::Call(d, a) if *d == present => matches!(a.as_slice(), [x] if names(x)),
+            Value::Call(d, a) if *d == not_op && not_op != u32::MAX => {
+                matches!(a.as_slice(), [inner]
+                    if matches!(inner.unspan(), Value::Call(n, b)
+                        if *n == vec_null && vec_null != u32::MAX
+                            && matches!(b.as_slice(), [x] if names(x))))
+            }
+            _ => false,
+        }
+    };
+    fn walk(n: &mut Value, f: &mut dyn FnMut(&Value) -> Option<Value>) {
         n.for_each_child_mut(&mut |c| walk(c, f));
         if let Some(new) = f(n) {
             *n = new;
@@ -3771,13 +3809,18 @@ fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data)
     fn operands(
         val: &Value,
         is_present: &dyn Fn(&Value, u16) -> bool,
-        out: &mut Vec<Value>,
+        out: &mut Vec<(Value, u16)>,
     ) -> bool {
         match val.unspan() {
             Value::If(c, head, alt) if matches!(head.unspan(), Value::Var(p) if is_present(c, *p)) =>
             {
-                out.push((**head).clone());
-                out.push((**alt).clone());
+                out.push(((**head).clone(), u16::MAX));
+                // …and the alternative is itself a chain where four or more operands were
+                // written left-associated (loft#1612): read through it, so every operand
+                // becomes an arm rather than one nested `if` that is not a variable.
+                if !operands(alt, is_present, out) {
+                    out.push(((**alt).clone(), u16::MAX));
+                }
                 true
             }
             Value::Block(bl) if bl.name == "ncc" => {
@@ -3792,26 +3835,94 @@ fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data)
                 if !is_present(c, *tmp) || !matches!(held.unspan(), Value::Var(x) if x == tmp) {
                     return false;
                 }
+                // A subject that is not itself a chain IS the chain's first operand, and the
+                // temp beside it is what holds it (loft#1612: `f() ?? x ?? d`, whose first
+                // operand is a call, was not read as a chain at all).  The temp is carried so
+                // the rewrite REUSES it: minting another loses what the parse gave this one,
+                // which for an owned call result is the release of its store.
                 if !operands(subject, is_present, out) {
-                    return false;
+                    out.push(((**subject).clone(), *tmp));
                 }
-                out.push((**rest).clone());
+                out.push(((**rest).clone(), u16::MAX));
                 true
             }
             _ => false,
         }
     }
-    let rewrite = |n: &Value| -> Option<Value> {
+    // The chain `ops` written right-associated: every operand but the last an arm of its own,
+    // `if present(p) { p } else { … }`.  `None` where an operand other than the last is not a
+    // variable — one of those needs a temp of its own, and such a chain keeps its form.
+    fn right_assoc(
+        ops: &[(Value, u16)],
+        present: u32,
+        tp: &Type,
+        function: &mut Function,
+        counter: &mut u32,
+    ) -> Option<Value> {
+        let (last, rest) = ops.split_last()?;
+        let mut acc = last.0.clone();
+        for (o, tmp) in rest.iter().rev() {
+            // A VARIABLE is tested and bound where it stands: the arm's bind is the plain bind
+            // that copies.
+            if let Value::Var(x) = o.unspan() {
+                acc = Value::If(
+                    Box::new(Value::Call(present, vec![Value::Var(*x)])),
+                    Box::new(o.clone()),
+                    Box::new(acc),
+                );
+                continue;
+            }
+            // Anything else — a call, an element read — is evaluated ONCE inside its own arm,
+            // through a temp, and the arm binds that temp: a temp holding a call's own store is
+            // adopted rather than viewed.  The temp the hoisted form already gave this operand
+            // is REUSED, because minting another loses what the parse gave that one (for an
+            // owned call result, the release of its store); an operand the parse left without
+            // one — a trivial arm's default — gets a fresh temp here.
+            let held = if *tmp == u16::MAX {
+                *counter += 1;
+                let fresh = function.add_temp_var(&format!("__ncc_a{counter}"), tp);
+                function.set_skip_free(fresh);
+                fresh
+            } else {
+                *tmp
+            };
+            acc = Value::Block(Box::new(Block {
+                name: "ncc",
+                operators: vec![
+                    v_set(held, o.clone()),
+                    Value::If(
+                        Box::new(Value::Call(present, vec![Value::Var(held)])),
+                        Box::new(Value::Var(held)),
+                        Box::new(acc),
+                    ),
+                ],
+                result: tp.clone(),
+                scope: 0,
+                var_size: 0,
+            }));
+        }
+        Some(acc)
+    }
+    let mut counter = 0_u32;
+    // `LOFT_NO_COALESCE_REASSOC=1` keeps loft#1591's gate — only a chain that NAMES its
+    // destination is right-associated — so a chain the AUTHOR parenthesised keeps the hoisted
+    // form, whose temp views the operand it chose.  The first bisect step for a wrong value, a
+    // leak or a double release out of a `??` chain written with parentheses.  The flat spelling
+    // is right-associated by the PARSER now (loft#1612, `formal/grammar.md` (G-Assoc)) and does
+    // not reach here at all; what is left for this pass is the grouping the author wrote.
+    let only_self = crate::keys::no_coalesce_reassoc();
+    let rewrite = |n: &Value, function: &mut Function, counter: &mut u32| -> Option<Value> {
         let Value::Set(dest, val) = n else {
             return None;
         };
         let dest = *dest;
         if !matches!(
             function.tp(dest).base(),
-            Type::Reference(_, _) | Type::Enum(_, true, _)
+            Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
         ) {
             return None;
         }
+        let dest_tp = function.tp(dest).clone();
         if !matches!(val.unspan(), Value::Block(bl) if bl.name == "ncc") {
             return None;
         }
@@ -3824,7 +3935,7 @@ fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data)
         // the destination.
         // Each arm is a block of its own, as `sink_set_into_arms` writes them: the rebind may
         // take a snapshot of the record it displaces, registered at the scope it runs in.
-        if matches!(ops.first().map(Value::unspan), Some(Value::Var(x)) if *x == dest) {
+        if matches!(ops.first().map(|(o, _)| o.unspan()), Some(Value::Var(x)) if *x == dest) {
             let arm = |op: Value| {
                 Value::Block(Box::new(Block {
                     name: "sunk arm",
@@ -3834,37 +3945,37 @@ fn reassociate_self_coalesce(code: &mut Value, function: &Function, data: &Data)
                     var_size: 0,
                 }))
             };
+            // The REST of the chain is right-associated too where its operands allow it
+            // (loft#1612): stripped alone it keeps the hoisted form, whose temp views the
+            // operand it chose — `a = a ?? x ?? d` with `a` absent bound `a` to `x`'s store.
+            let rest = right_assoc(&ops[1..], present, &dest_tp, function, counter)
+                .map_or_else(|| strip_head(val), Some)?;
             return Some(Value::If(
                 Box::new(Value::Call(present, vec![Value::Var(dest)])),
                 Box::new(arm(Value::Insert(Vec::new()))),
-                Box::new(arm(v_set(dest, strip_head(val)?))),
+                Box::new(arm(v_set(dest, rest))),
             ));
         }
         // Right-associated all the way down, so every arm is a variable or the last default: a
         // middle operand that is not a variable would need a temp of its own again, and a
         // chain that has one keeps its form.
-        let last = ops.pop()?;
-        if !ops
-            .iter()
-            .any(|o| matches!(o.unspan(), Value::Var(x) if *x == dest))
-            && !matches!(last.unspan(), Value::Var(x) if *x == dest)
-        {
+        //
+        // For EVERY chain, not only one that names its destination (loft#1612).  The hoisted
+        // form binds the destination to the temp, which VIEWS the chosen operand's store — the
+        // interpreter for a record, both backends for a vector — where `(B-Copy)` gives the
+        // destination a copy.  Right-associated, each operand is an ARM, and an arm's bind is
+        // the plain bind that copies: the two-operand chain has always lowered that way
+        // (`if let Value::Var(_) = code` in the `??` parse), and this gives the longer chains
+        // the same shape.
+        if only_self {
             return None;
         }
-        let mut acc = last;
-        for o in ops.into_iter().rev() {
-            let Value::Var(x) = o.unspan() else {
-                return None;
-            };
-            acc = Value::If(
-                Box::new(Value::Call(present, vec![Value::Var(*x)])),
-                Box::new(o),
-                Box::new(acc),
-            );
-        }
-        Some(v_set(dest, acc))
+        Some(v_set(
+            dest,
+            right_assoc(&ops, present, &dest_tp, function, counter)?,
+        ))
     };
-    walk(code, &rewrite);
+    walk(code, &mut |n| rewrite(n, function, &mut counter));
 }
 
 fn write_out_joined_copies(code: &mut Value, function: &Function, data: &Data) {
@@ -5532,14 +5643,25 @@ fn buffer_call_uses(ops: &[Value], av: u16, data: &Data) -> usize {
 /// sites.  Children are rewritten before their parent, so a recorded site nested inside another's
 /// arm still has its recorded address when it is reached.  A site the scan reached only inside a
 /// tree it had built itself is not in `code`; the rescan writes that one out as the scan did.
-fn rewrite_written_out(code: &mut Value, vars: &mut Function, written: &[(usize, u16)]) -> bool {
-    fn walk(n: &mut Value, vars: &mut Function, written: &[(usize, u16)], hit: &mut bool) {
-        n.for_each_child_mut(&mut |c| walk(c, vars, written, hit));
+fn rewrite_written_out(
+    code: &mut Value,
+    vars: &mut Function,
+    data: &Data,
+    written: &[(usize, u16)],
+) -> bool {
+    fn walk(
+        n: &mut Value,
+        vars: &mut Function,
+        data: &Data,
+        written: &[(usize, u16)],
+        hit: &mut bool,
+    ) {
+        n.for_each_child_mut(&mut |c| walk(c, vars, data, written, hit));
         let stmt = match &*n {
             Value::Set(t, val)
                 if written.contains(&(std::ptr::from_ref::<Value>(val).addr(), *t)) =>
             {
-                let stmt = Scopes::sink_set_into_arms(*t, *t, val, vars, true);
+                let stmt = Scopes::sink_set_into_arms(*t, *t, val, vars, data, true);
                 if stmt.is_some() {
                     for src in branch_tail_vars(val) {
                         if var_copy_owns(vars, *t, src) {
@@ -5557,7 +5679,7 @@ fn rewrite_written_out(code: &mut Value, vars: &mut Function, written: &[(usize,
         }
     }
     let mut hit = false;
-    walk(code, vars, written, &mut hit);
+    walk(code, vars, data, written, &mut hit);
     hit
 }
 
@@ -5645,6 +5767,7 @@ fn run_scan_phase(
         view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
+        join_holders: HashMap::new(),
         arm_lift_temps: HashSet::new(),
         handed_off: HashMap::new(),
         per_path_pairs: HashSet::new(),
@@ -8443,7 +8566,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // A join copied into a container is written out per arm before any analysis reads it,
         // so each arm's copy hands its own source over (`formal/heap.md` D-heap-15).
         write_out_joined_copies(&mut orig_code, &orig_vars, data);
-        reassociate_self_coalesce(&mut orig_code, &orig_vars, data);
+        reassociate_coalesce_chains(&mut orig_code, &mut orig_vars, data);
         // Phase 1: the normal scan → apply → set-scope pass.
         let written_out = run_scan_phase(
             data,
@@ -8460,7 +8583,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // that ran before the scan.  Rewrite exactly those and scan again, so those analyses read
         // the per-arm form; the confinement rescan below starts from the rewritten pair too.
         if !written_out.is_empty()
-            && rewrite_written_out(&mut orig_code, &mut orig_vars, &written_out)
+            && rewrite_written_out(&mut orig_code, &mut orig_vars, data, &written_out)
         {
             run_scan_phase(
                 data,
@@ -8613,6 +8736,12 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             &mut seq,
             0,
         );
+        // `@FR-B-Ref-Lvalue` — a `&` link names a PLACE, so its target's slot may not be
+        // handed to another local while the link is live.  Runs right after the intervals
+        // are computed and before `assign_slots` reads them.
+        data.definitions[d_nr as usize]
+            .variables
+            .extend_links_to_their_targets();
         // `@FR-O-Buffer` — the interpreter reads a promoted buffer's entry witness at every
         // rebind of the buffer, outside the IR, so the witness lives as long as the buffer: a
         // slot handed on after the snapshot's own initialisation would answer another
@@ -8694,7 +8823,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // rewrite above has settled.  Must run after the loop, not inside it: the
     // verdict is the same `owns` fact `get_free_vars` uses, and that fact is only
     // final once the call-result rewrites (`make_independent`) have run.
-    mark_borrowed_captures(data);
+    mark_borrowed_captures(data, database);
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);
@@ -8723,7 +8852,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
 /// The record is reached through the enclosing frame's `___clos_N` variable
 /// rather than by walking the IR: `emit_lambda_code` always mints one, and it
 /// lives in exactly the frame whose variables decide the verdict.
-fn mark_borrowed_captures(data: &mut Data) {
+fn mark_borrowed_captures(data: &mut Data, database: &crate::database::Stores) {
     let mut borrowed: Vec<(u32, usize)> = Vec::new();
     for d_nr in 0..data.definitions() {
         if !matches!(data.def(d_nr).def_type, DefType::Function) {
@@ -8772,6 +8901,58 @@ fn mark_borrowed_captures(data: &mut Data) {
     }
     for (record, a) in borrowed {
         data.mark_capture_borrowed(record, a);
+        strip_borrowed_capture_walk(data, database, record, a);
+    }
+}
+
+/// `@FR-L-CapOne` for the HOOKS — a record that BORROWS a capture runs no drop over it.
+///
+/// The record's drop cascade was synthesized at parse time, before this pass decided which
+/// record keeps a shared store, so it walks every capture slot.  Two closures over one
+/// store then ran the captured elements' hooks once each (loft#1606).  The free-side
+/// half reads the borrowed marker `mark_capture_borrowed` writes; this is the hook-side
+/// half: every walk the record's cascade (and its Except variant) guards on that slot's
+/// `OpGetDbRef(self, offset)` is removed.
+fn strip_borrowed_capture_walk(
+    data: &mut Data,
+    database: &crate::database::Stores,
+    record: u32,
+    a: usize,
+) {
+    let kt = data.def(record).known_type();
+    let off = database.position(kt, &data.attr_name(record, a));
+    let get_dbref = data.def_nr("OpGetDbRef");
+    if off == u16::MAX || get_dbref == u32::MAX {
+        return;
+    }
+    fn guards_on_slot(cond: &Value, get_dbref: u32, off: u16) -> bool {
+        let mut hit = false;
+        cond.walk(&mut |n| {
+            if let Value::Call(d, args) = n.unspan()
+                && *d == get_dbref
+                && matches!(args.get(1).map(Value::unspan), Some(Value::Int(o)) if *o == i32::from(off))
+            {
+                hit = true;
+            }
+        });
+        hit
+    }
+    // Wherever the guarded walk sits — at the cascade's top, or under the Except variant's
+    // `skip` test — the guard is replaced by nothing.
+    fn scrub(v: &mut Value, get_dbref: u32, off: u16) {
+        if matches!(v.unspan(), Value::If(cond, _, _) if guards_on_slot(cond, get_dbref, off)) {
+            *v = Value::Null;
+            return;
+        }
+        v.for_each_child_mut(&mut |c| scrub(c, get_dbref, off));
+    }
+    for cascade in [
+        data.drop_cascade_nr(record),
+        data.drop_cascade_except_nr(record),
+    ] {
+        if cascade != u32::MAX {
+            scrub(&mut data.definitions[cascade as usize].code, get_dbref, off);
+        }
     }
 }
 
@@ -9039,7 +9220,11 @@ fn capture_store_adopters(
         // mints for it.  A frame that receives the record as an ARGUMENT is the closure BODY
         // (its hidden `__closure` parameter), whose own variable table knows nothing about who
         // owns the captures — reading it flipped the verdict depending on definition order.
-        if function.is_argument(v) {
+        // …and a displaced-record SNAPSHOT (`__disp_N`, `displaced_drop`) is a transient copy
+        // released where it is taken, never an adopter: named one, it became the witness the
+        // frame's conditional release reads, and the frame freed the capture under the live
+        // record (loft#1606).
+        if function.is_argument(v) || function.name(v).starts_with("__disp_") {
             continue;
         }
         let Type::Reference(record, _) = function.tp(v) else {
@@ -11018,11 +11203,13 @@ impl Scopes<'_> {
         // handed, for `rewrite_written_out` — with every arm shape the rewrite accepts, a
         // projection arm beside an owned call included: the rescan's analyses see that
         // projection's assignment, which this scan's could not.
-        if writes_out && Self::sink_set_into_arms(v, ov, value, function, true).is_some() {
+        if writes_out && Self::sink_set_into_arms(v, ov, value, function, data, true).is_some() {
             self.written_out
                 .push((std::ptr::from_ref(value).addr(), ov));
         }
-        if writes_out && let Some(sunk) = Self::sink_set_into_arms(v, ov, value, function, false) {
+        if writes_out
+            && let Some(sunk) = Self::sink_set_into_arms(v, ov, value, function, data, false)
+        {
             // The written-out arms are copies the author could have spelled, so they get what
             // that spelling gets, BEFORE the first arm is scanned: a per-path flag for each source
             // a copy hands off (loft#1515 — minted here, because the pre-scan pass saw one
@@ -13012,8 +13199,20 @@ impl Scopes<'_> {
         let name = format!("__disp_{}", self.lift_counter);
         let disp = function.add_temp_var(&name, &tp);
         function.mark_inline_ref(disp);
-        self.var_scope.insert(disp, self.scope);
+        // A CLOSURE record's snapshot is homed at the FUNCTION body (1), its null-init hoisted
+        // there (`lift_vars`), as `__blk_N` is: the record is rebuilt inside its lambda's
+        // `fn_ref_with_closure` block, whose value is the `FnRef` it ends in, and the sweep's
+        // second visit (a no-op on the sentinel) made at that block's end stood after the value
+        // (loft#1606: `()` on native, a garbage fn-ref on the interpreter).  Every other snapshot
+        // keeps its statement's scope: homed at the function, a generator's would become a heap
+        // temp its TAIL releases when a `match` drains it.
+        let closure_record = function.name(v).starts_with("___clos_");
+        self.var_scope
+            .insert(disp, if closure_record { 1 } else { self.scope });
         self.var_order.push(disp);
+        if closure_record {
+            self.lift_vars.push(disp);
+        }
         let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
         let snapshot = Value::Insert(vec![
             Value::Call(
@@ -13219,13 +13418,25 @@ impl Scopes<'_> {
         // backings — a vector member's `__vdb_N`, a record member a whole-tuple bind copied
         // into a `__ref_N` (loft#1361) — so those take its place too (loft#1588).
         let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
+        // A fn-ref's closure record releases in the fn-ref's turn, just BEFORE it (loft#1606):
+        // the record's release runs its cascade and then frees its store, where the fn-ref's
+        // free alone frees the store with no cascade — so run first, it left the record's
+        // cascade to read a freed record.  The fn-ref's free after it finds the store gone.
+        let fn_ref = matches!(function.tp(v).base(), Type::Function(..));
+        let mut records = Vec::new();
         let mut backings = function.tp(v).depend().clone();
         if let Type::Tuple(elems) = function.tp(v).base() {
             backings.extend(elems.iter().filter_map(|e| member_backing(function, e)));
         }
         for d in backings {
             let name = function.name(d);
-            if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
+            if fn_ref
+                && name.starts_with("___clos_")
+                && let Some(pos) = self.var_order.iter().position(|&x| x == d)
+            {
+                self.var_order.remove(pos);
+                records.push(d);
+            } else if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
                 && let Some(pos) = self.var_order.iter().position(|&x| x == d)
             {
                 self.var_order.remove(pos);
@@ -13233,6 +13444,7 @@ impl Scopes<'_> {
             }
         }
         self.var_order.push(v);
+        self.var_order.extend(records);
     }
 
     /// `@FR-H-Drop`'s scope-end clause for an `if` arm's owner: a local every mention of which,
@@ -13979,6 +14191,14 @@ impl Scopes<'_> {
             && let Some(v) = return_copies_whole_local(expr, function, data, &self.view_backing)
         {
             arm_dropped.insert(v);
+        }
+        // loft#1623, `(H-Move)` — the same move one indirection down.  Where the returned value
+        // is a joined binding that BORROWS its arms' temps, it is those temps the return hands
+        // out, so their hook belongs to the caller and not to this exit.
+        if is_return {
+            for w in return_copies_view_holders(expr, function, data, &self.join_holders) {
+                arm_dropped.insert(w);
+            }
         }
         let ret_var = returned_var_null_unified(expr, data.def_nr("OpNullRefSentinel"));
         // @PLN85 cluster II / A.1 part i (OWNERSHIP_MODEL row 100, invariant #5
@@ -15113,7 +15333,11 @@ impl Scopes<'_> {
             // is what keeps the re-mint and the backing's own release from running the hooks a
             // second time — `clear` runs none (`H-Drop-Not`).  The release is the backing's
             // (`scope_end_drop`), so a hand-off that stopped it still stops it.
+            // A CAPTURED local's store is the closure record's to release (`@FR-L-CapOwn`,
+            // `capture_adoption_owns_free`), at every scope's end as at the function's: released
+            // here as well, its hooks ran twice (loft#1606).
             if let Some(backing) = outer_collection_backing(function, v, &exited)
+                && !capture_adoption_owns_free(data, function, &self.capture_build_backing, v)
                 && let Some(hook) = self.scope_end_drop(function, backing, data, None)
             {
                 ls.push(hook);
@@ -16925,9 +17149,16 @@ impl Scopes<'_> {
         ov: u16,
         value: &Value,
         function: &Function,
+        data: &Data,
         beside_any: bool,
     ) -> Option<Value> {
-        fn sinkable(tail: &Value, v: u16, ov: u16, function: &Function) -> bool {
+        // The chain's own block is a UNIT as an ARM (see `sinkable`), so as the VALUE being
+        // bound it is not a branch to sink into: `b = e ?? d` is already the statement a sunk
+        // arm would write, and sinking it would rebuild the same `Set` around it forever.
+        if matches!(value.unspan(), Value::Block(bl) if bl.name == "ncc") {
+            return None;
+        }
+        fn sinkable(tail: &Value, v: u16, ov: u16, function: &Function, data: &Data) -> bool {
             match tail.unspan() {
                 // The binding itself: written out, that arm is `v = v`, the identity (#330).
                 Value::Var(x) if *x == v || *x == ov => true,
@@ -16935,7 +17166,9 @@ impl Scopes<'_> {
                     (*x as usize) < function.count() as usize && !function.is_compiler_generated(*x)
                 }
                 Value::Null | Value::Call(_, _) | Value::CallRef(_, _) => true,
-                Value::If(_, t, f) => sinkable(t, v, ov, function) && sinkable(f, v, ov, function),
+                Value::If(_, t, f) => {
+                    sinkable(t, v, ov, function, data) && sinkable(f, v, ov, function, data)
+                }
                 // A call arm the parser gave an owner so the VALUE form's join had one; written
                 // out, the arm binds that call itself.
                 Value::Block(bl) if bl.name == crate::parser::Parser::JOIN_ARM_OWNER => {
@@ -16948,11 +17181,32 @@ impl Scopes<'_> {
                 Value::Block(bl) if bl.name == "Object" => {
                     construction_work_ref(tail, function).is_some()
                 }
+                // loft#1612 — a `??` chain's own block, sunk as a UNIT.  Its tail is the
+                // hoisted `__ncc_N` temp, which is compiler-generated and so not a tail a
+                // plain bind may take; the BLOCK is, and written out the arm binds the join
+                // exactly as a statement of its own would (`b = e ?? d`).  Left unsinkable it
+                // declines the WHOLE sink, and then a chosen VARIABLE arm beside it records no
+                // hand-off: `b = x ?? (c() ?? d())` released `x`'s record from `b` AND from
+                // `x`, the second release on freed memory — `@FR-H-Move`, and a double release
+                // only a type with an `OpDrop` hook can witness.
+                //
+                // Only where every arm of that chain is OWNED, which is the question
+                // `ncc_arms_are_all_owned` already asks for `inline_struct_return`: an arm
+                // that VIEWS a place the program can still reach owes the destination a COPY
+                // (`@FR-B-Copy`), and a written-out `Set` binds what it is given — the copy is
+                // the parser's to emit and it is not there to emit one here.  Without the
+                // clause `x: H = if k > 0 { s.h ?? b } else { mk(3) }` aliased `b`, which
+                // `ownership_drop_gate`'s copy census names.
+                Value::Block(bl) if bl.name == "ncc" => {
+                    !crate::keys::no_chain_arm_sink() && Scopes::ncc_arms_are_all_owned(bl, data)
+                }
                 Value::Block(bl) if !matches!(bl.result, Type::Void | Type::Null) => bl
                     .operators
                     .last()
-                    .is_some_and(|l| sinkable(l, v, ov, function)),
-                Value::Insert(ops) => ops.last().is_some_and(|l| sinkable(l, v, ov, function)),
+                    .is_some_and(|l| sinkable(l, v, ov, function, data)),
+                Value::Insert(ops) => ops
+                    .last()
+                    .is_some_and(|l| sinkable(l, v, ov, function, data)),
                 _ => false,
             }
         }
@@ -17025,6 +17279,16 @@ impl Scopes<'_> {
                 *node = Value::Set(ov, Box::new(construction));
                 return;
             }
+            // A `??` chain's block is the arm's VALUE, bound whole (loft#1612): descending
+            // into it would bind its `__ncc_N` temp, which is the view the chain hands back
+            // and not a value a bind may adopt.
+            if let Value::Block(bl) = node
+                && bl.name == "ncc"
+            {
+                let chain = std::mem::replace(node, Value::Null);
+                *node = Value::Set(ov, Box::new(chain));
+                return;
+            }
             match node {
                 Value::Span(b) => sink(&mut b.1, v, ov),
                 Value::If(_, t, f) => {
@@ -17053,7 +17317,7 @@ impl Scopes<'_> {
         // A construction is an ARM, never the branch: written out on its own it would be the
         // bind it already is, and the scan would write it out again forever.
         if matches!(value.unspan(), Value::Block(bl) if bl.name == "Object")
-            || !sinkable(value, v, ov, function)
+            || !sinkable(value, v, ov, function, data)
             || (!beside_any && !owners_beside_locals_only(value))
         {
             return None;
@@ -17151,13 +17415,35 @@ impl Scopes<'_> {
         );
         // Each `__lift_N = a` is a whole-value copy the collector never saw when it first ran
         // (the lift is built after it), so the drop moves here by the same rule — and PER PATH
-        // by construction, since these temps are one per arm.  [`handoff_target`] is the one
-        // home for that direction; recording the temps is what lets the collector reach the
-        // same answer when it meets these copies later, from inside the arm.
+        // by construction, since these temps are one per arm.  Recording the temps is what lets
+        // the collector reach the same answer when it meets these copies later, from inside the
+        // arm.
+        //
+        // `@FR-H-Move` / `@FR-H-Drop` (loft#1617) — the lift holds the STRUCTURE on the path
+        // that copied, so the lift is what releases it and the source is what stops.  The
+        // copy is a move of a value this frame owns, and the hook belongs to the record the
+        // new owner holds; stopping the LIFT instead left the hook on the source's record,
+        // which the binding that views the lift has since written (`x.id = 7` read back as the
+        // source's old value in the hook).  The count was right either way, which is why only
+        // a cell that separates the two records sees it.  Per path, because the arm may not
+        // run: the flag is `false` where it did not, and there the source still owes its
+        // release.  Off a PARAMETER the copy stops itself, as before — the caller owns that
+        // record, so neither the lift nor a flag may release it (`@FR-H-Drop`'s closing
+        // clause).
         for &(src, tmp) in &copied {
             self.arm_lift_temps.insert(tmp);
-            if let Some(moved) = handoff_target(function, data, tmp, src, true, true) {
-                self.drop_transferred.insert(moved);
+            let Some(stopped) = copy_moves_drop_from(function, data, tmp, src, true) else {
+                continue;
+            };
+            // A source that OUTLIVES the loop keeps its release: the lift is per ITERATION, so
+            // running the hook there releases one record once a pass — `(H-Spent)`, the same
+            // reason the per-arm write-out declines such a branch
+            // ([`Self::source_outlives_loop`]).
+            if stopped == src && !self.source_outlives_loop(src, function) {
+                self.per_path_pairs.insert((tmp, src));
+                self.mint_handoff_flag(function, src);
+            } else {
+                self.drop_transferred.insert(tmp);
             }
         }
         if bound == u16::MAX || (copied.is_empty() && viewed.is_empty()) {
@@ -17177,6 +17463,29 @@ impl Scopes<'_> {
         // (`formal/heap.md` D-heap-16).
         let mut owned: Vec<u16> = Vec::new();
         self.lift_owned_call_tails(node, home, function, data, &mut owned);
+        // loft#1623 — every frame-owned temp this join's value may live in, recorded against the
+        // binding that borrows them.  Three sources and the third is why this is a record rather
+        // than a dep read: the arm lifts (`copied`), the minting-call arms this pass just gave a
+        // temp (`owned`), and the arms the PARSER already owns, whose `join-arm-owner` `__ref_N`
+        // the binding's dep list never names.
+        let mut holders: Vec<u16> = copied.iter().map(|&(_, t)| t).collect();
+        for w in owned
+            .iter()
+            .copied()
+            .chain(construction_work_refs(node, function, data))
+        {
+            if !holders.contains(&w) {
+                holders.push(w);
+            }
+        }
+        if bound != u16::MAX && !holders.is_empty() {
+            let slot = self.join_holders.entry(bound).or_default();
+            for w in holders {
+                if !slot.contains(&w) {
+                    slot.push(w);
+                }
+            }
+        }
         let mut deps: Vec<u16> = function.tp(bound).depend().clone();
         for tmp in owned {
             deps.push(tmp);
@@ -17212,18 +17521,34 @@ impl Scopes<'_> {
     /// loop's body refills on every pass (`x = a ?? mk(); a = x`): the next pass reads the new
     /// value, so that move is the one-pass move the written-out arms already decide.
     fn arm_source_outlives_loop(&self, value: &Value, function: &Function) -> bool {
+        branch_tail_vars(value)
+            .iter()
+            .any(|&src| self.source_outlives_loop(src, function))
+    }
+
+    /// Is `src` a variable declared OUTSIDE the innermost loop this statement runs in — or a
+    /// parameter, which every loop is inside?
+    ///
+    /// The per-source half of [`Self::arm_source_outlives_loop`], and ONE home for it, because
+    /// the two deciders that read it must agree: the per-arm write-out declines such a branch,
+    /// and [`Self::lift_join_arm_tails`] keeps the release with the source for the same reason.
+    /// A `(H-Spent)` name may be moved once, and a source outside the loop is moved once per
+    /// ITERATION — so the second pass reads a name already spent, and whichever side the
+    /// release is put on it runs once per pass over ONE record.  Keeping it with the source is
+    /// the answer that releases once; moving it to the per-iteration lift doubles it
+    /// (`ownership_drop_gate`'s `p_l1`).  Until the rules' error exists, this is the fallback
+    /// both sites take.
+    fn source_outlives_loop(&self, src: u16, function: &Function) -> bool {
         !self.loops.is_empty()
-            && branch_tail_vars(value).iter().any(|&src| {
-                !function.is_compiler_generated(src)
-                    && self
-                        .var_scope
-                        .get(&src)
-                        .is_none_or(|&home| self.loop_depth_at(home) < self.loops.len())
-                    && !self
-                        .loop_refills
-                        .last()
-                        .is_some_and(|refilled| refilled.contains(&src))
-            })
+            && !function.is_compiler_generated(src)
+            && self
+                .var_scope
+                .get(&src)
+                .is_none_or(|&home| self.loop_depth_at(home) < self.loops.len())
+            && !self
+                .loop_refills
+                .last()
+                .is_some_and(|refilled| refilled.contains(&src))
     }
 
     /// Give every arm tail that is a bare call MINTING a record a `__lift_N` temp of its own —
@@ -17857,7 +18182,8 @@ impl Scopes<'_> {
     /// No `self`: unlike the fn-ref twin, which resolves a closure through the caller's
     /// `fnref_target`, the target here is written in the IR and only `Data` is needed.
     fn monomorph_delegated_return_is_fresh(data: &Data, def: &crate::data::Definition) -> bool {
-        let Some(targets) = def.monomorph_direct_call_return_targets() else {
+        let null_ref = data.def_nr("OpNullRefSentinel");
+        let Some(targets) = def.monomorph_direct_call_return_targets(null_ref) else {
             return false;
         };
         targets.iter().all(|&d_nr| {
@@ -17867,7 +18193,7 @@ impl Scopes<'_> {
             let target = data.def(d_nr);
             target.code != Value::Null
                 && !target.returns_borrowed_view()
-                && target.monomorph_return_is_fresh()
+                && target.monomorph_return_is_fresh(null_ref)
         })
     }
 
@@ -17877,7 +18203,8 @@ impl Scopes<'_> {
         data: &Data,
         def: &crate::data::Definition,
     ) -> bool {
-        let Some(slots) = def.monomorph_fnref_return_slots() else {
+        let null_ref = data.def_nr("OpNullRefSentinel");
+        let Some(slots) = def.monomorph_fnref_return_slots(null_ref) else {
             return false;
         };
         let Value::Call(_, args) = val.unspan() else {
@@ -17899,7 +18226,7 @@ impl Scopes<'_> {
             };
             target.code != Value::Null
                 && !target.returns_borrowed_view()
-                && target.monomorph_return_is_fresh()
+                && target.monomorph_return_is_fresh(null_ref)
         })
     }
 
@@ -18435,7 +18762,7 @@ impl Scopes<'_> {
                     || monomorph_returns_a_borrow
                     || ((def.name.starts_with("t_") || def.is_instance())
                         && (def.attr_names.contains_key("__retbuf")
-                            || def.monomorph_return_is_fresh()
+                            || def.monomorph_return_is_fresh(data.def_nr("OpNullRefSentinel"))
                             // loft#1273 — a tail that DELEGATES (`a + b` is `Call(n_OpAdd)`)
                             // is a shape the callee's own body settles.
                             || Self::monomorph_delegated_return_is_fresh(data, def)))
@@ -20912,6 +21239,56 @@ fn return_copy_out(
         }
         Some((src, skip))
     })
+}
+
+/// loft#1623, `(H-Move)` — the frame-owned TEMPS a return hands out, when the value it copies
+/// onto the return buffer is a joined binding that BORROWS them.
+///
+/// `(H-Move)`'s third clause ends a function's own variables with it, and a binding that
+/// declined the per-arm write-out is not one of them — it releases nothing and the temps behind
+/// it do.  So the return moves what THEY hold, and their hook belongs to the caller from there
+/// on.  [`return_copies_whole_local`] answers the owned-local spelling of the same question and
+/// declines a view, correctly: the view owes no release, and naming it would suppress nothing.
+///
+/// PER EXIT, which is the whole of why this is read here rather than recorded as a hand-off: a
+/// second exit that returns something ELSE leaves the temps holding a value nobody took, and
+/// there their hook is the one release it gets (guard cell `c7`).
+///
+/// Only the temps [`Scopes::join_holders`] recorded.  A container the frame keeps — `s` on the
+/// path where `x = s.h ?? b` chose `s.h` — is not one: the caller got a COPY of a member, and
+/// `s` still owes its own release (guard cell `c4`).
+fn return_copies_view_holders(
+    expr: &Value,
+    function: &Function,
+    data: &Data,
+    holders: &HashMap<u16, Vec<u16>>,
+) -> Vec<u16> {
+    let Value::Block(bl) = return_tail(expr) else {
+        return Vec::new();
+    };
+    if bl.name != "materialized_view_return" && bl.name != ARMED_VIEW_RETURN {
+        return Vec::new();
+    }
+    let copy_nr = data.def_nr("OpCopyRecord");
+    bl.operators
+        .iter()
+        .find_map(|op| {
+            let Value::Call(d, args) = op.unspan() else {
+                return None;
+            };
+            if *d != copy_nr {
+                return None;
+            }
+            let (Value::Var(src), Some(Value::Var(dest))) =
+                (args.first()?.unspan(), args.get(1).map(Value::unspan))
+            else {
+                return None;
+            };
+            (src != dest && !function.is_argument(*src))
+                .then(|| holders.get(src).cloned())
+                .flatten()
+        })
+        .unwrap_or_default()
 }
 
 /// D-heap-7 — the whole LOCAL a return copies onto the return buffer, when the copy owns that

@@ -1,0 +1,105 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A LINKED narrow local holds its type's FIELD encoding in the low bytes of its 8-byte frame
+// slot (@PLN167 decision 1, `@FR-B-Ref-Uniform`), so every reader of that slot must DECODE it
+// — and every writer must ENCODE — or it reports the stored code as a value.
+//
+// This file is the half of that a loft program can reach on its own: `stack_trace()`, which
+// carries each frame's variables into userland with no debugger attached.  The other entries
+// are the debugger's (`:vars` / a `name = <literal>` edit / the DAP and RPC surfaces, all of
+// which render through `State::render_frame_local`), and they are exercised by
+// `tests/frame_readers.rs` — a `.loft` file cannot pause itself.
+//
+// Measured before the fix, on this branch, with the linked locals below:
+//
+//   b: i8 = -1                      reported  127   — `enc_byte(-1, -128)`, the store byte
+//   d: limit(1000, 1100) = 1050     reported    50   — the bias not applied
+//   c: u8? = null                   reported   255   — the absence CODE read as a value
+//   f: i32 = -2147483647            reported  2147483649
+//
+// and `a: u8 = 250` and `e: u16 = 65535` were right THROUGHOUT, because their bias is zero
+// and their encoding is the identity.  That is the whole reason this file uses `i8` and
+// `limit(1000, 1100)` rather than the `u8` a test would reach for first: the covered spelling
+// is the one that cannot fail.
+//
+// Two gaps this file records rather than asserts, because neither is the narrow question:
+//
+//   * a NULLABLE local reaches `stack_trace()` as `OtherVal {description:"<unsupported>"}`
+//     for every scalar type, narrow or wide — `read_variable_value` has no `Optional` arm at
+//     all, so `c` below is not in the expectation.  The DEBUGGER's renderer does peel it
+//     (loft#1459 gave it that arm) and decodes it correctly since this fix, which
+//     `tests/frame_readers.rs` checks;
+//   * `w`, a WIDE `integer` link, reports `IntVal` rather than `LongVal` — its spec is not
+//     `is_wide()` here, which is a typing question and not a slot one.  Asserted as measured
+//     so a change to it is visible rather than silent.
+//
+// The controls:
+//   * `h` is a narrow local NOTHING links, so it keeps its full-width slot and must read
+//     the same either way — a fix that decoded every narrow local would break it, and its
+//     `IntVal` spelling against a linked local's `LongVal` is what says the two took
+//     different paths;
+//   * `w` is a WIDE `integer` link, which has no encoding at all;
+//   * the values printed by the program itself are asserted beside the reported ones, so a
+//     cell where BOTH are wrong in the same way cannot pass.
+//
+// @falsified-at: 16a74ef69 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT
+// @falsified-by: tests/falsified/167-a-frame-reader-decodes-a-linked-narrow-local.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.  Native is
+//   INERT because the reported half does not exist there at all — `stack_trace().variables`
+//   is the interpreter's `variables_snapshot`, and a native run answers `no-frame` before and
+//   after.  That is the asymmetry this file pins rather than a channel asleep.
+//
+// CHANNEL: the assertions.
+
+type Lim = integer limit(1000, 1100);
+
+fn reported(fn_name: text, var: text) -> text {
+  for f in stack_trace() {
+    if f.function == fn_name {
+      for v in f.variables { if v.name == var { return "{v.value}"; } }
+    }
+  }
+  "no-frame"
+}
+
+// Every local here is named by a `&`, so every one holds its field encoding.
+fn linked() -> text {
+  a: u8 = 250;          p = &a;
+  b: i8 = -1;           q = &b;
+  c: u8? = null;        r = &c;   // reported below only through the DEBUGGER's renderer
+  d: Lim = 1050;        s = &d;
+  e: u16 = 65535;       t = &e;
+  f: i32 = -2147483647; g = &f;
+  w: integer = 77;      z = &w;
+  h: u8 = 9;            // NOT linked: the full-width control
+  seen = "{reported("linked", "a")} {reported("linked", "b")} {reported("linked", "c")} "
+       + "{reported("linked", "d")} {reported("linked", "e")} {reported("linked", "f")} "
+       + "{reported("linked", "w")} {reported("linked", "h")}";
+  vals = "{p} {q} {r == null} {s} {t} {g} {z} {h}";
+  "{seen} | {vals}"
+}
+
+fn main() {
+  // `stack_trace()` renders an integer variable as `LongVal {n:…}`; a narrow one that is NOT
+  // linked keeps its own `IntVal` spelling, which is what tells the two apart here.
+  // `{{` / `}}` escape a brace: the rendered form is `LongVal {n:…}`, and an unescaped
+  // `{n:-1}` here would be read as an interpolation of a variable named `n`.
+  got = linked();
+  // The VALUES the program computes are the same on both backends, always — that is what a
+  // linked narrow local promises and what `@FR-O-NoDiverge` requires of it.
+  assert(got.ends_with("| 250 -1 true 1050 65535 -2147483647 77 9"),
+         "the values a linked narrow local answers: {got}");
+  // The REPORTED half exists only on the interpreter: `stack_trace().variables` is filled by
+  // `State::variables_snapshot`, which native has no counterpart for, so a native run answers
+  // `no-frame` for every one.  Both answers are pinned rather than one skipped, so the day
+  // native grows a snapshot this cell says so instead of quietly starting to mean less.
+  interp = "LongVal {{n:250}} LongVal {{n:-1}} OtherVal {{description:\"<unsupported>\"}} "
+         + "LongVal {{n:1050}} LongVal {{n:65535}} LongVal {{n:-2147483647}} "
+         + "IntVal {{n:77}} IntVal {{n:9}} | 250 -1 true 1050 65535 -2147483647 77 9";
+  native = "no-frame no-frame no-frame no-frame no-frame no-frame no-frame no-frame "
+         + "| 250 -1 true 1050 65535 -2147483647 77 9";
+  assert(got == interp || got == native,
+         "a frame reader decodes a linked narrow local: {got}");
+  println("a frame reader decodes a linked narrow local");
+}

@@ -1265,6 +1265,40 @@ pub fn adopt_first_bind_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_ADOPT_FIRST_BIND"))
 }
 
+/// loft#1612 (`@FR-B-Copy`): a `??` chain the AUTHOR parenthesised — `(x ?? y) ?? d`, whose
+/// subject the parser must hoist into a `__ncc_N` temp — is right-associated in the scopes pass,
+/// so every operand is an arm again and the destination copies rather than viewing the temp.
+/// **DEFAULT ON**, both backends.  `LOFT_NO_COALESCE_REASSOC=1` keeps loft#1591's gate (only a
+/// chain that names its destination): the first bisect step for a wrong value, a leak or a double
+/// release out of a parenthesised chain.  The FLAT spelling never reaches this pass — `??` is
+/// right-associative in the parser (`coalesce_left_assoc`).
+pub fn no_coalesce_reassoc() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_COALESCE_REASSOC"))
+}
+
+/// loft#1612 (`@FR-B-Copy`, `@FR-H-Move`): a `??` chain BLOCK is a sinkable ARM — written out,
+/// the arm binds the join as a statement of its own would — **DEFAULT ON**, both backends, read
+/// in the scopes pass.  Only where every arm of that chain is OWNED (`ncc_arms_are_all_owned`):
+/// an arm that VIEWS a place the program can still reach must be copied into the destination,
+/// and a written-out `Set` binds what it is given.  `LOFT_NO_CHAIN_ARM_SINK=1` declines the whole
+/// branch again, as before: the first bisect step for a double release, a leak or an aliased
+/// record out of a branch with a `??` chain in one of its arms.
+pub fn no_chain_arm_sink() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_NO_CHAIN_ARM_SINK"))
+}
+
+/// loft#1612 (`@FR-G-Assoc`, `@FR-B-Copy`): `??` is RIGHT-associative, so every operand of a
+/// chain is an ARM whose bind copies — **DEFAULT ON**, both backends, read at PARSE time.
+/// `LOFT_COALESCE_LEFT_ASSOC=1` parses `x ?? y ?? d` as `(x ?? y) ?? d` again, whose subject is
+/// hoisted into a `__ncc_N` temp that VIEWS the operand it chose: the first bisect step for a
+/// wrong value, a leak or a double release out of a `??` chain of three or more operands.
+pub fn coalesce_left_assoc() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_COALESCE_LEFT_ASSOC"))
+}
+
 /// loft#1600 (`@FR-H-Drop`, scope-end clause), OPT-IN: a heap local every mention of which
 /// lies in ONE arm of an `if` is declared in that arm and released at its end, rather than
 /// pre-initialised at the `if`'s scope and released at that scope's end.  Off by default:

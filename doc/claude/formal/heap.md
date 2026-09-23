@@ -597,7 +597,14 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-36`,
+OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-41`,
+loft#1623, opened and CLOSED 2026-09-23: a returned join binding released what it handed out —
+the half `D-heap-39` filed beside itself rather than closing.  `D-heap-39`,
+loft#1617, and `D-heap-40`, loft#1622, both opened and CLOSED 2026-09-22: a lifted arm's hook
+handed the SOURCE's record, and the cascade key that ICEd on two droppable types behind nullable
+fields — the second found while building the first's matrix.  `D-heap-39` leaves loft#1623 beside
+it, the same lift form RETURNED releasing in the callee and again in the caller, which is filed
+rather than closed because its cure wants a design; `D-heap-36`,
 loft#1600, opened 2026-09-22 as a design question; `D-heap-37`, the hoist order found beside it,
 opened and closed that day; `D-heap-38`, what an arm-scope rule would leave for a vector bound in
 both arms, opened that day; `D-heap-34` and `D-heap-35` opened and closed
@@ -659,6 +666,115 @@ freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a ref
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
+
+### D-heap-41 — OPENED AND CLOSED (2026-09-23, loft#1623): a returned join binding released what it handed out
+
+- **Violates:** (H-Move) — a `return` moves what it answers to the caller, and the function's own
+  variables end with it — with (H-Drop)'s *"a hook that runs twice closes a handle the author
+  already closed"*.
+- **Where:** a binding whose value branch declined the per-arm write-out BORROWS a temp per arm
+  and releases nothing itself (`Scopes::lift_join_arm_tails`), so at a `materialized_view_return`
+  the value the return moves is the TEMPS', not the binding's.  `return_copies_whole_local`
+  answers the owned-local spelling and declines a view — correctly, since a view owes no release
+  — and nothing answered for the temps behind it, so they released at the callee's exit what the
+  caller had just adopted.
+- **Effect:** one lease, two releases — the second on memory the first had freed.  Measured
+  2026-09-23, both backends identical, no diagnostic: `fn f() -> H { s = SN { h: null };
+  b = mk(2); x: H = s.h ?? b; x.id = 7; return x; }` traces `m2,d7,G7,d7` where the owned-local
+  spelling `return b` traces `m2,G7,d7`.  A caller that rebinds the result separates the two
+  records and shows the doubled hook firing on the callee's id.
+- **Status:** CLOSED 2026-09-23.  Found while measuring loft#1617's matrix (cell A15) and filed
+  rather than fixed there, because the cure needed a design the identity fix did not.
+- **What made it more than a suppression.**  The temps come from THREE places and the third is
+  why the fix records them where they are made rather than reading the binding's deps: the arm
+  lifts, the minting-call arms the scope pass gives a temp, and the arms the PARSER already owns
+  — whose `join-arm-owner` `__ref_N` the dep list never names and which hooks all the same.
+  Two cells then say what a holder is NOT:
+  - a container the frame KEEPS is not one.  On the path where `x = s.h ?? b` chooses `s.h`, the
+    binding views `s.h`, the caller gets a COPY of a member, and `s` still owes its own release
+    — so the callee's hook there is correct.  Guard cell `c4`, which carries a release in the
+    callee that every failing cell does not.
+  - a temp whose value nobody took is not one either, which makes the fact PER EXIT rather than
+    a hand-off recorded once: a second exit returning something else leaves the temps holding a
+    value the caller never saw, and there their hook is the only release it gets.  Guard cell
+    `c7`.
+- **Closed:** `Scopes::join_holders` records the temps against the binding that borrows them, and
+  `return_copies_view_holders` reads them at the return into `arm_dropped` — the per-exit
+  mechanism loft#1515 shape 2 already established, so the suppression lasts exactly one exit.
+  Guard `tests/scripts/1623-a-returned-join-binding-hands-out-its-arms-temps.loft`, 9 cells and
+  2 controls, clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1` before and after.
+- **Left open beside it:** a join binding REBOUND to a fresh value and then returned releases
+  that fresh value in the callee AND at the caller (`x: H = s.h ?? b; x.id = 7; x = mk(9);
+  return x`).  The lift's own release is correct there — nobody took it — and the double is on
+  the REBOUND value, so it is the rebind axis rather than this one.  Pre-existing by
+  construction: this fix only ever REMOVES a hook at a return and cannot produce a second.
+  Filed separately.
+
+### D-heap-39 — OPENED AND CLOSED (2026-09-22, loft#1617): a lifted arm's hook is handed the SOURCE's record, not the one the binding holds
+
+- **Violates:** (H-Move), and (H-Drop)'s *"act on what the value holds"*.
+- **Where:** `Scopes::lift_join_arm_tails`.  Where a value branch cannot be written out per arm —
+  an arm that VIEWS, or a `??` chain block as the whole value — the binding BORROWS a per-arm
+  `__lift_N` temp instead of owning its copy, and each `__lift_N = a` is a `(H-Move)`: the temp
+  holds the structure from there on.  The hand-off ran the other way round.  `handoff_target`'s
+  per-path form answered the DESTINATION, so the temp was put in `drop_transferred` — statically
+  silent — and the source kept its own scope-end release.
+- **Effect:** the one release the resource earns is handed the SOURCE's record.  The COUNT is
+  right in every shape, which is why `ownership_drop_gate`'s "releases each resource once" is
+  green on all of it: with no write between the bind and the release the two records carry equal
+  bytes, and only a write to one of them separates them.  Measured 2026-09-22, both backends
+  byte-identical, no diagnostic — `b = mk(2); x: H = s.h ?? b; x.id = 7` traces `m2,R7|B2,d2`
+  where the plain bind `x: H = b` traces `m2,R7|B2,d7`, so the two spellings of one value
+  disagree about which record the hook acts on.  A hook exists to close THAT handle or free THAT
+  slot; handed another record it acts on the wrong resource.
+  The filed scope was the `if` ARM and the matrix says otherwise: a chain at STATEMENT level is
+  the same defect and the `if` is incidental.  What decides it is whether the per-arm write-out
+  applies — a branch whose arms are all owned was right throughout.
+- **Status:** CLOSED 2026-09-22.  Found by an edge sweep over `??` spellings while closing
+  `D-bind-50`; the guard that issue shipped says so in its own header, because a value cell
+  cannot see a release identity and its droppable cells recorded the release alone.
+- **Closed:** the direction is the rule's.  The lift releases what it holds, and the SOURCE's
+  release is guarded on a per-path `__hoff_` flag — `D-heap-14`'s machinery, one axis over: the
+  arm may not run, and on the path that did not copy the source still owes its release.  A copy
+  off a PARAMETER still stops itself, since that record is the caller's.  Measured on a 16-cell
+  matrix moving the statement context (statement level, `if` arm, `match` arm, loop body,
+  returned), the arm kind (a chosen field, a chosen local, a call beside either), the operand
+  count, the route to the release (a direct hook, a cascade through a member) and the source's
+  later life (rebound after the chain): 10 of 16 named the wrong record before, none does after,
+  and the six that were right are unmoved.  Guard
+  `tests/scripts/1617-a-lifted-arm-releases-the-record-the-binding-holds.loft`.
+- **Left open beside it:** loft#1623 — the same lift form RETURNED releases in the callee and
+  again in the caller.  One lease, two hooks; pre-existing, and this entry moves which record the
+  callee's spurious hook names without changing the count.  It is not closed here because the
+  binding's holders come in two kinds — a `__lift_N` its dep list names and a parser-made
+  `join-arm-owner` `__ref_N` it does not — so the cure wants a per-binding record of them
+  written where they are made, which is a design and not a filter over the dep list.
+
+### D-heap-40 — OPENED AND CLOSED (2026-09-22, loft#1622): two droppable types behind nullable fields mint ONE drop-cascade key
+
+- **Violates:** (H-Drop) — a container's death releases what it holds, through the cascade — and
+  [interfaces.md](interfaces.md) `(G-Key)`, which asks that a definition key identify its
+  definition.
+- **Where:** `synth_drop_cascades` gives an enum VARIANT a cascade of its own, keyed by
+  `mangle_method(def.name(), "OpDropAll")` — the BARE variant name.  A variant name is unique only
+  WITHIN its enum, which is exactly what `Data::variant_of` exists to say (*"two enums may share a
+  variant name and a variant is never found without a contextual enum"*).  Every `τ?` lowers to a
+  `__nullable<τ>` whose payload variant is named `Some`.
+- **Effect:** two distinct droppable types each reached through a NULLABLE FIELD both mint
+  `t_4Some_OpDropAll`, and the second trips `Data::add_def`'s dual-definition assert — an ICE
+  before the program runs, on both backends.  Loud, not silent, and it takes a shape no reader
+  would expect to be rare: a pair of structs holding optionals.  Measured 2026-09-22 —
+  `struct SA { a: A? }` beside `struct SB { b: B? }` over two droppable payloads aborts; two
+  nullable LOCALS do not, nor does one nullable field beside a non-nullable one, nor two nullable
+  fields where only one payload is droppable.
+- **Status:** CLOSED 2026-09-22.  Found while building `D-heap-39`'s matrix, whose cascade cell
+  needs a second droppable type; until then that cell did not compile.
+- **Closed:** the key spells a variant as `<enum>::<variant>`, so the two are
+  `__nullable<A>::Some` and `__nullable<B>::Some`.  It has ONE home, `Data::drop_cascade_key`,
+  read by the parser that MINTS the cascade and by every lookup that finds it — the name had two
+  homes before (the parser's `drop_cascade_name` and three inline rebuilds in `Data`), and a
+  cascade minted under one spelling and looked up under another is a release that silently never
+  runs.  Guard `tests/scripts/1622-a-drop-cascade-key-names-the-variants-enum.loft`.
 
 ### D-heap-23 — OPENED AND CLOSED (2026-09-21): a whole-collection copy of a collection the function owns released its elements twice
 
@@ -961,7 +1077,7 @@ CLOSED 2026-09-17, below.
   destination, the destination absent, and a single `??` over itself (`D-heap-15`, `p_i2`).
 - **Status:** CLOSED 2026-09-22 — found the same day while closing `p_i2`.
 - **Closed:** the chain is rewritten before any analysis reads the function
-  (`scopes::reassociate_self_coalesce`), so neither the hoist nor the witness is involved.  In
+  (`scopes::reassociate_coalesce_chains`), so neither the hoist nor the witness is involved.  In
   `if present(p) { p } else { q }` only the `q` arm can be absent, so `(p ?? q) ?? d` equals
   `if present(p) { p } else { q ?? d }`, with the same value and the same evaluation order.
   With the destination as the HEAD the rebind becomes `if present(a) { } else { a = rest }`, where

@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-G-Mono — a generic `-> T?` at a TUPLE answers on every path what its twin does, and
+// frees what it mints.  `(τ, σ)?` has no stack spelling, so the instance returns a record
+// reference: the stored element's own where the result reads the vector, a record it mints
+// where the result is a tuple it holds.  1451's single tail read was right; its neighbours
+// were not, and each failed differently:
+//   - an `if` whose arms both read (`g4`): the arms' blocks kept the stack tuple's type
+//     while they held a reference, and the interpreter read past the frame (a store panic);
+//   - an arm answering `null` (`gn`, `g6`): the absent arm was a stack tuple too, and the
+//     run STOPPED after the call — nothing printed, exit 0;
+//   - a read on one path and a held tuple on the other (`gm`): a borrow on one path and a
+//     minted record on the other, which a call read without a binding never freed;
+//   - a tuple local declared in an arm (`gy`): the template's owned copy of a local that
+//     views a record ran record ops on the tuple (a store panic; `--native` E0308);
+//   - a loop's `return` beside a `null` tail (`gl`), and the same at a STRUCT (`sl`): the
+//     caller asks the callee's body whether its result is fresh, and a null-reference tail
+//     read as "not proven", so the record minted on the other path leaked per call.
+// The control `sv` returns the loop's own element — a VIEW — beside a `null` tail: it must
+// not be lifted and freed (reading the null tail as fresh without asking what the local
+// views freed the caller's vector).
+//
+// Cells run 3 times in a loop and inline (no binding), which is what the leak needs.
+//
+// @falsified-at: 514d039fd — interpret exit 134 -> 0, interpret panicked -> clean, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-nullable-result-at-a-tuple-answers-on-every-path.patch — interpret exit 134 -> 0, interpret panicked -> clean, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the interpreter panics in `g4`, native does not compile
+//     (`gy`, E0308).
+//   ARMED: nothing.
+//   MASKED: the leak cells (`gm`, `gl`, `sl`) sit behind that panic here.  Measured apart on
+//     the control, each leaked 3 records under LOFT_STRICT_STORES (`__tuple<integer,text>`,
+//     `Pt`), and `gn(a, 5)` ended the run silently.
+//   HOLDS: `sv`, the view beside a `null` tail, is not lifted on either tree.
+
+struct Pt { x: integer, s: text }
+
+fn g4<T>(v: vector<T>, i: integer) -> T? { if i > 0 { v[i] } else { v[0] } }
+fn gn<T>(v: vector<T>, i: integer) -> T? { if i < len(v) { v[i] } else { null } }
+fn g6<T>(v: vector<T>, i: integer) -> T? { if i > 1 { v[1] } else if i > 0 { v[0] } else { null } }
+fn gm<T>(v: vector<T>, d: T) -> T? { if len(v) > 0 { v[0] } else { d } }
+fn gy<T>(v: vector<T>, d: T) -> T? { if len(v) > 0 { y = v[0]; y } else { d } }
+fn gl<T>(v: vector<T>) -> T? { for x in v { if len(v) > 1 { return x; } } null }
+fn sl<T>(v: vector<T>) -> T? { for x in v { if len(v) > 1 { y: T = x; return y; } } null }
+fn sv<T>(v: vector<T>) -> T? { for x in v { if len(v) > 1 { return x; } } null }
+
+fn main() {
+  a = [(7, "s"), (8, "tt")];
+  b = [(1, 2), (3, 4)];
+  e: vector<(integer, text)> = [];
+  p = [Pt { x: 7, s: "s" }, Pt { x: 8, s: "t" }];
+  s = 0;
+  absent = 0;
+  for _ in 0..3 {
+    // g4: 8 + 7 + 4 + 2 = 21
+    s += g4(a, 1).0 + g4(a, 0).0 + g4(b, 1).1 + g4(b, 0).1;
+    // gn, g6: 8 + 2 + 8 + 7 = 25, and two absences
+    s += gn(a, 1).0 + gn(b, 0).1 + g6(a, 2).0 + g6(a, 1).0;
+    if gn(a, 5) == null { absent += 1; }
+    if g6(a, 0) == null { absent += 1; }
+    // gm, gy: 7 + 5 + 7 + 5 = 24
+    s += gm(a, (5, "d")).0 + gm(e, (5, "d")).0 + gy(a, (5, "d")).0 + gy(e, (5, "d")).0;
+    // gl, sl, sv: 7 + 7 + 7 = 21
+    s += gl(a).0 + sl(p).x + sv(p).x;
+  }
+  // (21 + 25 + 24 + 21) * 3 = 273
+  assert(s == 273 && absent == 6, "{s} {absent}");
+  x = g4(a, 1);
+  y = gn(a, 0);
+  z = g6(a, 1);
+  m = gm(e, (5, "dd"));
+  w = gy(a, (5, "dd"));
+  l = gl(a);
+  assert("{x.1} {y.1} {z.1} {m.1} {w.1} {l.1} {sl(p).s} {sv(p).s}" == "tt s s dd s s s s",
+    "{x.1} {y.1} {z.1} {m.1} {w.1} {l.1}");
+  // The views handed out left the vectors whole.
+  assert("{len(a)} {a[1].1} {len(p)} {p[1].s} {p[0].x}" == "2 tt 2 t 7", "{len(a)} {len(p)}");
+}

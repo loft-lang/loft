@@ -52,9 +52,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   (G-Prec)   for binary operators, level N binds tighter than level N-1.  Parsing is
              precedence-climbing: `parse_operators(p)` parses operands at level p+1, so a
              higher level groups deeper.
-  (G-Assoc)  binary levels are LEFT-associative, EXCEPT `**` (power = RIGHT-assoc) and the
-             comparison level 3 (NON-associative — chaining is rejected):
+  (G-Assoc)  binary levels are LEFT-associative, EXCEPT `**` (power = RIGHT-assoc), `??`
+             (default-fallback = RIGHT-assoc) and the comparison level 3 (NON-associative —
+             chaining is rejected):
                  2 ** 3 ** 2  ==  2 ** (3 ** 2)  ==  512       (matches maths / most languages)
+                 x ?? y ?? d  ==  x ?? (y ?? d)                 (same VALUE either way; see below)
                  x as integer as float  ==  (x as integer) as float   (`as` stays left-assoc)
                  a == b == c   → COMPILE ERROR (would be `(a == b) == c`, a bool vs c compare;
                                 parenthesise, or use `&&` for a range: `1 < x && x < 10`)
@@ -62,12 +64,23 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 **In words.** loft has one precedence ladder, twelve rungs. The closer to the bottom
 (`as`, `**`, `*`), the tighter an operator grips its operands; the closer to the top
-(`??`, `||`), the later it groups. Operators group left-to-right, with **two exceptions**:
+(`??`, `||`), the later it groups. Operators group left-to-right, with **three exceptions**:
 `**` (power) is **right**-associative, so `2 ** 3 ** 2` is `2 ** (3 ** 2) = 512` — matching
 maths and most languages (it was left-associative = 64 before; the maker should not carry a
-surprise there); and the **comparison** level is **non-associative** — `a == b == c` /
-`1 < x < 10` are rejected at parse time, because left-associative grouping would silently
-compare a boolean to the third operand. Parenthesise, or use `&&` for a range test.
+surprise there); `??` is **right**-associative; and the **comparison** level is
+**non-associative** — `a == b == c` / `1 < x < 10` are rejected at parse time, because
+left-associative grouping would silently compare a boolean to the third operand.
+Parenthesise, or use `&&` for a range test.
+
+`??`'s grouping is the one exception a program cannot OBSERVE as a value: the operator is
+associative, and either grouping answers the first present operand, evaluating the operands
+left to right and stopping there. What it changes is the SHAPE the rest of the language then
+reads. Left-associated, `x ?? y ?? d` is `(x ?? y) ?? d`, whose subject is not a variable and
+is therefore hoisted into a compiler temp — and that temp VIEWS the operand it chose, so the
+destination bound to it shared that operand's store where `(B-Copy)` gives it a copy
+(loft#1612, `binding.md` D-bind-50). Right-associated, every operand is an ARM of a plain
+`if`, and an arm's bind is the copy — which is why the two-operand spelling was always right.
+`LOFT_COALESCE_LEFT_ASSOC=1` parses the left-associated form again, as the bisect step.
 
 ### Postfix `?` is NOT a rung on the ladder — it is a primary suffix (@PLN116)
 

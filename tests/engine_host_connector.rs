@@ -797,7 +797,7 @@ fn main() {{
   w = W {{ tick: 0 }};
   engine_host::run({port}, 50000,
     fn(ev: engine_host::Event) {{
-      if ev.kind == 1 {{ engine_host::send(ev.cid, "7:hi"); }}
+      if ev.kind == 1 {{ println("s:connected"); engine_host::send(ev.cid, "7:hi"); }}
     }},
     fn() {{
       w.tick = w.tick + 1;
@@ -876,7 +876,11 @@ fn main() {{
     }
 
     // ── Browser leg ──
-    let _server = Guard(Some(spawn_loft(&server_prog, false)));
+    // Piped: the server prints `s:connected` when the page's client has spoken, which is
+    // what the kill below waits for.
+    let mut server_child = spawn_loft(&server_prog, true);
+    let server_out = server_child.stdout.take().expect("piped server stdout");
+    let _server = Guard(Some(server_child));
     wait_until_listening(port);
     // Serve doc/ (the page + bundle); kill the kernel server mid-run so the
     // browser client exits and the page compares its transcript.
@@ -901,8 +905,23 @@ fn main() {{
         }
     });
     let url = format!("http://127.0.0.1:{http_port}/kernel-differential.html?port={port}");
+    // Kill the kernel server only once the page has CONNECTED and been answered — the
+    // server's `s:connected` line — plus a second for the sync frames the page compares.
+    // A fixed 4 s from launch killed it before a slow runner's headless chromium had
+    // opened its socket, and the page reported `ERR_CONNECTION_REFUSED` (two of three
+    // gates on 2026-09-22).  The deadline is the harness's own wait, so a page that never
+    // connects still ends the test with the harness's verdict rather than a hang.
     let server_killer = std::thread::spawn(move || {
-        std::thread::sleep(Duration::from_secs(4));
+        let deadline = vm_deadline(12);
+        let mut lines = BufReader::new(server_out).lines();
+        loop {
+            match lines.next() {
+                Some(Ok(l)) if l.trim() == "s:connected" => break,
+                Some(Ok(_)) if Instant::now() < deadline => continue,
+                _ => break,
+            }
+        }
+        std::thread::sleep(Duration::from_secs(1));
         drop(_server);
     });
     let out = Command::new("node")

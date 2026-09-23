@@ -1,0 +1,108 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 00638427f..aec3136a2 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -254,38 +254,6 @@ pub(crate) struct AssignPlace<'a> {
+     pub fn_attr: Option<(u32, usize)>,
+ }
+ 
+-/// The steps a walk's INIT contributes to its loop's prelude, FLAT: [`Parser::iterator`]
+-/// answers a text walk over a non-place source as a block `for text source` holding the
+-/// hidden local's bind and the cursor's init, and pushed as one nested block that bind
+-/// would declare the local in a scope of its own — freed at the block's end, read by the
+-/// loop after it (measured: every `println` in the cell file printed an empty line on the
+-/// interpreter, and native did not compile).  Every lowering that pushes an init pushes
+-/// it through here, so the bind stands beside the init in the loop's own prelude, as the
+-/// vector temp's `fill` does.
+-pub(crate) fn iter_init_steps(create_iter: Value) -> Vec<Value> {
+-    match create_iter {
+-        Value::Block(b) if b.name == "for text source" => b.operators,
+-        other => vec![other],
+-    }
+-}
+-
+-/// Is this text source a PLACE — a variable, or a field path rooted at one — whose per-round
+-/// re-read is (I-For)'s cheap cursor re-read?  Anything else (a call, a literal, an
+-/// operator expression, an element read, a branch) is a VALUE the `for` evaluates once
+-/// (`@FR-I-Text`), so `parse_for` binds it to a hidden local first.
+-fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
+-    match v.unspan() {
+-        Value::Var(_) => true,
+-        Value::Call(d, args) => {
+-            matches!(
+-                data.def(*d).name(),
+-                "OpGetText" | "OpGetField" | "OpGetRecord"
+-            ) && args.first().is_some_and(|root| is_text_place(root, data))
+-        }
+-        _ => false,
+-    }
+-}
+-
+ impl Parser {
+     pub(crate) fn iter_text(
+         &mut self,
+@@ -526,32 +494,7 @@ impl Parser {
+             return Value::Null;
+         }
+         if matches!(*is_type, Type::Text(_)) {
+-            // @FR-I-Text, @FR-I-For — `it := ⟨0, src⟩`: the SOURCE is evaluated once, before
+-            // the first round.  A text walk re-spells its source three times per round (the
+-            // character read, the null test and the length test — `text_loop_break`), which
+-            // is the cheap re-read of a place (I-For)'s cursor makes; for a source that is
+-            // NOT a place — a call, a literal, an operator expression, an element read, a
+-            // branch — it evaluated the expression three times per character, side effects
+-            // included (measured: `for c in f()` called `f` twelve times for three
+-            // characters, on both backends, in the statement and the comprehension alike).
+-            // Such a source is bound to a hidden local in the walk's init and every
+-            // re-spelling reads the local; a variable and a field path stay as they are,
+-            // since binding them would cost a copy per walk for no value.  ONE home: every
+-            // text walk — the `for` statement, the comprehension — builds its iterator here.
+-            let bind = if is_text_place(code, &self.data) {
+-                None
+-            } else {
+-                let text_var = self.create_unique("for_text", is_type);
+-                let set = v_set(text_var, code.clone());
+-                *code = Value::Var(text_var);
+-                Some(set)
+-            };
+-            let next = self.iter_text(code, iter_var, pre_var);
+-            if let Some(set) = bind {
+-                let init = std::mem::replace(code, Value::Null);
+-                *code = v_block(vec![set, init], Type::Void, "for text source");
+-            }
+-            return next;
++            return self.iter_text(code, iter_var, pre_var);
+         }
+         // CO1.5a: a coroutine handle needs a next()-based advance.
+         //
+@@ -3900,7 +3843,7 @@ use #count instead"
+             if let Some(idx_var) = pre_var {
+                 for_steps.push(v_set(idx_var, Value::Int(0)));
+             }
+-            for_steps.extend(iter_init_steps(create_iter));
++            for_steps.push(create_iter);
+             let mut lp = vec![for_next];
+             // CO1.5b: coroutine iterators also need a termination check.
+             //
+@@ -4197,7 +4140,7 @@ use #count instead"
+         for s in &db_setup {
+             for_steps.push(s.clone());
+         }
+-        for_steps.extend(iter_init_steps(create_iter));
++        for_steps.push(create_iter);
+         for_steps.push(v_loop(lp, "Materialise par input"));
+         // Splice the steps inline (Insert), NOT a v_block: native codegen emits
+         // a Block as a Rust `{ }` scope, which would confine the `__par_mat`
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index d2bd925d7..0b8f7ee3a 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3596,7 +3596,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         if let Some(idx_var) = pre_var {
+             for_steps.push(v_set(idx_var, Value::Int(0)));
+         }
+-        for_steps.extend(super::collections::iter_init_steps(create_iter));
++        for_steps.push(create_iter);
+         for_steps.push(v_loop(lp, "For comprehension"));
+         let mut ls: Vec<Value> = Vec::new();
+         if block {

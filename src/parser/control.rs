@@ -12147,13 +12147,16 @@ impl Parser {
         let mut code =
             std::mem::replace(&mut self.data.definitions[d_nr as usize].code, Value::Null);
         // Which locals did the template type as the type variable?  Those are the binds the
-        // record lowering was written for; a local the template already typed as a vector
-        // got the vector lowering at the parse and is left alone.
+        // record lowering was written for; a local the template already typed as a collection
+        // got that lowering at the parse and is left alone.  Vector OR keyed: `acc = init` in
+        // `fold<T, U>` is the same `@FR-B-Copy` whole-value bind at a `hash`, and left aliasing
+        // the argument the caller freed its own collection through the result.
         let tv_typed = |v: u16, vars: &crate::variables::Function| -> bool {
             (v as usize) < tmpl_vars.count() as usize
                 && matches!(tmpl_vars.tp(v).base(), Type::Reference(h, _) if holders.contains(h))
                 && (v as usize) < vars.count() as usize
-                && matches!(vars.tp(v).base(), Type::Vector(_, _))
+                && (matches!(vars.tp(v).base(), Type::Vector(_, _))
+                    || crate::parser::vectors::is_keyed(vars.tp(v)))
         };
         if let Value::Block(bl) = &mut code {
             // B-Copy: the whole-value vector binds.
@@ -12196,6 +12199,39 @@ impl Parser {
     /// The FIRST assignment of a local is also its declaration — the null-init that allocates
     /// an owned vector local's store on both backends — so a first bind keeps a `Set(v, null)`
     /// in front of the copy; a rebind copies into the store the local already has.
+    /// The whole-value copy `@FR-B-Copy` asks of `d = v` at this INSTANCE's collection type:
+    /// `OpReplaceVector` for a vector, `OpReplaceKeyed` for a keyed kind — the ops the
+    /// concrete spelling of the same bind emits.  `None` where the source is neither, which
+    /// leaves the bind alone.
+    ///
+    /// The keyed half is what `fold(v, [], add)`'s `acc = init` needed: the template lowered
+    /// it while `U` was a record placeholder, so no keyed copy was emitted and the instance
+    /// ALIASED the caller's collection — the caller then freed it through the result and
+    /// still held it in the argument's own work-ref, and the NEXT call over a recycled store
+    /// read records that were no longer there (a second fold beside it made the first one's
+    /// answer shrink).  Its concrete twin copies.
+    fn generic_collection_copy(&mut self, v: u16, u: u16) -> Option<Value> {
+        let src = self.vars.tp(u).base().clone();
+        if let Type::Vector(elm, _) = &src {
+            let rec_tp = self.append_elem_tp(elm);
+            return Some(self.cl(
+                "OpReplaceVector",
+                &[Value::Var(v), Value::Var(u), Value::Int(rec_tp)],
+            ));
+        }
+        if crate::parser::vectors::is_keyed(&src)
+            && let Some(kt) = self.keyed_known_type(&src)
+        {
+            // Source first, destination second — `OpReplaceKeyed(src, dest, tp)`, as the
+            // keyed local's own assignment site spells it.
+            return Some(self.cl(
+                "OpReplaceKeyed",
+                &[Value::Var(u), Value::Var(v), Value::Int(i32::from(kt))],
+            ));
+        }
+        None
+    }
+
     fn rewrite_generic_vector_binds(
         &mut self,
         node: &mut Value,
@@ -12212,14 +12248,16 @@ impl Parser {
                     && tv_typed(*v, &self.vars)
                     && (*u as usize) < self.vars.count() as usize
                     && !self.vars.is_argument(*v)
-                    && let Type::Vector(elm, _) = self.vars.tp(*u).base().clone()
+                    // A target DECLARED a borrow of its source is a view bind (`@FR-B-View`),
+                    // not the whole-value copy `@FR-B-Copy` asks of a plain `s = x`: the
+                    // comprehension's slot for a `filter` body is one (`_comp` depends on the
+                    // loop element).  Copied, it went into a vector local no store had been
+                    // made for — `filter(vv, f)` inside a generic panicked at
+                    // `vector<vector<integer>>` — where the concrete twin aliases.
+                    && !self.vars.tp(*v).depend().contains(u)
+                    && let Some(replace) = self.generic_collection_copy(*v, *u)
                 {
-                    let (v, u) = (*v, *u);
-                    let rec_tp = self.append_elem_tp(&elm);
-                    let replace = self.cl(
-                        "OpReplaceVector",
-                        &[Value::Var(v), Value::Var(u), Value::Int(rec_tp)],
-                    );
+                    let v = *v;
                     *node = if first {
                         Value::Insert(vec![crate::data::v_set(v, Value::Null), replace])
                     } else {
@@ -15100,10 +15138,16 @@ impl Parser {
             // Delivering it emits `OpClearVector(w); OpAppendVector(w, v)`, which empties
             // the buffer before appending it to itself (the arm answered `[]`), and the
             // dep-free leg below then frees `w` — the CALLER's store.  Leave it alone.
+            // `.base()`, so a NULLABLE vector local is the same arm: `return b ?? [4]` yields
+            // `b: vector<T>?` on the present path, and read as `Type::Optional` it fell past
+            // this leg and was handed back AS IS — a vector living in the frame's own store,
+            // which the caller never adopts and nothing frees (one leaked store per call, on
+            // the interpreter alone, so `(O-NoDiverge)` with it).  The value is right either
+            // way; only the DELIVERY was missing (loft#1618).
             Value::Var(v)
                 if *v != w
                     && !self.vars.tp(*v).depend().contains(&w)
-                    && matches!(self.vars.tp(*v), Type::Vector(_, _)) =>
+                    && matches!(self.vars.tp(*v).base(), Type::Vector(_, _)) =>
             {
                 let local = *v;
                 let deps = self.vars.tp(local).depend();
@@ -15173,6 +15217,25 @@ impl Parser {
             // `OpVectorRef` / `OpGetRecord`) and a tuple element (`TupleGet`), which carries
             // its base as a variable number and is a view of that tuple's store the same way.
             Value::TupleGet(_, _) => {
+                let rec_tp = self.append_elem_tp(elm);
+                let proj = std::mem::replace(op, Value::Null);
+                let clear = self.cl("OpClearVector", &[Value::Var(w)]);
+                let append = self.cl("OpAppendVector", &[Value::Var(w), proj, Value::Int(rec_tp)]);
+                *op = Value::Insert(vec![clear, append, Value::Var(w)]);
+                true
+            }
+            // A CAPTURE read (`OpGetDbRef(__closure, off)`) is a projection out of the
+            // closure record exactly as `OpGetField` is one out of a struct, and `(O-Buffer)`
+            // asks every arm of a vector return to be delivered into the caller's buffer.
+            // `formal/closures.md` D-clo-7 calls a capture "a separate route" and it was left
+            // with NO leg at all, so a branch with a captured default answered its own
+            // closure's store on that arm while the sibling arm answered the buffer — one
+            // return, two provenances, which no caller can tell apart.  Measured (loft#1621):
+            // `g = fn(q: vector<integer>?) -> vector<integer> { q ?? cap }` called in a loop
+            // left `len(cap) == 0` and every later read null, on both backends.  The copy is
+            // what the sibling arm already pays; the closure keeps its own store, so nothing
+            // is freed here — the same terms as the projection leg below.
+            Value::Call(d, _) if self.data.def(*d).name() == "OpGetDbRef" => {
                 let rec_tp = self.append_elem_tp(elm);
                 let proj = std::mem::replace(op, Value::Null);
                 let clear = self.cl("OpClearVector", &[Value::Var(w)]);
@@ -15491,9 +15554,12 @@ impl Parser {
     fn deliver_mid_vector_walk(&mut self, elm: &Type, op: &mut Value, buf_var: u16) {
         match op {
             Value::Return(inner) => {
+                // `.base()`, for the reason the arm materialiser reads it that way: a NULLABLE
+                // vector local is the same local one `?` down, and read as `Type::Optional` it
+                // fell past this leg and was returned in the frame's own store (loft#1618).
                 if let Value::Var(v) = inner.unspan()
                     && *v != buf_var
-                    && matches!(self.vars.tp(*v), Type::Vector(_, _))
+                    && matches!(self.vars.tp(*v).base(), Type::Vector(_, _))
                 {
                     let local = *v;
                     let rec_tp = self.append_elem_tp(elm);
@@ -15516,6 +15582,13 @@ impl Parser {
                     // terminal Var is a fresh `_vec`, so the cluster-I per-arm
                     // materialiser delivers it (clear+append+free the __vdb), leaving
                     // the block yielding __retbuf; wrap it back in the `return`.
+                    self.materialize_vector_arms_into(elm, inner.unspan_mut(), buf_var);
+                } else if matches!(inner.unspan(), Value::If(_, _, _)) {
+                    // A mid-body `return <branch>` — a `??` chain is one — delivers ARM BY ARM,
+                    // the same walk the tail takes: each arm's own value is copied into the
+                    // buffer and the arm that yields a local frees the store it built
+                    // (loft#1618).  Without it the branch was returned as it stands, and the
+                    // arm that answered a local handed back the frame's store.
                     self.materialize_vector_arms_into(elm, inner.unspan_mut(), buf_var);
                 }
             }
@@ -16097,6 +16170,32 @@ impl Parser {
             }
         }
         body.iter().any(|s| walk(s, &borrowers))
+    }
+
+    /// The user PARAMETERS a returned value borrows, or `None` where it borrows none.
+    ///
+    /// `(O-Move)`'s record clause is about a parameter and only a parameter — *"if the return
+    /// borrows a parameter, the return type records it (`{Attr(param)}`), and the caller
+    /// COPIES to obtain its own store"*.  A dep naming a LOCAL is the other half of the same
+    /// rule, the one that says the value must be DELIVERED into the buffer, and the two want
+    /// opposite things: recording a borrow tells the caller not to free, and a local's store
+    /// is exactly what the caller must be handed.  Reading the list without this split leaked
+    /// the delivered store in every shape `nullable_ret_buffer` measures.
+    ///
+    /// Compiler names are out by construction: a hidden buffer (`__ref_N`, `__retbuf`) is an
+    /// argument too, and those are the list the caller of this already filtered into its own
+    /// branch.
+    fn borrowed_param_deps(&self, ls: &[u16]) -> Option<Vec<u16>> {
+        let params: Vec<u16> = ls
+            .iter()
+            .copied()
+            .filter(|&w| {
+                w < self.vars.count()
+                    && self.vars.is_argument(w)
+                    && !self.vars.name(w).starts_with("__")
+            })
+            .collect();
+        (params.len() == ls.len() && !params.is_empty()).then_some(params)
     }
 
     pub(crate) fn ref_return(&mut self, ls: &[u16], body: &mut [Value], site: RetSite) {
@@ -16923,6 +17022,33 @@ impl Parser {
                             std::slice::from_mut(&mut v),
                             RetSite::MidReturn,
                         );
+                    } else if let Some(param_deps) = self.borrowed_param_deps(&ls_own) {
+                        // loft#1625 — the VECTOR twin of the keyed arm above, which is
+                        // loft#1140's defect one container kind over, which is loft#677's a
+                        // second time.  The filter above keeps only a call's work-ref, so a
+                        // return that BORROWS a parameter (`return v[i]`) named no site ref
+                        // and `ref_return` was never entered at all — `LOFT_TRACE_RETPROMO`
+                        // printed no ENTER line for it, exactly as loft#1140's comment
+                        // describes.  So `(O-Move)`'s *"if the return borrows a parameter,
+                        // the return type records it (`{Attr(param)}`)"* went unwritten,
+                        // `(O-Opaque)` read the empty list as *"the callee minted this"* —
+                        // the one reading that licenses a free — and the caller released an
+                        // element of its OWN container.  The bare-tail spelling of the same
+                        // body records the borrow and is correct, so one callee had two
+                        // signatures.
+                        //
+                        // No placement is decided here and none can be: every var in this
+                        // list is already an ATTRIBUTE, and the classifier answers such a
+                        // var `MergeAttr` before any placement rung — *"an attribute has
+                        // nothing left to place, so the only thing left to say about it is
+                        // which attr the return borrows"*.  `vector_bound` therefore stays
+                        // false and the delivery below is unmoved; what changes is the
+                        // signature this spelling publishes.
+                        self.ref_return(
+                            &param_deps,
+                            std::slice::from_mut(&mut v),
+                            RetSite::MidReturn,
+                        );
                     }
                 }
             }
@@ -17473,45 +17599,10 @@ impl Parser {
                 || (!Self::seeds_lambda_hint(&self.expected)
                     && (self.lexer.peek_token("|") || self.lexer.peek_token("||")));
             if lambda_unsteered
-                && !types.is_empty()
-                && let Type::Vector(elm, _) = types[0].base()
+                && let Some(receiver) = list.first()
+                && let Some(h) = self.special_form_callback_hint(name, arg_idx, &types, receiver)
             {
-                let elem = *elm.clone();
-                // loft#1540 — an element of a const collection is read-only; see the twin in
-                // `parse_vector_method`.
-                let elem_const = self.const_view_place(&list[0], true).is_some();
-                let elem_at = |i: usize| {
-                    crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const))
-                };
-                let hint = match (name, arg_idx) {
-                    // loft#945 — `map` is `fn(T) -> U`: the PARAMETER is the element type,
-                    // the return is free.  See the twin hint in `parse_vector_method`.
-                    ("map", 1) => Some(Type::Function(
-                        vec![elem.clone()],
-                        Box::new(Type::Unknown(0)),
-                        Deps::none(),
-                        elem_at(0),
-                    )),
-                    ("filter" | "any" | "all" | "count_if", 1) => Some(Type::Function(
-                        vec![elem],
-                        Box::new(Type::Boolean),
-                        Deps::none(),
-                        elem_at(0),
-                    )),
-                    ("reduce", 2) => {
-                        let init_tp = types.get(1).cloned().unwrap_or(elem.clone());
-                        Some(Type::Function(
-                            vec![init_tp.clone(), elem],
-                            Box::new(init_tp),
-                            Deps::none(),
-                            elem_at(1),
-                        ))
-                    }
-                    _ => None,
-                };
-                if let Some(h) = hint {
-                    self.expected = h;
-                }
+                self.expected = h;
             }
             let mut p = Value::Null;
             // Capture each argument's start so a later type-mismatch diagnostic
@@ -17832,7 +17923,9 @@ impl Parser {
             "par_fold" => return self.parse_par_fold(val, list, types),
             "map" => return self.parse_map(val, list, types),
             "filter" => return self.parse_filter(val, list, types),
-            "reduce" => return self.parse_reduce(val, list, types),
+            "reduce" if self.reduce_is_special(source, list, types) => {
+                return self.parse_reduce(val, list, types);
+            }
             "sort" if self.sort_is_special(source, types) => {
                 return self.parse_sort(val, list, types);
             }
@@ -18386,6 +18479,14 @@ impl Parser {
         // A collection is a different defect with a different shape, not the same one one
         // size larger, which is why it is still refused after loft#951: the fold has to
         // hand the callee a buffer per step, and a collection's is not the text one.
+        // @PLN165 E7 — which lowering a template's accumulator takes is the monomorph's to
+        // decide: the fold below for a scalar or `text`, the declaration's instance for any
+        // other `U`.  The three argument types ride in the stamp's result (`TV_REDUCE`).
+        if self.is_type_var_element(&acc_type) {
+            let carried = Type::Tuple(vec![types[0].clone(), acc_type.clone(), types[2].clone()]);
+            *val = v_block(list.to_vec(), carried, Self::TV_REDUCE);
+            return acc_type;
+        }
         if Self::is_heap_storage(&acc_type) && !matches!(acc_type.base(), Type::Text(_)) {
             diagnostic!(
                 self.lexer,
@@ -18707,6 +18808,62 @@ impl Parser {
         }
     }
 
+    /// The `fn(…)` hint a vector special form gives its callback argument — `map`'s
+    /// `fn(T) -> U` with `U` left to the lambda (loft#945), `filter`/`any`/`all`/`count_if`'s
+    /// `fn(T) -> boolean`, `reduce`'s `fn(U, T) -> U` with the accumulator the INIT's type
+    /// (loft#1074) — and, the part no declared signature can say, the element parameter
+    /// `const` exactly when the collection is a const place (loft#1540: an element of a const
+    /// collection is read-only).  `None` for any other argument or name.
+    ///
+    /// One home for both spellings: the bare call asks it where no program definition
+    /// steers the argument, and a method call asks it where the method is a `#builtin`
+    /// declaration — whose lowering, and so whose argument hints, are the special form's.
+    pub(crate) fn special_form_callback_hint(
+        &self,
+        name: &str,
+        arg_idx: usize,
+        types: &[Type],
+        receiver: &Value,
+    ) -> Option<Type> {
+        let Type::Vector(boxed, _) = types.first()?.peel_link().base() else {
+            return None;
+        };
+        let elem = (**boxed).clone();
+        let elem_const = self.const_view_place(receiver, true).is_some();
+        let elem_at =
+            |i: usize| crate::data::ConstParams::from_flags((0..=i).map(|k| k == i && elem_const));
+        match (name, arg_idx) {
+            ("map", 1) => Some(Type::Function(
+                vec![elem],
+                Box::new(Type::Unknown(0)),
+                Deps::none(),
+                elem_at(0),
+            )),
+            ("filter" | "any" | "all" | "count_if", 1) => Some(Type::Function(
+                vec![elem],
+                Box::new(Type::Boolean),
+                Deps::none(),
+                elem_at(0),
+            )),
+            ("reduce", 2) => {
+                // The init's VALUE type: a struct literal arrives `Rewritten`, the spelling of
+                // an inline constructor, and a callback parameter typed that way took no return
+                // buffer where the call reaches the declaration's body.
+                let acc = types
+                    .get(1)
+                    .filter(|t| !t.is_unknown())
+                    .map_or_else(|| elem.clone(), Type::unrewritten);
+                Some(Type::Function(
+                    vec![acc.clone(), elem],
+                    Box::new(acc),
+                    Deps::none(),
+                    elem_at(1),
+                ))
+            }
+            _ => None,
+        }
+    }
+
     // <call> ::= [ <expression> { ',' <expression> } ] ')'
     /// Parse a method call's `(arg, …)` and emit it, the definition FIXED by the caller (a
     /// bound's stub, an enum variant's method).  See [`Self::parse_method_selecting`].
@@ -18940,6 +19097,23 @@ impl Parser {
                 {
                     self.expected = expected;
                 }
+            }
+            // @PLN165 arc E — a `#builtin` method's lowering is its special form, and so are
+            // its callback's hints: the element parameter is `const` when the receiver is a
+            // const collection (loft#1540), which no declared signature can say.  The bare
+            // spelling asks the same helper, so `v.filter(f)` and `filter(v, f)` type the
+            // lambda alike.
+            if hint_nr != u32::MAX
+                && self.data.def(hint_nr).builtin()
+                && let Some(receiver) = list.first()
+                && let Some(h) = self.special_form_callback_hint(
+                    &Self::method_spelling(self.data.def(hint_nr).name()),
+                    list.len(),
+                    &types,
+                    receiver,
+                )
+            {
+                self.expected = h;
             }
             let mut p = Value::Null;
             arg_pos.push(self.lexer.peek_pos().clone());

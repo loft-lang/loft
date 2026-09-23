@@ -78,6 +78,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   (O-Borrow)    BORROW TRACKING.  A value aliasing another (param / field / element / `&τ`)
                 carries the source in its `deps`; the borrower is skip-free; the single
                 owner frees once.
+  (O-Borrow-Scalar)  EXCEPT a `&` link at a SCALAR local, which owns no store and so has no
+                free decision to record: its `deps` stay EMPTY and the obligation it does
+                carry — that the place it names outlives it — is recorded on the TARGET
+                (`Variable::amp_linked_by`), read by the slot allocator and by nothing else.
+                Two channels, each answering one question.
   (O-Derived)   FREE PLACEMENT IS DERIVED, NOT DECIDED.  Free a local iff it owns its store
                 and does not transfer it out — once, at scope exit.  No per-site heuristic.
   (O-Buffer)    A HIDDEN RETURN BUFFER IS THE CALLER'S STORE, WITNESSED BY THE LOCAL
@@ -429,6 +434,19 @@ fills), and a variable minted once and then rebound by a call that may hand back
 is a `Join`, not `Owned`; reading the mint alone was the upgrade this paragraph forbids, held
 right at run time by the distinctness guard (D-own-32, QUALITY.md B7r).
 
+`(O-Borrow-Scalar)` is that principle applied one rule earlier, and it was written after the
+alternative shipped a defect.  `deps` answers *what does this binding borrow from*, and a
+heap link's answer happens to serve a second question — *how long must the source live* —
+because the two coincide there.  A SCALAR link has no answer to the first: it owns no store,
+so recording the target in its `deps` would say "this is a heap borrow" to every one of the
+38 readers below, while leaving the second question with no channel at all.  It had none, and
+the slot allocator — which ends a local's live range at its last use BY NAME — handed a
+linked local's slot to a later local: the interpreter read, and WROTE, the usurper's bytes
+through the link, while native was correct because a link there is a raw pointer to a Rust
+local the compiler keeps alive (loft#1627, `sev:high`, silent, both a wrong value and an
+`(O-NoDiverge)` divergence).  The cure is a second channel rather than a wider first one,
+for the reason the paragraph below gives.
+
 ⚠ **The reason to write this down is that the choice is currently invisible.** 38 functions
 test `depend().is_empty()`; some legitimately want the proxy (they are asking "is this a
 view?", not "may I free it?"), some memo the oracle, and some free. Nothing in the source
@@ -493,7 +511,10 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-48` (a returned vector local rebound by a call inside a loop or a branch
+**OPEN: 0.**  `D-own-49` (an explicit `return` of an ELEMENT published a signature with no
+borrow, so the caller freed the container — loft#1625, and the third container kind of one
+missing record after loft#677 and loft#1140) opened and CLOSED 2026-09-23, below.
+`D-own-48` (a returned vector local rebound by a call inside a loop or a branch
 answered a store its caller never handed in, loft#1599) opened and CLOSED 2026-09-22, below.
 `D-own-47` (a local a `match` statement's arms first assign died at the block
 the lowering wraps the arms in, and was read after it) opened and CLOSED 2026-09-21, below.
@@ -530,6 +551,62 @@ the entry records why the obvious widening is not taken: it answers wrong on `--
 > a struct's has, `tests/scripts/a-struct-enum-whole-value-bind-copies-like-a-struct.loft`);
 > and the `--native` release of a displaced store on a fn-ref re-bind of a USER local, which
 > is loft#1328 and which the `??` hoist sidesteps by releasing in the IR.
+
+### D-own-49 — OPENED AND CLOSED (2026-09-23, loft#1625): an explicit `return` of an ELEMENT published a signature with no borrow, and the caller freed the container
+
+- **Violates:** (O-Move) — *"if the return borrows a parameter, the return type records it
+  (`{Attr(param)}`)"* — with (O-Opaque), which is what gives the omission its cost.
+- **Where:** `parse_return`'s mid-body VECTOR leg filtered its dep list down to a CALL's
+  work-ref (`__ref_` / `__rref_`), so a return BORROWING a parameter named no site ref and
+  `ref_return` was never entered at all.  The tail spelling reaches it through `block_result`,
+  which hands over the tail's own deps.  Two spellings of one callee, two signatures, from
+  **byte-identical bodies**:
+  `fn retn(v, i) -> vector<integer>? { return v[i]; }` typed `vector<integer>?` with EMPTY
+  deps, `fn tail(v, i) -> vector<integer>? { v[i] }` typed `vector<integer>["v"]?`.
+- **Effect:** (O-Opaque) reads an empty list as *"the callee minted this"* — the one reading
+  that licenses a free — so the caller released an element of its OWN container.  Measured
+  2026-09-23, four iterations through a fn-ref call: the interpreter answers `null`, `--native`
+  a recycled number, and the caller's outer vector reads `len(vs) == 0`.  Two backends, two
+  different wrong answers, no diagnostic — `(O-NoDiverge)` with it.
+  It takes five things together and each one alone is clean: an ELEMENT read (a FIELD read was
+  always right), returned DIRECTLY (a bare tail and a local are right), from a
+  nullable-collection callee, through a FN-REF call (a named call is right), inside a LOOP.
+  Binding the result or the argument does not help, which is what says the defect is the
+  callee's signature and not the call site's spelling.
+- **Status:** CLOSED 2026-09-23.  Found while measuring loft#1624's controls.
+- **The same defect a third time, and the class is now closed.**  `D-own`'s loft#677 lost a
+  RECORD return's `["o"]` dep, where *"callers then read the returned borrow as owned and freed
+  the CALLER's store"*.  loft#1140 found the explicit-return spelling of it for KEYED
+  collections and fixed that arm — in a comment that describes this one exactly, one container
+  kind over.  This is the VECTOR arm beside it.  The remaining kinds were then measured rather
+  than assumed: a RECORD element return, a TUPLE return holding a borrowed vector, and both of
+  their tail spellings are correct, so there is no fourth instance to find.  What the three
+  share is not a container kind but an ENTRY POINT: `ref_return` is the one site that writes
+  `(O-Move)`'s record, and every path to a return has to reach it.  `LOFT_TRACE_RETPROMO`
+  answers that directly — it prints an ENTER line per entry, and the absence of one is the
+  defect's own signature (two lines for the tail spelling, none for the `return`).
+- **Closed:** the vector arm hands `ref_return` the value's deps when the work-ref filter comes
+  up empty, as the keyed arm above it already does.  No placement is decided and none can be:
+  every var in that list is already an ATTRIBUTE, and the classifier answers such a var
+  `MergeAttr` before any placement rung — *"an attribute has nothing left to place, so the only
+  thing left to say about it is which attr the return borrows"*.  Guard
+  `tests/scripts/1625-an-explicit-return-of-an-element-records-its-borrow.loft`, whose `k1` is
+  the axis the fix must not move: a callee that genuinely MINTS its answer keeps its empty deps,
+  or the caller stops freeing what the callee really did hand over.
+- **The first cure was wider than the rule and leaked**, which is why `c13` and `c14` exist.
+  `(O-Move)` has two halves that want OPPOSITE things: a return borrowing a PARAMETER records
+  it, so the caller does not free; a return of a LOCAL's store is DELIVERED, so the caller is
+  handed exactly that store.  Reading the dep list without splitting on it recorded a borrow
+  for the delivered case and leaked it, on every shape `tests/nullable_ret_buffer.rs` measures.
+  A MIXED list — a value that comes from a parameter on one path and a local on the other — is
+  declined rather than guessed.
+- **The record has THREE homes and no guard ties them together.**  `ref_return` is the
+  dispatching writer; `parser/mod.rs`'s template arm and `parser/definitions.rs`'s interface
+  stub each write `Deps::attrs` directly.  All three are correct today, and none of them is
+  this deviation — the defect here was an entry reaching NO writer — but a change to what the
+  record means has three places to land, which is the drift shape loft#1622 records one
+  subsystem over.  Noted rather than cured: unifying them is a refactor with no defect behind
+  it yet.
 
 ### D-own-48 — OPENED AND CLOSED (2026-09-22, loft#1599): a returned vector local rebound by a call inside a loop or a branch answered a store its caller never handed in
 

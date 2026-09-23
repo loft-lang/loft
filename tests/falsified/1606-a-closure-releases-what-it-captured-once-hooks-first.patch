@@ -1,0 +1,314 @@
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index dfa45cd9c..2257105b3 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -6272,7 +6272,6 @@ impl Parser {
+                     self.data.def(d_nr).known_type() != u16::MAX
+                         && (!self.cascade_fields(d_nr).is_empty()
+                             || !self.cascade_vectors(d_nr).is_empty()
+-                            || !self.cascade_shared_vectors(d_nr).is_empty()
+                             || !self.cascade_keyed(d_nr).is_empty())
+                 }
+                 // An ENUM releases through whichever variant it currently holds.
+@@ -6553,14 +6552,6 @@ impl Parser {
+             let Some((fd, read_tp)) = self.cascade_field_target(&a.typedef) else {
+                 continue;
+             };
+-            // A shared VECTOR capture wears its element's `Reference` spelling; it is walked by
+-            // `cascade_shared_vectors`, never released as one record.
+-            if self
+-                .closure_shared_vectors
+-                .contains_key(&(d_nr, self.data.attr_name(d_nr, a_nr)))
+-            {
+-                continue;
+-            }
+             if fd == d_nr || !self.data.owns_droppable(fd) {
+                 continue; // a self-field cannot exist inline; skip defensively
+             }
+@@ -6609,37 +6600,6 @@ impl Parser {
+         out
+     }
+ 
+-    /// A CLOSURE record's shared vector captures (loft#1606): `(byte offset, vector type,
+-    /// element type, element definition)` for each attribute [`Parser::closure_shared_vectors`]
+-    /// names whose elements own a droppable.  The attribute holds the captured vector's own
+-    /// `DbRef`, so the walk reads it with `OpGetDbRef` where [`Self::cascade_vectors`] reads an
+-    /// inline field.
+-    fn cascade_shared_vectors(&self, d_nr: u32) -> Vec<(u16, Type, Type, u32)> {
+-        let kt = self.data.def(d_nr).known_type();
+-        let mut out = Vec::new();
+-        for a_nr in 0..self.data.def(d_nr).attributes().len() {
+-            let name = self.data.attr_name(d_nr, a_nr);
+-            let Some(vec_tp) = self.closure_shared_vectors.get(&(d_nr, name.clone())) else {
+-                continue;
+-            };
+-            let Type::Vector(elm, _) = vec_tp.base() else {
+-                continue;
+-            };
+-            let Some((elm, ed)) = self.cascade_element((**elm).clone()) else {
+-                continue;
+-            };
+-            if !self.data.type_owns_droppable_anywhere(&elm) {
+-                continue;
+-            }
+-            let off = self.database.position(kt, &name);
+-            if off == u16::MAX {
+-                continue;
+-            }
+-            out.push((off, vec_tp.clone(), elm, ed));
+-        }
+-        out
+-    }
+-
+     /// The per-element release loop for one collection field — see [`Self::cascade_vectors`].
+     ///
+     /// Shaped check-then-read rather than the read-then-check a `for` loop lowers to, because
+@@ -6925,22 +6885,6 @@ impl Parser {
+             let loop_code = self.drop_elements_loop(&field, n, &elem_tp, target);
+             ops.push(loop_code);
+         }
+-        let inline = self.cascade_vectors(t).len();
+-        for (n, (off, _, elem_tp, ed)) in
+-            self.cascade_shared_vectors(t).into_iter().enumerate().rev()
+-        {
+-            let target = self.data.drop_cascade_nr(ed);
+-            if target == u32::MAX {
+-                continue;
+-            }
+-            let field = self.cl(
+-                "OpGetDbRef",
+-                &[Value::Var(self_var), Value::Int(i32::from(off))],
+-            );
+-            let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
+-            let walk = self.drop_elements_loop(&field, inline + n, &elem_tp, target);
+-            ops.push(v_if(live, walk, Value::Null));
+-        }
+         // loft#1601 — a keyed field's records release the generator frames they hold, and
+         // only those (`(H-Drop-Not)` keeps their hooks out).
+         for (off, ktp) in self.cascade_keyed(t).into_iter().rev() {
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index c00fef2dd..3621eeb92 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -983,12 +983,6 @@ pub struct Parser {
+     /// hidden parameter, and the value form assigns the arms' temps into the buffer var.
+     /// Keyed by name because a pass rebuilds the variable table; recorded on both passes.
+     pub(crate) branch_sunk_vectors: std::collections::HashSet<(u32, String)>,
+-    /// The closure-record attributes that SHARE a captured vector, by `(record, attribute)`,
+-    /// with the vector's type.  `closure_attr_type` stores such a capture as a 12-byte `DbRef`
+-    /// spelled `Reference(element)` — the spelling a shared RECORD capture has too — so the
+-    /// drop cascade reads this to walk the vector rather than release one element-typed
+-    /// record at the vector's slot (loft#1606).
+-    pub(crate) closure_shared_vectors: std::collections::HashMap<(u32, String), Type>,
+     /// Variable number of the __closure parameter inside a lambda body (second pass).
+     /// `u16::MAX` when not inside a capturing lambda.
+     pub(crate) closure_param: u16,
+@@ -1600,7 +1594,6 @@ impl Parser {
+             rebound_captures: std::collections::HashMap::new(),
+             captured_names: Vec::new(),
+             branch_sunk_vectors: std::collections::HashSet::new(),
+-            closure_shared_vectors: std::collections::HashMap::new(),
+             fn_lambdas: std::collections::HashMap::new(),
+             closure_param: u16::MAX,
+             cur_type_vars: Vec::new(),
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 4772fe889..0b8f7ee3a 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -2927,7 +2927,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+             ensure_tuple_defs_for_capture(&mut self.data, &mut self.lexer, &ctype);
+             let attr_tp = self.closure_attr_type(&ctype);
+             self.data.set_attr_type(closure_rec, a_nr, attr_tp);
+-            self.note_shared_vector(closure_rec, &name, &ctype);
+         }
+         if self.data.def(closure_rec).known_type() == u16::MAX
+             && !(0..self.data.attributes(closure_rec))
+@@ -2939,17 +2938,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         }
+     }
+ 
+-    /// Record that the closure record `rec`'s attribute `name` shares the captured vector of
+-    /// type `tp` — see [`Parser::closure_shared_vectors`].  A `&vector<τ>` capture shares its
+-    /// pointee, as `closure_attr_type` stores it.
+-    fn note_shared_vector(&mut self, rec: u32, name: &str, tp: &Type) {
+-        let tp = tp.peel_link();
+-        if matches!(tp, Type::Vector(_, _)) {
+-            self.closure_shared_vectors
+-                .insert((rec, name.to_string()), tp.clone());
+-        }
+-    }
+-
+     fn synthesize_closure_record(&mut self, lambda_d_nr: u32, lambda_name: &str) {
+         let record_name = lambda_name.replace("__lambda_", "__closure_");
+         let captures = self.captured_names.clone();
+@@ -2973,7 +2961,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 let attr_tp = self.closure_attr_type(tp);
+                 self.data
+                     .add_attribute(&mut self.lexer, record_d_nr, name, attr_tp);
+-                self.note_shared_vector(record_d_nr, name, tp);
+                 // loft#1540 — a capture of a read-only value is a read-only FIELD of the
+                 // record: the body reaches it through `__closure.<name>`, and a write through
+                 // a value-const field is refused at the write (`frozen_through`).
+diff --git b/src/scopes.rs a/src/scopes.rs
+index d20032a96..768e38ddf 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -8691,7 +8691,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+     // rewrite above has settled.  Must run after the loop, not inside it: the
+     // verdict is the same `owns` fact `get_free_vars` uses, and that fact is only
+     // final once the call-result rewrites (`make_independent`) have run.
+-    mark_borrowed_captures(data, database);
++    mark_borrowed_captures(data);
+     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
+     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
+     crate::variables::dump_var_tables(data, 0);
+@@ -8720,7 +8720,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+ /// The record is reached through the enclosing frame's `___clos_N` variable
+ /// rather than by walking the IR: `emit_lambda_code` always mints one, and it
+ /// lives in exactly the frame whose variables decide the verdict.
+-fn mark_borrowed_captures(data: &mut Data, database: &crate::database::Stores) {
++fn mark_borrowed_captures(data: &mut Data) {
+     let mut borrowed: Vec<(u32, usize)> = Vec::new();
+     for d_nr in 0..data.definitions() {
+         if !matches!(data.def(d_nr).def_type, DefType::Function) {
+@@ -8769,58 +8769,6 @@ fn mark_borrowed_captures(data: &mut Data, database: &crate::database::Stores) {
+     }
+     for (record, a) in borrowed {
+         data.mark_capture_borrowed(record, a);
+-        strip_borrowed_capture_walk(data, database, record, a);
+-    }
+-}
+-
+-/// `@FR-L-CapOne` for the HOOKS — a record that BORROWS a capture runs no drop over it.
+-///
+-/// The record's drop cascade was synthesized at parse time, before this pass decided which
+-/// record keeps a shared store, so it walks every capture slot.  Two closures over one
+-/// store then ran the captured elements' hooks once each (loft#1606).  The free-side
+-/// half reads the borrowed marker `mark_capture_borrowed` writes; this is the hook-side
+-/// half: every walk the record's cascade (and its Except variant) guards on that slot's
+-/// `OpGetDbRef(self, offset)` is removed.
+-fn strip_borrowed_capture_walk(
+-    data: &mut Data,
+-    database: &crate::database::Stores,
+-    record: u32,
+-    a: usize,
+-) {
+-    let kt = data.def(record).known_type();
+-    let off = database.position(kt, &data.attr_name(record, a));
+-    let get_dbref = data.def_nr("OpGetDbRef");
+-    if off == u16::MAX || get_dbref == u32::MAX {
+-        return;
+-    }
+-    fn guards_on_slot(cond: &Value, get_dbref: u32, off: u16) -> bool {
+-        let mut hit = false;
+-        cond.walk(&mut |n| {
+-            if let Value::Call(d, args) = n.unspan()
+-                && *d == get_dbref
+-                && matches!(args.get(1).map(Value::unspan), Some(Value::Int(o)) if *o == i32::from(off))
+-            {
+-                hit = true;
+-            }
+-        });
+-        hit
+-    }
+-    // Wherever the guarded walk sits — at the cascade's top, or under the Except variant's
+-    // `skip` test — the guard is replaced by nothing.
+-    fn scrub(v: &mut Value, get_dbref: u32, off: u16) {
+-        if matches!(v.unspan(), Value::If(cond, _, _) if guards_on_slot(cond, get_dbref, off)) {
+-            *v = Value::Null;
+-            return;
+-        }
+-        v.for_each_child_mut(&mut |c| scrub(c, get_dbref, off));
+-    }
+-    for cascade in [
+-        data.drop_cascade_nr(record),
+-        data.drop_cascade_except_nr(record),
+-    ] {
+-        if cascade != u32::MAX {
+-            scrub(&mut data.definitions[cascade as usize].code, get_dbref, off);
+-        }
+     }
+ }
+ 
+@@ -9088,11 +9036,7 @@ fn capture_store_adopters(
+         // mints for it.  A frame that receives the record as an ARGUMENT is the closure BODY
+         // (its hidden `__closure` parameter), whose own variable table knows nothing about who
+         // owns the captures — reading it flipped the verdict depending on definition order.
+-        // …and a displaced-record SNAPSHOT (`__disp_N`, `displaced_drop`) is a transient copy
+-        // released where it is taken, never an adopter: named one, it became the witness the
+-        // frame's conditional release reads, and the frame freed the capture under the live
+-        // record (loft#1606).
+-        if function.is_argument(v) || function.name(v).starts_with("__disp_") {
++        if function.is_argument(v) {
+             continue;
+         }
+         let Type::Reference(record, _) = function.tp(v) else {
+@@ -13065,20 +13009,8 @@ impl Scopes<'_> {
+         let name = format!("__disp_{}", self.lift_counter);
+         let disp = function.add_temp_var(&name, &tp);
+         function.mark_inline_ref(disp);
+-        // A CLOSURE record's snapshot is homed at the FUNCTION body (1), its null-init hoisted
+-        // there (`lift_vars`), as `__blk_N` is: the record is rebuilt inside its lambda's
+-        // `fn_ref_with_closure` block, whose value is the `FnRef` it ends in, and the sweep's
+-        // second visit (a no-op on the sentinel) made at that block's end stood after the value
+-        // (loft#1606: `()` on native, a garbage fn-ref on the interpreter).  Every other snapshot
+-        // keeps its statement's scope: homed at the function, a generator's would become a heap
+-        // temp its TAIL releases when a `match` drains it.
+-        let closure_record = function.name(v).starts_with("___clos_");
+-        self.var_scope
+-            .insert(disp, if closure_record { 1 } else { self.scope });
++        self.var_scope.insert(disp, self.scope);
+         self.var_order.push(disp);
+-        if closure_record {
+-            self.lift_vars.push(disp);
+-        }
+         let live = Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(v)]);
+         let snapshot = Value::Insert(vec![
+             Value::Call(
+@@ -13284,25 +13216,13 @@ impl Scopes<'_> {
+         // backings — a vector member's `__vdb_N`, a record member a whole-tuple bind copied
+         // into a `__ref_N` (loft#1361) — so those take its place too (loft#1588).
+         let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
+-        // A fn-ref's closure record releases in the fn-ref's turn, just BEFORE it (loft#1606):
+-        // the record's release runs its cascade and then frees its store, where the fn-ref's
+-        // free alone frees the store with no cascade — so run first, it left the record's
+-        // cascade to read a freed record.  The fn-ref's free after it finds the store gone.
+-        let fn_ref = matches!(function.tp(v).base(), Type::Function(..));
+-        let mut records = Vec::new();
+         let mut backings = function.tp(v).depend().clone();
+         if let Type::Tuple(elems) = function.tp(v).base() {
+             backings.extend(elems.iter().filter_map(|e| member_backing(function, e)));
+         }
+         for d in backings {
+             let name = function.name(d);
+-            if fn_ref
+-                && name.starts_with("___clos_")
+-                && let Some(pos) = self.var_order.iter().position(|&x| x == d)
+-            {
+-                self.var_order.remove(pos);
+-                records.push(d);
+-            } else if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
++            if (name.starts_with("__vdb_") || (collection && name.starts_with("__ref_")))
+                 && let Some(pos) = self.var_order.iter().position(|&x| x == d)
+             {
+                 self.var_order.remove(pos);
+@@ -13310,7 +13230,6 @@ impl Scopes<'_> {
+             }
+         }
+         self.var_order.push(v);
+-        self.var_order.extend(records);
+     }
+ 
+     /// `@FR-H-Drop`'s scope-end clause for an `if` arm's owner: a local every mention of which,
+@@ -15191,11 +15110,7 @@ impl Scopes<'_> {
+             // is what keeps the re-mint and the backing's own release from running the hooks a
+             // second time — `clear` runs none (`H-Drop-Not`).  The release is the backing's
+             // (`scope_end_drop`), so a hand-off that stopped it still stops it.
+-            // A CAPTURED local's store is the closure record's to release (`@FR-L-CapOwn`,
+-            // `capture_adoption_owns_free`), at every scope's end as at the function's: released
+-            // here as well, its hooks ran twice (loft#1606).
+             if let Some(backing) = outer_collection_backing(function, v, &exited)
+-                && !capture_adoption_owns_free(data, function, &self.capture_build_backing, v)
+                 && let Some(hook) = self.scope_end_drop(function, backing, data, None)
+             {
+                 ls.push(hook);

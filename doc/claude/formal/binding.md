@@ -397,6 +397,39 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 **OPEN: 2.**
 
+* **D-bind-50** *(opened 2026-09-22, CLOSED 2026-09-22; loft#1612)* — `(B-Copy)` for the
+  destination of a `??` CHAIN of three or more operands.  A plain bind copies a heap whole
+  value, and the two-operand spelling does: it is lowered per arm, and an arm's bind is that
+  copy.  `??` is left-associative, so a longer chain hoisted its subject into a `__ncc_N` temp
+  and bound the destination to THAT — and the temp views the operand it chose, by the rule that
+  makes it a borrow (loft#723: freeing it would be a use-after-free).  So the destination shared
+  the chosen operand's store: on the interpreter for a record, on BOTH backends for a vector and
+  for a chain whose first operand is a call.  Silent — the shared store reads right until the
+  operand is rebound, and then the destination reads the new value, or freed memory once both
+  release it.  `(O-NoDiverge)` was broken with it, since `--native` copies a record's temp.
+  **Closed** in the PARSER, by making `??` RIGHT-associative (`grammar.md` (G-Assoc): its RHS
+  parses at its own level, the one place associativity is decided).  `??` is associative as a
+  value — either grouping answers the first present operand, in the same order, short-circuiting
+  the same way — so no program's meaning moves; what moves is the SHAPE.  Right-associated there
+  is no chain subject to hoist: every operand is an ARM of a plain `if`, and an arm's bind is the
+  copy `(B-Copy)` describes, which is exactly why the two-operand spelling was always right.
+  `LOFT_COALESCE_LEFT_ASSOC=1` parses the left-associated form again.
+  A chain the AUTHOR parenthesised — `(x ?? y) ?? d` — still hands the parser a subject that is
+  not a variable, so that one is right-associated in the scopes pass instead
+  (`reassociate_coalesce_chains`, loft#1591's rewrite with its destination gate lifted;
+  `LOFT_NO_COALESCE_REASSOC=1` keeps the gate).  Without it the parenthesised spelling kept the
+  hoisted form and the destination VIEWED the operand — on the interpreter only, so it was a
+  `(O-NoDiverge)` divergence as well (guard cell `c27`).
+  A SECOND defect was in the way, pre-existing and reachable by hand as `b = x ?? (c() ?? d())`:
+  a chain BLOCK as an arm is not a tail a plain bind may take (its tail is the compiler temp),
+  so `sink_set_into_arms` declined the whole branch — and then the chosen VARIABLE's arm beside
+  it recorded no hand-off, so at a droppable type `x`'s record was released from the destination
+  AND from `x`, the second release on freed memory (`M8,R8,D8,D8`; loft2-21 measured this shape
+  on the first cure, and a value cell cannot see it — which is why the guard's droppable cells
+  exist).  Closed with it: the chain block is sunk as a UNIT, the arm binding the join exactly as
+  a statement of its own would, and a chain block handed to the sink as the VALUE declines, since
+  that statement is already what a sunk arm writes.  Guard
+  `tests/scripts/1612-a-coalesce-chain-copies-the-operand-it-chooses.loft`.
 * **D-bind-49** *(opened 2026-09-21, CLOSED 2026-09-21; loft#1554)* — the CALL-SITE half of
   `(B-Ref-Reshape)` read one spelling of one event.  A call handed both a container and a
   reference into it (`shift(v[2], v)`) was refused only where the callee REMOVES through a bare

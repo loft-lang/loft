@@ -1,0 +1,82 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1618, `@FR-O-Buffer` / `@FR-O-NoDiverge` — A RETURNED NULLABLE VECTOR LOCAL IS
+// DELIVERED INTO THE RETURN BUFFER.  A `-> vector<T>` function hands its answer back through
+// a buffer the caller owns, so an arm whose value is a local's vector must be COPIED into it;
+// handed back as it is, the caller gets a vector living in the frame's own store, which it
+// never adopts and nothing frees.
+//
+// `materialize_vector_arms_collect`'s local-arm leg read the arm's type as `Type::Vector`, and
+// the arm of a `??` — or of any branch yielding a nullable local — is `Type::Optional(Vector)`,
+// so it fell past the leg that emits the delivery.  One leaked store per call, on the
+// INTERPRETER alone (`--native` delivers through its own path), so the two backends disagreed
+// on what the call costs while agreeing on what it answers.  Read through `.base()`, such an
+// arm is the same arm.
+//
+// Every cell's value is worked out by hand; the leak is the channel the runner reports.
+//
+// @falsified-at: 9789ef07c — interpret leaked kt=32 main_vector<integer>×2, kt=39 main_vector<text>×1 -> clean, native leaked kt=32 main_vector<integer>×2, kt=39 main_vector<text>×1 -> clean
+// @falsified-by: tests/falsified/1618-a-returned-nullable-vector-local-is-delivered.patch —
+//   the same channel.
+// CHANNEL: leak, on both backends through the corpus runner's entry point — the VALUES are
+//   right before and after, which is what says the delivery and not the answer was missing.
+//   Run as a program, `--native` is clean and the interpreter is not, so the same defect is
+//   also an `(O-NoDiverge)` asymmetry from that direction.
+// ARMED: `LOFT_NATIVE_LEAK_CHECK=1`, which `scripts/falsify.sh` arms on every run of its own
+//   accord — no extra instrument is owed here.  The interpreter's store census prints
+//   unconditionally at exit and `LOFT_STRICT_STORES=1` only changes its prefix, so both legs
+//   report the leak without being asked; that is why this receipt's `@falsified-at` line
+//   carries no env prefix where a use-after-free guard's would.
+// HOLDS: exit, assertions and panic are unmoved; `k1`–`k3` are the controls beside it.
+// WITNESS: on the control, `Warning: N stores not freed at program exit:
+//   kt=32 main_vector<integer>` after the run's output.
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// 1 — the two-operand chain, the local chosen: its store is delivered, not handed back.
+fn c1() -> vector<integer> { b: vector<integer>? = [2]; return b ?? [4]; }
+
+// 2 — three operands, the middle one chosen.
+fn c2() -> vector<integer> { a: vector<integer>? = null; b: vector<integer>? = [2, 3]; return a ?? b ?? [4]; }
+
+// 3 — the HEAD chosen, so the later operands never run.
+fn c3() -> vector<integer> { a: vector<integer>? = [1]; b: vector<integer>? = [2]; return a ?? b ?? [4]; }
+
+// 4 — every operand absent: the default's own store is the one delivered, which was always
+//     right and is the arm the broken one sat beside.
+fn c4() -> vector<integer> { a: vector<integer>? = null; b: vector<integer>? = null; return a ?? b ?? [4, 5]; }
+
+// 5 — the elements own HEAP, so the delivery copies what each element holds.
+fn c5() -> vector<text> { b: vector<text>? = ["x", "y"]; return b ?? ["z"]; }
+
+// 6 — a `match` arm yielding the same nullable local: the leg is shared, the branch is not.
+fn c6(k: integer) -> vector<integer> { b: vector<integer>? = [7]; match k { 0 => [9], _ => b ?? [] } }
+
+// 7 — the chain in a mid-body `return`, with a second return after it.
+fn c7(k: integer) -> vector<integer> { b: vector<integer>? = [8]; if k > 0 { return b ?? [4]; } return [6]; }
+
+// Controls — the spellings that were always delivered.
+// k1: bound to a local first, then returned.
+fn k1() -> vector<integer> { b: vector<integer>? = [2]; r = b ?? [4]; return r; }
+// k2: the tail-expression spelling, no `return`.
+fn k2() -> vector<integer> { b: vector<integer>? = [2]; b ?? [4] }
+// k3: a non-null local arm, which the leg always matched.
+fn k3() -> vector<integer> { b: vector<integer> = [2]; if len(b) > 0 { return b; } return [4]; }
+
+fn main() {
+  ok("c1 two operands       ", "{c1()}", "[2]");
+  ok("c2 the middle chosen  ", "{c2()}", "[2,3]");
+  ok("c3 the head chosen    ", "{c3()}", "[1]");
+  ok("c4 every operand absent", "{c4()}", "[4,5]");
+  ok("c5 elements own heap  ", "{c5()}", "[\"x\",\"y\"]");
+  ok("c6 a match arm        ", "{c6(1)}", "[7]");
+  ok("c6 the other arm      ", "{c6(0)}", "[9]");
+  ok("c7 a mid-body return  ", "{c7(1)}", "[8]");
+  ok("c7 the later return   ", "{c7(0)}", "[6]");
+  ok("k1 control, via a local", "{k1()}", "[2]");
+  ok("k2 control, a tail expr", "{k2()}", "[2]");
+  ok("k3 control, a non-null ", "{k3()}", "[2]");
+  println("a returned nullable vector local is delivered: every cell holds");
+}

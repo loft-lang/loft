@@ -184,7 +184,7 @@ Walkable   fn children(self: T) -&gt; vector&lt;T&gt;
   <span class="kw">for</span> c <span class="kw">in</span> g.cells { out += [<span class="fn-call">f</span>(c)]; }
   <span class="en">Grid</span> { w: g.w, cells: out }
 }
-<span class="kw">fn</span> show&lt;<span class="en">T</span>: <span class="en">Printable</span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { r = <span class="st">""</span>; <span class="kw">for</span> c <span class="kw">in</span> g.cells { r += <span class="st">"[{c.to_text()}]"</span>; } r }
+<span class="kw">fn</span> show&lt;<span class="en">T</span>: <span class="en"><a href="stdlib-interfaces.html">Printable</a></span>&gt;(g: <span class="en">Grid</span>&lt;<span class="en">T</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { r = <span class="st">""</span>; <span class="kw">for</span> c <span class="kw">in</span> g.cells { r += <span class="st">"[{c.to_text()}]"</span>; } r }
 <span class="kw">fn</span> <span class="fn-call">show</span>(g: <span class="en">Grid</span>&lt;<span class="en">Tile</span>&gt;) -&gt; <span class="ty"><a href="stdlib-types.html">text</a></span> { <span class="st">"tiles:{len(g.cells)}"</span> }
 <span class="kw">fn</span> <span class="fn-call">test_two_variables</span>() {
   tiles = <span class="en">Grid</span> { w: <span class="nm">2</span>, cells: [<span class="en">Tile</span> { height: <span class="nm">3</span>, name: <span class="st">"a"</span> }, <span class="en">Tile</span> { height: <span class="nm">5</span>, name: <span class="st">"b"</span> }] };

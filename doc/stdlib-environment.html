@@ -29,7 +29,7 @@
 </div>
 <div class="item">
 <pre><code>pub fn env_variable(name: text) -&gt; text env#read</code></pre>
-<p>Returns the value of the environment variable `name`, or `&quot;&quot;` when it is not set. An unset variable and one set to the empty string give the same answer, so this cannot tell them apart. Use to read configuration from the shell environment.</p>
+<p>Returns the value of the environment variable `name`, or `null` when it is not set. A variable set to the empty string answers `&quot;&quot;`, so `== null` tells the two apart. Use to read configuration from the shell environment.</p>
 </div>
 <div class="item">
 <pre><code>pub fn arguments() -&gt; vector&lt;text&gt;</code></pre>

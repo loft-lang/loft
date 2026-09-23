@@ -1,0 +1,57 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1611, `(E-Left)` with `(E-And)`/`(E-Or)` — on `--native` the work inside a conditional
+// ARM ran BEFORE the test and on every path.  The pre-eval pass hoists a node into a
+// `let _pre_N = …` in front of the statement to keep two user calls out of one expression, and
+// it collected from an `if`'s arms as well as its test.  `a && b` lowers to `if a { b } else
+// { false }`, so a formatted string (or a call) in `b` was evaluated first and unconditionally:
+// `bump(a) == 4 && "{a}" == "[1,2,3,4]"` answered FALSE because `a` was formatted before
+// `bump(a)` ran, and `true || "{e}" == "{bump(e)}"` RAN `bump(e)`.  The interpreter was right
+// throughout, so the two backends disagreed in silence.
+//
+// The hoist now takes the test only, and each non-block arm carries its own `let _pre_N` inside
+// the braces it already emits — so the separation the pass exists for is kept per arm, which
+// the `both` cell holds: two user calls in one arm still compile and still answer.
+//
+// @falsified-at: 9a52ab949 — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1611-a-conditional-arms-work-runs-only-when-that-arm-does.patch — native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the first assertion, on `--native` alone.
+//   ARMED: nothing.
+//   EXPECTED INERT: `--interpret`, which has always evaluated an arm only when it runs —
+//     a backend-divergence guard cannot move both sides.
+//   HOLDS: the `both` cell (the hoist an arm still needs) on both trees.
+
+fn bump(v: &vector<integer>) -> integer { v += [4]; len(v) }
+fn joined(x: text, y: text) -> text { "{x}/{y}" }
+
+fn main() {
+  // `&&`: the left operand's write must land before the right operand reads it.
+  a = [1, 2, 3];
+  and_answer = bump(a) == 4 && "{a}" == "[1,2,3,4]";
+
+  // `||` short-circuits: the right operand must not run at all.
+  e = [1, 2, 3];
+  or_answer = true || "{e}" == "{bump(e)}";
+
+  // `&&` short-circuits the other way.
+  f = [1, 2, 3];
+  and_short = false && "{f}" == "{bump(f)}";
+
+  // A value `if` is the same shape written out: only the taken arm's work runs.
+  g = [1, 2, 3];
+  h = [1, 2, 3];
+  picked = if len(g) == 3 { "{bump(g)}" } else { "{bump(h)}" };
+
+  assert(and_answer && or_answer && !and_short, "{and_answer} {or_answer} {and_short}");
+  assert("{e}|{f}|{g}|{h}|{picked}" == "[1,2,3]|[1,2,3]|[1,2,3,4]|[1,2,3]|4",
+    "{e}|{f}|{g}|{h}|{picked}");
+
+  // The control: an arm that still needs the hoist — two user calls in one expression, in
+  // each arm, with a third in the test.
+  p = [1, 2];
+  q = [5];
+  both = if bump(p) == 3 { joined("{len(p)}", "{len(q)}") } else { joined("{len(q)}", "{len(p)}") };
+  assert(both == "3/1", "{both}");
+}

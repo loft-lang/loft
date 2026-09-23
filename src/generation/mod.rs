@@ -875,6 +875,10 @@ pub struct Output<'a> {
     /// `LOFT_NO_SPLIT_TABLE=1` — every such bind builds its `vector<text>` again; the
     /// bisect step for a wrong length, piece or walk out of a split bound to a name.
     pub split_table_disabled: bool,
+    /// `LOFT_NO_TEXT_BASE=1` — a text element read in a loop that holds the vector's header
+    /// and base resolves the store per element again (`@FR-R-Base`'s text clause off); the
+    /// bisect step for a wrong or stale text read out of `v[i]` on native.
+    pub text_base_disabled: bool,
     /// `@FR-R-TextBorrow` — the text LOCALS of the function being emitted whose Rust slot
     /// is a borrowed `&str` rather than an owned `String`: the loop variables of the walks
     /// of texts that borrow their element ([`hoist::borrowed_text_walks`]); rebuilt per
@@ -1060,6 +1064,10 @@ pub struct Output<'a> {
     leaf_cache: HashMap<u32, bool>,
     /// Per-definition verdict of [`Output::is_frameless_chain`].
     chain_cache: HashMap<u32, bool>,
+    /// Per-definition verdict of [`Output::is_guard_free`], and of its per-body half
+    /// ([`Output::registers_buffers`]).
+    guard_free_cache: HashMap<u32, bool>,
+    registers_cache: HashMap<u32, bool>,
     /// `LOFT_NATIVE_CHECKPOINTS=count|time` — emit a per-OPERATOR checkpoint into the
     /// generated Rust, so a native run attributes its own time without `perf`, without
     /// symbols, and identically under wasm.  This is a SUPPLEMENTARY instrument: the
@@ -1092,6 +1100,10 @@ pub struct Output<'a> {
     /// (`@FR-R-LeafChain`).  The bisect step one finer than
     /// `LOFT_NO_LEAF_PRELUDE`.
     pub leaf_chain_disabled: bool,
+    /// `LOFT_NO_GUARD_FREE=1` — every non-leaf frame constructs its fn-ref buffer guard
+    /// again, as before `@FR-R-GuardFree`; the bisect step for a leaked or doubly-freed
+    /// fn-ref return buffer in a program with recursion.
+    pub guard_free_disabled: bool,
     /// The `--lean` tier (@PLN157): the frame push demotes to the depth-only
     /// `cr_call_push_lean`.  Keyed on the FLAG, not on `emit_live`: a default
     /// `--html` build also has `emit_live == false` (debug is opt-in there)
@@ -1542,6 +1554,36 @@ pub(crate) fn is_raw_tuple_link(vars: &crate::variables::Function, var: u16) -> 
 /// a local, a link and a forwarded parameter all pass as one pointer.  A heap `τ` keeps
 /// `&mut T`: its store place reaches the call through a temporary of its own, so two
 /// arguments never share the memory the reference names.
+/// What a read through a scalar `&` link to an ABSENT place answers on native — the Rust
+/// spelling of the value the interpreter's getter gives a `rec == 0` reference: `OpGetInt`'s
+/// `i64::MIN`, `OpGetFloat`'s / `OpGetSingle`'s NaN, `OpGetCharacter`'s codepoint 0,
+/// `OpGetBoolean`'s storage byte 255 and `OpGetEnum`'s disc 0.  `None` for a link that cannot
+/// name an absent place: a text, a tuple and a fn-ref link only ever link a local.
+#[must_use]
+pub(crate) fn absent_link_value(inner: &Type) -> Option<&'static str> {
+    match inner.base() {
+        Type::Integer(_) => Some("i64::MIN"),
+        Type::Float => Some("f64::NAN"),
+        Type::Single => Some("f32::NAN"),
+        Type::Character => Some("0"),
+        Type::Boolean => Some("255_u8"),
+        Type::Enum(_, false, _) => Some("0_u8"),
+        _ => None,
+    }
+}
+
+/// The Rust type behind a scalar `&τ` pointer — `link_base_type(τ)` — which for a NARROW
+/// integer is the storage width the field encoding uses (`data::NarrowSlot`, @PLN167
+/// decision 1), so one `*mut u8` names a linked local and a field alike; every other τ is
+/// its variable type.
+#[must_use]
+pub(crate) fn link_base_type(inner: &Type) -> String {
+    match crate::data::NarrowSlot::of_type(inner) {
+        Some(slot) => slot.rust_type().to_string(),
+        None => rust_type(inner.base(), &Context::Variable),
+    }
+}
+
 #[must_use]
 pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
     matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
@@ -1686,7 +1728,7 @@ pub fn rust_type(tp: &Type, context: &Context) -> String {
     }
     if let Type::RefVar(in_tp) = tp {
         if is_raw_scalar_ref(tp) {
-            return format!("*mut {}", rust_type(in_tp, &Context::Variable));
+            return format!("*mut {}", link_base_type(in_tp));
         }
         return format!("&mut {}", rust_type(in_tp, &Context::Variable));
     }
@@ -2130,6 +2172,7 @@ impl<'a> Output<'a> {
             split_tables: BTreeMap::new(),
             split_table_aliases: BTreeMap::new(),
             split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
+            text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
@@ -2179,12 +2222,15 @@ impl<'a> Output<'a> {
             range_suspended: 0,
             leaf_cache: HashMap::new(),
             chain_cache: HashMap::new(),
+            guard_free_cache: HashMap::new(),
+            registers_cache: HashMap::new(),
             checkpoints: CkptMode::from_env(),
             ckpt_filter: ckpt_filter_from_env(),
             ckpt_sites: Vec::new(),
             ckpt_cur_line: 0,
             leaf_elide_disabled: std::env::var("LOFT_NO_LEAF_PRELUDE").is_ok_and(|v| v != "0"),
             leaf_chain_disabled: std::env::var("LOFT_NO_LEAF_CHAIN").is_ok_and(|v| v != "0"),
+            guard_free_disabled: std::env::var("LOFT_NO_GUARD_FREE").is_ok_and(|v| v != "0"),
             lean_tier: false,
             write_hoist_disabled: std::env::var("LOFT_NO_WRITE_HOIST").is_ok_and(|v| v != "0"),
             next_format_count: 0,
@@ -2829,7 +2875,7 @@ impl Output<'_> {
             return Ok(ChainGuard::None);
         };
         let variables = data.def(self.def_nr).variables();
-        let written = hoist::written_vars(lp);
+        let written = hoist::written_vars(lp, data, variables);
         let mut escaped: HashSet<u16> = HashSet::new();
         non_sentinel::collect_escapes(data, data.def(self.def_nr).code(), &mut escaped);
         let own: Vec<u16> = std::iter::once(rc.loop_var)
@@ -3279,15 +3325,27 @@ impl Output<'_> {
     /// its fill take: the range's end less its start (the `next` counter's current value,
     /// § V-ab, or `#index + 1`, P3b), plus one for an inclusive range.
     fn push_trip_count(&mut self, p: &hoist::PushLoop) -> std::io::Result<String> {
+        self.trip_count(p.index_var, p.next_var, p.hi, p.inclusive)
+    }
+
+    /// The trip count of a counted loop at its entry — the range's end less its start (the
+    /// `next` counter's current value, or `#index + 1`), plus one for an inclusive range.
+    fn trip_count(
+        &mut self,
+        index_var: u16,
+        next_var: Option<u16>,
+        hi: &Value,
+        inclusive: bool,
+    ) -> std::io::Result<String> {
         let variables = self.data.def(self.def_nr).variables();
-        let idx = format!("var_{}", sanitize(variables.name(p.index_var)));
-        let lo = match p.next_var {
+        let idx = format!("var_{}", sanitize(variables.name(index_var)));
+        let lo = match next_var {
             Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
             None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
             None => format!("ops::op_add_int(({idx}), (1_i64))"),
         };
-        let hi = self.expr_string(p.hi)?;
-        let incl = if p.inclusive { "1_i64" } else { "0_i64" };
+        let hi = self.expr_string(hi)?;
+        let incl = if inclusive { "1_i64" } else { "0_i64" };
         Ok(format!(
             "(({hi}) as i64).saturating_sub(({lo}) as i64).saturating_add({incl})"
         ))
@@ -3314,7 +3372,10 @@ impl Output<'_> {
             return Ok(None);
         }
         let Some(p) = hoist::push_loop(lp, self.data) else {
-            return Ok(None);
+            // `@FR-R-PushFill`'s record clause — a counted loop appending RECORDS through
+            // mint groups, possibly under `if` arms, reserves and opens a window the same
+            // way, over the record-push header the loop holds.
+            return self.mint_reserve(w, lp);
         };
         if p.fill.is_some() {
             return Ok(None);
@@ -3357,6 +3418,83 @@ impl Output<'_> {
             p.size
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
+        Ok(Some((win, hdr, vec)))
+    }
+
+    /// `@FR-R-PushFill`'s record clause — [`Self::push_reserve`] for a record-append loop
+    /// ([`hoist::mint_loop`]): the vector reserved for its trip count times the most mints
+    /// a pass runs, the record-push header re-derived, and — where [`hoist::mint_window_ok`]
+    /// admits the loop — a window opened that every mint group's slot, address and finish
+    /// go through, closed by the caller after every copy of the loop.
+    fn mint_reserve(
+        &mut self,
+        w: &mut dyn Write,
+        lp: &crate::data::Block,
+    ) -> std::io::Result<Option<(String, String, String)>> {
+        if self.record_push_disabled || self.in_coroutine_body {
+            return Ok(None);
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let (m, hi) = match hoist::mint_loop(
+            lp,
+            self.data,
+            self.stores,
+            vars,
+            !self.heap_record_push_disabled,
+        ) {
+            Ok(x) => x,
+            Err(why) => {
+                if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok()
+                    && why != "not a plain counted loop"
+                    && why != "no record mint in the body"
+                {
+                    eprintln!(
+                        "push-fill: {} loop {} is no record-append loop — {why}",
+                        self.data.def(self.def_nr).name(),
+                        lp.scope
+                    );
+                }
+                return Ok(None);
+            }
+        };
+        let Some(hdr) = self.active_mint_push(&m.path).map(str::to_owned) else {
+            return Ok(None);
+        };
+        if self.coroutine_persistent_fields.contains_key(&m.path.0) {
+            return Ok(None);
+        }
+        let count = self.trip_count(m.index_var, m.next_var, hi, m.inclusive)?;
+        let vec = self.expr_string(&m.vector)?;
+        self.indent(w)?;
+        writeln!(
+            w,
+            "{{ let _pn = {count}; if _pn > 0 {{ vector::reserve_more(&({vec}), _pn.saturating_mul({}_i64), {}_u32, &mut stores.allocations); {hdr} = vector::push_header(&({vec}), &stores.allocations); }} }} //@FR-R-PushFill record reservation",
+            m.mints_per_pass, m.size
+        )?;
+        if self.push_window_disabled {
+            return Ok(None);
+        }
+        if let Err(why) =
+            hoist::mint_window_ok(lp, &m, self.data, self.def_nr, &mut self.hoist_cache)
+        {
+            if std::env::var("LOFT_TRACE_PUSH_FILL").is_ok() {
+                eprintln!(
+                    "push-fill: {} loop {} keeps its header mints — {why}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope
+                );
+            }
+            return Ok(None);
+        }
+        self.hoist_counter += 1;
+        let win = format!("__pw_{}", self.hoist_counter);
+        self.indent(w)?;
+        writeln!(
+            w,
+            "let mut {win} = vector::push_window(&{hdr}, {}_u32, &stores.allocations); //@FR-R-PushFill record push window",
+            m.size
+        )?;
+        self.push_windows.push((m.path.clone(), win.clone()));
         Ok(Some((win, hdr, vec)))
     }
 
@@ -3437,6 +3575,28 @@ impl Output<'_> {
             w,
             "stores.push_window_close::<{verify}>(&mut {hdr}, {win}.len, &({vec})) /*@FR-R-PushFill window closed*/"
         )
+    }
+
+    /// `@FR-R-PushFill`'s record clause — when `stmt` binds an element minted into a path
+    /// the loop being emitted holds a push window for: the window local and the element's
+    /// width, for the mint's slot, address and finish.
+    #[must_use]
+    pub fn windowed_mint_of(&self, stmt: &Value) -> Option<(String, u32)> {
+        let Value::Set(_, rhs) = stmt.unspan() else {
+            return None;
+        };
+        let Value::Call(d, args) = rhs.unspan() else {
+            return None;
+        };
+        if (*d as usize) >= self.data.definitions.len() || self.data.def(*d).name() != "OpNewRecord"
+        {
+            return None;
+        }
+        let vars = self.data.def(self.def_nr).variables();
+        let t = hoist::mint_target(self.data, self.stores, "OpNewRecord", args, vars)?;
+        let win = self.active_push_window(&t.path)?.to_owned();
+        let size = u32::from(self.stores.size(self.stores.content(t.vector_tp)));
+        Some((win, size))
     }
 
     /// The window open for `path`, when the loop being emitted pushes through one.
@@ -3610,6 +3770,12 @@ impl Output<'_> {
                     lines.push(format!(
                         "let {base}: *const u8 = vector::vec_base(&{held}, &stores.allocations); //@PLN157 § V-ak element base of the held header"
                     ));
+                    // `@FR-R-Base`'s text clause — the store's span beside every base, so a
+                    // text element read slices off it with no resolution per element.
+                    lines.push(format!(
+                        "let {}: (*const u8, u32) = vector::text_span_of(&{held}, &stores.allocations);",
+                        base.replacen("__vb_", "__ts_", 1)
+                    ));
                     base_frame.insert(path.clone(), base);
                 }
                 continue;
@@ -3649,6 +3815,10 @@ impl Output<'_> {
                 lines.push(format!(
                     "let {base}: *const u8 = vector::vec_base(&{name}, &stores.allocations); //@PLN157 § V-ak element base"
                 ));
+                lines.push(format!(
+                    "let {}: (*const u8, u32) = vector::text_span_of(&{name}, &stores.allocations);",
+                    base.replacen("__vb_", "__ts_", 1)
+                ));
                 base_frame.insert(path.clone(), base);
             }
             frame.insert(path, name);
@@ -3681,7 +3851,8 @@ impl Output<'_> {
         let mut invariant_frame: HashMap<usize, std::rc::Rc<(String, Value)>> = HashMap::new();
         if !self.invariant_hoist_disabled {
             let trace = std::env::var("LOFT_TRACE_INVARIANT").is_ok();
-            for ch in hoist::invariant_chains(lp, self.data) {
+            for ch in hoist::invariant_chains(lp, self.data, self.data.def(self.def_nr).variables())
+            {
                 if ch
                     .nodes
                     .iter()
@@ -3860,6 +4031,12 @@ impl Output<'_> {
                 w,
                 "let {bname} = {base}; //@FR-R-Base view base for {operand}, shared from the held path"
             )?;
+            self.indent(w)?;
+            writeln!(
+                w,
+                "let {}: (*const u8, u32) = vector::text_span_of(&{name}, &stores.allocations);",
+                bname.replacen("__vb_", "__ts_", 1)
+            )?;
             bases.insert(path.clone(), bname);
         }
         self.vec_headers.push(HashMap::from([(path, name)]));
@@ -3875,11 +4052,16 @@ impl Output<'_> {
         if self.wrapper_inline_disabled {
             return None;
         }
-        // Only LEAF arguments: the op's operands are emitted from a fresh list, and the
-        // pre-evaluation map keys on the original nodes' addresses — a cloned block or call
-        // argument would miss its `_pre_N` binding and be emitted raw (a `let` inside an
-        // expression) or run a second time.  A call whose argument is an expression stays a
-        // call, as before.
+        // LEAF arguments, or a PURE VECTOR PATH (`m.chunks`: constant `OpGetField`s over a
+        // variable) the pre-evaluation map does not hold: the op's operands are emitted from
+        // a fresh list, and that map keys on the original nodes' addresses — a cloned block
+        // or call argument it holds would miss its `_pre_N` binding and be emitted raw (a
+        // `let` inside an expression) or run a second time.  A pure path is side-effect
+        // free and carries no binding of its own, so its clone emits what the original
+        // would; and as the op's operand it is what a held header serves — `len(m.chunks)`
+        // as a loop's bound then reads `__vh_N.len` instead of resolving the store through
+        // a call per iteration (88 loops in the corpus and the libraries are bounded that
+        // way).  Every other argument shape keeps the call.
         if !vals.iter().all(|v| {
             matches!(
                 v.unspan(),
@@ -3889,7 +4071,10 @@ impl Output<'_> {
                     | Value::Float(_)
                     | Value::Single(_)
                     | Value::Boolean(_)
-            )
+            ) || (hoist::vector_path(self.data, v).is_some_and(|p| !p.1.is_empty())
+                && !self
+                    .active_pre_eval
+                    .contains_key(&(std::ptr::from_ref(v) as usize)))
         }) {
             return None;
         }
@@ -4246,6 +4431,14 @@ impl Output<'_> {
                 w,
                 "let {name}: *const u8 = if (var_{index} as u64) < u64::from({header}.len) {{ unsafe {{ {base}.add(var_{index} as usize * {size}{plus}) }} }} else {{ std::ptr::null() }}; //@FR-R-RecPtr record view address for {operand}, from the held base"
             )?;
+        } else if let Some((win, size)) = self.windowed_mint_of(&stmts[at]) {
+            // `@FR-R-PushFill`'s record clause — an element minted through an open window
+            // sits at the window's next slot: its address is the base plus the length
+            // times the element's width, no store resolved.
+            writeln!(
+                w,
+                "let {name}: *const u8 = unsafe {{ {win}.base.add({win}.len as usize * {size}) }}; //@FR-R-PushFill windowed mint address for {operand}"
+            )?;
         } else {
             writeln!(
                 w,
@@ -4439,7 +4632,53 @@ impl Output<'_> {
         {
             return t.clone();
         }
+        // @PLN167 decision 1 — a LINKED narrow local is declared at its storage width and
+        // holds its field encoding; `narrow_local_enc` wraps every write, `narrow_local_dec`
+        // every read.
+        if let Some(slot) = self
+            .data
+            .def(self.def_nr)
+            .variables()
+            .linked_narrow_slot(var)
+        {
+            return slot.rust_type().to_string();
+        }
         rust_type(tp, &Context::Variable)
+    }
+
+    /// The `(prefix, suffix)` that encode a wide value written to linked narrow local `var`,
+    /// or two empty strings for any other variable (@PLN167 decision 1).
+    #[must_use]
+    pub(crate) fn narrow_local_enc(&self, var: u16) -> (String, String) {
+        match self
+            .data
+            .def(self.def_nr)
+            .variables()
+            .linked_narrow_slot(var)
+        {
+            Some(slot) => {
+                let both = slot.encode_rust("\u{0}");
+                let (a, b) = both
+                    .split_once('\u{0}')
+                    .expect("the marker is in the template");
+                (a.to_string(), b.to_string())
+            }
+            None => (String::new(), String::new()),
+        }
+    }
+
+    /// The wide value of linked narrow local `var`'s Rust variable, or its bare name.
+    #[must_use]
+    pub(crate) fn narrow_local_dec(&self, var: u16, name: &str) -> String {
+        match self
+            .data
+            .def(self.def_nr)
+            .variables()
+            .linked_narrow_slot(var)
+        {
+            Some(slot) => slot.decode_rust(&format!("var_{name}")),
+            None => format!("var_{name}"),
+        }
     }
 
     /// The ZERO a value local's declaration binds (@PLN157 § V-ah): the tuple's own
@@ -4684,6 +4923,48 @@ impl Output<'_> {
         self.split_table_var(*x)
     }
 
+    /// `@FR-R-Base`'s text clause — the text element read `OpGetText(E, 0)` whose element
+    /// address `E` is `OpGetVector*(P, 4, i)` over a path the loop holds a header AND a base
+    /// for: answers `(header, base, path expression, index)`.  Asked by the pre-evaluation
+    /// collector (which then leaves `E` where it stands) and by the emitter (which folds the
+    /// read into `vector::text_elem_at`), so the two cannot disagree.  A field other than 0,
+    /// an element width other than a text's 4, a path with no base, or the switch: `None`.
+    #[must_use]
+    pub fn fused_text_read<'a>(
+        &self,
+        args: &'a [Value],
+    ) -> Option<(String, String, String, &'a Value, &'a Value)> {
+        if self.text_base_disabled || self.hoist_disabled {
+            return None;
+        }
+        let [elem, fld] = args else { return None };
+        if !matches!(fld.unspan(), Value::Int(0)) {
+            return None;
+        }
+        let Value::Call(d, eargs) = elem.unspan() else {
+            return None;
+        };
+        if !hoist::is_element_address(self.data, *d) {
+            return None;
+        }
+        let [vector, size, index] = &eargs[..] else {
+            return None;
+        };
+        if !matches!(size.unspan(), Value::Int(4)) {
+            return None;
+        }
+        let path = hoist::vector_path(self.data, vector)?;
+        let header = self.active_vec_header(&path)?.to_owned();
+        let base = self.active_vec_base(&path)?.to_owned();
+        // The span is bound beside a FRAME's base (`__vb_N` → `__ts_N`); a twin's input base
+        // (`__ib_k`) carries none, and such a read keeps the store-resolving form.
+        if !base.starts_with("__vb_") {
+            return None;
+        }
+        let span = base.replacen("__vb_", "__ts_", 1);
+        Some((header, base, span, vector, index))
+    }
+
     /// The table an element read `elem` reads, with whether the read is the RAISING
     /// `OpGetVector` (`true`) or the nullable `OpGetVectorNullable` (`false`) — the two
     /// twins the parser picks between for `v[i]`, which the emitter answers apart.
@@ -4873,6 +5154,7 @@ impl Output<'_> {
                 self.data.def(self.def_nr).variables(),
                 self.data.def(self.def_nr).code(),
                 &nn,
+                &self.char_walks,
             ));
             self.range_cache.insert(self.def_nr, map.clone());
             map
@@ -4972,6 +5254,87 @@ impl Output<'_> {
         on_path.remove(&def_nr);
         self.chain_cache.insert(def_nr, chain);
         chain
+    }
+
+    /// Does this definition's OWN body register a store against the running frame's
+    /// fn-ref buffer list, or run something whose registrations are not visible here?  The
+    /// three pushers are the fn-ref dispatch (`cr_fnref_buf`, `cr_fnref_minted`, both under
+    /// a `CallRef`) and the op `OpFreeRefOrHandUp`; a `parallel` body and a `yield` are
+    /// opaque and count as registering, and so is a callee with NO loft body that is not the
+    /// standard library's (a user's native function) or that takes a fn-ref (it may call
+    /// back into user code).  A `#rust`-bodied stdlib function is the body's own work,
+    /// as `is_elidable_leaf` reads an op.
+    fn registers_buffers(&mut self, def_nr: u32) -> bool {
+        if let Some(&v) = self.registers_cache.get(&def_nr) {
+            return v;
+        }
+        let data = self.data;
+        let registers = data.def(def_nr).code().any_node(&mut |v| match v {
+            Value::Call(d, _) => {
+                let callee = data.def(*d);
+                let name = callee.name();
+                let user_fn = name.starts_with("n_") || name.starts_with("t_");
+                let opaque = user_fn
+                    && !matches!(callee.code(), Value::Block(_))
+                    && (!crate::portable_path::is_stdlib_source(&callee.position.file)
+                        || callee
+                            .attributes()
+                            .iter()
+                            .any(|a| matches!(a.typedef.base(), Type::Function(..))));
+                name == "OpFreeRefOrHandUp" || opaque
+            }
+            Value::CallRef(..) | Value::Parallel(..) | Value::Yield(..) => true,
+            _ => false,
+        });
+        self.registers_cache.insert(def_nr, registers);
+        registers
+    }
+
+    /// Is NOTHING that registers a fn-ref buffer reachable from this definition — over the
+    /// closure of its call graph, cycles included?  Then no entry can ever stand above the
+    /// mark its buffer guard would take, its drop is empty every time, and the frame carries
+    /// no guard.  Unlike [`Output::is_frameless_chain`] a cycle does not block: the guard
+    /// never depended on acyclicity, only the depth count does.
+    /// Decides `@FR-R-GuardFree`.
+    fn is_guard_free(&mut self, def_nr: u32) -> bool {
+        if let Some(&v) = self.guard_free_cache.get(&def_nr) {
+            return v;
+        }
+        let data = self.data;
+        let mut seen: HashSet<u32> = HashSet::new();
+        let mut todo: Vec<u32> = vec![def_nr];
+        let mut free = true;
+        while let Some(d) = todo.pop() {
+            if !seen.insert(d) {
+                continue;
+            }
+            if self.registers_buffers(d) {
+                if std::env::var("LOFT_TRACE_GUARD_FREE").is_ok() {
+                    eprintln!(
+                        "[guard-free] {}: keeps its guard — `{}` registers",
+                        data.def(def_nr).name(),
+                        data.def(d).name()
+                    );
+                }
+                free = false;
+                break;
+            }
+            data.def(d).code().any_node(&mut |v| {
+                if let Value::Call(c, _) = v {
+                    let callee = data.def(*c);
+                    let name = callee.name();
+                    if (name.starts_with("n_") || name.starts_with("t_"))
+                        && matches!(callee.code(), Value::Block(_))
+                        && !seen.contains(c)
+                    {
+                        todo.push(*c);
+                    }
+                }
+                false
+            });
+        }
+        self.guard_free_cache.insert(def_nr, free);
+        free
     }
 
     /// @PLN18 08-S2 — build the live-dispatch entry check for a user fn, or
@@ -5725,6 +6088,14 @@ extern crate loft;"
         writeln!(w, "use loft::tree;")?;
         writeln!(w, "use loft::codegen_runtime;")?;
         writeln!(w, "use loft::codegen_runtime::*;")?;
+        // A `#rust` template names a loft module as `crate::<m>::…` so the INTERPRETER's
+        // `fill.rs` compiles, where `crate` IS loft.  In generated code `crate` is the
+        // program, and a root `use loft::<m>;` is what makes `crate::<m>::…` resolve there
+        // — which is why `crate::codegen_runtime::` needs no rewrite while
+        // `crate::state::` / `crate::store::` / `crate::rpc::` / `crate::runtime_error::`
+        // are rewritten by hand in two places.  `narrow` joins the imported half
+        // (`generated_template_modules` is the gate that keeps the two halves total).
+        writeln!(w, "use loft::narrow;")?;
 
         // @PLN24 arc C — one typed `extern "C"` declaration per `#c` symbol.
         //
@@ -8566,14 +8937,45 @@ extern crate loft;"
                     continue;
                 }
                 use std::fmt::Write as _;
+                // @PLN167 decision 1 — a LINKED narrow local is bound at its storage width,
+                // its default encoded: this is the pre-init an arm-bound `i8` reads when no
+                // arm ran, and a raw `0` byte would decode as the type's minimum.
+                // Asked of THIS function's table: the prologue is built before `self.def_nr`
+                // moves to it.
+                let (ty, eo, ec) = match vars.linked_narrow_slot(v) {
+                    Some(slot) => {
+                        let both = slot.encode_rust("\u{0}");
+                        let (a, b) = both.split_once('\u{0}').expect("marker");
+                        (slot.rust_type().to_string(), a.to_string(), b.to_string())
+                    }
+                    None => (
+                        rust_type(vars.tp(v), &Context::Variable),
+                        String::new(),
+                        String::new(),
+                    ),
+                };
                 let _ = write!(
                     vdb_prologue,
-                    "\n  let mut var_{}: {} = {};",
+                    "\n  let mut var_{}: {ty} = {eo}{}{ec};",
                     sanitize(vars.name(v)),
-                    rust_type(vars.tp(v), &Context::Variable),
                     default_native_value_in(vars.tp(v), &Context::Variable)
                 );
                 self.declared.insert(v);
+            }
+            // @PLN167 decision 1 — a narrow by-value PARAMETER something in this body links
+            // arrives as the caller's `i64` and holds its field encoding from here on: one
+            // shadowing `let` at entry re-encodes it; the calling convention is untouched.
+            for v in vars.arguments() {
+                if let Some(slot) = vars.linked_narrow_slot(v) {
+                    use std::fmt::Write as _;
+                    let name = sanitize(vars.name(v));
+                    let _ = write!(
+                        vdb_prologue,
+                        "\n  let mut var_{name}: {} = {};",
+                        slot.rust_type(),
+                        slot.encode_rust(&format!("var_{name}"))
+                    );
+                }
             }
             // Entry-buffer witness for each hidden return buffer (retbuf): stash
             // the caller's buffer at function entry as `_rb_w_<name>`.  A
@@ -8677,11 +9079,25 @@ extern crate loft;"
                 if !crate::data::is_scalar(tp) {
                     continue;
                 }
-                let tp_str = rust_type(tp, &Context::Variable);
+                // @PLN167 decision 1 — a LINKED narrow local is hoisted at its storage width
+                // with its default ENCODED: this is the pre-init an arm-bound `i8` reads when
+                // no arm ran, and a raw `0` byte would decode as the type's minimum.
+                let (tp_str, eo, ec) = match vars.linked_narrow_slot(v) {
+                    Some(slot) => {
+                        let both = slot.encode_rust("\u{0}");
+                        let (a, b) = both.split_once('\u{0}').expect("marker");
+                        (slot.rust_type().to_string(), a.to_string(), b.to_string())
+                    }
+                    None => (
+                        rust_type(tp, &Context::Variable),
+                        String::new(),
+                        String::new(),
+                    ),
+                };
                 use std::fmt::Write as _;
                 let _ = write!(
                     vdb_prologue,
-                    "\n  let mut var_{}: {tp_str} = {};",
+                    "\n  let mut var_{}: {tp_str} = {eo}{}{ec};",
                     sanitize(vars.name(v)),
                     default_native_value(tp),
                 );
@@ -8828,7 +9244,17 @@ extern crate loft;"
                 // Measured on the hash row (100 000 leaf calls): the guard's two `Cell`
                 // reads and its drop were a third of the row (553–584k → 370–396k
                 // ns/op with the guard line removed from the emitted leaf).
-                let fnref_guard = if leaf { String::new() } else { fnref_guard };
+                //
+                // `@FR-R-GuardFree` — nor does a function from which NOTHING that registers
+                // a buffer is reachable, cycles included (`fib`): the guard's drop would find
+                // nothing above its mark, every time.  The depth count stays: it is the
+                // recursion cap both backends share.
+                let guard_free = leaf || (!self.guard_free_disabled && self.is_guard_free(def_nr));
+                let fnref_guard = if guard_free {
+                    String::new()
+                } else {
+                    fnref_guard
+                };
                 let push = if leaf {
                     String::new()
                 } else if !self.lean {
@@ -10033,6 +10459,67 @@ mod scrub_tests {
     fn clean_source_is_unchanged() {
         let src = b"fn n_main(cell: &Cell) { loft::rpc::ok(); }";
         assert_eq!(scrub_generated_crate_refs(src), src.to_vec());
+    }
+
+    /// Every `crate::<module>::` a `#rust` template names must have an answer in generated
+    /// code, where `crate` is the PROGRAM and not loft.  There are exactly three, and a
+    /// module in none of them compiles in the interpreter and fails in generated Rust with
+    /// `error[E0433]: cannot find <m> in crate` — which is how `crate::narrow::` arrived
+    /// (loft#1615): it was added to a template and neither imported nor rewritten, so the
+    /// interpreter was right and every native program that read such a field would not
+    /// build.  Nothing else asks this question, so a new template module is silent until a
+    /// program happens to reach it.
+    #[test]
+    fn every_template_crate_module_is_imported_or_rewritten() {
+        /// Reachable in generated code through a root `use loft::<m>;` in the preamble
+        /// (`Output::emit_preamble`), which is what makes `crate::<m>::…` resolve there.
+        const IMPORTED: &[&str] = &["codegen_runtime", "narrow"];
+        /// Rewritten to `loft::<m>::` by `scrub_generated_crate_refs` and by
+        /// `calls.rs`'s per-template substitution.
+        const REWRITTEN: &[&str] = &["rpc", "store", "state", "runtime_error"];
+        /// The generated crate's OWN item, so `crate::` is already right for it.
+        const GENERATED_OWN: &[&str] = &["wasm"];
+
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("default");
+        let mut seen: Vec<String> = Vec::new();
+        for entry in std::fs::read_dir(&root).expect("default/ is readable") {
+            let path = entry.expect("a readable entry").path();
+            if path.extension().is_none_or(|e| e != "loft") {
+                continue;
+            }
+            let text = std::fs::read_to_string(&path).expect("a readable .loft file");
+            for (i, _) in text.match_indices("crate::") {
+                let rest = &text[i + "crate::".len()..];
+                let name: String = rest
+                    .chars()
+                    .take_while(|c| c.is_ascii_lowercase() || *c == '_')
+                    .collect();
+                // `crate::loft_host_print(…)` is a free function, not a module path.
+                if name.is_empty() || !rest[name.len()..].starts_with("::") {
+                    continue;
+                }
+                assert!(
+                    IMPORTED.contains(&name.as_str())
+                        || REWRITTEN.contains(&name.as_str())
+                        || GENERATED_OWN.contains(&name.as_str()),
+                    "`crate::{name}::` is named by a #rust template in {} but is neither \
+                     imported by the generated preamble, rewritten to `loft::{name}::`, nor \
+                     an item of the generated crate — a native program reaching that \
+                     template will fail with `cannot find {name} in crate`",
+                    path.display()
+                );
+                seen.push(name);
+            }
+        }
+        // The lists describe templates that EXIST: a name left in one after its last
+        // template went away is a stale entry, and this is the only thing that says so.
+        for m in IMPORTED.iter().chain(REWRITTEN).chain(GENERATED_OWN) {
+            assert!(
+                seen.iter().any(|s| s == m),
+                "`{m}` is listed here but no #rust template in default/*.loft names \
+                 `crate::{m}::` any more — drop it"
+            );
+        }
     }
 }
 

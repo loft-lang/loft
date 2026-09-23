@@ -1,0 +1,62 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-G-Mono, @FR-B-Copy — a generic instantiated at a KEYED collection builds the empty one
+// its concrete twin builds, and COPIES a whole-value bind as its twin does.  Two halves, and
+// `fold(v, [], add)` needs both:
+//
+//   - a bare `[]` where the type variable resolves to a keyed kind reached the instance as a
+//     bare `null` (the call built an empty vector for a `[]` at a vector parameter and nothing
+//     at a keyed one): the interpreter looped inside the instance and `--native` did not
+//     compile it (E0308), while a typed empty local, and the concrete twin `addi([], 4)`,
+//     were right;
+//   - `acc = init` inside the template was lowered while `U` was still a record placeholder,
+//     so no keyed deep copy was emitted and the instance ALIASED the collection the caller
+//     handed it.  The caller freed that store through the result while the argument's own
+//     work-ref still named it, and the next call over the recycled slot read records that were
+//     no longer there: with two folds in one loop the FIRST one's answer shrank (3, then 1),
+//     whichever kind it was.  The per-instance `@FR-B-Copy` rewrite had a vector arm only.
+//
+// ⚠ The second half is invisible under `LOFT_STRICT_STORES=1`, which does not recycle a freed
+// store — this guard read GREEN under it while failing plain, on both backends.
+//
+// Controls: the vector cell (the arm that always worked), the typed-local spelling, and the
+// concrete twin.  Found measuring @PLN165 E7 through `reduce`, whose declaration is such a
+// generic.
+//
+// @falsified-at: a8b618a29 — interpret exit 134 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-generic-at-a-keyed-collection-builds-its-empty-and-copies-its-bind.patch — interpret exit 134 -> 0, native exit 1 -> 0
+//   CHANNEL: exit on both backends — the control's interpreter hangs in the instance (the
+//     watchdog kills it) and native does not compile (E0308).
+//   ARMED: nothing.
+//   MASKED: that hang is the FIRST half, so the control never reaches the second.  Measured
+//     apart, with the empty-argument half in place and the bind left aliasing: the loop's
+//     first fold answered 3, then 1, then 1, on both backends — and 3, 3, 3 under
+//     LOFT_STRICT_STORES=1, which is why this guard is run plain.
+//   HOLDS: the vector cell, the typed local and the concrete twin, on both trees.
+
+struct Rec { id: integer, v: integer }
+
+fn addi(acc: index<Rec[id]>, x: integer) -> index<Rec[id]> { acc += [Rec { id: x, v: x * 10 }]; acc }
+fn addh(acc: hash<Rec[id]>, x: integer) -> hash<Rec[id]> { acc += [Rec { id: x, v: x * 10 }]; acc }
+fn adds(acc: sorted<Rec[id]>, x: integer) -> sorted<Rec[id]> { acc += [Rec { id: x, v: x * 10 }]; acc }
+fn addv(acc: vector<integer>, x: integer) -> vector<integer> { acc += [x]; acc }
+fn fold<T, U>(v: vector<T>, init: U, f: fn(U, T) -> U) -> U { acc = init; for x in v { acc = f(acc, x); } acc }
+
+fn main() {
+  n = [3, 1, 2];
+  total = 0;
+  for _ in 0..3 {
+    i = fold(n, [], addi);
+    h = fold(n, [], addh);
+    s = fold(n, [], adds);
+    total += len(i) + len(h) + len(s) + i[2].v + h[3].v + s[1].v;
+  }
+  // (3 + 3 + 3 + 20 + 30 + 10) * 3 = 207
+  assert(total == 207, "{total}");
+  // Controls.
+  typed: index<Rec[id]> = [];
+  t = fold(n, typed, addi);
+  c = addi([], 4);
+  assert("{fold(n, [], addv)} {len(t)} {len(c)} {c[4].v}" == "[3,1,2] 3 1 40", "{len(t)} {len(c)}");
+}

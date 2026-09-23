@@ -109,6 +109,12 @@ pub struct Watchpoint {
     /// The call frame a **stack**-local watch is bound to; `None` for a heap watch (which
     /// survives frame exit).  A stack watch is dropped once its frame is no longer live.
     pub frame: Option<StackWatchFrame>,
+    /// The field encoding a LINKED narrow local's slot holds (@PLN167 decision 1), or `None`
+    /// for every other target.  `content` alone cannot carry it: it names the primitive KIND
+    /// and two locals of one kind may store differently, so the decode rides beside it rather
+    /// than inside it.  Without this the watch snapshotted eight bytes of a one-byte slot and
+    /// reported the stored codes — an `i8` going `-1 -> 5 -> -7` read `127 -> 133 -> 121`.
+    pub narrow: Option<crate::data::NarrowSlot>,
 }
 
 /// @PLN63 DB — the identity of the call frame a stack-local watch belongs to.  A watch is

@@ -254,6 +254,38 @@ pub(crate) struct AssignPlace<'a> {
     pub fn_attr: Option<(u32, usize)>,
 }
 
+/// The steps a walk's INIT contributes to its loop's prelude, FLAT: [`Parser::iterator`]
+/// answers a text walk over a non-place source as a block `for text source` holding the
+/// hidden local's bind and the cursor's init, and pushed as one nested block that bind
+/// would declare the local in a scope of its own — freed at the block's end, read by the
+/// loop after it (measured: every `println` in the cell file printed an empty line on the
+/// interpreter, and native did not compile).  Every lowering that pushes an init pushes
+/// it through here, so the bind stands beside the init in the loop's own prelude, as the
+/// vector temp's `fill` does.
+pub(crate) fn iter_init_steps(create_iter: Value) -> Vec<Value> {
+    match create_iter {
+        Value::Block(b) if b.name == "for text source" => b.operators,
+        other => vec![other],
+    }
+}
+
+/// Is this text source a PLACE — a variable, or a field path rooted at one — whose per-round
+/// re-read is (I-For)'s cheap cursor re-read?  Anything else (a call, a literal, an
+/// operator expression, an element read, a branch) is a VALUE the `for` evaluates once
+/// (`@FR-I-Text`), so `parse_for` binds it to a hidden local first.
+fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
+    match v.unspan() {
+        Value::Var(_) => true,
+        Value::Call(d, args) => {
+            matches!(
+                data.def(*d).name(),
+                "OpGetText" | "OpGetField" | "OpGetRecord"
+            ) && args.first().is_some_and(|root| is_text_place(root, data))
+        }
+        _ => false,
+    }
+}
+
 impl Parser {
     pub(crate) fn iter_text(
         &mut self,
@@ -494,7 +526,32 @@ impl Parser {
             return Value::Null;
         }
         if matches!(*is_type, Type::Text(_)) {
-            return self.iter_text(code, iter_var, pre_var);
+            // @FR-I-Text, @FR-I-For — `it := ⟨0, src⟩`: the SOURCE is evaluated once, before
+            // the first round.  A text walk re-spells its source three times per round (the
+            // character read, the null test and the length test — `text_loop_break`), which
+            // is the cheap re-read of a place (I-For)'s cursor makes; for a source that is
+            // NOT a place — a call, a literal, an operator expression, an element read, a
+            // branch — it evaluated the expression three times per character, side effects
+            // included (measured: `for c in f()` called `f` twelve times for three
+            // characters, on both backends, in the statement and the comprehension alike).
+            // Such a source is bound to a hidden local in the walk's init and every
+            // re-spelling reads the local; a variable and a field path stay as they are,
+            // since binding them would cost a copy per walk for no value.  ONE home: every
+            // text walk — the `for` statement, the comprehension — builds its iterator here.
+            let bind = if is_text_place(code, &self.data) {
+                None
+            } else {
+                let text_var = self.create_unique("for_text", is_type);
+                let set = v_set(text_var, code.clone());
+                *code = Value::Var(text_var);
+                Some(set)
+            };
+            let next = self.iter_text(code, iter_var, pre_var);
+            if let Some(set) = bind {
+                let init = std::mem::replace(code, Value::Null);
+                *code = v_block(vec![set, init], Type::Void, "for text source");
+            }
+            return next;
         }
         // CO1.5a: a coroutine handle needs a next()-based advance.
         //
@@ -2692,6 +2749,38 @@ use #count instead"
         v
     }
 
+    /// The TUPLE a rendering of `tp` would reach, if any — a vector's element, a struct's
+    /// field, or one of those nested — with the type itself excluded, since a bare tuple is
+    /// refused by `append_data`'s own `_` arm and has its own pinned message.
+    ///
+    /// A record type may name itself (a linked node), so the walk carries what it has seen.
+    fn rendered_tuple_within(&self, tp: &Type) -> Option<Type> {
+        fn walk(
+            data: &crate::data::Data,
+            tp: &Type,
+            seen: &mut Vec<u32>,
+            top: bool,
+        ) -> Option<Type> {
+            match tp.base() {
+                Type::Tuple(_) if !top => Some(tp.base().clone()),
+                Type::Tuple(elems) => elems.iter().find_map(|e| walk(data, e, seen, false)),
+                Type::Vector(elm, _) => walk(data, elm, seen, false),
+                Type::Reference(d_nr, _) | Type::Enum(d_nr, _, _) => {
+                    if seen.contains(d_nr) {
+                        return None;
+                    }
+                    seen.push(*d_nr);
+                    data.def(*d_nr)
+                        .attributes
+                        .iter()
+                        .find_map(|a| walk(data, &a.typedef, seen, false))
+                }
+                _ => None,
+            }
+        }
+        walk(&self.data, tp, &mut Vec::new(), true)
+    }
+
     pub(crate) fn append_data(
         &mut self,
         tp: Type,
@@ -2709,6 +2798,35 @@ use #count instead"
             Type::Optional(inner) => *inner,
             other => other,
         };
+        // `@FR-F-Render` — a tuple has no rendering, and that answer holds wherever the walk
+        // REACHES one.  The refusal below is the `_` arm of the match on this type, so it
+        // caught `"{t}"` and nothing else: a vector of tuples, a tuple FIELD of a struct and a
+        // nested vector all took the record walker instead, which renders a record's members
+        // by name — and a tuple's members are the synthetic `__tuple`'s, so the reader got
+        // `[{_0:1,_1:"a"}]`, an internal spelling the language does not have.
+        //
+        // The JSON spec is the exception, and it is one the documentation MAKES: the JSON
+        // chapter states that *"a tuple is an object with `_0`, `_1` … keys, not a JSON
+        // array"*, with a page and a doc test (`tests/docs/24-json.loft`).  That is a
+        // serialisation, where `_0` is a key rather than a name shown to a reader, so it
+        // stays as documented — and the tension with `(T-Absent)`'s *"a tuple has no faithful
+        // document form anyway"* is recorded in INCONSISTENCIES.md for the owner rather than
+        // settled here.
+        if !self.first_pass
+            && state.radix >= 0
+            && let Some(inner) = self.rendered_tuple_within(&tp)
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot format type {} — it reaches the tuple {}, and a tuple has no \
+                 rendering; format the members you want (`.0`, `.1`) or give that tuple a \
+                 named struct",
+                tp.source_name(&self.data),
+                inner.source_name(&self.data),
+            );
+            return;
+        }
         let var = Value::Var(append);
         let start = if matches!(self.vars.tp(append), Type::RefVar(_)) {
             "OpFormatStack"
@@ -3843,7 +3961,7 @@ use #count instead"
             if let Some(idx_var) = pre_var {
                 for_steps.push(v_set(idx_var, Value::Int(0)));
             }
-            for_steps.push(create_iter);
+            for_steps.extend(iter_init_steps(create_iter));
             let mut lp = vec![for_next];
             // CO1.5b: coroutine iterators also need a termination check.
             //
@@ -4140,7 +4258,7 @@ use #count instead"
         for s in &db_setup {
             for_steps.push(s.clone());
         }
-        for_steps.push(create_iter);
+        for_steps.extend(iter_init_steps(create_iter));
         for_steps.push(v_loop(lp, "Materialise par input"));
         // Splice the steps inline (Insert), NOT a v_block: native codegen emits
         // a Block as a Rust `{ }` scope, which would confine the `__par_mat`
@@ -6647,6 +6765,49 @@ use #count instead"
             return true;
         }
         self.is_type_var_element(elm) && self.builtin_selected(source, "sort", types).is_some()
+    }
+
+    /// @PLN165 E7 — does the special form lower this `reduce` call?  It folds into what the
+    /// runtime holds in a slot — a scalar or `text` accumulator — and every other `U` is the
+    /// declaration's to fold, through its body (`reduce<T, U>`: `acc = f(acc, x)` over the
+    /// elements), where the special form refused ("cannot fold into a … accumulator yet").
+    /// Inside a template the accumulator is its variable and the site is stamped
+    /// (`TV_REDUCE`) where the declaration takes the call.  A call the special form cannot
+    /// read, or one no declaration takes, stays with it for its message.
+    pub(crate) fn reduce_is_special(
+        &mut self,
+        source: u16,
+        list: &[Value],
+        types: &[Type],
+    ) -> bool {
+        let [_, init, f] = types else {
+            return true;
+        };
+        // The special form calls a function it names at compile time (`Value::Int(d)`); a
+        // fn-ref VARIABLE or a capturing lambda is the declaration's to call, through its body —
+        // the special form refused them ("function must be a compile-time constant").
+        let constant_fn = matches!(list.get(2).map(Value::unspan), Some(Value::Int(_)));
+        if !constant_fn && self.builtin_selected(source, "reduce", types).is_some() {
+            return false;
+        }
+        let acc = if init.is_unknown()
+            && let Type::Function(params, ..) = f.base()
+            && let Some(first) = params.first()
+        {
+            first.clone()
+        } else {
+            init.clone()
+        };
+        if !Self::is_heap_storage(&acc) || matches!(acc.base(), Type::Text(_)) {
+            return true;
+        }
+        // A heap accumulator: the special form keeps a call no declaration takes (its refusal
+        // names the cure) and a template's variable (stamped); the declaration takes the rest.
+        // Asked with the accumulator the FOLD names (loft#956): a bare `[]` init says nothing,
+        // and `c1 = n.reduce([], f)` must answer as `c2 = n.reduce(init, f)` does.
+        let asked = [types[0].clone(), acc.clone(), f.clone()];
+        let declared = self.builtin_selected(source, "reduce", &asked).is_some();
+        !declared || self.is_type_var_element(&acc)
     }
 
     /// The element types `OpSortVector` compares at runtime.  Not a nullable one: its order is

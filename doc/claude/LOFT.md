@@ -947,7 +947,10 @@ count = map_lookup ?? 0
 first = a ?? b ?? c    // chains: first non-null of a, b, c
 ```
 
-The operator is left-associative and chains: `a ?? b ?? c` is `(a ?? b) ?? c`.
+The operator is right-associative and chains: `a ?? b ?? c` is `a ?? (b ?? c)` — the same value
+either way (the first non-null operand, evaluated left to right and stopping there), and the
+grouping that makes every operand an arm whose bind COPIES (loft#1612, `formal/grammar.md`
+(G-Assoc)).
 If `lhs` has a statically-known `null` type (the bare `null` literal), `??` returns `rhs` directly.
 
 **Result type — the discharge is only as complete as the fallback.** `a ?? b` yields `a` when
@@ -2135,16 +2138,17 @@ v[..end]                    // open-start slice from 0 to end (exclusive)
 **A vector can also be taken apart by `match`** — `[first, ..rest]`, `[a, .., z]` and the other
 slice patterns are in [§ Slice patterns](#slice-patterns-matching-a-vector).
 
-**`reverse`, `reserve`, `insert` and `sort` are stdlib methods on `vector`** — `reverse(v)`
-and `v.reverse()` are one call (as are `reserve(v, n)` / `v.reserve(n)`, `insert(v, i, x)` /
-`v.insert(i, x)` and `sort(v)` / `v.sort()`), and a program defines its own `reverse` for its own types beside it
+**The vector built-ins are stdlib methods on `vector`** — `reverse`, `reserve`, `insert`,
+`sort`, `filter`, `map`, `reduce`: `reverse(v)` and `v.reverse()` are one call (as are
+`filter(v, f)` / `v.filter(f)` and the rest), and a program defines its own `reverse` for its own types beside it
 (`fn reverse(self: Roster)`), one definition per receiver type; one for `vector` itself is
 refused, as for any stdlib method.  They are calls in every respect: `insert`'s index and
 element are values before the vector grows, so `v.insert(0, v[1])` inserts the element that
 was at index 1, and the element converts as any element store does (`2` into a
 `vector<float>` is `2.0`; `300` into a `vector<u8>` is refused).  `sort` takes any element
 with a `<` (`Ordered`): a struct defining `op <` sorts by it, stably, and a null sorts first.
-The other vector built-ins (`map`, `filter`, `reduce`) follow as @PLN165 arc E moves them.
+`reduce` folds into any accumulator — a number, a `text`, a struct, a vector — and takes any
+function value, a fn-ref variable or a capturing lambda included.
 
 **Slices are iterators, materialised on assignment.**  `v[lo..hi]` can
 be used in `for x in v[lo..hi] { … }` and wherever an iterator is

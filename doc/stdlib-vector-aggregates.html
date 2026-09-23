@@ -52,6 +52,18 @@
 <p>Sort a vector in place, ascending: `sort(v)` or `v.sort()`.  Takes any element with a `&lt;` (`Ordered`) — a struct defining `op &lt;` sorts by it — and is stable: elements that compare equal keep their order.  A null element sorts first.</p>
 </div>
 <div class="item">
+<pre><code>pub fn filter &lt; T &gt; (self: vector&lt;T&gt;, f: fn(T) -&gt; boolean) -&gt; vector&lt;T&gt;</code></pre>
+<p>Keep the elements `f` answers true for, in order: `filter(v, f)` or `v.filter(f)`.</p>
+</div>
+<div class="item">
+<pre><code>pub fn map &lt; T, U &gt; (self: vector&lt;T&gt;, f: fn(T) -&gt; U) -&gt; vector&lt;U&gt;</code></pre>
+<p>What `f` answers for each element, in order: `map(v, f)` or `v.map(f)` — the result's element is what `f` returns, so a map can change the element type.</p>
+</div>
+<div class="item">
+<pre><code>pub fn reduce &lt; T, U &gt; (self: vector&lt;T&gt;, init: U, f: fn(U, T) -&gt; U) -&gt; U</code></pre>
+<p>Fold the elements into one value, left to right, from `init`: `reduce(v, init, f)` or `v.reduce(init, f)`.  Any accumulator: a number, a `text`, a struct, any collection.</p>
+</div>
+<div class="item">
 <pre><code>pub fn sum_of(v: const vector&lt;integer&gt;) -&gt; integer</code></pre>
 <p>Sum of all integer elements. Returns 0 for an empty vector. Superseded by the general `sum(v, init)`; kept as a shim over it (the old form keeps working). `sum_of(v)` == `sum(v, 0)`. Defined AFTER `sum` so the shim's call resolves — a forward reference to a generic is not yet supported.</p>
 </div>

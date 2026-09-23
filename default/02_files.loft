@@ -987,10 +987,9 @@ pub fn write(self: File, v: text) -> FileResult fs#update {
 pub fn env_variables() -> vector<EnvVariable> env#read;
 #rust"stores.os_variables()"
 #impure(host_io)
-// Returns the value of the environment variable `name`, or `""` when it is not set.
-// An unset variable and one set to the empty string give the same answer, so this
-// cannot tell them apart. Use to read configuration from the shell
-// environment.
+// Returns the value of the environment variable `name`, or `null` when it is not set.
+// A variable set to the empty string answers `""`, so `== null` tells the two apart.
+// Use to read configuration from the shell environment.
 pub fn env_variable(name: text) -> text env#read;
 #rust"stores.os_variable(@name)"
 #impure(host_io)

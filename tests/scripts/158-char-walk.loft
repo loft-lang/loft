@@ -96,7 +96,8 @@ fn w9(s: text) -> integer {
   n
 }
 
-// w10 — a call source and a literal source stay on the written step, and answer the same.
+// w10 — a call source and a literal source: bound once to a hidden local (`@FR-I-Text`), the
+// walk over that local takes the fast step and hoists its null test like any variable's.
 fn w10(s: text) -> integer {
   n = 0;
   for c in s.trim() { if c == 'x' { n += 1; } }

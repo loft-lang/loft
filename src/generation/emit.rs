@@ -12,7 +12,7 @@ use std::io::Write;
 use super::text::count_format_ops;
 use super::{
     Output, block_needs_i64_widen, block_tail_cast, default_native_value, default_native_value_in,
-    narrow_int_cast, rust_type, sanitize,
+    narrow_int_cast, sanitize,
 };
 
 impl Output<'_> {
@@ -278,10 +278,11 @@ impl Output<'_> {
                         continue;
                     }
                     let name = sanitize(variables.name(v));
-                    let ty = rust_type(tp, &Context::Variable);
+                    let ty = self.local_rust_type(v, tp);
+                    let (eo, ec) = self.narrow_local_enc(v);
                     let init = default_native_value_in(tp, &Context::Variable);
                     use std::fmt::Write as _;
-                    let _ = write!(preamble, "let mut var_{name}: {ty} = {init}; ");
+                    let _ = write!(preamble, "let mut var_{name}: {ty} = {eo}{init}{ec}; ");
                 }
                 write!(w, "n_parallel_block_native(cell, &[")?;
                 for arm in arms.iter() {
@@ -362,7 +363,9 @@ impl Output<'_> {
                         }
                         return write!(w, "*var_{var_name}");
                     }
-                    return write!(w, "var_{var_name}");
+                    // @PLN167 decision 1 — a by-value narrow parameter something links is
+                    // re-encoded at entry and reads as its decoded value from then on.
+                    return write!(w, "{}", self.narrow_local_dec(var, &var_name));
                 } else if let Type::RefVar(inner) = variables.tp(var)
                     && matches!(
                         inner.base(),
@@ -389,15 +392,27 @@ impl Output<'_> {
                     // the storage BYTE (0/1/255), as a `boolean?` local does, so `c == null`
                     // can see the 255: the two-state read would answer `false` for a null.
                     // Only a non-null `&boolean` reads as a `bool` (loft#655).
-                    if !matches!(**inner, Type::Optional(_))
-                        && matches!(inner.base(), Type::Boolean)
-                    {
-                        return write!(w, "unsafe {{ *var_{var_name} == 1 }}");
-                    }
                     if matches!(inner.base(), Type::Text(_)) {
                         return write!(w, "unsafe {{ &*var_{var_name} }}");
                     }
-                    return write!(w, "unsafe {{ *var_{var_name} }}");
+                    // A link to an ABSENT scalar place (`&v[10]`, a field of an absent record)
+                    // holds a null pointer and reads the type's absent value — the one the
+                    // interpreter's `OpGet*` answers for a `rec == 0` reference (C80: nothing
+                    // stops a running calculation).  A `&boolean` answers its storage byte, so
+                    // an absent one reads as null here as it does there.
+                    // @PLN167 decision 1 — a link to a NARROW integer place reads the field
+                    // encoding behind the pointer.
+                    let deref = match crate::data::NarrowSlot::of_type(inner) {
+                        Some(slot) => slot.decode_rust(&format!("*var_{var_name}")),
+                        None => format!("*var_{var_name}"),
+                    };
+                    if let Some(absent) = crate::generation::absent_link_value(inner.base()) {
+                        return write!(
+                            w,
+                            "unsafe {{ if var_{var_name}.is_null() {{ {absent} }} else {{ {deref} }} }}"
+                        );
+                    }
+                    return write!(w, "unsafe {{ {deref} }}");
                 } else if let Type::RefVar(inner) = variables.tp(var)
                     && matches!(inner.base(), Type::Reference(..))
                     && self.local_record_link.contains(&var)
@@ -418,7 +433,8 @@ impl Output<'_> {
                     // borrowed to `&str` too; inert gate-OFF (no `Optional` exists).
                     return write!(w, "&var_{var_name}");
                 }
-                return write!(w, "var_{var_name}");
+                // @PLN167 decision 1 — a LINKED narrow local reads as its decoded value.
+                return write!(w, "{}", self.narrow_local_dec(var, &var_name));
             }
             ValueType::Tuple => {
                 write!(w, "(")?;
@@ -1299,7 +1315,35 @@ impl Output<'_> {
             // so the condition correctly excludes it (its type is
             // `Type::RefVar(Type::Text(_))`, emitted as `&mut String`).
             let is_text_arg = i < param_types.len() && matches!(param_types[i], Type::Text(_));
-            if is_text_arg {
+            // loft#1005's re-spelling, at the fn-ref call: a tuple VARIABLE carrying text is
+            // `(i64, String)` in its slot and `(i64, &str)` as a parameter, so a direct call
+            // re-spells it (`calls.rs`) and this binding must too — `f(x)` with `x = (1,
+            // "ab")` did not compile on `--native`, while `g(x)` did.
+            let tuple_place = if let Value::Var(var) = arg.unspan()
+                && let Some(param) = param_types.get(i)
+                && let Type::Tuple(param_elems) = param.base()
+                && matches!(
+                    self.data.def(self.def_nr).variables().tp(*var).base(),
+                    Type::Tuple(_)
+                )
+                && crate::generation::dispatch::tuple_has_text_leaf(param_elems)
+            {
+                let name = self
+                    .data
+                    .def(self.def_nr)
+                    .variables()
+                    .name(*var)
+                    .to_string();
+                Some(crate::generation::dispatch::borrowed_tuple_from_owned(
+                    &format!("var_{name}"),
+                    param_elems,
+                ))
+            } else {
+                None
+            };
+            if let Some(respelled) = tuple_place {
+                write!(w, "let _farg_{i} = {respelled}; ")?;
+            } else if is_text_arg {
                 write!(
                     w,
                     "let _farg_{i}_h = {expr}; let _farg_{i}: &str = &*_farg_{i}_h; "
@@ -1809,6 +1853,52 @@ impl Output<'_> {
         }
     }
 
+    /// Open the pre-eval scope of one `if` ARM (loft#1611).
+    ///
+    /// A hoisted node must be evaluated where the node it replaces is — and an arm's node is
+    /// evaluated after the test and only on that arm's path, so its `let _pre_N` lands inside
+    /// the braces the arm already emits rather than in front of the statement.  Answers the
+    /// state [`Self::close_arm_pre_evals`] restores, or `None` when the arm hoists nothing.
+    ///
+    /// The substitution map is EXTENDED, not replaced: the statement's own hoists (the test's)
+    /// are still live inside the arm, and the two cannot collide — both are keyed on the
+    /// node's address.  The counter is wound back before the arm is emitted, exactly as the
+    /// statement site winds it back, so the emit walk regenerates the names the bindings carry.
+    fn open_arm_pre_evals(
+        &mut self,
+        w: &mut dyn Write,
+        arm: &Value,
+    ) -> std::io::Result<Option<(std::collections::HashMap<usize, String>, u32)>> {
+        let counter_before = self.counter;
+        let pre_evals = self.collect_pre_evals(arm)?;
+        if pre_evals.entries.is_empty() {
+            self.counter = counter_before;
+            return Ok(None);
+        }
+        for (name, _, bind_code, _, _) in &pre_evals.entries {
+            write!(w, " let {name} = {bind_code};")?;
+        }
+        let after_collect = self.counter;
+        let mut map = self.active_pre_eval.clone();
+        map.extend(pre_evals.name_map());
+        let saved = std::mem::replace(&mut self.active_pre_eval, map);
+        self.counter = counter_before;
+        Ok(Some((saved, after_collect)))
+    }
+
+    /// Close what [`Self::open_arm_pre_evals`] opened: the statement's map is the active one
+    /// again, and the counter stands where the arm's collection left it, so the sibling arm's
+    /// names continue rather than repeat.
+    fn close_arm_pre_evals(
+        &mut self,
+        state: Option<(std::collections::HashMap<usize, String>, u32)>,
+    ) {
+        if let Some((saved, after_collect)) = state {
+            self.active_pre_eval = saved;
+            self.counter = after_collect;
+        }
+    }
+
     fn output_if_inner(
         &mut self,
         w: &mut dyn Write,
@@ -1959,24 +2049,38 @@ impl Output<'_> {
         // braces for if-arms regardless of inner expression form, so even if
         // the branch is itself a `Block` (which emits its own `{…}`), we wrap
         // the block in `({…}).to_string()` inside an outer `{ … }`.
-        if text_string_unify {
-            write!(w, " {{(")?;
+        // The brace first, then the arm's OWN hoists, then the rest of the opening — a
+        // `let _pre_N` belongs inside the braces and in front of whatever wrapper follows
+        // (loft#1611).  `Block`/`b_true` opens no brace of its own here: its statements
+        // collect their own pre-evals, as every block's do.
+        let open_rest = if text_string_unify {
+            "("
         } else if bool_unify {
             // Block, not parens, around the arm: the arm can be a STATEMENT sequence (a boolean
             // operand that lifted a value-struct-returning call → `<lift>; <predicate>`), so
             // `(( stmt; expr ) as u8)` is invalid Rust. `({ … } as u8)` is valid either way.
-            write!(w, " {{({{")?;
-        } else if stmt_discard {
+            "({"
+        } else if stmt_discard || b_true {
             // An outer block whose single statement is the arm: `{ <arm>; }` yields `()`
             // whatever the arm yields, and a `Block` arm brings its own braces inside it.
-            write!(w, " {{")?;
-        } else if b_true {
-            write!(w, " ")?;
+            ""
         } else if text_unify {
-            write!(w, " {{&*(")?;
+            "&*("
         } else {
+            ""
+        };
+        let true_braced = text_string_unify || bool_unify || stmt_discard || !b_true;
+        if true_braced {
             write!(w, " {{")?;
+        } else {
+            write!(w, " ")?;
         }
+        let true_pre = if true_braced && !b_true {
+            self.open_arm_pre_evals(w, true_v)?
+        } else {
+            None
+        };
+        write!(w, "{open_rest}")?;
         self.indent += u32::from(!b_true || text_string_unify || bool_unify);
         // save/restore fn_ref_context — Call arguments inside the branch
         // must NOT inherit it (OpDatabase int args would be misinterpreted).
@@ -1997,6 +2101,7 @@ impl Output<'_> {
             self.clone_handed_tuple_local = None;
         }
         self.fn_ref_context = saved_ctx;
+        self.close_arm_pre_evals(true_pre);
         self.indent -= u32::from(!b_true || text_string_unify || bool_unify);
         if text_string_unify {
             write!(w, ").to_string()}} else ")?;
@@ -2016,15 +2121,26 @@ impl Output<'_> {
         } else {
             write!(w, "}} else ")?;
         }
-        if text_string_unify {
-            write!(w, "{{(")?;
+        let (false_braced, false_rest) = if text_string_unify {
+            (true, "(")
         } else if text_unify {
-            write!(w, "{{&*(")?;
+            (true, "&*(")
         } else if bool_unify {
-            write!(w, "{{({{")?;
+            (true, "({")
         } else if stmt_discard || !b_false {
+            (true, "")
+        } else {
+            (false, "")
+        };
+        if false_braced {
             write!(w, "{{")?;
         }
+        let false_pre = if false_braced && !b_false {
+            self.open_arm_pre_evals(w, false_v)?
+        } else {
+            None
+        };
+        write!(w, "{false_rest}")?;
         self.indent += u32::from(!b_false || text_string_unify || bool_unify);
         // When the else branch is Null and the true branch returns a value,
         // emit a typed null sentinel instead of () to match the true branch type.
@@ -2037,6 +2153,7 @@ impl Output<'_> {
             self.output_code_inner(w, false_v)?;
             self.clone_handed_tuple_local = None;
         }
+        self.close_arm_pre_evals(false_pre);
         if text_string_unify {
             write!(w, ").to_string()}}")?;
         } else if text_unify {
@@ -2127,9 +2244,10 @@ impl Output<'_> {
         for &v in &t_vars {
             if f_vars.contains(&v) && !self.declared.contains(&v) {
                 let name = sanitize(variables.name(v));
-                let tp_str = rust_type(variables.tp(v), &Context::Variable);
+                let tp_str = self.local_rust_type(v, variables.tp(v));
+                let (eo, ec) = self.narrow_local_enc(v);
                 let default = default_native_value_in(variables.tp(v), &Context::Variable);
-                writeln!(w, "let mut var_{name}: {tp_str} = {default};")?;
+                writeln!(w, "let mut var_{name}: {tp_str} = {eo}{default}{ec};")?;
                 self.indent(w)?;
                 self.declared.insert(v);
             }

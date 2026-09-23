@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @FR-G-Mono — an element READ of a `vector<T>` inside a generic, at a `T` bound to a TUPLE, is
+// the stack tuple its hand-written twin unboxes (`v[i]`, `for x in v`).  The template reads a
+// reference to the stored element — it cannot know `T` is a tuple — and the instance kept
+// that reference, so every consumer read the reference's bytes as the tuple's: a callback
+// over `for x in v` answered `137438953478` for `4`, `v[0]?` returned a tuple whose `.0` was
+// `34359738371`, and `--native` did not compile (E0308, "expected tuple `(i64, i64)`").
+// Silent on the interpreter.  `main` refused these programs until @PLN165 A6 typed a short
+// lambda under its generic's bindings, so the wrong answer was this plan's to fix.  The
+// substitution now stamps such a read and the instance unboxes it (`TV_TUPLE_READ`).
+//
+// @falsified-at: 42b763761 — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-tuple-element-read-inside-a-generic-is-its-tuple.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0
+//   CHANNEL: the ASSERTIONS on the interpreter — silent wrong values — and exit on native
+//     (E0308, "expected tuple `(i64, i64)`").
+//   ARMED: nothing.
+//   HOLDS: `apply`, the tuple handed as an argument rather than read out of a vector.
+
+fn each<T>(v: vector<T>, f: fn(T) -> integer) -> integer {
+  s = 0;
+  for x in v { s += f(x) };
+  s
+}
+fn pick<T>(v: vector<T>, i: integer) -> T { v[i]? }
+fn keep<T>(v: vector<T>, f: fn(T) -> boolean) -> vector<T> { filter(v, f) }
+fn copy_all<T>(v: vector<T>) -> vector<T> { out: vector<T> = []; for x in v { out += [x] }; out }
+fn apply<T>(x: T, f: fn(T) -> integer) -> integer { f(x) }
+
+fn test_a_loop_hands_the_callback_its_tuple() {
+  assert(each([(1, 2), (3, 4)], |q| { q.0 + q.1 * 10 }) == 64, "{each([(1, 2), (3, 4)], |q| { q.0 + q.1 * 10 })}");
+  assert(each([(1, "a"), (2, "bb")], |q| { q.0 + len(q.1) }) == 6, "text member");
+}
+
+fn test_an_indexed_read_returns_the_tuple() {
+  t = pick([(5, 6), (7, 8)], 1);
+  assert(t.0 == 7 && t.1 == 8, "{t.0} {t.1}");
+}
+
+fn test_filter_and_an_append_keep_the_tuple() {
+  k = keep([(1, 2), (3, 4), (5, 0)], |q| { q.0 > 1 && q.1 > 0 });
+  c = copy_all([(9, 8)]);
+  assert(len(k) == 1 && k[0].0 == 3 && k[0].1 == 4 && c[0].0 == 9 && c[0].1 == 8,
+    "{len(k)} {c[0].0}");
+}
+
+fn test_a_tuple_argument_was_always_right() {
+  assert(apply((3, 4), |q| { q.0 + q.1 }) == 7, "apply");
+}

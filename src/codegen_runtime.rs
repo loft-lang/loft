@@ -1166,7 +1166,7 @@ pub fn OpCopyRecord(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, to: DbRef
     // the same rule in `State::copy_ref_or_null`; measured without this,
     // `b.p = fwd(s, 1)` over `fn fwd(f, v) -> P { r = f(v); r }` freed the CALLER'S capture on
     // `--native` alone — the field destination of the shape loft#1185 closed for a local.
-    let borrowed = free_source && cr_take_fnref_borrowed(data.store_nr);
+    let borrowed = cr_take_fnref_borrowed(data.store_nr) && free_source;
     if free_source
         && !borrowed
         && data.store_nr != to.store_nr
@@ -1196,6 +1196,11 @@ pub fn OpReplaceKeyed(cell: &std::cell::UnsafeCell<Stores>, src: DbRef, dest: Db
     if src.store_nr == u16::MAX {
         stores.remove_claims(&dest, tp);
         stores.mark_collection_absent(&dest);
+        return;
+    }
+    // `@FR-B-Copy` — a source that IS the destination is already the value; the twin of
+    // the guard in `State::replace_keyed`, which carries the reasoning.
+    if src == dest {
         return;
     }
     stores.remove_claims(&dest, tp);
@@ -5652,20 +5657,20 @@ thread_local! {
     /// borrow path simply returned.  This carries that verdict to [`OpCopyRecord`], which
     /// declines the source-free for a store that predates the call.
     ///
-    /// Matched by STORE and taken when it matches, so it describes one value; re-armed (or
-    /// cleared) by the next fn-ref call, so it cannot go stale across calls.
+    /// TAKEN by the first record copy after the call — match or not, exactly as
+    /// `State::take_fnref_borrowed_return` is — so it describes one value and cannot outlive
+    /// it.  Taken only on a match it stayed armed past an unrelated copy, and store slots are
+    /// reused: the capture a lambda handed back in one function named the slot a later
+    /// function's fresh record temporary was minted in, that copy read it as borrowed and
+    /// declined its source-free, and one record leaked per program (found by the
+    /// `158-guard-free` cells, g6 followed by g9, on the leak channel).
     static FNREF_BORROWED: std::cell::Cell<Option<DbRef>> = const { std::cell::Cell::new(None) };
 }
 
-/// Take the @PLN150 borrowed-return marker when it names `store_nr`, clearing it.
+/// Take the @PLN150 borrowed-return marker, clearing it, and answer whether it named
+/// `store_nr`.
 fn cr_take_fnref_borrowed(store_nr: u16) -> bool {
-    FNREF_BORROWED.with(|b| match b.get() {
-        Some(r) if r.store_nr == store_nr => {
-            b.set(None);
-            true
-        }
-        _ => false,
-    })
+    FNREF_BORROWED.with(|b| b.take().is_some_and(|r| r.store_nr == store_nr))
 }
 
 /// Give an owner to a store a fn-ref callee MINTED and handed back.

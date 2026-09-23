@@ -1,0 +1,255 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1625, `@FR-O-Move` / `@FR-O-Opaque` — AN EXPLICIT `return` OF AN ELEMENT RECORDS ITS
+// BORROW.  `(O-Move)`: *"if the return borrows a parameter, the return type records it
+// (`{Attr(param)}`), and the caller COPIES to obtain its own store."*  A signature that omits
+// that record is not merely incomplete — `(O-Opaque)` gives the empty list a MEANING: *"empty
+// deps are then read as 'the callee minted this' — the one reading that licenses a free."*  So
+// the caller frees a store it never owned.
+//
+// Two spellings of one callee published two signatures.  The bodies are BYTE-IDENTICAL; only
+// the type differed:
+//
+//     fn retn(v: vector<vector<integer>>, i: integer) -> vector<integer>? { return v[i]; }
+//         -> vector<integer>?            deps EMPTY
+//     fn tail(v: vector<vector<integer>>, i: integer) -> vector<integer>? { v[i] }
+//         -> vector<integer>["v"]?       the borrow recorded
+//
+// `block_result` hands `ref_return` the tail's deps, which is what writes the record; the
+// mid-body arm filtered its list down to a CALL's work-ref (`__ref_`/`__rref_`) and a borrow of
+// a PARAMETER left it empty, so `ref_return` was never entered — `LOFT_TRACE_RETPROMO` printed
+// no ENTER line for `retn` and two for `tail`, which is what named the second entry point.
+//
+// **The same defect a third time.**  loft#677 lost a record return's `["o"]` dep and *"callers
+// then read the returned borrow as owned and freed the CALLER's store"*.  loft#1140 found the
+// explicit-return spelling of it for KEYED collections and fixed that arm, in a comment that
+// describes this one exactly.  This is the VECTOR arm next to it.  The fix hands the same arm
+// the value's deps, and no placement is decided: every var in the list is already an ATTRIBUTE,
+// which the classifier answers `MergeAttr` before any placement rung.
+//
+// It takes five things together, and the cells take each one away in turn: an ELEMENT read
+// (`c10`'s field read was always right), returned DIRECTLY (`c2`'s bare tail and `c3`'s local
+// are right), from a NULLABLE-collection callee, through a FN-REF call (`c6`'s named call is
+// right), inside a LOOP (`c4`/`c5` are right without one).  Binding the result or the argument
+// does not help (`c8`, `c9`) — the defect is the callee's signature, not the call site.
+//
+// `c13` and `c14` are the axis the FIRST cure got wrong, and they are here for that reason:
+// `(O-Move)`'s record clause is about a PARAMETER, and its other half says a LOCAL's store must
+// be DELIVERED into the caller's buffer instead.  The two want opposite things, so a cure that
+// reads the dep list without splitting on it leaks the delivered store — measured, on every
+// shape `nullable_ret_buffer` covers.  A MIXED list (a value that comes from a parameter on one
+// path and a local on the other) is declined rather than guessed.
+//
+// Every cell asserts `len` of the CONTAINER as well as the value.  The values alone understate
+// it: at four iterations the caller's whole outer vector reads `len(vs) == 0`, so a cell that
+// summed elements would report a wrong number where a container had been emptied.
+//
+// @falsified-at: 2faa68efe — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1625-an-explicit-return-of-an-element-records-its-borrow.patch —
+//   the same channels.
+// CHANNEL: assertion failures, both backends — and they disagree on the WRONG value (the
+//   interpreter answers null, native a recycled number), so it is an `(O-NoDiverge)` divergence
+//   from that direction too.
+// HOLDS: leak and panic are unmoved; `c2`, `c3`, `c6`, `c10` and `k1` are right before and after.
+// WITNESS: on the control, `c1 the sum: got null, want 168` on the interpreter and
+//   `c1 the sum: got 45, want 168` on native, with `c1 the container's length: got 0, want 2`.
+
+struct Box1625 { cells: vector<integer> }
+
+fn retn(v: vector<vector<integer>>, i: integer) -> vector<integer>? { return v[i]; }
+fn tail(v: vector<vector<integer>>, i: integer) -> vector<integer>? { v[i] }
+fn vialocal(v: vector<vector<integer>>, i: integer) -> vector<integer>? { e = v[i]; return e; }
+fn fld(b: Box1625) -> vector<integer>? { return b.cells; }
+fn named(q: vector<integer>?) -> vector<integer> { return q ?? [7, 8]; }
+fn rtext(v: vector<vector<text>>, i: integer) -> vector<text>? { return v[i]; }
+
+fn ok(nm: text, got: integer, want: integer) {
+  assert(got == want, "{nm}: got {got}, want {want}");
+}
+fn okt(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: got {got}, want {want}");
+}
+
+// 1 — the shape, four iterations so the container's own length is reached.
+fn c1() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for _ in 0..4 { s += g(retn(vs, 0))[1]; }
+  ok("c1 the sum              ", s, 168);
+  ok("c1 the container's length", len(vs), 2);
+  ok("c1 the element's length ", len(vs[0] ?? []), 2);
+}
+
+// 2 — the BARE TAIL spelling of the same callee: right throughout, and the oracle.
+fn c2() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for _ in 0..4 { s += g(tail(vs, 0))[1]; }
+  ok("c2 the sum              ", s, 168);
+  ok("c2 the container's length", len(vs), 2);
+}
+
+// 3 — returned through a LOCAL, which carries the dep and was right.
+fn c3() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for _ in 0..4 { s += g(vialocal(vs, 0))[1]; }
+  ok("c3 the sum              ", s, 168);
+  ok("c3 the container's length", len(vs), 2);
+}
+
+// 4 — ONE call, no loop: the free has no second read to spoil.
+fn c4() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  a = g(retn(vs, 0));
+  ok("c4 the answer           ", a[1] ?? -1, 42);
+  ok("c4 the container's length", len(vs), 2);
+}
+
+// 5 — TWO calls, still no loop.
+fn c5() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  a = g(retn(vs, 0));
+  b = g(retn(vs, 0));
+  ok("c5 the first answer     ", a[1] ?? -1, 42);
+  ok("c5 the second answer    ", b[1] ?? -1, 42);
+  ok("c5 the container's length", len(vs), 2);
+}
+
+// 6 — a NAMED call rather than a fn-ref, in a loop: the site axis.
+fn c6() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  s = 0;
+  for _ in 0..4 { s += named(retn(vs, 0))[1]; }
+  ok("c6 the sum              ", s, 168);
+  ok("c6 the container's length", len(vs), 2);
+}
+
+// 7 — no call at all around it, in a loop: the other half of the site axis.
+fn c7() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  s = 0;
+  for _ in 0..4 { s += retn(vs, 0)[1] ?? -1; }
+  ok("c7 the sum              ", s, 168);
+  ok("c7 the container's length", len(vs), 2);
+}
+
+// 8 — the RESULT bound before it is read: does not help, which says the defect is the callee's.
+fn c8() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for _ in 0..4 { r = g(retn(vs, 0)); s += r[1]; }
+  ok("c8 the sum              ", s, 168);
+  ok("c8 the container's length", len(vs), 2);
+}
+
+// 9 — the ARGUMENT bound before the call: the same, from the other side.
+fn c9() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for _ in 0..4 { x = retn(vs, 0); s += g(x)[1]; }
+  ok("c9 the sum              ", s, 168);
+  ok("c9 the container's length", len(vs), 2);
+}
+
+// 10 — a FIELD read rather than an ELEMENT read: right throughout, the member-kind axis.
+fn c10() {
+  b = Box1625 { cells: [41, 42] };
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for _ in 0..4 { s += g(fld(b))[1]; }
+  ok("c10 the sum             ", s, 168);
+  ok("c10 the field's length  ", len(b.cells), 2);
+}
+
+// 11 — TEXT elements, so what the free would take owns heap of its own.
+fn c11() {
+  vs: vector<vector<text>> = [["a", "b"], ["c", "d"]];
+  g = fn(q: vector<text>?) -> vector<text> { q ?? ["z"] };
+  r = "";
+  for _ in 0..4 { r += g(rtext(vs, 0))[1] ?? "!"; }
+  okt("c11 the joined reads    ", r, "bbbb");
+  ok("c11 the container's length", len(vs), 2);
+}
+
+// 12 — the element read at a VARIABLE index, so the read is not a constant fold.
+fn c12() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for i in 0..4 { s += g(retn(vs, i % 2))[1]; }
+  ok("c12 the sum             ", s, 188);
+  ok("c12 the container's length", len(vs), 2);
+}
+
+// 13 — the axis the FIRST cure got wrong, and the reason the split exists: a return of a
+//      LOCAL's vector must be DELIVERED into the caller's buffer, not recorded as a borrow.
+//      `(O-Move)`'s two halves want opposite things — recording a borrow tells the caller not
+//      to free, and a local's store is exactly what the caller must be handed — so reading the
+//      dep list without splitting on it leaked the delivered store in every shape
+//      `nullable_ret_buffer` measures.
+fn mklocal(n: integer) -> vector<integer>? { o: vector<integer> = []; o += [n]; o += [n + 1]; return o; }
+fn c13() {
+  s = 0;
+  for i in 0..4 { s += mklocal(i)[1] ?? -1; }
+  ok("c13 a local returned    ", s, 10);
+}
+
+// 14 — a callee whose value comes from a PARAMETER on one path and a LOCAL on the other.  The
+//      list is then mixed, and the fix declines it rather than guessing: a borrow recorded for
+//      the local path would free what the caller was handed, and a delivery forced on the
+//      parameter path would copy what it need not.  Each path taken alone, then alternating.
+fn mixed(v: vector<vector<integer>>, i: integer, use_param: boolean) -> vector<integer>? {
+  if use_param { return v[i]; }
+  o: vector<integer> = []; o += [9]; o += [8];
+  return o;
+}
+fn c14() {
+  vs: vector<vector<integer>> = [[41, 42], [51, 52]];
+  s = 0;
+  for _ in 0..4 { s += mixed(vs, 0, true)[1] ?? -1; }
+  t = 0;
+  for _ in 0..4 { t += mixed(vs, 0, false)[1] ?? -1; }
+  u = 0;
+  for i in 0..4 { u += mixed(vs, 0, i % 2 == 0)[1] ?? -1; }
+  ok("c14 the parameter path  ", s, 168);
+  ok("c14 the local path      ", t, 32);
+  ok("c14 alternating         ", u, 100);
+  ok("c14 the container's length", len(vs), 2);
+}
+
+// Control — a callee that genuinely MINTS its answer must keep its empty deps, or the caller
+// stops freeing what the callee really did hand over.  The axis the fix must not move.
+fn mint() -> vector<integer>? { return [3, 4]; }
+fn k1() {
+  g = fn(q: vector<integer>?) -> vector<integer> { q ?? [7, 8] };
+  s = 0;
+  for _ in 0..4 { s += g(mint())[1]; }
+  ok("k1 the minted sum       ", s, 16);
+}
+
+fn main() {
+  c1();
+  c2();
+  c3();
+  c4();
+  c5();
+  c6();
+  c7();
+  c8();
+  c9();
+  c10();
+  c11();
+  c12();
+  c13();
+  c14();
+  k1();
+  println("an explicit return of an element records its borrow: every cell holds");
+}

@@ -867,6 +867,13 @@ hooks:
 # that CI runs cross-backend.  See doc/claude/plans/92-feature-catalogue/.
 FEATURES_REPO ?= loft-lang/features
 
+# CAVEAT: the probe reads target/wasm32-unknown-unknown/release/libloft.rlib, and it
+# must be the `--html` shape (`--no-default-features --features random`).  `make wasm`
+# overwrites that rlib with the wasm-bindgen variant, against which the probe records
+# store_load_url and store_load_url_trusted as unavailable in the BROWSER and commits
+# that as derived truth.  So after a bundle rebuild the order is: `make wasm`, then
+# `cargo build --release --target wasm32-unknown-unknown --lib --no-default-features
+# --features random`, then this.
 surface-gen:  ## Regenerate index/target_surface.json (which builtins exist per target)
 	@python3 scripts/gen_target_surface.py
 

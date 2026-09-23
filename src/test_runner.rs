@@ -1715,17 +1715,36 @@ pub(crate) fn run_tests(
                                             .lines()
                                             .find(|l| l.starts_with("error"))
                                             .unwrap_or("(unknown)");
-                                        // Append linker-detail lines (LNK####, "cannot
-                                        // open input file", undefined symbol) so a
-                                        // Windows link failure NAMES the missing file
-                                        // instead of just "exit code: 1181" — the first
-                                        // `error:` line alone hid the cause.
+                                        // Append linker-detail lines so a link failure
+                                        // NAMES its cause instead of just "exit code:
+                                        // 1181" / "exit status: 1" — the first `error:`
+                                        // line alone hid it.
+                                        //
+                                        // The first three markers are the WINDOWS shapes
+                                        // and were the whole list until 2026-09-23, when
+                                        // `keyed_fast_paths` went red inside three
+                                        // different agents' gates on this box and green
+                                        // standalone in all three.  Every one of us called
+                                        // it environmental without evidence, because a
+                                        // UNIX `cc` failure names its cause in
+                                        // `collect2:` / `ld:` lines that match none of the
+                                        // three — so the report said only that linking
+                                        // failed.  An OOM kill during parallel linking and
+                                        // a full disk are the two this box actually
+                                        // produces, and both are one line away from being
+                                        // self-evident.
                                         let detail: Vec<&str> = s
                                             .lines()
                                             .filter(|l| {
                                                 l.contains("LNK")
                                                     || l.contains("cannot open")
                                                     || l.contains("undefined")
+                                                    || l.contains("collect2")
+                                                    || l.contains("ld:")
+                                                    || l.contains("ld returned")
+                                                    || l.contains("No space left")
+                                                    || l.contains("Killed")
+                                                    || l.contains("terminated with signal")
                                             })
                                             .take(4)
                                             .collect();

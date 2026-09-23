@@ -1,0 +1,134 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 0c0daa580..85f7e77ea 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -301,19 +301,6 @@ struct Scopes<'s> {
+     /// statement's scope — a pooled `__ref_N` work-ref must never land here, since its
+     /// scope-end drop releases whatever record it holds LAST.
+     lift_field_skip: HashMap<u16, (u16, u16)>,
+-    /// loft#1623 — the frame-owned TEMPS a joined binding borrows, keyed by that binding.
+-    ///
+-    /// A binding whose value branch declined the per-arm write-out borrows a temp per arm and
+-    /// releases nothing itself, so at a RETURN of it `(H-Move)`'s *"the function's own
+-    /// variables end with it"* is about those temps and not about the binding.  The set cannot
+-    /// be read back off the binding's deps: an arm the PARSER owns hands back a
+-    /// `join-arm-owner` `__ref_N` that the dep list never names, and it hooks all the same.
+-    /// Recorded where the temps are made, and read at the return.
+-    ///
+-    /// A container the frame keeps — `s` in `x = s.h ?? b` on the path that chose `s.h` — is
+-    /// NOT in here, and must not be: the caller got a copy of a member and `s` still owes its
+-    /// own release.  That is the cell this map exists to keep apart from the rest.
+-    join_holders: HashMap<u16, Vec<u16>>,
+     /// The `__lift_N` temps an arm lift built — the destinations whose hand-off is PER PATH.
+     ///
+     /// The fact belongs to the CONSTRUCTION and cannot be read back off the IR: by the time
+@@ -5767,7 +5754,6 @@ fn run_scan_phase(
+         view_backing: HashMap::new(),
+         construction_backing: HashMap::new(),
+         lift_field_skip: HashMap::new(),
+-        join_holders: HashMap::new(),
+         arm_lift_temps: HashSet::new(),
+         handed_off: HashMap::new(),
+         per_path_pairs: HashSet::new(),
+@@ -14186,14 +14172,6 @@ impl Scopes<'_> {
+         {
+             arm_dropped.insert(v);
+         }
+-        // loft#1623, `(H-Move)` — the same move one indirection down.  Where the returned value
+-        // is a joined binding that BORROWS its arms' temps, it is those temps the return hands
+-        // out, so their hook belongs to the caller and not to this exit.
+-        if is_return {
+-            for w in return_copies_view_holders(expr, function, data, &self.join_holders) {
+-                arm_dropped.insert(w);
+-            }
+-        }
+         let ret_var = returned_var_null_unified(expr, data.def_nr("OpNullRefSentinel"));
+         // @PLN85 cluster II / A.1 part i (OWNERSHIP_MODEL row 100, invariant #5
+         // "per binding, per path, complete") — the return-source SET, not the
+@@ -17457,29 +17435,6 @@ impl Scopes<'_> {
+         // (`formal/heap.md` D-heap-16).
+         let mut owned: Vec<u16> = Vec::new();
+         self.lift_owned_call_tails(node, home, function, data, &mut owned);
+-        // loft#1623 — every frame-owned temp this join's value may live in, recorded against the
+-        // binding that borrows them.  Three sources and the third is why this is a record rather
+-        // than a dep read: the arm lifts (`copied`), the minting-call arms this pass just gave a
+-        // temp (`owned`), and the arms the PARSER already owns, whose `join-arm-owner` `__ref_N`
+-        // the binding's dep list never names.
+-        let mut holders: Vec<u16> = copied.iter().map(|&(_, t)| t).collect();
+-        for w in owned
+-            .iter()
+-            .copied()
+-            .chain(construction_work_refs(node, function, data))
+-        {
+-            if !holders.contains(&w) {
+-                holders.push(w);
+-            }
+-        }
+-        if bound != u16::MAX && !holders.is_empty() {
+-            let slot = self.join_holders.entry(bound).or_default();
+-            for w in holders {
+-                if !slot.contains(&w) {
+-                    slot.push(w);
+-                }
+-            }
+-        }
+         let mut deps: Vec<u16> = function.tp(bound).depend().clone();
+         for tmp in owned {
+             deps.push(tmp);
+@@ -21233,56 +21188,6 @@ fn return_copy_out(
+     })
+ }
+ 
+-/// loft#1623, `(H-Move)` — the frame-owned TEMPS a return hands out, when the value it copies
+-/// onto the return buffer is a joined binding that BORROWS them.
+-///
+-/// `(H-Move)`'s third clause ends a function's own variables with it, and a binding that
+-/// declined the per-arm write-out is not one of them — it releases nothing and the temps behind
+-/// it do.  So the return moves what THEY hold, and their hook belongs to the caller from there
+-/// on.  [`return_copies_whole_local`] answers the owned-local spelling of the same question and
+-/// declines a view, correctly: the view owes no release, and naming it would suppress nothing.
+-///
+-/// PER EXIT, which is the whole of why this is read here rather than recorded as a hand-off: a
+-/// second exit that returns something ELSE leaves the temps holding a value nobody took, and
+-/// there their hook is the one release it gets (guard cell `c7`).
+-///
+-/// Only the temps [`Scopes::join_holders`] recorded.  A container the frame keeps — `s` on the
+-/// path where `x = s.h ?? b` chose `s.h` — is not one: the caller got a COPY of a member, and
+-/// `s` still owes its own release (guard cell `c4`).
+-fn return_copies_view_holders(
+-    expr: &Value,
+-    function: &Function,
+-    data: &Data,
+-    holders: &HashMap<u16, Vec<u16>>,
+-) -> Vec<u16> {
+-    let Value::Block(bl) = return_tail(expr) else {
+-        return Vec::new();
+-    };
+-    if bl.name != "materialized_view_return" && bl.name != ARMED_VIEW_RETURN {
+-        return Vec::new();
+-    }
+-    let copy_nr = data.def_nr("OpCopyRecord");
+-    bl.operators
+-        .iter()
+-        .find_map(|op| {
+-            let Value::Call(d, args) = op.unspan() else {
+-                return None;
+-            };
+-            if *d != copy_nr {
+-                return None;
+-            }
+-            let (Value::Var(src), Some(Value::Var(dest))) =
+-                (args.first()?.unspan(), args.get(1).map(Value::unspan))
+-            else {
+-                return None;
+-            };
+-            (src != dest && !function.is_argument(*src))
+-                .then(|| holders.get(src).cloned())
+-                .flatten()
+-        })
+-        .unwrap_or_default()
+-}
+-
+ /// D-heap-7 — the whole LOCAL a return copies onto the return buffer, when the copy owns that
+ /// local's release.
+ ///

@@ -216,6 +216,31 @@ pub struct Variable {
     /// indirection parameters use, slowing every access to carry a compile-time fact.
     /// See loft#779 / `formal/binding.md` D-bind-8.
     amp_link: bool,
+    /// Does a `&` name this narrow integer local — a `&` bind, a `&` argument or a re-point?
+    ///
+    /// Such a local holds its type's FIELD encoding (`data::NarrowSlot`, @PLN167 decision 1),
+    /// so the `&u8` that names it is the byte pointer that names a field too.  Set on the
+    /// second pass at the `&`; read by both emitters, which run after the parse, so a use
+    /// written before the `&` in the body is emitted with the fact as well.
+    linked_narrow: bool,
+    /// `@FR-B-Ref-Lvalue`, `@FR-O-Borrow-Scalar` — the `&` LINK variable that names this local
+    /// as its place, or
+    /// `u16::MAX`.  Recorded on the TARGET rather than on the link, because a re-point
+    /// (`c = &x; c = &y`) gives one link two places and both must outlive it, while each
+    /// place is bound by a `&` once.
+    ///
+    /// A HEAP link publishes the same relation as a dep on its own type, because the borrow
+    /// fact rides `deps` (`@FR-O-Borrow`) and the free decision derives from it.  A SCALAR
+    /// link owns no store, has no free decision and so carries NO dep — which left the
+    /// relation with no channel at all for exactly the types the slot allocator needed it
+    /// for.  One question (who frees this) was answering for two; the second (how long must
+    /// the place live) is this field, kept apart so a scalar link does not read as a heap
+    /// borrow to every reader of `owns = dep.is_empty()`.
+    amp_linked_by: u16,
+    /// More than one `&` link named this local.  `amp_linked_by` then holds the last, so the
+    /// live range is extended conservatively to the widest link range in the function
+    /// instead — it can only EXTEND, so the answer stays sound where it is not tight.
+    amp_linked_many: bool,
     /// Was this bound with an explicit `&` at a COLLECTION — `d = &cv.data`, `a = &s.h`?
     ///
     /// The collection sibling of `amp_link`, kept apart from it because their READERS are
@@ -752,6 +777,9 @@ impl Function {
                 const_binding: false,
                 value_const: false,
                 amp_link: false,
+                linked_narrow: false,
+                amp_linked_by: u16::MAX,
+                amp_linked_many: false,
                 amp_container_link: false,
                 iteration_source: false,
                 first_def: u32::MAX,
@@ -1402,6 +1430,102 @@ impl Function {
         v.last_use = v.last_use.max(until);
     }
 
+    /// Record that `link` was bound `&target`, a LOCAL.  Called at the one `&`-bind
+    /// lowering; a re-point calls it again for the second place and both are kept, because
+    /// the fact lives on the TARGET.
+    pub fn record_amp_link(&mut self, link: u16, target: u16) {
+        if link == u16::MAX || target == u16::MAX || link == target {
+            return;
+        }
+        let Some(t) = self.variables.get_mut(target as usize) else {
+            return;
+        };
+        if t.amp_linked_by != u16::MAX && t.amp_linked_by != link {
+            t.amp_linked_many = true;
+        }
+        t.amp_linked_by = link;
+    }
+
+    /// A `&` LINK's target lives at least as long as the link — `@FR-B-Ref-Lvalue`, whose
+    /// whole content is that the link names a PLACE, and a place whose slot has been handed
+    /// to another local is not that place any more.
+    ///
+    /// `compute_intervals` ends a local's range at its last use BY NAME, and after `c = &x`
+    /// every read and write goes through `c`, so `x` looked dead at its bind.  `assign_slots`
+    /// then gave `x`'s slot to a later local and the interpreter read — and WROTE — the
+    /// usurper's bytes through the link: `c` answered `7` for `250`, and `c = 99` silently
+    /// changed the unrelated live local that had taken the slot.  Native was correct
+    /// throughout, because a link there is a raw pointer to a Rust local the compiler keeps
+    /// alive, so this was an `@FR-O-NoDiverge` divergence as well as a wrong answer.
+    ///
+    /// Two channels answer "which link names this local": a HEAP link's own dep list, read
+    /// the way `generation::hoist::link_targets` reads it, and — for a SCALAR link, which
+    /// carries no dep — `Variable::amp_linked_by`, recorded on the target at the `&` bind.
+    /// The walk is transitive and runs to a fixpoint, because a link may name a link.  It
+    /// only ever EXTENDS a range, so a local nothing links to is untouched and ordinary slot
+    /// reuse is unaffected.
+    pub fn extend_links_to_their_targets(&mut self) {
+        // The widest range any `&` link in this function has, for the rare local named by
+        // more than one link (`amp_linked_many`): the exact answer would need the set, and a
+        // range that is too WIDE only declines a slot reuse, where one too narrow is the
+        // defect this exists to close.
+        let broadest = self
+            .variables
+            .iter()
+            .filter(|v| matches!(v.type_def.base(), Type::RefVar(_)))
+            .map(|v| v.last_use)
+            .max()
+            .unwrap_or(0);
+        // At most one round per link in the chain, and a round that moves nothing stops.
+        for _ in 0..self.variables.len().max(1) {
+            let mut moved = false;
+            // The scalar channel: each target names its link, so read the link's range.
+            for t in 0..self.variables.len() {
+                let (by, many) = (
+                    self.variables[t].amp_linked_by,
+                    self.variables[t].amp_linked_many,
+                );
+                if by == u16::MAX {
+                    continue;
+                }
+                let want = if many {
+                    broadest
+                } else {
+                    self.variables.get(by as usize).map_or(0, |l| l.last_use)
+                };
+                if self.variables[t].last_use < want {
+                    self.variables[t].last_use = want;
+                    moved = true;
+                }
+            }
+            // The heap channel: each link names its targets in its own dep list.
+            for v in 0..self.variables.len() {
+                if !matches!(self.variables[v].type_def.base(), Type::RefVar(_)) {
+                    continue;
+                }
+                let (first, last) = (self.variables[v].first_def, self.variables[v].last_use);
+                for d in self.variables[v].type_def.depend() {
+                    let Some(t) = self.variables.get_mut(d as usize) else {
+                        continue;
+                    };
+                    if t.last_use < last {
+                        t.last_use = last;
+                        moved = true;
+                    }
+                    // A link bound before its target is written holds the target's slot from
+                    // the link's own bind, so the two ranges cannot be disjoint at either end.
+                    if first != u32::MAX && (t.first_def == u32::MAX || t.first_def > first) {
+                        t.first_def = first;
+                        moved = true;
+                    }
+                }
+            }
+            if !moved {
+                break;
+            }
+        }
+    }
+
     pub fn scope(&self, var_nr: u16) -> u16 {
         if var_nr as usize >= self.variables.len() {
             return u16::MAX;
@@ -1479,6 +1603,45 @@ impl Function {
 
     /// Replace all occurrences of `Type::Reference(tv_nr, _)` with `concrete`
     /// in every variable's type definition.  Used when instantiating a generic template.
+    /// @FR-G-Mono — once a template's variables are substituted, a dependency that names
+    /// nothing is dropped.  The template recorded it because a variable was still the type
+    /// variable's placeholder, a record — `acc = f(acc, x)` made `acc` depend on `x`.  At an
+    /// instance binding `x` to a scalar, nothing can be borrowed from it; bound to a `text`,
+    /// only a text can view it.  Kept, the dependency made an owning local read as a borrow:
+    /// `acc` at `vector<integer>` (or `vector<text>`) was given no store of its own, and the
+    /// copy of `init` into it reached a NULL vector, where the twin (`acc` depending on
+    /// itself) folds.
+    pub fn drop_scalar_deps(&mut self) {
+        // What each variable can lend: nothing (a scalar), a text's characters (a text), or a
+        // store (anything else).
+        let lends: Vec<u8> = self
+            .variables
+            .iter()
+            .map(|v| {
+                if crate::data::is_scalar(&v.type_def) {
+                    0
+                } else if matches!(v.type_def.base(), Type::Text(_)) {
+                    1
+                } else {
+                    2
+                }
+            })
+            .collect();
+        for v in &mut self.variables {
+            let is_text = matches!(v.type_def.base(), Type::Text(_));
+            let meaningful = |d: &u16| match lends.get(*d as usize) {
+                Some(0) => false,
+                Some(1) => is_text,
+                _ => true,
+            };
+            let deps = v.type_def.depend();
+            if !deps.iter().all(meaningful) {
+                let kept: Vec<u16> = deps.into_iter().filter(meaningful).collect();
+                v.type_def = v.type_def.with_deps(&crate::data::Deps::frame(kept));
+            }
+        }
+    }
+
     pub fn substitute_type(&mut self, tv_nr: u32, concrete: &Type) {
         let trace_target = crate::log_config::type_timeline_target();
         for (i, v) in self.variables.iter_mut().enumerate() {
@@ -2268,6 +2431,9 @@ impl Function {
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
+            linked_narrow: false,
+            amp_linked_by: u16::MAX,
+            amp_linked_many: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2305,6 +2471,10 @@ impl Function {
             // asks a copy; the move is an optimisation).
             uses: self.variables[var as usize].uses,
             uses_at_write: self.variables[var as usize].uses_at_write,
+            // A SPLIT of a linked local is a second place, and the `&` names the original;
+            // the copy is not the place the link holds, so it inherits no link.
+            amp_linked_by: u16::MAX,
+            amp_linked_many: false,
             write_source: (0, 0),
             argument: false,
             defined: self.variables[var as usize].defined,
@@ -2314,6 +2484,7 @@ impl Function {
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: self.variables[var as usize].amp_link,
+            linked_narrow: self.variables[var as usize].linked_narrow,
             amp_container_link: self.variables[var as usize].amp_container_link,
             iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
@@ -2353,6 +2524,9 @@ impl Function {
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
+            linked_narrow: false,
+            amp_linked_by: u16::MAX,
+            amp_linked_many: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -2389,6 +2563,9 @@ impl Function {
             lazy_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
+            linked_narrow: false,
+            amp_linked_by: u16::MAX,
+            amp_linked_many: false,
             amp_container_link: false,
             iteration_source: false,
             stack_allocated: false,
@@ -3191,6 +3368,36 @@ impl Function {
     /// otherwise invisible after parsing: `c = &v[0]` and `c = v[0]` emit the same IR.
     pub fn is_amp_link(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].amp_link
+    }
+
+    /// Record that a `&` names narrow local `var_nr` (see `Variable::linked_narrow`).  A local
+    /// whose type is not narrow takes no flag: it links as the 8-byte slot it is.
+    pub fn set_linked_narrow(&mut self, var_nr: u16) {
+        if (var_nr as usize) < self.variables.len()
+            && crate::data::NarrowSlot::of_type(self.tp(var_nr)).is_some()
+        {
+            self.variables[var_nr as usize].linked_narrow = true;
+        }
+    }
+
+    /// The field encoding `var_nr` holds, when it is a linked narrow local — or every narrow
+    /// local under `LOFT_LINK_ALL_NARROW=1`, the generation-time switch that makes the whole
+    /// corpus exercise the linked shape (@PLN167 A1's instrument).  `None` for every other
+    /// variable: the 8-byte slot, read and written as today.
+    #[must_use]
+    pub fn linked_narrow_slot(&self, var_nr: u16) -> Option<crate::data::NarrowSlot> {
+        if (var_nr as usize) >= self.variables.len() {
+            return None;
+        }
+        // The switch stands for "as if a `&` named it", which only a variable the author can
+        // write a `&` to can be: a compiler temp (a `??` or `as τ?` lowering's `__ncc_N`,
+        // `__dn4_N`) never is, and several lowerings declare their temps on paths of their
+        // own, so treating one as linked measures nothing the rule can produce.
+        let as_if_linked = link_all_narrow() && !self.is_compiler_generated(var_nr);
+        if !self.variables[var_nr as usize].linked_narrow && !as_if_linked {
+            return None;
+        }
+        crate::data::NarrowSlot::of_type(self.tp(var_nr))
     }
 
     /// Mark `var_nr` as bound with an explicit `&` at a COLLECTION — `d = &cv.data`,
@@ -4903,4 +5110,12 @@ mod loop_binding_dep_tests {
 #[must_use]
 pub fn owns_literal_backing_store(name: &str) -> bool {
     name.starts_with("__vdb") || name.starts_with("__kvb")
+}
+
+/// `LOFT_LINK_ALL_NARROW=1`: treat every narrow integer local as linked, so the linked
+/// representation is exercised by every program rather than by the few that write a `&` to
+/// one.  Read once per process.
+fn link_all_narrow() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))
 }

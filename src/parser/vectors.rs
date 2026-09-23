@@ -924,7 +924,7 @@ impl Parser {
             // the LHS is free to receive the chain's result, and wrap the (now void,
             // in-place) build so it YIELDS that local — making a literal receiver behave
             // exactly like a variable one.  Scoped to a `.` method chain: `.map` /
-            // `.filter` / `.reduce` route the receiver through `parse_vector_method`,
+            // `.filter` / `.reduce` route the receiver through their `#builtin` method,
             // and the map/filter cases keep the vector's element type so the LHS's
             // parsed type stays valid across passes.  (A trailing `[i]` index yields a
             // SCALAR, so the LHS's parsed vector type would clash with the index result
@@ -2927,6 +2927,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             ensure_tuple_defs_for_capture(&mut self.data, &mut self.lexer, &ctype);
             let attr_tp = self.closure_attr_type(&ctype);
             self.data.set_attr_type(closure_rec, a_nr, attr_tp);
+            self.note_shared_vector(closure_rec, &name, &ctype);
         }
         if self.data.def(closure_rec).known_type() == u16::MAX
             && !(0..self.data.attributes(closure_rec))
@@ -2935,6 +2936,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             crate::typedef::fill_database(&mut self.data, &mut self.database, closure_rec);
             self.database
                 .lay_out_record(self.data.def(closure_rec).known_type());
+        }
+    }
+
+    /// Record that the closure record `rec`'s attribute `name` shares the captured vector of
+    /// type `tp` — see [`Parser::closure_shared_vectors`].  A `&vector<τ>` capture shares its
+    /// pointee, as `closure_attr_type` stores it.
+    fn note_shared_vector(&mut self, rec: u32, name: &str, tp: &Type) {
+        let tp = tp.peel_link();
+        if matches!(tp, Type::Vector(_, _)) {
+            self.closure_shared_vectors
+                .insert((rec, name.to_string()), tp.clone());
         }
     }
 
@@ -2961,6 +2973,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 let attr_tp = self.closure_attr_type(tp);
                 self.data
                     .add_attribute(&mut self.lexer, record_d_nr, name, attr_tp);
+                self.note_shared_vector(record_d_nr, name, tp);
                 // loft#1540 — a capture of a read-only value is a read-only FIELD of the
                 // record: the body reaches it through `__closure.<name>`, and a write through
                 // a value-const field is refused at the write (`frozen_through`).
@@ -3566,6 +3579,20 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 "OpCopyRecord",
                 &[Value::Var(comp_var), Value::Var(elm), type_nr],
             ));
+        } else if self.is_type_var_element(in_t) {
+            // @FR-G-Mono — a TYPE VARIABLE's element is written in the shape the append
+            // `v += [x]` writes it, which each monomorph re-lowers at its concrete element
+            // (`rewrite_vector_write_triplets`); `set_field` below wraps the destination in a
+            // field read the rewrite does not match.  So `filter(v, f)` and `map(v, f)` inside a
+            // generic kept a RECORD copy per element at every scalar instance: the interpreter
+            // panicked ("DbRef store_nr … out of range", `text`: SIGSEGV) and `--native` did
+            // not compile (E0610).  The slice materialisation had the same fault.
+            let row = i32::from(self.data.def(ed_nr).known_type())
+                | i32::from(crate::keys::COPY_FRESH_DEST);
+            lp.push(self.cl(
+                "OpCopyRecord",
+                &[Value::Var(comp_var), Value::Var(elm), Value::Int(row)],
+            ));
         } else if let Some(op) = self.narrow_elm_set(in_t, elm, &Value::Var(comp_var)) {
             // A NARROW element gets the store op for its own width — the third site
             // `narrow_elm_set` exists for, beside the `+=` append and the slice.
@@ -3596,7 +3623,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if let Some(idx_var) = pre_var {
             for_steps.push(v_set(idx_var, Value::Int(0)));
         }
-        for_steps.push(create_iter);
+        for_steps.extend(super::collections::iter_init_steps(create_iter));
         for_steps.push(v_loop(lp, "For comprehension"));
         let mut ls: Vec<Value> = Vec::new();
         if block {
@@ -4020,14 +4047,22 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             if ed_nr != u32::MAX {
                 let known = self.data.def(ed_nr).known_type();
                 if known != u16::MAX {
-                    let elem_size = self.database.size(known);
+                    // `@FR-H-Stride` — the width is the ELEMENT's, which
+                    // `Parser::element_store_size` is the one home for: a narrow element
+                    // (`u8`/`i16`/`u32`) is one, two or four bytes wide and a nested vector
+                    // element is its handle's row, while `database.size(known)` answers 8 for
+                    // the integer base whatever the declaration said.  Asked here, that 8
+                    // reserved a `vector<u8>` literal eight times the bytes its own reads then
+                    // walked at stride 1 — the same disagreement loft#1420 closed for the four
+                    // operations it reached, arriving at a fifth site.
+                    let elem_size = self.element_store_size(in_t);
                     if elem_size > 0 {
                         ls.push(self.cl(
                             "OpPreAllocVector",
                             &[
                                 Value::Var(vec),
                                 Value::Int(res.len() as i32),
-                                Value::Int(i32::from(elem_size)),
+                                Value::Int(elem_size),
                             ],
                         ));
                     }

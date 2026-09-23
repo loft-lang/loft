@@ -4131,6 +4131,17 @@ impl Store {
         self.get_str(self.get_u32_raw(rec, pos)) == crate::state::STRING_NULL
     }
 
+    /// The store's DATA span — its buffer's address and its size in words — for a loop that
+    /// reads text elements through it ([`crate::vector::text_at`]): derived once beside a
+    /// held element base, valid for as long as the base is (the store's buffer does not move
+    /// while no store grows; the `Store` STRUCT may, when the slot table grows, which is why
+    /// this is the buffer's address and not a pointer to `self`).
+    #[must_use]
+    #[inline]
+    pub fn text_span(&self) -> (*const u8, u32) {
+        (self.ptr.cast_const(), self.size)
+    }
+
     #[inline]
     pub fn get_str<'a>(&self, rec: u32) -> &'a str {
         if rec == 0 || rec > i32::MAX as u32 {

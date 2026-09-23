@@ -2363,6 +2363,75 @@ impl Stores {
         e
     }
 
+    /// `@FR-R-PushFill`'s record clause — [`Self::push_record_hoisted`] through an open
+    /// [`crate::vector::PushWindow`]: the fresh element is the window's next slot, addressed
+    /// off the held base with no store resolved, zeroed there when `ZERO` (the heap and
+    /// struct-enum clauses' prefill), and the window's length is bumped by the group's
+    /// FINISH, not here — the element is invisible until then, as with the header form.
+    /// A window at capacity takes the growth arm: the record's length synced, the runtime's
+    /// append, a fresh header and window.
+    ///
+    /// # Safety
+    /// The window's base addresses element 0 of the vector `p` describes, in a store the
+    /// loop cannot grow but through this call (the emitter's admission).
+    ///
+    /// # Panics
+    /// Under `VERIFY`, when the frozen header no longer describes the vector.
+    ///
+    /// `#[inline(always)]` is load-bearing (`@FR-R-Cold`'s inverse): the fast path is a
+    /// compare, a zero and three stores, yet left to LLVM it stayed a call per mint —
+    /// measured 23.4 µs against 21.0 with the body inlined on the consumer bench's
+    /// `enum_match` (3 000 mints).  The growth arm is outlined beside it.
+    #[allow(clippy::inline_always)] // measured, not habitual — see the doc paragraph above
+    #[inline(always)]
+    pub unsafe fn push_record_windowed<const ZERO: bool, const VERIFY: bool>(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        w: &mut crate::vector::PushWindow,
+        db: &crate::keys::DbRef,
+        size: u32,
+    ) -> crate::keys::DbRef {
+        // An absent vector's window has capacity 0 (`push_window`), so one test covers it.
+        if w.len >= w.cap {
+            *w = self.push_record_window_grow(p, w.len, db, size);
+        }
+        if VERIFY {
+            self.push_window_verify(p, *w, db, size);
+        }
+        self.records_created += 1;
+        if ZERO {
+            // SAFETY: `len < cap` slots of `size` bytes fit the record the base addresses.
+            unsafe {
+                std::ptr::write_bytes(w.base.add(w.len as usize * size as usize), 0, size as usize)
+            };
+        }
+        // The slot's position needs no overflow test: `len < cap` after the test above,
+        // and `cap` elements of `size` bytes are the record's own extent, a `u32`.
+        crate::keys::DbRef {
+            store_nr: p.h.store_nr,
+            rec: p.h.rec,
+            pos: w.len * size + 8,
+        }
+    }
+
+    /// The growth arm of [`Self::push_record_windowed`], outlined (`@FR-R-Cold`): the
+    /// record's length synced first (the reservation reads it), one element's room claimed
+    /// through the runtime's own growth, and a fresh header and window answered by value.
+    #[cold]
+    #[inline(never)]
+    fn push_record_window_grow(
+        &mut self,
+        p: &mut crate::vector::PushHeader,
+        len: u32,
+        db: &crate::keys::DbRef,
+        size: u32,
+    ) -> crate::vector::PushWindow {
+        self.push_window_sync(p, len);
+        crate::vector::reserve_more(db, 1, size, &mut self.allocations);
+        *p = crate::vector::push_header(db, &self.allocations);
+        crate::vector::push_window(p, size, &self.allocations)
+    }
+
     /// The finish half of [`Self::push_record_hoisted`]: the length bump, written to BOTH
     /// the header and the record — the one step that makes the element visible, exactly as
     /// `record_finish`'s `vector_finish` was for the unfused group.

@@ -1244,6 +1244,20 @@ fn parse_instr_line(line: &str) -> Option<(Option<i64>, &str, &str)> {
 fn encode_const(out: &mut Vec<u8>, a: &crate::data::Attribute, val: &str) -> Result<(), String> {
     let bad = |t: &str| format!("cannot parse {t} value {val:?} for `{}`", a.name);
     match &a.typedef {
+        // loft#654's rung, which `variables::size` and `Data::rust_type` already carry and
+        // this ladder did not: a declared `size(N)` picks the width, so a `size(4)` alias
+        // (`i32` / `u32` — the `min` bias of every narrow field op since loft#1620) is
+        // WRITTEN as four bytes by `variables::size` and would be re-assembled here as
+        // eight.  `dump_attribute` carries the matching rung; the three must move together
+        // or the disassembly round-trip stops being byte-identical.
+        Type::Integer(s)
+            if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) && s.min >= 0 =>
+        {
+            out.extend_from_slice(&val.parse::<u32>().map_err(|_| bad("u32"))?.to_le_bytes());
+        }
+        Type::Integer(s) if s.forced_size.map(std::num::NonZeroU8::get) == Some(4) => {
+            out.extend_from_slice(&val.parse::<i32>().map_err(|_| bad("i32"))?.to_le_bytes());
+        }
         Type::Integer(s) if s.range() - 1 <= 256 && s.min == 0 => {
             out.push(val.parse::<i32>().map_err(|_| bad("u8"))? as u8);
         }

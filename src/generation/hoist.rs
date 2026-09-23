@@ -360,8 +360,8 @@ pub fn nested_counted_loops<'a>(
 
 /// The variables `body` rebinds anywhere — a `Set`, a `TuplePut`, an `Iter` binding.
 #[must_use]
-pub fn written_vars(body: &Block) -> HashSet<u16> {
-    let mut w = rebound_vars(body);
+pub fn written_vars(body: &Block, data: &Data, vars: &crate::variables::Function) -> HashSet<u16> {
+    let mut w = rebound_vars(body, data, vars);
     for op in &body.operators {
         op.any_node(&mut |n| {
             if let Value::Iter(v, ..) = n {
@@ -373,17 +373,93 @@ pub fn written_vars(body: &Block) -> HashSet<u16> {
     w
 }
 
-fn rebound_vars(body: &Block) -> HashSet<u16> {
+/// The variables `body` rebinds — a `Set` or a `TuplePut`, and the RE-MINT of a hidden
+/// pass-2 buffer (`OpDatabase`/`OpDatabaseNP` on a `__ref_p2_N`: a literal handed to a
+/// call, a `?`-discharge's absent record), which the IR spells as a bare call while it
+/// clears the buffer's store and claims a fresh record, so every path rooted at the buffer
+/// names another record after it — closed over LINKS: a `&`-bound local reads whatever its
+/// target holds NOW, so a rebind of the target repoints every path rooted at the link, and
+/// the link counts as rebound too ([`close_over_links`]).  The one home of the question
+/// every hoist asks of its root; a site that asks it of a single variable uses
+/// [`rebinds_root`].  (Measured without the mint clause, once `(R-InPlace)`'s hidden-buffer
+/// allowance took a heap-holding record: a push header hoisted off the literal buffer's
+/// vector field before the loop, the buffer re-minted per pass, the element lost —
+/// `1575-…`'s c3 read `null(oob)` for `1`.)
+fn rebound_vars(body: &Block, data: &Data, vars: &crate::variables::Function) -> HashSet<u16> {
     let mut rebound: HashSet<u16> = HashSet::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
             if let Value::Set(v, _) | Value::TuplePut(v, _, _) = n {
                 rebound.insert(*v);
             }
+            // A `__ref_p2_` buffer as the first operand of anything but its mint (a field
+            // set, the call it is handed to) is a use, not a rebind.
+            if let Some(args) =
+                call_named(n, data, "OpDatabase").or_else(|| call_named(n, data, "OpDatabaseNP"))
+                && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+                && *b < vars.count()
+                && vars.name(*b).starts_with("__ref_p2_")
+            {
+                rebound.insert(*b);
+            }
             false
         });
     }
+    close_over_links(&mut rebound, vars);
     rebound
+}
+
+/// The variables `v` LINKS to: a `g = &e` local's type is a `RefVar` whose deps name its
+/// target, and a link to a link follows through.  Empty for a variable that is no link.
+fn link_targets(vars: &crate::variables::Function, v: u16) -> Vec<u16> {
+    let mut out: Vec<u16> = Vec::new();
+    let mut todo = vec![v];
+    while let Some(x) = todo.pop() {
+        if x >= vars.count() || !matches!(vars.tp(x).base(), Type::RefVar(_)) {
+            continue;
+        }
+        for d in vars.tp(x).depend() {
+            if d != v && !out.contains(&d) {
+                out.push(d);
+                todo.push(d);
+            }
+        }
+    }
+    out
+}
+
+/// Add to `rebound` every link whose target — or whose target's target — is in it.  A
+/// header, a base, an address or a memo hoisted off `g.tags` with `g = &e` describes the
+/// record `e` named on the way in; once the body rebinds `e`, `g` reads another record
+/// while the hoisted fact still describes the first (measured 2026-09-22: `link_view`
+/// answered 15 for 16 on native, with every switch on or off).
+fn close_over_links(rebound: &mut HashSet<u16>, vars: &crate::variables::Function) {
+    loop {
+        let mut grew = false;
+        for v in 0..vars.count() {
+            if !rebound.contains(&v) && link_targets(vars, v).iter().any(|t| rebound.contains(t)) {
+                rebound.insert(v);
+                grew = true;
+            }
+        }
+        if !grew {
+            return;
+        }
+    }
+}
+
+/// Does statement node `n` rebind `root` — or a variable `root` links to?  The
+/// single-variable form of [`rebound_vars`]'s question.
+fn rebinds_root(n: &Value, root: u16, vars: &crate::variables::Function) -> bool {
+    // `unspan`, as every shape test over a statement must: a rebind the parser wrapped for its
+    // source position is the same rebind, and a `Span` that hid it would leave a stale header
+    // on the very shape this predicate exists to decline.
+    match n.unspan() {
+        Value::Set(v, _) | Value::TuplePut(v, _, _) => {
+            *v == root || link_targets(vars, root).contains(v)
+        }
+        _ => false,
+    }
 }
 
 /// The vector paths `body` indexes, in the order they appear, minus those whose root the
@@ -391,9 +467,9 @@ fn rebound_vars(body: &Block) -> HashSet<u16> {
 /// field itself is an `OpSetRef`, which is not in [`IN_PLACE_SET_OPS`] and blocks outright).
 /// Enforces `@FR-R-Header`: which paths a loop derives a header for.
 fn vector_candidates(body: &Block, data: &Data, def_nr: u32) -> Vec<(PathKey, Value)> {
-    let rebound = rebound_vars(body);
-    let mut found: Vec<(PathKey, Value)> = Vec::new();
     let vars = data.def(def_nr).variables();
+    let rebound = rebound_vars(body, data, vars);
+    let mut found: Vec<(PathKey, Value)> = Vec::new();
     for op in &body.operators {
         op.any_node(&mut |n| {
             if let Value::Call(d, args) = n
@@ -585,7 +661,7 @@ pub fn hoistable(
         growth_free: false,
     };
     let vars = data.def(def_nr).variables();
-    let rebound = rebound_vars(body);
+    let rebound = rebound_vars(body, data, vars);
     // (key, record type, the call) in first-appearance order.
     let mut found: Vec<(ScalarKey, u16, Value)> = Vec::new();
     if tiers.scalars {
@@ -1319,7 +1395,7 @@ fn callee_inputs_inner(
     }
     let vars = def.variables();
     let params = u16::try_from(def.attributes().len()).ok()?;
-    let rebound = rebound_vars(body);
+    let rebound = rebound_vars(body, data, vars);
     // What the body writes, as the caller's gate accounts it (`@FR-R-Callee`): a
     // return-buffer writer (§ V-ac — `brush_sample` answering a `Smp` through its buffer)
     // reaches its buffer's record type WHOLE, which no parameter's field shares; any other
@@ -1531,7 +1607,7 @@ pub fn view_def_header(
     for op in rest {
         op.any_node(&mut |n| {
             match n {
-                Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == *d => rebound = true,
+                _ if rebinds_root(n, *d, vars) => rebound = true,
                 Value::Call(op_nr, args)
                     if args.len() == 3
                         && is_element_address(data, *op_nr)
@@ -1959,7 +2035,7 @@ fn view_extent_verdict(
     for op in rest {
         op.any_node(&mut |n| {
             match n {
-                Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == *r => rebound = true,
+                _ if rebinds_root(n, *r, vars) => rebound = true,
                 Value::Call(g, args) if (*g as usize) < data.definitions.len() => {
                     let name = data.def(*g).name();
                     let on_r =
@@ -3911,6 +3987,40 @@ pub fn push_window_ok(
     let Some(body) = push_loop_body(lp) else {
         return Err("not a counted push loop".to_string());
     };
+    let mut parts: Vec<&Value> = Vec::new();
+    for s in body {
+        // A counted push contributes its VALUE operand alone, and the path's own
+        // reservation its count: the vector operand of either is the window's business.
+        match s.unspan() {
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args.first().and_then(|f| vector_path(data, f)).as_ref()
+                        == Some(&p.path)
+                    && (FUSABLE_PUSHES
+                        .iter()
+                        .any(|(n, _, _)| *n == data.def(*d).name())
+                        || data.def(*d).name() == "OpPreAllocVector") =>
+            {
+                parts.extend(args.iter().skip(1));
+            }
+            _ => parts.push(s),
+        }
+    }
+    window_parts_ok(&parts, root, root_is_retbuf, vars, data, cache)
+}
+
+/// The window clause's aliasing test over the `parts` of a loop body that are NOT the
+/// pushes themselves: none names the pushed `root`, none names a variable that may view
+/// the root's store, and none writes a store.  Shared by the scalar window
+/// ([`push_window_ok`]) and the record one ([`mint_window_ok`]).
+fn window_parts_ok(
+    parts: &[&Value],
+    root: u16,
+    root_is_retbuf: bool,
+    vars: &crate::variables::Function,
+    data: &Data,
+    cache: &mut HashMap<u32, bool>,
+) -> Result<(), String> {
     // The variables that COULD name the root's store: asked per variable through the one
     // naming predicate (`Value::reads_var`), so every spelling of a mention is covered.
     let may_view: Vec<u16> = (0..vars.count())
@@ -3925,39 +4035,302 @@ pub fn push_window_ok(
                 && !separate_parameter
         })
         .collect();
-    for s in body {
-        // A counted push contributes its VALUE operand alone, and the path's own
-        // reservation its count: the vector operand of either is the window's business.
-        let parts: Vec<&Value> = match s.unspan() {
-            Value::Call(d, args)
-                if (*d as usize) < data.definitions.len()
-                    && args.first().and_then(|f| vector_path(data, f)).as_ref()
-                        == Some(&p.path)
-                    && (FUSABLE_PUSHES
-                        .iter()
-                        .any(|(n, _, _)| *n == data.def(*d).name())
-                        || data.def(*d).name() == "OpPreAllocVector") =>
-            {
-                args.iter().skip(1).collect()
-            }
-            _ => vec![s],
-        };
-        for part in parts {
-            if part.reads_var(root) {
-                return Err("the body names the pushed vector outside its pushes".to_string());
-            }
-            if let Some(x) = may_view.iter().find(|&&x| part.reads_var(x)) {
-                return Err(format!(
-                    "the body names `{}`, which may view the pushed vector",
-                    vars.name(*x)
-                ));
-            }
-            if may_write_store(part, data, cache) {
-                return Err("the body writes a store beside its pushes".to_string());
-            }
+    for part in parts {
+        if part.reads_var(root) {
+            return Err("the body names the pushed vector outside its pushes".to_string());
+        }
+        if let Some(x) = may_view.iter().find(|&&x| part.reads_var(x)) {
+            return Err(format!(
+                "the body names `{}`, which may view the pushed vector",
+                vars.name(*x)
+            ));
+        }
+        if may_write_store(part, data, cache) {
+            return Err("the body writes a store beside its pushes".to_string());
         }
     }
     Ok(())
+}
+
+/// `@FR-R-PushFill`'s record clause — a counted loop whose body appends RECORD elements to
+/// one plain vector through mint groups, possibly under `if` arms, and nothing else.
+pub struct MintLoop {
+    pub path: PathKey,
+    pub vector: Value,
+    /// The element's width in bytes.
+    pub size: u32,
+    pub inclusive: bool,
+    pub index_var: u16,
+    pub next_var: Option<u16>,
+    /// The most mint groups any one pass runs — one per arm of a branch, summed along a
+    /// straight line — which times the trip count bounds the appends.
+    pub mints_per_pass: u32,
+}
+
+/// Recognise the counted RECORD-append loop (`@FR-R-PushFill`'s record clause): `for i in
+/// a..b { if … { v += [R { … }] } else { v += [S { … }] } }` — a plain `for` over a counted
+/// range whose body's only writes to the path are mint groups (the parser's reservation,
+/// mint, field sets on the fresh element, finish), each group over ONE plain vector whose
+/// element qualifies for the record push, standing at the body's top level or under `if`
+/// arms.  Declines — and says why under `LOFT_TRACE_PUSH_FILL=1` — on an early exit or an
+/// inner loop, a group on a second path, any other write reaching the path, or a range end
+/// that is not a simple invariant.  Answers the loop's facts and the `hi` end; the aliasing
+/// test is [`mint_window_ok`]'s.
+///
+/// # Errors
+/// The reason the loop is not one — what `LOFT_TRACE_PUSH_FILL=1` prints.
+pub fn mint_loop<'a>(
+    lp: &'a Block,
+    data: &Data,
+    stores: &Stores,
+    vars: &crate::variables::Function,
+    heap_push: bool,
+) -> Result<(MintLoop, &'a Value), String> {
+    let Some(body) = plain_for_body(lp) else {
+        return Err("not a plain counted loop".to_string());
+    };
+    let rc = range_counters(lp, data)?;
+    let early = body.operators.iter().any(|s| {
+        s.any_node(&mut |n| {
+            matches!(
+                n,
+                Value::Break(_)
+                    | Value::Return(_)
+                    | Value::Continue(_)
+                    | Value::Loop(_)
+                    | Value::Yield(_)
+                    | Value::Parallel(_)
+            )
+        })
+    });
+    if early {
+        return Err("the body can leave early, or loops".to_string());
+    }
+    // Every mint in the body, all on one qualifying path.
+    let mut target: Option<MintTarget> = None;
+    let mut mints = 0usize;
+    for s in &body.operators {
+        let mut bad: Option<String> = None;
+        s.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && data.def(*d).name() == "OpNewRecord"
+            {
+                match mint_target(data, stores, "OpNewRecord", args, vars) {
+                    Some(t) if mint_push_qualifies(stores, t.vector_tp, heap_push) => {
+                        match &target {
+                            Some(tt) if tt.path != t.path => {
+                                bad = Some("the mints reach two paths".to_string());
+                            }
+                            Some(_) => {}
+                            None => target = Some(t),
+                        }
+                        mints += 1;
+                    }
+                    _ => {
+                        bad = Some(
+                            "a mint's element does not qualify for the record push".to_string(),
+                        )
+                    }
+                }
+            }
+            false
+        });
+        if let Some(why) = bad {
+            return Err(why);
+        }
+    }
+    let Some(target) = target else {
+        return Err("no record mint in the body".to_string());
+    };
+    if mints == 0 {
+        return Err("no record mint in the body".to_string());
+    }
+    // Every op naming the path is a mint group's own: the reservation, the mint, the finish.
+    let mut other = false;
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if let Value::Call(d, args) = n
+                && (*d as usize) < data.definitions.len()
+                && let Some(first) = args.first()
+                && vector_path(data, first).as_ref() == Some(&target.path)
+                && !matches!(
+                    data.def(*d).name(),
+                    "OpPreAllocVector" | "OpNewRecord" | "OpFinishRecord"
+                )
+            {
+                other = true;
+            }
+            false
+        });
+    }
+    if other {
+        return Err("another op reaches the path".to_string());
+    }
+    let mut banned = vec![rc.loop_var, rc.index, target.path.0];
+    if let Some(nx) = rc.next {
+        banned.push(nx);
+    }
+    if !simple_invariant(rc.hi, data, &banned) {
+        return Err("the range's end is not a simple invariant".to_string());
+    }
+    // The most groups one pass runs: arms of an `if` take the larger, a straight line sums.
+    fn most_mints(
+        n: &Value,
+        data: &Data,
+        stores: &Stores,
+        vars: &crate::variables::Function,
+        path: &PathKey,
+    ) -> u32 {
+        match n.unspan() {
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpNewRecord"
+                    && mint_path(data, stores, "OpNewRecord", args, vars).as_ref()
+                        == Some(path) =>
+            {
+                1
+            }
+            Value::If(c, t, e) => {
+                most_mints(c, data, stores, vars, path)
+                    + most_mints(t, data, stores, vars, path)
+                        .max(most_mints(e, data, stores, vars, path))
+            }
+            _ => {
+                let mut total = 0u32;
+                n.for_each_child(&mut |child| total += most_mints(child, data, stores, vars, path));
+                total
+            }
+        }
+    }
+    let mints_per_pass = body
+        .operators
+        .iter()
+        .map(|s| most_mints(s, data, stores, vars, &target.path))
+        .sum::<u32>()
+        .max(1);
+    let elem = stores.content(target.vector_tp);
+    let size = u32::from(stores.size(elem));
+    Ok((
+        MintLoop {
+            path: target.path,
+            vector: target.vector,
+            size,
+            inclusive: rc.inclusive,
+            index_var: rc.index,
+            next_var: rc.next,
+            mints_per_pass,
+        },
+        rc.hi,
+    ))
+}
+
+/// `@FR-R-PushFill`'s record clause — may the record-append loop `lp`, which [`mint_loop`]
+/// answered `m` for, run its mints through a [`crate::vector::PushWindow`]?  The scalar
+/// window's condition, with a mint group's own ops as "the pushes": the fresh element's
+/// field sets write the slot the window handed out and are not store writes to this test,
+/// while their VALUE operands, the group's reservation count and every other statement are
+/// the parts that must name neither the root nor a variable that may view its store, and
+/// write no store.
+///
+/// # Errors
+///
+/// The condition that does not hold — what `LOFT_TRACE_PUSH_FILL=1` prints.
+pub fn mint_window_ok(
+    lp: &Block,
+    m: &MintLoop,
+    data: &Data,
+    def_nr: u32,
+    cache: &mut HashMap<u32, bool>,
+) -> Result<(), String> {
+    let vars = data.def(def_nr).variables();
+    let root = m.path.0;
+    let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
+    if root >= vars.count() || !(owned_local(vars, root) || root_is_retbuf) {
+        return Err("the appended vector's root is not exclusive".to_string());
+    }
+    let Some(body) = plain_for_body(lp) else {
+        return Err("not a plain counted loop".to_string());
+    };
+    // The elements minted by the groups: their field sets are the group's own writes.
+    let mut fresh: HashSet<u16> = HashSet::new();
+    for s in &body.operators {
+        s.any_node(&mut |n| {
+            if let Value::Set(e, rhs) = n
+                && matches!(rhs.unspan(), Value::Call(d, args)
+                    if (*d as usize) < data.definitions.len()
+                        && data.def(*d).name() == "OpNewRecord"
+                        && args.first().and_then(|f| vector_path(data, f)).as_ref() == Some(&m.path))
+            {
+                fresh.insert(*e);
+            }
+            false
+        });
+    }
+    fn collect<'v>(
+        n: &'v Value,
+        data: &Data,
+        path: &PathKey,
+        fresh: &HashSet<u16>,
+        parts: &mut Vec<&'v Value>,
+    ) {
+        match n.unspan() {
+            Value::If(c, t, e) => {
+                parts.push(c);
+                collect(t, data, path, fresh, parts);
+                collect(e, data, path, fresh, parts);
+            }
+            Value::Block(b) => {
+                for op in &b.operators {
+                    collect(op, data, path, fresh, parts);
+                }
+            }
+            Value::Insert(ops) => {
+                for op in ops {
+                    collect(op, data, path, fresh, parts);
+                }
+            }
+            Value::Line(_) => {}
+            Value::Set(e, rhs) if fresh.contains(e) => {
+                // The mint itself: its operands beyond the vector.
+                if let Value::Call(_, args) = rhs.unspan() {
+                    parts.extend(args.iter().skip(1));
+                }
+            }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && args.first().and_then(|f| vector_path(data, f)).as_ref() == Some(path)
+                    && matches!(data.def(*d).name(), "OpPreAllocVector" | "OpFinishRecord") =>
+            {
+                // The finish's second operand is the fresh element itself — the group's
+                // own slot, not a view the window must fear.
+                let skip = if data.def(*d).name() == "OpFinishRecord" {
+                    2
+                } else {
+                    1
+                };
+                parts.extend(args.iter().skip(skip));
+            }
+            Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && IN_PLACE_SET_OPS.contains(&data.def(*d).name())
+                    && args
+                        .first()
+                        .and_then(|f| vector_path(data, f))
+                        .is_some_and(|(root, _)| fresh.contains(&root)) =>
+            {
+                // A field set on the fresh element — its own field, or one reached
+                // through its inline sub-records (`pos.x`): the value is the part.
+                parts.extend(args.iter().skip(1));
+            }
+            _ => parts.push(n),
+        }
+    }
+    let mut parts: Vec<&Value> = Vec::new();
+    for s in &body.operators {
+        collect(s, data, &m.path, &fresh, &mut parts);
+    }
+    window_parts_ok(&parts, root, root_is_retbuf, vars, data, cache)
 }
 
 /// Recognise `OpPreAllocVector(path, count, size)` over a pure path (@PLN157 § V-q): the
@@ -4222,7 +4595,7 @@ pub fn mint_group(
                 }
                 continue;
             }
-            Value::Set(v, _) | Value::TuplePut(v, _, _) if *v == path.0 => return None,
+            n if rebinds_root(n, path.0, vars) => return None,
             _ => {}
         }
         // A statement of the group that is not one of its mints or finishes: admitted on
@@ -4442,12 +4815,17 @@ fn all_scalar_record(data: &Data, def_nr: u32) -> bool {
 }
 
 /// @PLN157 § V-ad — `OpDatabase`/`OpDatabaseNP` into a hidden null-discharge buffer
-/// (`__ref_p2_N`, the record `e = tbl[i]?` mints an ABSENT element into) whose record is
-/// all-scalar: the allocation takes a store of its own from a null slot, or clears the
-/// buffer's OWN store, and that store hosts no vector, text or reference — so no header
-/// can go stale and no scalar hoist can be reached except through the buffer's own type.
-/// Answers that type.  Only the pass-2 discharge buffers qualify: a `__ref_N` work-ref may
-/// be a return buffer, and a return buffer may be a record the caller offered.
+/// (`__ref_p2_N`, the record `e = tbl[i]?` mints an ABSENT element into): the allocation
+/// takes a store of its own from a null slot, or clears the buffer's OWN store — a store
+/// only the site's `__ncc_N` temp reaches, and the site rebinds that temp on every run, so
+/// no loop-invariant path names anything in it and no header or base can go stale, whatever
+/// the record holds; a scalar hoist can be reached only through the buffer's own type, which
+/// the caller reads as written whole.  Answers that type.  (Until 2026-09-22 an all-scalar
+/// record was required — the `Chunk { …, hexes: vector<Hex> }` a game's chunk lookup
+/// discharges kept its loop on no header at all; a growth of the buffer's vector field from
+/// the body is a push through a non-pure path, which the gate declines on its own.)  Only
+/// the pass-2 discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and a
+/// return buffer may be a record the caller offered.
 /// Enforces `@FR-R-InPlace` (the hidden-buffer allowance).
 fn null_buffer_alloc(
     name: &str,
@@ -4467,9 +4845,7 @@ fn null_buffer_alloc(
     if *b >= vars.count() || !vars.name(*b).starts_with("__ref_p2_") {
         return None;
     }
-    let tp = plain_record_type(data, vars.tp(*b))?;
-    let def_nr = vars.tp(*b).heap_def_nr()?;
-    all_scalar_record(data, def_nr).then_some(tp)
+    plain_record_type(data, vars.tp(*b))
 }
 
 fn frees_a_record(name: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
@@ -7731,7 +8107,13 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     let every: HashSet<u32> = HashSet::new();
     for d_nr in 0..data.definitions.len() as u32 {
         let def = data.def(d_nr);
-        if matches!(def.code(), Value::Null) {
+        // A generic TEMPLATE is never emitted — only its instances are (`@FR-G-Mono`) — so a
+        // call through a fn-ref inside one dispatches nowhere.  Asked of it anyway, its
+        // `fn(T) -> U` reads `fn(DbRef) -> DbRef` (the placeholder is a record) and declined
+        // every record-to-record function in the program: the stdlib's `map`/`filter`/
+        // `reduce` declarations (@PLN165 E5–E7) turned the value-record return off for a
+        // method as plain as `rdouble(self: RColor) -> RColor`.
+        if matches!(def.code(), Value::Null) || def.def_type() == DefType::Generic {
             continue;
         }
         let vars = def.variables();
@@ -10931,7 +11313,11 @@ fn same_chain(a: &Value, b: &Value) -> bool {
 /// every entry — the form LLVM peels the first-use test out of (measured: declared one
 /// loop out, the flag's state at entry is unknown and the test stays in every tap).
 #[must_use]
-pub fn invariant_chains(lp: &Block, data: &Data) -> Vec<InvariantChain> {
+pub fn invariant_chains(
+    lp: &Block,
+    data: &Data,
+    vars: &crate::variables::Function,
+) -> Vec<InvariantChain> {
     if lp
         .operators
         .iter()
@@ -10939,7 +11325,7 @@ pub fn invariant_chains(lp: &Block, data: &Data) -> Vec<InvariantChain> {
     {
         return Vec::new();
     }
-    let mut banned = rebound_vars(lp);
+    let mut banned = rebound_vars(lp, data, vars);
     for op in &lp.operators {
         super::non_sentinel::collect_escapes(data, op, &mut banned);
     }

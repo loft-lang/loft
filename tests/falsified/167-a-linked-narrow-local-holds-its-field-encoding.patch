@@ -1,0 +1,29 @@
+Reintroduce the defect this guard catches: a linked narrow LOCAL that does not hold its
+type's field encoding, because the bias is dropped.
+
+A1's claim is not "a linked narrow local is narrow" — pre-A1 it was wide and every cell in
+this guard still passed, which is why `--falsify` against the commit before A1 reports INERT.
+The claim is that the local holds the SAME BYTES a FIELD of its type holds, so that one `&u8`
+pointer or `DbRef` reads a local and a field alike (`@FR-B-Ref-Uniform`).  The way to
+contradict that is a WRONG encoding, not a missing one.
+
+This drops the type's minimum from the LOCAL's encoding alone — the store ops keep theirs —
+which is exactly the two's-complement-Rust-local option P0 rejected and measured: a store `i8`
+holds `-1` as `0x7F`, a Rust `i8` as `0xFF`.  One line, both backends, and no field, element
+or keyed read is perturbed, so the guard's failing cells name the local's own encoding and
+nothing else.
+
+diff --git a/src/variables/mod.rs b/src/variables/mod.rs
+--- a/src/variables/mod.rs
++++ b/src/variables/mod.rs
+@@ -3271,7 +3271,9 @@
+         if !self.variables[var_nr as usize].linked_narrow && !as_if_linked {
+             return None;
+         }
+-        crate::data::NarrowSlot::of_type(self.tp(var_nr))
++        // FALSIFIER: the local keeps its WIDTH but loses its BIAS, so it no longer holds what
++        // a field of the same type holds.
++        crate::data::NarrowSlot::of_type(self.tp(var_nr)).map(|mut s| { s.min = 0; s })
+     }
+ 
+     /// Mark `var_nr` as bound with an explicit `&` at a COLLECTION — `d = &cv.data`,

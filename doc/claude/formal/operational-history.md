@@ -6,7 +6,7 @@
 > past its own history stops being a contract they can skim.  The rules doc carries the CURRENT
 > state (how many are open, and which); everything below is the record behind it.
 
-OPEN: **2** (D-op-1/2 — both NOT resolvable in a release, below; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
+OPEN: **2** (D-op-1/2 — both NOT resolvable in a release, below; D-op-12, opened and closed 2026-09-22, loft#1611; D-op-11, opened and closed 2026-09-21, loft#1575; D-op-5, opened 2026-08-25 — two
 spellings of a following null-check still reported, the sibling of a wrapper-list drift fixed the
 same day — CLOSED 2026-09-02; the null-model keystone deviations D-op-null-1/2 both CLOSED 2026-07-10 by
 keystone steps 2–3, D-op-6 opened AND closed 2026-08-29 by the first `@FR-E-NullArg` walk,
@@ -233,6 +233,30 @@ only as strong as the rules above it, not only as strong as its oracle.
   identical on interp and native, before AND after the fix.  So D-op-1 closing would not have
   found this, and the shared front end needs its own oracle rather than a differential one.
   Related: the reference-route discipline in [DEBUG.md](../DEBUG.md).
+
+### D-op-12 — OPENED AND CLOSED (2026-09-22, loft#1611): on `--native`, the work inside a conditional ARM ran before the test and on every path
+
+- **Violates:** `(E-Left)`, and `(E-And)`/`(E-Or)` with it — operands reduce left first, and a
+  short-circuiting operator does not evaluate its right operand at all once the left has
+  decided.
+- **Where:** `generation/pre_eval.rs` hoists a node into a `let _pre_N = …` in FRONT of the
+  statement, to keep two user calls out of one generated expression.  Its walk collected from
+  an `if`'s test AND both arms, and `a && b` lowers to `if a { b } else { false }` — so the
+  arm's node was evaluated first, and whatever the test decided.
+- **Effect:** `bump(a) == 4 && "{a}" == "[1,2,3,4]"` answered FALSE on `--native` (`a` was
+  formatted before `bump(a)` wrote it) and `true || "{e}" == "{bump(e)}"` RAN `bump(e)`; the
+  interpreter answered both right, so the backends disagreed in silence.  Any hoistable node
+  in an arm carries it — a formatted string, a user call.
+- **Found:** 2026-09-22 while writing @PLN165 E5–E7's guard, whose `&&` chain over a mutating
+  call read false on one backend only; the guard bound the call's result first and the issue
+  was filed against `main`.
+- **Closed:** the hoist takes the TEST only, and each non-block arm opens its own pre-eval
+  scope inside the braces it already emits (`open_arm_pre_evals` / `close_arm_pre_evals`), its
+  substitution map EXTENDING the statement's rather than replacing it — so a node the arm still
+  needs hoisted is hoisted where the arm runs, and the separation the pass exists for is kept
+  per arm.  A BLOCK arm's statements collect their own, as every block's do.  Guard
+  `tests/scripts/1611-a-conditional-arms-work-runs-only-when-that-arm-does.loft`, whose
+  `both` cell is two user calls in one arm.
 
 ### D-op-11 — OPENED AND CLOSED (2026-09-21, loft#1575): a literal passed to a call that returns it, rebound in a loop to the local it reads, read the cleared record
 

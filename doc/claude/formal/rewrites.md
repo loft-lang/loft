@@ -305,7 +305,26 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  under the held address.  The single exit is the counted loop's own
                  (no `break`, `return`, `continue` or inner loop), so the close runs
                  on every path out.  A body that fails any of these keeps the header
-                 push, which costs the window and never a value.
+                 push, which costs the window and never a value.  THE RECORD CLAUSE:
+                 the pushed values may be RECORD MINT GROUPS — the parser's
+                 reservation, mint, field sets on the fresh element and finish —
+                 standing at the body's top level or under `if` arms, each over ONE
+                 plain vector whose element qualifies for the record push
+                 (R-PushRec); the arms of a branch are exclusive, so the most groups
+                 any one pass runs, times the trip count, bounds the appends and the
+                 reservation holds.  The window's admission is the scalar clause's,
+                 read over the groups' operands: a field set whose root is the fresh
+                 element is a write through the window's slot (it can name no other
+                 element), the finish's element operand is that slot too, and any
+                 other mention of the vector — a read, a view of it or of an element
+                 named in the body, a second pushed path, a group whose element's
+                 own heap the literal fills (a claim in the store whose base the
+                 window holds) — keeps the header mints.  A windowed mint takes its
+                 slot from the window (`base + len·size`, zeroed through the held
+                 address, the record's length untouched), the group's field sets and
+                 the address (R-RecPtr)'s mint clause holds are that pointer, its
+                 finish is the window's length bump, and the close writes the
+                 record's length once after every copy of the loop.
 
   (R-Invariant)  an integer chain — `+`, `-`, `*`, negation, `&`, `|`, `^` (their
                  `Nullable` twins included) over literals and variables — that a loop
@@ -399,6 +418,45 @@ Sites: `hoist::range_counters`, `hoist::plain_for_body`, `hoist::push_loop`,
 `push_window_grow` / `push_window_close`.  Cells `tests/scripts/158-push-window.loft`
 (w1–w12 a window; d1–d8 the declines; a1–b1 the aliasing cases; r1 the growth condition),
 pins `tests/push_window.rs`.
+
+**(R-PushFill)'s record clause, in words.** 2026-09-22, @PLN158 round 4
+(`bench/portal/analysis/round-3.md` § Built).  The consumer bench's `enum_match` builds
+its edits as `for i in 0..3000 { if i % 3 == 0 { edits += [SetHeight { … }] } else if … {
+edits += [Paint { … }] } else { edits += [Wall { … }] } }`, and every record went through
+the header push: a capacity test in bytes, a store resolved through
+`allocations[store_nr]`, the slot zeroed, the length bumped in the header AND written back
+to the record.  The window clause did not reach it for two reasons that are one — a mint
+group is four statements the scalar push's recogniser does not read, and it stands under
+an `if` arm, which the scalar clause declines — and neither matters to the window: the
+arms are exclusive, so at most one group runs a pass, the trip count times that bounds the
+appends, and the window never grows inside the loop.  Hand-priced on the emitted Rust
+before any emitter code (the build loop edited by script: reserved for its trips, a
+`push_window` opened on the header, each arm's mint taking `base + len·32` and zeroing it
+through the window, its finish `len += 1`, the close after every copy the guarded chain
+emits): 35.9 → 20.4 µs, hash `1493`; built, 23.4 µs — the difference was the fast path
+staying a CALL until `#[inline(always)]` (`Stores::push_record_windowed`: one growth test
+`len >= cap`, the slot at `len·size + 8`, the growth arm outlined beside it).  The first
+hand placement closed only the CHECKED copy of the loop and read hash `0`: a window whose
+close does not run leaves the record's length at 0, and the consuming loop reads an empty
+vector — which is why the close stands after every guarded copy, and why the VALUE channel
+is the falsifier here (`LOFT_HOIST_VERIFY=1` compares the frozen header against a fresh
+derivation at every mint and cannot see a length nothing wrote).  Sabotage, measured: the
+finish emitted as nothing, r1 answers `0 0 0 0` for `300 7261 6400 6566` on the built
+form; the switch restores the interpreter's answer.  Two admissions the first build got
+wrong, each a cell: a NESTED record element's field set (`pos.x` on the fresh element)
+read as a view of the vector because its path had a field on the root — the root being
+the fresh element decides, not the path's length (r5); and the finish's own element
+operand counted as a mention of the vector (every group would have declined).  Switch
+`LOFT_NO_PUSH_WINDOW` (and `LOFT_NO_PUSH_FILL`, one rule); trace `LOFT_TRACE_PUSH_FILL=1`
+names the clause that declined; falsifiers `LOFT_HOIST_VERIFY=1`, `LOFT_POISON` /
+`LOFT_POISON_CLAIM` (the slot's zero is the window's own, so a mint that skipped it reads
+the poison), `LOFT_STRICT_STORES`, `LOFT_NATIVE_LEAK_CHECK`, and the interpreter through
+the cells.  Sites: `hoist::mint_loop` / `MintLoop`, `hoist::mint_window_ok` (sharing
+`window_parts_ok` with `push_window_ok`), `Output::mint_reserve` / `windowed_mint_of`, the
+windowed-mint address in `Output::bind_record_ptr`, the registry's `NewRecordEmitter` and
+`FinishRecordEmitter` windowed arms, `Stores::push_record_windowed` /
+`push_record_window_grow`.  Cells `tests/scripts/158-record-window.loft` (r1–r3, r5, r9
+and `build` a window; r4, r7, r8, r10, r11 the declines), pins `tests/record_window.rs`.
 
 **(R-Base)'s join clause, in words.** 2026-09-22, @PLN158 F1
 (`bench/portal/analysis/vector-build.md`).  `v[i].f` was already one load — the scalar
@@ -501,17 +559,58 @@ in-place write moves nothing, so no header, aliased or not, can go stale; that i
 why the header needs no write set while a scalar (R-Scalar) does.  Switch
 `LOFT_NO_WRITE_HOIST`.  Sites: `hoist::IN_PLACE_SET_OPS`,
 `hoist::blocks_header_hoist`.
+**The text clause of (R-Base)** (2026-09-22, @PLN158 round 4): a TEXT element read —
+`OpGetText(OpGetVector*(P, 4, i), 0)`, a walk's element or an indexed `v[i]` — in a loop
+that holds P's header and element base reads the element's record number through the
+base (one bounds test, one `u32` load) and slices the text off the vector's store's DATA
+SPAN, derived once beside the base (`vector::text_span_of`: the buffer's address and size,
+not a pointer to the `Store` struct, which may move when the slot table grows while the
+buffer cannot).  A text element is a record in the same store as its vector, so every
+element's bytes lie in that span.  Past the end — where a walk's last read lands before
+its length test breaks — is the null text without a call, as `get_vector` answers any
+non-negative index at or beyond the length (a null vector's length is 0); a NEGATIVE index
+counts from the end and takes the unfused path (`text_elem_cold`, outlined: folded in, the
+hot half lost its inline and the walk its registers — 9.0 µs against 6.6 on `join`).
+`LOFT_HOIST_VERIFY=1` re-derives header, base and span at every read.  A twin's input
+base carries no span, and such a read keeps the store-resolving form.  Measured: the
+stdlib `join` 11.0 → **6.6 µs** (−40 %, 2.11× → ~1.15× of its twin), hash `2df9`.  Switch
+`LOFT_NO_TEXT_BASE`; cells `tests/scripts/158-text-base.loft` b1–b8 (falsified by the
+past-the-end arm answering the element before it); pins `tests/text_borrow.rs`.  Sites:
+`Output::fused_text_read`, the span beside each base in `Output::bind_loop_headers` and
+`Output::bind_view_header`, the arm in `LazySplitNextEmitter`, the pre-eval exemption in
+`Output::collect_pre_evals_inner`, `vector::text_elem_at`, `vector::text_at`,
+`vector::text_span_of`, `Store::text_span`.
+**The link clause** (2026-09-22): a hoist's ROOT is loop-invariant only while nothing the
+root LINKS to is rebound — `g = &e` reads whatever `e` holds now, so a rebind of `e` in
+the body repoints every path rooted at `g`, and `g` counts as rebound (`hoist::rebound_vars`
+closes the set over links, `hoist::rebinds_root` answers the single-root form for a view's
+header, a record's address and a mint group's path).  Measured before it: `g.tags`' header
+hoisted across `e = h[i]`, native read `h[0]`'s tags on every pass (15 for 16, every
+switch on or off); cells `tests/scripts/158-link-rebind.loft` l1–l7.
 **The hidden-buffer allowance** (@PLN157 § V-ad): the allow-list also admits
 `OpDatabase`/`OpDatabaseNP` into a null-discharge buffer — the hidden `__ref_p2_N` that
-`e = tbl[i]?` mints an ABSENT record element into — when the record is all-scalar.
-The allocation takes a store of its own from a null slot or clears the buffer's OWN
-store, and that store hosts no vector, text or reference, so no header can name
-anything in it; the field sets that follow are (R-InPlace) sets and walk on their own,
-and the scalar tier reads the allocation as the record's type whole (R-Scalar).  Only
-the pass-2 discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and
-a return buffer may be a record the caller offered (R-Callee's second half carries
-that case).  Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`.
-Site: `hoist::null_buffer_alloc`.
+`e = tbl[i]?` mints an ABSENT record element into — whatever the record holds.  The
+allocation takes a store of its own from a null slot or clears the buffer's OWN store,
+and that store is reachable only through the site's `__ncc_N` temp, which the site
+rebinds on every run: no loop-invariant path names anything in it, so no header and no
+base can go stale — and the buffer's own re-mint in a loop body counts as a REBIND of
+the buffer (`hoist::rebound_vars`), so a path rooted at a pass-2 buffer the body re-mints
+takes no holder either: a literal handed to a call (`s = me(Bx { v: [i], n: 7 })`) is
+built in such a buffer and re-minted per pass, and a push header hoisted off its vector
+field would push into the record the previous pass claimed (measured: `1575-…`'s c3
+read `null(oob)` for `1` the moment the allowance took a heap-holding record); the field sets that follow are (R-InPlace) sets and walk on their own,
+and the scalar tier reads the allocation as the record's type whole (R-Scalar).  A growth
+of the buffer's own store from the body — an append to the absent element's vector
+field — is a push through a non-pure path, which the gate declines on its own.  Until
+2026-09-22 (@PLN158 round 3, P1) the record had to be ALL-SCALAR, on the reading that a
+store hosting no vector could not be named by a header; the invariant-path argument is
+the one that holds, and the restriction had kept `map_set`'s loop — three
+`m.chunks[i]?` joins over `Chunk { …, hexes: vector<Hex> }` — on no header at all, each
+join a store resolution and `len(m.chunks)` a call per iteration.  Only the pass-2
+discharge buffers qualify: a `__ref_N` work-ref may be a return buffer, and a return
+buffer may be a record the caller offered (R-Callee's second half carries that case).
+Switch `LOFT_NO_NULL_BUFFER_HOIST`; falsifier `LOFT_HOIST_VERIFY=1`; cells
+`tests/scripts/158-heap-discharge-buffer.loft`.  Site: `hoist::null_buffer_alloc`.
 **The copy clause** (2026-09-21, @PLN158 R5).  A consumer writes the copy-out / mutate /
 write-back a Rust or C author writes — `e = ents[i]?; e.energy += e.speed; …; ents[i] = e`.
 In loft `e` is a VIEW of `ents[i]` (`(B-View)`), so the last statement copies the element
@@ -801,18 +900,25 @@ registry's `NewRecordEmitter`, `Output::write_elem_first_mint`.
 ```
   (R-Wrapper)    a call to a STDLIB function whose whole body is one native op over
                  its own parameters and constants, with leaf arguments (a variable,
-                 a literal) and no text operand or result, is emitted as that op
-                 with the arguments in the operand positions.  A USER function's
-                 call is observable — the live tier may flip it to the interpreter,
-                 and its frame is on the shadow call stack — and stays a call.
+                 a literal) or a PURE VECTOR PATH (constant field projections over a
+                 variable) the pre-evaluation holds no binding for, and no text
+                 operand or result, is emitted as that op with the arguments in the
+                 operand positions.  A USER function's call is observable — the live
+                 tier may flip it to the interpreter, and its frame is on the shadow
+                 call stack — and stays a call.
 ```
 
 **In words.** @PLN157 § V-o.  The wrapper's compiled Rust body IS the op's template,
 so for a frameless, unflippable stdlib method the op is the call; `len(d)` after a
-view binding then reads the header.  Leaf arguments only, because the op's operands
-are emitted from a fresh list the pre-evaluation map (keyed on node addresses)
-cannot see.  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.  Sites:
-`hoist::one_op_wrapper`, `Output::wrapper_op`.
+view binding then reads the header.  Leaf arguments, because the op's operands are
+emitted from a fresh list the pre-evaluation map (keyed on node addresses) cannot see —
+and, since 2026-09-22 (@PLN158 round 3), a pure vector path too: side-effect free and
+never bound by the pre-evaluation, its clone emits what the original would, and as the
+op's operand it is what a held header serves.  Before that `for i in 0..len(m.chunks)`
+kept `len` a CALL per iteration — a store resolution and a length load — beside the
+header the loop already held for `m.chunks` (`map_set`'s bound, and 88 such loops in
+the corpus and the libraries).  Switch `LOFT_NO_WRAPPER_INLINE`; pin `tests/wrapper_op.rs`.
+Sites: `hoist::one_op_wrapper`, `Output::wrapper_op`.
 
 ### A callee's invariant inputs cross the call
 
@@ -1201,6 +1307,22 @@ end (`0..=10` against `0..=9`, `i * 1e18` crossing i64::MAX between them), so th
 verdict is a claim about the counter's top bound and nothing else — a top taken one too LOW
 is the only unsound direction, and it turns b3 red and makes `LOFT_HOIST_VERIFY=1` panic
 naming the operator.
+**The accumulator clause** (2026-09-22, @PLN158 round 4): a second self-stepping shape
+read off a loop, after the counters.  A local seeded ONCE by a ranged value (`n = 0`) and
+stepped only by LITERALS (`n += 1`, `n -= 2`), every step either straight-line after the
+seed in the seed's own block or inside ONE loop there that is a character walk `(R-CharWalk)`
+over a text the body never writes, is ranged: such a walk makes at most `size(T)` trips (a
+`u32` word), so per run of the block `n` moves by at most `Σ|c| · u32::MAX` over the walked
+steps plus `Σ|c|` over the straight ones, and the seed plus that bound is `n`'s range
+whenever it fits the type — the checked step cannot fault, so the processor's operator
+answers what the template would.  The seed's block may itself sit in a loop (each pass
+re-seeds); a step under a second loop, under a loop that is not such a walk (a counted loop:
+its trips are not a text's size; a walk over a text the body appends to), a step by a
+non-literal, a second seed, a write to `n` anywhere else, a parameter seed or `n` handed out
+by reference declines.  Measured: the stdlib bench's `char_walk` (`n += 1` / `n += 2` under
+`for c in src`) 12.5 → 10.45 µs (−17 %), hash `2e18`; `LOFT_HOIST_VERIFY=1` compares every
+plain step with its template.  Cells `tests/scripts/158-walk-accumulator.loft` a1–a11, pins
+`tests/walk_accumulator.rs`.  Site: `range::seed_accumulators`.
 Sites: `generation::range::{range, op_range, range_vars, plain_form}`, the range arm in
 `ops::int_arith`, `Output::op_range`, `non_sentinel::callee_returns_non_sentinel`.
 
@@ -1834,6 +1956,45 @@ buffer, so its buffer guard would always drop empty.  The lean frame carries no 
 why the rule is lean-only: in a named tier the frame is also what `stack_trace()` and a
 panic's frame block read.  Switch `LOFT_NO_LEAF_CHAIN` (one step finer than
 `LOFT_NO_LEAF_PRELUDE`).  Site: `Output::is_frameless_chain`.
+
+### A frame no registrant can reach carries no buffer guard
+
+```
+  (R-GuardFree)  a function from which NOTHING that registers a fn-ref return buffer
+                 is reachable — over the closure of its call graph, cycles INCLUDED:
+                 no fn-ref call, no `parallel`, no `yield`, no `OpFreeRefOrHandUp`,
+                 no callee without a loft body that is a user's native function or
+                 takes a fn-ref — constructs no `FnRefBufGuard`, in every tier.  The
+                 depth count stays: it is the recursion cap both backends share.
+```
+
+**In words.**  @PLN158 round 3, C1.  A `--native` frame entered with a `FnRefBufGuard`
+whose drop releases the fn-ref return buffers registered above its mark; three sites
+register — the fn-ref dispatch (`cr_fnref_buf`, `cr_fnref_minted`, both under a `CallRef`)
+and the op `OpFreeRefOrHandUp` (a capturing lambda's join tail) — and a `parallel` body, a
+`yield` and a native callee are opaque.  Where none of those is reachable no entry can ever
+stand above the mark, so the drop is empty every time and the guard is two `Cell` reads paid
+for nothing: `fib`'s frame was 27 % of its row.  `(R-LeafChain)` already elides it — with the
+whole prelude — for an ACYCLIC chain in the lean tier; the guard never depended on
+acyclicity (only the depth count does), so this rule reaches the recursive function in every
+tier, and keeps its depth push.  The predicate is a breadth-first closure with the
+per-body half cached (`Output::registers_buffers`); a `#rust`-bodied standard function is
+the body's own work, as `(R-Leaf)` reads an op, and a stdlib function taking a fn-ref would
+be opaque (none does today).  Measured on `fib(30)`: 11.3 → 7.4 ms (−34 %), 4.1× → ~2.5× of
+its Rust twin, hash `cb228`.  The stack-pointer overflow check the round priced beside it
+(a further −15 %) is DECLINED: `MAX_CALL_DEPTH` is a cap both backends share and report
+identically (`runtime_errors.rs`, `native.rs` pin "exceeded 10000 stack frames"), and a check
+against the machine's stack would fault at a machine-dependent depth — the disagreement
+`formal/operational.md` D-op-1 forbids.  Switch `LOFT_NO_GUARD_FREE`; trace
+`LOFT_TRACE_GUARD_FREE` (each frame that keeps its guard, naming the registrant); scored on
+the LEAK channel — cells `tests/scripts/158-guard-free.loft` g1–g9 under
+`LOFT_NATIVE_LEAK_CHECK=1` / `LOFT_STRICT_STORES=1` (falsified by answering `true` for every
+frame: g5's three delivered buffers leak), pins `tests/guard_free.rs`.  The cells also found
+a leak of their own, unrelated to the rule: @PLN150's borrowed-return marker taken only on a
+MATCH stayed armed past an unrelated copy and matched a reused slot number later
+(`158-fnref-borrowed-marker.loft`); it is now taken by the first copy after the call, as the
+interpreter's is.  Sites: `Output::registers_buffers`, `Output::is_guard_free`, the guard
+line in `Output::output_function`'s prelude.
 
 ### A fast path inlines; its cold half is outlined
 

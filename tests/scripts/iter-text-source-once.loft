@@ -1,0 +1,124 @@
+// `(I-Text)` / `(I-For)`: `it := ⟨0, src⟩` — a `for` loop's SOURCE is evaluated ONCE, before
+// the first round.  Measured before the fix, on both backends alike: a text source that was
+// a CALL was evaluated three times per round (the character read, the null test and the
+// length test each re-spelled it) — `for c in f()` called `f` twelve times for three
+// characters, an inclusive range end nine times for three, and a side effect in the source
+// ran with every one of them.  A text source that is not a PLACE (a call, a literal, an
+// operator expression, an element read, a branch) is now bound to a hidden local before
+// the loop; a variable and a field path are read as before.  The interpreter is the oracle
+// and every value below is hand-computed from the rule.  Cells: a call source (s1), a
+// literal with its byte indexes (s2), a concatenation (s3), nested call sources (s4), an
+// empty result (s5), a multibyte result's `#index` / `#next` (s6), a comprehension (s7), a
+// body writing the call's argument (s8), a source inside an outer loop, rebound per pass
+// (s9), an element source the body overwrites (s10), a `par` walk over a literal (s11),
+// the source ordered before the body (s12), `s.trim()` with the body writing `s` (s13), a
+// branch source (s14), a variable and a field path — read per round, as before (s15).
+// @falsified-at: c9cc94b81 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/iter-text-source-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel — the control evaluates a call source three times per round,
+//   so the evaluation COUNT the cells read back off `st.calls` is wrong there and the first
+//   assertion (s1, `st.calls == 1`) fails.
+//   WITNESS: on c9cc94b81 s1 prints `s1 3 12` where this file says `s1 3 1`, on both
+//   backends alike; the run exits 1 at that assertion.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees, and every
+//   character count and `#index` / `#next` value is the same on both — only the evaluation
+//   count moves, so a run scored on any channel but the assertions would learn nothing.
+struct St { calls: integer, s: text }
+struct In { s: text }
+struct Outer { inner: In }
+fn srct(st: St) -> text { st.calls += 1; "abc" }
+fn srcu(st: St) -> text { st.calls += 1; "xy" }
+fn empty(st: St) -> text { st.calls += 1; "" }
+fn wide(st: St) -> text { st.calls += 1; "1😊8" }
+fn char_one(c: character) -> integer { if c == 'l' { 10 } else { 1 } }
+
+fn s1() {
+  st = St { calls: 0, s: "" };
+  n = 0; for c in srct(st) { n += 1; }
+  println("s1 {n} {st.calls}");
+  assert(n == 3 && st.calls == 1, "s1");
+}
+fn s2() {
+  n = 0; k = 0; for c in "abc" { n += 1; k += c#index; }
+  println("s2 {n} {k}");
+  assert(n == 3 && k == 3, "s2");
+}
+fn s3() {
+  st = St { calls: 0, s: "" };
+  n = 0; for c in srct(st) + "!" { n += 1; }
+  println("s3 {n} {st.calls}");
+  assert(n == 4 && st.calls == 1, "s3");
+}
+fn s4() {
+  st = St { calls: 0, s: "" };
+  n = 0; for c in srct(st) { for d in srcu(st) { n += 1; } }
+  println("s4 {n} {st.calls}");
+  assert(n == 6 && st.calls == 4, "s4");
+}
+fn s5() {
+  st = St { calls: 0, s: "" };
+  n = 0; for c in empty(st) { n += 1; }
+  println("s5 {n} {st.calls}");
+  assert(n == 0 && st.calls == 1, "s5");
+}
+fn s6() {
+  st = St { calls: 0, s: "" };
+  n = 0; k = 0; m = 0; for c in wide(st) { n += 1; k += c#index; m += c#next; }
+  println("s6 {n} {k} {m} {st.calls}");
+  assert(n == 3 && k == 6 && m == 12 && st.calls == 1, "s6");
+}
+fn s7() {
+  st = St { calls: 0, s: "" };
+  v = [for c in srct(st) { c#index }];
+  println("s7 {len(v)} {v[2]} {st.calls}");
+  assert(len(v) == 3 && v[2] == 2 && st.calls == 1, "s7");
+}
+fn s8() {
+  st = St { calls: 0, s: "pqr" };
+  n = 0; for c in srct(st) { n += 1; st.s = "zz"; }
+  println("s8 {n} {st.s} {st.calls}");
+  assert(n == 3 && st.s == "zz" && st.calls == 1, "s8");
+}
+fn s9() {
+  st = St { calls: 0, s: "" };
+  n = 0; for i in 0..3 { for c in srct(st) { n += 1; } }
+  println("s9 {n} {st.calls}");
+  assert(n == 9 && st.calls == 3, "s9");
+}
+fn s10() {
+  v = ["ab", "cde"];
+  n = 0; for c in v[1] { n += 1; v[1] = "z"; }
+  println("s10 {n} {v[1]}");
+  assert(n == 3 && v[1] == "z", "s10");
+}
+fn s11() {
+  n = 0; for ch in "hello" par(r = char_one(ch), 2) { n += r; }
+  println("s11 {n}");
+  assert(n == 23, "s11");
+}
+fn s12() {
+  st = St { calls: 0, s: "" };
+  for c in srct(st) { st.calls += 100; }
+  println("s12 {st.calls}");
+  assert(st.calls == 301, "s12");
+}
+fn s13() {
+  s = "  ab  ";
+  n = 0; for c in s.trim() { n += 1; s = "zzzzzz"; }
+  println("s13 {n} {s}");
+  assert(n == 2 && s == "zzzzzz", "s13");
+}
+fn s14() {
+  b = true;
+  n = 0; for c in if b { "ab" } else { "xyz" } { n += 1; }
+  m = 0; for c in if !b { "ab" } else { "xyz" } { m += 1; }
+  println("s14 {n} {m}");
+  assert(n == 2 && m == 3, "s14");
+}
+fn s15() {
+  s = "hello"; n = 0; for c in s { n += 1; if n == 1 { s = "zz"; } }
+  o = Outer { inner: In { s: "pqr" } }; m = 0; for c in o.inner.s { m += 1; }
+  println("s15 {n} {m}");
+  assert(n == 2 && m == 3, "s15");
+}
+fn main() { s1(); s2(); s3(); s4(); s5(); s6(); s7(); s8(); s9(); s10(); s11(); s12(); s13(); s14(); s15(); }

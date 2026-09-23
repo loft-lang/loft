@@ -983,6 +983,12 @@ pub struct Parser {
     /// hidden parameter, and the value form assigns the arms' temps into the buffer var.
     /// Keyed by name because a pass rebuilds the variable table; recorded on both passes.
     pub(crate) branch_sunk_vectors: std::collections::HashSet<(u32, String)>,
+    /// The closure-record attributes that SHARE a captured vector, by `(record, attribute)`,
+    /// with the vector's type.  `closure_attr_type` stores such a capture as a 12-byte `DbRef`
+    /// spelled `Reference(element)` — the spelling a shared RECORD capture has too — so the
+    /// drop cascade reads this to walk the vector rather than release one element-typed
+    /// record at the vector's slot (loft#1606).
+    pub(crate) closure_shared_vectors: std::collections::HashMap<(u32, String), Type>,
     /// Variable number of the __closure parameter inside a lambda body (second pass).
     /// `u16::MAX` when not inside a capturing lambda.
     pub(crate) closure_param: u16,
@@ -1602,6 +1608,7 @@ impl Parser {
             rebound_captures: std::collections::HashMap::new(),
             captured_names: Vec::new(),
             branch_sunk_vectors: std::collections::HashSet::new(),
+            closure_shared_vectors: std::collections::HashMap::new(),
             fn_lambdas: std::collections::HashMap::new(),
             closure_param: u16::MAX,
             cur_type_vars: Vec::new(),
@@ -3719,8 +3726,14 @@ impl Parser {
         // later input and a debugger's eval resolve their names under that scope, and where
         // a definition colliding with a stdlib one is a collision of ONE key.  A gate that
         // asks "is this the reader's code?" therefore reads the definition's FILE, not this
-        // id — `Data::is_owned_def`.
-        self.lambda_counter = 0;
+        // id.
+        //
+        // The lambda counter CONTINUES where the session left it, and only the two passes of
+        // THIS input share a start (`lambda_base` below).  Reset to 0 here, a second REPL
+        // input carrying a lambda minted `__lambda_0` again while the first input's
+        // definition was still in the session: *"Cannot redefine '__lambda_0'"*, so a session
+        // could hold one lambda and no more.
+        let lambda_base = self.lambda_counter;
         self.fn_lambdas.clear();
         self.declared_capabilities.clear();
         self.member_access.clear();
@@ -3743,7 +3756,8 @@ impl Parser {
         self.deferred_unknown.clear();
         self.resolutions.clear();
         self.data.reset();
-        self.lambda_counter = 0;
+        // Pass 2 mints the same names pass 1 did, so it starts where pass 1 started.
+        self.lambda_counter = lambda_base;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
         self.first_pass = false;
@@ -3789,7 +3803,9 @@ impl Parser {
         self.lexer.parse_string(text, filename);
         self.deferred_unknown.clear();
         self.resolutions.clear();
-        self.lambda_counter = 0;
+        // The counter continues, as `parse_str`'s does and for the same reason: the session
+        // still holds the definitions the previous input minted.
+        let lambda_base = self.lambda_counter;
         self.fn_lambdas.clear();
         self.data.source = source;
         self.parse_file();
@@ -3802,7 +3818,7 @@ impl Parser {
         }
         self.deferred_unknown.clear();
         self.resolutions.clear();
-        self.lambda_counter = 0;
+        self.lambda_counter = lambda_base;
         self.fn_lambdas.clear();
         self.lexer.parse_string(text, filename);
         self.first_pass = false;
@@ -5707,7 +5723,10 @@ impl Parser {
                 }
             } else {
                 let orig = std::mem::replace(code, Value::Null);
-                if matches!(orig, Value::Var(_)) {
+                if let Value::Var(v) = orig {
+                    // @PLN167 decision 1 — handed to a `&` parameter, a narrow local holds its
+                    // field encoding from here on (`Variable::linked_narrow`).
+                    self.vars.set_linked_narrow(v);
                     *code = self.cl("OpCreateStack", &[orig]);
                 } else if crate::data::is_scalar(ref_tp)
                     && Self::is_amp_place(&orig, &self.data)
@@ -7638,6 +7657,12 @@ impl Parser {
     /// lowered in the monomorph's frame through `emit_tuple_set_ops`, the concrete append's
     /// own member-by-member write.
     pub(crate) const TV_TUPLE_ELEM: &'static str = "tvtupleelem";
+    /// An element READ of a `vector<T>` whose `T` is bound to a TUPLE: the template read a
+    /// reference to the stored element, and every consumer of the value — a callback, a
+    /// return, a local — expects the stack tuple the concrete twin unboxes it into.  The
+    /// substitution cannot mint the unboxing temp (it has no frame), so it stamps the read and
+    /// the monomorph lowers it through `unbox_tuple_from_dbref`.
+    pub(crate) const TV_TUPLE_READ: &'static str = "tvtupleread";
     /// The value [`Parser::null_value`] answers for a type still a TYPE VARIABLE — a `match`
     /// join's fallback, a branch with nothing to yield — asked again of the concrete type by
     /// each monomorph.  Apart from [`Self::TV_NULL_BLOCK`] because every type has this one:
@@ -7659,6 +7684,11 @@ impl Parser {
     /// itself, and to a call of the stdlib declaration's instance otherwise — what the
     /// instance's hand-written twin reaches either way.
     pub(crate) const TV_SORT: &'static str = "tvsort";
+    /// A `reduce(v, init, f)` whose accumulator is still a TYPE VARIABLE (@PLN165 E7): the
+    /// monomorph folds with the special form where the accumulator is a scalar or `text`, and
+    /// calls the declaration's instance otherwise.  The block's result carries the three
+    /// argument types as a tuple, so substitution makes them concrete.
+    pub(crate) const TV_REDUCE: &'static str = "tvreduce";
     /// A capture READ inside a template lambda: `[Var(__closure), Text(name), read]`.  The
     /// template's closure record lays a capture typed by a type variable out at no width, so
     /// the read is re-lowered by NAME against the instance's own record
@@ -8471,6 +8501,7 @@ impl Parser {
         for (holder, bound_to) in bindings {
             vars.substitute_type(*holder, bound_to);
         }
+        vars.drop_scalar_deps();
         // P241 fix (2026-05-11): post-substitution rewrite of the
         // parametric vector-element-write triplet to the primitive
         // shape, plus elm-var type patch.  Runs after both code
@@ -8506,6 +8537,12 @@ impl Parser {
         let before_work: std::collections::HashSet<u16> =
             self.vars.work_texts().into_iter().collect();
         let outer_set_call_refs = std::mem::take(&mut self.set_call_refs);
+        let mut code = code;
+        let returned = self.data.def(d_nr).returned().clone();
+        if matches!(returned, Type::Optional(_)) && Self::every_result_is_a_tuple_read(&code, true)
+        {
+            Self::keep_returned_tuple_reads(&mut code, true, &returned);
+        }
         let mut code = self.rewrite_generic_type_defaults(code);
         self.settle_parametric_yield_copies(&mut code);
         self.stage_text_self_reads(&mut code, tmpl_vars);
@@ -10687,8 +10724,163 @@ impl Parser {
         self.push_fnref_text_buffers(args, &work_vars);
     }
 
+    /// A NULLABLE result at a tuple `T` (`fn first<T>(v: vector<T>) -> T? { v[0] }`) is the
+    /// stored element's REFERENCE — `(τ, σ)?` has no stack spelling, and
+    /// `an-absent-tuple-meets-the-type-its-author-declares` pins what it answers — so a tuple
+    /// element read that IS the result keeps the reference instead of being unboxed
+    /// (`TV_TUPLE_READ`).  Unboxed, the return boxed the tuple again into a record of its own
+    /// that no caller freed: one `__tuple` store leaked per call.  `tail` says whether `v`
+    /// is in a result position: the body's tail, a tail block's tail, a tail `if`'s arms, and
+    /// every `return`'s value wherever it stands.  Answers whether `v` now yields that
+    /// reference; a block that does is retyped to the result `ret`, as a hand-written
+    /// function's is — left at the stack tuple, an `if` arm's block exit was sized for the
+    /// tuple while it held a reference (the interpreter read past the frame).  An `if` yields
+    /// it when every arm does or is absent (`null`), and its absent arms are retyped with it.
+    ///
+    /// Only where EVERY result is such a read or absent ([`Self::every_result_is_a_tuple_read`]):
+    /// a result that also mints on some path (a tuple parameter, a local, a literal) would
+    /// be a borrow on one path and an owned record on another, which a call read without a
+    /// binding does not free (`@FR-O-Complete`'s join, the residual QUALITY.md B7t records).
+    /// There every read stays unboxed, every path mints, and the caller owns the result.
+    fn keep_returned_tuple_reads(v: &mut Value, tail: bool, ret: &Type) -> bool {
+        match v {
+            Value::Block(bl)
+                if tail && bl.name == Self::TV_TUPLE_READ && bl.operators.len() == 1 =>
+            {
+                *v = bl.operators.remove(0);
+                true
+            }
+            Value::Span(b) => Self::keep_returned_tuple_reads(&mut b.1, tail, ret),
+            Value::Return(inner) => {
+                Self::keep_returned_tuple_reads(inner, true, ret);
+                false
+            }
+            Value::Block(bl) => {
+                let last = bl.operators.len().saturating_sub(1);
+                let mut yields = false;
+                for (i, op) in bl.operators.iter_mut().enumerate() {
+                    let got = Self::keep_returned_tuple_reads(op, tail && i == last, ret);
+                    yields = tail && i == last && got;
+                }
+                if yields && matches!(bl.result.base(), Type::Tuple(_)) {
+                    bl.result = ret.clone();
+                }
+                yields
+            }
+            Value::If(c, t, e) => {
+                Self::keep_returned_tuple_reads(c, false, ret);
+                let then = Self::keep_returned_tuple_reads(t, tail, ret);
+                let other = Self::keep_returned_tuple_reads(e, tail, ret);
+                let yields = tail
+                    && (then || other)
+                    && (then || Self::is_absent_arm(t))
+                    && (other || Self::is_absent_arm(e));
+                if yields {
+                    Self::retype_absent_arm(t, ret);
+                    Self::retype_absent_arm(e, ret);
+                }
+                yields
+            }
+            _ => {
+                v.for_each_child_mut(&mut |child| {
+                    Self::keep_returned_tuple_reads(child, false, ret);
+                });
+                false
+            }
+        }
+    }
+
+    /// Is every result of `v` a tuple element read (`TV_TUPLE_READ`) or absent?  `tail`
+    /// says whether `v` is in a result position, as in [`Self::keep_returned_tuple_reads`];
+    /// a statement is searched for the `return`s it holds.
+    fn every_result_is_a_tuple_read(v: &Value, tail: bool) -> bool {
+        match v {
+            Value::Block(bl) if tail && bl.name == Self::TV_TUPLE_READ => true,
+            Value::Span(b) => Self::every_result_is_a_tuple_read(&b.1, tail),
+            Value::Return(inner) => Self::every_result_is_a_tuple_read(inner, true),
+            Value::Block(bl) if bl.name != Self::TV_NULL_BLOCK => {
+                let last = bl.operators.len().saturating_sub(1);
+                bl.operators
+                    .iter()
+                    .enumerate()
+                    .all(|(i, op)| Self::every_result_is_a_tuple_read(op, tail && i == last))
+            }
+            Value::If(c, t, e) => {
+                Self::every_result_is_a_tuple_read(c, false)
+                    && Self::every_result_is_a_tuple_read(t, tail)
+                    && Self::every_result_is_a_tuple_read(e, tail)
+            }
+            _ if tail => Self::is_absent_arm(v),
+            _ => {
+                let mut all = true;
+                v.for_each_child(&mut |child| {
+                    all &= Self::every_result_is_a_tuple_read(child, false);
+                });
+                all
+            }
+        }
+    }
+
+    /// An `if` arm that answers `null` — a bare `null`, the template's deferred null of `T`
+    /// (`TV_NULL_BLOCK`), or a block ending in either: beside an arm answering the stored
+    /// element's reference it is that reference absent.
+    fn is_absent_arm(arm: &Value) -> bool {
+        match arm.unspan() {
+            Value::Null => true,
+            Value::Block(bl) if bl.name == Self::TV_NULL_BLOCK => true,
+            Value::Block(bl) => bl.operators.last().is_some_and(Self::is_absent_arm),
+            _ => false,
+        }
+    }
+
+    /// Retypes an absent arm's blocks to the result type, the deferred null's included, so
+    /// its per-instance null is the reference's (a no-op on any other arm).
+    fn retype_absent_arm(arm: &mut Value, ret: &Type) {
+        if !Self::is_absent_arm(arm) {
+            return;
+        }
+        if let Value::Block(bl) = arm.unspan_mut() {
+            if matches!(bl.result.base(), Type::Tuple(_)) {
+                bl.result = ret.clone();
+            }
+            if bl.name != Self::TV_NULL_BLOCK
+                && let Some(tail) = bl.operators.last_mut()
+            {
+                Self::retype_absent_arm(tail, ret);
+            }
+        }
+    }
+
     fn rewrite_generic_type_defaults(&mut self, val: Value) -> Value {
         match val {
+            Value::Block(bl) if bl.name == Self::TV_TUPLE_READ && bl.operators.len() == 1 => {
+                let mut bl = *bl;
+                let read = self.rewrite_generic_type_defaults(bl.operators.remove(0));
+                let Type::Tuple(elems) = bl.result.base().clone() else {
+                    return read;
+                };
+                self.unbox_tuple_from_dbref(read, &elems)
+            }
+            // @FR-G-Mono — a template returns a local that VIEWS a record through an owned
+            // copy (`materialize_return_into`: `w = null; OpDatabase(w); OpCopyRecord(src, w);
+            // w`), because `T` compiled as a record there.  At a tuple the local is its
+            // unboxed stack tuple and the copy's work-ref substituted to that tuple: the
+            // record ops ran on a tuple (the interpreter indexed a store table with its
+            // bits; `--native` did not compile, E0308).  The instance hands the tuple up
+            // as its twin does, and the tuple return boxes it (`synthetic_tuple_return`).
+            Value::Block(bl)
+                if bl.name == "materialized_view_return"
+                    && let [_, _, Value::Call(_, args), Value::Var(w)] =
+                        bl.operators.as_slice()
+                    && matches!(args.as_slice(), [_, Value::Var(to), _] if to == w)
+                    && matches!(self.vars.tp(*w).base(), Type::Tuple(_)) =>
+            {
+                let mut bl = *bl;
+                let Value::Call(_, mut args) = bl.operators.swap_remove(2) else {
+                    unreachable!("matched above");
+                };
+                self.rewrite_generic_type_defaults(args.swap_remove(0))
+            }
             Value::Block(bl) if bl.name == Self::TV_TUPLE_ELEM && bl.operators.len() == 2 => {
                 let mut bl = *bl;
                 let src = self.rewrite_generic_type_defaults(bl.operators.remove(1));
@@ -10767,6 +10959,28 @@ impl Parser {
             // substitution, so it is the CONCRETE vector type by now, and the same parse
             // function the concrete spelling uses lowers it — width, row and setter from one
             // home.  A nested generic re-stamps through that call and stays deferred.
+            Value::Block(bl) if bl.name == Self::TV_REDUCE => {
+                let bl = *bl;
+                let list: Vec<Value> = bl
+                    .operators
+                    .into_iter()
+                    .map(|a| self.rewrite_generic_type_defaults(a))
+                    .collect();
+                let Type::Tuple(types) = bl.result.clone() else {
+                    return Value::Null;
+                };
+                if self.reduce_is_special(u16::MAX, &list, &types) {
+                    let mut out = Value::Null;
+                    self.parse_reduce(&mut out, &list, &types);
+                    out
+                } else if let Some(d) = self.builtin_selected(u16::MAX, "reduce", &types) {
+                    // The declaration's template: the nested-generic pass aims the call at its
+                    // instance.
+                    Value::Call(d, list)
+                } else {
+                    Value::Null
+                }
+            }
             Value::Block(bl) if bl.name == Self::TV_SORT => {
                 let bl = *bl;
                 let list: Vec<Value> = bl
@@ -11245,6 +11459,15 @@ impl Parser {
             || matches!(tp, Type::Reference(_, _) | Type::Tuple(_))
     }
 
+    /// The targets an APPEND's triplet is rewritten for: every element-write target, and a
+    /// nested vector — an appended element that is itself a vector takes a zeroed handle and
+    /// a deep copy, as the concrete append does.  An INDEXED write of a vector element is the
+    /// clear-and-append lowering, not a record copy, so it stays out of
+    /// [`Self::is_rewritable_vector_element_target`].
+    fn is_rewritable_append_target(tp: &Type) -> bool {
+        Self::is_rewritable_vector_element_target(tp) || matches!(tp.base(), Type::Vector(_, _))
+    }
+
     /// P241 fix slice 3 — build the per-type primitive setter Call
     /// for the rewritten triplet's middle op.  Mirrors the parse-time
     /// concrete-T dispatch in `parser/vectors.rs:1560-1599`.
@@ -11513,7 +11736,7 @@ impl Parser {
             let site = matched.as_ref().and_then(|(_, _, _, copy_tp)| {
                 Self::element_write_binding(*copy_tp, bindings, data)
                     .map(|bound| bound.base().clone())
-                    .filter(Self::is_rewritable_vector_element_target)
+                    .filter(Self::is_rewritable_append_target)
             });
             if let (Some((elm_var, out_var, src_value, _)), Some(concrete)) = (matched, site) {
                 buf.drain(0..3);
@@ -11546,6 +11769,7 @@ impl Parser {
         (new_record_d, copy_record_d, finish_record_d, pre_alloc_d): (u32, u32, u32, u32),
     ) {
         let is_struct_target = matches!(concrete, Type::Reference(_, _));
+        let is_vector_target = matches!(concrete.base(), Type::Vector(_, _));
         // Look up the concrete vector-element record type-id.
         // Mirrors `vectors.rs:1532-1535` — `database.vector(content_db_type)`
         // returns the synthetic vector<concrete> type id (registers
@@ -11578,9 +11802,15 @@ impl Parser {
                 // `self.vars.depend(elm, vec)` so elm doesn't outlive the
                 // backing store.
                 let content_def_nr = data.type_def_nr(concrete);
+                // A nested vector's element is typed as the vector it is, as `unique_elm_var`
+                // types it for the concrete append.
                 vars.set_type(
                     elm_var,
-                    Type::Reference(content_def_nr, Deps::frame1(out_var)),
+                    if let Type::Vector(inner, _) = concrete.base() {
+                        Type::Vector(inner.clone(), Deps::frame1(out_var))
+                    } else {
+                        Type::Reference(content_def_nr, Deps::frame1(out_var))
+                    },
                 );
                 // 1. OpPreAllocVector(Var(out_var), Int(1), Int(elem_size))
                 //    Mirrors `vectors.rs:1161-1178` for perf parity with
@@ -11618,6 +11848,26 @@ impl Parser {
                         vec![Value::Var(elm_var), src_value],
                         concrete.clone(),
                         Self::TV_TUPLE_ELEM,
+                    ));
+                } else if is_vector_target {
+                    // @FR-G-Mono — a vector element is a 4-byte handle to a record of its own:
+                    // zeroed, then the source vector deep-copied in at the element's row, as
+                    // the concrete append writes it (`build_comprehension_code`).  Left a record
+                    // copy at the template's row, `filter(vv, f)` inside a generic panicked at
+                    // `vector<vector<integer>>` ("the vector handle … points at record 3,
+                    // whose size word is -1").
+                    let set_int4_d = data.def_nr("OpSetInt4");
+                    out.push(Value::Call(
+                        set_int4_d,
+                        vec![Value::Var(elm_var), Value::Int(0), Value::Int(0)],
+                    ));
+                    out.push(Value::Call(
+                        copy_record_d,
+                        vec![
+                            src_value,
+                            Value::Var(elm_var),
+                            Value::Int(i32::from(content_db_type)),
+                        ],
                     ));
                 } else if is_struct_target {
                     let known_tp = if (content_def_nr as usize) < data.definitions.len() {
@@ -11739,6 +11989,14 @@ impl Parser {
     /// zero offset — keeps this from having to carry a second copy of the op list that
     /// `wrap_vector_get_val` already owns.
     fn element_write_destination(dest: &Value, data: &Data) -> Option<Value> {
+        // A tuple element's read is stamped for unboxing (`TV_TUPLE_READ`); as a write
+        // destination it is the element reference inside.
+        if let Value::Block(bl) = dest.unspan()
+            && bl.name == Self::TV_TUPLE_READ
+            && let [inner] = bl.operators.as_slice()
+        {
+            return Self::element_write_destination(inner, data);
+        }
         let is_element_read = |v: &Value| {
             matches!(v.unspan(), Value::Call(d, _)
                 if *d != u32::MAX
@@ -11887,9 +12145,14 @@ impl Parser {
             | Type::Function(..)
             | Type::Routine(_)
             | Type::RefVar(_) => return code,
-            // A tuple element is read field by field by its consumer (`TupleGet`), so
-            // there is no single value to unpack here.
-            Type::Tuple(_) => return code,
+            // @FR-G-Mono — a tuple element is the stack tuple its twin unboxes (`v[i]`, `for x
+            // in v`): stamped here, lowered in the monomorph's frame (`TV_TUPLE_READ`).  Left a
+            // reference to the stored element, a callback over `vector<T>` at `(integer,
+            // integer)` read the reference's bytes as the tuple's (`137438953478`) and native
+            // did not compile.
+            Type::Tuple(_) => {
+                return crate::data::v_block(vec![code], tp.base().clone(), Self::TV_TUPLE_READ);
+            }
             // Not element types: `Unknown`/`Null`/`Void`/`Never` carry no storage,
             // `Keys` describes a key list, and `Rewritten` is an append form that has
             // already been lowered.  `Optional` cannot appear — `base()` peeled it.
@@ -12315,8 +12578,12 @@ impl Parser {
                 // a narrow-vector element keeps the raw direct encoding (its
                 // stride/value contract is the narrow-vector one, not the
                 // field-sentinel one) — `narrow_vec` selects that.
-                let kind =
-                    crate::data::NarrowIntKind::of(s, nullable, narrow_vec, spec.unsigned_wide());
+                // loft#1615: `NarrowSlot` is the one home for a store place's ops, so a
+                // NON-nullable type that kept a top code reads that code as null (C85) here
+                // exactly as a LOCAL of the type does — `kind.get_op()` alone decodes every
+                // code as a value, which read the overflow's `u16::MAX` back as `64535`.
+                let slot = crate::data::NarrowSlot::of_slot(s, nullable, narrow_vec, spec);
+                let kind = slot.kind;
                 if kind.takes_min() {
                     // H6: a sentinel-reserving kind (`ByteNullable`/`Short` — a
                     // nullable narrow FIELD *or* vector element) shrinks its usable
@@ -12324,10 +12591,9 @@ impl Parser {
                     // raw kinds keep the full `min`.  Deriving from the KIND (not a
                     // re-computed `nullable && !narrow_vec`) keeps this in lockstep
                     // with the write op's `min`.
-                    let mn = spec.usable_min(kind.reserves_sentinel());
-                    self.cl(kind.get_op(), &[code, p, Value::Int(mn)])
+                    self.cl(slot.get_op(), &[code, p, Value::Int(slot.min)])
                 } else {
-                    self.cl(kind.get_op(), &[code, p])
+                    self.cl(slot.get_op(), &[code, p])
                 }
             }
             Type::Enum(_, false, _) => self.cl("OpGetEnum", &[code, p]),
@@ -13503,17 +13769,21 @@ impl Parser {
                 // sentinel); `not null` fields and narrow-vector elements keep the
                 // raw op.
                 let nullable = f_nr != usize::MAX && self.data.attr_nullable(d_nr, f_nr);
-                let kind =
-                    crate::data::NarrowIntKind::of(s, nullable, narrow_vec, spec.unsigned_wide());
+                // loft#1615: the same `NarrowSlot` the READ (`get_val`) asks, so the ops
+                // and the `min` cannot drift.  A NON-nullable byte that kept a top code
+                // writes through the NULLABLE setter: the plain one casts its value
+                // `as i32` before the store sees it, and `i64::MIN as i32` is `0` — a
+                // VALUE — so C85's overflow used to land in the slot as the number zero.
+                let slot = crate::data::NarrowSlot::of_slot(s, nullable, narrow_vec, spec);
                 // H6: the WRITE op encodes against the same `usable_min` the READ
                 // op (`get_val`) decodes against — derived from the KIND so a
                 // sentinel-reserving kind (`ByteNullable`/`Short`) shrinks the
                 // range identically on both sides and raw kinds keep the full `min`.
-                let m = Value::Int(spec.usable_min(kind.reserves_sentinel()));
-                if kind.takes_min() {
-                    self.cl(kind.set_op(), &[ref_code, pos_val, m, val_code])
+                let m = Value::Int(slot.min);
+                if slot.kind.takes_min() {
+                    self.cl(slot.set_op(), &[ref_code, pos_val, m, val_code])
                 } else {
-                    self.cl(kind.set_op(), &[ref_code, pos_val, val_code])
+                    self.cl(slot.set_op(), &[ref_code, pos_val, val_code])
                 }
             }
             Type::Vector(ref content, _)
@@ -14767,6 +15037,26 @@ impl Parser {
                 let vec = self.create_unique("vec", &Type::Vector(elm_tp.clone(), dep.clone()));
                 let mut ls = self.vector_db(elm_tp, vec);
                 ls.push(Value::Var(vec));
+                actual.push(v_block(ls, tp.clone(), "empty_vector_arg"));
+                all_types[nr] = tp.clone();
+                continue;
+            }
+            // … and at a KEYED parameter, the empty collection its concrete spelling builds
+            // (`f([])` at a `hash<K[k]>` mints a `__kvb_N` store, loft#703).  A generic's
+            // parameter learns it is keyed only here (`fold(v, [], add)` binds `U` from
+            // `add`), and without this arm the `[]` reached the callee as a bare `null`: the
+            // interpreter looped in the instance and `--native` did not compile (E0308), where
+            // a typed empty local passed in its place was right.
+            if matches!(&actual_code, Value::Insert(ops) if ops.len() <= 1)
+                && crate::parser::vectors::is_keyed(&tp)
+                && let Some(kt) = self.keyed_known_type(&tp)
+            {
+                let kvb = self.vars.work_keyed(&tp.without_deps(), &mut self.lexer);
+                let ls = vec![
+                    v_set(kvb, Value::Null),
+                    self.cl("OpDatabase", &[Value::Var(kvb), Value::Int(i32::from(kt))]),
+                    Value::Var(kvb),
+                ];
                 actual.push(v_block(ls, tp.clone(), "empty_vector_arg"));
                 all_types[nr] = tp.clone();
                 continue;
