@@ -19,25 +19,43 @@
 //   repeats M1 through a parameter; the run exits 1 at the M1 assertion.
 //   HOLDS: M2, M5–M8, M10 and M11 are exact on both trees, and leak, panic and free-refusal
 //   are clean on both — only the values of the cells with an allocation in the window move.
-// ⚠ WHAT THIS FILE DOES NOT COVER, and why — read before narrowing a shared predicate
-// on the strength of it.  M6–M8 all call `same(w)`, whose EVERY return path hands back
-// the parameter.  That is the MUST-borrow shape.  The predicate these cells were used to
-// justify also covers a second class: a callee ONE of whose paths borrows while another
-// MINTS (`fn pick(w: S, c: boolean) -> S { f = S { … }; if c { w } else { f } }`).  Which
-// arm ran is a RUNTIME fact, so no static bit can carry it — `formal/ownership.md` says
-// exactly that, and the @P290 bracket is the mechanism that decides it.
 //
-// The suite's witness for that class is
-// `1140-a-returned-keyed-parameter-is-still-the-callers.loft`, in its KEYED spelling, in
-// another file.  Nothing connected the two, so narrowing the shared predicate to "never
-// free for a borrowing callee" read as safe here and took the source-free bit away from
-// the bracket-licensed site as well; 1140's minting arm then leaked one store per call.
+// M12–M14 carry their OWN falsification, against a different tree and a different channel:
+// @falsified-at: a028b4f0e — interpret 1 stack-store free refusal(s) (BUG #306) -> 0; native
+//   INERT (expected — the refusal is raised by the interpreter's allocator guard, which
+//   `--native` has no counterpart for, so only one side can move)
+//   CHANNEL: the FREE-REFUSAL channel, interpreter only.  Not the value channel — every cell
+//   below prints the same string on the control, which is why this class went unguarded: the
+//   control is WRONG and says so only on stderr, where nothing but `tests/wrap.rs` Part A2
+//   reads it.
+//   WITNESS: on a028b4f0e `pick`'s three cells each raise `BUG (#306): refused to free the
+//   stack store (#0)`; `ref_return`'s rename retired the `__retbuf` placeholder and left it an
+//   owning local nothing declared, so the clear read an unreserved slot (loft#1651).
+//   HOLDS: M1–M11 are exact on both trees, and leak, panic and assertions are clean on both.
+// ⚠ The PATCH receipt beside this file belongs to the receipt ABOVE (M1–M11's value channel),
+//   which is the stronger of the two — it moves on both backends.  Re-running `make falsify`
+//   on this guard OVERWRITES that patch with whichever defect was last scored; it did here,
+//   and the original was restored by hand.  Score M12–M14 with `REF=a028b4f0e` instead.
+// ⚠ WHY M12–M14 EXIST — the gap that let a narrowing of the shared predicate land green.
+// M6–M8 all call `same(w)`, whose EVERY return path hands back the parameter: the MUST-borrow
+// shape.  The predicate those cells were used to justify also covers a second class, a callee
+// ONE of whose paths borrows while another MINTS, and nothing here reached it.  Narrowing to
+// "never free for a borrowing callee" therefore read as safe and took the source-free bit away
+// from the bracket-licensed site too, where the minting arm then leaked one store per call —
+// caught only by `1140-a-returned-keyed-parameter-is-still-the-callers.loft`, in another file
+// and another spelling.  A guard that exercises only the trivial member of a class licenses a
+// change to the whole class, so the mixed member is a cell here now.
 //
-// The RECORD spelling of the class cannot be a cell here yet: it raises a pre-existing
-// `BUG (#306)` stack-store free refusal on the interpreter, in all three destinations
-// (bind, field, append), on `main` as well — the vector and keyed spellings do not, which
-// is why 1140 never showed it.  Tracked as loft#1651, which carries the measured
-// boundary; when it closes, the three cells belong here.
+// Which arm ran is a RUNTIME fact and no static bit can carry it (`formal/ownership.md` says
+// so); the @P290 bracket is what decides it.  M14 makes that explicit by alternating the arms
+// through ONE call site.  Each cell allocates a `spare` after the call so a wrongly-freed store
+// has its slot recycled before the assertion reads it — without that churn a freed store
+// answers correctly off stale bytes and the cell is vacuous.
+//
+// These cells could not land until loft#1651 was fixed: the RECORD spelling of this class
+// raised a `BUG (#306)` stack-store free refusal that `tests/wrap.rs` Part A2 fails, in every
+// destination, because `ref_return`'s rename retired the `__retbuf` placeholder and left it an
+// owning local nothing declared.
 struct V3 { x: single, y: single, z: single }
 struct Vert { pos: V3, nrm: V3 }
 struct Mesh { name: text, vs: vector<Vert> }
@@ -212,8 +230,52 @@ fn m11() -> text {
   "{t.rows[1]?.v} {t.rows[2]?.v} {len(t.rows)}"
 }
 
+fn pick(w: Vert, c: boolean) -> Vert {
+  fresh = Vert { pos: v3(9.0, 9.0, 9.0), nrm: v3(0.0, 0.0, 0.0) };
+  if c { w } else { fresh }
+}
+
+// M12 — the BORROW arm, three calls: the caller's `w` must survive every one.
+fn m12() -> text {
+  w = Vert { pos: v3(4.0, 5.0, 0.0), nrm: v3(0.0, 0.0, 0.0) };
+  o = "";
+  for i in 0..3 {
+    r = pick(w, true);
+    spare = Vert { pos: v3(7.0, 7.0, 0.0), nrm: v3(0.0, 0.0, 0.0) };
+    o += "{r.pos.x}/{w.pos.x}/{spare.pos.x} ";
+  }
+  o
+}
+
+// M13 — the MINT arm, three calls: the callee's store is its own to give away.  The VALUES
+// are right whether or not it is released, so the leak channel is what scores this cell.
+fn m13() -> text {
+  w = Vert { pos: v3(4.0, 5.0, 0.0), nrm: v3(0.0, 0.0, 0.0) };
+  o = "";
+  for i in 0..3 {
+    r = pick(w, false);
+    spare = Vert { pos: v3(7.0, 7.0, 0.0), nrm: v3(0.0, 0.0, 0.0) };
+    o += "{r.pos.x}/{w.pos.x}/{spare.pos.x} ";
+  }
+  o
+}
+
+// M14 — the arms ALTERNATING through ONE call site: the same `OpCopyRecord` must free on the
+// passes that minted and not on the passes that borrowed.
+fn m14() -> text {
+  w = Vert { pos: v3(4.0, 5.0, 0.0), nrm: v3(0.0, 0.0, 0.0) };
+  o = "";
+  for i in 0..4 {
+    r = pick(w, i % 2 == 0);
+    spare = Vert { pos: v3(7.0, 7.0, 0.0), nrm: v3(0.0, 0.0, 0.0) };
+    o += "{r.pos.x}/{w.pos.x} ";
+  }
+  o
+}
+
 fn main() {
   r1 = m1(); r2 = m2(); r3 = m3(); r4 = m4(); r5 = m5(); r6 = m6(); r7 = m7(); r8 = m8(); r9 = m9(); r10 = m10(); r11 = m11();
+  r12 = m12(); r13 = m13(); r14 = m14();
   println("M1 {r1}"); println("M2 {r2}"); println("M3 {r3}");
   println("M4 {r4}"); println("M5 {r5}"); println("M6 {r6}"); println("M7 {r7}"); println("M8 {r8}");
   println("M9 {r9}"); println("M10 {r10}"); println("M11 {r11}");
@@ -228,4 +290,8 @@ fn main() {
   assert(r9 == "0,0 0,0 10,1 10,1 1,1 1,1 11,2 11,2 ", "M9");
   assert(r10 == "0,1 2,3 ", "M10");
   assert(r11 == "10 20 2", "M11");
+  println("M12 {r12}"); println("M13 {r13}"); println("M14 {r14}");
+  assert(r12 == "4/4/7 4/4/7 4/4/7 ", "M12");
+  assert(r13 == "9/4/7 9/4/7 9/4/7 ", "M13");
+  assert(r14 == "4/4 9/4 4/4 9/4 ", "M14");
 }
