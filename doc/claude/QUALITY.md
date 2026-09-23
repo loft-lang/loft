@@ -2773,12 +2773,19 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **320** |
+| **318** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-23, loft#1628 / loft#1629 / loft#1621 on `tuxedo-1562-layout-gate`, rebased onto
+`main` @ `6c79912b5` and RE-MEASURED there: **954 · 632 · 4 · 318**, opaque tests 1304, and
+`--check-ratchet` re-pinned DOWN from main's 320 · 1307.  The fall is loft#1629: the debugger's
+frame reader and writer now peel `τ?` to its scalar base, which is the arm `render_frame_local`
+already had.  The branch's own pre-rebase figure (943 · 621 · 4 · 318, 1306) described a tree
+without @PLN167 and was not carried.)
 
 (2026-09-22, @PLN165 E5–E7 on `tuxedo-165-generics`, rebased onto `main` @ ffb66a58b and
 re-measured there: **946 · 620 · 4 · 322**, and `--check-ratchet` re-pinned at opaque 322,
