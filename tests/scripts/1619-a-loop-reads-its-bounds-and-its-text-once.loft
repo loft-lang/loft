@@ -20,6 +20,9 @@
 //   so the round counts and call counts the cells assert are wrong there.
 //   WITNESS: on 778b4fd01 r1 prints `r1 10 10` where this file says `r1 3 10`, on both
 //   backends alike; the run exits 1 at that first assertion.
+//   HOLDS: leak, panic, free-refusal and expectations are equal on both trees; only the
+//   round and call counts move, so a run scored on any channel but the assertions learns
+//   nothing.
 struct St { calls: integer, n: integer, s: text, other: integer }
 fn f(st: St) -> integer { st.calls += 1; 3 }
 fn bump(st: St) { st.n = 10; }

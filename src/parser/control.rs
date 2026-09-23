@@ -6595,7 +6595,7 @@ impl Parser {
         let arm_expected = Self::match_arm_expected(result_type);
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
-        if matches!(*result_type, Type::Void | Type::Never) {
+        if matches!(result_type.base(), Type::Void | Type::Never) {
             *result_type = arm_type;
         }
         let (guard, exhaustive) = if field_conditions.is_empty() {
