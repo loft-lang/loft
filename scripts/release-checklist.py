@@ -74,8 +74,23 @@ REPO = "loft-lang/loft"
 # run and a check that passed are the two answers a release must never confuse (the same
 # distinction `loft verify-self` draws with its exit 2).
 OK, FAIL, UNKNOWN, TODO, DONE, NA = "OK", "FAIL", "UNKNOWN", "TODO", "DONE", "NA"
+# A manual tick whose recorded commit differs from HEAD in what ships (`src/`, `default/`,
+# `tests/`) — a `[cand]` claim about a tree that is no longer this one.  Not done, not
+# undone: the evidence still exists, it just names another candidate.
+STALE = "STALE"
 
-MARK = {OK: "[x]", FAIL: "[!]", UNKNOWN: "[?]", TODO: "[ ]", DONE: "[x]", NA: "[-]"}
+MARK = {
+    OK: "[x]", FAIL: "[!]", UNKNOWN: "[?]", TODO: "[ ]", DONE: "[x]", NA: "[-]", STALE: "[~]",
+}
+
+# What ships.  A tick's commit is compared with HEAD over these paths only, so a docs-only
+# commit after a candidate sweep does not invalidate the sweep.
+SHIPPED_PATHS = ["src", "default", "tests", "Cargo.toml", "Cargo.lock", "loft-ffi"]
+
+# The record being worked on (`releases/<cycle>/checklist.json`), set by `main` before the
+# items are built so an automatic check can read the waivers it holds.  Keys that start
+# with `_` are not item ticks.
+RECORD: dict = {}
 
 
 def sh(*args: str, cwd: str = ROOT, timeout: int = 60) -> tuple[int, str]:
@@ -127,6 +142,19 @@ class Item:
 
     `check` present  -> automatic: re-measured every run, not tickable.
     `check` absent   -> manual: tickable, and `how` is the command to run.
+
+    Two more axes, orthogonal to that one:
+
+    `report`  -> the row must be READ, not be true.  The monthly reviews, the censuses and
+                 the perf pass are what RELEASE.md calls "a report, never a blocker"; they
+                 were counted in one tally with the valgrind sweep, so "21/27 done" said
+                 nothing about what was blocking.  A report row never blocks and never
+                 sets the exit code; it is tallied apart.
+    `derived` -> a manual row a green gate JOB on HEAD's commit satisfies without a
+                 hand-run (the valgrind sweep the nightly already ran on this commit).
+                 The callable answers (state, evidence); OK means done.  The hand-run stays
+                 as the fallback when the gate cannot run, which is why the row is still
+                 tickable.
     """
 
     def __init__(
@@ -138,6 +166,8 @@ class Item:
         check=None,
         applies=True,
         cadence: str = "",
+        report: bool = False,
+        derived=None,
     ):
         self.id = ident
         self.title = title
@@ -145,6 +175,8 @@ class Item:
         self.passes = passes
         self.check = check
         self.applies = applies
+        self.report = report
+        self.derived = derived
         # When this item can be FINISHED, earlier than the release window itself
         # (@PLN156).  The test is whether its evidence stays valid as the tree moves
         # on, because a tick is a claim about the release, not about the day it was
@@ -180,10 +212,43 @@ class Item:
         if rec:
             self.state = DONE
             self.evidence = rec.get("at", "")
+            if rec.get("commit"):
+                self.evidence += f" @ {rec['commit'][:12]}"
             if rec.get("note"):
                 self.evidence += " — " + rec["note"]
-        else:
-            self.state = TODO
+            # A candidate-bound tick is a claim about ONE tree.  If what ships moved
+            # since, the claim is about another candidate — 2026-09's sweeps were ticked
+            # on e77ef442 and the tag was b1016d00, and only a by-hand diff said nothing
+            # shipped had moved in between.
+            if "cand" in self.cadence.split() and rec.get("commit"):
+                moved = shipped_moved_since(rec["commit"])
+                if moved is None:
+                    self.evidence += "  (commit unknown to this clone — cannot tell whether what ships moved)"
+                elif moved:
+                    self.state = STALE
+                    self.evidence += f"  STALE: {moved} changed since — re-run on the candidate"
+            return
+        if self.derived is not None:
+            st, why = self.derived()
+            if st == OK:
+                self.state, self.evidence = DONE, "covered: " + why
+                return
+            if why:
+                self.evidence = why
+        self.state = TODO
+
+
+def shipped_moved_since(commit: str):
+    """What shipped that changed between `commit` and HEAD — the first path, or "" for
+    nothing, or None when the commit is not in this clone."""
+    code, _ = sh("git", "cat-file", "-e", f"{commit}^{{commit}}")
+    if code != 0:
+        return None
+    code, out = sh("git", "diff", "--name-only", commit, "HEAD", "--", *SHIPPED_PATHS)
+    if code != 0:
+        return None
+    first = out.splitlines()[0] if out else ""
+    return first
 
 
 # --------------------------------------------------------------------------------------
@@ -903,22 +968,31 @@ def check_smoke_ran(version: str, network: bool):
     return OK, f"bundle smoke ran and passed on all {len(ran)} legs"
 
 
-def check_release_gate(network: bool):
-    """The newest completed `release-gate.yml` run for HEAD's commit, and its verdict.
+_GATE_RUN: dict = {}   # memo: HEAD sha -> (state, evidence, run or None)
+_GATE_JOBS: dict = {}  # memo: run id -> list of jobs, or None when unreadable
 
-    The gate is every nightly, run deliberately against ONE commit and ending in one
-    verdict (`make release-gate`).  It is keyed by COMMIT on purpose: the release evidence
-    RELEASE.md asks for is a run on the tag candidate, and a run on any other commit --
-    last night's `main`, the branch before its final fix -- is not that, however green.
-    A run still in flight is UNKNOWN, not a pass, for the same reason a check that could
-    not run is.
+
+def gate_run(network: bool):
+    """The newest completed `release-gate.yml` run for HEAD's commit: (state, evidence, run).
+
+    Keyed by COMMIT on purpose: the release evidence RELEASE.md asks for is a run on the
+    tag candidate, and a run on any other commit -- last night's `main`, the branch before
+    its final fix -- is not that, however green.  A run still in flight is UNKNOWN, not a
+    pass, for the same reason a check that could not run is.
     """
     if not network:
-        return UNKNOWN, "skipped (--no-network)"
+        return UNKNOWN, "skipped (--no-network)", None
     code, sha = sh("git", "rev-parse", "HEAD")
     if code != 0:
-        return UNKNOWN, "could not read HEAD"
+        return UNKNOWN, "could not read HEAD", None
+    if sha in _GATE_RUN:
+        return _GATE_RUN[sha]
     short = sha[:12]
+
+    def memo(st, why, run=None):
+        _GATE_RUN[sha] = (st, why, run)
+        return _GATE_RUN[sha]
+
     code, out = sh(
         "gh", "run", "list", "--workflow", "release-gate.yml", "--commit", sha,
         "--json", "databaseId,conclusion,status,createdAt,url", "--limit", "10",
@@ -928,25 +1002,130 @@ def check_release_gate(network: bool):
         if "404" in out:
             # A dispatchable workflow has to be on the default branch; until this one has
             # merged, GitHub answers as if it did not exist.
-            return UNKNOWN, "release-gate.yml is not on GitHub's default branch yet — merge it, then `make release-gate`"
-        return UNKNOWN, f"could not list release-gate runs: {out.splitlines()[-1] if out else code}"
+            return memo(UNKNOWN, "release-gate.yml is not on GitHub's default branch yet — merge it, then `make release-gate`")
+        return memo(UNKNOWN, f"could not list release-gate runs: {out.splitlines()[-1] if out else code}")
     try:
         runs = json.loads(out or "[]")
     except json.JSONDecodeError:
-        return UNKNOWN, "could not parse `gh run list`"
+        return memo(UNKNOWN, "could not parse `gh run list`")
     if not runs:
-        return UNKNOWN, f"no release-gate run for {short} — `make release-gate` (the branch must be pushed)"
+        return memo(UNKNOWN, f"no release-gate run for {short} — `make release-gate` (the branch must be pushed)")
     run = max(runs, key=lambda r: r.get("createdAt", ""))
     when = run.get("createdAt", "")[:16].replace("T", " ")
     if run.get("status") != "completed":
-        return UNKNOWN, f"run for {short} still {run.get('status')} (started {when}) — {run.get('url')}"
+        return memo(UNKNOWN, f"run for {short} still {run.get('status')} (started {when}) — {run.get('url')}", run)
     if run.get("conclusion") == "success":
-        return OK, f"GREEN for {short} at {when} — {run.get('url')}"
+        return memo(OK, f"GREEN for {short} at {when} — {run.get('url')}", run)
+    return memo(FAIL, f"{run.get('conclusion')} for {short} at {when} — {run.get('url')}", run)
+
+
+def gate_jobs(run) -> list | None:
+    """Every job of a release-gate run, named `<leg> / <job>` (the `verdict` job is bare)."""
+    rid = run.get("databaseId")
+    if rid in _GATE_JOBS:
+        return _GATE_JOBS[rid]
+    code, out = sh(
+        "gh", "api", f"repos/{REPO}/actions/runs/{rid}/jobs", "--paginate",
+        "--jq", ".jobs[] | {name, conclusion}", timeout=90,
+    )
+    jobs = None
+    if code == 0:
+        try:
+            jobs = [json.loads(line) for line in out.splitlines() if line.strip()]
+        except json.JSONDecodeError:
+            jobs = None
+    _GATE_JOBS[rid] = jobs
+    return jobs
+
+
+def red_legs(jobs) -> dict[str, list[str]]:
+    """leg -> the jobs of that leg that did not succeed (skipped excluded: a skipped job
+    inside a leg is that leg's own `if:`, and the verdict already refuses a skipped LEG)."""
+    out: dict[str, list[str]] = {}
+    for j in jobs:
+        name, concl = j.get("name", ""), j.get("conclusion")
+        if " / " not in name or concl in ("success", "skipped", None):
+            continue
+        leg = name.split(" / ", 1)[0]
+        out.setdefault(leg, []).append(f"{name.split(' / ', 1)[1]}={concl}")
+    return out
+
+
+def check_release_gate(network: bool):
+    """The gate's verdict for HEAD's commit, read through the record's WAIVERS.
+
+    A leg red for a reason outside the candidate -- a runner without a device, a package's
+    own defect, a toolchain the verifier cannot compare -- is what RELEASE.md § The
+    nightlies' table says is CLEARED by recording the reason.  Until 2026-09-23 nothing
+    could record it, so the gate could only end red and the release proceeded on hand-run
+    substitutes.  `--waive <leg> --note '<why>'` records the leg against the RUN it was red
+    in; a waiver names one run, so the next run starts with none.
+    """
+    st, why, run = gate_run(network)
+    if st != FAIL:
+        return st, why
+    jobs = gate_jobs(run)
+    if jobs is None:
+        return FAIL, why + " — the `verdict` job names the red legs (the run's jobs could not be read here)"
+    red = red_legs(jobs)
+    waivers = RECORD.get("_waivers", {}).get(str(run.get("databaseId")), {})
+    unwaived = {leg: js for leg, js in red.items() if leg not in waivers}
+    waived = [f"{leg} ({waivers[leg].get('note') or 'no reason recorded'})" for leg in red if leg in waivers]
+    if not red:
+        return FAIL, why + " — no leg reports a red job; open the run"
+    if not unwaived:
+        return OK, f"GREEN with waived legs for {run.get('databaseId')}: " + "; ".join(waived) + f" — {run.get('url')}"
+    detail = "; ".join(f"{leg}: {', '.join(js)}" for leg, js in unwaived.items())
+    tail = f"; waived: {', '.join(waived)}" if waived else ""
     return (
         FAIL,
-        f"{run.get('conclusion')} for {short} at {when} — the `verdict` job names the red "
-        f"legs: {run.get('url')}",
+        f"{why} — red legs {detail}{tail}.  Fix, or `--waive <leg> --note '<why>'` for a red "
+        f"that is not the candidate's",
     )
+
+
+def gate_leg_ok(prefixes: list[str], network: bool):
+    """Did every gate job whose name starts with one of `prefixes` succeed on HEAD's
+    commit?  (state, evidence) for a DERIVED manual row: OK satisfies the row."""
+    st, why, run = gate_run(network)
+    if run is None or st == UNKNOWN:
+        return UNKNOWN, ""
+    jobs = gate_jobs(run)
+    if jobs is None:
+        return UNKNOWN, ""
+    hits = [j for j in jobs if any(j.get("name", "").startswith(p) for p in prefixes)]
+    if not hits:
+        return UNKNOWN, f"the release-gate run has no job named {' / '.join(prefixes)} — run it by hand"
+    bad = [f"{j['name']}={j.get('conclusion')}" for j in hits if j.get("conclusion") != "success"]
+    if bad:
+        return FAIL, "the gate's own job is not green on this commit: " + ", ".join(bad)
+    return OK, f"{', '.join(j['name'] for j in hits)} green in release-gate run {run.get('databaseId')} on this commit"
+
+
+def check_cargo_audit():
+    """RUSTSEC advisories over `Cargo.lock`, on this box.  The nightly `audit` job in
+    `miri.yml` asks the same question on the schedule; this asks it of THIS tree."""
+    code, out = sh("cargo", "audit", "--version", timeout=30)
+    if code != 0:
+        return UNKNOWN, "cargo-audit is not installed — `cargo install cargo-audit --locked`"
+    code, out = sh("cargo", "audit", timeout=300)
+    # The report is blank-line-separated blocks; a `Warning:` block is an unmaintained or
+    # yanked crate (informational, exit 0), any other `Crate:` block is a vulnerability.
+    vulns, warnings = [], 0
+    for block in re.split(r"\n\s*\n", out):
+        if "Crate:" not in block:
+            continue
+        if "Warning:" in block:
+            warnings += 1
+            continue
+        crate = re.search(r"^Crate:\s*(\S+)", block, re.M)
+        advisory = re.search(r"^ID:\s*(\S+)", block, re.M)
+        vulns.append(f"{crate.group(1) if crate else '?'} ({advisory.group(1) if advisory else '?'})")
+    if code == 0 and not vulns:
+        return OK, "no vulnerable crate in Cargo.lock" + (f" ({warnings} unmaintained/informational warning(s))" if warnings else "")
+    if not vulns:
+        return UNKNOWN, "cargo audit could not answer: " + (out.splitlines()[-1] if out else f"exit {code}")
+    return FAIL, f"{len(vulns)} vulnerable crate(s): " + ", ".join(vulns) + " — `cargo update -p <crate>`, or record why it cannot move"
 
 
 def changed_since_last_tag(version: str, paths: list[str]) -> bool:
@@ -976,6 +1155,10 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
     ]
     editor_touched = changed_since_last_tag(version, prev_tag_paths_editor)
     debug_touched = changed_since_last_tag(version, prev_tag_paths_debug)
+    # The bundle smoke is read ONCE: `A-smoke` reports it, and `M-rosetta` exists only
+    # for a leg it reports as skipped (with no network it cannot say, so the row stays).
+    smoke = check_smoke_ran(version, network)
+    smoke_skipped = smoke[0] != OK
 
     before = [
         Item(
@@ -1052,12 +1235,17 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             check=check_reference_pdf_content,
             cadence="pre",
         ),
+        # The two watermark reviews are REPORTS: any commit touching a chapter's source
+        # re-arms them, so on an active tree they read red most days by construction, and
+        # RELEASE.md § What forces a release says docs are never release-coupled.  They are
+        # listed so the count is seen, and tallied apart so it never reads as a blocker.
         Item(
             "A-reference-review",
             "Every reference chapter has been read against the shipped language",
             "make reference-review",
             check=check_reference_review,
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "A-skills-review",
@@ -1065,6 +1253,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "make skills-review",
             check=check_skills_review,
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "A-ignores",
@@ -1074,23 +1263,27 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             cadence="mid pre",
         ),
         Item(
+            "A-audit",
+            "No RUSTSEC advisory against a crate in Cargo.lock",
+            "cargo audit   # then `cargo update -p <crate>`",
+            check=check_cargo_audit,
+            cadence="mid pre",
+        ),
+        Item(
             "M-valgrind",
             "Valgrind-clean on the TAG CANDIDATE",
             "scripts/valgrind-sweep.sh   # interpreter + native, every script and document",
             "GREEN — no invalid access and nothing definitely lost on either backend.  A "
-            "possibly-lost record is Rust's interior pointers, not a leak, and a leaked STORE is "
-            "M-leaks' question (TESTING.md § Occasional valgrind pass)",
+            "possibly-lost record is Rust's interior pointers, not a leak; a leaked STORE "
+            "fails the wrap suite itself (TESTING.md § Occasional valgrind pass).  Satisfied "
+            "by the gate's own valgrind job on this commit",
             cadence="cand pre",
+            derived=lambda: gate_leg_ok(["miri.yml / Valgrind memcheck sweep"], network),
         ),
-        Item(
-            "M-leaks",
-            "Zero-leak gate re-verified on the TAG CANDIDATE",
-            "run tests/scripts/*.loft under LOFT_STORES=warn; LOFT_LOG=stores on "
-            "22-threading.loft and 80-parallel-block.loft",
-            "no `Warning: N stores not freed at program exit`.  A release that leaks "
-            "one store per loop iteration is unusable for a server or a game loop",
-            cadence="cand pre",
-        ),
+        # `M-leaks` retired 2026-09-23: it re-ran by hand what the wrap suite hard-fails on
+        # every `make ci` and inside the gate — a `tests/scripts` file that leaves a store
+        # unfreed, `SCRIPTS_LEAK_ALLOW` empty — with the two `par` scripts in that corpus.
+        # A manual re-run of a suite assertion is a row that gets ticked, not a gate.
         Item(
             "M-ignores",
             "Owner sign-off on every ignore AND every skip-list entry",
@@ -1105,8 +1298,13 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "The WASM endpoint works — build, runtime, and gallery",
             "make wasm-html-test && make gallery, then open doc/gallery.html",
             "RELEASE.md § WASM endpoint: the browser bundle is how most users meet "
-            "loft.  All examples load with NO console errors",
+            "loft.  All examples load with NO console errors.  Satisfied by the gate's "
+            "`Browser build + probe` job (gallery render check + the brick-buster "
+            "console-error test) and the wasm node bridge on this commit",
             cadence="cand pre",
+            derived=lambda: gate_leg_ok(
+                ["ci.yml / Browser build + probe", "ci.yml / wasm node bridge"], network
+            ),
         ),
         Item(
             "M-docs-review",
@@ -1117,6 +1315,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "clippy suppressions measured (dead ones named, live ones explained).  "
             "Steps 5-7 are deferred (2026-05-15)",
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "M-monthly-docs",
@@ -1125,6 +1324,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "which libraries owe a review or moved since their watermark — the "
             "monthly cadence makes this a per-release step",
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "M-monthly-bugs",
@@ -1133,6 +1333,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "which mechanism classes still produce bugs, and whether last cycle's "
             "keystone moved its class",
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "M-ops-census",
@@ -1149,13 +1350,18 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "slots — the table holds 511 and is nowhere near full "
             "(RELEASE.md § The operator census)",
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "M-perf-pass",
             "Performance pass — loft AND its libraries, routines pull their weight",
             "make speed; per library: python3 bench/compare.py   # the drawing library's "
             "bench/ is the model (loft#1426); @PLN158 adopts it as the standard",
-            "the formal contract is formal/performance.md (Perf-Like / Perf-Weight / "
+            "the BAR is gated elsewhere and this pass does not gate it twice: "
+            "`scripts/native_ratio.sh` fails a ratio over `bench/ratio_oracle.tsv` in `make "
+            "ci`, and an open `D-perf-*` deviation blocks through `A-deviations` — so this is "
+            "the READ of what is left over the bar and why.  "
+            "The formal contract is formal/performance.md (Perf-Like / Perf-Weight / "
             "Perf-Twin / Perf-Cure): every routine within the bar of its industry-language reference "
             "twin, hashes agreeing across lanes (lanes that disagree are not one "
             "algorithm), and a missing twin is WRITTEN where a hit is expected.  Verify "
@@ -1165,6 +1371,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "for the native side — a slow routine whose profile matches its reference's hot "
             "loop is an engine-class finding (file it, like loft#1426), not a library bug",
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "M-file-sizes",
@@ -1181,16 +1388,20 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "companion EXISTING does not mean the history moved into it, so read the share "
             "and not the `yes`.  Split what a reader cannot navigate",
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "M-liveness",
             "The liveness census — are the gates themselves still live?",
             "make release-liveness",
             "read the report: ignored/skip rationales pointing at CLOSED issues, gates "
-            "that have not actually fired recently, checklist items never run in any "
-            "recorded cycle.  2026.8.0's rescue was this census done by hand, once; "
-            "drift surfaces continuously only if it is read per release (@PLN156)",
+            "that have not actually fired recently (with the last fortnight's per-leg "
+            "tally — a leg red ten nights in fourteen is what blocks the release gate), "
+            "checklist items never run in any recorded cycle.  2026.8.0's rescue was this "
+            "census done by hand, once; drift surfaces continuously only if it is read per "
+            "release (@PLN156)",
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "A-deviations",
@@ -1210,6 +1421,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "cycle as the inflow rate: that number is what says whether recording a patch "
             "at falsification time is taking",
             cadence="mid pre",
+            report=True,
         ),
         Item(
             "M-close-plans",
@@ -1230,8 +1442,10 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "M-libs",
             "The shipped libraries still build against this tree",
             "scripts/revalidate_libs_local.sh",
-            "every library green — `make ci` says nothing about them",
+            "every library green — `make ci` says nothing about them.  Satisfied by the "
+            "gate's `revalidate-libs.yml / gate` job on this commit",
             cadence="mid pre",
+            derived=lambda: gate_leg_ok(["revalidate-libs.yml / gate"], network),
         ),
     ]
 
@@ -1256,44 +1470,30 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             f"gh release view v{version}",
             check=lambda: check_draft_assets(version, network),
         ),
+        # The per-platform hands-on walkthrough IS this row: each `release.yml` leg unpacks
+        # its own zip, asserts `--version`, `verify-self` and every shipped example with
+        # empty stderr, and the owner ruled on 2026-09-05 that the bundle smoke is the
+        # walkthrough.  `M-hands-linux/-macos/-windows` were retired into it 2026-09-23;
+        # what they added — Gatekeeper on an unsigned download, the VS Code grammar
+        # symlink — no runner observes and no release has recorded.
         Item(
             "A-smoke",
-            "The bundle smoke RAN (did not skip) on every leg",
+            "The bundle smoke RAN (did not skip) on every leg — the hands-on walkthrough",
             f"gh run list --workflow release.yml --branch v{version}",
-            check=lambda: check_smoke_ran(version, network),
+            check=lambda: smoke,
         ),
         Item(
             "M-rosetta",
             "Any bundle the smoke SKIPPED, run by hand",
             "unzip the bundle A-smoke names, then: bin/loft --version && "
             "bin/loft verify-self && bin/loft --interpret examples/*.loft",
-            "only needed when A-smoke reports a skip; an unexecuted bundle is the one "
-            "least likely to work",
+            "listed only while A-smoke reports a skip (or cannot read the run); an "
+            "unexecuted bundle is the one least likely to work",
+            applies=smoke_skipped,
         ),
     ]
 
     before_publish = [
-        Item(
-            "M-hands-linux",
-            "Linux: install from the DRAFT's zip and run a walkthrough",
-            f"unzip loft-{version}-x86_64-unknown-linux-musl.zip && "
-            "cd loft-*/ && bin/loft --interpret examples/fibonacci.loft",
-            "from the ZIP, never a git clone — the clone is a different path from the "
-            "one users take, and it was the only one ever smoke-tested",
-        ),
-        Item(
-            "M-hands-macos",
-            "macOS: install from the DRAFT's zip and run a walkthrough",
-            "same, with the darwin bundle for this Mac's architecture",
-            "note what Gatekeeper does to an unsigned download, and that QUICKSTART "
-            "does not warn about it",
-        ),
-        Item(
-            "M-hands-windows",
-            "Windows: install from the DRAFT's zip and run a walkthrough",
-            "same, with the windows-msvc bundle",
-            "watch the VS Code grammar symlink, the usual Windows failure",
-        ),
         Item(
             "M-install-sh",
             "`scripts/install.sh` end-to-end on one platform",
@@ -1368,15 +1568,9 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "replacing a RUNNING executable is the one genuinely platform-divergent "
             "step in the chain, and no test can reach it (RELEASE.md § 10)",
         ),
-        Item(
-            "M-install-live",
-            "`loft install <lib>` works with the tagged binary against the live registry",
-            f"bin/loft install regex   # using the {version} binary",
-            "trust-root / signing-key skew is the classic release break, and nothing "
-            "tests the SHIPPED binary against the LIVE index.  Refresh first: a cached "
-            "index predating the splice reports the empty-index message, which reads "
-            "like the submission failed",
-        ),
+        # M-install-live retired 2026-09-23: `scripts/acquisition-chain.sh` step 6 installs a
+        # library with the binary it just acquired, into a fresh LOFT_HOME, against the live
+        # index — the trust-root / signing-key skew question, measured by A-acquisition.
         # M-verify-anchored retired 2026-09 (@PLN156 phase 1): A-acquisition asserts the
         # anchor line itself, on an installation it just made over the real transport —
         # the same evidence, measured instead of promised.
@@ -1416,9 +1610,16 @@ def save_state(version: str, state: dict) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--version", help="release version (default: Cargo.toml's)")
-    ap.add_argument("--done", metavar="ID", help="mark a manual item done")
+    ap.add_argument("--done", metavar="ID", help="mark a manual item done (records HEAD's commit)")
     ap.add_argument("--undo", metavar="ID", help="un-mark a manual item")
-    ap.add_argument("--note", default="", help="evidence to record with --done")
+    ap.add_argument("--note", default="", help="evidence to record with --done / --waive")
+    ap.add_argument(
+        "--waive",
+        metavar="LEG",
+        help="waive a red release-gate LEG (`ci.yml`, `repro-build.yml`, …) for the newest "
+        "run on HEAD's commit — a red that is not the candidate's, with --note saying why",
+    )
+    ap.add_argument("--unwaive", metavar="LEG", help="withdraw a waiver for HEAD's run")
     ap.add_argument("--fetch", action="store_true", help="refresh origin/main + tags")
     ap.add_argument(
         "--no-network", action="store_true", help="skip every check that needs the net"
@@ -1440,6 +1641,32 @@ def main() -> int:
         sh("git", "fetch", "--tags", "--quiet", "origin", timeout=120)
 
     state = load_state(version)
+    global RECORD
+    RECORD = state
+    if args.waive or args.unwaive:
+        # A waiver names ONE run — the newest completed release-gate run on HEAD's commit —
+        # so the next run starts with none and a leg that stays red is re-justified each
+        # time.  Stored beside the ticks under `_waivers`, which no item reads as a tick.
+        st, why, run = gate_run(network=True)
+        if run is None:
+            print(f"no release-gate run to waive a leg of: {why}", file=sys.stderr)
+            return 2
+        rid = str(run.get("databaseId"))
+        leg = args.waive or args.unwaive
+        waivers = state.setdefault("_waivers", {}).setdefault(rid, {})
+        if args.waive:
+            if not args.note:
+                print("--waive needs --note: the reason is the record", file=sys.stderr)
+                return 2
+            _, head = sh("git", "rev-parse", "HEAD")
+            waivers[leg] = {
+                "at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                "commit": head,
+                "note": args.note,
+            }
+        else:
+            waivers.pop(leg, None)
+        save_state(version, state)
     if args.done or args.undo:
         sections = build_items(version, network=False)
         ids = {i.id: i for _, items in sections for i in items}
@@ -1456,8 +1683,10 @@ def main() -> int:
                 )
                 return 2
             if flag == "--done":
+                _, head = sh("git", "rev-parse", "HEAD")
                 state[ident] = {
                     "at": datetime.datetime.now().strftime("%Y-%m-%d %H:%M"),
+                    "commit": head,
                     "note": args.note,
                 }
             else:
@@ -1509,6 +1738,7 @@ def main() -> int:
                             "title": i.title,
                             "state": i.state,
                             "automatic": i.automatic,
+                            "report": i.report,
                             "cadence": i.cadence,
                             "evidence": i.evidence,
                         }
@@ -1533,6 +1763,9 @@ def main() -> int:
             "  candidate · [pre] can be finished in the month's last days as pre-work ·\n"
             "  unmarked needs the release window itself.  `--phase mid|pre` works each\n"
             "  view; `--phase mid` lists the [cand] rows apart and counts them nowhere.\n"
+            "  class: a GATE row must be true; a [report] row must be READ and never\n"
+            "  blocks; a tick records its commit, and [~] is a [cand] tick made on a tree\n"
+            "  whose shipped files have since moved.\n"
         )
     for name, items in sections:
         shown = [i for i in items if i.state != NA]
@@ -1544,7 +1777,8 @@ def main() -> int:
         for i in shown:
             kind = "auto" if i.automatic else "    "
             tag = "[" + "+".join(i.cadence.split()) + "]" if i.cadence else ""
-            print(f"  {MARK[i.state]} {kind}  {i.id:<20} {tag:<10} {i.title}")
+            title = i.title + ("  [report]" if i.report else "")
+            print(f"  {MARK[i.state]} {kind}  {i.id:<20} {tag:<10} {title}")
             if i.evidence:
                 print(f"                            {i.evidence}")
             elif not i.automatic:
@@ -1568,20 +1802,33 @@ def main() -> int:
         print("  (counted nowhere below — a mid-cycle result is warning, not evidence)")
         print()
 
-    auto = [i for _, items in sections for i in items if i.automatic and i.applies]
-    manual = [i for _, items in sections for i in items if not i.automatic and i.applies]
+    applicable = [i for _, items in sections for i in items if i.applies]
+    auto = [i for i in applicable if i.automatic and not i.report]
+    manual = [i for i in applicable if not i.automatic and not i.report]
+    reports = [i for i in applicable if i.report]
     bad = [i for i in auto if i.state == FAIL]
     unknown = [i for i in auto if i.state == UNKNOWN]
-    left = [i for i in manual if i.state == TODO]
+    stale = [i for i in manual if i.state == STALE]
+    left = [i for i in manual if i.state in (TODO, STALE)]
+    unread = [i for i in reports if i.state in (TODO, FAIL, STALE)]
 
     print(
-        f"{len(auto) - len(bad) - len(unknown)}/{len(auto)} automatic checks pass"
+        f"{len(auto) - len(bad) - len(unknown)}/{len(auto)} automatic gates pass"
         f"{', ' + str(len(unknown)) + ' could not run' if unknown else ''}"
         f"{', ' + str(len(bad)) + ' FAILING' if bad else ''}."
     )
-    print(f"{len(manual) - len(left)}/{len(manual)} manual steps done.")
+    print(
+        f"{len(manual) - len(left)}/{len(manual)} manual gates done"
+        f"{', ' + str(len(stale)) + ' STALE (ticked on another candidate)' if stale else ''}."
+    )
+    # Reports are tallied apart and never block: they must be READ, not be true.
+    print(f"{len(reports) - len(unread)}/{len(reports)} reports read.")
     if bad:
         print("\nBlocking: " + ", ".join(i.id for i in bad))
+    if stale:
+        print("\nStale: " + ", ".join(i.id for i in stale) + " — re-run on this candidate")
+    if unread:
+        print("\nReports owing a read: " + ", ".join(i.id for i in unread))
     if unknown:
         # UNKNOWN never aggregates into green (@PLN156 phase 5): a check that could
         # not run and a check that passed are the two answers a release must never
@@ -1594,8 +1841,9 @@ def main() -> int:
     if left:
         print("\nNext manual step: " + left[0].id + " — " + left[0].title)
     if not bad and not left and not unknown:
-        print("\nEverything on this list is answered.")
+        print("\nEvery gate on this list is answered." + (" Reports still owing a read are listed above." if unread else ""))
     print("\nTick a manual step:  scripts/release-checklist.py --done <ID> --note '...'")
+    print("Waive a red gate leg:  scripts/release-checklist.py --waive <leg> --note '<why it is not the candidate's>'")
     # Exit: 1 = a measured gate FAILED; 3 = nothing failed but gates remain unmeasured
     # (UNKNOWN) — distinct so a caller can tell red from not-yet-evidence; 0 only when
     # every applicable automatic gate ran and passed.

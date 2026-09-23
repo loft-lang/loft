@@ -173,3 +173,59 @@ documentation recommendations were false before the guard (`len(secs) < 2` canno
   and the skills review **11/11**, both at their current sources.  Each pass found real defects
   rather than paperwork — the stdlib reference still teaching the retired `both` receiver, and
   `loft-write` instructing agents to write it.
+
+## The release-check audit (2026-09-23) — what the accumulated checks were, and what moved
+
+Asked at the owner's request: are the checks consistent, are obvious ones missing, is the
+validation efficient and effective.  Measured on the joined tree of 2026-09-23.
+
+**The gate had never been green.**  `release-gate.yml` ran three times (09-04 on `main`,
+09-08 twice), every run red, every time on legs that were not the candidate's: the Windows
+`Test` leg (failed on 5 and cancelled on 6 of the 14 nightlies to 09-23; on 09-21 its Test
+step ran 88 minutes, 5009 of 5010 tests passing, one timed out), the macOS and Windows
+`repro-build` legs (the C-toolchain drift closed on 09-15 as an exit 3, which the gate still
+counted red) and `registry-validation` (`hex_fit`, then `imaging` — packages' own defects).
+`A-release-gate` read the verdict and nothing else, so RELEASE.md's own table ("cleared by
+recording the reason") had no mechanism, and 2026.9.0 shipped on the hand-run substitutes.
+Cured: `registry-validation` is no longer a leg; `--waive <leg> --note` records a red leg
+against its run and `A-release-gate` reads the run's jobs through the waivers.  Left: the
+Windows leg itself (no open issue named it; loft#1652 now does), and `release.yml`'s `docs` job,
+red at `make game` on every release since 2026.7.2 and deploying to a `gh-pages` branch
+nothing serves — the agent was not permitted to delete a workflow job, so that is by hand.
+
+**Consistency.**  RELEASE.md carried dead gates: 0.9.0/1.0.0 blocker tables naming the
+REPL, `loft fmt` and `match` as missing, a `v1.0.0` artifacts table, a semver policy beside
+`2026.9.0`, and April status lines under the safety gate — all gone, the versioning and
+contract stated once.  Three homes for the hands-on walkthrough (a 2026-05-15 deferral,
+three unconditional checklist rows, the owner's 2026-09-05 ruling that the bundle smoke IS
+it) are one: `A-smoke`, with `M-rosetta` only on a skip.  Three homes for the perf bar
+(`M-perf-pass` "never a gate", `native_ratio.sh` gating in `make ci`, `D-perf-1` blocking
+through `A-deviations`) are stated as one bar gated twice and read once.  Report rows and
+gate rows were one tally; they are two, and the two watermark reviews are reports.  A tick
+recorded no commit; it records HEAD's, and a candidate tick made on another tree reads
+STALE.  The checklist itself did not exist at v2026.8.0 and at least nine of its rows
+postdate v2026.9.0: a new blocking row must name the past defect it would have caught.
+
+**Missing, now present.**  A dependency audit (none anywhere; 182 crates, rustls/ring/ureq on
+the self-update path): its first run found RUSTSEC-2026-0285 in rustls 0.23.40 and
+RUSTSEC-2026-0204 in crossbeam-epoch — both bumped, `A-audit` and the nightly `audit` job
+keep asking.  An older stable for `--native` (`rust-version = "1.96"`, proven by a build,
+the `msrv` matrix leg keeps it true).  A fortnight's per-leg tally in the liveness census,
+which read only the last run.  **Missing, filed as loft#1653:** a consumer-apps leg (moros,
+dryopea) and `revalidate-libs`' native run made gating — it is `continue-on-error` while
+native is the backend users get.
+
+**Effectiveness, measured.**  Every check that caught a real defect RUNS THE ARTEFACT:
+install.sh (shipped broken in 2026.8.0), valgrind on the candidate (#1357), the bundle
+smoke (bundles had shipped unexecuted), the registry splice (never done before 08-31).
+The report-reads caught documentation rot.  The one defect that reached users after
+2026.9.0, loft#1497, was a matrix cell no check covered (self-update over a source-installed
+prefix).  Efficiency: the checklist runs in 12 s (3 s offline); the gate is 90 minutes and
+had produced no evidence; the valgrind sweep is 113 minutes nightly and was repeated by hand
+on the candidate — `M-valgrind`, `M-libs` and `M-wasm` now derive from the gate's own jobs on
+the candidate's commit, and `M-leaks`, the three hands-on rows and `M-install-live` are
+retired into what already measured them.  27 manual rows became 20, eight of them reports.
+
+**Decision for the owner, now rather than on tag day:** `A-deviations` has never been green
+and lists six open deviations that block `2026.10.0` (D-bind-38/39/44, D-heap-8/9,
+D-perf-1).  Fix inside the week, or mark `not resolvable in a release` with the reason.

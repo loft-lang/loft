@@ -920,6 +920,32 @@ jobs:
           --lib --test issues --test wrap --test strings --test frame_vars
           -- --skip library_suite
 
+  audit:
+    # @nightly-class: report — an advisory against a dependency is not the language broken
+    name: Dependency advisories (cargo audit over Cargo.lock)
+    # Nightly-only: it measures the advisory database, not this diff — @CI_BUDGET.
+    # RUSTSEC advisories over the locked dependency tree.  Nothing asked this until
+    # 2026-09-23, when the first run found rustls 0.23.40 (RUSTSEC-2026-0285, the TLS
+    # 1.3 handshake, on the `self-update` / `loft install` download path) and
+    # crossbeam-epoch 0.9.18 (RUSTSEC-2026-0204) — a toolchain that ships a TLS stack
+    # and reasons about "a known-vulnerable release" in `self_update.rs` had no gate
+    # asking whether it was one.  `make release-checklist`'s `A-audit` asks the same
+    # question of the tree at hand; this asks it on the schedule, so an advisory
+    # published mid-cycle surfaces the next morning and not at the tag.
+    # Unmaintained-crate warnings do not fail it (memmap, ttf-parser are known); a
+    # vulnerability does.
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      - name: Install cargo-audit
+        uses: taiki-e/install-action@cargo-audit
+      - name: cargo audit
+        run: cargo audit
+
   toolchain-matrix:
     # @nightly-class: report — beta/nightly std and lint churn must never page us
     name: Suite under ${{ matrix.toolchain }}
@@ -937,14 +963,27 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        toolchain: [beta, nightly]
+        # `msrv` resolves to Cargo.toml's `rust-version` — the oldest stable `--native`
+        # is proven on.  A user one stable behind is the common case, and `--native`
+        # compiles a user's program with THEIR rustc, so beta and nightly alone tested
+        # the future and never the past.
+        toolchain: [beta, nightly, msrv]
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install Rust ${{ matrix.toolchain }}
+      - name: Resolve the toolchain (msrv = Cargo.toml's rust-version)
+        id: tc
+        run: |
+          t="${{ matrix.toolchain }}"
+          if [ "$t" = msrv ]; then
+            t=$(sed -n 's/^rust-version *= *"\([^"]*\)".*/\1/p' Cargo.toml)
+            [ -n "$t" ] || { echo "::error::Cargo.toml declares no rust-version, so the msrv leg has nothing to test"; exit 1; }
+          fi
+          echo "toolchain=$t" >> "$GITHUB_OUTPUT"
+      - name: Install Rust ${{ steps.tc.outputs.toolchain }}
         uses: dtolnay/rust-toolchain@master
         with:
-          toolchain: ${{ matrix.toolchain }}
+          toolchain: ${{ steps.tc.outputs.toolchain }}
 
       - name: Install mold
         run: sudo apt-get update && sudo apt-get install -y mold
@@ -991,7 +1030,7 @@ jobs:
       # coverage and buy nothing.
       - name: Test (ubuntu, ${{ matrix.toolchain }})
         run: >
-          cargo +${{ matrix.toolchain }} test --release --no-fail-fast
+          cargo +${{ steps.tc.outputs.toolchain }} test --release --no-fail-fast
           --lib --test issues --test wrap --test strings --test frame_vars
           -- --skip fill_rs_up_to_date --skip n9_generated_fill_matches_src
           --skip native_rs_functions_up_to_date --skip library_suite
@@ -1250,8 +1289,8 @@ jobs:
   daily-status:
     name: Daily status (the one place to look)
     needs: [stale-plans-audit, miri, asan, asan-leak-gate, poison, stack-shadow, tsan,
-            native-asan, valgrind, release-gate-sweeps, debug-asserts, toolchain-matrix,
-            index-hygiene, library-health]
+            native-asan, valgrind, release-gate-sweeps, debug-asserts, audit,
+            toolchain-matrix, index-hygiene, library-health]
     # The digest describes the default branch's nightlies, so it follows `notify`: not a
     # PR, not the release gate, and not a dispatch on another branch.
     if: always() && github.event_name != 'pull_request' && !inputs.from_gate && github.ref == format('refs/heads/{0}', github.event.repository.default_branch)

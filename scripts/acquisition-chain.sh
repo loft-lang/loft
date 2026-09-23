@@ -104,6 +104,19 @@ case "$run" in
   *) fail "program output was '$run', expected chain-ok:$VERSION" ;;
 esac
 
+# 6. The acquired binary installs a library from the LIVE registry into a fresh home.
+#    Trust-root / signing-key skew between a shipped binary and the live index is the
+#    classic release break, and nothing above asks the SHIPPED binary to resolve a
+#    package.  A fresh LOFT_HOME, so neither a cached index nor a package the box's own
+#    loft installed can answer for it.  (This was the by-hand `M-install-live` row.)
+export LOFT_HOME="$PREFIX/home"
+mkdir -p "$LOFT_HOME"
+iout=$("$LOFT" install regex 2>&1)
+icode=$?
+echo "$iout" | tail -3 | sed 's/^/    /'
+[ "$icode" = 0 ] || fail "the installed loft cannot install a library from the live registry (exit $icode)"
+say "loft install regex resolved against the live index"
+
 triple=$(uname -m)-$(uname -s)
-say "PASS — $VERSION acquired, anchored and executed ($triple, prefix $PREFIX)"
+say "PASS — $VERSION acquired, anchored, executed and installing ($triple, prefix $PREFIX)"
 exit 0

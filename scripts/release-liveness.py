@@ -52,11 +52,21 @@ GATE_WORKFLOWS = [
     ("release-gate.yml", "dispatch"),
     ("registry-validation.yml", "scheduled"),
     ("miri.yml", "scheduled"),
+    ("revalidate-libs.yml", "scheduled"),
+    ("repro-build.yml", "weekly"),
     ("api-compat.yml", "dispatch"),
     ("lib-main-health.yml", "scheduled"),
     ("browser-threads.yml", "scheduled"),
     ("win-cdylib.yml", "dispatch"),
 ]
+
+# How many scheduled runs the per-leg tally reads back.  The LAST run is one bit; a leg
+# that is red ten nights in fourteen is what makes the release gate impossible to turn
+# green, and only a window shows it (the Windows `Test` leg was, 2026-09-10..23, and
+# every release-gate run ended red on it while this census reported ci.yml "in flight").
+TALLY_RUNS = 14
+# A weekly workflow's "has not fired" alarm needs a wider window than a nightly's.
+SILENCE_DAYS = {"scheduled": 7, "weekly": 10}
 
 
 def sh(*args: str, timeout: int = 60) -> tuple[int, str]:
@@ -243,11 +253,57 @@ def census_workflows(network: bool) -> None:
         except (KeyError, ValueError):
             age = -1
         flag = ""
-        if age > 7 and kind == "scheduled":
+        if kind in SILENCE_DAYS and age > SILENCE_DAYS[kind]:
             flag = f"  <- has not fired in {age} days"
         if concl not in ("success", "in flight"):
             flag += f"  <- last verdict: {concl}"
         print(f"  {wf:<28} {kind:<10} {when}  {concl}{flag}")
+        if kind in SILENCE_DAYS:
+            tally_scheduled_runs(wf)
+
+
+def tally_scheduled_runs(wf: str) -> None:
+    """The last TALLY_RUNS scheduled runs of one workflow: how many ended how, and which
+    JOBS carried the reds — so a leg that is chronically red is named, not averaged
+    into a badge.  Jobs are fetched for the non-green runs only."""
+    code, out = sh(
+        "gh", "run", "list", "--workflow", wf, "-R", REPO, "--event", "schedule",
+        "--json", "databaseId,conclusion,createdAt", "--limit", str(TALLY_RUNS), timeout=60,
+    )
+    if code != 0:
+        return
+    try:
+        runs = json.loads(out or "[]")
+    except json.JSONDecodeError:
+        return
+    if not runs:
+        return
+    by: dict[str, int] = {}
+    for r in runs:
+        by[r.get("conclusion") or "in flight"] = by.get(r.get("conclusion") or "in flight", 0) + 1
+    span = f"{runs[-1].get('createdAt', '')[:10]}..{runs[0].get('createdAt', '')[:10]}"
+    summary = ", ".join(f"{n} {c}" for c, n in sorted(by.items(), key=lambda kv: -kv[1]))
+    red_jobs: dict[str, int] = {}
+    for r in runs:
+        if r.get("conclusion") in ("success", None):
+            continue
+        code, out = sh(
+            "gh", "run", "view", str(r["databaseId"]), "-R", REPO, "--json", "jobs",
+            "--jq", '.jobs[] | select(.conclusion != "success" and .conclusion != "skipped") | "\\(.name)=\\(.conclusion)"',
+            timeout=60,
+        )
+        if code != 0:
+            continue
+        for line in out.splitlines():
+            if line.strip():
+                red_jobs[line.strip()] = red_jobs.get(line.strip(), 0) + 1
+    print(f"{'':<40} last {len(runs)} scheduled ({span}): {summary}")
+    if red_jobs:
+        worst = sorted(red_jobs.items(), key=lambda kv: -kv[1])[:6]
+        print(f"{'':<40} red legs: " + "; ".join(f"{name} x{n}" for name, n in worst))
+        chronic = [name for name, n in red_jobs.items() if n * 2 >= len(runs)]
+        if chronic:
+            print(f"{'':<40} <- CHRONIC (red in half the window or more): " + "; ".join(chronic))
 
 
 def census_checklist() -> None:
@@ -268,7 +324,8 @@ def census_checklist() -> None:
     cycles = sorted(glob.glob(os.path.join(ROOT, "doc", "claude", "releases", "*", "checklist.json")))
     for p in cycles:
         try:
-            ticked |= set(json.load(open(p, encoding="utf-8")))
+            # `_waivers` and any other `_`-key is the record's own bookkeeping, not a tick.
+            ticked |= {k for k in json.load(open(p, encoding="utf-8")) if not k.startswith("_")}
         except (OSError, json.JSONDecodeError):
             pass
     never = [i for i in manual if i not in ticked]
