@@ -4470,14 +4470,13 @@ fn outer_collection_backing(
     }
     // The backing the latest bind on THIS path filled, where the scan recorded one (loft#1607);
     // else the one the type names.
-    let b = match on_this_path {
-        Some(b) => b,
-        None => {
-            let [b] = function.tp(v).depend()[..] else {
-                return None;
-            };
-            b
-        }
+    let b = if let Some(b) = on_this_path {
+        b
+    } else {
+        let [b] = function.tp(v).depend()[..] else {
+            return None;
+        };
+        b
     };
     (is_backing_name(function, b) && !exited.contains(&b) && !function.is_argument(b)).then_some(b)
 }
