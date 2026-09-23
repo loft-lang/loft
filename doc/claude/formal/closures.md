@@ -308,7 +308,9 @@ CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35`
   (`__ref_N`, guarded by store identity).  The next pass's literal or call then mints a fresh
   store, and every frame release of the holder finds nothing.  Each record releases what it
   adopted when its rebuild displaces it, or at the end: `M70 F1 M71 D70 F1 X D71` for `run(f)`,
-  inline and `keep(f)`, and `… F1 F1 X D71` for a local declared outside the loop.  The record
+  inline and `keep(f)`, and `… F1 F1 X D71` for a local declared outside the loop.  (Since
+  `(L-CapKeep)`, a pass no other name kept releases at its own `}` instead: `M70 F1 D70 M71 F1
+  D71 X` for `run(f)` and inline; a local declared outside the loop is unchanged.)  The record
   capture exposed one more hook-order defect.  Loft#1483's hookless free of a displaced capture
   ran BEFORE the rebuild's snapshot cascade, which then read the store it had freed.  That free
   now stands down wherever the capture's type owns a droppable, because the snapshot releases

@@ -13428,7 +13428,30 @@ impl Scopes<'_> {
                     && !function.is_skip_free(*t)
             })
             .collect();
-        if dead.is_empty() {
+        // A record built INLINE (`run(fn() {…})`) has no fn-ref of its own: its only name is
+        // the value the build hands to the expression around it, so it is dead at the end of
+        // the block its build lies in.  (Its local is also named by the function's head
+        // pre-init, so the mention count cannot say this.)
+        let database = data.def_nr("OpDatabase");
+        let mut built_here: HashSet<u16> = HashSet::new();
+        for op in &bl.operators {
+            op.walk(&mut |n| {
+                if let Value::Call(d, args) = n.unspan()
+                    && *d == database
+                    && let Some(Value::Var(r)) = args.first().map(Value::unspan)
+                {
+                    built_here.insert(*r);
+                }
+            });
+        }
+        let inline: Vec<u16> = self
+            .closure_keep
+            .records
+            .iter()
+            .copied()
+            .filter(|r| !self.closure_keep.targets.contains_key(r) && built_here.contains(r))
+            .collect();
+        if dead.is_empty() && inline.is_empty() {
             return Vec::new();
         }
         let (link_pre, links, link_post) = self.closure_keep_links(function);
@@ -13441,7 +13464,7 @@ impl Scopes<'_> {
                 .get(&r)
                 .map(|ts| ts.iter().copied().filter(|t| dead.contains(t)).collect())
                 .unwrap_or_default();
-            if built_for.is_empty() {
+            if built_for.is_empty() && !inline.contains(&r) {
                 continue;
             }
             let mut others = self.closure_keep_live(&built_for);
@@ -20658,9 +20681,6 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
             _ => {}
         }
     }
-    if out.holders.is_empty() {
-        return ClosureKeep::default();
-    }
     let database = data.def_nr("OpDatabase");
     let mut built_in_loop = false;
     let mut shared = false;
@@ -20722,7 +20742,7 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
         &mut shared,
         &mut foreign,
     );
-    out.gated = (built_in_loop && !out.records.is_empty()) || shared;
+    out.gated = (built_in_loop && !out.records.is_empty()) || (shared && !out.holders.is_empty());
     if !out.gated {
         return ClosureKeep::default();
     }
