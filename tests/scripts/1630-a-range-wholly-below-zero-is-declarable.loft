@@ -9,7 +9,10 @@
 // bytes through a different consumer — a field, a local, an element, three widths, a
 // nullable field, a `sorted` and a `hash` key, a write, a neighbour's offset, a parameter.
 //
-// CHANNEL: assertion failures, both backends (the control refuses the file at compile time).
+// @falsified-at: ec0097e24 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1630-a-range-wholly-below-zero-is-declarable.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: exit, both backends — the control refuses the file at compile time; the cells'
+//   assertions are what hold the representation once it compiles.
 
 type Neg = integer limit(-100, -1) size(1);
 type N2 = integer limit(-40000, -1) size(2);

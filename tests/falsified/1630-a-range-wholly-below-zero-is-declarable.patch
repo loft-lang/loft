@@ -1,0 +1,282 @@
+diff --git b/src/data.rs a/src/data.rs
+index 5f1871fc7..c058da83e 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -108,10 +108,9 @@ pub struct IntegerSpec {
+     /// Inclusive lower bound.  `i32::MIN` is reserved as the null
+     /// sentinel; plain-integer templates use `i32::MIN + 1`.
+     pub min: i32,
+-    /// Inclusive upper bound.  Signed, so a range lying wholly below zero has one
+-    /// (`limit(-100, -1)`, loft#1630); the wide / former-`long` template keeps
+-    /// `u32::MAX` as its "wider than i32" marker.
+-    pub max: i64,
++    /// Inclusive upper bound.  `u32` to allow the wide / former-`long`
++    /// template to use `u32::MAX` as a "wider than i32" sentinel.
++    pub max: u32,
+     /// When true, the value cannot be null — frees the null sentinel
+     /// and widens the usable range by 1 on narrow types.
+     pub not_null: bool,
+@@ -130,7 +129,7 @@ impl IntegerSpec {
+     pub const fn wide() -> Self {
+         IntegerSpec {
+             min: i32::MIN + 1,
+-            max: u32::MAX as i64,
++            max: u32::MAX,
+             not_null: false,
+             forced_size: None,
+         }
+@@ -140,7 +139,7 @@ impl IntegerSpec {
+     pub const fn signed32() -> Self {
+         IntegerSpec {
+             min: i32::MIN + 1,
+-            max: i32::MAX as i64,
++            max: i32::MAX as u32,
+             not_null: false,
+             forced_size: None,
+         }
+@@ -190,7 +189,7 @@ impl IntegerSpec {
+     pub fn i32() -> Self {
+         IntegerSpec {
+             min: i32::MIN + 1,
+-            max: i32::MAX as i64,
++            max: i32::MAX as u32,
+             not_null: false,
+             forced_size: NonZeroU8::new(4),
+         }
+@@ -200,7 +199,7 @@ impl IntegerSpec {
+     pub fn u32() -> Self {
+         IntegerSpec {
+             min: 0,
+-            max: i64::from(u32::MAX as i64) - 1,
++            max: u32::MAX - 1,
+             not_null: false,
+             forced_size: None,
+         }
+@@ -459,7 +458,7 @@ impl IntegerSpec {
+     /// True when the value range exceeds the signed-32-bit range.
+     #[must_use]
+     pub fn is_wide(&self) -> bool {
+-        self.max > i64::from(i32::MAX)
++        self.max > i32::MAX as u32
+     }
+ 
+     /// Number of distinct representable values (inclusive range + 1).
+@@ -495,13 +494,13 @@ impl IntegerSpec {
+     /// True when this is the I32 template (plain `integer` post-2c).
+     #[must_use]
+     pub fn is_signed32_template(&self) -> bool {
+-        self.min == i32::MIN + 1 && self.max == i64::from(i32::MAX)
++        self.min == i32::MIN + 1 && self.max == i32::MAX as u32
+     }
+ 
+     /// True when this is the wide I64 template.
+     #[must_use]
+     pub fn is_wide_template(&self) -> bool {
+-        self.min == i32::MIN + 1 && self.max == i64::from(u32::MAX)
++        self.min == i32::MIN + 1 && self.max == u32::MAX
+     }
+ 
+     /// The loft-SOURCE spelling of this spec, or `None` when it has no name of
+@@ -542,7 +541,7 @@ impl IntegerSpec {
+     /// misroute every plain `integer`.
+     #[must_use]
+     pub fn unsigned_wide(&self) -> bool {
+-        self.min >= 0 && self.max > i64::from(i32::MAX)
++        self.min >= 0 && self.max > i32::MAX as u32
+     }
+ }
+ 
+@@ -10048,7 +10047,7 @@ impl Data {
+             "_d_nr",
+             Type::Integer(IntegerSpec {
+                 min: i32::MIN + 1,
+-                max: i64::from(i32::MAX),
++                max: i32::MAX as u32,
+                 not_null: false,
+                 forced_size: NonZeroU8::new(4),
+             }),
+diff --git b/src/ir_read.rs a/src/ir_read.rs
+index 66a92cd29..11eb846bd 100644
+--- b/src/ir_read.rs
++++ a/src/ir_read.rs
+@@ -332,7 +332,7 @@ fn read_name_list(stores: &Stores, v: ds::RecVector) -> Vec<String> {
+ fn read_int_spec(stores: &Stores, slot: Record) -> IntegerSpec {
+     IntegerSpec {
+         min: slot.field_int(stores, ds::TYINTEGER_MIN) as i32,
+-        max: slot.field_int(stores, ds::TYINTEGER_MAX),
++        max: slot.field_int(stores, ds::TYINTEGER_MAX) as u32,
+         not_null: slot.field_bool(stores, ds::TYINTEGER_NOT_NULL),
+         forced_size: NonZeroU8::new(slot.field_int(stores, ds::TYINTEGER_FORCED) as u8),
+     }
+diff --git b/src/ir_schema.rs a/src/ir_schema.rs
+index faa8105e7..5482891ad 100644
+--- b/src/ir_schema.rs
++++ a/src/ir_schema.rs
+@@ -367,7 +367,7 @@ fn type_list(p: &Parsed) -> Result<Vec<Type>, TypeDecodeError> {
+ 
+ fn integer_spec(p: &Parsed) -> Result<IntegerSpec, TypeDecodeError> {
+     let min = as_i32(field(p, "min")?)?;
+-    let max = as_i64(field(p, "max")?)?;
++    let max = as_u32(field(p, "max")?)?;
+     let not_null = as_bool(field(p, "not_null")?)?;
+     let forced = as_u32(field(p, "forced")?)? as u8;
+     Ok(IntegerSpec {
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 42178a203..4b8fc1690 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -3416,7 +3416,7 @@ impl Parser {
+         let mut dep = Vec::new();
+         self.parse_depended(returned, &mut dep);
+         let mut min = i32::MIN + 1;
+-        let mut max = i64::from(i32::MAX);
++        let mut max = i32::MAX as u32;
+         if type_name == "integer" {
+             let has_limit = self.parse_type_limit(&mut min, &mut max);
+             // `@FR-L-Narrow-Alias` — a stored WIDTH is a property of a named type, so `size(n)`
+@@ -4191,7 +4191,7 @@ impl Parser {
+     /// out-of-range write.  A bound is the one thing in a declaration a program cannot
+     /// check for itself, so an unrepresentable one is a compile error naming the
+     /// representable edge and the type that does hold the value.
+-    pub(crate) fn parse_type_limit(&mut self, min: &mut i32, max: &mut i64) -> bool {
++    pub(crate) fn parse_type_limit(&mut self, min: &mut i32, max: &mut u32) -> bool {
+         if self.lexer.has_keyword("limit") {
+             self.lexer.token("(");
+             // A bound the type cannot carry is refused, and the declaration then RECOVERS as
+@@ -4228,47 +4228,52 @@ impl Parser {
+                 }
+             }
+             self.lexer.token(",");
+-            // The upper bound is signed (loft#1630): a range lying wholly below zero is
+-            // `value - start` in the smallest width that holds it, like any other
+-            // (`(L-Narrow-Decode)`).  It spans the same window the lower bound does at its
+-            // bottom and the wide template's `u32::MAX` at its top.
+-            let max_neg = self.lexer.has_token("-");
+-            let upper = if let Some(nr) = self.lexer.has_integer() {
+-                Some(i64::from(nr))
+-            } else {
+-                self.lexer
+-                    .has_long()
+-                    .map(|nr| i64::try_from(nr).unwrap_or(i64::MAX))
+-            };
+-            if let Some(nr) = upper {
+-                let v = if max_neg { -nr } else { nr };
+-                if (i64::from(i32::MIN) + 1..=i64::from(u32::MAX)).contains(&v) {
+-                    *max = v;
++            // An upper bound below zero is not representable: `IntegerSpec::max` is a
++            // `u32`, so a range lying entirely below zero has no encoding.  Say that,
++            // because the `-` otherwise reaches no branch below and the parser desyncs
++            // into *"Expect token )"* — an error about punctuation for a bound the type
++            // system simply cannot carry, which is the same shape the lower bound's
++            // too-wide case was fixed for above.
++            if self.lexer.has_token("-") {
++                if !self.first_pass {
++                    diagnostic!(
++                        self.lexer,
++                        Level::Error,
++                        "`limit(...)`'s upper bound cannot be negative, so a range lying \
++                         entirely below zero cannot be declared; widen it to zero \
++                         (`limit({min}, 0)`) and check the upper edge in code, or declare \
++                         it plain `integer`"
++                    );
++                }
++                self.limit_refused = true;
++                // Consume the digits so the `)` below still lines up and the file's other
++                // errors are reported rather than buried under a cascade.
++                let _ = self
++                    .lexer
++                    .has_integer()
++                    .or_else(|| self.lexer.has_long().and_then(|n| u32::try_from(n).ok()));
++                self.lexer.token(")");
++                return false;
++            }
++            // C54.A incremental 2a — accept both Integer and Long literals.
++            // Values > i32::MAX tokenise as Long, so u32-range bounds like
++            // `limit(0, 4_294_967_294)` work.
++            if let Some(nr) = self.lexer.has_integer() {
++                *max = nr;
++            } else if let Some(nr) = self.lexer.has_long() {
++                if let Ok(fits) = u32::try_from(nr) {
++                    *max = fits;
+                 } else {
+                     refused = true;
+-                    if !self.first_pass {
+-                        diagnostic!(
+-                            self.lexer,
+-                            Level::Error,
+-                            "upper bound {v} is outside the range `limit(...)` can carry \
+-                             ({} to {}); declare it plain `integer`, which holds the full \
+-                             64-bit range, and check the bound in code",
+-                            i32::MIN + 1,
+-                            u32::MAX
+-                        );
+-                    }
+                 }
+-            }
+-            // An inverted range admits no value at all, so every store into it would be
+-            // refused with a message about narrowing rather than about the declaration.
+-            if !refused && i64::from(*min) > *max {
+-                refused = true;
+-                if !self.first_pass {
++                if u32::try_from(nr).is_err() && !self.first_pass {
+                     diagnostic!(
+                         self.lexer,
+                         Level::Error,
+-                        "`limit({min}, {max})` holds no value: the lower bound is above the \
+-                         upper one; write the smaller bound first"
++                        "upper bound {nr} is outside the range `limit(...)` can carry \
++                         (up to {}); declare it plain `integer`, which holds the full \
++                         64-bit range, and check the bound in code",
++                        u32::MAX
+                     );
+                 }
+             }
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 4e5fd8b60..9857a0663 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -4150,7 +4150,7 @@ impl Parser {
+         if let Type::Integer(s) = ty
+             && s.min >= 0
+         {
+-            return u32::try_from(s.max).ok();
++            return Some(s.max);
+         }
+         None
+     }
+@@ -4965,11 +4965,11 @@ impl Parser {
+                 };
+                 if let Some((nmin, nmax)) = narrowed
+                     && nmin >= s.min
+-                    && i64::from(nmax) <= s.max
++                    && nmax <= s.max
+                 {
+                     *ctp = Type::Integer(IntegerSpec {
+                         min: nmin,
+-                        max: i64::from(nmax),
++                        max: nmax,
+                         ..*s
+                     });
+                 }
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index e923aa2d4..b957231e6 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -7130,7 +7130,7 @@ fn cell_stem(tp: &Type, data: &crate::data::Data) -> Option<String> {
+ /// has always carried; only a narrow width needs the encoded form.
+ fn int_cell_stem(spec: &crate::data::IntegerSpec) -> String {
+     if spec.forced_size.is_none() && spec.byte_width(true) == 8 {
+-        return if spec.max == i64::from(u32::MAX) {
++        return if spec.max == u32::MAX {
+             "long"
+         } else {
+             "integer"
+@@ -7187,7 +7187,7 @@ fn cell_value_type(tp: &Type) -> Type {
+             // type promises, and a box that widened any of them would answer a value the
+             // author's type excludes (`@FR-L-CapBox`).
+             if spec.forced_size.is_none() && spec.byte_width(true) == 8 {
+-                if spec.max == i64::from(u32::MAX) {
++                if spec.max == u32::MAX {
+                     crate::data::I64.clone()
+                 } else {
+                     crate::data::I32.clone()
