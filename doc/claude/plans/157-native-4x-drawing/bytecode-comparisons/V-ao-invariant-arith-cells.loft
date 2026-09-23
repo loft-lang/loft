@@ -119,7 +119,8 @@ fn m9() {
   println("m9 {s}");
 }
 
-// m10 — the chain in the loop's OWN test: `n * 4` is the range's end, read per iteration.
+// m10 — the chain in the loop's OWN test: `n * 4` is the range's end, taken once before the
+// first round (`(I-Range)`, loft#1619), so it needs no memo.
 fn m10() {
   n = 3;
   s = 0;

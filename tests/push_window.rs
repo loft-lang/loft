@@ -238,10 +238,14 @@ fn a_comprehension_is_the_counted_range_it_spells() {
     // plain behind the guard (`@FR-R-GuardedChain`), and its pushes are reserved.
     let rust = emit("comprehension", &[]);
     let w2 = body(&rust, "n_w2");
+    // Since loft#1619 the end `n` is taken once into a local the range proof ranges, so the
+    // counter is ranged too and steps through the plain add (`@FR-R-Range`), which is the
+    // stronger form of the same claim.
     assert!(
-        w2.contains("var_i__index = ops::op_add_long_nn((var_i__index), (1_i64))")
+        (w2.contains("var_i__index = ops::op_add_long_nn((var_i__index), (1_i64))")
+            || w2.contains("var_i__index = ((var_i__index).wrapping_add(1_i64))"))
             && !w2.contains("var_i__index = ops::op_add_int("),
-        "the comprehension's counter steps through the non-null add:\n{w2}"
+        "the comprehension's counter steps through the non-null or the plain add:\n{w2}"
     );
     assert!(
         w2.contains("@FR-R-GuardedChain guard") && w2.contains(".wrapping_mul(var_i)"),

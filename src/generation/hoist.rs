@@ -349,6 +349,26 @@ pub fn nested_counted_loops<'a>(
                 if seeds == 1
                     && let Some(s) = seed
                 {
+                    // The end, likewise: a non-literal bound is taken once into a local in
+                    // the loop's prelude (`@FR-I-Range`), so an end that is a local set ONCE
+                    // in this body is read as the value it was set from.
+                    let mut rc = rc;
+                    if let Value::Var(h) = rc.hi.unspan() {
+                        let mut ends: Vec<&'a Value> = Vec::new();
+                        for o in &body.operators {
+                            o.any_node(&mut |m| {
+                                if let Value::Set(v, e) = m
+                                    && v == h
+                                {
+                                    ends.push(e);
+                                }
+                                false
+                            });
+                        }
+                        if let [e] = ends[..] {
+                            rc.hi = e;
+                        }
+                    }
                     out.push((rc, s));
                 }
             }
