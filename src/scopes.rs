@@ -145,6 +145,9 @@ struct Scopes<'s> {
     /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
     /// arm assigns and a later statement reads.
     null_led: HashSet<u16>,
+    /// The locals whose one real bind follows an enclosing null on every path and every pass
+    /// ([`null_led_first_binds_in`]): that bind displaces no store.
+    null_led_first: HashSet<u16>,
     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
     /// `scan_if` a local whose every mention lies inside one arm.
     mentions: HashMap<u16, usize>,
@@ -5279,7 +5282,9 @@ fn written_tuple_members_in(code: &Value) -> HashSet<(u16, u16)> {
 /// each backend's set lowering, not by this scan, and under reuse the displaced store is
 /// the buffer's: the next call then writes a store that is back in the pool (measured, a
 /// use-after-free on every turn after the first).  Guarding that free against the buffer is
-/// the widening that lifts this condition; until then the buffer stays null there.
+/// the widening that lifts this condition; until then the buffer stays null there.  The
+/// nulls in front of a local's one real bind on every pass (`null_led_first_binds_in`) are
+/// not such a second assignment: they displace nothing.
 /// The calls at the VALUE positions of a branch (@PLN157 § V-af, `@FR-O-Buffer`): an `if`'s two arms, a
 /// value block's last statement, recursively; a `Call` is its own tail.  Anything else — a
 /// variable, a literal, a null — contributes no call.
@@ -5303,7 +5308,7 @@ fn reuse_record_buffers(
     fn_nr: u32,
     witness_buffer: &HashMap<u16, Vec<u16>>,
     minted_pairs: &HashSet<u16>,
-    multi_assigned: &HashSet<u16>,
+    reassigned: &HashSet<u16>,
 ) {
     if !crate::keys::retbuf_reuse_enabled() {
         return;
@@ -5380,7 +5385,7 @@ fn reuse_record_buffers(
         if !ungated
             && fed_locals
                 .get(&av)
-                .is_some_and(|vs| vs.iter().any(|v| multi_assigned.contains(v)))
+                .is_some_and(|vs| vs.iter().any(|v| reassigned.contains(v)))
         {
             // The result local is reassigned somewhere: its set lowering frees the store
             // it displaces, which would be this buffer's.
@@ -5783,6 +5788,7 @@ fn run_scan_phase(
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
         null_led: null_led_in(orig_code, data),
+        null_led_first: null_led_first_binds_in(orig_code, data),
         mentions: var_mentions_in(orig_code),
         sunk: sunk.clone(),
         assigned: assigned_in(orig_code),
@@ -5998,7 +6004,8 @@ fn run_scan_phase(
             break;
         }
     }
-    let displace_locals = nullable_locals_that_displace(orig_code, &function, data);
+    let displace_locals =
+        nullable_locals_that_displace(orig_code, &function, data, &scopes.null_led_first);
     for &v in &displace_locals {
         // loft#1522 — keyed by the VAR, not by its name.  `add_temp_var` identifies a temp by
         // name and hands back the existing one, so two locals of the same name in SIBLING
@@ -6130,7 +6137,13 @@ fn run_scan_phase(
         d_nr,
         &scopes.witness_buffer,
         &scopes.minted_pairs,
-        &scopes.multi_assigned,
+        // A local whose other binds are the nulls in front of it on every pass displaces
+        // nothing (`null_led_first_binds_in`, loft#1643).
+        &scopes
+            .multi_assigned
+            .difference(&scopes.null_led_first)
+            .copied()
+            .collect(),
     );
     lazy_buffer_mints(&mut code, &mut function, data);
     data.definitions[d_nr as usize].code = code;
@@ -6809,6 +6822,98 @@ pub(crate) fn null_led_in(node: &Value, data: &Data) -> HashSet<u16> {
     counts
         .into_iter()
         .filter(|&(_, (nulls, real))| nulls >= 1 && real == 1)
+        .map(|(v, _)| v)
+        .collect()
+}
+
+/// Variables whose one real bind can hold nothing but the sentinel it overwrites: every bind
+/// but one writes `null`, and a null is written EARLIER in a block that ENCLOSES that real bind
+/// with no loop between the two.  So every path to the real bind wrote the null first, on
+/// every pass, and the bind displaces no store — the author's `x: T? = null; if c { x = mk() }`
+/// inside a loop body, which `(B-Scope)` makes the spelling of a local an arm assigns and a
+/// later statement reads.  Two nulls that do not qualify: one written only OUTSIDE the loop
+/// the real bind sits in (the second pass's bind displaces the first pass's store), and one in
+/// a sibling arm (the path through the other arm reaches the bind without it).
+///
+/// Stricter than [`null_led_in`], which counts binds and reads no position.
+pub(crate) fn null_led_first_binds_in(node: &Value, data: &Data) -> HashSet<u16> {
+    fn is_null(v: &Value, data: &Data) -> bool {
+        match v.unspan() {
+            Value::Null => true,
+            Value::Call(d, a) => a.is_empty() && data.def(*d).name() == "OpNullRefSentinel",
+            _ => false,
+        }
+    }
+    /// A region is a block, a loop body or an `if` arm: `(id, is_loop)`.
+    type Regions = Vec<(usize, bool)>;
+    #[derive(Default)]
+    struct Binds {
+        nulls: Vec<Regions>,
+        reals: usize,
+        led: bool,
+        null_after_real: bool,
+    }
+    struct Walk<'a> {
+        data: &'a Data,
+        regions: Regions,
+        next: usize,
+        out: HashMap<u16, Binds>,
+    }
+    impl Walk<'_> {
+        fn region(&mut self, node: &Value, is_loop: bool) {
+            self.next += 1;
+            self.regions.push((self.next, is_loop));
+            self.node(node);
+            self.regions.pop();
+        }
+        fn node(&mut self, node: &Value) {
+            match node.unspan() {
+                Value::If(test, t, f) => {
+                    self.node(test);
+                    self.region(t, false);
+                    self.region(f, false);
+                    return;
+                }
+                Value::Loop(_) | Value::Block(_) => {
+                    let is_loop = matches!(node.unspan(), Value::Loop(_));
+                    self.next += 1;
+                    self.regions.push((self.next, is_loop));
+                    node.unspan().for_each_child(&mut |c| self.node(c));
+                    self.regions.pop();
+                    return;
+                }
+                _ => {}
+            }
+            node.unspan().for_each_child(&mut |c| self.node(c));
+            if let Value::Set(v, value) = node.unspan() {
+                let here = self.regions.clone();
+                let e = self.out.entry(*v).or_default();
+                if is_null(value, self.data) {
+                    if e.reals == 0 {
+                        e.nulls.push(here);
+                    } else {
+                        e.null_after_real = true;
+                    }
+                } else {
+                    e.reals += 1;
+                    e.led = e
+                        .nulls
+                        .iter()
+                        .any(|n| here.starts_with(n) && here[n.len()..].iter().all(|&(_, lp)| !lp));
+                }
+            }
+        }
+    }
+    let mut w = Walk {
+        data,
+        regions: Vec::new(),
+        next: 0,
+        out: HashMap::new(),
+    };
+    w.node(node);
+    w.out
+        .into_iter()
+        .filter(|(_, b)| b.reals == 1 && b.led && !b.null_after_real)
         .map(|(v, _)| v)
         .collect()
 }
@@ -12016,7 +12121,20 @@ impl Scopes<'_> {
                 }
             }
         }
-        if (record_shaped || vector_shaped)
+        // loft#1643 — a NULLABLE record local whose one real bind follows its null on every
+        // pass (`x: T? = null; if c { x = mk() }`, the spelling `(B-Scope)` requires) is a
+        // first bind of the call's answer exactly as the bare local's is, so it takes that
+        // bind's witness PAIRING: its free declines against the call's buffer by identity.  Only the pairing: the dep strips below stay
+        // bare-record-only for the reason `record_target` gives.
+        let nullable_first_adopt = !record_shaped
+            && !publishes_through_ref
+            && matches!(function.tp(v), Type::Optional(_))
+            && matches!(
+                function.tp(v).base(),
+                Type::Reference(_, _) | Type::Enum(_, true, _)
+            )
+            && self.null_led_first.contains(&ov);
+        if (record_shaped || vector_shaped || nullable_first_adopt)
             && matches!(unspanned_value, Value::Call(_, _) | Value::CallRef(_, _))
             && let Some(fn_nr) = crate::use_analysis::callee_of(data, self.d_nr, unspanned_value)
             // A loft-defined callee — an `n_` global OR a `t_` method / generic
@@ -20368,7 +20486,12 @@ fn nullable_view_locals(code: &Value, function: &Function, data: &Data) -> Vec<u
     out
 }
 
-fn nullable_locals_that_displace(code: &Value, function: &Function, data: &Data) -> Vec<u16> {
+fn nullable_locals_that_displace(
+    code: &Value,
+    function: &Function,
+    data: &Data,
+    null_led_first: &HashSet<u16>,
+) -> Vec<u16> {
     fn walk(node: &Value, seen: &mut HashSet<u16>, out: &mut Vec<u16>, data: &Data) {
         if let Value::Set(t, val) = node.unspan() {
             // A SECOND assignment is what displaces; the first allocates.
@@ -20386,9 +20509,12 @@ fn nullable_locals_that_displace(code: &Value, function: &Function, data: &Data)
     let mut seen = HashSet::new();
     walk(code, &mut seen, &mut out, data);
     // @FR-O-Proxy asks free — the locals this returns are the ones whose DISPLACED store is
-    // released, so the proxy's answer is what licenses that free.
+    // released, so the proxy's answer is what licenses that free.  A local whose earlier binds
+    // are nulls in front of the minting one on every pass displaces nothing: that bind is a
+    // first bind (`@FR-O-Move`) and takes the first bind's pairing (loft#1643).
     out.retain(|&v| {
-        v < function.count()
+        !null_led_first.contains(&v)
+            && v < function.count()
             && matches!(function.tp(v), Type::Optional(_))
             && matches!(
                 function.tp(v).base(),
