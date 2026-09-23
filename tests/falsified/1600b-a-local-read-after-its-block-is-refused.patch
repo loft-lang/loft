@@ -1,0 +1,382 @@
+diff --git b/src/keys.rs a/src/keys.rs
+index 068ef47b9..e3eb8b00a 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1299,16 +1299,15 @@ pub fn coalesce_left_assoc() -> bool {
+     *ON.get_or_init(|| env_set("LOFT_COALESCE_LEFT_ASSOC"))
+ }
+ 
+-/// loft#1600 (`@FR-H-Drop`'s scope-end clause with `@FR-B-Scope`), **DEFAULT ON**, both
+-/// backends: a heap local every mention of which lies in ONE arm of an `if` is declared in that
+-/// arm and released at its end, rather than pre-initialised at the `if`'s scope and released at
+-/// that scope's end.  `(B-Scope)` makes the arm the local's scope (a read after it is refused),
+-/// so the arm's end is where its owner dies.  `LOFT_NO_ARM_SCOPE=1` keeps the pre-init and the
+-/// late release: the first bisect step for a wrong release order, a leak or a double release out
+-/// of a local bound inside an `if` arm.
++/// loft#1600 (`@FR-H-Drop`, scope-end clause), OPT-IN: a heap local every mention of which
++/// lies in ONE arm of an `if` is declared in that arm and released at its end, rather than
++/// pre-initialised at the `if`'s scope and released at that scope's end.  Off by default:
++/// which of the two scopes an `if`-arm local has is an open design question (`formal/heap.md`
++/// D-heap-36) — @PLN125 decided the function's (`pln125-b-drop.loft`'s `if_block_local`), and
++/// the value-`if` delivery paths read the pre-init.  `LOFT_ARM_SCOPE=1` turns it on.
+ pub fn arm_scope_enabled() -> bool {
+     static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_ARM_SCOPE"))
++    *ON.get_or_init(|| env_set("LOFT_ARM_SCOPE"))
+ }
+ 
+ /// @PLN164 B1b (`@FR-O-Buffer`, `@FR-R-Reuse`): the buffer of a call whose result a local
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index a9c658f0c..c7b0a3af6 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -720,11 +720,7 @@ impl Parser {
+         // statements that produced it, so it is saved across every block this one contains
+         // and restored for the loop that is still in the middle of that pair.
+         let outer_fit = self.fit_armed.take();
+-        // `@FR-B-Scope` — this block is open while its statements parse.
+-        self.block_ord = self.block_ord.wrapping_add(1);
+-        self.block_path.push(self.block_ord);
+         let cc_ret = self.parse_block_inner(context, val, result);
+-        self.block_path.pop();
+         self.fit_armed = outer_fit;
+         if cc.is_some() {
+             self.cc_nest -= 1;
+@@ -1110,16 +1106,7 @@ impl Parser {
+                 // `x: void` in first_pass, which then tripped the
+                 // "cannot change type from void to S" diagnostic in
+                 // second_pass when the real Reference(S) type arrived.
+-                //
+-                // …and preserve `Type::Never` for the same reason: a `return` whose value is
+-                // COPIED into the caller's buffer (`return b.items`, a projection of a local)
+-                // is lowered as an Insert of copy, frees and the `return` itself, and the
+-                // statement still diverges.  Reset to Void, the arm read as a statement and
+-                // the `if` around it as one too, so a sibling `else { head(n) }` had its
+-                // value dropped and the function answered an empty vector — silently, on
+-                // both backends, while the diverging arm's own path (the only one loft#1495's
+-                // guard ran) was right.
+-                if !matches!(t, Type::Rewritten(_) | Type::Never) {
++                if !matches!(t, Type::Rewritten(_)) {
+                     t = Type::Void;
+                 }
+             } else if !matches!(t, Type::Void | Type::Never)
+@@ -5572,12 +5559,11 @@ impl Parser {
+                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+                 result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
+                 self.match_void_arm |= matches!(arm_type, Type::Void);
+-                if matches!(result_type, Type::Void | Type::Null | Type::Never) {
++                if result_type == Type::Void || result_type == Type::Null {
+                     result_type = arm_type.clone();
+                 } else if !self.first_pass
+                     && arm_type != Type::Void
+                     && arm_type != Type::Null
+-                    && arm_type != Type::Never
+                     && !self.arm_convert_reported
+                     && !self.match_arms_unify(&result_type, &arm_type)
+                 {
+@@ -6123,12 +6109,11 @@ impl Parser {
+             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
+             self.match_void_arm |= matches!(arm_type, Type::Void);
+-            if matches!(result_type, Type::Void | Type::Null | Type::Never) {
++            if result_type == Type::Void || result_type == Type::Null {
+                 result_type = arm_type.clone();
+             } else if !self.first_pass
+                 && arm_type != Type::Void
+                 && arm_type != Type::Null
+-                && arm_type != Type::Never
+                 && !self.arm_convert_reported
+                 && !self.match_arms_unify(&result_type, &arm_type)
+             {
+@@ -6391,8 +6376,7 @@ impl Parser {
+     /// either the initial value or a statement `match` whose arms yield nothing — the
+     /// same "expect nothing" an `else if` chain passes down for a `Void` then arm.
+     fn match_arm_expected(result_type: &Type) -> Type {
+-        if result_type.is_unknown() || matches!(result_type, Type::Void | Type::Null | Type::Never)
+-        {
++        if result_type.is_unknown() || matches!(result_type, Type::Void | Type::Null) {
+             Type::Unknown(0)
+         } else {
+             result_type.clone()
+@@ -6509,11 +6493,10 @@ impl Parser {
+         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
+         *result_type = joined;
+         self.match_void_arm |= matches!(arm_type, Type::Void);
+-        if matches!(*result_type, Type::Void | Type::Never) {
++        if *result_type == Type::Void {
+             *result_type = arm_type.clone();
+         } else if !self.first_pass
+             && arm_type != Type::Void
+-            && arm_type != Type::Never
+             && !self.arm_convert_reported
+             && !self.match_arms_unify(result_type, &arm_type)
+         {
+@@ -6595,7 +6578,7 @@ impl Parser {
+         let arm_expected = Self::match_arm_expected(result_type);
+         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
+         let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
+-        if matches!(result_type.base(), Type::Void | Type::Never) {
++        if *result_type == Type::Void {
+             *result_type = arm_type;
+         }
+         let (guard, exhaustive) = if field_conditions.is_empty() {
+@@ -9492,7 +9475,7 @@ impl Parser {
+             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
+             self.match_void_arm |= matches!(arm_type, Type::Void);
+-            if matches!(result_type, Type::Void | Type::Null | Type::Never) {
++            if result_type == Type::Void || result_type == Type::Null {
+                 result_type = arm_type.clone();
+             }
+             // P209 — when the arm has both a guard and pattern bindings
+@@ -10590,7 +10573,7 @@ impl Parser {
+             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
+             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
+             self.match_void_arm |= matches!(arm_type, Type::Void);
+-            if matches!(result_type, Type::Void | Type::Never) {
++            if result_type == Type::Void {
+                 result_type = arm_type.clone();
+             }
+             // Without a guard the bindings fold into the body exactly as before; with one they
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index e9e707c8c..db642d3c1 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -2362,12 +2362,6 @@ impl Parser {
+                 for (shadow, original) in self.vars.promoted_text_args() {
+                     let orig_name = self.vars.name(original).to_string();
+                     self.vars.remap_name(&orig_name, shadow);
+-                    // The shadow is seeded from the parameter at function entry (the
+-                    // preamble in `expressions.rs`), so it holds a value from the first
+-                    // statement on.  Without this a read BEFORE the promoting write — the
+-                    // condition of the `if` whose arm writes the parameter — found the
+-                    // shadow undefined and reported `Unknown variable '__tp_<name>'`.
+-                    self.vars.defined(shadow);
+                     // Mark original as used so test_used doesn't warn.
+                     self.vars.mark_used(original);
+                 }
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 4b1f160fe..6bc406b5d 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -808,14 +808,6 @@ pub struct Parser {
+     /// O8.5: range bounds captured by `parse_in_range_body` for const-unroll detection.
+     pub(crate) last_range_from: Option<Value>,
+     pub(crate) last_range_till: Option<Value>,
+-    /// `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser
+-    /// ordinal; and, per `(function, local)`, the open-block path where a STATEMENT last bound
+-    /// that local.  A local bound inside a block ends at that block's `}` (rustc's rule), so a
+-    /// read from outside the path is refused.  Pass 2 only: both are written and read in
+-    /// source order within the pass.
+-    pub(crate) block_path: Vec<u32>,
+-    pub(crate) block_ord: u32,
+-    pub(crate) bound_in_block: std::collections::HashMap<(u32, u16), Vec<u32>>,
+     /// @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an
+     /// integer `pos`): `(cursor_var, cursor_def, pos_field_idx, pos_var)`.  `pos_var` holds the
+     /// current position (reads are offset by it); the match PREFIX-consumes (gate `pos + fixed <=
+@@ -1565,9 +1557,6 @@ impl Parser {
+             iterable_context: false,
+             last_range_from: None,
+             last_range_till: None,
+-            block_path: Vec::new(),
+-            block_ord: 0,
+-            bound_in_block: std::collections::HashMap::new(),
+             match_cursor: None,
+             match_cursor_farthest: None,
+             subrule_edges: Vec::new(),
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index e912415fa..0ab67704f 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -254,68 +254,6 @@ impl Parser {
+     }
+ 
+     #[allow(clippy::too_many_lines)]
+-    /// `@FR-B-Scope` — a local bound by a statement inside a block ends at that block's `}`,
+-    /// as in Rust: a read of it from outside the block is refused.  The block path of the
+-    /// statement that last bound it is recorded at every binding position; a bind from outside
+-    /// that path starts a new binding there (`w = 3` after the block is legal and makes `w`
+-    /// the outer block's).  Parameters and loop variables are bound by their construct, not by
+-    /// a statement, and are not tracked; nor are the compiler's own locals.  The question is
+-    /// asked of the VARIABLE's name, not the spelling: a text parameter written in a block
+-    /// is promoted to a `__tp_<name>` copy the spelling then resolves to, and that copy is
+-    /// still the parameter.
+-    fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
+-        let own = self.vars.name(var);
+-        if self.vars.is_argument(var) || self.vars.was_loop_var(var) || own.starts_with("__") {
+-            return;
+-        }
+-        let key = (self.context, var);
+-        let visible = self
+-            .bound_in_block
+-            .get(&key)
+-            .is_none_or(|p| self.block_path.starts_with(p));
+-        if self.at_binding_name() {
+-            if !visible || !self.bound_in_block.contains_key(&key) {
+-                self.bound_in_block.insert(key, self.block_path.clone());
+-            }
+-            return;
+-        }
+-        if !visible {
+-            diagnostic_at!(
+-                self.lexer,
+-                name_pos,
+-                Level::Error,
+-                code = "local-out-of-scope",
+-                "`{name}` was bound inside a block that has ended, so it does not exist here — \
+-                 bind it before the block, or give the block a value: \
+-                 `{name} = if … {{ … }} else {{ … }}`"
+-            );
+-            self.lexer.fix_last(crate::diagnostics::Fix {
+-                kind: crate::diagnostics::FixKind::Conditional,
+-                title: format!("bind `{name}` before the block and assign it inside"),
+-                condition: Some(
+-                    "if every path should leave a value behind; the binding before the block \
+-                     is the value on a path that assigns nothing"
+-                        .to_string(),
+-                ),
+-                edit: None,
+-                concept: "`if` as an expression",
+-                concept_ref: "@F27",
+-            });
+-            self.lexer.fix_last(crate::diagnostics::Fix {
+-                kind: crate::diagnostics::FixKind::Conditional,
+-                title: format!(
+-                    "make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"
+-                ),
+-                condition: Some(
+-                    "if each arm computes the value, so the `if` itself can answer it".to_string(),
+-                ),
+-                edit: None,
+-                concept: "`if` as an expression",
+-                concept_ref: "@F27",
+-            });
+-        }
+-    }
+-
+     pub(crate) fn parse_var(
+         &mut self,
+         code: &mut Value,
+@@ -629,9 +567,6 @@ impl Parser {
+             t = Type::Unknown(0);
+         } else if self.vars.name_exists(name) {
+             let index_var = self.vars.var(name);
+-            if !self.first_pass {
+-                self.check_block_scope(index_var, name, name_pos);
+-            }
+             // on pass 2, if a variable has Unknown type, it may be a pass-1
+             // placeholder for a forward-declared function. Try fn-ref resolution.
+             //
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 121c3f02c..30e924672 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -141,10 +141,6 @@ struct Scopes<'s> {
+     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
+     /// direction: declining keeps today's leak, never frees a store twice.
+     multi_assigned: HashSet<u16>,
+-    /// Variables every bind of which but ONE writes `null` ([`null_led_in`]): the author's
+-    /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
+-    /// arm assigns and a later statement reads.
+-    null_led: HashSet<u16>,
+     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
+     /// `scan_if` a local whose every mention lies inside one arm.
+     mentions: HashMap<u16, usize>,
+@@ -5738,7 +5734,6 @@ fn run_scan_phase(
+         lift_join_witness: HashMap::new(),
+         pending_join_witness: std::cell::Cell::new(u16::MAX),
+         multi_assigned: multi_assigned_in(orig_code),
+-        null_led: null_led_in(orig_code, data),
+         mentions: var_mentions_in(orig_code),
+         sunk: sunk.clone(),
+         assigned: assigned_in(orig_code),
+@@ -6732,38 +6727,6 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
+         .collect()
+ }
+ 
+-/// Variables with exactly ONE bind that is not a `null` (a `Value::Null` or the
+-/// `OpNullRefSentinel` an explicit `x: T? = null` lowers to), and at least one that is.
+-/// On every path that reaches the one real bind the local holds the sentinel, so that bind
+-/// is a FIRST bind in `@FR-O-Move`'s sense, whoever wrote the null before it.
+-pub(crate) fn null_led_in(node: &Value, data: &Data) -> HashSet<u16> {
+-    fn is_null(v: &Value, data: &Data) -> bool {
+-        match v.unspan() {
+-            Value::Null => true,
+-            Value::Call(d, a) => a.is_empty() && data.def(*d).name() == "OpNullRefSentinel",
+-            _ => false,
+-        }
+-    }
+-    fn count(node: &Value, data: &Data, out: &mut HashMap<u16, (usize, usize)>) {
+-        if let Value::Set(v, value) = node.unspan() {
+-            let e = out.entry(*v).or_insert((0, 0));
+-            if is_null(value, data) {
+-                e.0 += 1;
+-            } else {
+-                e.1 += 1;
+-            }
+-        }
+-        node.for_each_child(&mut |c| count(c, data, out));
+-    }
+-    let mut counts = HashMap::new();
+-    count(node, data, &mut counts);
+-    counts
+-        .into_iter()
+-        .filter(|&(_, (nulls, real))| nulls >= 1 && real == 1)
+-        .map(|(v, _)| v)
+-        .collect()
+-}
+-
+ /// How many nodes of `node` name each variable: a read, a write, a tuple member read or
+ /// write, a fn-ref's closure slot or projection, a call through a fn-ref local and an
+ /// iterator's own variable.  A count, so a region's share of it says whether a variable is
+@@ -11903,7 +11866,6 @@ impl Scopes<'_> {
+             // home decides it for the two backends' bind arms too.
+             let adopts_minted =
+                 crate::use_analysis::adopts_minted_at_bind(data, function, v, unspanned_value);
+-
+             // @PLN85 `local_source` over-free fix (LOFT_JOIN_OWN): `v` holds an OWNED
+             // store (this adopts-fresh call) that a later borrow/join reassignment
+             // displaces. Strip `v`'s declared deps so it is OWNED everywhere — the
+@@ -13337,17 +13299,8 @@ impl Scopes<'_> {
+         let mut pre_inits: Vec<u16> = Vec::new();
+         self.find_first_ref_vars(t_val, function, &mut pre_inits);
+         self.find_first_ref_vars(f_val, function, &mut pre_inits);
+-        // The arm-scoped ones are kept aside: each is its arm's own local, so its one bind
+-        // there is a FIRST bind on every path — the adoption below offers it the same.
+-        let mut arm_scoped: Vec<u16> = Vec::new();
+         if crate::keys::arm_scope_enabled() {
+-            pre_inits.retain(|&v| {
+-                let confined = self.confined_to_one_arm(v, t_val, f_val, function);
+-                if confined {
+-                    arm_scoped.push(v);
+-                }
+-                !confined
+-            });
++            pre_inits.retain(|&v| !self.confined_to_one_arm(v, t_val, f_val, function));
+         }
+ 
+         // Also find small variables assigned in BOTH branches (or an else-if chain).
+@@ -13371,21 +13324,8 @@ impl Scopes<'_> {
+         // When that bind is the local's only assignment it follows the pre-init on every
+         // path that reaches it, so the local holds the sentinel there: it is a first bind.
+         if crate::keys::adopt_first_bind_enabled() {
+-            // …and the same fact when the AUTHOR wrote the null: `(B-Scope)` refuses a read of
+-            // a local an arm first binds, so `x: T? = null; if c { x = mk() } … x` is how such a
+-            // local is spelled now, and every bind of it but the arm's writes the sentinel.
+-            let null_led: Vec<u16> = self
+-                .null_led
+-                .iter()
+-                .copied()
+-                .filter(|v| !pre_inits.contains(v))
+-                .collect();
+-            for &v in pre_inits
+-                .iter()
+-                .chain(null_led.iter())
+-                .chain(arm_scoped.iter())
+-            {
+-                if (!self.multi_assigned.contains(&v) || self.null_led.contains(&v))
++            for &v in &pre_inits {
++                if !self.multi_assigned.contains(&v)
+                     && let Some(value) = only_bind_in_arms(t_val, f_val, v)
+                     && crate::use_analysis::adopts_minted_at_bind(data, function, v, value)
+                 {

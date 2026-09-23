@@ -23,7 +23,12 @@
 // @EXPECT_ERROR: `r6w` was bound inside a block that has ended
 // @EXPECT_ERROR: `r7p` was bound inside a block that has ended
 // @EXPECT_ERROR: `r8q` was bound inside a block that has ended
-// @falsified-at: pending
+// @falsified-at: 317d753e2 — interpret exit 1 -> 0, interpret expectations FAIL/8 -> 0/8 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/8 -> 0/8 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1600b-a-local-read-after-its-block-is-refused.patch — the same channels.
+//   CHANNEL: the EXPECTATION channel — the control compiles every refused cell, so none of the
+//   eight `local-out-of-scope` refusals fires and the suite scores the file FAIL.
+//   WITNESS: on 317d753e2 the refused cells compile and run (`r1w` reads 5 after its arm).
+//   HOLDS: leak and panic are equal on both trees; the running cells o1–o8 answer the same.
 struct P { f: integer }
 fn yes() -> boolean { true }
 

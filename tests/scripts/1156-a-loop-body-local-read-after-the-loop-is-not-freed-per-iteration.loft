@@ -41,9 +41,15 @@
 // fails to COMPILE and so has no assertion to fail.
 //
 // @falsified-at: 8d3245eb — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
-//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees. Falsify prints
-//   only the channels that MOVE and requires HERE to be clean, so each of those is clean on
-//   both. The native side was not scored in this sweep.
+//   (taken against the FIRST-BOUND-IN-THE-LOOP spelling).  Re-scored 2026-09-23 against the
+//   same ref after loft#1600: INERT — interpret exit 0 -> 0, native exit 0 -> 0.  That verdict
+//   is the rule working, not the guard failing: the defect lived in the hoist of a local a loop
+//   body FIRST binds and a later statement reads, and `(B-Scope)` now refuses that program
+//   (`local-out-of-scope`, pinned by `1600b-…`).  The bound-before-the-loop spelling these
+//   cells now use never reached the hoist, so the control answers it correctly too; the cells
+//   stay as the ownership check of that spelling (the null-bound local reassigned per pass,
+//   read after the loop, released once).
+//   HOLDS: leak, panic, free-refusal, expectations are equal on both trees.
 
 struct Ba1156A { ba_v: integer }
 struct Ba1156Item { ba_q: integer }
