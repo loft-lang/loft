@@ -6,8 +6,8 @@
 // interpreter copies as the IR spells it and is the oracle.  Admitted: the find-or-insert
 // (a1), the lookup key alone (a2), a `??` default taken past the end (a3), a rebind from a
 // literal (a4), a local declared before the loop and read after it (a5), a parameter
-// record's field (a6); a5 again with a stdlib call in the local's scope (a7, the local
-// declines, the temp borrows).  Declined, and still exact: the body grows the SOURCE vector
+// record's field (a6); a5 again with `len` of the table in the local's scope (a7 — a
+// collection's length is a read, so the local borrows too).  Declined, and still exact: the body grows the SOURCE vector
 // (d1 — the cell that reads differently the moment the store condition is dropped), a
 // source the frame minted and grows (d2), a sibling field of the source's record grown
 // (d3), a callee that grows it (d4), `w += "!"` (d5), a format source (d6), `w` returned
@@ -89,8 +89,7 @@ fn a5(words: const vector<text>) -> text {
   "{last}:{db.rows["k2"]?.count}"
 }
 
-// a7 — a5 with `len(db.rows)` in `last`'s scope: `len` of a hash is a stdlib CALL whose
-// `OpLengthHash` the store-free list does not name, so `last` keeps its copy — exact.
+// a7 — a5 with `len(db.rows)` in `last`'s scope: `OpLengthHash` reads, so `last` borrows.
 fn a7(words: const vector<text>) -> text {
   db = ByWord { rows: [] };
   last = "";

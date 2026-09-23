@@ -28,6 +28,24 @@ what they are, with what was learned.
 
 ## Built
 
+### A collection's length is a read — the keyed readers, 2026-09-23
+
+`READ_ONLY_COLLECTION_OPS` named `OpLengthVector` and no other collection's count, so one
+`len(h)` of a hash, sorted, index, spatial or trie in a loop read as a store WRITER and
+declined every header the loop could hold, and a push loop's window with them.  Each of
+`OpLength{Sorted,Hash,Index,Spatial,Trie}` and `OpSize{Vector,Hash}` reads through a shared
+borrow of the allocations and `OpSizeStruct` answers its constant, so `(R-Base)`'s
+"store-free ops" already covered them; the list now says so.  Cells
+`tests/scripts/158-keyed-length-reader.loft` k1–k8 (exact on both backends under
+`LOFT_HOIST_VERIFY`, `LOFT_POISON`, `LOFT_STRICT_STORES` and `LOFT_NATIVE_LEAK_CHECK`),
+falsified by `OpClearVector` admitted beside them (`tests/falsified/158-keyed-length-reader.patch`
+— k8 clears the vector it reads and must stop at 14), pin in `tests/hoisted_length.rs`.
+Before, all eight loops declined; after, k1–k4 and k7 hold their header, k6's push loop
+takes its window, and k5 (the hash grows) and k8 (the clear) still decline.  The
+store-read clause's a7 flips with it: its `last` now borrows.  No bench row spells the
+shape, so it moves no portal figure; it removes a cliff a consumer's loop would have fallen
+off the moment it read a table's size.
+
 ### A parameter's text borrowed — `(R-TextBorrow)`'s store-read clause, 2026-09-23
 
 Built as the store-read clause of `(R-TextBorrow)` (`formal/rewrites.md`), under the rule's
@@ -54,7 +72,7 @@ Two lessons: a type test on a parameter or a block result wants `.base()` like e
 site here (four of the clause's tests were spelled bare, and `ir_walker_audit.py optional`'s
 ratchet caught the last one); and `OpLengthHash`, with the other keyed `OpLength*` ops, is
 missing from `READ_ONLY_COLLECTION_OPS`, so a `len(h)` in a loop declines every hoist in it
-(cell a7 spells the shape — the next lever).
+(cell a7 spells the shape) — built next, below.
 
 ### The record push window under a branch — `(R-PushFill)`'s record clause, 2026-09-22
 

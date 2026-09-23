@@ -72,7 +72,7 @@ const PURE_NULLARY_OPS: [&str; 15] = [
 /// direction: a reader left out of this list only means a loop that keeps re-deriving its
 /// headers. Add to it when a loop that should hoist does not — never to make a loop hoist
 /// that a measurement said was slow.
-const READ_ONLY_COLLECTION_OPS: [&str; 25] = [
+const READ_ONLY_COLLECTION_OPS: [&str; 33] = [
     // the reference's own identity — `store_nr`/`rec` tests that touch no store at all
     // (@PLN157 § V-c: the R1 guard put `OpRefIsNull` in every buffer-building body), and
     // the copy of one (@PLN164 B1b: the entry witness snapshots every promoted buffer)
@@ -84,6 +84,18 @@ const READ_ONLY_COLLECTION_OPS: [&str; 25] = [
     "OpGetVector",
     "OpGetVectorNullable",
     "OpLengthVector",
+    // every other collection's element count and byte footprint: each template reads
+    // through `&s.database.allocations`, a shared borrow, so it cannot write (`len(h)` in
+    // a loop otherwise declined every header the loop could hold)
+    "OpLengthSorted",
+    "OpLengthHash",
+    "OpLengthIndex",
+    "OpLengthSpatial",
+    "OpLengthTrie",
+    "OpSizeVector",
+    "OpSizeHash",
+    // a record's byte size is the compile-time constant; the reference is not read
+    "OpSizeStruct",
     // typed field reads through a reference
     "OpGetInt",
     "OpGetInt4",

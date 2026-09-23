@@ -1,0 +1,123 @@
+// `READ_ONLY_COLLECTION_OPS`'s keyed readers — on `--native` a loop that holds a vector's
+// header may read the element count or byte footprint of ANY collection: `len` of a hash,
+// sorted, index, spatial or trie, `size` of a hash or a vector, each a template reading
+// through a shared borrow of the allocations.  Before, one `len(h)` declined every header
+// the loop could hold.  Every cell hand-computes its value; the interpreter is the oracle.
+// Admitted: hash (k1), sorted (k2), index (k3), spatial (k3s), trie (k3t), `size(h)` (k4),
+// a sorted's length read inside a push loop (k6), a record's vector field held beside its
+// sibling hash (k7).  Declined, and still exact: the hash grows in the loop (k5), and the
+// loop CLEARS the vector it reads beside the length reads (k8 — the cell that reads
+// differently the moment a writer joins the list).
+// `LOFT_HOIST_VERIFY=1`, `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` and
+// `LOFT_NATIVE_LEAK_CHECK=1` must answer identically.
+// @falsified-by: tests/falsified/158-keyed-length-reader.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch admits `OpClearVector` beside the
+//   length readers, so k8's loop holds its header across the clear and walks the stale
+//   length; the first assertion to see it is k8's.
+//   WITNESS: under the patch native prints `k … 18 72 7` where this file says `k … 18 14 7`
+//   — 14 + (20 + 4) + (30 + 4), the cleared vector read three times — and exits 1 at
+//   `assert(r8 == 14, "k8")`.
+//   HOLDS: the interpreter is exact on both trees, k1–k7 are exact on both, and leak, panic
+//   and free-refusal are clean on both — only native's k8 moves.
+struct Eh { k: integer }
+struct Hb { h: hash<Eh[k]> }
+struct Es { k: integer }
+struct Sb { s: sorted<Es[k]> }
+struct Ei { k: integer }
+struct Ib { ix: index<Ei[k]> }
+struct Ep { x: integer, y: integer }
+struct Pb { sp: spatial<Ep[x, y]> }
+struct Et { nm: text }
+struct Tb { tr: trie<Et[nm]> }
+struct Rv { vals: vector<integer>, hh: hash<Eh[k]> }
+
+// k1 — hash len in a header-holding loop: 60 + 3*4 = 72.
+fn k1(v: const vector<integer>, hb: const Hb) -> integer {
+  acc = 0;
+  for i in 0..len(v) { acc += v[i]? + len(hb.h); }
+  acc
+}
+// k2 — sorted: 60 + 3*5 = 75.
+fn k2(v: const vector<integer>, sb: const Sb) -> integer {
+  acc = 0;
+  for i in 0..len(v) { acc += v[i]? + len(sb.s); }
+  acc
+}
+// k3 — index: 60 + 3*6 = 78.
+fn k3(v: const vector<integer>, ib: const Ib) -> integer {
+  acc = 0;
+  for i in 0..len(v) { acc += v[i]? + len(ib.ix); }
+  acc
+}
+// k3s — spatial: 60 + 3*7 = 81.
+fn k3s(v: const vector<integer>, pb: const Pb) -> integer {
+  acc = 0;
+  for i in 0..len(v) { acc += v[i]? + len(pb.sp); }
+  acc
+}
+// k3t — trie: 60 + 3*2 = 66.
+fn k3t(v: const vector<integer>, tb: const Tb) -> integer {
+  acc = 0;
+  for i in 0..len(v) { acc += v[i]? + len(tb.tr); }
+  acc
+}
+// k4 — size(h) of a non-empty hash is positive: 60 + 3 = 63.
+fn k4(v: const vector<integer>, hb: const Hb) -> integer {
+  acc = 0;
+  for i in 0..len(v) { acc += v[i]?; if size(hb.h) > 0 { acc += 1; } }
+  acc
+}
+// k5 — the hash GROWS in the loop: len reads 5, 6, 7 → 60 + 18 = 78.
+fn k5(v: const vector<integer>, hb: Hb) -> integer {
+  acc = 0;
+  for i in 0..len(v) { hb.h += [Eh { k: 100 + i }]; acc += v[i]? + len(hb.h); }
+  acc
+}
+// k6 — a push loop reading a sorted's len: w = [0,5,10,15,20] → 50 + 5*1000 = 5050.
+fn k6(sb: const Sb) -> integer {
+  w: vector<integer> = [];
+  for i in 0..5 { w += [i * len(sb.s)]; }
+  t = 0;
+  for x in w { t += x; }
+  t + len(w) * 1000
+}
+// k7 — a record's vector field held, its sibling hash read: 10 + 4*2 = 18.
+fn k7(r: const Rv) -> integer {
+  acc = 0;
+  for i in 0..len(r.vals) { acc += r.vals[i]? + len(r.hh); }
+  acc
+}
+
+// k8 — the loop clears the vector it reads: i=0 adds 10+4, the clear ends the loop → 14.
+fn k8(v: vector<integer>, hb: const Hb) -> integer {
+  acc = 0;
+  for i in 0..len(v) { acc += v[i]? + len(hb.h); if i == 0 { v.clear(); } }
+  acc
+}
+
+fn main() {
+  v = [10, 20, 30];
+  hb = Hb { h: [Eh { k: 1 }, Eh { k: 2 }, Eh { k: 3 }, Eh { k: 4 }] };
+  sb = Sb { s: [Es { k: 5 }, Es { k: 1 }, Es { k: 4 }, Es { k: 2 }, Es { k: 3 }] };
+  ib = Ib { ix: [Ei { k: 6 }, Ei { k: 1 }, Ei { k: 5 }, Ei { k: 2 }, Ei { k: 4 }, Ei { k: 3 }] };
+  pb = Pb { sp: [Ep { x: 1, y: 1 }, Ep { x: 2, y: 1 }, Ep { x: 3, y: 1 }, Ep { x: 1, y: 2 },
+                 Ep { x: 2, y: 2 }, Ep { x: 3, y: 2 }, Ep { x: 1, y: 3 }] };
+  tb = Tb { tr: [Et { nm: "ab" }, Et { nm: "cd" }] };
+  rv = Rv { vals: [1, 2, 3, 4], hh: [Eh { k: 7 }, Eh { k: 8 }] };
+  r1 = k1(v, hb); r2 = k2(v, sb); r3 = k3(v, ib); r3s = k3s(v, pb); r3t = k3t(v, tb);
+  r4 = k4(v, hb); r6 = k6(sb); r7 = k7(rv);
+  r8 = k8([10, 20, 30], hb);
+  r5 = k5(v, hb);
+  println("k {r1} {r2} {r3} {r3s} {r3t} {r4} {r5} {r6} {r7} {r8} {len(hb.h)}");
+  assert(r1 == 72, "k1");
+  assert(r2 == 75, "k2");
+  assert(r3 == 78, "k3");
+  assert(r3s == 81, "k3s");
+  assert(r3t == 66, "k3t");
+  assert(r4 == 63, "k4");
+  assert(r5 == 78, "k5");
+  assert(r6 == 5050, "k6");
+  assert(r7 == 18, "k7");
+  assert(r8 == 14, "k8");
+  assert(len(hb.h) == 7, "k5 grew the caller's hash");
+}

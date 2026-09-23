@@ -215,7 +215,7 @@ const STORE_BORROWS: [(&str, &[&str], &[&str]); 7] = [
     ("n_a4", &["__ncc_1"], &["w"]),
     ("n_a5", &["__ncc_1"], &["last"]),
     ("n_a6", &["__ncc_1", "__ncc_2"], &["w"]),
-    ("n_a7", &["__ncc_1"], &[]),
+    ("n_a7", &["__ncc_1"], &["last"]),
 ];
 
 #[test]
@@ -266,14 +266,9 @@ fn a_parameters_text_is_copied_when_its_store_may_move() {
             "{name}: nothing borrows the parameter's text:\n{b}"
         );
     }
-    // d2's source is a store the frame minted; d5 writes `w`; d6 formats it; a7 has a
-    // stdlib call in `last`'s scope: the local stays an owned `String`.
-    for (name, var) in [
-        ("n_d2", "w"),
-        ("n_d5", "w"),
-        ("n_d6", "w"),
-        ("n_a7", "last"),
-    ] {
+    // d2's source is a store the frame minted; d5 writes `w`; d6 formats it: the local
+    // stays an owned `String`.
+    for (name, var) in [("n_d2", "w"), ("n_d5", "w"), ("n_d6", "w")] {
         let b = body(&rust, name);
         assert_eq!(
             count(b, &format!("var_{var}: &str")),
