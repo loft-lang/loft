@@ -87,6 +87,15 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  skips it — so there the frame's release is the store's only one.  The record's
                  reach is its CASCADE: a capture attribute the cascade does not follow is not
                  covered by any adoption, whatever the free-suppression believes.
+  (L-CapKeep)    each RUN of a closure build is its own record.  A fn-ref that still names
+                 the record an earlier run built (a pass of a loop kept in a local declared
+                 outside it, a `&fn(…)` link, a copy in another local) goes on answering from
+                 that run's captures, and the build makes a new record for the next run.  A
+                 record, and each capture it reads, is released ONCE: by the LAST of the
+                 frame's names for it to let go — a rebind of a fn-ref, a scope's end, or the
+                 build rebuilding it when no other name holds it.  Which name is last is a
+                 per-run fact, so it is decided by store identity when a name lets go, never
+                 by which pass the program text says might keep it.
   (L-CapOne)     among records that adopt ONE store and can COEXIST, exactly one owns it — the
                  one that leaves the frame, or the first where none does — and the rest borrow.
                  Records that cannot coexist, each built in a different arm of one branch, EACH
@@ -200,11 +209,11 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 1** — `D-clo-39` (opened 2026-09-23; `D-clo-38`, loft#1624, opened and CLOSED the same
-day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23;
-`D-clo-27` closed 2026-09-12).
+**OPEN: 0** — `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
+2026-09-23; `D-clo-27` closed 2026-09-12).
 
-- **D-clo-39** *(opened 2026-09-23, loft#1636)* — `(L-CapScalar)` for a closure KEPT from one
+- **D-clo-39** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1636)* — `(L-CapScalar)` for a closure KEPT from one
   loop pass.  The closure record local (`___clos_N`) is minted once per frame, and each pass
   rebuilds it IN PLACE.  So a fn-ref kept from an earlier pass in a local declared outside the
   loop holds the same store, and reads the LATEST pass's captures:
@@ -214,6 +223,25 @@ day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026
   pass's fn-ref kept in an outer local.  The contract is settled; the open part is the
   mechanism: a record that escapes on SOME passes needs a store of its own per build, released
   by whoever kept it, or at the pass end on a pass where nobody did.
+  **CLOSED 2026-09-23 — `(L-CapKeep)`.**  Which pass was kept is a per-run fact, so the frame
+  asks it at run time, by store identity, at the three moments it would let a record go
+  (`scopes::closure_keep_set`; `OpFnRefClosure` reads a fn-ref's closure half for the test):
+  the build rebuilds in place only where no other fn-ref of the frame names the record, and
+  otherwise hands it to that name and mints a new one; a captured literal's backing is handed
+  over with it at the literal's re-mint, which runs ahead of the build; and a rebind or a
+  scope's end releases a closure only where no other live name — a fn-ref, a record local, a
+  `&fn(…)` parameter's caller — holds the same store, so of several names exactly the last
+  releases.  The matrix found the class wider than filed, all of it the same cause:
+  - two names for ONE record released it twice at the end, the second through a freed store
+    (`g = f`, kept on the last pass: `D71` twice, a use after free under `LOFT_STRICT_STORES`);
+  - a closure a CALL returned (`f = mkf(i)`, the workaround this entry named) answered right
+    and leaked every pass nobody kept, since `(L-CapOwn)`'s rebind release declined wherever
+    a second name might share the record;
+  - a record written through a `&fn(…)` link on one pass was taken as delivered on every one,
+    so the pass that was not delivered leaked.
+  Every fn-ref local of such a frame is set to null at the function's head, so each name the
+  tests compare has a dominating bind (SLOTS.md § the reserve does not initialise).  Guard:
+  `tests/scripts/1636-a-closure-kept-from-a-loop-pass-keeps-that-pass.loft`.
 
 - **D-clo-38** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1624)* — `(O-Buffer)` for a
   collection `??` whose chosen arm is a CAPTURE.  A `vector<T>` return is delivered into the

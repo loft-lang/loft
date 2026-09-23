@@ -102,6 +102,20 @@ impl OpEmitter for OpFnRefDetachSharedEmitter {
     }
 }
 
+/// `OpFnRefClosure(f)` — the closure half of the fn-ref `f`, the native twin of
+/// `State::fn_ref_closure` (`@FR-L-CapKeep`, loft#1636).
+pub struct OpFnRefClosureEmitter;
+
+impl OpEmitter for OpFnRefClosureEmitter {
+    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        let Some(Value::Var(v)) = args.first().map(Value::unspan) else {
+            return write!(ctx.w, "DbRef {{ store_nr: u16::MAX, rec: 0, pos: 0 }}");
+        };
+        let (_, f) = free_label_lvalue(ctx, *v);
+        write!(ctx.w, "{f}.1")
+    }
+}
+
 pub struct OpFreeRefEmitter;
 
 /// The debug LABEL and the reset LVALUE of a freed local: `("var_x", "var_x")`, or

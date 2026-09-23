@@ -1663,6 +1663,10 @@ fn OpDropFnRef(fn_var: const u16);
 // a rebind that hands the same closure back (`f = keep(f)`) displaces nothing, so the release
 // of the displaced value that follows must find nothing to release (loft#1609).
 fn OpFnRefDetachShared(old: const u16, new: const u16);
+// The closure half of the fn-ref at `fn_var`, as a reference: the record a closure's captures
+// live in, or the null sentinel for a fn-ref with none.  What the store-identity tests of a
+// frame's closure holders compare (@FR-L-CapKeep, loft#1636).
+fn OpFnRefClosure(fn_var: const u16) -> reference;
 // Append a text to a stack text variable.
 fn OpAppendStackText(pos: const u16, v1: text);
 // Append a character to a stack text variable.

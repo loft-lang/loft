@@ -4043,10 +4043,13 @@ pub fn is_null_sentinel_detach(
     // construction delivered to (loft#1513) — so the write displaces nothing the work-ref
     // still owns.  The displacement free fired here regardless, and on the adoption shape it
     // freed the store the binding had just taken: the scope-end hook then read freed memory.
+    // A closure record local assigned the sentinel is `@FR-L-CapKeep`'s hand-over: the record
+    // it held is now the fn-ref's that still names it (loft#1636).
     let name = function.name(var);
     (crate::variables::owns_literal_backing_store(name)
         || name.starts_with("__ref_")
-        || name.starts_with("__rref_"))
+        || name.starts_with("__rref_")
+        || name.starts_with("___clos_"))
         && matches!(value.unspan(), Value::Call(nr, args)
             if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel")
 }

@@ -302,6 +302,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     get_stack_fn_ref,
     drop_fn_ref,
     fn_ref_detach_shared,
+    fn_ref_closure,
     append_stack_text,
     append_stack_character,
     clear_stack_text,
@@ -2614,6 +2615,10 @@ fn drop_fn_ref(s: &mut State) {
 
 fn fn_ref_detach_shared(s: &mut State) {
     s.fn_ref_detach_shared();
+}
+
+fn fn_ref_closure(s: &mut State) {
+    s.fn_ref_closure();
 }
 
 fn append_stack_text(s: &mut State) {

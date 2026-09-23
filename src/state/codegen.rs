@@ -4101,6 +4101,16 @@ impl State {
             self.code_add(var_pos);
             return Type::Void;
         }
+        // loft#1636 — `OpFnRefClosure(f)` names the fn-ref VARIABLE; the op pushes its
+        // closure half, read in place.
+        if stack.data.def(op).name() == "OpFnRefClosure"
+            && let Some(Value::Var(v)) = parameters.first()
+        {
+            let var_pos = stack.var_pos(*v);
+            stack.add_op("OpFnRefClosure", self);
+            self.code_add(var_pos);
+            return stack.data.def(op).returned().clone();
+        }
         if stack.data.def(op).name() == "OpFnRefDetachShared"
             && let [Value::Var(old), Value::Var(new)] = parameters
         {

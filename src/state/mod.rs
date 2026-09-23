@@ -1073,6 +1073,15 @@ impl State {
         }
     }
 
+    /// `OpFnRefClosure(f)` — push the closure half of the fn-ref at `f`, a slot distance from
+    /// the top of the stack: the record the store-identity tests of a frame's closure holders
+    /// compare (`@FR-L-CapKeep`, loft#1636).
+    pub fn fn_ref_closure(&mut self) {
+        let f = self.code::<u16>();
+        let closure = self.get_var::<DbRef>(f - 8);
+        self.put_stack(closure);
+    }
+
     pub fn static_call(&mut self) {
         let call = self.code::<u16>();
         // Fix #87: resolve n_stack_trace index lazily, then only snapshot for that call.
