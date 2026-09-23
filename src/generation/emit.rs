@@ -331,10 +331,6 @@ impl Output<'_> {
                     self.clone_handed_tuple_local = None;
                     return write!(w, "var_{var_name}.clone()");
                 }
-                // A USER `&text` link reads the text it names (loft#1566).
-                if crate::generation::is_user_text_link(self.data, self.def_nr, var) {
-                    return write!(w, "(&*{}.edit(cell))", self.var_link(var));
-                }
                 if let Some(field) = self.coroutine_persistent_fields.get(&var) {
                     // P224: read from the coroutine struct field, under the name the struct
                     // definition gave it — which is the variable's own only where no other
