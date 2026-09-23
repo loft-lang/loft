@@ -451,15 +451,6 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   `tests/scripts/a-plain-bind-from-a-link-copies-the-value-it-reads.loft`.  Found while fixing
   loft#1614.
 
-* **D-bind-53** *(opened 2026-09-23, CLOSED 2026-09-23; found with loft#1566)* — `(B-Ref-Lvalue)` for
-  a FIELD of a struct ELEMENT.  `v: vector<R> = [R { a: 1, b: 2, c: 3 }]; p = &v[0].c; p = 9` wrote
-  `a`, and `q = &v[0].b; q += 40` added to `a` as well: `49 2 3` for `1 42 9`, silently, on both
-  backends, the same on `bebca4155`.  **Where.**  `Parser::scalar_place_ref` took the element as
-  the place for every read through an element accessor, dropping the field offset — right only
-  for a field at offset 0, which is every `vector<integer>` element and so every probe that
-  reached for one.  **Closed** by taking the element itself only at offset 0, and
-  `OpGetField(element, fld)` otherwise, as a plain field already did.  Guard:
-  `tests/scripts/1566-a-link-to-a-text-field-or-element-writes-that-place.loft`.
 * **D-bind-50** *(opened 2026-09-22, CLOSED 2026-09-22; loft#1612)* — `(B-Copy)` for the
   destination of a `??` CHAIN of three or more operands.  A plain bind copies a heap whole
   value, and the two-operand spelling does: it is lowered per arm, and an arm's bind is that

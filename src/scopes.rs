@@ -13590,21 +13590,7 @@ impl Scopes<'_> {
             ));
         }
         for &t in &dead {
-            out.extend(self.closure_keep_stand_down(t, data));
-            let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(t)]);
-            for &l in &links {
-                out.push(v_if(
-                    Value::Call(
-                        data.def_nr("OpDistinctStore"),
-                        vec![
-                            closure.clone(),
-                            Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(l)]),
-                        ],
-                    ),
-                    Value::Null,
-                    v_set(t, Value::Null),
-                ));
-            }
+            out.extend(self.closure_keep_stand_down(t, function, data));
             if data.any_closure_drop() {
                 out.push(call("OpDropFnRef", t, data));
             }
@@ -13619,17 +13605,28 @@ impl Scopes<'_> {
     /// a closure record or another live fn-ref names the same store, so the release that
     /// follows finds nothing and that name releases the store instead.  Each stand-down nulls,
     /// so of several names released in one sweep exactly the last releases.
-    fn closure_keep_stand_down(&self, v: u16, data: &Data) -> Vec<Value> {
-        let mut out: Vec<Value> = self
-            .closure_keep_live(&[v])
-            .into_iter()
-            .map(|y| {
-                Value::Call(
-                    data.def_nr("OpFnRefDetachShared"),
-                    vec![Value::Var(v), Value::Var(y)],
-                )
-            })
-            .collect();
+    fn closure_keep_stand_down(
+        &mut self,
+        v: u16,
+        function: &mut Function,
+        data: &Data,
+    ) -> Vec<Value> {
+        // The caller's fn-refs behind the `&fn(…)` parameters are names too: a closure written
+        // out through one is the caller's (loft#1443's shape, which a sweep that asked only the
+        // frame's own names released under the caller).
+        let (link_pre, links, link_post) = self.closure_keep_links(function);
+        let mut out = link_pre;
+        out.extend(
+            self.closure_keep_live(&[v])
+                .into_iter()
+                .chain(links)
+                .map(|y| {
+                    Value::Call(
+                        data.def_nr("OpFnRefDetachShared"),
+                        vec![Value::Var(v), Value::Var(y)],
+                    )
+                }),
+        );
         let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(v)]);
         for &r in &self.closure_keep.records {
             out.push(v_if(
@@ -13641,6 +13638,7 @@ impl Scopes<'_> {
                 v_set(v, Value::Null),
             ));
         }
+        out.extend(link_post);
         out
     }
 
@@ -17013,7 +17011,7 @@ impl Scopes<'_> {
                     // of one, hooks included, whether or not a local record built it.
                     let keep = self.closure_keep.gated && self.closure_keep.holders.contains(&v);
                     if keep {
-                        ls.extend(self.closure_keep_stand_down(v, data));
+                        ls.extend(self.closure_keep_stand_down(v, function, data));
                     }
                     if (keep || !local_record) && data.any_closure_drop() {
                         ls.push(call("OpDropFnRef", v, data));
