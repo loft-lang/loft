@@ -723,6 +723,15 @@ impl Parser {
         // `@FR-B-Scope` — this block is open while its statements parse.
         self.block_ord = self.block_ord.wrapping_add(1);
         self.block_path.push(self.block_ord);
+        // A loop's variable belongs to the loop's BODY (`@FR-B-Scope`, as in Rust): the `for`
+        // header binds it, so this block is where it is bound.
+        if !self.first_pass && matches!(context, "for" | "parallel for") {
+            let lv = self.vars.current_loop_variable();
+            if lv != u16::MAX {
+                self.bound_in_block
+                    .insert((self.context, lv), self.block_path.clone());
+            }
+        }
         let cc_ret = self.parse_block_inner(context, val, result);
         self.block_path.pop();
         self.fit_armed = outer_fit;
