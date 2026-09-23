@@ -14,6 +14,7 @@
 // Every expected value is hand-computed.  The `k` cells are controls: shapes that were right
 // before and must stay right.
 //
+// @falsified-at: 5acd8d91c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // CHANNEL: assertion failures, both backends.
 // HOLDS: clean under `LOFT_STRICT_STORES=1`.
 

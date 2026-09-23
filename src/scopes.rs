@@ -13239,7 +13239,7 @@ impl Scopes<'_> {
         let mut temps = Vec::new();
         let mut post = Vec::new();
         for p in self.closure_keep.links.clone() {
-            let Type::RefVar(inner) = function.tp(p).clone() else {
+            let Type::RefVar(inner) = function.tp(p).base().clone() else {
                 continue;
             };
             self.lift_counter += 1;
@@ -13567,7 +13567,7 @@ impl Scopes<'_> {
             return None;
         }
         let v = *self.var_mapping.get(ov).unwrap_or(ov);
-        if !matches!(function.tp(v), Type::Function(..))
+        if !matches!(function.tp(v).base(), Type::Function(..))
             || !self.fnref_bound.iter().any(|b| b.contains(&v))
             || !self.var_scope.contains_key(&v)
             || function.is_argument(v)
@@ -20531,7 +20531,8 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
     let mut out = ClosureKeep::default();
     for v in 0..function.count() {
         if function.is_argument(v) {
-            if matches!(function.tp(v), Type::RefVar(inner) if matches!(**inner, Type::Function(..)))
+            if let Type::RefVar(inner) = function.tp(v).base()
+                && matches!(inner.base(), Type::Function(..))
             {
                 out.links.push(v);
             }
