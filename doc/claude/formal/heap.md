@@ -1386,16 +1386,25 @@ CLOSED 2026-09-17, below.
   releases exactly once on both backends** — they were never unsound, and the rules now say so.
   What stays open here is the 71 that are NOT the function's — a parameter (45) and a member of a
   container (26) — each of which really does release twice (`L1 D2 A2 D2` and `L1 D3 D3`,
-  measured, both backends).  A SECOND half is open with no implementation at all: `(H-Spent)`'s
-  error for reading a name after its value moved.  Today that is silent — `c = open(1);
-  if c { v += [c]; } … c.id` reads a value whose hook has already run, and no store instrument can
-  see it because the memory is intact and only the resource is gone.  The drop gate's `p_v2`
+  measured, both backends).  A SECOND half is `(H-Spent)`'s error for reading a name after its
+  value moved — `c = open(1); if c { v += [c]; } … c.id` reads a value whose hook has already
+  run, and no store instrument can see it because the memory is intact and only the resource is
+  gone.  **Built 2026-09-23, behind the same `LOFT_LEASE_REFUSE`** as `error[read-after-move]`
+  (`src/spent.rs`): the moves are `lease.rs`'s own verdict (`Frame::spends`), read at every
+  placement the parser writes, and the reads are followed through the body BEFORE the scope pass,
+  whose releases and snapshots are reads of their own that no rule judges.  A read any spending
+  path reaches is refused (rustc's possibly-moved reading), a reassignment refills, and reads
+  inside the moving statement are not late.  Guard `tests/read_after_move.rs`, seven refused and
+  eight legal cells, both backends.  The drop gate's `p_v2`
   (`d = v; v += […]`) is that error's cell, `CENSUS_BLIND` until it is built (reclassified from
   `D-heap-15` 2026-09-23), and so is a tuple bound outside a loop and moved inside it, which
-  releases the moved member once per pass (loft#1645's guard leaves it out for that reason).  ⚠ The refusal built behind
-  `LOFT_LEASE_REFUSE` still implements the PRE-ruling population, so it is now WIDER than the
-  rules: it refuses the 156 owned-local placements the rules permit.  Narrowing it to the
-  not-yours cases, and adding the spent-name error, is what closes this entry.
+  releases the moved member once per pass (loft#1645's guard leaves it out for that reason); both
+  are refused by the error now.  The copy refusal is narrowed to the rules as well: an owned
+  local MOVES, and what it refuses is the not-yours population.  **What closes this entry is the
+  flip**, which waits on this repository's own corpus (measured 2026-09-23 on `main` 6c188b612,
+  both switches on): the copy refusal fires at 106 sites in 20 of the 71 files that declare
+  `OpDrop`, and the spent-name error at 36 reads in 16 — each a guard written before the error
+  existed, and each a genuine case of the rule, none a false positive (hand-checked).
 - **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists,
   and that enumeration is now the whole population — it was not until 2026-09-17.  The bind arm
   matches `Value::Set(v, Var(src))`, a node the parser never produces for a whole COLLECTION:

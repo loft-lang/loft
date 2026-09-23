@@ -61,6 +61,15 @@ const CODES: &[(&str, &str)] = &[
          struct S { h: H }\nfn wrap(c: H) -> S { return S { h: c }; }\n\
          fn main() { s = wrap(H { id: 1 }); print(\"{s.h.id}\"); }",
     ),
+    // @PLN163 P3 `(H-Spent)` — a name read after the statement that moved its value.  `a` is
+    // this function's own, so `Hold { h: a }` MOVES it, and the read after reads a value the
+    // new structure releases.  Opt-in behind `LOFT_LEASE_REFUSE`, as `copy-of-droppable` is.
+    (
+        "read-after-move",
+        "struct H { id: integer }\nfn OpDrop(self: H) { print(\"{self.id}\"); }\n\
+         struct Hold { h: H }\n\
+         fn main() { a = H { id: 1 }; k = Hold { h: a }; print(\"{a.id}{k.h.id}\"); }",
+    ),
     // @PLN107 dead-store lint. `d = s.items` COPIES (C86), so writing `d` cannot reach
     // `s`, and `d` is never read afterwards — the write is lost.
     (

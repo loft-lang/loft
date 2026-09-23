@@ -229,6 +229,69 @@ impl<'a> Frame<'a> {
         Lease::Move
     }
 
+    /// The author's variables a placement of `src` SPENDS: each value this function OWNS that
+    /// `(H-Move)` moves into the new structure, whose name is spent from the end of the
+    /// statement (`(H-Spent)`).  A leaf `written_verdict` refuses spends nothing — it is a copy,
+    /// and `(H-Copy-Refuse)` reports it — and neither does a fresh value, a buffer, or a compiler
+    /// temp, whose own sources are followed as `written_leaf` follows them.
+    #[must_use]
+    pub fn spends(&self, src: &Value, placement: Placement) -> Vec<u16> {
+        let mut out = Vec::new();
+        let mut followed = HashSet::new();
+        for leaf in leaves(self.data, &self.ops, src) {
+            self.spent_leaf(leaf, placement, &mut followed, &mut out);
+        }
+        out
+    }
+
+    fn spent_leaf(
+        &self,
+        leaf: Leaf,
+        placement: Placement,
+        followed: &mut HashSet<u16>,
+        out: &mut Vec<u16>,
+    ) {
+        let Leaf::Var(var) = leaf else {
+            return;
+        };
+        if placement == Placement::ReadThrough {
+            return;
+        }
+        // A buffer the compiler named is its own; a local promoted onto the return buffer keeps
+        // the author's name, and the author's reads of it follow the move like any local's.
+        let promoted = self.buffers.contains(&var) && !self.func.name(var).starts_with("__");
+        if self.buffers.contains(&var) && !promoted {
+            return;
+        }
+        if promoted {
+            if self
+                .data
+                .type_owns_droppable_anywhere(self.func.tp(var).base())
+                && !out.contains(&var)
+            {
+                out.push(var);
+            }
+            return;
+        }
+        if self.func.is_compiler_generated(var) && !self.func.is_argument(var) {
+            if followed.insert(var) {
+                for given in self.assigned(var) {
+                    self.spent_leaf(given, placement, followed, out);
+                }
+            }
+            return;
+        }
+        // The same branch order as `written_leaf`: only what reaches its final `Move` is owned.
+        if self.written_leaf(Leaf::Var(var), placement, &mut HashSet::new()) == Lease::Move
+            && self
+                .data
+                .type_owns_droppable_anywhere(self.func.tp(var).base())
+            && !out.contains(&var)
+        {
+            out.push(var);
+        }
+    }
+
     /// `(H-Copy-Refuse)`'s verdict on a copy of the whole variable `var` whose value goes to
     /// `placement` — a bind `x = a`, or a whole-tuple copy the parser lowers into member copies.
     #[must_use]
@@ -403,9 +466,9 @@ impl<'a> Frame<'a> {
         // its own variable was only ever a narrower way of saying what this line now says.
         //
         // Placing it TWICE, and reading the name afterwards, are the two errors `(H-Spent)` asks
-        // for, and neither is built yet — `formal/heap.md` D-heap-8 carries them.  Until they are,
-        // this verdict is deliberately the SOUND subset: it never refuses a program the rules
-        // permit, and it is silent on two the rules forbid.
+        // for; both are one check, `crate::spent`, which reads this verdict through
+        // [`Frame::spends`] and follows the body to the reads after the move.  This verdict stays
+        // the copy question alone: a spent name placed again is refused there, as a read.
         Lease::Move
     }
 

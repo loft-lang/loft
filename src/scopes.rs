@@ -8829,6 +8829,9 @@ fn vs_copy_walk(
 /// reclaim pass left a store the model says is dead un-freed past a later
 /// allocation (the Phase-4 Goal-E watermark guard).  Never panics in normal builds.
 pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+    // `(H-Spent)` — the reads of a moved name, found while every body is still the parser's:
+    // the scan below adds reads of its own (releases, hooks, snapshots) that are not the author's.
+    crate::spent::record_all(data);
     // @PLN94 — the CFG/dataflow completeness oracle, an OBSERVER reached only via
     // LOFT_OWN_ORACLE (SI-1: shipped codegen byte-identical; a no-op when unset).
     crate::ownership_cfg::oracle(data);
