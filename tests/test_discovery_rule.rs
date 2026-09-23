@@ -170,3 +170,32 @@ fn the_corpus_witness_reports_the_name_based_count() {
         "the witness names a `test_*`, so that is the whole set:\n{report}"
     );
 }
+
+const ONE_FAILS: &str = "\
+fn test_ok() { assert(1 + 1 == 2, \"ok\"); }
+fn test_bad() { assert(1 + 1 == 3, \"the bad one\"); }
+fn test_also_ok() { assert(2 * 2 == 4, \"also ok\"); }
+";
+
+/// A native run attributes a failure to the test that failed (loft#1649).  The file is
+/// ONE binary, and its exit status used to be read once: one failing test marked every
+/// test in the file failed, each with the same message and none named.  Each test is now
+/// its own run of that binary, so the report matches the interpreter's.
+#[test]
+fn a_native_failure_names_the_test_that_failed() {
+    for (case, extra) in [("attr_interp", &[][..]), ("attr_native", &["--native"][..])] {
+        let report = run_tests(case, ONE_FAILS, extra);
+        assert!(
+            report.contains("1 failed, 2 passed"),
+            "{case}: one of three tests fails:\n{report}"
+        );
+        assert!(
+            report.contains("::test_bad  —  assertion failed: the bad one"),
+            "{case}: the failing test is named with its assertion:\n{report}"
+        );
+        assert!(
+            !report.contains("::test_ok  —") && !report.contains("::test_also_ok  —"),
+            "{case}: the passing tests are not reported as failed:\n{report}"
+        );
+    }
+}

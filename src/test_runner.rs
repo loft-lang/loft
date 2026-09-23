@@ -618,6 +618,25 @@ pub(crate) fn run_tests(
         }
     }
 
+    /// Why one native test run failed: the first `error:` line the program wrote (an
+    /// assertion names itself there, as it does on the interpreter), else how it ended.
+    fn native_failure(status: std::process::ExitStatus, stderr: &str) -> String {
+        if let Some(line) = stderr.lines().find_map(|l| l.strip_prefix("error: ")) {
+            return line.trim().to_string();
+        }
+        if let Some(code) = status.code() {
+            return format!("native run failed (exit {code})");
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(sig) = status.signal() {
+                return format!("native run killed by signal {sig}");
+            }
+        }
+        "native run failed".to_string()
+    }
+
     /// The declared substrings that no produced error contains.
     ///
     /// This is the whole of TESTING.md's **"Every expectation must match"**: an
@@ -1524,8 +1543,17 @@ pub(crate) fn run_tests(
                             )
                             .unwrap();
                             writeln!(buf, "    init(&cell);").unwrap();
+                            // The harness names ONE test per run (its first argument), so a
+                            // failure is attributed to the test that failed and every test
+                            // starts from fresh stores, as it does on the interpreter.  With
+                            // no argument the binary runs them all.
+                            writeln!(buf, "    let only = std::env::args().nth(1);").unwrap();
                             for (_, name) in &native_fns {
-                                writeln!(buf, "    n_{name}(&cell);").unwrap();
+                                writeln!(
+                                    buf,
+                                    "    if only.as_deref().is_none_or(|n| n == \"{name}\") {{ n_{name}(&cell); }}"
+                                )
+                                .unwrap();
                             }
                             writeln!(buf, "}}").unwrap();
                         }
@@ -1787,38 +1815,74 @@ pub(crate) fn run_tests(
                             if let Some(dir) = binary.parent() {
                                 native_utils::stage_native_dlls(dir, &native_data);
                             }
-                            let mut run_cmd = std::process::Command::new(&binary);
-                            if std::env::var("LOFT_SOURCE_DIR").is_err()
-                                && let Some(dir) = std::path::Path::new(&abs_file).parent()
-                            {
-                                run_cmd.env("LOFT_SOURCE_DIR", dir);
-                            }
-                            // Run the native test binary with cwd = source_dir so its
-                            // raw `std::fs` (e.g. imaging's load_png/save_png) anchors
-                            // where its loft `file()` does.  Gated on the program's own
-                            // mode, exactly as `enter_source_dir` gates the in-process
-                            // interpreter run: a `#cwd` program anchors loft I/O at the
-                            // cwd, so moving the child would put its raw `std::fs`
-                            // somewhere its `file()` is not.
-                            if clean_db.program_relative
-                                && let Some(dir) = std::path::Path::new(&abs_file).parent()
-                            {
-                                run_cmd.current_dir(dir);
-                            }
-                            let run_ok = run_cmd.status().map(|s| s.success()).unwrap_or(false);
-                            if run_ok {
-                                for (_, fn_name) in &native_fns {
-                                    file_result.tests.push((fn_name.clone(), true, None));
-                                    dir_pass += 1;
+                            let run_one = |only: Option<&str>| -> Result<(), String> {
+                                let mut run_cmd = std::process::Command::new(&binary);
+                                if let Some(name) = only {
+                                    run_cmd.arg(name);
                                 }
+                                if std::env::var("LOFT_SOURCE_DIR").is_err()
+                                    && let Some(dir) = std::path::Path::new(&abs_file).parent()
+                                {
+                                    run_cmd.env("LOFT_SOURCE_DIR", dir);
+                                }
+                                // Run the native test binary with cwd = source_dir so its
+                                // raw `std::fs` (e.g. imaging's load_png/save_png) anchors
+                                // where its loft `file()` does.  Gated on the program's own
+                                // mode, exactly as `enter_source_dir` gates the in-process
+                                // interpreter run: a `#cwd` program anchors loft I/O at the
+                                // cwd, so moving the child would put its raw `std::fs`
+                                // somewhere its `file()` is not.
+                                if clean_db.program_relative
+                                    && let Some(dir) = std::path::Path::new(&abs_file).parent()
+                                {
+                                    run_cmd.current_dir(dir);
+                                }
+                                // The child's output is passed on as it was; its stderr is
+                                // also read for the first `error:` line, which names why
+                                // the test failed.
+                                run_cmd.stdout(std::process::Stdio::inherit());
+                                let out = run_cmd
+                                    .output()
+                                    .map_err(|e| format!("native run failed: {e}"))?;
+                                let stderr = String::from_utf8_lossy(&out.stderr);
+                                eprint!("{stderr}");
+                                if out.status.success() {
+                                    return Ok(());
+                                }
+                                Err(native_failure(out.status, &stderr))
+                            };
+                            // A file's own `main` is one run; otherwise one run per test.
+                            let names: Vec<Option<&str>> = if has_main {
+                                vec![None]
                             } else {
-                                for (_, fn_name) in &native_fns {
-                                    file_result.tests.push((
-                                        fn_name.clone(),
-                                        false,
-                                        Some("native run failed".to_string()),
-                                    ));
-                                    dir_fail += 1;
+                                native_fns.iter().map(|(_, n)| Some(n.as_str())).collect()
+                            };
+                            for only in names {
+                                let outcome = run_one(only);
+                                // A whole-file run (`main`) stands for every entry in it.
+                                let covered: Vec<&String> = match only {
+                                    Some(name) => native_fns
+                                        .iter()
+                                        .map(|(_, n)| n)
+                                        .filter(|n| n.as_str() == name)
+                                        .collect(),
+                                    None => native_fns.iter().map(|(_, n)| n).collect(),
+                                };
+                                for fn_name in covered {
+                                    match &outcome {
+                                        Ok(()) => {
+                                            file_result.tests.push((fn_name.clone(), true, None));
+                                            dir_pass += 1;
+                                        }
+                                        Err(msg) => {
+                                            file_result.tests.push((
+                                                fn_name.clone(),
+                                                false,
+                                                Some(msg.clone()),
+                                            ));
+                                            dir_fail += 1;
+                                        }
+                                    }
                                 }
                             }
                         }
