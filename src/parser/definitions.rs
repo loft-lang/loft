@@ -3418,6 +3418,41 @@ impl Parser {
         let mut max = i32::MAX as u32;
         if type_name == "integer" {
             let has_limit = self.parse_type_limit(&mut min, &mut max);
+            // `@FR-L-Narrow-Alias` — a stored WIDTH is a property of a named type, so `size(n)`
+            // is written in a `type` alias and nowhere else.  `parse_typedef` is the only reader
+            // of it; here the parser simply never looked, so an inline `size(1)` drew three
+            // errors about the punctuation after it (`Expect token )`, `Tuple types require at
+            // least 2 elements`, `Expect token }`) and named neither the modifier nor its home.
+            // Refusing it by name is also what `NarrowSlot::of_slot`'s spare-code assertion
+            // rests on: the rule is what makes a spare-code type reachable only through an
+            // alias, and an inline spelling that parsed would walk into that assert.
+            // PEEKED, never consumed: `parse_typedef` is the site that legitimately reads
+            // `size`, and taking the token here made the stdlib's own `type i32 = integer
+            // size(4)` stop parsing.  `on_d` is what tells the two apart — inside a `type`
+            // alias it names the TYPE being defined, and the `size` ahead is that alias's.
+            let in_alias =
+                on_d != u32::MAX && self.data.def_type(on_d) == crate::data::DefType::Type;
+            // Reported on BOTH passes, unlike most refusals: the parse derails at the `size`
+            // token itself, so pass 2 never runs and a `!first_pass` gate made this silent
+            // while three punctuation errors stood in for it.
+            if !in_alias
+                && self.lexer.peek().has == crate::lexer::LexItem::Identifier("size".to_string())
+            {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`size(…)` is a property of a NAMED type — write it in a `type` alias \
+                     (`type Small = integer limit(0, 200) size(1);`) and use that name here"
+                );
+                // CONSUME it and carry on as the plain range, the way `parse_type_limit`
+                // recovers from a bound it refuses: left in the stream the modifier drew
+                // three further errors about the punctuation after it, and the reader had to
+                // decide which of the four was theirs.
+                self.lexer.has_keyword("size");
+                self.lexer.token("(");
+                self.lexer.has_long();
+                self.lexer.token(")");
+            }
             // T1.7: check for `not null` annotation after the integer type
             let not_null = self.has_deprecated_not_null();
             if has_limit || not_null {

@@ -6031,10 +6031,13 @@ impl NarrowSlot {
     /// (`IntegerSpec::reserves_sentinel_unconditionally`): C85 says an overflow writes that
     /// code and the slot then reads null, which is what a LOCAL of the type answers — so the
     /// place reads and writes through the op that maps the code to null (loft#1615).  It is
-    /// never a narrow-vector element: the only spelling of such a type is a `type` ALIAS
-    /// (`integer limit(-100, 100) size(1)` does not parse inline), and `narrow_vec` requires
-    /// no alias — so the two are mutually exclusive by construction, and the `debug_assert`
-    /// below is what says so if that ever stops being true.
+    /// never a narrow-vector element, and `@FR-L-Narrow-Alias` is why: a stored width is a
+    /// property of a NAMED type, so `size(n)` is written in a `type` alias and nowhere else,
+    /// while `narrow_vec` requires no alias.  The two are therefore mutually exclusive by the
+    /// RULE rather than by an accident of the parser — which is what the `debug_assert` below
+    /// now rests on.  (It rested on the accident until 2026-09-23: nothing REFUSES an inline
+    /// `size`, the parser simply never looks for one, so a future production that admitted it
+    /// would have walked into the assert with no rule to warn it.)
     ///
     /// A width of 8 is the wide `integer`, which answers [`NarrowIntKind::Int`] and takes no
     /// `min`: the two store-place callers pass every supported width here, so this is total

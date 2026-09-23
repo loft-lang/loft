@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-L-Narrow-Alias` — a stored WIDTH is a property of a NAMED type, so `size(n)` is
+// written in a `type` alias and nowhere else.
+//
+// `Parser::parse_typedef` is the only reader of the modifier; inline, the parser simply never
+// looked for it, so `a: integer limit(-100, 100) size(1)` on a struct field drew FOUR errors,
+// none of which named `size` — `Expect token )`, `Tuple types require at least 2 elements`,
+// `Expect token }` — and the reader had to work out which was theirs.  It is refused by name
+// now, and the modifier CONSUMED so the declaration recovers as the plain range: one error,
+// naming the modifier and its home.
+//
+// The rule is load-bearing beyond the message.  `data::NarrowSlot::of_slot` asserts that a
+// spare-code type is never a narrow-VECTOR element, and the whole argument is that such a
+// type needs an alias while a narrow vector needs none.  Until this refusal existed that was
+// an accident of the parser rather than a rule (measured by loft3-ca: `formal/grammar.md` has
+// no type productions at all, and `LOFT.md`'s informal grammar puts `size` in none), so an
+// inline spelling that ever parsed would have walked into the assertion with nothing to warn
+// it.
+//
+// The CONTROL is the alias spelling, which must keep working — the stdlib's own `type i32 =
+// integer size(4)` is that shape, and a refusal that reached it stopped the standard library
+// parsing (measured, while building this).
+//
+// CHANNEL: the expected diagnostics, one per inline `size`.
+
+type Ok1 = integer limit(-100, 100) size(1);   // the control: the alias spelling
+type Ok2 = integer size(4);                    // the stdlib's own shape
+
+// The annotations sit here rather than in the header: a `type` declaration does not end the
+// header the way a `struct` does, so pending annotations placed above one are dropped and the
+// file reports `0 expected errors` while passing.
+// @EXPECT_ERROR: is a property of a NAMED type
+// @EXPECT_ERROR: is a property of a NAMED type
+struct Bad { a: integer limit(-100, 100) size(1) }
+
+fn inline_local() -> integer { v: integer limit(0, 200) size(1) = 7; v }
+
+fn main() {
+  b = Bad { a: 100 };
+  o: Ok1 = -100;
+  p: Ok2 = 2147483647;
+  println("{b.a} {o} {p} {inline_local()}");
+}

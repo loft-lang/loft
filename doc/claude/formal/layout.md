@@ -89,6 +89,13 @@ store written by one build readable by another *of the same layout*.
   (L-Narrow)  a range-annotated integer stores in the SMALLEST width that holds its range (#399):
               u8 → 1 B, u16/i16 → 2 B, i32/u32 → 4 B, else 8 B.  The narrowing is a WIDTH change,
               so it moves offsets and record size — a layout fact the golden pins.
+  (L-Narrow-Alias)  a stored width is a property of a NAMED type.  `size(n)` is written in a
+              `type` alias and nowhere else: `type Lim = integer limit(1000, 1100) size(1)`, never
+              inline on a field or a vector element.  So a type whose declared range leaves a
+              width's top code SPARE — the `(E-Uncomp-NN)` types — always reaches a slot through
+              an alias, and can therefore never be a narrow-VECTOR element, whose raw encoding
+              requires no alias.  That is what lets the field-sentinel and raw-element op families
+              stay separate (`data::NarrowSlot::of_slot`).
   (L-Narrow-Enc) a width does NOT determine how its bytes decode.  At 2 and 4 bytes a
               non-negative range running past the signed maximum stores UNSIGNED and reserves the
               TOP code for absence; a signed range stores two's-complement and reserves its own
@@ -128,8 +135,23 @@ lookup answered `null` for a record its own iteration yields (loft#1431); and
 where the field is NULLABLE, and reading it as null regardless reported a not-null `u8` holding
 `255`, and a not-null `i8` holding `127`, as absent.
 
+Three more readers joined the count on 2026-09-23, all of them the same sentence again and all
+found by ONE probe of an `i8` holding `-1`.  `Parser::get_val` and `Parser::set_field_check` are
+the field's read and write: a non-null type that kept a spare top code decoded every code as a
+value, so C85's overflow read back as `64535` at two bytes, and at ONE byte the write lost the
+code entirely (`i64::MIN as i32` is `0`, a value inside the declared range) — loft#1615.  The
+`min` operand of all twelve narrow ops was `const i16` while a minimum is an `i32`, so a bias
+outside i16 was truncated at EMISSION and `limit(40000, 40100) size(1)` read one wrong number for
+all 101 of its values — loft#1620.  And every FRAME reader of a linked narrow local —
+`render_frame_local`, `read_variable_value`, `set_frame_literal`, the watchpoint — read the slot
+as a wide `i64`, so a debugger reported `127` for `-1` and an edit of `-5` resumed the run with
+`123` (@PLN167 A2).  `u8` and `u16` were right at every one of them, exactly as this rule's own
+paragraph predicts.
+
 *Anchors:* `Store::get_byte` / `get_short` / `get_short_full` take the minimum as their `min`
-parameter and are the encoding's one home; `database/structures.rs`'s `Enc::Byte(from) =>
+parameter and are the encoding's one home; `data::NarrowSlot` is the one home for WHICH kind a
+slot takes, asked by the field's read and its write alike, and `crate::narrow` for the bytes
+themselves on both backends; `database/structures.rs`'s `Enc::Byte(from) =>
 set_byte(.., from, v)` is the WRITER, which is the oracle whenever two readers disagree.
 The keyed refinement is [collections.md](collections.md) `(Col-Axis)`.
 
@@ -334,7 +356,23 @@ that gate, now applied across a network boundary.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 1.**
+
+> **D-layout-9 — OPEN (loft#1630)** — `(L-Narrow-Decode)` says a narrow slot holds `value - start`, which
+> admits a range lying wholly BELOW zero — `limit(-100, -1) size(1)` is 100 values in a byte, biased
+> by `-100`, exactly as `limit(1000, 1100)` is 101 biased by `1000`.  The parser refuses every such
+> type at every width, so the refusal is a deviation from this rule and not merely the bad sentence
+> loft#1621 was filed for — which is why the two are separate issues: loft#1621 is the MESSAGE,
+> loft#1630 the representation change that lifts the refusal.  Root cause measured by loft3-ca: `IntegerSpec::max` is a `u32`, so a
+> negative upper bound has no representation at all; `parse_type_limit` refuses it on pass 2, and the
+> pass-1 `check_declared_size` has meanwhile seen the DEFAULT spec and printed *"`size(1)` holds 256
+> values and a plain `integer` has more — say which values this type holds with `limit(lo, hi)`"* over
+> a line that gives one.  The message half is being fixed on its own; the rule half needs
+> `IntegerSpec`'s upper bound widened to a signed type, which moves every narrow encode/decode
+> consumer (the twelve op operands, the schema `Parts`, the key descriptor, `NarrowSlot`) and is
+> therefore its own arc rather than a clause of @PLN167.  `(L-Narrow-Alias)` decides WHERE the
+> refusal is met: such a type needs an alias, so it is `check_declared_size` that must carry the
+> right sentence.
 
 D-layout-1 CLOSED 2026-09-21 (loft#1562): every path that reads an EXISTING image through the
 program's types now asks the `.dschema` gate before it reads a byte — `store_load`,

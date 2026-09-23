@@ -78,6 +78,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   (O-Borrow)    BORROW TRACKING.  A value aliasing another (param / field / element / `&τ`)
                 carries the source in its `deps`; the borrower is skip-free; the single
                 owner frees once.
+  (O-Borrow-Scalar)  EXCEPT a `&` link at a SCALAR local, which owns no store and so has no
+                free decision to record: its `deps` stay EMPTY and the obligation it does
+                carry — that the place it names outlives it — is recorded on the TARGET
+                (`Variable::amp_linked_by`), read by the slot allocator and by nothing else.
+                Two channels, each answering one question.
   (O-Derived)   FREE PLACEMENT IS DERIVED, NOT DECIDED.  Free a local iff it owns its store
                 and does not transfer it out — once, at scope exit.  No per-site heuristic.
   (O-Buffer)    A HIDDEN RETURN BUFFER IS THE CALLER'S STORE, WITNESSED BY THE LOCAL
@@ -428,6 +433,19 @@ makes it Owned only where nothing else defines it (the retbuf a `materialized_vi
 fills), and a variable minted once and then rebound by a call that may hand back its argument
 is a `Join`, not `Owned`; reading the mint alone was the upgrade this paragraph forbids, held
 right at run time by the distinctness guard (D-own-32, QUALITY.md B7r).
+
+`(O-Borrow-Scalar)` is that principle applied one rule earlier, and it was written after the
+alternative shipped a defect.  `deps` answers *what does this binding borrow from*, and a
+heap link's answer happens to serve a second question — *how long must the source live* —
+because the two coincide there.  A SCALAR link has no answer to the first: it owns no store,
+so recording the target in its `deps` would say "this is a heap borrow" to every one of the
+38 readers below, while leaving the second question with no channel at all.  It had none, and
+the slot allocator — which ends a local's live range at its last use BY NAME — handed a
+linked local's slot to a later local: the interpreter read, and WROTE, the usurper's bytes
+through the link, while native was correct because a link there is a raw pointer to a Rust
+local the compiler keeps alive (loft#1627, `sev:high`, silent, both a wrong value and an
+`(O-NoDiverge)` divergence).  The cure is a second channel rather than a wider first one,
+for the reason the paragraph below gives.
 
 ⚠ **The reason to write this down is that the choice is currently invisible.** 38 functions
 test `depend().is_empty()`; some legitimately want the proxy (they are asking "is this a

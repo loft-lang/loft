@@ -223,7 +223,8 @@ pub struct Variable {
     /// second pass at the `&`; read by both emitters, which run after the parse, so a use
     /// written before the `&` in the body is emitted with the fact as well.
     linked_narrow: bool,
-    /// `@FR-B-Ref-Lvalue` — the `&` LINK variable that names this local as its place, or
+    /// `@FR-B-Ref-Lvalue`, `@FR-O-Borrow-Scalar` — the `&` LINK variable that names this local
+    /// as its place, or
     /// `u16::MAX`.  Recorded on the TARGET rather than on the link, because a re-point
     /// (`c = &x; c = &y`) gives one link two places and both must outlive it, while each
     /// place is bound by a `&` once.
