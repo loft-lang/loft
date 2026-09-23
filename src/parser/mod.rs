@@ -814,6 +814,9 @@ pub struct Parser {
     /// read from outside the path is refused.  Pass 2 only: both are written and read in
     /// source order within the pass.
     pub(crate) block_path: Vec<u32>,
+    /// A destructuring `for (a, b) in …`'s binders, bound by the header like the loop variable
+    /// and scoped to the body the next `for` block opens.
+    pub(crate) pending_loop_binders: Vec<u16>,
     pub(crate) block_ord: u32,
     pub(crate) bound_in_block: std::collections::HashMap<(u32, u16), Vec<u32>>,
     /// @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an
@@ -1566,6 +1569,7 @@ impl Parser {
             last_range_from: None,
             last_range_till: None,
             block_path: Vec::new(),
+            pending_loop_binders: Vec::new(),
             block_ord: 0,
             bound_in_block: std::collections::HashMap::new(),
             match_cursor: None,

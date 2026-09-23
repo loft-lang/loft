@@ -398,9 +398,9 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
                  body, a `match` arm body, a bare `{ }` — exists from that statement to the
                  block's `}`.  A read of it after the `}` is refused (`local-out-of-scope`),
                  also when every arm binds it.  A bind after the `}` starts a new binding in
-                 the enclosing block.  Parameters are bound for the whole function; a loop
-                 variable follows its loop's own rule (LOFT.md, "loop variables are not
-                 block-scoped").
+                 the enclosing block.  A loop variable (and a destructured `for (a, b)`'s
+                 binders) is bound by its `for` header into the loop's BODY, and ends with
+                 it.  Parameters are bound for the whole function.
 ```
 
 **In words.** loft follows rustc here: a local lives in the block that binds it.

@@ -759,9 +759,15 @@ never a codegen panic or silent corruption, on either backend:
 **`for` loops are the exception to the one-type-per-name rule** (loft#915): each
 `for` binds its own variable, so two loops in one function may reuse a name at
 different element types — `for i in ["a","b"] {…}` then `for i in 0..3 {…}`
-compiles.  Reading the variable after the loop still works and gives the *last*
-loop's value.  You therefore do **not** need per-function loop-variable prefixes;
+compiles.  You therefore do **not** need per-function loop-variable prefixes;
 short names (`i`, `e`, `n`) are fine and read better.
+
+**A local ends at the `}` of the block that bound it — an `if` arm, a loop body, a
+`match` arm, a bare `{ }` — and so does a loop variable** (`formal/binding.md`
+`(B-Scope)`, rustc's rule).  Reading it after is `error[local-out-of-scope]`, also when
+every arm binds it.  Bind it before the block (`x: T? = null; if c { x = mk(); }`,
+`last = 0; for v in xs { last = v; }`) or make the block's value the binding
+(`x = if c { a } else { b }`, a tuple for several).
 
 **Unused variable = warning, not an error** — the program still runs (exit 0).
 Use `_` for an unused loop variable to keep the build warning-clean.

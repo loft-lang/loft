@@ -1,0 +1,37 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Scope`'s loop clause (loft#1600, owner ruling 2026-09-23, rustc's rule): a loop
+// variable is bound by its `for` header into the loop's BODY and ends with the loop.  Reading it
+// after the loop is `local-out-of-scope` — the variable (`l1i`), its `#index` companion (`l2x`),
+// a destructured binder (`l3p`), a `rev` range's variable (`l4r`), and one read after two
+// same-named loops (`l5j`).  Until 2026-09-23 it was documented as the exception: readable after
+// the loop, answering what the last pass left and `null` when the loop never ran.
+//
+// The running cells are the legal spellings and the neighbours the rule must leave alone, each
+// asserting a hand-computed value: the last value carried out by a local bound before the loop
+// (o1), an empty loop leaving that local's own value (o2), a destructured loop read inside its
+// body (o3), `#index` inside the body (o4), a name rebound after its loop (o5), two same-named
+// loops (o6), a comprehension (o7) and a filtered loop (o8).
+//
+// @EXPECT_ERROR: `l1i` was bound inside a block that has ended
+// @EXPECT_ERROR: `l2x` was bound inside a block that has ended
+// @EXPECT_ERROR: `l3p` was bound inside a block that has ended
+// @EXPECT_ERROR: `l4r` was bound inside a block that has ended
+// @EXPECT_ERROR: `l5j` was bound inside a block that has ended
+// @falsified-at: pending
+
+fn l1() { for l1i in 0..3 { } assert(l1i == 2, "l1"); }
+fn l2() { for l2x in [5, 6] { } assert(l2x#index == 1, "l2"); }
+fn l3() { v = [(1, 2)]; for (l3p, l3q) in v { } assert(l3p == 1, "l3"); }
+fn l4() { for l4r in rev(0..4) { } assert(l4r == 0, "l4"); }
+fn l5() { for l5j in 0..2 { } for l5j in 10..12 { } assert(l5j == 11, "l5"); }
+
+fn o1() { last = -1; for x in [4, 8, 15] { last = x; } assert(last == 15, "o1 {last}"); }
+fn o2() { last = -1; for x in 0..0 { last = x; } assert(last == -1, "o2 {last}"); }
+fn o3() { v = [(1, 2), (3, 4)]; s = 0; for (p, q) in v { s += p * q; } assert(s == 14, "o3 {s}"); }
+fn o4() { s = 0; for x in [7, 7, 7] { s += x#index; } assert(s == 3, "o4 {s}"); }
+fn o5() { for i in 0..3 { } i = 40; assert(i == 40, "o5 {i}"); }
+fn o6() { t = ""; for i in ["a", "b"] { t += i; } for i in 0..2 { t += "{i}"; } assert(t == "ab01", "o6 {t}"); }
+fn o7() { v = [for x in 1..4 { x * x }]; assert(len(v) == 3 && v[2] == 9, "o7"); }
+fn o8() { n = 0; for x in [1, 2, 3, 4] if x > 2 { n += x; } assert(n == 7, "o8 {n}"); }

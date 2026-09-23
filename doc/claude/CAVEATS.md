@@ -746,8 +746,8 @@ different element types: `for i in [1,2,3] {…}` then `for i in ["a","b"] {…}
 compiles.  Each loop binds its OWN variable, so the second inherits no type, dep
 or storage from the first — which is also what makes loft#690's corruption
 (reading B's records through A's layout) unreachable by construction rather than
-by diagnostic.  The loop variable stays function-scoped: `i` after the loop still
-reads the value the last loop left, so nothing that read it before changes.
+by diagnostic.  Since loft#1600 the loop variable also ENDS with its loop
+(`(B-Scope)`): `i` after the loop is `local-out-of-scope`.
 
 What is still rejected is a loop variable landing on a plain function local
 (`x = 5; for x in …` → *"loop variable 'x' shadows a local named 'x'"*) and

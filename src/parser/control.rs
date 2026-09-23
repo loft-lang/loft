@@ -725,11 +725,18 @@ impl Parser {
         self.block_path.push(self.block_ord);
         // A loop's variable belongs to the loop's BODY (`@FR-B-Scope`, as in Rust): the `for`
         // header binds it, so this block is where it is bound.
-        if !self.first_pass && matches!(context, "for" | "parallel for") {
+        if matches!(context, "for" | "parallel for") {
+            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body.
+            let binders = std::mem::take(&mut self.pending_loop_binders);
             let lv = self.vars.current_loop_variable();
-            if lv != u16::MAX {
-                self.bound_in_block
-                    .insert((self.context, lv), self.block_path.clone());
+            for v in std::iter::once(lv).chain(binders) {
+                if self.first_pass {
+                    break;
+                }
+                if v != u16::MAX {
+                    self.bound_in_block
+                        .insert((self.context, v), self.block_path.clone());
+                }
             }
         }
         let cc_ret = self.parse_block_inner(context, val, result);

@@ -104,11 +104,13 @@ fn main() {
   assert(ba_churn() == 40, "churn ran");
   assert(ba_deep.ba_v == 20, "an inner-body local survives the OUTER loop; got {ba_deep.ba_v}");
 
-  // ---- EXCLUSION: the loop VARIABLE is read after the loop and must NOT be hoisted ----
+  // ---- EXCLUSION: the loop VARIABLE keeps its own per-iteration slot (loft#1135).  It ends
+  // with its loop (`@FR-B-Scope`), so its last value is carried out by a local bound before.
   ba_seen = 0;
-  for ba_k in 0..3 { ba_seen = ba_seen + ba_k; }
-  assert(ba_k == 2 && ba_seen == 3,
-    "loft#1135: a loop variable keeps its own per-iteration slot; got {ba_k}/{ba_seen}");
+  ba_last = 0;
+  for ba_k in 0..3 { ba_seen = ba_seen + ba_k; ba_last = ba_k; }
+  assert(ba_last == 2 && ba_seen == 3,
+    "loft#1135: a loop variable keeps its own per-iteration slot; got {ba_last}/{ba_seen}");
 
   // ---- CONTROL: a local used INSIDE the loop only stays per-iteration ----
   ba_sum = 0;
