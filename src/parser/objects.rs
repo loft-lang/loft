@@ -254,6 +254,68 @@ impl Parser {
     }
 
     #[allow(clippy::too_many_lines)]
+    /// `@FR-B-Scope` — a local bound by a statement inside a block ends at that block's `}`,
+    /// as in Rust: a read of it from outside the block is refused.  The block path of the
+    /// statement that last bound it is recorded at every binding position; a bind from outside
+    /// that path starts a new binding there (`w = 3` after the block is legal and makes `w`
+    /// the outer block's).  Parameters and loop variables are bound by their construct, not by
+    /// a statement, and are not tracked; nor are the compiler's own names.
+    fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
+        if self.vars.is_argument(var)
+            || self.vars.was_loop_var(var)
+            || name.starts_with("__")
+            || name.contains('#')
+        {
+            return;
+        }
+        let key = (self.context, var);
+        let visible = self
+            .bound_in_block
+            .get(&key)
+            .is_none_or(|p| self.block_path.starts_with(p));
+        if self.at_binding_name() {
+            if !visible || !self.bound_in_block.contains_key(&key) {
+                self.bound_in_block.insert(key, self.block_path.clone());
+            }
+            return;
+        }
+        if !visible {
+            diagnostic_at!(
+                self.lexer,
+                name_pos,
+                Level::Error,
+                code = "local-out-of-scope",
+                "`{name}` was bound inside a block that has ended, so it does not exist here — \
+                 bind it before the block, or give the block a value: \
+                 `{name} = if … {{ … }} else {{ … }}`"
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!("bind `{name}` before the block and assign it inside"),
+                condition: Some(
+                    "if every path should leave a value behind; the binding before the block \
+                     is the value on a path that assigns nothing"
+                        .to_string(),
+                ),
+                edit: None,
+                concept: "`if` as an expression",
+                concept_ref: "@F27",
+            });
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: format!(
+                    "make the block's value `{name}`: `{name} = if … {{ … }} else {{ … }}`"
+                ),
+                condition: Some(
+                    "if each arm computes the value, so the `if` itself can answer it".to_string(),
+                ),
+                edit: None,
+                concept: "`if` as an expression",
+                concept_ref: "@F27",
+            });
+        }
+    }
+
     pub(crate) fn parse_var(
         &mut self,
         code: &mut Value,
@@ -567,6 +629,9 @@ impl Parser {
             t = Type::Unknown(0);
         } else if self.vars.name_exists(name) {
             let index_var = self.vars.var(name);
+            if !self.first_pass {
+                self.check_block_scope(index_var, name, name_pos);
+            }
             // on pass 2, if a variable has Unknown type, it may be a pass-1
             // placeholder for a forward-declared function. Try fn-ref resolution.
             //

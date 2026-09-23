@@ -720,7 +720,11 @@ impl Parser {
         // statements that produced it, so it is saved across every block this one contains
         // and restored for the loop that is still in the middle of that pair.
         let outer_fit = self.fit_armed.take();
+        // `@FR-B-Scope` — this block is open while its statements parse.
+        self.block_ord = self.block_ord.wrapping_add(1);
+        self.block_path.push(self.block_ord);
         let cc_ret = self.parse_block_inner(context, val, result);
+        self.block_path.pop();
         self.fit_armed = outer_fit;
         if cc.is_some() {
             self.cc_nest -= 1;

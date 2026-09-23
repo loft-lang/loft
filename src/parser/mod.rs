@@ -808,6 +808,14 @@ pub struct Parser {
     /// O8.5: range bounds captured by `parse_in_range_body` for const-unroll detection.
     pub(crate) last_range_from: Option<Value>,
     pub(crate) last_range_till: Option<Value>,
+    /// `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser
+    /// ordinal; and, per `(function, local)`, the open-block path where a STATEMENT last bound
+    /// that local.  A local bound inside a block ends at that block's `}` (rustc's rule), so a
+    /// read from outside the path is refused.  Pass 2 only: both are written and read in
+    /// source order within the pass.
+    pub(crate) block_path: Vec<u32>,
+    pub(crate) block_ord: u32,
+    pub(crate) bound_in_block: std::collections::HashMap<(u32, u16), Vec<u32>>,
     /// @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an
     /// integer `pos`): `(cursor_var, cursor_def, pos_field_idx, pos_var)`.  `pos_var` holds the
     /// current position (reads are offset by it); the match PREFIX-consumes (gate `pos + fixed <=
@@ -1557,6 +1565,9 @@ impl Parser {
             iterable_context: false,
             last_range_from: None,
             last_range_till: None,
+            block_path: Vec::new(),
+            block_ord: 0,
+            bound_in_block: std::collections::HashMap::new(),
             match_cursor: None,
             match_cursor_farthest: None,
             subrule_edges: Vec::new(),
