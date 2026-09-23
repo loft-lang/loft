@@ -108,6 +108,28 @@ jobs:
           ref: ${{ matrix.tag }}
           path: lib
 
+      # System libraries the lib's native crate links against, declared as `build-deps`
+      # in its loft.toml (graphics → libgl-dev, libasound2-dev) and in the manifests of
+      # the packages it resolves — the step library-ci-reusable.yml runs, for the same
+      # reason.  Without it the native crate's build script fails (`alsa-sys`), and the
+      # re-classification below, which compiles every file and so builds the cdylib too,
+      # reported that environment failure as a language COMPILE-BREAK.
+      - name: Install system build-deps (this lib and its resolved deps)
+        working-directory: lib/${{ matrix.sub }}
+        run: |
+          set -u
+          loft install > /dev/null 2>&1 || true
+          deps=$( { sed -n 's/^ *build-deps *= *"\(.*\)"/\1/p' loft.toml 2>/dev/null
+                    cat ~/.loft/registry/*/loft.toml 2>/dev/null \
+                      | sed -n 's/^ *build-deps *= *"\(.*\)"/\1/p'
+                  } | tr ',' '\n' | tr -d ' ' | sed '/^$/d' | sort -u | tr '\n' ' ') || true
+          if [ -n "$deps" ]; then
+            echo "installing build-deps: $deps"
+            sudo apt-get install -y $deps
+          else
+            echo "no build-deps declared by this lib or its deps"
+          fi
+
       # HARD GATE — does this published lib still work against THIS loft?  Warnings
       # are NON-contractual (a new deprecation must not fail a shipped lib), so
       # LOFT_DENY_WARNINGS stays off.  Run the full interpret suite first.  If it
