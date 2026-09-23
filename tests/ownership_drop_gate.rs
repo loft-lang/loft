@@ -1464,9 +1464,8 @@ const PILOT_ONCE: &[&str] = &[
     // A local the function OWNS, placed — each a MOVE since the 2026-09-17 ruling.
     "p_k1", "p_k2", "p_k3", "p_h1", "p_i1", // `x = a` of a local
     "p_o2", // `u = t` of a tuple the function built
-    "p_l1", "p_l2", "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
-    "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s4",
-    "p_s5", // a local in a join
+    "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
+    "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s5", // a local in a join
     // `d = v` of a droppable COLLECTION the function owns: a MOVE (`D-heap-23` closed it).
     "p_v1",
 ];
@@ -1481,10 +1480,14 @@ const PILOT_REFUSED: &[&str] = &[
     "p_g1", "p_g3", "p_g4", "p_g5", // a member of a call result
     // `d = b.v` of a droppable COLLECTION held in a FIELD: the container still owns it.
     "p_v3",
-    // `d = v; v += […]`: the bind MOVES `v`, so the growth reads a SPENT name, which `(H-Spent)`
-    // makes a compile-time error — `D-heap-8`'s unbuilt second half (loft#1568), not a release
-    // to judge.  Reclassified 2026-09-23, which closed `D-heap-15`.
-    "p_v2",
+    // `(H-Spent)` — a name read, or placed again, after its value MOVED; a compile-time error
+    // since loft#1568 (`read-after-move`).  `d = v; v += […]`: the bind moves `v`, so the growth
+    // reads a spent name.  `p_l1` / `p_l2`: a local declared outside a loop moved by the `??`
+    // inside it, which the second pass reads spent.  `p_s4`: `y = a` after an arm that may have
+    // moved `a` into `x`.  The three were `Once` until the error existed — the move rule alone
+    // does not refuse them, and the gate's check against the compiler
+    // (`a_refused_cell_is_a_compile_error_and_a_once_cell_is_not`) is what found them.
+    "p_v2", "p_l1", "p_l2", "p_s4",
 ];
 
 /// What the lease rules require of the cell `name`, read — as the rule is read — off the cell's
@@ -1573,11 +1576,14 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
 /// census DOES refuse fails until it is removed, and a merely tolerant list would have gone green
 /// on the cure and stayed forever.
 ///
-/// `p_v2` entered it 2026-09-23 for a different blindness.  Its copy IS enumerated, and it is
-/// correctly a MOVE (`lease=move`).  What the rules refuse is the LATER read of the spent name
-/// (`d = v; v += […]`), `(H-Spent)`'s error, which no census arm implements yet (`D-heap-8`,
-/// loft#1568).  It leaves the day that error refuses it.
-const CENSUS_BLIND: &[&str] = &["p_v2"];
+/// What it holds since 2026-09-23 is a different thing, and permanent: the cells `(H-Spent)`
+/// refuses.  Each one's copies ARE enumerated and are correctly MOVES (`lease=move`); what the
+/// rules refuse is a LATER read of the spent name — `d = v; v += […]`, a `??` inside a loop over
+/// a local declared outside it, `y = a` after an arm that may have moved `a`.  The census answers
+/// the copy question only, by design; the spent read is `crate::spent`'s, raised as
+/// `read-after-move`, and [`a_refused_cell_is_a_compile_error_and_a_once_cell_is_not`] is the
+/// test that holds these four to it.
+const CENSUS_BLIND: &[&str] = &["p_v2", "p_l1", "p_l2", "p_s4"];
 
 /// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
 /// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.

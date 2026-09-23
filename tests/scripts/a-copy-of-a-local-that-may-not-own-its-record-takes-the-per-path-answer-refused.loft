@@ -9,7 +9,19 @@
 // (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
 // verified against.  Here each cell pins the refusal instead, with the words it must say.
 //
-// @falsified-at: PENDING
+// @falsified-at: 301ed70c9 — interpret exit 1 -> 0, interpret expectations FAIL/6 -> 5/6 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/6 ->
+//   5/6 (the suite's verdict, not a count of matches)
+// @falsified-by:
+//   tests/falsified/a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer-refused.patch
+//   — interpret exit 1 -> 0, interpret expectations FAIL/6 -> 5/6 (the suite's verdict, not a
+//   count of matches), native exit 1 -> 0, native expectations FAIL/6 -> 5/6 (the suite's
+//   verdict, not a count of matches)
+// CHANNEL: the expectations and the exit code, identically on both backends — on the control
+//   the refused cells compile, so every `@EXPECT_ERROR` goes unmatched.
+// ARMED: no instrument — the errors are on by default on this tree and off on the control.
+// WITNESS: on the control, `expected error not emitted` for each annotation.
+// HOLDS: leak and panic are unmoved on both trees; nothing runs on either.
 
 fn trace_path() -> text { return "loft_arm_carrier_trace.tmp"; }
 
