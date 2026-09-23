@@ -98,6 +98,8 @@ fn c12() { n = mkf(79)(); note("L{n}"); note("X"); }
 // 13 — a call's closure bound in each arm of a local declared ahead of the branch: the first
 //      binding displaces only the null pre-init.
 fn c13() { note("A{arms(true)}"); note("B{arms(false)}"); note("X"); }
+// 14 — a rebind inside a loop of a fn-ref declared outside it: each pass displaces the last.
+fn c14() { f = mkf(60); for i in 61..63 { f = mkf(i); note("F{f()}"); } note("X"); }
 // Controls: a returned closure that captures nothing, and a vector with no closure.
 fn k1() { h = mk(76); f = plain(); note("F{f()}"); note("X"); }
 fn k2() { w = [mk(65)]; note("L{len(w)}"); note("X"); }
@@ -133,6 +135,9 @@ fn main() {
 
   c13();
   ok("c13 bound in each arm    ", drain(), "M90,D90,A1,M91,D91,B2,X");
+
+  c14();
+  ok("c14 rebound in a loop    ", drain(), "M60,M61,D60,F1,M62,D61,F1,X,D62");
 
   k1();
   ok("k1 captures nothing      ", drain(), "M76,F5,X,D76");

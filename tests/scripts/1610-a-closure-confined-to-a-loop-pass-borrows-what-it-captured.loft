@@ -11,6 +11,10 @@
 // adopted, through a backing the next pass had already refilled: the next pass's element was
 // released early, and the last one three times.
 //
+// A record that is NOT confined (passed to a call, held outside the loop) ADOPTS its capture
+// and may outlive the pass, so the pass's backing lets go of the store at the build and the next
+// pass mints its own: each record then releases exactly what it adopted (`c7`–`c13`).
+//
 // Every trace is exact and hand-computed: a lost release and a doubled one both show as the
 // wrong sequence, not just the wrong count.
 //
@@ -19,8 +23,6 @@
 //   the same channels.
 // CHANNEL: assertion failures, both backends.
 // HOLDS: clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1` after; `k1`–`k3` right before and after.
-// OPEN beside it (formal/closures.md D-clo-37): a closure PASSED as an argument inside the loop,
-// and one held by a local declared outside it, still adopt through the reused backing.
 
 struct H { id: integer }
 
@@ -80,6 +82,49 @@ fn c6() {
   }
   note("X");
 }
+// A record that may OUTLIVE the pass ADOPTS its capture, and the loop body's backing (or the
+// call's pooled return buffer) lets go of the store at the build, so the next pass mints a
+// fresh one.  Each record releases what it adopted when it is displaced, or at the end.
+fn run(g: fn() -> integer) -> integer { g() }
+fn keep(g: fn() -> integer) -> fn() -> integer { g }
+// 7 — the closure passed as an argument inside the loop.
+fn c7() { for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { len(w) }; note("F{run(f)}"); } note("X"); }
+// 8 — passed inline, never bound to a local.
+fn c8() { for i in 0..2 { w = [mk(70 + i)]; note("F{run(fn() -> integer { len(w) })}"); } note("X"); }
+// 9 — held by a local declared OUTSIDE the loop and called after it.
+fn c9() {
+  f = fn() -> integer { 0 };
+  for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { len(w) }; note("F{f()}"); }
+  note("F{f()}");
+  note("X");
+}
+// 10 — handed back through a call into a local declared outside the loop.
+fn c10() {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { len(w) }; g = keep(f); note("F{g()}"); }
+  note("F{g()}");
+  note("X");
+}
+// 11 — a RECORD capture delivered through a call's pooled return buffer.
+fn c11() { for i in 0..2 { h = mk(70 + i); f = fn() -> integer { h.id }; note("F{run(f)}"); } note("X"); }
+// 12 — the vector rebound after the build: the new store stays the frame's.
+fn c12() {
+  for i in 0..2 {
+    w = [mk(70 + i)];
+    f = fn() -> integer { len(w) };
+    note("F{run(f)}");
+    w = [mk(90 + i)];
+    note("L{len(w)}");
+  }
+  note("X");
+}
+// 13 — a nested loop.
+fn c13() {
+  for j in 0..2 {
+    for i in 0..2 { w = [mk(70 + 10 * j + i)]; f = fn() -> integer { len(w) }; note("F{run(f)}"); }
+  }
+  note("X");
+}
 // Controls: the same captures without a loop, and a loop without a closure.
 fn k1() { w = [mk(70)]; f = fn() -> integer { len(w) }; note("F{f()}"); note("X"); }
 fn k2() { for i in 0..2 { w = [mk(70 + i)]; note("F{len(w)}"); } note("X"); }
@@ -101,6 +146,21 @@ fn main() {
   ok("c5 three passes         ", drain(), "M80,M90,F4,D80,D90,M81,M91,F4,D81,D91,M82,M92,F4,D82,D92,X");
   c6();
   ok("c6 a mutated scalar too ", drain(), "M70,F11/12,D70,M71,F11/12,D71,X");
+
+  c7();
+  ok("c7 passed as an argument", drain(), "M70,F1,M71,D70,F1,X,D71");
+  c8();
+  ok("c8 passed inline        ", drain(), "M70,F1,M71,D70,F1,X,D71");
+  c9();
+  ok("c9 held outside the loop", drain(), "M70,F1,M71,D70,F1,F1,X,D71");
+  c10();
+  ok("c10 kept through a call ", drain(), "M70,F1,M71,D70,F1,F1,X,D71");
+  c11();
+  ok("c11 a record, a buffer  ", drain(), "M70,F70,M71,D70,F71,X,D71");
+  c12();
+  ok("c12 rebound after build ", drain(), "M70,F1,M90,L1,D90,M71,D70,F1,M91,L1,D91,X,D71");
+  c13();
+  ok("c13 a nested loop       ", drain(), "M70,F1,M71,D70,F1,M80,D71,F1,M81,D80,F1,X,D81");
 
   k1();
   ok("k1 no loop              ", drain(), "M70,F1,X,D70");

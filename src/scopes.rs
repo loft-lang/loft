@@ -266,6 +266,11 @@ struct Scopes<'s> {
     /// one in a nested scope, and intersect-merged at every join like
     /// [`Self::tuple_call_mint`], so a move that cannot know which backing it copies declines.
     tuple_member_now: HashMap<u16, HashMap<u16, u16>>,
+    /// Per open block, the fn-ref locals a statement of that block has already bound: a
+    /// `Set` of one of them is a REBIND, which displaces a value (`fnref_call_rebind`).  A
+    /// local declared ahead of a branch is first bound in an arm, where its slot holds no
+    /// value yet — on the interpreter not even a null one.
+    fnref_bound: Vec<HashSet<u16>>,
     /// loft#1532 — the `(tuple, element)` pairs a member ASSIGNMENT (`t.1 = …`) writes in this
     /// function, by the variable numbers of the unscanned body.  Such an element is handed to
     /// the tuple ALONE at the literal that builds it: the construction or call that delivered it
@@ -5767,6 +5772,7 @@ fn run_scan_phase(
         drop_transferred: HashSet::new(),
         tuple_call_mint: HashMap::new(),
         tuple_member_now: HashMap::new(),
+        fnref_bound: Vec::new(),
         written_tuple_members: written_tuple_members_in(orig_code),
         view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
@@ -13119,6 +13125,68 @@ impl Scopes<'_> {
         Some((pre, post))
     }
 
+    /// `@FR-L-CapOwn` for a collection captured by a record built in a LOOP: the statements
+    /// that detach the frame's backing from the store the record just adopted (loft#1610).
+    ///
+    /// A loop-body vector's backing (`__vdb_N`) is minted once, at the function's head, and
+    /// refilled on every pass.  A record that ADOPTS the capture takes that store over, so from
+    /// the build on the store is the record's and the backing no longer names anything the
+    /// frame owns.  Left naming it, the next pass's literal cleared and refilled the store the
+    /// previous pass's record still held, which then released the NEW pass's elements, and the
+    /// frame released the last pass's again.  Set to the sentinel, the next literal mints a
+    /// fresh store and every frame release of the backing finds nothing.  A record that BORROWS
+    /// (one confined to the pass, `CaptureBuilds::pass_confined`) leaves the store the frame's,
+    /// and is not named by [`owning_record_locals`].
+    fn adopted_backing_detach(&self, stmt: &Value, function: &Function, data: &Data) -> Vec<Value> {
+        let set_dbref = data.def_nr("OpSetDbRef");
+        let builds = &self.capture_build_backing;
+        let mut out = Vec::new();
+        stmt.walk(&mut |n| {
+            let Value::Call(d, args) = n.unspan() else {
+                return;
+            };
+            if *d != set_dbref {
+                return;
+            }
+            let (Some(Value::Var(rec)), Some(Value::Var(x))) = (
+                args.first().map(Value::unspan),
+                args.get(2).map(Value::unspan),
+            ) else {
+                return;
+            };
+            if !builds.rebuilt_in_loop.contains(x) {
+                return;
+            }
+            let sentinel = || Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+            // A collection capture: a view over the literal's backing, which is the store.
+            if let Some(&b) = builds.backing.get(x) {
+                if function.name(b).starts_with("__vdb_")
+                    && owning_record_locals(data, function, self.d_nr, builds, b).contains(rec)
+                {
+                    let detach = v_set(b, sentinel());
+                    if !out.contains(&detach) {
+                        out.push(detach);
+                    }
+                }
+                return;
+            }
+            // A struct capture a call delivered through a pooled return buffer, which the next
+            // pass's call clears and refills.  The local may have been bound from elsewhere on
+            // this path, so only a buffer still naming the adopted store lets go of it.
+            if !owning_record_locals(data, function, self.d_nr, builds, *x).contains(rec) {
+                return;
+            }
+            for &b in self.witness_buffer.get(x).into_iter().flatten() {
+                let same = Value::Call(
+                    data.def_nr("OpDistinctStore"),
+                    vec![Value::Var(b), Value::Var(*x)],
+                );
+                out.push(v_if(same, Value::Null, v_set(b, sentinel())));
+            }
+        });
+        out
+    }
+
     /// `@FR-L-CapOwn` at a REBIND of a fn-ref local that holds a CALL's closure: `(before,
     /// after)` the statement, or `None` where it is not such a rebind (loft#1609).
     ///
@@ -13147,6 +13215,7 @@ impl Scopes<'_> {
         }
         let v = *self.var_mapping.get(ov).unwrap_or(ov);
         if !matches!(function.tp(v), Type::Function(..))
+            || !self.fnref_bound.iter().any(|b| b.contains(&v))
             || !self.var_scope.contains_key(&v)
             || function.is_argument(v)
             || function.is_captured(v)
@@ -13745,6 +13814,7 @@ impl Scopes<'_> {
         // Releases owed at the END of the current statement: a statement's own parts arrive
         // flat, so they wait for the statement boundary, a `Line` marker or the block's end.
         let mut at_end: Vec<Value> = Vec::new();
+        self.fnref_bound.push(HashSet::new());
         for (i, v) in bl.operators.iter().enumerate() {
             if matches!(v.unspan(), Value::Line(_)) {
                 ls.append(&mut at_end);
@@ -13798,6 +13868,13 @@ impl Scopes<'_> {
             // waits for the statement's end; any other rebind is a whole statement already.
             let rebind_is_group = matches!(v.unspan(), Value::Set(_, rhs)
                 if literal_backing_of(rhs, function, data).is_some());
+            let adopted_detach = self.adopted_backing_detach(v, function, data);
+            if let Value::Set(ov, _) = v.unspan()
+                && matches!(function.tp(*ov).base(), Type::Function(..))
+                && let Some(bound) = self.fnref_bound.last_mut()
+            {
+                bound.insert(*self.var_mapping.get(ov).unwrap_or(ov));
+            }
             let sv = self.scan(v, function, data);
             // Arm the hand-offs this statement makes, AFTER it is scanned: its own displaced
             // release and its retirement read the facts of the assignments before it, and what
@@ -13948,6 +14025,7 @@ impl Scopes<'_> {
                 ls.extend(rebind_release);
                 ls.extend(call_release);
             }
+            ls.extend(adopted_detach);
             // loft#1331 — DETACH an accumulator this statement repointed at a destination the
             // frame does not own, so the scope-exit sweep frees nothing instead of freeing the
             // caller's collection.  @FR-O-Latest is the fact: ownership belongs to the LATEST
@@ -14116,6 +14194,7 @@ impl Scopes<'_> {
         for v in frees {
             ls.push(v);
         }
+        self.fnref_bound.pop();
         ls
     }
 

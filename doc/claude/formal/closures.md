@@ -200,9 +200,9 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 1** — `D-clo-37` (`D-clo-38`, loft#1624, opened and CLOSED 2026-09-23; `D-clo-36`
-opened 2026-09-22 and CLOSED 2026-09-23; both opened with `D-clo-35`, which closed the same
-day; `D-clo-27` closed 2026-09-12).
+**OPEN: 0** — (`D-clo-38`, loft#1624, opened and CLOSED 2026-09-23; `D-clo-36` and
+`D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED 2026-09-23; `D-clo-27` closed
+2026-09-12).
 
 - **D-clo-38** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1624)* — `(O-Buffer)` for a
   collection `??` whose chosen arm is a CAPTURE.  A `vector<T>` return is delivered into the
@@ -228,7 +228,7 @@ day; `D-clo-27` closed 2026-09-12).
   every sibling arm already pays.  Guard
   `tests/scripts/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft`, whose `c4` is
   the alias cell and fails on `origin/main`.
-- **D-clo-37** *(opened 2026-09-22, loft#1610)* — `(L-CapOwn)` for a closure over a LOOP-BODY
+- **D-clo-37** *(opened 2026-09-22, CLOSED 2026-09-23; loft#1610)* — `(L-CapOwn)` for a closure over a LOOP-BODY
   vector.  The vector's backing is minted at the function's head and reused on every pass, and
   the capture is a `DbRef` to that backing's slot.  So the previous pass's record, when its
   rebuild releases it, walks the NEW pass's vector, and the backing's own rebuild releases the
@@ -254,6 +254,19 @@ day; `D-clo-27` closed 2026-09-12).
   local declared OUTSIDE the loop (`g = fn() { len(w) }` in the body), which really outlives the
   pass.  The first two need the callee's retention (a `&` parameter, a returned fn-ref) read,
   and the third needs the per-pass backing the original entry names.
+  **CLOSED 2026-09-23 — the ADOPTING record takes the store with it.**  The per-pass backing
+  covers all three shapes, so the callee's retention never has to be read.  An adopting record
+  may outlive the pass, and from its build on the store is the record's.  So the frame's holder
+  lets go at the build (`Scopes::adopted_backing_detach`): a collection's literal backing
+  (`__vdb_N`) becomes the sentinel, and so does a struct capture's pooled call buffer
+  (`__ref_N`, guarded by store identity).  The next pass's literal or call then mints a fresh
+  store, and every frame release of the holder finds nothing.  Each record releases what it
+  adopted when its rebuild displaces it, or at the end: `M70 F1 M71 D70 F1 X D71` for `run(f)`,
+  inline and `keep(f)`, and `… F1 F1 X D71` for a local declared outside the loop.  The record
+  capture exposed one more hook-order defect.  Loft#1483's hookless free of a displaced capture
+  ran BEFORE the rebuild's snapshot cascade, which then read the store it had freed.  That free
+  now stands down wherever the capture's type owns a droppable, because the snapshot releases
+  it, hook first.  The guard gained seven cells (`c7`–`c13`).
 - **D-clo-36** *(opened 2026-09-22, CLOSED 2026-09-23; loft#1609)* — `(L-CapOwn)`'s hand-over
   for a record that LEAVES its frame covered the store and not the HOOKS.  The caller's fn-ref
   was released by `OpFreeRef`, whose store cascade frees the captured vector, and no hook ran.

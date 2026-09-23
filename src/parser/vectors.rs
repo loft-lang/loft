@@ -2085,8 +2085,17 @@ or build a local and use that."
                         alloc_steps.extend(backing);
                     }
                     // loft#1483, `@FR-L-CapOwn` — release the store this capture slot DISPLACES.
+                    // A capture whose type owns a droppable gives the record a drop cascade,
+                    // and the record's rebuild then releases what it displaces through a
+                    // snapshot: the hook, then the store (`Scopes::displaced_drop`).  A free
+                    // here ran first, without the hook, and the snapshot's cascade read the
+                    // store it had freed (loft#1610, a record capture in a loop).
+                    let snapshot_releases = self
+                        .data
+                        .type_owns_droppable_anywhere(&self.data.attr_type(closure_rec_d, aid));
                     if v_nr != u16::MAX
                         && self.assign_target != v_nr
+                        && !snapshot_releases
                         && !crate::parser::vectors::is_collection(self.vars.tp(v_nr))
                         && matches!(
                             self.data.attr_type(closure_rec_d, aid).base(),
