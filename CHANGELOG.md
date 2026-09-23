@@ -19,6 +19,21 @@ dependency audit now runs every night, and its first run found that the TLS libr
 loft downloads with carried a published advisory (RUSTSEC-2026-0285); the fixed version
 ships from this release on.  Nothing in a program changes.
 
+**A value with a release hook is either moved or refused, and the compiler tells you which.**
+A type that declares `OpDrop` holds something outside the program — a file, a lock, a
+connection — and releasing it twice closes a handle you already closed.  Two new errors, on
+by default, stop that at compile time.  `copy-of-droppable` refuses a COPY of such a value
+the function does not own: a parameter (`x = p`), a member of a container (`Hold { h: s.h }`,
+`return d.h`), a member of a call result bound to a name.  `read-after-move` refuses a READ
+of a name after its value MOVED: `a = open(1); k = Hold { h: a }; a.id` — `k` holds the only
+lease now, so `a` is spent.  A move inside one branch of an `if`, or inside a loop, spends the
+name on that path, and a later read any such path reaches is refused.  Reading the name
+inside the statement that moves it is fine (`N { h: c, tag: c.id }`), and giving it a new
+value makes it usable again.  Each error says what to write instead: read the value through
+the structure it moved into, pass it as an argument, or build it where it belongs.
+`LOFT_NO_LEASE_REFUSE=1` switches both off, as the first step when a program stops
+compiling with one of them.
+
 **A ranged type you declare yourself answers an out-of-range step the same way `u8` does.**
 `type Small = integer limit(-100, 100) size(1)` holds 201 values inside a byte's 256, and
 those 55 spare codes used to hold one more thing: a null, which an out-of-range `+=` wrote

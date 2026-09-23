@@ -83,6 +83,24 @@ pins the layout and the tree's validity, and fails on a carve that breaks the or
 the color).  `hash_text_keys` −8.0 %, `grouped_fill_find` −2.9 %, every other bench row within
 noise, every hash unchanged.
 
+### @PLN163 P3 — the lease errors on by default; `(H-Spent)` built (loft#1568, 2026-09-24)
+
+`copy-of-droppable` (`(H-Copy-Refuse)`, the census's verdict) and the new `read-after-move`
+(`(H-Spent)`, `src/spent.rs`) are raised unless `LOFT_NO_LEASE_REFUSE=1`.  The spent check
+reads `lease.rs`'s own Move verdict (`Frame::spends`) at each placement the parser writes and
+follows the body BEFORE the scope pass, whose releases and snapshots are reads no rule judges:
+statements are the parser's line groups, an `if` joins by union, a loop runs to a fixpoint,
+a `return` ends the path, a reassignment refills.  Converting the corpus found five shapes the
+copy census refused against the rules (a vector literal's `__vdb_N` backing read as a
+container; a returned tuple local with no hold; a whole-tuple move's vector and nullable
+members; a call result's member handed to a function as an argument), fixed at the census.
+124 genuine sites in 25 guards: refused cells moved to `<name>-refused.loft` companions, three
+files' incidental late reads dropped.  `tests/wrap.rs` raises the census after the scope pass
+(it ran a pre-scope subset of the lints, so no lease `@EXPECT_ERROR` could match), the drop
+gate and the `double_move` cells run under the switch-off, and the drop gate checks its
+Refused/Once verdicts against the default compiler over all 285 cells (it found `p_l1`,
+`p_l2` and `p_s4`).  `formal/heap.md` D-heap-8 CLOSED.
+
 ### C127 — a declared narrow range has no null; the spare-code encodings retired (2026-09-23)
 
 `uncomputable_default` answered `i64::MIN` for a non-nullable spec that left a code unused
