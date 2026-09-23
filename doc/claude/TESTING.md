@@ -3463,6 +3463,36 @@ is checked. `make falsify` catches the commonest case — a guard that never fai
 build it was written to catch — but it only answers for the commit you name. These are the
 shapes that survive it, each one measured here rather than imagined.
 
+**⚠ A guard can cover a CLASS with cells that reach only its easiest member — and then it
+licenses a change to the whole class.**  Measured 2026-09-23 on loft#1647.  Its three
+borrowed-view cells all called ONE callee, `fn same(w: S) -> S { w }`, whose **every** return
+path borrows.  On that evidence a shared predicate was narrowed to *"never free for a callee
+whose return MAY name a parameter"* — but `Def::returns_borrowed_view` is `.any(…)` over a
+union of return paths, so the class also holds a callee that borrows on one path and MINTS on
+another, and for that member the narrowing removes a free that is needed.  The guard stayed
+green.  The suite's only witness for the second member was
+`tests/scripts/1140-a-returned-keyed-parameter-is-still-the-callers.loft`, in a different file
+AND a different spelling (keyed, not record), so nothing connected the two.  The cost was one
+leaked store per call plus two broken ownership pins, found by `make ci` rather than by the
+guard that was cited for the change.
+
+`make falsify` cannot see this one: the guard DID fail on the build it was written to catch.
+What it does not answer is whether the cells span what the predicate ranges over.
+
+**How to apply.**  Before citing a guard as the licence for a change, name the class the
+changed code quantifies over in the PREDICATE's terms — for a MAY/ANY predicate that is
+*"every callee for which this can answer true"*, always larger than the shape in front of you
+— then list its members and check a cell reaches each.  For a MAY predicate the members are
+at least always-true, always-false and **mixed-per-path**; mixed is the one usually missing,
+because it is the one that is awkward to construct, which is exactly why its absence goes
+unnoticed.  When a member cannot be a cell, say so in the guard's header with its issue
+number: loft#1651 blocks the record spelling of that class (it raises a `BUG (#306)`
+stack-store free refusal that `tests/wrap.rs` Part A2 fails), so those cells are drafted in
+the header rather than landed.  A stated gap is one the next reader can close; an unstated one
+is re-found by a regression.  This is the testing half of the debugging policy's *"count the
+axes you HELD FIXED"* — there the axes compose one program, here they are members of the class
+a predicate ranges over.
+
 **⚠ TWO guards can cover one question and both be blind to the same WINDOW — and each one's
 existence is why nobody looked for the other's gap.**  Measured 2026-09-17 on
 `@FR-H-Wilderness`.  `Store::init` left word 1 named in `claims` while also recording it as
