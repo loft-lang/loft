@@ -19174,7 +19174,7 @@ impl Parser {
             Value::Var(_) => true,
             Value::Call(d_nr, args) => {
                 let name = data.def(*d_nr).name();
-                matches!(
+                let listed = matches!(
                     name,
                     "OpGetField"
                         | "OpGetVector"
@@ -19190,7 +19190,16 @@ impl Parser {
                         | "OpGetRecord"
                         | "OpGetRef"
                         | "OpGetDbRef"
-                ) && !args.is_empty()
+                        | "OpGetVectorNullable"
+                );
+                // loft#1567 — every NARROW read op, asked from the one home that names them
+                // (`NarrowIntKind::get_op`) rather than re-listed here.  The hand-kept list
+                // above carried `OpGetByte` and `OpGetShort` while the family had grown past
+                // it: a `u16` field reads `OpGetShortFull` and an `i32` field `OpGetInt4`, so
+                // both answered "not an addressable operand" — a place the language plainly
+                // has, refused by a stale list.
+                (listed || crate::data::NarrowIntKind::is_get_op(name))
+                    && !args.is_empty()
                     && Self::is_amp_place(&args[0], data)
             }
             _ => false,

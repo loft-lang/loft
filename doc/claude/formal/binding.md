@@ -811,7 +811,29 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   element (a 1-byte store slot) have the same type, `&integer(0, 255)`, and a link can be re-pointed
   from one to the other, so the width belongs to the target at run time.  `(B-Ref-Reshape)` prefers
   refusing a link it cannot honour to a silent copy.  **Closes when** a link carries its target's
-  width — a representation decision — and the refusal is lifted.  One home decides the refused set,
+  width — a representation decision — and the refusal is lifted.
+  **Half of that is now built, measured 2026-09-23 by lifting the refusal behind a temporary
+  switch and putting it straight back.**  READS are correct on both backends: a `&` to a `u8`,
+  `i8`, `u16` or `limit(1000, 1100)` FIELD and to a `vector<u8>` ELEMENT answered `250 -1 1050
+  65535` and `1`.  The representation question the entry above calls open is therefore ANSWERED
+  for reading — `@PLN167` decision 1 dissolved its premise.  That premise was *"a link to a `u8`
+  local (an 8-byte frame slot) and a link to a `u8` element (a 1-byte store slot) have the same
+  type"*, and a linked narrow local now holds its type's FIELD encoding, so the two are one
+  representation; `state/codegen.rs` already reads through `NarrowSlot::of_type` for *"a linked
+  local, a field, an element"* and `generation::link_base_type` already says *"one `*mut u8`
+  names a linked local and a field alike"*.
+  **WRITES are the remaining half and are still lost** — `pa = 7` through a `&u8` field link
+  left the field at 250 on both backends, which is this entry's own pre-refusal measurement
+  (*"a `u8` field link was a plain copy, so its write was lost"*).  So the refusal STAYS: a
+  lifted refusal with reads right and writes silently dropped is worse than the refusal, which
+  is `(B-Ref-Reshape)`'s own reasoning.
+  **And one gate behind it is fixed rather than left to be re-found.**  With the refusal lifted,
+  every narrow place fell to *"`&` requires an addressable operand"*: `Parser::is_amp_place`
+  kept a hand-written list of readable place ops carrying `OpGetByte` and `OpGetShort` while a
+  `u16` field reads `OpGetShortFull`, an `i32` field `OpGetInt4` and a `u8` element
+  `OpGetVectorNullable`.  It now asks `NarrowIntKind::is_get_op`, derived from the same match
+  `get_op` is, so a new kind cannot be missed; adding seven more names by hand is the failure
+  mode rather than the cure.  One home decides the refused set,
   `Parser::is_narrow_store_place`, asked at the `&` and by the lowering on both passes.  Guards
   `tests/scripts/a-link-to-a-narrow-integer-store-place-is-refused.loft` (one error per `&`) and
   `tests/scripts/a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` (what must still link).
