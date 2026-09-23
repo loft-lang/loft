@@ -26,6 +26,49 @@ fn loft_bin() -> std::path::PathBuf {
     std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
+/// Every loft this file runs has the lease errors switched OFF (`LOFT_NO_LEASE_REFUSE=1`).
+///
+/// Each shape the lint judges hands one value to two owners, and since @PLN163 P3 the rules
+/// REFUSE every one of them at compile time — a second placement of a moved name is
+/// `read-after-move`, a copy of what the function does not own is `copy-of-droppable`
+/// ([`the_lease_errors_refuse_a_double_move_first`]).  With the errors on, no cell here would
+/// compile, and a cell that does not compile measures neither the warning nor the releases.
+/// Measured with them off, these cells are what the release machinery the errors replace is
+/// held to, as the drop gate's are.
+fn lint_command() -> Command {
+    let mut cmd = Command::new(loft_bin());
+    cmd.env("LOFT_NO_LEASE_REFUSE", "1");
+    cmd
+}
+
+/// The default refuses the lint's own canonical shape before the lint can warn about it.
+#[test]
+fn the_lease_errors_refuse_a_double_move_first() {
+    let src = format!(
+        "{PRELUDE}\nfn main() {{ c = mk(1); s1 = S {{ h: c }}; s2 = S {{ h: c }}; \
+         println(\"{{s1.h.id}}{{s2.h.id}}\"); }}\n"
+    );
+    let path = std::env::temp_dir().join("loft_pln139_dm_default.loft");
+    std::fs::write(&path, &src).expect("write temp script");
+    let out = Command::new(loft_bin())
+        .arg("--check")
+        .arg("--interpret")
+        .arg(&path)
+        .env_remove("LOFT_NO_LEASE_REFUSE")
+        .output()
+        .expect("failed to invoke loft binary");
+    let _ = std::fs::remove_file(&path);
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        text.contains("read-after-move") && !out.status.success(),
+        "the second placement of `c` is refused by default:\n{text}"
+    );
+}
+
 /// The shared preamble: a droppable that announces every release, and a container.
 const PRELUDE: &str = "\
 struct H { id: integer }
@@ -40,7 +83,7 @@ fn cell(name: &str, body: &str) -> (usize, usize) {
     let src = format!("{PRELUDE}\nfn main() {{ {body} }}\n");
     let path = std::env::temp_dir().join(format!("loft_pln139_dm_{name}.loft"));
     std::fs::write(&path, &src).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = lint_command()
         .arg("--interpret")
         .arg(&path)
         .env_remove("LOFT_NO_DOUBLE_MOVE")
@@ -258,7 +301,7 @@ fn cell_prog(name: &str, decls: &str, body: &str) -> (usize, usize) {
     let src = format!("{PRELUDE}\n{decls}\nfn main() {{ {body} }}\n");
     let path = std::env::temp_dir().join(format!("loft_pln139_dm_{name}.loft"));
     std::fs::write(&path, &src).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = lint_command()
         .arg("--interpret")
         .arg(&path)
         .env_remove("LOFT_NO_DOUBLE_MOVE")
@@ -847,7 +890,7 @@ fn opt_out_silences_without_changing_behaviour() {
     );
     let path = std::env::temp_dir().join("loft_pln139_dm_optout.loft");
     std::fs::write(&path, &src).expect("write temp script");
-    let out = Command::new(loft_bin())
+    let out = lint_command()
         .arg("--interpret")
         .arg(&path)
         .env("LOFT_NO_DOUBLE_MOVE", "1")
