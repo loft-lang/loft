@@ -13,6 +13,7 @@
 // @falsified-by: tests/falsified/1630-a-range-wholly-below-zero-is-declarable.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: exit, both backends — the control refuses the file at compile time; the cells'
 //   assertions are what hold the representation once it compiles.
+// HOLDS: all eleven cells on both backends after, clean under `LOFT_STRICT_STORES=1`.
 
 type Neg = integer limit(-100, -1) size(1);
 type N2 = integer limit(-40000, -1) size(2);
