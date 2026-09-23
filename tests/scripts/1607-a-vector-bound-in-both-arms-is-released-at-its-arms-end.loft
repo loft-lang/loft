@@ -15,7 +15,11 @@
 // after the `if` (b7, a CONTROL for the admission's own limit), and a `match` (b8).  The drop
 // hook writes a trace FILE, as `1600-…` does.
 //
-// @falsified-at: pending
+// @falsified-at: 8735b507e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1607-a-vector-bound-in-both-arms-is-released-at-its-arms-end.patch — the same channels.
+//   CHANNEL: the assertion channel — the control releases the element after the `if`.
+//   WITNESS: on 8735b507e `b1 true arm: m50,r1,x,d50, want m50,r1,d50,x`, both backends.
+//   HOLDS: leak, panic and free-refusal are equal on both trees; the count is right on both.
 
 fn trace_path() -> text { return "loft_1607_both_arms_trace.tmp"; }
 
