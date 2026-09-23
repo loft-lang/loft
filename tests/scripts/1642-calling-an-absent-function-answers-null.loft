@@ -10,7 +10,11 @@
 // is the control that the dispatch itself is unchanged.  `??` on a fn-ref is refused, which
 // `102-expected-errors.loft` pins.
 //
-// CHANNEL: exit and assertion failures, both backends.
+// @falsified-at: bebca4155 — interpret exit 1 -> 0, native exit 1 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/1642-calling-an-absent-function-answers-null.patch — interpret exit 1 -> 0, native exit 1 -> 0, native panicked -> clean
+// CHANNEL: exit, both backends (the control panics on the first absent call); the assertions
+//   hold each return shape's null once it no longer does.
+// HOLDS: all eight cells on both backends, clean under `LOFT_STRICT_STORES=1`.
 
 fn double(v: integer) -> integer { v * 2 }
 fn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }
