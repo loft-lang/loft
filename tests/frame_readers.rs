@@ -165,8 +165,14 @@ fn an_expression_over_a_linked_narrow_local_is_unmoved() {
 fn a_linked_narrow_nullable_takes_a_value_and_refuses_null() {
     let dir = scratch("nullable");
     let refused = debug_session(&dir, 8, "c = null\n:vars\n:continue\n");
-    assert!(refused.contains("couldn't set `c`"), "the refusal is said\n{refused}");
-    assert!(refused.contains("c = null"), "the local is unchanged\n{refused}");
+    assert!(
+        refused.contains("couldn't set `c`"),
+        "the refusal is said\n{refused}"
+    );
+    assert!(
+        refused.contains("c = null"),
+        "the local is unchanged\n{refused}"
+    );
     assert!(
         refused.contains("250 -1 true 1050 9 1"),
         "the resumed run sees the local untouched\n{refused}"
