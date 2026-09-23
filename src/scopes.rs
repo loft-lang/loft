@@ -11903,6 +11903,7 @@ impl Scopes<'_> {
             // home decides it for the two backends' bind arms too.
             let adopts_minted =
                 crate::use_analysis::adopts_minted_at_bind(data, function, v, unspanned_value);
+
             // @PLN85 `local_source` over-free fix (LOFT_JOIN_OWN): `v` holds an OWNED
             // store (this adopts-fresh call) that a later borrow/join reassignment
             // displaces. Strip `v`'s declared deps so it is OWNED everywhere — the
@@ -13379,7 +13380,11 @@ impl Scopes<'_> {
                 .copied()
                 .filter(|v| !pre_inits.contains(v))
                 .collect();
-            for &v in pre_inits.iter().chain(null_led.iter()).chain(arm_scoped.iter()) {
+            for &v in pre_inits
+                .iter()
+                .chain(null_led.iter())
+                .chain(arm_scoped.iter())
+            {
                 if (!self.multi_assigned.contains(&v) || self.null_led.contains(&v))
                     && let Some(value) = only_bind_in_arms(t_val, f_val, v)
                     && crate::use_analysis::adopts_minted_at_bind(data, function, v, value)

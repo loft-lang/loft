@@ -165,12 +165,12 @@ fn a_bind_after_an_if_pre_init_adopts() {
         !r28.contains("OpCopyRecord(cell,_src, var_mf"),
         "r28 native: no copy into `mf`"
     );
-    // r22: bound inside the `if` alone — pre-initialised in front of it all the same (an arm's
-    // local is the scope around the `if`'s unless `LOFT_ARM_SCOPE=1`, formal/heap.md D-heap-36).
+    // r22: bound inside the `if` alone — the arm's own local (`@FR-B-Scope`, loft#1600), so the
+    // bind is its declaration there and adopts the call's buffer.
     let r22 = section(&rust, "n_r22");
     assert!(
-        r22.contains("var_mf = n_scan_mk(cell, 4_i64,"),
-        "r22 native: the plain assignment"
+        r22.contains("let mut var_mf: DbRef = n_scan_mk(cell, 4_i64,"),
+        "r22 native: the plain assignment, declared in the arm"
     );
     assert!(
         !r22.contains("OpCopyRecord(cell,_src, var_mf"),
@@ -272,7 +272,12 @@ fn the_store_census_drops() {
     // fell again 174/270 → 169/265 on 2026-09-18 with `@FR-R-LoopRecord` (a record literal
     // bound inside a loop keeps its store across the iterations) — in both arms, so the
     // pool's own drop (96) is unchanged.  Cell r28 (2026-09-22) adds exactly its own share,
-    // measured alone: one mint pooled and four without, on each backend.
+    // measured alone: one mint pooled and four without, on each backend.  Re-measured
+    // 2026-09-23 with `@FR-B-Scope` (loft#1600): r26 and r28 now bind their local before the
+    // block (a read after the block that first binds it is refused), r26 is cheaper for it
+    // (10 → 6 on the interpreter, measured against the build before the rule on the same
+    // text); r28's author-written null costs 3 mints over the compiler's pre-init it replaces,
+    // its rebind taking no pool pairing — loft#1643, fixed before this arc's PR.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -285,7 +290,7 @@ fn the_store_census_drops() {
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),
-        (198, 307, 170, 269),
+        (197, 303, 173, 269),
         "mints (interpret on, off, native on, off)"
     );
 }

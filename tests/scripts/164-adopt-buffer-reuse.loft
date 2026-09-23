@@ -444,7 +444,7 @@ fn r22() {
   for line in 0..8 {
     if md(line, 2) == 0 {
       mf = scan_mk(4, md(line, 5));
-      if mf.matched { total += mf.pts[1]? } else { total += 50 + len(mf.pts ?? []) }
+      if mf.matched { total += mf.pts[1]? } else { total += 50 + len(mf?.pts) }
       continue
     }
     total += 1;
@@ -544,7 +544,7 @@ fn r26() {
   lm: Mk? = null;
   for i in 0..5 {
     lm = scan_mk(3, i);
-    t += len(lm.pts ?? []);
+    t += len(lm?.pts);
   }
   // i = 1, 2, 3 match (2 each); after the loop `lm` is i = 4's empty answer
   t += lm.pts[1]? * 100;
