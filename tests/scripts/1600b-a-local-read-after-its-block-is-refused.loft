@@ -1,0 +1,50 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Scope` (loft#1600, owner ruling 2026-09-23, rustc's rule): a local a STATEMENT binds
+// inside a block — an `if` / `else` arm, a loop body, a `match` arm body, a bare `{ }` — ends at
+// that block's `}`, and reading it after is refused (`local-out-of-scope`), also when every arm
+// binds it.  The refused cells each use their own name, so each `@EXPECT_ERROR` pins one cell:
+// an `if` arm (`r1w`), a bare block (`r2n`), both arms (`r3k`), a loop body (`r4e`), a `match`
+// arm (`r5m`), a compound write after the block, which reads (`r6w`), a field write through
+// it (`r7p`), and a read in the enclosing block of a local an inner block bound (`r8q`).
+//
+// The running cells are the legal spellings and the neighbours the rule must leave alone,
+// each asserting a hand-computed value: bound before the block (o1), rebound after the block
+// (o2), the block's own value (o3), a tuple from a value `if` (o4), a `match` as a value (o5),
+// a read after a nested block that binds nothing (o6), a loop variable after its loop (o7 —
+// loop variables follow their own rule), and a parameter reassigned inside an arm (o8).
+//
+// @EXPECT_ERROR: `r1w` was bound inside a block that has ended
+// @EXPECT_ERROR: `r2n` was bound inside a block that has ended
+// @EXPECT_ERROR: `r3k` was bound inside a block that has ended
+// @EXPECT_ERROR: `r4e` was bound inside a block that has ended
+// @EXPECT_ERROR: `r5m` was bound inside a block that has ended
+// @EXPECT_ERROR: `r6w` was bound inside a block that has ended
+// @EXPECT_ERROR: `r7p` was bound inside a block that has ended
+// @EXPECT_ERROR: `r8q` was bound inside a block that has ended
+// @falsified-at: pending
+struct P { f: integer }
+fn yes() -> boolean { true }
+
+fn r1() { if yes() { r1w = 5; } assert(r1w == 5, "r1"); }
+fn r2() { { r2n = 7; } assert(r2n == 7, "r2"); }
+fn r3() { if yes() { r3k = 1; } else { r3k = 2; } assert(r3k == 1, "r3"); }
+fn r4() { for x in [1, 2] { r4e = x; } assert(r4e == 2, "r4"); }
+fn r5() { match 1 { 1 => { r5m = 3; }, _ => { r5m = 4; } } assert(r5m == 3, "r5"); }
+fn r6() { if yes() { r6w = 5; } r6w += 1; }
+fn r7() { if yes() { r7p = P { f: 1 }; } r7p.f = 2; }
+fn r8() { if yes() { if yes() { r8q = 1; } assert(r8q == 1, "r8"); } }
+
+fn o1() { w = 0; if yes() { w = 5; } assert(w == 5, "o1 {w}"); }
+fn o2() { if yes() { w = 5; w += 1; } w = 3; assert(w == 3, "o2 {w}"); }
+fn o3() { x = if yes() { 1 } else { 2 }; assert(x == 1, "o3 {x}"); }
+fn o4() {
+  (qx, qw) = if yes() { (10, 20) } else { (30, 40) };
+  assert(qx + qw == 30, "o4 {qx} {qw}");
+}
+fn o5() { m = match 2 { 1 => 3, _ => 4 }; assert(m == 4, "o5 {m}"); }
+fn o6() { y = 4; if yes() { z = 1; z += 1; } assert(y == 4, "o6 {y}"); }
+fn o7() { s = 0; for i in 0..3 { s += i; } assert(s == 3, "o7 {s}"); }
+fn g8(p: integer) -> integer { if p > 0 { p = p * 10; } p }
+fn o8() { assert(g8(4) == 40 && g8(-1) == -1, "o8 {g8(4)} {g8(-1)}"); }

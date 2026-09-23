@@ -657,7 +657,7 @@ author's spelling had been failing all along.
 Closed at loft#1156's home, generalised: `Scopes::locals_read_after` takes a statement BLOCK as
 well as a loop, and hoists a local that the block first assigns and that the following
 statements READ, under the same liveness guard (loft#1332) and the same loop-variable exclusion
-(loft#1135).  Guard: `tests/scripts/a-local-a-match-arm-binds-lives-past-the-match.loft`.
+(loft#1135).  Guard: `tests/scripts/a-local-a-match-arm-assigns-is-bound-before-the-match.loft`.
 
 ### D-own-46 — OPENED AND CLOSED (2026-09-17): a view leaf was admitted where the element was not the value's copy on every path
 

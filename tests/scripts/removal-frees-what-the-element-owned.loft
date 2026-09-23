@@ -45,7 +45,10 @@ fn main() {
   // Three element shapes: scalars only, an owned vector, an owned text.  All
   // three leaked — the flat one least, which is why it looked fine at small
   // sizes and the leak read as "only deep records".
+  // Each baseline is bound BEFORE its loop and assigned on the first pass: a local first
+  // bound inside the `if` would end at its `}` and could not be read on a later pass.
   h: hash<Flat[id]> = [];
+  flat_first = 0;
   for k in 0..4 {
     for i in 0..n { h += [Flat { id: i, a: i }]; }
     if k == 0 { flat_first = record_count(); }
@@ -54,6 +57,7 @@ fn main() {
   }
 
   d: hash<Deep[id]> = [];
+  deep_first = 0;
   for k in 0..4 {
     for i in 0..n { d += [Deep { id: i, pts: tens() }]; }
     if k == 0 { deep_first = record_count(); }
@@ -62,6 +66,7 @@ fn main() {
   }
 
   t: hash<Txt[id]> = [];
+  txt_first = 0;
   for k in 0..4 {
     for i in 0..n { t += [Txt { id: i, s: "value {i} padded out a little" }]; }
     if k == 0 { txt_first = record_count(); }
@@ -70,6 +75,7 @@ fn main() {
   }
 
   s: sorted<Deep[id]> = [];
+  sorted_first = 0;
   for k in 0..4 {
     for i in 0..n { s += [Deep { id: i, pts: tens() }]; }
     if k == 0 { sorted_first = record_count(); }
@@ -78,6 +84,7 @@ fn main() {
   }
 
   x: index<Deep[id]> = [];
+  index_first = 0;
   for k in 0..4 {
     for i in 0..n { x += [Deep { id: i, pts: tens() }]; }
     if k == 0 { index_first = record_count(); }

@@ -1299,15 +1299,16 @@ pub fn coalesce_left_assoc() -> bool {
     *ON.get_or_init(|| env_set("LOFT_COALESCE_LEFT_ASSOC"))
 }
 
-/// loft#1600 (`@FR-H-Drop`, scope-end clause), OPT-IN: a heap local every mention of which
-/// lies in ONE arm of an `if` is declared in that arm and released at its end, rather than
-/// pre-initialised at the `if`'s scope and released at that scope's end.  Off by default:
-/// which of the two scopes an `if`-arm local has is an open design question (`formal/heap.md`
-/// D-heap-36) — @PLN125 decided the function's (`pln125-b-drop.loft`'s `if_block_local`), and
-/// the value-`if` delivery paths read the pre-init.  `LOFT_ARM_SCOPE=1` turns it on.
+/// loft#1600 (`@FR-H-Drop`'s scope-end clause with `@FR-B-Scope`), **DEFAULT ON**, both
+/// backends: a heap local every mention of which lies in ONE arm of an `if` is declared in that
+/// arm and released at its end, rather than pre-initialised at the `if`'s scope and released at
+/// that scope's end.  `(B-Scope)` makes the arm the local's scope (a read after it is refused),
+/// so the arm's end is where its owner dies.  `LOFT_NO_ARM_SCOPE=1` keeps the pre-init and the
+/// late release: the first bisect step for a wrong release order, a leak or a double release out
+/// of a local bound inside an `if` arm.
 pub fn arm_scope_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_ARM_SCOPE"))
+    *ON.get_or_init(|| !env_set("LOFT_NO_ARM_SCOPE"))
 }
 
 /// @PLN164 B1b (`@FR-O-Buffer`, `@FR-R-Reuse`): the buffer of a call whose result a local

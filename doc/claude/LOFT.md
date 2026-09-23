@@ -3211,7 +3211,30 @@ so reusing the same parameter or local-variable name across functions (including
 recursive functions with `const vector<T>` parameters and `for` loops) works
 correctly.
 
-The one rule to know: **loop variables are not block-scoped.**  A `for` loop
+**A local bound inside a block ends at that block's `}`** (`formal/binding.md` `(B-Scope)`,
+as in Rust).  An `if` / `else` arm, a loop body, a `match` arm body and a bare `{ }` are
+blocks; a local a statement binds there is gone after the `}`, and reading it is an error —
+also when every arm binds it:
+
+```loft
+fn f(c: boolean) -> integer {
+  if c { w = 5; } else { w = 6; }
+  w                        // error[local-out-of-scope]: `w` was bound inside a block that has ended
+}
+fn g(c: boolean) -> integer {
+  w = if c { 5 } else { 6 };   // the block's value is the binding
+  w
+}
+fn h(c: boolean) -> integer {
+  w = 0;                   // bound before the block, assigned inside
+  if c { w = 5; }
+  w
+}
+```
+
+For several values, bind a tuple: `(qx, qw) = if c { (0.0, 1.0) } else { (a, b) };`.
+
+The one exception is the loop variable: **loop variables are not block-scoped.**  A `for` loop
 variable lives in the function's scope, so naming it the same as an existing local
 in that function is a *compile-time error*, not a silent shadow:
 

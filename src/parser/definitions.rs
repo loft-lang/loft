@@ -2362,6 +2362,12 @@ impl Parser {
                 for (shadow, original) in self.vars.promoted_text_args() {
                     let orig_name = self.vars.name(original).to_string();
                     self.vars.remap_name(&orig_name, shadow);
+                    // The shadow is seeded from the parameter at function entry (the
+                    // preamble in `expressions.rs`), so it holds a value from the first
+                    // statement on.  Without this a read BEFORE the promoting write — the
+                    // condition of the `if` whose arm writes the parameter — found the
+                    // shadow undefined and reported `Unknown variable '__tp_<name>'`.
+                    self.vars.defined(shadow);
                     // Mark original as used so test_used doesn't warn.
                     self.vars.mark_used(original);
                 }

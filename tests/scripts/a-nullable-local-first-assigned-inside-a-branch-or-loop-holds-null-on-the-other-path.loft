@@ -1,10 +1,16 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// A nullable heap local first assigned inside a branch or a loop body holds NULL on every
-// path that did not assign it, and outlives the loop that first bound it — exactly as its
-// dense twin holds its zero (`formal/ownership.md` `(O-Complete)`: every binding, including
-// every arm; LOFT.md § loops: a local declared inside a loop body is readable after it).
+// A nullable heap local bound `x: T? = null` before a branch or a loop and assigned inside
+// it holds NULL on every path that did not assign it, and holds the last assignment after
+// the loop — exactly as its dense twin holds its zero (`formal/ownership.md` `(O-Complete)`:
+// every binding, including every arm).  Every in-block assignment is therefore a
+// REASSIGNMENT whose guarded displacement free reads the pre-bound slot.
+//
+// A local first bound INSIDE the block ends at its `}` (`error[local-out-of-scope]`, the
+// 2026-09-23 ruling), so the pre-bind is now the only spelling of these shapes.  It is the
+// spelling of what the compiler used to insert by itself, which is what the history below
+// is about — the cells still pin the reassignment through a null-initialised slot.
 //
 // `scopes::needs_pre_init` names the locals that get a `Set(x, null)` before the branch and
 // the hoist out of the loop body, and it listed the bare heap spellings — `Reference`,
@@ -21,6 +27,9 @@
 // `gen_set_first_nullable_collection_null`): the dense arm allocates a store, or a stack
 // placeholder into the DEP's slot with `x` itself left unwritten, and the read on the untaken
 // path was a poisoned frame word.  Absent is the sentinel.
+//
+// Those were the first-bound-inside spellings; under the ruling they are refused at
+// compile time, and the cells below spell the same paths with the pre-bind.
 //
 // ⚠ A KEYED nullable local is asserted here for the branch and loop shapes only.  On the
 // untaken path of a one-arm assignment it reads as PRESENT and empty on both backends — its
@@ -59,14 +68,15 @@ fn rdk(h: hash<K[k]>?) -> integer { if h != null { 1 } else { -1 } }
 
 // --- a record local -----------------------------------------------------------------
 
-fn rec_both(i: integer) -> integer { if pick(i) { x = mkn(1); } else { x = mkn(2); } rdn(x) }
-fn rec_one(i: integer) -> integer { if pick(i) { x = mkn(1); } rdn(x) }
+fn rec_both(i: integer) -> integer { x: S? = null; if pick(i) { x = mkn(1); } else { x = mkn(2); } rdn(x) }
+fn rec_one(i: integer) -> integer { x: S? = null; if pick(i) { x = mkn(1); } rdn(x) }
 fn rec_nested(i: integer) -> integer {
+  x: S? = null;
   if pick(i) { if i < 5 { x = mkn(1); } else { x = mkn(3); } } else { x = mkn(2); }
   rdn(x)
 }
-fn rec_loop(i: integer) -> integer { for j in 0..3 { x = mkn(j); } rdn(x) }
-fn rec_loop_loop(i: integer) -> integer { for j in 0..3 { x = mkn(j); } s = 0; for j in 0..2 { s += rdn(x); } s }
+fn rec_loop(i: integer) -> integer { x: S? = null; for j in 0..3 { x = mkn(j); } rdn(x) }
+fn rec_loop_loop(i: integer) -> integer { x: S? = null; for j in 0..3 { x = mkn(j); } s = 0; for j in 0..2 { s += rdn(x); } s }
 
 fn test_a_nullable_record_local_assigned_in_both_arms() {
   for i in 0..2 { o = O { opt: S { n: 6 } }; got = rec_both(i); assert(got == 1 + i && rdn(o.opt) == 6, "call {i}: got {got}, o.opt {rdn(o.opt)}"); }
@@ -86,14 +96,15 @@ fn test_a_nullable_record_local_first_assigned_in_a_loop_is_readable_in_a_later_
 
 // --- a vector local -----------------------------------------------------------------
 
-fn vec_both(i: integer) -> integer { if pick(i) { x = mkv(1); } else { x = mkv(2); } rdv(x) }
-fn vec_one(i: integer) -> integer { if pick(i) { x = mkv(1); } rdv(x) }
+fn vec_both(i: integer) -> integer { x: vector<integer>? = null; if pick(i) { x = mkv(1); } else { x = mkv(2); } rdv(x) }
+fn vec_one(i: integer) -> integer { x: vector<integer>? = null; if pick(i) { x = mkv(1); } rdv(x) }
 fn vec_nested(i: integer) -> integer {
+  x: vector<integer>? = null;
   if pick(i) { if i < 5 { x = mkv(1); } else { x = mkv(3); } } else { x = mkv(2); }
   rdv(x)
 }
-fn vec_loop(i: integer) -> integer { for j in 0..3 { x = mkv(j); } rdv(x) }
-fn vec_loop_loop(i: integer) -> integer { for j in 0..3 { x = mkv(j); } s = 0; for j in 0..2 { s += rdv(x); } s }
+fn vec_loop(i: integer) -> integer { x: vector<integer>? = null; for j in 0..3 { x = mkv(j); } rdv(x) }
+fn vec_loop_loop(i: integer) -> integer { x: vector<integer>? = null; for j in 0..3 { x = mkv(j); } s = 0; for j in 0..2 { s += rdv(x); } s }
 
 fn test_a_nullable_vector_local_assigned_in_both_arms() {
   for i in 0..2 { o = O { opt: S { n: 6 } }; got = vec_both(i); assert(got == 1 + i && rdn(o.opt) == 6, "call {i}: got {got}, o.opt {rdn(o.opt)}"); }
@@ -113,14 +124,15 @@ fn test_a_nullable_vector_local_first_assigned_in_a_loop_is_readable_in_a_later_
 
 // --- a text local -------------------------------------------------------------------
 
-fn txt_both(i: integer) -> integer { if pick(i) { x = mkt(1); } else { x = mkt(22); } rdt(x) }
-fn txt_one(i: integer) -> integer { if pick(i) { x = mkt(1); } rdt(x) }
+fn txt_both(i: integer) -> integer { x: text? = null; if pick(i) { x = mkt(1); } else { x = mkt(22); } rdt(x) }
+fn txt_one(i: integer) -> integer { x: text? = null; if pick(i) { x = mkt(1); } rdt(x) }
 fn txt_nested(i: integer) -> integer {
+  x: text? = null;
   if pick(i) { if i < 5 { x = mkt(1); } else { x = mkt(333); } } else { x = mkt(22); }
   rdt(x)
 }
-fn txt_loop(i: integer) -> integer { for j in 0..3 { x = mkt(j); } rdt(x) }
-fn txt_loop_loop(i: integer) -> integer { for j in 0..3 { x = mkt(j); } s = 0; for j in 0..2 { s += rdt(x); } s }
+fn txt_loop(i: integer) -> integer { x: text? = null; for j in 0..3 { x = mkt(j); } rdt(x) }
+fn txt_loop_loop(i: integer) -> integer { x: text? = null; for j in 0..3 { x = mkt(j); } s = 0; for j in 0..2 { s += rdt(x); } s }
 
 fn test_a_nullable_text_local_assigned_in_both_arms() {
   for i in 0..2 { o = O { opt: S { n: 6 } }; got = txt_both(i); assert(got == 2 + i && rdn(o.opt) == 6, "call {i}: got {got}, o.opt {rdn(o.opt)}"); }
@@ -140,13 +152,14 @@ fn test_a_nullable_text_local_first_assigned_in_a_loop_is_readable_in_a_later_lo
 
 // --- a keyed local: the branch and loop shapes ---------------------------------------
 
-fn key_both(i: integer) -> integer { if pick(i) { x = mkk(1); } else { x = mkk(2); } rdk(x) }
+fn key_both(i: integer) -> integer { x: hash<K[k]>? = null; if pick(i) { x = mkk(1); } else { x = mkk(2); } rdk(x) }
 fn key_nested(i: integer) -> integer {
+  x: hash<K[k]>? = null;
   if pick(i) { if i < 5 { x = mkk(1); } else { x = mkk(3); } } else { x = mkk(2); }
   rdk(x)
 }
-fn key_loop(i: integer) -> integer { for j in 0..3 { x = mkk(j); } rdk(x) }
-fn key_loop_loop(i: integer) -> integer { for j in 0..3 { x = mkk(j); } s = 0; for j in 0..2 { s += rdk(x); } s }
+fn key_loop(i: integer) -> integer { x: hash<K[k]>? = null; for j in 0..3 { x = mkk(j); } rdk(x) }
+fn key_loop_loop(i: integer) -> integer { x: hash<K[k]>? = null; for j in 0..3 { x = mkk(j); } s = 0; for j in 0..2 { s += rdk(x); } s }
 
 fn test_a_nullable_keyed_local_assigned_in_both_arms() {
   for i in 0..2 { o = O { opt: S { n: 6 } }; got = key_both(i); assert(got == 1 && rdn(o.opt) == 6, "call {i}: got {got}, o.opt {rdn(o.opt)}"); }

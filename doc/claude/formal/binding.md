@@ -391,6 +391,29 @@ independent of the subject — the same "fresh result vector" a comprehension bu
 mutating a captured `rest` never touches the original. This split keeps the cheap case cheap while
 avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
+### Scope — a local ends at the block that bound it
+
+```
+  (B-Scope)      a local bound by a STATEMENT inside a block — an `if` / `else` arm, a loop
+                 body, a `match` arm body, a bare `{ }` — exists from that statement to the
+                 block's `}`.  A read of it after the `}` is refused (`local-out-of-scope`),
+                 also when every arm binds it.  A bind after the `}` starts a new binding in
+                 the enclosing block.  Parameters are bound for the whole function; a loop
+                 variable follows its loop's own rule (LOFT.md, "loop variables are not
+                 block-scoped").
+```
+
+**In words.** loft follows rustc here: a local lives in the block that binds it.
+`if c { w = v; }` makes a `w` that ends with that arm, so its value is released at the arm's
+`}` ([heap.md](heap.md) `(H-Drop)`), and `println(w)` after the `if` does not compile. A local
+that must outlive the block is bound before it and assigned inside
+(`w: T? = null; if c { w = v; }`), or is the block's own value
+(`w = if c { a } else { b }`, a tuple for several). The refusal is deliberate and
+one-directional ([COMPATIBILITY.md](../COMPATIBILITY.md) § The error surface): relaxing it
+later breaks nothing, while the reverse would. Before 2026-09-23 such a local was
+function-scoped, readable after its block, and on a path that never bound it, a read
+answered a value no statement had assigned (loft#1600, owner ruling).
+
 ---
 
 ## Deviations

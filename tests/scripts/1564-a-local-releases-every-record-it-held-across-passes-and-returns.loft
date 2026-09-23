@@ -11,10 +11,12 @@
 // - (b) a returned local DECLARED in a loop body.  Renamed onto the buffer, it is a parameter
 //   by slot: the pass end never released it, and every pass refilled the same buffer.  A search
 //   loop lost every pass it did not return on — all of them when it returned nothing.
-// - (l) a local first bound in a loop body and read after the loop.  Its scope is moved out to
-//   the function, with a null before the loop, and that null recorded no ownership, so the
-//   binding in the loop released nothing on the passes after the first.  And a local owned
-//   before a loop that the loop rebinds lost its record at a rebind after the loop.
+// - (l) a local bound to null before a loop, bound by the loop body and read after the loop.
+//   The null recorded no ownership, so the binding in the loop released nothing on the passes
+//   after the first.  And a local owned before a loop that the loop rebinds lost its record at
+//   a rebind after the loop.  (Filed as a local first bound IN the body, whose scope was moved
+//   out with that null; a local first bound in a body now ends at the body's `}` and a read
+//   after the loop is refused, so the cells write the null binding themselves.)
 //
 // Only releases and reads are traced, as `<id>` and `R<id>`, in the order they happen.  Every
 // expected trace is worked out by hand: a rebind releases the record it displaces after the
@@ -101,13 +103,13 @@ fn b5_f(k: integer) -> Lh {
 fn b5() { r = b5_f(1); note("R{r.id}"); }
 fn b6() { r = b1_f(0); note("R{r.id}"); }
 
-// (l) a local first bound in a loop body and read after the loop.
-fn l1() { for i in 0..3 { s = lmk(40 + i); } note("R{s.id}"); }
-fn l2() { for i in 0..3 { s = Lhold { h: lmk(43 + i) }; } note("R{s.h.id}"); }
-fn l3() { for i in 0..2 { for j in 0..2 { s = lmk(60 + 2 * i + j); } } note("R{s.id}"); }
-fn l4() { for i in 0..3 { s = lmk(46 + i); if i == 1 { break; } } note("R{s.id}"); }
+// (l) a local bound to null before a loop, bound in the loop body and read after the loop.
+fn l1() { s: Lh? = null; for i in 0..3 { s = lmk(40 + i); } note("R{s.id}"); }
+fn l2() { s: Lhold? = null; for i in 0..3 { s = Lhold { h: lmk(43 + i) }; } note("R{s.h.id}"); }
+fn l3() { s: Lh? = null; for i in 0..2 { for j in 0..2 { s = lmk(60 + 2 * i + j); } } note("R{s.id}"); }
+fn l4() { s: Lh? = null; for i in 0..3 { s = lmk(46 + i); if i == 1 { break; } } note("R{s.id}"); }
 fn l5() { s = lmk(49); for i in 0..3 { s = lmk(50 + i); } s = lmk(53); note("R{s.id}"); }
-fn l6_f() -> Lh { for i in 0..3 { s = lmk(54 + i); } return s; }
+fn l6_f() -> Lh? { s: Lh? = null; for i in 0..3 { s = lmk(54 + i); } return s; }
 fn l6() { r = l6_f(); note("R{r.id}"); }
 fn l7() { for i in 0..2 { s = lmk(57 + i); note("R{s.id}"); } }
 

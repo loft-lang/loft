@@ -13,13 +13,13 @@
 // before the encoding too — the change is the representation, so the cells that can FAIL on
 // a wrong encoding are the edges: an `i8` holding `-1` or `-128` (a Rust `i8` would be
 // `0xFF`, a store byte is `0x7F`), a `u8` at `255`, a `u8?` at its null code and at `254`, a
-// `limit(1000, 1100)` whose bias is not zero, and a local first bound inside an `if` ARM and
-// read after it — whose pre-declared default is written before any arm runs.
+// `limit(1000, 1100)` whose bias is not zero, and a local bound before an `if` and assigned
+// in each ARM — whose pre-bound value is written, encoded, before any arm runs.
 //
 // Cells: each narrow type at min, max and (for `u8?`) null, written and read through a bind;
 // a re-point between two linked locals; a loop variable linked in the body; a by-value
 // parameter linked in its callee; a `&` parameter re-pointed to a local of the callee; the arm
-// pre-init; the decode seams (`n: integer = x`, `x + 1000`, `"{x}"`, `as u8 ??`); a linked
+// assignment over a pre-bind; the decode seams (`n: integer = x`, `x + 1000`, `"{x}"`, `as u8 ??`); a linked
 // local handed by value to a function and returned; an unlinked neighbour that must not move.
 //
 // @falsified-at: none — this guard is INERT against the commit before A1 (`d19fe5eb5`), and
@@ -66,8 +66,12 @@ fn loop_variable() -> text {
   seen
 }
 
+// A local first bound INSIDE the arms and read after them is refused (`local-out-of-scope`:
+// it ends at its arm's `}`), so `q` is bound before the branch — the explicit form of the
+// pre-init the compiler used to insert — and each arm writes it through its encoding.
 fn arm_pre_init(k: integer) -> text {
-  if k > 0 { q: i8 = -5; } else { q: i8 = 5; }
+  q: i8 = 0;
+  if k > 0 { q = -5; } else { q = 5; }
   c = &q;
   c += 1;
   "{q}"
@@ -98,7 +102,7 @@ fn main() {
   assert(edges() == "255 0|-1 -128 127|null true 254 true|1000 1100|65535 0|-2147483647 2147483647|4294967294 0", "edges: {edges()}");
   assert(repoint() == "3 7", "a re-point between two linked locals: {repoint()}");
   assert(loop_variable() == "999", "a loop variable linked in the body: {loop_variable()}");
-  assert(arm_pre_init(1) == "-4" && arm_pre_init(0) == "6", "a local first bound in an arm: {arm_pre_init(1)} {arm_pre_init(0)}");
+  assert(arm_pre_init(1) == "-4" && arm_pre_init(0) == "6", "a local bound before and assigned in an arm: {arm_pre_init(1)} {arm_pre_init(0)}");
   assert(seams() == "250 1250 500 250 251 251", "the decode seams: {seams()}");
   assert(unlinked_neighbour() == "7 6", "the unlinked neighbour keeps its slot: {unlinked_neighbour()}");
   assert(parameters() == "200 0 null 33 33 251 1", "parameters: {parameters()}");
