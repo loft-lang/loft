@@ -7,15 +7,11 @@
       "triple": "wasm32-unknown-unknown",
       "unavailable_builtins": [
         "store_lazy_query",
-        "store_lazy_range",
-        "store_load_url",
-        "store_load_url_trusted"
+        "store_lazy_range"
       ],
       "unavailable_methods": [
         "lazy_query",
-        "lazy_range",
-        "load_url",
-        "load_url_verified"
+        "lazy_range"
       ]
     }
   }
