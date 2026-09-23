@@ -6,20 +6,22 @@
 //
 // - a value that names no place — a literal, a call's result, a computed value — because the
 //   callee's write would land nowhere;
-// - a narrow integer store place (`o.a` of type `u8`), which no link can honour yet
-//   (`binding.md` D-bind-39) — the same refusal the `&` bind gives it;
 // - an element of a container the callee GROWS, handed in beside that container
 //   (`(B-Ref-Reshape)`'s callee clause: a growth that outgrows the allocation moves every
 //   element, so the link would name a slot that is gone).  An element's FIELD is the same
 //   hazard, and so is an element of a record's vector field when the callee grows it through
 //   the record.
 //
+// A narrow integer store place (`o.a` of type `u8`) was a fourth refusal here until loft#1567
+// lifted it at the bind and at the argument together; it now links, and its cell moved to
+// `1567-a-link-to-a-narrow-integer-store-place-reads-and-writes-it.loft`.
+//
 // Every expected error below is matched exactly once, so a second error for one argument
 // fails the file.  Before @PLN167 B1 the three reshape cells were refused as "a literal or
 // expression" — the right verdict under the wrong rule — and they must stay refused now that
 // the argument itself is admitted.
 //
-// @falsified-at: 92bdca3d9 — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
+// @falsified-at: 92bdca3d9 — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches).  Measured when the file carried seven cells; the narrow one left with loft#1567 and the remaining six are unchanged by that
 // @falsified-by: tests/falsified/167-a-ref-parameter-refuses-a-place-it-cannot-link.patch — interpret exit 1 -> 0, interpret expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/7 -> 0/7 (the suite's verdict, not a count of matches)
 // HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 //
@@ -28,12 +30,10 @@
 // @EXPECT_ERROR: Cannot pass a literal or expression to a '&' parameter
 // @EXPECT_ERROR: Cannot pass a literal or expression to a '&' parameter
 // @EXPECT_ERROR: Cannot pass a literal or expression to a '&' parameter
-// @EXPECT_ERROR: cannot link to an integer element or field that is stored in fewer than 8 bytes
 // @EXPECT_ERROR: cannot pass both `v` and a reference into it to `grow_bump`
 // @EXPECT_ERROR: cannot pass both `v2` and a reference into it to `grow`
 // @EXPECT_ERROR: cannot pass both `b` and a reference into it to `grow_bag`
 
-struct B { a: u8, n: integer }
 struct E { n: integer }
 struct Bag { es: vector<E> }
 
@@ -48,8 +48,6 @@ fn main() {
   bump(five());
   x = 1;
   bump(x + 1);
-  o = B { a: 1, n: 2 };
-  bump(o.a);
   v: vector<integer> = [1, 2, 3];
   grow_bump(v[0], v);
   v2: vector<E> = [E { n: 1 }];

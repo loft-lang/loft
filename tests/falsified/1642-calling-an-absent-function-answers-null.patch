@@ -1,0 +1,132 @@
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 22ab6c040..28070a370 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -1207,6 +1207,7 @@ impl Output<'_> {
+         args: &[Value],
+     ) -> std::io::Result<()> {
+         let variables = self.data.def(self.def_nr).variables();
++        let var_name = sanitize(variables.name(v_nr));
+         // The slot's PLACE: `self.var_<field>` for a generator's persistent fn-ref, which has
+         // no local of its own — spelling the local named a Rust identifier no state declared
+         // (loft#1587).  Outside a coroutine this is the bare local, as before.
+@@ -1565,16 +1566,10 @@ impl Output<'_> {
+             }
+             write!(w, ",")?;
+         }
+-        // `@FR-L-FnAbsent` — no candidate matches an ABSENT fn-ref (an element read out of
+-        // range), and the call answers the return type's null, as the interpreter's guard in
+-        // `generate_call_ref` does; the program continues (C80).
+-        write!(w, " _ => ")?;
+-        match ret_type.base() {
+-            Type::Text(_) => write!(w, "loft::state::STRING_NULL.to_string()")?,
+-            Type::Tuple(_) => write!(w, "{}", super::default_native_value(&ret_type))?,
+-            _ => Self::write_typed_null_in(w, ret_type.base(), true)?,
+-        }
+-        write!(w, " }}")?;
++        write!(
++            w,
++            " _ => unreachable!(\"invalid fn-ref: {{}} in {var_name}\", {place}.0) }}"
++        )?;
+         if heap_return {
+             // The match is the block's value; bind it so the store can be asked about, then
+             // yield it unchanged.
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index fe9ab8f87..4e5fd8b60 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -2689,7 +2689,6 @@ impl Parser {
+             && !matches!(ctp, Type::Optional(_))
+             && !narrowing_fallback
+             && !Self::is_existing_tuple(&self.data, ctp)
+-            && !matches!(ctp.base(), Type::Function(..))
+             && !self.call_declares_nullable(code)
+         {
+             diagnostic!(
+@@ -2769,20 +2768,6 @@ impl Parser {
+                 ctp.source_name(&self.data)
+             );
+         }
+-        // `@FR-N-Opt` — a FUNCTION type has no null, so `??` has nothing to test on one, exactly
+-        // as `f != null` has nothing to compare.  Refused so the two spellings agree; an
+-        // absent fn-ref (an element read out of range) is callable and answers its return
+-        // type's null (`@FR-L-FnAbsent`).  Reported and then allowed to proceed, for the
+-        // reason the tuple refusal above gives.
+-        if !self.first_pass && matches!(ctp.base(), Type::Function(..)) {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "`??` has nothing to test — a function value has no null.  To fall back to \
+-                 another function, check the index (`if i < len(fs) {{ fs[i] }} else {{ d }}`), \
+-                 or keep the function in a struct field and discharge the struct (`(acts[k] ?? fallback).f(x)`)"
+-            );
+-        }
+         *ctp = match &*ctp {
+             Type::RefVar(inner) => inner.base().clone(),
+             other => other.base().clone(),
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index e99f24b2b..8182b1a36 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -4657,6 +4657,8 @@ impl State {
+             }
+         }
+ 
++        // fn-ref variable is below all pushed arguments.
++        let fn_var_dist = stack.var_pos(v_nr);
+         // declared: visible param sizes; extra: work-buf + closure (all 12-byte DbRefs).
+         // @PLAN53 cluster 2 / S4: each arg occupies a stepped span (Σ step).
+         let declared_size: u16 = param_types
+@@ -4669,51 +4671,11 @@ impl State {
+             0
+         };
+         let total_arg_size = declared_size + extra;
+-        // `@FR-L-FnAbsent` — an ABSENT fn-ref (an element read out of range: its `d_nr` is the
+-        // null sentinel) is callable, and the call answers the return type's null instead of
+-        // dispatching; the program continues (C80).  The arguments are evaluated first on
+-        // both paths, as `--native` binds them before its dispatch; the absent path drops them.
+-        let guard = std::env::var_os("LOFT_NO_ABSENT_FNREF").is_none();
+-        let mut absent_jump: Option<(u32, u16)> = None;
+-        if guard {
+-            let args_top = stack.position;
+-            let d = stack.var_pos(v_nr);
+-            stack.add_op("OpVarInt", self);
+-            self.code_add(d);
+-            stack.add_op("OpConvBoolFromInt", self);
+-            stack.add_op("OpGotoFalseWord", self);
+-            let step = self.code_pos;
+-            self.code_add(0i32);
+-            absent_jump = Some((step, args_top));
+-        }
+-        // The fn-ref variable is below all pushed arguments.
+-        let fn_var_dist = stack.var_pos(v_nr);
+         stack.add_op("OpCallRef", self);
+         self.code_add(fn_var_dist);
+         self.code_add(total_arg_size);
+         stack.position -= total_arg_size;
+-        let ret_size = stack.step(size(&ret_type, &Context::Argument));
+-        stack.position += ret_size;
+-        if let Some((step, args_top)) = absent_jump {
+-            let after = stack.position;
+-            stack.add_op("OpGotoWord", self);
+-            let end = self.code_pos;
+-            self.code_add(0i32);
+-            let absent_pos = self.code_pos;
+-            self.code_put(step, (self.code_pos - (step + 4)) as i32);
+-            stack.position = args_top;
+-            if total_arg_size > 0 {
+-                stack.add_op("OpFreeStack", self);
+-                self.code_add(0u8);
+-                self.code_add(total_arg_size);
+-                stack.position -= total_arg_size;
+-            }
+-            if ret_size > 0 {
+-                self.emit_typed_null(stack, &ret_type);
+-            }
+-            self.code_put(end, (self.code_pos - absent_pos) as i32);
+-            stack.position = after;
+-        }
++        stack.position += stack.step(size(&ret_type, &Context::Argument));
+         ret_type
+     }
+ 

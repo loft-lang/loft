@@ -2,6 +2,11 @@
 name = "loft"
 version = "2026.9.0"
 edition = "2024"
+# The oldest stable `--native` is proven on: the nightly `toolchain-matrix` runs the suite
+# under it (`msrv` leg), because a user one stable behind is the common case and `--native`
+# compiles user programs with THEIR rustc.  Bump it with the same reasoning, never to make
+# a build pass.
+rust-version = "1.96"
 authors = ["Jurjen Stellingwerff"]
 license = "LGPL-3.0-or-later"
 description = "The loft scripting language interpreter"

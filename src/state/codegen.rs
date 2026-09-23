@@ -4678,8 +4678,6 @@ impl State {
             }
         }
 
-        // fn-ref variable is below all pushed arguments.
-        let fn_var_dist = stack.var_pos(v_nr);
         // declared: visible param sizes; extra: work-buf + closure (all 12-byte DbRefs).
         // @PLAN53 cluster 2 / S4: each arg occupies a stepped span (Σ step).
         let declared_size: u16 = param_types
@@ -4692,11 +4690,51 @@ impl State {
             0
         };
         let total_arg_size = declared_size + extra;
+        // `@FR-L-FnAbsent` — an ABSENT fn-ref (an element read out of range: its `d_nr` is the
+        // null sentinel) is callable, and the call answers the return type's null instead of
+        // dispatching; the program continues (C80).  The arguments are evaluated first on
+        // both paths, as `--native` binds them before its dispatch; the absent path drops them.
+        let guard = std::env::var_os("LOFT_NO_ABSENT_FNREF").is_none();
+        let mut absent_jump: Option<(u32, u16)> = None;
+        if guard {
+            let args_top = stack.position;
+            let d = stack.var_pos(v_nr);
+            stack.add_op("OpVarInt", self);
+            self.code_add(d);
+            stack.add_op("OpConvBoolFromInt", self);
+            stack.add_op("OpGotoFalseWord", self);
+            let step = self.code_pos;
+            self.code_add(0i32);
+            absent_jump = Some((step, args_top));
+        }
+        // The fn-ref variable is below all pushed arguments.
+        let fn_var_dist = stack.var_pos(v_nr);
         stack.add_op("OpCallRef", self);
         self.code_add(fn_var_dist);
         self.code_add(total_arg_size);
         stack.position -= total_arg_size;
-        stack.position += stack.step(size(&ret_type, &Context::Argument));
+        let ret_size = stack.step(size(&ret_type, &Context::Argument));
+        stack.position += ret_size;
+        if let Some((step, args_top)) = absent_jump {
+            let after = stack.position;
+            stack.add_op("OpGotoWord", self);
+            let end = self.code_pos;
+            self.code_add(0i32);
+            let absent_pos = self.code_pos;
+            self.code_put(step, (self.code_pos - (step + 4)) as i32);
+            stack.position = args_top;
+            if total_arg_size > 0 {
+                stack.add_op("OpFreeStack", self);
+                self.code_add(0u8);
+                self.code_add(total_arg_size);
+                stack.position -= total_arg_size;
+            }
+            if ret_size > 0 {
+                self.emit_typed_null(stack, &ret_type);
+            }
+            self.code_put(end, (self.code_pos - absent_pos) as i32);
+            stack.position = after;
+        }
         ret_type
     }
 
@@ -5207,19 +5245,25 @@ impl State {
             // a reference (`OpGetVector` / `OpGetField`), where a write-through of a value reads
             // that place (`OpGetInt(OpGetVector(..))`) and is typed as the scalar.  For a record or
             // collection link an element's VALUE is a reference too, so the type cannot tell them
-            // apart and only the install op is routed here.  An integer stored narrower than 8
-            // bytes is left out: a link does not yet honour a narrow place's width
-            // (binding.md D-bind-39), and routed it would read that wrong width silently.
-            let link_base = tp.base();
-            let scalar_link = match link_base {
-                Type::Integer(spec) => spec.byte_width(false) == 8,
-                Type::Boolean
-                | Type::Float
-                | Type::Single
-                | Type::Character
-                | Type::Enum(_, false, _) => true,
-                _ => false,
-            };
+            // apart and only the install op is routed here.  A NARROW integer place joins every
+            // other width here (loft#1567, D-bind-39 closed): the exclusion read
+            // `byte_width(false) == 8` while a link could not honour a narrow place, and left a
+            // re-point to fall through to the write-through path below — which wrote the 12-byte
+            // stack CELL through the kind's own `set_op`, so the interpreter read a corrupt
+            // reference (`k = &r[0]; k = &r[1]` panicked in the store for an element and wrote the
+            // CONST store for a field) while native, which routes a re-point by the value's shape,
+            // was correct.  A re-point is not a value write at any width.
+            // Every scalar, at every width — the arms became uniform when loft#1567 dropped the
+            // narrow integer's, which is the shape of the fix as much as its effect.
+            let scalar_link = matches!(
+                tp.base(),
+                Type::Integer(_)
+                    | Type::Boolean
+                    | Type::Float
+                    | Type::Single
+                    | Type::Character
+                    | Type::Enum(_, false, _)
+            );
             let repoints = if let Value::Call(d, _) = value.unspan() {
                 let def = stack.data.def(*d);
                 // `OpVarRef(b)` is a re-point to the link `b` holds, for every kind of link.

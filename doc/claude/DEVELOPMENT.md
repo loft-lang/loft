@@ -323,6 +323,26 @@ conflict to either side to unblock, keep a list, and re-run every instrument onc
 end — `ir_walker_audit.py optional --write-ratchet`, `o_proxy_check.py`,
 `rule_tags.py check` — in one commit, so the baseline in the diff is the receipt.
 
+**`git show --cc` cannot audit a join, and reading it as if it could is how a reverted fix
+ships.**  A combined diff prints only the lines that differ from BOTH parents, so a conflict
+resolved by taking one side WHOLESALE — the most common resolution there is — appears nowhere
+in it.  The join at `b5c179e5e` had eleven conflicted files where `--cc` showed ten
+resolutions, five of them files `--cc` never mentioned, and three of its choices were the
+stale side: `main` already had `i64::from(i32::MAX)` in `IntegerSpec::i32` and the join put
+`as i64` back, reddening the next gate at clippy; `IntegerSpec::u32` was resolved to a THIRD
+form that was neither parent; and `index/target_surface.json` went back to listing
+`store_load_url` as unavailable in the browser, undoing a re-derivation on the same branch.
+
+The instrument is to recompute the merge: `git merge-tree --write-tree <p1> <p2>` names every
+conflicted file and writes a tree whose conflict markers show both sides, and each resolution
+is then checked against `git show <parent>:<file>`.  Two cheap readings make it quick — a file
+that IS in the `--cc` output was edited by hand and is a deliberate act, while a conflicted
+file that is NOT is the dangerous kind, chosen silently.  For a DERIVED artefact do not read
+either side at all: re-derive it, because it has no side to choose (`make surface-gen`, the two
+clippy variants, `make optional-ratchet`, `scripts/wasm_bundle_stamp.sh`).  Run the same
+recompute over the branch's OTHER merges while you are there — a merge with zero conflicts
+needs none of this, and knowing which merges those are is one command.
+
 **Build after EACH source, not once at the end.**  A join can hold a defect neither branch
 could see: one branch gives an enum a third variant and makes every reader dispose of it
 explicitly, the other adds a reader, and only the union fails to compile.  Neither
@@ -538,6 +558,30 @@ hard to review.  Such refactors belong in a dedicated commit (Step 4) if they ar
 necessary, or left for a separate cleanup task if they are pre-existing.
 
 ---
+
+## Where a rule's letter and the code disagree
+
+**Standing ruling (owner, 2026-09-23): apply the strict reading of the written rule, without
+asking.** The formal doctrine already says the code changes to match the rules
+([formal/README.md](formal/README.md)); this makes the consequence operational. When a fix
+meets a rule whose letter says one thing and the code does another, the agent applies the
+letter, lands the fix with its verification, and records the trailer
+`Contract: strained — letter applied: <rule> <what moved>`. The owner reads the week's rulings
+off those trailers in one sitting — agreeing costs nothing, and disagreeing is a revert of a
+commit that names exactly what it changed.
+
+**Only three kinds of question reach the owner:**
+1. **a rule that does not exist yet** — the letter is silent, so there is nothing to apply;
+2. **a change to a shipped surface** — a refusal, a spelling, an observable behaviour a
+   published program may depend on (COMPATIBILITY.md is the home for what counts);
+3. **two rules in conflict** — the letters disagree with each other, not only with the code.
+
+Everything else is the agent's to decide. The measured reason: the three rulings of the week
+of 2026-09-23 (loft#1600 block scoping, loft#1619 the once-taken range end, C127 narrow ranges)
+all went the letter's way, and each one waited on the owner's attention — which is meant for
+the engine ([STABILITY_ROADMAP.md § The owner's directive](STABILITY_ROADMAP.md)). A question
+the rules already answer, asked anyway, is a process defect and counts against the
+owner-rulings meter.
 
 ## Commit Rules
 

@@ -1,0 +1,231 @@
+// loft#1647 — a record built by a call and MOVED into a container is released once.
+// `m.vs += [vert(a, up)]`, `h.q = vert(c, up)` and `m.vs[1] = vert(c, up)` copy the call's
+// result with the `0x8000` move bit, which releases the call's store inside the copy; the
+// scope pass lifts the call into a `__lift_N` temp and used to release that store AGAIN at
+// the temp's scope exit.  Silent while the slot stayed free — and the lazily minted return
+// buffer (`@FR-O-LazyBuffer`) put an allocation in that window, so the second release freed
+// a live buffer and the next pass read whatever took its slot (M1: element 6 read pass 1's
+// `a`).  The move bit is set only for a call that answers a store of its own: a callee that
+// can hand back its ARGUMENT's record (M6–M8, `same(w)`) keeps its private copy and one
+// release, and `w` survives.  Every value is hand-computed; the two backends must agree.
+// `LOFT_POISON=1`, `LOFT_STRICT_STORES=1` and `LOFT_NATIVE_LEAK_CHECK=1` must answer
+// identically.
+// @falsified-at: 587784455 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1647-a-moved-call-result-is-released-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel, on both backends alike — the control releases a lifted call
+//   result a second time, and the store it frees is by then another local's buffer.
+//   WITNESS: on 587784455 M1 prints `0,0 0,0 10,1 10,1 1,1 1,1 0,0 11,2` where this file says
+//   `… 11,2 11,2` (element 6 is pass 1's `a`), M3 and M4 read `0,0` in their second slot, M9
+//   repeats M1 through a parameter; the run exits 1 at the M1 assertion.
+//   HOLDS: M2, M5–M8, M10 and M11 are exact on both trees, and leak, panic and free-refusal
+//   are clean on both — only the values of the cells with an allocation in the window move.
+// ⚠ WHAT THIS FILE DOES NOT COVER, and why — read before narrowing a shared predicate
+// on the strength of it.  M6–M8 all call `same(w)`, whose EVERY return path hands back
+// the parameter.  That is the MUST-borrow shape.  The predicate these cells were used to
+// justify also covers a second class: a callee ONE of whose paths borrows while another
+// MINTS (`fn pick(w: S, c: boolean) -> S { f = S { … }; if c { w } else { f } }`).  Which
+// arm ran is a RUNTIME fact, so no static bit can carry it — `formal/ownership.md` says
+// exactly that, and the @P290 bracket is the mechanism that decides it.
+//
+// The suite's witness for that class is
+// `1140-a-returned-keyed-parameter-is-still-the-callers.loft`, in its KEYED spelling, in
+// another file.  Nothing connected the two, so narrowing the shared predicate to "never
+// free for a borrowing callee" read as safe here and took the source-free bit away from
+// the bracket-licensed site as well; 1140's minting arm then leaked one store per call.
+//
+// The RECORD spelling of the class cannot be a cell here yet: it raises a pre-existing
+// `BUG (#306)` stack-store free refusal on the interpreter, in all three destinations
+// (bind, field, append), on `main` as well — the vector and keyed spellings do not, which
+// is why 1140 never showed it.  Tracked as loft#1651, which carries the measured
+// boundary; when it closes, the three cells belong here.
+struct V3 { x: single, y: single, z: single }
+struct Vert { pos: V3, nrm: V3 }
+struct Mesh { name: text, vs: vector<Vert> }
+struct Hold { p: Vert, q: Vert }
+fn v3(x: float, y: float, z: float) -> V3 { V3 { x: x as single, y: y as single, z: z as single } }
+fn vert(p: V3, n: V3) -> Vert { Vert { pos: p, nrm: n } }
+fn same(w: Vert) -> Vert { w }
+
+fn show(m: Mesh) -> text {
+  out = "";
+  for i in 0..len(m.vs) { out += "{m.vs[i].pos.x},{m.vs[i].pos.y} "; }
+  out
+}
+
+// M1 — the issue: expected 0,0 0,0 10,1 10,1 1,1 1,1 11,2 11,2
+fn m1() -> text {
+  m = Mesh { name: "s", vs: [] };
+  up = v3(0.0, 1.0, 0.0);
+  for i in 0..2 {
+    f = i as float;
+    a = v3(f, f, -0.5);
+    b = v3(f, f, 0.5);
+    m.vs += [vert(a, up)];
+    m.vs += [vert(b, up)];
+    c = v3(f + 10.0, f + 1.0, -0.5);
+    d = v3(f + 10.0, f + 1.0, 0.5);
+    m.vs += [vert(c, up)];
+    m.vs += [vert(d, up)];
+  }
+  show(m)
+}
+
+// M2 — straight line, a fresh call between two appends: 1,2 3,4 5,6
+fn m2() -> text {
+  m = Mesh { name: "s", vs: [] };
+  up = v3(0.0, 1.0, 0.0);
+  a = v3(1.0, 2.0, 0.0);
+  m.vs += [vert(a, up)];
+  c = v3(3.0, 4.0, 0.0);
+  m.vs += [vert(c, up)];
+  e = v3(5.0, 6.0, 0.0);
+  m.vs += [vert(e, up)];
+  show(m)
+}
+
+// M3 — field assignment from a call, then an allocation: p 1,2 q 3,4 then r 7,8
+fn m3() -> text {
+  up = v3(0.0, 1.0, 0.0);
+  h = Hold { p: vert(up, up), q: vert(up, up) };
+  for i in 0..2 {
+    f = i as float;
+    a = v3(1.0 + f, 2.0 + f, 0.0);
+    h.p = vert(a, up);
+    c = v3(3.0 + f, 4.0 + f, 0.0);
+    h.q = vert(c, up);
+  }
+  r = v3(7.0, 8.0, 0.0);
+  "{h.p.pos.x},{h.p.pos.y} {h.q.pos.x},{h.q.pos.y} {r.x},{r.y}"
+}
+
+// M4 — element assignment from a call in a loop, then an allocation: 11,12 13,14
+fn m4() -> text {
+  up = v3(0.0, 1.0, 0.0);
+  m = Mesh { name: "s", vs: [vert(up, up), vert(up, up)] };
+  for i in 0..2 {
+    f = i as float;
+    a = v3(10.0 + f, 11.0 + f, 0.0);
+    m.vs[0] = vert(a, up);
+    c = v3(12.0 + f, 13.0 + f, 0.0);
+    m.vs[1] = vert(c, up);
+  }
+  show(m)
+}
+
+// M5 — first assignment, the control: 1,2 3,4
+fn m5() -> text {
+  up = v3(0.0, 1.0, 0.0);
+  out = "";
+  for i in 0..2 {
+    f = i as float;
+    x = vert(v3(1.0 + 2.0 * f, 2.0 + 2.0 * f, 0.0), up);
+    c = v3(9.0, 9.0, 9.0); if c.z > 100.0 { out += "!"; }
+    out += "{x.pos.x},{x.pos.y} ";
+  }
+  out
+}
+
+// M6 — the callee hands back its argument: the caller's record survives: 4,5 4,5 | w 4,5
+fn m6() -> text {
+  m = Mesh { name: "s", vs: [] };
+  up = v3(0.0, 1.0, 0.0);
+  w = vert(v3(4.0, 5.0, 0.0), up);
+  for _ in 0..2 {
+    m.vs += [same(w)];
+    c = v3(9.0, 9.0, 9.0); if c.z > 100.0 { m.name = "!"; }
+  }
+  "{show(m)}| w {w.pos.x},{w.pos.y}"
+}
+
+// M7 — field assignment from a callee that hands back its argument: w survives: 4,5 | w 4,5
+fn m7() -> text {
+  up = v3(0.0, 1.0, 0.0);
+  w = vert(v3(4.0, 5.0, 0.0), up);
+  h = Hold { p: vert(up, up), q: vert(up, up) };
+  for _ in 0..2 {
+    h.q = same(w);
+    c = v3(9.0, 9.0, 9.0);
+    h.p = vert(c, up);
+  }
+  "{h.q.pos.x},{h.q.pos.y} | w {w.pos.x},{w.pos.y}"
+}
+
+// M8 — element assignment from the same callee: 4,5 0,1 | w 4,5
+fn m8() -> text {
+  up = v3(0.0, 1.0, 0.0);
+  w = vert(v3(4.0, 5.0, 0.0), up);
+  m = Mesh { name: "s", vs: [vert(up, up), vert(up, up)] };
+  for _ in 0..2 {
+    m.vs[0] = same(w);
+    c = v3(9.0, 9.0, 9.0);
+    m.vs[1] = vert(up, c);
+  }
+  "{show(m)}| w {w.pos.x},{w.pos.y}"
+}
+
+// M9 — the issue's own shape: the container is a PARAMETER, filled by a helper.
+fn stair(m: Mesh, steps: integer) {
+  up = v3(0.0, 1.0, 0.0);
+  for i in 0..steps {
+    f = i as float;
+    a = v3(f, f, -0.5);
+    b = v3(f, f, 0.5);
+    m.vs += [vert(a, up)];
+    m.vs += [vert(b, up)];
+    c = v3(f + 10.0, f + 1.0, -0.5);
+    d = v3(f + 10.0, f + 1.0, 0.5);
+    m.vs += [vert(c, up)];
+    m.vs += [vert(d, up)];
+  }
+}
+fn m9() -> text {
+  m = Mesh { name: "s", vs: [] };
+  stair(m, 2);
+  show(m)
+}
+
+// M10 — the append under an `if` arm (even passes only): i=0 → 0,1  i=2 → 2,3, and a
+// buffer minted after the arm on every pass: 0,1 2,3
+fn m10() -> text {
+  m = Mesh { name: "s", vs: [] };
+  up = v3(0.0, 1.0, 0.0);
+  for i in 0..4 {
+    f = i as float;
+    if i % 2 == 0 { a = v3(f, f + 1.0, 0.0); m.vs += [vert(a, up)]; }
+    c = v3(f + 50.0, 0.0, 0.0);
+    if c.z > 100.0 { m.name = "!"; }
+  }
+  show(m)
+}
+
+// M11 — a keyed insert of a call result, then an allocation: keys 1, 2 hold 10, 20 → 10 20 2
+struct Kv { k: integer, v: integer }
+struct Table { rows: hash<Kv[k]> }
+fn kv(k: integer, v: integer) -> Kv { Kv { k: k, v: v } }
+fn m11() -> text {
+  t = Table { rows: [] };
+  for i in 1..3 {
+    t.rows += [kv(i, i * 10)];
+    c = v3(9.0, 9.0, 9.0);
+    if c.z > 100.0 { t.rows += [kv(99, 99)]; }
+  }
+  "{t.rows[1]?.v} {t.rows[2]?.v} {len(t.rows)}"
+}
+
+fn main() {
+  r1 = m1(); r2 = m2(); r3 = m3(); r4 = m4(); r5 = m5(); r6 = m6(); r7 = m7(); r8 = m8(); r9 = m9(); r10 = m10(); r11 = m11();
+  println("M1 {r1}"); println("M2 {r2}"); println("M3 {r3}");
+  println("M4 {r4}"); println("M5 {r5}"); println("M6 {r6}"); println("M7 {r7}"); println("M8 {r8}");
+  println("M9 {r9}"); println("M10 {r10}"); println("M11 {r11}");
+  assert(r1 == "0,0 0,0 10,1 10,1 1,1 1,1 11,2 11,2 ", "M1");
+  assert(r2 == "1,2 3,4 5,6 ", "M2");
+  assert(r3 == "2,3 4,5 7,8", "M3");
+  assert(r4 == "11,12 13,14 ", "M4");
+  assert(r5 == "1,2 3,4 ", "M5");
+  assert(r6 == "4,5 4,5 | w 4,5", "M6");
+  assert(r7 == "4,5 | w 4,5", "M7");
+  assert(r8 == "4,5 0,1 | w 4,5", "M8");
+  assert(r9 == "0,0 0,0 10,1 10,1 1,1 1,1 11,2 11,2 ", "M9");
+  assert(r10 == "0,1 2,3 ", "M10");
+  assert(r11 == "10 20 2", "M11");
+}

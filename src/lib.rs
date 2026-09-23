@@ -285,6 +285,7 @@ pub mod narrow;
 pub mod native;
 pub mod net_profile;
 pub mod null_census;
+pub mod spent;
 pub mod stack_census;
 pub mod stack_verify;
 // `net::fetch_bytes` (behind `store_load_url*`) exists exactly where `load_url`

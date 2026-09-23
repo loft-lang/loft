@@ -551,7 +551,7 @@ sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged t
 	@# What loft writes to a temp dir and what removes it — TESTING.md § Scratch hygiene.
 	@# Safe by construction: only loft's own names, only dead pids or aged entries, and a
 	@# sibling checkout's gate scratch is never touched (each checkout has its own).
-	@scripts/sweep_scratch.sh --sessions $(TEST_SCRATCH) "$${TMPDIR:-$$HOME/.cache/tmp}"
+	@scripts/sweep_scratch.sh --sessions $(TEST_SCRATCH) "$${TMPDIR:-$$HOME/.cache/tmp}" /tmp
 	@df -h / | tail -1
 
 sweep-target:  ## Drop cargo artefacts no build in two weeks has used (stale-hash test binaries)

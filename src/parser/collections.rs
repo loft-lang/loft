@@ -285,6 +285,17 @@ fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
     }
 }
 
+/// Whether a loop over a source of this type walks characters, and so needs the
+/// `#next` / `#index` pair.  A `&text` link walks the text it names: `iterator` unwraps
+/// the link before it builds the walk, and the pair must be asked the same question.
+pub(crate) fn walks_text(in_type: &Type) -> bool {
+    match in_type {
+        Type::Text(_) => true,
+        Type::RefVar(inner) => walks_text(inner),
+        _ => false,
+    }
+}
+
 impl Parser {
     pub(crate) fn iter_text(
         &mut self,
@@ -1897,7 +1908,7 @@ impl Parser {
                 && let Some(kt) = self.keyed_field_kt(f_type)
             {
                 #[cfg(not(feature = "wasm"))]
-                let tp_val = if self.is_struct_returning_call(val) {
+                let tp_val = if self.call_gives_away_its_store(val) {
                     i32::from(kt) | 0x8000
                 } else {
                     i32::from(kt)
@@ -3183,7 +3194,7 @@ use #count instead"
     ) -> (u16, Option<u16>, u16, Value, Value, Value) {
         let var_tp = self.for_type(in_type);
         // For text loops: {id}#next drives the loop; {id}#index is saved per-iteration.
-        let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+        let (iter_var, pre_var) = if walks_text(in_type) {
             let pos_var = self.create_var(&format!("{id}#next"), &I32);
             self.vars.defined(pos_var);
             let index_var = self.create_var(&format!("{id}#index"), &I32);
@@ -4317,7 +4328,7 @@ use #count instead"
         }
         // Iterator state vars — text drives a (pos, index) pair, every other
         // iterator a single index — mirroring parse_vector_for.
-        let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+        let (iter_var, pre_var) = if walks_text(in_type) {
             let pos = mk(self, "mat_next", &I32);
             let idx = mk(self, "mat_index", &I32);
             (pos, Some(idx))

@@ -345,6 +345,18 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  the tail and a delete into it cost no tree delete, insert or
                  rebalance.  At most one wilderness exists, it never overlaps a claim,
                  and the open walk (and every re-tiling) re-derives it.
+  (H-Carve)      inside one store, a best-fit claim of n words from a tree node of b
+                 words with b − n ≥ n puts the (b − n)-word remainder IN THE NODE'S
+                 PLACE — the node's links, its color, its parent's pointer — instead of
+                 deleting the node and inserting the remainder.  The node is the
+                 SMALLEST of at least n words by the tree's (size, position) order, so
+                 every node before it is smaller than n: a remainder of at least n
+                 words still follows that predecessor, and being smaller than b it
+                 still precedes the successor.  The tree's key set is the one the
+                 delete and insert leave, so every later claim takes the same block
+                 and the layout is unchanged; what changes is that the claim costs no
+                 tree delete, insert or rebalance.  A remainder under n words, or
+                 under the tree's minimum, takes the delete and the insert.
 ```
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to
@@ -607,7 +619,8 @@ branch read 4 (`D-heap-8`, `9`, `36`, `38`) and `tuxedo-165-generics` read 3 (`D
 
 (`D-heap-15` CLOSED as
 reclassified 2026-09-23: its last cell, `p_v2`, reads a name `(H-Spent)` makes an error, so it is
-`D-heap-8`'s.  `D-heap-38`, loft#1607, CLOSED 2026-09-23: a
+`D-heap-8`'s — and the tuple in an arm it had carried as a residue was measured and fixed the
+same day, loft#1645.  `D-heap-38`, loft#1607, CLOSED 2026-09-23: a
 vector bound in both arms releases the backing its own arm filled.  `D-heap-36`, loft#1600, CLOSED
 2026-09-23 by owner ruling: the arm is the scope, `(B-Scope)`.  `D-heap-42`,
 loft#1628, opened and CLOSED 2026-09-23: a returned witnessed local released the record it handed
@@ -1385,15 +1398,25 @@ CLOSED 2026-09-17, below.
   releases exactly once on both backends** — they were never unsound, and the rules now say so.
   What stays open here is the 71 that are NOT the function's — a parameter (45) and a member of a
   container (26) — each of which really does release twice (`L1 D2 A2 D2` and `L1 D3 D3`,
-  measured, both backends).  A SECOND half is open with no implementation at all: `(H-Spent)`'s
-  error for reading a name after its value moved.  Today that is silent — `c = open(1);
-  if c { v += [c]; } … c.id` reads a value whose hook has already run, and no store instrument can
-  see it because the memory is intact and only the resource is gone.  The drop gate's `p_v2`
+  measured, both backends).  A SECOND half is `(H-Spent)`'s error for reading a name after its
+  value moved — `c = open(1); if c { v += [c]; } … c.id` reads a value whose hook has already
+  run, and no store instrument can see it because the memory is intact and only the resource is
+  gone.  **Built 2026-09-23, behind the same `LOFT_LEASE_REFUSE`** as `error[read-after-move]`
+  (`src/spent.rs`): the moves are `lease.rs`'s own verdict (`Frame::spends`), read at every
+  placement the parser writes, and the reads are followed through the body BEFORE the scope pass,
+  whose releases and snapshots are reads of their own that no rule judges.  A read any spending
+  path reaches is refused (rustc's possibly-moved reading), a reassignment refills, and reads
+  inside the moving statement are not late.  Guard `tests/read_after_move.rs`, seven refused and
+  eight legal cells, both backends.  The drop gate's `p_v2`
   (`d = v; v += […]`) is that error's cell, `CENSUS_BLIND` until it is built (reclassified from
-  `D-heap-15` 2026-09-23).  ⚠ The refusal built behind
-  `LOFT_LEASE_REFUSE` still implements the PRE-ruling population, so it is now WIDER than the
-  rules: it refuses the 156 owned-local placements the rules permit.  Narrowing it to the
-  not-yours cases, and adding the spent-name error, is what closes this entry.
+  `D-heap-15` 2026-09-23), and so is a tuple bound outside a loop and moved inside it, which
+  releases the moved member once per pass (loft#1645's guard leaves it out for that reason); both
+  are refused by the error now.  The copy refusal is narrowed to the rules as well: an owned
+  local MOVES, and what it refuses is the not-yours population.  **What closes this entry is the
+  flip**, which waits on this repository's own corpus (measured 2026-09-23 on `main` 6c188b612,
+  both switches on): the copy refusal fires at 106 sites in 20 of the 71 files that declare
+  `OpDrop`, and the spent-name error at 36 reads in 16 — each a guard written before the error
+  existed, and each a genuine case of the rule, none a false positive (hand-checked).
 - **Where:** no site refuses a copy.  The copy sites are the ones `LOFT_DROP_COPY_CENSUS` lists,
   and that enumeration is now the whole population — it was not until 2026-09-17.  The bind arm
   matches `Value::Set(v, Var(src))`, a node the parser never produces for a whole COLLECTION:
@@ -1656,7 +1679,7 @@ CLOSED 2026-09-17, below.
   of its 56 cells lost the source on the tree before, on both backends, and none does after.
   Guard `tests/scripts/a-move-in-one-arm-leaves-the-other-path-releasing.loft`.
 
-### D-heap-15 — CLOSED (2026-09-17, NARROWED 2026-09-21, CLOSED as reclassified 2026-09-23, loft#1563): a value the rules MOVE is still copied, and both structures release it
+### D-heap-15 — CLOSED (2026-09-17, NARROWED 2026-09-21, CLOSED as reclassified 2026-09-23, loft#1563, loft#1645): a value the rules MOVE is still copied, and both structures release it
 
 - **Violates:** (H-Move), and through it (H-Lease).
 - **Where:** not established.  What is measured is the population, below; the shapes share that
@@ -1738,6 +1761,23 @@ CLOSED 2026-09-17, below.
   **Open:** `p_v2` (`(H-Spent)`) and the tuple move written in an arm.  A `??` CHAIN whose
   hoisted subject names the destination (`a = a ?? b ?? mk()`) is a different defect, a backend
   split at the hoist, and has its own entry: `D-heap-28`.
+- ⚠ **CLOSED 2026-09-23 — the tuple in an arm (loft#1645).**  Re-measured when loft#1563 closed,
+  "the tuple move written in an arm" was one face of three, all silent and identical on both
+  backends, and a record in place of the tuple was right on every cell.  (1) A tuple REBOUND in an
+  arm — by a literal, in either arm, or bound from a value `if` — ran no hook for its member at
+  scope exit on EITHER path: the per-arm reconcile of `Scopes::tuple_call_mint` keeps what both
+  arms agree on, and two arms that both minted the member disagreed only on the claimant, so the
+  member fell to the bare free.  They now join as a sole owner, every claimant disarmed after the
+  `if` (`branch_tuple_call_mints` for the value form).  (2) A MOVE of an outer tuple in an arm
+  released the moved member twice where it ran; it now sets a per-member flag
+  (`Scopes::tuple_moved`) that the source's releases read, and a rebind or member write resets.
+  (3) A move's destination lost the member its earlier bind minted, even unconditionally, because
+  the tuple's one type names the move's backing and read the minted member as a view; a member
+  the latest bind minted is now owned unless its deps name its own claimant.  Guard
+  `tests/scripts/1645-a-tuple-rebound-or-moved-in-an-arm-releases-each-member-once.loft`.
+  **What is left is not this entry's.**  `p_v2` grows a collection after moving it and a tuple
+  moved inside a LOOP moves one name once per pass; `(H-Spent)` refuses both, and the missing
+  error is `D-heap-8`'s second half, where the drop gate counts `p_v2` as a refused cell.
 - **Removal:** the copy that makes the second structure, removed wherever the rules move the
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.

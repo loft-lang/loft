@@ -412,13 +412,35 @@ impl Parser {
         true
     }
 
-    /// Check whether `val` is a call to a user-defined function that returns a struct
-    /// via a temporary store.  Used by `copy_ref` and the vector-append
-    /// emit path (`vectors.rs`) to decide whether to free the source
-    /// store after the deep copy.  The free bit's behaviour differs
-    /// under WASM but the query is the same on every target — call
-    /// sites in expressions.rs / objects.rs / vectors.rs / collections.rs
-    /// are not feature-gated, so this helper must not be either.
+    /// Is `val` a call to a user-defined function that answers a struct through a
+    /// temporary store?  The STRUCTURAL half of the `0x8000` source-free decision,
+    /// and deliberately nothing more.
+    ///
+    /// ⚠ This does NOT say the store is the callee's to give away.  A callee whose
+    /// return can hand back an ARGUMENT's record (`fn same(w: S) -> S { w }`) is
+    /// structurally a struct-returning call and answers a store the CALLER still
+    /// owns.  Every site that sets the bit must therefore ask an ownership question
+    /// beside this one, and there are exactly two admissible answers:
+    ///
+    /// - [`Self::call_gives_away_its_store`] — the conservative answer, for a site
+    ///   that emits no @P290 bracket;
+    /// - `use_analysis::call_return_frees_source` — the bracket-licensed answer, for
+    ///   a site that emits one (`expressions.rs`'s collection bind).
+    ///
+    /// loft#1647 folded the conservative clause into THIS predicate instead, which
+    /// fixed the sites that asked no ownership question and silently vetoed the one
+    /// site that asked the better one: its `&&` could no longer be reached for a
+    /// borrowing callee, so the bracket never licensed the free and the minting arm
+    /// of a borrowing signature leaked one store per call
+    /// (`tests/scripts/1140-a-returned-keyed-parameter-is-still-the-callers.loft`).
+    /// `formal/ownership.md` had already written that outcome down — *"answering the
+    /// callee-side half alone would also close the use-after-free, but
+    /// conservatively"*.  The two questions are kept apart here so neither can veto
+    /// the other again.
+    ///
+    /// The free bit's behaviour differs under WASM but the query is the same on every
+    /// target — call sites in expressions.rs / objects.rs / vectors.rs /
+    /// collections.rs are not feature-gated, so this helper must not be either.
     pub(crate) fn is_struct_returning_call(&self, val: &Value) -> bool {
         if self.first_pass {
             return false;
@@ -436,6 +458,32 @@ impl Parser {
             Value::Block(bl) => bl.name == "Object",
             _ => false,
         }
+    }
+
+    /// May this site set the `0x8000` source-free bit WITHOUT emitting a @P290
+    /// bracket — i.e. is the returned store certainly the callee's to give away?
+    ///
+    /// [`Self::is_struct_returning_call`] plus the callee-side half of `@FR-O-Move`:
+    /// a return whose dep names a visible parameter may hand back that parameter's
+    /// store, and the caller must not release what it still owns.  With no bracket
+    /// there is no runtime witness to tell the two arms apart, so the answer is no
+    /// for the whole signature.
+    ///
+    /// **What that costs, stated rather than discovered:** the MINTING arm of a
+    /// borrowing signature (`fn pick(w: S, c: boolean) -> S { f = S { … }; if c { w }
+    /// else { f } }`) then leaks one store per call at these sites.  That is the
+    /// deliberate trade `formal/ownership.md` records — a leak is recoverable where a
+    /// premature free is not — and the cure is not a cleverer static read but the
+    /// bracket, which decides it at runtime: a protected store is refused the free, a
+    /// callee-minted one is freed.  A site that wants the minting arm back emits the
+    /// bracket and asks `use_analysis::call_return_frees_source` instead.
+    pub(crate) fn call_gives_away_its_store(&self, val: &Value) -> bool {
+        self.is_struct_returning_call(val)
+            && match val.unspan() {
+                Value::Call(fn_nr, _) => !self.data.def(*fn_nr).returns_borrowed_view(),
+                // An `Object` block mints in place; it borrows no parameter.
+                _ => true,
+            }
     }
 
     /// loft#1154 — the `0x8000` source-free decision for a JOIN right-hand side, and the
@@ -1017,7 +1065,7 @@ impl Parser {
         // whole-value element-set path.
         #[cfg(not(feature = "wasm"))]
         let tp_val =
-            if matches!(code.unspan(), Value::Call(_, _)) && self.is_struct_returning_call(code) {
+            if matches!(code.unspan(), Value::Call(_, _)) && self.call_gives_away_its_store(code) {
                 i32::from(tp) | 0x8000
             } else {
                 i32::from(tp)
@@ -1269,14 +1317,25 @@ impl Parser {
                              parameter type); do not use `&` in an argument or sub-expression"
                         );
                         self.amp_pending = false;
-                    } else if Self::is_narrow_store_place(&t, code) {
+                    } else if let Some((want, got)) = self.amp_annotation_mismatch(var_tp, &t) {
+                        // loft#1639 — `(B-Ref-Intro)` gives the bound variable `&(typeof a)`, so
+                        // the link's type comes from the TARGET; `(C-Ref)` converts `τ ↔ &τ` at
+                        // ONE τ and has no conversion for a different one.  Unenforced, the link
+                        // read and wrote the target's slot at the ANNOTATION's width and bias and
+                        // handed the stored code back as a value: `pb: &u16 = &(b: i8 = -1)` read
+                        // `127`, the raw byte, and `pf = 5` through it left `f == -123`.
+                        // `--native` did not compile at all (`*mut u16 = addr_of_mut!(var_a)`).
+                        //
+                        // `u8` was the one shape that read correctly, because its bias is zero and
+                        // its encoding is the identity — the covered spelling is the one that
+                        // cannot fail, which is why this survived.
                         diagnostic!(
                             self.lexer,
                             Level::Error,
-                            "`&` cannot link to an integer element or field that is stored in fewer \
-                             than 8 bytes, because a link reads and writes a whole integer. Copy it \
-                             into a local and write it back (`x = v[i]; ...; v[i] = x`), or declare \
-                             the element or field as `integer`"
+                            "a `&` link takes its target's type, so the annotation `&{want}` cannot \
+                             re-type a link to a `{got}` — they are different ranges, and the link \
+                             would read the stored bytes at the wrong width. Drop the annotation \
+                             (`p = &x` takes the target's type), or write `&{got}`"
                         );
                         self.amp_pending = false;
                     } else if !Self::is_amp_place(code, &self.data) {
@@ -2689,6 +2748,7 @@ impl Parser {
             && !matches!(ctp, Type::Optional(_))
             && !narrowing_fallback
             && !Self::is_existing_tuple(&self.data, ctp)
+            && !matches!(ctp.base(), Type::Function(..))
             && !self.call_declares_nullable(code)
         {
             diagnostic!(
@@ -2766,6 +2826,20 @@ impl Parser {
                 "`??` has nothing to discharge — `{}` is a tuple that EXISTS, and only a tuple \
                  read out of range is absent.  Discharge the member you mean (`t.0 ?? d`)",
                 ctp.source_name(&self.data)
+            );
+        }
+        // `@FR-N-Opt` — a FUNCTION type has no null, so `??` has nothing to test on one, exactly
+        // as `f != null` has nothing to compare.  Refused so the two spellings agree; an
+        // absent fn-ref (an element read out of range) is callable and answers its return
+        // type's null (`@FR-L-FnAbsent`).  Reported and then allowed to proceed, for the
+        // reason the tuple refusal above gives.
+        if !self.first_pass && matches!(ctp.base(), Type::Function(..)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`??` has nothing to test — a function value has no null.  To fall back to \
+                 another function, check the index (`if i < len(fs) {{ fs[i] }} else {{ d }}`), \
+                 or keep the function in a struct field and discharge the struct (`(acts[k] ?? fallback).f(x)`)"
             );
         }
         *ctp = match &*ctp {

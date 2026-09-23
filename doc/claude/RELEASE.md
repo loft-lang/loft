@@ -19,7 +19,7 @@ priorities, and ambitions live elsewhere:
 | **[releases/](releases/README.md)** | One directory per cycle | "What did THIS release need, find, and decide?" |
 | **[ROADMAP.md](ROADMAP.md)** | Things we want to do, grouped by milestone | "What's the arc of work for the project, in what order?" |
 | **[PLANNING.md](PLANNING.md)** | Priority-ordered backlog, all features | "What's the next best thing to pick up?" |
-| **[PROBLEMS.md](PROBLEMS.md)** | Known bugs with severity | "What's broken today?" |
+| **GitHub Issues** (`make work`) | Open bugs; [PROBLEMS.md](PROBLEMS.md) is the closed archive | "What's broken today?" |
 | **[QUALITY.md](QUALITY.md)** | Open programmer-biting issues and active sprints | "Which open issues bite users, and what are we actively working on?" |
 
 RELEASE.md only cites items from those four files — it doesn't
@@ -204,28 +204,16 @@ write-up (`README.md`) and the checklist's recorded evidence (`checklist.json`, 
 `make release-checklist` reads and writes).  This file stays the process: what must be
 true before ANY release, and how to prove it.
 
-## What each milestone means
+## Versioning and the stability contract
 
-**0.9.0 — Fully working loft language.**
-The language is feature-complete, well-documented, and tooling-friendly.
-PROBLEMS.md has zero "appears fixed but unverified" entries and no
-open compiler-correctness bugs.  A REPL and decent error recovery
-ship.  Audience: developers who want to write loft as a real language.
-
-**1.0.0 — Stability contract.**
-1.0.0 is the stability contract: any program valid on 1.0.0 compiles
-and runs identically on any 1.0.x or 1.x.0 release.  The contract
-covers:
-- The core language surface (syntax, type system, documented stdlib API, CLI flags).
-- The public IDE API (WASM `compileAndRun` / `getSymbols` JS interface).
-- A user can write, run, and share a real program — from the terminal or the browser.
-
-Safety (no crashes, no memory corruption, no leaks) is NOT a 1.0
-addition — it is the floor for every release, tracked under the
-[Safety gate](#safety-gate--blocks-every-release) below.  1.0.0
-additionally requires the four-platform-binary stability gate
-and a full INCONSISTENCIES.md sweep; see
-[ROADMAP.md § 1.0.0](ROADMAP.md).
+Releases are calendar-versioned, `YYYY.M.P` (`2026.9.0`), one per monthly cycle since
+`2026-06` ([releases/2026-06](releases/2026-06/README.md) records the switch); a point
+release off the beat is for a binary fix that cannot wait.  What a release may change is
+[COMPATIBILITY.md](COMPATIBILITY.md), not a semver clause: its § *The road to contract 1*
+holds the floors the freeze needs and `make rule-coverage` measures the position against
+them.  Safety (no crash, no corruption, no leak) is not a contract addition; it is the
+floor for every release, tracked under the [Safety gate](#safety-gate--blocks-every-release)
+below.
 
 ---
 
@@ -268,10 +256,10 @@ make release-gate          # every nightly, THIS commit, one CI run, one verdict
 make release-checklist     # `A-release-gate` reads the newest run for HEAD's sha
 ```
 
-`release-gate.yml` calls the six nightlies as reusable workflows — the full
+`release-gate.yml` calls five nightlies as reusable workflows — the full
 `ci.yml` matrix incl. Windows with the stdlib round-trip and the differential
-oracle, every `miri.yml` sanitizer and invariant gate, `registry-validation`,
-`revalidate-libs`, `browser-threads`, `repro-build` — and a `verdict` job goes
+oracle, every `miri.yml` sanitizer and invariant gate, `revalidate-libs`,
+`browser-threads`, `repro-build` — and a `verdict` job goes
 red if any leg did not succeed, `cancelled` and `skipped` included.  It also
 counts the jobs a PR shows as **advisory**: informational on a diff, blocking
 on a release.  It is keyed by commit on purpose — a green run on any other
@@ -301,6 +289,25 @@ the work — and then the thing to get is proof, not another night.
 
 A nightly run reports one bit; the release needs the state behind it.
 
+**A red leg that is not the candidate's is WAIVED on the record, never ignored.**
+`make release-checklist ARGS="--waive <leg> --note '<why>'"` records the leg (`ci.yml`,
+`repro-build.yml`, …), the run it was red in and the reason, beside the manual ticks in
+the cycle's `checklist.json`; `A-release-gate` then reads the run's jobs and answers
+*green, leg waived: <why>* when every red leg is waived, and names the unwaived ones
+otherwise.  A waiver names ONE run, so the next run starts with none and a leg that stays
+red is re-justified each time — which is the point.  It is the table above made
+mechanical.  Before it existed the gate had no way to end in evidence: three of three runs
+ended red, every time on legs of the first kind (the Windows `Test` leg, red or cancelled
+on 11 of the 14 nightlies to 2026-09-23, loft#1652; the macOS and Windows repro legs, whose C
+toolchain the verifier cannot compare; a registry package's own defect), so 2026.9.0
+proceeded on hand-run substitutes with a 90-minute run proving nothing.
+
+**`registry-validation` is not a leg.**  It validates every published package against the
+registry's own rules, so a library's defect turned the toolchain's gate red (`hex_fit` on
+2026-09-08, `imaging` on 09-23) — and § What forces a release says the registry is never
+release-coupled.  `revalidate-libs` stays: *does this loft break a shipped library* is the
+coupling that matters.
+
 ### WASM endpoint — our primary deliverable must work
 
 The browser WASM bundle (`doc/pkg/loft_bg.wasm` + `doc/pkg/loft.js`)
@@ -316,114 +323,38 @@ WASM path is broken is a release that doesn't work for most users.
 
 ### Crashes — no release may crash on valid input
 
-**No open crash blockers as of 2026-04-15.**  All previously-listed
-crash gates closed:
-
-- B2-runtime — closed 2026-04-13 (unit-variant retrofit).
-- B3 — closed 2026-04-13 (hidden caller pre-alloc for struct-enum returns).
-- B5 — all three layers closed (layers 1+2 2026-04-14; layer 3 closed
-  as a side-effect of struct-enum return-slot work in PR #168→#174).
-  All four `p54_b5_*` guards green.
-- B7 — closed as a side-effect of the B2-runtime / B5 / dep-inference /
-  lock-args work across PR #168→#172.  All five `b7_*` guards green
-  (the old `_crashes` suffix stays for search-back compatibility).
-- P136 — closed (`gen_if` divergent-true-branch fix).
-  `tests/wrap.rs::sigsegv_repro_79_alone` and `loft_suite` (which
-  walks `79-null-early-exit.loft`) both green; `ignored_scripts()`
-  is empty.
+The gate is the corpus on both backends under `make ci`, and the sanitizer nightlies in
+`miri.yml` (ASan, the native-backend ASan, TSan, `LOFT_POISON`, the debug-assertions and
+`LOFT_VERIFY_STACK` sweeps), all of which the release gate runs on the candidate's commit.
+An open crash issue blocks the release whatever its severity label says
+([bug-filing policy](../../CLAUDE.md): an open issue is never ignored for a release).
 
 ### Memory safety — no release may corrupt memory
 
 | ID | H/M | Summary | Reference |
 |---|---|---|---|
-| **Valgrind-clean gate** | H | `scripts/valgrind-sweep.sh`: every script in `tests/scripts/` and every doc in `tests/docs/` under memcheck, on the interpreter and as the compiled native program, must show no invalid access and `definitely lost: 0 bytes in 0 blocks`.  Runs nightly (`miri.yml` `valgrind` job); run it on the tag candidate before release. | ROADMAP.md |
+| **Valgrind-clean gate** | H | `scripts/valgrind-sweep.sh`: every script in `tests/scripts/` and every doc in `tests/docs/` under memcheck, on the interpreter and as the compiled native program, must show no invalid access and `definitely lost: 0 bytes in 0 blocks`.  Runs nightly (`miri.yml` `valgrind` job) and inside the release gate; `M-valgrind` is satisfied by that job on the candidate's commit, or by the sweep run here. | TESTING.md § Occasional valgrind pass |
 
 ### Memory leaks — no release may leak on valid programs
 
-Long-running programs — servers, game loops, REPLs — cannot
-tolerate per-iteration leaks.  A release that leaks even one
-store per loop iteration is unusable for production workloads;
-users hit out-of-memory before the language gets a chance to
-prove itself.  This bar isn't a 1.0 feature — it's the floor for
-every release.
+Long-running programs — servers, game loops, REPLs — cannot tolerate per-iteration
+leaks, so the floor is a store count of zero at every program's exit.
 
 | ID | H/M | Summary | Reference |
 |---|---|---|---|
-| **Zero-leak gate** | H | `State::check_store_leaks` must emit no `Warning: N stores not freed at program exit` lines across the full test suite AND a hands-on run of every `tests/scripts/*.loft`.  As of 2026-04-21 the wrap suite's `loft_suite` produces no `stores not freed` warnings, and bare-interpret runs on the historically-flagged scripts (42, 62, 76, 95) are clean under `LOFT_STORES=warn` — the gate is currently green but must be re-verified on the tag candidate (including `LOFT_LOG=stores` on the parallel scripts, see below). | `src/state/mod.rs:1486` check_store_leaks |
-| **P122** | H | Store leak in game loops — struct/vector temps not freed at end-of-iteration.  Originally scoped as a Brick Buster ergonomics fix; **generalises** to any loop-body struct/vector construction.  Status-unknown (previously listed as "appears fixed"); must be re-verified in the zero-leak gate above. | PROBLEMS.md |
-| **Parallel leak audit** | M | `parallel { ... }` blocks — the A15 structured-concurrency path spawns workers that hold `ParallelCtx`; confirm no worker Stores remain after join.  Run the zero-leak gate with `LOFT_LOG=stores` on `tests/scripts/22-threading.loft`, `80-parallel-block.loft`. | THREADING.md |
+| **Zero-leak gate** | H | The wrap suite hard-fails any `tests/scripts` file that leaves a store unfreed at exit (`State::check_store_leaks`; `SCRIPTS_LEAK_ALLOW` is empty by design), on every `make ci` and inside the release gate; the two `par` scripts (`22-threading`, `80-parallel-block`) are in that corpus.  There is no separate hand sweep: a manual re-run of a suite assertion was the `M-leaks` row, retired 2026-09-23. | `tests/wrap.rs` `loft_suite`, `src/state/mod.rs` `check_store_leaks` |
 
 ### Test suite integrity — no release may silently skip tests
 
-An ignored test is a bug you promised you would fix, then pulled
-out of CI.  Every `#[ignore]` hides a known failure — if the
-suite is silently skipping them, the release's "all green"
-status is a lie.  The bar is simple: **no `#[ignore]` attribute
-ships unless explicitly approved with a documented rationale
-and a linked issue**.
+An ignored test is a bug you promised you would fix, then pulled out of CI.  Every
+`#[ignore]` hides a known failure — if the suite is silently skipping them, the release's
+"all green" status is a lie.  The bar: **no `#[ignore]` ships unless it carries a rationale
+that names the run it rides**, and the owner signs off on the set each release.
 
 | ID | H/M | Summary | Reference |
 |---|---|---|---|
-| **Zero-ignore gate** | H | Every `#[ignore]` (and every `#[ignore = "..."]`) must either be (a) removed because the underlying bug is fixed, or (b) explicitly approved by the release owner with a one-line rationale in `tests/ignored_tests.baseline`.  The approval must cite the blocking issue ID (e.g. `B7 family — ...`, `CI harness SIGABRT (P136-adjacent)`) so the ignore traces back to the open bug.  Unreviewed ignores — where the reason is vague or the owner didn't sign off — block the release. | `tests/ignored_tests.baseline` + `tests/doc_hygiene.rs::ignored_tests_baseline_is_current` |
-| **Skip-list audit** | H | Every `SKIP` / `NATIVE_SKIP` / `SCRIPTS_NATIVE_SKIP` / `ignored_scripts()` entry must be traceable to a specific open blocker issue.  "Currently worked around by skipping" counts as an ignore and must appear in the same baseline approval flow. | `tests/native.rs`, `tests/wrap.rs::ignored_scripts`, `tests/native_loader.rs` |
-
-Baseline as of 2026-04-21 — only one entry remains:
-- `regen_fill_rs` → maintenance-only, not a test of runtime
-  behaviour (regenerates `src/fill.rs`); candidate for
-  explicit permanent exemption.
-
-(B5/B7 ignores all removed once the underlying bugs were
-confirmed closed; `file_content_nonexistent_trace` and
-`sigsegv_repro_79_alone` no longer carry `#[ignore]` attrs.
-`tests/wrap.rs::sigsegv_repro_79_alone` and the P136 skip of
-`79-null-early-exit.loft` in `loft_suite` are also gone —
-`cargo test --release --test wrap` reports 47 passed, 0 ignored.)
-
----
-
-## Milestone-specific blockers
-
-The items below gate a SPECIFIC milestone (0.9.0 or 1.0.0) without
-blocking earlier patch releases that don't claim to ship them.
-
-### Language-surface gaps (0.9.0 blockers)
-
-| ID | H/M | Summary | Reference |
-|---|---|---|---|
-| **L1** | H | Error recovery — cascading errors after one bad token; high UX impact. | PLANNING.md § L1 |
-| **P2** | H | REPL / interactive mode — needed for the "write real loft" story once the browser IDE is deferred past 1.0. | PLANNING.md § P2 |
-| **W-warn** | M | Clippy-inspired developer warnings in the interpreter. | PLANNING.md § W-warn |
-| **C52** | M | stdlib name clash + `std::` prefix hygiene. | PLANNING.md § C52 |
-| **P117** | M | Re-verify the original `file()` pattern with `LOFT_STORES=warn` — fix landed but not re-run end-to-end. | PROBLEMS.md |
-| **P120** | M | Full GL example suite end-to-end on a display (fix appears verified; one hands-on pass needed). | PROBLEMS.md |
-| **P121** | M | Debug-build valgrind pass over `tests/scripts/50-tuples.loft`. | PROBLEMS.md |
-| **P124** | M | `--native-emit` inspection of generated Rust (fix appears verified; one hands-on pass needed). | PROBLEMS.md |
-
-### Stability gate (1.0 blocker)
-
-Safety (valgrind-clean, zero-leak, zero-crash) is tracked under the
-[Safety gate](#safety-gate--blocks-every-release) above and is a
-blocker for every release, not just 1.0.  The items below are the
-1.0-specific additions on top of that floor.
-
-| ID | H/M | Summary | Reference |
-|---|---|---|---|
-| **Multi-platform binaries** | H | Pre-built binaries published for Linux x86_64-musl, macOS x86_64, macOS aarch64, Windows x86_64-msvc.  Hands-on smoke test of each before publishing the tag. | ROADMAP.md § 1.0.0 |
-| **Zero open High issues** | H | No entry in PROBLEMS.md or QUALITY.md tagged **High** severity at release time. | PROBLEMS.md |
-| **INCONSISTENCIES sweep** | M | 6 open entries in INCONSISTENCIES.md — none are code blockers but #6 (plain enums cannot have methods) and #10 (sizeof(u8) = 4) need documentation coverage before 1.0. | INCONSISTENCIES.md |
-
-### Code-debt cleanup (nice-to-have for 1.0)
-
-| ID | Summary |
-|---|---|
-| **P54-U phase 3** | Delete ~540 lines of legacy `src/database/structures.rs::parsing` scanner once a walker-native `Diagnostic` shape replaces the `"line N:M path:X"` error-path format.  Walker already covers the success path (zero fallback hits across the full test suite).  See QUALITY.md § P54-U. |
-| **T2-0** | `loft --format` code formatter — professional tooling polish; zero correctness risk. |
-| **T1-2** | Wildcard imports (`use mylib::*`) — friction removal; medium payoff. |
-| **T1-4** | Match expressions — largest language feature gap.  If deferred past 1.0, INCONSISTENCY #6 must be prominently documented in CHANGELOG.md and the HTML reference. |
-
-Completed historical gate items (T0-1 through T0-7, T1-5, PROBLEMS #10,
-#37–#40, P117/P120–P131 fixes, A4 pre-gate, Cargo.toml, README, CHANGELOG,
-CI pipeline, R1) are recorded in CHANGELOG.md.
+| **Zero-ignore gate** | H | Every `#[ignore]` carries a one-line rationale in `tests/ignored_tests.baseline` naming how it runs instead (a measurement by hand, a nightly sweep, a platform cap) — held mechanically by `A-ignores`, and judged for acceptability by the owner in `M-ignores`. | `tests/ignored_tests.baseline`, `tests/doc_hygiene.rs::{ignored_tests_baseline_is_current, every_ignore_reason_says_how_it_runs}` |
+| **Skip-list audit** | H | Every `SKIP` / `NATIVE_SKIP` / `ignored_scripts()` entry is a suppression of the same kind and is in the same sign-off; `make release-liveness` reports any whose justifying issue has since closed.  TESTING.md § *Every skip says why, how it runs instead, and when it ends* is the rule's home. | `tests/*.rs` skip lists (found by shape), `scripts/release-liveness.py` |
 
 ---
 
@@ -444,62 +375,6 @@ after any of the language milestones above — independently:
 
 See [PLANNING.md](PLANNING.md) / [ROADMAP.md](ROADMAP.md) for the
 backlogs of those projects.
-
----
-
-## Explicitly 1.1+ language work
-
-Deferred past 1.0 by design — they are either additive (can land in
-a minor) or too large a change to block the stability contract on.
-
-| Item | Notes |
-|---|---|
-| A2 logger production mode | Low user impact until logger is widely used |
-| A4 spatial<T> full implementation | After pre-gate added in 0.8.0 |
-| A5 closure capture | Very high effort; depends on P1 |
-| C57 route decorator syntax | `@get` / `@post` / `@ws` annotations |
-| W1.14 WASM Tier 2 | Web Worker pool + `par()` parallelism |
-
----
-
-## Project Structure Changes
-
-### For 1.0 — no crate split needed
-
-The current single-crate layout is correct for the project's scale.  A Cargo workspace split is warranted only when W1 (WASM) starts, so that the `loft-core` library can use `crate-type = ["cdylib","rlib"]` without affecting the CLI binary.
-
-### Cargo.toml changes before 1.0
-
-```toml
-[package]
-name        = "loft"          # ✓ done 2026-03-15
-version     = "1.0.0"             # bump at release
-description = "loft — interpreter for the loft scripting language"  # ✓ done 2026-03-15
-homepage    = "https://github.com/loft-lang/loft"  # ✓ done 2026-03-15
-repository  = "https://github.com/loft-lang/loft"  # ✓ done 2026-03-15
-keywords    = ["language", "interpreter", "scripting"]  # ✓ done 2026-03-15
-categories  = ["command-line-utilities", "compilers"]   # ✓ done 2026-03-15
-```
-
-**Note:** `rand_core` and `rand_pcg` are actively used in `src/native.rs` for random number generation — do **not** remove them.  The earlier claim that they were unused was wrong.
-
-**Note on renaming to "loft":** ~~Do it now.~~  **Done 2026-03-15.**  Renaming was free because the package had not yet been published to crates.io.
-
-### Future workspace layout (for W1)
-
-```
-Cargo.toml                  (workspace root)
-loft-core/              (Cargo.toml: crate-type = ["cdylib","rlib"])
-  src/
-loft-cli/               (Cargo.toml: [[bin]])
-  src/main.rs
-loft-gendoc/            (Cargo.toml: [[bin]])
-  src/gendoc.rs
-default/                    (standard library .loft files)
-tests/
-doc/
-ide/                        (web IDE — added at W1)
-```
 
 ---
 
@@ -680,8 +555,8 @@ they *inform* the release, they do not *block* it.  Only the subjective judgment
 0e and step 7 (topic flow) waits for external signal.
 
 Until the project has regular external-developer interactions
-that exercise the user-facing examples, **steps 5, 6, 7, and
-the cross-platform smoke test below** are explicitly deferred.
+that exercise the user-facing examples, **steps 5, 6 and 7** are
+explicitly deferred.
 
 Rationale: those steps validate the user-facing surface
 (`.loft` examples, comparison pages, walkthrough topic flow,
@@ -699,15 +574,16 @@ feedback signal that makes them meaningful.  Until then:
   - Step 5 (user docs vs Unreleased changelog) — defer.
   - Step 6 (DEVELOPERS.md + comparison pages) — defer.
   - Step 7 (topic-flow ordering) — defer.
-  - Cross-platform smoke test (Linux + macOS + Windows
-    walkthrough run, VS Code extension install,
-    example-open) — defer.
-    ⚠ **This deferral predates external users** (2026-05-15, before the
-    registry, `loft install` and `self-update` shipped), and
-    `make release-checklist` lists the three hands-on runs
-    (`M-hands-linux` / `-macos` / `-windows`) as outstanding.  Whether
-    the deferral still holds is the owner's call; until it is made, the
-    checklist asks for them and this line says they may be waived.
+
+The cross-platform hands-on walkthrough is NOT deferred — it is **done by the
+tag pipeline**: each `release.yml` build leg unpacks its own zip, asserts
+`--version`, `verify-self` and every shipped example with empty stderr
+(§ What the tag pipeline proves), and the owner ruled on 2026-09-05 that this
+bundle smoke IS the walkthrough.  `A-smoke` reads it; a leg that skipped becomes
+the by-hand `M-rosetta` row.  The three hand-run rows it replaced
+(`M-hands-linux` / `-macos` / `-windows`) were retired 2026-09-23; what they
+added and no runner observes — Gatekeeper on an unsigned download, the VS Code
+grammar symlink on Windows — no release had recorded either.
 
 Steps 1-4 + 8 + 9 (internal-doc hygiene, broken-link
 audit, clippy-suppression review, gendoc + PDF) are NOT
@@ -1026,6 +902,7 @@ adds an item that needs a new tool, add the tool here.
 | `python3` | JSON validation (`python3 -m json.tool`); generic scripting | OS package manager |
 | `gh` | `make release-gate` (dispatch + watch) and the checklist's CI-reading items (`A-release-gate`, `A-draft`, `A-smoke`) | https://cli.github.com (needs the `workflow` scope) |
 | `chromium` / `google-chrome` | WASM HTML build verification (already used by `make wasm-html-test`) | OS package manager |
+| `cargo audit` | `A-audit`: RUSTSEC advisories over `Cargo.lock` (the nightly `audit` job asks the same on the schedule) | `cargo install cargo-audit --locked` |
 
 ### The per-release checklist — `make release-checklist`
 
@@ -1138,11 +1015,12 @@ The per-item landing procedures in the release's plans are separate and still
 apply (e.g. NDB.0 in [`plans/34-native-debug/`](plans/34-native-debug)).
 
 **What it covers, audited against this document (2026-08-31).**  Every gate this
-file calls a release blocker is an item: the safety gate's valgrind, zero-leak,
-zero-ignore and skip-list rows (`M-valgrind`, `M-leaks`, `M-ignores`, with
-`A-ignores` checking the rationales mechanically), the WASM endpoint gate
-(`M-wasm`), the nightlies (`A-release-gate`: one deliberate run of all six against
-HEAD's commit, measured — it replaced six hand-dispatched, hand-ticked items), step 9's
+file calls a release blocker is an item: the safety gate's valgrind, zero-ignore and
+skip-list rows (`M-valgrind`, `M-ignores`, with `A-ignores` checking the rationales
+mechanically; the zero-leak gate is the suite's own assertion, carried by `A-ci` and the
+gate), the WASM endpoint gate (`M-wasm`), the nightlies (`A-release-gate`: one deliberate
+run of all five against HEAD's commit, measured — it replaced six hand-dispatched,
+hand-ticked items), the dependency audit (`A-audit`), step 9's
 artefacts, step 10's
 binaries and registry entry, and the monthly reviews the cadence makes
 per-release work (`M-monthly-docs`, `M-monthly-bugs`, `M-close-plans`, and
@@ -1152,10 +1030,31 @@ any open formal deviation a release can resolve: each has a tracking issue, and 
 allowed to ship are marked `not resolvable in a release` with their reason
 (`formal/README.md` § Deviation entry format).
 
+**Three classes of row, since 2026-09-23.**  A GATE row must be true (`A-ci`,
+`M-valgrind`); a `[report]` row must be READ — `M-monthly-bugs`, `M-file-sizes`,
+`A-reference-review`, the passes this document calls *a report, never a blocker* — and
+the tally counts the two apart, because "21/27 done" with them mixed said nothing about
+what was blocking; a DERIVED row is a manual row a green gate job on the candidate's
+commit satisfies without a hand-run (`M-valgrind`, `M-libs`, `M-wasm`, each naming the
+job that covers it), the hand-run staying as the fallback when the gate cannot run.  A
+tick records the COMMIT it was made on, and a `[cand]` tick whose commit differs from
+HEAD in what ships (`src/`, `default/`, `tests/`, the manifests) reads `[~] STALE` rather
+than done — 2026-09's candidate ticks named `e77ef442` while the tag was `b1016d00`, and
+only a by-hand diff said that nothing shipped had moved.  Retired the same day:
+`M-leaks` (the suite's own assertion), `M-hands-linux/-macos/-windows` (the tag
+pipeline's bundle smoke IS the walkthrough; `A-smoke` reads it, and `M-rosetta` appears
+only when it reports a skip) and `M-install-live` (`scripts/acquisition-chain.sh` now
+installs a library with the acquired binary).  A new blocking row must be able to name
+the past defect it would have caught — install.sh, the registry splice and #1357 all
+can; a row that cannot is a report.
+
 One of those is worth calling out because it is invisible and it ships:
 **`make-release.sh` copies `doc/loft-reference.pdf` into all four bundles and
-never builds it.**  The HTML docs are regenerated by the tag's `docs` job, so
-they cannot go stale; the PDF is a committed file that only `gendoc` + `make
+never builds it.**  The HTML docs are committed and served from `main:/docs`,
+rebuilt on every push, so they cannot go stale at a tag (the tag's `docs` job
+rebuilds them again for a `gh-pages` branch nothing serves, and has failed at
+`make game` on every release since 2026.7.2 — deleting that job is the owner's
+call); the PDF is a committed file that only `gendoc` + `make
 pdf` update by hand, so a release can ship four bundles carrying a reference
 that does not describe it, in silence.
 
@@ -1242,31 +1141,20 @@ annotations so a skipped bundle becomes a manual item instead of a silence.
 
 ---
 
-## Release Artifacts Checklist
+## Release artifacts
 
-| Artifact | Required | How |
-|---|---|---|
-| GitHub release tag `v1.0.0` | Yes | `git tag v1.0.0` |
-| Linux static binary (`x86_64-unknown-linux-musl`) | Yes | GitHub Actions + `cross` |
-| macOS Intel binary (`x86_64-apple-darwin`) | Yes | GitHub Actions matrix |
-| macOS ARM binary (`aarch64-apple-darwin`) | Yes | GitHub Actions matrix |
-| Windows binary (`x86_64-pc-windows-msvc`) | Recommended | GitHub Actions matrix |
-| `loft-reference.pdf` attached to release | Yes | `typst compile doc/loft-reference.typ` |
-| HTML docs on GitHub Pages | Recommended | `cargo run --bin gendoc` → `gh-pages` branch (automated in release.yml) |
-| crates.io publish as `loft` | Recommended | `cargo publish` (automated in release.yml via `CARGO_REGISTRY_TOKEN`) |
-| `loft.1` man page | Optional | Generate from README with `pandoc` |
+| Artifact | How |
+|---|---|
+| Annotated tag `vYYYY.M.P` | `git tag -a vYYYY.M.P -m "…" && git push origin vYYYY.M.P` — the push triggers `release.yml` |
+| Four bundles `loft-<v>-<triple>.zip` + `.sha256` (linux-musl, macos-x64, macos-arm64, windows-msvc), each with `bin/`, `default/`, `examples/`, `loft-reference.pdf`, `BUILD-INFO`, `SHA256SUMS` | `release.yml` → `scripts/make-release.sh`, attached to the DRAFT, each smoke-run from its own zip |
+| `loft-<v>-src.zip` + `loft-<v>-registry-entry.json` | the draft job, derived from the bundles it just built |
+| crates.io `loft` | `release.yml` `crates-io` job, when `CARGO_REGISTRY_TOKEN` is set |
+| HTML docs | committed under `doc/`, served from `main:/docs` and rebuilt on every push — no release step |
+| The signed registry entry | step 4 of § Tag & publish, by hand (`M-registry-splice`), read back by `A-registry-this` |
 
----
-
-## Post-1.0.0 Versioning Policy
-
-**Semantic versioning with a roughly monthly release cadence:**
-
-- **1.0.x patch** — bug fixes only; no new language features; no behaviour changes; always backward-compatible.  Example: fix a crash found after 1.0.0 ships.
-- **1.x.0 minor** — new language features that are strictly additive (new syntax, new stdlib functions, new CLI flags, new IDE capabilities).  Any program valid on 1.0.0 must compile and run identically on 1.x.0.  Candidates: P2 (REPL), A5 (closures), A7 (native extensions), Tier N (native codegen).
-- **2.0** — reserved for breaking language changes.  Not expected in the near term.
-
-The stability guarantee applies to the **loft language surface** (syntax, type system, documented stdlib, CLI flags) and the **public IDE API** (`compileAndRun` / `getSymbols` JS interface).  The Rust library API (`lib.rs`) is not a public stable API until explicitly stabilised.
+The Rust library API (`lib.rs`) is not a public stable API; what IS stable is
+[COMPATIBILITY.md](COMPATIBILITY.md)'s business, and § Versioning and the stability
+contract above says where the versions come from.
 
 ---
 

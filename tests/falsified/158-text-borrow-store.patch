@@ -1,0 +1,13 @@
+--- a/src/generation/hoist.rs
++++ b/src/generation/hoist.rs
+@@ -3297,7 +3297,9 @@
+         .collect::<Vec<_>>()
+     {
+         let scope = mention_scope(body, v);
+-        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active) {
++        if let Some(w) = foreign_store_writer(scope, data, &minted, &mut cache, &mut active)
++            .filter(|_| false)
++        {
+             temps.remove(&v);
+             locals.remove(&v);
+             why.insert(v, w);

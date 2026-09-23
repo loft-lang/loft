@@ -73,3 +73,39 @@ fn a_hoisted_loop_reads_its_bound_from_the_header_and_the_others_keep_the_runtim
     let _ = std::fs::remove_file(&src);
     let _ = std::fs::remove_file(&out);
 }
+
+/// A collection's element count or byte footprint is a READ: `len` of a hash, sorted, index,
+/// spatial or trie, and `size` of a hash, leave every header the loop holds intact.  One
+/// such read used to decline them all.  The guard (`tests/scripts/158-keyed-length-reader.loft`)
+/// says the values hold on both backends; this pins which loops hold a header.
+#[test]
+fn a_keyed_length_read_leaves_the_loops_headers_held() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/scripts/158-keyed-length-reader.loft");
+    let out = std::env::temp_dir().join(format!(
+        "loft_keyed_length_reader_{}.rs",
+        std::process::id()
+    ));
+    let rs = emit(&src, &out);
+    for name in ["n_k1", "n_k2", "n_k3", "n_k3s", "n_k3t", "n_k4", "n_k7"] {
+        let body = fn_of(&rs, name);
+        assert!(
+            body.contains("vec_header("),
+            "{name}: a length read beside the element reads keeps the header held:\n{body}"
+        );
+    }
+    let push = fn_of(&rs, "n_k6");
+    assert!(
+        push.contains("__pw_"),
+        "n_k6: a push loop reading a sorted's length keeps its push window:\n{push}"
+    );
+    // k5 grows the hash, k8 clears the vector it reads: both are writers, nothing is held.
+    for name in ["n_k5", "n_k8"] {
+        let body = fn_of(&rs, name);
+        assert!(
+            !body.contains("vec_header("),
+            "{name}: a loop that writes a store holds no header:\n{body}"
+        );
+    }
+    let _ = std::fs::remove_file(&out);
+}

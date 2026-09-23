@@ -170,6 +170,21 @@ match a rule already written, which is the doctrine
 ([formal/README.md](../doc/claude/formal/README.md)) — *the rules do not change to match
 the code; the code changes to match the rules*.
 
+**`formal/rewrites.md` is not the contract (owner, 2026-09-23; C122).** A fix whose only rule
+change is a clause in `rewrites.md` — an optimisation's admission conditions, its switch, its
+verify form — is `contract:settled`: a rewrite is free exactly where its conditions hold, and
+tightening those conditions changes what the optimiser does, not what a program means.
+Trigger 1 counts a rule text in every OTHER chapter.  Without this, a perf stream running to
+December guarantees the strained gate never reads zero, and the optimiser's motion reads as
+the language's.
+
+**A letter applied is strained, and says so.** Under the standing ruling in
+[DEVELOPMENT.md § Where a rule's letter and the code
+disagree](../doc/claude/DEVELOPMENT.md#where-a-rules-letter-and-the-code-disagree), a fix that
+applies a rule's strict reading where the code (and perhaps a consumer) relied on something
+else is spelled `Contract: strained — letter applied: <rule> <what moved>`.  That trailer is
+what the owner reads the week's rulings from, in one sitting.
+
 ### Independent of `silent-wrong`, and that independence is the point
 
 A silently wrong answer is USUALLY `contract:settled` — the spec said what the right answer

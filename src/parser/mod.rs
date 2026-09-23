@@ -13252,7 +13252,7 @@ impl Parser {
                     self.cl("OpSetInt4", &[ref_code.clone(), pos_v, value])
                 } else {
                     let kt = self.keyed_field_kt(&keyed_tp).unwrap_or(u16::MAX);
-                    let tp_val = if self.is_struct_returning_call(&value) {
+                    let tp_val = if self.call_gives_away_its_store(&value) {
                         i32::from(kt) | 0x8000
                     } else {
                         i32::from(kt)
@@ -13891,7 +13891,7 @@ impl Parser {
                 // on the first insert through the aliased header.  `0x8000` frees the
                 // call's fresh return storage after the copy, or it leaks per construction.
                 let kt = self.keyed_field_kt(&tp).unwrap_or(u16::MAX);
-                let tp_val = if self.is_struct_returning_call(&val_code) {
+                let tp_val = if self.call_gives_away_its_store(&val_code) {
                     i32::from(kt) | 0x8000
                 } else {
                     i32::from(kt)
@@ -15152,20 +15152,6 @@ impl Parser {
                         "a `&text` parameter cannot link to a text field or element, so the \
                          function's write would be lost. Copy it into a local, pass the local and \
                          write it back (`t = o.s; f(t); o.s = t`)"
-                    );
-                }
-                actual.push(actual_code);
-                continue;
-            }
-            if scalar_place && Self::is_narrow_store_place(actual_type, &actual_code) {
-                if !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "`&` cannot link to an integer element or field that is stored in fewer \
-                         than 8 bytes, because a link reads and writes a whole integer. Copy it \
-                         into a local and write it back (`x = v[i]; ...; v[i] = x`), or declare \
-                         the element or field as `integer`"
                     );
                 }
                 actual.push(actual_code);
@@ -19174,7 +19160,7 @@ impl Parser {
             Value::Var(_) => true,
             Value::Call(d_nr, args) => {
                 let name = data.def(*d_nr).name();
-                matches!(
+                let listed = matches!(
                     name,
                     "OpGetField"
                         | "OpGetVector"
@@ -19190,7 +19176,16 @@ impl Parser {
                         | "OpGetRecord"
                         | "OpGetRef"
                         | "OpGetDbRef"
-                ) && !args.is_empty()
+                        | "OpGetVectorNullable"
+                );
+                // loft#1567 — every NARROW read op, asked from the one home that names them
+                // (`NarrowIntKind::get_op`) rather than re-listed here.  The hand-kept list
+                // above carried `OpGetByte` and `OpGetShort` while the family had grown past
+                // it: a `u16` field reads `OpGetShortFull` and an `i32` field `OpGetInt4`, so
+                // both answered "not an addressable operand" — a place the language plainly
+                // has, refused by a stale list.
+                (listed || crate::data::NarrowIntKind::is_get_op(name))
+                    && !args.is_empty()
                     && Self::is_amp_place(&args[0], data)
             }
             _ => false,
@@ -19213,9 +19208,40 @@ impl Parser {
     /// (`formal/binding.md` D-bind-39).  A plain variable is not a store place — a narrow local, a
     /// parameter and a tuple local all live in an 8-byte frame slot and link correctly — so it
     /// answers no for a `Var`.
-    fn is_narrow_store_place(tp: &Type, code: &Value) -> bool {
-        matches!(tp.base(), Type::Integer(spec) if spec.byte_width(false) < 8)
-            && !matches!(code.unspan(), Value::Var(_))
+    /// loft#1639 — does an explicit `&τ` ANNOTATION name a different integer type than the
+    /// target does?  `Some((annotation, target))` when it does, spelled as the author would.
+    ///
+    /// `(B-Ref-Intro)` gives a `&`-annotated binding the type `&(typeof a)`, so the annotation
+    /// cannot choose: one that disagrees is a mismatch `(C-Ref)` has no conversion for, since
+    /// it converts `τ ↔ &τ` at ONE τ.  An UNANNOTATED `p = &x` already arrives here with
+    /// `var_tp` inferred from the target, so it compares equal and is never refused.
+    ///
+    /// ⚠ Compared on (min, max, forced_size) and NOT with `==`, because `IntegerSpec` also
+    /// carries `not_null` — a claim about the SLOT that a declaration and an annotation can
+    /// disagree on without naming different types.  The same flag caught `non_null_reads_null`
+    /// and `Data::integer_alias` out on the same day (C127, loft#1641).
+    ///
+    /// Scoped to INTEGERS, which is what loft#1639 measured and what the width argument is
+    /// about.  A mismatch at another type is left to the machinery that already handles it
+    /// rather than widened into blind: a refusal earns its reach by the cell that proves it.
+    fn amp_annotation_mismatch(&self, var_tp: &Type, target: &Type) -> Option<(String, String)> {
+        let Type::RefVar(want) = var_tp else {
+            return None;
+        };
+        let (Type::Integer(w), Type::Integer(g)) = (want.base(), target.base()) else {
+            return None;
+        };
+        if w.min == g.min && w.max == g.max && w.forced_size == g.forced_size {
+            return None;
+        }
+        // Named through `int_type_name`, which is loft#1641's fix: a type is spelled `u8` only
+        // when its values ARE `u8`'s, and the author's own alias otherwise.  A message that
+        // said `integer(0, 65535)` would be true and unwritable — the cure it names has to be
+        // something the reader can type back in.
+        Some((
+            self.int_type_name(want.base()),
+            self.int_type_name(target.base()),
+        ))
     }
 
     /// Plan-06 PRIORITY.md spine step 5 — par-result use-site analyser.

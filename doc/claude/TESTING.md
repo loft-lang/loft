@@ -965,13 +965,18 @@ Comparing a compiler arm's effect under `--tests` on a `main`-ful guard answered
 the thing that changes*.
 
 **The control builds are cached, and the cache prunes itself.**  Each ref costs about 2 GB
-under `~/.cache/tmp/loft-falsify/<ref>` and `<ref>-target` (the native leg links
+under `~/.cache/loft-falsify/<ref>` and `<ref>-target` — on disk, never in `TMPDIR`, which is
+a RAM tmpfs on many boxes and one run filled (the native leg links
 `libloft.rlib` and its dependency rlibs, so the binary alone is not enough), beside a
 `head-target` and a `shared-target`.  Kept forever, they held 364 GB on 2026-09-05 and filled
 the root filesystem, and `make ci` failed in the NATIVE corpus with `FAIL unknown-mode` after
 four `loft: low space in /var/tmp/loft-test-scratch-… — reclaimed … MB` lines — a disk-full
 symptom that reads like a code fault.  The script now keeps the `LOFT_FALSIFY_KEEP` (default 4)
-most recently used controls and removes the rest with their worktrees.  A gate that fails on an
+most recently used controls and removes the rest with their worktrees.  A `--patch` control is
+HEAD with the patch applied, so it is cached under `patch-<patch content>-<HEAD>`: keyed on the
+patch alone, an unchanged patch re-used the control of a tree the branch had since rebased away
+from, and scored the guard against semantics HEAD no longer has (a native-only guard read as
+falsified on the interpreter too).  A gate that fails on an
 unrelated suite right after "low space" lines is the disk: `df -h /`, then § Scratch hygiene.
 
 ### Scratch hygiene — what loft writes to a temp directory, and what removes it
@@ -986,8 +991,8 @@ that removes it.  Measured 2026-09-05 before the rules existed: 434 GB under one
 | `loft_test_native_<stem>_<key>_bin` (built in `loft_test_native_<pid>/`, published by rename) | `--tests --native`, a per-PROGRAM binary cache keyed by the native cache key — never a shared path a sibling process writes (loft#1626) | the low-space reclaim (aged entries) and `sweep_scratch.sh --days` |
 | `<dir>/.loft/cache/<entry>` | the program cache a test writes beside its probe — every probe has a fresh name, so the cache only grows (13 GB in one test's dir) | `sweep_scratch.sh` (entries older than a day) |
 | `loft_html_*`, `loft_p*`, `loft_rebuild_*`, `loft-*` | the html, probe, rebuild and serve suites | `sweep_scratch.sh` (older than a day) |
-| `~/.cache/tmp/loft-falsify/<ref>{,-target}` | `make falsify` control builds | the script itself, LRU to `LOFT_FALSIFY_KEEP` |
-| `~/.cache/tmp/claude-<uid>/<project>/<session>` | the agent harness's per-session scratch (170 GB, 284 sessions) | `make sweep-scratch` (older than two weeks) |
+| `~/.cache/loft-falsify/<ref>{,-target}` (`LOFT_FALSIFY_CACHE`) | `make falsify` control builds | the script itself, LRU to `LOFT_FALSIFY_KEEP` after a successful build; `sweep_scratch.sh` a control unused for `--falsify-days` (7), a failed build's included |
+| `~/.cache/tmp/claude-<uid>/<project>/<session>` | the agent harness's per-session scratch (170 GB, 284 sessions) | `make sweep-scratch` (nothing in it changed for two weeks — two days on a RAM tmpfs) |
 | `target/debug/deps` | cargo: every test binary of every dependency hash ever built (76–110 GB per checkout) | `make sweep-target` (`cargo sweep --time 14`) |
 
 `make ci` runs `scripts/sweep_scratch.sh` on its own scratch at the start of every gate (it
@@ -3457,6 +3462,36 @@ A guard that cannot fail is worse than no guard: it is a standing claim that the
 is checked. `make falsify` catches the commonest case — a guard that never failed on the
 build it was written to catch — but it only answers for the commit you name. These are the
 shapes that survive it, each one measured here rather than imagined.
+
+**⚠ A guard can cover a CLASS with cells that reach only its easiest member — and then it
+licenses a change to the whole class.**  Measured 2026-09-23 on loft#1647.  Its three
+borrowed-view cells all called ONE callee, `fn same(w: S) -> S { w }`, whose **every** return
+path borrows.  On that evidence a shared predicate was narrowed to *"never free for a callee
+whose return MAY name a parameter"* — but `Def::returns_borrowed_view` is `.any(…)` over a
+union of return paths, so the class also holds a callee that borrows on one path and MINTS on
+another, and for that member the narrowing removes a free that is needed.  The guard stayed
+green.  The suite's only witness for the second member was
+`tests/scripts/1140-a-returned-keyed-parameter-is-still-the-callers.loft`, in a different file
+AND a different spelling (keyed, not record), so nothing connected the two.  The cost was one
+leaked store per call plus two broken ownership pins, found by `make ci` rather than by the
+guard that was cited for the change.
+
+`make falsify` cannot see this one: the guard DID fail on the build it was written to catch.
+What it does not answer is whether the cells span what the predicate ranges over.
+
+**How to apply.**  Before citing a guard as the licence for a change, name the class the
+changed code quantifies over in the PREDICATE's terms — for a MAY/ANY predicate that is
+*"every callee for which this can answer true"*, always larger than the shape in front of you
+— then list its members and check a cell reaches each.  For a MAY predicate the members are
+at least always-true, always-false and **mixed-per-path**; mixed is the one usually missing,
+because it is the one that is awkward to construct, which is exactly why its absence goes
+unnoticed.  When a member cannot be a cell, say so in the guard's header with its issue
+number: loft#1651 blocks the record spelling of that class (it raises a `BUG (#306)`
+stack-store free refusal that `tests/wrap.rs` Part A2 fails), so those cells are drafted in
+the header rather than landed.  A stated gap is one the next reader can close; an unstated one
+is re-found by a regression.  This is the testing half of the debugging policy's *"count the
+axes you HELD FIXED"* — there the axes compose one program, here they are members of the class
+a predicate ranges over.
 
 **⚠ TWO guards can cover one question and both be blind to the same WINDOW — and each one's
 existence is why nobody looked for the other's gap.**  Measured 2026-09-17 on

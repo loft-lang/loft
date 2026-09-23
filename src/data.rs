@@ -632,6 +632,32 @@ impl NarrowIntKind {
         }
     }
 
+    /// Every `OpGet*` name [`Self::get_op`] can produce, as a set — derived from the same
+    /// match, so a new kind cannot be missed.
+    ///
+    /// It exists because `Parser::is_amp_place` kept its own hand-written list of readable
+    /// place ops, and the narrow family grew past it: the list had `OpGetByte` and
+    /// `OpGetShort` while a `u16` field reads `OpGetShortFull`, an `i32` field `OpGetInt4`,
+    /// and a `u8` element `OpGetVectorNullable` — so lifting D-bind-39's refusal fell straight
+    /// into *"`&` requires an addressable operand"* for exactly the places that had just been
+    /// admitted.  Adding seven more names by hand is the failure mode, not the cure.
+    #[must_use]
+    pub fn is_get_op(name: &str) -> bool {
+        [
+            NarrowIntKind::Byte,
+            NarrowIntKind::ByteNullable,
+            NarrowIntKind::ShortRaw,
+            NarrowIntKind::Short,
+            NarrowIntKind::ShortFull,
+            NarrowIntKind::Int4,
+            NarrowIntKind::Int4Raw,
+            NarrowIntKind::Int4Full,
+            NarrowIntKind::Int,
+        ]
+        .iter()
+        .any(|k| k.get_op() == name)
+    }
+
     /// The `OpSet*` op name for this kind — the matched write twin of [`Self::get_op`].
     #[must_use]
     pub fn set_op(self) -> &'static str {

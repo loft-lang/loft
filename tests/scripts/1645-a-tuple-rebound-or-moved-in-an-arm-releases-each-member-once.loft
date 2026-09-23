@@ -1,0 +1,110 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1645, `@FR-H-Move`, `@FR-H-Lease`, `@FR-O-Complete` — A TUPLE REBOUND OR MOVED INSIDE AN
+// `if` RELEASES EACH MEMBER ONCE.  A droppable tuple member owes one release, after its last
+// read, on every path: whether the arm that rebinds or moves the tuple ran or not.
+//
+// Measured before the fix, identically on both backends: a tuple rebound by a literal in an arm
+// ran NO hook for its member at scope exit on either path (`r1`, `r2`), and one bound from a value
+// `if` ran none either (`r3`) — the per-arm reconcile of the scan's mint table kept only entries
+// both arms agreed on, and two arms that both minted the member disagreed on WHICH claimant did.
+// A whole-tuple move `u = t` in an arm released the moved member twice on the path that ran it
+// (`m1`–`m4`): loft#1563 hands the release over only where the copy is certain to run.  And a
+// move's destination lost the member its earlier bind minted, even unconditionally (`m5`): the
+// tuple's type names the move's backing, parsed last, and read the minted member as a view.
+//
+// Records in place of the tuples answered right on every cell, which is what bounds the defect to
+// the tuple lowering.  Excluded on purpose: a tuple bound outside a LOOP and moved inside it,
+// which moves one name once per pass — `(H-Spent)` refuses that program, and `formal/heap.md`
+// D-heap-8 carries its missing error.  Every expected trace is worked out by hand: `M<id>` a
+// mint, `R<id>` a read, `<id>` a release.
+//
+// @falsified-at: c4b3fb4f3 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1645-a-tuple-rebound-or-moved-in-an-arm-releases-each-member-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends.
+// ARMED: no instrument — each hook call and read is written to this guard's own trace file.
+// WITNESS: on the control, `r1 then` traces `M1,1,M2,R2` (the member's hook never runs) and
+//   `m1 then` `M40,R40,40,E,40` (the moved member released twice).
+// HOLDS: leak, panic and refusals are unmoved on both trees; every trace here is hand-worked.
+//
+struct Th { id: integer }
+
+fn trace_path() -> text { return "loft_tuple_arm_release_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn OpDrop(self: Th) { note("{self.id}"); }
+fn mk(id: integer) -> Th { note("M{id}"); return Th { id: id }; }
+
+// A literal rebind in the then arm, in the else arm, and in each.
+fn r1(c: boolean) { u = (mk(1), 0); if c { u = (mk(2), 5); } note("R{u.0.id}"); }
+fn r2(c: boolean) { u = (mk(3), 0); if c { note("x"); } else { u = (mk(4), 5); } note("R{u.0.id}"); }
+// A value branch of literals.
+fn r3(c: boolean) { u = if c { (mk(5), 1) } else { (mk(6), 2) }; note("R{u.0.id}"); }
+// A loop-body tuple rebound in an arm on some passes.
+fn r4() { for i in 0..3 { u = (mk(10 + i), 0); if i % 2 == 0 { u = (mk(20 + i), 1); } note("R{u.0.id}"); } }
+// Two heap members and a text member beside a heap one.
+fn r5(c: boolean) { u = (mk(30), "a"); if c { u = (mk(31), "bb"); } note("R{u.0.id}{u.1}"); }
+// A move in an arm, the destination local to the arm.
+fn m1(c: boolean) { t = (mk(40), 1); if c { u = t; note("R{u.0.id}"); } note("E"); }
+// A move into a destination that holds a member of its own.
+fn m2(c: boolean) { t = (mk(41), 1); u = (mk(42), 0); if c { u = t; } note("R{u.0.id}"); }
+// A move of two heap members, and a move in a nested arm.
+fn m3(c: boolean) { t = (mk(43), mk(44)); if c { u = t; note("R{u.0.id}"); note("R{u.1.id}"); } note("E"); }
+fn m4(c: boolean, d: integer) { t = (mk(45), 1); if c { if d > 0 { u = t; note("R{u.0.id}"); } } note("E"); }
+// The unconditional move into a destination whose member an earlier bind minted.
+fn m5() { t = (mk(46), 1); u = (mk(47), 0); note("R{u.0.id}"); u = t; note("R{u.0.id}"); }
+// A move in one arm, a literal rebind in the other.
+fn m6(c: boolean) { t = (mk(48), 1); u = (mk(49), 0); if c { u = (mk(50), 3); } else { u = t; } note("R{u.0.id}"); }
+// A move in an arm, then the source rebound after the `if`: what it holds then is its own again.
+fn m7(c: boolean) { t = (mk(51), 1); if c { u = t; note("R{u.0.id}"); } t = (mk(52), 2); note("R{t.0.id}"); }
+
+fn check(name: text, got: text, want: text) {
+  assert(got == want, "{name}: {got} where {want} is right");
+}
+
+fn main() {
+  drain();
+  r1(true); check("r1 then", drain(), "M1,1,M2,R2,2");
+  r1(false); check("r1 else", drain(), "M1,R1,1");
+  r2(true); check("r2 then", drain(), "M3,x,R3,3");
+  r2(false); check("r2 else", drain(), "M3,3,M4,R4,4");
+  r3(true); check("r3 then", drain(), "M5,R5,5");
+  r3(false); check("r3 else", drain(), "M6,R6,6");
+  r4(); check("r4", drain(), "M10,10,M20,R20,20,M11,R11,11,M12,12,M22,R22,22");
+  r5(true); check("r5 then", drain(), "M30,30,M31,R31bb,31");
+  r5(false); check("r5 else", drain(), "M30,R30a,30");
+  m1(true); check("m1 then", drain(), "M40,R40,40,E");
+  m1(false); check("m1 else", drain(), "M40,E,40");
+  m2(true); check("m2 then", drain(), "M41,M42,42,R41,41");
+  m2(false); check("m2 else", drain(), "M41,M42,R42,42,41");
+  m3(true); check("m3 then", drain(), "M43,M44,R43,R44,E,44,43");
+  m3(false); check("m3 else", drain(), "M43,M44,E,44,43");
+  m4(true, 1); check("m4 both", drain(), "M45,R45,45,E");
+  m4(true, 0); check("m4 outer", drain(), "M45,E,45");
+  m5(); check("m5", drain(), "M46,M47,R47,47,R46,46");
+  m6(true); check("m6 then", drain(), "M48,M49,49,M50,R50,50,48");
+  m6(false); check("m6 else", drain(), "M48,M49,49,R48,48");
+  m7(true); check("m7 then", drain(), "M51,R51,51,M52,R52,52");
+  m7(false); check("m7 else", drain(), "M51,51,M52,R52,52");
+  println("ok");
+}

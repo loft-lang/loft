@@ -1,0 +1,14 @@
+--- a/src/scopes.rs
++++ b/src/scopes.rs
+@@ -4737,10 +4737,7 @@
+ /// copy declines its release (the same store as the destination, a stack, free, read-only
+ /// or free-protected store) the lift's own free would release nothing it owns either.
+ fn moved_source_arg(outer_call: u32, args: &[Value], data: &Data) -> Option<usize> {
+-    if outer_call == u32::MAX
+-        || (outer_call != data.def_nr("OpReplaceKeyed")
+-            && outer_call != data.def_nr("OpCopyRecord"))
+-    {
++    if outer_call == u32::MAX || outer_call != data.def_nr("OpReplaceKeyed") {
+         return None;
+     }
+     matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0).then_some(0)

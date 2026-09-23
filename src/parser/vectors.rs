@@ -3067,7 +3067,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             expr = Value::Var(vec_var);
         }
         let var_tp = self.for_type(&in_type);
-        let (iter_var, pre_var) = if matches!(in_type, Type::Text(_)) {
+        let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
             let pos_var = self.create_var(&format!("{id}#next"), &I32);
             self.vars.defined(pos_var);
             let index_var = self.create_var(&format!("{id}#index"), &I32);
@@ -5720,11 +5720,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     ls.push(v_set(r, Value::Call(fn_nr, args)));
                     // A callee that hands back a VISIBLE argument's record (`fn id(p: S)
                     // -> S { p }`) answers a store the caller still owns: the copy must not
-                    // release it.  Today's path is protected by the lift's private copy;
-                    // here the answer is read directly, so the callee's own fact decides.
-                    let free_source_bit: i32 = if self.is_struct_returning_call(p)
-                        && !self.data.def(fn_nr).returns_borrowed_view()
-                    {
+                    // release it.  This site emits no @P290 bracket, so it takes the
+                    // conservative answer and its stated cost.
+                    let free_source_bit: i32 = if self.call_gives_away_its_store(p) {
                         0x8000
                     } else {
                         0
@@ -5757,7 +5755,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                     // aliases that cannot yet be tracked.
                     #[cfg(not(feature = "wasm"))]
                     let free_source_bit: i32 =
-                        if !self.first_pass && self.is_struct_returning_call(p) {
+                        if !self.first_pass && self.call_gives_away_its_store(p) {
                             0x8000
                         } else {
                             0

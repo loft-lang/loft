@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1642, `@FR-L-FnAbsent` — CALLING AN ABSENT FUNCTION ANSWERS NULL.
+//
+// A function type has no null (`@FR-N-Opt`), so an element of a `vector<fn(…)>` read out of
+// range is the ABSENT function: callable, answering its return type's null, and the program goes
+// on (C80, and C66's "a production program never aborts on a user-attributable edge").  It used
+// to panic the interpreter and reach `unreachable!` on `--native`.  Each cell reads one return
+// shape, because each backend spells a different null per shape; the in-range half of every cell
+// is the control that the dispatch itself is unchanged.  `??` on a fn-ref is refused, which
+// `102-expected-errors.loft` pins.
+//
+// @falsified-at: bebca4155 — interpret exit 1 -> 0, native exit 1 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/1642-calling-an-absent-function-answers-null.patch — interpret exit 1 -> 0, native exit 1 -> 0, native panicked -> clean
+// CHANNEL: exit, both backends (the control panics on the first absent call); the assertions
+//   hold each return shape's null once it no longer does.
+// HOLDS: all eight cells on both backends, clean under `LOFT_STRICT_STORES=1`.
+
+fn double(v: integer) -> integer { v * 2 }
+fn apply(f: fn(integer) -> integer, v: integer) -> integer { f(v) }
+fn wrap(s: text) -> text { "<{s}>" }
+fn pos(v: integer) -> boolean { v > 0 }
+fn half(v: float) -> float { v / 2.0 }
+fn three(v: integer) -> vector<integer> { [v, v, v] }
+fn noted(t: text) -> integer { note(t); 4 }
+
+fn trace_path() -> text { return "loft_1642_absent_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn test_an_integer_return() {
+  fs: vector<fn(integer) -> integer> = [double];
+  g = fs[0];
+  assert(apply(fs[0], 4) == 8 && g(4) == 8, "in range, the call dispatches");
+  r = apply(fs[9], 4);
+  assert(!r, "an absent function passed on answers null, got {r}");
+  f = fs[9];
+  s = f(4);
+  assert(!s, "an absent function called from a local answers null, got {s}");
+}
+
+fn test_a_text_return() {
+  fs: vector<fn(text) -> text> = [wrap];
+  a = fs[0]("ab");
+  b = fs[7]("ab");
+  assert(a == "<ab>" && !b, "text: {a} and an absent call's null");
+}
+
+fn test_a_boolean_return() {
+  fs: vector<fn(integer) -> boolean> = [pos];
+  a = fs[0](3);
+  b = fs[5](3);
+  assert(a && b == null, "boolean: true, then the tri-state null");
+}
+
+fn test_a_float_return() {
+  fs: vector<fn(float) -> float> = [half];
+  a = fs[0](3.0);
+  b = fs[4](3.0);
+  assert(a == 1.5 && !b, "float: 1.5, then null, got {a}");
+}
+
+fn test_a_vector_return() {
+  fs: vector<fn(integer) -> vector<integer>> = [three];
+  a = fs[0](1);
+  b = fs[3](1);
+  assert(len(a) == 3 && len(b) == 0, "vector: 3 elements, then the empty null, got {len(a)} {len(b)}");
+}
+
+fn test_a_void_function_is_skipped() {
+  fs: vector<fn(text)> = [note];
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  fs[0]("S1");
+  fs[9]("S2");
+  t = drain();
+  delete(trace_path());
+  assert(t == "S1", "only the present function ran, got {t}");
+}
+
+fn test_arguments_are_evaluated_either_way() {
+  fs: vector<fn(integer) -> integer> = [double];
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  a = fs[0](noted("A"));
+  b = fs[9](noted("B"));
+  t = drain();
+  delete(trace_path());
+  assert(a == 8 && !b && t == "AB", "both arguments evaluated, got {a} {t}");
+}
+
+fn test_in_a_loop() {
+  fs: vector<fn(integer) -> integer> = [double, double];
+  t = "";
+  for i in 0..3 {
+    r = fs[i](i + 1);
+    t += "{r} ";
+  }
+  assert(t == "2 4 null ", "the pass past the end answers null, got {t}");
+}

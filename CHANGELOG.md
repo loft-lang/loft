@@ -14,6 +14,11 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**`loft self-update` and `loft install` download over a patched TLS stack.**  A
+dependency audit now runs every night, and its first run found that the TLS library
+loft downloads with carried a published advisory (RUSTSEC-2026-0285); the fixed version
+ships from this release on.  Nothing in a program changes.
+
 **A ranged type you declare yourself answers an out-of-range step the same way `u8` does.**
 `type Small = integer limit(-100, 100) size(1)` holds 201 values inside a byte's 256, and
 those 55 spare codes used to hold one more thing: a null, which an out-of-range `+=` wrote

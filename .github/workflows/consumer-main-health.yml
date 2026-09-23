@@ -1,0 +1,193 @@
+# Copyright (c) 2026 Jurjen Stellingwerff
+# SPDX-License-Identifier: LGPL-3.0-or-later
+#
+# consumer-main-health — every CONSUMER's tip, against loft main, on a schedule.
+#
+# lib-main-health watches loft's own libraries.  This watches the programs built WITH
+# loft: the games and tools that dogfood the language.  The gap, measured 2026-09-23:
+# the consumers made no commits after 2026-08-31, so nothing ran them against main for
+# three weeks.  Run from scratch copies that night, their suites went red on three causes,
+# two of them loft moving under code nobody was running — a refusal (#1465) that took four
+# moros packages down, a scoping ruling (#1600) that took most of loft_planet down, and a
+# silent-wrong regression (loft#1647) that had been on main for six days, seen by nothing
+# in loft's own suite.  Consumer-found issues had fallen from ~120 in August to 5 in
+# September, and that fall was the consumers' silence, not loft's stability.
+#
+# So this is the gate the stability meters read (STABILITY_ROADMAP.md § The owner's
+# directive): green with no cure needed, two weeks running.
+#
+# Every package is reported separately, on BOTH backends.  A test failure is RED — there
+# is no "compiles, so probably the environment" pass: loft#1647 compiled everywhere and
+# answered wrong.  Graphics packages run under a virtual display, best effort.
+#
+# A cure a consumer needs is recorded in loft's docs (COMPATIBILITY.md § The cures
+# consumers have needed), never applied here: this job only READS their trees.
+#
+# ⚠ `loft test --native` attributes a file's failure to every test in it (loft#1649), so a
+# native red names the FILE; the interpreter leg names the test.
+#
+# The private consumer (Moros-Economy-Development) needs `secrets.CONSUMER_TOKEN` with read
+# access; without it that consumer is SKIPPED with a notice rather than reported green.
+name: consumer-main-health
+
+on:
+  schedule:
+    - cron: '15 6 * * *'   # after lib-main-health (05:45)
+  workflow_dispatch:
+    inputs:
+      consumers:
+        description: 'Space-separated consumer names (default: all)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120   # dryopea's suite alone runs past ten minutes
+    strategy:
+      fail-fast: false     # one red consumer must not hide the state of the others
+      matrix:
+        include:
+          # repo, branch, the package directories that carry tests (a glob), and whether
+          # the job only BUILDS (no tests/ anywhere).
+          - name: moros
+            repo: jjstwerff/moros
+            ref: main
+            packages: 'lib/*'
+            private: false
+          - name: dryopea
+            repo: jjstwerff/dryopea
+            ref: main
+            packages: '.'
+            private: false
+          - name: moros-economy
+            repo: hstellingwerff-jpg/Moros-Economy-Development
+            ref: master
+            packages: 'loft_planet loft_eval'
+            private: true
+          - name: crawler
+            repo: jjstwerff/crawler
+            ref: main
+            packages: '.'
+            private: false
+    steps:
+      - name: Selected?
+        id: sel
+        env:
+          ONLY: ${{ inputs.consumers }}
+        run: |
+          if [ -z "${ONLY:-}" ] || printf ' %s ' $ONLY | grep -q " ${{ matrix.name }} "; then
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Token for a private consumer
+        id: tok
+        if: steps.sel.outputs.run == 'true'
+        env:
+          TOKEN: ${{ secrets.CONSUMER_TOKEN }}
+        run: |
+          if [ "${{ matrix.private }}" = "true" ] && [ -z "${TOKEN:-}" ]; then
+            echo "::notice title=${{ matrix.name }} skipped::private consumer and no CONSUMER_TOKEN secret — NOT checked (this is not a pass)"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout loft
+        if: steps.tok.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          path: loft-src
+
+      - name: Checkout ${{ matrix.name }} tip
+        if: steps.tok.outputs.run == 'true'
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ matrix.repo }}
+          ref: ${{ matrix.ref }}
+          path: consumer
+          token: ${{ matrix.private && secrets.CONSUMER_TOKEN || github.token }}
+
+      - name: Install mold and a virtual display
+        if: steps.tok.outputs.run == 'true'
+        run: sudo apt-get update -y && sudo apt-get install -y mold xvfb
+
+      - name: Cache cargo + loft build
+        if: steps.tok.outputs.run == 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            loft-src/target
+          key: consumer-main-health-${{ hashFiles('loft-src/Cargo.lock') }}
+          restore-keys: consumer-main-health-
+
+      - name: Build loft
+        if: steps.tok.outputs.run == 'true'
+        working-directory: loft-src
+        run: |
+          cargo build --release --lib --bin loft
+          echo "$PWD/target/release" >> "$GITHUB_PATH"
+
+      # Per package: the suite on the interpreter, then on native.  A package with no
+      # tests/ is BUILT (`loft --check` on its entry) so a refusal still shows.
+      - name: Check every package
+        if: steps.tok.outputs.run == 'true'
+        working-directory: consumer
+        run: |
+          set -u
+          fail=0
+          summary=""
+          for pat in ${{ matrix.packages }}; do
+            for dir in $pat; do
+              [ -f "$dir/loft.toml" ] || continue
+              name=$(sed -n 's/^ *name *= *"\(.*\)".*/\1/p' "$dir/loft.toml" | head -1)
+              name=${name:-$dir}
+              echo "::group::$name"
+              ( cd "$dir" && loft install >/dev/null 2>&1 ) || true
+              # dryopea's runner writes into tests/actual/; a fresh clone has none.
+              [ -d "$dir/tests" ] && mkdir -p "$dir/tests/actual"
+              if [ -d "$dir/tests" ]; then
+                legs=""
+                for mode in --interpret --native; do
+                  if ( cd "$dir" && LOFT_TIMEOUT=600 xvfb-run -a loft test $mode > "/tmp/$name$mode.log" 2>&1 ); then
+                    legs="$legs ok |"
+                  else
+                    legs="$legs FAIL |"; fail=1
+                    echo "::error title=$name ($mode): tests fail on loft main::$(grep -E 'FAIL|error' "/tmp/$name$mode.log" | head -3 | tr '\n' ' ')"
+                    grep -E 'FAIL|error|test result' "/tmp/$name$mode.log" | head -40
+                  fi
+                done
+                summary="$summary| \`$name\` |$legs\n"
+              else
+                entry=$(sed -n 's/^ *entry *= *"\(.*\)".*/\1/p' "$dir/loft.toml" | head -1)
+                entry=${entry:-src/$name.loft}
+                if ( cd "$dir" && LOFT_TIMEOUT=600 loft --check "$entry" > "/tmp/$name.check.log" 2>&1 ); then
+                  summary="$summary| \`$name\` | builds | (no tests) |\n"
+                else
+                  fail=1
+                  summary="$summary| \`$name\` | BUILD FAIL | (no tests) |\n"
+                  echo "::error title=$name: does not build on loft main::"
+                  head -40 "/tmp/$name.check.log"
+                fi
+              fi
+              echo "::endgroup::"
+            done
+          done
+          {
+            echo "### ${{ matrix.name }} @ ${{ matrix.ref }} vs loft@${{ github.sha }}"
+            echo
+            echo "| package | interpreter | native |"
+            echo "|---|---|---|"
+            printf "$summary"
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit $fail

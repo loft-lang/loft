@@ -4920,6 +4920,7 @@ pub fn drop_copy_census(
             sites += cx.sites;
             if refuse {
                 raise_copy_refusals(&mut cx, def, diags, fallback_file);
+                raise_spent_reads(d_nr, def, diags, fallback_file);
             }
         }
     }
@@ -4993,6 +4994,58 @@ fn raise_copy_refusals(
             condition: Some(
                 "the value is only being READ here — an argument binds without copying".to_string(),
             ),
+            edit: None,
+            concept: "move",
+            concept_ref: "@F106",
+        });
+    }
+}
+
+/// `(H-Spent)` — a read of a name whose value an earlier statement MOVED, raised beside the copy
+/// refusals from the reads `crate::spent` found in the parser's body.  The error names the line
+/// the value moved on and the cure the rule gives: read it through the structure it moved into,
+/// or give the name a new value first.
+fn raise_spent_reads(
+    d_nr: u32,
+    def: &crate::data::Definition,
+    diags: &mut crate::diagnostics::Diagnostics,
+    fallback_file: &str,
+) {
+    let def_file = if def.position.file.is_empty() {
+        fallback_file
+    } else {
+        def.position.file.as_str()
+    };
+    for read in crate::spent::take(d_nr) {
+        let (file, line, col) = match &read.pos {
+            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
+            Some(p) => (def_file, p.line, p.pos),
+            None => (def_file, read.line, 0),
+        };
+        diags.add_at_coded(
+            crate::diagnostics::Level::Error,
+            Some("read-after-move"),
+            &format!(
+                "`{}` is read after its value moved at line {} — the structure it moved into \
+                 releases it now",
+                read.name, read.moved_line
+            ),
+            file,
+            line,
+            col,
+        );
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "read it through the structure it moved into".to_string(),
+            condition: Some("the value is still needed after it moved".to_string()),
+            edit: None,
+            concept: "move",
+            concept_ref: "@F106",
+        });
+        diags.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("give `{}` a new value before this read", read.name),
+            condition: Some("this line means a new value of its own".to_string()),
             edit: None,
             concept: "move",
             concept_ref: "@F106",

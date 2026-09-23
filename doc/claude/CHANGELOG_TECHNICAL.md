@@ -9,6 +9,74 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The release checks re-cut: a gate that can end in evidence, rows that say what they are (2026-09-23)
+
+An audit of the accumulated release checks found the release gate (`release-gate.yml`)
+red on all three of its runs, every time on legs that were not the candidate's — the
+Windows `Test` leg (red or cancelled on 11 of the 14 nightlies to 09-23), the macOS and
+Windows repro legs (a C toolchain the verifier cannot compare; an exit 3 since 09-15) and
+`registry-validation` (a package's own defect: `hex_fit`, then `imaging`) — while the
+checklist read the verdict and nothing else.  So 2026.9.0 shipped on hand-run
+substitutes and a 90-minute run proved nothing.  Changed:
+
+- **`registry-validation.yml` is no longer a gate leg.**  RELEASE.md § What forces a
+  release: the registry is never release-coupled.  `revalidate-libs` stays.
+- **A waiver, on the record.**  `make release-checklist ARGS="--waive <leg> --note
+  '<why>'"` stores the leg against the RUN it was red in (`_waivers` in the cycle's
+  `checklist.json`); `A-release-gate` reads the run's jobs and answers *green with
+  waived legs* when every red leg is waived, naming the unwaived ones otherwise.  A
+  waiver names one run, so the next starts with none.
+- **Three row classes.**  `report=True` rows must be READ, never block and never set the
+  exit code: the monthly reviews, the censuses, the perf pass, and the two watermark
+  reviews `A-reference-review` / `A-skills-review`, which re-arm on any chapter commit
+  and read as blockers on an active tree.  `derived=` rows are manual rows a green gate
+  job on HEAD's commit satisfies without a hand-run: `M-valgrind` (`miri.yml / Valgrind
+  memcheck sweep`), `M-libs` (`revalidate-libs.yml / gate`), `M-wasm` (`ci.yml / Browser
+  build + probe` + the wasm node bridge).  The tally reports gates and reports apart.
+- **A tick records HEAD's commit**, and a `[cand]` tick whose commit differs from HEAD
+  in `src/`, `default/`, `tests/`, the manifests or `loft-ffi` reads `[~] STALE` (2026-09's
+  sweeps were ticked on `e77ef442`; the tag was `b1016d00`).
+- **Retired:** `M-leaks` (the wrap suite hard-fails a `tests/scripts` file that leaks a
+  store, `SCRIPTS_LEAK_ALLOW` empty — a hand re-run of a suite assertion);
+  `M-hands-linux/-macos/-windows` (the tag pipeline's bundle smoke IS the walkthrough,
+  per the owner 2026-09-05; `A-smoke` reads it and `M-rosetta` appears only when it
+  reports a skip); `M-install-live` (`scripts/acquisition-chain.sh` step 6 installs
+  `regex` with the acquired binary into a fresh `LOFT_HOME` against the live index).
+- **New:** `A-audit` (`cargo audit` over `Cargo.lock`) and the nightly `audit` job in
+  `miri.yml` (`@nightly-class: report`).  Its first run found RUSTSEC-2026-0285 (rustls
+  0.23.40, the TLS 1.3 handshake, on the `self-update` / `loft install` path) and
+  RUSTSEC-2026-0204 (crossbeam-epoch 0.9.18); both bumped with `cargo update -p rustls
+  -p crossbeam-epoch`.  `rust-version = "1.96"` in Cargo.toml, proven by a release build
+  under 1.96.0, and an `msrv` leg in the nightly toolchain matrix that resolves it from
+  the manifest — `--native` compiles a user's program with THEIR rustc, and the matrix
+  tested beta and nightly, never a stable behind.
+- **`make release-liveness`** tallies the last 14 scheduled runs per gate workflow, names
+  the red jobs and flags a CHRONIC one (red in half the window or more); it read only
+  the last run, which said "ci.yml in flight" over a Windows leg red ten nights in
+  fourteen.  `revalidate-libs.yml` and the weekly `repro-build.yml` join its list.
+- **RELEASE.md** loses the 0.9.0/1.0.0 milestone tables, the semver policy and the April
+  status lines (calendar versions since `2026-06`; the contract is COMPATIBILITY.md), and
+  the safety gate states each mechanism as it runs today.
+
+Still open, and the owner's: `release.yml`'s `docs` job (a Pages deploy to an unserved
+branch, red at `make game` on every release since 2026.7.2 — to delete by hand); the
+Windows `Test` leg itself (loft#1652); `A-deviations`, which has never been green and
+blocks 2026.10.0 on six open deviations; and a consumer-apps leg (moros, dryopea) with
+`revalidate-libs`' native run made gating (loft#1653).
+
+### A best-fit claim carves its node in place (2026-09-23)
+
+`@FR-H-Carve`, both backends, default ON (`LOFT_NO_CARVE_IN_PLACE=1` deletes the node and
+inserts the remainder again, read per store at construction).  When the free block a claim
+takes is at least twice the request, the remainder takes the block's place in the free tree —
+its links, its color, its parent's pointer — instead of a tree delete and an insert: the block
+is the smallest that fits, so every node before it is smaller than the request and a remainder
+of at least the request keeps its place in the order.  The key set is the one the delete and
+insert leave, so every claim takes the block it always took (a seeded side-by-side unit test
+pins the layout and the tree's validity, and fails on a carve that breaks the order or drops
+the color).  `hash_text_keys` −8.0 %, `grouped_fill_find` −2.9 %, every other bench row within
+noise, every hash unchanged.
+
 ### C127 — a declared narrow range has no null; the spare-code encodings retired (2026-09-23)
 
 `uncomputable_default` answered `i64::MIN` for a non-nullable spec that left a code unused
