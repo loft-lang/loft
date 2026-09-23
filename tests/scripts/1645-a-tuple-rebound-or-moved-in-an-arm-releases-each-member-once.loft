@@ -19,7 +19,16 @@
 // D-heap-8 carries its missing error.  Every expected trace is worked out by hand: `M<id>` a
 // mint, `R<id>` a read, `<id>` a release.
 //
-// @falsified-at: pending
+// @falsified-at: c4b3fb4f3 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1645-a-tuple-rebound-or-moved-in-an-arm-releases-each-member-once.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion
+//   failures -> 0
+// CHANNEL: the assertion count and the exit code, identically on both backends.
+// ARMED: no instrument — each hook call and read is written to this guard's own trace file.
+// WITNESS: on the control, `r1 then` traces `M1,1,M2,R2` (the member's hook never runs) and
+//   `m1 then` `M40,R40,40,E,40` (the moved member released twice).
+// HOLDS: leak, panic and refusals are unmoved on both trees; every trace here is hand-worked.
 //
 struct Th { id: integer }
 
