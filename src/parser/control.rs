@@ -723,6 +723,22 @@ impl Parser {
         // `@FR-B-Scope` — this block is open while its statements parse.
         self.block_ord = self.block_ord.wrapping_add(1);
         self.block_path.push(self.block_ord);
+        // A loop's variable belongs to the loop's BODY (`@FR-B-Scope`, as in Rust): the `for`
+        // header binds it, so this block is where it is bound.
+        if matches!(context, "for" | "parallel for") {
+            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body.
+            let binders = std::mem::take(&mut self.pending_loop_binders);
+            let lv = self.vars.current_loop_variable();
+            for v in std::iter::once(lv).chain(binders) {
+                if self.first_pass {
+                    break;
+                }
+                if v != u16::MAX {
+                    self.bound_in_block
+                        .insert((self.context, v), self.block_path.clone());
+                }
+            }
+        }
         let cc_ret = self.parse_block_inner(context, val, result);
         self.block_path.pop();
         self.fit_armed = outer_fit;
@@ -5585,7 +5601,7 @@ impl Parser {
                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
                 result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
                 self.match_void_arm |= matches!(arm_type, Type::Void);
-                if matches!(result_type, Type::Void | Type::Null | Type::Never) {
+                if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                     result_type = arm_type.clone();
                 } else if !self.first_pass
                     && arm_type != Type::Void
@@ -6133,7 +6149,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if matches!(result_type, Type::Void | Type::Null | Type::Never) {
+            if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                 result_type = arm_type.clone();
             } else if !self.first_pass
                 && arm_type != Type::Void
@@ -6531,7 +6547,7 @@ impl Parser {
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
         *result_type = joined;
         self.match_void_arm |= matches!(arm_type, Type::Void);
-        if matches!(*result_type, Type::Void | Type::Never) {
+        if matches!(result_type.base(), Type::Void | Type::Never) {
             *result_type = arm_type.clone();
         } else if !self.first_pass
             && arm_type != Type::Void
@@ -9514,7 +9530,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if matches!(result_type, Type::Void | Type::Null | Type::Never) {
+            if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                 result_type = arm_type.clone();
             }
             // P209 — when the arm has both a guard and pattern bindings
@@ -10612,7 +10628,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if matches!(result_type, Type::Void | Type::Never) {
+            if matches!(result_type.base(), Type::Void | Type::Never) {
                 result_type = arm_type.clone();
             }
             // Without a guard the bindings fold into the body exactly as before; with one they

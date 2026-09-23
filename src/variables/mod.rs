@@ -1087,6 +1087,15 @@ impl Function {
         }
     }
 
+    /// The variable the loop now being parsed binds, or `u16::MAX` outside a loop or before
+    /// the header has bound it.
+    pub(crate) fn current_loop_variable(&self) -> u16 {
+        if self.current_loop == u16::MAX || self.current_loop as usize >= self.loops.len() {
+            return u16::MAX;
+        }
+        self.loops[self.current_loop as usize].variable
+    }
+
     /// `@FR-I-For` — record a place the current loop's source reads (see
     /// `Iterator::source_places`).  No-op when there is no active loop.
     pub(crate) fn add_loop_source_place(&mut self, place: &Value) {

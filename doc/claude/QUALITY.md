@@ -2773,7 +2773,7 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **317** |
+| **314** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
@@ -2781,20 +2781,31 @@ function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` 
 comparison this row gates.
 
 (2026-09-23, the JOIN of `tuxedo-pr1632-red`, `tuxedo-1562-layout-gate`, `tuxedo-165-generics`
-and `157-native-4x`, measured on the joined tree: **964 · 643 · 4 · 317**, opaque tests 1308,
-`--check-ratchet` re-pinned there.  Neither branch's figure was carried, because a derived row
-belongs to the TREE and the union's is neither side's — `tuxedo-1562-layout-gate` read 318 /
-1304 and `tuxedo-165-generics` 319 / 1306.
+and `157-native-4x`, measured on the joined tree: **964 · 646 · 4 · 314**, opaque tests 1303,
+`--check-ratchet` re-pinned there.
 
-Where the 317 comes from, per side.  The FALL is loft#1629 (the debugger's frame reader and
-writer peel `τ?` to its scalar base, the arm `render_frame_local` already had), loft#1614 and
-loft#1631 (`intervals.rs`'s early-`first_def` test asks `type_def.base()`; the link tests peel
-before matching `RefVar`; the whole-record copy question moved into `Function::record_copy_source`,
-which peels), and C127, which retired `NarrowSlot.spare` and `reserves_sentinel_unconditionally`
-along with their branches.  The RISE is loft#1600's duplicated match-arm join, `parse_match_inner`
-4 → 6, which put `tuxedo-165-generics` at an actual 1311 against its own pinned 1306 — caught on
-this join and fixed by loft-96 at `d66ccc247` with `result_type.base()`, which is not yet in this
-tree.  So 317 / 1308 is this tree's honest figure and the next join should measure lower again.)
+That figure is lower than every branch it was built from — `tuxedo-165-generics` 316 / 1306,
+`tuxedo-1562-layout-gate` 318 / 1304, an earlier join of the same four 317 / 1308 — because the
+falls COMPOSE and none of the branches could see the others'.  It is the argument for
+re-measuring a derived row on a join rather than carrying the best-looking number: the union's
+value is nobody's, and here it beats all of them.  The contributors are loft#1629 (the
+debugger's frame reader and writer peel `τ?` to its scalar base), loft#1614 and loft#1631
+(`intervals.rs`'s early-`first_def` test, the link tests, and `Function::record_copy_source`),
+loft#1600's `result_type.base()` fix below, and C127, which retired `NarrowSlot.spare` and
+`reserves_sentinel_unconditionally` along with the branches that discriminated on them.)
+
+(2026-09-23, loft#1600 on `tuxedo-165-generics`: **316**, opaque tests 1306, re-pinned with
+`--write-ratchet`.  The `match` arm joins ask their not-yet-settled question — `Void`, `Null` or
+`Never` — through `result_type.base()`; spelled as bare `matches!` they had grown the opaque tests
+by five, which `--check-ratchet` caught and the gate does not run.)
+
+(2026-09-23, loft#1614 and loft#1631 on `tuxedo-165-generics`, rebased onto `main` @ 6c79912b5
+(#1632) and re-measured there: **956 · 633 · 4 · 319**, and `--check-ratchet` re-pinned at opaque
+319, opaque tests 1306.  `intervals.rs`'s early-`first_def`
+test now asks `type_def.base()` — a nullable heap local pre-inits exactly as its non-null twin
+does — and the new link tests peel before they match `RefVar`.  The whole-record copy question
+moved into `Function::record_copy_source`, which peels; `generation::classify_set` is opaque
+again, as it was before the session, on its bare `vars.tp(v)` candidate test.)
 
 (2026-09-22, @PLN165 E5–E7 on `tuxedo-165-generics`, rebased onto `main` @ ffb66a58b and
 re-measured there: **946 · 620 · 4 · 322**, and `--check-ratchet` re-pinned at opaque 322,

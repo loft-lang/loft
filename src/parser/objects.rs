@@ -258,14 +258,15 @@ impl Parser {
     /// as in Rust: a read of it from outside the block is refused.  The block path of the
     /// statement that last bound it is recorded at every binding position; a bind from outside
     /// that path starts a new binding there (`w = 3` after the block is legal and makes `w`
-    /// the outer block's).  Parameters and loop variables are bound by their construct, not by
-    /// a statement, and are not tracked; nor are the compiler's own locals.  The question is
+    /// the outer block's).  A loop variable is bound by its `for` header into the loop's body
+    /// (`parse_block` records that path), so it too is gone after the loop.  Parameters are
+    /// bound for the whole function and are not tracked; nor are the compiler's own locals.  The question is
     /// asked of the VARIABLE's name, not the spelling: a text parameter written in a block
     /// is promoted to a `__tp_<name>` copy the spelling then resolves to, and that copy is
     /// still the parameter.
     fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
         let own = self.vars.name(var);
-        if self.vars.is_argument(var) || self.vars.was_loop_var(var) || own.starts_with("__") {
+        if self.vars.is_argument(var) || own.starts_with("__") {
             return;
         }
         let key = (self.context, var);

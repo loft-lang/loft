@@ -3726,6 +3726,8 @@ use #count instead"
                                 let var = self.create_var(name, &bind_tp);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
+                                // Bound by the header, scoped to the body (`@FR-B-Scope`).
+                                self.pending_loop_binders.push(var);
                                 // A generator handle carries no deps to say so: marked instead
                                 // (loft#1585), as a `for` over a vector of handles marks its
                                 // loop variable.
