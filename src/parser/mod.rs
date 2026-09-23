@@ -2883,6 +2883,7 @@ impl Parser {
                 .add_attribute(&mut self.lexer, d, &name, buf_tp.clone());
             self.data.definitions[d as usize].attributes[a].hidden = true;
             let f = &mut self.data.definitions[d as usize].variables;
+            f.mark_nullable_text_buffer(v);
             f.set_type(v, buf_tp.clone());
             f.become_argument(v);
             f.mark_used(v);

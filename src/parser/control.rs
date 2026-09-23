@@ -11741,6 +11741,17 @@ impl Parser {
                         // the wrong escape hatch — call sites would push a
                         // 12-byte null DbRef where the slot is 16+ bytes).
                     }
+                    // loft#1616 — pass 2 FOLLOWS pass 1 for an author's local (loft#1099's
+                    // rule): a promotion grows a hidden `&text` PARAMETER, so a verdict pass 1
+                    // did not reach would move a signature pass 1 already published.  A local
+                    // pass 1 promoted arrives here as `Attr`; one reaching this arm on pass 2
+                    // was not, and is delivered by copy like `SkipSecondTextBuf`.  The tail's
+                    // dep LIST is what differs between passes (`a ?? b ?? "d"` lists `a` on
+                    // pass 1 and `b` on pass 2 from a byte-identical body).  A compiler temp
+                    // (`__tret`, `___acc`) is minted on the pass that promotes it, so it is not
+                    // gated.
+                    TextDep::PromoteHidden
+                        if !self.first_pass && !self.vars.is_compiler_generated(*v) => {}
                     TextDep::PromoteHidden => {
                         let n = self.vars.name(*v);
                         let a = self.data.add_attribute(
@@ -11757,6 +11768,7 @@ impl Parser {
                         // the deps-based exclusion that wrongly dropped returned params.
                         self.data.definitions[self.context as usize].attributes[a].hidden = true;
                         self.vars.become_argument(*v);
+                        self.vars.mark_nullable_text_buffer(*v);
                         dep.push(a as u16);
                         self.vars
                             .set_type(*v, Type::RefVar(Box::new(Type::Text(Deps::none()))));

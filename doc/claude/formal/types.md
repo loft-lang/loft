@@ -678,6 +678,19 @@ the count sits here and the entry sits in [types-history.md](types-history.md) â
 delegates its register states a number nothing beside it can check.  `rule_tags.py registers`
 now checks it, by attributing a `-history` companion's entries to its chapter.
 
+`D-Text-Promote` opened and closed 2026-09-23 (loft#1616): a `text?` local promoted to a
+`-> text` function's hidden `&text` work buffer lost its `?`, against `(N-Shape)` (the `?` is a
+marker over Ï„'s own storage and never selects a road).  So pass 2 checked the local's own
+`a: text? = null` against `&text` and refused it, and a later `a = null` drew a false
+`(N-Store)` warning.  `a: text? = null; return a ?? "d"` did not compile, on both backends.
+Beside it, the list of locals a tail promotes was not pass-stable (`a ?? b ?? "d"` listed `a` on
+pass 1 and `b` on pass 2), so a hidden parameter grew on pass 2 alone and the H5 contract
+aborted the compiler.  Closed by marking a promoted `text?` local on its `Function`
+(`mark_nullable_text_buffer`, carried across passes), read where the null store is checked and
+converted.  An author's `&text` and a buffer promoted from a non-null `text` keep the refusal.
+Pass 2 now follows pass 1 for an author's local, loft#1099's rule.  Guard
+`tests/scripts/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft`.
+
 `D-Narrow-Limit` opened and closed 2026-09-22 (loft#1593): a user-written `limit(a, b)` was
 outside all three narrowing rules, keyed out by the alias's `forced_size`; one predicate now
 asks the two full-integer templates instead, and the runtime default is reachable only on the

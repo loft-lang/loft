@@ -3889,7 +3889,18 @@ use a separate collection or add after the loop"
         // only place the five things that spelling can mean are told apart (loft#1404 —
         // `Parser::copy_ref`).
         if s_type == Type::Null && op == "=" && !crate::data::is_dbref(f_type) {
-            self.convert_store(code, &Type::Null, f_type, "the assignment target", None);
+            // loft#1616 — a `text?` local promoted to a hidden `&text` work buffer keeps its `?`
+            // (`@FR-N-Shape`): the store is converted against the NULLABLE slot it is, which
+            // lowers `null` to the sentinel without reporting an `@FR-N-Store` breach.
+            let slot = if var_nr != u16::MAX
+                && self.vars.exists(var_nr)
+                && self.vars.is_nullable_text_buffer(var_nr)
+            {
+                Type::optional(f_type.clone())
+            } else {
+                f_type.clone()
+            };
+            self.convert_store(code, &Type::Null, &slot, "the assignment target", None);
         }
         if var_nr == u16::MAX && !skip_validate {
             // Use the LHS target's parent type saved BEFORE the RHS parse — the RHS

@@ -1,0 +1,73 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1616, `@FR-N-Shape` / `@FR-N-Store` — A TEXT LOCAL PROMOTED TO THE RETURN BUFFER KEEPS
+// ITS `?`.
+//
+// A `-> text` function hands its text local to the caller as a hidden `&text` work buffer
+// (`text_return`).  `(N-Shape)`: the `?` is a marker over τ's own storage and never selects a
+// road, so a `text?` local takes the same promotion as its dense twin, and its null is
+// `STRING_NULL` in the buffer's own slot.  Two defects stood between that rule and a program:
+//
+// - The promotion lost the `?`.  Pass 2 checked the local's own `a: text? = null` against the
+//   buffer's `&text` and refused it (*"cannot change type from &text to null"*), and a later
+//   `a = null` drew a false `(N-Store)` warning.  So `a: text? = null; return a ?? "d"` did not
+//   compile.
+// - The list of locals a tail promotes was not pass-stable.  `return a ?? b ?? "d"` listed `a`
+//   on pass 1 and `b` on pass 2 from a byte-identical body, so `b` grew a hidden PARAMETER on
+//   pass 2 alone and the H5 two-pass contract aborted the compiler.  Pass 2 now FOLLOWS pass 1
+//   for an author's local (loft#1099's rule).
+//
+// The mark is kept for a `text?` local only: a buffer promoted from a non-null `text`, and an
+// author's `&text` parameter, still refuse `null`.
+//
+// @falsified-at: 1d0ca28cd — interpret exit 101 -> 0, interpret panicked -> clean, native exit 101 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.patch —
+//   the same channels (the control's first failure is the H5 abort).
+// CHANNEL: the program compiles and every value is exact, both backends.
+// HOLDS: clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1`; the controls `k1`–`k3` compile before and after.
+
+fn t_chain() -> text { a: text? = null; b: text? = "b"; return a ?? b ?? "d"; }
+fn t_one() -> text { a: text? = null; return a ?? "d"; }
+fn t_all_null() -> text { a: text? = null; b: text? = null; return a ?? b ?? "d"; }
+fn t_dense_mid() -> text { a: text? = null; b: text = "b"; return a ?? b ?? "d"; }
+fn t_grouped() -> text { a: text? = null; b: text? = "b"; return (a ?? b) ?? "d"; }
+fn t_rebound() -> text { a: text? = null; a = "x{1}"; return a ?? "d"; }
+fn t_to_null(k: integer) -> text { a: text? = "v{k}"; if k == 0 { a = null; } return a ?? "z"; }
+fn t_per_call(k: integer) -> text {
+  a: text? = null;
+  if k > 1 { a = "x{k}"; }
+  b: text? = null;
+  if k == 1 { b = "b"; }
+  return a ?? b ?? "d";
+}
+fn q_nullable() -> text? { a: text? = null; b: text? = "b"; return a ?? b; }
+fn q_absent() -> text? { a: text? = null; return a; }
+// Controls: the shapes that compiled before.
+fn k_first() -> text { a: text? = "a"; b: text? = "b"; return a ?? b ?? "d"; }
+fn k_bound() -> text { a: text? = null; b: text? = "b"; c = a ?? b ?? "d"; return c; }
+fn k_link(s: &text?) { s = null; }
+
+fn main() {
+  assert(t_chain() == "b", "chain: {t_chain()}");
+  assert(t_one() == "d", "one operand: {t_one()}");
+  assert(t_all_null() == "d", "all null: {t_all_null()}");
+  assert(t_dense_mid() == "b", "dense middle: {t_dense_mid()}");
+  assert(t_grouped() == "b", "grouped: {t_grouped()}");
+  assert(t_rebound() == "x1", "rebound: {t_rebound()}");
+  assert(t_to_null(0) == "z", "rebound to null: {t_to_null(0)}");
+  assert(t_to_null(5) == "v5", "kept: {t_to_null(5)}");
+  out = "";
+  for k in 0..4 { out += t_per_call(k) + ","; }
+  assert(out == "d,b,x2,x3,", "per call, the caller's buffer reused: {out}");
+  s = t_per_call(2);
+  t = t_per_call(1);
+  assert("{s}/{t}" == "x2/b", "two results held at once: {s}/{t}");
+  assert((q_nullable() ?? "N") == "b", "-> text? chain");
+  assert((q_absent() ?? "N") == "N", "-> text? absent");
+  assert(k_first() == "a", "control: first operand present");
+  assert(k_bound() == "b", "control: bound to a local first");
+  z: text? = "x";
+  k_link(z);
+  assert((z ?? "N") == "N", "control: a nullable link takes null");
+  println("a text local promoted to the return buffer keeps its ?: every cell holds");
+}
