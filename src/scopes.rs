@@ -14542,10 +14542,13 @@ impl Scopes<'_> {
         // nothing unreleased.  Dropped from the join instead, the member fell to the bare
         // free on both paths and no hook ran (loft#1645).  A statement `if` only: after a
         // value `if` a statement would change its value.
-        let statement_if = [&scanned_true, &scanned_false].iter().all(|arm| {
-            matches!(arm.unspan(), Value::Null)
-                || matches!(arm.unspan(), Value::Block(b) if matches!(b.result, Type::Void))
-        });
+        let statement_if = [&scanned_true, &scanned_false]
+            .iter()
+            .all(|arm| match arm.unspan() {
+                Value::Null => true,
+                Value::Block(b) => matches!(b.result.base(), Type::Void),
+                _ => false,
+            });
         let mut disarms: Vec<Value> = Vec::new();
         if statement_if {
             let mut joined: Vec<(u16, u16)> = Vec::new();
