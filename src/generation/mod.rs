@@ -894,6 +894,10 @@ pub struct Output<'a> {
     /// function.  [`Output::text_borrowed`] is the one predicate that reads it, beside the
     /// text parameters it always answers.
     pub borrowed_text_locals: HashMap<u16, hoist::TextBorrow>,
+    /// `@FR-R-TextBorrow`'s store-read clause — the statement-bound text locals among
+    /// [`Output::borrowed_text_locals`] ([`hoist::borrowed_store_texts`]): every `Set` of
+    /// one binds its `&str` slot.
+    pub borrowed_store_locals: HashSet<u16>,
     /// `LOFT_NO_TEXT_BORROW=1` — every walk of texts copies its element again, as before
     /// `@FR-R-TextBorrow`; the bisect step for a wrong or stale text read through the loop
     /// variable of `for p in vector<text>` on native.
@@ -2190,6 +2194,7 @@ impl<'a> Output<'a> {
             split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
             text_base_disabled: std::env::var("LOFT_NO_TEXT_BASE").is_ok_and(|v| v != "0"),
             borrowed_text_locals: HashMap::new(),
+            borrowed_store_locals: HashSet::new(),
             text_borrow_disabled: std::env::var("LOFT_NO_TEXT_BORROW").is_ok_and(|v| v != "0"),
             char_walks: BTreeMap::new(),
             char_walk_binds: HashMap::new(),
@@ -2547,6 +2552,7 @@ impl Output<'_> {
             .chain(self.split_table_aliases.keys())
             .copied()
             .collect();
+        self.borrowed_store_locals.clear();
         self.borrowed_text_locals = if self.text_borrow_disabled {
             HashMap::new()
         } else {
@@ -2556,6 +2562,9 @@ impl Output<'_> {
                 def_nr,
                 &self.split_tables,
             ));
+            let store = hoist::borrowed_store_texts(self.data, def_nr, &walks);
+            walks.extend(store.borrows);
+            self.borrowed_store_locals = store.locals;
             walks
         };
         self.char_walks = if self.char_walk_disabled {

@@ -345,6 +345,18 @@ parameter (via `&`) is host, a genuinely-copied one is script-owned.
                  the tail and a delete into it cost no tree delete, insert or
                  rebalance.  At most one wilderness exists, it never overlaps a claim,
                  and the open walk (and every re-tiling) re-derives it.
+  (H-Carve)      inside one store, a best-fit claim of n words from a tree node of b
+                 words with b − n ≥ n puts the (b − n)-word remainder IN THE NODE'S
+                 PLACE — the node's links, its color, its parent's pointer — instead of
+                 deleting the node and inserting the remainder.  The node is the
+                 SMALLEST of at least n words by the tree's (size, position) order, so
+                 every node before it is smaller than n: a remainder of at least n
+                 words still follows that predecessor, and being smaller than b it
+                 still precedes the successor.  The tree's key set is the one the
+                 delete and insert leave, so every later claim takes the same block
+                 and the layout is unchanged; what changes is that the claim costs no
+                 tree delete, insert or rebalance.  A remainder under n words, or
+                 under the tree's minimum, takes the delete and the insert.
 ```
 
 **`H-RootExtent` is what makes `H-ClearRelease`'s release affordable.** The release has to

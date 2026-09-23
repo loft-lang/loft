@@ -4733,17 +4733,25 @@ fn block_tail_var(v: &Value) -> Option<u16> {
     }
 }
 
-/// loft#890 — the argument index whose STORE `outer_call` frees WHOLE for itself, via
-/// the `0x8000` source-free bit on its `const u16` type parameter.
+/// loft#890, loft#1647 — the argument index whose STORE `outer_call` frees WHOLE for
+/// itself, via the `0x8000` source-free bit on its `const u16` type parameter.
 ///
-/// Only `OpReplaceKeyed` answers.  Every op carrying that bit frees SOMETHING, but only
-/// the keyed whole-collection replace frees a store that a `__lift_N` also owns: its
-/// source is a keyed collection minted by a call, which is a store of its own.
-/// `OpCopyRecord`'s move releases a RECORD inside a store whose life the append site
-/// already governs (@PLN85's Join-return machinery reads that site), so answering for it
-/// here would take the free away from the analysis that owns it.
+/// `OpReplaceKeyed` and `OpCopyRecord` answer: each releases its source's whole store
+/// (`Stores::free` takes the store, not the record) once the copy is made, and a source
+/// that is an inline call the scope pass lifts into a `__lift_N` is a store that temp also
+/// owns.  Its scope-exit `OpFreeRef` is then a second release — silent while the slot stays
+/// free, and a stolen store the moment the allocator hands that slot to anything minted
+/// before the scope ends: `m.vs += [vert(a, up)]` followed by a lazily minted return buffer
+/// in the same pass freed that buffer at the pass's end, and the next pass's value was read
+/// from whatever took the slot after it (@FR-H-FreeAll: a store is released exactly once;
+/// @FR-H-FreeTwice names the slot reuse a second release hits).  Where the
+/// copy declines its release (the same store as the destination, a stack, free, read-only
+/// or free-protected store) the lift's own free would release nothing it owns either.
 fn moved_source_arg(outer_call: u32, args: &[Value], data: &Data) -> Option<usize> {
-    if outer_call == u32::MAX || outer_call != data.def_nr("OpReplaceKeyed") {
+    if outer_call == u32::MAX
+        || (outer_call != data.def_nr("OpReplaceKeyed")
+            && outer_call != data.def_nr("OpCopyRecord"))
+    {
         return None;
     }
     matches!(args.get(2).map(Value::unspan), Some(Value::Int(tp)) if tp & 0x8000 != 0).then_some(0)

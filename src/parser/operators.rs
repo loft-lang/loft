@@ -415,7 +415,11 @@ impl Parser {
     /// Check whether `val` is a call to a user-defined function that returns a struct
     /// via a temporary store.  Used by `copy_ref` and the vector-append
     /// emit path (`vectors.rs`) to decide whether to free the source
-    /// store after the deep copy.  The free bit's behaviour differs
+    /// store after the deep copy.  A callee that can hand back an ARGUMENT's record
+    /// (`fn same(w: S) -> S { w }`, `returns_borrowed_view`) does not answer a store of
+    /// its own, so the bit is never set for it: its call binds a private copy in the
+    /// scope pass's lift, which that lift's own scope exit releases once (loft#1647).
+    /// The free bit's behaviour differs
     /// under WASM but the query is the same on every target — call
     /// sites in expressions.rs / objects.rs / vectors.rs / collections.rs
     /// are not feature-gated, so this helper must not be either.
@@ -429,6 +433,7 @@ impl Parser {
                 // User function with code (not a built-in op)
                 def.name().starts_with("n_")
                     && *def.code() != Value::Null
+                    && !def.returns_borrowed_view()
                     && !self.answers_caller_buffer(*fn_nr, args)
             }
             // Struct constructor blocks allocate a store too — when assigned

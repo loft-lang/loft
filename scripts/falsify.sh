@@ -77,7 +77,10 @@ else
 fi
 
 ROOT=$(git rev-parse --show-toplevel)
-CACHE="${LOFT_FALSIFY_CACHE:-${TMPDIR:-/tmp}/loft-falsify}"
+# On DISK, never in TMPDIR: a control plus the HERE build is a full debug `target/` each
+# (~2 GB), and `/tmp` is a RAM tmpfs on many Linux boxes — one run filled a 7.5 GB one, and
+# the build then failed as "this tree does not build" before the LRU below could run.
+CACHE="${LOFT_FALSIFY_CACHE:-${XDG_CACHE_HOME:-$HOME/.cache}/loft-falsify}"
 
 # Resolve a control ref to a commit, reaching into `refs/pull/*/head` when the clone does not
 # already hold it.
@@ -126,9 +129,11 @@ resolve_control() {   # <ref>; sets RESOLVED_SHA; non-zero when the control is u
   return 0
 }
 if [ -n "$PATCHFILE" ]; then
-  # Cache the control build against the patch's CONTENT, so editing the patch rebuilds and
-  # re-running an unchanged one does not.
-  SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)"
+  # The control is HEAD + the patch, so its cache is keyed on BOTH: the patch's content (an
+  # edited patch rebuilds) and the commit it is applied to (a rebase, merge or new commit
+  # rebuilds — keyed on the content alone, an unchanged patch re-used the control of a tree
+  # the branch had left, and scored the guard against semantics HEAD no longer has).
+  SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)-$(git rev-parse --short=12 HEAD)"
   WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
 elif [ -z "$BULK" ]; then
   resolve_control "$REF" || {
