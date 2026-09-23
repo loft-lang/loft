@@ -972,7 +972,11 @@ a RAM tmpfs on many boxes and one run filled (the native leg links
 the root filesystem, and `make ci` failed in the NATIVE corpus with `FAIL unknown-mode` after
 four `loft: low space in /var/tmp/loft-test-scratch-… — reclaimed … MB` lines — a disk-full
 symptom that reads like a code fault.  The script now keeps the `LOFT_FALSIFY_KEEP` (default 4)
-most recently used controls and removes the rest with their worktrees.  A gate that fails on an
+most recently used controls and removes the rest with their worktrees.  A `--patch` control is
+HEAD with the patch applied, so it is cached under `patch-<patch content>-<HEAD>`: keyed on the
+patch alone, an unchanged patch re-used the control of a tree the branch had since rebased away
+from, and scored the guard against semantics HEAD no longer has (a native-only guard read as
+falsified on the interpreter too).  A gate that fails on an
 unrelated suite right after "low space" lines is the disk: `df -h /`, then § Scratch hygiene.
 
 ### Scratch hygiene — what loft writes to a temp directory, and what removes it

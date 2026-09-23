@@ -129,9 +129,11 @@ resolve_control() {   # <ref>; sets RESOLVED_SHA; non-zero when the control is u
   return 0
 }
 if [ -n "$PATCHFILE" ]; then
-  # Cache the control build against the patch's CONTENT, so editing the patch rebuilds and
-  # re-running an unchanged one does not.
-  SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)"
+  # The control is HEAD + the patch, so its cache is keyed on BOTH: the patch's content (an
+  # edited patch rebuilds) and the commit it is applied to (a rebase, merge or new commit
+  # rebuilds — keyed on the content alone, an unchanged patch re-used the control of a tree
+  # the branch had left, and scored the guard against semantics HEAD no longer has).
+  SHA="patch-$(git hash-object "$PATCHFILE" | cut -c1-12)-$(git rev-parse --short=12 HEAD)"
   WT="$CACHE/$SHA"; TGT="$CACHE/$SHA-target"
 elif [ -z "$BULK" ]; then
   resolve_control "$REF" || {
