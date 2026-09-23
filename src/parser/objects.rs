@@ -265,10 +265,7 @@ impl Parser {
     /// still the parameter.
     fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
         let own = self.vars.name(var);
-        if self.vars.is_argument(var)
-            || self.vars.was_loop_var(var)
-            || own.starts_with("__")
-        {
+        if self.vars.is_argument(var) || self.vars.was_loop_var(var) || own.starts_with("__") {
             return;
         }
         let key = (self.context, var);
