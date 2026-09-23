@@ -19,12 +19,13 @@
 //                        (a local link, a `&` parameter).
 // Axes it HOLDS FIXED:   the pointee is not a RECORD or a COLLECTION.  A vector link is a plain
 //                        vector local and copies on its own path.  A record read through a
-//                        link VIEWS its source, for a local link and a `&` parameter alike,
-//                        where `(B-Copy)` says a whole-value bind copies; that is its own
-//                        question, loft#1631 (`binding.md` D-bind-52).
+//                        link copies too, through the emitters' record-copy arms rather than
+//                        this peel alone — loft#1631 (`binding.md` D-bind-52), guarded in
+//                        `a-record-read-through-a-link-is-copied.loft`.
 //
 // @falsified-at: 333ccd7e5 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/a-plain-bind-from-a-link-copies-the-value-it-reads.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
 
 fn int_inferred() -> text { z = 3; e = &z; y = e; z = 9; "{y},{e}" }
 fn int_write_copy() -> text { z = 3; e = &z; y = e; y += 4; "{y},{z}" }

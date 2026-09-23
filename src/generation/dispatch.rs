@@ -189,7 +189,7 @@ impl Output<'_> {
         // reports the SOURCE var as Borrowed — mirror collect_witness_vars.
         let is_var_copy = matches!(
             to.unspan(),
-            Value::Var(src) if variables.tp(*src).heap_def_nr().is_some()
+            Value::Var(src) if variables.tp(*src).peel_link().heap_def_nr().is_some()
         );
         let owned = is_var_copy
             || matches!(
@@ -1444,10 +1444,18 @@ impl Output<'_> {
         // read (`tests/scripts/157-value-tail.loft` t14 — E0308 without this line).
         if let (Some(d_nr), Value::Var(src)) =
             (variables.tp(var).base().heap_def_nr(), to_unspanned)
-            && variables.tp(*src).base().heap_def_nr().is_some()
+            && variables.tp(*src).peel_link().heap_def_nr().is_some()
             && !self.value_record_locals.contains_key(&var)
         {
-            let src_name = sanitize(variables.name(*src));
+            // The source READ, rendered by the Var emitter rather than spelled `var_<src>`: a
+            // `&S` link holds `*mut DbRef` and reads as the record behind it (@FR-C-Ref), so
+            // `y = e` with `e = &z` copies `z`'s record (`binding.md` D-bind-52).
+            let src_expr = if matches!(variables.tp(*src).base(), Type::RefVar(_)) {
+                format!("({})", self.generate_expr_buf(&Value::Var(*src))?)
+            } else {
+                format!("var_{}", sanitize(variables.name(*src)))
+            };
+            let variables = self.data.def(self.def_nr).variables();
             let tp_nr = self.data.def(d_nr).known_type();
             let first_bind = !self.declared.contains(&var);
             if self.declared.contains(&var) {
@@ -1509,9 +1517,9 @@ impl Output<'_> {
                 let target = copy_target(&format!("var_{name}"), first_bind);
                 write!(
                     w,
-                    "if var_{src_name}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
+                    "if {src_expr}.rec == 0 {{ {release}var_{name} = DbRef::NULL; }} \
                      else {{ var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32); \
-                     OpCopyRecord(cell,var_{src_name}, var_{name}, {tp_nr}_i32); }}"
+                     OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32); }}"
                 )?;
                 crate::copy_manifest::record(
                     self.def_nr,
@@ -1524,10 +1532,7 @@ impl Output<'_> {
             let target = copy_target(&format!("var_{name}"), first_bind);
             writeln!(w, "var_{name} = OpDatabase(cell,{target}, {tp_nr}_i32);")?;
             self.indent(w)?;
-            write!(
-                w,
-                "OpCopyRecord(cell,var_{src_name}, var_{name}, {tp_nr}_i32)"
-            )?;
+            write!(w, "OpCopyRecord(cell,{src_expr}, var_{name}, {tp_nr}_i32)")?;
             // @PLN130 — native's whole-record bind deep-copies unconditionally (it has no
             // last-use move; that asymmetry with the interpreter is @PLN130 cluster V).
             crate::copy_manifest::record(

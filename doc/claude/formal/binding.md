@@ -395,15 +395,27 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
 ## Deviations
 
-**OPEN: 3.**
+**OPEN: 2.**
 
-* **D-bind-52** *(opened 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD read through a link.
-  `y = e` with `e = &z` (and `y = p` with `p: &P` a parameter) binds `y` with a borrow dep on the
-  link, so `y` VIEWS the record and `y.n = 9` writes `z` — where a whole-value bind copies and a
-  plain local source (`y = z`) does.  Both backends agree.  The `&`-parameter peel's borrow is
-  deliberate (loft#772: without it `w` became an owner of the shared store), so the fix decides
-  where a whole read of a borrowed base stands between `(B-Copy)` and `(B-View-Base)`.  Found
-  while closing D-bind-51, whose scalar, text and nullable cells copy.
+* **D-bind-52** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD
+  read through a link.  `y = e` with `e = &z`, and `y = p` with `p: &P` a parameter, bound `y`
+  with a borrow dep on the link, so `y` VIEWED the record and `y.n = 9` wrote `z` — where a
+  whole-value bind copies and a plain local source (`y = z`) does.  Both backends agreed.
+  **Where (measured), three places.**  The parser's link peel gave a record read a borrow dep
+  (the `&`-parameter half on purpose, loft#772: without it `w` owned the caller's store — a copy
+  settles that the other way, since `w` then owns the copy and nothing else).  Both emitters'
+  whole-record copy arms asked the SOURCE's shape through `base()`, which does not see through a
+  `&`, so a link source took the plain alias; native also spelled the source `var_<src>`, the
+  pointer rather than the record behind it.  And a NULLABLE destination (`y: S?`) pre-inits its
+  slot before the value runs, but `intervals.rs` gave only the bare `Reference` an early
+  `first_def`, so `y` was handed the slot of the `&S?` link it was about to read — a link frees
+  nothing, so its range ended at that read — and the pre-init zeroed it (interpreter panic).
+  **Closed** by peeling a record link read to an OWNED value, asking `peel_link()` at every copy
+  arm (and rendering native's source through the Var emitter, one `OpBindOrCopy` witness helper
+  on the interpreter), and asking the early-`first_def` test through `base()`.  A program that
+  wrote a `&` record parameter through a plain alias (`w = p; w.n = 9`) no longer writes it, and
+  is told so: the `&` is then unused.  Guard
+  `tests/scripts/a-record-read-through-a-link-is-copied.loft`.  Found while closing D-bind-51.
 * **D-bind-51** *(opened 2026-09-23, CLOSED 2026-09-23)* — `(B-Copy)` with `(C-Ref)` for a plain
   bind from a LOCAL link.  `y = e` with `e = &z` kept the link's `&τ` type into the bind, so `y`
   became a second link: `z = 9` afterwards read 9 through `y`, and `y = 4` wrote `z`, on both

@@ -5364,8 +5364,8 @@ impl Parser {
             // `RefVar(Optional(Integer))`, and peeling the target alone sent it to a dense
             // `integer`, reporting a store no program makes — formatting `"{e}"` with
             // `e = &z; z: integer?` warned that a nullable "becomes null there" (loft#1614).
-            if let Type::RefVar(pointee) = is_type
-                && matches!(pointee.as_ref(), Type::Optional(_))
+            if let Type::RefVar(pointee) = is_type.base()
+                && pointee.peel_optional().1
             {
                 return self.convert(code, pointee, should);
             }

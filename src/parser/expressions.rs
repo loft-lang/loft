@@ -4514,8 +4514,8 @@ use a separate collection or add after the loop"
         //
         // A bare read of a LOCAL link peels too, to the bare value: `y = e` with `e = &z`
         // copies what the link reads (@FR-B-Copy through @FR-C-Ref), where keeping `&τ` made
-        // `y` a second link (`binding.md` D-bind-50).  A record there still views through the
-        // pointee's own deps — D-bind-51, loft#1631.  An explicit `&`-binding (`d = &c`,
+        // `y` a second link (`binding.md` D-bind-51).  A record is COPIED there, so `y` owns
+        // the copy and carries no dep (D-bind-52).  An explicit `&`-binding (`d = &c`,
         // `d = &b`) never reaches this match as a bare `Var`: it is lowered above to
         // `OpCreateStack` / `OpVarRef`, which is what keeps it a live link.
         let s_type = match (&s_type, code.unspan()) {
@@ -4524,12 +4524,18 @@ use a separate collection or add after the loop"
                     && matches!(self.vars.tp(*src), Type::RefVar(_))
                     && !matches!(to.unspan(), Value::Var(d) if self.vars.is_argument(*d)) =>
             {
-                inner.depending(*src)
+                // A RECORD is copied at this bind (@FR-B-Copy — codegen reads the source through
+                // the link, `binding.md` D-bind-52), so `w` OWNS that copy and borrows nothing.
+                if inner.heap_def_nr().is_some() {
+                    inner.without_deps()
+                } else {
+                    inner.depending(*src)
+                }
             }
             (Type::RefVar(inner), Value::Var(src))
-                if matches!(self.vars.tp(*src), Type::RefVar(_)) =>
+                if matches!(self.vars.tp(*src).base(), Type::RefVar(_)) =>
             {
-                (**inner).clone()
+                inner.without_deps()
             }
             _ => s_type,
         };

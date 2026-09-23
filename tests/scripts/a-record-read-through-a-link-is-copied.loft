@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A plain bind of a RECORD read through a link copies it: `(C-Ref)` reads a `&S` as its `S`, and
+// `(B-Copy)` makes a whole-value bind independent.  So `y = e` with `e = &z`, and `y = p` with `p`
+// a `&S` parameter, give `y` a record of its own — a write through `y` does not reach the source,
+// and a later write to the source does not reach `y`.  Only `&` makes a link.
+//
+// Both spellings VIEWED: the bind kept a borrow dep on the link and aliased its record, on both
+// backends.  The local spelling had first been a crash (the interpreter's allocator panicked, native
+// emitted Rust that did not compile); the parameter spelling was the view loft#772 introduced so
+// that `w = p` would not OWN the caller's store — which a copy settles the other way, since `w` then
+// owns the copy and nothing else.  A nullable link (`&S?`) exposed one more boundary: the
+// destination pre-inits its slot before the value runs, and the slot allocator gave it the slot of
+// the link it was about to read.
+//
+// Axes this file MOVES:  the source (a local link, a nullable local link, a `&` parameter), the
+//                        spelling (inferred, annotated, a rebind of an existing local, inside a
+//                        loop), the record (plain, with text / vector / nested-record fields, a
+//                        struct-enum), the direction of the later write (through the copy, through
+//                        the source, a whole-value write to the parameter), and where the copy goes
+//                        (read in place, returned).
+// Axes it HOLDS FIXED:   the source is a whole record, never a field of one (`y = e.inner` is a
+//                        projection, `(B-View)`); the destination is a local, never a field.
+//
+// @falsified-at: 2d3026b14 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-record-read-through-a-link-is-copied.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+
+struct P { n: integer }
+struct Q { s: text, v: vector<integer>, p: P }
+enum Sh { Ci { r: integer }, Sq { a: integer } }
+
+fn local_link() -> text { z = P { n: 3 }; e = &z; y = e; y.n = 9; "{y.n},{z.n}" }
+fn source_write() -> text { z = P { n: 3 }; e = &z; y = e; z.n = 9; "{y.n},{z.n}" }
+fn annotated() -> text { z = P { n: 3 }; e = &z; y: P = e; y.n = 9; "{y.n},{z.n}" }
+fn rebind() -> text { z = P { n: 3 }; e = &z; y = P { n: 1 }; t = y.n; y = e; y.n = 9; "{t},{y.n},{z.n}" }
+fn heap_fields() -> text {
+  z = Q { s: "ab", v: [1, 2], p: P { n: 4 } };
+  e = &z;
+  y = e;
+  y.s += "c";
+  y.v += [3];
+  y.p.n = 8;
+  "{y.s},{len(y.v)},{y.p.n},{z.s},{len(z.v)},{z.p.n}"
+}
+fn enum_link() -> integer {
+  z: Sh = Ci { r: 3 };
+  e = &z;
+  y = e;
+  z = Sq { a: 7 };
+  match y { Ci { r } => r, Sq { a } => a }
+}
+fn nullable_link() -> text { z: P? = P { n: 3 }; e = &z; y = e; z = null; "{y?.n},{z == null}" }
+fn in_a_loop() -> text {
+  z = P { n: 3 };
+  e = &z;
+  s = 0;
+  for i in 0..3 { y = e; y.n += i; s += y.n; }
+  "{s},{z.n}"
+}
+fn param_read(p: &P) -> integer { y = p; y.n = 9; p = P { n: p.n }; y.n }
+fn param_returned(p: &P) -> P { y = p; y.n = y.n + 100; p = P { n: p.n + 1 }; y }
+
+fn main() {
+  assert(local_link() == "9,3", "a record read through a link is copied: {local_link()}");
+  assert(source_write() == "3,9", "the copy does not follow the source: {source_write()}");
+  assert(annotated() == "9,3", "the annotated bind copies: {annotated()}");
+  assert(rebind() == "1,9,3", "a rebind from a link copies: {rebind()}");
+  assert(heap_fields() == "abc,3,8,ab,2,4", "every heap field is the copy's own: {heap_fields()}");
+  assert(enum_link() == 3, "a struct-enum read through a link is copied: {enum_link()}");
+  assert(nullable_link() == "3,true", "a nullable link is copied: {nullable_link()}");
+  assert(in_a_loop() == "12,3", "a copy per pass: {in_a_loop()}");
+  w = P { n: 3 };
+  r = param_read(w);
+  assert(r == 9 && w.n == 3, "a `&` parameter's record is copied: {r},{w.n}");
+  w2 = P { n: 3 };
+  r2 = param_returned(w2);
+  assert(r2.n == 103 && w2.n == 4, "a returned copy is the callee's own: {r2.n},{w2.n}");
+}
