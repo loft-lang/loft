@@ -597,7 +597,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **4** — `D-heap-8`, `D-heap-9`, `D-heap-15` and `D-heap-38` (`D-heap-36`, loft#1600, CLOSED
+OPEN: **3** — `D-heap-8`, `D-heap-9` and `D-heap-15` (`D-heap-38`, loft#1607, CLOSED 2026-09-23: a
+vector bound in both arms releases the backing its own arm filled.  `D-heap-36`, loft#1600, CLOSED
 2026-09-23 by owner ruling: the arm is the scope, `(B-Scope)`.  `D-heap-41`,
 loft#1623, opened and CLOSED 2026-09-23: a returned join binding released what it handed out —
 the half `D-heap-39` filed beside itself rather than closing.  `D-heap-39`,
@@ -919,21 +920,23 @@ CLOSED 2026-09-17, below.
   its inner elements (loft#1597), and a vector moved out and then refilled releases the moved
   elements twice (loft#1598).
 
-### D-heap-38 — OPEN (2026-09-22, loft#1607): under the arm-scope rule, a vector local bound in both arms of an `if` is released at the end of the scope around it
+### D-heap-38 — CLOSED (opened 2026-09-22, closed 2026-09-23, loft#1607): under the arm-scope rule, a vector local bound in both arms of an `if` was released at the end of the scope around it
 
-- **Violates:** (H-Drop), its scope-end clause — an arm's owner dies at the arm's end.
-- **Where:** the arm scope (`D-heap-36`'s ruling) makes a local bound in BOTH arms
-  each arm's own for a record or a text, and not for a vector or a tuple.  Each arm's bind lands in a backing of its own
-  (`__vdb_2`, `__vdb_3`), and the variable's type names one of them, the LAST bind's
-  (`@FR-O-Latest`).  The arm-end release reads that one dep (`scopes::outer_collection_backing`),
-  so the other arm would release the wrong backing.  Measured when the case was allowed: the
-  true arm released the false arm's empty `__vdb_3`, and `D50` never ran.  So the case keeps the
-  pre-init in front of the `if`.
+- **Violates:** (H-Drop), its scope-end clause — an arm's owner dies at the arm's end, and since
+  `D-heap-36`'s ruling the arm IS the scope (`(B-Scope)`).
+- **Where:** each arm's bind lands in a backing of its own (`__vdb_2`, `__vdb_3`), and the
+  variable's type names one of them, the LAST bind's (`@FR-O-Latest`).  The arm-end release read
+  that one dep (`scopes::outer_collection_backing`), so the arm scope declined the case and it
+  kept the pre-init in front of the `if`.
 - **Effect:** measured on both backends, identical: `if c { w = v; … } else { w = v; … }` released
-  `v`'s element after the `if`'s successor ran.  The count is right.
-- **Status:** OPEN.  The cure is a per-path fact, the backing the local's latest bind on THIS
-  path names, snapshotted per arm as `construction_backing` is for records; or both arms' binds
-  sharing one backing.
+  `v`'s element after the `if`'s successor ran.  The count was right.
+- **Closed:** the per-path fact the entry named — `Scopes::bind_backing`, the backing the latest
+  vector bind on THIS path filled (`w = OpGetField(__vdb_N, …)`), saved per arm and merged by
+  intersection as `construction_backing` is; the scope-end release reads it first, and
+  `confined_to_one_arm` admits a vector bound in both arms when each arm's one bind names its
+  backing that way.  An arm that binds twice still declines.  Guard:
+  `tests/scripts/1607-a-vector-bound-in-both-arms-is-released-at-its-arms-end.loft` (b1–b8, both
+  backends, strict stores and poison).
 
 ### D-heap-37 — OPENED AND CLOSED (2026-09-22, found with loft#1600): a local hoisted out of an `if`, a loop or a block was released after the locals declared before it
 
