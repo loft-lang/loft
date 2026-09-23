@@ -13136,9 +13136,15 @@ impl Scopes<'_> {
         function: &mut Function,
         data: &Data,
     ) -> Option<(Vec<Value>, Vec<Value>)> {
-        let Value::Set(ov, _) = stmt.unspan() else {
+        let Value::Set(ov, rhs) = stmt.unspan() else {
             return None;
         };
+        // Only a CALL's closure is displaced here: a lambda built in this frame is released
+        // through its own record, and the first assignment of a local declared ahead of a
+        // branch (`h` bound in each arm) displaces only its null pre-init.
+        if !matches!(rhs.unspan(), Value::Call(d, _) if !data.def(*d).name().starts_with("Op")) {
+            return None;
+        }
         let v = *self.var_mapping.get(ov).unwrap_or(ov);
         if !matches!(function.tp(v), Type::Function(..))
             || !self.var_scope.contains_key(&v)

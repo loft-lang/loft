@@ -1010,14 +1010,15 @@ impl State {
         self.fn_call(d_nr as u32, total, code_pos);
     }
 
-    /// Run the drop cascade of the closure record the fn-ref at `fn_var` holds
-    /// (`@FR-L-CapOwn`: a record that leaves its frame takes over the release, hooks
-    /// included).  Which lambda the fn-ref holds is a run-time fact, so the cascade is looked
-    /// up from the slot's `d_nr` through that lambda's `closure_record`.  Nothing runs for a
-    /// null fn-ref, a fn-ref with no closure, a released closure store, or a record type
+    /// `OpDropFnRef(fn_var)` — run the drop cascade of the closure record the fn-ref at
+    /// `fn_var` holds (`@FR-L-CapOwn`: a record that leaves its frame takes over the release,
+    /// hooks included).  Which lambda the fn-ref holds is a run-time fact, so the cascade is
+    /// looked up from the slot's `d_nr` through that lambda's `closure_record`.  Nothing runs
+    /// for a null fn-ref, a fn-ref with no closure, a released closure store, or a record type
     /// with no cascade.  The cascade is entered as an ordinary call and returns to the next
     /// op, which is the `OpFreeRef` that releases the store.
-    pub fn fn_drop_ref(&mut self, fn_var: u16) {
+    pub fn drop_fn_ref(&mut self) {
+        let fn_var = self.code::<u16>();
         if self.data_ptr.is_null() {
             return;
         }
@@ -1052,13 +1053,18 @@ impl State {
         self.fn_call(cascade, span, code_pos);
     }
 
-    /// Null the closure half of the fn-ref at `old` when it shares a store with the fn-ref at
-    /// `new` — the displaced value of a rebind that handed the same closure back owns nothing
-    /// the rebind released (loft#1609).  Both are slot distances from the top of the stack.
-    pub fn fn_ref_detach_shared(&mut self, old: u16, new: u16) {
+    /// `OpFnRefDetachShared(old, new)` — null the closure half of the fn-ref at `old` when it
+    /// names no record, or shares a store with the fn-ref at `new`: the displaced value of a
+    /// rebind that handed the same closure back owns nothing the rebind released (loft#1609).
+    /// Both are slot distances from the top of the stack.
+    pub fn fn_ref_detach_shared(&mut self) {
+        let old = self.code::<u16>();
+        let new = self.code::<u16>();
         let o = self.get_var::<DbRef>(old - 8);
         let n = self.get_var::<DbRef>(new - 8);
-        if o.store_nr == n.store_nr {
+        // A closure half with no record (`rec == 0`, the pre-init of a local declared ahead of
+        // a branch) displaces nothing either.
+        if o.rec == 0 || o.store_nr == n.store_nr {
             *self.mut_var::<DbRef>(old - 8) = DbRef {
                 store_nr: u16::MAX,
                 rec: 0,

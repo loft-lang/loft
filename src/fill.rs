@@ -2609,14 +2609,11 @@ fn get_stack_fn_ref(s: &mut State) {
 }
 
 fn drop_fn_ref(s: &mut State) {
-    let v_fn_var = s.code::<u16>();
-    s.fn_drop_ref(v_fn_var);
+    s.drop_fn_ref();
 }
 
 fn fn_ref_detach_shared(s: &mut State) {
-    let v_old = s.code::<u16>();
-    let v_new = s.code::<u16>();
-    s.fn_ref_detach_shared(v_old, v_new);
+    s.fn_ref_detach_shared();
 }
 
 fn append_stack_text(s: &mut State) {

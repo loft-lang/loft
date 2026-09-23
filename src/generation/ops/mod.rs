@@ -566,8 +566,11 @@ mod tests {
         // value-enum field are one byte, written through the record's address like the
         // three scalar kinds (`enum_match`'s build −11 %); every other `OpSetEnum` falls
         // through to the template.
+        // loft#1609 adds two, `OpDropFnRefEmitter` (the drop cascade of a fn-ref's closure
+        // record, dispatched on its `d_nr`) and `OpFnRefDetachSharedEmitter` (a rebind's
+        // displaced closure half, nulled where the new value shares it).
         assert!(
-            count <= 123,
+            count <= 125,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

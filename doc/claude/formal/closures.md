@@ -200,9 +200,9 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 2** — `D-clo-36` and `D-clo-37` (`D-clo-38`, loft#1624, opened and CLOSED 2026-09-23;
-both of the others opened 2026-09-22 with `D-clo-35`, which closed
-the same day; `D-clo-27` closed 2026-09-12).
+**OPEN: 1** — `D-clo-37` (`D-clo-38`, loft#1624, opened and CLOSED 2026-09-23; `D-clo-36`
+opened 2026-09-22 and CLOSED 2026-09-23; both opened with `D-clo-35`, which closed the same
+day; `D-clo-27` closed 2026-09-12).
 
 - **D-clo-38** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1624)* — `(O-Buffer)` for a
   collection `??` whose chosen arm is a CAPTURE.  A `vector<T>` return is delivered into the
@@ -254,11 +254,22 @@ the same day; `D-clo-27` closed 2026-09-12).
   local declared OUTSIDE the loop (`g = fn() { len(w) }` in the body), which really outlives the
   pass.  The first two need the callee's retention (a `&` parameter, a returned fn-ref) read,
   and the third needs the per-pass backing the original entry names.
-- **D-clo-36** *(opened 2026-09-22, loft#1609)* — `(L-CapOwn)`'s hand-over for a record that
-  LEAVES its frame covers the store and not the HOOKS.  The caller's fn-ref is released by
-  `OpFreeRef`, whose store cascade frees the captured vector, and no hook runs.  The hook
-  cascade is per lambda, and which lambda a fn-ref value holds is a run-time fact, so this needs
-  a dispatch on the record's type (as `fnref::dispatch_arms` dispatches a call).
+- **D-clo-36** *(opened 2026-09-22, CLOSED 2026-09-23; loft#1609)* — `(L-CapOwn)`'s hand-over
+  for a record that LEAVES its frame covered the store and not the HOOKS.  The caller's fn-ref
+  was released by `OpFreeRef`, whose store cascade frees the captured vector, and no hook ran.
+  The hook cascade is per lambda, and which lambda a fn-ref value holds is a run-time fact.
+  Closed with a dispatch on that fact: `OpDropFnRef(f)` runs the cascade of the record
+  `f`'s `d_nr` names (`Data::closure_drops`), just before the free, wherever the fn-ref is
+  released without a local record that releases itself.  On native the arms are the fn type's
+  `fnref::dispatch_arms`, the set a call through it dispatches over.  The matrix found two
+  more releases of the same kind:
+  - a REBIND of such a fn-ref released the displaced closure nowhere, store included.  It is
+    released after the new value is built (`Scopes::fnref_call_rebind`), and a rebind that
+    hands the same closure back releases nothing (`OpFnRefDetachShared`);
+  - the frame's release that stands in for a closure built in ONE ARM
+    (`free_unless_record_built`) freed the store without the hook.  It now runs the owner's
+    hook, once per store.
+  Guard: `tests/scripts/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft`.
 - **D-clo-35** *(opened and CLOSED 2026-09-22, loft#1606)* — a closure over a value whose type
   owns a droppable ran the hook on the wrong record, twice, or not at all, on both backends:
   `w = [mk(61)]; f = fn() { len(w) }` ran `D3` for `D61`.  Four mechanisms:

@@ -1658,7 +1658,8 @@ fn OpGetStackFnRef(r: reference) -> text;
 // fn-ref holding no closure, or a lambda whose record owns nothing droppable, runs nothing.
 // `fn_var` is the fn-ref slot's distance from the top of the stack, as `OpCallRef`'s is.
 fn OpDropFnRef(fn_var: const u16);
-// Null the closure half of the fn-ref at `old` when it shares a store with the one at `new`:
+// Null the closure half of the fn-ref at `old` when it names no record (`rec == 0`), or shares
+// a store with the one at `new`:
 // a rebind that hands the same closure back (`f = keep(f)`) displaces nothing, so the release
 // of the displaced value that follows must find nothing to release (loft#1609).
 fn OpFnRefDetachShared(old: const u16, new: const u16);

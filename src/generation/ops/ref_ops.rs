@@ -84,8 +84,8 @@ impl OpEmitter for OpDropFnRefEmitter {
     }
 }
 
-/// `OpFnRefDetachShared(old, new)` — null the closure half of `old` when it shares a store
-/// with `new`'s, the native twin of `State::fn_ref_detach_shared` (loft#1609).
+/// `OpFnRefDetachShared(old, new)` — null the closure half of `old` when it names no record
+/// or shares a store with `new`'s, the native twin of `State::fn_ref_detach_shared` (loft#1609).
 pub struct OpFnRefDetachSharedEmitter;
 
 impl OpEmitter for OpFnRefDetachSharedEmitter {
@@ -97,7 +97,7 @@ impl OpEmitter for OpFnRefDetachSharedEmitter {
         let (_, n) = free_label_lvalue(ctx, *new);
         write!(
             ctx.w,
-            "if {o}.1.store_nr == {n}.1.store_nr {{ {o}.1 = DbRef {{ store_nr: u16::MAX, rec: 0, pos: 0 }}; }}"
+            "if {o}.1.rec == 0 || {o}.1.store_nr == {n}.1.store_nr {{ {o}.1 = DbRef {{ store_nr: u16::MAX, rec: 0, pos: 0 }}; }}"
         )
     }
 }

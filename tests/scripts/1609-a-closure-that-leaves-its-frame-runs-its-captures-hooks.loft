@@ -64,6 +64,7 @@ fn mkcr(c: boolean, i: integer) -> fn() -> integer {
 fn plain() -> fn() -> integer { fn() -> integer { 5 } }
 fn keep(g: fn() -> integer) -> fn() -> integer { g }
 fn run(g: fn() -> integer) -> integer { g() }
+fn arms(p: boolean) -> integer { if p { h = mkf(90); h() } else { h = mkf(91); h() + 1 } }
 
 // 1 — the issue's shape: a returned closure over a VECTOR of records with a hook.
 fn c1() { f = mkf(66); note("F{f()}"); note("X"); }
@@ -90,6 +91,9 @@ fn c10() { for i in 74..76 { f = mkf(i); note("F{f()}"); } note("X"); }
 fn c11() { v = [mk(78)]; a = fn() -> integer { len(v) }; b = mkf(77); note("A{a()}B{b()}"); note("X"); }
 // 12 — a returned closure called and discarded in one expression.
 fn c12() { n = mkf(79)(); note("L{n}"); note("X"); }
+// 13 — a call's closure bound in each arm of a local declared ahead of the branch: the first
+//      binding displaces only the null pre-init.
+fn c13() { note("A{arms(true)}"); note("B{arms(false)}"); note("X"); }
 // Controls: a returned closure that captures nothing, and a vector with no closure.
 fn k1() { h = mk(76); f = plain(); note("F{f()}"); note("X"); }
 fn k2() { w = [mk(65)]; note("L{len(w)}"); note("X"); }
@@ -122,6 +126,9 @@ fn main() {
   ok("c11 beside a local record", drain(), "M78,M77,A1B1,X,D77,D78");
   c12();
   ok("c12 called and discarded ", drain(), "M79,D79,L1,X");
+
+  c13();
+  ok("c13 bound in each arm    ", drain(), "M90,D90,A1,M91,D91,B2,X");
 
   k1();
   ok("k1 captures nothing      ", drain(), "M76,F5,X,D76");
