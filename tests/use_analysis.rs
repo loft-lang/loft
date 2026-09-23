@@ -321,6 +321,9 @@ fn pick(t: vector<M>, i: integer) -> M { t[i] ?? dflt() }
 // @P290 bracket, so there is no runtime witness to tell its borrow arm from its mint
 // arm — the conservative answer, and no AppendSource site.
 fn collect(t: vector<M>) -> vector<M> { out: vector<M> = []; for i in 0..len(t) { out += [pick(t, i)]; } out }
+// The interprocedural base the old site exercised, kept observable on a REASSIGN: `c`
+// first owns dflt(), then takes pick's JOIN return, whose base is the caller's `t`.
+fn relay(t: vector<M>) -> M { c = dflt(); c = pick(t, 0); c }
 
 // local_source ROOT (#462 leak): `chosen` first OWNS dflt(), then is reassigned to
 // a JOIN — the displaced owned store leaks. The over-free shape = prior Owned, rhs
@@ -480,6 +483,18 @@ fn ownership_resolves_the_borrow_base() {
     // of the may-borrow class cannot be a corpus cell at all yet: it raises a
     // pre-existing `BUG (#306)` stack-store free refusal (loft#1651).
     assert_no_free_site(&stderr, "collect");
+
+    // INTERPROCEDURAL: `c = pick(t, 0)`'s rhs is the `pick` CALL; the oracle maps pick's
+    // borrowed param `t` to relay's argument `t`.
+    assert_reassign(&stderr, "relay", "c", "Owned", "Join");
+    let relay_line = stderr
+        .lines()
+        .find(|l| l.contains("fn=n_relay reassign") && l.contains("(c)"))
+        .unwrap();
+    assert!(
+        relay_line.ends_with("rhs=Join(base=t)"),
+        "relay c rhs base: {relay_line}"
+    );
 
     // the displaced-owned reassign's borrow arm roots to the local `pool`.
     assert_reassign(&stderr, "pick_cond", "chosen", "Owned", "Join"); // rhs base = pool
