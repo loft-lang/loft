@@ -1010,6 +1010,78 @@ impl State {
         self.fn_call(d_nr as u32, total, code_pos);
     }
 
+    /// `OpDropFnRef(fn_var)` — run the drop cascade of the closure record the fn-ref at
+    /// `fn_var` holds (`@FR-L-CapOwn`: a record that leaves its frame takes over the release,
+    /// hooks included).  Which lambda the fn-ref holds is a run-time fact, so the cascade is
+    /// looked up from the slot's `d_nr` through that lambda's `closure_record`.  Nothing runs
+    /// for a null fn-ref, a fn-ref with no closure, a released closure store, or a record type
+    /// with no cascade.  The cascade is entered as an ordinary call and returns to the next
+    /// op, which is the `OpFreeRef` that releases the store.
+    pub fn drop_fn_ref(&mut self) {
+        let fn_var = self.code::<u16>();
+        if self.data_ptr.is_null() {
+            return;
+        }
+        let d_nr_i64 = self.get_var::<i64>(fn_var);
+        let closure = self.get_var::<DbRef>(fn_var - 8);
+        // SAFETY: the `Data` outlives this `State` — see `data_ptr`.
+        let data = unsafe { &*self.data_ptr };
+        let Ok(d_nr) = u32::try_from(d_nr_i64) else {
+            return;
+        };
+        if d_nr >= data.definitions() || closure.rec == 0 {
+            return;
+        }
+        let record = data.def(d_nr).closure_record();
+        if record == u32::MAX {
+            return;
+        }
+        let cascade = data.drop_cascade_nr(record);
+        if cascade == u32::MAX
+            || self
+                .database
+                .allocations
+                .get(closure.store_nr as usize)
+                .is_none_or(crate::store::Store::is_free)
+        {
+            return;
+        }
+        let before = self.stack_pos;
+        self.put_stack(closure);
+        let span = u16::try_from(self.stack_pos - before).unwrap_or(0);
+        let code_pos = i64::from(self.fn_positions[cascade as usize]);
+        self.fn_call(cascade, span, code_pos);
+    }
+
+    /// `OpFnRefDetachShared(old, new)` — null the closure half of the fn-ref at `old` when it
+    /// names no record, or shares a store with the fn-ref at `new`: the displaced value of a
+    /// rebind that handed the same closure back owns nothing the rebind released (loft#1609).
+    /// Both are slot distances from the top of the stack.
+    pub fn fn_ref_detach_shared(&mut self) {
+        let old = self.code::<u16>();
+        let new = self.code::<u16>();
+        let o = self.get_var::<DbRef>(old - 8);
+        let n = self.get_var::<DbRef>(new - 8);
+        // A closure half with no record (`rec == 0`, the pre-init of a local declared ahead of
+        // a branch) displaces nothing either.
+        if o.rec == 0 || o.store_nr == n.store_nr {
+            *self.mut_var::<DbRef>(old - 8) = DbRef {
+                store_nr: u16::MAX,
+                rec: 0,
+                pos: 0,
+            };
+        }
+    }
+
+    /// `OpFnRefClosure(f)` — push the closure half of the fn-ref at `f`, a slot distance from
+    /// the top of the stack: the record the store-identity tests of a frame's closure holders
+    /// compare (`@FR-L-CapKeep`, loft#1636).
+    pub fn fn_ref_closure(&mut self) {
+        let f = self.code::<u16>();
+        let closure = self.get_var::<DbRef>(f - 8);
+        self.put_stack(closure);
+    }
+
     pub fn static_call(&mut self) {
         let call = self.code::<u16>();
         // Fix #87: resolve n_stack_trace index lazily, then only snapshot for that call.
@@ -1130,6 +1202,9 @@ impl State {
                                             rec: r.rec as i32,
                                             pos: r.pos as i32,
                                         }
+                                    }
+                                    crate::state::debug::VariableValue::Null => {
+                                        crate::database::VarValueSnapshot::Null
                                     }
                                     crate::state::debug::VariableValue::OutOfFrame => {
                                         crate::database::VarValueSnapshot::Other(
@@ -4133,6 +4208,27 @@ impl State {
             return false;
         };
         let lit = literal.trim();
+        // loft#1629, `@FR-N-Shape` — a nullable scalar local is its non-null twin's slot with
+        // the absence spelled as the type's null sentinel, so an edit is the twin's write, and
+        // `null` writes the sentinel.  The same sentinels `render_frame_local` reads.  A
+        // nullable local of any other former keeps the refusal it had, now said out loud.
+        let (tp, nullable) = match tp {
+            Type::Optional(inner) => (inner.base().clone(), true),
+            other => (other, false),
+        };
+        if nullable
+            && !matches!(
+                tp,
+                Type::Integer(_)
+                    | Type::Float
+                    | Type::Single
+                    | Type::Boolean
+                    | Type::Character
+                    | Type::Enum(_, false, _)
+            )
+        {
+            return false;
+        }
         // @PLN16 M2 — snapshot the slot for undo before the typed write.  Width by type
         // (text arg = 16-byte `Str`, text local = 24-byte `String`); a heap `_` slot
         // gets 0 here and returns below — that case is `set_frame_dbref`'s.  A failing
@@ -4152,6 +4248,26 @@ impl State {
             _ => 0,
         };
         let before = self.edit_before(store_nr, rec, at, len);
+        if nullable && lit == "null" {
+            // A LINKED narrow local holds its field encoding, whose null code is the
+            // encoding's own (`crate::narrow`); a wide sentinel written here would read back
+            // as a value.  Refused, which the prompt reports, rather than guessed.
+            if self.frame_narrow(name, data).is_some() {
+                return false;
+            }
+            let store = self.database.store_mut(&self.stack_cur);
+            match &tp {
+                Type::Integer(_) => *store.addr_mut::<i64>(rec, at) = i64::MIN,
+                Type::Float => *store.addr_mut::<f64>(rec, at) = f64::NAN,
+                Type::Single => *store.addr_mut::<f32>(rec, at) = f32::NAN,
+                Type::Character => *store.addr_mut::<u32>(rec, at) = 0,
+                // 255 is the three-state boolean's null (C73); a simple enum's null is 0.
+                Type::Boolean => *store.addr_mut::<u8>(rec, at) = 255,
+                _ => *store.addr_mut::<u8>(rec, at) = 0,
+            }
+            self.edit_after(store_nr, rec, at, before);
+            return true;
+        }
         match &tp {
             Type::Integer(_) => {
                 let Ok(v) = lit.parse::<i64>() else {

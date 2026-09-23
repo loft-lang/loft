@@ -146,7 +146,7 @@ fn kind_type(kind: &str) -> Type {
     let int = |min: i32, max: u32, forced: Option<u8>| {
         Type::Integer(IntegerSpec {
             min,
-            max,
+            max: i64::from(max),
             not_null: false,
             forced_size: forced.and_then(std::num::NonZeroU8::new),
         })

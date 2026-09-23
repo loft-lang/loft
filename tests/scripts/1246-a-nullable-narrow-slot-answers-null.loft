@@ -142,14 +142,15 @@ fn test_a_non_nullable_narrow_slot_takes_its_default() {
   // separation is sharper now that one of the four has left it.
   k: i32 = 2147483647; k += 1; assert(k == null, "an i32 past its max reads as null, got {k}");
 
-  // …and where zero is OUTSIDE the range, the nearest bound is the default.  Only the
-  // ABOVE-zero side can be written: `limit(-30, -10)` does not parse (a negative HIGH
-  // bound is rejected), so no declarable type has a range lying wholly below zero and
-  // `range_default`'s `hi` arm has no source spelling that reaches it.
+  // …and where zero is OUTSIDE the range, the nearest bound is the default: the LOW bound
+  // for a range above zero, the HIGH bound for one lying wholly below it (declarable since
+  // loft#1630, which is what gives `range_default`'s `hi` arm a source spelling).
   o: integer limit(10,20) = 20;  o += 10;
   assert(o == 10, "a limit(10,20) past 20 takes the bound nearest zero, got {o}");
   r: integer limit(300,400) = 400; r += 10;
   assert(r == 300, "a limit(300,400) past 400 takes the bound nearest zero, got {r}");
+  q: integer limit(-30,-10) = -10; q += 10;
+  assert(q == -10, "a limit(-30,-10) past -10 takes the bound nearest zero, got {q}");
 
   // The non-nullable spellings never answer null, whatever `??` is written beside them.
   assert((n ?? 77) == 0, "a non-nullable default is a VALUE, so `??` is inert, got {n ?? 77}");

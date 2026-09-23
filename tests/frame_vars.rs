@@ -573,3 +573,43 @@ fn test() {{
         );
     }
 }
+
+// ── loft#1629 — a nullable scalar local is read, not `<unsupported>` ────────
+
+/// `(N-Shape)`: a nullable scalar local is its non-null twin's slot with the absence spelled
+/// as the null sentinel.  The frame reader had no `Optional` arm, so every one reached
+/// `stack_trace()` as `OtherVal { description: "<unsupported>" }` — absent or present alike.
+/// The script asserts its own trace, so a wrong reading fails the run.
+#[test]
+fn a_nullable_scalar_local_reads_its_value_or_null() {
+    let (mut state, data) = build(
+        "fn shown(v: ArgValue) -> text {
+    match v {
+        NullVal => \"null\",
+        BoolVal { b } => \"{b}\",
+        IntVal { n } => \"{n}\",
+        LongVal { n } => \"{n}\",
+        FloatVal { f } => \"{f}\",
+        CharVal { c } => \"{c}\",
+        OtherVal { description } => \"other {description}\",
+        _ => \"?\"
+    }
+}
+fn test() {
+    a: integer? = null; b: integer? = 5; c: float? = null; d: boolean? = true; e: character? = 'k';
+    st = stack_trace();
+    got = \"\";
+    for v in st[0].variables { if len(v.name) == 1 { got += \"{v.name}={shown(v.value)};\"; } }
+    assert(got == \"a=null;b=5;c=null;d=true;e=k;\", got);
+    assert(\"{a ?? 0}{b ?? 0}{c ?? 0.0}{d ?? false}{e ?? 'q'}\" == \"050truek\", \"values\");
+}",
+    );
+    let config = LogConfig::minimal();
+    let mut buf = Vec::<u8>::new();
+    state.execute_log(&mut buf, "test", &config, &data).unwrap();
+    assert!(
+        state.database.runtime_error.is_none(),
+        "the script's own assert failed: {:?}",
+        state.database.runtime_error
+    );
+}

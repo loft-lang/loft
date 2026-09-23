@@ -41,6 +41,15 @@ variables.  Per-block `OpReserveFrame(block.var_size)` is gone; slot-move
 a positional init (`OpInitText(pos)` / `OpInitRef(pos)` /
 `OpInitRefSentinel(pos)` / `OpInitCreateStack(pos, dep_pos)`).
 
+**The reserve does not initialise.**  `OpReserveFrame` only moves the top of the stack,
+so a slot holds whatever an earlier call left there until its first assignment writes it.
+A local declared ahead of a branch and first bound inside an arm (`if p { h = mk(1) } else
+{ h = mk(2) }`) therefore reads stale bytes on the interpreter if anything reads it before
+that bind, where `--native` starts every local at its zero value.  A single-cell probe does
+not show it, because a fresh stack is zero: it takes an earlier call to dirty the slot.  So a
+compiler-emitted read of a local's OLD value (a displaced-value release, a snapshot) must be
+placed only where an earlier bind dominates it — see `Scopes::fnref_bound` (loft#1609).
+
 **Blocks** use both zones.  Slots are assigned by `assign_slots_v2`;
 codegen writes directly to each variable's pre-assigned position via the
 positional init ops.  No per-block reserve, no per-block free: the whole

@@ -3416,7 +3416,7 @@ impl Parser {
         let mut dep = Vec::new();
         self.parse_depended(returned, &mut dep);
         let mut min = i32::MIN + 1;
-        let mut max = i32::MAX as u32;
+        let mut max = i64::from(i32::MAX);
         if type_name == "integer" {
             let has_limit = self.parse_type_limit(&mut min, &mut max);
             // `@FR-L-Narrow-Alias` — a stored WIDTH is a property of a named type, so `size(n)`
@@ -4191,7 +4191,7 @@ impl Parser {
     /// out-of-range write.  A bound is the one thing in a declaration a program cannot
     /// check for itself, so an unrepresentable one is a compile error naming the
     /// representable edge and the type that does hold the value.
-    pub(crate) fn parse_type_limit(&mut self, min: &mut i32, max: &mut u32) -> bool {
+    pub(crate) fn parse_type_limit(&mut self, min: &mut i32, max: &mut i64) -> bool {
         if self.lexer.has_keyword("limit") {
             self.lexer.token("(");
             // A bound the type cannot carry is refused, and the declaration then RECOVERS as
@@ -4228,52 +4228,47 @@ impl Parser {
                 }
             }
             self.lexer.token(",");
-            // An upper bound below zero is not representable: `IntegerSpec::max` is a
-            // `u32`, so a range lying entirely below zero has no encoding.  Say that,
-            // because the `-` otherwise reaches no branch below and the parser desyncs
-            // into *"Expect token )"* — an error about punctuation for a bound the type
-            // system simply cannot carry, which is the same shape the lower bound's
-            // too-wide case was fixed for above.
-            if self.lexer.has_token("-") {
+            // The upper bound is signed (loft#1630): a range lying wholly below zero is
+            // `value - start` in the smallest width that holds it, like any other
+            // (`(L-Narrow-Decode)`).  It spans the same window the lower bound does at its
+            // bottom and the wide template's `u32::MAX` at its top.
+            let max_neg = self.lexer.has_token("-");
+            let upper = if let Some(nr) = self.lexer.has_integer() {
+                Some(i64::from(nr))
+            } else {
+                self.lexer
+                    .has_long()
+                    .map(|nr| i64::try_from(nr).unwrap_or(i64::MAX))
+            };
+            if let Some(nr) = upper {
+                let v = if max_neg { -nr } else { nr };
+                if (i64::from(i32::MIN) + 1..=i64::from(u32::MAX)).contains(&v) {
+                    *max = v;
+                } else {
+                    refused = true;
+                    if !self.first_pass {
+                        diagnostic!(
+                            self.lexer,
+                            Level::Error,
+                            "upper bound {v} is outside the range `limit(...)` can carry \
+                             ({} to {}); declare it plain `integer`, which holds the full \
+                             64-bit range, and check the bound in code",
+                            i32::MIN + 1,
+                            u32::MAX
+                        );
+                    }
+                }
+            }
+            // An inverted range admits no value at all, so every store into it would be
+            // refused with a message about narrowing rather than about the declaration.
+            if !refused && i64::from(*min) > *max {
+                refused = true;
                 if !self.first_pass {
                     diagnostic!(
                         self.lexer,
                         Level::Error,
-                        "`limit(...)`'s upper bound cannot be negative, so a range lying \
-                         entirely below zero cannot be declared; widen it to zero \
-                         (`limit({min}, 0)`) and check the upper edge in code, or declare \
-                         it plain `integer`"
-                    );
-                }
-                self.limit_refused = true;
-                // Consume the digits so the `)` below still lines up and the file's other
-                // errors are reported rather than buried under a cascade.
-                let _ = self
-                    .lexer
-                    .has_integer()
-                    .or_else(|| self.lexer.has_long().and_then(|n| u32::try_from(n).ok()));
-                self.lexer.token(")");
-                return false;
-            }
-            // C54.A incremental 2a — accept both Integer and Long literals.
-            // Values > i32::MAX tokenise as Long, so u32-range bounds like
-            // `limit(0, 4_294_967_294)` work.
-            if let Some(nr) = self.lexer.has_integer() {
-                *max = nr;
-            } else if let Some(nr) = self.lexer.has_long() {
-                if let Ok(fits) = u32::try_from(nr) {
-                    *max = fits;
-                } else {
-                    refused = true;
-                }
-                if u32::try_from(nr).is_err() && !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "upper bound {nr} is outside the range `limit(...)` can carry \
-                         (up to {}); declare it plain `integer`, which holds the full \
-                         64-bit range, and check the bound in code",
-                        u32::MAX
+                        "`limit({min}, {max})` holds no value: the lower bound is above the \
+                         upper one; write the smaller bound first"
                     );
                 }
             }

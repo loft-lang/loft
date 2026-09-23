@@ -746,6 +746,13 @@ on top of HEAD, and `scripts/falsify.sh <guard> --patch <file>` scores it exactl
 control is scored.  Nothing outside the repository has to survive for it to be re-run, which is
 the one property no ref-shaped receipt can have.
 
+⚠ **`make falsify` WRITES `tests/falsified/<guard>.patch` every time it runs**, as the diff from the
+control to your working tree.  Run on an OLDER guard, one that already carries a receipt, to
+check a new cell added to it, it replaces that receipt with a diff that has nothing to do with the
+guard's original defect (measured 2026-09-23 on `102-expected-errors.loft`: a 919-line rewrite).
+Restore the committed receipt with `git show HEAD:tests/falsified/<guard>.patch > <that file>`,
+and keep only the verdict lines from the run.
+
 Deriving one is mechanical, because a control is not an arbitrary commit: it is the PARENT of
 the commit that added the guard, so the reintroducing patch is that commit's own source diff,
 reversed.  Measured over the 133 guards whose control is publicly unreachable, that holds for

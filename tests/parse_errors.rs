@@ -5045,14 +5045,19 @@ fn a_generic_literal_reports_where_its_twin_does() {
 /// and assert nothing.  (loft#1621 also carries a sized-alias cell in that file, where the
 /// channel is the whole file's error COUNT: before the fix the pass-1 size error aborted the
 /// parse and every other annotation in it went unmatched.  Two channels, one fact.)
+///
+/// ⚠ This cell was written against `limit(-1100, -900) size(2)` — a range wholly below zero,
+/// which was refused *"`limit(...)`'s upper bound cannot be negative"*.  loft#1630 made such a
+/// range DECLARABLE, so that trigger no longer refuses anything and the cell would have passed
+/// while testing nothing.  Re-based on the INVERTED range, which is the refusal loft#1630 added
+/// in its place and which reaches the same recovery.
 #[test]
 fn refused_limit_with_size_reports_the_refusal_and_not_the_size() {
-    code!("type Narrow1638 = integer limit(-1100, -900) size(2);\nfn test() { x: Narrow1638 = -1000; print(\"{x}\"); }")
+    code!("type Narrow1638 = integer limit(10, 3) size(1);\nfn test() { x: Narrow1638 = 5; print(\"{x}\"); }")
         .error(
-            "`limit(...)`'s upper bound cannot be negative, so a range lying entirely below \
-             zero cannot be declared; widen it to zero (`limit(-1100, 0)`) and check the upper \
-             edge in code, or declare it plain `integer` at \
-             refused_limit_with_size_reports_the_refusal_and_not_the_size:1:44",
+            "`limit(10, 3)` holds no value: the lower bound is above the upper one; write the \
+             smaller bound first at \
+             refused_limit_with_size_reports_the_refusal_and_not_the_size:1:39",
         );
 }
 
@@ -5063,7 +5068,7 @@ fn refused_limit_with_size_reports_the_refusal_and_not_the_size() {
 fn unrepresentable_limit_with_size_reports_the_bound_and_not_the_size() {
     code!("type Narrow1638b = integer limit(0, 5000000000) size(4);\nfn test() { x: Narrow1638b = 5; print(\"{x}\"); }")
         .error(
-            "upper bound 5000000000 is outside the range `limit(...)` can carry (up to \
+            "upper bound 5000000000 is outside the range `limit(...)` can carry (-2147483647 to \
              4294967295); declare it plain `integer`, which holds the full 64-bit range, and \
              check the bound in code at \
              unrepresentable_limit_with_size_reports_the_bound_and_not_the_size:1:48",
@@ -5094,6 +5099,11 @@ fn size_with_no_limit_still_names_the_missing_limit() {
 /// because the fact is an error that must still appear, and the file it would live in aborts
 /// on the first pass-1 error — which is the refusal.
 ///
+/// ⚠ The first declaration was `limit(-100, -1) size(1)` until loft#1630 made a wholly-negative
+/// range declarable.  It then refused nothing, `limit_refused` was never set, and this cell
+/// passed while testing NOTHING — the second declaration reports its error either way.  Re-based
+/// on the inverted range, which still refuses and still recovers as a plain `integer`.
+///
 /// Only the SECOND declaration's error is asserted, and that is the whole cell: this source
 /// reports exactly one diagnostic, because the size check is pass-1 and its error aborts
 /// before pass 2 ever reaches the refusal.  The refusal's own message is pinned by
@@ -5102,7 +5112,7 @@ fn size_with_no_limit_still_names_the_missing_limit() {
 #[test]
 fn a_refused_limit_does_not_silence_the_next_declaration() {
     code!(
-        "type Narrow1621a = integer limit(-100, -1) size(1);\n\
+        "type Narrow1621a = integer limit(10, 3) size(1);\n\
          type Narrow1621b = i32 size(1);\n\
          fn test() { print(\"x\"); }"
     )

@@ -1,0 +1,149 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1609, `@FR-L-CapOwn` / `@FR-H-Drop` — A CLOSURE THAT LEAVES ITS FRAME RUNS ITS
+// CAPTURES' HOOKS WHEN IT IS RELEASED.
+//
+// `(L-CapOwn)`: a closure record that LEAVES its defining frame takes the release of what it
+// captured over.  That release is the whole of one, the hooks as well as the store
+// (`(H-Drop)`).  In the caller the fn-ref is a call result that no local record names, and
+// which lambda it holds is known only at run time.  So its release dispatches the record's drop
+// cascade on the fn-ref's own `d_nr` (`OpDropFnRef`), ahead of the free.  The store used to be
+// freed with no hook at all.
+//
+// Two releases of the same kind, found by the matrix, are pinned here too:
+// - a REBIND of such a fn-ref (`f = mkf(); f = mkf()`) releases the displaced closure after
+//   the new value is built.  It used to be released by nobody, store included.
+// - a closure BUILT IN ONE ARM of a branch leaves the frame's own release to the run that
+//   skips the build.  That release used to free the captured store without its hook.
+//
+// Every trace is exact and hand-computed: a lost release and a doubled one both show as the
+// wrong sequence, not just the wrong count.
+//
+// @falsified-at: 25ea32554 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.patch —
+//   the same channels.
+// CHANNEL: assertion failures, both backends.
+// HOLDS: clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1`; `k1`, `k2` right before and after.
+
+struct H { id: integer }
+
+fn OpDrop(self: H) { note("D{self.id}"); }
+fn mk(id: integer) -> H { note("M{id}"); H { id: id } }
+
+fn trace_path() -> text { return "loft_1609_escape_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn mkf(i: integer) -> fn() -> integer { w = [mk(i)]; fn() -> integer { len(w) } }
+fn mkr(i: integer) -> fn() -> integer { h = mk(i); fn() -> integer { h.id } }
+fn mkl(i: integer, out: &fn() -> integer) { w = [mk(i)]; out = fn() -> integer { len(w) }; }
+fn mkc(c: boolean, i: integer) -> fn() -> integer {
+  w = [mk(i)];
+  if c { fn() -> integer { len(w) } } else { fn() -> integer { 7 } }
+}
+fn mkcr(c: boolean, i: integer) -> fn() -> integer {
+  h = mk(i);
+  if c { fn() -> integer { h.id } } else { fn() -> integer { 7 } }
+}
+fn plain() -> fn() -> integer { fn() -> integer { 5 } }
+fn keep(g: fn() -> integer) -> fn() -> integer { g }
+fn run(g: fn() -> integer) -> integer { g() }
+fn arms(p: boolean) -> integer { if p { h = mkf(90); h() } else { h = mkf(91); h() + 1 } }
+
+// 1 — the issue's shape: a returned closure over a VECTOR of records with a hook.
+fn c1() { f = mkf(66); note("F{f()}"); note("X"); }
+// 2 — a returned closure over a RECORD with a hook.
+fn c2() { f = mkr(68); note("F{f()}"); note("X"); }
+// 3 — the closure leaves through a `&fn(…)` link instead of the return (loft#1443's route).
+fn c3() { f = fn() -> integer { 0 }; mkl(67, f); note("F{f()}"); note("X"); }
+// 4 — two lambdas of one fn type, only one capturing: the other arm drops nothing, and on its
+//     run the frame's own release of the vector runs the hook.
+fn c4() { f = mkc(false, 69); note("F{f()}"); g = mkc(true, 80); note("G{g()}"); note("X"); }
+// 5 — the same over a RECORD capture.
+fn c5() { f = mkcr(false, 83); note("F{f()}"); g = mkcr(true, 84); note("G{g()}"); note("X"); }
+// 6 — a rebind: the displaced closure is released after the new value is built.
+fn c6() { f = mkf(70); note("F{f()}"); f = mkf(71); note("F{f()}"); note("X"); }
+// 7 — a rebind that hands the SAME closure back displaces nothing.
+fn c7() { f = mkf(81); f = keep(f); note("F{f()}"); f = mkf(82); note("F{f()}"); note("X"); }
+// 8 — a copy shares the closure: released once.
+fn c8() { f = mkf(73); g = f; note("F{f()}G{g()}"); note("X"); }
+// 9 — passed as an argument: the callee does not release it.
+fn c9() { f = mkf(72); note("R{run(f)}"); note("X"); }
+// 10 — one per loop pass, released at the pass's end.
+fn c10() { for i in 74..76 { f = mkf(i); note("F{f()}"); } note("X"); }
+// 11 — beside a closure built in this frame: each record released once.
+fn c11() { v = [mk(78)]; a = fn() -> integer { len(v) }; b = mkf(77); note("A{a()}B{b()}"); note("X"); }
+// 12 — a returned closure called and discarded in one expression.
+fn c12() { n = mkf(79)(); note("L{n}"); note("X"); }
+// 13 — a call's closure bound in each arm of a local declared ahead of the branch: the first
+//      binding displaces only the null pre-init.
+fn c13() { note("A{arms(true)}"); note("B{arms(false)}"); note("X"); }
+// 14 — a rebind inside a loop of a fn-ref declared outside it: each pass displaces the last.
+fn c14() { f = mkf(60); for i in 61..63 { f = mkf(i); note("F{f()}"); } note("X"); }
+// Controls: a returned closure that captures nothing, and a vector with no closure.
+fn k1() { h = mk(76); f = plain(); note("F{f()}"); note("X"); }
+fn k2() { w = [mk(65)]; note("L{len(w)}"); note("X"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+
+  c1();
+  ok("c1 returned, vector      ", drain(), "M66,F1,X,D66");
+  c2();
+  ok("c2 returned, record      ", drain(), "M68,F68,X,D68");
+  c3();
+  ok("c3 through a link        ", drain(), "M67,F1,X,D67");
+  c4();
+  ok("c4 built in one arm      ", drain(), "M69,D69,F7,M80,G1,X,D80");
+  c5();
+  ok("c5 one arm, a record     ", drain(), "M83,D83,F7,M84,G84,X,D84");
+  c6();
+  ok("c6 a rebind              ", drain(), "M70,F1,M71,D70,F1,X,D71");
+  c7();
+  ok("c7 the same closure back ", drain(), "M81,F1,M82,D81,F1,X,D82");
+  c8();
+  ok("c8 a shared copy         ", drain(), "M73,F1G1,X,D73");
+  c9();
+  ok("c9 an argument           ", drain(), "M72,R1,X,D72");
+  c10();
+  ok("c10 one per pass         ", drain(), "M74,F1,D74,M75,F1,D75,X");
+  c11();
+  ok("c11 beside a local record", drain(), "M78,M77,A1B1,X,D77,D78");
+  c12();
+  ok("c12 called and discarded ", drain(), "M79,D79,L1,X");
+
+  c13();
+  ok("c13 bound in each arm    ", drain(), "M90,D90,A1,M91,D91,B2,X");
+
+  c14();
+  ok("c14 rebound in a loop    ", drain(), "M60,M61,D60,F1,M62,D61,F1,X,D62");
+
+  k1();
+  ok("k1 captures nothing      ", drain(), "M76,F5,X,D76");
+  k2();
+  ok("k2 no closure            ", drain(), "M65,L1,X,D65");
+
+  delete(trace_path());
+  println("a closure that leaves its frame runs its captures' hooks: every cell holds");
+}

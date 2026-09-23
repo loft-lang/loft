@@ -390,6 +390,15 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
         // return would be misread as a reachable fn d_nr.
         let returns_fn = matches!(def.returned(), Type::Function(..) | Type::Routine(_));
         collect_fn_ref_literals(def.code(), data, def.variables(), &mut calls, returns_fn);
+        // A reachable lambda's closure record can be released through a fn-ref that no local
+        // record names, and `OpDropFnRef` dispatches to its cascade by `d_nr` (loft#1609).
+        let record = def.closure_record();
+        if record != u32::MAX {
+            let cascade = data.drop_cascade_nr(record);
+            if cascade != u32::MAX {
+                calls.insert(cascade);
+            }
+        }
         for c in calls {
             if !reachable.contains(&c) {
                 queue.push_back(c);

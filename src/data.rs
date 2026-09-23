@@ -108,9 +108,10 @@ pub struct IntegerSpec {
     /// Inclusive lower bound.  `i32::MIN` is reserved as the null
     /// sentinel; plain-integer templates use `i32::MIN + 1`.
     pub min: i32,
-    /// Inclusive upper bound.  `u32` to allow the wide / former-`long`
-    /// template to use `u32::MAX` as a "wider than i32" sentinel.
-    pub max: u32,
+    /// Inclusive upper bound.  Signed, so a range lying wholly below zero has one
+    /// (`limit(-100, -1)`, loft#1630); the wide / former-`long` template keeps
+    /// `u32::MAX` as its "wider than i32" marker.
+    pub max: i64,
     /// When true, the value cannot be null — frees the null sentinel
     /// and widens the usable range by 1 on narrow types.
     pub not_null: bool,
@@ -129,7 +130,7 @@ impl IntegerSpec {
     pub const fn wide() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: u32::MAX,
+            max: u32::MAX as i64,
             not_null: false,
             forced_size: None,
         }
@@ -139,7 +140,7 @@ impl IntegerSpec {
     pub const fn signed32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            max: i32::MAX as i64,
             not_null: false,
             forced_size: None,
         }
@@ -189,7 +190,7 @@ impl IntegerSpec {
     pub fn i32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            max: i32::MAX as i64,
             not_null: false,
             forced_size: NonZeroU8::new(4),
         }
@@ -199,7 +200,7 @@ impl IntegerSpec {
     pub fn u32() -> Self {
         IntegerSpec {
             min: 0,
-            max: u32::MAX - 1,
+            max: i64::from(u32::MAX as i64) - 1,
             not_null: false,
             forced_size: None,
         }
@@ -433,7 +434,7 @@ impl IntegerSpec {
     /// True when the value range exceeds the signed-32-bit range.
     #[must_use]
     pub fn is_wide(&self) -> bool {
-        self.max > i32::MAX as u32
+        self.max > i64::from(i32::MAX)
     }
 
     /// Number of distinct representable values (inclusive range + 1).
@@ -469,13 +470,13 @@ impl IntegerSpec {
     /// True when this is the I32 template (plain `integer` post-2c).
     #[must_use]
     pub fn is_signed32_template(&self) -> bool {
-        self.min == i32::MIN + 1 && self.max == i32::MAX as u32
+        self.min == i32::MIN + 1 && self.max == i64::from(i32::MAX)
     }
 
     /// True when this is the wide I64 template.
     #[must_use]
     pub fn is_wide_template(&self) -> bool {
-        self.min == i32::MIN + 1 && self.max == u32::MAX
+        self.min == i32::MIN + 1 && self.max == i64::from(u32::MAX)
     }
 
     /// The loft-SOURCE spelling of this spec, or `None` when it has no name of
@@ -516,7 +517,7 @@ impl IntegerSpec {
     /// misroute every plain `integer`.
     #[must_use]
     pub fn unsigned_wide(&self) -> bool {
-        self.min >= 0 && self.max > i32::MAX as u32
+        self.min >= 0 && self.max > i64::from(i32::MAX)
     }
 }
 
@@ -3819,7 +3820,7 @@ mod tuple_stack_layout_tests {
     fn integer() -> Type {
         Type::Integer(IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            max: i64::from(i32::MAX),
             not_null: false,
             forced_size: None,
         })
@@ -4018,10 +4019,13 @@ pub fn is_null_sentinel_detach(
     // construction delivered to (loft#1513) — so the write displaces nothing the work-ref
     // still owns.  The displacement free fired here regardless, and on the adoption shape it
     // freed the store the binding had just taken: the scope-end hook then read freed memory.
+    // A closure record local assigned the sentinel is `@FR-L-CapKeep`'s hand-over: the record
+    // it held is now the fn-ref's that still names it (loft#1636).
     let name = function.name(var);
     (crate::variables::owns_literal_backing_store(name)
         || name.starts_with("__ref_")
-        || name.starts_with("__rref_"))
+        || name.starts_with("__rref_")
+        || name.starts_with("___clos_"))
         && matches!(value.unspan(), Value::Call(nr, args)
             if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel")
 }
@@ -9976,7 +9980,7 @@ impl Data {
             "_d_nr",
             Type::Integer(IntegerSpec {
                 min: i32::MIN + 1,
-                max: i32::MAX as u32,
+                max: i64::from(i32::MAX),
                 not_null: false,
                 forced_size: NonZeroU8::new(4),
             }),
@@ -10366,6 +10370,33 @@ impl Data {
             return Self::mangle_method(&format!("{owner}::{}", def.name()), method);
         }
         Self::mangle_method(def.name(), method)
+    }
+
+    /// Every lambda whose closure record has a drop cascade, paired with that cascade: the
+    /// arms `OpDropFnRef` dispatches over (`@FR-L-CapOwn`, loft#1609).  A fn-ref's run-time
+    /// `d_nr` names the lambda; a lambda absent here has nothing to drop.
+    #[must_use]
+    pub fn closure_drops(&self) -> Vec<(u32, u32)> {
+        (0..self.definitions())
+            .filter_map(|d| {
+                let record = self.def(d).closure_record();
+                if record == u32::MAX {
+                    return None;
+                }
+                let cascade = self.drop_cascade_nr(record);
+                (cascade != u32::MAX).then_some((d, cascade))
+            })
+            .collect()
+    }
+
+    /// Does any lambda's closure record have a drop cascade?  Gates `OpDropFnRef`, which is
+    /// a no-op in a program where [`Self::closure_drops`] is empty.
+    #[must_use]
+    pub fn any_closure_drop(&self) -> bool {
+        (0..self.definitions()).any(|d| {
+            let record = self.def(d).closure_record();
+            record != u32::MAX && self.drop_cascade_nr(record) != u32::MAX
+        })
     }
 
     #[must_use]

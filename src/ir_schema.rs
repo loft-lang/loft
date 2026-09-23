@@ -367,7 +367,7 @@ fn type_list(p: &Parsed) -> Result<Vec<Type>, TypeDecodeError> {
 
 fn integer_spec(p: &Parsed) -> Result<IntegerSpec, TypeDecodeError> {
     let min = as_i32(field(p, "min")?)?;
-    let max = as_u32(field(p, "max")?)?;
+    let max = as_i64(field(p, "max")?)?;
     let not_null = as_bool(field(p, "not_null")?)?;
     let forced = as_u32(field(p, "forced")?)? as u8;
     Ok(IntegerSpec {

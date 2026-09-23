@@ -120,6 +120,8 @@ pub enum VariableValue {
     },
     Reference(DbRef),
     Vector(DbRef),
+    /// A nullable scalar local holding its type's null sentinel.
+    Null,
     /// Slot lies above the current `stack_pos` (not yet allocated this frame).
     OutOfFrame,
     /// Slot is below `stack_pos` but the read failed (bounds, alignment, or
@@ -712,6 +714,36 @@ impl State {
                     VariableValue::Long(crate::narrow::decode(slot.code(), slot.min, b))
                 })
             }
+            // loft#1629, `@FR-N-Shape` — a nullable scalar is its non-null twin's slot, the
+            // absence spelled as the null sentinel; the same sentinels `render_frame_local`
+            // reads.  A present value reads exactly as the twin does.  A linked narrow slot
+            // carries its field encoding instead, which is not this arm's to read.
+            Type::Optional(inner)
+                if narrow.is_none()
+                    && matches!(
+                        inner.base(),
+                        Type::Integer(_)
+                            | Type::Float
+                            | Type::Single
+                            | Type::Boolean
+                            | Type::Character
+                    ) =>
+            {
+                let absent = match inner.base() {
+                    Type::Integer(_) => self.peek_at::<i64>(abs_pos).map(|v| v == i64::MIN),
+                    Type::Float => self.peek_at::<f64>(abs_pos).map(f64::is_nan),
+                    Type::Single => self.peek_at::<f32>(abs_pos).map(f32::is_nan),
+                    Type::Boolean => self.peek_at::<u8>(abs_pos).map(|b| b == 255),
+                    _ => self.peek_at::<u32>(abs_pos).map(|c| c == 0),
+                };
+                match absent {
+                    None => VariableValue::Unreadable("oob"),
+                    Some(true) => VariableValue::Null,
+                    Some(false) => {
+                        self.read_variable_value(inner.base(), abs_pos, _size, is_arg, None)
+                    }
+                }
+            }
             // Post-2c round 10c: wide Type::Integer (former Type::Long) is i64.
             Type::Integer(s) if s.is_wide() => self
                 .peek_at::<i64>(abs_pos)
@@ -907,6 +939,7 @@ impl State {
                 VariableValue::Vector(r) => {
                     writeln!(f, "vec  = ({},{},{})", r.store_nr, r.rec, r.pos)?;
                 }
+                VariableValue::Null => writeln!(f, "null")?,
                 VariableValue::OutOfFrame => writeln!(f, "<out-of-frame>")?,
                 VariableValue::Unreadable(why) => writeln!(f, "<unreadable: {why}>")?,
                 VariableValue::Unsupported => writeln!(f, "<unsupported type>")?,

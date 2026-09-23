@@ -221,10 +221,14 @@ pub struct Parser {
     ///
     /// ⚠ Reset in `parse_typedef`, per DECLARATION, and NOT in `parse_type_limit`.  That
     /// function is reached only for the literal type name `integer`, so resetting there leaves
-    /// the flag standing for a following alias declaration that never calls it: `type Neg =
-    /// integer limit(-100, -1) size(1); type S = i32 size(1);` measured the second one SILENT,
-    /// where it reports its own error alone.  Pinned by
+    /// the flag standing for a following alias declaration that never calls it:
+    /// `type Wide = integer limit(0, 5000000000) size(4); type S = i32 size(1);` measured the
+    /// second one SILENT, where it reports its own error alone.  Pinned by
     /// `parse_errors::a_refused_limit_does_not_silence_the_next_declaration`.
+    ///
+    /// (That example was `limit(-100, -1)` until loft#1630 made a range wholly below zero
+    /// DECLARABLE — so it refuses nothing now and demonstrates nothing.  An example inside a
+    /// comment is a cell nobody runs; this one went stale in one join.)
     limit_refused: bool,
     /// @PLN11 arc E — set by the driver (`main.rs`) only when the whole-program
     /// startup cache is enabled; gates [`Parser::parsed_sources`] tracking so a
@@ -1531,7 +1535,6 @@ impl Parser {
             first_bind_targets: Vec::new(),
             first_bind_at: HashMap::new(),
             stmt_if_pending: false,
-            limit_refused: false,
             fit_candidate: None,
             fit_armed: None,
             fit_in_condition: false,
@@ -1552,6 +1555,7 @@ impl Parser {
             default: false,
             context: u32::MAX,
             first_pass: true,
+            limit_refused: false,
             ambiguity_reported: std::collections::HashSet::new(),
             force_tret: std::collections::HashSet::new(),
             par_worker_defs: std::collections::HashSet::new(),
@@ -2890,6 +2894,7 @@ impl Parser {
                 .add_attribute(&mut self.lexer, d, &name, buf_tp.clone());
             self.data.definitions[d as usize].attributes[a].hidden = true;
             let f = &mut self.data.definitions[d as usize].variables;
+            f.mark_nullable_text_buffer(v);
             f.set_type(v, buf_tp.clone());
             f.become_argument(v);
             f.mark_used(v);

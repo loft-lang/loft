@@ -1,0 +1,102 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1630, `@FR-L-Narrow-Decode` — A RANGE LYING WHOLLY BELOW ZERO IS DECLARABLE.
+//
+// A narrow slot stores `value - start` in the smallest width that holds the range, and that
+// is defined for any range: `limit(-100, -1)` is 100 values in one byte at bias `-100`,
+// exactly as `limit(1000, 1100)` is 101 at bias `1000`.  The upper bound used to be an
+// unsigned field, so every such declaration was refused.  Each cell below reaches the stored
+// bytes through a different consumer — a field, a local, an element, three widths, a
+// nullable field, a `sorted` and a `hash` key, a write, a neighbour's offset, a parameter.
+//
+// @falsified-at: ec0097e24 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1630-a-range-wholly-below-zero-is-declarable.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: exit, both backends — the control refuses the file at compile time; the cells'
+//   assertions are what hold the representation once it compiles.
+// HOLDS: all eleven cells on both backends after, clean under `LOFT_STRICT_STORES=1`.
+
+type Neg = integer limit(-100, -1) size(1);
+type N2 = integer limit(-40000, -1) size(2);
+type N4 = integer limit(-2000000000, -1) size(4);
+type Unsized = integer limit(-100, -1);
+
+struct P { a: Neg }
+struct Q2 { a: N2, b: N2 }
+struct Q4 { a: N4, b: N4 }
+struct Opt { a: Neg?, b: Neg? }
+struct Lay { a: Neg, b: integer, c: Neg }
+struct U { a: Unsized }
+struct Keyed { a: Neg, n: integer }
+struct Ordered { s: sorted<Keyed[a]> }
+struct Hashed { m: hash<Keyed[a]> }
+
+fn dbl(x: Neg) -> Neg { x * 2 + 1 ?? -1 }
+
+fn test_a_field() {
+  p = P { a: -50 };
+  assert(p.a == -50, "a Neg field reads -50, got {p.a}");
+}
+
+fn test_a_locals_edges() {
+  x: Neg = -1;
+  y: Neg = -100;
+  assert(x == -1 && y == -100, "a Neg local holds both edges, got {x} {y}");
+}
+
+fn test_elements() {
+  v: vector<Neg> = [-100, -1, -50];
+  s = 0;
+  for e in v { s += e; }
+  assert(s == -151 && len(v) == 3 && v[0] == -100, "Neg elements, got {s} {len(v)} {v[0]}");
+}
+
+fn test_two_and_four_bytes() {
+  q = Q2 { a: -39999, b: -1 };
+  assert(q.a == -39999 && q.b == -1, "an N2 pair, got {q.a} {q.b}");
+  r = Q4 { a: -2000000000, b: -3 };
+  assert(r.a == -2000000000 && r.b == -3, "an N4 pair, got {r.a} {r.b}");
+}
+
+fn test_a_nullable_field() {
+  o = Opt { a: null, b: -7 };
+  assert(!o.a && o.b == -7, "a Neg? holds null and -7, got {o.b}");
+}
+
+fn test_a_neighbours_offset() {
+  l = Lay { a: -3, b: 123456789, c: -4 };
+  assert(l.a == -3 && l.b == 123456789 && l.c == -4, "the layout around Neg, got {l.a} {l.b} {l.c}");
+}
+
+fn test_no_declared_size() {
+  u = U { a: -77 };
+  assert(u.a == -77, "an unsized negative range, got {u.a}");
+}
+
+fn test_a_write() {
+  p = P { a: -50 };
+  p.a = -12;
+  x = p.a;
+  p.a = -99;
+  assert(x == -12 && p.a == -99, "writes to a Neg field, got {x} {p.a}");
+}
+
+fn test_arithmetic_and_a_parameter() {
+  p = P { a: -50 };
+  assert(p.a * 2 == -100 && p.a + 99 == 49, "arithmetic over a Neg");
+  assert(dbl(-11) == -21, "a Neg parameter and return, got {dbl(-11)}");
+}
+
+fn test_a_sorted_key() {
+  h = Ordered { s: [] };
+  h.s += [Keyed { a: -5, n: 1 }, Keyed { a: -90, n: 2 }, Keyed { a: -1, n: 3 }];
+  t = "";
+  for e in h.s { t += "{e.a} "; }
+  assert(t == "-90 -5 -1 ", "a sorted Neg key orders by value, got {t}");
+}
+
+fn test_a_hash_key() {
+  h = Hashed { m: [] };
+  h.m += [Keyed { a: -33, n: 2 }, Keyed { a: -1, n: 5 }];
+  e = h.m[-33];
+  assert(e.n == 2 && e.a == -33, "a hash Neg key finds its record, got {e.n} {e.a}");
+}

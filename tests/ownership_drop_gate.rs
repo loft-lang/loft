@@ -1452,10 +1452,8 @@ const PILOT_ONCE: &[&str] = &[
     "p_l1", "p_l2", "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
     "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s4",
     "p_s5", // a local in a join
-    // `d = v` of a droppable COLLECTION the function owns.  ⚠ These two are MOVES by the rules
-    // and still release TWICE today (`M1 L1 D1 D1`, measured both backends) — `formal/heap.md`
-    // D-heap-15 carries that, and `LEASE_DEVIATIONS` names them so the gate stays honest about it.
-    "p_v1", "p_v2",
+    // `d = v` of a droppable COLLECTION the function owns: a MOVE (`D-heap-23` closed it).
+    "p_v1",
 ];
 
 /// The pilot cells that place a value the function does NOT own — the copies `(H-Copy-Refuse)`
@@ -1468,6 +1466,10 @@ const PILOT_REFUSED: &[&str] = &[
     "p_g1", "p_g3", "p_g4", "p_g5", // a member of a call result
     // `d = b.v` of a droppable COLLECTION held in a FIELD: the container still owns it.
     "p_v3",
+    // `d = v; v += […]`: the bind MOVES `v`, so the growth reads a SPENT name, which `(H-Spent)`
+    // makes a compile-time error — `D-heap-8`'s unbuilt second half (loft#1568), not a release
+    // to judge.  Reclassified 2026-09-23, which closed `D-heap-15`.
+    "p_v2",
 ];
 
 /// What the lease rules require of the cell `name`, read — as the rule is read — off the cell's
@@ -1555,7 +1557,12 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
 /// the direction that retires it: it enforces from BOTH sides, so a cell here whose copy the
 /// census DOES refuse fails until it is removed, and a merely tolerant list would have gone green
 /// on the cure and stayed forever.
-const CENSUS_BLIND: &[&str] = &[];
+///
+/// `p_v2` entered it 2026-09-23 for a different blindness.  Its copy IS enumerated, and it is
+/// correctly a MOVE (`lease=move`).  What the rules refuse is the LATER read of the spent name
+/// (`d = v; v += […]`), `(H-Spent)`'s error, which no census arm implements yet (`D-heap-8`,
+/// loft#1568).  It leaves the day that error refuses it.
+const CENSUS_BLIND: &[&str] = &["p_v2"];
 
 /// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
 /// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.
@@ -1591,7 +1598,9 @@ const CENSUS_BLIND: &[&str] = &[];
 // release to the copy when the copy is certain to run, and `c_tuple_tuplem` with it.
 // `p_i2` left it the same day (loft#1563): a rebind written out per arm makes the arm that hands
 // back the binding itself the identity, so the record it keeps is neither displaced nor released.
-const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[("D-heap-15", &["p_v2"])];
+// `p_v2` left it 2026-09-23 as reclassified: the growth after the move is `(H-Spent)`'s error,
+// so the rules refuse the program and the cell is `PILOT_REFUSED` (`D-heap-8`).
+const LEASE_DEVIATIONS: &[(&str, &[&str])] = &[];
 
 /// Every cell has a lease verdict, and every cell the rules say must release once while a
 /// baseline says it does not is carried by exactly one OPEN deviation in `formal/heap.md`.  A fix

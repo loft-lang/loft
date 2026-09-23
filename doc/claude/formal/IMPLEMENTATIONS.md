@@ -548,7 +548,7 @@ reframes the rest:
 | `@FR-O-Proxy` | empty `deps` as a stand-in for "owner" — unsound alone | `Type::depend().is_empty()`, 24 sites |
 | `@FR-O-Override` | the never-free veto that makes the proxy safe at a free — over the free NOTION (`OpSets::frees`, five spellings), with the one admissible free named | `Function::is_skip_free`; the downstream intercepts `state/codegen.rs::generate_call` and `generation/ops/ref_ops.rs`; `Function::is_staged_text_temp` (the admissible release); gated by `ownership_cfg`'s Check D under `LOFT_OWN_ORACLE=check` |
 | `@FR-O-Latest` | latest assignment's ownership + the LOOP DEPTH it was taken at | `Scopes::owned_refs` |
-| `@FR-O-Witness` | a MIXED-ownership local's owner, per RUN, by store identity | `Scopes::owner_witness` (`owner_witness_locals`, `witness_set_kind`), `Function::owner_witness` (stored in the snapshot as `VAR_OWNER_WITNESS`, cache format v5); both emitters read the flag to copy FRESH and to decline the materialise arms |
+| `@FR-O-Witness` | a MIXED-ownership local's owner, per RUN, by store identity | `Scopes::owner_witness` (`owner_witness_locals`, `witness_set_kind`), `Function::owner_witness` (stored in the snapshot as `VAR_OWNER_WITNESS`, cache format v5); both emitters read the flag to copy FRESH and to decline the materialise arms; at a return that copies the local out, `return_moved_holders` names the witness and the plain locals it aliased (`Scopes::witness_aliases`), whose hooks stand down by RECORD identity (loft#1628) |
 
 **`deps` is not the oracle.** `ownership_of` derives own-vs-borrow from the IR — a store
 mint is `Owned`, a projection is `Borrowed(base)`, a call resolves through the callee's
