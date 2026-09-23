@@ -79,6 +79,15 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     // c8: three declared ranges that leave codes spare — two signed byte/short aliases and
     // `limit(1000, 1100)`, whose range excludes zero.  Every step and every read after it is
     // PLAIN since C127; the one `wrapping_neg` is the negative literal in `y -= 1`.
+    //
+    // ⚠ DERIVED, so re-measure on any JOIN that touches the range proof — a pin means
+    // "measured on THIS tree".  Known in flight 2026-09-23: loft#1619 on
+    // `tuxedo-165-generics` takes a range bound once into a hidden `_range_end` local and
+    // re-seeds counters as the proof's fixpoint grows, which already moved
+    // `invariant_arith` m1/m10, `push_window` w2, `guarded_chain` c4 and `group_push` g11 to
+    // stronger forms.  These rows move WITH the proof and a moved row is not a regression;
+    // the way to tell is to run the cells under the switches, which the two tests beside
+    // this table do.
     ("n_c8", [5, 1, 2, 1, 0, 0, 0, 0, 0, 0]),
     // b5: an end that is a `size`, ranged at seed time — `k + 1` is plain beside the
     // counter's step (two), while `acc + …` self-steps and stays checked.
