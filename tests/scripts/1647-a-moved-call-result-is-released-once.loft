@@ -28,6 +28,13 @@
 //   below prints the same string on the control, which is why this class went unguarded: the
 //   control is WRONG and says so only on stderr, where nothing but `tests/wrap.rs` Part A2
 //   reads it.
+//   ARMED: none — unlike a leak, the refusal needs no instrument switched on: the allocator
+//   raises it on every interpreter run and prints it to stderr.  What it DOES need is a reader.
+//   A run scored on stdout and the exit code alone sees nothing at all, because the refusal
+//   keeps the store alive and every assertion below still passes; `tests/wrap.rs` Part A2 is
+//   what turns it into a failure, by snapshotting `loft::keys::stack_free_refusals()` around
+//   the file.  So score this receipt through the corpus runner, or by reading stderr —
+//   `loft --interpret <this file> 2>&1 | grep -c 'BUG (#306)'` — never by exit code.
 //   WITNESS: on a028b4f0e `pick`'s three cells each raise `BUG (#306): refused to free the
 //   stack store (#0)`; `ref_return`'s rename retired the `__retbuf` placeholder and left it an
 //   owning local nothing declared, so the clear read an unreserved slot (loft#1651).
