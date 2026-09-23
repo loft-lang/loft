@@ -3738,6 +3738,23 @@ use a separate collection or add after the loop"
             } else {
                 None
             };
+            // @PLN167 C1 — a text FIELD or ELEMENT (`t = &o.s`, `t = &a[0]`): the STORE kind of
+            // a text link.  It holds the slot's `DbRef`, the place `scalar_place_ref` gives a
+            // scalar, and every later mention of the link is parsed as that field
+            // (`Parser::store_text_link_place`).  The annotated spelling (`t: &text = o.s`)
+            // arrives with `s_type` already the link type, hence the peel.
+            let text_place_ref = if stack_src.is_none()
+                && heap_ref.is_none()
+                && matches!(
+                    if let Type::RefVar(inner) = &s_type { inner.base() } else { s_type.base() },
+                    Type::Text(_)
+                )
+                && self.is_text_place(code)
+            {
+                self.scalar_place_ref(code)
+            } else {
+                None
+            };
             // `c = &b` where `b` is itself a link: `c` takes the link `b` holds — a re-point on a
             // reassignment (`@FR-B-Ref-Repoint`), a link copy on a first bind.  Spelled
             // `OpVarRef(b)` so it cannot be read as `c = b`, which writes `b`'s value through `c`
@@ -3745,10 +3762,18 @@ use a separate collection or add after the loop"
             // (`formal/binding.md` D-bind-41).
             let link_src = match *code.unspan() {
                 Value::Var(src) if matches!(self.vars.tp(src).base(), Type::RefVar(_)) => Some(src),
-                _ => None,
+                // A store-kind text link is parsed as its field, so `c = &t` arrives in that
+                // spelling rather than as `Var(t)`.
+                _ => self.store_text_link_of(code),
             };
             if let Some(src) = link_src {
                 amp_unlowered = false;
+                if self.vars.is_store_text_link(src) {
+                    self.bind_text_link_kind(var_nr, true);
+                } else if matches!(self.vars.tp(src), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                {
+                    self.bind_text_link_kind(var_nr, false);
+                }
                 *code = self.cl("OpVarRef", &[Value::Var(src)]);
                 s_type = self.vars.tp(src).clone();
             } else if let Some(src) = stack_src {
@@ -3761,6 +3786,9 @@ use a separate collection or add after the loop"
                 // publishes it below as a dep; a SCALAR one owns no store and carries none,
                 // so it is recorded here for both.
                 self.vars.record_amp_link(var_nr, src);
+                if matches!(self.vars.tp(src).base(), Type::Text(_)) {
+                    self.bind_text_link_kind(var_nr, false);
+                }
                 let mut inner = self.vars.tp(src).clone();
                 // tuples.md T-Ref — a linked tuple local with a heap element is the
                 // `__tuple<…>` record.  On pass 1 its bind has not been rewritten yet (the fact
@@ -3807,6 +3835,16 @@ use a separate collection or add after the loop"
                 } else {
                     self.ref_var_type(linked)
                 };
+            } else if let Some(eref) = text_place_ref {
+                amp_unlowered = false;
+                self.bind_text_link_kind(var_nr, true);
+                *code = eref;
+                let text = if let Type::RefVar(inner) = &s_type {
+                    inner.base().clone()
+                } else {
+                    s_type.base().clone()
+                };
+                s_type = Type::RefVar(Box::new(text));
             } else if let Some(eref) = heap_ref {
                 amp_unlowered = false;
                 // `c`/`r` holds the field/element DbRef; interp reads/writes it via the
@@ -7203,6 +7241,16 @@ use a separate collection or add after the loop"
         let mut to = code.clone();
         for op in ["=", "+=", "-=", "*=", "%=", "/="] {
             if self.lexer.has_token(op) {
+                // @PLN167 C1 — `t = &…` BINDS the link: its target is the variable itself,
+                // not the text field every other mention of a store-kind link is spelled as.
+                if op == "="
+                    && self.lexer.peek_token("&")
+                    && let Some(link) = self.store_text_link_of(&to)
+                {
+                    to = Value::Var(link);
+                    *code = Value::Var(link);
+                    f_type = self.vars.tp(link).clone();
+                }
                 // loft#1212 — an EXPLICIT `??` coalesce is not a place.  `(E-Asgn-Discharge)`
                 // (@FR-E-Asgn-Discharge) says so in as many words: *"an explicit `(a ?? d)`
                 // names two values and no place; it takes no assignment at all"*, and

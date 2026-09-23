@@ -4668,6 +4668,15 @@ impl Output<'_> {
         {
             return slot.rust_type().to_string();
         }
+        // @PLN167 decision 2 — a link to a text field or element holds the slot's `DbRef`.
+        if self
+            .data
+            .def(self.def_nr)
+            .variables()
+            .is_store_text_link(var)
+        {
+            return "DbRef".to_string();
+        }
         rust_type(tp, &Context::Variable)
     }
 

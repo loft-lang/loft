@@ -1,0 +1,42 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// One `&text` link names texts of ONE kind: a text variable (the stack kind) or a text field
+// or element (the store kind, @PLN167 decision 2).  A bind of the other kind is refused —
+// in either order, and across the two arms of an `if`, because the kind belongs to the
+// VARIABLE and never to a path (`@FR-B-Ref-Repoint` keeps a link's type on a re-point).
+// Two links of the same kind re-point freely, which `167-a-text-link-into-a-store.loft`
+// covers.
+//
+// CHANNEL: the expected diagnostics, one per refused bind.
+// @falsified-at: ba778c9ac — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/167-a-text-link-keeps-its-kind.patch — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 -> 0/3 (the suite's verdict, not a count of matches)
+//
+// @EXPECT_ERROR: `u` links a text variable, so it cannot also link a text field or element
+// @EXPECT_ERROR: `w` links a text field or element, so it cannot also link a text variable
+// @EXPECT_ERROR: `p` links a text variable, so it cannot also link a text field or element
+
+struct O { a: text }
+
+fn stack_then_store() {
+  o = O { a: "x" };
+  loc = "l";
+  u = &loc;
+  u = &o.a;
+  println("{u}");
+}
+
+fn store_then_stack() {
+  o = O { a: "x" };
+  loc = "l";
+  w = &o.a;
+  w = &loc;
+  println("{w}");
+}
+
+fn per_path(c: boolean) {
+  o = O { a: "x" };
+  loc = "l";
+  if c { p = &loc; } else { p = &o.a; }
+  println("{loc}");
+}

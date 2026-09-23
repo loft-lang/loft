@@ -170,6 +170,26 @@ function (`__retbuf`), so its stack form cannot change.
    Rejected: a store for the stack on native (every linked local a store access, or a runtime
    branch on every link access); copy-in/write-back at the call (the copy shows inside the
    callee, which `(B-Ref-Reshape)` forbids doing quietly).
+   **Amended 2026-09-23 (C1's probe): the kind rides on the VARIABLE, not in the `Deps` of the
+   linked `Text`.**  The probe this plan set for C1 (§ Where the text kind can ride) failed:
+   `Type::with_deps`, `Type::without_deps` and `make_independent` rebuild a `Text`'s deps, the IR
+   codec reads back only the dep items, and 56 sites build `Type::Text(Deps::none())` fresh — each
+   of which would drop a side flag in silence, reverting a store link to the stack kind with a
+   wrong read and no diagnostic.  A link exists only in a variable (a local bound by `&`, a
+   parameter), so the fact is `Variable::store_text_link`, the shape decision 1 already chose for
+   `linked_narrow`, and it is carried through the IR snapshot.  What decision 2 decided is
+   unchanged: the kind is static, there is no runtime branch, the stack kind is byte-identical,
+   the store kind reads through the field read and writes through the field's setter, and a
+   cross-kind bind is refused.  Realised in the PARSER: every mention of a store-kind link is
+   spelled as the field it names (`OpGetText(OpVarRef(t), 0)`), so the emitters add only the
+   link's `DbRef` declaration and bind.  Rejected alongside the two above: a runtime-kind link
+   (a `TextLink` naming a `String` or a slot, a branch on every access, the slot's text written
+   back at the end of each statement) — built on this branch as WIP for loft#1566 and reverted
+   (ed429181d) for being the first rejected option in another spelling.
+   **A per-variable fact is only as durable as the CODEC**: a warm program-cache load is a
+   second decoder of the same state, and `linked_narrow` had no codec field — a warm run read a
+   linked `i8` holding `-7` as `-135` (loft#1650).  A new per-variable flag owes a snapshot field
+   and a cold-vs-warm cell in the commit that introduces it.
 3. **A `&` parameter takes a field or element through the lowering the `&` binding already
    has** (`expressions.rs`, the `heap_ref` arm that turns `OpGetInt(p, off)` into a store
    `DbRef`; native's `&mut (expr)` argument arm is already there for it).  The refusal was the
@@ -300,7 +320,7 @@ recorded here with the phase that must carry it as a cell, so none depends on me
 | **B2** — loft#1603: a `&`-bound scalar local passed to a `&` parameter compiles on native — after B0 the link IS the parameter's type and is passed as it is | loft#1603 | the issue's cell answers `6 11` on both backends | **Done with B0** — the issue's cell is in B0's guard |
 | **B3** — loft#1602, the loud stopgap: a text FIELD or ELEMENT handed to a `&text` parameter is refused, naming the cure | loft#1602 | `app(o.s)` refused; falsified (both backends answered `cc` silently before) | **Done** — narrowed by measurement: a TEMPORARY keeps its read-only work copy, because the stdlib's `directory(v: &text = "")` and its two siblings are called with literals by design; only a place (`Parser::is_text_place`) is refused. Guard `1602-a-text-place-to-a-ref-text-parameter-is-refused.loft` |
 | **B4** — a link to an ABSENT scalar place (`c = &v[10]`, `bump(v[10])`, a field of a null record) reads null and drops its writes on native as on the interpreter (C80: nothing stops a running calculation); native panicked in the allocator (`index 65535`), on `main` too for the bind | found in B1 (R10's raise-parity cell) | the bind and the argument cells answer alike on both backends: a read is null, a write lands nowhere, a later read is still null; no panic | **Done** — `output_place_pointer` yields a null pointer for an absent place; a scalar link's read answers `generation::absent_link_value` (each getter's `rec == 0` answer) and its write is dropped; a `&boolean` reads its storage byte in every case. No measurable cost on a hot `&` accumulator. Guard `167-a-link-to-an-absent-place-reads-null.loft` |
-| **C1** — `RefVar(Text)` carries its kind; the bind `t = &o.s` / `t = &v[0]` makes the store kind; reads and writes through it on both backends; cross-kind re-point refused | decision 2 | `tests/scripts/167-a-text-link-into-a-store.loft`, both backends; the stack-kind emission of every text-returning guard byte-identical before/after (`--native-emit` diff); `D-bind-38` closed | Open — **loft3-ca** |
+| **C1** — `RefVar(Text)` carries its kind; the bind `t = &o.s` / `t = &v[0]` makes the store kind; reads and writes through it on both backends; cross-kind re-point refused | decision 2 | `tests/scripts/167-a-text-link-into-a-store.loft`, both backends; the stack-kind emission of every text-returning guard byte-identical before/after (`--native-emit` diff); `D-bind-38` closed | **Done** — `Variable::store_text_link` (decision 2's amendment); the parser spells every mention as the field, `OpGetText(OpVarRef(t), 0)`, and binds the place `scalar_place_ref` gives; native declares the link a `DbRef`, the interpreter re-points it by `OpPutRef`. `scripts/introspect_diff.sh` before/after: 1 799 of 1 801 corpus files byte-identical, the two differing being the new guards. R3, R6 (refused, both orders and per path) and R7 answered in `167-a-text-link-into-a-store.loft` / `167-a-text-link-keeps-its-kind.loft`, both backends under `LOFT_POISON=1`. A store-kind link handed to a `&text` parameter stays refused (D-bind-55, C3). |
 | **C2** — the store-text slice joins the disturbance check | decision 2 | a cell that dangles under `LOFT_POISON=1` before the check is refused after; growth of another store stays allowed | Open — **loft3-ca** |
 | **C3** — a `&text` parameter instantiated per kind; `app(o.s)` links, `app(local)` unchanged | decision 2, @PLN165 | the aliasing cell reads the written value inside the callee; the stack instance byte-identical to C1's; loft#1602 closed | Open — **loft3-ca** |
 | **D** — formal + docs: `binding.md` gains the text-kind rule and closes `D-bind-38`/`39`; `DIAGNOSTICS.md` rows for the two new refusals; `CHANGELOG.md` | — | `rule_tags.py check` + `registers`; `check_doc_drift.sh` | Open — split: the narrow half here, the text half with C3 (loft3-ca) |
@@ -343,6 +363,10 @@ read only where the kind decides something — the two emitters' read and write 
 re-point refusal, and C3's instantiation key.  To be probed in C1 before it is built: whether
 any site rebuilds a `Text`'s `Deps` from scratch (`Deps::none()`, `depending(v)`), which would
 drop the flag silently.
+
+**Answered by C1 (2026-09-23): it does** — `with_deps`, `without_deps`, `make_independent`, the
+codec, and 56 fresh `Type::Text(Deps::none())` constructions.  The kind rides on the variable
+instead (decision 2's amendment).
 
 ## Cross-arc dependencies
 

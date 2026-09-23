@@ -46,7 +46,27 @@ impl Output<'_> {
         {
             return self.emit_invariant_use(w, &memo);
         }
+        // @PLN167 decision 2 — a store-kind text link IS the slot's `DbRef`, so the link a
+        // mention of it names (`OpGetText(OpVarRef(t), 0)`) is the variable itself.
+        if let Some(v) = self.store_text_link_ref(code) {
+            let name = sanitize(self.data.def(self.def_nr).variables().name(v));
+            return write!(w, "var_{name}");
+        }
         self.output_code_node(w, IrNode::Native(code))
+    }
+
+    /// The store-kind text link `OpVarRef(t)` names, or `None` for any other value.
+    pub(super) fn store_text_link_ref(&self, code: &Value) -> Option<u16> {
+        if let Value::Call(d, args) = code.unspan()
+            && self.data.def(*d).name() == "OpVarRef"
+            && let [arg] = args.as_slice()
+            && let Value::Var(v) = arg.unspan()
+            && self.data.def(self.def_nr).variables().is_store_text_link(*v)
+        {
+            Some(*v)
+        } else {
+            None
+        }
     }
 
     /// Central recursive dispatch from an IR node to its Rust representation
