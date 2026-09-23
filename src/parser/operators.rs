@@ -2689,6 +2689,7 @@ impl Parser {
             && !matches!(ctp, Type::Optional(_))
             && !narrowing_fallback
             && !Self::is_existing_tuple(&self.data, ctp)
+            && !matches!(ctp.base(), Type::Function(..))
             && !self.call_declares_nullable(code)
         {
             diagnostic!(
@@ -2766,6 +2767,20 @@ impl Parser {
                 "`??` has nothing to discharge — `{}` is a tuple that EXISTS, and only a tuple \
                  read out of range is absent.  Discharge the member you mean (`t.0 ?? d`)",
                 ctp.source_name(&self.data)
+            );
+        }
+        // `@FR-N-Opt` — a FUNCTION type has no null, so `??` has nothing to test on one, exactly
+        // as `f != null` has nothing to compare.  Refused so the two spellings agree; an
+        // absent fn-ref (an element read out of range) is callable and answers its return
+        // type's null (`@FR-L-FnAbsent`).  Reported and then allowed to proceed, for the
+        // reason the tuple refusal above gives.
+        if !self.first_pass && matches!(ctp.base(), Type::Function(..)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`??` has nothing to test — a function value has no null.  To fall back to \
+                 another function, check the index (`if i < len(fs) {{ fs[i] }} else {{ d }}`), \
+                 or keep the function in a struct field and discharge the struct (`(acts[k] ?? fallback).f(x)`)"
             );
         }
         *ctp = match &*ctp {

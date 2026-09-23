@@ -114,7 +114,9 @@ semantics live in [binding.md](binding.md); here it is just one more thing `⤳`
                no `(τ, τ)?` exists even in flight.  A FUNCTION type is the second:
                `(fn() -> integer)?` does not resolve and a yielded fn-ref has no sentinel to
                test, so (N-Chain) does not wrap one either — a fn-ref field read through an
-               absent receiver stays a fn-ref.
+               absent receiver stays a fn-ref.  What an out-of-range fn-ref read yields instead
+               is the ABSENT function, callable and answering its return type's null, and
+               `??` on a fn-ref is refused like `!= null` (closures.md `(L-FnAbsent)`).
                ⚠ `has_null(τ)` is a SIDE CONDITION on this rule, so every rule that CONSTRUCTS a
                `τ?` owes it — (N-Domain), (N-Chain), (Col-Lookup), (N-Join) — and enforcing it
                only where a type is DECLARED is what let a `τ?` be minted for a τ that had none

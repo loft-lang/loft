@@ -4657,8 +4657,6 @@ impl State {
             }
         }
 
-        // fn-ref variable is below all pushed arguments.
-        let fn_var_dist = stack.var_pos(v_nr);
         // declared: visible param sizes; extra: work-buf + closure (all 12-byte DbRefs).
         // @PLAN53 cluster 2 / S4: each arg occupies a stepped span (Σ step).
         let declared_size: u16 = param_types
@@ -4671,11 +4669,51 @@ impl State {
             0
         };
         let total_arg_size = declared_size + extra;
+        // `@FR-L-FnAbsent` — an ABSENT fn-ref (an element read out of range: its `d_nr` is the
+        // null sentinel) is callable, and the call answers the return type's null instead of
+        // dispatching; the program continues (C80).  The arguments are evaluated first on
+        // both paths, as `--native` binds them before its dispatch; the absent path drops them.
+        let guard = std::env::var_os("LOFT_NO_ABSENT_FNREF").is_none();
+        let mut absent_jump: Option<(u32, u16)> = None;
+        if guard {
+            let args_top = stack.position;
+            let d = stack.var_pos(v_nr);
+            stack.add_op("OpVarInt", self);
+            self.code_add(d);
+            stack.add_op("OpConvBoolFromInt", self);
+            stack.add_op("OpGotoFalseWord", self);
+            let step = self.code_pos;
+            self.code_add(0i32);
+            absent_jump = Some((step, args_top));
+        }
+        // The fn-ref variable is below all pushed arguments.
+        let fn_var_dist = stack.var_pos(v_nr);
         stack.add_op("OpCallRef", self);
         self.code_add(fn_var_dist);
         self.code_add(total_arg_size);
         stack.position -= total_arg_size;
-        stack.position += stack.step(size(&ret_type, &Context::Argument));
+        let ret_size = stack.step(size(&ret_type, &Context::Argument));
+        stack.position += ret_size;
+        if let Some((step, args_top)) = absent_jump {
+            let after = stack.position;
+            stack.add_op("OpGotoWord", self);
+            let end = self.code_pos;
+            self.code_add(0i32);
+            let absent_pos = self.code_pos;
+            self.code_put(step, (self.code_pos - (step + 4)) as i32);
+            stack.position = args_top;
+            if total_arg_size > 0 {
+                stack.add_op("OpFreeStack", self);
+                self.code_add(0u8);
+                self.code_add(total_arg_size);
+                stack.position -= total_arg_size;
+            }
+            if ret_size > 0 {
+                self.emit_typed_null(stack, &ret_type);
+            }
+            self.code_put(end, (self.code_pos - absent_pos) as i32);
+            stack.position = after;
+        }
         ret_type
     }
 
