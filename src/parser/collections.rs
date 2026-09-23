@@ -1897,7 +1897,7 @@ impl Parser {
                 && let Some(kt) = self.keyed_field_kt(f_type)
             {
                 #[cfg(not(feature = "wasm"))]
-                let tp_val = if self.is_struct_returning_call(val) {
+                let tp_val = if self.call_gives_away_its_store(val) {
                     i32::from(kt) | 0x8000
                 } else {
                     i32::from(kt)

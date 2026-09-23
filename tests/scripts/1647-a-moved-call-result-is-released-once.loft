@@ -19,6 +19,25 @@
 //   repeats M1 through a parameter; the run exits 1 at the M1 assertion.
 //   HOLDS: M2, M5–M8, M10 and M11 are exact on both trees, and leak, panic and free-refusal
 //   are clean on both — only the values of the cells with an allocation in the window move.
+// ⚠ WHAT THIS FILE DOES NOT COVER, and why — read before narrowing a shared predicate
+// on the strength of it.  M6–M8 all call `same(w)`, whose EVERY return path hands back
+// the parameter.  That is the MUST-borrow shape.  The predicate these cells were used to
+// justify also covers a second class: a callee ONE of whose paths borrows while another
+// MINTS (`fn pick(w: S, c: boolean) -> S { f = S { … }; if c { w } else { f } }`).  Which
+// arm ran is a RUNTIME fact, so no static bit can carry it — `formal/ownership.md` says
+// exactly that, and the @P290 bracket is the mechanism that decides it.
+//
+// The suite's witness for that class is
+// `1140-a-returned-keyed-parameter-is-still-the-callers.loft`, in its KEYED spelling, in
+// another file.  Nothing connected the two, so narrowing the shared predicate to "never
+// free for a borrowing callee" read as safe here and took the source-free bit away from
+// the bracket-licensed site as well; 1140's minting arm then leaked one store per call.
+//
+// The RECORD spelling of the class cannot be a cell here yet: it raises a pre-existing
+// `BUG (#306)` stack-store free refusal on the interpreter, in all three destinations
+// (bind, field, append), on `main` as well — the vector and keyed spellings do not, which
+// is why 1140 never showed it.  Tracked as loft#1651, which carries the measured
+// boundary; when it closes, the three cells belong here.
 struct V3 { x: single, y: single, z: single }
 struct Vert { pos: V3, nrm: V3 }
 struct Mesh { name: text, vs: vector<Vert> }

@@ -6305,7 +6305,7 @@ impl Parser {
                         Value::Int(i32::from(kt)),
                     ],
                 );
-                let tp_val = if self.is_struct_returning_call(value) {
+                let tp_val = if self.call_gives_away_its_store(value) {
                     i32::from(kt) | 0x8000
                 } else {
                     i32::from(kt)
