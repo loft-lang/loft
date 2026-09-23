@@ -81,6 +81,7 @@ type S16 = integer limit(-1000, 1000) size(2);
 struct F  { a: S8, b: S16 }
 struct N  { a: S8?, b: S16? }
 struct W  { u: u8, i: i16 }
+struct T  { w: integer, i: i32, u: u32 }
 struct K  { id: S8, b: S16 }
 
 fn show(label: text, v: integer) -> text { "{label}={v}/{v == null}" }
@@ -155,6 +156,31 @@ fn keyed() -> text {
   "{o} {o2}"
 }
 
+// C127's LINE, in one function: a DECLARED range gives the default, the plain `integer` and
+// `i32` TEMPLATES keep C85's sentinel — and each answers the same in a local, a field and an
+// element.  `u32` sits on the declared side (its range is `0..=u32::MAX - 1`, matching neither
+// template), which is what makes it the cell that cannot be passed by a rule about widths.
+//
+// The axis this exists for is `not_null`.  Every non-nullable struct FIELD's spec carries that
+// flag, and it is a claim about the slot rather than about the bytes: a field declared `i: i32`
+// still has the range `[i32::MIN + 1, MAX]`, so `i32::MIN` is still spare in it.  Asking the
+// stored default through a predicate that reads `not_null` first made the `i32` FIELD answer
+// `0` while its local and its element answered null — loft#1296's disagreement reopened from
+// the other side, and caught by `1030-compound-range-both-spellings` rather than by this file,
+// which is why the row is here now.
+fn templates() -> text {
+  lw: integer = 9223372036854775807; lw += 1;
+  li: i32 = 2147483647;              li += 10;
+  lu: u32 = 4294967290;              lu += 10;
+  t = T { w: 9223372036854775807, i: 2147483647, u: 4294967290 };
+  t.w += 1; t.i += 10; t.u += 10;
+  vw: vector<integer> = [9223372036854775807]; vw[0] += 1;
+  vi: vector<i32> = [2147483647];              vi[0] += 10;
+  vu: vector<u32> = [4294967290];              vu[0] += 10;
+  "local {lw == null} {li == null} {lu} field {t.w == null} {t.i == null} {t.u} "
+  + "elem {vw[0] == null} {vi[0] == null} {vu[0] ?? -1}"
+}
+
 fn take(v: F) -> text { "{show("pa", v.a)} {show("pb", v.b)}" }
 fn make() -> F { g = F { a: 100, b: -1000 }; g.a += 50; g.b -= 1; g }
 fn provenance() -> text { "{take(make())} {show("ra", make().a)}" }
@@ -185,6 +211,8 @@ fn main() {
          "the nullable spelling keeps its null: {nullables()}");
   assert(fullwidth() == "u=255/false i=-32768/false uo=0/false io=0/false",
          "a type that fills its width answers the same default: {fullwidth()}");
+  assert(templates() == "local true true 0 field true true 0 elem true true 0",
+         "templates keep C85's sentinel, `u32` takes the default: {templates()}");
   assert(keyed() == "hid=100/false hb=-1000/false sid=-100/false",
          "a narrow key and element field: {keyed()}");
   assert(provenance() == "pa=0/false pb=0/false ra=0/false",

@@ -138,16 +138,24 @@ fn uncomputable_default(nullable: bool, spec: &crate::data::IntegerSpec) -> i64 
     // author did: before C127 the first answered null and the second `0`, so widening a range
     // for an unrelated reason flipped an overflow from detectable to silent.
     //
-    // Two families keep C85's in-band sentinel, and `non_null_reads_null` is the ONE home for
-    // which — the same predicate `redundant-null-negation` asks of its operand, so the lint
-    // and the stored value cannot drift:
+    // Two families keep C85's in-band sentinel:
     //
     //   * a NULLABLE slot, which has a null by declaration;
     //   * the plain `integer` and `i32` TEMPLATES, whose reserved code lies OUTSIDE the range
     //     they report (`[i64::MIN + 1, MAX]`, `[i32::MIN + 1, MAX]`).  That is what makes
     //     their sentinel a real absence rather than a code that decodes to a number: it is
     //     not a value of the type, and no widening of the declaration can make it one.
-    if nullable || spec.non_null_reads_null() {
+    //
+    // ⚠ Asked with the template predicates and NOT through `non_null_reads_null`, which is
+    // the same two clauses behind an early `if self.not_null { return false }`.  The two
+    // questions differ on exactly that flag: `not_null` is a claim about the SLOT, and every
+    // non-nullable struct field's spec carries it, while this asks what the REPRESENTATION
+    // keeps a code for — and a field declared `c: i32` still has the range
+    // `[i32::MIN + 1, MAX]`, so `i32::MIN` is still spare in its bytes.  Routed through
+    // `non_null_reads_null` for one build, the `i32` FIELD answered `0` while its local and
+    // its element answered null: loft#1296's disagreement, reopened from the other side
+    // (`1030-compound-range-both-spellings`).
+    if nullable || spec.is_wide_template() || spec.is_signed32_template() {
         i64::MIN
     } else {
         spec.default_value()

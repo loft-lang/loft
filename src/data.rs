@@ -323,10 +323,14 @@ impl IntegerSpec {
     /// `limit(-128, 127) size(1)` and went silent on `limit(-100, 100) size(1)`, two
     /// declarations one value apart.
     ///
-    /// The store side of the same fact is `uncomputable_default`'s `dflt`, read through
-    /// `Parser::compound_range`: a target whose `dflt` is `i64::MIN` is one this answers
-    /// `true` for.  Two readers, one fact — kept apart only because one is handed a spec
-    /// and the other a store target.
+    /// ⚠ This is NOT the same question as `uncomputable_default`'s, and the two must not be
+    /// routed through one predicate — they differ on `not_null`.  That flag is a claim about
+    /// the SLOT (every non-nullable struct field's spec carries it); the stored default asks
+    /// what the REPRESENTATION keeps a code for, and a field declared `c: i32` still has the
+    /// range `[i32::MIN + 1, MAX]`, so `i32::MIN` is still spare in its bytes.  Measured when
+    /// they were unified: the `i32` FIELD stored `0` where its local and its element stored
+    /// null — loft#1296's disagreement reopened from the other side.  An earlier version of
+    /// this comment claimed *"two readers, one fact"*; that was never true.
     #[must_use]
     pub fn non_null_reads_null(&self) -> bool {
         if self.not_null {
