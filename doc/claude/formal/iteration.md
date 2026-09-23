@@ -119,6 +119,63 @@ a body cannot grow the collection it walks (`Cannot add elements to 'v' while it
 iterated`).  Pinned by `tests/scripts/iter-text-source-once.loft` and
 `tests/scripts/1619-a-loop-reads-its-bounds-and-its-text-once.loft`.
 
+> **Combinators are vector methods, not text methods.** `t.map(…)` / `t.filter(…)` are **not**
+> valid — `.map`/`.filter`/`.reduce` (`I-Map`/`I-Filter`/`I-Reduce`) dispatch on a vector (or a
+> keyed collection), and text is `Unknown field text.map`. Text participates in the combinator
+> world only as a **comprehension source**: `[for c in t { f(c) }]` builds a `vector<…>` of
+> per-codepoint results (this IS how you "map over text"). So text is a first-class `for` /
+> comprehension source but never a `.method` combinator receiver.
+
+### Combinators desugar to a comprehension over the same loop
+
+```
+  (I-Map)      src.map(f)         ≡  [ for x in src { f(x) } ]
+  (I-Filter)   src.filter(p)      ≡  [ for x in src { if p(x) { x } } ]     (keeps x where p(x))
+  (I-Reduce)   src.reduce(a, g)   ≡  { acc := a ; for x in src { acc := g(acc, x) } ; acc }
+  (I-Comp)     [ for x in src { e } ]
+                 ≡  out := alloc(vector) ;                    (a FRESH store, heap.md H-Alloc)
+                    for x in src { append(out, e) } ;         (per element, heap.md H-NewRec)
+                    out
+```
+
+**In words.** The combinators are not primitive — each is the same left-to-right `for` loop
+building a **fresh** result vector (`I-Comp`): `map` appends `f(x)` for every element; `filter`
+appends `x` only where the predicate holds; `reduce` folds a running accumulator and yields it
+(not a vector). The result is a new store ([heap.md](heap.md) `H-Alloc`), so the source is
+untouched — `xs.map(f)` never mutates `xs`. Because they all lower to `I-For`, they inherit its
+**deterministic order**: `map` preserves order, `filter` preserves relative order, `reduce`
+folds left. The lambda `f`/`p`/`g` is an ordinary closure ([capabilities.md](capabilities.md)
+gates its body when sandboxed). A combinator on a LITERAL receiver (`[1,2,3].map(f)`) is the
+same rule — the literal is a fresh source value (`#501` fixed the parser so the literal is a
+self-contained receiver, not a reuse of the assignment target).
+
+### Empty and null sources
+
+```
+  (I-Empty)    for x in src { body }   runs body ZERO times when len(src) = 0.
+  (I-NullSrc)  for x in nullref { body }   runs body ZERO times (a null source is empty,
+                                           consistent with heap.md H-ReadNull — no halt).
+```
+
+**In words.** An empty vector, an empty range, or a **null** source all iterate zero times and
+fall through — never a fault. A null source is treated as empty (the same null-continue
+discipline as a read through `nullref`).
+
+**`nullref` is a RUNTIME null of a NON-nullable type, and the distinction is the whole content
+of this rule.** A collection field never filled, or a call whose declared `vector<τ>` return
+answers null, is a `nullref`: it iterates zero times with no guard and no fault (measured, both
+sources). A source whose TYPE is `τ?` is a different question and is REFUSED — `for x in v` with
+`v: vector<integer>?` does not compile, because [types.md](types.md) `(N-Coal)`/`(N-Default)`
+admit no implicit unwrap and a `for` is not an exception to that. The discharge is one character
+and gives exactly this rule's answer: `for x in v?` and `for x in v ?? []` each run zero times.
+
+Until 2026-09-07 this paragraph ended *"so a `for` over a possibly-null collection is safe
+without a guard"*, which reads as a promise about the `?` spelling — the one spelling the rule
+does not cover and the compiler refuses. The formal line was right and its gloss reached one
+case past it (QUALITY.md B8i).
+
+---
+
 ## Deviations
 
 **OPEN: 0.**  Every deviation is closed; the record is in the companion

@@ -3530,6 +3530,15 @@ impl Parser {
             for bound in [&*expr, &till] {
                 self.record_source_places(bound);
             }
+            // A bound that folds to a constant (`-3`, `2 * 4`) is written as that literal: the
+            // lowering's literal-start forms and the native range proofs key on a literal.
+            for bound in [&mut *expr, &mut till] {
+                if let Some(c @ (Value::Int(_) | Value::Long(_))) =
+                    crate::const_eval::const_eval(bound, &self.data)
+                {
+                    *bound = c;
+                }
+            }
             if !matches!(expr.unspan(), Value::Int(_) | Value::Long(_)) {
                 let lo = self.create_unique("range_start", &in_type);
                 iter_prelude.push(v_set(lo, std::mem::replace(expr, Value::Var(lo))));

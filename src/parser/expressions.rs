@@ -1651,6 +1651,30 @@ use a separate collection or add after the loop"
             "the loop read {what} once, before its first round, so this write does not change \
              what the loop walks — to loop until a condition changes, use `while`"
         );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("take {what} into a local before the loop"),
+            condition: Some(
+                "if the loop is meant to run over the value it started with, the local says so \
+                 and the write no longer reads as if it moved the loop"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "for loops",
+            concept_ref: "@F28",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "loop with `while`, testing the end each round".to_string(),
+            condition: Some(
+                "if the loop is meant to follow the end as the body moves it — a queue that \
+                 grows while it is read"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "for loops",
+            concept_ref: "@F28",
+        });
     }
 
     /// Validate `d#lock = expr` assignment; returns true if handled (caller should return Void).
