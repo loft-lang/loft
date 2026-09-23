@@ -10025,13 +10025,44 @@ impl Data {
     /// `integer limit(0, 255) size(1)`), read off the declarations themselves.
     #[must_use]
     pub fn integer_alias(&self, spec: &IntegerSpec) -> Option<&str> {
-        self.definitions.iter().find_map(|d| {
-            (d.def_type == DefType::Type
-                && d.source == STD_SOURCE
+        self.integer_alias_any_source(spec, true)
+    }
+
+    /// The same lookup, optionally reaching the USER's own `type` aliases.
+    ///
+    /// A diagnostic has to name a type the reader can act on, and for a declared range that
+    /// is the alias they wrote: `type Lim = integer limit(1000, 1100) size(1)` is `Lim`, not
+    /// `integer(1000, 1100)` — which is true but is no spelling the parser reads, so a cure
+    /// built from it (`as integer(1000, 1100)?`) cannot be typed back in.  Stdlib aliases are
+    /// preferred, so `u8` keeps naming itself even where a program declares its own alias for
+    /// the same range; a user alias is the fallback rather than the first answer (loft#1641).
+    #[must_use]
+    pub fn integer_alias_any_source(&self, spec: &IntegerSpec, std_only: bool) -> Option<&str> {
+        // The RANGE and the WIDTH identify the type; `not_null` does not.  That flag is a
+        // claim about the SLOT — a local declared `x: Lim` carries it, the `type Lim = …`
+        // definition does not — so a whole-spec equality here never matched a user's own
+        // alias, and the diagnostic fell back to `integer(1000, 1100)`, which is true and is
+        // no spelling the parser reads (loft#1641).  The same flag caught `non_null_reads_null`
+        // out the same day, from the other side (C127).
+        let matches_spec = |d: &Definition| {
+            d.def_type == DefType::Type
                 && matches!(d.returned.base(), Type::Integer(s)
-                    if s == spec && s.forced_size == spec.forced_size))
-            .then_some(d.name.as_str())
-        })
+                    if s.min == spec.min
+                        && s.max == spec.max
+                        && s.forced_size == spec.forced_size)
+        };
+        self.definitions
+            .iter()
+            .find_map(|d| (d.source == STD_SOURCE && matches_spec(d)).then_some(d.name.as_str()))
+            .or_else(|| {
+                (!std_only)
+                    .then(|| {
+                        self.definitions
+                            .iter()
+                            .find_map(|d| matches_spec(d).then_some(d.name.as_str()))
+                    })
+                    .flatten()
+            })
     }
 
     /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type

@@ -4569,18 +4569,37 @@ impl Parser {
     /// (`i32`/`u8`/`u16`/`i8`/`i16`) so a narrowing diagnostic doesn't print
     /// the bare `integer` for both sides (they share bounds).
     fn int_type_name(&self, t: &Type) -> String {
-        if let Type::Integer(s) = t {
-            match s.forced_size.map(std::num::NonZeroU8::get) {
-                // Every width picks its spelling from the sign of the range, and the
-                // four-byte case was the one that did not — so a `u32` reported itself
-                // as `i32`, and the message's own advice (`cast explicitly with
-                // `as i32``) named a type with a different range than the one the
-                // author declared (loft#1247).
-                Some(4) => return if s.min < 0 { "i32" } else { "u32" }.to_string(),
-                Some(2) => return if s.min < 0 { "i16" } else { "u16" }.to_string(),
-                Some(1) => return if s.min < 0 { "i8" } else { "u8" }.to_string(),
-                _ => {}
-            }
+        let Type::Integer(s) = t else {
+            return t.source_name(&self.data);
+        };
+        if s.forced_size.is_none() {
+            return t.source_name(&self.data);
+        }
+        // A stdlib alias is named by its own RANGE, never by its width and sign.  This spelled
+        // a type from `forced_size` plus `min < 0` alone, which is right for the six aliases
+        // and wrong for every other declared range: `type Lim = integer limit(1000, 1100)
+        // size(1)` was reported as `u8`, so the refusal told an author to fit 1050 into
+        // `0..=255` and its own cure (`as u8?`) could never succeed (loft#1641).  Matching the
+        // whole range keeps loft#1247's fix — `u32` and `i32` share a width and differ in
+        // range, so neither can be named as the other — and makes it impossible to name a type
+        // whose values are not the named one's.
+        let named = match (s.min, s.max) {
+            (0, 255) => Some("u8"),
+            (-128, 127) => Some("i8"),
+            (0, 65535) => Some("u16"),
+            (-32768, 32767) => Some("i16"),
+            (0, 4_294_967_294) => Some("u32"),
+            _ if s.is_signed32_template() => Some("i32"),
+            _ => None,
+        };
+        if let Some(n) = named {
+            return n.to_string();
+        }
+        // Otherwise the alias the AUTHOR declared, which is the only spelling they can act on:
+        // `integer(1000, 1100)` is true and is no syntax the parser reads, so a cure built from
+        // it (`as integer(1000, 1100)?`) cannot be typed back in.
+        if let Some(name) = self.data.integer_alias_any_source(s, false) {
+            return name.to_string();
         }
         t.source_name(&self.data)
     }
