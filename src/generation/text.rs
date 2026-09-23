@@ -179,7 +179,9 @@ impl Output<'_> {
             // loft#1371 — the LOCAL `&text` link needs it for the same reason the parameter
             // does: the destination is the link, and an assignment left-hand side does not
             // auto-deref.  Its raw-pointer `unsafe` block is opened by the op dispatch.
-            let deref = if matches!(variables.tp(*nr), Type::RefVar(_)) {
+            let deref = if matches!(variables.tp(*nr), Type::RefVar(_))
+                && !crate::generation::is_user_text_link(self.data, self.def_nr, *nr)
+            {
                 "*"
             } else {
                 ""

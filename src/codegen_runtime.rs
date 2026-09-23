@@ -5935,3 +5935,116 @@ pub fn make_loft_store(stores: &mut Stores, store_nr: u16) -> loft_ffi::LoftStor
         resize_fn: Some(_ffi_resize),
     }
 }
+
+/// A user `&text` link on `--native` (`@FR-B-Ref-Lvalue`, loft#1566): the place a `&text`
+/// local or parameter names.  A link to a text VARIABLE points at the `String` the variable
+/// owns; a link to a text FIELD or ELEMENT names the record's four-byte text slot, whose text
+/// lives in the store and is not a `String` anywhere.  Every use goes through [`Self::edit`],
+/// which yields a `String` to read or edit and, for a slot, writes the result back when the
+/// statement ends — so a write REPLACES the place's value (`@FR-B-Ref-Write`) and two links to
+/// one place apply their writes in order.  `Copy`, like the raw pointer it replaces: a link is
+/// forwarded to a `&text` parameter and copied into another link as it is.
+#[derive(Clone, Copy)]
+pub struct TextLink {
+    local: *mut String,
+    slot: DbRef,
+}
+
+impl TextLink {
+    /// A link to a text variable.
+    #[must_use]
+    pub fn local(p: *mut String) -> Self {
+        TextLink {
+            local: p,
+            slot: DbRef::NULL,
+        }
+    }
+
+    /// A link to a record's text slot — the `DbRef` of the field or element itself.
+    #[must_use]
+    pub fn slot(d: DbRef) -> Self {
+        TextLink {
+            local: std::ptr::null_mut(),
+            slot: d,
+        }
+    }
+
+    /// The text the link names, to read or edit for the rest of the statement.
+    #[must_use]
+    pub fn edit(self, cell: &UnsafeCell<Stores>) -> TextEdit {
+        if !self.local.is_null() {
+            return TextEdit {
+                local: self.local,
+                slot: DbRef::NULL,
+                stores: std::ptr::null_mut(),
+                text: String::new(),
+                dirty: false,
+            };
+        }
+        let stores = cell.get();
+        let text = if self.slot.rec == 0 {
+            String::new()
+        } else {
+            // SAFETY: the generated code holds `cell` for the whole call; no other borrow of
+            // the store is live across this read.
+            // A null slot keeps its null: a read through the link answers null, as the
+            // interpreter's does, and a write replaces it whole.
+            let store = unsafe { &*stores }.store(&self.slot);
+            store
+                .get_str(store.get_u32_raw(self.slot.rec, self.slot.pos))
+                .to_string()
+        };
+        TextEdit {
+            local: std::ptr::null_mut(),
+            slot: self.slot,
+            stores,
+            text,
+            dirty: false,
+        }
+    }
+}
+
+/// The text a [`TextLink`] names for one statement: the variable's own `String`, or a copy of
+/// a slot's text that is written back to the slot when the statement ends, if it was edited.
+pub struct TextEdit {
+    local: *mut String,
+    slot: DbRef,
+    stores: *mut Stores,
+    text: String,
+    dirty: bool,
+}
+
+impl std::ops::Deref for TextEdit {
+    type Target = String;
+    fn deref(&self) -> &String {
+        if self.local.is_null() {
+            &self.text
+        } else {
+            // SAFETY: a local link points at a live `String` of an enclosing frame.
+            unsafe { &*self.local }
+        }
+    }
+}
+
+impl std::ops::DerefMut for TextEdit {
+    fn deref_mut(&mut self) -> &mut String {
+        if self.local.is_null() {
+            self.dirty = true;
+            &mut self.text
+        } else {
+            // SAFETY: as in `deref`.
+            unsafe { &mut *self.local }
+        }
+    }
+}
+
+impl Drop for TextEdit {
+    fn drop(&mut self) {
+        if self.dirty && self.slot.rec != 0 && !self.stores.is_null() {
+            // SAFETY: as in `TextLink::edit`.
+            let store = unsafe { &mut *self.stores }.store_mut(&self.slot);
+            let at = store.set_str(&self.text);
+            store.set_u32_raw(self.slot.rec, self.slot.pos, at);
+        }
+    }
+}

@@ -45,8 +45,14 @@ impl OpEmitter for TextDispatchEmitter {
         let writes_through_dest = dispatch.starts_with("OpAppendStack")
             || dispatch.starts_with("OpClearStack")
             || dispatch.starts_with("OpFormatStack");
+        // A USER `&text` link (loft#1566) is a `TextLink`: `var_place` spells the text it names,
+        // a `String` place reached through a safe accessor, so it takes neither the block nor
+        // the extra dereference below.
+        let user_link = matches!(args.first().map(Value::unspan), Some(Value::Var(v))
+            if crate::generation::is_user_text_link(ctx.output.data, ctx.output.def_nr, *v));
         let raw_link = refvar_text_first
             && writes_through_dest
+            && !user_link
             && matches!(args.first().map(Value::unspan), Some(Value::Var(v))
                 if !ctx.output.data.def(ctx.output.def_nr).variables().is_argument(*v));
         if raw_link {
@@ -68,7 +74,9 @@ impl OpEmitter for TextDispatchEmitter {
             "OpFormatText" | "OpFormatStackText" => ctx.output.format_text(&mut *ctx.w, args),
             "OpAppendText" => ctx.output.append_text(&mut *ctx.w, args),
             "OpAppendStackText" => {
-                write!(ctx.w, "*")?;
+                if !user_link {
+                    write!(ctx.w, "*")?;
+                }
                 ctx.output.append_text(&mut *ctx.w, args)
             }
             "OpAppendCharacter" | "OpAppendStackCharacter" => {
@@ -114,10 +122,7 @@ impl OpEmitter for TextDispatchEmitter {
                     write!(ctx.w, "OpFormatDatabase(cell,&mut ")?;
                     // work_val is Var(nr) — strip the leading & that emit() adds.
                     if let Value::Var(nr) = work_val {
-                        let nm = super::super::sanitize(
-                            ctx.output.data.def(ctx.output.def_nr).variables().name(*nr),
-                        );
-                        write!(ctx.w, "var_{nm}")?;
+                        write!(ctx.w, "{}", ctx.output.var_place(*nr))?;
                     } else {
                         ctx.emit(work_val)?;
                     }

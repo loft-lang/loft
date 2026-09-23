@@ -718,12 +718,7 @@ impl State {
             String::new()
         } else {
             let store = self.database.store(&r);
-            let cur = store.get_str(store.get_u32_raw(r.rec, r.pos));
-            if cur == crate::state::STRING_NULL {
-                String::new()
-            } else {
-                cur.to_string()
-            }
+            store.get_str(store.get_u32_raw(r.rec, r.pos)).to_string()
         };
         let out = f(&mut text);
         if r.rec != 0 {

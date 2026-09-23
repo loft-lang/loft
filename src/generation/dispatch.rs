@@ -503,6 +503,66 @@ impl Output<'_> {
             }
             return Ok(());
         }
+        // A USER `&text` link — a `&text` local or parameter — is a `TextLink` (loft#1566): it
+        // names a text variable or a record's text slot, and every write goes through the text
+        // it names.  One branch for the local and the parameter, so the two cannot drift.
+        if to != &Value::Null && crate::generation::is_user_text_link(self.data, self.def_nr, var) {
+            if variables.is_argument(var) {
+                self.declared.insert(var);
+            }
+            let place = self.var_link(var);
+            let bind = |this: &mut Self, w: &mut dyn Write| -> std::io::Result<()> {
+                if this.declared.contains(&var) {
+                    write!(w, "{place} = ")
+                } else {
+                    this.declared.insert(var);
+                    write!(w, "let mut {place}: loft::codegen_runtime::TextLink = ")
+                }
+            };
+            let link_of = |this: &Self, src: u16| -> String {
+                if crate::generation::is_user_text_link(this.data, this.def_nr, src) {
+                    this.var_link(src)
+                } else if matches!(variables.tp(src).base(), Type::RefVar(_)) {
+                    format!(
+                        "loft::codegen_runtime::TextLink::local(&mut *{} as *mut String)",
+                        this.var_link(src)
+                    )
+                } else {
+                    format!(
+                        "loft::codegen_runtime::TextLink::local(std::ptr::addr_of_mut!({}))",
+                        this.var_link(src)
+                    )
+                }
+            };
+            if let Value::Call(d_nr, cargs) = to.unspan() {
+                let op = self.data.def(*d_nr).name().to_string();
+                if matches!(op.as_str(), "OpGetField" | "OpGetVector" | "OpVectorRef") {
+                    bind(self, w)?;
+                    write!(w, "loft::codegen_runtime::TextLink::slot(")?;
+                    self.output_code_inner(w, to)?;
+                    return write!(w, ")");
+                }
+                if matches!(op.as_str(), "OpCreateStack" | "OpVarRef")
+                    && let [src_arg] = cargs.as_slice()
+                    && let Value::Var(src) = src_arg.unspan()
+                {
+                    let l = link_of(self, *src);
+                    bind(self, w)?;
+                    return write!(w, "{l}");
+                }
+            }
+            if let Value::Var(src) = to.unspan()
+                && matches!(variables.tp(*src).base(), Type::RefVar(_))
+                && !self.declared.contains(&var)
+            {
+                let l = link_of(self, *src);
+                bind(self, w)?;
+                return write!(w, "{l}");
+            }
+            write!(w, "*{place}.edit(cell) = (")?;
+            self.output_code_inner(w, to)?;
+            return write!(w, ").to_string()");
+        }
         if variables.is_argument(var)
             && let Type::RefVar(inner) = variables.tp(var)
             && !crate::generation::is_raw_scalar_ref(variables.tp(var))

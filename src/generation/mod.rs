@@ -1601,6 +1601,49 @@ pub(crate) fn link_base_type(inner: &Type) -> String {
 }
 
 #[must_use]
+/// Is `v` a USER `&text` link — a `&text` local or parameter the program declared — as opposed
+/// to a hidden text work buffer (`__work_N`, a `RefVar(Text)` the compiler threads through a
+/// text-returning call)?  A user link is a `codegen_runtime::TextLink` on `--native`, because
+/// it may name a record's text slot as well as a text variable (loft#1566); a work buffer is
+/// always a `String` the caller owns and stays `&mut String`.
+pub(crate) fn is_user_text_link(data: &Data, def_nr: u32, v: u16) -> bool {
+    let vars = data.def(def_nr).variables();
+    if !matches!(vars.tp(v).base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+        || vars.is_compiler_generated(v)
+    {
+        return false;
+    }
+    // A parameter asks the signature's own question, so the two cannot disagree.
+    if vars.is_argument(v) {
+        return data
+            .def(def_nr)
+            .attributes()
+            .iter()
+            .find(|a| a.name == vars.name(v))
+            .is_some_and(|a| attr_rust_type(data.def(def_nr), a).ends_with("TextLink"));
+    }
+    true
+}
+
+/// The Rust type of a function parameter: [`rust_type`], except that a visible `&text`
+/// parameter is a `TextLink` (see [`is_user_text_link`]).
+pub(crate) fn attr_rust_type(def: &crate::data::Definition, a: &crate::data::Attribute) -> String {
+    if emits_text_links(def)
+        && !a.hidden
+        && matches!(a.typedef.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+    {
+        return "loft::codegen_runtime::TextLink".to_string();
+    }
+    rust_type(&a.typedef, &Context::Argument)
+}
+
+/// Does `def` have a body loft emits, so its `&text` parameters are `TextLink`s?  An operator
+/// and a function with a Rust body are implemented in the runtime, where a `&text` parameter
+/// is the `&mut String` a work buffer is.
+pub(crate) fn emits_text_links(def: &crate::data::Definition) -> bool {
+    !def.name().starts_with("Op") && def.rust().is_empty() && def.native.is_empty()
+}
+
 pub(crate) fn is_raw_scalar_ref(tp: &Type) -> bool {
     matches!(tp.base(), Type::RefVar(inner) if crate::data::is_scalar(inner))
 }
@@ -2449,6 +2492,15 @@ impl Output<'_> {
     /// before, so routing a site through it can only add the case it was missing.
     #[must_use]
     pub fn var_place(&self, var: u16) -> String {
+        // A user `&text` link is used through the text it names for this statement.
+        if is_user_text_link(self.data, self.def_nr, var) {
+            return format!("(*{}.edit(cell))", self.var_link(var));
+        }
+        self.var_link(var)
+    }
+
+    /// The variable itself, never dereferenced: for a user `&text` link, the `TextLink`.
+    pub fn var_link(&self, var: u16) -> String {
         match self.coroutine_persistent_fields.get(&var) {
             Some(field) => format!("self.var_{field}"),
             None => format!(
@@ -8800,7 +8852,7 @@ extern crate loft;"
             if dropped == Some(i) {
                 continue;
             }
-            let tp = rust_type(&a.typedef, &Context::Argument);
+            let tp = attr_rust_type(def, a);
             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
         }
         if let Some(t) = &twin {

@@ -308,6 +308,56 @@ impl Output<'_> {
     /// per-parameter coercions (boolean→`u8`, narrow-int, text deref,
     /// typed-null, fn-ref / routine wrapping, `&`-param forwarding) live
     /// here so both paths apply them identically.
+    /// The `TextLink` a user `&text` parameter is handed for the argument `v`.
+    fn emit_text_link_arg(&mut self, w: &mut dyn Write, v: &Value) -> std::io::Result<()> {
+        let link_of_var = |this: &Self, nr: u16| -> String {
+            let vars = this.data.def(this.def_nr).variables();
+            if crate::generation::is_user_text_link(this.data, this.def_nr, nr) {
+                this.var_link(nr)
+            } else if matches!(vars.tp(nr).base(), Type::RefVar(_)) {
+                format!(
+                    "loft::codegen_runtime::TextLink::local(&mut *{} as *mut String)",
+                    this.var_link(nr)
+                )
+            } else {
+                format!(
+                    "loft::codegen_runtime::TextLink::local(std::ptr::addr_of_mut!({}))",
+                    this.var_link(nr)
+                )
+            }
+        };
+        if let Some(vr) = self.create_stack_var(v) {
+            let l = link_of_var(self, vr);
+            return write!(w, "{l}");
+        }
+        if let Value::Var(nr) = v.unspan()
+            && matches!(
+                self.data.def(self.def_nr).variables().tp(*nr).base(),
+                Type::RefVar(_)
+            )
+        {
+            let l = link_of_var(self, *nr);
+            return write!(w, "{l}");
+        }
+        if let Value::Call(d_nr, _) = v.unspan()
+            && matches!(
+                self.data.def(*d_nr).name(),
+                "OpGetField" | "OpGetVector" | "OpVectorRef"
+            )
+        {
+            write!(w, "loft::codegen_runtime::TextLink::slot(")?;
+            self.output_code_inner(w, v)?;
+            return write!(w, ")");
+        }
+        // A temporary: the work text the call site builds for it, as a local link.
+        write!(
+            w,
+            "loft::codegen_runtime::TextLink::local({{ let __tl: &mut String = "
+        )?;
+        self.output_code_inner(w, v)?;
+        write!(w, "; __tl as *mut String }})")
+    }
+
     pub(super) fn emit_call_arg(
         &mut self,
         w: &mut dyn Write,
@@ -319,6 +369,14 @@ impl Output<'_> {
         // passes its address, and a link or a `&` parameter passes the pointer it holds.
         let raw_param = idx < def_fn.attributes().len()
             && crate::generation::is_raw_scalar_ref(&def_fn.attributes()[idx].typedef);
+        // A USER `&text` parameter takes a `TextLink` (loft#1566): the address of a text
+        // variable, the slot of a text field or element, or the link a caller already holds.
+        if idx < def_fn.attributes().len()
+            && crate::generation::attr_rust_type(def_fn, &def_fn.attributes()[idx])
+                .ends_with("TextLink")
+        {
+            return self.emit_text_link_arg(w, v);
+        }
         if let Some(vr) = self.create_stack_var(v) {
             let name = sanitize(self.data.def(self.def_nr).variables().name(vr));
             if raw_param {
