@@ -363,6 +363,18 @@ The field is **computed automatically by the gate on import** — derived from t
 never author-declared — so it stays honest (the registry produces the verdict; an author cannot
 *claim* compatibility) and always current (set on every version imported, no manual upkeep).
 
+### The cures consumers have needed before contract 1 — recorded here, never in their trees
+
+Before the freeze a refusal may still be added (the error surface is one-directional only
+from contract 1), and each one that reaches a consumer's code is recorded here with its cure,
+verified on both backends, so the consumer's agent finds it in one place. The consumer-main-
+health nightly is what finds them; a cure is never applied by this repo in theirs.
+
+| since | refusal | shape it met | cure | note |
+|---|---|---|---|---|
+| PR #1465 (2026-09-08) | iterating a NULLABLE projection needs a discharge | moros `hex_voxel` `named_label`: `for ly in w.w_chunks[ci].ck_layers` — took 4 moros packages / 125 test files down | `for ly in w.w_chunks[ci]?.ck_layers` | same values as 2026.8.0 on both backends; an out-of-range chunk still walks nothing |
+| loft#1600 (2026-09-23) | a local bound inside a block does not exist after its `}` (`local-out-of-scope`) | Moros-Economy-Development `loft_planet` `dispersal.loft`: two locals declared inside `if weld { … }`, read after it — 26 of 42 files | declare the local before the block, with the value the path that skips the block MEANS | **not mechanical**: 2026.8.0 read a stale value on the skipped path (`if c { h = 3 }; h + 1` answered 4 for `c == false`), so the refusal surfaced a latent wrong answer; the planet's own agent has since applied it at function scope |
+
 ## The `contract` integer under this promise
 
 Because forward-compatibility is now **guaranteed**, the `contract` version is simpler than
@@ -473,7 +485,12 @@ only the second kind can say the quiet was earned:
   measurement, and the freeze binds what main ships.
 - **`contract:strained` → 0, SUSTAINED over a window long enough to be evidence**, is the
   convergence gate — the standard has stopped moving. Only this one can say the blockers are
-  truly gone rather than currently absent.
+  truly gone rather than currently absent. The window the owner reads is **two consecutive
+  weeks** ([STABILITY_ROADMAP.md § The owner's directive](STABILITY_ROADMAP.md)). ⚠ A fix
+  whose only rule change is a clause in `formal/rewrites.md` is `settled`, not strained: by
+  C122 a rewrite is not the contract, and counting the optimiser's rule motion as the
+  language's would keep this gate from ever reading zero while the perf stream runs
+  ([.github/LABELS.md § contract:](../../.github/LABELS.md)).
 - **Rule coverage at or above its contract-1 floors** — `make rule-coverage`, currently
   **70 % of `@FR-` rules carrying a code annotation and 40 % an active guard** — is the
   *coverage* gate: enough of the written standard has been checked against the implementation

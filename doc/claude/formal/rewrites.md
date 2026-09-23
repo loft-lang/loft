@@ -39,7 +39,15 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  form, and with a falsifier: a checking form that re-derives what the
                  rewrite assumed and panics when it is stale (LOFT_HOIST_VERIFY=1), or
                  an emission pin where there is nothing to re-derive.  The interpreter
-                 applies no rewrite and is the oracle of every cell.
+                 applies no GENERATOR rewrite and is the oracle of every cell of one.
+                 BOTH-BACKEND CLAUSE: a rewrite the parser or the scope pass applies —
+                 so the interpreter runs it too — has no interpreter oracle, and where
+                 it also has no checking form (the ownership / buffer family:
+                 O-LazyBuffer, O-Move's adopt, O-Buffer's reuse, R-Place,
+                 R-InPlaceLiteral, R-ValueRecord) its falsifier is the SWITCH A/B: the
+                 script corpus and the consumer suites run with the switch off and
+                 on, and any output difference is a defect.  Such a rewrite lands
+                 only with that A/B green (`.github/workflows/switch-ab.yml`).
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's
@@ -79,6 +87,16 @@ agree" a proof rather than a coincidence — a header-served read and a runtime 
 of an unmoved vector answer the same number, so agreement alone cannot tell a sound
 rewrite from a lucky one.  `PERFORMANCE.md § Design: P2` and `NATIVE.md` list the
 switches; `hoist_verify` in `Output` is the one flag every checking form reads.
+
+**The both-backend clause in words.**  `LOFT_STRICT_STORES` and `LOFT_POISON` catch a leak or
+a double free; they do not catch a stale VALUE, and a rewrite the interpreter shares gives
+the two backends the same wrong answer, so their agreement proves nothing.  loft#1647 was that
+case: a lazily minted return buffer (`O-LazyBuffer`) met a double release older than it and a
+loop read its first pass's value on both backends — six days on main, seen by no cell, found
+by a consumer's suite.  Its switch told the difference at once (`LOFT_NO_LAZY_BUFFER=1`
+restored the value), which is the A/B's whole argument: for this family the switch is the
+only second answer there is, so it is run over everything, every night, rather than only when
+someone already suspects the rewrite.
 
 ## The hoist state — what the rewrites compose through
 

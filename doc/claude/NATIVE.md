@@ -1221,6 +1221,13 @@ N10e-2–N10e-5 fix the remaining 10 compile failures.
 
 ## Verification
 
+**A rewrite both backends run lands with its switch A/B green.** The interpreter is the
+oracle only for a GENERATOR rewrite; one the parser or scope pass applies (the ownership /
+buffer family) gives both backends the same answer, right or wrong, so its falsifier is the
+switch itself: the corpus and the consumer suites run with it off and on, and any difference
+is a defect (`.github/workflows/switch-ab.yml`; the rule is `(R-Switch)`'s both-backend
+clause in [formal/rewrites.md](formal/rewrites.md)).
+
 After each step:
 1. `cargo test` — existing tests must still pass (bytecode interpreter unaffected)
 2. Count remaining compilation errors:

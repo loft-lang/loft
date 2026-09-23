@@ -30,6 +30,11 @@ area and has exactly two parts:
 > **The rules do not change to match the code. The code changes to match the rules.**
 > A new edge that the rules can't express is a signal the *rule* is wrong (fix the
 > rule); a place the code disobeys a sound rule is a *deviation* (fix the code).
+>
+> And the agent that meets the disagreement applies the letter WITHOUT asking — the standing
+> ruling in [DEVELOPMENT.md § Where a rule's letter and the code
+> disagree](../DEVELOPMENT.md#where-a-rules-letter-and-the-code-disagree). Only a rule that
+> does not exist yet, a change to a shipped surface, or two rules in conflict go to the owner.
 
 ## When to reach for this doc
 

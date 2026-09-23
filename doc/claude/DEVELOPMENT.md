@@ -559,6 +559,30 @@ necessary, or left for a separate cleanup task if they are pre-existing.
 
 ---
 
+## Where a rule's letter and the code disagree
+
+**Standing ruling (owner, 2026-09-23): apply the strict reading of the written rule, without
+asking.** The formal doctrine already says the code changes to match the rules
+([formal/README.md](formal/README.md)); this makes the consequence operational. When a fix
+meets a rule whose letter says one thing and the code does another, the agent applies the
+letter, lands the fix with its verification, and records the trailer
+`Contract: strained — letter applied: <rule> <what moved>`. The owner reads the week's rulings
+off those trailers in one sitting — agreeing costs nothing, and disagreeing is a revert of a
+commit that names exactly what it changed.
+
+**Only three kinds of question reach the owner:**
+1. **a rule that does not exist yet** — the letter is silent, so there is nothing to apply;
+2. **a change to a shipped surface** — a refusal, a spelling, an observable behaviour a
+   published program may depend on (COMPATIBILITY.md is the home for what counts);
+3. **two rules in conflict** — the letters disagree with each other, not only with the code.
+
+Everything else is the agent's to decide. The measured reason: the three rulings of the week
+of 2026-09-23 (loft#1600 block scoping, loft#1619 the once-taken range end, C127 narrow ranges)
+all went the letter's way, and each one waited on the owner's attention — which is meant for
+the engine ([STABILITY_ROADMAP.md § The owner's directive](STABILITY_ROADMAP.md)). A question
+the rules already answer, asked anyway, is a process defect and counts against the
+owner-rulings meter.
+
 ## Commit Rules
 
 A branch may contain **any number of commits** as long as every commit satisfies the
