@@ -5561,12 +5561,9 @@ impl Parser {
             if valid_enum && (synth_null_elem || heap_null_subject) && self.lexer.has_token("null")
             {
                 self.expect_match_arm_arrow();
-                let arm_write_state = self.vars.save_and_clear_write_state();
-                self.vars.clear_write_state();
                 let mut arm_body = Value::Null;
                 let arm_expected = Self::match_arm_expected(&result_type);
                 let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-                self.vars.restore_write_state(&arm_write_state);
                 // loft#978 — every arm can deliver this match's value, so the result carries
                 // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
@@ -6085,12 +6082,9 @@ impl Parser {
             // the closing `}` is not confused with the match's `}`.
             // Save/restore write tracking so writes in one arm don't cause
             // false dead-assignment warnings in sibling arms.
-            let arm_write_state = self.vars.save_and_clear_write_state();
-            self.vars.clear_write_state();
             let mut arm_body = Value::Null;
             let arm_expected = Self::match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-            self.vars.restore_write_state(&arm_write_state);
             // @PLN85 match_return (LOFT_JOIN_OWN): if this arm yields a borrowed-view
             // vector field binding DIRECTLY (`Filled { items } => { items }`), wrap it in
             // an owned copy `{ o = []; o += items; o }` so the value ESCAPES OWNED — the
@@ -6413,6 +6407,18 @@ impl Parser {
     /// so the same conversion is asked here through the same `convert_admitting` /
     /// `validate_convert` pair, and the carve-outs are restated in the same order.
     fn parse_match_arm_body(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
+        // Each arm runs INSTEAD of its siblings, so the dead-store tracking starts every arm from
+        // the state before the `match` and leaves it there — as `parse_if` does for its arms.
+        // Asked here, the one body every arm kind parses through: held at the arm sites, three
+        // of seven had it, and in the others one arm's write read as overwritten by the next.
+        let arm_write_state = self.vars.save_and_clear_write_state();
+        self.vars.clear_write_state();
+        let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        self.vars.restore_write_state(&arm_write_state);
+        tp
+    }
+
+    fn parse_match_arm_body_inner(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
         // Cleared AFTER the body is parsed on both paths, never at entry: a nested `match`
         // inside this arm runs its own arms through here, so a flag set at entry would still
         // carry that inner arm's answer when THIS one is asked about.  From each clear to the
@@ -10921,13 +10927,9 @@ impl Parser {
             }
 
             self.expect_match_arm_arrow();
-
-            let arm_write_state = self.vars.save_and_clear_write_state();
-            self.vars.clear_write_state();
             let mut arm_body = Value::Null;
             let arm_expected = Self::match_arm_expected(&result_type);
             let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-            self.vars.restore_write_state(&arm_write_state);
 
             // Combine element conditions with AND (short-circuit: if a { b } else { false })
             let cond: Option<Value> = if elem_conds.is_empty() {
