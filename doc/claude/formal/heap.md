@@ -497,7 +497,9 @@ installed, which the frame does own.
                  or appended (`S { h: p }`, `v += [s.h]`, `(p, 1)`);
                - returned where (H-Move) does not allow it (`return p`, `return s.h`);
                - as an operand of `??` or an arm of a join in any of those positions
-                 (`x = p ?? mk()`, `x = if c { s.h } else { mk() }`).
+                 (`x = p ?? mk()`, `S { h: s.h ?? mk() }`).  A MEMBER chosen by an arm
+                 and bound to a variable is not a copy: the arm is read on its own
+                 (binding.md D-bind-16), and there it is a view (B-View, `x = s.h`).
              Legal, because no second structure is made: a fresh value anywhere, a value the
              function OWNS placed ONCE (H-Move — its lifetime ends there), passing a value as
              an argument (calls.md F-ParamHeap binds without copying), a `&` bind
@@ -597,7 +599,20 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **5** — `D-heap-8`, `D-heap-9`, `D-heap-15`, `D-heap-36` and `D-heap-38` (`D-heap-41`,
+OPEN: **2** — `D-heap-8` and `D-heap-9`.  The count is the UNION of two branches that each
+closed entries the other still listed, and neither side's number was right for the join: this
+branch read 4 (`D-heap-8`, `9`, `36`, `38`) and `tuxedo-165-generics` read 3 (`D-heap-8`, `9`,
+`15`).  Taken per ENTRY rather than per side — `D-heap-15` closed here, `D-heap-36` and
+`D-heap-38` closed there, so only `D-heap-8` and `D-heap-9` are open on both.
+
+(`D-heap-15` CLOSED as
+reclassified 2026-09-23: its last cell, `p_v2`, reads a name `(H-Spent)` makes an error, so it is
+`D-heap-8`'s.  `D-heap-38`, loft#1607, CLOSED 2026-09-23: a
+vector bound in both arms releases the backing its own arm filled.  `D-heap-36`, loft#1600, CLOSED
+2026-09-23 by owner ruling: the arm is the scope, `(B-Scope)`.  `D-heap-42`,
+loft#1628, opened and CLOSED 2026-09-23: a returned witnessed local released the record it handed
+out, and a rebind released what it displaced before the new value and at the wrong owner's scope
+end — the half `D-heap-41` left open.  `D-heap-41`,
 loft#1623, opened and CLOSED 2026-09-23: a returned join binding released what it handed out —
 the half `D-heap-39` filed beside itself rather than closing.  `D-heap-39`,
 loft#1617, and `D-heap-40`, loft#1622, both opened and CLOSED 2026-09-22: a lifted arm's hook
@@ -667,6 +682,43 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
 
+### D-heap-42 — OPENED AND CLOSED (2026-09-23, loft#1628): a returned witnessed local released the record it handed out, and a rebind released what it displaced in the wrong place
+
+- **Violates:** (H-Move) — a `return` moves what it answers — and (H-Drop)'s reassignment
+  clause, *"after the new value has been computed and before anything after the statement runs"*.
+- **Where:** a local bound from a join that VIEWS on one arm and takes a local's record over on
+  the other (`x: H = s.h ?? b`), then rebound to a mint, carries an owner witness
+  (`(O-Witness)`).  The join declined the per-arm write-out, so the local ALIASES `b` on the path
+  that took it.  So which structure holds the record `x` answers is a per-RUN fact: the witness
+  after a rebind, `b` on a path that never rebinds, `s` on the path that viewed the member.
+  - At a `materialized_view_return` the return copied `x` out and then ran the holder's hook as
+    well — the witness's in `x = mk(9); return x` (`m2,m9,d9,d7,G9,d9`), `b`'s where the rebind
+    did not run (`m2,d7,G7,d7`).
+  - A minting rebind (`WitnessSet::Mint`) released the witness's record in the statement's
+    PREFIX, before the call (`R9,d9,m11`).  And the record `x` took over from `b` was released
+    only at `b`'s scope end, not at the rebind that displaced it.
+- **Effect:** one lease, two releases — the second on memory the first had freed — plus two
+  releases in the wrong place.  Both backends identical, no diagnostic, on `main` and on every
+  branch since `(O-Witness)` landed.
+- **Status:** CLOSED 2026-09-23.  Filed from loft#1623 as a design question, because one
+  suppression rule could not name both holders from a fact that tells them apart.  The rules
+  settle it.  `(H-Move)` makes the join's local arm a MOVE, so `x` holds `b`'s lease on that
+  path.  `(B-View)`, read arm by arm (binding.md D-bind-16), makes the member arm a view.  And a
+  return's move is of the RECORD `x` names, so the holder that names that same record is the
+  one whose hook stands down.  That is a runtime fact, and record identity reads it with no new
+  channel.
+- **Closed:** `return_moved_holders` names the witness and the plain locals the witnessed local
+  was bound to as they are (`Scopes::witness_aliases`, recorded at each `Set`).  The return
+  sweep guards each one's hook on `OpNeRef(holder, x)`.  RECORD identity, not store identity: on
+  the member path `s` shares `x`'s store and still owes its own release (loft#1623's `c4`).
+  A rebind snapshots `OpEqRef(x, b)` before the new value and, after it lands, runs `b`'s hook
+  and sets `b`'s `__hoff_` flag, so its scope-end hook stands down.  Its STORE is still freed
+  there, with the call buffer it shares.  A minting rebind releases the witness through the same
+  identity-guarded path a reading mint always used.  `Uses::is_hook_release` reads a guarded hook
+  as release machinery, so the copy lint does not count the guard's operand as a later use.
+  Guard `tests/scripts/1628-a-returned-witnessed-local-hands-out-the-record-it-holds.loft`: 11
+  cells, 3 controls, every trace exact, falsified at `4af6d4c41` on both backends.
+
 ### D-heap-41 — OPENED AND CLOSED (2026-09-23, loft#1623): a returned join binding released what it handed out
 
 - **Violates:** (H-Move) — a `return` moves what it answers to the caller, and the function's own
@@ -708,7 +760,7 @@ CLOSED 2026-09-17, below.
   return x`).  The lift's own release is correct there — nobody took it — and the double is on
   the REBOUND value, so it is the rebind axis rather than this one.  Pre-existing by
   construction: this fix only ever REMOVES a hook at a return and cannot produce a second.
-  Filed separately.
+  Filed separately as loft#1628 — `D-heap-42`, closed the same day.
 
 ### D-heap-39 — OPENED AND CLOSED (2026-09-22, loft#1617): a lifted arm's hook is handed the SOURCE's record, not the one the binding holds
 
@@ -918,21 +970,23 @@ CLOSED 2026-09-17, below.
   its inner elements (loft#1597), and a vector moved out and then refilled releases the moved
   elements twice (loft#1598).
 
-### D-heap-38 — OPEN (2026-09-22, loft#1607): under the arm-scope rule, a vector local bound in both arms of an `if` is released at the end of the scope around it
+### D-heap-38 — CLOSED (opened 2026-09-22, closed 2026-09-23, loft#1607): under the arm-scope rule, a vector local bound in both arms of an `if` was released at the end of the scope around it
 
-- **Violates:** (H-Drop), its scope-end clause — an arm's owner dies at the arm's end.
-- **Where:** `D-heap-36`'s opt-in rule (`LOFT_ARM_SCOPE=1`) makes a local bound in BOTH arms
-  each arm's own for a record or a text, and not for a vector or a tuple.  Each arm's bind lands in a backing of its own
-  (`__vdb_2`, `__vdb_3`), and the variable's type names one of them, the LAST bind's
-  (`@FR-O-Latest`).  The arm-end release reads that one dep (`scopes::outer_collection_backing`),
-  so the other arm would release the wrong backing.  Measured when the case was allowed: the
-  true arm released the false arm's empty `__vdb_3`, and `D50` never ran.  So the case keeps the
-  pre-init in front of the `if`.
+- **Violates:** (H-Drop), its scope-end clause — an arm's owner dies at the arm's end, and since
+  `D-heap-36`'s ruling the arm IS the scope (`(B-Scope)`).
+- **Where:** each arm's bind lands in a backing of its own (`__vdb_2`, `__vdb_3`), and the
+  variable's type names one of them, the LAST bind's (`@FR-O-Latest`).  The arm-end release read
+  that one dep (`scopes::outer_collection_backing`), so the arm scope declined the case and it
+  kept the pre-init in front of the `if`.
 - **Effect:** measured on both backends, identical: `if c { w = v; … } else { w = v; … }` released
-  `v`'s element after the `if`'s successor ran.  The count is right.
-- **Status:** OPEN.  The cure is a per-path fact, the backing the local's latest bind on THIS
-  path names, snapshotted per arm as `construction_backing` is for records; or both arms' binds
-  sharing one backing.
+  `v`'s element after the `if`'s successor ran.  The count was right.
+- **Closed:** the per-path fact the entry named — `Scopes::bind_backing`, the backing the latest
+  vector bind on THIS path filled (`w = OpGetField(__vdb_N, …)`), saved per arm and merged by
+  intersection as `construction_backing` is; the scope-end release reads it first, and
+  `confined_to_one_arm` admits a vector bound in both arms when each arm's one bind names its
+  backing that way.  An arm that binds twice still declines.  Guard:
+  `tests/scripts/1607-a-vector-bound-in-both-arms-is-released-at-its-arms-end.loft` (b1–b8, both
+  backends, strict stores and poison).
 
 ### D-heap-37 — OPENED AND CLOSED (2026-09-22, found with loft#1600): a local hoisted out of an `if`, a loop or a block was released after the locals declared before it
 
@@ -950,30 +1004,28 @@ CLOSED 2026-09-17, below.
   bind and the three hoists call.  Guard
   `tests/scripts/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.loft` `a9`–`a11`.
 
-### D-heap-36 — OPEN (2026-09-22, loft#1600): which scope does a local every mention of which lies in one `if` arm die at?
+### D-heap-36 — CLOSED (opened 2026-09-22, closed 2026-09-23 by owner ruling, loft#1600): which scope does a local every mention of which lies in one `if` arm die at?
 
 - **The question.** (H-Drop) releases at *"the owner's scope end (@PLAN125 arc B)"*, and arc B
-  HOISTS a local written inside an `if` block to the function's scope: `pln125-b-drop.loft`'s
-  `if_block_local` pins its drop at the function's end, *"the drop is wherever the free is"*.
-  A block local stays readable after its block (`{ n = 5 } n` is legal), so the function IS its
-  owner's scope by that reading.  loft#1600 asks for the arm's end instead, and `D-heap-27`'s
-  paraphrase of the clause ("for a loop body's or a block's owner, THAT scope's end") reads the
-  same way.  The implementation answers both: a vector LITERAL bound in an arm is released at
-  the arm's end (its backing is not registered when `Scopes::scan_if` asks), every other heap
-  local at the end of the scope around the `if`.
-- **Status:** OPEN, a design call for the owner — may such a local be released at the arm's end,
-  for memory only, or for drops too?  The arm-scope rule is built and OPT-IN:
-  `LOFT_ARM_SCOPE=1` makes a local the program declared, every mention of which lies inside the
-  `if`'s arms, the arm's (`Scopes::confined_to_one_arm`, counted by `var_mentions_in`).  Any
-  mention elsewhere keeps the pre-init, and so do these: a local the arm hands out as its value
-  or through a `return`; a value-branch bind the scan wrote out into the arms (`sunk`); and a
-  compiler temp.  Bound in both arms, a record or a text is each arm's own; a vector is
-  `D-heap-38`.  Default-on, it regressed `1495-a-diverging-arm-beside-a-value-arm-still-yields`
-  (a value `if` whose return the parser rewrote into a buffer copy: value-wrong and an
-  interpreter panic) and `a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer`
-  (release order), and it contradicts `pln125-b-drop`.  The arm cells of
-  `tests/scripts/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.loft` assert
-  it when the switch is set.
+  HOISTED a local written inside an `if` block to the function's scope: `pln125-b-drop.loft`'s
+  `if_block_local` pinned its drop at the function's end.  A block local stayed readable after
+  its block (`{ n = 5 } n` compiled), so by that reading the function was its owner's scope;
+  loft#1600 asked for the arm's end.
+- **Ruling (owner, 2026-09-23):** rustc's rule.  A local a statement binds inside a block ends at
+  the block's `}` — [binding.md](binding.md) `(B-Scope)` — so a read after it is refused
+  (`local-out-of-scope`, a hard error, also when every arm binds it) and the arm's `}` is where
+  its owner dies, drops included.  With no read possible after the arm, the question the
+  pre-init answered is gone.
+- **Closed:** the refusal at name resolution (`Parser::check_block_scope`); the arm scope
+  (`Scopes::confined_to_one_arm`) default-on, `LOFT_NO_ARM_SCOPE=1` the bisect switch; the
+  corpus's post-block reads rewritten to the legal spellings.  The two regressions the
+  default-on attempt of 2026-09-22 met are closed: `1495-…` was a diverging arm whose `Never`
+  the block's Insert flattening reset to `Void` — silently wrong on both backends WITHOUT the arm
+  scope too, on the value arm its guard never took — and `a-copy-of-a-local-that-may-not-own-…`
+  moved two cells to the rule's order, where an arm local takes a record by hand-off and the
+  read of the spent source after the arm is `D-heap-8`'s.  Guards:
+  `tests/scripts/1600-a-local-bound-inside-an-if-arm-is-released-at-the-arms-end.loft` (every
+  arm cell asserted unconditionally), `tests/scripts/1600b-a-local-read-after-its-block-is-refused.loft`.
 
 ### D-heap-35 — OPENED AND CLOSED (2026-09-22, found with loft#1597): a struct-enum vector released a unit variant's literal twice
 
@@ -1336,7 +1388,9 @@ CLOSED 2026-09-17, below.
   measured, both backends).  A SECOND half is open with no implementation at all: `(H-Spent)`'s
   error for reading a name after its value moved.  Today that is silent — `c = open(1);
   if c { v += [c]; } … c.id` reads a value whose hook has already run, and no store instrument can
-  see it because the memory is intact and only the resource is gone.  ⚠ The refusal built behind
+  see it because the memory is intact and only the resource is gone.  The drop gate's `p_v2`
+  (`d = v; v += […]`) is that error's cell, `CENSUS_BLIND` until it is built (reclassified from
+  `D-heap-15` 2026-09-23).  ⚠ The refusal built behind
   `LOFT_LEASE_REFUSE` still implements the PRE-ruling population, so it is now WIDER than the
   rules: it refuses the 156 owned-local placements the rules permit.  Narrowing it to the
   not-yours cases, and adding the spent-name error, is what closes this entry.
@@ -1602,7 +1656,7 @@ CLOSED 2026-09-17, below.
   of its 56 cells lost the source on the tree before, on both backends, and none does after.
   Guard `tests/scripts/a-move-in-one-arm-leaves-the-other-path-releasing.loft`.
 
-### D-heap-15 — OPEN (2026-09-17, NARROWED 2026-09-21, loft#1563): a value the rules MOVE is still copied, and both structures release it
+### D-heap-15 — CLOSED (2026-09-17, NARROWED 2026-09-21, CLOSED as reclassified 2026-09-23, loft#1563): a value the rules MOVE is still copied, and both structures release it
 
 - **Violates:** (H-Move), and through it (H-Lease).
 - **Where:** not established.  What is measured is the population, below; the shapes share that
@@ -1688,6 +1742,16 @@ CLOSED 2026-09-17, below.
   value; `scopes::copy_moves_drop_from` and the hand-off flags beside it are @PLN163 P5's
   subject and this entry is the measurement P5 is verified against.
 
+- **CLOSED as reclassified 2026-09-23.**  The one cell left was `p_v2`,
+  `v: vector<H> = [mk(81)]; d = v; v += [mk(82)]`.  It was re-read against the rules rather than
+  against the gate's own verdict.  `d = v` places a value the function OWNS, so `(H-Move)` moves
+  it and `v` is SPENT from the end of that statement, and `v += …` reads it, which `(H-Spent)`
+  makes a compile-time error.  So `p_v2` is a program the rules REFUSE, and its releases are not
+  this entry's to judge: the gate's `PILOT_ONCE` verdict was the oracle's error, and the cell
+  moves to `PILOT_REFUSED` under `D-heap-8`, whose unbuilt second half is exactly that
+  spent-name error (loft#1568, open).  `rule_tags.py registers --issues` flagged the entry
+  because it named the closed loft#1563 while still reading OPEN.  That was right to re-measure,
+  and the measurement is this reclassification, not a fix.
 ### D-heap-16 — OPENED 2026-09-17, CLOSED 2026-09-21: the fresh value of a `??` DEFAULT arm is never released
 
 - **Violates:** (H-Drop).

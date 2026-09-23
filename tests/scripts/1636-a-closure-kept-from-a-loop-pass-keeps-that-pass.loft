@@ -1,0 +1,186 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1636, `@FR-L-CapKeep` — A CLOSURE KEPT FROM A LOOP PASS KEEPS THAT PASS.
+//
+// `(L-CapScalar)`: a closure sees the value a variable had when the closure was formed, and each
+// run of a build is its own record.  A loop rebuilds one record local every pass, so a fn-ref
+// kept from an earlier pass in a local declared outside the loop used to read the LATEST pass's
+// captures: `g()` answered `11` for `1`, and a captured vector read the next pass's elements.
+// `(L-CapKeep)` releases a record once, by the last of the frame's names for it to let go, and
+// which name is last is decided by store identity at run time — so every cell below also traces
+// the hooks of what the closures captured, and a lost, doubled or LATE release shows as the
+// wrong sequence.  A pass nobody kept releases at its own `}` (`D70` before `M71`), and only a
+// record another name still holds outlives its pass.
+//
+// Every expected value is hand-computed.  The `k` cells are controls: shapes that were right
+// before and must stay right.
+//
+// @falsified-at: 5acd8d91c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: assertion failures, both backends.
+// HOLDS: clean under `LOFT_STRICT_STORES=1`.
+
+struct H { id: integer }
+
+fn OpDrop(self: H) { note("D{self.id}"); }
+fn mk(id: integer) -> H { note("M{id}"); H { id: id } }
+
+fn trace_path() -> text { return "loft_1636_kept_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+fn keep(g: fn() -> integer) -> fn() -> integer { g }
+fn mkf(i: integer) -> fn() -> integer { w = [mk(70 + i)]; fn() -> integer { w[0].id } }
+
+// 1 — the issue's shape: a scalar capture, kept by a plain copy on the first pass.
+fn c1() -> integer {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { f = fn() -> integer { i * 10 + 1 }; if i == 0 { g = f; } }
+  g()
+}
+// 2 — kept through a call that hands the fn-ref back.
+fn c2() -> integer {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { f = fn() -> integer { i * 10 + 1 }; if i == 0 { g = keep(f); } }
+  g()
+}
+// 3 — a captured loop-body VECTOR: the literal refills its backing ahead of the build.
+fn c3() -> integer {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { w = [i + 3, 9]; f = fn() -> integer { w[0] * 100 + i }; if i == 0 { g = f; } }
+  g()
+}
+// 4 — a captured text.
+fn c4() -> text {
+  g = fn() -> text { "" };
+  for i in 0..2 { t = "a{i}"; f = fn() -> text { "{t}/{i}" }; if i == 0 { g = f; } }
+  g()
+}
+// 5 — a captured vector of droppables, kept on the first pass.
+fn c5() {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { w[0].id }; if i == 0 { g = f; } }
+  note("G{g()}");
+}
+// 6 — kept on EVERY pass: each rebind of `g` releases the pass it displaced.
+fn c6() {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { w[0].id }; g = f; }
+  note("G{g()}");
+}
+// 7 — kept on no pass: the rebuild releases each displaced pass.
+fn c7() {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { w[0].id }; if i > 5 { g = f; } }
+  note("X{g()}");
+}
+// 8 — two names kept from two passes.
+fn c8() -> text {
+  g = fn() -> integer { 0 };
+  h = fn() -> integer { 0 };
+  for i in 0..3 { f = fn() -> integer { i * 10 + 1 }; if i == 0 { g = f; } if i == 2 { h = f; } }
+  "{g()} {h()}"
+}
+// 9 — kept on passes 0 and 2: the second keep releases the first.
+fn c9() {
+  g = fn() -> integer { 0 };
+  for i in 0..3 { w = [mk(70 + i)]; f = fn() -> integer { w[0].id }; if i != 1 { g = f; } }
+  note("G{g()}");
+}
+// 10 — a record capture.
+fn c10() {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { h = mk(70 + i); f = fn() -> integer { h.id }; if i == 0 { g = f; } }
+  note("G{g()}");
+}
+// 11 — through a `&fn(…)` parameter: the caller holds the pass it was given.
+fn fill(p: &fn() -> integer) { for i in 0..2 { f = fn() -> integer { i * 10 + 1 }; if i == 0 { p = f; } } }
+fn c11() -> integer { g = fn() -> integer { 0 }; fill(g); g() }
+// 12 — returned: the caller holds the pass the frame kept.
+fn c12() -> fn() -> integer {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { f = fn() -> integer { i * 10 + 1 }; if i == 0 { g = f; } }
+  g
+}
+// 13 — a mutated scalar capture, kept: it goes on counting from its own pass.
+fn c13() -> text {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { k = i * 100 + 4; f = fn() -> integer { k += 1; k }; if i == 0 { g = f; } f(); }
+  a = g();
+  b = g();
+  "{a} {b}"
+}
+// 14-16 — a closure a CALL returned: the passes nobody kept are released at their rebind.
+fn c14() { g = fn() -> integer { 0 }; for i in 0..3 { f = mkf(i); g = f; } note("G{g()}"); }
+fn c15() { g = fn() -> integer { 0 }; for i in 0..2 { f = mkf(i); if i > 5 { g = f; } } note("X{g()}"); }
+fn c16() { g = fn() -> integer { 0 }; for i in 0..3 { f = mkf(i); if i != 1 { g = f; } } note("G{g()}"); }
+
+// Controls.
+fn k1() -> integer {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { f = fn() -> integer { i * 10 + 1 }; if i == 1 { g = f; } }
+  g()
+}
+fn k2() -> integer { h = 0; for i in 0..3 { f = fn() -> integer { i * 10 + 1 }; h = f(); } h }
+fn k3() -> integer {
+  g = fn() -> integer { 0 };
+  for i in 0..5 { f = fn() -> integer { i * 10 + 1 }; if i == 1 { g = f; break; } }
+  g()
+}
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+
+  ok("c1 a scalar, copied     ", "{c1()}", "1");
+  ok("c2 kept through a call  ", "{c2()}", "1");
+  ok("c3 a loop-body vector   ", "{c3()}", "300");
+  ok("c4 a text               ", c4(), "a0/0");
+  c5();
+  ok("c5 droppables, pass 0   ", drain(), "M70,M71,D71,G70,D70");
+  c6();
+  ok("c6 kept every pass      ", drain(), "M70,M71,D70,G71,D71");
+  c7();
+  ok("c7 kept on no pass      ", drain(), "M70,D70,M71,D71,X0");
+  ok("c8 two names, two passes", c8(), "1 21");
+  c9();
+  ok("c9 passes 0 and 2       ", drain(), "M70,M71,D71,M72,D70,G72,D72");
+  c10();
+  ok("c10 a record capture    ", drain(), "M70,M71,D71,G70,D70");
+  ok("c11 a &fn parameter     ", "{c11()}", "1");
+  r = c12();
+  ok("c12 returned            ", "{r()}", "1");
+  ok("c13 a mutated scalar    ", c13(), "6 7");
+  c14();
+  ok("c14 a call, every pass  ", drain(), "M70,M71,D70,M72,D71,G72,D72");
+  c15();
+  ok("c15 a call, no pass     ", drain(), "M70,D70,M71,D71,X0");
+  c16();
+  ok("c16 a call, passes 0, 2 ", drain(), "M70,M71,D71,M72,D70,G72,D72");
+
+  ok("k1 the last pass        ", "{k1()}", "11");
+  ok("k2 never kept           ", "{k2()}", "21");
+  ok("k3 a break              ", "{k3()}", "11");
+
+  delete(trace_path());
+  println("a closure kept from a loop pass keeps that pass: every cell holds");
+}

@@ -12,9 +12,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > τ-lvalue); the `&` belongs to the **variable's type**, fixed at its binding — it is
 > not something the expression grammar applies per use. The @PLN87 ladder (built in the
 > `loft2` worktree, branch `tuxedo-work2`) **realises this model** and landed via PR#436
-> (merged into this branch); D-bind-7, its last residual, was fixed that cycle. **D-bind: 0
-> open** — `B-Ref-Reshape` (2026-08-05) declines a container disturbance under a live `&`, and
-> all three of its disturbances are enforced. This doc's SECOND axis,
+> (merged into this branch); D-bind-7, its last residual, was fixed that cycle. The open count
+> is the one § Deviations states — `B-Ref-Reshape` (2026-08-05) declines a container disturbance
+> under a live `&`, and all three of its disturbances are enforced. This doc's SECOND axis,
 > `const` (@PLN40, shipped), completes the binding table alongside `&`/copy/view — its
 > deviation list is now **closed (D-const: 0 open)**; D-const-1 (enum-variant enforcement
 > scope) was fixed via @PLN102 K1 (see § Deviations), unrelated to the `&`-ladder.
@@ -391,11 +391,65 @@ independent of the subject — the same "fresh result vector" a comprehension bu
 mutating a captured `rest` never touches the original. This split keeps the cheap case cheap while
 avoiding an interior-sub-slice lifetime that neither backend models cleanly.
 
+### Scope — a local ends at the block that bound it
+
+```
+  (B-Scope)      a local bound by a STATEMENT inside a block — an `if` / `else` arm, a loop
+                 body, a `match` arm body, a bare `{ }` — exists from that statement to the
+                 block's `}`.  A read of it after the `}` is refused (`local-out-of-scope`),
+                 also when every arm binds it.  A bind after the `}` starts a new binding in
+                 the enclosing block.  A loop variable (and a destructured `for (a, b)`'s
+                 binders) is bound by its `for` header into the loop's BODY, and ends with
+                 it.  Parameters are bound for the whole function.
+```
+
+**In words.** loft follows rustc here: a local lives in the block that binds it.
+`if c { w = v; }` makes a `w` that ends with that arm, so its value is released at the arm's
+`}` ([heap.md](heap.md) `(H-Drop)`), and `println(w)` after the `if` does not compile. A local
+that must outlive the block is bound before it and assigned inside
+(`w: T? = null; if c { w = v; }`), or is the block's own value
+(`w = if c { a } else { b }`, a tuple for several). The refusal is deliberate and
+one-directional ([COMPATIBILITY.md](../COMPATIBILITY.md) § The error surface): relaxing it
+later breaks nothing, while the reverse would. Before 2026-09-23 such a local was
+function-scoped, readable after its block, and on a path that never bound it, a read
+answered a value no statement had assigned (loft#1600, owner ruling).
+
 ---
 
 ## Deviations
 
-**OPEN: 2.**
+**OPEN: 3.**
+
+* **D-bind-52** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD
+  read through a link.  `y = e` with `e = &z`, and `y = p` with `p: &P` a parameter, bound `y`
+  with a borrow dep on the link, so `y` VIEWED the record and `y.n = 9` wrote `z` — where a
+  whole-value bind copies and a plain local source (`y = z`) does.  Both backends agreed.
+  **Where (measured), three places.**  The parser's link peel gave a record read a borrow dep
+  (the `&`-parameter half on purpose, loft#772: without it `w` owned the caller's store — a copy
+  settles that the other way, since `w` then owns the copy and nothing else).  Both emitters'
+  whole-record copy arms asked the SOURCE's shape through `base()`, which does not see through a
+  `&`, so a link source took the plain alias; native also spelled the source `var_<src>`, the
+  pointer rather than the record behind it.  And a NULLABLE destination (`y: S?`) pre-inits its
+  slot before the value runs, but `intervals.rs` gave only the bare `Reference` an early
+  `first_def`, so `y` was handed the slot of the `&S?` link it was about to read — a link frees
+  nothing, so its range ended at that read — and the pre-init zeroed it (interpreter panic).
+  **Closed** by peeling a record link read to an OWNED value, asking `peel_link()` at every copy
+  arm (and rendering native's source through the Var emitter, one `OpBindOrCopy` witness helper
+  on the interpreter), and asking the early-`first_def` test through `base()`.  A program that
+  wrote a `&` record parameter through a plain alias (`w = p; w.n = 9`) no longer writes it, and
+  is told so: the `&` is then unused.  Guard
+  `tests/scripts/a-record-read-through-a-link-is-copied.loft`.  Found while closing D-bind-51.
+* **D-bind-51** *(opened 2026-09-23, CLOSED 2026-09-23)* — `(B-Copy)` with `(C-Ref)` for a plain
+  bind from a LOCAL link.  `y = e` with `e = &z` kept the link's `&τ` type into the bind, so `y`
+  became a second link: `z = 9` afterwards read 9 through `y`, and `y = 4` wrote `z`, on both
+  backends; the annotated `y: integer = e` was refused as "cannot change type from integer to
+  &integer"; and a record there panicked the interpreter's allocator and emitted Rust that did not
+  compile.  **Where (measured).**  `parse_assign_op_inner` peels a bare link read to its value
+  type, but asked only of a `&` PARAMETER — its comment took every other `RefVar` source for an
+  explicit `&` bind, which by then has already been lowered to `OpCreateStack` / `OpVarRef` and is
+  no bare `Var`.  **Closed** by peeling a local link's read the same way.  Guard
+  `tests/scripts/a-plain-bind-from-a-link-copies-the-value-it-reads.loft`.  Found while fixing
+  loft#1614.
 
 * **D-bind-50** *(opened 2026-09-22, CLOSED 2026-09-22; loft#1612)* — `(B-Copy)` for the
   destination of a `??` CHAIN of three or more operands.  A plain bind copies a heap whole
@@ -762,6 +816,25 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
   `tests/scripts/a-link-to-a-narrow-integer-store-place-is-refused.loft` (one error per `&`) and
   `tests/scripts/a-link-to-a-narrow-integer-local-reads-and-writes-it.loft` (what must still link).
   Found while checking D-bind-36's cells against a middle element.
+* **D-bind-44** *(opened 2026-09-23, loft#1639)* — `(B-Ref-Intro)` says a `&`-annotated binding
+  gives the variable type `&(typeof a)`, so the link's type comes from the TARGET and an explicit
+  annotation naming a different type is a mismatch `(C-Ref)` has no conversion for.  It is not
+  refused: the link reads and writes the target's slot at the ANNOTATION's width and bias, handing
+  the stored code back as a value.  `b: i8 = -1; pb: &u16 = &b` reads `127` (`enc_byte(-1, -128)`,
+  the raw byte); `d: integer limit(1000, 1100) = 1050; pd: &u8 = &d` reads `50`; `h: u16 = 65535;
+  ph: &u8 = &h` reads `255`.  The writes corrupt the target — `pf: &u16 = &(f: i8 = -1); pf = 5`
+  leaves `f == -123`, `pg: &u8 = &(g: Lim = 1050); pg = 200` leaves `g == 1200`, and
+  `pi: &u8 = &(i: u16 = 65535); pi = 200` leaves `i == 65480`, one byte written over two.  The
+  annotation IS consulted for the value check, against the wrong type: `pg = 1060` is refused as
+  not fitting `u8` over a slot that holds `1000..=1100`.  `--native` does not compile at all
+  (`*mut u16 = addr_of_mut!(var_a)` over a `u8`, rustc E0308 per link), so the backends diverge
+  too.  **Where (measured).**  `u8` is the one row that reads correctly, because its bias is zero
+  and its encoding is the identity — the covered spelling is the one that cannot fail, which is why
+  nothing caught it.  Same class as the frame readers @PLN167 A0–A2 closed (#1632): a reader taking
+  the stored code for a value, here with the wrong width supplied by the annotation rather than by
+  the reader.  Belongs to A3 with D-bind-38 and D-bind-39.  Found when a peer's rules-side read
+  predicted the spelling was already refused.
+
 * **D-bind-38** *(opened 2026-09-14, loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
   vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
   addressable operand — a variable, struct field, or vector element", on both backends and already

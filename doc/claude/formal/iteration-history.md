@@ -16,7 +16,8 @@ field and a `+=` — and all three are now closed with their own guards. D-iter-
 CLOSED.  D-iter-4 opened and closed 2026-09-06: the LITERAL was the fourth kind, found by walking
 `@FR-O-Detach` rather than this doc's own corpus — which varied what the comprehension reads and
 never asked whether a literal reads at all.  D-iter-5 opened and closed the same day: the two
-destinations D-iter-4's snapshot could not NAME.
+destinations D-iter-4's snapshot could not NAME.  D-iter-6 opened and closed 2026-09-23 (loft#1619, below): a
+place source and a range bound were re-read per round.
 
 > **D-iter-4 — OPENED AND CLOSED (2026-09-06). A vector LITERAL that reads its destination.**
 > `I-Comp` was walked three times for the comprehension (D-iter-1..3) and the literal — the same
@@ -31,6 +32,30 @@ destinations D-iter-4's snapshot could not NAME.
 > `tests/scripts/a-vector-literal-reads-what-its-destination-held.loft`, falsified at 6f9c0886.
 > Two destinations the snapshot cannot NAME remain — a field reached through an element, a
 > captured collection — filed as loft#1391 and closed the same day as D-iter-5.
+
+> **D-iter-6 — OPENED AND CLOSED (2026-09-23, loft#1619). A PLACE source, and a range bound,
+> were RE-READ per round.**  (Filed in `iteration.md` as "D-iter-5", a number this register
+> had already given to loft#1391; renumbered when it closed.)  `it := ⟨0, src⟩` and
+> `(I-Range)`'s "the integers a, …, b-1" read `src` and `b` as VALUES taken once; the code
+> re-read a place every round.  Measured, both backends alike: `s = "hello"; for c in s { s =
+> "zz" }` walked two characters, `for c in st.s { st.s = "zz" }` the same; `w = [1,2,3]; for i
+> in 0..len(w) { w += [9] }` ran five rounds, `m = 3; for i in 0..m { m = 10 }` ten, and `for i
+> in 0..=f()` called `f` nine times for three rounds — `0..f()` four.  The value half (a text
+> source that is a call) had closed that morning; the place half was filed as a language
+> choice, since `(I-For)`'s own prose kept a collection's length re-read on purpose and the
+> queue idiom `for i in 0..len(q) { …; q += [next] }` was written against it.
+>
+> **Closed by owner ruling (2026-09-23): the letter holds, and the body's write is told.**
+> A non-literal range bound is bound to a hidden local in the loop prelude
+> (`parse_in_range_body`), a text place is bound like any other text source
+> (`Parser::iterator`), and the places a source read are recorded on the loop so a body that
+> writes one warns `loop-source-written` — the variable-end and text-source shapes being the
+> two the ruling named.  Pins that recorded the re-read moved to the ruled values:
+> `iter-text-source-once` s15 (2 → 5), `158-char-walk` w6 (6006 → 2004) and w7 (3 → 6),
+> `158-walk-accumulator` a8 (6 → 2 trips), and `string_scope`'s slot layout (the inner loop's
+> end is a slot of its own, and `n`'s span now ends at the bind).  Guard:
+> `tests/scripts/1619-a-loop-reads-its-bounds-and-its-text-once.loft`, thirteen cells on both
+> backends.
 
 > **D-iter-5 — OPENED AND CLOSED (2026-09-06, loft#1391). The two destinations the snapshot
 > could not name.**  `(I-Comp)` is *whichever destination*, and D-iter-4's cure reached the

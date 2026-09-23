@@ -108,9 +108,10 @@ pub struct IntegerSpec {
     /// Inclusive lower bound.  `i32::MIN` is reserved as the null
     /// sentinel; plain-integer templates use `i32::MIN + 1`.
     pub min: i32,
-    /// Inclusive upper bound.  `u32` to allow the wide / former-`long`
-    /// template to use `u32::MAX` as a "wider than i32" sentinel.
-    pub max: u32,
+    /// Inclusive upper bound.  Signed, so a range lying wholly below zero has one
+    /// (`limit(-100, -1)`, loft#1630); the wide / former-`long` template keeps
+    /// `u32::MAX` as its "wider than i32" marker.
+    pub max: i64,
     /// When true, the value cannot be null — frees the null sentinel
     /// and widens the usable range by 1 on narrow types.
     pub not_null: bool,
@@ -129,7 +130,7 @@ impl IntegerSpec {
     pub const fn wide() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: u32::MAX,
+            max: u32::MAX as i64,
             not_null: false,
             forced_size: None,
         }
@@ -139,7 +140,10 @@ impl IntegerSpec {
     pub const fn signed32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            // `as`, not `i64::from`: this is a `const fn` and `From` is not a const trait
+            // yet (rust-lang#143874).  Clippy's cast lint does not fire here for that
+            // reason; it fires on the non-const `i32()` below, which does use `From`.
+            max: i32::MAX as i64,
             not_null: false,
             forced_size: None,
         }
@@ -189,7 +193,7 @@ impl IntegerSpec {
     pub fn i32() -> Self {
         IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            max: i64::from(i32::MAX),
             not_null: false,
             forced_size: NonZeroU8::new(4),
         }
@@ -199,7 +203,7 @@ impl IntegerSpec {
     pub fn u32() -> Self {
         IntegerSpec {
             min: 0,
-            max: u32::MAX - 1,
+            max: i64::from(u32::MAX) - 1,
             not_null: false,
             forced_size: None,
         }
@@ -277,7 +281,7 @@ impl IntegerSpec {
     /// loft#1246 already recorded two of them drifting apart; loft#1254 found the third.
     #[must_use]
     pub fn default_value(&self) -> i64 {
-        let (lo, hi) = (i64::from(self.min), i64::from(self.max));
+        let (lo, hi) = (i64::from(self.min), self.max);
         if lo <= 0 && 0 <= hi {
             0
         } else if lo > 0 {
@@ -293,46 +297,10 @@ impl IntegerSpec {
     #[must_use]
     pub fn usable_max(&self, nullable: bool) -> i64 {
         if self.reserves_narrow_sentinel(nullable) && self.min >= 0 {
-            i64::from(self.max) - 1
+            self.max - 1
         } else {
-            i64::from(self.max)
+            self.max
         }
-    }
-
-    /// True when a nullable field of this spec must sacrifice one edge value: its
-    /// value range exactly fills its 1- or 2-byte width, so the all-ones null byte
-    /// would otherwise BE a usable value.  (Wider 4/8-byte ints reserve
-    /// `i32::MIN`/`i64::MIN` for null, outside this narrow mechanism; an
-    /// un-annotated `limit(...)` whose range does not fill the width already has a
-    /// spare code and needs no sacrifice.)
-    /// Can a NON-nullable slot of this spec hold a value that reads back as null?
-    ///
-    /// Two conditions, and both are about storage rather than about the `?`:
-    ///
-    /// 1. the declared range must not FILL the fixed width, or there is no spare code —
-    ///    `u8`/`i8`/`u16`/`i16` use all 256 / 65 536 of theirs, while `i32` is
-    ///    `i32::MIN + 1 ..= i32::MAX` and `u32` is `0 ..= u32::MAX - 1`, which is why
-    ///    `i32 = -2147483648` is refused as out of range in either spelling;
-    /// 2. the spare code must be the one a NON-null read already reports as null, which is
-    ///    the BOTTOM code — the same `i32::MIN` / `i64::MIN` plain `integer` uses.  An
-    ///    unsigned spec's spare code is the TOP one, and no non-null read tests for it: a
-    ///    `u32` field holding it renders `4294967295`, a value outside the type's own
-    ///    declared range, which is worse than the in-range answer it replaces.
-    ///
-    /// So this is exactly the specs for which `formal/types.md` C85 — *"on overflow they
-    /// write the reserved sentinel into that non-null slot, which then reads as null"* — has
-    /// a sentinel to write (loft#1296).
-    #[must_use]
-    pub fn reserves_sentinel_unconditionally(&self) -> bool {
-        let Some(size) = self.forced_size.map(NonZeroU8::get) else {
-            return false;
-        };
-        // A wider `forced_size` never reaches here — the wide template is excluded before
-        // the range questions are asked — and `1 << 64` would not be a shift.
-        if size >= 8 {
-            return false;
-        }
-        self.min < 0 && self.range() < (1_i64 << (8 * i64::from(size)))
     }
 
     /// Can a value held in a NON-nullable slot of this spec ever read back as null?
@@ -342,33 +310,44 @@ impl IntegerSpec {
     /// code back for a failure, so `!x` on it is always false and a fit-failure leaves
     /// nothing in the value to see (@PLN152).
     ///
-    /// Three families, and the split is about which code the type kept back rather than
-    /// about the `?`:
+    /// Two families, and the split is a DECISION rather than a property — it is where C127's
+    /// pragmatic exemption falls, not a line the null model draws:
     ///
-    /// 1. `not_null` says the slot gave the sentinel up to widen its range by one, so
-    ///    there is no code left for null whatever the width — this is how a struct field
-    ///    declared `i: u8` (and one declared `x: integer`) reaches here;
-    /// 2. the plain `integer` and `i32` templates reserve the BOTTOM code
-    ///    (`i64::MIN` / `i32::MIN`), which is exactly what a non-null read reports as
-    ///    null — so `!x` on either is a real test and must not be flagged;
-    /// 3. every remaining spec is a declared range, and
-    ///    [`Self::reserves_sentinel_unconditionally`] is the one home for whether it kept
-    ///    a bottom code: `u8`/`i8`/`u16`/`i16` fill their fixed width, `u32`'s spare code
-    ///    is at the TOP where no non-null read tests for it, and an un-annotated
-    ///    `limit(lo, hi)` takes its own default rather than a sentinel.
+    /// 1. the plain `integer` and `i32` templates keep a code for absence, so `!x` on either
+    ///    is a real test and must not be flagged;
+    /// 2. every other non-nullable spec is a declared NARROW range, and by C127 it has no
+    ///    null at all: a value that does not fit takes the type's DEFAULT, so `!x` on it is
+    ///    always false.  `not_null` is the same answer reached by declaration rather than by
+    ///    width, and is kept as an early return because it also covers the wide templates.
     ///
-    /// The store side of the same fact is `uncomputable_default`'s `dflt`, read through
-    /// `Parser::compound_range`: a target whose `dflt` is `i64::MIN` is one this answers
-    /// `true` for.  Two readers, one fact — kept apart only because one is handed a spec
-    /// and the other a store target.
+    /// ⚠ Do NOT re-derive clause 1 from "which code the type kept back".  `u32` keeps one
+    /// too — `limit(0, 4294967294) size(4)`, at the top of its range, which is what refuses
+    /// `u32 = 4294967295` — and it is in clause 2.  The reason `i32` is in clause 1 is that
+    /// the owner allowed the exemption on COST (one value in 2^32, for the only narrow type
+    /// whose overflow is detectable), so this boundary moves by decision and not by a fact
+    /// about representations (C127 § Decision; `tests/scripts/1615-…`'s `templates()` row
+    /// pins all three types across all three slot kinds for exactly that reason).
+    ///
+    /// ⚠ Before C127 clause 2 read *"kept a code back inside its width"* — a predicate
+    /// (`reserves_sentinel_unconditionally`) that made the lint's answer depend on whether
+    /// `hi - lo + 1` fell short of `2^(8*size)`, so it fired on
+    /// `limit(-128, 127) size(1)` and went silent on `limit(-100, 100) size(1)`, two
+    /// declarations one value apart.
+    ///
+    /// ⚠ This is NOT the same question as `uncomputable_default`'s, and the two must not be
+    /// routed through one predicate — they differ on `not_null`.  That flag is a claim about
+    /// the SLOT (every non-nullable struct field's spec carries it); the stored default asks
+    /// what the REPRESENTATION keeps a code for, and a field declared `c: i32` still has the
+    /// range `[i32::MIN + 1, MAX]`, so `i32::MIN` is still spare in its bytes.  Measured when
+    /// they were unified: the `i32` FIELD stored `0` where its local and its element stored
+    /// null — loft#1296's disagreement reopened from the other side.  An earlier version of
+    /// this comment claimed *"two readers, one fact"*; that was never true.
     #[must_use]
     pub fn non_null_reads_null(&self) -> bool {
         if self.not_null {
             return false;
         }
-        self.is_wide_template()
-            || self.is_signed32_template()
-            || self.reserves_sentinel_unconditionally()
+        self.is_wide_template() || self.is_signed32_template()
     }
 
     fn reserves_narrow_sentinel(&self, nullable: bool) -> bool {
@@ -458,13 +437,13 @@ impl IntegerSpec {
     /// True when the value range exceeds the signed-32-bit range.
     #[must_use]
     pub fn is_wide(&self) -> bool {
-        self.max > i32::MAX as u32
+        self.max > i64::from(i32::MAX)
     }
 
     /// Number of distinct representable values (inclusive range + 1).
     #[must_use]
     pub fn range(&self) -> i64 {
-        i64::from(self.max) - i64::from(self.min) + 1
+        self.max - i64::from(self.min) + 1
     }
 
     /// Can `width` bytes hold every value this range admits? — `@FR-L-Narrow`, read as the
@@ -494,13 +473,13 @@ impl IntegerSpec {
     /// True when this is the I32 template (plain `integer` post-2c).
     #[must_use]
     pub fn is_signed32_template(&self) -> bool {
-        self.min == i32::MIN + 1 && self.max == i32::MAX as u32
+        self.min == i32::MIN + 1 && self.max == i64::from(i32::MAX)
     }
 
     /// True when this is the wide I64 template.
     #[must_use]
     pub fn is_wide_template(&self) -> bool {
-        self.min == i32::MIN + 1 && self.max == u32::MAX
+        self.min == i32::MIN + 1 && self.max == i64::from(u32::MAX)
     }
 
     /// The loft-SOURCE spelling of this spec, or `None` when it has no name of
@@ -541,7 +520,7 @@ impl IntegerSpec {
     /// misroute every plain `integer`.
     #[must_use]
     pub fn unsigned_wide(&self) -> bool {
-        self.min >= 0 && self.max > i32::MAX as u32
+        self.min >= 0 && self.max > i64::from(i32::MAX)
     }
 }
 
@@ -3844,7 +3823,7 @@ mod tuple_stack_layout_tests {
     fn integer() -> Type {
         Type::Integer(IntegerSpec {
             min: i32::MIN + 1,
-            max: i32::MAX as u32,
+            max: i64::from(i32::MAX),
             not_null: false,
             forced_size: None,
         })
@@ -4043,10 +4022,13 @@ pub fn is_null_sentinel_detach(
     // construction delivered to (loft#1513) — so the write displaces nothing the work-ref
     // still owns.  The displacement free fired here regardless, and on the adoption shape it
     // freed the store the binding had just taken: the scope-end hook then read freed memory.
+    // A closure record local assigned the sentinel is `@FR-L-CapKeep`'s hand-over: the record
+    // it held is now the fn-ref's that still names it (loft#1636).
     let name = function.name(var);
     (crate::variables::owns_literal_backing_store(name)
         || name.starts_with("__ref_")
-        || name.starts_with("__rref_"))
+        || name.starts_with("__rref_")
+        || name.starts_with("___clos_"))
         && matches!(value.unspan(), Value::Call(nr, args)
             if args.is_empty() && data.def(*nr).name() == "OpNullRefSentinel")
 }
@@ -6010,11 +5992,6 @@ pub struct NarrowSlot {
     /// The `min` operand of the kind's ops; `0` for a kind that takes none.
     pub min: i32,
     pub width: u8,
-    /// A NON-nullable 1- or 2-byte type that kept a spare top code
-    /// (`IntegerSpec::reserves_sentinel_unconditionally`): an overflow writes that code and
-    /// the slot reads null (C85), which is what a LOCAL of the type answers today.  The
-    /// encoding maps null to the code and back; the kind's own ops do not.
-    pub spare: bool,
 }
 
 impl NarrowSlot {
@@ -6027,17 +6004,14 @@ impl NarrowSlot {
     /// narrow-vector ELEMENT, whose stride/value contract is the raw one rather than the
     /// field-sentinel one.
     ///
-    /// `spare` is a NON-nullable 1- or 2-byte type that kept a top code
-    /// (`IntegerSpec::reserves_sentinel_unconditionally`): C85 says an overflow writes that
-    /// code and the slot then reads null, which is what a LOCAL of the type answers — so the
-    /// place reads and writes through the op that maps the code to null (loft#1615).  It is
-    /// never a narrow-vector element, and `@FR-L-Narrow-Alias` is why: a stored width is a
-    /// property of a NAMED type, so `size(n)` is written in a `type` alias and nowhere else,
-    /// while `narrow_vec` requires no alias.  The two are therefore mutually exclusive by the
-    /// RULE rather than by an accident of the parser — which is what the `debug_assert` below
-    /// now rests on.  (It rested on the accident until 2026-09-23: nothing REFUSES an inline
-    /// `size`, the parser simply never looks for one, so a future production that admitted it
-    /// would have walked into the assert with no rule to warn it.)
+    /// ⚠ A NON-nullable type that leaves a code spare inside its width — `limit(-100, 100)
+    /// size(1)`, 201 values in 256 — takes the PLAIN kind here, exactly as one that fills its
+    /// width does.  Between loft#1615 and C127 it took a `spare` encoding that decoded that
+    /// code as null, so an overflow read absent; C127 retired it, because whether `hi - lo + 1`
+    /// falls short of `2^(8*width)` is arithmetic the author did not do, and two declarations
+    /// one value apart answered differently.  Such a value now takes the type's DEFAULT
+    /// before it reaches any slot (`parser::expressions::uncomputable_default`), so no slot
+    /// here needs a code for it (`@FR-L-Narrow-Spare`, `@FR-N-Reserve`, `@FR-E-Uncomp-NN`).
     ///
     /// A width of 8 is the wide `integer`, which answers [`NarrowIntKind::Int`] and takes no
     /// `min`: the two store-place callers pass every supported width here, so this is total
@@ -6054,19 +6028,7 @@ impl NarrowSlot {
         } else {
             0
         };
-        let spare = !nullable && matches!(width, 1 | 2) && spec.reserves_sentinel_unconditionally();
-        debug_assert!(
-            !(spare && narrow_vec),
-            "a spare-code type reached a narrow-vector element — only a `type` alias can \
-             spell one, and a narrow vector has no alias; the two op families would now \
-             disagree about the same type"
-        );
-        Self {
-            kind,
-            min,
-            width,
-            spare,
-        }
+        Self { kind, min, width }
     }
 
     /// The slot a narrow integer LOCAL of this type takes — a slot like a field, never a
@@ -6088,35 +6050,19 @@ impl NarrowSlot {
     /// The kind as the interpreter's op operand spells it.
     #[must_use]
     pub fn code(self) -> u8 {
-        match (self.spare, self.width) {
-            (true, 1) => crate::narrow::BYTE_SPARE,
-            (true, _) => crate::narrow::SHORT_SPARE,
-            _ => self.kind.code(),
-        }
+        self.kind.code()
     }
 
-    /// The interpreter op a LINK to a place of this kind reads through: the kind's own, except
-    /// that a spare-code kind reads through the op that decodes its top code as null.
+    /// The interpreter op a LINK to a place of this kind reads through.
     #[must_use]
     pub fn get_op(self) -> &'static str {
-        match (self.spare, self.width) {
-            (true, 1) => "OpGetByteNullable",
-            (true, _) => "OpGetShortSpare",
-            _ => self.kind.get_op(),
-        }
+        self.kind.get_op()
     }
 
-    /// The write twin of [`Self::get_op`].  A spare-code BYTE writes through the nullable
-    /// setter: the plain one casts its value `as i32` before the store sees it, which turns
-    /// the null `i64::MIN` into `0` — a value — where the nullable one maps it to the code
-    /// first (the field half of that truncation is loft#1615).  The two-byte setter and every
-    /// other kind's already map null to their code.
+    /// The write twin of [`Self::get_op`].
     #[must_use]
     pub fn set_op(self) -> &'static str {
-        match (self.spare, self.width) {
-            (true, 1) => "OpSetByteNullable",
-            _ => self.kind.set_op(),
-        }
+        self.kind.set_op()
     }
 
     /// The Rust type a native local of this kind is declared as: the storage width, unsigned
@@ -6135,13 +6081,6 @@ impl NarrowSlot {
     /// The `crate::narrow` function pair for this kind, `(enc, dec)`, and whether it takes
     /// the `min` argument.
     fn fns(self) -> (&'static str, &'static str, bool) {
-        if self.spare {
-            return if self.width == 1 {
-                ("enc_byte_spare", "dec_byte_spare", true)
-            } else {
-                ("enc_short_spare", "dec_short_spare", true)
-            };
-        }
         match self.kind {
             NarrowIntKind::Byte => ("enc_byte", "dec_byte", true),
             NarrowIntKind::ByteNullable => ("enc_byte_nullable", "dec_byte_nullable", true),
@@ -10044,7 +9983,7 @@ impl Data {
             "_d_nr",
             Type::Integer(IntegerSpec {
                 min: i32::MIN + 1,
-                max: i32::MAX as u32,
+                max: i64::from(i32::MAX),
                 not_null: false,
                 forced_size: NonZeroU8::new(4),
             }),
@@ -10093,13 +10032,44 @@ impl Data {
     /// `integer limit(0, 255) size(1)`), read off the declarations themselves.
     #[must_use]
     pub fn integer_alias(&self, spec: &IntegerSpec) -> Option<&str> {
-        self.definitions.iter().find_map(|d| {
-            (d.def_type == DefType::Type
-                && d.source == STD_SOURCE
+        self.integer_alias_any_source(spec, true)
+    }
+
+    /// The same lookup, optionally reaching the USER's own `type` aliases.
+    ///
+    /// A diagnostic has to name a type the reader can act on, and for a declared range that
+    /// is the alias they wrote: `type Lim = integer limit(1000, 1100) size(1)` is `Lim`, not
+    /// `integer(1000, 1100)` — which is true but is no spelling the parser reads, so a cure
+    /// built from it (`as integer(1000, 1100)?`) cannot be typed back in.  Stdlib aliases are
+    /// preferred, so `u8` keeps naming itself even where a program declares its own alias for
+    /// the same range; a user alias is the fallback rather than the first answer (loft#1641).
+    #[must_use]
+    pub fn integer_alias_any_source(&self, spec: &IntegerSpec, std_only: bool) -> Option<&str> {
+        // The RANGE and the WIDTH identify the type; `not_null` does not.  That flag is a
+        // claim about the SLOT — a local declared `x: Lim` carries it, the `type Lim = …`
+        // definition does not — so a whole-spec equality here never matched a user's own
+        // alias, and the diagnostic fell back to `integer(1000, 1100)`, which is true and is
+        // no spelling the parser reads (loft#1641).  The same flag caught `non_null_reads_null`
+        // out the same day, from the other side (C127).
+        let matches_spec = |d: &Definition| {
+            d.def_type == DefType::Type
                 && matches!(d.returned.base(), Type::Integer(s)
-                    if s == spec && s.forced_size == spec.forced_size))
-            .then_some(d.name.as_str())
-        })
+                    if s.min == spec.min
+                        && s.max == spec.max
+                        && s.forced_size == spec.forced_size)
+        };
+        self.definitions
+            .iter()
+            .find_map(|d| (d.source == STD_SOURCE && matches_spec(d)).then_some(d.name.as_str()))
+            .or_else(|| {
+                (!std_only)
+                    .then(|| {
+                        self.definitions
+                            .iter()
+                            .find_map(|d| matches_spec(d).then_some(d.name.as_str()))
+                    })
+                    .flatten()
+            })
     }
 
     /// Does `tp` mention a type-variable placeholder anywhere — is it still a template's type
@@ -10403,6 +10373,33 @@ impl Data {
             return Self::mangle_method(&format!("{owner}::{}", def.name()), method);
         }
         Self::mangle_method(def.name(), method)
+    }
+
+    /// Every lambda whose closure record has a drop cascade, paired with that cascade: the
+    /// arms `OpDropFnRef` dispatches over (`@FR-L-CapOwn`, loft#1609).  A fn-ref's run-time
+    /// `d_nr` names the lambda; a lambda absent here has nothing to drop.
+    #[must_use]
+    pub fn closure_drops(&self) -> Vec<(u32, u32)> {
+        (0..self.definitions())
+            .filter_map(|d| {
+                let record = self.def(d).closure_record();
+                if record == u32::MAX {
+                    return None;
+                }
+                let cascade = self.drop_cascade_nr(record);
+                (cascade != u32::MAX).then_some((d, cascade))
+            })
+            .collect()
+    }
+
+    /// Does any lambda's closure record have a drop cascade?  Gates `OpDropFnRef`, which is
+    /// a no-op in a program where [`Self::closure_drops`] is empty.
+    #[must_use]
+    pub fn any_closure_drop(&self) -> bool {
+        (0..self.definitions()).any(|d| {
+            let record = self.def(d).closure_record();
+            record != u32::MAX && self.drop_cascade_nr(record) != u32::MAX
+        })
     }
 
     #[must_use]

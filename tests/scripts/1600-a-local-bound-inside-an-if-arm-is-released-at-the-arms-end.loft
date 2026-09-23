@@ -1,18 +1,18 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// loft#1600, `@FR-H-Drop` — WHERE A LOCAL BOUND INSIDE AN `if` ARM IS RELEASED, and the order a
-// HOISTED local releases in.  Two contracts, one of them still a design question:
+// loft#1600, `@FR-H-Drop` with `@FR-B-Scope` — WHERE A LOCAL BOUND INSIDE AN `if` ARM IS
+// RELEASED, and the order a local bound BEFORE a block releases in.  Two contracts:
 //
-// ALWAYS (D-heap-37, closed): a local bound inside an `if` arm, a loop body or a block and READ
-// after it is hoisted to the enclosing scope, and released there in reverse declaration order —
-// before the locals declared ahead of it (`a9`–`a11`; the controls `k1`–`k3`).  The three
-// hoists registered it with a bare push, and its backing kept its turn at the function's head.
+// THE ARM IS THE SCOPE (D-heap-36, closed by owner ruling 2026-09-23, rustc's rule): a local a
+// statement binds inside an arm, a loop body, a `match` arm or a block ends at that block's
+// `}` and is released there (`a1`–`a8`, `a12`–`a16`).  Reading it after the `}` is refused
+// (`local-out-of-scope`, `1600b-…`), so these cells cannot read it after.
 //
-// OPT-IN (D-heap-36, OPEN): whether a local every mention of which lies in ONE arm dies at the
-// arm's end or at the scope around the `if`.  @PLN125 decided the scope around it
-// (`pln125-b-drop.loft`'s `if_block_local`); loft#1600 asks for the arm's end.  The mechanism
-// exists behind `LOFT_ARM_SCOPE=1`, and so do its cells: run this file with it set to assert
-// them (`a1`–`a8`, `a12`–`a16`).  Off by default, and the corpus runs it off.
+// RELEASE ORDER (D-heap-37, closed): a local bound BEFORE a block and assigned inside it is
+// the enclosing scope's, released there in reverse declaration order — before the locals
+// declared ahead of it (`a9`–`a11`; the controls `k1`–`k3`).  Until the ruling these cells
+// bound the local INSIDE the block and read it after, which is now refused; the order they
+// measure is the same.
 //
 // Every expected trace is worked out by hand.  The drop hook writes a trace FILE, as
 // `139-drop-cascade.loft` does and for its reason.
@@ -82,14 +82,15 @@ fn a7(c: boolean) {
 // 8 — a record literal.
 fn a8(c: boolean) { v: vector<H> = [mk(50)]; if c { r = H { id: 54 }; note("r{r.id}"); } note("x"); }
 
-// 9 — READ after the `if`: the local is the function's, released in reverse declaration order.
-fn a9(c: boolean) { v: vector<H> = [mk(50)]; if c { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+// 9 — bound before the `if`, assigned in the arm and read after it: the function's, released
+// in reverse declaration order.
+fn a9(c: boolean) { v: vector<H> = [mk(50)]; w: vector<H> = []; if c { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
 
-// 10 — the same, bound in a loop body and read after the loop.
-fn a10() { v: vector<H> = [mk(50)]; for _ in 0..1 { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+// 10 — the same, assigned in a loop body and read after the loop.
+fn a10() { v: vector<H> = [mk(50)]; w: vector<H> = []; for _ in 0..1 { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
 
-// 11 — the same, bound in a block and read after it.
-fn a11() { v: vector<H> = [mk(50)]; { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+// 11 — the same, assigned in a block and read after it.
+fn a11() { v: vector<H> = [mk(50)]; w: vector<H> = []; { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
 
 // 12 — a record bound in BOTH arms: each arm's own.
 fn a12(c: boolean) {
@@ -125,10 +126,10 @@ fn g16(c: boolean) -> integer { if c { w = [mk(65)]; note("r{len(w)}"); return l
 fn a16() { note("g{g16(true)}"); }
 
 // Controls — right before and after.
-// k1: a vector moved in the arm and read after the `if`.
-fn k1(c: boolean) { v: vector<H> = [mk(50)]; if c { w = v; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
-// k2: the arm not taken, the local read after it.
-fn k2(c: boolean) { v: vector<H> = [mk(50)]; if !c { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+// k1: a vector moved in the arm into a local bound before it, and read after the `if`.
+fn k1(c: boolean) { v: vector<H> = [mk(50)]; w: vector<H> = []; if c { w = v; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
+// k2: the arm not taken; the local bound before it reads its first value.
+fn k2(c: boolean) { v: vector<H> = [mk(50)]; w: vector<H> = []; if !c { w = [mk(52)]; note("r{len(w)}"); } note("a{len(w)}"); note("x"); }
 // k3: a vector literal in the arm, which kept the arm's scope before.
 fn k3(c: boolean) { v: vector<H> = [mk(50)]; if c { w = [mk(52)]; note("r{len(w)}"); } note("x"); }
 
@@ -148,10 +149,8 @@ fn main() {
   ok("k2 control, not taken ", drain(), "m50,a0,x,d50");
   k3(true);
   ok("k3 control, literal   ", drain(), "m50,m52,r1,d52,x,d50");
-  // OPT-IN — an arm's local released at the arm's end (`LOFT_ARM_SCOPE=1`, D-heap-36).
-  // `env_variable` answers null for an unset variable (loft#1302).
-  arm = env_variable("LOFT_ARM_SCOPE");
-  if arm != null && arm != "" {
+  // THE ARM IS THE SCOPE — an arm's local released at the arm's end.
+  {
     a1(true);
     ok("a1 moved in the arm   ", drain(), "m50,r1,d50,x");
     a2(true);
@@ -180,13 +179,7 @@ fn main() {
     ok("a15 match arm         ", drain(), "m50,m63,r1,d63,x,d50");
     a16();
     ok("a16 early return      ", drain(), "m65,r1,d65,g1");
-  } else {
-    // Run every cell so none of them rots unparsed; their traces are the rule this file
-    // does not assert with the switch off.
-    a1(true); a2(true); a3(true); a4(true); a5(true); a6(true); a7(true); a8(true);
-    a12(true); a12(false); a13(true); a14(true); a15(true); a16();
-    drain();
   }
   delete(trace_path());
-  println("a hoisted local releases in its declaration turn: every asserted cell holds");
+  println("an arm's local is released at the arm's end, and a local bound before a block in its declaration turn");
 }

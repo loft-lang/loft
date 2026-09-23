@@ -9,6 +9,53 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### C127 — a declared narrow range has no null; the spare-code encodings retired (2026-09-23)
+
+`uncomputable_default` answered `i64::MIN` for a non-nullable spec that left a code unused
+inside its storage width, and the store wrote that code through a bespoke `*_spare`
+encoding.  So `limit(-100, 100) size(1)` read null after an overflow and
+`limit(-128, 127) size(1)` read `0`: the semantics turned on `hi - lo + 1 < 2^(8*size)`, an
+arithmetic fact no author states, and widening a range flipped an overflow from detectable
+to silent.  The formal rules had said otherwise all along — `(N-Reserve)`'s *"a null cannot
+sit in a non-null narrow slot"* and `(E-Uncomp-NN)`'s *"the next best thing is τ's
+DEFAULT"* — so the encodings were an unrecorded deviation from both.
+
+Scope is the DECLARATION.  The plain `integer` and `i32` templates keep C85's sentinel, and
+that is a PRAGMATIC exemption the owner allowed rather than a line the rule draws: C127
+reaches `i32`, and it is exempted because reserving `i32::MIN` costs one value in 2^32 and
+buys the only narrow type whose overflow is detectable.  `u32` reserves a code too and takes
+the default, which is the standing proof that the split is not a principle — so this is the
+clause to move if that cost assessment ever changes, and `1615-…`'s `templates()` row is
+pinned across `integer` / `i32` / `u32` × local / field / element to make the full extent of
+such a move visible in one failure.  ⚠ That split is NOT
+`IntegerSpec::non_null_reads_null`, which is the same two clauses behind an early
+`if self.not_null`: `not_null` is a claim about the SLOT and every non-nullable struct
+field's spec carries it, while the stored default asks what the REPRESENTATION keeps a code
+for.  Routed through it for one commit, the `i32` FIELD stored `0` while its local and its
+element stored null — loft#1296 reopened from the other side, caught by
+`1030-compound-range-both-spellings`.
+
+Retired with the encodings: `NarrowSlot.spare` and the op selection it drove,
+`IntegerSpec::reserves_sentinel_unconditionally` (no caller left), and the `type_range` and
+`native_narrow_int` exclusions whose reason was the sentinel — so a declared narrow range is
+again a fact the `@FR-R-Range` proof uses and a function returning one keeps its narrow Rust
+type.  `OpGetShortSpare` and `narrow.rs`'s `*_spare` pair are marked RETIRED in place;
+nothing emits them and removing the op is a separate renumbering change.
+
+New `advice[narrow-fallback]` (`LOFT_NO_NARROW_FALLBACK`) at the compound-assignment seam —
+the one arithmetic shape where the language cannot demand `?`/`??`, since the written-out
+form is refused and at the store site the operand is the one that fits.  The three places a
+fit candidate can die now go through `Parser::retire_fit_candidate`, so a pair the author
+DID fuse (`@FR-E-Uncomp-Seen`) is silent.  Census: 16 of 1 653 corpus files, all of them
+tests about narrow overflow, and no reach into a program from the stdlib.
+
+Guards: `1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value` (renamed,
+with a `templates()` row drawing C127's line and element controls at 33/44 rather than 0, so
+a control cannot hold its cell's own value) and
+`1634-a-narrow-types-default-is-the-same-at-every-frame-boundary` (renamed, with a
+`limit(1000, 1100)` row whose default is its minimum, so a cure writing zero fails there
+alone).  `157-range-arith`'s c8 flips to the opposite fact.
+
 ### The record shapes: seven clauses, the worst portal row from 18.3× to 2.95× (2026-09-21)
 
 `--native` only, generation time; every one a clause of an existing rule in

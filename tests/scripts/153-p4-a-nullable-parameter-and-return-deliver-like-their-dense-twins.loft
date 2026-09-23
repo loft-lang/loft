@@ -31,7 +31,7 @@ fn main() {
 
 // --- @PLN153 phase 4, batches 1–3: more sites shown unreached by a wrong answer ---
 enum E4 { A, B }
-fn pick_hoisted(c: boolean, v: vector<integer>, i: integer) -> integer? { if c { t = 5; } else { t = v[i]; } t }   // a nullable scalar hoisted out of a branch (the native prologue's `is_scalar`)
+fn pick_hoisted(c: boolean, v: vector<integer>, i: integer) -> integer? { t: integer? = null; if c { t = 5; } else { t = v[i]; } t }   // a nullable scalar bound before a branch and assigned in its arms (the native prologue's `is_scalar`)
 fn ret_param(p: S) -> S? { p }
 fn ret_field(h: H4) -> S? { h.s }
 fn ret_tagged(h: H4) -> S? { h.opt }

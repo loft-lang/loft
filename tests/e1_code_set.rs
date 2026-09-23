@@ -69,6 +69,16 @@ const CODES: &[(&str, &str)] = &[
          fn f(s: D) -> integer { d = s.items; d[0] = 9; return len(s.items); }\n\
          fn main() { s = D { items: [1, 2] }; print(\"{f(s)}\"); }",
     ),
+    // loft#1600 — a local bound inside a block, read after the block ended (`(B-Scope)`).
+    (
+        "local-out-of-scope",
+        "fn main() { if true { w = 5; } print(\"{w}\"); }",
+    ),
+    // loft#1619 — the body writes the variable the range end read; the loop took it once.
+    (
+        "loop-source-written",
+        "fn main() { m = 3; n = 0; for _ in 0..m { n += 1; m = 10; } print(\"{n} {m}\"); }",
+    ),
     (
         "cast-constant-out-of-range",
         "fn main() { x = 1e30 as integer; print(\"{x}\"); }",
@@ -193,6 +203,14 @@ const CODES: &[(&str, &str)] = &[
         "trailing-boolean-parameters",
         "fn f(a: integer, b: boolean, c: boolean) -> integer { if b { a } else if c { a } else { 0 } }\n\
          fn main() { print(\"{f(1,true,false)}\"); }",
+    ),
+    // C127 — a compound step into a declared narrow range takes the type's default when it
+    // does not fit, and nothing at the site says so.  The trigger uses the `u8` spelling
+    // because it is the one an author reaches for; the `limit(lo, hi)` spelling is the same
+    // range and the same notice (`Parser::compound_range`).
+    (
+        "narrow-fallback",
+        "fn main() { x: u8 = 250; x += 10; print(\"{x}\"); }",
     ),
     (
         "omitted-field-zero",

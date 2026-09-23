@@ -1,0 +1,183 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 5538886ec..121c3f02c 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -296,12 +296,6 @@ struct Scopes<'s> {
+     /// discipline as [`Self::owned_refs`]; an entry that does not survive a join falls back
+     /// to the bare free (losing the hook, never doubling it).
+     construction_backing: HashMap<u16, u16>,
+-    /// loft#1607 / `formal/heap.md` D-heap-38 — a VECTOR local's latest bind on THIS path, mapped
+-    /// to the backing that bind filled (`w = OpGetField(__vdb_N, …)`).  The variable's type names
+-    /// one backing, the LAST bind's (`@FR-O-Latest`), which is the wrong one for an arm that bound
+-    /// an earlier one; the scope-end release reads this first.  Same per-arm save and intersect
+-    /// merge as [`Self::construction_backing`].
+-    bind_backing: HashMap<u16, u16>,
+     /// D-heap-3 (loft#1506) — `__lift_N` temps ONE of whose fields a materialising copy took
+     /// over, keyed to that field's byte offset: the temp's scope-end release runs the type's
+     /// `…OpDropAllExcept` cascade so every OTHER member is still released exactly once while
+@@ -4463,43 +4457,18 @@ fn outer_collection_backing(
+     function: &Function,
+     v: u16,
+     exited: &std::collections::HashSet<u16>,
+-    on_this_path: Option<u16>,
+ ) -> Option<u16> {
+     if !matches!(function.tp(v).base(), Type::Vector(_, _)) || function.is_compiler_generated(v) {
+         return None;
+     }
+-    // The backing the latest bind on THIS path filled, where the scan recorded one (loft#1607);
+-    // else the one the type names.
+-    let b = match on_this_path {
+-        Some(b) => b,
+-        None => {
+-            let [b] = function.tp(v).depend()[..] else {
+-                return None;
+-            };
+-            b
+-        }
++    let [b] = function.tp(v).depend()[..] else {
++        return None;
+     };
+-    (is_backing_name(function, b) && !exited.contains(&b) && !function.is_argument(b)).then_some(b)
+-}
+-
+-/// Is `b` a hidden backing a vector local's elements live in — its `__vdb_N`, or the `__ref_N`
+-/// buffer a call delivered it through?  Both are minted at the function's head.
+-fn is_backing_name(function: &Function, b: u16) -> bool {
+     let n = function.name(b);
+-    n.starts_with("__vdb_") || n.starts_with("__ref_")
+-}
+-
+-/// The backing a vector bind fills: `OpGetField(<backing>, …)`, the shape the parser lowers a
+-/// vector copy into.  `None` for any other bind.
+-fn bind_backing_of(value: &Value, function: &Function, data: &Data) -> Option<u16> {
+-    if let Value::Call(d, args) = value.unspan()
+-        && data.def(*d).name() == "OpGetField"
+-        && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+-        && is_backing_name(function, *b)
+-    {
+-        return Some(*b);
+-    }
+-    None
++    ((n.starts_with("__vdb_") || n.starts_with("__ref_"))
++        && !exited.contains(&b)
++        && !function.is_argument(b))
++    .then_some(b)
+ }
+ 
+ /// The backing each VECTOR member of a tuple literal lives in, by member index — read off the
+@@ -5802,7 +5771,6 @@ fn run_scan_phase(
+         written_tuple_members: written_tuple_members_in(orig_code),
+         view_backing: HashMap::new(),
+         construction_backing: HashMap::new(),
+-        bind_backing: HashMap::new(),
+         lift_field_skip: HashMap::new(),
+         join_holders: HashMap::new(),
+         arm_lift_temps: HashSet::new(),
+@@ -6892,25 +6860,6 @@ fn only_bind_in_arms<'a>(t_val: &'a Value, f_val: &'a Value, v: u16) -> Option<&
+     }
+ }
+ 
+-/// The backing the ONE bind of `v` inside `arm` fills ([`bind_backing_of`]); `None` when the arm
+-/// binds `v` other than once or through another shape.
+-fn arm_bind_backing(arm: &Value, v: u16, function: &Function, data: &Data) -> Option<u16> {
+-    fn find<'a>(node: &'a Value, v: u16, out: &mut Vec<&'a Value>) {
+-        if let Value::Set(w, value) = node.unspan()
+-            && *w == v
+-        {
+-            out.push(value);
+-        }
+-        node.for_each_child(&mut |c| find(c, v, out));
+-    }
+-    let mut found = Vec::new();
+-    find(arm, v, &mut found);
+-    match found.as_slice() {
+-        [one] => bind_backing_of(one, function, data),
+-        _ => None,
+-    }
+-}
+-
+ /// Every variable assigned at any depth inside `node`.
+ fn collect_sets_in(node: &Value, mapping: &HashMap<u16, u16>, out: &mut Vec<u16>) {
+     if let Value::Set(v, _) = node.unspan() {
+@@ -11808,16 +11757,6 @@ impl Scopes<'_> {
+         if first_binding {
+             self.register_binding(v, function);
+         }
+-        if matches!(function.tp(v).base(), Type::Vector(_, _)) {
+-            match bind_backing_of(value, function, data) {
+-                Some(b) => {
+-                    self.bind_backing.insert(v, b);
+-                }
+-                None => {
+-                    self.bind_backing.remove(&v);
+-                }
+-            }
+-        }
+         // When a Reference variable is assigned from a user-function call,
+         // codegen has two sub-paths (state/codegen.rs gen_set_first_at_tos /
+         // gen_set_first_ref_call_copy), keyed on the SAME carried adopt-vs-copy
+@@ -13403,7 +13342,7 @@ impl Scopes<'_> {
+         let mut arm_scoped: Vec<u16> = Vec::new();
+         if crate::keys::arm_scope_enabled() {
+             pre_inits.retain(|&v| {
+-                let confined = self.confined_to_one_arm(v, t_val, f_val, function, data);
++                let confined = self.confined_to_one_arm(v, t_val, f_val, function);
+                 if confined {
+                     arm_scoped.push(v);
+                 }
+@@ -13480,14 +13419,12 @@ impl Scopes<'_> {
+         // reconcile intersects rather than unions.
+         let owned_before = self.owned_refs.clone();
+         let backing_before = self.construction_backing.clone();
+-        let binds_before = self.bind_backing.clone();
+         let views_before = self.view_backing.clone();
+         let mints_before = self.tuple_call_mint.clone();
+         let now_before = self.tuple_member_now.clone();
+         let scanned_true = self.scan(t_val, function, data);
+         let owned_after_true = std::mem::replace(&mut self.owned_refs, owned_before);
+         let backing_after_true = std::mem::replace(&mut self.construction_backing, backing_before);
+-        let binds_after_true = std::mem::replace(&mut self.bind_backing, binds_before);
+         let views_after_true = std::mem::replace(&mut self.view_backing, views_before);
+         let mints_after_true = std::mem::replace(&mut self.tuple_call_mint, mints_before);
+         let now_after_true = std::mem::replace(&mut self.tuple_member_now, now_before);
+@@ -13496,8 +13433,6 @@ impl Scopes<'_> {
+             .retain(|k, depth| owned_after_true.get(k) == Some(depth));
+         self.construction_backing
+             .retain(|k, w| backing_after_true.get(k) == Some(w));
+-        self.bind_backing
+-            .retain(|k, w| binds_after_true.get(k) == Some(w));
+         self.view_backing
+             .retain(|k, b| views_after_true.get(k) == Some(b));
+         self.tuple_call_mint
+@@ -13587,7 +13522,6 @@ impl Scopes<'_> {
+         t_val: &Value,
+         f_val: &Value,
+         function: &Function,
+-        data: &Data,
+     ) -> bool {
+         let total = self.mentions.get(&v).copied().unwrap_or(0);
+         if total == 0
+@@ -13603,12 +13537,7 @@ impl Scopes<'_> {
+         // variable, so the arm that bound another backing would release the wrong one.
+         let (in_t, in_f) = (mentions_of(t_val, v), mentions_of(f_val, v));
+         let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
+-        // A VECTOR bound in both arms is each arm's own when each arm's bind names the backing it
+-        // fills (`bind_backing`, loft#1607): the arm's release then reads that one.
+-        let per_arm_backing = matches!(function.tp(v).base(), Type::Vector(_, _))
+-            && arm_bind_backing(t_val, v, function, data).is_some()
+-            && arm_bind_backing(f_val, v, function, data).is_some();
+-        if in_t + in_f != total || (collection && in_t > 0 && in_f > 0 && !per_arm_backing) {
++        if in_t + in_f != total || (collection && in_t > 0 && in_f > 0) {
+             return false;
+         }
+         // A local the arm hands OUT — as the arm's value (`w = if c { a = …; a } else { … }`) or
+@@ -15467,8 +15396,7 @@ impl Scopes<'_> {
+             // A CAPTURED local's store is the closure record's to release (`@FR-L-CapOwn`,
+             // `capture_adoption_owns_free`), at every scope's end as at the function's: released
+             // here as well, its hooks ran twice (loft#1606).
+-            if let Some(backing) =
+-                outer_collection_backing(function, v, &exited, self.bind_backing.get(&v).copied())
++            if let Some(backing) = outer_collection_backing(function, v, &exited)
+                 && !capture_adoption_owns_free(data, function, &self.capture_build_backing, v)
+                 && let Some(hook) = self.scope_end_drop(function, backing, data, None)
+             {

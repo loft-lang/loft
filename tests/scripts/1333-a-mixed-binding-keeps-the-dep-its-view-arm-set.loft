@@ -45,10 +45,14 @@
 //   `--native --tests` and `LOFT_POISON`, present before this fix and unrelated to it — score
 //   the native half without poison, where the control is 6/6 and so is this tree.
 //
-//   ⚠ EVERY CELL NEEDS ITS TAIL READ.  Written without the `assert(len(r) == 2)` after the
-//   loop, `test_both_arms_in_one_loop` PASSED on the control: with nothing reading `r`
-//   afterwards, loft#1332's hoist declines and each arm gets a binding of its own, so the
-//   join this file is about never forms.  The tail read is what makes the binding one thing.
+//   ⚠ EVERY CELL NEEDS ONE BINDING ACROSS ITS ARMS.  Written as arm-local binds with no read
+//   after the loop, `test_both_arms_in_one_loop` PASSED on the control: loft#1332's hoist
+//   declined and each arm got a binding of its own, so the join this file is about never
+//   formed.  A local first bound inside a block now ends at its `}` (`local-out-of-scope`,
+//   the 2026-09-23 ruling), so each cell binds `r` BEFORE its loops — with the kind of
+//   assignment the first arm makes, a view or a delivery — and the in-block assignments are
+//   rebinds of that one binding.  The tail read after the loop stays: it reads the joined
+//   binding.  `LOFT_VAR_TABLE=n_<cell>` shows `r` with `deps=[…]`, never `OWNS`.
 //
 //   ARMED: `LOFT_POISON`, which falsify does not arm — hence the INERT row, honestly so,
 //   since every cell answers CORRECTLY on the control without it.
@@ -65,6 +69,7 @@ fn test_both_arms_in_one_loop() {
   // backends. The view arm points into `q`; the fn-ref arm delivers a buffer.
   q = Q1333 { xs: [1, 2] };
   fresh = fn(v: integer) -> vector<integer> { [v, v + 1] };
+  r = field1333(q);
   for i in 0..4 {
     if i % 2 == 0 { r = field1333(q); } else { r = fresh(7); }
     assert(len(r) == 2, "mixed arm {i}: got {len(r)}");
@@ -74,11 +79,12 @@ fn test_both_arms_in_one_loop() {
 }
 
 fn test_two_sibling_loops_with_a_tail_read() {
-  // The same binding across two loops, made live by the tail read. Without that read
-  // loft#1332's hoist declines and the two loops get separate bindings; with it they are
-  // legitimately one, which is what leaves the ownership join as the whole of the defect.
+  // The same binding across two loops: bound as a view before them, rebound in each, read
+  // after both. That makes it one binding, which leaves the ownership join as the whole of
+  // the defect.
   q = Q1333 { xs: [1, 2] };
   fresh = fn(v: integer) -> vector<integer> { [v, v + 1] };
+  r = field1333(q);
   for i in 0..4 { r = field1333(q); assert(len(r) == 2, "view {i}: got {len(r)}"); }
   for i in 0..4 { r = fresh(7); assert(len(r) == 2, "delivered {i}: got {len(r)}"); }
   assert(len(r) == 2, "the tail read: got {len(r)}");
@@ -89,6 +95,7 @@ fn test_the_owned_loop_runs_first() {
   // Order is not the axis — the disagreement is.
   q = Q1333 { xs: [1, 2] };
   fresh = fn(v: integer) -> vector<integer> { [v, v + 1] };
+  r = fresh(7);
   for i in 0..4 { r = fresh(7); assert(len(r) == 2, "delivered {i}: got {len(r)}"); }
   for i in 0..4 { r = field1333(q); assert(len(r) == 2, "view {i}: got {len(r)}"); }
   assert(len(r) == 2, "the tail read: got {len(r)}");
@@ -100,6 +107,7 @@ fn test_a_direct_call_on_the_owned_arm_is_unmoved() {
   // so it never takes the delivery strip and was correct throughout. This is what says the
   // defect is the fn-ref DELIVERY path and not the branch.
   q = Q1333 { xs: [1, 2] };
+  r = field1333(q);
   for i in 0..4 {
     if i % 2 == 0 { r = field1333(q); } else { r = mk1333(7); }
     assert(len(r) == 2, "mixed arm {i}: got {len(r)}");
@@ -112,6 +120,7 @@ fn test_both_arms_view_the_same_field() {
   // CONTROL. Both arms view, so the binding's single fact is CONSISTENT and the strip never
   // ran. It says the defect needs two DISAGREEING facts, not merely two arms.
   q = Q1333 { xs: [1, 2] };
+  r = field1333(q);
   for i in 0..4 {
     if i % 2 == 0 { r = field1333(q); } else { r = field1333(q); }
     assert(len(r) == 2, "view {i}: got {len(r)}");

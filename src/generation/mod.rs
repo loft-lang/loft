@@ -390,6 +390,15 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
         // return would be misread as a reachable fn d_nr.
         let returns_fn = matches!(def.returned(), Type::Function(..) | Type::Routine(_));
         collect_fn_ref_literals(def.code(), data, def.variables(), &mut calls, returns_fn);
+        // A reachable lambda's closure record can be released through a fn-ref that no local
+        // record names, and `OpDropFnRef` dispatches to its cascade by `d_nr` (loft#1609).
+        let record = def.closure_record();
+        if record != u32::MAX {
+            let cascade = data.drop_cascade_nr(record);
+            if cascade != u32::MAX {
+                calls.insert(cascade);
+            }
+        }
         for c in calls {
             if !reachable.contains(&c) {
                 queue.push_back(c);
@@ -1423,7 +1432,14 @@ fn narrow_int_cast(tp: &Type) -> Option<&'static str> {
 /// so the span belongs to `bytes_for_range` and never to a register.  A value in flight is
 /// its plain number, which is what the interpreter's i64 slot already does.
 fn native_narrow_int(s: &crate::data::IntegerSpec) -> Option<&'static str> {
-    let (min, max) = (i64::from(s.min), i64::from(s.max));
+    // ⚠ A NULLABLE spec never reaches here — `rust_type`'s Result arms peel the `Optional`
+    // first — which is what makes the declared range the whole answer.  Between loft#1634 and
+    // C127 a non-nullable spec that left a code spare inside its width carried one more value
+    // in flight than its range held (the null its overflow answered), so this returned `None`
+    // for those; C127 retired that null, so the range is again exactly what a value of the
+    // type can be.  loft#1634's guard keeps the cell either way: what changes is the value
+    // every frame boundary must agree on, from null to the type's default.
+    let (min, max) = (i64::from(s.min), s.max);
     if min >= 0 && max <= 255 {
         Some("u8")
     } else if min >= 0 && max <= 65535 {
@@ -2340,7 +2356,7 @@ fn collect_witness_vars(data: &crate::data::Data, def_nr: u32) -> HashSet<u16> {
             // A whole-value copy of another heap var — native emits `OpCopyRecord`
             // into a fresh store, so r OWNS the result (C86), regardless of the
             // source's own ownership.
-            Value::Var(src) if vars.tp(*src).heap_def_nr().is_some() => true,
+            Value::Var(src) if vars.record_copy_source(v, *src).is_some() => true,
             // An owned call / struct literal is Owned; an `?? `/ncc block is a
             // Borrow/Join view — the oracle carries the distinction.
             Value::Block(_) | Value::Call(_, _) | Value::Insert(_) => matches!(

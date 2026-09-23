@@ -147,14 +147,13 @@ fn two() {
   note("work:two");
 }
 
-// A local written inside an `if` block is HOISTED to the function scope — the
-// IR declares it at the top and frees it at the function's exit — so its drop
-// runs there too. That is the invariant holding, not an exception to it: the
-// drop is wherever the free is, and moving it to the closing brace of the `if`
-// would be a second answer to "when does this run".
+// A local written inside an `if` block ENDS at that block's `}` (`@FR-B-Scope`,
+// loft#1600: rustc's rule — it cannot be read after the block), so its free and
+// its drop both run at the arm's closing brace.  The drop is still wherever the
+// free is; what moved (2026-09-23) is where the free is.  Until then the local
+// was hoisted to the function scope and dropped at the function's end.
 //
-// A `for` body IS a scope of its own (`per_iteration` below), so the two are
-// genuinely different and both are covered.
+// A `for` body is a scope of its own in the same way (`per_iteration` below).
 fn if_block_local() {
   note("outer-open");
   if true {
@@ -246,8 +245,8 @@ fn main() {
 
   if_block_local();
   got = drain();
-  assert(got == "outer-open,begin:i,work:i,outer-close,rollback:i",
-         "an `if`-block local drops where its free is — the function's end: {got}");
+  assert(got == "outer-open,begin:i,work:i,rollback:i,outer-close",
+         "an `if`-block local drops at its block's end: {got}");
 
   takes_returned();
   got = drain();
@@ -266,8 +265,8 @@ fn main() {
 
   conditional(true);
   got = drain();
-  assert(got == "begin:k,after-cond,rollback:k",
-         "created and dropped at the function's end: {got}");
+  assert(got == "begin:k,rollback:k,after-cond",
+         "created in the arm and dropped at the arm's end: {got}");
 
   conditional(false);
   got = drain();

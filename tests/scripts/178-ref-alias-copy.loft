@@ -3,49 +3,56 @@
 //
 // Regression (GitHub #257): binding a `&`-reference parameter to a fresh local
 // (`snap = s`, s: &Foo) used to panic codegen on both backends
-// (gen_set_first_at_tos fallthrough: unsupported var type RefVar). The local is
-// itself a RefVar; the fix copies the raw cell (interp) / a by-value record
-// DbRef (native) so `snap` aliases the same record as `s`. Writes through the
-// alias must reach the caller's struct, reads through both the alias and the
-// original must agree, and the alias must be forwardable as a `&ref` argument.
+// (gen_set_first_at_tos fallthrough: unsupported var type RefVar).
+//
+// What the bind MEANS is `binding.md` `(B-Copy)` read through `(C-Ref)`: a plain
+// bind of a whole record copies it, and a `&Foo` reads as its `Foo` — exactly as
+// `snap = s` does for a plain `s: Foo` parameter (`(B-Ref-Uniform)`).  So `snap`
+// is the callee's own record: a write through it does not reach the caller, a
+// write through `s` does, and `snap` forwards to a `&Foo` parameter like any
+// local.  This file first pinned the alias the #257 lowering happened to build;
+// loft#1631 (D-bind-52) made the bind the copy the rules state.
 
 struct Foo {
   a: integer,
   b: integer,
 }
 
-// write through the alias reaches the caller's record
+// a write through the copy stays in the copy; the `&` writes the caller
 fn set_a(s: &Foo) {
   snap = s; snap.a = 7;
+  s.b = snap.a;
 }
 
-// read through alias AND original, then write the sum back through the alias
+// read through the copy AND the original, then write the sum back through `s`
 fn mix(s: &Foo) {
   snap = s;
   snap.a = 7;
   r = snap.a + s.b;
-  snap.b = r;
+  s.b = r;
 }
 
 fn bump(s: &Foo) {
   s.a = s.a + 10;
 }
 
-// forward the alias onward as a `&ref` argument
+// forward the copy onward as a `&ref` argument, then write it back
 fn forward(s: &Foo) {
   snap = s;
   bump(snap);
   snap.a = snap.a + 1;
+  assert(s.a == 0, "forward: the copy's writes do not reach `s` before the write-back: {s.a}");
+  s.a = snap.a;
 }
 
 fn main() {
   f = Foo { a: 0, b: 5 };
   set_a(f);
-  assert(f.a == 7, "set_a: a={f.a} expect 7");
+  assert(f.a == 0 && f.b == 7, "set_a: a={f.a} b={f.b} expect 0,7");
 
   g = Foo { a: 0, b: 5 };
   mix(g);
-  assert(g.a == 7 && g.b == 12, "mix: a={g.a} b={g.b} expect 7,12");
+  assert(g.a == 0 && g.b == 12, "mix: a={g.a} b={g.b} expect 0,12");
 
   h = Foo { a: 0, b: 0 };
   forward(h);

@@ -1923,6 +1923,89 @@ A **real consumer** hits a concrete wall that primitives-plus-`match` cannot rea
 e.g. a genuine need for pluggable auth or automatic TLS certificate management in a shipping loft
 program. Bring that consumer's use case as the evidence; scope the *specific* piece it needs (auth,
 or TLS, or static serving) as its own addition, not the whole framework at once.
+## C127 — A narrow type without `?` has no null: an unfitting value takes the type's DEFAULT, and says so
+
+**Catalogue:** @F4 (width integers), @F1 (null model). Refines [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
+
+### Question
+
+C85 keeps a wide `integer`'s overflow as the `i64::MIN` sentinel, which reads null, because
+`i64::MIN` genuinely is not a valid `integer`.  A NARROW declared range is different: some
+ranges leave a code spare inside their storage width and some do not, purely as arithmetic.
+`limit(-100, 100) size(1)` is 201 values in 256; `limit(-128, 127) size(1)` is 256 in 256.
+Should the first read null on overflow because a code happened to be free?
+
+Measured on both backends before the ruling — it did:
+
+```loft
+type Spare = integer limit(-100, 100) size(1);   // 201 values in 256
+type Full  = integer limit(-128, 127) size(1);   // 256 values in 256
+
+a: Spare = 1; a += 500;   ->  a was null
+b: Full  = 1; b += 500;   ->  b was 0
+```
+
+Two declarations, both non-nullable, neither author writing anything about overflow, and
+opposite behaviour decided by whether `hi - lo + 1` falls short of `2^(8*size)`.  Widening
+`Spare` for an unrelated reason would have flipped its overflow from detectable to silent.
+
+### Decision
+
+**A DECLARED narrow range without `?` has no null value.**  An unfitting value takes the
+type's DEFAULT — zero where the range contains it, the bound nearest zero otherwise, which is
+what `?` and a declared field default already answer.
+
+The scope is the declaration: `limit(lo, hi)` and the aliases `u8`/`i8`/`u16`/`i16` built on
+one.  The plain `integer` and `i32` TEMPLATES keep C85's sentinel.
+
+**That exemption is PRAGMATIC, not principled, and the difference is the part to remember.**
+The principle above reaches `i32` perfectly well — it is a narrow type without a `?`, and by
+the sentence at the top of this decision it should take its default too.  It is exempted
+because the exemption is cheap: reserving `i32::MIN` costs ONE value out of 2^32, and what it
+buys is the only narrow type in which an overflow is detectable at all.  The owner allowed it
+on that basis and on no other (2026-09-23).
+
+So the reasons NOT to read into it:
+
+* it is not that `i32`'s reserved code is special.  It is true that `i32::MIN` read out of a
+  four-byte two's-complement slot already IS `i64::MIN` with nothing mapping it, while
+  `limit(-100, 100) size(1)`'s spare codes decode to `101 … 155` and had to be TAUGHT to mean
+  absence — but that is a description of the mechanism, not the reason for the decision.  Had
+  the cost been high, the mechanism would not have saved it;
+* it is not a line anyone should extend.  `u32` reserves a code too — `integer limit(0,
+  4294967294) size(4)`, its top one, and `default/01_code.loft` calls it *"the same
+  reservation"* — and `u32` takes the DEFAULT.  Two four-byte aliases, one reserved code each,
+  different answers, and that is admitted rather than justified;
+* it is REVISITABLE in a way the rest of C127 is not.  If the cost assessment changes — a
+  program that needs the whole 32-bit range, a use where the lost value bites — this is the
+  clause to move, and moving it is one predicate.  `tests/scripts/1615-…`'s `templates()` row
+  is pinned across `integer` / `i32` / `u32` × local / field / element precisely so that the
+  day it moves, every cell that must move with it says so.
+
+`IntegerSpec::non_null_reads_null` is the one home for where the split currently falls, read
+by the stored value and by the `redundant-null-negation` lint alike.
+
+Where the language CAN demand the author say what an unfitting value becomes, it does: that
+is the narrowing refusal, and `?` or `?? d` is the cure (loft#1593).  Where it cannot — a
+compound step, a value arriving at run time — the default is the fallback **and a warning
+says so**, because a fallback the author did not write is exactly the thing a silent
+language would hide.
+
+The rules already said this and the code did not.  `(N-Reserve)`'s *"a null cannot sit in a
+non-null narrow slot"* and `(E-Uncomp-NN)`'s *"the next best thing is τ's DEFAULT"* are the
+same sentence read from the type side and the evaluation side; the spare-code encodings were
+a deviation from both that nothing had written down.  C85 is unchanged for wide `integer`,
+where the sentinel is not a value the type can hold.
+
+### Consequence
+
+The spare-code encodings exist only to put a null in a non-nullable narrow slot, so they are
+retired rather than extended.  The three defects found while building them — loft#1615
+(a field disagreeing with its local), loft#1634 (a return disagreeing), loft#1635 (an element
+disagreeing) — remain defects and keep their guards: what changes is the value all of them
+must agree ON, from null to the type's default.  Uniformity across local, field, element,
+parameter and return is the part that was right.
+
 ## C85 — Overflow arithmetic types NON-null; the game keeps running (don't force `integer?` on every `*`/`+`/`-`)
 
 **Catalogue:** @F38 (arithmetic safety), @F1 (null model). Refines [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) and the @PLN25 `(N-Div)`/`(N-Arith)` rules (formal/types.md § DN3).

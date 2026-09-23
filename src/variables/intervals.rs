@@ -99,9 +99,15 @@ pub fn compute_intervals(
             // struct-enum ref (OpConvRefFromNull).  Float (8 B), Long (8 B), and Vector do
             // NOT have pre-init opcodes; setting first_def early for them causes spurious
             // interval overlaps with variables defined inside the value expression.
+            //
+            // Through `base()`: a NULLABLE one pre-inits the same way (`S?` is the same storage
+            // behind a nullability marker, @FR-L-Null — its first bind opens with `OpInitRef`).
+            // Read bare, `y: S? = e` took its `first_def` after the value and was handed the slot
+            // of `e`, which the pre-init then zeroed before `e` was read — seen where `e` is a
+            // `&S?` link, whose range ends at that read because a link frees nothing.
             let needs_early_first_def = v < function.variables.len()
                 && matches!(
-                    function.variables[v].type_def,
+                    function.variables[v].type_def.base(),
                     Type::Text(_) | Type::Reference(_, _) | Type::Enum(_, true, _)
                 );
             if needs_early_first_def && function.variables[v].first_def == u32::MAX {

@@ -41,12 +41,12 @@ const EXPECTED: &[(&str, [usize; 10])] = &[
     // c4: `-(a * i) - b` — negation, a product and a subtraction in one chain.  Since
     // loft#1558 the RANGE proof reaches all of it (`a` and `b` are literal-assigned locals,
     // `i` runs -3..=2), so every operator is plain in BOTH arms and nothing is left for the
-    // guard to convert.  Hand-counted: 2 arms x (mul, neg, sub) = 2/2/2, plus the two
-    // negated literals emitted once each (`-3`, the range start, and `-579` in the assert)
-    // for 4 negations; the two `_next_1 + 1` steps are the adds; `acc + …` self-steps and
+    // guard to convert.  Hand-counted: 2 arms x (mul, neg, sub) = 2/2/2, plus `-579` in the
+    // assert for 3 negations — the range start `-3` is folded to a literal (`@FR-I-Range`:
+    // a constant bound is written as its value, loft#1619); the two `_next_1 + 1` steps are the adds; `acc + …` self-steps and
     // keeps its checked helper in both arms.  The `op_min_int` that stood here is gone
     // because `- b` is now plain.
-    ("n_c4", [1, 2, 0, 2, 2, 2, 4, 2, 0, 0]),
+    ("n_c4", [1, 2, 0, 2, 2, 2, 3, 2, 0, 0]),
     // c5: `2 * i + 1` plain; `w + i` keeps its template (w is written in the loop).
     // Hand-counted after loft#1558: 2 arms x (`2 * i` mul, `+ 1` add) plus the 2 counter
     // steps = 4 adds and 2 multiplies, and 2 arms x (`w + i`, `acc + …`) = 4 checked adds.

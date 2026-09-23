@@ -1,24 +1,29 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// A local a `match` statement's arms first assign, and that the code after the `match` reads,
-// lives until that read — as it does when the same arms are spelled as an `if`.
+// A heap local that a `match` gives its value, and that the code after the `match` reads,
+// lives until that read — whether the local is bound BEFORE the `match` and assigned in its
+// arms, or bound to the `match` itself as a value.  The `if` spelling is the control.
 //
-// Every `match` lowers its arms inside a block of its own: the subject binding, then the arm
-// chain.  That block is a scope the author never wrote, and a heap local first assigned in an
-// arm was registered there, so its store was freed at the block's end and the read after the
-// `match` landed on a freed record.  The interpreter answered whatever the allocator had put in
-// the slot since; `--native` refused the program (`E0425`), because it scopes the Rust `let` to
-// the same block.  One decision, shown twice.  It is loft#1156's defect with a `match` block in
-// place of a loop body, and `Scopes::locals_read_after` is the one home for both
+// A local that an arm ITSELF first binds ends with that arm, as a local bound in any block
+// does: a read after the `match` is refused with `error[local-out-of-scope]`.  So the shape
+// this guard was written for (`match c { A => { t = …; } … } t.v`) is no longer a program,
+// and its cells are spelled the two legal ways.  What they still measure is the lifetime the
+// defect broke: every `match` lowers its arms inside a block of its own (the subject binding,
+// then the arm chain), a block the author never wrote, and a heap store registered there was
+// freed at that block's end, so a read after the `match` landed on a freed record (the
+// interpreter answered the churned bytes; `--native` refused with `E0425`).  A store written
+// in an arm to a local bound OUTSIDE the `match`, or the record a value `match` answers, must
+// survive that block.  `Scopes::locals_read_after` is the one home
 // (`formal/ownership-history.md` D-own-47).
 //
-// A scalar local was never affected — its slot is function-wide already — and neither was the
-// `if` spelling, whose pre-init already declares the local where it is read.
+// A scalar local was never affected — its slot is function-wide already.
 
 // @falsified-at: 9f5cf6a96 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0
-// @falsified-by: tests/falsified/a-local-a-match-arm-binds-lives-past-the-match.patch — interpret exit 1 -> 0,
+// @falsified-by: tests/falsified/a-local-a-match-arm-assigns-is-bound-before-the-match.patch — interpret exit 1 -> 0,
 //   interpret 1 assertion failures -> 0, native exit 1 -> 0
+// The receipt above was taken against the arm-binding spelling this file used before
+//   `local-out-of-scope`; it records what the defect looked like, not a re-run of these cells.
 // CHANNEL: two channels, one decision.  The interpreter fails an ASSERTION (it ran and answered
 //   wrong); native fails to COMPILE (`E0425`) and has no assertion to fail.
 // ARMED: no instrument — the churn between the bind and the read is what makes the freed slot
@@ -42,52 +47,56 @@ fn ma_churn() -> integer {
 }
 
 fn ma_enum(e: MaE) -> integer {
-  match e { MaA => { t = MaP { ma_v: 7 }; }, MaB => { t = MaP { ma_v: 8 }; } }
+  t = match e { MaA => MaP { ma_v: 7 }, MaB => MaP { ma_v: 8 } };
   assert(ma_churn() == 40, "churn ran");
   t.ma_v
 }
 
 fn ma_bool(c: boolean) -> integer {
+  u: MaP? = null;
   match c { true => { u = MaP { ma_v: 11 }; }, false => { u = MaP { ma_v: 12 }; } }
   assert(ma_churn() == 40, "churn ran");
-  u.ma_v
+  u.ma_v ?? -1
 }
 
 fn ma_int(n: integer) -> integer {
+  w = MaP { ma_v: 0 };
   match n { 1 => { w = MaP { ma_v: 21 }; }, _ => { w = MaP { ma_v: 22 }; } }
   assert(ma_churn() == 40, "churn ran");
   w.ma_v
 }
 
 fn ma_payload(sh: MaShape) -> integer {
-  match sh {
-    MaCircle { ma_r } => { z = MaP { ma_v: ma_r }; },
-    MaSquare { ma_s } => { z = MaP { ma_v: ma_s + 1 }; }
-  }
+  z = match sh {
+    MaCircle { ma_r } => MaP { ma_v: ma_r },
+    MaSquare { ma_s } => MaP { ma_v: ma_s + 1 }
+  };
   assert(ma_churn() == 40, "churn ran");
   z.ma_v
 }
 
 fn ma_vector(c: boolean) -> integer {
-  match c { true => { vs = [31, 32, 33]; }, false => { vs = [34]; } }
+  vs = match c { true => [31, 32, 33], false => [34] };
   assert(ma_churn() == 40, "churn ran");
   len(vs) * 100 + (vs[0] ?? -1)
 }
 
 fn ma_text(c: boolean) -> text {
+  tx = "";
   match c { true => { tx = "left"; }, false => { tx = "right"; } }
   assert(ma_churn() == 40, "churn ran");
   tx
 }
 
 fn ma_loop() -> integer {
+  mm: MaP? = null;
   for i in 0..2 { match i { 0 => { mm = MaP { ma_v: 30 }; }, _ => { mm = MaP { ma_v: 31 }; } } }
   assert(ma_churn() == 40, "churn ran");
-  mm.ma_v
+  mm.ma_v ?? -1
 }
 
 fn ma_if(c: boolean) -> integer {
-  if c { g = MaP { ma_v: 41 }; } else { g = MaP { ma_v: 42 }; }
+  g = if c { MaP { ma_v: 41 } } else { MaP { ma_v: 42 } };
   assert(ma_churn() == 40, "churn ran");
   g.ma_v
 }
@@ -99,15 +108,15 @@ fn ma_inside(c: boolean) -> integer {
 }
 
 fn main() {
-  assert(ma_enum(MaB) == 8, "an enum match's arm local survives the match; got {ma_enum(MaB)}");
+  assert(ma_enum(MaB) == 8, "an enum match as a value survives the match block; got {ma_enum(MaB)}");
   assert(ma_enum(MaA) == 7, "the other arm; got {ma_enum(MaA)}");
-  assert(ma_bool(false) == 12, "a boolean match; got {ma_bool(false)}");
-  assert(ma_int(5) == 22, "an integer match, the wildcard arm; got {ma_int(5)}");
-  assert(ma_payload(MaSquare { ma_s: 60 }) == 61, "a payload-binding match; got {ma_payload(MaSquare { ma_s: 60 })}");
-  assert(ma_vector(true) == 331, "a vector local; got {ma_vector(true)}");
-  assert(ma_text(false) == "right", "a text local; got {ma_text(false)}");
-  assert(ma_loop() == 31, "a match inside a loop, read after the loop; got {ma_loop()}");
-  assert(ma_if(false) == 42, "CONTROL: the if spelling of the same arms; got {ma_if(false)}");
+  assert(ma_bool(false) == 12, "a boolean match assigning a nullable local bound before it; got {ma_bool(false)}");
+  assert(ma_int(5) == 22, "an integer match assigning a local bound before it, the wildcard arm; got {ma_int(5)}");
+  assert(ma_payload(MaSquare { ma_s: 60 }) == 61, "a payload-binding match as a value; got {ma_payload(MaSquare { ma_s: 60 })}");
+  assert(ma_vector(true) == 331, "a vector match as a value; got {ma_vector(true)}");
+  assert(ma_text(false) == "right", "a text local bound before the match; got {ma_text(false)}");
+  assert(ma_loop() == 31, "a match inside a loop assigning a local bound before the loop, read after it; got {ma_loop()}");
+  assert(ma_if(false) == 42, "CONTROL: the if spelling as a value; got {ma_if(false)}");
   assert(ma_inside(true) == 51, "CONTROL: a local used only inside its arm; got {ma_inside(true)}");
   println("match-arm locals ok");
 }

@@ -1,16 +1,21 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// #354 — native block-scope hoisting.  A local first WRITTEN inside one
-// `{ }` block and READ in a sibling block is fn-scoped in loft (frame
-// slots) but block-scoped in the emitted Rust — so the `let` at the
-// first write was lost for the sibling read (E0425).  Scalars carry no
-// IR-level fn-scope null-init (unlike heap locals, which scope analysis
-// already hoists), so they are the cases that need the native-codegen
-// hoist.  This is the exact `intown` / `nhouse` shape from crawler's
-// sim town-generation, plus the discriminating axes (float, enum, loop
-// body, nested block).  Cross-mode: the interpreter treats all locals
-// as fn-scoped, so both backends must agree.
+// #354 — native block-scope hoisting.  A local WRITTEN inside one `{ }`
+// block and READ in a sibling block lives in a frame slot in loft but in
+// a block-scoped `let` in the emitted Rust — so a `let` placed at the
+// first write was lost for the sibling read (E0425).  This is the
+// `intown` / `nhouse` shape from crawler's sim town-generation, plus the
+// discriminating axes (float, enum, loop body, nested block).
+//
+// A local first BOUND inside a block ends at that block's `}`, so the
+// original spelling — first bound in one block, read in the next — is
+// now refused (`local-out-of-scope`).  Each local is therefore bound
+// before the blocks and ASSIGNED inside them, which is the legal
+// spelling of the same program: the write still happens inside one
+// block and the read in a sibling (or after a loop), so native must
+// still place the `let` where both can reach it.  Cross-mode: both
+// backends must agree.
 
 enum Dir {
   North,
@@ -20,6 +25,9 @@ enum Dir {
 
 fn town(wwx: integer, wwy: integer) -> integer {
   acc = 0;
+  intown = false;
+  nhouse = 0;
+  scale = 0.0;
   // bool from an `&&` expression + an int, both written in one if-block...
   if wwx >= 0 {
     intown = wwx == 0 && wwy == 0;
@@ -36,7 +44,8 @@ fn town(wwx: integer, wwy: integer) -> integer {
 
 fn loop_then_read() -> integer {
   acc = 0;
-  // scalar first-written inside a loop body, read after the loop
+  hit = 0;
+  // scalar written inside a loop body, read after the loop
   for k in 0..5 {
     if k == 3 { hit = k * 10; }
   }
@@ -46,6 +55,7 @@ fn loop_then_read() -> integer {
 
 fn enum_across_blocks(n: integer) -> integer {
   acc = 0;
+  d = Dir.North;
   if n == 0 { d = Dir.South; }
   if n == 0 {
     if d == Dir.South { acc = acc + 1; }

@@ -107,6 +107,11 @@ struct Iterator {
     /// is a bare `len(<addressable vector>)`; `None` for `0..n`, slices, or collection loops.
     /// Read by the gated `LOFT_LINT_STRICT_INDEX` warning to flag `w[i]` where `w != X`.
     len_bound: Option<crate::parser::operators::VecKey>,
+    /// `@FR-I-For` — the PLACES this loop's source reads: a variable, or a field path rooted
+    /// at one, in a range's bounds or as a text source.  The loop reads them once, before the
+    /// first round, so a write to one inside the body cannot change what the loop walks;
+    /// `loop-source-written` says so.
+    source_places: Vec<Value>,
     /// The I64 local holding this loop's packed iterator state (`cur << 32 | finish`), the
     /// one `OpStep` steps and `OpRemove` rewinds. `u16::MAX` when the loop has none (a
     /// range, a vector walk, a custom iterator).
@@ -327,6 +332,10 @@ pub struct Function {
     /// Lives on the `Function` rather than on the parser because a var number is unique per
     /// FUNCTION, and the parser swaps this whole table for a lambda's.
     pass2_rebuilt: std::collections::HashSet<u16>,
+    /// loft#1616 — the `text?` locals `text_return` promoted to a hidden `&text` work buffer.
+    /// Set on pass 1 and read on pass 2, where such a local's own declaration
+    /// (`a: text? = null`) stores into the buffer.
+    nullable_text_buffers: std::collections::HashSet<u16>,
     pub name: String,
     pub file: String,
     /// Per-prefix counters for `unique()` temp names (`_<prefix>_<n>`).
@@ -625,6 +634,7 @@ impl Function {
     pub fn new(name: &str, file: &str) -> Self {
         Function {
             pass2_rebuilt: std::collections::HashSet::new(),
+            nullable_text_buffers: std::collections::HashSet::new(),
             name: name.to_string(),
             file: file.to_string(),
             unique: HashMap::new(),
@@ -819,6 +829,11 @@ impl Function {
         // CARRIED for the same reason, and read by the same pass.
         self.tuple_backings.clear();
         self.tuple_backings.clone_from(&other.tuple_backings);
+        // CARRIED: pass 1 promotes a `text?` local to a hidden work buffer and pass 2 reads
+        // the mark at that local's own declaration (loft#1616).
+        self.nullable_text_buffers.clear();
+        self.nullable_text_buffers
+            .clone_from(&other.nullable_text_buffers);
         self.loop_ord = 0;
         other.loop_ord = 0;
         self.loop_ord_of.clear();
@@ -888,6 +903,7 @@ impl Function {
     pub fn copy(other: &Function) -> Self {
         Function {
             pass2_rebuilt: std::collections::HashSet::new(),
+            nullable_text_buffers: other.nullable_text_buffers.clone(),
             name: other.name.clone(),
             file: other.file.clone(),
             current_loop: u16::MAX,
@@ -979,6 +995,7 @@ impl Function {
             coll_var: u16::MAX,
             counter: u16::MAX,
             len_bound: None,
+            source_places: Vec::new(),
             state_var: u16::MAX,
         });
         self.current_loop = self.loops.len() as u16 - 1;
@@ -1068,6 +1085,52 @@ impl Function {
         if self.current_loop != u16::MAX && (self.current_loop as usize) < self.loops.len() {
             self.loops[self.current_loop as usize].len_bound = Some(vk);
         }
+    }
+
+    /// The variable the loop now being parsed binds, or `u16::MAX` outside a loop or before
+    /// the header has bound it.
+    pub(crate) fn current_loop_variable(&self) -> u16 {
+        if self.current_loop == u16::MAX || self.current_loop as usize >= self.loops.len() {
+            return u16::MAX;
+        }
+        self.loops[self.current_loop as usize].variable
+    }
+
+    /// `@FR-I-For` — record a place the current loop's source reads (see
+    /// `Iterator::source_places`).  No-op when there is no active loop.
+    pub(crate) fn add_loop_source_place(&mut self, place: &Value) {
+        if self.current_loop == u16::MAX || self.current_loop as usize >= self.loops.len() {
+            return;
+        }
+        let places = &mut self.loops[self.current_loop as usize].source_places;
+        let place = place.unspan().clone();
+        if !places.contains(&place) {
+            places.push(place);
+        }
+    }
+
+    /// `@FR-I-For` — the place an ACTIVE loop's source reads that a write to `target` changes:
+    /// `target` is that place, or a place it lies inside (`st` holds `st.n`).  A write INTO a
+    /// place (`w[0] = …` under a `len(w)` bound) changes no value the source read.
+    pub(crate) fn loop_source_written(&self, target: &Value) -> Option<Value> {
+        let target = target.unspan();
+        let mut c = self.current_loop;
+        while c != u16::MAX {
+            for place in &self.loops[c as usize].source_places {
+                let mut p = place;
+                loop {
+                    if p.unspan() == target {
+                        return Some(place.clone());
+                    }
+                    match p.unspan() {
+                        Value::Call(_, args) if !args.is_empty() => p = &args[0],
+                        _ => break,
+                    }
+                }
+            }
+            c = self.loops[c as usize].inside;
+        }
+        None
     }
 
     /// @PLN102 strict-index lint — the `len(...)` bound recorded for the active for-loop
@@ -2582,6 +2645,24 @@ impl Function {
         v
     }
 
+    /// loft#1616 — record that `var_nr`, a local the author declared `text?`, is now the
+    /// hidden `&text` work buffer `text_return` promoted it to.  `@FR-N-Shape`: the promotion
+    /// changes the local's CHANNEL and never its nullability, so a `null` stored into it stays
+    /// legal — it is `STRING_NULL` in the buffer's own slot.  Only a nullable local is marked:
+    /// a buffer promoted from a non-null `text` keeps `@FR-N-Store`'s refusal of `null`.
+    pub fn mark_nullable_text_buffer(&mut self, var_nr: u16) {
+        if matches!(self.tp(var_nr), Type::Optional(_)) {
+            self.nullable_text_buffers.insert(var_nr);
+        }
+    }
+
+    /// Is `var_nr` a hidden work buffer promoted from a `text?` local (see
+    /// [`Self::mark_nullable_text_buffer`])?
+    #[must_use]
+    pub fn is_nullable_text_buffer(&self, var_nr: u16) -> bool {
+        self.nullable_text_buffers.contains(&var_nr)
+    }
+
     pub fn change_var_type(
         &mut self,
         var_nr: u16,
@@ -2928,10 +3009,19 @@ impl Function {
             // `x: integer? = 7` and `= null` are on the slot itself; unpeeled, the write
             // through a nullable link was refused as *"cannot change type from `&integer?`
             // to `integer`"*, which is @FR-B-Ref-Intro's `&τ` for every τ not holding.
+            // loft#1616 — and a bare `null` into the hidden work buffer a `text?` local was
+            // promoted to (`a: text? = null; return a ?? "d"`).  `@FR-N-Shape`: the `?` is a
+            // marker over τ's own storage and never selects a road, so the nullable local takes
+            // the same promotion as its dense twin and its null is `STRING_NULL` in the same
+            // slot.  An author's `&text`, and a buffer promoted from a non-null `text`, keep
+            // `@FR-N-Store`'s refusal (`fn g(s: &text) { s = null; }`).
             if let Type::RefVar(in_tp) = var_tp
                 && (in_tp.is_equal(type_def.base())
                     || in_tp.base().is_equal(type_def.base())
-                    || (matches!(**in_tp, Type::Optional(_)) && matches!(type_def, Type::Null)))
+                    || (matches!(**in_tp, Type::Optional(_)) && matches!(type_def, Type::Null))
+                    || (self.is_nullable_text_buffer(var_nr)
+                        && matches!(in_tp.base(), Type::Text(_))
+                        && matches!(type_def.base(), Type::Null)))
             {
                 return self.is_new(var_nr);
             }
@@ -3220,6 +3310,29 @@ impl Function {
     /// `x = t.h[k]; y: S? = x` on a miss read `y == null` false where `x == null` read
     /// true, on both backends.  A dense destination keeps the plain copy: `(N-Store)` has
     /// already reported that it cannot hold absence.
+    /// The record a whole-value bind `v = src` COPIES (`@FR-B-Copy`), or `None` where it copies
+    /// no whole record.  The one question both emitters' record-copy arms and their ownership
+    /// screens ask, so the copy and the free that owns it cannot disagree.
+    ///
+    /// A `&S` source reads as its `S` (`@FR-C-Ref`), so `v = e` with `e = &z` copies `z`'s
+    /// record — but only into a destination that OWNS what it holds.  `@FR-O-Proxy` asks copy:
+    /// an empty dep list on `v` is the parser's verdict that `v` is an owner (a user's `y = e`
+    /// peels to one, `binding.md` D-bind-52), while a compiler view of the link — a tuple
+    /// unbox's `__ref_N = t`, which keeps `["t"]` — is an alias that frees nothing, and a copy
+    /// into it is a store nobody releases.
+    #[must_use]
+    pub fn record_copy_source(&self, v: u16, src: u16) -> Option<u32> {
+        let src_tp = self.tp(src);
+        if matches!(src_tp.base(), Type::RefVar(_)) {
+            // @FR-O-Proxy asks copy — a destination with deps views the link; only an owner copies.
+            if !self.tp(v).depend().is_empty() {
+                return None;
+            }
+            return src_tp.peel_link().heap_def_nr();
+        }
+        src_tp.heap_def_nr()
+    }
+
     #[must_use]
     pub fn bind_admits_absence(&self, var: u16, src: u16) -> bool {
         matches!(self.tp(src), Type::Optional(_)) || matches!(self.tp(var), Type::Optional(_))

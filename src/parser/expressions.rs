@@ -131,12 +131,31 @@ pub(crate) fn linked_store_target<'a>(target: &'a Type, source: &Type) -> &'a Ty
 }
 
 fn uncomputable_default(nullable: bool, spec: &crate::data::IntegerSpec) -> i64 {
-    // C85 says an overflow writes the RESERVED sentinel into a non-null slot, which then
-    // reads as null — so a non-null slot answers null exactly when its type kept a code back
-    // for one.  `i32` is `i32::MIN + 1 ..= i32::MAX` and `u32` is `0 ..= u32::MAX - 1`
-    // whatever the `?`, so both have that code; `u8`/`i8`/`u16`/`i16` fill their width and
-    // have none (loft#1296).
-    if nullable || spec.reserves_sentinel_unconditionally() {
+    // @FR-E-Uncomp-NN, @FR-N-Reserve, C127 — a DECLARED narrow range has no null in its
+    // non-nullable form, so a value that does not fit takes the type's DEFAULT whatever that
+    // range does with the storage width.  `limit(-100, 100) size(1)` leaves 55 codes unused
+    // and `limit(-128, 127) size(1)` leaves none, and that arithmetic is not something the
+    // author did: before C127 the first answered null and the second `0`, so widening a range
+    // for an unrelated reason flipped an overflow from detectable to silent.
+    //
+    // Two families keep C85's in-band sentinel:
+    //
+    //   * a NULLABLE slot, which has a null by declaration;
+    //   * the plain `integer` and `i32` TEMPLATES, whose reserved code lies OUTSIDE the range
+    //     they report (`[i64::MIN + 1, MAX]`, `[i32::MIN + 1, MAX]`).  That is what makes
+    //     their sentinel a real absence rather than a code that decodes to a number: it is
+    //     not a value of the type, and no widening of the declaration can make it one.
+    //
+    // ⚠ Asked with the template predicates and NOT through `non_null_reads_null`, which is
+    // the same two clauses behind an early `if self.not_null { return false }`.  The two
+    // questions differ on exactly that flag: `not_null` is a claim about the SLOT, and every
+    // non-nullable struct field's spec carries it, while this asks what the REPRESENTATION
+    // keeps a code for — and a field declared `c: i32` still has the range
+    // `[i32::MIN + 1, MAX]`, so `i32::MIN` is still spare in its bytes.  Routed through
+    // `non_null_reads_null` for one build, the `i32` FIELD answered `0` while its local and
+    // its element answered null: loft#1296's disagreement, reopened from the other side
+    // (`1030-compound-range-both-spellings`).
+    if nullable || spec.is_wide_template() || spec.is_signed32_template() {
         i64::MIN
     } else {
         spec.default_value()
@@ -1620,6 +1639,63 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// `@FR-I-For` — warn when a loop body writes a place its loop's source read.  The loop
+    /// took its range bounds and its text source once, before the first round, so the write
+    /// cannot change how many rounds run or what text is walked; a program that expected it
+    /// to (a queue grown under `0..len(q)`) now computes something else, which is why this is
+    /// a warning and not advice.  Asked at the assignment path's one entry, beside the const
+    /// guard, so every route that lowers a write is covered.  A write through a callee is not
+    /// seen: the loop's answer is still the rule's, only the notice is missing.
+    fn check_loop_source_write(&mut self, to: &Value) {
+        if self.first_pass {
+            return;
+        }
+        let Some(place) = self.vars.loop_source_written(to) else {
+            return;
+        };
+        let root = lhs_base_var(&place, &self.data);
+        if root == u16::MAX {
+            return;
+        }
+        let name = self.vars.written_name(root).to_string();
+        let what = if matches!(place.unspan(), Value::Var(_)) {
+            format!("`{name}`")
+        } else {
+            format!("a field of `{name}`")
+        };
+        diagnostic!(
+            self.lexer,
+            Level::Warning,
+            code = "loop-source-written",
+            "the loop read {what} once, before its first round, so this write does not change \
+             what the loop walks — to loop until a condition changes, use `while`"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: format!("take {what} into a local before the loop"),
+            condition: Some(
+                "if the loop is meant to run over the value it started with, the local says so \
+                 and the write no longer reads as if it moved the loop"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "for loops",
+            concept_ref: "@F28",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "loop with `while`, testing the end each round".to_string(),
+            condition: Some(
+                "if the loop is meant to follow the end as the body moves it — a queue that \
+                 grows while it is read"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "for loops",
+            concept_ref: "@F28",
+        });
+    }
+
     /// Validate `d#lock = expr` assignment; returns true if handled (caller should return Void).
     pub(crate) fn validate_lock_assign(&mut self, code: &Value, to: &Value) -> bool {
         if self.first_pass {
@@ -3076,6 +3152,7 @@ use a separate collection or add after the loop"
         skip_validate: bool,
     ) -> Type {
         self.check_iter_safety(to, f_type, op);
+        self.check_loop_source_write(to);
         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
         // every route below.  Whether a write is allowed is a property of the BINDING, not
         // of the route that lowers it, so a guard held inside a route is only as complete
@@ -3889,7 +3966,18 @@ use a separate collection or add after the loop"
         // only place the five things that spelling can mean are told apart (loft#1404 —
         // `Parser::copy_ref`).
         if s_type == Type::Null && op == "=" && !crate::data::is_dbref(f_type) {
-            self.convert_store(code, &Type::Null, f_type, "the assignment target", None);
+            // loft#1616 — a `text?` local promoted to a hidden `&text` work buffer keeps its `?`
+            // (`@FR-N-Shape`): the store is converted against the NULLABLE slot it is, which
+            // lowers `null` to the sentinel without reporting an `@FR-N-Store` breach.
+            let slot = if var_nr != u16::MAX
+                && self.vars.exists(var_nr)
+                && self.vars.is_nullable_text_buffer(var_nr)
+            {
+                Type::optional(f_type.clone())
+            } else {
+                f_type.clone()
+            };
+            self.convert_store(code, &Type::Null, &slot, "the assignment target", None);
         }
         if var_nr == u16::MAX && !skip_validate {
             // Use the LHS target's parent type saved BEFORE the RHS parse — the RHS
@@ -4512,16 +4600,30 @@ use a separate collection or add after the loop"
         // appended into nothing), an ICE, or a SIGSEGV depending on what the body did
         // with it next (loft#772's sibling).
         //
-        // Only a bare read of a `&` PARAMETER peels.  An explicit `&`-binding (`d = &c`,
-        // @PLN87 L1/L2) runs the other way — the source is an ordinary local and the `&`
-        // is what MAKES the reference — so it keeps `RefVar` and stays a live link.
+        // A bare read of a LOCAL link peels too, to the bare value: `y = e` with `e = &z`
+        // copies what the link reads (@FR-B-Copy through @FR-C-Ref), where keeping `&τ` made
+        // `y` a second link (`binding.md` D-bind-51).  A record is COPIED there, so `y` owns
+        // the copy and carries no dep (D-bind-52).  An explicit `&`-binding (`d = &c`,
+        // `d = &b`) never reaches this match as a bare `Var`: it is lowered above to
+        // `OpCreateStack` / `OpVarRef`, which is what keeps it a live link.
         let s_type = match (&s_type, code.unspan()) {
             (Type::RefVar(inner), Value::Var(src))
                 if self.vars.is_argument(*src)
                     && matches!(self.vars.tp(*src), Type::RefVar(_))
                     && !matches!(to.unspan(), Value::Var(d) if self.vars.is_argument(*d)) =>
             {
-                inner.depending(*src)
+                // A RECORD is copied at this bind (@FR-B-Copy — codegen reads the source through
+                // the link, `binding.md` D-bind-52), so `w` OWNS that copy and borrows nothing.
+                if inner.heap_def_nr().is_some() {
+                    inner.without_deps()
+                } else {
+                    inner.depending(*src)
+                }
+            }
+            (Type::RefVar(inner), Value::Var(src))
+                if matches!(self.vars.tp(*src).base(), Type::RefVar(_)) =>
+            {
+                inner.without_deps()
             }
             _ => s_type,
         };
@@ -6077,28 +6179,7 @@ use a separate collection or add after the loop"
         // @PLN152 — a `??` in the stored expression names what happens when the value does
         // not fit, so guard inside the discharge and leave this store alone: neither the
         // refusal below nor the outside-the-expression guard after it applies.
-        let discharged =
-            op == "=" && !self.first_pass && self.range_guard_inside_discharge(code, store_tp);
-        if !discharged
-            && op == "="
-            && !self.first_pass
-            && Self::is_narrowing_int_store(&s_type, store_tp)
-        {
-            let dst = self.int_type_name(store_tp);
-            if let Some(hint) = self.nullable_sentinel_hint(code, store_tp, &dst) {
-                // The literal fits the type but lands on the reserved null
-                // sentinel of a nullable narrow FIELD — explain that, not "too big".
-                diagnostic!(self.lexer, Level::Error, "{hint}");
-            } else if !self.int_value_fits(code, store_tp) {
-                let src = self.int_type_name(&s_type);
-                let cures = Self::narrowing_cures(code, &dst);
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "cannot implicitly narrow {src} to {dst} (may lose data) — {cures}"
-                );
-            }
-        }
+        let discharged = op == "=" && self.narrow_store_checks(code, store_tp, &s_type);
         // loft#984 — a store into a slot that DECLARES a range guards the value: one
         // outside `lo..=hi` takes the slot's default rather than being wrapped, aliased
         // or dropped.  This site is deliberately the same one the narrowing check above
@@ -7080,6 +7161,22 @@ use a separate collection or add after the loop"
             if let Some(member) = member_for_null.as_ref() {
                 self.tuple_member_owned_copy(&mut rhs, member);
             }
+            // loft#1640 — a tuple MEMBER is a slot, so it owes the same two checks every
+            // other narrow slot does, and this branch returns before the general assign path
+            // that applies them.  Without them `t: (u8, u8); t.0 = 300` stored `300`, and
+            // copying that tuple into a `vector<(u8, u8)>` read `44` — the low byte — with
+            // nothing said at either step.  Same shape as loft#1284 reaching in here for
+            // `(N-Store)`, which is why the refusal now lives in one method rather than being
+            // copied a third time.
+            if let Some(member) = member_for_null.as_ref() {
+                let discharged = self.narrow_store_checks(&mut rhs, member, &rhs_tp);
+                if !discharged && !self.first_pass {
+                    // The parent is the TUPLE, which is never nullable `(N-Tuple)`, so the
+                    // member's own nullability is the whole answer.
+                    let holds_null = matches!(member, Type::Optional(_));
+                    self.guard_declared_range(&mut rhs, member, &rhs_tp, holds_null);
+                }
+            }
             *code = build_nested_tuple_assign(code, &lhs, rhs);
             return Type::Void;
         }
@@ -7744,6 +7841,53 @@ use a separate collection or add after the loop"
         out
     }
 
+    /// The narrowing refusal every narrow STORE owes, in ONE place — answers whether the
+    /// value was DISCHARGED (a `??` inside it already named what happens when it does not
+    /// fit), which is what the caller's range guard keys off.
+    ///
+    /// It is a method because the assignment dispatcher is not the only site that stores into
+    /// a slot, and the ones that are not it have to ask by hand.  A TUPLE MEMBER is the case
+    /// that proved it: `t.0 = …` is handled on its own branch that returns before the general
+    /// path, so it reached neither this refusal nor loft#984's range guard, and
+    /// `t: (u8, u8); t.0 = 300` stored `300` — with `t.0 <= 255`, the type's own range written
+    /// out, reading FALSE for a value the type was holding (loft#1640).
+    ///
+    /// That branch already carried the same repair for a DIFFERENT question: loft#1284 had to
+    /// reach into it to ask `(N-Store)`, whose comment records the shape — *"`(N-Store)`
+    /// covers the direct store, the field, the call-argument site and the branch join, and a
+    /// TUPLE ELEMENT reached none of them"*.  Two questions, one hole, patched once each.
+    /// This is the second one given a home rather than a second copy, so the third slot kind
+    /// that reaches neither has one place to be added to.
+    ///
+    /// `(N-Reserve)` is why a tuple member is a slot at all: it names "a local, a field, an
+    /// element, a parameter and a return alike", and a member is one of those in everything
+    /// but that list — `layout.md` `(L-Tuple)` makes it a field.
+    fn narrow_store_checks(&mut self, code: &mut Value, store_tp: &Type, s_type: &Type) -> bool {
+        if self.first_pass {
+            return false;
+        }
+        if self.range_guard_inside_discharge(code, store_tp) {
+            return true;
+        }
+        if Self::is_narrowing_int_store(s_type, store_tp) {
+            let dst = self.int_type_name(store_tp);
+            if let Some(hint) = self.nullable_sentinel_hint(code, store_tp, &dst) {
+                // The literal fits the type but lands on the reserved null
+                // sentinel of a nullable narrow FIELD — explain that, not "too big".
+                diagnostic!(self.lexer, Level::Error, "{hint}");
+            } else if !self.int_value_fits(code, store_tp) {
+                let src = self.int_type_name(s_type);
+                let cures = Self::narrowing_cures(code, &dst);
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot implicitly narrow {src} to {dst} (may lose data) — {cures}"
+                );
+            }
+        }
+        false
+    }
+
     /// Is this expression itself a null discharge (`a ?? b`)?
     fn is_root_discharge(v: &Value) -> bool {
         matches!(v.unspan(), Value::Block(bl) if bl.name == "ncc")
@@ -7937,7 +8081,7 @@ use a separate collection or add after the loop"
         // Already inside the slot's range for every value the source can take → no guard.
         if let Type::Integer(src) = source.base()
             && i64::from(src.min) >= lo
-            && i64::from(src.max) <= hi
+            && src.max <= hi
         {
             return;
         }

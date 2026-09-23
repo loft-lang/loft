@@ -1,0 +1,109 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A TUPLE MEMBER of a narrow type is bounded by its declared range, exactly as a local, a
+// field and an element are.  `formal/types.md` `(N-Reserve)` names "a local, a field, an
+// element, a parameter and a return alike" and does not name a member — not because a member
+// is different but because nobody had asked; `layout.md` `(L-Tuple)` makes it a field.
+//
+// Before loft#1640 it was unbounded on the PLAIN assignment, on both backends:
+//
+//   t: (u8, u8) = (250, 7);  t.0 = 300          stored 300
+//   t.0 >= 0 and t.0 <= 255                     read FALSE, for a value the type was holding
+//   vs: vector<(u8, u8)> = [t];  vs[0].0        read 44 — the low byte, silently
+//   v: (i8, i8);  v.0 = 5000                    stored 5000
+//   w: (u16, u16); w.0 = 999999                 stored 999999
+//
+// while the same write into the three slots the rule DOES name was refused with "cannot
+// implicitly narrow integer to u8".  The tuple local reading 300 and the vector element built
+// from it reading 44 is the pair that makes it silent-wrong rather than merely unchecked.
+//
+// WHERE.  The compound path was already right — `t.0 += 10` from 250 answers `0`, because
+// loft#1228 routed tuple members through the one seam `guard_compound_range` sits at.  The
+// gap was the PLAIN assignment: `t.0 = …` is handled on its own branch that returns before
+// the general assign path, so it reached neither the narrowing refusal nor loft#984's range
+// guard.  That branch already carried the same repair for a different question — loft#1284
+// had to reach into it for `(N-Store)` — so the refusal now lives in ONE method
+// (`Parser::narrow_store_checks`) that both sites call, rather than being copied a third
+// time.
+//
+// The REFUSAL cells cannot live in this file, which must compile: they are in
+// `tests/scripts/102-expected-errors.loft`.  What is here is everything that must still be
+// TRUE once the refusal exists, and the cells that catch a cure reaching too far.
+//
+// @falsified-at: a5d8cdd26 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1640-a-tuple-member-is-a-narrow-slot-like-any-other.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: the assertions.
+
+type Hi = integer limit(1000, 1100) size(1);
+struct F { a: u8 }
+
+fn test_a_fitting_write_is_unmoved() {
+  t: (u8, u8) = (250, 7);
+  t.0 = 200;
+  assert(t.0 == 200, "a value inside the range stores as itself");
+  assert(t.1 == 7, "and the sibling member is untouched");
+}
+
+fn test_the_compound_step_still_takes_the_default() {
+  // loft#1228's half, which was already correct and which a cure must not move.
+  c: (u8, u8) = (250, 7);
+  c.0 += 10;
+  assert(c.0 == 0, "260 does not fit, so the member takes u8's default");
+  assert(c.1 == 7, "the sibling is untouched");
+}
+
+fn test_a_member_whose_default_is_not_zero() {
+  // `limit(1000, 1100)` excludes zero, so its default is 1000 — the bound nearest zero.
+  // A cure that wrote a zero passes every other cell here and fails this one.
+  h: (Hi, u8) = (1050, 7);
+  h.0 += 5000;
+  assert(h.0 == 1000, "the bound nearest zero, not zero: {h.0}");
+  assert(h.1 == 7, "the sibling is untouched");
+}
+
+fn test_a_runtime_value_takes_the_range_guard() {
+  // Not a literal, so the compile-time refusal cannot see it: this is loft#984's guard,
+  // which the tuple branch also reached for the first time.
+  n: integer = 300;
+  r: (u8, u8) = (1, 7);
+  r.0 = n ?? 0;
+  assert(r.0 == 0, "300 does not fit, so the slot takes its default: {r.0}");
+  assert(r.1 == 7, "the sibling is untouched");
+}
+
+fn test_the_wider_members_behave_the_same() {
+  w: (u16, i8) = (65530, 120);
+  w.0 += 10;
+  w.1 += 10;
+  assert(w.0 == 0, "u16 past 65535 takes its default");
+  assert(w.1 == 0, "i8 past 127 takes its default");
+}
+
+fn test_a_nullable_member_still_holds_absence() {
+  // The half the fix must NOT move: a `τ?` member has a null and keeps it.
+  q: (u8?, u8) = (null, 7);
+  assert(q.0 == null, "a nullable member holds absence");
+  assert(q.1 == 7, "beside a non-null one");
+}
+
+fn test_the_three_slots_the_rule_names_are_unmoved() {
+  // The controls.  Each of these was already bounded; a cure reaching too far moves them.
+  f = F { a: 200 };
+  v: vector<u8> = [200];
+  l: u8 = 200;
+  assert(f.a == 200, "a struct field");
+  assert((v[0] ?? -1) == 200, "a vector element");
+  assert(l == 200, "a local");
+}
+
+fn test_the_member_survives_a_copy_into_a_container() {
+  // The cell that made this silent-wrong: the tuple read one value and the container built
+  // from it read another, with nothing said at either step.
+  t: (u8, u8) = (200, 7);
+  vs: vector<(u8, u8)> = [t];
+  assert((vs[0] ?? (0, 0)).0 == 200, "the member crosses into a container unchanged");
+  assert(t.0 == 200, "and the source still reads the same");
+}

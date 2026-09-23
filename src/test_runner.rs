@@ -1553,31 +1553,36 @@ pub(crate) fn run_tests(
                             .unwrap_or_default()
                             .to_string_lossy()
                             .replace('-', "_");
+                        // The scratch directory is shared by every process on the box —
+                        // every test binary of a gate, and every checkout's gate — and one
+                        // file is often compiled several times at once with DIFFERENT
+                        // emissions (`keyed_fast_paths` runs `158-keyed-fast-paths` under
+                        // each `LOFT_KEYED_VERIFY` setting).  So nothing is written at a
+                        // shared path while another process may read it: the source and the
+                        // binary are built in this process's own directory, and the binary
+                        // is PUBLISHED under its cache key by an atomic rename.  A shared
+                        // per-stem name let one process rewrite the source another was
+                        // compiling (`unexpected closing delimiter`), truncate the binary
+                        // another was linking (`ld terminated with signal 7`), or hand it a
+                        // program built against another checkout's rlib (`undefined hidden
+                        // symbol`) — loft#1626.  Equal keys mean equal programs, so a
+                        // published binary is never replaced by a different one.
                         let scratch = crate::platform::scratch_dir();
-                        let tmp_rs = scratch.join(format!("loft_test_native_{stem}.rs"));
-                        let binary = scratch.join(format!("loft_test_native_{stem}_bin"));
-                        let key_file = scratch.join(format!("loft_test_native_{stem}_bin.key"));
-
-                        // Write .rs only when content changed (preserves cache).
-                        let existing = std::fs::read(&tmp_rs).unwrap_or_default();
-                        if existing != buf {
+                        let lib_dir = native_utils::loft_lib_dir();
+                        let key = native_utils::native_cache_key(
+                            &buf,
+                            lib_dir.as_deref(),
+                            Some(&native_data),
+                        );
+                        let binary =
+                            scratch.join(format!("loft_test_native_{stem}_{key:016x}_bin"));
+                        let work = crate::platform::build_scratch_dir("test_native");
+                        let tmp_rs = work.join(format!("loft_test_native_{stem}.rs"));
+                        let tmp_bin = work.join(format!("loft_test_native_{stem}_bin"));
+                        let cached = binary.exists();
+                        if !cached {
                             let _ = std::fs::write(&tmp_rs, &buf);
                         }
-
-                        // Check binary cache before compiling.
-                        let lib_dir = native_utils::loft_lib_dir();
-                        let cached = binary.exists()
-                            && std::fs::read_to_string(&key_file).is_ok_and(|stored| {
-                                stored.trim()
-                                    == format!(
-                                        "{:016x}",
-                                        native_utils::native_cache_key(
-                                            &buf,
-                                            lib_dir.as_deref(),
-                                            Some(&native_data),
-                                        )
-                                    )
-                            });
 
                         // Layer 2: never start a compile that could overflow a
                         // RAM-backed tmpfs (reclaims loft's own stale artefacts
@@ -1605,7 +1610,7 @@ pub(crate) fn run_tests(
                                 .arg("-C")
                                 .arg("opt-level=0")
                                 .arg("-o")
-                                .arg(&binary)
+                                .arg(&tmp_bin)
                                 .arg(&tmp_rs);
                             // Layer 1: strip the linked binary (~36MB → ~1MB;
                             // the bulk is debug info from libloft.rlib + std,
@@ -1698,15 +1703,9 @@ pub(crate) fn run_tests(
                                 .as_ref()
                                 .map(|o| o.status.success())
                                 .unwrap_or(false);
-                            if ok {
-                                // Write cache key sidecar.
-                                let key = native_utils::native_cache_key(
-                                    &buf,
-                                    lib_dir.as_deref(),
-                                    Some(&native_data),
-                                );
-                                let _ = std::fs::write(&key_file, format!("{key:016x}"));
-                            } else {
+                            let ok = ok
+                                && (std::fs::rename(&tmp_bin, &binary).is_ok() || binary.exists());
+                            if !ok {
                                 let stderr_msg = compile_result.as_ref().ok().map_or_else(
                                     || "rustc not found".to_string(),
                                     |o| {
@@ -1755,8 +1754,7 @@ pub(crate) fn run_tests(
                                         }
                                     },
                                 );
-                                let _ = std::fs::remove_file(&binary);
-                                let _ = std::fs::remove_file(&key_file);
+                                let _ = std::fs::remove_file(&tmp_bin);
                                 for (_, fn_name) in &native_fns {
                                     file_result.tests.push((
                                         fn_name.clone(),
@@ -1824,7 +1822,12 @@ pub(crate) fn run_tests(
                                 }
                             }
                         }
-                        // Keep .rs and binary on disk for caching.
+                        // The published binary stays as the cache; this process's own
+                        // build directory goes.  `LOFT_KEEP_NATIVE_RS=1` keeps it, source
+                        // included, for inspection.
+                        if std::env::var_os("LOFT_KEEP_NATIVE_RS").is_none() {
+                            let _ = std::fs::remove_dir_all(&work);
+                        }
                     }
                 }
             } else {

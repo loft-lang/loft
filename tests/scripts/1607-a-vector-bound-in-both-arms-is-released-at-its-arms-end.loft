@@ -1,0 +1,113 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1607, `@FR-H-Drop` with `@FR-B-Scope` — a VECTOR local bound in BOTH arms of an `if` is
+// each arm's own, and is released at the end of the arm that ran.  Each arm's bind fills a
+// backing of its own (`__vdb_2`, `__vdb_3`) while the variable's type names one of them, the LAST
+// bind's (`@FR-O-Latest`); the scope pass now records the backing the latest bind on THIS path
+// filled (`Scopes::bind_backing`) and the arm's release reads that one.  Before, such a local
+// kept the pre-init in front of the `if` and was released after the `if`'s successor ran — the
+// count right, the order late (`formal/heap.md` D-heap-38).
+//
+// Cells, every trace worked out by hand: both arms move `v` in (b1 true, b2 false), both arms
+// build a literal (b3), one arm moves and the other builds (b4 each way), inside a loop body
+// (b5), an `if` nested in an arm (b6), an arm that binds twice — declined, the release stays
+// after the `if` (b7, a CONTROL for the admission's own limit), and a `match` (b8).  The drop
+// hook writes a trace FILE, as `1600-…` does.
+//
+// @falsified-at: 8735b507e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1607-a-vector-bound-in-both-arms-is-released-at-its-arms-end.patch — the same channels.
+//   CHANNEL: the assertion channel — the control releases the element after the `if`.
+//   WITNESS: on 8735b507e `b1 true arm: m50,r1,x,d50, want m50,r1,d50,x`, both backends.
+//   HOLDS: leak, panic and free-refusal are equal on both trees; the count is right on both.
+
+fn trace_path() -> text { return "loft_1607_both_arms_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) { assert(got == want, "{nm}: {got}, want {want}"); }
+
+struct H { id: integer }
+fn OpDrop(self: H) { note("d{self.id}"); }
+fn mk(id: integer) -> H { note("m{id}"); return H { id: id }; }
+
+fn b1(c: boolean) {
+  v: vector<H> = [mk(50)];
+  if c { w = v; note("r{len(w)}"); } else { w = v; note("q{len(w)}"); }
+  note("x");
+}
+fn b3(c: boolean) {
+  if c { w: vector<H> = [mk(60)]; note("r{len(w)}"); } else { w: vector<H> = [mk(61), mk(62)]; note("q{len(w)}"); }
+  note("x");
+}
+fn b4(c: boolean) {
+  v: vector<H> = [mk(70)];
+  if c { w = v; note("r{len(w)}"); } else { w: vector<H> = [mk(71)]; note("q{len(w)}"); }
+  note("x");
+}
+fn b5() {
+  for i in 0..2 {
+    v: vector<H> = [mk(80 + i)];
+    if i == 0 { w = v; note("r{len(w)}"); } else { w = v; note("q{len(w)}"); }
+    note("e");
+  }
+  note("x");
+}
+fn b6(c: boolean) {
+  v: vector<H> = [mk(90)];
+  if c { if c { w = v; note("r{len(w)}"); } else { w = v; note("q{len(w)}"); } note("b"); }
+  note("x");
+}
+fn b7(c: boolean) {
+  v: vector<H> = [mk(95)];
+  if c { w = v; note("r{len(w)}"); w = [mk(96)]; note("s{len(w)}"); } else { w = v; note("q{len(w)}"); }
+  note("x");
+}
+fn b8(k: integer) {
+  v: vector<H> = [mk(99)];
+  match k { 1 => { w = v; note("r{len(w)}"); }, _ => { w = v; note("q{len(w)}"); } }
+  note("x");
+}
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  b1(true);
+  ok("b1 true arm           ", drain(), "m50,r1,d50,x");
+  b1(false);
+  ok("b1 false arm          ", drain(), "m50,q1,d50,x");
+  b3(true);
+  ok("b3 literals, true     ", drain(), "m60,r1,d60,x");
+  b3(false);
+  ok("b3 literals, false    ", drain(), "m61,m62,q2,d61,d62,x");
+  b4(true);
+  ok("b4 move | build, true ", drain(), "m70,r1,d70,x");
+  b4(false);
+  ok("b4 move | build, false", drain(), "m70,m71,q1,d71,x,d70");
+  b5();
+  ok("b5 in a loop body     ", drain(), "m80,r1,d80,e,m81,q1,d81,e,x");
+  b6(true);
+  ok("b6 nested if          ", drain(), "m90,r1,d90,b,x");
+  b7(true);
+  ok("b7 CONTROL bound twice", drain(), "m95,r1,m96,d95,s1,x,d96");
+  b8(1);
+  ok("b8 match arm          ", drain(), "m99,r1,d99,x");
+  delete(trace_path());
+  println("a vector bound in both arms is released at its arm's end");
+}

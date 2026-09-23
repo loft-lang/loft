@@ -33,8 +33,11 @@ fn c1(o: O, y: S?) -> integer { x = y; x = o.opt; if x != null { x.n = 99; } rdn
 fn c2(o: O, y: S?) -> integer { x = o.opt; x = y; if x != null { x.n = 99; } rdn(x) }
 // the single-spelling control
 fn c3(o: O) -> integer { x = o.opt; if x != null { x.n = 99; } rdn(x) }
-fn b1(o: O, y: S?, c: boolean) -> integer { if c { x = y } else { x = o.opt } if x != null { x.n = 99; } rdn(x) }
-fn b2(o: O, y: S?, c: boolean) -> integer { if c { x = o.opt } else { x = y } if x != null { x.n = 99; } rdn(x) }
+// the two spellings joined at a branch: a local first bound inside an arm ends at its `}`,
+// so `x` is bound before the branch with one spelling and the arm rebinds it with the
+// other — the last one PARSED is the arm's
+fn b1(o: O, y: S?, c: boolean) -> integer { x = y; if !c { x = o.opt } if x != null { x.n = 99; } rdn(x) }
+fn b2(o: O, y: S?, c: boolean) -> integer { x = o.opt; if !c { x = y } if x != null { x.n = 99; } rdn(x) }
 fn w1(o: O, y: S?) -> integer { x: S? = y; x = o.opt; if x != null { x.n = 99; } rdn(x) }
 fn w2(o: O, y: S?) -> integer { x: S? = o.opt; x = y; if x != null { x.n = 99; } rdn(x) }
 // the vector element is a tagged slot too

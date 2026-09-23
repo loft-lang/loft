@@ -12,7 +12,9 @@
 // body writing the call's argument (s8), a source inside an outer loop, rebound per pass
 // (s9), an element source the body overwrites (s10), a `par` walk over a literal (s11),
 // the source ordered before the body (s12), `s.trim()` with the body writing `s` (s13), a
-// branch source (s14), a variable and a field path — read per round, as before (s15).
+// branch source (s14), a variable and a field path — taken once too since loft#1619, and
+// the body's write to the variable is reported (s15).
+// @EXPECT_WARNING: Warning[loop-source-written]
 // @falsified-at: c9cc94b81 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/iter-text-source-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 //   CHANNEL: the VALUE channel — the control evaluates a call source three times per round,
@@ -119,6 +121,6 @@ fn s15() {
   s = "hello"; n = 0; for c in s { n += 1; if n == 1 { s = "zz"; } }
   o = Outer { inner: In { s: "pqr" } }; m = 0; for c in o.inner.s { m += 1; }
   println("s15 {n} {m}");
-  assert(n == 2 && m == 3, "s15");
+  assert(n == 5 && m == 3, "s15");
 }
 fn main() { s1(); s2(); s3(); s4(); s5(); s6(); s7(); s8(); s9(); s10(); s11(); s12(); s13(); s14(); s15(); }

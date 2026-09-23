@@ -3211,9 +3211,44 @@ so reusing the same parameter or local-variable name across functions (including
 recursive functions with `const vector<T>` parameters and `for` loops) works
 correctly.
 
-The one rule to know: **loop variables are not block-scoped.**  A `for` loop
-variable lives in the function's scope, so naming it the same as an existing local
-in that function is a *compile-time error*, not a silent shadow:
+**A local bound inside a block ends at that block's `}`** (`formal/binding.md` `(B-Scope)`,
+as in Rust).  An `if` / `else` arm, a loop body, a `match` arm body and a bare `{ }` are
+blocks; a local a statement binds there is gone after the `}`, and reading it is an error —
+also when every arm binds it:
+
+```loft
+fn f(c: boolean) -> integer {
+  if c { w = 5; } else { w = 6; }
+  w                        // error[local-out-of-scope]: `w` was bound inside a block that has ended
+}
+fn g(c: boolean) -> integer {
+  w = if c { 5 } else { 6 };   // the block's value is the binding
+  w
+}
+fn h(c: boolean) -> integer {
+  w = 0;                   // bound before the block, assigned inside
+  if c { w = 5; }
+  w
+}
+```
+
+For several values, bind a tuple: `(qx, qw) = if c { (0.0, 1.0) } else { (a, b) };`.
+
+The loop variable follows the same rule: it is bound by the `for` header, lives in the
+loop's body, and is gone after the loop — `for i in 0..3 { } i` is `local-out-of-scope`, and so
+is `i#index` after the loop.  A destructured `for (a, b) in …` binds both names the same way.
+Carry a value out through a local bound before the loop:
+
+```loft
+fn last_of(v: vector<integer>) -> integer {
+  last = 0;
+  for x in v { last = x; }
+  last                     // the last element, or 0 when `v` is empty
+}
+```
+
+Naming a loop variable the same as an existing local of the function is still a
+*compile-time error*, not a silent shadow:
 
 ```loft
 fn f() {
@@ -3223,8 +3258,7 @@ fn f() {
 ```
 
 Rename the loop variable (the message suggests `loop_x`) or drop the dead outer
-local.  The compiler reports this up front with a fix hint; there is no codegen
-panic or hidden workaround to remember.
+local.
 
 Two *loops* may share a name freely, at any element types — each `for` binds its
 own variable, so nothing is carried from one to the next:
@@ -3233,14 +3267,11 @@ own variable, so nothing is carried from one to the next:
 fn g() {
   for i in ["a", "b"] { println(i); }
   for i in 0..3 { println("{i}"); }   // fine — a different variable
-  println("{i}");                      // 2 — the last loop's value
 }
 ```
 
-Reading the variable after the loop still works, and reads what the *last* loop
-that bound the name left there.  Nested loops are the exception: `for i { for i
-{ } }` is rejected, because the inner binding would take over `i` for the rest of
-the outer body.
+Nested loops are the exception: `for i { for i { } }` is rejected, because the inner
+binding would take over `i` for the rest of the outer body.
 
 A local declared **inside** a loop body splits the same way, and for the same
 reason — two adjacent loops doing different work want the same short name for the
@@ -3253,17 +3284,13 @@ fn h() {
 }
 ```
 
-The split happens only where the two types differ; a local whose type is the same
-in both loops stays ONE variable, which is what keeps an accumulator working:
+A local that must outlive its loop — an accumulator — is bound before it:
 
 ```loft
 total = 0;
 for x in as1 { total = total + x.v; }
-for z in cs  { total = total + z.c; }   // still the same `total`
+for z in cs  { total = total + z.c; }   // the same `total`, bound before both loops
 ```
-
-A body local read after its loop keeps the value the last iteration left, and a
-loop that never ran leaves it `null` — the same answer the loop variable gives.
 
 ### Hash collections: name the key (local or struct field)
 

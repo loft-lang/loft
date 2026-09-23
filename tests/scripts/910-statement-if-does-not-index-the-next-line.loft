@@ -30,10 +30,11 @@
 // the same program correctly, so this row must stay asserted on both backends.
 //
 // The comprehension row keeps the reported body — loop-invariant, so it does not
-// read its loop variable, and the match row overwrites in one arm.  Both are the
-// shape under test, not oversights.
+// read its loop variable — and that is the shape under test, not an oversight.  The
+// match row writes `am_m` in each arm; the arms are alternatives, so neither write is
+// dead (until 2026-09-23 `dead-assignment` read one arm's write as overwritten by the
+// next's, and this file pinned that false warning).
 // @EXPECT_WARNING: Variable tc_i is never read
-// @EXPECT_WARNING: Dead assignment
 
 fn tail_literal() -> vector<integer> {
   tl_m = 0;

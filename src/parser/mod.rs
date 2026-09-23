@@ -214,6 +214,22 @@ pub struct ArmMismatch {
 #[allow(clippy::struct_excessive_bools)]
 pub struct Parser {
     pub todo_files: Vec<(String, u16)>,
+    /// loft#1621 — the last `limit(…)` refused one of its bounds.  The declaration then
+    /// recovers as plain `integer`, and a `size(…)` checked against that recovery would name
+    /// a missing `limit(…)` over a line that wrote one — so the size check stands down and the
+    /// bound's own refusal is the message.
+    ///
+    /// ⚠ Reset in `parse_typedef`, per DECLARATION, and NOT in `parse_type_limit`.  That
+    /// function is reached only for the literal type name `integer`, so resetting there leaves
+    /// the flag standing for a following alias declaration that never calls it:
+    /// `type Wide = integer limit(0, 5000000000) size(4); type S = i32 size(1);` measured the
+    /// second one SILENT, where it reports its own error alone.  Pinned by
+    /// `parse_errors::a_refused_limit_does_not_silence_the_next_declaration`.
+    ///
+    /// (That example was `limit(-100, -1)` until loft#1630 made a range wholly below zero
+    /// DECLARABLE — so it refuses nothing now and demonstrates nothing.  An example inside a
+    /// comment is a cell nobody runs; this one went stale in one join.)
+    limit_refused: bool,
     /// @PLN11 arc E — set by the driver (`main.rs`) only when the whole-program
     /// startup cache is enabled; gates [`Parser::parsed_sources`] tracking so a
     /// normal (non-cache) run pays nothing.
@@ -808,6 +824,17 @@ pub struct Parser {
     /// O8.5: range bounds captured by `parse_in_range_body` for const-unroll detection.
     pub(crate) last_range_from: Option<Value>,
     pub(crate) last_range_till: Option<Value>,
+    /// `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser
+    /// ordinal; and, per `(function, local)`, the open-block path where a STATEMENT last bound
+    /// that local.  A local bound inside a block ends at that block's `}` (rustc's rule), so a
+    /// read from outside the path is refused.  Pass 2 only: both are written and read in
+    /// source order within the pass.
+    pub(crate) block_path: Vec<u32>,
+    /// A destructuring `for (a, b) in …`'s binders, bound by the header like the loop variable
+    /// and scoped to the body the next `for` block opens.
+    pub(crate) pending_loop_binders: Vec<u16>,
+    pub(crate) block_ord: u32,
+    pub(crate) bound_in_block: std::collections::HashMap<(u32, u16), Vec<u32>>,
     /// @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an
     /// integer `pos`): `(cursor_var, cursor_def, pos_field_idx, pos_var)`.  `pos_var` holds the
     /// current position (reads are offset by it); the match PREFIX-consumes (gate `pos + fixed <=
@@ -1539,6 +1566,7 @@ impl Parser {
             default: false,
             context: u32::MAX,
             first_pass: true,
+            limit_refused: false,
             ambiguity_reported: std::collections::HashSet::new(),
             force_tret: std::collections::HashSet::new(),
             par_worker_defs: std::collections::HashSet::new(),
@@ -1557,6 +1585,10 @@ impl Parser {
             iterable_context: false,
             last_range_from: None,
             last_range_till: None,
+            block_path: Vec::new(),
+            pending_loop_binders: Vec::new(),
+            block_ord: 0,
+            bound_in_block: std::collections::HashMap::new(),
             match_cursor: None,
             match_cursor_farthest: None,
             subrule_edges: Vec::new(),
@@ -2877,6 +2909,7 @@ impl Parser {
                 .add_attribute(&mut self.lexer, d, &name, buf_tp.clone());
             self.data.definitions[d as usize].attributes[a].hidden = true;
             let f = &mut self.data.definitions[d as usize].variables;
+            f.mark_nullable_text_buffer(v);
             f.set_type(v, buf_tp.clone());
             f.become_argument(v);
             f.mark_used(v);
@@ -4556,18 +4589,37 @@ impl Parser {
     /// (`i32`/`u8`/`u16`/`i8`/`i16`) so a narrowing diagnostic doesn't print
     /// the bare `integer` for both sides (they share bounds).
     fn int_type_name(&self, t: &Type) -> String {
-        if let Type::Integer(s) = t {
-            match s.forced_size.map(std::num::NonZeroU8::get) {
-                // Every width picks its spelling from the sign of the range, and the
-                // four-byte case was the one that did not — so a `u32` reported itself
-                // as `i32`, and the message's own advice (`cast explicitly with
-                // `as i32``) named a type with a different range than the one the
-                // author declared (loft#1247).
-                Some(4) => return if s.min < 0 { "i32" } else { "u32" }.to_string(),
-                Some(2) => return if s.min < 0 { "i16" } else { "u16" }.to_string(),
-                Some(1) => return if s.min < 0 { "i8" } else { "u8" }.to_string(),
-                _ => {}
-            }
+        let Type::Integer(s) = t else {
+            return t.source_name(&self.data);
+        };
+        if s.forced_size.is_none() {
+            return t.source_name(&self.data);
+        }
+        // A stdlib alias is named by its own RANGE, never by its width and sign.  This spelled
+        // a type from `forced_size` plus `min < 0` alone, which is right for the six aliases
+        // and wrong for every other declared range: `type Lim = integer limit(1000, 1100)
+        // size(1)` was reported as `u8`, so the refusal told an author to fit 1050 into
+        // `0..=255` and its own cure (`as u8?`) could never succeed (loft#1641).  Matching the
+        // whole range keeps loft#1247's fix — `u32` and `i32` share a width and differ in
+        // range, so neither can be named as the other — and makes it impossible to name a type
+        // whose values are not the named one's.
+        let named = match (s.min, s.max) {
+            (0, 255) => Some("u8"),
+            (-128, 127) => Some("i8"),
+            (0, 65535) => Some("u16"),
+            (-32768, 32767) => Some("i16"),
+            (0, 4_294_967_294) => Some("u32"),
+            _ if s.is_signed32_template() => Some("i32"),
+            _ => None,
+        };
+        if let Some(n) = named {
+            return n.to_string();
+        }
+        // Otherwise the alias the AUTHOR declared, which is the only spelling they can act on:
+        // `integer(1000, 1100)` is true and is no syntax the parser reads, so a cure built from
+        // it (`as integer(1000, 1100)?`) cannot be typed back in.
+        if let Some(name) = self.data.integer_alias_any_source(s, false) {
+            return name.to_string();
         }
         t.source_name(&self.data)
     }
@@ -4591,7 +4643,7 @@ impl Parser {
                 _ => return false,
             },
         };
-        n >= i64::from(spec.min) && n <= i64::from(spec.max)
+        n >= i64::from(spec.min) && n <= spec.max
     }
 
     /// When a literal stored into a NULLABLE narrow field fits the type's full
@@ -5359,6 +5411,15 @@ impl Parser {
             // `Entity?` parameter, loft#1528).
             if let Type::Optional(src_inner) = is_type {
                 return self.convert(code, src_inner, inner);
+            }
+            // A LINK to a nullable is the same source read through `(C-Ref)`: `&integer?` is
+            // `RefVar(Optional(Integer))`, and peeling the target alone sent it to a dense
+            // `integer`, reporting a store no program makes — formatting `"{e}"` with
+            // `e = &z; z: integer?` warned that a nullable "becomes null there" (loft#1614).
+            if let Type::RefVar(pointee) = is_type.base()
+                && pointee.peel_optional().1
+            {
+                return self.convert(code, pointee, should);
             }
             return self.convert(code, is_type, inner);
         }

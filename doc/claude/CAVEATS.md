@@ -184,22 +184,34 @@ was fine, so the axis was never the generic. It was the `par` element STRIDE for
 vector, computed from the inner element's type — fixed the same day, guard
 `tests/scripts/1033-a-par-worker-gets-the-right-nested-vector.loft`.
 
-**#1030 / #1009 / #1296 — settled, and the answer is a table rather than a rule.** A width
-type's out-of-range `+=` no longer keeps `260`. What it answers depends on whether the spec
-has a spare code to spell null WITH, which `formal/types.md` now states and this tree
-measures: `integer` and `i32` keep a code at the bottom and answer **`null`** (which is why
-`i32 = -2147483648` is refused); `u32` has a spare code at the TOP that no non-null read
-tests for, and `u8`/`i8`/`u16`/`i16` have none at all because the range fills the width — all
-of those answer **the type's default**. Measured here: `u32` and `u8` answer `0`, `i32`
-answers `null`. The default is a legal value of the type, so nothing holds a non-`τ` value,
-but it cannot be told from a computed one — `τ?` is the spelling that always answers null,
-because a nullable narrow alias sacrifices an edge value to reserve one.
+**#1030 / #1009 / #1296 — settled, and since C127 the answer is a rule rather than a table.**
+A width type's out-of-range `+=` no longer keeps `260`. It takes **the type's DEFAULT** —
+zero where the declared range holds it, the bound nearest zero otherwise — and it does so in
+every slot alike. The two full-integer TEMPLATES are the exception and keep C85's in-band
+sentinel, answering **`null`**: `integer` and `i32` reserve a code at the BOTTOM, outside the
+range they report, which is why `i32 = -2147483648` is refused and why that code is a real
+absence rather than a number.
+
+For two cycles the answer was a table, because whether a DECLARED range left a code spare
+inside its width decided it: `limit(-100, 100) size(1)` answered null and
+`limit(-128, 127) size(1)` answered `0`, two declarations one value apart, with the
+arithmetic `hi - lo + 1 < 2^(8*size)` doing the deciding and no author having done it. C127
+retired that — a spare code is not a null — so `u8`, `i8`, `u16`, `i16`, `u32` and every
+`limit(lo, hi)` now answer alike whatever room their range leaves.
+
+The default is a legal value of the type, so nothing holds a non-`τ` value, but it cannot be
+told from a computed one. Two spellings can tell: `τ?` always answers null, because a
+nullable narrow alias sacrifices an edge value to reserve one; and `if !x { … }` as the very
+next statement after the step reads the fit failure without storing anything
+(`@FR-E-Uncomp-Seen`). Since C127 the step also says so — `advice[narrow-fallback]` names the
+default it took.
 
 **#1031 — `u32` is one short of its name, by construction.** The local and the field agree
 now. `u32 = 4294967295` is still refused: `default/01_code.loft` declares `u32` as
 `integer limit(0, 4294967294) size(4)`, keeping the top code back — and per the table above
 that reserved code is the one no non-null read tests for, so it buys the refusal without
-buying a null. The 2026-08 changelog line "`u32` finally holding every `u32`" overstated the
+buying a null — and since C127 no declared range buys one, whichever end its spare code
+sits at. The 2026-08 changelog line "`u32` finally holding every `u32`" overstated the
 fix, and is corrected.
 
 The lesson the rows leave behind: a closed issue is a claim about a build, and the build has
@@ -746,8 +758,8 @@ different element types: `for i in [1,2,3] {…}` then `for i in ["a","b"] {…}
 compiles.  Each loop binds its OWN variable, so the second inherits no type, dep
 or storage from the first — which is also what makes loft#690's corruption
 (reading B's records through A's layout) unreachable by construction rather than
-by diagnostic.  The loop variable stays function-scoped: `i` after the loop still
-reads the value the last loop left, so nothing that read it before changes.
+by diagnostic.  Since loft#1600 the loop variable also ENDS with its loop
+(`(B-Scope)`): `i` after the loop is `local-out-of-scope`.
 
 What is still rejected is a loop variable landing on a plain function local
 (`x = 5; for x in …` → *"loop variable 'x' shadows a local named 'x'"*) and

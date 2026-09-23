@@ -430,7 +430,14 @@ the bug-filing policy above). It never blocks.
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
 [INTERFACES.md](doc/claude/INTERFACES.md) traits/generics · [TUPLES.md](doc/claude/TUPLES.md) ·
 [COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md) ·
-[OCAML_BAR.md](doc/claude/OCAML_BAR.md) / [LUA_BAR.md](doc/claude/LUA_BAR.md) expressiveness probes against OCaml and
+[SUBJECTS.md](doc/claude/SUBJECTS.md) the axes loft made a choice on — one row per subject with its
+RATIONALE (a link to the `C` entry, never a restatement) and how the claim is VERIFIED; the
+comparison pages, the bars and the registers all link into it, and a row reading `— none
+recorded` is a decision nobody wrote down ·
+`tests/comparisons/*.loft` the comparison claims AS PROGRAMS (`wrap::comparisons`): until
+2026-09-23 `00-vs-rust.html` and `00-vs-python.html` were the only reference pages with no
+`.loft` source, so their 28 samples were the only published code nothing ran ·
+[bars/](doc/claude/bars/README.md) — [OCAML_BAR.md](doc/claude/bars/OCAML_BAR.md) / [LUA_BAR.md](doc/claude/bars/LUA_BAR.md) expressiveness probes against OCaml and
 Lua, measured (reports, never gates — and run a generator probe inside a memory cap).
 
 **Compiler / internals:** [COMPILER.md](doc/claude/COMPILER.md) parser/two-pass/types ·
@@ -612,6 +619,18 @@ excluded; separate from complexity because a caller's burden and a reader's burd
 different fixes: a struct vs an extracted function) · `LOFT_NO_DEFAULT_HINT` (≥2 trailing
 booleans with no default — advertises default parameters, which are under-used and free to
 adopt: adding a default is additive, so existing callers keep working) ·
+`LOFT_NO_NARROW_FALLBACK` (C127 `narrow-fallback` ADVICE: a compound step into a
+DECLARED narrow range whose result does not fit takes the type's DEFAULT — `x: u8 = 250;
+x += 10` answers `0`, `h: integer limit(1000, 1100) = 1050; h += 5000` answers `1000` —
+and nothing at the site says so.  The WRITTEN-OUT `x = x + 10` is refused at compile
+time, so the compound step is the one arithmetic shape where the language cannot ask the
+author what an unfitting result should become.  The cure is the pair `@FR-E-Uncomp-Seen`
+already fuses (`if !x { … }` as the very next statement) or choosing the value with
+`x = (x + n) ?? d`.  `advice`, not `warning`: the default IS what the language promises
+for an unfitting value, so ignoring it cannot produce a result the language did not
+promise.  Quiet where the target keeps a code for its own failure — a `τ?`, an `i32`, a
+plain `integer` — where the check IS fused, and where the author chose the value; census
+2026-09-23: 16 of 1 653 corpus files, every one of them a test about narrow overflow) ·
 `LOFT_NO_OMITTED_FIELD` (loft#914 `omitted-field-zero` ADVICE: a struct literal that names
 SOME fields and leaves another out — the omitted one takes its type's zero and nothing in the
 declaration chose it, which bites where zero is a meaningful value of the field's domain

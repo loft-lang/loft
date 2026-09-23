@@ -1,7 +1,8 @@
 // @TITLE: a `for` loop binds its own variable, so two loops may reuse a name
 //
-// loft#915 — a loop variable stays function-scoped (`i` after the loop still reads what
-// the loop left), but each LOOP gets its own binding.  Two loops in one function may
+// loft#915 — each LOOP gets its own binding for its variable, and since loft#1600 that
+// binding ends with the loop (`@FR-B-Scope`, rustc's rule: `i` after the loop is
+// `local-out-of-scope`, pinned in `1600c-…`).  Two loops in one function may
 // therefore spell one name at different element types, which is what dryopea was paying
 // a per-function prefix on 122 of its 131 loops to avoid.
 //
@@ -20,13 +21,14 @@ fn c1_two_types() -> text {
     r
 }
 
-// c2 — the leak: `i` after TWO same-named loops reads the LAST loop's value.
+// c2 — two same-named loops: the value the second one left is carried out by a local
+// bound before them (the loop variable itself ends with its loop).
 fn c2_outlives_two() -> integer {
     last = 0;
     for i in 0..2 { last = i; }
     for i in 10..14 { last = i; }
     assert(last == 13, "c2 inner {last}");
-    i
+    last
 }
 
 // c3 — #index companion, one per loop.
@@ -111,8 +113,9 @@ fn c11_nested() -> text {
 // c12 — same name in two DIFFERENT functions is independent (the counter is
 // per function, so both are the first loop of their own function).
 fn c12_helper() -> integer {
-    for z in 100..102 { }
-    z
+    seen = 0;
+    for z in 100..102 { seen = z; }
+    seen
 }
 fn c12_other() -> text {
     r = "";

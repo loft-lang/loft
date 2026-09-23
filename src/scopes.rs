@@ -141,6 +141,10 @@ struct Scopes<'s> {
     /// is already gone, so such a base is not offered as a witness.  Conservative in the safe
     /// direction: declining keeps today's leak, never frees a store twice.
     multi_assigned: HashSet<u16>,
+    /// Variables every bind of which but ONE writes `null` ([`null_led_in`]): the author's
+    /// `x: T? = null; if c { x = mk() }`, which `(B-Scope)` makes the spelling of a local an
+    /// arm assigns and a later statement reads.
+    null_led: HashSet<u16>,
     /// How many nodes of the body name each variable ([`var_mentions_in`]) — what tells
     /// `scan_if` a local whose every mention lies inside one arm.
     mentions: HashMap<u16, usize>,
@@ -152,6 +156,11 @@ struct Scopes<'s> {
     /// [`capture_build_backings`].  Computed once off the raw body, because the answer is
     /// positional (@FR-O-Latest) and the variable table carries only the LAST assignment.
     capture_build_backing: CaptureBuilds,
+    /// The closure records and fn-ref locals whose releases are decided by store identity —
+    /// see [`closure_keep_set`] (`@FR-L-CapKeep`).
+    closure_keep: ClosureKeep,
+    /// The fn-ref local the statement being scanned binds to a closure build, if any.
+    keep_build_target: Option<u16>,
     /// The loop depth at which each `__lift_N` temp was created.  A temp created INSIDE the
     /// innermost loop that re-runs its Set has its scope exited — and its slot freed — every
     /// iteration, so a transition free there would free twice; one created OUTSIDE that loop
@@ -266,6 +275,11 @@ struct Scopes<'s> {
     /// one in a nested scope, and intersect-merged at every join like
     /// [`Self::tuple_call_mint`], so a move that cannot know which backing it copies declines.
     tuple_member_now: HashMap<u16, HashMap<u16, u16>>,
+    /// Per open block, the fn-ref locals a statement of that block has already bound: a
+    /// `Set` of one of them is a REBIND, which displaces a value (`fnref_call_rebind`).  A
+    /// local declared ahead of a branch is first bound in an arm, where its slot holds no
+    /// value yet — on the interpreter not even a null one.
+    fnref_bound: Vec<HashSet<u16>>,
     /// loft#1532 — the `(tuple, element)` pairs a member ASSIGNMENT (`t.1 = …`) writes in this
     /// function, by the variable numbers of the unscanned body.  Such an element is handed to
     /// the tuple ALONE at the literal that builds it: the construction or call that delivered it
@@ -292,6 +306,12 @@ struct Scopes<'s> {
     /// discipline as [`Self::owned_refs`]; an entry that does not survive a join falls back
     /// to the bare free (losing the hook, never doubling it).
     construction_backing: HashMap<u16, u16>,
+    /// loft#1607 / `formal/heap.md` D-heap-38 — a VECTOR local's latest bind on THIS path, mapped
+    /// to the backing that bind filled (`w = OpGetField(__vdb_N, …)`).  The variable's type names
+    /// one backing, the LAST bind's (`@FR-O-Latest`), which is the wrong one for an arm that bound
+    /// an earlier one; the scope-end release reads this first.  Same per-arm save and intersect
+    /// merge as [`Self::construction_backing`].
+    bind_backing: HashMap<u16, u16>,
     /// D-heap-3 (loft#1506) — `__lift_N` temps ONE of whose fields a materialising copy took
     /// over, keyed to that field's byte offset: the temp's scope-end release runs the type's
     /// `…OpDropAllExcept` cascade so every OTHER member is still released exactly once while
@@ -314,6 +334,10 @@ struct Scopes<'s> {
     /// NOT in here, and must not be: the caller got a copy of a member and `s` still owes its
     /// own release.  That is the cell this map exists to keep apart from the rest.
     join_holders: HashMap<u16, Vec<u16>>,
+    /// loft#1628 — the plain locals a WITNESSED local was bound to as they are (a value
+    /// branch's arm `b` in `x = s.h ?? b`), keyed by that local.  Such a local may hold one of
+    /// their records at a return, and then that record is what the return hands out.
+    witness_aliases: HashMap<u16, Vec<u16>>,
     /// The `__lift_N` temps an arm lift built — the destinations whose hand-off is PER PATH.
     ///
     /// The fact belongs to the CONSTRUCTION and cannot be read back off the IR: by the time
@@ -4453,18 +4477,42 @@ fn outer_collection_backing(
     function: &Function,
     v: u16,
     exited: &std::collections::HashSet<u16>,
+    on_this_path: Option<u16>,
 ) -> Option<u16> {
     if !matches!(function.tp(v).base(), Type::Vector(_, _)) || function.is_compiler_generated(v) {
         return None;
     }
-    let [b] = function.tp(v).depend()[..] else {
-        return None;
+    // The backing the latest bind on THIS path filled, where the scan recorded one (loft#1607);
+    // else the one the type names.
+    let b = if let Some(b) = on_this_path {
+        b
+    } else {
+        let [b] = function.tp(v).depend()[..] else {
+            return None;
+        };
+        b
     };
+    (is_backing_name(function, b) && !exited.contains(&b) && !function.is_argument(b)).then_some(b)
+}
+
+/// Is `b` a hidden backing a vector local's elements live in — its `__vdb_N`, or the `__ref_N`
+/// buffer a call delivered it through?  Both are minted at the function's head.
+fn is_backing_name(function: &Function, b: u16) -> bool {
     let n = function.name(b);
-    ((n.starts_with("__vdb_") || n.starts_with("__ref_"))
-        && !exited.contains(&b)
-        && !function.is_argument(b))
-    .then_some(b)
+    n.starts_with("__vdb_") || n.starts_with("__ref_")
+}
+
+/// The backing a vector bind fills: `OpGetField(<backing>, …)`, the shape the parser lowers a
+/// vector copy into.  `None` for any other bind.
+fn bind_backing_of(value: &Value, function: &Function, data: &Data) -> Option<u16> {
+    if let Value::Call(d, args) = value.unspan()
+        && data.def(*d).name() == "OpGetField"
+        && let Some(Value::Var(b)) = args.first().map(Value::unspan)
+        && is_backing_name(function, *b)
+    {
+        return Some(*b);
+    }
+    None
 }
 
 /// The backing each VECTOR member of a tuple literal lives in, by member index — read off the
@@ -5734,6 +5782,7 @@ fn run_scan_phase(
         lift_join_witness: HashMap::new(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
+        null_led: null_led_in(orig_code, data),
         mentions: var_mentions_in(orig_code),
         sunk: sunk.clone(),
         assigned: assigned_in(orig_code),
@@ -5743,6 +5792,8 @@ fn run_scan_phase(
             data,
         ),
         capture_build_backing: capture_build_backings(data, orig_vars, orig_code),
+        closure_keep: closure_keep_set(data, orig_vars, orig_code),
+        keep_build_target: None,
         lift_decl_depth: HashMap::new(),
         callref_join_bases: callref_join_bases_in(orig_code, data, d_nr),
         snapshot_witness: HashMap::new(),
@@ -5763,11 +5814,14 @@ fn run_scan_phase(
         drop_transferred: HashSet::new(),
         tuple_call_mint: HashMap::new(),
         tuple_member_now: HashMap::new(),
+        fnref_bound: Vec::new(),
         written_tuple_members: written_tuple_members_in(orig_code),
         view_backing: HashMap::new(),
         construction_backing: HashMap::new(),
+        bind_backing: HashMap::new(),
         lift_field_skip: HashMap::new(),
         join_holders: HashMap::new(),
+        witness_aliases: HashMap::new(),
         arm_lift_temps: HashSet::new(),
         handed_off: HashMap::new(),
         per_path_pairs: HashSet::new(),
@@ -6727,6 +6781,38 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
         .collect()
 }
 
+/// Variables with exactly ONE bind that is not a `null` (a `Value::Null` or the
+/// `OpNullRefSentinel` an explicit `x: T? = null` lowers to), and at least one that is.
+/// On every path that reaches the one real bind the local holds the sentinel, so that bind
+/// is a FIRST bind in `@FR-O-Move`'s sense, whoever wrote the null before it.
+pub(crate) fn null_led_in(node: &Value, data: &Data) -> HashSet<u16> {
+    fn is_null(v: &Value, data: &Data) -> bool {
+        match v.unspan() {
+            Value::Null => true,
+            Value::Call(d, a) => a.is_empty() && data.def(*d).name() == "OpNullRefSentinel",
+            _ => false,
+        }
+    }
+    fn count(node: &Value, data: &Data, out: &mut HashMap<u16, (usize, usize)>) {
+        if let Value::Set(v, value) = node.unspan() {
+            let e = out.entry(*v).or_insert((0, 0));
+            if is_null(value, data) {
+                e.0 += 1;
+            } else {
+                e.1 += 1;
+            }
+        }
+        node.for_each_child(&mut |c| count(c, data, out));
+    }
+    let mut counts = HashMap::new();
+    count(node, data, &mut counts);
+    counts
+        .into_iter()
+        .filter(|&(_, (nulls, real))| nulls >= 1 && real == 1)
+        .map(|(v, _)| v)
+        .collect()
+}
+
 /// How many nodes of `node` name each variable: a read, a write, a tuple member read or
 /// write, a fn-ref's closure slot or projection, a call through a fn-ref local and an
 /// iterator's own variable.  A count, so a region's share of it says whether a variable is
@@ -6819,6 +6905,25 @@ fn only_bind_in_arms<'a>(t_val: &'a Value, f_val: &'a Value, v: u16) -> Option<&
     find(f_val, v, &mut found);
     match found.as_slice() {
         [one] => Some(one),
+        _ => None,
+    }
+}
+
+/// The backing the ONE bind of `v` inside `arm` fills ([`bind_backing_of`]); `None` when the arm
+/// binds `v` other than once or through another shape.
+fn arm_bind_backing(arm: &Value, v: u16, function: &Function, data: &Data) -> Option<u16> {
+    fn find<'a>(node: &'a Value, v: u16, out: &mut Vec<&'a Value>) {
+        if let Value::Set(w, value) = node.unspan()
+            && *w == v
+        {
+            out.push(value);
+        }
+        node.for_each_child(&mut |c| find(c, v, out));
+    }
+    let mut found = Vec::new();
+    find(arm, v, &mut found);
+    match found.as_slice() {
+        [one] => bind_backing_of(one, function, data),
         _ => None,
     }
 }
@@ -9238,7 +9343,7 @@ fn capture_store_adopters(
             if !capture_attr_is_cascade_relevant(data, record, a) {
                 continue;
             }
-            if record_adopts_capture(data, function, record, a) {
+            if record_adopts_capture(data, function, builds, record, a) {
                 adopters
                     .entry(adopted_store_key(data, function, builds, v, record, a))
                     .or_default()
@@ -9711,8 +9816,43 @@ pub(crate) fn capture_adoption_owns_free(
     // s = build(h)` leaked the store `s` ends up holding, on both backends, once per
     // reassignment and once per pass of a loop (loft#1388).
     !built_with.reassigned_after_build.contains(&v)
-        && (function.is_captured(v) || backs_an_adopted_capture(data, function, built_with, v))
+        && ((function.is_captured(v) && !captured_only_by_confined(data, function, built_with, v))
+            || backs_an_adopted_capture(data, function, built_with, v))
         && crate::data::is_dbref(function.tp(v).base())
+}
+
+/// loft#1610 — is every closure record that captures local `v` confined to one loop pass
+/// ([`pass_confined_records`])?  Then no record adopts `v` and the frame's release stands.  A
+/// local captured by no record this frame can see keeps the old answer (`false`).
+fn captured_only_by_confined(
+    data: &Data,
+    function: &Function,
+    built_with: &CaptureBuilds,
+    v: u16,
+) -> bool {
+    if built_with.pass_confined.is_empty() {
+        return false;
+    }
+    let name = function.name(v);
+    let mut any = false;
+    for w in 0..function.next_var() {
+        if function.is_argument(w) {
+            continue;
+        }
+        let Type::Reference(record, _) = function.tp(w).base() else {
+            continue;
+        };
+        if !data.def(*record).name.starts_with("__closure_")
+            || data.attr(*record, name) == usize::MAX
+        {
+            continue;
+        }
+        if !built_with.pass_confined.contains(record) {
+            return false;
+        }
+        any = true;
+    }
+    any
 }
 
 /// Does a closure record that LEAVES this frame hold the store of local `witness`?
@@ -9805,7 +9945,7 @@ fn escaping_record_holds_buffer(
         }
         let a = data.attr(record, function.name(capture));
         a != usize::MAX
-            && record_adopts_capture(data, function, record, a)
+            && record_adopts_capture(data, function, built_with, record, a)
             && capture_attr_is_cascade_relevant(data, record, a)
     })
 }
@@ -9848,6 +9988,7 @@ pub(crate) fn capture_build_backings(
     let mut generation: HashMap<u16, u32> = HashMap::new();
     let mut out = CaptureBuilds::default();
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
+    out.pass_confined = pass_confined_records(data, function, code);
     captures_built_conditionally(code, set_dbref, false, &mut out.built_conditionally);
     let mut built: HashSet<u16> = HashSet::new();
     // Capture vars already resolved at their enclosing statement, waiting for the walk to
@@ -9994,6 +10135,12 @@ pub(crate) struct CaptureBuilds {
     /// Captures whose closure BUILD sits inside a loop, so the record's slot is rewritten on
     /// every pass and only the LAST adoption is the one it still holds.
     pub(crate) rebuilt_in_loop: HashSet<u16>,
+    /// loft#1610, `@FR-L-CapOwn` — the closure record TYPES confined to one pass of a loop: built
+    /// inside a loop body into a fn-ref local that appears nowhere outside that loop and there
+    /// only as a call's callee, so no value of it survives the pass.  Such a record cannot
+    /// outlive what it captured, so it BORROWS every capture and the frame keeps its release,
+    /// at the local's own scope end ([`pass_confined_records`]).
+    pub(crate) pass_confined: HashSet<u32>,
     /// Captures whose closure BUILD does not DOMINATE the scope exit — it sits inside an `if`
     /// arm, a `match` arm or a loop body, so on some runs no record is ever built.
     ///
@@ -10057,7 +10204,7 @@ pub(crate) fn backs_an_adopted_capture(
             // still reads, which `1324-a-reassigned-capture-suppresses-the-store-the-record-\
             // holds` catches as `null(oob)`.
             && !built_with.rebuilt_in_loop.contains(&c)
-            && capture_is_adopted(data, function, c)
+            && capture_is_adopted(data, function, built_with, c)
             && match built_with.backing.get(&c) {
                 // @FR-O-Latest — the record holds the store this capture named AT THE BUILD, so
                 // that is the one local whose free it takes over.  Reading the type dep instead
@@ -10084,7 +10231,7 @@ pub(crate) fn backs_an_adopted_capture(
 /// on purpose (loft#1248's minting capture, which still declines the lift), and reading only
 /// `frame_owns_capture_store` here suppressed its free while the record declined to adopt it,
 /// so the store leaked at program exit.
-fn capture_is_adopted(data: &Data, function: &Function, c: u16) -> bool {
+fn capture_is_adopted(data: &Data, function: &Function, builds: &CaptureBuilds, c: u16) -> bool {
     let name = function.name(c);
     for w in 0..function.next_var() {
         if function.is_argument(w) {
@@ -10104,7 +10251,7 @@ fn capture_is_adopted(data: &Data, function: &Function, c: u16) -> bool {
             if !capture_attr_is_cascade_relevant(data, record, a) {
                 return false;
             }
-            return record_adopts_capture(data, function, record, a);
+            return record_adopts_capture(data, function, builds, record, a);
         }
     }
     false
@@ -10197,7 +10344,13 @@ fn backing_chain(function: &Function, start: u16) -> Vec<u16> {
 
 /// Does the closure record own the store behind capture `a` of `record`, as seen
 /// from the defining frame `function`?  See [`mark_borrowed_captures`].
-fn record_adopts_capture(data: &Data, function: &Function, record: u32, a: usize) -> bool {
+fn record_adopts_capture(
+    data: &Data,
+    function: &Function,
+    builds: &CaptureBuilds,
+    record: u32,
+    a: usize,
+) -> bool {
     // A `__cell_<T>` is minted FOR this closure (plan-22 boxes a mutated scalar /
     // text capture into one), so the record is its only possible owner however the
     // original binding was reached — including from a parameter.
@@ -10213,6 +10366,13 @@ fn record_adopts_capture(data: &Data, function: &Function, record: u32, a: usize
         && function.var(&data.attr_name(record, a)) != u16::MAX
     {
         return true;
+    }
+    // loft#1610 — a record confined to one loop pass outlives nothing it captured, so the frame
+    // keeps every release it HAS (`@FR-L-CapOwn`'s "whichever outlives the other").  Asked after
+    // the `__cell_` arm above: a cell is minted for the closure, the frame has no release of it
+    // to keep, and the record is its only owner wherever it lives.
+    if builds.pass_confined.contains(&record) {
+        return false;
     }
     let v = function.var(&data.attr_name(record, a));
     // An unresolvable name defaults to BORROW: an unfreed store is a leak the
@@ -11720,6 +11880,16 @@ impl Scopes<'_> {
         if first_binding {
             self.register_binding(v, function);
         }
+        if matches!(function.tp(v).base(), Type::Vector(_, _)) {
+            match bind_backing_of(value, function, data) {
+                Some(b) => {
+                    self.bind_backing.insert(v, b);
+                }
+                None => {
+                    self.bind_backing.remove(&v);
+                }
+            }
+        }
         // When a Reference variable is assigned from a user-function call,
         // codegen has two sub-paths (state/codegen.rs gen_set_first_at_tos /
         // gen_set_first_ref_call_copy), keyed on the SAME carried adopt-vs-copy
@@ -11866,6 +12036,7 @@ impl Scopes<'_> {
             // home decides it for the two backends' bind arms too.
             let adopts_minted =
                 crate::use_analysis::adopts_minted_at_bind(data, function, v, unspanned_value);
+
             // @PLN85 `local_source` over-free fix (LOFT_JOIN_OWN): `v` holds an OWNED
             // store (this adopts-fresh call) that a later borrow/join reassignment
             // displaces. Strip `v`'s declared deps so it is OWNED everywhere — the
@@ -12720,6 +12891,66 @@ impl Scopes<'_> {
                 ));
             }
         }
+        // loft#1628, `@FR-H-Drop` — a REBIND of a witnessed local that still holds a record it took
+        // over from a plain local (`x: H = s.h ?? b; …; x = mk(9)`) displaces THAT record, whose
+        // lease `(H-Move)` gave to `x`: its hook runs here, after the new value has landed, and
+        // the local's `__hoff_` flag keeps its scope-end hook from running it a second time.  The
+        // store is still freed at the local's scope end, with its call buffer, exactly as before.
+        if was_in_scope && self.owner_witness.contains_key(&v) {
+            for h in self.witness_aliases.get(&v).cloned().unwrap_or_default() {
+                let Some(hook) = drop_hook(function, h, data) else {
+                    continue;
+                };
+                let held = function.add_temp_var(
+                    &format!("__hdsp_{}_{}", function.name(v), function.name(h)),
+                    &Type::Boolean,
+                );
+                self.var_scope.insert(held, 0);
+                self.var_order.push(held);
+                let flag = self.mint_handoff_flag(function, h);
+                prefix.insert(
+                    0,
+                    v_set(
+                        held,
+                        Value::Call(data.def_nr("OpEqRef"), vec![Value::Var(v), Value::Var(h)]),
+                    ),
+                );
+                witness_ops.push(v_if(
+                    Value::Var(held),
+                    v_if(
+                        Value::Var(flag),
+                        Value::Null,
+                        Value::Insert(vec![hook, v_set(flag, Value::Boolean(true))]),
+                    ),
+                    Value::Null,
+                ));
+            }
+        }
+        // loft#1628, `(H-Move)` — the frame's own locals a witnessed local may ALIAS: a value
+        // branch whose arm is a plain local hands that local's record over as it is, so at a
+        // return of `v` it is that local's record the caller takes.  Read at the return by
+        // [`return_moved_holders`].
+        if self.owner_witness.contains_key(&v) {
+            let mut arms = Vec::new();
+            crate::use_analysis::join_var_arms(value, &mut arms);
+            for h in arms {
+                // @FR-O-Proxy asks free — a holder recorded here has its hook RUN at a rebind of
+                // `v` and guarded at a return, so only a local that owns its record may be one:
+                // a view arm (`__ncc_N` over `s.h`) holds no lease, and running its hook would
+                // release the container's member.  The @FR-O-Override veto rides inside
+                // `proxy_says_owned` as one question.
+                if h != v
+                    && !function.is_argument(h)
+                    && matches!(function.tp(h).base(), Type::Reference(_, _))
+                    && function.proxy_says_owned(h)
+                {
+                    let slot = self.witness_aliases.entry(v).or_default();
+                    if !slot.contains(&h) {
+                        slot.push(h);
+                    }
+                }
+            }
+        }
         if let Some(&w) = self.owner_witness.get(&v) {
             let kind = {
                 let d_nr = self.d_nr;
@@ -12739,14 +12970,11 @@ impl Scopes<'_> {
                 Value::Null,
             );
             match kind {
-                WitnessSet::Mint => {
-                    prefix.insert(
-                        0,
-                        release_witness(w, self.witness_hook(function, data, v, w), data),
-                    );
-                    witness_ops.push(witness_points_at(w, v, data));
-                }
-                WitnessSet::MintReading => {
+                // `(H-Drop)`: the record a reassignment displaces is released AFTER the new
+                // value has been computed — so a mint releases what the witness held exactly as
+                // a mint that reads the local does.  Every copy into a witnessed local lands in
+                // a fresh store (`(O-Witness)`), so the identity guard declines nothing here.
+                WitnessSet::Mint | WitnessSet::MintReading => {
                     witness_ops.push(guarded_release);
                     witness_ops.push(witness_points_at(w, v, data));
                 }
@@ -12999,6 +13227,607 @@ impl Scopes<'_> {
         }
         post.push(call("OpFreeRef", tmp, data));
         post.push(v_set(tmp, sentinel()));
+        Some((pre, post))
+    }
+
+    /// `@FR-L-CapOwn` for a collection captured by a record built in a LOOP: the statements
+    /// that detach the frame's backing from the store the record just adopted (loft#1610).
+    ///
+    /// A loop-body vector's backing (`__vdb_N`) is minted once, at the function's head, and
+    /// refilled on every pass.  A record that ADOPTS the capture takes that store over, so from
+    /// the build on the store is the record's and the backing no longer names anything the
+    /// frame owns.  Left naming it, the next pass's literal cleared and refilled the store the
+    /// previous pass's record still held, which then released the NEW pass's elements, and the
+    /// frame released the last pass's again.  Set to the sentinel, the next literal mints a
+    /// fresh store and every frame release of the backing finds nothing.  A record that BORROWS
+    /// (one confined to the pass, `CaptureBuilds::pass_confined`) leaves the store the frame's,
+    /// and is not named by [`owning_record_locals`].
+    fn adopted_backing_detach(&self, stmt: &Value, function: &Function, data: &Data) -> Vec<Value> {
+        let set_dbref = data.def_nr("OpSetDbRef");
+        let builds = &self.capture_build_backing;
+        let mut out = Vec::new();
+        stmt.walk(&mut |n| {
+            let Value::Call(d, args) = n.unspan() else {
+                return;
+            };
+            if *d != set_dbref {
+                return;
+            }
+            let (Some(Value::Var(rec)), Some(off), Some(Value::Var(x))) = (
+                args.first().map(Value::unspan),
+                args.get(1),
+                args.get(2).map(Value::unspan),
+            ) else {
+                return;
+            };
+            // Only a record with a drop cascade releases what it adopted when its rebuild
+            // displaces it (`displaced_drop`'s snapshot: the hook, then the store).  A record
+            // with nothing to drop is rebuilt in place and frees nothing, so there the frame's
+            // holder stays the store's release — detached, the store would leak.
+            let cascade = function
+                .tp(*rec)
+                .base()
+                .heap_def_nr()
+                .is_some_and(|r| data.drop_cascade_nr(r) != u32::MAX);
+            if !cascade || !builds.rebuilt_in_loop.contains(x) {
+                return;
+            }
+            // A collection capture: a view over the literal's backing, which is the store.
+            // A struct capture: the pooled buffer a call delivered it through, which the next
+            // pass's call clears and refills.
+            let holders: Vec<u16> = match builds.backing.get(x) {
+                Some(&b) => {
+                    if function.name(b).starts_with("__vdb_")
+                        && owning_record_locals(data, function, self.d_nr, builds, b).contains(rec)
+                    {
+                        vec![b]
+                    } else {
+                        Vec::new()
+                    }
+                }
+                None => {
+                    if owning_record_locals(data, function, self.d_nr, builds, *x).contains(rec) {
+                        self.witness_buffer.get(x).cloned().unwrap_or_default()
+                    } else {
+                        Vec::new()
+                    }
+                }
+            };
+            // The holder lets go only while it still names the store the record adopted, read
+            // back out of the record's own capture field.  The detach runs after the WHOLE
+            // statement, and a build inside the statement that rebinds the capture
+            // (`v = build_v(|i| v[0] + i)`) leaves the holder naming the NEW value by then.
+            for b in holders {
+                let adopted = Value::Call(
+                    data.def_nr("OpGetDbRef"),
+                    vec![Value::Var(*rec), off.clone()],
+                );
+                let distinct =
+                    Value::Call(data.def_nr("OpDistinctStore"), vec![Value::Var(b), adopted]);
+                let sentinel = Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+                let detach = v_if(distinct, Value::Null, v_set(b, sentinel));
+                if !out.contains(&detach) {
+                    out.push(detach);
+                }
+            }
+        });
+        out
+    }
+
+    /// The holders a store-identity test may read at this point: those with a DOMINATING
+    /// bind (`fnref_bound`), so none is read out of a slot nothing has written (SLOTS.md § the
+    /// reserve does not initialise).  A record is pre-initialised at the function's head.
+    fn closure_keep_live(&self, except: &[u16]) -> Vec<u16> {
+        self.closure_keep
+            .holders
+            .iter()
+            .copied()
+            .filter(|h| !except.contains(h) && self.fnref_bound.iter().any(|b| b.contains(h)))
+            .collect()
+    }
+
+    /// The caller's fn-refs behind the frame's `&fn(…)` parameters, copied into temps the
+    /// store-identity tests can read: `(before, temps, after)`.  The copies own nothing, so
+    /// `after` nulls them before any sweep of the temps could release the caller's record.
+    fn closure_keep_links(
+        &mut self,
+        function: &mut Function,
+    ) -> (Vec<Value>, Vec<u16>, Vec<Value>) {
+        let mut pre = Vec::new();
+        let mut temps = Vec::new();
+        let mut post = Vec::new();
+        for p in self.closure_keep.links.clone() {
+            let Type::RefVar(inner) = function.tp(p).base().clone() else {
+                continue;
+            };
+            self.lift_counter += 1;
+            let tmp = function.add_temp_var(&format!("__fklink_{}", self.lift_counter), &inner);
+            self.var_scope.insert(tmp, self.scope);
+            pre.push(v_set(tmp, Value::Var(p)));
+            post.push(v_set(tmp, Value::Null));
+            temps.push(tmp);
+        }
+        (pre, temps, post)
+    }
+
+    /// `v_if` chain: `then` when `closure` names a store none of `holders` and none of
+    /// `records` names, `shared` otherwise.
+    fn closure_keep_unless_shared(
+        closure: &Value,
+        holders: &[u16],
+        records: &[u16],
+        then: Value,
+        shared: &Value,
+        data: &Data,
+    ) -> Value {
+        let distinct = data.def_nr("OpDistinctStore");
+        let fn_closure = data.def_nr("OpFnRefClosure");
+        let mut out = then;
+        let others = holders
+            .iter()
+            .map(|&h| Value::Call(fn_closure, vec![Value::Var(h)]))
+            .chain(records.iter().map(|&r| Value::Var(r)));
+        for other in others.collect::<Vec<_>>().into_iter().rev() {
+            out = v_if(
+                Value::Call(distinct, vec![closure.clone(), other]),
+                out,
+                shared.clone(),
+            );
+        }
+        out
+    }
+
+    /// `@FR-L-CapKeep` at a BUILD in a loop: the statements that hand the record the build is
+    /// about to rebuild to the fn-ref that still names it (loft#1636).
+    ///
+    /// A record is rebuilt in place on every pass, which is right while nothing but the build's
+    /// own target names it.  Where another fn-ref of the frame still holds it (a pass that was
+    /// kept), the record local lets go of it instead — the record is that holder's from here on
+    /// — and the build mints a new one.  So do the literal backings the record's captures
+    /// reach: the kept record still reads them, and the next pass's literal would refill them.
+    fn closure_keep_detach(
+        &self,
+        stmt: &Value,
+        function: &Function,
+        data: &Data,
+        links: &[u16],
+    ) -> Vec<Value> {
+        let k = &self.closure_keep;
+        if !k.gated || self.loops.is_empty() {
+            return Vec::new();
+        }
+        // Asked at the statement that BINDS the build (`f = fn() {…}`): the build block opens
+        // with the release of what the previous record adopted, which must already see the
+        // record handed over.  Its own target is rebound by the statement, so the record it
+        // names is not being kept.  A build not bound directly (an argument, `keep(fn() {…})`)
+        // is asked at its `OpDatabase` statement instead.
+        let database = data.def_nr("OpDatabase");
+        let is_build = |op: &Value| {
+            matches!(op.unspan(), Value::Call(d, args) if *d == database
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(r)) if k.records.contains(r)))
+        };
+        let (target, built): (Option<u16>, Vec<u16>) = match stmt.unspan() {
+            Value::Set(t, rhs) => {
+                let Value::Block(b) = rhs.unspan() else {
+                    return Vec::new();
+                };
+                if b.name != "fn_ref_with_closure" {
+                    return Vec::new();
+                }
+                let built = b
+                    .operators
+                    .iter()
+                    .filter(|op| is_build(op))
+                    .filter_map(|op| match op.unspan() {
+                        Value::Call(_, args) => match args.first().map(Value::unspan) {
+                            Some(Value::Var(r)) => Some(*r),
+                            _ => None,
+                        },
+                        _ => None,
+                    })
+                    .collect();
+                (Some(*self.var_mapping.get(t).unwrap_or(t)), built)
+            }
+            Value::Call(_, args) if is_build(stmt) && self.keep_build_target.is_none() => {
+                match args.first().map(Value::unspan) {
+                    Some(Value::Var(r)) => (None, vec![*r]),
+                    _ => return Vec::new(),
+                }
+            }
+            _ => return Vec::new(),
+        };
+        if built.is_empty() {
+            return Vec::new();
+        }
+        let backings: Vec<(u16, Value, u16)> = k
+            .captures
+            .iter()
+            .filter_map(|(rec, off, x)| {
+                let b = *self.capture_build_backing.backing.get(x)?;
+                (function.name(b).starts_with("__vdb_")).then(|| (*rec, off.clone(), b))
+            })
+            .collect();
+        let except: Vec<u16> = target.into_iter().collect();
+        let mut holders = self.closure_keep_live(&except);
+        holders.extend_from_slice(links);
+        if holders.is_empty() && self.closure_keep.links.is_empty() {
+            return Vec::new();
+        }
+        let sentinel = || Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+        let mut out = Vec::new();
+        for r in built {
+            let mut detach: Vec<Value> = Vec::new();
+            for (_, off, b) in backings.iter().filter(|(rec, _, _)| *rec == r) {
+                let captured =
+                    Value::Call(data.def_nr("OpGetDbRef"), vec![Value::Var(r), off.clone()]);
+                detach.push(v_if(
+                    Value::Call(
+                        data.def_nr("OpDistinctStore"),
+                        vec![Value::Var(*b), captured],
+                    ),
+                    Value::Null,
+                    v_set(*b, sentinel()),
+                ));
+            }
+            detach.push(v_set(r, sentinel()));
+            let detach = Value::Insert(detach);
+            // A holder naming the record is the whole condition; nobody naming it keeps it.
+            out.push(v_if(
+                Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(r)]),
+                Self::closure_keep_unless_shared(
+                    &Value::Var(r),
+                    &holders,
+                    &[],
+                    Value::Null,
+                    &detach,
+                    data,
+                ),
+                Value::Null,
+            ));
+        }
+        out
+    }
+
+    /// `@FR-L-CapKeep` at the END OF A PASS: the statements that release what a loop body's
+    /// fn-ref holds where no other name kept it (loft#1636).
+    ///
+    /// A fn-ref every mention of which lies in this block is dead at its `}`, so the closure it
+    /// holds is released there, hooks included, exactly as a record local of the block would
+    /// be — unless another name of the frame still holds the same store, which then owns it.
+    /// A record this block built for such a fn-ref is released first, through its own cascade,
+    /// and the fn-ref nulled so it does not release the store a second time.  The block's end
+    /// is not reached by a `break` or a `continue`: those passes release at the next rebuild or
+    /// at the function's end, once either way.
+    fn closure_keep_pass_end(
+        &mut self,
+        bl: &Block,
+        function: &mut Function,
+        data: &Data,
+    ) -> Vec<Value> {
+        if !self.closure_keep.gated || self.loops.is_empty() || bl.result != Type::Void {
+            return Vec::new();
+        }
+        let mut here: HashMap<u16, usize> = HashMap::new();
+        for op in &bl.operators {
+            for (v, n) in var_mentions_in(op) {
+                *here.entry(v).or_insert(0) += n;
+            }
+        }
+        let dead: Vec<u16> = self
+            .closure_keep
+            .owning
+            .iter()
+            .copied()
+            .filter(|t| {
+                here.get(t)
+                    .is_some_and(|&n| n > 0 && Some(&n) == self.mentions.get(t))
+                    && self.var_scope.contains_key(t)
+                    && !function.is_captured(*t)
+                    && !function.is_skip_free(*t)
+            })
+            .collect();
+        // A record built INLINE (`run(fn() {…})`) has no fn-ref of its own: its only name is
+        // the value the build hands to the expression around it, so it is dead at the end of
+        // the block its build lies in.  (Its local is also named by the function's head
+        // pre-init, so the mention count cannot say this.)
+        let database = data.def_nr("OpDatabase");
+        let mut built_here: HashSet<u16> = HashSet::new();
+        for op in &bl.operators {
+            op.walk(&mut |n| {
+                if let Value::Call(d, args) = n.unspan()
+                    && *d == database
+                    && let Some(Value::Var(r)) = args.first().map(Value::unspan)
+                {
+                    built_here.insert(*r);
+                }
+            });
+        }
+        let inline: Vec<u16> = self
+            .closure_keep
+            .records
+            .iter()
+            .copied()
+            .filter(|r| !self.closure_keep.targets.contains_key(r) && built_here.contains(r))
+            .collect();
+        if dead.is_empty() && inline.is_empty() {
+            return Vec::new();
+        }
+        let (link_pre, links, link_post) = self.closure_keep_links(function);
+        let mut out = link_pre;
+        let sentinel = || Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+        for r in self.closure_keep.records.clone() {
+            let built_for: Vec<u16> = self
+                .closure_keep
+                .targets
+                .get(&r)
+                .map(|ts| ts.iter().copied().filter(|t| dead.contains(t)).collect())
+                .unwrap_or_default();
+            if built_for.is_empty() && !inline.contains(&r) {
+                continue;
+            }
+            let mut others = self.closure_keep_live(&built_for);
+            others.extend(links.iter().copied());
+            let mut release = Vec::new();
+            if let Some(hook) = drop_hook(function, r, data) {
+                release.push(hook);
+            }
+            release.push(call("OpFreeRef", r, data));
+            release.push(v_set(r, sentinel()));
+            for &t in &built_for {
+                release.push(v_set(t, Value::Null));
+            }
+            out.push(v_if(
+                Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(r)]),
+                Self::closure_keep_unless_shared(
+                    &Value::Var(r),
+                    &others,
+                    &[],
+                    Value::Insert(release),
+                    &Value::Null,
+                    data,
+                ),
+                Value::Null,
+            ));
+        }
+        for &t in &dead {
+            out.extend(self.closure_keep_stand_down(t, data));
+            let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(t)]);
+            for &l in &links {
+                out.push(v_if(
+                    Value::Call(
+                        data.def_nr("OpDistinctStore"),
+                        vec![
+                            closure.clone(),
+                            Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(l)]),
+                        ],
+                    ),
+                    Value::Null,
+                    v_set(t, Value::Null),
+                ));
+            }
+            if data.any_closure_drop() {
+                out.push(call("OpDropFnRef", t, data));
+            }
+            out.push(call("OpFreeRef", t, data));
+            out.push(v_set(t, Value::Null));
+        }
+        out.extend(link_post);
+        out
+    }
+
+    /// `@FR-L-CapKeep` at the scope-end release of the fn-ref `v`: null its closure half where
+    /// a closure record or another live fn-ref names the same store, so the release that
+    /// follows finds nothing and that name releases the store instead.  Each stand-down nulls,
+    /// so of several names released in one sweep exactly the last releases.
+    fn closure_keep_stand_down(&self, v: u16, data: &Data) -> Vec<Value> {
+        let mut out: Vec<Value> = self
+            .closure_keep_live(&[v])
+            .into_iter()
+            .map(|y| {
+                Value::Call(
+                    data.def_nr("OpFnRefDetachShared"),
+                    vec![Value::Var(v), Value::Var(y)],
+                )
+            })
+            .collect();
+        let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(v)]);
+        for &r in &self.closure_keep.records {
+            out.push(v_if(
+                Value::Call(
+                    data.def_nr("OpDistinctStore"),
+                    vec![closure.clone(), Value::Var(r)],
+                ),
+                Value::Null,
+                v_set(v, Value::Null),
+            ));
+        }
+        out
+    }
+
+    /// `@FR-L-CapKeep` at the re-mint of a literal BACKING a record captures (loft#1636): the
+    /// statements that let the frame's backing go where the record reading it was kept.
+    ///
+    /// The literal runs ahead of the build in the pass, so by the build the backing would
+    /// already hold the new pass's elements.  Where a fn-ref other than the build's own target
+    /// still names the record whose capture is this backing, that record is kept, and the
+    /// backing is its from here on: the literal mints a fresh store.
+    fn closure_keep_backing(
+        &self,
+        stmt: &Value,
+        function: &Function,
+        data: &Data,
+        links: &[u16],
+    ) -> Vec<Value> {
+        let k = &self.closure_keep;
+        if !k.gated || self.loops.is_empty() {
+            return Vec::new();
+        }
+        let Value::Call(d, args) = stmt.unspan() else {
+            return Vec::new();
+        };
+        if *d != data.def_nr("OpDatabase") {
+            return Vec::new();
+        }
+        let Some(Value::Var(b)) = args.first().map(Value::unspan) else {
+            return Vec::new();
+        };
+        if !function.name(*b).starts_with("__vdb_") {
+            return Vec::new();
+        }
+        let sentinel = || Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+        let distinct = data.def_nr("OpDistinctStore");
+        let mut out = Vec::new();
+        for (r, off, x) in &k.captures {
+            if self.capture_build_backing.backing.get(x) != Some(b) {
+                continue;
+            }
+            let except = k.targets.get(r).cloned().unwrap_or_default();
+            let mut holders = self.closure_keep_live(&except);
+            holders.extend_from_slice(links);
+            if holders.is_empty() && k.links.is_empty() {
+                continue;
+            }
+            let captured =
+                Value::Call(data.def_nr("OpGetDbRef"), vec![Value::Var(*r), off.clone()]);
+            let kept = Self::closure_keep_unless_shared(
+                &Value::Var(*r),
+                &holders,
+                &[],
+                Value::Null,
+                &v_set(*b, sentinel()),
+                data,
+            );
+            out.push(v_if(
+                Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(*r)]),
+                v_if(
+                    Value::Call(distinct, vec![Value::Var(*b), captured]),
+                    Value::Null,
+                    kept,
+                ),
+                Value::Null,
+            ));
+        }
+        out
+    }
+
+    /// `@FR-L-CapKeep` at a REBIND of an owning fn-ref local: `(before, after)` the statement
+    /// (loft#1636).  The displaced value is copied aside before, and released after only where
+    /// no other name of the frame — the local's new value, another holder, a closure record —
+    /// holds the same store.  Released, it runs the record's cascade (`OpDropFnRef`) and frees
+    /// the store; the copy is then nulled so the sweep of the temp releases nothing.
+    fn closure_keep_rebind(
+        &mut self,
+        stmt: &Value,
+        function: &mut Function,
+        data: &Data,
+    ) -> Option<(Vec<Value>, Vec<Value>)> {
+        if !self.closure_keep.gated {
+            return None;
+        }
+        let Value::Set(ov, _) = stmt.unspan() else {
+            return None;
+        };
+        let v = *self.var_mapping.get(ov).unwrap_or(ov);
+        if !self.closure_keep.owning.contains(&v)
+            || !self.var_scope.contains_key(&v)
+            || !self.fnref_bound.iter().any(|b| b.contains(&v))
+            || function.is_captured(v)
+            || function.is_skip_free(v)
+        {
+            return None;
+        }
+        let mut holders = self.closure_keep_live(&[]);
+        let records = self.closure_keep.records.clone();
+        let (link_pre, links, link_post) = self.closure_keep_links(function);
+        holders.extend(links);
+        let tp = function.tp(v).clone();
+        self.lift_counter += 1;
+        let tmp = function.add_temp_var(&format!("__fkeep_{}", self.lift_counter), &tp);
+        self.var_scope.insert(tmp, self.scope);
+        let pre = vec![v_set(tmp, Value::Var(v))];
+        let mut release = Vec::new();
+        if data.any_closure_drop() {
+            release.push(call("OpDropFnRef", tmp, data));
+        }
+        release.push(call("OpFreeRef", tmp, data));
+        let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(tmp)]);
+        let mut post = link_pre;
+        post.push(Self::closure_keep_unless_shared(
+            &closure,
+            &holders,
+            &records,
+            Value::Insert(release),
+            &Value::Null,
+            data,
+        ));
+        post.extend(link_post);
+        post.push(v_set(tmp, Value::Null));
+        Some((pre, post))
+    }
+
+    /// `@FR-L-CapOwn` at a REBIND of a fn-ref local that holds a CALL's closure: `(before,
+    /// after)` the statement, or `None` where it is not such a rebind (loft#1609).
+    ///
+    /// A closure record that left its frame is released by the fn-ref holding it, and once the
+    /// local names the new value nothing names the old one.  Before the statement the old
+    /// value is copied into a displaced temp; after it, the temp gives up a closure it shares
+    /// with the new value (`OpFnRefDetachShared` — `f = keep(f)` hands the same record back),
+    /// runs the record's cascade and frees its store, and is set to null so the scope-end
+    /// sweep of the temp releases nothing.  Declined where the old value may be a record this
+    /// frame built (the record releases through itself) or another local shares the fn-ref
+    /// (`g = f`: releasing it here would leave `g` a freed closure).
+    fn fnref_call_rebind(
+        &mut self,
+        stmt: &Value,
+        function: &mut Function,
+        data: &Data,
+    ) -> Option<(Vec<Value>, Vec<Value>)> {
+        let Value::Set(ov, rhs) = stmt.unspan() else {
+            return None;
+        };
+        // Only a CALL's closure is displaced here: a lambda built in this frame is released
+        // through its own record, and the first assignment of a local declared ahead of a
+        // branch (`h` bound in each arm) displaces only its null pre-init.
+        if !matches!(rhs.unspan(), Value::Call(d, _) if !data.def(*d).name().starts_with("Op")) {
+            return None;
+        }
+        let v = *self.var_mapping.get(ov).unwrap_or(ov);
+        if !matches!(function.tp(v).base(), Type::Function(..))
+            || !self.fnref_bound.iter().any(|b| b.contains(&v))
+            || !self.var_scope.contains_key(&v)
+            || function.is_argument(v)
+            || function.is_captured(v)
+            || function.is_compiler_generated(v)
+            || function.is_skip_free(v)
+        {
+            return None;
+        }
+        let count = function.count();
+        // Every entry a callee's tagged note (a call result), never a local of this frame.
+        if function.tp(v).depend().iter().any(|&r| r < count) {
+            return None;
+        }
+        if (0..count).any(|u| {
+            u != v
+                && matches!(function.tp(u).base(), Type::Function(..))
+                && function.tp(u).depend().contains(&v)
+        }) {
+            return None;
+        }
+        let tp = function.tp(v).clone();
+        self.lift_counter += 1;
+        let tmp = function.add_temp_var(&format!("__fdisp_{}", self.lift_counter), &tp);
+        self.var_scope.insert(tmp, self.scope);
+        let pre = vec![v_set(tmp, Value::Var(v))];
+        let mut post = vec![Value::Call(
+            data.def_nr("OpFnRefDetachShared"),
+            vec![Value::Var(tmp), Value::Var(v)],
+        )];
+        if data.any_closure_drop() {
+            post.push(call("OpDropFnRef", tmp, data));
+        }
+        post.push(call("OpFreeRef", tmp, data));
+        post.push(v_set(tmp, Value::Null));
         Some((pre, post))
     }
 
@@ -13299,8 +14128,17 @@ impl Scopes<'_> {
         let mut pre_inits: Vec<u16> = Vec::new();
         self.find_first_ref_vars(t_val, function, &mut pre_inits);
         self.find_first_ref_vars(f_val, function, &mut pre_inits);
+        // The arm-scoped ones are kept aside: each is its arm's own local, so its one bind
+        // there is a FIRST bind on every path — the adoption below offers it the same.
+        let mut arm_scoped: Vec<u16> = Vec::new();
         if crate::keys::arm_scope_enabled() {
-            pre_inits.retain(|&v| !self.confined_to_one_arm(v, t_val, f_val, function));
+            pre_inits.retain(|&v| {
+                let confined = self.confined_to_one_arm(v, t_val, f_val, function, data);
+                if confined {
+                    arm_scoped.push(v);
+                }
+                !confined
+            });
         }
 
         // Also find small variables assigned in BOTH branches (or an else-if chain).
@@ -13324,8 +14162,21 @@ impl Scopes<'_> {
         // When that bind is the local's only assignment it follows the pre-init on every
         // path that reaches it, so the local holds the sentinel there: it is a first bind.
         if crate::keys::adopt_first_bind_enabled() {
-            for &v in &pre_inits {
-                if !self.multi_assigned.contains(&v)
+            // …and the same fact when the AUTHOR wrote the null: `(B-Scope)` refuses a read of
+            // a local an arm first binds, so `x: T? = null; if c { x = mk() } … x` is how such a
+            // local is spelled now, and every bind of it but the arm's writes the sentinel.
+            let null_led: Vec<u16> = self
+                .null_led
+                .iter()
+                .copied()
+                .filter(|v| !pre_inits.contains(v))
+                .collect();
+            for &v in pre_inits
+                .iter()
+                .chain(null_led.iter())
+                .chain(arm_scoped.iter())
+            {
+                if (!self.multi_assigned.contains(&v) || self.null_led.contains(&v))
                     && let Some(value) = only_bind_in_arms(t_val, f_val, v)
                     && crate::use_analysis::adopts_minted_at_bind(data, function, v, value)
                 {
@@ -13359,12 +14210,14 @@ impl Scopes<'_> {
         // reconcile intersects rather than unions.
         let owned_before = self.owned_refs.clone();
         let backing_before = self.construction_backing.clone();
+        let binds_before = self.bind_backing.clone();
         let views_before = self.view_backing.clone();
         let mints_before = self.tuple_call_mint.clone();
         let now_before = self.tuple_member_now.clone();
         let scanned_true = self.scan(t_val, function, data);
         let owned_after_true = std::mem::replace(&mut self.owned_refs, owned_before);
         let backing_after_true = std::mem::replace(&mut self.construction_backing, backing_before);
+        let binds_after_true = std::mem::replace(&mut self.bind_backing, binds_before);
         let views_after_true = std::mem::replace(&mut self.view_backing, views_before);
         let mints_after_true = std::mem::replace(&mut self.tuple_call_mint, mints_before);
         let now_after_true = std::mem::replace(&mut self.tuple_member_now, now_before);
@@ -13373,6 +14226,8 @@ impl Scopes<'_> {
             .retain(|k, depth| owned_after_true.get(k) == Some(depth));
         self.construction_backing
             .retain(|k, w| backing_after_true.get(k) == Some(w));
+        self.bind_backing
+            .retain(|k, w| binds_after_true.get(k) == Some(w));
         self.view_backing
             .retain(|k, b| views_after_true.get(k) == Some(b));
         self.tuple_call_mint
@@ -13462,6 +14317,7 @@ impl Scopes<'_> {
         t_val: &Value,
         f_val: &Value,
         function: &Function,
+        data: &Data,
     ) -> bool {
         let total = self.mentions.get(&v).copied().unwrap_or(0);
         if total == 0
@@ -13477,7 +14333,12 @@ impl Scopes<'_> {
         // variable, so the arm that bound another backing would release the wrong one.
         let (in_t, in_f) = (mentions_of(t_val, v), mentions_of(f_val, v));
         let collection = matches!(function.tp(v).base(), Type::Vector(_, _) | Type::Tuple(_));
-        if in_t + in_f != total || (collection && in_t > 0 && in_f > 0) {
+        // A VECTOR bound in both arms is each arm's own when each arm's bind names the backing it
+        // fills (`bind_backing`, loft#1607): the arm's release then reads that one.
+        let per_arm_backing = matches!(function.tp(v).base(), Type::Vector(_, _))
+            && arm_bind_backing(t_val, v, function, data).is_some()
+            && arm_bind_backing(f_val, v, function, data).is_some();
+        if in_t + in_f != total || (collection && in_t > 0 && in_f > 0 && !per_arm_backing) {
             return false;
         }
         // A local the arm hands OUT — as the arm's value (`w = if c { a = …; a } else { … }`) or
@@ -13563,6 +14424,22 @@ impl Scopes<'_> {
         // Releases owed at the END of the current statement: a statement's own parts arrive
         // flat, so they wait for the statement boundary, a `Line` marker or the block's end.
         let mut at_end: Vec<Value> = Vec::new();
+        self.fnref_bound.push(HashSet::new());
+        // `@FR-L-CapKeep` — every holder the frame compares by store starts at null at the
+        // function's head, so each later read of one is dominated by a bind (SLOTS.md § the
+        // reserve does not initialise), and each later `Set` is a rebind.
+        if self.fnref_bound.len() == 1 && self.closure_keep.gated {
+            for h in self.closure_keep.holders.clone() {
+                if self.var_scope.contains_key(&h) {
+                    continue;
+                }
+                self.register_binding(h, function);
+                ls.push(v_set(h, Value::Null));
+                if let Some(bound) = self.fnref_bound.last_mut() {
+                    bound.insert(h);
+                }
+            }
+        }
         for (i, v) in bl.operators.iter().enumerate() {
             if matches!(v.unspan(), Value::Line(_)) {
                 ls.append(&mut at_end);
@@ -13608,13 +14485,44 @@ impl Scopes<'_> {
             // construction of a local (outside a loop) displaces nothing.
             let rebuilt = self.in_place_rebuild(v, function, data);
             let rebind_release = self.vector_rebind_release(v, function, data);
-            let call_rebind = self.vector_call_rebind(v, function, data);
+            let mut keep_detach = Vec::new();
+            if self.closure_keep.gated && !self.loops.is_empty() {
+                keep_detach = self.closure_keep_backing(v, function, data, &[]);
+                keep_detach.extend(self.closure_keep_detach(v, function, data, &[]));
+                if !keep_detach.is_empty() && !self.closure_keep.links.is_empty() {
+                    let (link_pre, links, link_post) = self.closure_keep_links(function);
+                    keep_detach = self.closure_keep_backing(v, function, data, &links);
+                    keep_detach.extend(self.closure_keep_detach(v, function, data, &links));
+                    let mut wrapped = link_pre;
+                    wrapped.append(&mut keep_detach);
+                    wrapped.extend(link_post);
+                    keep_detach = wrapped;
+                }
+            }
+            let call_rebind = self
+                .vector_call_rebind(v, function, data)
+                .or_else(|| self.closure_keep_rebind(v, function, data))
+                .or_else(|| self.fnref_call_rebind(v, function, data));
             let promoted_refill = self.promoted_vector_refill(v, function, data);
             // A literal's `Set` heads the statements that fill its new backing, so its release
             // waits for the statement's end; any other rebind is a whole statement already.
             let rebind_is_group = matches!(v.unspan(), Value::Set(_, rhs)
                 if literal_backing_of(rhs, function, data).is_some());
+            let adopted_detach = self.adopted_backing_detach(v, function, data);
+            if let Value::Set(ov, _) = v.unspan()
+                && matches!(function.tp(*ov).base(), Type::Function(..))
+                && let Some(bound) = self.fnref_bound.last_mut()
+            {
+                bound.insert(*self.var_mapping.get(ov).unwrap_or(ov));
+            }
+            let outer_target = self.keep_build_target;
+            if let Value::Set(t, rhs) = v.unspan()
+                && matches!(rhs.unspan(), Value::Block(b) if b.name == "fn_ref_with_closure")
+            {
+                self.keep_build_target = Some(*self.var_mapping.get(t).unwrap_or(t));
+            }
             let sv = self.scan(v, function, data);
+            self.keep_build_target = outer_target;
             // Arm the hand-offs this statement makes, AFTER it is scanned: its own displaced
             // release and its retirement read the facts of the assignments before it, and what
             // it hands off applies to the value it has just assigned (`@FR-O-Latest`).  Armed
@@ -13724,6 +14632,7 @@ impl Scopes<'_> {
                     }
                 }
             }
+            ls.extend(keep_detach);
             if let Some((pre, _)) = &rebuilt {
                 ls.extend(pre.iter().cloned());
             }
@@ -13764,6 +14673,7 @@ impl Scopes<'_> {
                 ls.extend(rebind_release);
                 ls.extend(call_release);
             }
+            ls.extend(adopted_detach);
             // loft#1331 — DETACH an accumulator this statement repointed at a destination the
             // frame does not own, so the scope-exit sweep frees nothing instead of freeing the
             // caller's collection.  @FR-O-Latest is the fact: ownership belongs to the LATEST
@@ -13932,6 +14842,13 @@ impl Scopes<'_> {
         for v in frees {
             ls.push(v);
         }
+        // After the block's own frees: a capture the record adopted is released by the
+        // record, and the frame's release of it asks whether the record is still live.
+        if !is_return {
+            let pass_end = self.closure_keep_pass_end(bl, function, data);
+            ls.extend(pass_end);
+        }
+        self.fnref_bound.pop();
         ls
     }
 
@@ -14200,6 +15117,17 @@ impl Scopes<'_> {
                 arm_dropped.insert(w);
             }
         }
+        let moved_out = if is_return {
+            return_moved_holders(
+                expr,
+                function,
+                data,
+                &self.owner_witness,
+                &self.witness_aliases,
+            )
+        } else {
+            None
+        };
         let ret_var = returned_var_null_unified(expr, data.def_nr("OpNullRefSentinel"));
         // @PLN85 cluster II / A.1 part i (OWNERSHIP_MODEL row 100, invariant #5
         // "per binding, per path, complete") — the return-source SET, not the
@@ -14549,6 +15477,7 @@ impl Scopes<'_> {
                 sources: return_sources,
                 field_skip: path_skip,
                 arm_dropped,
+                moved_out,
             },
         );
         // @PLN85 P4-records — at a RETURN site, a record work-ref's store may
@@ -15265,7 +16194,20 @@ impl Scopes<'_> {
             sources: return_sources,
             field_skip: path_skip,
             arm_dropped,
+            moved_out,
         } = delivered;
+        // loft#1628 — a holder's hook runs only where it holds a record other than the one
+        // this return hands out.
+        let unless_moved = |h: u16, hook: Option<Value>| match moved_out {
+            Some((x, holders)) if holders.contains(&h) => hook.map(|hook| {
+                v_if(
+                    Value::Call(data.def_nr("OpNeRef"), vec![Value::Var(h), Value::Var(*x)]),
+                    hook,
+                    Value::Null,
+                )
+            }),
+            _ => hook,
+        };
         let scope_debug = std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug");
         let mut ls = Vec::new();
         // The conditional releases of loft#1464, kept apart so they can go FIRST.  Each reads a
@@ -15275,6 +16217,9 @@ impl Scopes<'_> {
         // it standing, `--native` nulls `store_nr`), so a guard placed after it would decline on
         // one and double-free on the other.
         let mut guarded: Vec<Value> = Vec::new();
+        // The owners whose drop a conditional release below already carries — one hook per
+        // store, on the FIRST release of it (a view and its backing free one store).
+        let mut guarded_hooks: std::collections::HashSet<u16> = std::collections::HashSet::new();
         let vars = self.variables(to_scope);
         if scope_debug {
             eprintln!(
@@ -15323,6 +16268,26 @@ impl Scopes<'_> {
             if v == ret_var || suppress_source(function, v) {
                 continue;
             }
+            // `@FR-L-CapKeep` — a closure record another live fn-ref still names is that
+            // name's to release: the record local lets go of it before its own release.
+            if self.closure_keep.gated && self.closure_keep.records.contains(&v) {
+                let mut holders = self.closure_keep_live(&[]);
+                let (link_pre, links, link_post) = self.closure_keep_links(function);
+                holders.extend(links);
+                if !holders.is_empty() {
+                    let sentinel = Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+                    ls.extend(link_pre);
+                    ls.push(Self::closure_keep_unless_shared(
+                        &Value::Var(v),
+                        &holders,
+                        &[],
+                        Value::Null,
+                        &v_set(v, sentinel),
+                        data,
+                    ));
+                    ls.extend(link_post);
+                }
+            }
             // `@FR-H-Drop`, the scope-end clause — a VECTOR local whose elements live in a
             // backing registered in an OUTER scope (its `__vdb_N`, or the `__ref_N` buffer a call
             // delivered it through, both minted at the function's head so the store is reused)
@@ -15336,7 +16301,8 @@ impl Scopes<'_> {
             // A CAPTURED local's store is the closure record's to release (`@FR-L-CapOwn`,
             // `capture_adoption_owns_free`), at every scope's end as at the function's: released
             // here as well, its hooks ran twice (loft#1606).
-            if let Some(backing) = outer_collection_backing(function, v, &exited)
+            if let Some(backing) =
+                outer_collection_backing(function, v, &exited, self.bind_backing.get(&v).copied())
                 && !capture_adoption_owns_free(data, function, &self.capture_build_backing, v)
                 && let Some(hook) = self.scope_end_drop(function, backing, data, None)
             {
@@ -15408,11 +16374,11 @@ impl Scopes<'_> {
                     )
                     && !records.is_empty()
                 {
-                    guarded.push(free_unless_record_built(v, &records, Some(w), data));
+                    guarded.push(free_unless_record_built(v, &records, Some(w), None, data));
                 }
                 ls.push(release_witness(
                     w,
-                    self.witness_hook(function, data, v, w),
+                    unless_moved(w, self.witness_hook(function, data, v, w)),
                     data,
                 ));
                 continue;
@@ -15511,9 +16477,12 @@ impl Scopes<'_> {
                 // `0xDEADBEEF`.  Invisible without `LOFT_POISON=1`, because a freed arena slot
                 // still reads back the bytes it held — every cell of the loft#1443 guard passed
                 // on stale data.
+                // A record whose link delivery the frame decides at run time
+                // (`@FR-L-CapKeep`) stands down above where the caller holds it, and is
+                // released here on the runs that did not deliver it.
                 let in_ret = ret_borrows_v
                     || backs_return_source
-                    || link_delivered.contains(&v)
+                    || (link_delivered.contains(&v) && !self.closure_keep.decides_link(v))
                     || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v)
                     // …and a CLOSURE RECORD this return delivers.  `ret_borrows_v` decodes the
                     // declared return's `CalleeFrame` note, and that note is published once per
@@ -15690,7 +16659,20 @@ impl Scopes<'_> {
                     )
                     && !records.is_empty()
                 {
-                    guarded.push(free_unless_record_built(v, &records, None, data));
+                    // The release this stands in for is the frame's whole one, hook included
+                    // (`@FR-H-Drop`): on a run that skips the build nothing else releases the
+                    // elements.  The hook is the OWNER's — a vector local viewing its backing
+                    // (`w` over `__vdb_N`) frees the same store — and it runs once, ahead of
+                    // whichever of the two is released first.
+                    let owner = match function.tp(v).depend().as_slice() {
+                        [] => Some(v),
+                        [b] => Some(*b),
+                        _ => None,
+                    };
+                    let hook = owner
+                        .filter(|o| guarded_hooks.insert(*o))
+                        .and_then(|o| self.scope_end_drop(function, o, data, None));
+                    guarded.push(free_unless_record_built(v, &records, None, hook, data));
                 }
                 if function.is_skip_free(v) && inject_free_skipfree() == Some(function.name(v)) {
                     ls.push(Value::Call(
@@ -15749,7 +16731,7 @@ impl Scopes<'_> {
                         // the caller's own store.  A `Join` is owned on one arm and a borrow
                         // on the other and they are the SAME call, so nothing static separates
                         // them; the store number does.
-                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
+                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, path_skip, arm_dropped)) {
                             ls.push(hook);
                         }
                         ls.push(Value::Call(
@@ -15847,7 +16829,7 @@ impl Scopes<'_> {
                         // The FREE is skipped in the adoption case; the DROP is not.
                         // The store surviving into the next iteration is a reuse
                         // optimisation, and the value it held is over either way.
-                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
+                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, path_skip, arm_dropped)) {
                             ls.push(hook);
                         }
                         // Several buffers — one per arm of the value branch `v` was bound
@@ -15874,7 +16856,7 @@ impl Scopes<'_> {
                         }
                     } else if let Some(w) = borrow_witness {
                         // Free ONLY when the local no longer names what its dep names.
-                        if let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped) {
+                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, path_skip, arm_dropped)) {
                             ls.push(hook);
                         }
                         ls.push(Value::Call(
@@ -15891,7 +16873,7 @@ impl Scopes<'_> {
                         // the value's life — unless `v` is a buffer whose witness already
                         // ran it.
                         if !is_buffer
-                            && let Some(hook) = self.scope_end_hook(function, v, data, path_skip, arm_dropped)
+                            && let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, path_skip, arm_dropped))
                         {
                             ls.push(hook);
                         }
@@ -15964,8 +16946,20 @@ impl Scopes<'_> {
                 let mut carried: Vec<u16> = Vec::new();
                 closure_records_of_source(data, function, v, &mut carried);
                 let link_carries = matches!(function.tp(v), Type::Function(..))
-                    && carried.iter().any(|w| link_delivered.contains(w));
-                let in_ret = tp.depend().contains(&v)
+                    && carried
+                        .iter()
+                        .any(|w| link_delivered.contains(w) && !self.closure_keep.decides_link(*w));
+                // A return's dep on the fn-ref says its value was computed FROM it; only a
+                // returned fn-ref can carry the closure out.  Asked for a name whose release
+                // is decided by store identity (`@FR-L-CapKeep`), where reading `"{g()}"`
+                // as a delivery left the record `g` alone holds unreleased.
+                let keep_holder = self.closure_keep.gated && self.closure_keep.holders.contains(&v);
+                // De Morgan of `!(keep_holder && !is_fn)`, which clippy reads as non-minimal.
+                // Written this way round on purpose: the dep test leads, and the exception
+                // reads as "unless this is a kept holder that is not itself a function".
+                let dep_delivers = tp.depend().contains(&v)
+                    && (!keep_holder || matches!(tp.base(), Type::Function(..)));
+                let in_ret = dep_delivers
                     || ret_carries
                     || link_carries
                     || v == ret_var
@@ -16004,6 +16998,25 @@ impl Scopes<'_> {
                             function.name(v),
                             self.var_scope.get(&v).copied().unwrap_or(u16::MAX),
                         );
+                    }
+                    // `@FR-L-CapOwn` — a fn-ref no local record releases (a call result, a
+                    // parameter) holds a record that LEFT its frame, and the release it took
+                    // over runs the hooks as well as freeing the store.  Which lambda it holds
+                    // is a run-time fact, so the cascade is dispatched on its `d_nr`
+                    // (loft#1609).  A local record releases through itself and needs no op.
+                    let local_record = carried
+                        .iter()
+                        .any(|&r| r < function.count() && function.name(r).starts_with("___clos_"));
+                    // `@FR-L-CapKeep` — in a frame whose names are compared by store, the
+                    // fn-ref stands down where a record or another live name holds the same
+                    // store, and is otherwise the record's LAST name: its release is the whole
+                    // of one, hooks included, whether or not a local record built it.
+                    let keep = self.closure_keep.gated && self.closure_keep.holders.contains(&v);
+                    if keep {
+                        ls.extend(self.closure_keep_stand_down(v, data));
+                    }
+                    if (keep || !local_record) && data.any_closure_drop() {
+                        ls.push(call("OpDropFnRef", v, data));
                     }
                     ls.push(call("OpFreeRef", v, data));
                 }
@@ -19733,6 +20746,214 @@ fn subtree_has_return(node: &Value) -> bool {
     found
 }
 
+/// loft#1636, `@FR-L-CapKeep` — the closure records and the fn-ref locals of one frame whose
+/// releases are decided by STORE IDENTITY at run time.
+///
+/// `(L-CapScalar)` makes every build of a closure its own value, and `(L-CapOwn)` frees each
+/// record once.  A record built in a loop is rebuilt in place on the next pass, which is right
+/// while nothing else names it, and a fn-ref local kept from an earlier pass (`if i == 0 { g =
+/// f }`) is such a name.  Which pass was kept is a per-run fact, so where more than one name can
+/// reach one record the frame asks, at the moment it would let a record go, whether any other
+/// of its names still holds that store:
+/// - a build that would rebuild a record another fn-ref still names builds a new one instead
+///   (`Scopes::closure_keep_detach`);
+/// - a rebind of a fn-ref releases the record it displaced only where no other name holds it
+///   (`Scopes::closure_keep_rebind`);
+/// - the scope-end sweep releases a record, or a fn-ref's closure, only where no name released
+///   after it holds the same store (`Scopes::closure_keep_stand_down`).
+///
+/// `holders` are the frame's own fn-ref locals, `records` its `___clos_N` locals not confined
+/// to one pass.  `owning` are the holders every assignment of which yields a closure this
+/// frame owns (a build, another holder, a call's result): only a displaced value of those is
+/// ever released at a rebind, so a fn-ref that may view a caller's closure never is.
+/// `LOFT_NO_CLOSURE_KEEP=1` leaves every frame ungated — the bisect step for a wrong value, a
+/// leak or a double release out of a closure kept from one loop pass.
+#[derive(Default)]
+pub(crate) struct ClosureKeep {
+    gated: bool,
+    records: Vec<u16>,
+    holders: Vec<u16>,
+    owning: HashSet<u16>,
+    /// Every capture a build writes: `(record, offset, captured local)`.
+    captures: Vec<(u16, Value, u16)>,
+    /// The fn-ref locals each record's build is bound to directly (`f = fn() {…}`).
+    targets: HashMap<u16, Vec<u16>>,
+    /// The `&fn(…)` parameters: a record written through one is the CALLER's name for it.
+    links: Vec<u16>,
+}
+
+impl ClosureKeep {
+    /// Whether the frame decides at run time if the record `r` was delivered through a
+    /// `&fn(…)` parameter, instead of taking every link write as a delivery.
+    pub(crate) fn decides_link(&self, r: u16) -> bool {
+        self.gated && !self.links.is_empty() && self.records.contains(&r)
+    }
+}
+
+pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -> ClosureKeep {
+    if std::env::var_os("LOFT_NO_CLOSURE_KEEP").is_some() {
+        return ClosureKeep::default();
+    }
+    let confined = pass_confined_records(data, function, code);
+    let mut out = ClosureKeep::default();
+    for v in 0..function.count() {
+        if function.is_argument(v) {
+            if let Type::RefVar(inner) = function.tp(v).base()
+                && matches!(inner.base(), Type::Function(..))
+            {
+                out.links.push(v);
+            }
+            continue;
+        }
+        match function.tp(v).base() {
+            Type::Function(..) if !function.is_compiler_generated(v) => out.holders.push(v),
+            Type::Reference(r, _)
+                if function.name(v).starts_with("___clos_") && !confined.contains(r) =>
+            {
+                out.records.push(v);
+            }
+            _ => {}
+        }
+    }
+    let database = data.def_nr("OpDatabase");
+    let mut built_in_loop = false;
+    let mut shared = false;
+    let mut foreign: HashSet<u16> = HashSet::new();
+    // The three `&mut` out-params are one answer taken in one pass; bundling them into a
+    // struct would name a type that exists only to satisfy the count.  Same reading as the
+    // other 27 sites that carry this allow.
+    #[allow(clippy::too_many_arguments)]
+    fn walk(
+        node: &Value,
+        in_loop: bool,
+        keep: &ClosureKeep,
+        data: &Data,
+        database: u32,
+        built_in_loop: &mut bool,
+        shared: &mut bool,
+        foreign: &mut HashSet<u16>,
+    ) {
+        let inner = in_loop || matches!(node.unspan(), Value::Loop(_));
+        match node.unspan() {
+            Value::Call(d, args)
+                if in_loop
+                    && *d == database
+                    && matches!(args.first().map(Value::unspan), Some(Value::Var(r)) if keep.records.contains(r)) =>
+            {
+                *built_in_loop = true;
+            }
+            Value::Set(p, rhs)
+                if keep.links.contains(p)
+                    && matches!(rhs.unspan(), Value::Var(x) if keep.holders.contains(x)) =>
+            {
+                *shared = true;
+            }
+            Value::Set(h, rhs) if keep.holders.contains(h) => match rhs.unspan() {
+                Value::Var(x) if keep.holders.contains(x) => *shared = true,
+                Value::Call(d, args) if !data.def(*d).name().starts_with("Op") => {
+                    if args
+                        .iter()
+                        .any(|a| matches!(a.unspan(), Value::Var(x) if keep.holders.contains(x)))
+                    {
+                        *shared = true;
+                    }
+                }
+                Value::Block(b) if b.name == "fn_ref_with_closure" => {}
+                Value::Null | Value::Int(_) => {}
+                _ => {
+                    foreign.insert(*h);
+                }
+            },
+            _ => {}
+        }
+        node.unspan().for_each_child(&mut |ch| {
+            walk(
+                ch,
+                inner,
+                keep,
+                data,
+                database,
+                built_in_loop,
+                shared,
+                foreign,
+            );
+        });
+    }
+    walk(
+        code,
+        false,
+        &out,
+        data,
+        database,
+        &mut built_in_loop,
+        &mut shared,
+        &mut foreign,
+    );
+    out.gated = (built_in_loop && !out.records.is_empty()) || (shared && !out.holders.is_empty());
+    if !out.gated {
+        return ClosureKeep::default();
+    }
+    let set_dbref = data.def_nr("OpSetDbRef");
+    let mut captures = Vec::new();
+    code.walk(&mut |n| {
+        if let Value::Call(d, args) = n.unspan()
+            && *d == set_dbref
+            && let (Some(Value::Var(r)), Some(off), Some(Value::Var(x))) = (
+                args.first().map(Value::unspan),
+                args.get(1),
+                args.get(2).map(Value::unspan),
+            )
+            && out.records.contains(r)
+        {
+            captures.push((*r, off.clone(), *x));
+        }
+    });
+    out.captures = captures;
+    let mut targets: HashMap<u16, Vec<u16>> = HashMap::new();
+    code.walk(&mut |n| {
+        if let Value::Set(h, rhs) = n.unspan()
+            && let Value::Block(b) = rhs.unspan()
+            && b.name == "fn_ref_with_closure"
+        {
+            for op in &b.operators {
+                if let Value::Call(d, args) = op.unspan()
+                    && *d == database
+                    && let Some(Value::Var(r)) = args.first().map(Value::unspan)
+                    && out.records.contains(r)
+                {
+                    targets.entry(*r).or_default().push(*h);
+                }
+            }
+        }
+    });
+    out.targets = targets;
+    out.owning = out
+        .holders
+        .iter()
+        .copied()
+        .filter(|h| !foreign.contains(h))
+        .collect();
+    if std::env::var_os("LOFT_TRACE_CLOSURE_KEEP").is_some() {
+        eprintln!(
+            "[closure-keep] {}: records {:?} holders {:?} owning {:?}",
+            function.name,
+            out.records
+                .iter()
+                .map(|&v| function.name(v).to_string())
+                .collect::<Vec<_>>(),
+            out.holders
+                .iter()
+                .map(|&v| function.name(v).to_string())
+                .collect::<Vec<_>>(),
+            out.owning
+                .iter()
+                .map(|&v| function.name(v).to_string())
+                .collect::<Vec<_>>(),
+        );
+    }
+    out
+}
+
 fn captures_built_in_a_loop(node: &Value, set_dbref: u32, in_loop: bool, out: &mut HashSet<u16>) {
     let inner = in_loop || matches!(node.unspan(), Value::Loop(_));
     if in_loop
@@ -19744,6 +20965,119 @@ fn captures_built_in_a_loop(node: &Value, set_dbref: u32, in_loop: bool, out: &m
     }
     node.unspan()
         .for_each_child(&mut |ch| captures_built_in_a_loop(ch, set_dbref, inner, out));
+}
+
+/// loft#1610, `@FR-L-CapOwn` — the closure record types whose every value is confined to one
+/// pass of a loop.
+///
+/// `(L-CapOwn)` frees a captured store once, "by whichever of the two outlives the other".  A
+/// record built in a loop body is rebuilt every pass, and while it ADOPTED its captures each
+/// pass's record released what it adopted: a loop-body capture through a backing the next pass
+/// had already refilled (the next pass's element, released early and then twice more), a
+/// function-scope capture once per pass.  Where the fn-ref local that holds the record is itself
+/// a loop-body local used only as a callee, the record dies with the pass, so it cannot outlive
+/// anything it captured, and the frame's own release is the one that stands.
+///
+/// Confined: a `Set(f, …)` inside a loop whose value builds a closure (`FnRef` over a
+/// `___clos_N`), where every `Set` of `f` lies in that loop and `f` is never read as a VALUE
+/// anywhere.  A call through it is `CallRef(f, …)`, whose callee is an index and not a `Var`.
+/// The operands of a release (`OpFreeRef`, `OpConvBoolFromRef`, `OpRefIsNull`, …) are not
+/// escapes: this is asked of the body before the scope pass and after it, and the two readings
+/// must agree.
+fn pass_confined_records(data: &Data, function: &Function, code: &Value) -> HashSet<u32> {
+    let release_ops: HashSet<u32> = [
+        "OpFreeRef",
+        "OpFreeRefIfDistinct",
+        "OpConvBoolFromRef",
+        "OpRefIsNull",
+    ]
+    .iter()
+    .map(|n| data.def_nr(n))
+    .filter(|&d| d != u32::MAX)
+    .collect();
+    // (fn-ref local, record local, loop id) for every closure build inside a loop.
+    let mut builds: Vec<(u16, u16, usize)> = Vec::new();
+    // Per local: the loop ids of every `Set` of it (usize::MAX outside any loop).
+    let mut sets: HashMap<u16, HashSet<usize>> = HashMap::new();
+    // Locals read as a VALUE somewhere that is not a release operand.
+    let mut read_as_value: HashSet<u16> = HashSet::new();
+    fn built_record(v: &Value) -> Option<u16> {
+        match v.unspan() {
+            Value::FnRef(_, rec, _) if *rec != u16::MAX => Some(*rec),
+            Value::Block(bl) => bl.operators.last().and_then(built_record),
+            Value::Insert(ops) => ops.last().and_then(built_record),
+            _ => None,
+        }
+    }
+    #[allow(clippy::too_many_arguments)]
+    fn walk(
+        node: &Value,
+        loop_id: usize,
+        next_id: &mut usize,
+        release_ops: &HashSet<u32>,
+        builds: &mut Vec<(u16, u16, usize)>,
+        sets: &mut HashMap<u16, HashSet<usize>>,
+        read_as_value: &mut HashSet<u16>,
+    ) {
+        match node.unspan() {
+            Value::Loop(_) => {
+                let id = *next_id;
+                *next_id += 1;
+                node.unspan().for_each_child(&mut |c| {
+                    walk(c, id, next_id, release_ops, builds, sets, read_as_value);
+                });
+                return;
+            }
+            Value::Set(v, rhs) => {
+                sets.entry(*v).or_default().insert(loop_id);
+                if loop_id != usize::MAX
+                    && let Some(rec) = built_record(rhs)
+                {
+                    builds.push((*v, rec, loop_id));
+                }
+            }
+            Value::Var(v) => {
+                read_as_value.insert(*v);
+            }
+            Value::Call(d, _) if release_ops.contains(d) => return,
+            _ => {}
+        }
+        node.unspan().for_each_child(&mut |c| {
+            walk(
+                c,
+                loop_id,
+                next_id,
+                release_ops,
+                builds,
+                sets,
+                read_as_value,
+            );
+        });
+    }
+    let mut next_id = 0;
+    walk(
+        code,
+        usize::MAX,
+        &mut next_id,
+        &release_ops,
+        &mut builds,
+        &mut sets,
+        &mut read_as_value,
+    );
+    let mut out = HashSet::new();
+    for (f, rec, loop_id) in builds {
+        let only_this_loop = sets
+            .get(&f)
+            .is_some_and(|ids| ids.len() == 1 && ids.contains(&loop_id));
+        if only_this_loop
+            && !read_as_value.contains(&f)
+            && let Type::Reference(record, _) = function.tp(rec).base()
+            && data.def(*record).name.starts_with("__closure_")
+        {
+            out.insert(*record);
+        }
+    }
+    out
 }
 
 /// The capture variables a value's closure BUILDS write into their record.
@@ -19931,7 +21265,15 @@ fn adoption_build_is_conditional(builds: &CaptureBuilds, v: u16) -> bool {
 /// `witness` is the local's OWNER WITNESS where it has one (`@FR-O-Witness`): the sweep
 /// releases that separately, so the release here declines by store identity where the two
 /// would name one store.  Without the witness the free is plain.
-fn free_unless_record_built(v: u16, records: &[u16], witness: Option<u16>, data: &Data) -> Value {
+///
+/// `hook` is the release's drop (`@FR-H-Drop`), run ahead of the free on the same path.
+fn free_unless_record_built(
+    v: u16,
+    records: &[u16],
+    witness: Option<u16>,
+    hook: Option<Value>,
+    data: &Data,
+) -> Value {
     // ANY of them being there is the fact: where several records can hold this store they are
     // mutually exclusive builds, so on a given run at most one exists — and that one's cascade
     // is the release this free stands down for.  Folded right so the last record is the base
@@ -19954,6 +21296,10 @@ fn free_unless_record_built(v: u16, records: &[u16], witness: Option<u16>, data:
             vec![Value::Var(v), Value::Var(w)],
         ),
         None => call("OpFreeRef", v, data),
+    };
+    let release = match hook {
+        Some(hook) => Value::Insert(vec![hook, release]),
+        None => release,
     };
     v_if(present, Value::Null, release)
 }
@@ -20911,6 +22257,9 @@ struct Delivered {
     /// its join, so the common sweep must not run it again. Their FREE is untouched: a store
     /// is freed once whichever arm ran. See [`move_join_hooks_into_arms`].
     arm_dropped: HashSet<u16>,
+    /// loft#1628 — the local a return copies out and the holders that may hold its record, whose
+    /// hooks run only where they hold a DIFFERENT record.  See [`return_moved_holders`].
+    moved_out: Option<(u16, Vec<u16>)>,
 }
 
 /// loft#1515 shape 2 — move a join-return's source hooks INTO its arms, so the arm is the path.
@@ -21263,32 +22612,58 @@ fn return_copies_view_holders(
     data: &Data,
     holders: &HashMap<u16, Vec<u16>>,
 ) -> Vec<u16> {
+    return_copied_local(expr, function, data)
+        .and_then(|src| holders.get(&src).cloned())
+        .unwrap_or_default()
+}
+
+/// The frame's own local a return COPIES onto the return buffer — the source of the
+/// `OpCopyRecord` inside a `materialized_view_return` — or `None` for any other return.
+fn return_copied_local(expr: &Value, function: &Function, data: &Data) -> Option<u16> {
     let Value::Block(bl) = return_tail(expr) else {
-        return Vec::new();
+        return None;
     };
     if bl.name != "materialized_view_return" && bl.name != ARMED_VIEW_RETURN {
-        return Vec::new();
+        return None;
     }
     let copy_nr = data.def_nr("OpCopyRecord");
-    bl.operators
-        .iter()
-        .find_map(|op| {
-            let Value::Call(d, args) = op.unspan() else {
-                return None;
-            };
-            if *d != copy_nr {
-                return None;
-            }
-            let (Value::Var(src), Some(Value::Var(dest))) =
-                (args.first()?.unspan(), args.get(1).map(Value::unspan))
-            else {
-                return None;
-            };
-            (src != dest && !function.is_argument(*src))
-                .then(|| holders.get(src).cloned())
-                .flatten()
-        })
-        .unwrap_or_default()
+    bl.operators.iter().find_map(|op| {
+        let Value::Call(d, args) = op.unspan() else {
+            return None;
+        };
+        if *d != copy_nr {
+            return None;
+        }
+        let (Value::Var(src), Some(Value::Var(dest))) =
+            (args.first()?.unspan(), args.get(1).map(Value::unspan))
+        else {
+            return None;
+        };
+        (src != dest && !function.is_argument(*src)).then_some(*src)
+    })
+}
+
+/// loft#1628, `@FR-H-Move` — the holders whose record a return may be handing out, when it copies
+/// a WITNESSED local onto the return buffer: the local's witness (a record it minted, after a
+/// rebind) and the plain locals it was bound to as they are (a value branch's arm).
+///
+/// Which of them holds the returned record is a per-RUN fact — `x: H = s.h ?? b; if c
+/// { x = mk(9) }; return x` hands out `mk(9)`'s record through the witness on one run and `b`'s
+/// on the other — so each holder's hook is guarded on RECORD identity with the returned local
+/// (`OpNeRef`), not suppressed.  Record identity and not store identity: a container whose
+/// MEMBER the local views shares its store and still owes its own release (#1623's `c4`).
+fn return_moved_holders(
+    expr: &Value,
+    function: &Function,
+    data: &Data,
+    witness: &HashMap<u16, u16>,
+    aliases: &HashMap<u16, Vec<u16>>,
+) -> Option<(u16, Vec<u16>)> {
+    let x = return_copied_local(expr, function, data)?;
+    let &w = witness.get(&x)?;
+    let mut holders = vec![w];
+    holders.extend(aliases.get(&x).into_iter().flatten().copied());
+    Some((x, holders))
 }
 
 /// D-heap-7 — the whole LOCAL a return copies onto the return buffer, when the copy owns that
@@ -21966,6 +23341,7 @@ fn check_ref_leaks(
 
     let built_with = capture_build_backings(data, function, ir);
     let link_delivered = link_written_closure_records(data, function, fn_def_nr);
+    let keep = closure_keep_set(data, function, ir);
     for (&v, &scope) in var_scope {
         if scope == 0 {
             continue; // function parameter — caller frees
@@ -22004,7 +23380,7 @@ fn check_ref_leaks(
         // record and the frame owes no free.  The third suppression leg this mirror has had
         // to learn, and the reason each is a CALL to the emitter's own predicate rather than
         // a restatement of it.
-        if link_delivered.contains(&v) {
+        if link_delivered.contains(&v) && !keep.decides_link(v) {
             continue;
         }
         if v == direct_ret_var {

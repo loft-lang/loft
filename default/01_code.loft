@@ -25,10 +25,20 @@ pub type u16 = integer limit(0, 65535) size(2);
 // -32768 – 32767, 2 bytes.
 pub type i16 = integer limit(-32768, 32767) size(2);
 // 4-byte signed: -2_147_483_647 – 2_147_483_647.  The bottom of the 32-bit range
-// (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold — the
-// same reservation `u32` makes at the top of its range.
+// (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold.
+//
+// `u32` reserves a code too, at the top of its range, and the two reservations LOOK alike
+// and do not behave alike: an `i32` overflow reads `null`, a `u32` overflow reads `0`, the
+// type's default.  That is not a claim that the reservations differ — it is C127's
+// pragmatic exemption, allowed because losing one value out of 2^32 is cheap and being the
+// one narrow type whose overflow is detectable is worth more (DESIGN_DECISIONS.md C127 §
+// Decision).  Pinned across both aliases by
+// `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
 pub type i32 = integer size(4);
-// 4-byte unsigned: 0 – 4_294_967_294.  size(4) forces 4-byte storage
+// 4-byte unsigned: 0 – 4_294_967_294.  The top code is reserved to buy the same refusal
+// `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is
+// NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32`
+// above says why the two differ).  size(4) forces 4-byte storage
 // and serialisation symmetric with `i32`.  Stored as Parts::Int so the
 // in-memory representation is signed i32; values in the upper half
 // (2^31..2^32-2) round-trip through file I/O via 4-byte raw bytes but
@@ -1080,9 +1090,11 @@ fn OpSetShortRaw(v1: reference, fld: const u16, min: const i32, val: integer);
 // `OpGetShortRaw`'s `u16::MAX` both swallow the max value as null).  The write
 // reuses `OpSetShortRaw` (same `(val - min)` store); only the read differs
 // (no sentinel decode).  Nullable `u16`/`i16` fields stay on `OpGetShort`.
-// @PLN167 — a LINK to a non-null two-byte place whose type kept a spare top code
-// (`limit(-1000, 1000) size(2)`): the overflow's `u16::MAX` reads as null (C85), as the
-// local it may name answers; every other code is a value.
+// ⚠ RETIRED by C127 and kept only until an op removal can renumber the table.  It read a
+// non-null two-byte place whose type left a code spare inside its width and decoded that code
+// as null; C127 gives such a type no null at all — a value that does not fit takes the type's
+// DEFAULT before it reaches any slot — so nothing emits this and `make ops-census` lists it as
+// an orphan WITH its verdict.  Do not reach for it for a new narrow read.
 fn OpGetShortSpare(v1: reference, fld: const u16, min: const i32) -> integer;
 #rust"{{let db = @v1; if db.rec == 0 {{ i64::MIN }} else {{ let r = stores.store(&db).read::<u16>(db.rec, db.pos + u32::from(@fld)); crate::narrow::dec_short_spare(r, (@min)) }} }}"
 fn OpGetShortFull(v1: reference, fld: const u16, min: const i32) -> integer;
@@ -1651,6 +1663,22 @@ fn OpSetStackFnRef(pos: const u16, v1: text);
 // reference names the link's slot; the 20-byte STACK blob lives where it points.  Declared
 // `text` for the blob like `OpVarFnRef`, whose signature carries the same 16-vs-20 gap.
 fn OpGetStackFnRef(r: reference) -> text;
+// Run the drop cascade of the closure record a fn-ref holds, before the fn-ref's own
+// `OpFreeRef` releases that record's store (@FR-L-CapOwn, loft#1609).  Emitted only for a
+// fn-ref no local closure record releases (a call result, a parameter): which lambda such a
+// value holds is a run-time fact, so the cascade is found from the fn-ref's own `d_nr`.  A
+// fn-ref holding no closure, or a lambda whose record owns nothing droppable, runs nothing.
+// `fn_var` is the fn-ref slot's distance from the top of the stack, as `OpCallRef`'s is.
+fn OpDropFnRef(fn_var: const u16);
+// Null the closure half of the fn-ref at `old` when it names no record (`rec == 0`), or shares
+// a store with the one at `new`:
+// a rebind that hands the same closure back (`f = keep(f)`) displaces nothing, so the release
+// of the displaced value that follows must find nothing to release (loft#1609).
+fn OpFnRefDetachShared(old: const u16, new: const u16);
+// The closure half of the fn-ref at `fn_var`, as a reference: the record a closure's captures
+// live in, or the null sentinel for a fn-ref with none.  What the store-identity tests of a
+// frame's closure holders compare (@FR-L-CapKeep, loft#1636).
+fn OpFnRefClosure(fn_var: const u16) -> reference;
 // Append a text to a stack text variable.
 fn OpAppendStackText(pos: const u16, v1: text);
 // Append a character to a stack text variable.

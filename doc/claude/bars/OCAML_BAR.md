@@ -124,7 +124,7 @@ A script `tools/bar.loft` (to be written, ~50 lines: iterate the directory,
 run both backends, compare with the first line, print a table) turns the
 directory into a single `make bar` target. `make bar` must never be part of
 `make ci` until the project *chooses* to make a tier a compatibility promise;
-until then it is a report, and the report goes into `doc/claude/OCAML_BAR_STATUS.md`
+until then it is a report, and the report goes into `doc/claude/bars/OCAML_BAR_STATUS.md`
 as a dated table.
 
 **Syntax caveat.** Probes for features loft does not have yet use *proposed*

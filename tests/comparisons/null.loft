@@ -1,0 +1,54 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: null
+// @CLAIM: absence is a value of the type (`τ?`), read straight — nothing forces a discharge
+//         at the call site, and `??` / `?` are offered at the point of USE.
+// @SEEN-FROM: 00-vs-rust.html#null · 00-vs-python.html#null
+// @RATIONALE: DESIGN_DECISIONS.md C90, C80
+//
+// The warning below is part of the claim, not noise: loft KNOWS `x` cannot be absent and says
+// so, which is the half a Rust reader asks about when told the absence is in the type.
+// @EXPECT_WARNING: Warning[redundant-null-check]
+//
+// Rust, for the same shape:
+//     struct Point { label: Option<String>, x: i32 }
+//     let p = Point { label: None, x: 1 };
+//     assert!(p.label.is_none());
+//     let shown = p.label.unwrap_or_else(|| "none".to_string());   // MUST say something
+//
+// Python:
+//     p = {"label": None, "x": 1}          # absence is untyped and universal
+//     assert p["label"] is None
+//
+// The difference the page claims, and the one asserted below: in loft the absence is IN THE
+// TYPE as it is in Rust, but reading it is not an error — where Rust's `Option` makes every
+// call site state what it does about `None`.
+
+struct Point {
+  label: text?,      // `?`: may be absent
+  x: integer,        // never null — the default
+}
+
+fn test_absence_is_in_the_type_and_reads_straight() {
+  p = Point { x: 1 };
+  // Read straight.  No unwrap, no match, no ceremony — and it answers null.
+  assert(p.label == null, "an omitted nullable field is absent");
+  assert(p.x == 1, "a non-null field beside it is untouched");
+}
+
+fn test_the_discharge_is_offered_at_the_use_site() {
+  p = Point { x: 1 };
+  shown = p.label ?? "none";
+  assert(shown == "none", "`??` names the fallback where the value is USED");
+  q = Point { label: "here", x: 2 };
+  assert((q.label ?? "none") == "here", "and it steps aside when the value is present");
+}
+
+fn test_a_non_null_field_is_the_default() {
+  // This is the half a Rust reader checks first: non-null is not an annotation you remember
+  // to write, it is what a declaration means.
+  p = Point { label: null, x: 7 };
+  assert(p.x != null, "`x: integer` cannot be absent");
+  assert(p.label == null, "`label: text?` can, and was");
+}

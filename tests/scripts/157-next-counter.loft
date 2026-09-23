@@ -29,7 +29,7 @@ fn c15(a: integer, b: integer) -> integer { s = 0; for i in rev(a..b) { s = s * 
 fn c16(a: integer, b: integer) -> integer { s = 0; for i in rev(a..=b) { s = s * 10 + i; } s }
 fn c17(a: integer, b: integer) -> integer { n = 0; last = 0; for i in a..b { n += 1; last = i; } n * 100 + (last + 9223372036854775800) }
 fn c18(a: integer, t: integer) -> integer { s = 0; for _ in a..t { s += 1; } s }
-fn c19(a: integer, b: integer) -> integer { for i in a..b { } i }
+fn c19(a: integer, b: integer) -> integer { last = 0; for i in a..b { last = i; } last }
 fn c20(a: integer, b: integer) -> integer { n = 0; s = 0; for i in a..b { for j in i..b { n += 1; s += j; } } n * 100 + s }
 
 fn main() {
@@ -54,6 +54,6 @@ fn main() {
   w: vector<integer> = [1];
   nt = w[2];                                    // out of bounds: a null integer
   println("c18 {c18(0, nt ?? 0)} {c18(0, nt ?? 3)}"); // a null-discharged end: 0 and 3
-  println("c19 {c19(2, 5)}");                   // the variable after the loop holds the last value: 4
+  println("c19 {c19(2, 5)}");                   // the last value the variable took: 4 (it ends with its loop)
   println("c20 {c20(0, 3)}");                   // inner start reads the outer var: 6 pairs, j sum 8 -> 608
 }

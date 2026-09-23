@@ -1,0 +1,48 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: exceptions
+// @CLAIM: there is no exception handling and no programmer-side try/catch.  A recoverable
+//         failure is a VALUE; a calculation that cannot be computed yields null and the
+//         program keeps running.
+// @SEEN-FROM: 00-vs-python.html#exceptions
+// @RATIONALE: DESIGN_DECISIONS.md C66 (a production program never aborts on a
+//         user-attributable edge case), C67 (fail at startup, not at runtime), C80 (the
+//         spreadsheet fault model)
+//
+// Python:
+//     try:
+//         v = xs[10]
+//     except IndexError:
+//         v = -1
+//     try:
+//         q = a / 0
+//     except ZeroDivisionError:
+//         q = None
+//
+// The trade: Python's control flow can leave any expression; loft's cannot, so the failure
+// has to be IN THE VALUE.  That is the same mechanism as the `null` subject, seen from the
+// failure side rather than the absence side.
+
+fn test_an_out_of_range_read_is_a_value_not_a_throw() {
+  xs: vector<integer> = [1, 2, 3];
+  v = xs[10] ?? -1;
+  assert(v == -1, "an out-of-range read yields null; `??` names the fallback");
+  assert(len(xs) == 3, "and the vector is untouched — no growth, no panic");
+}
+
+fn test_division_by_zero_does_not_stop_the_program() {
+  a = 7;
+  b = 0;
+  q = a / b;
+  assert(q == null, "`/ 0` is not computable, so it is null (C80)");
+  // The line after it runs.  That is the whole claim.
+  assert(a == 7, "and execution continued");
+}
+
+fn test_the_failure_composes_instead_of_unwinding() {
+  xs: vector<integer> = [];
+  // Null is contagious through arithmetic, so a chain of reads does not need a guard per step.
+  total = (xs[0] ?? 0) + (xs[1] ?? 0) + (xs[2] ?? 0);
+  assert(total == 0, "three absent reads, one expression, no handler");
+}

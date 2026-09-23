@@ -1,0 +1,105 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index b81f23a5b..4eb9466e7 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3721,8 +3721,6 @@ use #count instead"
+                                 let var = self.create_var(name, &bind_tp);
+                                 self.vars.defined(var);
+                                 self.vars.in_use(var, true);
+-                                // Bound by the header, scoped to the body (`@FR-B-Scope`).
+-                                self.pending_loop_binders.push(var);
+                                 // A generator handle carries no deps to say so: marked instead
+                                 // (loft#1585), as a `for` over a vector of handles marks its
+                                 // loop variable.
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 1fa85d149..be7b16b72 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -723,22 +723,6 @@ impl Parser {
+         // `@FR-B-Scope` — this block is open while its statements parse.
+         self.block_ord = self.block_ord.wrapping_add(1);
+         self.block_path.push(self.block_ord);
+-        // A loop's variable belongs to the loop's BODY (`@FR-B-Scope`, as in Rust): the `for`
+-        // header binds it, so this block is where it is bound.
+-        if matches!(context, "for" | "parallel for") {
+-            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body.
+-            let binders = std::mem::take(&mut self.pending_loop_binders);
+-            let lv = self.vars.current_loop_variable();
+-            for v in std::iter::once(lv).chain(binders) {
+-                if self.first_pass {
+-                    break;
+-                }
+-                if v != u16::MAX {
+-                    self.bound_in_block
+-                        .insert((self.context, v), self.block_path.clone());
+-                }
+-            }
+-        }
+         let cc_ret = self.parse_block_inner(context, val, result);
+         self.block_path.pop();
+         self.fit_armed = outer_fit;
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index a6235f93b..4b1f160fe 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -814,9 +814,6 @@ pub struct Parser {
+     /// read from outside the path is refused.  Pass 2 only: both are written and read in
+     /// source order within the pass.
+     pub(crate) block_path: Vec<u32>,
+-    /// A destructuring `for (a, b) in …`'s binders, bound by the header like the loop variable
+-    /// and scoped to the body the next `for` block opens.
+-    pub(crate) pending_loop_binders: Vec<u16>,
+     pub(crate) block_ord: u32,
+     pub(crate) bound_in_block: std::collections::HashMap<(u32, u16), Vec<u32>>,
+     /// @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an
+@@ -1569,7 +1566,6 @@ impl Parser {
+             last_range_from: None,
+             last_range_till: None,
+             block_path: Vec::new(),
+-            pending_loop_binders: Vec::new(),
+             block_ord: 0,
+             bound_in_block: std::collections::HashMap::new(),
+             match_cursor: None,
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 0727d61b0..e912415fa 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -258,15 +258,14 @@ impl Parser {
+     /// as in Rust: a read of it from outside the block is refused.  The block path of the
+     /// statement that last bound it is recorded at every binding position; a bind from outside
+     /// that path starts a new binding there (`w = 3` after the block is legal and makes `w`
+-    /// the outer block's).  A loop variable is bound by its `for` header into the loop's body
+-    /// (`parse_block` records that path), so it too is gone after the loop.  Parameters are
+-    /// bound for the whole function and are not tracked; nor are the compiler's own locals.  The question is
++    /// the outer block's).  Parameters and loop variables are bound by their construct, not by
++    /// a statement, and are not tracked; nor are the compiler's own locals.  The question is
+     /// asked of the VARIABLE's name, not the spelling: a text parameter written in a block
+     /// is promoted to a `__tp_<name>` copy the spelling then resolves to, and that copy is
+     /// still the parameter.
+     fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
+         let own = self.vars.name(var);
+-        if self.vars.is_argument(var) || own.starts_with("__") {
++        if self.vars.is_argument(var) || self.vars.was_loop_var(var) || own.starts_with("__") {
+             return;
+         }
+         let key = (self.context, var);
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index de1fb6627..67ad28e23 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -1076,15 +1076,6 @@ impl Function {
+         }
+     }
+ 
+-    /// The variable the loop now being parsed binds, or `u16::MAX` outside a loop or before
+-    /// the header has bound it.
+-    pub(crate) fn current_loop_variable(&self) -> u16 {
+-        if self.current_loop == u16::MAX || self.current_loop as usize >= self.loops.len() {
+-            return u16::MAX;
+-        }
+-        self.loops[self.current_loop as usize].variable
+-    }
+-
+     /// `@FR-I-For` — record a place the current loop's source reads (see
+     /// `Iterator::source_places`).  No-op when there is no active loop.
+     pub(crate) fn add_loop_source_place(&mut self, place: &Value) {

@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @F4 — Ranged/width integer types: the bytes one occupies at rest
 //! The encoding of a narrow integer at rest — the bytes a `u8`, `i8`, `u16`, `i16`, `i32`,
 //! `u32` or `limit(lo, hi)` value occupies in a store, spelled once for both backends.
 //!
@@ -13,7 +14,11 @@
 //! `OpVarNarrow` / `OpPutNarrow` call them on the frame slot's bytes.
 //!
 //! `i64::MIN` is the language's null in a wide value; each kind's absent CODE is what the
-//! store writes for it.  A non-nullable kind has no code for absence and never sees one.
+//! store writes for it.  A non-nullable kind has no code for absence and never sees one —
+//! including one whose declared range leaves codes unused inside its width, which C127
+//! settled: `limit(-100, 100) size(1)` leaves 55 codes and none of them is a null, because a
+//! value that does not fit takes the type's DEFAULT before it reaches a slot.  The
+//! `*_SPARE` kinds below are that retired encoding.
 
 /// The kinds as the interpreter's op operand spells them — `NarrowIntKind::code`.
 pub const BYTE: u8 = 0;
@@ -24,10 +29,13 @@ pub const SHORT_FULL: u8 = 4;
 pub const INT4: u8 = 5;
 pub const INT4_RAW: u8 = 6;
 pub const INT4_FULL: u8 = 7;
-/// A non-nullable byte whose type kept a spare code (`limit(-100, 100) size(1)`, 201 values
-/// in 256): an overflow writes `255` and the slot reads null (C85).
+/// ⚠ RETIRED by C127, and kept only so the op operand's numbering is stable until an op
+/// removal can renumber the table.  It named a non-nullable byte whose type left a code spare
+/// inside its width (`limit(-100, 100) size(1)`, 201 values in 256) and decoded that code as
+/// null.  C127 gives such a type no null: a value that does not fit takes the type's DEFAULT
+/// before it reaches any slot, so no slot needs a code for one.  Nothing selects this kind.
 pub const BYTE_SPARE: u8 = 8;
-/// The two-byte twin: `u16::MAX` is the overflow's code.
+/// The two-byte twin, retired with it.
 pub const SHORT_SPARE: u8 = 9;
 
 /// The storage width of a kind, in bytes.
@@ -62,8 +70,8 @@ pub fn dec_byte_nullable(b: u8, min: i32) -> i64 {
     if b == 255 { i64::MIN } else { dec_byte(b, min) }
 }
 
-/// A non-nullable byte with a spare top code: `255` is the overflow's null (C85), every
-/// other code a value.  What `Store::set_byte` writes for `i32::MIN`.
+/// ⚠ RETIRED by C127 with [`BYTE_SPARE`] — nothing calls this.  It mapped `255` to the
+/// overflow's null; such a type now has no null to map.
 #[must_use]
 pub fn enc_byte_spare(v: i64, min: i32) -> u8 {
     if v == i64::MIN { 255 } else { enc_byte(v, min) }
@@ -124,8 +132,9 @@ pub fn dec_short_raw(s: u16, min: i32) -> i64 {
     }
 }
 
-/// A non-nullable short with a spare top code: `u16::MAX` is the overflow's null (C85).
-/// What `Store::set_i16_raw` writes for `i32::MIN`.
+/// ⚠ RETIRED by C127 with [`SHORT_SPARE`].  `OpGetShortSpare`'s body still names
+/// `dec_short_spare`, which is the only reason the pair is still compiled; nothing emits
+/// that op.
 #[must_use]
 pub fn enc_short_spare(v: i64, min: i32) -> u16 {
     if v == i64::MIN {

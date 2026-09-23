@@ -720,7 +720,27 @@ impl Parser {
         // statements that produced it, so it is saved across every block this one contains
         // and restored for the loop that is still in the middle of that pair.
         let outer_fit = self.fit_armed.take();
+        // `@FR-B-Scope` — this block is open while its statements parse.
+        self.block_ord = self.block_ord.wrapping_add(1);
+        self.block_path.push(self.block_ord);
+        // A loop's variable belongs to the loop's BODY (`@FR-B-Scope`, as in Rust): the `for`
+        // header binds it, so this block is where it is bound.
+        if matches!(context, "for" | "parallel for") {
+            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body.
+            let binders = std::mem::take(&mut self.pending_loop_binders);
+            let lv = self.vars.current_loop_variable();
+            for v in std::iter::once(lv).chain(binders) {
+                if self.first_pass {
+                    break;
+                }
+                if v != u16::MAX {
+                    self.bound_in_block
+                        .insert((self.context, v), self.block_path.clone());
+                }
+            }
+        }
         let cc_ret = self.parse_block_inner(context, val, result);
+        self.block_path.pop();
         self.fit_armed = outer_fit;
         if cc.is_some() {
             self.cc_nest -= 1;
@@ -955,7 +975,15 @@ impl Parser {
             // `@FR-E-Uncomp-Seen` — arm the preceding store's fit status for THIS statement, and
             // only when it opens with `if`: that is the whole of the adjacency rule, and the
             // `take` is what makes it one statement wide rather than "until someone asks".
-            self.fit_armed = pending_fit.take().filter(|_| self.lexer.peek_token("if"));
+            let (armed, unfused) = match pending_fit.take() {
+                Some(c) if self.lexer.peek_token("if") => (Some(c), None),
+                other => (None, other),
+            };
+            // C127 — death one: the next statement does not open with `if`, so no `!place`
+            // can reach this store's fit status.  `retire_fit_candidate` is the one home for
+            // all three deaths.
+            self.retire_fit_candidate(unfused);
+            self.fit_armed = armed;
             self.fit_candidate = None;
             // loft#1382 — statement position, decided by the ONE reader that knows it.  A
             // statement beginning with `if` or `match` has its value discarded
@@ -974,11 +1002,13 @@ impl Parser {
             // construction — an out-of-range subject casts to null and `OpRangeDefault`
             // answers the same default it answered for the raw value, and an in-range one
             // passes straight through.
-            if let Some(fit) = self
-                .fit_armed
-                .take()
-                .and_then(|f| f.fit_var.map(|v| (f, v)))
-            {
+            // C127 — death two: the `if` ran but its condition named no `!place` of this
+            // store, so the candidate comes back with no temp.
+            let retired = self.fit_armed.take();
+            if retired.as_ref().is_some_and(|f| f.fit_var.is_none()) {
+                self.retire_fit_candidate(retired.clone());
+            }
+            if let Some(fit) = retired.and_then(|f| f.fit_var.map(|v| (f, v))) {
                 let (cand, fit_var) = fit;
                 let mut composed = Value::Null;
                 if let Some(slot) = crate::parser::fit::guard_slot(&self.data, &mut l[fit_store_at])
@@ -1106,7 +1136,16 @@ impl Parser {
                 // `x: void` in first_pass, which then tripped the
                 // "cannot change type from void to S" diagnostic in
                 // second_pass when the real Reference(S) type arrived.
-                if !matches!(t, Type::Rewritten(_)) {
+                //
+                // …and preserve `Type::Never` for the same reason: a `return` whose value is
+                // COPIED into the caller's buffer (`return b.items`, a projection of a local)
+                // is lowered as an Insert of copy, frees and the `return` itself, and the
+                // statement still diverges.  Reset to Void, the arm read as a statement and
+                // the `if` around it as one too, so a sibling `else { head(n) }` had its
+                // value dropped and the function answered an empty vector — silently, on
+                // both backends, while the diverging arm's own path (the only one loft#1495's
+                // guard ran) was right.
+                if !matches!(t, Type::Rewritten(_) | Type::Never) {
                     t = Type::Void;
                 }
             } else if !matches!(t, Type::Void | Type::Never)
@@ -1155,10 +1194,16 @@ impl Parser {
             // cannot split can never reach the point where a `!` has already been redirected
             // to a temp nothing binds.  A candidate raised inside a nested block fails the
             // same test, because the node pushed here is the enclosing construct.
-            pending_fit = self.fit_candidate.take().filter(|_| {
-                l.last()
-                    .is_some_and(|last| crate::parser::fit::has_guard_slot(&self.data, last))
-            });
+            // C127 — death three: the pushed node carries no `OpRangeDefault` slot to
+            // rewrite, so the pair could never have fused whatever the next statement says.
+            let raised = self.fit_candidate.take();
+            let has_slot = l
+                .last()
+                .is_some_and(|last| crate::parser::fit::has_guard_slot(&self.data, last));
+            if !has_slot {
+                self.retire_fit_candidate(raised.clone());
+            }
+            pending_fit = raised.filter(|_| has_slot);
             fit_store_at = l.len().saturating_sub(1);
             if self.lexer.peek_token("}") {
                 break;
@@ -5548,22 +5593,20 @@ impl Parser {
             if valid_enum && (synth_null_elem || heap_null_subject) && self.lexer.has_token("null")
             {
                 self.expect_match_arm_arrow();
-                let arm_write_state = self.vars.save_and_clear_write_state();
-                self.vars.clear_write_state();
                 let mut arm_body = Value::Null;
                 let arm_expected = Self::match_arm_expected(&result_type);
                 let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-                self.vars.restore_write_state(&arm_write_state);
                 // loft#978 — every arm can deliver this match's value, so the result carries
                 // what ANY of them borrows.  A no-op on the first arm (nothing to join with);
                 // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
                 result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
                 self.match_void_arm |= matches!(arm_type, Type::Void);
-                if result_type == Type::Void || result_type == Type::Null {
+                if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                     result_type = arm_type.clone();
                 } else if !self.first_pass
                     && arm_type != Type::Void
                     && arm_type != Type::Null
+                    && arm_type != Type::Never
                     && !self.arm_convert_reported
                     && !self.match_arms_unify(&result_type, &arm_type)
                 {
@@ -6071,12 +6114,9 @@ impl Parser {
             // the closing `}` is not confused with the match's `}`.
             // Save/restore write tracking so writes in one arm don't cause
             // false dead-assignment warnings in sibling arms.
-            let arm_write_state = self.vars.save_and_clear_write_state();
-            self.vars.clear_write_state();
             let mut arm_body = Value::Null;
             let arm_expected = Self::match_arm_expected(&result_type);
             let mut arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-            self.vars.restore_write_state(&arm_write_state);
             // @PLN85 match_return (LOFT_JOIN_OWN): if this arm yields a borrowed-view
             // vector field binding DIRECTLY (`Filled { items } => { items }`), wrap it in
             // an owned copy `{ o = []; o += items; o }` so the value ESCAPES OWNED — the
@@ -6109,11 +6149,12 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_body, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if result_type == Type::Void || result_type == Type::Null {
+            if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                 result_type = arm_type.clone();
             } else if !self.first_pass
                 && arm_type != Type::Void
                 && arm_type != Type::Null
+                && arm_type != Type::Never
                 && !self.arm_convert_reported
                 && !self.match_arms_unify(&result_type, &arm_type)
             {
@@ -6376,7 +6417,8 @@ impl Parser {
     /// either the initial value or a statement `match` whose arms yield nothing — the
     /// same "expect nothing" an `else if` chain passes down for a `Void` then arm.
     fn match_arm_expected(result_type: &Type) -> Type {
-        if result_type.is_unknown() || matches!(result_type, Type::Void | Type::Null) {
+        if result_type.is_unknown() || matches!(result_type, Type::Void | Type::Null | Type::Never)
+        {
             Type::Unknown(0)
         } else {
             result_type.clone()
@@ -6397,6 +6439,18 @@ impl Parser {
     /// so the same conversion is asked here through the same `convert_admitting` /
     /// `validate_convert` pair, and the carve-outs are restated in the same order.
     fn parse_match_arm_body(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
+        // Each arm runs INSTEAD of its siblings, so the dead-store tracking starts every arm from
+        // the state before the `match` and leaves it there — as `parse_if` does for its arms.
+        // Asked here, the one body every arm kind parses through: held at the arm sites, three
+        // of seven had it, and in the others one arm's write read as overwritten by the next.
+        let arm_write_state = self.vars.save_and_clear_write_state();
+        self.vars.clear_write_state();
+        let tp = self.parse_match_arm_body_inner(expected, arm_code);
+        self.vars.restore_write_state(&arm_write_state);
+        tp
+    }
+
+    fn parse_match_arm_body_inner(&mut self, expected: &Type, arm_code: &mut Value) -> Type {
         // Cleared AFTER the body is parsed on both paths, never at entry: a nested `match`
         // inside this arm runs its own arms through here, so a flag set at entry would still
         // carry that inner arm's answer when THIS one is asked about.  From each clear to the
@@ -6493,10 +6547,11 @@ impl Parser {
         let joined = self.join_arm_into(result_type, &arm_code, &arm_type);
         *result_type = joined;
         self.match_void_arm |= matches!(arm_type, Type::Void);
-        if *result_type == Type::Void {
+        if matches!(result_type.base(), Type::Void | Type::Never) {
             *result_type = arm_type.clone();
         } else if !self.first_pass
             && arm_type != Type::Void
+            && arm_type != Type::Never
             && !self.arm_convert_reported
             && !self.match_arms_unify(result_type, &arm_type)
         {
@@ -6578,7 +6633,7 @@ impl Parser {
         let arm_expected = Self::match_arm_expected(result_type);
         let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_code);
         let block = v_block(vec![arm_code], arm_type.clone(), "struct_match");
-        if *result_type == Type::Void {
+        if matches!(result_type.base(), Type::Void | Type::Never) {
             *result_type = arm_type;
         }
         let (guard, exhaustive) = if field_conditions.is_empty() {
@@ -9475,7 +9530,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if result_type == Type::Void || result_type == Type::Null {
+            if matches!(result_type.base(), Type::Void | Type::Null | Type::Never) {
                 result_type = arm_type.clone();
             }
             // P209 — when the arm has both a guard and pattern bindings
@@ -10573,7 +10628,7 @@ impl Parser {
             // on the later ones it stops an owned arm from erasing a borrowed sibling's dep.
             result_type = self.join_arm_into(&result_type, &arm_code, &arm_type);
             self.match_void_arm |= matches!(arm_type, Type::Void);
-            if result_type == Type::Void {
+            if matches!(result_type.base(), Type::Void | Type::Never) {
                 result_type = arm_type.clone();
             }
             // Without a guard the bindings fold into the body exactly as before; with one they
@@ -10904,13 +10959,9 @@ impl Parser {
             }
 
             self.expect_match_arm_arrow();
-
-            let arm_write_state = self.vars.save_and_clear_write_state();
-            self.vars.clear_write_state();
             let mut arm_body = Value::Null;
             let arm_expected = Self::match_arm_expected(&result_type);
             let arm_type = self.parse_match_arm_body(&arm_expected, &mut arm_body);
-            self.vars.restore_write_state(&arm_write_state);
 
             // Combine element conditions with AND (short-circuit: if a { b } else { false })
             let cond: Option<Value> = if elem_conds.is_empty() {
@@ -11741,6 +11792,17 @@ impl Parser {
                         // the wrong escape hatch — call sites would push a
                         // 12-byte null DbRef where the slot is 16+ bytes).
                     }
+                    // loft#1616 — pass 2 FOLLOWS pass 1 for an author's local (loft#1099's
+                    // rule): a promotion grows a hidden `&text` PARAMETER, so a verdict pass 1
+                    // did not reach would move a signature pass 1 already published.  A local
+                    // pass 1 promoted arrives here as `Attr`; one reaching this arm on pass 2
+                    // was not, and is delivered by copy like `SkipSecondTextBuf`.  The tail's
+                    // dep LIST is what differs between passes (`a ?? b ?? "d"` lists `a` on
+                    // pass 1 and `b` on pass 2 from a byte-identical body).  A compiler temp
+                    // (`__tret`, `___acc`) is minted on the pass that promotes it, so it is not
+                    // gated.
+                    TextDep::PromoteHidden
+                        if !self.first_pass && !self.vars.is_compiler_generated(*v) => {}
                     TextDep::PromoteHidden => {
                         let n = self.vars.name(*v);
                         let a = self.data.add_attribute(
@@ -11757,6 +11819,7 @@ impl Parser {
                         // the deps-based exclusion that wrongly dropped returned params.
                         self.data.definitions[self.context as usize].attributes[a].hidden = true;
                         self.vars.become_argument(*v);
+                        self.vars.mark_nullable_text_buffer(*v);
                         dep.push(a as u16);
                         self.vars
                             .set_type(*v, Type::RefVar(Box::new(Type::Text(Deps::none()))));

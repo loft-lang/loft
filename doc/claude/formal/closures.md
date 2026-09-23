@@ -87,6 +87,18 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  skips it — so there the frame's release is the store's only one.  The record's
                  reach is its CASCADE: a capture attribute the cascade does not follow is not
                  covered by any adoption, whatever the free-suppression believes.
+  (L-CapKeep)    each RUN of a closure build is its own record.  A fn-ref that still names
+                 the record an earlier run built (a pass of a loop kept in a local declared
+                 outside it, a `&fn(…)` link, a copy in another local) goes on answering from
+                 that run's captures, and the build makes a new record for the next run.  A
+                 record, and each capture it reads, is released ONCE: by the LAST of the
+                 frame's names for it to let go — a rebind of a fn-ref, or a scope's end.  A
+                 fn-ref whose every mention lies in one block lets go at that block's `}`, so
+                 a loop pass nobody kept releases what it captured at the end of THAT pass,
+                 exactly as the same body without a closure would; only a record another name
+                 still holds outlives the pass.  Which name is last is a per-run fact, so it
+                 is decided by store identity when a name lets go, never by which pass the
+                 program text says might keep it.
   (L-CapOne)     among records that adopt ONE store and can COEXIST, exactly one owns it — the
                  one that leaves the frame, or the first where none does — and the rest borrow.
                  Records that cannot coexist, each built in a different arm of one branch, EACH
@@ -200,9 +212,43 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 2** — `D-clo-36` and `D-clo-37` (`D-clo-38`, loft#1624, opened and CLOSED 2026-09-23;
-both of the others opened 2026-09-22 with `D-clo-35`, which closed
-the same day; `D-clo-27` closed 2026-09-12).
+**OPEN: 0** — `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
+2026-09-23; `D-clo-27` closed 2026-09-12).
+
+- **D-clo-39** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1636)* — `(L-CapScalar)` for a closure KEPT from one
+  loop pass.  The closure record local (`___clos_N`) is minted once per frame, and each pass
+  rebuilds it IN PLACE.  So a fn-ref kept from an earlier pass in a local declared outside the
+  loop holds the same store, and reads the LATEST pass's captures:
+  `for i in 0..2 { f = fn() { i * 10 + 1 }; if i == 0 { g = f; } }` answers `g() == 11` for
+  `1`, on both backends, with no diagnostic.  Building the closure straight into the outer
+  local is right, and collections of capturing closures are refused (#318), so the reach is a
+  pass's fn-ref kept in an outer local.  The contract is settled; the open part is the
+  mechanism: a record that escapes on SOME passes needs a store of its own per build, released
+  by whoever kept it, or at the pass end on a pass where nobody did.
+  **CLOSED 2026-09-23 — `(L-CapKeep)`.**  Which pass was kept is a per-run fact, so the frame
+  asks it at run time, by store identity, at the three moments it would let a record go
+  (`scopes::closure_keep_set`; `OpFnRefClosure` reads a fn-ref's closure half for the test):
+  the build rebuilds in place only where no other fn-ref of the frame names the record, and
+  otherwise hands it to that name and mints a new one; the end of the block holding every
+  mention of a fn-ref releases what it holds unless another name kept it
+  (`Scopes::closure_keep_pass_end`), so an unkept pass releases at its own `}` — decided
+  2026-09-23 over "at the next rebuild", which kept every pass's captures one pass too long
+  and put the last one's release after the loop; a captured literal's backing is handed
+  over with it at the literal's re-mint, which runs ahead of the build; and a rebind or a
+  scope's end releases a closure only where no other live name — a fn-ref, a record local, a
+  `&fn(…)` parameter's caller — holds the same store, so of several names exactly the last
+  releases.  The matrix found the class wider than filed, all of it the same cause:
+  - two names for ONE record released it twice at the end, the second through a freed store
+    (`g = f`, kept on the last pass: `D71` twice, a use after free under `LOFT_STRICT_STORES`);
+  - a closure a CALL returned (`f = mkf(i)`, the workaround this entry named) answered right
+    and leaked every pass nobody kept, since `(L-CapOwn)`'s rebind release declined wherever
+    a second name might share the record;
+  - a record written through a `&fn(…)` link on one pass was taken as delivered on every one,
+    so the pass that was not delivered leaked.
+  Every fn-ref local of such a frame is set to null at the function's head, so each name the
+  tests compare has a dominating bind (SLOTS.md § the reserve does not initialise).  Guard:
+  `tests/scripts/1636-a-closure-kept-from-a-loop-pass-keeps-that-pass.loft`.
 
 - **D-clo-38** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1624)* — `(O-Buffer)` for a
   collection `??` whose chosen arm is a CAPTURE.  A `vector<T>` return is delivered into the
@@ -228,18 +274,63 @@ the same day; `D-clo-27` closed 2026-09-12).
   every sibling arm already pays.  Guard
   `tests/scripts/1624-a-captured-default-arm-is-delivered-into-the-buffer.loft`, whose `c4` is
   the alias cell and fails on `origin/main`.
-- **D-clo-37** *(opened 2026-09-22, loft#1610)* — `(L-CapOwn)` for a closure over a LOOP-BODY
+- **D-clo-37** *(opened 2026-09-22, CLOSED 2026-09-23; loft#1610)* — `(L-CapOwn)` for a closure over a LOOP-BODY
   vector.  The vector's backing is minted at the function's head and reused on every pass, and
   the capture is a `DbRef` to that backing's slot.  So the previous pass's record, when its
   rebuild releases it, walks the NEW pass's vector, and the backing's own rebuild releases the
   old contents too.  `for i in 0..2 { w = [mk(70 + i)]; f = fn() { len(w) }; … }` releases `71`
   three times, identical on both backends.  The cure needs a decision: either the record dies
   with its loop-body fn-ref, or a captured loop-body vector gets a backing of its own per pass.
-- **D-clo-36** *(opened 2026-09-22, loft#1609)* — `(L-CapOwn)`'s hand-over for a record that
-  LEAVES its frame covers the store and not the HOOKS.  The caller's fn-ref is released by
-  `OpFreeRef`, whose store cascade frees the captured vector, and no hook runs.  The hook
-  cascade is per lambda, and which lambda a fn-ref value holds is a run-time fact, so this needs
-  a dispatch on the record's type (as `fnref::dispatch_arms` dispatches a call).
+  ⚠ **NARROWED 2026-09-23 — the CONFINED record is closed.**  `(L-CapOwn)` frees a captured
+  store "by whichever of the two outlives the other", and the unit is the captured local's
+  SCOPE, not the function.  A record built in a loop body into a fn-ref local that appears
+  nowhere outside that loop, and there only as a callee, dies with the pass.  So it outlives
+  nothing it captured: it BORROWS every capture (`strip_borrowed_capture_walk`), and the frame
+  keeps its own release at the local's scope end, exactly as the no-closure spelling does.
+  `pass_confined_records` computes the fact once into `CaptureBuilds::pass_confined`, and both
+  deciders read it: `record_adopts_capture` for the record and `capture_adoption_owns_free` for
+  the frame.  So suppressing and adopting stay one decision.  The class was wider than filed: a
+  loop-body RECORD capture (`M70 F70 M71 D71 F71 X D71`), a FUNCTION-scope capture rebuilt each
+  pass (`D70` three times) and a `break` (`D70` twice) had the same cause, and all four read
+  exactly once, at the scope end, on both backends
+  (`tests/scripts/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.loft`).
+  **Still open:** a record that is NOT confined still adopts through a backing the next pass
+  reuses.  Three shapes: a closure passed as an argument inside the loop (`run(f)`, or inline
+  `run(fn() { len(w) })`: `D70 D71 … D71 D71`), whose callee may keep it, and a record held by a
+  local declared OUTSIDE the loop (`g = fn() { len(w) }` in the body), which really outlives the
+  pass.  The first two need the callee's retention (a `&` parameter, a returned fn-ref) read,
+  and the third needs the per-pass backing the original entry names.
+  **CLOSED 2026-09-23 — the ADOPTING record takes the store with it.**  The per-pass backing
+  covers all three shapes, so the callee's retention never has to be read.  An adopting record
+  may outlive the pass, and from its build on the store is the record's.  So the frame's holder
+  lets go at the build (`Scopes::adopted_backing_detach`): a collection's literal backing
+  (`__vdb_N`) becomes the sentinel, and so does a struct capture's pooled call buffer
+  (`__ref_N`, guarded by store identity).  The next pass's literal or call then mints a fresh
+  store, and every frame release of the holder finds nothing.  Each record releases what it
+  adopted when its rebuild displaces it, or at the end: `M70 F1 M71 D70 F1 X D71` for `run(f)`,
+  inline and `keep(f)`, and `… F1 F1 X D71` for a local declared outside the loop.  (Since
+  `(L-CapKeep)`, a pass no other name kept releases at its own `}` instead: `M70 F1 D70 M71 F1
+  D71 X` for `run(f)` and inline; a local declared outside the loop is unchanged.)  The record
+  capture exposed one more hook-order defect.  Loft#1483's hookless free of a displaced capture
+  ran BEFORE the rebuild's snapshot cascade, which then read the store it had freed.  That free
+  now stands down wherever the capture's type owns a droppable, because the snapshot releases
+  it, hook first.  The guard gained seven cells (`c7`–`c13`).
+- **D-clo-36** *(opened 2026-09-22, CLOSED 2026-09-23; loft#1609)* — `(L-CapOwn)`'s hand-over
+  for a record that LEAVES its frame covered the store and not the HOOKS.  The caller's fn-ref
+  was released by `OpFreeRef`, whose store cascade frees the captured vector, and no hook ran.
+  The hook cascade is per lambda, and which lambda a fn-ref value holds is a run-time fact.
+  Closed with a dispatch on that fact: `OpDropFnRef(f)` runs the cascade of the record
+  `f`'s `d_nr` names (`Data::closure_drops`), just before the free, wherever the fn-ref is
+  released without a local record that releases itself.  On native the arms are the fn type's
+  `fnref::dispatch_arms`, the set a call through it dispatches over.  The matrix found two
+  more releases of the same kind:
+  - a REBIND of such a fn-ref released the displaced closure nowhere, store included.  It is
+    released after the new value is built (`Scopes::fnref_call_rebind`), and a rebind that
+    hands the same closure back releases nothing (`OpFnRefDetachShared`);
+  - the frame's release that stands in for a closure built in ONE ARM
+    (`free_unless_record_built`) freed the store without the hook.  It now runs the owner's
+    hook, once per store.
+  Guard: `tests/scripts/1609-a-closure-that-leaves-its-frame-runs-its-captures-hooks.loft`.
 - **D-clo-35** *(opened and CLOSED 2026-09-22, loft#1606)* — a closure over a value whose type
   owns a droppable ran the hook on the wrong record, twice, or not at all, on both backends:
   `w = [mk(61)]; f = fn() { len(w) }` ran `D3` for `D61`.  Four mechanisms:

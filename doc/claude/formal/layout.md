@@ -91,11 +91,28 @@ store written by one build readable by another *of the same layout*.
               so it moves offsets and record size — a layout fact the golden pins.
   (L-Narrow-Alias)  a stored width is a property of a NAMED type.  `size(n)` is written in a
               `type` alias and nowhere else: `type Lim = integer limit(1000, 1100) size(1)`, never
-              inline on a field or a vector element.  So a type whose declared range leaves a
-              width's top code SPARE — the `(E-Uncomp-NN)` types — always reaches a slot through
-              an alias, and can therefore never be a narrow-VECTOR element, whose raw encoding
-              requires no alias.  That is what lets the field-sentinel and raw-element op families
-              stay separate (`data::NarrowSlot::of_slot`).
+              inline on a field or a vector element, and the parser refuses the inline spelling by
+              name.  So a type whose declared range leaves a width's top code SPARE always
+              reaches a slot through an alias — which is why that spareness is decidable at
+              the DECLARATION and never at the slot, and why `(L-Narrow-Spare)` can say the
+              same thing about every kind of slot.
+  (L-Narrow-Spare)  and every kind of slot answers it the same way.  A local, a field, an
+              element, a parameter and a return of a DECLARED narrow range without `?` all give
+              the type's DEFAULT for a value that does not fit — zero where the range holds it,
+              the bound nearest zero otherwise — never a null, because such a type has no null to
+              hold (`DESIGN_DECISIONS.md` C127, `(N-Reserve)`, `(E-Uncomp-NN)`).  A code left
+              spare inside the storage width is not a place to put one: whether a declared range
+              leaves one is arithmetic the author did not do, and two ranges one value apart
+              would otherwise answer differently.  The plain `integer` and `i32` TEMPLATES are
+              EXEMPT and keep C85's sentinel — a pragmatic exemption and not a principled one:
+              the rule reaches them, and reserving `i32::MIN` is allowed because it costs one
+              value in 2^32 and buys the only narrow type whose overflow is detectable
+              ([C127](../DESIGN_DECISIONS.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)
+              § Decision).  `u32` reserves a code too and takes the DEFAULT, so the exemption
+              is not a line to extend.  Where the language can
+              demand the author say what an unfitting value becomes it refuses instead; where it
+              cannot — the compound step `x += n`, whose written-out form IS refused — the
+              default is the fallback and the `narrow-fallback` advice says so.
   (L-Narrow-Enc) a width does NOT determine how its bytes decode.  At 2 and 4 bytes a
               non-negative range running past the signed maximum stores UNSIGNED and reserves the
               TOP code for absence; a signed range stores two's-complement and reserves its own
@@ -356,9 +373,9 @@ that gate, now applied across a network boundary.
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-> **D-layout-9 — OPEN (loft#1630)** — `(L-Narrow-Decode)` says a narrow slot holds `value - start`, which
+> **D-layout-9 — CLOSED 2026-09-23 (loft#1630)** — `(L-Narrow-Decode)` says a narrow slot holds `value - start`, which
 > admits a range lying wholly BELOW zero — `limit(-100, -1) size(1)` is 100 values in a byte, biased
 > by `-100`, exactly as `limit(1000, 1100)` is 101 biased by `1000`.  The parser refuses every such
 > type at every width, so the refusal is a deviation from this rule and not merely the bad sentence
@@ -373,6 +390,19 @@ that gate, now applied across a network boundary.
 > therefore its own arc rather than a clause of @PLN167.  `(L-Narrow-Alias)` decides WHERE the
 > refusal is met: such a type needs an alias, so it is `check_declared_size` that must carry the
 > right sentence.
+>
+> **Closed** by widening `IntegerSpec::max` to `i64`: the upper bound now spans the same window
+> the lower bound does (`i32::MIN + 1` up to the wide template's `u32::MAX`), and
+> `parse_type_limit` reads it signed.  Nothing downstream needed a new arm — every encode and
+> decode already stored `value - min`, which is non-negative for any range, so the ops, the
+> schema `Parts`, the key descriptor and `NarrowSlot` answer a wholly negative range exactly as
+> a wholly positive one (14 cells, both backends: a field, a local's edges, an element, sizes 1,
+> 2 and 4, a nullable field, a `sorted` and a `hash` key, a write, a neighbour's layout, a
+> parameter and return).  What such a type answers for a value that does not fit is
+> `(L-Narrow-Spare)`'s question, not this one's.  The same parse now refuses an INVERTED range
+> (`limit(10, 3)`) at the declaration, where it used to be an empty type that refused every
+> store with a narrowing message.  Guard:
+> `tests/scripts/1630-a-range-wholly-below-zero-is-declarable.loft`.
 
 D-layout-1 CLOSED 2026-09-21 (loft#1562): every path that reads an EXISTING image through the
 program's types now asks the `.dschema` gate before it reads a byte — `store_load`,

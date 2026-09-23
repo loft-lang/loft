@@ -46,12 +46,15 @@
 //   because the fix is in shared IR lowering, where a divergence would be the regression
 //   worth catching (@FR-O-NoDiverge).
 //
-// ⚠ AND THE CONTROLS ARE THE OTHER HALF OF THE BOUNDARY. Narrowing the predicate is a live
-// regression risk for loft#1156 itself, so `test_a_value_the_loop_produces_is_read_after_it`,
+// ⚠ AND THE CONTROLS ARE THE OTHER HALF OF THE BOUNDARY. `test_a_value_the_loop_produces_is_read_after_it`,
 // `test_a_conditional_reassignment_does_not_kill_the_binding` and
-// `test_a_later_loop_that_reads_before_it_assigns` are the cells that must still HOIST. Each
-// of them reads a value the loop produced, on at least one path; drop the hoist for any of
-// them and the read is a use-after-free again.
+// `test_a_later_loop_that_reads_before_it_assigns` each read a value the loop produced, on at
+// least one path, so that value must NOT be released per iteration.  A local first BOUND in a
+// loop body now ends at the body's `}` and reading it after the loop is refused
+// (`local-out-of-scope`), so these three bind `e` BEFORE the loop and reassign it in the body —
+// the legal spelling of the same program, which exercises the same question: a record local
+// reassigned every pass and read after the loop keeps the last pass's record.  The two
+// sibling-loop fault cells are unchanged: each loop still binds its own `r`, never read after.
 //   ARMED: `LOFT_POISON`. Falsify does not arm it, so every cell answers correctly on the
 //   control and the sweep reports INERT — an honest verdict about an unarmed run, not a
 //   defect in the guard.
@@ -96,18 +99,20 @@ fn test_two_borrow_loops_sharing_a_name_are_unmoved() {
 }
 
 fn test_a_value_the_loop_produces_is_read_after_it() {
-  // CONTROL, and the loft#1156 shape itself: nothing after the loop assigns `e`, so the read
-  // takes the value the last iteration built and the hoist MUST still fire. Drop it and this
-  // read is the use-after-free loft#1156 closed.
+  // CONTROL, the loft#1156 shape in its legal spelling (bound before the loop): nothing after
+  // the loop assigns `e`, so the read takes the value the last iteration built, which must
+  // not have been released at that iteration's end.
+  e: A1332? = null;
   for i in 0..4 { e = A1332 { n: i + 10 }; }
   assert(e.n == 13, "the last iteration's value: got {e.n}");
 }
 
 fn test_a_conditional_reassignment_does_not_kill_the_binding() {
   // CONTROL. A later assignment on ONE path only leaves the other path reading the loop's
-  // value, so the binding is still live and the hoist must still fire. A predicate that
-  // treated any later assignment as a kill would break exactly here.
+  // value, so that value must survive the loop. A predicate that treated any later
+  // assignment as a kill would break exactly here.
   hit = false;
+  e: A1332? = null;
   for i in 0..4 { e = A1332 { n: i + 10 }; }
   if hit { e = A1332 { n: 99 }; }
   assert(e.n == 13, "the loop's value on the untaken path: got {e.n}");
@@ -115,9 +120,10 @@ fn test_a_conditional_reassignment_does_not_kill_the_binding() {
 
 fn test_a_later_loop_that_reads_before_it_assigns() {
   // CONTROL. The second loop READS `e` before it assigns it, so the first loop's value does
-  // flow out and the hoist must still fire — the mirror of the filed shape, and the reason
-  // the predicate asks for the FIRST use in execution order rather than for any read at all.
+  // flow out and must survive it — the mirror of the filed shape, and the reason the
+  // predicate asks for the FIRST use in execution order rather than for any read at all.
   seen = 0;
+  e: A1332? = null;
   for i in 0..4 { e = A1332 { n: i + 10 }; }
   for j in 0..2 { seen = seen + e.n; e = A1332 { n: j }; }
   assert(seen == 13, "first pass reads the loop's value, second reads j=0: got {seen}");

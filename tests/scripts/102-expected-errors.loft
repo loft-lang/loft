@@ -513,16 +513,20 @@ fn concat_mixed_offset_elements() {
   _ = x;
 }
 
-// `limit(lo, hi)`'s upper bound is stored in `IntegerSpec::max`, a `u32`, so a range
-// lying entirely below zero has no encoding.  Refusing it is the honest answer; what it
-// must NOT do is desync the parser, which read the `-` in no branch at all and reported
-// *"Expect token )"* — a punctuation error for a bound the type system cannot carry
-// (loft#1246's measurement; the lower bound's too-wide case was fixed the same way).
-// @EXPECT_ERROR: upper bound cannot be negative
-fn limit_with_a_negative_upper_bound() {
-  b: integer limit(-200, -10) = -50;
+// `limit(lo, hi)`'s upper bound is signed, and spans the same window as the lower bound
+// (loft#1630): a range lying wholly below zero is declarable, and a bound outside the window
+// is refused by name rather than desyncing the parser into *"Expect token )"* — a punctuation
+// error for a bound the type cannot carry (loft#1246's measurement).
+// @EXPECT_ERROR: upper bound -3000000000 is outside the range
+fn limit_with_an_upper_bound_below_the_window() {
+  b: integer limit(-100, -3000000000) = -50;
   _ = b;
 }
+
+// An inverted range holds no value; it is refused at the declaration, not at the first store
+// with a message about narrowing.
+// @EXPECT_ERROR: holds no value: the lower bound is above the upper one
+type PeInvertedRange = integer limit(10, 3) size(1);
 
 // @falsified-at: 2e408acc8 — interpret exit 1 -> 0, interpret expectations FAIL/48 -> 54/48
 //   (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations
@@ -562,4 +566,28 @@ fn unknown_field_on_a_fn_ref_names_the_fn_type(a: integer, b: integer) -> intege
 
 fn pe_add_for_fn_ref(a: integer, b: integer) -> integer {
   a + b
+}
+
+// ── loft#1640 — a tuple MEMBER is a narrow slot, so an unfitting write is refused ──
+//
+// The same value into the three slots `(N-Reserve)` names — a local, a struct field, a vector
+// element — has always been refused.  A tuple member reached neither the refusal nor
+// loft#984's range guard, because `t.0 = …` is handled on a branch that returns before the
+// general assign path, and stored 300 in a `u8`.  The TRUE half of the cell — what must still
+// work once the refusal exists — is
+// `tests/scripts/1640-a-tuple-member-is-a-narrow-slot-like-any-other.loft`.
+//
+// @EXPECT_ERROR: cannot implicitly narrow integer to u8
+fn pe_tuple_member_out_of_range() {
+  t: (u8, u8) = (250, 7);
+  t.0 = 300;
+  assert(t.0 == 0, "unreached");
+}
+
+// The wider member, so the cell is not pinned to one width.
+// @EXPECT_ERROR: cannot implicitly narrow integer to u16
+fn pe_tuple_member_out_of_range_wide() {
+  w: (u16, u16) = (1, 2);
+  w.0 = 999999;
+  assert(w.0 == 0, "unreached");
 }

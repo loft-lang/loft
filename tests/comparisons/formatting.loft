@@ -1,0 +1,47 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SUBJECT: formatting
+// @CLAIM: every text literal is a format string — an expression in braces is evaluated in
+//         place.  `print` stays text-only; there is no bare `print(value)`.
+// @SEEN-FROM: 00-vs-rust.html#formatting · 00-vs-python.html#formatting
+// @RATIONALE: DESIGN_DECISIONS.md C100 (`print` stays text-only)
+//
+// Rust:   println!("{} and {}", a, b);        // positional, macro, arguments out of line
+// Python: print(f"{a} and {b}")               // f-prefix opts in
+//
+// loft has no opt-in and no argument list: the braces are part of every literal, which is why
+// `{{` escapes one.  That is the cost side of the trade and it is asserted below.
+
+struct P { x: integer, y: integer }
+
+fn test_an_expression_in_braces_is_evaluated_in_place() {
+  a = 2;
+  b = 3;
+  assert("{a} and {b}" == "2 and 3", "no f-prefix, no argument list");
+  assert("{a + b}" == "5", "a full expression, not just a name");
+  p = P { x: 1, y: 2 };
+  assert("{p.x},{p.y}" == "1,2", "field access inside the hole");
+}
+
+fn test_a_brace_must_be_escaped_because_every_literal_is_a_format() {
+  // The cost of having no opt-in: a literal brace is `{{`.  A Rust or Python reader meets
+  // this the first time they write JSON or a CSS rule in a string.
+  //
+  // This test cannot be written as `"{{}}" == "{}"`, and the reason IS the claim: the
+  // right-hand side would be a literal containing an empty HOLE, which does not parse.  There
+  // is no way to spell a bare `{` in this language, so the comparison is built from the
+  // escapes themselves.
+  open_brace = "{{";
+  close_brace = "}}";
+  assert(size(open_brace) == 1, "two characters in the source, one in the value");
+  assert(size(close_brace) == 1, "and the same for the closer");
+  both = "{{}}";
+  assert(size(both) == 2, "`{{}}` is a two-character text");
+  assert(both == open_brace + close_brace, "and it is exactly those two, in order");
+}
+
+fn test_a_call_is_a_hole_too() {
+  v: vector<integer> = [1, 2, 3];
+  assert("{len(v)}" == "3", "a call evaluates inside the literal");
+}

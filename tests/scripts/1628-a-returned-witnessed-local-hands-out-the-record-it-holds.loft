@@ -1,0 +1,153 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1628, `@FR-H-Move` / `@FR-H-Drop` / `@FR-O-Witness` — A RETURNED WITNESSED LOCAL HANDS
+// OUT THE RECORD IT HOLDS.
+//
+// `x: H = s.h ?? b` VIEWS the member on one path (`(B-View)`, read arm by arm) and takes `b`'s
+// record over on the other (`(H-Move)`: `b` is a local the function owns, placed once).  A later
+// `x = mk(9)` MINTS, so `x` carries an owner witness `__own_x` (`(O-Witness)`).  Which structure
+// holds the record `x` answers at a return is therefore a per-RUN fact: the witness after the
+// rebind, `b` on a path that never rebinds, `s` on the path that viewed the member.
+//
+// The return copies `x` onto the caller's buffer, which is a MOVE: the caller releases it.  The
+// holder that held it released it as well — the witness after a rebind, `b` when `x` still held
+// its record — so the resource was released twice, the second time on memory the first had
+// freed.  The cure guards each such holder's hook on RECORD identity with the returned local
+// (`OpNeRef`), not store identity: `s` shares `x`'s store on the member path and still owes its
+// own release (`c10`, and loft#1623's `c4`).
+//
+// Beside it, the TIMING `(H-Drop)` gives a displaced record: a rebind releases what it displaces
+// AFTER the new value has landed.  A minting rebind released the witness's record BEFORE the call
+// (`R9,d9,m11`), and the record `x` took over from `b` was released only at `b`'s scope end.  So
+// every trace here is exact, not a count: a release in the wrong place is a failure.
+//
+// @falsified-at: 4af6d4c41 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1628-a-returned-witnessed-local-hands-out-the-record-it-holds.patch —
+//   the same channels.
+// CHANNEL: assertion failures, both backends — the callee releases what it handed out.
+// HOLDS: clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1` after; the controls `k1`–`k3` are
+//   right before and after.
+// WITNESS: on the control, `c1 rebound, returned: m2,m9,d9,d7,G9,d9, want m2,m9,d7,G9,d9`.
+
+struct H { id: integer }
+struct SN { h: H? }
+
+fn OpDrop(self: H) { note("d{self.id}"); }
+fn mk(id: integer) -> H { note("m{id}"); return H { id: id }; }
+
+fn trace_path() -> text { return "loft_1628_witness_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// The callees.  Each binds `x` from a join whose member arm VIEWS, so the join is not written
+// out per arm, and a later rebind MINTS, so `x` is witnessed.
+fn f_rebound() -> H { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; x = mk(9); return x; }
+fn f_to_local() -> H { s = SN { h: null }; b = mk(2); o = mk(9); x: H = s.h ?? b; x.id = 7; x = o; return x; }
+fn f_twice() -> H {
+  s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7;
+  x = mk(9); note("R{x.id}"); x = mk(11);
+  return x;
+}
+fn f_maybe(c: boolean) -> H { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; if c { x = mk(9); } return x; }
+fn f_other() -> H { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; x = mk(9); note("R{x.id}"); return mk(5); }
+fn f_exits(c: boolean) -> H { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; x = mk(9); if c { return x; } return mk(5); }
+fn f_loop() -> H { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; for i in 0..3 { x = mk(10 + i); } return x; }
+fn f_loop_exit() -> H {
+  s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7;
+  for i in 0..3 { x = mk(10 + i); if i == 1 { return x; } }
+  return x;
+}
+fn f_present() -> H { s = SN { h: mk(4) }; b = mk(2); x: H = s.h ?? b; x.id = 7; x = mk(9); return x; }
+fn f_viewed() -> H { s = SN { h: mk(4) }; x: H = mk(1); note("R{x.id}"); for i in 0..2 { x = mk(20 + i); } x = s.h ?? mk(99); x.id = 5; return mk(6); }
+// Controls: the same shapes over locals the function owns, which write out per arm.
+fn k_owned() -> H { o: H? = null; b = mk(2); x: H = o ?? b; x.id = 7; x = mk(9); return x; }
+fn k_present() -> H { o: H? = mk(5); b = mk(2); x: H = o ?? b; x.id = 7; x = mk(9); return x; }
+fn k_branch() -> H { c = false; a = mk(3); b = mk(2); x: H = if c { a } else { b }; x.id = 7; x = mk(9); return x; }
+
+// 1 — the shape: rebound to a mint and returned.  The witness holds `mk(9)`, the return moves
+//     it, and `b`'s record, which `x` took over, is displaced at the rebind.
+fn c1() { y = f_rebound(); note("G{y.id}"); }
+// 2 — rebound to another owned LOCAL, which moves into `x` exactly as a mint lands there.
+fn c2() { y = f_to_local(); note("G{y.id}"); }
+// 3 — rebound twice: each rebind releases what it displaces, after the new value.
+fn c3() { y = f_twice(); note("G{y.id}"); }
+// 4 — the rebind under an `if`, TAKEN.
+fn c4() { y = f_maybe(true); note("G{y.id}"); }
+// 5 — the rebind under an `if`, NOT taken: `x` still holds `b`'s record, there is no witness,
+//     and it is `b` whose hook must stand down at the return.
+fn c5() { y = f_maybe(false); note("G{y.id}"); }
+// 6 — rebound and NOT returned: every record is this frame's to release, once.
+fn c6() { y = f_other(); note("G{y.id}"); }
+// 7 — two exits, the one returning something else taken: per exit, the witness keeps its hook.
+fn c7() { y = f_exits(false); note("G{y.id}"); }
+// 8 — rebound in a loop: each pass displaces the last pass's record.
+fn c8() { y = f_loop(); note("G{y.id}"); }
+// 9 — the return inside the loop.
+fn c9() { y = f_loop_exit(); note("G{y.id}"); }
+// 10 — the member PRESENT: `x` views `s.h` until the rebind, `s` releases its member and `b`
+//      its own record, and the returned mint is the caller's.
+fn c10() { y = f_present(); note("G{y.id}"); }
+// 11 — a witnessed local that ends on a VIEW of a member, with a fresh value returned.
+fn c11() { y = f_viewed(); note("G{y.id}"); }
+fn k1() { y = k_owned(); note("G{y.id}"); }
+fn k2() { y = k_present(); note("G{y.id}"); }
+fn k3() { y = k_branch(); note("G{y.id}"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+
+  c1();
+  ok("c1 rebound, returned       ", drain(), "m2,m9,d7,G9,d9");
+  c2();
+  ok("c2 rebound to a local      ", drain(), "m2,m9,d7,G9,d9");
+  c3();
+  ok("c3 rebound twice           ", drain(), "m2,m9,d7,R9,m11,d9,G11,d11");
+  c4();
+  ok("c4 rebind taken            ", drain(), "m2,m9,d7,G9,d9");
+  c5();
+  ok("c5 rebind not taken        ", drain(), "m2,G7,d7");
+  c6();
+  ok("c6 rebound, not returned   ", drain(), "m2,m9,d7,R9,m5,d9,G5,d5");
+  c7();
+  ok("c7 the other exit          ", drain(), "m2,m9,d7,m5,d9,G5,d5");
+  c8();
+  ok("c8 rebound in a loop       ", drain(), "m2,m10,d7,m11,d10,m12,d11,G12,d12");
+  c9();
+  ok("c9 returned in the loop    ", drain(), "m2,m10,d7,m11,d10,G11,d11");
+  c10();
+  ok("c10 the member present     ", drain(), "m4,m2,m9,d2,d7,G9,d9");
+  c11();
+  ok("c11 ends on a member view  ", drain(), "m4,m1,R1,m20,d1,m21,d20,d21,m6,d5,G6,d6");
+
+  // Controls — right before and after.
+  k1();
+  ok("k1 owned locals            ", drain(), "m2,m9,d7,G9,d9");
+  k2();
+  ok("k2 owned, first present    ", drain(), "m5,m2,m9,d7,d2,G9,d9");
+  k3();
+  ok("k3 owned branch            ", drain(), "m3,m2,m9,d7,d3,G9,d9");
+
+  delete(trace_path());
+  println("a returned witnessed local hands out the record it holds: every cell holds");
+}

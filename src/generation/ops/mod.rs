@@ -281,6 +281,12 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
     // templates (pure-expr / literal, no non-rewritable `s.`) are native-valid
     // via DefaultEmitter.
     r.insert("OpFreeRef", Box::new(ref_ops::OpFreeRefEmitter));
+    r.insert("OpDropFnRef", Box::new(ref_ops::OpDropFnRefEmitter));
+    r.insert(
+        "OpFnRefDetachShared",
+        Box::new(ref_ops::OpFnRefDetachSharedEmitter),
+    );
+    r.insert("OpFnRefClosure", Box::new(ref_ops::OpFnRefClosureEmitter));
     r.insert(
         "OpFreeRefIfDistinct",
         Box::new(ref_ops::OpFreeRefIfDistinctEmitter),
@@ -561,8 +567,12 @@ mod tests {
         // value-enum field are one byte, written through the record's address like the
         // three scalar kinds (`enum_match`'s build −11 %); every other `OpSetEnum` falls
         // through to the template.
+        // loft#1609 adds two, `OpDropFnRefEmitter` (the drop cascade of a fn-ref's closure
+        // record, dispatched on its `d_nr`) and `OpFnRefDetachSharedEmitter` (a rebind's
+        // displaced closure half, nulled where the new value shares it).  loft#1636 adds one,
+        // `OpFnRefClosureEmitter` (a fn-ref's closure half, for the holder identity tests).
         assert!(
-            count <= 123,
+            count <= 126,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

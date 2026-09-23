@@ -2610,8 +2610,16 @@ impl ReplSession {
     /// write-back, not yet built).  The edit is picked up when the run resumes — the
     /// @PLN16 F edit-and-continue, driven from the REPL.
     pub fn debug_set(&mut self, name: &str, rhs: &str) -> bool {
-        let Some(lit) = self.debug_eval(rhs) else {
-            return false;
+        // A bare `null` has no type to evaluate at, and it is the own-format literal the frame
+        // view prints for an absent value — so it is written as it is, and the local's own
+        // type decides whether it can hold one (loft#1629).
+        let lit = if rhs.trim() == "null" {
+            "null".to_string()
+        } else {
+            let Some(lit) = self.debug_eval(rhs) else {
+                return false;
+            };
+            lit
         };
         if self.paused.is_none() {
             return false;

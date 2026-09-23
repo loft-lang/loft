@@ -4103,7 +4103,7 @@ impl Parser {
         // hid it by const-folding before this runs.  u8/u16/i8/i16/i32 were unaffected:
         // their maxima are the only ones that fit i32.
         let min = spec.min;
-        let max = i64::from(spec.max);
+        let max = spec.max;
         // Result type is `Optional(τ)` — the narrow target τ, marked nullable. As a Rust
         // VALUE this is carried full-width (`rust_type(Optional(Integer))` is `i64`, so the
         // else-branch's integer null sentinel fits and the value is not truncated); the
@@ -4150,7 +4150,7 @@ impl Parser {
         if let Type::Integer(s) = ty
             && s.min >= 0
         {
-            return Some(s.max);
+            return u32::try_from(s.max).ok();
         }
         None
     }
@@ -4965,11 +4965,11 @@ impl Parser {
                 };
                 if let Some((nmin, nmax)) = narrowed
                     && nmin >= s.min
-                    && nmax <= s.max
+                    && i64::from(nmax) <= s.max
                 {
                     *ctp = Type::Integer(IntegerSpec {
                         min: nmin,
-                        max: nmax,
+                        max: i64::from(nmax),
                         ..*s
                     });
                 }

@@ -520,7 +520,10 @@ old auto-`τ?` reading. Design record:
 (N-Reserve) a reserved null is a VALUE OF THE TYPE, so it is excluded from `τ?`'s non-null
             range — and excluded EVERYWHERE the value can be, not only where the bytes are
             packed.  `255` is a real `u8` and IS the null of a `u8?`, so a `u8?` ranges over
-            `0..=254` in a local, a field, an element, a parameter and a return alike.  What
+            `0..=254` in a local, a field, an element, a parameter and a return alike —
+            and in a TUPLE MEMBER, which that list does not name because it was written
+            before anyone asked — `layout.md` `(L-Tuple)` makes a member a field, and since
+            loft#1640 it is bounded like one.  What
             spends the edge is a SLOT — a place a value is KEPT — and an expression in flight
             is not one: `e as u8?` yields `255` and `(e as u8?) ?? d` keeps it, because
             neither ever holds a `u8?`; assign the same cast into a `u8?` and it is null.
@@ -528,7 +531,18 @@ old auto-`τ?` reading. Design record:
             range exactly fills a fixed 1- or 2-byte storage — an `i32?` has a spare code
             outside its range and an `integer limit(0,255)?` widens to get one, so neither
             gives anything up.  The COMPLEMENT is the same statement: a NON-null narrow
-            reserves nothing, because it has no null to encode.
+            reserves nothing, because it has no null to encode — and that holds however much
+            room its declared range leaves inside the width.  `limit(-100, 100) size(1)` is
+            201 values in 256 and the 55 codes left over are NOT a place to keep a null:
+            a value that does not fit takes the type's DEFAULT, by `(E-Uncomp-NN)`
+            ([C127](../DESIGN_DECISIONS.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
+            Spareness is arithmetic the author did not do, so it cannot decide semantics.
+            The plain `integer` and `i32` TEMPLATES keep their sentinel, and that is an
+            EXEMPTION rather than a distinction the rule draws: it costs one value in 2^32
+            and buys the only narrow type whose overflow is detectable, which is the whole
+            reason it stands (C127 § Decision).  `u32` reserves a code at the top of its
+            range and takes the DEFAULT, so the table below records where the split falls
+            and not a principle that puts it there.
 ```
 
 **Per-type null + store verdict** — the verdict follows the *representability* test, not
@@ -544,6 +558,8 @@ per-type taste ([C90](../DESIGN_DECISIONS.md) fixes the reserved value):
 | reference | out-of-band `nullref` | yes | **warn** |
 | struct in `vector` | tagged `__nullable<S>` | yes | **warn** |
 | narrow `u8`/`i8`/`u16`/`i16`/`i32`/`u32` | top width value — reserved ONLY in the `τ?` form | **no** — non-null uses the full width (`255` is a real `u8`) | **error** |
+| narrow `limit(lo, hi) size(n)` — a range with codes to spare | top width value — reserved ONLY in the `τ?` form, exactly as above | **no** — a spare code is not a reserved one (C127) | **error** |
+| `u32` — `limit(0, 4294967294) size(4)`, a reserved TOP code | top width value, in the `τ?` form | **no** — the reserved code buys the refusal of `4294967295`, not a null: an overflow reads `0` | **error** |
 
 The narrow widths are the **sole error case**: they are the only types whose non-null form
 spends the whole width on real values (C90 gives them a sentinel only in `τ?`, to keep the
@@ -666,7 +682,35 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 ## Deviations
 
-**OPEN: 0.**  `D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
+**OPEN: 0.**
+
+* **D-types-2** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1640)* — `(N-Reserve)`: a TUPLE MEMBER of a narrow
+  type is not bounded by its declared range on a plain assignment.  `t: (u8, u8) = (250, 7);
+  t.0 = 300` stores `300`, and `t.0 >= 0 and t.0 <= 255` — the type's own range, written out
+  — reads `false` for a value the type is holding; copying that tuple into a
+  `vector<(u8, u8)>` element then reads `44`, the low byte, with nothing reported at either
+  step.  `i8` takes `5000` and `u16` takes `999999` the same way.  The three slots the rule
+  DOES name refuse it: a local, a struct field and a vector element all answer *"cannot
+  implicitly narrow integer to u8"*.  **Where (measured).**  The COMPOUND path is correct —
+  `t.0 += 10` from 250 answers `0` like the local — because loft#1228 routed tuple members
+  through the one seam `Parser::guard_compound_range` sits at; it is the compile-time
+  `is_narrowing_int_store` check on the PLAIN assignment that does not see a tuple member as
+  a narrow store place.  Both backends agree, so a coverage gap and not a divergence.  A
+  tuple member inside a CONTAINER is a second, louder gap: `v: vector<(u8, u8)> = [(1, 2)];
+  v[0].0 += 10` is refused with *"Not implemented operation + for type integer(0, 255)"*, a
+  message about an operator that is plainly implemented — loft#1228's own shape one level
+  deeper.  Found by `scripts/matrix_axes.py`, which reports `A3 … MISSING tuple-element`
+  against the C127 guards.  **Closed** the same day: the narrowing refusal and loft#984's range
+  guard now live in one method (`Parser::narrow_store_checks`) that the general assign path and
+  the tuple branch both call, so a tuple member is bounded like every other slot and the third
+  slot kind that reaches neither has one place to be added to.  Guard
+  `tests/scripts/1640-a-tuple-member-is-a-narrow-slot-like-any-other.loft` for what must still
+  be true, and two `@EXPECT_ERROR` cells in `102-expected-errors.loft` for the refusal itself.
+  The second half — `v[0].0 += 10` on a `vector<(u8, u8)>` refused as *"Not implemented
+  operation +"* — is a tuple-in-a-container ROUTING question rather than a narrowing one and
+  stays open on the issue.
+
+`D-Domain-Guard` opened 2026-09-08 and CLOSED 2026-09-12: the owner took the
 call the entry was waiting on and ruled that the LATTICE widens rather than the rule narrowing,
 so `(N-Domain)`'s one promise now holds over all three families.  A comparison against zero
 contributes a `Sign` for the slot, which is what makes the guard COMPOSE with the expression
@@ -677,6 +721,19 @@ lattice instead of sitting beside it — and is why `ln` given only `x >= 0.0` s
 the count sits here and the entry sits in [types-history.md](types-history.md) — a chapter that
 delegates its register states a number nothing beside it can check.  `rule_tags.py registers`
 now checks it, by attributing a `-history` companion's entries to its chapter.
+
+`D-Text-Promote` opened and closed 2026-09-23 (loft#1616): a `text?` local promoted to a
+`-> text` function's hidden `&text` work buffer lost its `?`, against `(N-Shape)` (the `?` is a
+marker over τ's own storage and never selects a road).  So pass 2 checked the local's own
+`a: text? = null` against `&text` and refused it, and a later `a = null` drew a false
+`(N-Store)` warning.  `a: text? = null; return a ?? "d"` did not compile, on both backends.
+Beside it, the list of locals a tail promotes was not pass-stable (`a ?? b ?? "d"` listed `a` on
+pass 1 and `b` on pass 2), so a hidden parameter grew on pass 2 alone and the H5 contract
+aborted the compiler.  Closed by marking a promoted `text?` local on its `Function`
+(`mark_nullable_text_buffer`, carried across passes), read where the null store is checked and
+converted.  An author's `&text` and a buffer promoted from a non-null `text` keep the refusal.
+Pass 2 now follows pass 1 for an author's local, loft#1099's rule.  Guard
+`tests/scripts/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft`.
 
 `D-Narrow-Limit` opened and closed 2026-09-22 (loft#1593): a user-written `limit(a, b)` was
 outside all three narrowing rules, keyed out by the alias's `forced_size`; one predicate now

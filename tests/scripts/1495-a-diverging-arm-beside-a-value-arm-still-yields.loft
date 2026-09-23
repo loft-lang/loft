@@ -88,6 +88,18 @@ fn three_arms(n: integer) -> vector<u8> {
   else if n > 1 { head1495(n) }
   else { head1495(1) }
 }
+// The VALUE arm taken, with a condition that leaves it a non-empty answer.  `if_arm`'s value
+// arm runs only for `n <= 0`, where `head1495(n)` is empty, so a lost value and a right one
+// read alike there; these read 2 and 3.  Until 2026-09-23 both answered 0 on both backends:
+// the diverging arm's `return b.items` is lowered as an Insert (copy, frees, `return`), and the
+// block flattening it reset the arm's `Never` to `Void`, so the `if` read as a statement and
+// dropped the sibling's value.
+fn if_value_arm(n: integer) -> vector<u8> {
+  if n > 3 { b = Box1495 { items: head1495(n), name: "x" }; return b.items; } else { head1495(n) }
+}
+fn if_value_arm_plus(n: integer) -> vector<u8> {
+  if n > 3 { b = Box1495 { items: head1495(n), name: "x" }; return b.items; } else { head1495(n + 1) }
+}
 // A two-level projection, and a diverging arm with no statement before the `return`.
 fn deep_projection(n: integer, o: Outer1495) -> vector<u8> {
   if n > 0 { return o.inner.items; } else { head1495(n) }
@@ -139,6 +151,9 @@ fn main() {
   assert(len(match_arm(A1495 { n: 5 })) == 5, "the filed shape: got {len(match_arm(A1495 { n: 5 }))}");
   assert(len(match_arm(B1495 { n: 4 })) == 4, "the filed shape, value arm: got {len(match_arm(B1495 { n: 4 }))}");
   assert(len(if_arm(5)) == 5, "an if arm: got {len(if_arm(5))}");
+  assert(len(if_value_arm(2)) == 2, "an if arm, its value arm taken: got {len(if_value_arm(2))}");
+  assert(len(if_value_arm_plus(2)) == 3, "…yielding a different call: got {len(if_value_arm_plus(2))}");
+  assert(len(if_value_arm(5)) == 5, "…and its diverging arm: got {len(if_value_arm(5))}");
   assert(len(second_arm(B1495 { n: 5 })) == 5, "the second arm diverges: got {len(second_arm(B1495 { n: 5 }))}");
   assert(len(second_arm(A1495 { n: 3 })) == 3, "its value arm: got {len(second_arm(A1495 { n: 3 }))}");
   assert(len(three_arms(5)) == 5, "a chain, diverging head: got {len(three_arms(5))}");

@@ -513,7 +513,7 @@ pub fn reclaim_native_scratch(dir: &std::path::Path) -> u64 {
 /// the disk was full (sixteen thousand of them on one box).  Bounded by construction: after
 /// this, the directory holds at most one artefact per LIVE process.  The age fallback of
 /// [`reclaim_native_scratch`] is deliberately NOT applied here — a name without a pid is the
-/// test runner's per-file binary cache (`loft_test_native_<stem>_bin`), which is a cache only
+/// test runner's per-program binary cache (`loft_test_native_<stem>_<key>_bin`), which is a cache only
 /// as long as it survives a compile that has room.
 pub fn reclaim_dead_native_scratch(dir: &std::path::Path) -> u64 {
     reclaim_native_scratch_by(dir, false)

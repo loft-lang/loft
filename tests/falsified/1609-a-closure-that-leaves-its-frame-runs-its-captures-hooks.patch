@@ -1,0 +1,518 @@
+diff --git b/default/01_code.loft a/default/01_code.loft
+index 6684eb0f1..cc9f43e66 100644
+--- b/default/01_code.loft
++++ a/default/01_code.loft
+@@ -1651,18 +1651,6 @@ fn OpSetStackFnRef(pos: const u16, v1: text);
+ // reference names the link's slot; the 20-byte STACK blob lives where it points.  Declared
+ // `text` for the blob like `OpVarFnRef`, whose signature carries the same 16-vs-20 gap.
+ fn OpGetStackFnRef(r: reference) -> text;
+-// Run the drop cascade of the closure record a fn-ref holds, before the fn-ref's own
+-// `OpFreeRef` releases that record's store (@FR-L-CapOwn, loft#1609).  Emitted only for a
+-// fn-ref no local closure record releases (a call result, a parameter): which lambda such a
+-// value holds is a run-time fact, so the cascade is found from the fn-ref's own `d_nr`.  A
+-// fn-ref holding no closure, or a lambda whose record owns nothing droppable, runs nothing.
+-// `fn_var` is the fn-ref slot's distance from the top of the stack, as `OpCallRef`'s is.
+-fn OpDropFnRef(fn_var: const u16);
+-// Null the closure half of the fn-ref at `old` when it names no record (`rec == 0`), or shares
+-// a store with the one at `new`:
+-// a rebind that hands the same closure back (`f = keep(f)`) displaces nothing, so the release
+-// of the displaced value that follows must find nothing to release (loft#1609).
+-fn OpFnRefDetachShared(old: const u16, new: const u16);
+ // Append a text to a stack text variable.
+ fn OpAppendStackText(pos: const u16, v1: text);
+ // Append a character to a stack text variable.
+diff --git b/src/data.rs a/src/data.rs
+index ace72387f..b38c7b756 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -10405,33 +10405,6 @@ impl Data {
+         Self::mangle_method(def.name(), method)
+     }
+ 
+-    /// Every lambda whose closure record has a drop cascade, paired with that cascade: the
+-    /// arms `OpDropFnRef` dispatches over (`@FR-L-CapOwn`, loft#1609).  A fn-ref's run-time
+-    /// `d_nr` names the lambda; a lambda absent here has nothing to drop.
+-    #[must_use]
+-    pub fn closure_drops(&self) -> Vec<(u32, u32)> {
+-        (0..self.definitions())
+-            .filter_map(|d| {
+-                let record = self.def(d).closure_record();
+-                if record == u32::MAX {
+-                    return None;
+-                }
+-                let cascade = self.drop_cascade_nr(record);
+-                (cascade != u32::MAX).then_some((d, cascade))
+-            })
+-            .collect()
+-    }
+-
+-    /// Does any lambda's closure record have a drop cascade?  Gates `OpDropFnRef`, which is
+-    /// a no-op in a program where [`Self::closure_drops`] is empty.
+-    #[must_use]
+-    pub fn any_closure_drop(&self) -> bool {
+-        (0..self.definitions()).any(|d| {
+-            let record = self.def(d).closure_record();
+-            record != u32::MAX && self.drop_cascade_nr(record) != u32::MAX
+-        })
+-    }
+-
+     #[must_use]
+     pub fn drop_cascade_nr(&self, type_def: u32) -> u32 {
+         if type_def == u32::MAX || type_def as usize >= self.definitions.len() {
+diff --git b/src/fill.rs a/src/fill.rs
+index 644e87a30..9a869181a 100644
+--- b/src/fill.rs
++++ a/src/fill.rs
+@@ -300,8 +300,6 @@ pub const OPERATORS: &[fn(&mut State)] = &[
+     set_stack_ref,
+     set_stack_fn_ref,
+     get_stack_fn_ref,
+-    drop_fn_ref,
+-    fn_ref_detach_shared,
+     append_stack_text,
+     append_stack_character,
+     clear_stack_text,
+@@ -2608,14 +2606,6 @@ fn get_stack_fn_ref(s: &mut State) {
+     s.get_stack_fn_ref();
+ }
+ 
+-fn drop_fn_ref(s: &mut State) {
+-    s.drop_fn_ref();
+-}
+-
+-fn fn_ref_detach_shared(s: &mut State) {
+-    s.fn_ref_detach_shared();
+-}
+-
+ fn append_stack_text(s: &mut State) {
+     s.append_stack_text();
+ }
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index 320d3777e..928581019 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -390,15 +390,6 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
+         // return would be misread as a reachable fn d_nr.
+         let returns_fn = matches!(def.returned(), Type::Function(..) | Type::Routine(_));
+         collect_fn_ref_literals(def.code(), data, def.variables(), &mut calls, returns_fn);
+-        // A reachable lambda's closure record can be released through a fn-ref that no local
+-        // record names, and `OpDropFnRef` dispatches to its cascade by `d_nr` (loft#1609).
+-        let record = def.closure_record();
+-        if record != u32::MAX {
+-            let cascade = data.drop_cascade_nr(record);
+-            if cascade != u32::MAX {
+-                calls.insert(cascade);
+-            }
+-        }
+         for c in calls {
+             if !reachable.contains(&c) {
+                 queue.push_back(c);
+diff --git b/src/generation/ops/mod.rs a/src/generation/ops/mod.rs
+index 40d6801f5..af23d6bcf 100644
+--- b/src/generation/ops/mod.rs
++++ a/src/generation/ops/mod.rs
+@@ -281,11 +281,6 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
+     // templates (pure-expr / literal, no non-rewritable `s.`) are native-valid
+     // via DefaultEmitter.
+     r.insert("OpFreeRef", Box::new(ref_ops::OpFreeRefEmitter));
+-    r.insert("OpDropFnRef", Box::new(ref_ops::OpDropFnRefEmitter));
+-    r.insert(
+-        "OpFnRefDetachShared",
+-        Box::new(ref_ops::OpFnRefDetachSharedEmitter),
+-    );
+     r.insert(
+         "OpFreeRefIfDistinct",
+         Box::new(ref_ops::OpFreeRefIfDistinctEmitter),
+@@ -566,11 +561,8 @@ mod tests {
+         // value-enum field are one byte, written through the record's address like the
+         // three scalar kinds (`enum_match`'s build −11 %); every other `OpSetEnum` falls
+         // through to the template.
+-        // loft#1609 adds two, `OpDropFnRefEmitter` (the drop cascade of a fn-ref's closure
+-        // record, dispatched on its `d_nr`) and `OpFnRefDetachSharedEmitter` (a rebind's
+-        // displaced closure half, nulled where the new value shares it).
+         assert!(
+-            count <= 125,
++            count <= 123,
+             "registry has {count} custom emitters — bump the cap if \
+              this is intentional and document here"
+         );
+diff --git b/src/generation/ops/ref_ops.rs a/src/generation/ops/ref_ops.rs
+index a18799eaa..f6285c303 100644
+--- b/src/generation/ops/ref_ops.rs
++++ a/src/generation/ops/ref_ops.rs
+@@ -27,81 +27,6 @@ use std::io;
+ ///   - an fn-ref (`Type::Function`) → free only its closure component when set;
+ ///   - otherwise → `OpFreeRef(cell, <db>, "var")` plus a `store_nr = u16::MAX`
+ ///     reset when the operand is a variable.
+-/// `OpDropFnRef(f)` (`@FR-L-CapOwn`, loft#1609) — run the drop cascade of the closure record
+-/// a fn-ref holds, ahead of the `OpFreeRef` that releases its store.  Which lambda the value
+-/// holds is a run-time fact, so this is a `match` on its `d_nr` whose arms are the lambdas a
+-/// value of this fn-ref TYPE can be ([`super::super::fnref::dispatch_arms`], the same set a
+-/// call through it dispatches over) that have a cascade ([`crate::data::Data::closure_drops`]).
+-/// A null closure, a released store and every other `d_nr` run nothing — the interpreter's
+-/// `State::fn_drop_ref` answers the same three the same way.
+-pub struct OpDropFnRefEmitter;
+-
+-impl OpEmitter for OpDropFnRefEmitter {
+-    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+-        let Some(Value::Var(v)) = args.first().map(Value::unspan) else {
+-            return write!(ctx.w, "()");
+-        };
+-        let tp = ctx
+-            .output
+-            .data
+-            .def(ctx.output.def_nr)
+-            .variables()
+-            .tp(*v)
+-            .clone();
+-        let Type::Function(params, ..) = tp.base() else {
+-            return write!(ctx.w, "()");
+-        };
+-        let candidates: Vec<u32> = super::super::fnref::dispatch_arms(
+-            ctx.output.data,
+-            &ctx.output.reachable,
+-            tp.base(),
+-            params.len(),
+-        )
+-        .unwrap_or_default()
+-        .iter()
+-        .map(|a| a.d_nr)
+-        .collect();
+-        let arms: Vec<(u32, String)> = ctx
+-            .output
+-            .data
+-            .closure_drops()
+-            .into_iter()
+-            .filter(|(lambda, _)| candidates.contains(lambda))
+-            .map(|(lambda, cascade)| (lambda, ctx.output.fn_ident(ctx.output.data.def(cascade))))
+-            .collect();
+-        if arms.is_empty() {
+-            return write!(ctx.w, "()");
+-        }
+-        let (_, vn) = free_label_lvalue(ctx, *v);
+-        write!(
+-            ctx.w,
+-            "{{ let __df = {vn}; if __df.1.rec != 0 && stores.allocations.get(__df.1.store_nr as usize).is_some_and(|s| !s.is_free()) {{ match __df.0 {{ "
+-        )?;
+-        for (lambda, cascade) in arms {
+-            write!(ctx.w, "{lambda}_u32 => {cascade}(cell, __df.1), ")?;
+-        }
+-        write!(ctx.w, "_ => {{}} }} }} }}")
+-    }
+-}
+-
+-/// `OpFnRefDetachShared(old, new)` — null the closure half of `old` when it names no record
+-/// or shares a store with `new`'s, the native twin of `State::fn_ref_detach_shared` (loft#1609).
+-pub struct OpFnRefDetachSharedEmitter;
+-
+-impl OpEmitter for OpFnRefDetachSharedEmitter {
+-    fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+-        let [Value::Var(old), Value::Var(new)] = args else {
+-            return write!(ctx.w, "()");
+-        };
+-        let (_, o) = free_label_lvalue(ctx, *old);
+-        let (_, n) = free_label_lvalue(ctx, *new);
+-        write!(
+-            ctx.w,
+-            "if {o}.1.rec == 0 || {o}.1.store_nr == {n}.1.store_nr {{ {o}.1 = DbRef {{ store_nr: u16::MAX, rec: 0, pos: 0 }}; }}"
+-        )
+-    }
+-}
+-
+ pub struct OpFreeRefEmitter;
+ 
+ /// The debug LABEL and the reset LVALUE of a freed local: `("var_x", "var_x")`, or
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 515e36d83..abb7cdc99 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -13119,71 +13119,6 @@ impl Scopes<'_> {
+         Some((pre, post))
+     }
+ 
+-    /// `@FR-L-CapOwn` at a REBIND of a fn-ref local that holds a CALL's closure: `(before,
+-    /// after)` the statement, or `None` where it is not such a rebind (loft#1609).
+-    ///
+-    /// A closure record that left its frame is released by the fn-ref holding it, and once the
+-    /// local names the new value nothing names the old one.  Before the statement the old
+-    /// value is copied into a displaced temp; after it, the temp gives up a closure it shares
+-    /// with the new value (`OpFnRefDetachShared` — `f = keep(f)` hands the same record back),
+-    /// runs the record's cascade and frees its store, and is set to null so the scope-end
+-    /// sweep of the temp releases nothing.  Declined where the old value may be a record this
+-    /// frame built (the record releases through itself) or another local shares the fn-ref
+-    /// (`g = f`: releasing it here would leave `g` a freed closure).
+-    fn fnref_call_rebind(
+-        &mut self,
+-        stmt: &Value,
+-        function: &mut Function,
+-        data: &Data,
+-    ) -> Option<(Vec<Value>, Vec<Value>)> {
+-        let Value::Set(ov, rhs) = stmt.unspan() else {
+-            return None;
+-        };
+-        // Only a CALL's closure is displaced here: a lambda built in this frame is released
+-        // through its own record, and the first assignment of a local declared ahead of a
+-        // branch (`h` bound in each arm) displaces only its null pre-init.
+-        if !matches!(rhs.unspan(), Value::Call(d, _) if !data.def(*d).name().starts_with("Op")) {
+-            return None;
+-        }
+-        let v = *self.var_mapping.get(ov).unwrap_or(ov);
+-        if !matches!(function.tp(v), Type::Function(..))
+-            || !self.var_scope.contains_key(&v)
+-            || function.is_argument(v)
+-            || function.is_captured(v)
+-            || function.is_compiler_generated(v)
+-            || function.is_skip_free(v)
+-        {
+-            return None;
+-        }
+-        let count = function.count();
+-        // Every entry a callee's tagged note (a call result), never a local of this frame.
+-        if function.tp(v).depend().iter().any(|&r| r < count) {
+-            return None;
+-        }
+-        if (0..count).any(|u| {
+-            u != v
+-                && matches!(function.tp(u).base(), Type::Function(..))
+-                && function.tp(u).depend().contains(&v)
+-        }) {
+-            return None;
+-        }
+-        let tp = function.tp(v).clone();
+-        self.lift_counter += 1;
+-        let tmp = function.add_temp_var(&format!("__fdisp_{}", self.lift_counter), &tp);
+-        self.var_scope.insert(tmp, self.scope);
+-        let pre = vec![v_set(tmp, Value::Var(v))];
+-        let mut post = vec![Value::Call(
+-            data.def_nr("OpFnRefDetachShared"),
+-            vec![Value::Var(tmp), Value::Var(v)],
+-        )];
+-        if data.any_closure_drop() {
+-            post.push(call("OpDropFnRef", tmp, data));
+-        }
+-        post.push(call("OpFreeRef", tmp, data));
+-        post.push(v_set(tmp, Value::Null));
+-        Some((pre, post))
+-    }
+-
+     /// `@FR-H-Drop`, the reassignment clause, for a vector local promoted onto the RETURN
+     /// BUFFER: `(before, after, waits)` a statement that refills it, or `None`.
+     ///
+@@ -13790,9 +13725,7 @@ impl Scopes<'_> {
+             // construction of a local (outside a loop) displaces nothing.
+             let rebuilt = self.in_place_rebuild(v, function, data);
+             let rebind_release = self.vector_rebind_release(v, function, data);
+-            let call_rebind = self
+-                .vector_call_rebind(v, function, data)
+-                .or_else(|| self.fnref_call_rebind(v, function, data));
++            let call_rebind = self.vector_call_rebind(v, function, data);
+             let promoted_refill = self.promoted_vector_refill(v, function, data);
+             // A literal's `Set` heads the statements that fill its new backing, so its release
+             // waits for the statement's end; any other rebind is a whole statement already.
+@@ -15484,9 +15417,6 @@ impl Scopes<'_> {
+         // it standing, `--native` nulls `store_nr`), so a guard placed after it would decline on
+         // one and double-free on the other.
+         let mut guarded: Vec<Value> = Vec::new();
+-        // The owners whose drop a conditional release below already carries — one hook per
+-        // store, on the FIRST release of it (a view and its backing free one store).
+-        let mut guarded_hooks: std::collections::HashSet<u16> = std::collections::HashSet::new();
+         let vars = self.variables(to_scope);
+         if scope_debug {
+             eprintln!(
+@@ -15620,7 +15550,7 @@ impl Scopes<'_> {
+                     )
+                     && !records.is_empty()
+                 {
+-                    guarded.push(free_unless_record_built(v, &records, Some(w), None, data));
++                    guarded.push(free_unless_record_built(v, &records, Some(w), data));
+                 }
+                 ls.push(release_witness(
+                     w,
+@@ -15902,20 +15832,7 @@ impl Scopes<'_> {
+                     )
+                     && !records.is_empty()
+                 {
+-                    // The release this stands in for is the frame's whole one, hook included
+-                    // (`@FR-H-Drop`): on a run that skips the build nothing else releases the
+-                    // elements.  The hook is the OWNER's — a vector local viewing its backing
+-                    // (`w` over `__vdb_N`) frees the same store — and it runs once, ahead of
+-                    // whichever of the two is released first.
+-                    let owner = match function.tp(v).depend().as_slice() {
+-                        [] => Some(v),
+-                        [b] => Some(*b),
+-                        _ => None,
+-                    };
+-                    let hook = owner
+-                        .filter(|o| guarded_hooks.insert(*o))
+-                        .and_then(|o| self.scope_end_drop(function, o, data, None));
+-                    guarded.push(free_unless_record_built(v, &records, None, hook, data));
++                    guarded.push(free_unless_record_built(v, &records, None, data));
+                 }
+                 if function.is_skip_free(v) && inject_free_skipfree() == Some(function.name(v)) {
+                     ls.push(Value::Call(
+@@ -16230,17 +16147,6 @@ impl Scopes<'_> {
+                             self.var_scope.get(&v).copied().unwrap_or(u16::MAX),
+                         );
+                     }
+-                    // `@FR-L-CapOwn` — a fn-ref no local record releases (a call result, a
+-                    // parameter) holds a record that LEFT its frame, and the release it took
+-                    // over runs the hooks as well as freeing the store.  Which lambda it holds
+-                    // is a run-time fact, so the cascade is dispatched on its `d_nr`
+-                    // (loft#1609).  A local record releases through itself and needs no op.
+-                    let local_record = carried
+-                        .iter()
+-                        .any(|&r| r < function.count() && function.name(r).starts_with("___clos_"));
+-                    if !local_record && data.any_closure_drop() {
+-                        ls.push(call("OpDropFnRef", v, data));
+-                    }
+                     ls.push(call("OpFreeRef", v, data));
+                 }
+             }
+@@ -20280,15 +20186,7 @@ fn adoption_build_is_conditional(builds: &CaptureBuilds, v: u16) -> bool {
+ /// `witness` is the local's OWNER WITNESS where it has one (`@FR-O-Witness`): the sweep
+ /// releases that separately, so the release here declines by store identity where the two
+ /// would name one store.  Without the witness the free is plain.
+-///
+-/// `hook` is the release's drop (`@FR-H-Drop`), run ahead of the free on the same path.
+-fn free_unless_record_built(
+-    v: u16,
+-    records: &[u16],
+-    witness: Option<u16>,
+-    hook: Option<Value>,
+-    data: &Data,
+-) -> Value {
++fn free_unless_record_built(v: u16, records: &[u16], witness: Option<u16>, data: &Data) -> Value {
+     // ANY of them being there is the fact: where several records can hold this store they are
+     // mutually exclusive builds, so on a given run at most one exists — and that one's cascade
+     // is the release this free stands down for.  Folded right so the last record is the base
+@@ -20312,10 +20210,6 @@ fn free_unless_record_built(
+         ),
+         None => call("OpFreeRef", v, data),
+     };
+-    let release = match hook {
+-        Some(hook) => Value::Insert(vec![hook, release]),
+-        None => release,
+-    };
+     v_if(present, Value::Null, release)
+ }
+ 
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index cafd4fc5f..69e35931f 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -2106,15 +2106,6 @@ impl State {
+             Type::Reference(_, _) | Type::Enum(_, true, _) => {
+                 self.emit_push_sentinel(stack);
+             }
+-            // A fn-ref's null is the PAIR the first-Set path writes (`gen_set_first`'s
+-            // `Type::Function` arm): the null `d_nr`, then the null-closure sentinel.  Given
+-            // the catch-all's lone DbRef, `OpPutFnRef` popped twenty bytes off a push of
+-            // sixteen and the frame ran eight bytes short from there on.
+-            Type::Function(..) => {
+-                stack.add_op("OpConstInt", self);
+-                self.code_add(i64::MIN);
+-                self.emit_push_sentinel(stack);
+-            }
+             Type::Integer(_) => {
+                 stack.add_op("OpConstInt", self);
+                 self.code_add(i64::MIN);
+@@ -4091,25 +4082,6 @@ impl State {
+             stack.add_op("OpFreeRef", self);
+             return Type::Void;
+         }
+-        // loft#1609 — `OpDropFnRef(f)` names the fn-ref VARIABLE; the op reads the slot in
+-        // place (`d_nr` and the closure half), so nothing is pushed, only its distance.
+-        if stack.data.def(op).name() == "OpDropFnRef"
+-            && let Some(Value::Var(v)) = parameters.first()
+-        {
+-            let var_pos = stack.var_pos(*v);
+-            stack.add_op("OpDropFnRef", self);
+-            self.code_add(var_pos);
+-            return Type::Void;
+-        }
+-        if stack.data.def(op).name() == "OpFnRefDetachShared"
+-            && let [Value::Var(old), Value::Var(new)] = parameters
+-        {
+-            let (old_pos, new_pos) = (stack.var_pos(*old), stack.var_pos(*new));
+-            stack.add_op("OpFnRefDetachShared", self);
+-            self.code_add(old_pos);
+-            self.code_add(new_pos);
+-            return Type::Void;
+-        }
+         // @PLN118 — free a heap variable that took an unconditional pre-build free
+         // (`generate_set`'s `owned_ref` path), then RESET its slot to the null
+         // sentinel.  The native backend resets after EVERY var free
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index f0ad82aff..ba661eb76 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -1010,69 +1010,6 @@ impl State {
+         self.fn_call(d_nr as u32, total, code_pos);
+     }
+ 
+-    /// `OpDropFnRef(fn_var)` — run the drop cascade of the closure record the fn-ref at
+-    /// `fn_var` holds (`@FR-L-CapOwn`: a record that leaves its frame takes over the release,
+-    /// hooks included).  Which lambda the fn-ref holds is a run-time fact, so the cascade is
+-    /// looked up from the slot's `d_nr` through that lambda's `closure_record`.  Nothing runs
+-    /// for a null fn-ref, a fn-ref with no closure, a released closure store, or a record type
+-    /// with no cascade.  The cascade is entered as an ordinary call and returns to the next
+-    /// op, which is the `OpFreeRef` that releases the store.
+-    pub fn drop_fn_ref(&mut self) {
+-        let fn_var = self.code::<u16>();
+-        if self.data_ptr.is_null() {
+-            return;
+-        }
+-        let d_nr_i64 = self.get_var::<i64>(fn_var);
+-        let closure = self.get_var::<DbRef>(fn_var - 8);
+-        // SAFETY: the `Data` outlives this `State` — see `data_ptr`.
+-        let data = unsafe { &*self.data_ptr };
+-        let Ok(d_nr) = u32::try_from(d_nr_i64) else {
+-            return;
+-        };
+-        if d_nr >= data.definitions() || closure.rec == 0 {
+-            return;
+-        }
+-        let record = data.def(d_nr).closure_record();
+-        if record == u32::MAX {
+-            return;
+-        }
+-        let cascade = data.drop_cascade_nr(record);
+-        if cascade == u32::MAX
+-            || self
+-                .database
+-                .allocations
+-                .get(closure.store_nr as usize)
+-                .is_none_or(crate::store::Store::is_free)
+-        {
+-            return;
+-        }
+-        let before = self.stack_pos;
+-        self.put_stack(closure);
+-        let span = u16::try_from(self.stack_pos - before).unwrap_or(0);
+-        let code_pos = i64::from(self.fn_positions[cascade as usize]);
+-        self.fn_call(cascade, span, code_pos);
+-    }
+-
+-    /// `OpFnRefDetachShared(old, new)` — null the closure half of the fn-ref at `old` when it
+-    /// names no record, or shares a store with the fn-ref at `new`: the displaced value of a
+-    /// rebind that handed the same closure back owns nothing the rebind released (loft#1609).
+-    /// Both are slot distances from the top of the stack.
+-    pub fn fn_ref_detach_shared(&mut self) {
+-        let old = self.code::<u16>();
+-        let new = self.code::<u16>();
+-        let o = self.get_var::<DbRef>(old - 8);
+-        let n = self.get_var::<DbRef>(new - 8);
+-        // A closure half with no record (`rec == 0`, the pre-init of a local declared ahead of
+-        // a branch) displaces nothing either.
+-        if o.rec == 0 || o.store_nr == n.store_nr {
+-            *self.mut_var::<DbRef>(old - 8) = DbRef {
+-                store_nr: u16::MAX,
+-                rec: 0,
+-                pos: 0,
+-            };
+-        }
+-    }
+-
+     pub fn static_call(&mut self) {
+         let call = self.code::<u16>();
+         // Fix #87: resolve n_stack_trace index lazily, then only snapshot for that call.

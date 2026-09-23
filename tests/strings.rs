@@ -53,30 +53,33 @@ fn string_scope() {
     // adds a null-coalesce block (`ncc:14` / `__ncc_1`) at the tail.
     // @PLN157 P3b: both counted loops carry literal `lo`, so each drops its
     // null-test-and-choose ops (~4 apiece) and every later span starts earlier.
+    // loft#1619 (I-For): the inner loop's end `n` is bound once to `_range_end_1`, so `n`
+    // is last read there — its span ends at the bind and `__ncc_1` reuses its slot.
     .slots(
         "\
   block:1
-  __work_5+24=8 [0..142]
-  __work_4+24=32 [3..141]
-  __work_3+24=56 [6..140]
-  __work_2+24=80 [9..139]
-  __work_1+24=104 [12..138]
-  test_value+24=128 [15..137]
+  __work_5+24=8 [0..144]
+  __work_4+24=32 [3..143]
+  __work_3+24=56 [6..142]
+  __work_2+24=80 [9..141]
+  __work_1+24=104 [12..140]
+  test_value+24=128 [15..139]
   │ block:2
-  │ a+8=152 [17..99]
-  │ b+24=160 [18..116]
+  │ a+8=152 [17..101]
+  │ b+24=160 [18..118]
   │ │ for:3
-  │ │ n#index+8=184 [22..95]
-  │ │ │ loop:4L [seq 23..96]
-  │ │ │ n+8=192 [31..73]
-  │ │ │ │ block:6
-  │ │ │ │ t+24=200 [32..95]
-  │ │ │ │ │ for:9
-  │ │ │ │ │ _m#index+8=224 [61..73]
-  │ │ │ │ │ │ loop:10L [seq 62..74]
-  │ │ │ │ │ │ _m+8=232 [70..70]
+  │ │ n#index+8=184 [22..97]
+  │ │ │ loop:4L [seq 23..98]
+  │ │ │ n+8=192 [31..60]
   │ │ │ │ │ │ │ ncc:14
-  │ │ │ │ │ │ │ __ncc_1+8=240 [88..91]",
+  │ │ │ │ │ │ │ __ncc_1+8=192 [90..93]
+  │ │ │ │ block:6
+  │ │ │ │ t+24=200 [32..97]
+  │ │ │ │ │ for:9
+  │ │ │ │ │ _range_end_1+8=224 [61..75]
+  │ │ │ │ │ _m#index+8=232 [63..75]
+  │ │ │ │ │ │ loop:10L [seq 64..76]
+  │ │ │ │ │ │ _m+8=240 [72..72]",
     )
     .result(Value::str("136 via n:1=1 n:2=12 n:3=122 "));
 }

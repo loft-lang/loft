@@ -10,9 +10,10 @@
 // an `if` (a4), the seed's block re-run by an OUTER loop — re-seeded per pass, admitted
 // (a5); and the shapes that must DECLINE and still answer right: the seed OUTSIDE the
 // loop that holds the walk (a6), a step by a non-literal (a7), a walk over a text the body
-// appends to (a8), a second seed (a9), a counted loop instead of a walk (a10), a parameter
+// appends to — walked as it was (a8), a second seed (a9), a counted loop instead of a walk (a10), a parameter
 // as the seed (a11).
 //
+// @EXPECT_WARNING: Warning[loop-source-written]
 // @falsified-at: hand-measured (2026-09-22) — `LOFT_HOIST_VERIFY=1` is the falsifier: with
 // the accumulator's range widened by hand to admit a12's overflow (a step of 2^40 under a
 // walk of 2^24 characters is not constructible here), the checking form of the plain add
@@ -91,12 +92,12 @@ fn a7() {
   println("a7 {n}");
 }
 
-// a8 — DECLINES: a walk over a text the body APPENDS to (the trips are not bounded by the
-// size at entry); the walk reads what it appended: a, b, then four c's — six trips.
+// a8 — a walk over a text the body APPENDS to: the walk took the text once, before its first
+// round (`@FR-I-For`, loft#1619), so it runs two trips and the appends land in `s` alone.
 fn a8() {
   s = "ab"; n = 0;
   for c in s { n += 1; if n < 5 { s += "c"; } }
-  assert(n == 6 && s == "abcccc", "a8 {n} {s}");
+  assert(n == 2 && s == "abcc", "a8 {n} {s}");
   println("a8 {n} {s}");
 }
 

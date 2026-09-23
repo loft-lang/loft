@@ -33,6 +33,16 @@ area and has exactly two parts:
 
 ## When to reach for this doc
 
+**When no rule is written yet, the default is rustc's answer** (owner, 2026-09-23). A semantic
+corner case — scoping, evaluation order, when something is dropped — takes what Rust does unless
+there is a stated reason to deviate, and when it is unclear whether to ALLOW a shape, the answer
+is a refusal: an error can be relaxed later without breaking a program, and an allowance cannot
+be withdrawn ([COMPATIBILITY.md](../COMPATIBILITY.md) § The error surface). Rulings made this way:
+a `for` takes its bounds and text source once (`(I-For)`, loft#1619); a local and a loop
+variable end at the `}` of the block that bound them, and a read after is an error
+(`(B-Scope)`, loft#1600). Write the rule down when you apply it — an unwritten default is a
+question the next reader asks again.
+
 **Before** the work, not after — these are the moments the rules decide something you would
 otherwise deliberate about:
 

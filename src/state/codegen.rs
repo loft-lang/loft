@@ -2106,6 +2106,15 @@ impl State {
             Type::Reference(_, _) | Type::Enum(_, true, _) => {
                 self.emit_push_sentinel(stack);
             }
+            // A fn-ref's null is the PAIR the first-Set path writes (`gen_set_first`'s
+            // `Type::Function` arm): the null `d_nr`, then the null-closure sentinel.  Given
+            // the catch-all's lone DbRef, `OpPutFnRef` popped twenty bytes off a push of
+            // sixteen and the frame ran eight bytes short from there on.
+            Type::Function(..) => {
+                stack.add_op("OpConstInt", self);
+                self.code_add(i64::MIN);
+                self.emit_push_sentinel(stack);
+            }
             Type::Integer(_) => {
                 stack.add_op("OpConstInt", self);
                 self.code_add(i64::MIN);
@@ -2904,7 +2913,7 @@ impl State {
                 if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
                     && let Value::Var(src) = value.unspan()
                     && *src != v
-                    && let Some(src_d) = stack.function.tp(*src).base().heap_def_nr()
+                    && let Some(src_d) = stack.function.record_copy_source(v, *src)
                     && stack.data.copies_as(d_nr, src_d)
                 {
                     let tp_nr = stack.data.def(d_nr).known_type();
@@ -2919,11 +2928,13 @@ impl State {
                     let slot_offset = stack.var_pos(v);
                     stack.add_op("OpInitRef", self);
                     self.code_add(slot_offset);
-                    if matches!(stack.function.tp(*src), Type::Optional(_)) {
+                    // A `&S?` link is as nullable as an `S?` local: the `?` sits under the `&`.
+                    let (outer, src_nullable) = stack.function.tp(*src).peel_optional();
+                    let src_nullable = src_nullable
+                        || matches!(outer, Type::RefVar(inner) if inner.peel_optional().1);
+                    if src_nullable {
                         self.generate(&Value::Var(*src), stack, false);
-                        let witness_pos = stack.var_pos(*src);
-                        stack.add_op("OpVarRef", self);
-                        self.code_add(witness_pos);
+                        self.push_copy_witness(stack, *src);
                         stack.add_op("OpBindOrCopy", self);
                         self.code_add(stack.var_pos(v));
                         self.code_add(tp_nr);
@@ -3150,7 +3161,9 @@ impl State {
             self.gen_set_first_ref_copy(stack, v, d_nr, value);
         } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
             && let Value::Var(src) = value
-            && let Some(src_d_nr) = stack.function.tp(*src).base().heap_def_nr()
+            // `record_copy_source` also reads a `&S` source as its `S` (@FR-C-Ref), so `y = e`
+            // with `e = &z` copies the record the link names (`binding.md` D-bind-52).
+            && let Some(src_d_nr) = stack.function.record_copy_source(v, *src)
             && stack.data.copies_as(d_nr, src_d_nr)
         {
             // First assignment `d = c` where both hold the same heap RECORD type — a struct
@@ -3565,6 +3578,26 @@ impl State {
     /// pattern that works the same whether slot-move is active or not
     /// (v.stack_pos keeps V1's value when OpVarRef just pushes a copy
     /// of src's DbRef).
+    /// Push the WITNESS `OpBindOrCopy` compares a whole-record bind's source against: the
+    /// record `src` names.  A present source equal to its witness is materialised into a
+    /// fresh store (@FR-B-Copy); an absent one is adopted as the null it is.
+    ///
+    /// A plain local's slot holds that record, so its witness is the slot (`OpVarRef`).  A
+    /// `&S` link's slot holds the stack cell it links, and the record is one deref further
+    /// (@FR-C-Ref) — the read `generate` emits for the variable, so that is its witness
+    /// (`binding.md` D-bind-52).
+    fn push_copy_witness(&mut self, stack: &mut Stack, src: u16) {
+        if matches!(stack.function.tp(src).base(), Type::RefVar(_)) {
+            self.generate(&Value::Var(src), stack, false);
+        } else {
+            // A PUSH op reads at the PRE-push position, so the offset is taken BEFORE
+            // `add_op`.
+            let witness_pos = stack.var_pos(src);
+            stack.add_op("OpVarRef", self);
+            self.code_add(witness_pos);
+        }
+    }
+
     fn gen_set_first_ref_var_copy(&mut self, stack: &mut Stack, v: u16, src: u16, d_nr: u32) {
         // O-B1: last-use move — if source is only read once (this assignment),
         // transfer the DbRef instead of deep copying. Skip the source's OpFreeRef.
@@ -3643,12 +3676,9 @@ impl State {
         // `nullref`, and a nullable destination has to receive it as absence.
         if stack.function.bind_admits_absence(v, src) {
             self.generate(&Value::Var(src), stack, false);
-            // A PUSH op reads at the PRE-push position, so the witness offset is taken
-            // BEFORE `add_op`; the slot the opcode POPS into is taken after, at the
-            // post-pop position.  Same order as the `Join` emission in `generate_set`.
-            let witness_pos = stack.var_pos(src);
-            stack.add_op("OpVarRef", self);
-            self.code_add(witness_pos);
+            // The slot the opcode POPS into is taken after, at the post-pop position.  Same
+            // order as the `Join` emission in `generate_set`.
+            self.push_copy_witness(stack, src);
             stack.add_op("OpBindOrCopy", self);
             self.code_add(stack.var_pos(v));
             self.code_add(tp_nr);
@@ -4080,6 +4110,35 @@ impl State {
             stack.add_op("OpVarRef", self);
             self.code_add(var_pos - 8);
             stack.add_op("OpFreeRef", self);
+            return Type::Void;
+        }
+        // loft#1609 — `OpDropFnRef(f)` names the fn-ref VARIABLE; the op reads the slot in
+        // place (`d_nr` and the closure half), so nothing is pushed, only its distance.
+        if stack.data.def(op).name() == "OpDropFnRef"
+            && let Some(Value::Var(v)) = parameters.first()
+        {
+            let var_pos = stack.var_pos(*v);
+            stack.add_op("OpDropFnRef", self);
+            self.code_add(var_pos);
+            return Type::Void;
+        }
+        // loft#1636 — `OpFnRefClosure(f)` names the fn-ref VARIABLE; the op pushes its
+        // closure half, read in place.
+        if stack.data.def(op).name() == "OpFnRefClosure"
+            && let Some(Value::Var(v)) = parameters.first()
+        {
+            let var_pos = stack.var_pos(*v);
+            stack.add_op("OpFnRefClosure", self);
+            self.code_add(var_pos);
+            return stack.data.def(op).returned().clone();
+        }
+        if stack.data.def(op).name() == "OpFnRefDetachShared"
+            && let [Value::Var(old), Value::Var(new)] = parameters
+        {
+            let (old_pos, new_pos) = (stack.var_pos(*old), stack.var_pos(*new));
+            stack.add_op("OpFnRefDetachShared", self);
+            self.code_add(old_pos);
+            self.code_add(new_pos);
             return Type::Void;
         }
         // @PLN118 — free a heap variable that took an unconditional pre-build free

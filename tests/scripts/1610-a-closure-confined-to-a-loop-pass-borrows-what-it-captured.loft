@@ -1,0 +1,179 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// loft#1610, `@FR-L-CapOwn` / `@FR-H-Drop` — A CLOSURE CONFINED TO A LOOP PASS BORROWS WHAT IT
+// CAPTURED.
+//
+// `(L-CapOwn)` frees a captured store ONCE, "by whichever of the two outlives the other".  A
+// closure built in a loop body into a fn-ref local that is used only as a callee dies with the
+// pass, so it outlives nothing it captured: the record borrows, and the frame's own release at
+// the local's scope end is the one that stands, exactly as it is without a closure.  The record
+// used to ADOPT instead, and it is rebuilt every pass.  So each pass's record released what it
+// adopted, through a backing the next pass had already refilled: the next pass's element was
+// released early, and the last one three times.
+//
+// A record that is NOT confined (passed to a call, held outside the loop) ADOPTS its capture
+// and may outlive the pass, so the pass's backing lets go of the store at the build and the next
+// pass mints its own: each record then releases exactly what it adopted (`c7`–`c13`).  WHEN is
+// `(L-CapKeep)`'s: a pass no other name kept releases at its own `}`, so a closure lent to a
+// call (`c7`, `c8`, `c11`–`c13`) releases with its pass, and only one held by a local declared
+// OUTSIDE the loop (`c9`, `c10`) lives until that local is rebound.
+//
+// Every trace is exact and hand-computed: a lost release and a doubled one both show as the
+// wrong sequence, not just the wrong count.
+//
+// @falsified-at: 8bde81b68 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1610-a-closure-confined-to-a-loop-pass-borrows-what-it-captured.patch —
+//   the same channels.
+// CHANNEL: assertion failures, both backends.
+// HOLDS: clean under `LOFT_STRICT_STORES=1 LOFT_POISON=1` after; `k1`–`k3` right before and after.
+// `c1`–`c6` were falsified first at d4dacbbb2 (the same channels); the receipt above is the
+// adopting half's, `c7`–`c13`.
+
+struct H { id: integer }
+
+fn OpDrop(self: H) { note("D{self.id}"); }
+fn mk(id: integer) -> H { note("M{id}"); H { id: id } }
+
+fn trace_path() -> text { return "loft_1610_confined_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+// 1 — the issue's shape: a loop-body VECTOR captured by a loop-body closure.
+fn c1() { for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { len(w) }; note("F{f()}"); } note("X"); }
+// 2 — a loop-body RECORD, the same cause through a record capture.
+fn c2() { for i in 0..2 { h = mk(70 + i); f = fn() -> integer { h.id }; note("F{f()}"); } note("X"); }
+// 3 — a FUNCTION-scope capture rebuilt every pass: every pass's record released it.
+fn c3() { w = [mk(70)]; for _ in 0..2 { f = fn() -> integer { len(w) }; note("F{f()}"); } note("X"); }
+// 4 — a `break` after the first pass.
+fn c4() { for i in 0..3 { w = [mk(70 + i)]; f = fn() -> integer { len(w) }; note("F{f()}"); if i == 0 { break; } } note("X"); }
+// 5 — three passes, the closure called twice in each.
+fn c5() {
+  for i in 0..3 {
+    w = [mk(80 + i), mk(90 + i)];
+    f = fn() -> integer { len(w) };
+    note("F{f() + f()}");
+  }
+  note("X");
+}
+// 6 — a MUTATED scalar capture beside it, boxed into a `__cell_` minted FOR the closure: the
+//     record is that cell's only owner, confined or not, so it still adopts it (a leak otherwise).
+fn c6() {
+  for i in 0..2 {
+    w = [mk(70 + i)];
+    k = 0;
+    f = fn() -> integer { k += 1; len(w) * 10 + k };
+    a = f();
+    note("F{a}/{f()}");
+  }
+  note("X");
+}
+// A record that may OUTLIVE the pass ADOPTS its capture, and the loop body's backing (or the
+// call's pooled return buffer) lets go of the store at the build, so the next pass mints a
+// fresh one.  Each record releases what it adopted when it is displaced, or at the end.
+fn run(g: fn() -> integer) -> integer { g() }
+fn keep(g: fn() -> integer) -> fn() -> integer { g }
+// 7 — the closure passed as an argument inside the loop.
+fn c7() { for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { len(w) }; note("F{run(f)}"); } note("X"); }
+// 8 — passed inline, never bound to a local.
+fn c8() { for i in 0..2 { w = [mk(70 + i)]; note("F{run(fn() -> integer { len(w) })}"); } note("X"); }
+// 9 — held by a local declared OUTSIDE the loop and called after it.
+fn c9() {
+  f = fn() -> integer { 0 };
+  for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { len(w) }; note("F{f()}"); }
+  note("F{f()}");
+  note("X");
+}
+// 10 — handed back through a call into a local declared outside the loop.
+fn c10() {
+  g = fn() -> integer { 0 };
+  for i in 0..2 { w = [mk(70 + i)]; f = fn() -> integer { len(w) }; g = keep(f); note("F{g()}"); }
+  note("F{g()}");
+  note("X");
+}
+// 11 — a RECORD capture delivered through a call's pooled return buffer.
+fn c11() { for i in 0..2 { h = mk(70 + i); f = fn() -> integer { h.id }; note("F{run(f)}"); } note("X"); }
+// 12 — the vector rebound after the build: the new store stays the frame's.
+fn c12() {
+  for i in 0..2 {
+    w = [mk(70 + i)];
+    f = fn() -> integer { len(w) };
+    note("F{run(f)}");
+    w = [mk(90 + i)];
+    note("L{len(w)}");
+  }
+  note("X");
+}
+// 13 — a nested loop.
+fn c13() {
+  for j in 0..2 {
+    for i in 0..2 { w = [mk(70 + 10 * j + i)]; f = fn() -> integer { len(w) }; note("F{run(f)}"); }
+  }
+  note("X");
+}
+// Controls: the same captures without a loop, and a loop without a closure.
+fn k1() { w = [mk(70)]; f = fn() -> integer { len(w) }; note("F{f()}"); note("X"); }
+fn k2() { for i in 0..2 { w = [mk(70 + i)]; note("F{len(w)}"); } note("X"); }
+fn k3() { h = mk(70); f = fn() -> integer { h.id }; note("F{f()}"); note("X"); }
+
+fn main() {
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+
+  c1();
+  ok("c1 loop-body vector     ", drain(), "M70,F1,D70,M71,F1,D71,X");
+  c2();
+  ok("c2 loop-body record     ", drain(), "M70,F70,D70,M71,F71,D71,X");
+  c3();
+  ok("c3 function-scope store ", drain(), "M70,F1,F1,X,D70");
+  c4();
+  ok("c4 a break              ", drain(), "M70,F1,D70,X");
+  c5();
+  ok("c5 three passes         ", drain(), "M80,M90,F4,D80,D90,M81,M91,F4,D81,D91,M82,M92,F4,D82,D92,X");
+  c6();
+  ok("c6 a mutated scalar too ", drain(), "M70,F11/12,D70,M71,F11/12,D71,X");
+
+  c7();
+  ok("c7 passed as an argument", drain(), "M70,F1,D70,M71,F1,D71,X");
+  c8();
+  ok("c8 passed inline        ", drain(), "M70,F1,D70,M71,F1,D71,X");
+  c9();
+  ok("c9 held outside the loop", drain(), "M70,F1,M71,D70,F1,F1,X,D71");
+  c10();
+  ok("c10 kept through a call ", drain(), "M70,F1,M71,D70,F1,F1,X,D71");
+  c11();
+  ok("c11 a record, a buffer  ", drain(), "M70,F70,D70,M71,F71,D71,X");
+  c12();
+  ok("c12 rebound after build ", drain(), "M70,F1,M90,L1,D90,D70,M71,F1,M91,L1,D91,D71,X");
+  c13();
+  ok("c13 a nested loop       ", drain(), "M70,F1,D70,M71,F1,D71,M80,F1,D80,M81,F1,D81,X");
+
+  k1();
+  ok("k1 no loop              ", drain(), "M70,F1,X,D70");
+  k2();
+  ok("k2 no closure           ", drain(), "M70,F1,D70,M71,F1,D71,X");
+  k3();
+  ok("k3 a record, no loop    ", drain(), "M70,F70,X,D70");
+
+  delete(trace_path());
+  println("a closure confined to a loop pass borrows what it captured: every cell holds");
+}

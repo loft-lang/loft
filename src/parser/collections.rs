@@ -269,10 +269,9 @@ pub(crate) fn iter_init_steps(create_iter: Value) -> Vec<Value> {
     }
 }
 
-/// Is this text source a PLACE — a variable, or a field path rooted at one — whose per-round
-/// re-read is (I-For)'s cheap cursor re-read?  Anything else (a call, a literal, an
-/// operator expression, an element read, a branch) is a VALUE the `for` evaluates once
-/// (`@FR-I-Text`), so `parse_for` binds it to a hidden local first.
+/// Is this text source a PLACE — a variable, or a field path rooted at one — that the body
+/// could write?  The walk takes every source once (`@FR-I-Text`); a place's root is also
+/// recorded on the loop, so a write to it inside the body is reported (`loop-source-written`).
 fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
     match v.unspan() {
         Value::Var(_) => true,
@@ -534,23 +533,21 @@ impl Parser {
             // branch — it evaluated the expression three times per character, side effects
             // included (measured: `for c in f()` called `f` twelve times for three
             // characters, on both backends, in the statement and the comprehension alike).
-            // Such a source is bound to a hidden local in the walk's init and every
-            // re-spelling reads the local; a variable and a field path stay as they are,
-            // since binding them would cost a copy per walk for no value.  ONE home: every
-            // text walk — the `for` statement, the comprehension — builds its iterator here.
-            let bind = if is_text_place(code, &self.data) {
-                None
-            } else {
-                let text_var = self.create_unique("for_text", is_type);
-                let set = v_set(text_var, code.clone());
-                *code = Value::Var(text_var);
-                Some(set)
-            };
-            let next = self.iter_text(code, iter_var, pre_var);
-            if let Some(set) = bind {
-                let init = std::mem::replace(code, Value::Null);
-                *code = v_block(vec![set, init], Type::Void, "for text source");
+            // Every source is bound to a hidden local in the walk's init and every
+            // re-spelling reads the local.  A PLACE — a variable, a field path — is bound
+            // too: re-read, it walked the new text from the round after a body wrote it
+            // (`s = "hello"; for c in s { s = "zz" }` walked two characters, loft#1619).
+            // Its root is recorded on the loop, so such a write is told it no longer moves
+            // the walk (`loop-source-written`).  ONE home: every text walk — the `for`
+            // statement, the comprehension — builds its iterator here.
+            if is_text_place(code, &self.data) {
+                self.record_source_places(code);
             }
+            let text_var = self.create_unique("for_text", is_type);
+            let set = v_set(text_var, std::mem::replace(code, Value::Var(text_var)));
+            let next = self.iter_text(code, iter_var, pre_var);
+            let init = std::mem::replace(code, Value::Null);
+            *code = v_block(vec![set, init], Type::Void, "for text source");
             return next;
         }
         // CO1.5a: a coroutine handle needs a next()-based advance.
@@ -2028,10 +2025,15 @@ impl Parser {
             // `i32`, a plain `integer`), and `!` reads that today with no help from here.
             self.fit_candidate = match bounded {
                 Some((_, _, dflt)) if dflt != i64::MIN => match f_type.base() {
+                    // C127 — the same `dflt != i64::MIN` that makes the failure fusible makes
+                    // it SILENT when nobody fuses it, so the candidate carries the position it
+                    // was raised at and `Parser::retire_fit_candidate` decides a statement
+                    // later, when whether anyone asked is finally known.
                     Type::Integer(spec) => Some(crate::parser::fit::FitFusion {
                         place: to.clone(),
                         spec: *spec,
                         fit_var: None,
+                        at: self.lexer.pos().clone(),
                     }),
                     _ => None,
                 },
@@ -3724,6 +3726,8 @@ use #count instead"
                                 let var = self.create_var(name, &bind_tp);
                                 self.vars.defined(var);
                                 self.vars.in_use(var, true);
+                                // Bound by the header, scoped to the body (`@FR-B-Scope`).
+                                self.pending_loop_binders.push(var);
                                 // A generator handle carries no deps to say so: marked instead
                                 // (loft#1585), as a `for` over a vector of handles marks its
                                 // loop variable.

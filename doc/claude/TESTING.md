@@ -746,6 +746,13 @@ on top of HEAD, and `scripts/falsify.sh <guard> --patch <file>` scores it exactl
 control is scored.  Nothing outside the repository has to survive for it to be re-run, which is
 the one property no ref-shaped receipt can have.
 
+⚠ **`make falsify` WRITES `tests/falsified/<guard>.patch` every time it runs**, as the diff from the
+control to your working tree.  Run on an OLDER guard, one that already carries a receipt, to
+check a new cell added to it, it replaces that receipt with a diff that has nothing to do with the
+guard's original defect (measured 2026-09-23 on `102-expected-errors.loft`: a 919-line rewrite).
+Restore the committed receipt with `git show HEAD:tests/falsified/<guard>.patch > <that file>`,
+and keep only the verdict lines from the run.
+
 Deriving one is mechanical, because a control is not an arbitrary commit: it is the PARENT of
 the commit that added the guard, so the reintroducing patch is that commit's own source diff,
 reversed.  Measured over the 133 guards whose control is publicly unreachable, that holds for
@@ -976,7 +983,7 @@ that removes it.  Measured 2026-09-05 before the rules existed: 434 GB under one
 | what | who writes it | what removes it |
 |---|---|---|
 | `loft_native_bin_<pid>`, `loft_native_<pid>.rs` | a `--native` run's compile | the run itself when it ends normally; a run killed from OUTSIDE (a `timeout` wrapper, a harness kill, Ctrl-C) cannot, so **every native compile first sweeps the artefacts of dead processes** (`platform::reclaim_dead_native_scratch`, silent).  Sixteen thousand of them, 151 GB, had accumulated with nothing looking |
-| `loft_test_native_<stem>_bin` / `.key` / `.rs` | `--tests --native`, a per-file binary cache keyed by stem | the low-space reclaim (aged entries) and `sweep_scratch.sh --days` |
+| `loft_test_native_<stem>_<key>_bin` (built in `loft_test_native_<pid>/`, published by rename) | `--tests --native`, a per-PROGRAM binary cache keyed by the native cache key — never a shared path a sibling process writes (loft#1626) | the low-space reclaim (aged entries) and `sweep_scratch.sh --days` |
 | `<dir>/.loft/cache/<entry>` | the program cache a test writes beside its probe — every probe has a fresh name, so the cache only grows (13 GB in one test's dir) | `sweep_scratch.sh` (entries older than a day) |
 | `loft_html_*`, `loft_p*`, `loft_rebuild_*`, `loft-*` | the html, probe, rebuild and serve suites | `sweep_scratch.sh` (older than a day) |
 | `~/.cache/tmp/loft-falsify/<ref>{,-target}` | `make falsify` control builds | the script itself, LRU to `LOFT_FALSIFY_KEEP` |

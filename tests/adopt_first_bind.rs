@@ -183,10 +183,11 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
     // too since then); a cell edit re-measures both pairs.  The native pair fell 101/137 →
     // 91/127 on 2026-09-18 with `@FR-R-LoopRecord`: a record literal bound inside a loop keeps
     // its store across the iterations, so ten per-pass mints are one — in BOTH arms, which is
-    // why the adoption's own drop (36) is unchanged.  Under `LOFT_ARM_SCOPE=1` (D-heap-36) the
-    // interpreter's OFF count is 134: c11's `k = build(d - 1)` is then its arm's local, a first
-    // bind, where the pre-init in front of the `if` makes it a rebind that copies — one mint for
-    // each of the five activations with `d > 0`.
+    // why the adoption's own drop (36) is unchanged.  The interpreter's OFF count is 134 since the
+    // arm became the scope (`@FR-B-Scope`, loft#1600, 2026-09-23; it read 139 before): c11's
+    // `k = build(d - 1)` is its arm's local, a first bind, where the pre-init that used to stand in
+    // front of the `if` made it a rebind that copies — one mint for each of the five activations
+    // with `d > 0`.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -195,7 +196,7 @@ fn the_store_census_drops_by_one_per_adopting_bind() {
         i_on < i_off,
         "interpret: {i_on} mints with adoption, {i_off} without"
     );
-    assert_eq!((i_on, i_off), (98, 139), "interpret mints (on, off)");
+    assert_eq!((i_on, i_off), (98, 134), "interpret mints (on, off)");
     let (n_on, n_off) = (store_mints("--native", &[]), store_mints("--native", OFF));
     assert!(
         n_on < n_off,
