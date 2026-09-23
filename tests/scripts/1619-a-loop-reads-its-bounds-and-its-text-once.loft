@@ -14,7 +14,12 @@
 // SIBLING field written beside a field end — no warning (r11), an element written under a
 // `len` end — no warning (r12), a comprehension over a variable end (r13).
 // @EXPECT_WARNING: Warning[loop-source-written]
-// @falsified-at: pending
+// @falsified-at: 778b4fd01 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1619-a-loop-reads-its-bounds-and-its-text-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: the VALUE channel — the control re-reads every bound and text place per round,
+//   so the round counts and call counts the cells assert are wrong there.
+//   WITNESS: on 778b4fd01 r1 prints `r1 10 10` where this file says `r1 3 10`, on both
+//   backends alike; the run exits 1 at that first assertion.
 struct St { calls: integer, n: integer, s: text, other: integer }
 fn f(st: St) -> integer { st.calls += 1; 3 }
 fn bump(st: St) { st.n = 10; }

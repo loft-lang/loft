@@ -1,0 +1,336 @@
+diff --git b/src/generation/hoist.rs a/src/generation/hoist.rs
+index 646790b80..fd3f80c9a 100644
+--- b/src/generation/hoist.rs
++++ a/src/generation/hoist.rs
+@@ -349,26 +349,6 @@ pub fn nested_counted_loops<'a>(
+                 if seeds == 1
+                     && let Some(s) = seed
+                 {
+-                    // The end, likewise: a non-literal bound is taken once into a local in
+-                    // the loop's prelude (`@FR-I-Range`), so an end that is a local set ONCE
+-                    // in this body is read as the value it was set from.
+-                    let mut rc = rc;
+-                    if let Value::Var(h) = rc.hi.unspan() {
+-                        let mut ends: Vec<&'a Value> = Vec::new();
+-                        for o in &body.operators {
+-                            o.any_node(&mut |m| {
+-                                if let Value::Set(v, e) = m
+-                                    && v == h
+-                                {
+-                                    ends.push(e);
+-                                }
+-                                false
+-                            });
+-                        }
+-                        if let [e] = ends[..] {
+-                            rc.hi = e;
+-                        }
+-                    }
+                     out.push((rc, s));
+                 }
+             }
+diff --git b/src/generation/range.rs a/src/generation/range.rs
+index 8073bc655..fe76d1d8e 100644
+--- b/src/generation/range.rs
++++ a/src/generation/range.rs
+@@ -372,16 +372,7 @@ pub fn range_vars(
+             }
+         }
+         if !changed {
+-            // A counter whose END is a local the fixpoint has only now ranged — the hidden
+-            // `_range_end` a non-literal bound is taken into (`@FR-I-Range`: once, before the
+-            // first round) — is seeded here, and the fixpoint resumes with it.  Seeding is
+-            // monotone: a counter enters the map once both its seed and its end are ranged,
+-            // and neither leaves it.
+-            let before = rv.len();
+-            seed_counters(data, code, code, nn, &mut rv, &mut counters);
+-            if rv.len() == before {
+-                return rv;
+-            }
++            return rv;
+         }
+     }
+ }
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 4eb9466e7..ced191aa5 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -269,9 +269,10 @@ pub(crate) fn iter_init_steps(create_iter: Value) -> Vec<Value> {
+     }
+ }
+ 
+-/// Is this text source a PLACE — a variable, or a field path rooted at one — that the body
+-/// could write?  The walk takes every source once (`@FR-I-Text`); a place's root is also
+-/// recorded on the loop, so a write to it inside the body is reported (`loop-source-written`).
++/// Is this text source a PLACE — a variable, or a field path rooted at one — whose per-round
++/// re-read is (I-For)'s cheap cursor re-read?  Anything else (a call, a literal, an
++/// operator expression, an element read, a branch) is a VALUE the `for` evaluates once
++/// (`@FR-I-Text`), so `parse_for` binds it to a hidden local first.
+ fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
+     match v.unspan() {
+         Value::Var(_) => true,
+@@ -533,21 +534,23 @@ impl Parser {
+             // branch — it evaluated the expression three times per character, side effects
+             // included (measured: `for c in f()` called `f` twelve times for three
+             // characters, on both backends, in the statement and the comprehension alike).
+-            // Every source is bound to a hidden local in the walk's init and every
+-            // re-spelling reads the local.  A PLACE — a variable, a field path — is bound
+-            // too: re-read, it walked the new text from the round after a body wrote it
+-            // (`s = "hello"; for c in s { s = "zz" }` walked two characters, loft#1619).
+-            // Its root is recorded on the loop, so such a write is told it no longer moves
+-            // the walk (`loop-source-written`).  ONE home: every text walk — the `for`
+-            // statement, the comprehension — builds its iterator here.
+-            if is_text_place(code, &self.data) {
+-                self.record_source_places(code);
+-            }
+-            let text_var = self.create_unique("for_text", is_type);
+-            let set = v_set(text_var, std::mem::replace(code, Value::Var(text_var)));
++            // Such a source is bound to a hidden local in the walk's init and every
++            // re-spelling reads the local; a variable and a field path stay as they are,
++            // since binding them would cost a copy per walk for no value.  ONE home: every
++            // text walk — the `for` statement, the comprehension — builds its iterator here.
++            let bind = if is_text_place(code, &self.data) {
++                None
++            } else {
++                let text_var = self.create_unique("for_text", is_type);
++                let set = v_set(text_var, code.clone());
++                *code = Value::Var(text_var);
++                Some(set)
++            };
+             let next = self.iter_text(code, iter_var, pre_var);
+-            let init = std::mem::replace(code, Value::Null);
+-            *code = v_block(vec![set, init], Type::Void, "for text source");
++            if let Some(set) = bind {
++                let init = std::mem::replace(code, Value::Null);
++                *code = v_block(vec![set, init], Type::Void, "for text source");
++            }
+             return next;
+         }
+         // CO1.5a: a coroutine handle needs a next()-based advance.
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 0a7abb83f..5ca651590 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -1620,63 +1620,6 @@ use a separate collection or add after the loop"
+         }
+     }
+ 
+-    /// `@FR-I-For` — warn when a loop body writes a place its loop's source read.  The loop
+-    /// took its range bounds and its text source once, before the first round, so the write
+-    /// cannot change how many rounds run or what text is walked; a program that expected it
+-    /// to (a queue grown under `0..len(q)`) now computes something else, which is why this is
+-    /// a warning and not advice.  Asked at the assignment path's one entry, beside the const
+-    /// guard, so every route that lowers a write is covered.  A write through a callee is not
+-    /// seen: the loop's answer is still the rule's, only the notice is missing.
+-    fn check_loop_source_write(&mut self, to: &Value) {
+-        if self.first_pass {
+-            return;
+-        }
+-        let Some(place) = self.vars.loop_source_written(to) else {
+-            return;
+-        };
+-        let root = lhs_base_var(&place, &self.data);
+-        if root == u16::MAX {
+-            return;
+-        }
+-        let name = self.vars.written_name(root).to_string();
+-        let what = if matches!(place.unspan(), Value::Var(_)) {
+-            format!("`{name}`")
+-        } else {
+-            format!("a field of `{name}`")
+-        };
+-        diagnostic!(
+-            self.lexer,
+-            Level::Warning,
+-            code = "loop-source-written",
+-            "the loop read {what} once, before its first round, so this write does not change \
+-             what the loop walks — to loop until a condition changes, use `while`"
+-        );
+-        self.lexer.fix_last(crate::diagnostics::Fix {
+-            kind: crate::diagnostics::FixKind::Conditional,
+-            title: format!("take {what} into a local before the loop"),
+-            condition: Some(
+-                "if the loop is meant to run over the value it started with, the local says so \
+-                 and the write no longer reads as if it moved the loop"
+-                    .to_string(),
+-            ),
+-            edit: None,
+-            concept: "for loops",
+-            concept_ref: "@F28",
+-        });
+-        self.lexer.fix_last(crate::diagnostics::Fix {
+-            kind: crate::diagnostics::FixKind::Conditional,
+-            title: "loop with `while`, testing the end each round".to_string(),
+-            condition: Some(
+-                "if the loop is meant to follow the end as the body moves it — a queue that \
+-                 grows while it is read"
+-                    .to_string(),
+-            ),
+-            edit: None,
+-            concept: "for loops",
+-            concept_ref: "@F28",
+-        });
+-    }
+-
+     /// Validate `d#lock = expr` assignment; returns true if handled (caller should return Void).
+     pub(crate) fn validate_lock_assign(&mut self, code: &Value, to: &Value) -> bool {
+         if self.first_pass {
+@@ -3133,7 +3076,6 @@ use a separate collection or add after the loop"
+         skip_validate: bool,
+     ) -> Type {
+         self.check_iter_safety(to, f_type, op);
+-        self.check_loop_source_write(to);
+         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
+         // every route below.  Whether a write is allowed is a property of the BINDING, not
+         // of the route that lowers it, so a guard held inside a route is only as complete
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 0ab67704f..21452e39a 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -3517,37 +3517,6 @@ impl Parser {
+                 self.vars.set_loop_len_bound(vk);
+             }
+         }
+-        // @FR-I-For, @FR-I-Range — `it := ⟨0, src⟩`: a range's bounds are VALUES, taken once
+-        // before the first round.  The lowering spells the end in the per-round test (and the
+-        // start too, in the reverse and null-encoded forms), so a bound that is not a literal
+-        // is bound to a hidden local here and every spelling reads the local.  Before, a
+-        // bound was re-read each round: `for i in 0..m { m = 10 }` ran ten rounds, and
+-        // `0..=f()` called `f` nine times for three rounds, on both backends.  The variables a
+-        // bound reads are recorded on the loop, so a body that writes one is told the write
+-        // no longer moves the end (`loop-source-written`).  A slice clamps and binds its own
+-        // bounds below.
+-        if *data == Value::Null {
+-            for bound in [&*expr, &till] {
+-                self.record_source_places(bound);
+-            }
+-            // A bound that folds to a constant (`-3`, `2 * 4`) is written as that literal: the
+-            // lowering's literal-start forms and the native range proofs key on a literal.
+-            for bound in [&mut *expr, &mut till] {
+-                if let Some(c @ (Value::Int(_) | Value::Long(_))) =
+-                    crate::const_eval::const_eval(bound, &self.data)
+-                {
+-                    *bound = c;
+-                }
+-            }
+-            if !matches!(expr.unspan(), Value::Int(_) | Value::Long(_)) {
+-                let lo = self.create_unique("range_start", &in_type);
+-                iter_prelude.push(v_set(lo, std::mem::replace(expr, Value::Var(lo))));
+-            }
+-            if !matches!(till.unspan(), Value::Int(_) | Value::Long(_)) {
+-                let hi = self.create_unique("range_end", &till_tp);
+-                iter_prelude.push(v_set(hi, std::mem::replace(&mut till, Value::Var(hi))));
+-            }
+-        }
+         // loft#384: a vector slice (`data` present, not a pure `0..n` range) must
+         // resolve negative bounds from the end and clamp into `[0, len]`, else the
+         // iteration endpoints run off an edge: a negative end breaks immediately
+@@ -3809,40 +3778,6 @@ impl Parser {
+         Type::Iterator(Box::new(in_type), Box::new(Type::Null))
+     }
+ 
+-    /// `@FR-I-For` — record on the current loop every PLACE a loop source reads: a variable,
+-    /// or a field path rooted at one, found through operators and `len` / `size`.  A user
+-    /// function's result is a value the loop takes once, so its arguments are not recorded:
+-    /// a write to them changes nothing the loop could have re-read.
+-    pub(crate) fn record_source_places(&mut self, v: &Value) {
+-        if Self::is_source_place(v, &self.data) {
+-            self.vars.add_loop_source_place(v);
+-            return;
+-        }
+-        if let Value::Call(d, args) = v.unspan() {
+-            let def = self.data.def(*d);
+-            if def.name().starts_with("Op")
+-                || matches!(def.original_name().as_str(), "len" | "size")
+-            {
+-                for a in args {
+-                    self.record_source_places(a);
+-                }
+-            }
+-        }
+-    }
+-
+-    fn is_source_place(v: &Value, data: &crate::data::Data) -> bool {
+-        match v.unspan() {
+-            Value::Var(_) => true,
+-            Value::Call(d, args) => {
+-                data.def(*d).name().starts_with("OpGet")
+-                    && args
+-                        .first()
+-                        .is_some_and(|root| Self::is_source_place(root, data))
+-            }
+-            _ => false,
+-        }
+-    }
+-
+     pub(crate) fn parse_in_range(
+         &mut self,
+         expr: &mut Value,
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 67ad28e23..e97fa7270 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -107,11 +107,6 @@ struct Iterator {
+     /// is a bare `len(<addressable vector>)`; `None` for `0..n`, slices, or collection loops.
+     /// Read by the gated `LOFT_LINT_STRICT_INDEX` warning to flag `w[i]` where `w != X`.
+     len_bound: Option<crate::parser::operators::VecKey>,
+-    /// `@FR-I-For` — the PLACES this loop's source reads: a variable, or a field path rooted
+-    /// at one, in a range's bounds or as a text source.  The loop reads them once, before the
+-    /// first round, so a write to one inside the body cannot change what the loop walks;
+-    /// `loop-source-written` says so.
+-    source_places: Vec<Value>,
+     /// The I64 local holding this loop's packed iterator state (`cur << 32 | finish`), the
+     /// one `OpStep` steps and `OpRemove` rewinds. `u16::MAX` when the loop has none (a
+     /// range, a vector walk, a custom iterator).
+@@ -984,7 +979,6 @@ impl Function {
+             coll_var: u16::MAX,
+             counter: u16::MAX,
+             len_bound: None,
+-            source_places: Vec::new(),
+             state_var: u16::MAX,
+         });
+         self.current_loop = self.loops.len() as u16 - 1;
+@@ -1076,43 +1070,6 @@ impl Function {
+         }
+     }
+ 
+-    /// `@FR-I-For` — record a place the current loop's source reads (see
+-    /// `Iterator::source_places`).  No-op when there is no active loop.
+-    pub(crate) fn add_loop_source_place(&mut self, place: &Value) {
+-        if self.current_loop == u16::MAX || self.current_loop as usize >= self.loops.len() {
+-            return;
+-        }
+-        let places = &mut self.loops[self.current_loop as usize].source_places;
+-        let place = place.unspan().clone();
+-        if !places.contains(&place) {
+-            places.push(place);
+-        }
+-    }
+-
+-    /// `@FR-I-For` — the place an ACTIVE loop's source reads that a write to `target` changes:
+-    /// `target` is that place, or a place it lies inside (`st` holds `st.n`).  A write INTO a
+-    /// place (`w[0] = …` under a `len(w)` bound) changes no value the source read.
+-    pub(crate) fn loop_source_written(&self, target: &Value) -> Option<Value> {
+-        let target = target.unspan();
+-        let mut c = self.current_loop;
+-        while c != u16::MAX {
+-            for place in &self.loops[c as usize].source_places {
+-                let mut p = place;
+-                loop {
+-                    if p.unspan() == target {
+-                        return Some(place.clone());
+-                    }
+-                    match p.unspan() {
+-                        Value::Call(_, args) if !args.is_empty() => p = &args[0],
+-                        _ => break,
+-                    }
+-                }
+-            }
+-            c = self.loops[c as usize].inside;
+-        }
+-        None
+-    }
+-
+     /// @PLN102 strict-index lint — the `len(...)` bound recorded for the active for-loop
+     /// whose variable is `var_nr` (walks the active-loop chain like `is_active_loop_var`).
+     /// `None` when `var_nr` is not an active loop var or the loop wasn't a `0..len(X)` range.
