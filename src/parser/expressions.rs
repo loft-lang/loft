@@ -131,12 +131,23 @@ pub(crate) fn linked_store_target<'a>(target: &'a Type, source: &Type) -> &'a Ty
 }
 
 fn uncomputable_default(nullable: bool, spec: &crate::data::IntegerSpec) -> i64 {
-    // C85 says an overflow writes the RESERVED sentinel into a non-null slot, which then
-    // reads as null — so a non-null slot answers null exactly when its type kept a code back
-    // for one.  `i32` is `i32::MIN + 1 ..= i32::MAX` and `u32` is `0 ..= u32::MAX - 1`
-    // whatever the `?`, so both have that code; `u8`/`i8`/`u16`/`i16` fill their width and
-    // have none (loft#1296).
-    if nullable || spec.reserves_sentinel_unconditionally() {
+    // @FR-E-Uncomp-NN, @FR-N-Reserve, C127 — a DECLARED narrow range has no null in its
+    // non-nullable form, so a value that does not fit takes the type's DEFAULT whatever that
+    // range does with the storage width.  `limit(-100, 100) size(1)` leaves 55 codes unused
+    // and `limit(-128, 127) size(1)` leaves none, and that arithmetic is not something the
+    // author did: before C127 the first answered null and the second `0`, so widening a range
+    // for an unrelated reason flipped an overflow from detectable to silent.
+    //
+    // Two families keep C85's in-band sentinel, and `non_null_reads_null` is the ONE home for
+    // which — the same predicate `redundant-null-negation` asks of its operand, so the lint
+    // and the stored value cannot drift:
+    //
+    //   * a NULLABLE slot, which has a null by declaration;
+    //   * the plain `integer` and `i32` TEMPLATES, whose reserved code lies OUTSIDE the range
+    //     they report (`[i64::MIN + 1, MAX]`, `[i32::MIN + 1, MAX]`).  That is what makes
+    //     their sentinel a real absence rather than a code that decodes to a number: it is
+    //     not a value of the type, and no widening of the declaration can make it one.
+    if nullable || spec.non_null_reads_null() {
         i64::MIN
     } else {
         spec.default_value()

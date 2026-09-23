@@ -92,13 +92,23 @@ store written by one build readable by another *of the same layout*.
   (L-Narrow-Alias)  a stored width is a property of a NAMED type.  `size(n)` is written in a
               `type` alias and nowhere else: `type Lim = integer limit(1000, 1100) size(1)`, never
               inline on a field or a vector element, and the parser refuses the inline spelling by
-              name.  So a type whose declared range leaves a width's top code SPARE — the
-              `(E-Uncomp-NN)` types — always reaches a slot through an alias.
-  (L-Narrow-Spare)  and it reaches EVERY kind of slot the same way.  A field, a vector element and
-              a local of such a type all answer C85's null after an overflow: `vector<Spare8>` is
-              a narrow vector whose ELEMENT type is the alias, so the spare-code encoding and the
-              raw narrow-vector encoding are not alternatives to choose between — the spare clause
-              applies on top of whichever kind the width picks (`data::NarrowSlot::of_slot`).
+              name.  So a type whose declared range leaves a width's top code SPARE always
+              reaches a slot through an alias — which is why that spareness is decidable at
+              the DECLARATION and never at the slot, and why `(L-Narrow-Spare)` can say the
+              same thing about every kind of slot.
+  (L-Narrow-Spare)  and every kind of slot answers it the same way.  A local, a field, an
+              element, a parameter and a return of a DECLARED narrow range without `?` all give
+              the type's DEFAULT for a value that does not fit — zero where the range holds it,
+              the bound nearest zero otherwise — never a null, because such a type has no null to
+              hold (`DESIGN_DECISIONS.md` C127, `(N-Reserve)`, `(E-Uncomp-NN)`).  A code left
+              spare inside the storage width is not a place to put one: whether a declared range
+              leaves one is arithmetic the author did not do, and two ranges one value apart
+              would otherwise answer differently.  The plain `integer` and `i32` TEMPLATES are
+              not this case — their reserved code lies outside the range they report, so it is
+              not a value of the type — and they keep C85's sentinel.  Where the language can
+              demand the author say what an unfitting value becomes it refuses instead; where it
+              cannot — the compound step `x += n`, whose written-out form IS refused — the
+              default is the fallback and the `narrow-fallback` advice says so.
   (L-Narrow-Enc) a width does NOT determine how its bytes decode.  At 2 and 4 bytes a
               non-negative range running past the signed maximum stores UNSIGNED and reserves the
               TOP code for absence; a signed range stores two's-complement and reserves its own

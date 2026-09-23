@@ -30,17 +30,16 @@
 // nullable `u8?` (its bare `??` lowers to an `if` over the nullable parameter), a plain
 // `integer`; c6 a `u8` written through the checked cast's fallback; c7 a captured narrow
 // local — the value is right and the arithmetic stays CHECKED, measured: a box is read
-// through a record field no type ranges; c8 the one spec the third exclusion decides.
+// through a record field no type ranges; c8 c4's question asked of a range that leaves
+// codes unused inside its width, which C127 made a fact.
 //
-// @falsified-at (type clause): hand-measured (sabotage, 2026-09-22) — the exclusion of a
-// spec that reserves a sentinel removed (`reserves_sentinel_unconditionally` no longer
-// consulted): c8's `after = x + 5` answers `-9223372036854775803` on --native for null —
-// the plain add over the sentinel the overflow wrote, C120's own example — and
-// LOFT_HOIST_VERIFY=1 panics at the operator (src/ops.rs range_verify).  `y * 3` stays null
-// under the sabotage by coincidence (MIN * 3 wraps onto the sentinel), which is why `after`
-// is the line that decides.  The first cell written for this (an `i32`) could not fail: i32
-// is excluded a clause earlier as the signed-32 template, so the sabotage never reached it.
-// Restored byte-identically; interpret / native / LOFT_NO_RANGE_ARITH / LOFT_HOIST_VERIFY green.
+// ⚠ c8 previously carried a falsification receipt for a THIRD exclusion clause in
+// `type_range` — a spec that reserved a sentinel was not a fact — measured by sabotage on
+// 2026-09-22: removing it made `after = x + 5` answer `-9223372036854775803` on --native,
+// the plain add over the sentinel the overflow had written.  C127 retired that sentinel and
+// with it the clause, so the receipt has no subject and is not carried forward as one.  What
+// c8 pins now is the opposite fact — such a spec IS ranged — and its falsifier is the same
+// `LOFT_HOIST_VERIFY=1`, which compares every plain operator with the checked one.
 //
 // @falsified-at: hand-measured (sabotage, 2026-09-20) — the mask rule's non-sentinel
 // requirement removed turns a9 red on --native (`null` → `-9223372036854775807`: the mask
@@ -310,21 +309,30 @@ fn c7() {
   assert(a == 200 && a * 5 + 3 == 1003 && g == 0 && g * 5 + 3 == 3, "c7");
 }
 
-// c8 — the one spec the third exclusion decides: a SIGNED narrow alias whose range leaves a
-// spare bottom code (`limit(-100, 100) size(1)`: 201 values in 256 codes).  An overflow
-// writes that code — the sentinel — into the non-null slot (C85), so the slot reads null and
-// every read after it must propagate null.  `i32` is the same shape but is the signed-32
-// template, excluded a clause earlier; `i8`/`i16` fill their width and have no spare code.
+// c8 — a SIGNED narrow alias whose range leaves codes unused inside its width
+// (`limit(-100, 100) size(1)`: 201 values in 256; `limit(-1000, 1000) size(2)`: 2001 in
+// 65536).  This is c4's question asked of the shape that used to answer differently: until
+// C127 an overflow wrote a sentinel into such a slot, so the type was NOT a fact and
+// `type_range` excluded it by a clause of its own.  C127 retires that sentinel — the slot
+// takes the type's DEFAULT like every other non-nullable narrow — so the declared range is
+// again exactly what the slot can hold and the arithmetic after an overflow runs plain and
+// answers a number.  `Hi` is the cell that makes "the default" mean more than "zero": its
+// range excludes zero, so its default is 1000 and a truncation would read 0 here alone.
+// `i32` and `u32` keep the exclusion (c5): their sentinel is inside the template, not the
+// declaration.
 type Spare8 = integer limit(-100, 100) size(1);
 type Spare16 = integer limit(-1000, 1000) size(2);
+type Hi = integer limit(1000, 1100) size(1);
 fn c8() {
   x: Spare8 = 100;
   x += 50;
   after = x + 5;
   y: Spare16 = -1000;
   y -= 1;
-  println("c8 {x} {after} {y} {y * 3}");
-  assert(x == null && after == null && y == null && y * 3 == null, "c8");
+  h: Hi = 1050;
+  h += 5000;
+  println("c8 {x} {after} {y} {y * 3} {h} {h + 5}");
+  assert(x == 0 && after == 5 && y == 0 && y * 3 == 0 && h == 1000 && h + 5 == 1005, "c8");
 }
 
 fn main() {

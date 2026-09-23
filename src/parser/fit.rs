@@ -59,6 +59,7 @@
 //! Where no `!` names the place, nothing here runs and emission is byte-identical.
 
 use crate::data::{Data, IntegerSpec, Type, Value};
+use crate::diagnostics::{Level, diagnostic_format};
 
 /// A narrow store whose fit-failure the next statement may ask about.
 ///
@@ -75,8 +76,12 @@ pub(crate) struct FitFusion {
     pub(crate) spec: IntegerSpec,
     /// The `__fit_N` temp, minted the first time a `!place` asks for it and `None` while
     /// nobody has. `None` at the end of the statement means the author wrote no test, which
-    /// is the ordinary case and the one that must emit exactly what it emitted before.
+    /// is the ordinary case and the one that must emit exactly what it emitted before — and,
+    /// since C127, the one [`crate::parser::Parser::retire_fit_candidate`] advises about.
     pub(crate) fit_var: Option<u16>,
+    /// Where the compound assignment stood, captured at the seam.  The advice is decided a
+    /// statement later, by which time the lexer's cursor is inside the NEXT statement.
+    pub(crate) at: crate::lexer::Position,
 }
 
 /// Do these two expressions name the same place, using only nodes it is safe to READ ONCE?
@@ -174,5 +179,65 @@ impl crate::parser::Parser {
             c.fit_var = Some(v);
         }
         Some(v)
+    }
+
+    /// C127 `narrow-fallback` — a compound step into a DECLARED narrow range whose result
+    /// does not fit takes the type's DEFAULT, and the site says nothing.
+    ///
+    /// The ONE place a fit candidate dies, so the advice is decided once however the
+    /// candidate was lost: the next statement did not open with `if`, the `if` named another
+    /// place, or the pushed node carried no guard slot to rewrite.  A candidate that DID fuse
+    /// carries its `__fit_N` temp and is silent — the author wrote the check, and an advice
+    /// telling them to write it again is the kind that spends the credibility the other sites
+    /// live on.
+    ///
+    /// Armed at the same `dflt != i64::MIN` the fusion is (`Parser::towards_set`): a target
+    /// that keeps a code for its own failure raises no candidate at all, because `!` reads
+    /// that failure off the value anywhere.
+    ///
+    /// The `advice` tier and the reason for it are on
+    /// [`crate::keys::narrow_fallback_lint_enabled`].
+    pub(crate) fn retire_fit_candidate(&mut self, cand: Option<FitFusion>) {
+        let Some(cand) = cand else { return };
+        if cand.fit_var.is_some() || self.first_pass {
+            return;
+        }
+        self.narrow_fallback_advice(cand.spec, &cand.at);
+    }
+
+    fn narrow_fallback_advice(&mut self, spec: IntegerSpec, at: &crate::lexer::Position) {
+        if !crate::keys::narrow_fallback_lint_enabled() {
+            return;
+        }
+        let dflt = spec.default_value();
+        let (lo, hi) = (spec.min, spec.max);
+        crate::diagnostic_at!(
+            self.lexer,
+            at,
+            Level::Advice,
+            code = "narrow-fallback",
+            "a step past `{lo}..{hi}` takes this type's default, `{dflt}` — nothing here \
+             says which values the step may produce"
+        );
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "read the failure: `if !<place> { … }` as the very next statement".to_string(),
+            condition: Some(
+                "the step can leave the range and the program must know — the pair is fused, \
+                 so nothing is stored beside the value"
+                    .to_string(),
+            ),
+            edit: None,
+            concept: "ranged integer types",
+            concept_ref: "@F4",
+        });
+        self.lexer.fix_last(crate::diagnostics::Fix {
+            kind: crate::diagnostics::FixKind::Conditional,
+            title: "choose the value: `<place> = (<place> + n) ?? <d>`".to_string(),
+            condition: Some("a different fallback than the type's default is wanted".to_string()),
+            edit: None,
+            concept: "ranged integer types",
+            concept_ref: "@F4",
+        });
     }
 }

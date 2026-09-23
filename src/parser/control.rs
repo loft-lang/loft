@@ -955,7 +955,15 @@ impl Parser {
             // `@FR-E-Uncomp-Seen` — arm the preceding store's fit status for THIS statement, and
             // only when it opens with `if`: that is the whole of the adjacency rule, and the
             // `take` is what makes it one statement wide rather than "until someone asks".
-            self.fit_armed = pending_fit.take().filter(|_| self.lexer.peek_token("if"));
+            let (armed, unfused) = match pending_fit.take() {
+                Some(c) if self.lexer.peek_token("if") => (Some(c), None),
+                other => (None, other),
+            };
+            // C127 — death one: the next statement does not open with `if`, so no `!place`
+            // can reach this store's fit status.  `retire_fit_candidate` is the one home for
+            // all three deaths.
+            self.retire_fit_candidate(unfused);
+            self.fit_armed = armed;
             self.fit_candidate = None;
             // loft#1382 — statement position, decided by the ONE reader that knows it.  A
             // statement beginning with `if` or `match` has its value discarded
@@ -974,11 +982,13 @@ impl Parser {
             // construction — an out-of-range subject casts to null and `OpRangeDefault`
             // answers the same default it answered for the raw value, and an in-range one
             // passes straight through.
-            if let Some(fit) = self
-                .fit_armed
-                .take()
-                .and_then(|f| f.fit_var.map(|v| (f, v)))
-            {
+            // C127 — death two: the `if` ran but its condition named no `!place` of this
+            // store, so the candidate comes back with no temp.
+            let retired = self.fit_armed.take();
+            if retired.as_ref().is_some_and(|f| f.fit_var.is_none()) {
+                self.retire_fit_candidate(retired.clone());
+            }
+            if let Some(fit) = retired.and_then(|f| f.fit_var.map(|v| (f, v))) {
                 let (cand, fit_var) = fit;
                 let mut composed = Value::Null;
                 if let Some(slot) = crate::parser::fit::guard_slot(&self.data, &mut l[fit_store_at])
@@ -1155,10 +1165,16 @@ impl Parser {
             // cannot split can never reach the point where a `!` has already been redirected
             // to a temp nothing binds.  A candidate raised inside a nested block fails the
             // same test, because the node pushed here is the enclosing construct.
-            pending_fit = self.fit_candidate.take().filter(|_| {
-                l.last()
-                    .is_some_and(|last| crate::parser::fit::has_guard_slot(&self.data, last))
-            });
+            // C127 — death three: the pushed node carries no `OpRangeDefault` slot to
+            // rewrite, so the pair could never have fused whatever the next statement says.
+            let raised = self.fit_candidate.take();
+            let has_slot = l
+                .last()
+                .is_some_and(|last| crate::parser::fit::has_guard_slot(&self.data, last));
+            if !has_slot {
+                self.retire_fit_candidate(raised.clone());
+            }
+            pending_fit = raised.filter(|_| has_slot);
             fit_store_at = l.len().saturating_sub(1);
             if self.lexer.peek_token("}") {
                 break;

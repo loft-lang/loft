@@ -194,6 +194,14 @@ const CODES: &[(&str, &str)] = &[
         "fn f(a: integer, b: boolean, c: boolean) -> integer { if b { a } else if c { a } else { 0 } }\n\
          fn main() { print(\"{f(1,true,false)}\"); }",
     ),
+    // C127 — a compound step into a declared narrow range takes the type's default when it
+    // does not fit, and nothing at the site says so.  The trigger uses the `u8` spelling
+    // because it is the one an author reaches for; the `limit(lo, hi)` spelling is the same
+    // range and the same notice (`Parser::compound_range`).
+    (
+        "narrow-fallback",
+        "fn main() { x: u8 = 250; x += 10; print(\"{x}\"); }",
+    ),
     (
         "omitted-field-zero",
         "struct S { hover: integer, palette_pick: integer }\n\

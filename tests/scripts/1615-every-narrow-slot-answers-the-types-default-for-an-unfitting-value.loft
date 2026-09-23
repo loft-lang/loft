@@ -1,0 +1,195 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A value that does NOT FIT a non-nullable narrow slot takes the type's DEFAULT — zero where
+// the declared range holds it, the bound nearest zero otherwise — and it takes the SAME one
+// in a local, a field, an element, a keyed collection's key, a by-value parameter and a
+// return (`DESIGN_DECISIONS.md` C127, `formal/types.md` `(N-Reserve)`, `formal/operational.md`
+// `(E-Uncomp-NN)`, `formal/layout.md` `(L-Narrow-Spare)`).  A narrow type without `?` has no
+// null, so no slot of one ever reads absent.
+//
+// The types here are the ones that make that a question rather than a restatement: a signed
+// narrow alias whose declared range leaves codes unused inside its storage width.
+// `limit(-100, 100) size(1)` is 201 values in 256; `limit(-1000, 1000) size(2)` is 2001 in
+// 65536.  A type whose range FILLS its width — `u8`, `i16` — has no spare code to argue about,
+// and `fullwidth` below is the control that pins it answering the same way.
+//
+// Two rounds of defects met here, and the cells are laid out so each is still addressable.
+//
+// The DISAGREEMENT (loft#1615) — the local was right and the store places were not, on both
+// backends: the one-byte write cast its value `as i32` before the store saw it, and the
+// two-byte read decoded all 65536 codes as values, so one overflow landed as `0` and the
+// other read back `64535`, 63535 past the type's own maximum.  `data::NarrowSlot::of_slot`
+// is the one home for which ops a store place takes, asked by `Parser::get_val` (the read)
+// and `Parser::set_field_check` (the write) alike, so the pair cannot drift again.
+//
+// The VALUE (C127) — every one of those slots then agreed on NULL, because the type had a
+// code to spare.  Whether `hi - lo + 1` falls short of `2^(8*size)` is arithmetic the author
+// did not do: `limit(-128, 127) size(1)` answered `0` and `limit(-100, 100) size(1)` answered
+// null, two declarations one value apart, and widening a range for an unrelated reason
+// flipped an overflow from detectable to silent.  `parser::expressions::uncomputable_default`
+// is the one home, and it now answers the type's default for every non-nullable spec.
+//
+// Every cell states its expected value by hand.  The cells that can FAIL are the ones whose
+// value leaves the range; the controls are what stop a cure reaching too far:
+//
+//   * `ta`/`tb` — the untouched twin of each overflowed field, at its type's MAX and MIN.
+//     Those are the two codes nearest the one an overflow used to take, so a fix one code
+//     too wide erases them.
+//   * `v1`/`w1` — an element never written past its range, and deliberately NOT the default:
+//     `33` and `44`, because a control holding `0` is indistinguishable from the cell beside
+//     it and could not fail.
+//   * `nullables` — the `τ?` spelling of both types.  This is the half C127 did NOT move: a
+//     nullable narrow HAS a null, C85 writes its sentinel, and a fix that confused the two
+//     would take it away.  `na_over`/`nb_over` overflow one, so the two answers sit side by
+//     side in one file: `τ` gives the default, `τ?` gives null.
+//   * `fullwidth` — `u8` and `i16` fill their width and never had a spare code, so they
+//     answered the default before C127 and must still.
+//   * `keyed` — a narrow field as a hash KEY and as a sorted collection's key, neither
+//     overflowed: a wrong decode there loses the record, not just the number.
+//
+// The other cells are the reach: the overflow through `+=`, `-=` and `*=`, a field read
+// through a by-value struct PARAMETER and out of a CALL's return, the read as a condition,
+// as a `??` subject, and repeated in a loop.
+//
+// `matrix_axes.py` reports this file missing `index`, `spatial` and `tuple` containers and
+// the float/boolean/enum element types: those are axes of the CONTAINER idioms, and this is
+// a question about one scalar slot's encoding, which every container reaches through the
+// same two parser sites the fix routes through.
+//
+// Two lints now fire on `contexts()`, and they are pinned rather than edited away: with C127
+// the compiler KNOWS a non-nullable narrow field cannot read null, so `s.a == null` is a
+// constant and `s.a ?? -7` never takes its default.  Both went silent for a spare-code type
+// before C127 while firing for `limit(-128, 127) size(1)` next door, so their presence here
+// is the compile-time half of the same answer the assertions check at run time.
+//
+// @EXPECT_WARNING: Warning[redundant-null-check]
+// @EXPECT_WARNING: Warning[redundant-coalesce]
+//
+// @falsified-at: 53f2c6bd3 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends; no durable
+//   patch, because 53f2c6bd3 is 2548 source lines from this tree and a diff against it would
+//   reintroduce everything fixed in between rather than this defect.  At that ref the local
+//   answered null and the field `0`/`64535`; both halves are wrong against C127, so the
+//   receipt reads the same failure for a sharper expectation.
+//
+// CHANNEL: the assertions.
+
+type S8  = integer limit(-100, 100) size(1);
+type S16 = integer limit(-1000, 1000) size(2);
+
+struct F  { a: S8, b: S16 }
+struct N  { a: S8?, b: S16? }
+struct W  { u: u8, i: i16 }
+struct K  { id: S8, b: S16 }
+
+fn show(label: text, v: integer) -> text { "{label}={v}/{v == null}" }
+
+// The answer every other slot must match: a LOCAL of each type, overflowed, and the two edge
+// values that must stay values.
+fn locals() -> text {
+  x: S8 = 100; x += 50;
+  y: S16 = -1000; y -= 1;
+  p: S8 = 100;
+  q: S16 = -1000;
+  "{show("x", x)} {show("y", y)} {show("p", p)} {show("q", q)}"
+}
+
+fn fields() -> text {
+  s = F { a: 100, b: -1000 };
+  t = F { a: 100, b: -1000 };
+  s.a += 50; s.b -= 1;
+  "{show("a", s.a)} {show("b", s.b)} {show("ta", t.a)} {show("tb", t.b)}"
+}
+
+// The other spellings of a write that leaves the range.  A checked cast is NOT one: it is
+// discharged at the cast and the `??` default lands as a value.
+fn field_forms() -> text {
+  s = F { a: 0, b: 0 };
+  n: integer = 300;
+  s.a = n as S8 ?? -100;
+  u = "{show("cast", s.a)}";
+  s.a = 100; s.a *= 2;
+  s.b = -1000; s.b *= 2;
+  "{u} {show("mul", s.a)} {show("mul16", s.b)}"
+}
+
+// `v1` and `w1` are 33 and 44 rather than 0 on purpose: a control holding the same value as
+// the cell it guards cannot fail.
+fn elements() -> text {
+  v: vector<S8> = [100, 33];
+  w: vector<S16> = [-1000, 44];
+  v[0] += 50; w[0] -= 1;
+  "{show("v0", v[0] ?? 7)} {show("v1", v[1] ?? 7)} {show("w0", w[0] ?? 7)} {show("w1", w[1] ?? 7)}"
+}
+
+// The half C127 did not move: a nullable narrow HAS a null, and an overflow writes it.
+fn nullables() -> text {
+  s = N { a: null, b: null };
+  u = "{s.a == null} {s.b == null}";
+  s.a = 100; s.b = -1000;
+  v = "{show("na", s.a ?? 7)} {show("nb", s.b ?? 7)}";
+  o = N { a: 100, b: -1000 };
+  o.a += 50; o.b -= 1;
+  "{u} {v} na_over={o.a == null} nb_over={o.b == null}"
+}
+
+fn fullwidth() -> text {
+  s = W { u: 255, i: -32768 };
+  t = W { u: 255, i: -32768 };
+  t.u += 1; t.i -= 1;
+  "{show("u", s.u)} {show("i", s.i)} {show("uo", t.u)} {show("io", t.i)}"
+}
+
+fn keyed() -> text {
+  h: hash<K[id]> = [];
+  h += [K { id: 100, b: -1000 }];
+  e = h[100];
+  o: text = "miss";
+  if e != null { o = "{show("hid", e.id)} {show("hb", e.b)}"; }
+  srt: sorted<K[id]> = [];
+  srt += [K { id: -100, b: 0 }];
+  f = srt[-100];
+  o2: text = "miss";
+  if f != null { o2 = show("sid", f.id); }
+  "{o} {o2}"
+}
+
+fn take(v: F) -> text { "{show("pa", v.a)} {show("pb", v.b)}" }
+fn make() -> F { g = F { a: 100, b: -1000 }; g.a += 50; g.b -= 1; g }
+fn provenance() -> text { "{take(make())} {show("ra", make().a)}" }
+
+// The loop accumulates the VALUE and not the nullness: with C127 every pass reads non-null,
+// so a nullness trace would be three identical characters and could not fail.
+fn contexts() -> text {
+  s = F { a: 100, b: -1000 };
+  s.a += 50; s.b -= 1;
+  c = if s.a == null { "cond-null" } else { "cond-value" };
+  d = s.a ?? -7;
+  acc = "";
+  t = F { a: 0, b: 0 };
+  for i in 0..3 { t.a = 100; t.a += 50 * i; acc += "{t.a},"; }
+  "{c} coal={d} loop={acc}"
+}
+
+fn main() {
+  assert(locals() == "x=0/false y=0/false p=100/false q=-1000/false",
+         "the local's answer, which every other slot must match: {locals()}");
+  assert(fields() == "a=0/false b=0/false ta=100/false tb=-1000/false",
+         "a narrow field after an overflow: {fields()}");
+  assert(field_forms() == "cast=-100/false mul=0/false mul16=0/false",
+         "the other write spellings: {field_forms()}");
+  assert(elements() == "v0=0/false v1=33/false w0=0/false w1=44/false",
+         "a narrow element after an overflow: {elements()}");
+  assert(nullables() == "true true na=100/false nb=-1000/false na_over=true nb_over=true",
+         "the nullable spelling keeps its null: {nullables()}");
+  assert(fullwidth() == "u=255/false i=-32768/false uo=0/false io=0/false",
+         "a type that fills its width answers the same default: {fullwidth()}");
+  assert(keyed() == "hid=100/false hb=-1000/false sid=-100/false",
+         "a narrow key and element field: {keyed()}");
+  assert(provenance() == "pa=0/false pb=0/false ra=0/false",
+         "through a by-value parameter and a call's return: {provenance()}");
+  assert(contexts() == "cond-value coal=0 loop=100,0,0,",
+         "as a condition, a coalesce subject and in a loop: {contexts()}");
+  println("every narrow slot answers the type's default for an unfitting value");
+}

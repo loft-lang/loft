@@ -69,12 +69,17 @@ const U32_MAX: i64 = u32::MAX as i64;
 /// edge) — answers the type's DEFAULT, which is in range too (`(E-Uncomp-NN)`).  So no value
 /// outside `[lo, hi]` can ever be held, whoever writes.
 ///
-/// Three specs are NOT facts and answer `None`: the two full-integer templates (the range
+/// Two specs are NOT facts and answer `None`: the two full-integer templates (the range
 /// the plain `integer` REPORTS is not the range it holds), and `i32`/`u32`, which keep a
 /// code back for null that an overflow does write into a non-null slot — a `u32` local can
 /// hold the sentinel after `+=`, and a range that trusted its type would run plain arithmetic
 /// on it.  A nullable `τ?` and a `&` link answer `None` for the same reason: the slot can hold
 /// what the range does not describe.
+///
+/// Every other non-nullable declared range IS a fact, including one that leaves codes spare
+/// inside its storage width: by C127 a value that does not fit such a slot takes the type's
+/// DEFAULT, which is in range, so nothing outside `[lo, hi]` can be held.  Before C127 those
+/// specs answered `None` because an overflow wrote a sentinel into them.
 #[must_use]
 pub fn type_range(tp: &crate::data::Type) -> Option<Range> {
     match tp {
@@ -82,10 +87,7 @@ pub fn type_range(tp: &crate::data::Type) -> Option<Range> {
         // range does not describe, so it is not a fact — deliberately NOT peeled through.
         crate::data::Type::Optional(_) => None,
         crate::data::Type::Integer(spec) => {
-            if spec.is_signed32_template()
-                || spec.is_wide_template()
-                || spec.reserves_sentinel_unconditionally()
-            {
+            if spec.is_signed32_template() || spec.is_wide_template() {
                 return None;
             }
             fits(i128::from(spec.min), i128::from(spec.max))

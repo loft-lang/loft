@@ -714,6 +714,37 @@ pub fn omitted_field_lint_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_OMITTED_FIELD"))
 }
 
+/// C127 — a compound step whose result does not fit a DECLARED narrow range takes that
+/// type's DEFAULT, and nothing at the site says so.
+///
+/// `x: u8 = 250; x += 10` answers `0`; `h: integer limit(1000, 1100) = 1050; h += 5000`
+/// answers `1000`.  The WRITTEN-OUT form (`x = x + 10`) is refused at compile time, because
+/// there the value is a plain `integer` flowing into a narrow slot — so this is the one
+/// arithmetic shape where the language cannot ask the author what an unfitting result should
+/// become, and C127's answer is the type's default.  The silence was the defect: a fallback
+/// the author did not write is exactly what a silent language would hide.
+///
+/// The cure is the pair `@FR-E-Uncomp-Seen` already fuses — an `if !place { … }` as the very
+/// next statement reads the fit failure — or the author choosing the value with
+/// `place = (place + n) ?? d`, which `range_guard_inside_discharge` owns and this is quiet on.
+///
+/// `advice` rather than `warning` by the two-tier rule: the default IS what the language
+/// promises for an unfitting value (C127, `@FR-E-Uncomp-NN`), so ignoring this cannot produce
+/// a result the language did not promise.  It reports a check worth writing, and the check
+/// already exists.
+///
+/// Quiet where the target keeps a code for its own failure — a `τ?`, an `i32`, a plain
+/// `integer` — because there the failure is readable from the value anywhere, with no help
+/// from the site (`IntegerSpec::non_null_reads_null` is the one home for that split, and it
+/// is the same predicate the stored default is chosen by).
+///
+/// **Default ON**; `LOFT_NO_NARROW_FALLBACK` opts out. One cached env read.
+#[must_use]
+pub fn narrow_fallback_lint_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_NARROW_FALLBACK"))
+}
+
 /// loft#926 — one struct literal filling TWO members of a linked collection group.
 ///
 /// Two collection fields over one element type, at least one of them keyed, are auto-linked:

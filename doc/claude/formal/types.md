@@ -528,7 +528,15 @@ old auto-`τ?` reading. Design record:
             range exactly fills a fixed 1- or 2-byte storage — an `i32?` has a spare code
             outside its range and an `integer limit(0,255)?` widens to get one, so neither
             gives anything up.  The COMPLEMENT is the same statement: a NON-null narrow
-            reserves nothing, because it has no null to encode.
+            reserves nothing, because it has no null to encode — and that holds however much
+            room its declared range leaves inside the width.  `limit(-100, 100) size(1)` is
+            201 values in 256 and the 55 codes left over are NOT a place to keep a null:
+            a value that does not fit takes the type's DEFAULT, by `(E-Uncomp-NN)`
+            ([C127](../DESIGN_DECISIONS.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so)).
+            Spareness is arithmetic the author did not do, so it cannot decide semantics.
+            The plain `integer` and `i32` TEMPLATES are the other case and keep their
+            sentinel: theirs lies OUTSIDE the range they report, so it is not a value of the
+            type at all — which is the line the table below draws.
 ```
 
 **Per-type null + store verdict** — the verdict follows the *representability* test, not
@@ -544,6 +552,7 @@ per-type taste ([C90](../DESIGN_DECISIONS.md) fixes the reserved value):
 | reference | out-of-band `nullref` | yes | **warn** |
 | struct in `vector` | tagged `__nullable<S>` | yes | **warn** |
 | narrow `u8`/`i8`/`u16`/`i16`/`i32`/`u32` | top width value — reserved ONLY in the `τ?` form | **no** — non-null uses the full width (`255` is a real `u8`) | **error** |
+| narrow `limit(lo, hi) size(n)` — a range with codes to spare | top width value — reserved ONLY in the `τ?` form, exactly as above | **no** — a spare code is not a reserved one (C127) | **error** |
 
 The narrow widths are the **sole error case**: they are the only types whose non-null form
 spends the whole width on real values (C90 gives them a sentinel only in `τ?`, to keep the

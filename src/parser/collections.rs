@@ -2028,10 +2028,15 @@ impl Parser {
             // `i32`, a plain `integer`), and `!` reads that today with no help from here.
             self.fit_candidate = match bounded {
                 Some((_, _, dflt)) if dflt != i64::MIN => match f_type.base() {
+                    // C127 — the same `dflt != i64::MIN` that makes the failure fusible makes
+                    // it SILENT when nobody fuses it, so the candidate carries the position it
+                    // was raised at and `Parser::retire_fit_candidate` decides a statement
+                    // later, when whether anyone asked is finally known.
                     Type::Integer(spec) => Some(crate::parser::fit::FitFusion {
                         place: to.clone(),
                         spec: *spec,
                         fit_var: None,
+                        at: self.lexer.pos().clone(),
                     }),
                     _ => None,
                 },
