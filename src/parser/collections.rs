@@ -288,8 +288,11 @@ fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
 /// Whether a loop over a source of this type walks characters, and so needs the
 /// `#next` / `#index` pair.  A `&text` link walks the text it names: `iterator` unwraps
 /// the link before it builds the walk, and the pair must be asked the same question.
+/// Through `base()`, as `@FR-N-Shape` reads a `text?`: such a source is refused before a
+/// loop is built, so the answer is never used for one, and any other type is not a text
+/// and walks no characters.
 pub(crate) fn walks_text(in_type: &Type) -> bool {
-    match in_type {
+    match in_type.base() {
         Type::Text(_) => true,
         Type::RefVar(inner) => walks_text(inner),
         _ => false,
