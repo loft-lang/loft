@@ -8,8 +8,9 @@
 // captures: `g()` answered `11` for `1`, and a captured vector read the next pass's elements.
 // `(L-CapKeep)` releases a record once, by the last of the frame's names for it to let go, and
 // which name is last is decided by store identity at run time — so every cell below also traces
-// the hooks of what the closures captured, and a lost or doubled release shows as the wrong
-// sequence.
+// the hooks of what the closures captured, and a lost, doubled or LATE release shows as the
+// wrong sequence.  A pass nobody kept releases at its own `}` (`D70` before `M71`), and only a
+// record another name still holds outlives its pass.
 //
 // Every expected value is hand-computed.  The `k` cells are controls: shapes that were right
 // before and must stay right.
@@ -155,16 +156,16 @@ fn main() {
   ok("c3 a loop-body vector   ", "{c3()}", "300");
   ok("c4 a text               ", c4(), "a0/0");
   c5();
-  ok("c5 droppables, pass 0   ", drain(), "M70,M71,G70,D71,D70");
+  ok("c5 droppables, pass 0   ", drain(), "M70,M71,D71,G70,D70");
   c6();
   ok("c6 kept every pass      ", drain(), "M70,M71,D70,G71,D71");
   c7();
-  ok("c7 kept on no pass      ", drain(), "M70,M71,D70,X0,D71");
+  ok("c7 kept on no pass      ", drain(), "M70,D70,M71,D71,X0");
   ok("c8 two names, two passes", c8(), "1 21");
   c9();
-  ok("c9 passes 0 and 2       ", drain(), "M70,M71,M72,D71,D70,G72,D72");
+  ok("c9 passes 0 and 2       ", drain(), "M70,M71,D71,M72,D70,G72,D72");
   c10();
-  ok("c10 a record capture    ", drain(), "M70,M71,G70,D71,D70");
+  ok("c10 a record capture    ", drain(), "M70,M71,D71,G70,D70");
   ok("c11 a &fn parameter     ", "{c11()}", "1");
   r = c12();
   ok("c12 returned            ", "{r()}", "1");
@@ -172,9 +173,9 @@ fn main() {
   c14();
   ok("c14 a call, every pass  ", drain(), "M70,M71,D70,M72,D71,G72,D72");
   c15();
-  ok("c15 a call, no pass     ", drain(), "M70,M71,D70,X0,D71");
+  ok("c15 a call, no pass     ", drain(), "M70,D70,M71,D71,X0");
   c16();
-  ok("c16 a call, passes 0, 2 ", drain(), "M70,M71,M72,D71,D70,G72,D72");
+  ok("c16 a call, passes 0, 2 ", drain(), "M70,M71,D71,M72,D70,G72,D72");
 
   ok("k1 the last pass        ", "{k1()}", "11");
   ok("k2 never kept           ", "{k2()}", "21");

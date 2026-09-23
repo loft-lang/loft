@@ -13390,6 +13390,110 @@ impl Scopes<'_> {
         out
     }
 
+    /// `@FR-L-CapKeep` at the END OF A PASS: the statements that release what a loop body's
+    /// fn-ref holds where no other name kept it (loft#1636).
+    ///
+    /// A fn-ref every mention of which lies in this block is dead at its `}`, so the closure it
+    /// holds is released there, hooks included, exactly as a record local of the block would
+    /// be — unless another name of the frame still holds the same store, which then owns it.
+    /// A record this block built for such a fn-ref is released first, through its own cascade,
+    /// and the fn-ref nulled so it does not release the store a second time.  The block's end
+    /// is not reached by a `break` or a `continue`: those passes release at the next rebuild or
+    /// at the function's end, once either way.
+    fn closure_keep_pass_end(
+        &mut self,
+        bl: &Block,
+        function: &mut Function,
+        data: &Data,
+    ) -> Vec<Value> {
+        if !self.closure_keep.gated || self.loops.is_empty() || bl.result != Type::Void {
+            return Vec::new();
+        }
+        let mut here: HashMap<u16, usize> = HashMap::new();
+        for op in &bl.operators {
+            for (v, n) in var_mentions_in(op) {
+                *here.entry(v).or_insert(0) += n;
+            }
+        }
+        let dead: Vec<u16> = self
+            .closure_keep
+            .owning
+            .iter()
+            .copied()
+            .filter(|t| {
+                here.get(t)
+                    .is_some_and(|&n| n > 0 && Some(&n) == self.mentions.get(t))
+                    && self.var_scope.contains_key(t)
+                    && !function.is_captured(*t)
+                    && !function.is_skip_free(*t)
+            })
+            .collect();
+        if dead.is_empty() {
+            return Vec::new();
+        }
+        let (link_pre, links, link_post) = self.closure_keep_links(function);
+        let mut out = link_pre;
+        let sentinel = || Value::Call(data.def_nr("OpNullRefSentinel"), Vec::new());
+        for r in self.closure_keep.records.clone() {
+            let built_for: Vec<u16> = self
+                .closure_keep
+                .targets
+                .get(&r)
+                .map(|ts| ts.iter().copied().filter(|t| dead.contains(t)).collect())
+                .unwrap_or_default();
+            if built_for.is_empty() {
+                continue;
+            }
+            let mut others = self.closure_keep_live(&built_for);
+            others.extend(links.iter().copied());
+            let mut release = Vec::new();
+            if let Some(hook) = drop_hook(function, r, data) {
+                release.push(hook);
+            }
+            release.push(call("OpFreeRef", r, data));
+            release.push(v_set(r, sentinel()));
+            for &t in &built_for {
+                release.push(v_set(t, Value::Null));
+            }
+            out.push(v_if(
+                Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(r)]),
+                Self::closure_keep_unless_shared(
+                    &Value::Var(r),
+                    &others,
+                    &[],
+                    Value::Insert(release),
+                    &Value::Null,
+                    data,
+                ),
+                Value::Null,
+            ));
+        }
+        for &t in &dead {
+            out.extend(self.closure_keep_stand_down(t, data));
+            let closure = Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(t)]);
+            for &l in &links {
+                out.push(v_if(
+                    Value::Call(
+                        data.def_nr("OpDistinctStore"),
+                        vec![
+                            closure.clone(),
+                            Value::Call(data.def_nr("OpFnRefClosure"), vec![Value::Var(l)]),
+                        ],
+                    ),
+                    Value::Null,
+                    v_set(t, Value::Null),
+                ));
+            }
+            if data.any_closure_drop() {
+                out.push(call("OpDropFnRef", t, data));
+            }
+            out.push(call("OpFreeRef", t, data));
+            out.push(v_set(t, Value::Null));
+        }
+        out.extend(link_post);
+        out
+    }
+
     /// `@FR-L-CapKeep` at the scope-end release of the fn-ref `v`: null its closure half where
     /// a closure record or another live fn-ref names the same store, so the release that
     /// follows finds nothing and that name releases the store instead.  Each stand-down nulls,
@@ -14584,6 +14688,12 @@ impl Scopes<'_> {
         let frees = self.free_vars(is_return, &expr, function, data, &bl.result, self.scope);
         for v in frees {
             ls.push(v);
+        }
+        // After the block's own frees: a capture the record adopted is released by the
+        // record, and the frame's release of it asks whether the record is still live.
+        if !is_return {
+            let pass_end = self.closure_keep_pass_end(bl, function, data);
+            ls.extend(pass_end);
         }
         self.fnref_bound.pop();
         ls

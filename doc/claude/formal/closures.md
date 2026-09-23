@@ -92,10 +92,13 @@ available). A bare `f` (a function's name used as a value) is a first-class func
                  outside it, a `&fn(…)` link, a copy in another local) goes on answering from
                  that run's captures, and the build makes a new record for the next run.  A
                  record, and each capture it reads, is released ONCE: by the LAST of the
-                 frame's names for it to let go — a rebind of a fn-ref, a scope's end, or the
-                 build rebuilding it when no other name holds it.  Which name is last is a
-                 per-run fact, so it is decided by store identity when a name lets go, never
-                 by which pass the program text says might keep it.
+                 frame's names for it to let go — a rebind of a fn-ref, or a scope's end.  A
+                 fn-ref whose every mention lies in one block lets go at that block's `}`, so
+                 a loop pass nobody kept releases what it captured at the end of THAT pass,
+                 exactly as the same body without a closure would; only a record another name
+                 still holds outlives the pass.  Which name is last is a per-run fact, so it
+                 is decided by store identity when a name lets go, never by which pass the
+                 program text says might keep it.
   (L-CapOne)     among records that adopt ONE store and can COEXIST, exactly one owns it — the
                  one that leaves the frame, or the first where none does — and the rest borrow.
                  Records that cannot coexist, each built in a different arm of one branch, EACH
@@ -227,7 +230,11 @@ CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35`
   asks it at run time, by store identity, at the three moments it would let a record go
   (`scopes::closure_keep_set`; `OpFnRefClosure` reads a fn-ref's closure half for the test):
   the build rebuilds in place only where no other fn-ref of the frame names the record, and
-  otherwise hands it to that name and mints a new one; a captured literal's backing is handed
+  otherwise hands it to that name and mints a new one; the end of the block holding every
+  mention of a fn-ref releases what it holds unless another name kept it
+  (`Scopes::closure_keep_pass_end`), so an unkept pass releases at its own `}` — decided
+  2026-09-23 over "at the next rebuild", which kept every pass's captures one pass too long
+  and put the last one's release after the loop; a captured literal's backing is handed
   over with it at the literal's re-mint, which runs ahead of the build; and a rebind or a
   scope's end releases a closure only where no other live name — a fn-ref, a record local, a
   `&fn(…)` parameter's caller — holds the same store, so of several names exactly the last
