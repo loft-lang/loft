@@ -412,17 +412,35 @@ impl Parser {
         true
     }
 
-    /// Check whether `val` is a call to a user-defined function that returns a struct
-    /// via a temporary store.  Used by `copy_ref` and the vector-append
-    /// emit path (`vectors.rs`) to decide whether to free the source
-    /// store after the deep copy.  A callee that can hand back an ARGUMENT's record
-    /// (`fn same(w: S) -> S { w }`, `returns_borrowed_view`) does not answer a store of
-    /// its own, so the bit is never set for it: its call binds a private copy in the
-    /// scope pass's lift, which that lift's own scope exit releases once (loft#1647).
-    /// The free bit's behaviour differs
-    /// under WASM but the query is the same on every target — call
-    /// sites in expressions.rs / objects.rs / vectors.rs / collections.rs
-    /// are not feature-gated, so this helper must not be either.
+    /// Is `val` a call to a user-defined function that answers a struct through a
+    /// temporary store?  The STRUCTURAL half of the `0x8000` source-free decision,
+    /// and deliberately nothing more.
+    ///
+    /// ⚠ This does NOT say the store is the callee's to give away.  A callee whose
+    /// return can hand back an ARGUMENT's record (`fn same(w: S) -> S { w }`) is
+    /// structurally a struct-returning call and answers a store the CALLER still
+    /// owns.  Every site that sets the bit must therefore ask an ownership question
+    /// beside this one, and there are exactly two admissible answers:
+    ///
+    /// - [`Self::call_gives_away_its_store`] — the conservative answer, for a site
+    ///   that emits no @P290 bracket;
+    /// - `use_analysis::call_return_frees_source` — the bracket-licensed answer, for
+    ///   a site that emits one (`expressions.rs`'s collection bind).
+    ///
+    /// loft#1647 folded the conservative clause into THIS predicate instead, which
+    /// fixed the sites that asked no ownership question and silently vetoed the one
+    /// site that asked the better one: its `&&` could no longer be reached for a
+    /// borrowing callee, so the bracket never licensed the free and the minting arm
+    /// of a borrowing signature leaked one store per call
+    /// (`tests/scripts/1140-a-returned-keyed-parameter-is-still-the-callers.loft`).
+    /// `formal/ownership.md` had already written that outcome down — *"answering the
+    /// callee-side half alone would also close the use-after-free, but
+    /// conservatively"*.  The two questions are kept apart here so neither can veto
+    /// the other again.
+    ///
+    /// The free bit's behaviour differs under WASM but the query is the same on every
+    /// target — call sites in expressions.rs / objects.rs / vectors.rs /
+    /// collections.rs are not feature-gated, so this helper must not be either.
     pub(crate) fn is_struct_returning_call(&self, val: &Value) -> bool {
         if self.first_pass {
             return false;
@@ -433,7 +451,6 @@ impl Parser {
                 // User function with code (not a built-in op)
                 def.name().starts_with("n_")
                     && *def.code() != Value::Null
-                    && !def.returns_borrowed_view()
                     && !self.answers_caller_buffer(*fn_nr, args)
             }
             // Struct constructor blocks allocate a store too — when assigned
@@ -441,6 +458,32 @@ impl Parser {
             Value::Block(bl) => bl.name == "Object",
             _ => false,
         }
+    }
+
+    /// May this site set the `0x8000` source-free bit WITHOUT emitting a @P290
+    /// bracket — i.e. is the returned store certainly the callee's to give away?
+    ///
+    /// [`Self::is_struct_returning_call`] plus the callee-side half of `@FR-O-Move`:
+    /// a return whose dep names a visible parameter may hand back that parameter's
+    /// store, and the caller must not release what it still owns.  With no bracket
+    /// there is no runtime witness to tell the two arms apart, so the answer is no
+    /// for the whole signature.
+    ///
+    /// **What that costs, stated rather than discovered:** the MINTING arm of a
+    /// borrowing signature (`fn pick(w: S, c: boolean) -> S { f = S { … }; if c { w }
+    /// else { f } }`) then leaks one store per call at these sites.  That is the
+    /// deliberate trade `formal/ownership.md` records — a leak is recoverable where a
+    /// premature free is not — and the cure is not a cleverer static read but the
+    /// bracket, which decides it at runtime: a protected store is refused the free, a
+    /// callee-minted one is freed.  A site that wants the minting arm back emits the
+    /// bracket and asks `use_analysis::call_return_frees_source` instead.
+    pub(crate) fn call_gives_away_its_store(&self, val: &Value) -> bool {
+        self.is_struct_returning_call(val)
+            && match val.unspan() {
+                Value::Call(fn_nr, _) => !self.data.def(*fn_nr).returns_borrowed_view(),
+                // An `Object` block mints in place; it borrows no parameter.
+                _ => true,
+            }
     }
 
     /// loft#1154 — the `0x8000` source-free decision for a JOIN right-hand side, and the
@@ -1022,7 +1065,7 @@ impl Parser {
         // whole-value element-set path.
         #[cfg(not(feature = "wasm"))]
         let tp_val =
-            if matches!(code.unspan(), Value::Call(_, _)) && self.is_struct_returning_call(code) {
+            if matches!(code.unspan(), Value::Call(_, _)) && self.call_gives_away_its_store(code) {
                 i32::from(tp) | 0x8000
             } else {
                 i32::from(tp)

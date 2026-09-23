@@ -4816,7 +4816,7 @@ use a separate collection or add after the loop"
             match (self.first_pass, self.keyed_field_kt(f_type)) {
                 (false, Some(kt)) => {
                     #[cfg(not(feature = "wasm"))]
-                    let tp_val = if self.is_struct_returning_call(code) {
+                    let tp_val = if self.call_gives_away_its_store(code) {
                         i32::from(kt) | 0x8000
                     } else {
                         i32::from(kt)
@@ -6001,7 +6001,7 @@ use a separate collection or add after the loop"
             && let Some(kt) = self.keyed_field_kt(f_type)
         {
             #[cfg(not(feature = "wasm"))]
-            let tp_val = if self.is_struct_returning_call(code) {
+            let tp_val = if self.call_gives_away_its_store(code) {
                 i32::from(kt) | 0x8000
             } else {
                 i32::from(kt)

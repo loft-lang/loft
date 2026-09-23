@@ -13252,7 +13252,7 @@ impl Parser {
                     self.cl("OpSetInt4", &[ref_code.clone(), pos_v, value])
                 } else {
                     let kt = self.keyed_field_kt(&keyed_tp).unwrap_or(u16::MAX);
-                    let tp_val = if self.is_struct_returning_call(&value) {
+                    let tp_val = if self.call_gives_away_its_store(&value) {
                         i32::from(kt) | 0x8000
                     } else {
                         i32::from(kt)
@@ -13891,7 +13891,7 @@ impl Parser {
                 // on the first insert through the aliased header.  `0x8000` frees the
                 // call's fresh return storage after the copy, or it leaks per construction.
                 let kt = self.keyed_field_kt(&tp).unwrap_or(u16::MAX);
-                let tp_val = if self.is_struct_returning_call(&val_code) {
+                let tp_val = if self.call_gives_away_its_store(&val_code) {
                     i32::from(kt) | 0x8000
                 } else {
                     i32::from(kt)
