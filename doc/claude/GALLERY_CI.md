@@ -10,6 +10,31 @@ on GitHub Pages, and each can go stale on its own:
 | `doc/pkg/loft_bg.wasm` + `doc/pkg/loft.js` | `gallery-run.html`, `playground.html` | `wasm-pack build --target web` | `make gallery` |
 | `doc/brick-buster.html` | The featured "click-to-play" arcade game | `loft --html` against a `wasm32-unknown-unknown` libloft.rlib + wasm-opt | `make game` |
 
+⚠ **A THIRD artefact is derived from the same wasm build and goes stale the same way, but by
+a subtler route: `index/target_surface.json`.**  `make surface-gen` asks a **prebuilt** wasm
+rlib which builtins exist, and the rebuild it needs is NOT `make wasm`, which builds the
+wasm-bindgen package in the table above.  The rlib it reads comes from
+
+```
+cargo build --release --target wasm32-wasip2          --lib --no-default-features --features random
+cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
+```
+
+Run `surface-gen` without those and it records builtins as UNAVAILABLE IN THE BROWSER and
+commits that as derived truth.  Measured 2026-09-24: run straight after `make wasm`, it
+re-added `store_load_url` and `store_load_url_trusted` to the unavailable list — silently
+reverting a fix made on the same branch that morning, when a join had made the identical
+mistake by hand.  With both rlibs built first it answers *"2 of 111 builtins unavailable"* and
+the file is byte-identical to what was committed.
+
+**Same file, same command, opposite answers, decided only by build ORDER.**  That is what makes
+this one dangerous rather than merely annoying: the generator's two failure modes — a real
+surface change and a stale read — are indistinguishable in the diff, so the diff is not
+evidence on its own.  Read a builtin BECOMING unavailable as a suspected stale read first: a
+builtin does not usually leave the browser.  `make ci` gets the order right (it builds both
+rlibs before `gen_target_surface.py --check`); a hand-run is where it bites, and CLAUDE.md's
+*"rebuild that rlib first"* does not say which rebuild is meant.
+
 ⚠ **`gallery.html` makes no DIRECT reference to the bundle — it reaches it one page down.**  It
 is an index linking to `gallery-run.html?example=…`, which is where `./pkg/loft.js` is actually
 imported.  The row above therefore names the page that HOLDS the relationship rather than the
