@@ -4367,6 +4367,8 @@ impl ReplSession {
         dest: &crate::keys::DbRef,
         kind: ScalarKind,
     ) -> bool {
+        // @FR-L-Narrow-Linked — seeding a frame slot is a WRITE of one, and the rule binds
+        // writers too: a wide value stored here is read back decoded.
         let store = state.database.store(src);
         match kind {
             ScalarKind::Integer => {

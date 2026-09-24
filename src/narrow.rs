@@ -6,7 +6,8 @@
 //!
 //! A store field holds a narrow integer biased by the type's minimum, with one code kept
 //! back for absence where the slot is nullable (`data::NarrowIntKind` names the kinds; the
-//! `Store` getters and setters read and write them in place).  A LINKED narrow local —
+//! `Store` getters and setters read and write them in place).  `@FR-L-Narrow-Linked` is the
+//! rule this module is the bytes of.  A LINKED narrow local —
 //! one a `&` bind, a `&` argument or a re-point names (@PLN167 decision 1) — holds the same
 //! bytes, so that one `&u8` pointer or `DbRef` reads a local and a field alike
 //! (`@FR-B-Ref-Uniform`).  Native keeps such a local in a Rust variable of the storage

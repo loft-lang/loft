@@ -3484,6 +3484,9 @@ impl State {
         name: &str,
         data: &crate::data::Data,
     ) -> Option<crate::data::NarrowSlot> {
+        // @FR-L-Narrow-Linked — the ONE lookup for a reader that has a NAME.  The rule's
+        // obligation runs to every reader of the slot, not to the emitters alone, so the
+        // debugger, reflection and the watchpoint all arrive here rather than each deciding.
         let frame = self.call_stack.last()?;
         if frame.d_nr == u32::MAX {
             return None;
@@ -4195,6 +4198,9 @@ impl State {
         literal: &str,
         data: &crate::data::Data,
     ) -> bool {
+        // @FR-L-Narrow-Linked — a `setValue` edit WRITES a frame slot, so it encodes.  Writing a
+        // wide value here is the mirror of reading one: typing `-5` resumed the run with `123`
+        // until @PLN167 A2, because the next read decoded bytes nobody had encoded.
         use crate::data::Type;
         // @PLN120 A — one gate for every type, replacing the `Text`-arm-only check.
         // A local the frame does not hold shares its slot with another local (or has
@@ -5358,6 +5364,9 @@ impl State {
         data: &crate::data::Data,
         narrow: Option<crate::data::NarrowSlot>,
     ) -> String {
+        // @FR-L-Narrow-Linked — a locals VIEW is a reader of the slot, so it decodes.  This
+        // one reported `127` for an `i8` holding `-1` until @PLN167 A2; it did not fail, it
+        // answered a plausible wrong number, which is the rule's stated hazard.
         use crate::data::Type;
         let rec = self.stack_cur.rec;
         let at = self.stack_cur.pos + frame_base + u32::from(off);

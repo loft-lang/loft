@@ -3536,6 +3536,9 @@ impl Function {
     /// variable: the 8-byte slot, read and written as today.
     #[must_use]
     pub fn linked_narrow_slot(&self, var_nr: u16) -> Option<crate::data::NarrowSlot> {
+        // @FR-L-Narrow-Linked — the per-variable fact the rule's two shapes are picked by:
+        // `Some(kind)` means this local holds the FIELD encoding, so a link can reach it and
+        // every reader of its slot owes a decode.
         if (var_nr as usize) >= self.variables.len() {
             return None;
         }

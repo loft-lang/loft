@@ -14,6 +14,34 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A `&` link now reaches a narrow integer field or element.**  `c = &o.count` where `count`
+is a `u8`, `&v[i]` into a `vector<i8>`, `&o.height` on a `limit(1000, 1100)` field — all of
+these used to be refused as *"not addressable"*.  So the one feature `&` exists for was
+unavailable for exactly the types you declare in order to save space, and the workaround was
+to widen the field to a plain `integer` and give the saving back.  A link now reads and
+writes such a place at its own width, and a `&u8` behaves like any other link — you can
+re-point it and hand it to a `&` parameter:
+
+```loft
+fn bump(p: &u8) { p += 3; }      // declared WITH `&`…
+c = &o.count;  c = 9;            // write through the link
+bump(o.count);                   // …and called WITHOUT one
+```
+
+Two things keep a narrow link honest, and both are the same rule that a `&τ` is used exactly
+like a `τ`.  Writing `p = p + 3` inside that function is refused, because `p + 3` is an
+`integer` and narrowing it could lose data — use the compound step `p += 3`, or give it a
+fallback.  And a link carries its target's type, so re-pointing a `&u8` at an `i8` is refused
+rather than silently reading the bytes at the wrong width.
+
+**The debugger tells you the truth about those locals.**  A narrow local your program takes
+the address of is stored differently from one it does not, and every reader that did not
+know — the locals view, `stack_trace()`, a `setValue` edit, a watchpoint — reported a
+plausible wrong number rather than failing.  An `i8` holding `-1` displayed as `127`, a
+`limit(1000, 1100)` holding `1050` as `50`, and typing `-5` into the debugger resumed the run
+with `123`.  All four now decode.  If you ever debugged one of these and distrusted what you
+saw, you were right.
+
 **`loft self-update` and `loft install` download over a patched TLS stack.**  A
 dependency audit now runs every night, and its first run found that the TLS library
 loft downloads with carried a published advisory (RUSTSEC-2026-0285); the fixed version
