@@ -754,19 +754,31 @@ fn serve_game_debug_control_end_to_end() {
     // Stop over the channel (the editor's post-swap stop path).
     ws_send(ctl.get_ref(), "D!:quit");
     assert_eq!(ws_recv(&mut ctl), "D:quitting");
+    // A DEADLINE, not a trip count — the sibling of the wait below and the same defect
+    // (loft#1668): fifty polls at 100 ms is five seconds of wall clock, and wall clock is what
+    // a loaded box takes away.  Found by a sweep after the other loop was cured, which is the
+    // reason to sweep: one file held two of them and only one had gone red yet.
     let mut stopped = false;
-    for i in 0..50 {
+    let started = Instant::now();
+    let deadline = vm_deadline(20);
+    let mut polls = 0;
+    while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
         ws_send(
             ws.get_ref(),
-            &format!("{{\"id\":{},\"req\":\"gameStatus\"}}", 200 + i),
+            &format!("{{\"id\":{},\"req\":\"gameStatus\"}}", 200 + polls),
         );
+        polls += 1;
         if ws_recv(&mut ws).contains("\"running\":false") {
             stopped = true;
             break;
         }
     }
-    assert!(stopped, "the game must exit on D!:quit");
+    assert!(
+        stopped,
+        "the game must exit on D!:quit — {polls} polls in {:?}",
+        started.elapsed()
+    );
     let _ = std::fs::remove_file(&path);
 }
 
