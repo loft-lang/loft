@@ -79,6 +79,10 @@ impl Parser {
         minted: &mut Vec<u32>,
     ) {
         node.for_each_child_mut(&mut |c| self.retarget_store_text_calls(c, from, memo, minted));
+        // Through a `Span`: the call it wraps is the call.  Asked again after the recursion
+        // reached it, which is idempotent — a retargeted call names an instance (skipped
+        // below) and a function-value call's candidates are memoised.
+        let node = node.unspan_mut();
         // A call through a FUNCTION VALUE (loft#1656): which function the value holds is a
         // run-time fact, so every candidate of its type gets the instance the call's mask
         // names, and the backends dispatch to it (`Data::store_text_instance`).

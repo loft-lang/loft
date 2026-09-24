@@ -40,15 +40,15 @@
 <p>Returns the UTC calendar date `days` days before today as `YYYY-MM-DD`. Use for cutoff dates in time-window filters; negative `days` clamps to today.</p>
 </div>
 <div class="item">
-<pre><code>pub fn directory(v: &amp;text = &quot;&quot;) -&gt; text</code></pre>
+<pre><code>pub fn directory(v: text = &quot;&quot;) -&gt; text</code></pre>
 <p>Returns the current working directory, optionally with v appended as a subpath. Use to construct absolute paths relative to where the program was launched.</p>
 </div>
 <div class="item">
-<pre><code>pub fn user_directory(v: &amp;text = &quot;&quot;) -&gt; text</code></pre>
+<pre><code>pub fn user_directory(v: text = &quot;&quot;) -&gt; text</code></pre>
 <p>Returns the current user's home directory, optionally with v appended. Use for storing user-specific data or configuration.</p>
 </div>
 <div class="item">
-<pre><code>pub fn program_directory(v: &amp;text = &quot;&quot;) -&gt; text</code></pre>
+<pre><code>pub fn program_directory(v: text = &quot;&quot;) -&gt; text</code></pre>
 <p>Returns the directory containing the running executable, optionally with v appended. Use to locate assets bundled alongside the program.</p>
 </div>
 <div class="item">
