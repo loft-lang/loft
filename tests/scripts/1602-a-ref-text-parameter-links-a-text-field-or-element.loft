@@ -19,6 +19,13 @@
 // growing a SIBLING collection of the linked element's record, which disturbs nothing it links.
 // A temporary (a literal, `directory`'s computed text) still takes a work copy.
 //
+// Through a FUNCTION VALUE (loft#1656) the same holds: the value holds one function, so the
+// call dispatches to that function's store instance — minted for every candidate of the
+// value's type.  Cells: a named function re-pointed between two, a capturing lambda, a
+// text-returning one, an element read out of a vector of functions and an absent one (a no-op,
+// `@FR-L-FnAbsent`), and the stack kind through the same value (which did not compile on
+// `--native`: its dispatch matched no function).
+//
 // @falsified-at: 569caacf3 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/1602-a-ref-text-parameter-links-a-text-field-or-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
@@ -112,4 +119,48 @@ fn test_a_sibling_collection_grows() {
   h = H { v: ["aa", "bb"], w: [] };
   grow_other(h.v[0], h);
   assert(h.v[0] == "aa!" && len(h.w) == 50, "sibling growth: {h.v[0]} {len(h.w)}");
+}
+
+fn app2(t: &text, k: integer) { t += "?{k}"; }
+fn tagged(t: &text) -> text { t += "!"; "r{t}" }
+
+fn test_through_a_function_value() {
+  o = O { a: "alpha", b: "beta" };
+  g = app;
+  g(o.a, 1);
+  g = app2;
+  g(o.b, 2);
+  v: vector<text> = ["aa", "bb"];
+  g(v[1], 3);
+  s = "x";
+  g(s, 4);
+  assert(o.a == "alpha!1" && o.b == "beta?2" && "{v}" == "[\"aa\",\"bb?3\"]" && s == "x?4",
+    "function value: {o.a} {o.b} {v} {s}");
+  k = "<k>";
+  c = fn(t: &text) { t += k; };
+  c(o.a);
+  assert(o.a == "alpha!1<k>", "capturing lambda: {o.a}");
+  h = tagged;
+  r = h(o.b);
+  assert(r == "rbeta?2!" && o.b == "beta?2!", "text-returning: {r} {o.b}");
+  fs = [tagged];
+  r2 = fs[0](o.a);
+  fs[3](o.b);
+  assert(r2 == "ralpha!1<k>!" && o.a == "alpha!1<k>!" && o.b == "beta?2!", "vector of functions: {o.a} {o.b}");
+}
+
+// `directory`, `user_directory` and `program_directory` read their argument and build the
+// answer in the caller's buffer.  They took it as `&text` and built the answer IN it on the
+// interpreter, so `directory(s)` overwrote `s` there while `--native` left it alone — and, having
+// no loft body, they were the functions a text field could not be linked through.  Now the
+// argument is a plain `text`, so a field is simply read.
+fn test_directory_reads_its_argument() {
+  s = "sub";
+  d = directory(s);
+  assert(s == "sub" && d.ends_with("sub"), "directory kept its argument: {s}");
+  o = O { a: "sub", b: "" };
+  e = directory(o.a);
+  assert(o.a == "sub" && e == d, "directory of a field: {o.a}");
+  u = user_directory(s);
+  assert(s == "sub" && u.ends_with("sub"), "user_directory: {s}");
 }

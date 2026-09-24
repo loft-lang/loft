@@ -340,6 +340,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     put_fn_ref,
     const_ref,
     const_store_text,
+    call_ref_store,
 ];
 
 fn goto(s: &mut State) {
@@ -2844,4 +2845,11 @@ fn const_store_text(s: &mut State) {
     let v_rec = s.code::<i64>();
     let v_pos = s.code::<i64>();
     s.string_from_const_store(v_rec as u32, v_pos as u32)
+}
+
+fn call_ref_store(s: &mut State) {
+    let v_fn_var = s.code::<u16>();
+    let v_arg_size = s.code::<u16>();
+    let v_mask = s.code::<i64>();
+    s.fn_call_ref_store(v_fn_var, v_arg_size, v_mask as u64);
 }

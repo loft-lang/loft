@@ -141,6 +141,9 @@ pub(crate) fn is_text_dest_native(name: &str) -> bool {
             // that "a dest can't represent null" was probe-falsified on both
             // backends.
             | "n_source_dir"
+            | "n_directory"
+            | "n_user_directory"
+            | "n_program_directory"
             // #635 — os_temp_dir / os_cache_dir (the private natives temp_dir /
             // cache_dir wrap); non-null text, "" only on a filesystem-less target.
             | "n_os_temp_dir"
@@ -4709,9 +4712,26 @@ impl State {
         }
         // The fn-ref variable is below all pushed arguments.
         let fn_var_dist = stack.var_pos(v_nr);
-        stack.add_op("OpCallRef", self);
-        self.code_add(fn_var_dist);
-        self.code_add(total_arg_size);
+        // @PLN167 C3 (loft#1656) — a text field or element handed to a `&text` parameter picks
+        // the STORE instance of whichever function the slot holds.
+        let store_mask = if param_types.iter().any(
+            |p| matches!(p.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_))),
+        ) {
+            let values: Vec<Value> = args.iter().map(|a| a.to_owned_value()).collect();
+            stack.data.store_text_mask(&param_types, &values)
+        } else {
+            0
+        };
+        if store_mask == 0 {
+            stack.add_op("OpCallRef", self);
+            self.code_add(fn_var_dist);
+            self.code_add(total_arg_size);
+        } else {
+            stack.add_op("OpCallRefStore", self);
+            self.code_add(fn_var_dist);
+            self.code_add(total_arg_size);
+            self.code_add(store_mask as i64);
+        }
         stack.position -= total_arg_size;
         let ret_size = stack.step(size(&ret_type, &Context::Argument));
         stack.position += ret_size;

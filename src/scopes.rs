@@ -2896,9 +2896,7 @@ fn def_reshape_refusals(
                 // `OpCreateStack` of a text variable, which names no element.
                 let text_place_link = matches!(attr.typedef.base(),
                         Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
-                    && matches!(arg.unspan(), Value::Call(g, _)
-                        if data.def(*g).name() != "OpCreateStack"
-                            && matches!(data.def(*g).returned.base(), Type::Reference(_, _)));
+                    && data.is_store_text_arg(arg);
                 let scalar_link = text_place_link
                     || matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
                 let ptp = match &attr.typedef {

@@ -133,6 +133,9 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_set_bridge_dest", n_set_bridge_dest),
     ("n_source_dir_dest", n_source_dir_dest),
     ("n_os_temp_dir_dest", n_os_temp_dir_dest),
+    ("n_directory_dest", n_directory_dest),
+    ("n_user_directory_dest", n_user_directory_dest),
+    ("n_program_directory_dest", n_program_directory_dest),
     ("n_os_cache_dir_dest", n_os_cache_dir_dest),
     ("n_json_errors_dest", n_json_errors_dest),
     ("t_9JsonValue_kind_dest", n_kind_dest),
@@ -218,9 +221,6 @@ pub const FUNCTIONS: &[(&str, Call)] = &[
     ("n_store_load_url_trusted", n_store_load_url_trusted),
     ("n_store_load_untrusted", n_store_load_untrusted),
     ("n_eprint", n_eprint),
-    ("n_directory", n_directory),
-    ("n_user_directory", n_user_directory),
-    ("n_program_directory", n_program_directory),
     ("n_get_store_lock", n_get_store_lock),
     ("n_set_store_lock", n_set_store_lock),
     ("n_protect_store_frees", n_protect_store_frees),
@@ -1606,25 +1606,37 @@ fn n_eprint(stores: &mut Stores, stack: &mut DbRef) {
     crate::codegen_runtime::host_eprint(v.str());
 }
 
-fn n_directory(stores: &mut Stores, stack: &mut DbRef) {
-    let v_v = stores.get::<DbRef>(stack);
-    let v_v = stores.store_mut(&v_v).addr_mut::<String>(v_v.rec, v_v.pos);
-    let new_value = { Stores::os_directory(v_v) };
-    stores.put(stack, new_value);
+// `directory` / `user_directory` / `program_directory` build their answer in the caller's
+// buffer and only READ their argument.  They used to take it as `&text` and build the answer
+// IN it, so `directory(s)` overwrote `s` on the interpreter while `--native` left it alone.
+fn n_directory_dest(stores: &mut Stores, stack: &mut DbRef) {
+    let dest = stores.get::<DbRef>(stack);
+    let v_v = stores.get::<Str>(stack);
+    let new_value = Stores::os_directory_native(v_v.str());
+    stores
+        .store_mut(&dest)
+        .addr_mut::<String>(dest.rec, dest.pos)
+        .push_str(&new_value);
 }
 
-fn n_user_directory(stores: &mut Stores, stack: &mut DbRef) {
-    let v_v = stores.get::<DbRef>(stack);
-    let v_v = stores.store_mut(&v_v).addr_mut::<String>(v_v.rec, v_v.pos);
-    let new_value = { Stores::os_home(v_v) };
-    stores.put(stack, new_value);
+fn n_user_directory_dest(stores: &mut Stores, stack: &mut DbRef) {
+    let dest = stores.get::<DbRef>(stack);
+    let v_v = stores.get::<Str>(stack);
+    let new_value = Stores::os_home_native(v_v.str());
+    stores
+        .store_mut(&dest)
+        .addr_mut::<String>(dest.rec, dest.pos)
+        .push_str(&new_value);
 }
 
-fn n_program_directory(stores: &mut Stores, stack: &mut DbRef) {
-    let v_v = stores.get::<DbRef>(stack);
-    let v_v = stores.store_mut(&v_v).addr_mut::<String>(v_v.rec, v_v.pos);
-    let new_value = { Stores::os_executable(v_v) };
-    stores.put(stack, new_value);
+fn n_program_directory_dest(stores: &mut Stores, stack: &mut DbRef) {
+    let dest = stores.get::<DbRef>(stack);
+    let v_v = stores.get::<Str>(stack);
+    let new_value = Stores::os_executable_native(v_v.str());
+    stores
+        .store_mut(&dest)
+        .addr_mut::<String>(dest.rec, dest.pos)
+        .push_str(&new_value);
 }
 
 // @PLN10 — destination-passing variant: write straight into the caller's

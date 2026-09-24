@@ -49,19 +49,6 @@ fn is_text_link_type(tp: &Type) -> bool {
 }
 
 impl Parser {
-    /// Is `arg`, handed to a `&text` parameter, the STORE kind — a place in a record rather
-    /// than a text variable?
-    fn is_store_text_arg(&self, arg: &Value) -> bool {
-        match arg.unspan() {
-            Value::Call(g, _) => {
-                let def = self.data.def(*g);
-                def.name() != "OpCreateStack"
-                    && matches!(def.returned.base(), Type::Reference(_, _))
-            }
-            _ => false,
-        }
-    }
-
     /// Mint a store instance for every call that hands a text place to a `&text` parameter,
     /// and point those calls at it.  Instances close transitively: an instance that forwards
     /// its parameter to another `&text` function asks for that function's instance in turn.
@@ -92,10 +79,47 @@ impl Parser {
         minted: &mut Vec<u32>,
     ) {
         node.for_each_child_mut(&mut |c| self.retarget_store_text_calls(c, from, memo, minted));
+        // A call through a FUNCTION VALUE (loft#1656): which function the value holds is a
+        // run-time fact, so every candidate of its type gets the instance the call's mask
+        // names, and the backends dispatch to it (`Data::store_text_instance`).
+        if let Value::CallRef(v, args) = node {
+            let fn_type = self.data.def(from).variables.tp(*v).clone();
+            let Type::Function(params, ..) = fn_type.base() else {
+                return;
+            };
+            let mask = self.data.store_text_mask(params, args);
+            if mask == 0 {
+                return;
+            }
+            let candidates = crate::generation::fnref::dispatch_arms(
+                &self.data,
+                &HashSet::new(),
+                &fn_type,
+                args.len(),
+            )
+            .unwrap_or_default();
+            for arm in candidates {
+                if memo.contains_key(&(arm.d_nr, mask))
+                    || !matches!(self.data.def(arm.d_nr).code, Value::Block(_))
+                {
+                    continue;
+                }
+                let i = self.mint_store_text_instance(arm.d_nr, mask, from);
+                memo.insert((arm.d_nr, mask), i);
+                if i != u32::MAX {
+                    minted.push(i);
+                }
+            }
+            return;
+        }
         let Value::Call(d, args) = node else {
             return;
         };
         let callee = *d;
+        // A call already pointed at an instance has its kind; instances are never re-instanced.
+        if self.data.def(callee).is_store_text_instance() {
+            return;
+        }
         if !matches!(
             self.data.def(callee).def_type,
             crate::data::DefType::Function
@@ -106,7 +130,7 @@ impl Parser {
         for (i, a) in self.data.def(callee).attributes.iter().enumerate() {
             if i < 64
                 && is_text_link_type(&a.typedef)
-                && args.get(i).is_some_and(|x| self.is_store_text_arg(x))
+                && args.get(i).is_some_and(|x| self.data.is_store_text_arg(x))
             {
                 mask |= 1 << i;
             }
@@ -151,11 +175,15 @@ impl Parser {
         // the key stays unique and every name decoder cuts at it: the instance is the author's
         // function in every message, trace and profile.
         let name = format!("{}@st{mask}", def.name);
+        // Registered under the ORIGINAL's source, which is where `Data::store_text_instance`
+        // looks it up from any later context.
+        let saved_source = self.data.source;
+        self.data.source = def.source;
         let nd = self
             .data
             .add_def(&name, &def.position, crate::data::DefType::Function);
+        self.data.source = saved_source;
         def.name = name;
-        def.source = self.data.definitions[nd as usize].source;
         self.data.definitions[nd as usize] = def;
         let params: HashSet<u16> = self.data.definitions[nd as usize]
             .attributes
@@ -306,6 +334,24 @@ impl Parser {
                     };
                 for (i, a) in args.iter_mut().enumerate() {
                     if attrs.get(i).copied().unwrap_or(false)
+                        && let Value::Var(x) = a.unspan()
+                        && links.contains(x)
+                    {
+                        *a = self.cl("OpVarRef", &[Value::Var(*x)]);
+                        continue;
+                    }
+                    self.rewrite_store_text(a, links, params, work);
+                }
+            }
+            // A store-kind link handed on to a FUNCTION VALUE's `&text` parameter goes as the
+            // slot it holds, which makes that call store-kind too (loft#1656).
+            Value::CallRef(v, args) => {
+                let text_params: Vec<bool> = match self.vars.tp(*v).base() {
+                    Type::Function(p, ..) => p.iter().map(is_text_link_type).collect(),
+                    _ => Vec::new(),
+                };
+                for (i, a) in args.iter_mut().enumerate() {
+                    if text_params.get(i).copied().unwrap_or(false)
                         && let Value::Var(x) = a.unspan()
                         && links.contains(x)
                     {

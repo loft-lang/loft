@@ -378,6 +378,22 @@ fn collect_fn_ref_literals(
 pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
     let mut reachable = HashSet::new();
     let mut queue: VecDeque<u32> = entry_defs.iter().copied().collect();
+    // @PLN167 C3 (loft#1656) — a function's STORE instances (`<key>@st<mask>`) are reachable
+    // with it: a call through a function value reaches an instance only through its dispatch
+    // arm, which names the function it copies.  Over-approximation, correctness-safe as the
+    // fn-ref rules below are: it can only emit an unused instance.
+    let mut instances: HashMap<(String, u16), Vec<u32>> = HashMap::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.is_store_text_instance()
+            && let Some((base, _)) = def.name().split_once('@')
+        {
+            instances
+                .entry((base.to_string(), def.source()))
+                .or_default()
+                .push(d);
+        }
+    }
     while let Some(d) = queue.pop_front() {
         if !reachable.insert(d) {
             continue;
@@ -398,6 +414,9 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
             if cascade != u32::MAX {
                 calls.insert(cascade);
             }
+        }
+        if let Some(list) = instances.get(&(def.name().to_string(), def.source())) {
+            calls.extend(list.iter().copied());
         }
         for c in calls {
             if !reachable.contains(&c) {

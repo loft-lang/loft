@@ -285,17 +285,17 @@ pub fn ymd_days_ago(days: integer) -> text;
 #impure(host_io)
 // Returns the current working directory, optionally with v appended as a subpath.
 // Use to construct absolute paths relative to where the program was launched.
-pub fn directory(v: &text = "") -> text;
+pub fn directory(v: text = "") -> text;
 #rust"Stores::os_directory_native(@v)"
 #impure(host_io)
 // Returns the current user's home directory, optionally with v appended.
 // Use for storing user-specific data or configuration.
-pub fn user_directory(v: &text = "") -> text;
+pub fn user_directory(v: text = "") -> text;
 #rust"Stores::os_home_native(@v)"
 #impure(host_io)
 // Returns the directory containing the running executable, optionally with v appended.
 // Use to locate assets bundled alongside the program.
-pub fn program_directory(v: &text = "") -> text;
+pub fn program_directory(v: text = "") -> text;
 #rust"Stores::os_executable_native(@v)"
 #impure(host_io)
 // Returns the directory containing the main source file being executed.
