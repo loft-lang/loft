@@ -27,6 +27,17 @@
 //   CHANNEL: the store ceiling (the 70 000-call cells: `store table exhausted`) and the value
 //   (the capture cells read a freed record's bytes; the two write-through cells read the
 //   caller's capture changed — `formal/closures.md` D-clo-42).
+//   HOLDS: the LEAK count and the stack-store free refusal are equal on both trees and both
+//   backends.  Read off the receipt rather than assumed: `falsify.sh` prints only the channels
+//   that MOVE and requires HERE to be clean, so a channel absent from the two lines above was
+//   equal on the control.
+//   ⚠ PANIC is NOT held here — `native panicked -> clean` is one of the channels that moves,
+//   which is unusual and is the point: a store ceiling reached at 70 000 calls ABORTS the
+//   native run rather than answering wrongly.  So a patch that merely restored the wrong VALUE
+//   without restoring the abort would move fewer channels than the control did, and this
+//   receipt says which ones it owes.  The leak count is the discriminator that keeps a
+//   different over-free from passing as this defect: the fault is a store held to frame exit,
+//   not one released twice.
 
 struct S1659 { v: float }
 

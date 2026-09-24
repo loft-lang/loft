@@ -2786,7 +2786,7 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **312** |
+| **311** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
@@ -2798,6 +2798,12 @@ comparison this row gates.
 statement test (loft#1645) asks the arm's block type through `base()`, which takes `scan_if` off
 the opaque list; `main` read 315 / 1303 and the branch 313 / 1303 before the rebase, both on trees
 that did not contain the other.)
+
+(2026-09-24, the FIFTH join — `#1659`, @PLN163 P5's two removals, and seven commits of the
+native line — RE-MEASURED: functions discriminating on a `Type` variant **984**, opaque
+**311**; shape tests **2518**, opaque **1299**.  `--check-ratchet` reported `fell` on both and
+asked for the re-pin, which is the legitimate use of `--write-ratchet` and the opposite of the
+override recorded below.  The spellings row is unmoved at 93 · 15.)
 
 (2026-09-24, the FOURTH join — `origin/main` @ c2eec30c6 plus THREE sources merged one at a
 time: `157-native-4x`, `tuxedo-1562-layout-gate` (C2/C3 and the seven `&`-link peels) and
