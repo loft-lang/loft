@@ -84,6 +84,7 @@ text2d	write_text	call	library:text2d	one set_pixel call per lit sub-pixel of ev
 text2d	atlas_cell	keyed	library:text2d	a linear scan of the atlas codes per character
 text2d	layout	record-build	library:text2d	one Quad record appended per character
 text2d	draw_quads	vector-read	library:text2d	get_pixel on the atlas and set_pixel on the target per texel
+text2d	wrap	text-build	library:text2d	per character `word += c`, per word a concatenation and a re-measure
 tween	value	call	library:tween	progress, ease and lerp: three calls and a record read per number
 tween	ease	float-kernel	library:tween	an 11-arm match with cos, pow, sin and sqrt
 random	rand	native-boundary	library:random	the minimum crossing: two integers in, one out

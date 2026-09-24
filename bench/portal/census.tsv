@@ -31,7 +31,6 @@ stage	compose	record-field	loft	1	per node a cos/sin, an affine compose, and 12+
 stage	pack_instances	vector-build	loft	1	16 separate one-element appends per visible node	5,000 nodes, 100x	`extend_from_slice([…; 16])`
 stage	draw_list	record-build	loft	2	a `vector<DrawRect>` of NESTED records, one `+=` at a time	5,000 nodes, 200x	`Vec<DrawRect>` push
 stage	composite_light	float-kernel	loft	2	`sqrt` + `pow` per light per pixel	8 lights over 640x360, 20x	a per-pixel f64 loop
-text2d	wrap	text-build	loft	1	per character `word += c`, per word a concatenation and a re-measure	a 20 kB paragraph to 40 columns, 100x	greedy wrap over `split_whitespace`
 shapes	proxies_overlap	call	loft	2	16 x 16 nested predicate calls, each reading 8 fields off two records	500 proxies, all pairs	nested `iter().any()`
 imaging	png	native-boundary	native	2	the decode is Rust; the cost is ONE STORE RECORD PER PIXEL across the boundary	a 2048x2048 PNG, 20x	`image::open` into `Vec<[u8; 4]>`
 glb	save_glb	record-field	loft	2	four walks of `vector<Vertex>` reading NESTED `.pos.x / .normal.y / .uv.x`	a 16,641-vertex sphere, 20x	`extend_from_slice` from `&[Vertex]`
