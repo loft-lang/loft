@@ -3748,7 +3748,7 @@ use a separate collection or add after the loop"
             let text_place_ref = if stack_src.is_none()
                 && heap_ref.is_none()
                 && matches!(
-                    if let Type::RefVar(inner) = &s_type {
+                    if let Type::RefVar(inner) = s_type.base() {
                         inner.base()
                     } else {
                         s_type.base()
@@ -3776,7 +3776,7 @@ use a separate collection or add after the loop"
                 amp_unlowered = false;
                 if self.vars.is_store_text_link(src) {
                     self.bind_text_link_kind(var_nr, true);
-                } else if matches!(self.vars.tp(src), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                } else if matches!(self.vars.tp(src).base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
                 {
                     self.bind_text_link_kind(var_nr, false);
                 }
@@ -3845,7 +3845,7 @@ use a separate collection or add after the loop"
                 amp_unlowered = false;
                 self.bind_text_link_kind(var_nr, true);
                 *code = eref;
-                let text = if let Type::RefVar(inner) = &s_type {
+                let text = if let Type::RefVar(inner) = s_type.base() {
                     inner.base().clone()
                 } else {
                     s_type.base().clone()

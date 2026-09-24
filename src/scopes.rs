@@ -2631,7 +2631,7 @@ pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<
 /// so a `Set` of one is always its bind (@PLN167 decision 2).  Asked by the interpreter's
 /// `set_var` and by the view walk, so the two cannot disagree about which statement binds.
 pub(crate) fn link_set_repoints(data: &Data, function: &Function, var: u16, value: &Value) -> bool {
-    let Type::RefVar(tp) = function.tp(var) else {
+    let Type::RefVar(tp) = function.tp(var).base() else {
         return false;
     };
     let scalar_link = matches!(
@@ -2660,7 +2660,7 @@ pub(crate) fn link_set_repoints(data: &Data, function: &Function, var: u16, valu
 /// its caller and never by a `Set` the walk sees.  @FR-B-Ref-Reshape keys on the aliasing
 /// relation, so both spellings reach it.
 fn is_place_link(function: &Function, v: u16) -> bool {
-    !function.is_argument(v) && matches!(function.tp(v), Type::RefVar(_))
+    !function.is_argument(v) && matches!(function.tp(v).base(), Type::RefVar(_))
 }
 
 fn def_reshape_refusals(
@@ -2894,7 +2894,7 @@ fn def_reshape_refusals(
                 // A `&text` parameter handed a text field or element links that place too
                 // (@PLN167 C3): the argument is then the place op itself, never the
                 // `OpCreateStack` of a text variable, which names no element.
-                let text_place_link = matches!(&attr.typedef,
+                let text_place_link = matches!(attr.typedef.base(),
                         Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
                     && matches!(arg.unspan(), Value::Call(g, _)
                         if data.def(*g).name() != "OpCreateStack"

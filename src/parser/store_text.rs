@@ -45,7 +45,7 @@ fn stack_write_twin(name: &str) -> Option<&'static str> {
 }
 
 fn is_text_link_type(tp: &Type) -> bool {
-    matches!(tp, Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+    matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
 }
 
 impl Parser {
