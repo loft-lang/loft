@@ -83,3 +83,74 @@ and base64). The ~3× of the web/ssh/random rows is a 1-byte callee against the 
 
 **Filed:** loft#1659.  **Open:** a fn-ref into an auto-built native library answering null
 from a `return <call>;` body (zttext's `token_width`, interpreter only).
+
+**The rules for the copy class** (the 100×+ rows) are written, not built: `(R-Rebind)`,
+`(R-Compact)`, `(R-Const)`, `(R-ValueLocal)` in `doc/claude/formal/rewrites.md` § *A value
+already home is not copied to a second one*, on the floor `(H-CopySelf)` (heap.md).  Each
+names its headline row and the hand-price to take first.
+
+## Wave 3 — the consumers modelled, the rest of hex_*, and par (2026-09-24)
+
+53 rows, median **5.51×**; the whole portal is now 203 routines (median 3.13×, libraries 4.25×).  The consumer lanes
+(`17_consumer_moros_dryopea`, `18_consumer_crawler`) model the games' hot loops at their own
+layouts; every row but `binary_read` was written with the copy class already named above,
+and the numbers say the same thing the rules do: `truncate_to` **207×** (`(R-Compact)`),
+`slope_path_with_undo` 20× and `panel_build` 19× (records copied into stacks and panels),
+`resolve_move` 10× (`(R-ValueLocal)`), `map_json` 17× (`Map.parse` runs the source lexer).
+`binary_read` fell 224× → **33×** with the buffered `LoftFile` (each `f#read(2)` was a
+system call); the rest of its 33× is the per-read allocation and the crossing.  `par` holds
+0.7–2.4×: the pool is not the problem.  The hex_* rows are the same mechanisms again —
+`field_union` 173× and `bone_shape_has` 100× (a vector filled one push at a time, then read
+through nullable accessors; three records per query), `edgeset_count` 40×, `doc_read` 17×
+(one file-read crossing per cell), `stencil_rotate` 10× — with three twins that run a
+CHEAPER algorithm than the library (`bone_shape_has`, `rig_read`, `form_read`, and
+pluginabi's decoders from wave 2): those rows overstate loft's share and are to be
+re-aligned to the library's algorithm (bench/README.md rule 1), the library's own extra
+work listed beside them for its author.
+
+**`(R-Rebind)` hand-priced** on `delete_range`'s emitted Rust (2026-09-24): 61–64 → 4.2–4.6 ms/op
+(−93 %), 138× → ~6.5×, hash unchanged — the two whole-buffer copies were the row.  Probe:
+the session scratch `rb/dr.loft` (the bench row alone), `dr.rs` → `dr2.rs` the hand edit.
+
+**Twins re-aligned to the library's algorithm (2026-09-24, bench rule 1).**  Four twins had
+been written with the census's IDIOMATIC algorithm rather than the library's, so their rows
+charged loft for work the library itself repeats: hex_body `bone_shape_has` re-poses the rig
+per query (97× → ~4.9×), `rig_read` and hex_form `form_read` re-split each line per field read
+(13.8× → ~1.8×, 5.2× → ~2.7×), pluginabi `check_request` decodes its frame twice and
+`req_state_b64` three times.  Each `bench.rs` now names that extra work for the library's
+author; the re-measured rows are in the results file.  **A twin's own noise floor, measured on
+the way:** the pluginabi `request` twin moved ±40 % between two builds of UNCHANGED source —
+`b64_decode` byte-identical, at a different address (function alignment 16 vs 32 mod 64);
+`codegen-units=1` inverts the order and `-C llvm-args=-align-all-functions=6` equalises them.
+`stats.py`'s seven interleaved samples resample one binary and cannot see it, so a ratio near
+the bar on a small twin can move a class with no loft cause.  The cure, if wanted, is an
+alignment flag in the protocol's `rustc -O` line, not a source edit chasing a layout.
+
+**`(R-Const)` hand-priced** on `write_text`'s emitted Rust (2026-09-24): 117 → 4.3 ms/op (−96 %),
+86× → ~3.3×, hash unchanged — the two face tables rebuilt per glyph were the row; the rule's
+second half strikes `(O-LazyBuffer)`'s per-call buffer, not a copy.  Emitter waste found: the
+fused element write derives `text_span_of` per call for an integer element (9–13 % of what
+remains).  Probe: session scratch `rk/`.
+
+**`(R-ValueLocal)` hand-priced** on `mat4_transform`'s emitted Rust (2026-09-24): 45 → 3.1–4.0 ms/op
+(−92 %), 22× → ~1.7–2.2×, hash unchanged.  Today's site mints a store and frees the previous one
+per call (`(R-ValueRecord)` declines it: the local is also an argument).  The remainder is twelve
+loop-invariant element reads of the unwritten matrix per call (an instrument hoisting them:
+~1.2–1.5×) — a rule to write.  Probe: session scratch `rv/`.
+
+**`(R-Compact)` hand-priced** on `truncate_to`'s emitted Rust (2026-09-24): 3.2–3.8 ms → 414–435 µs/op
+(−87 %), 207× → ~30×, hash unchanged — the rebuild was three deep copies of every kept entry; the
+rest is the per-push record construction (`(R-Place)`'s class).  Found on the way and fixed: a
+vector FIELD rebind on a multi-field record stranded the old elements' owned heap inside the
+store.  Probe: session scratch `rc/` (`compact_vector_in_place` there is the primitive the
+runtime lacks).
+
+**Two runtime levers out of the wide pass (2026-09-24).**  A `for e in hash` walk had no row:
+added as `15_stdlib_keyed/hash_walk` (5k records walked in key order, the twin sorting its
+keys per pass as loft does), it read 5.93× and profiled as 69 % sort — `keys::compare` resolving
+two stores per pair.  Decorated (`keys::sort_records`, keyed.md L8): 2.83×.  And
+`vector::text_span_of` was a CALL per fused element write — the one helper of the base family
+without `#[inline]`, 12.7 % of `write_text`'s hand-priced remainder; inlined, it is a load
+pair, and the dead span a non-text element binds folds away.  `write_text` re-measured
+124× (the row is the two tables rebuilt per glyph, `(R-Const)`; the inline is for what
+follows it).

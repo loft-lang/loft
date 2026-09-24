@@ -1881,7 +1881,9 @@ fn file_handle_write(stores: &mut Stores, file: &DbRef) -> i32 {
                     .store_mut(file)
                     .set_byte(file.rec, file.pos + 32, 0, 1);
             }
-            stores.files.push(Some(f));
+            stores
+                .files
+                .push(Some(crate::database::loft_file::LoftFile::new(f)));
             f_nr
         }
         Err(e) => {
@@ -1916,7 +1918,9 @@ fn file_handle_read(stores: &mut Stores, file: &DbRef, initial_pos: i64) -> i32 
             stores
                 .store_mut(file)
                 .set_i32_raw(file.rec, file.pos + 28, f_nr);
-            stores.files.push(Some(f));
+            stores
+                .files
+                .push(Some(crate::database::loft_file::LoftFile::new(f)));
             f_nr
         }
         Err(e) => {

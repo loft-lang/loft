@@ -48,6 +48,7 @@
 15_stdlib_keyed	hash_update	keyed	stdlib	a lookup followed by a field write
 15_stdlib_keyed	hash_remove	keyed	stdlib	fill, remove every second key, count
 15_stdlib_keyed	hash_text_keys	keyed	stdlib	find-or-insert and lookup on 2,000 text keys
+15_stdlib_keyed	hash_walk	keyed	stdlib	`for e in hash`: 5k records walked in key order, the order built per walk
 15_stdlib_keyed	sorted_fill_walk	keyed	stdlib	`sorted<ES[id]>` (inline elements) filled out of order, walked in order
 15_stdlib_keyed	index_fill_find	keyed	stdlib	`index<EI[id]>` filled out of order, then found in
 15_stdlib_keyed	grouped_fill_find	keyed	stdlib	a `vector` + `hash` group over one record set: filled through the vector, found through the hash
@@ -164,3 +165,50 @@ hex_field	edgeset_count	call	library:hex_field	a triple loop through `edge_mat` 
 hex_field	trace	vector-read	library:hex_field	the loop stitcher rescans ALL edges to find each next one: O(n^2) reads over five parallel vectors
 hex_world	get_cell	keyed	library:hex_world	a linear scan of the chunk list comparing two fields, then a record returned BY VALUE
 hex_terrain	terrain_fbm	float-kernel	library:hex_terrain	per octave four integer hashes and a smoothstep lerp: the densest per-op kernel in the tree
+17_consumer_moros_dryopea	resolve_move	call	consumer:moros	per-frame physics: a chain of small functions passing small records by value
+17_consumer_moros_dryopea	panel_build	record-build	consumer:moros	one frame's panel: records with nested fields and texts, a hit test answering a struct-enum
+17_consumer_moros_dryopea	slope_path_with_undo	record-build	consumer:moros	per step a record read out of a nested container and appended by value into an undo stack
+17_consumer_moros_dryopea	emit_to_material	text-build	consumer:moros	per hex an integer formatted to text and a mesh list scanned comparing a text field
+17_consumer_moros_dryopea	map_json	text-build	consumer:moros	a whole map serialised with {m:j} and parsed back with Map.parse
+17_consumer_moros_dryopea	reload_and_record	keyed	consumer:dryopea	a two-way hash diff with u8 fields: walk A probing B, walk B probing A
+17_consumer_moros_dryopea	mapfile_to_painted	text-scan	consumer:dryopea	per entry a linear palette scan comparing a text field, then a composite-key insert
+17_consumer_moros_dryopea	truncate_to	vector-build	consumer:dryopea	a timeline of records with inner vectors rebuilt element by element to drop a prefix
+18_consumer_crawler	build_walls	keyed	consumer:crawler	a text key formatted per wall face probing a hash, a record appended on a miss
+18_consumer_crawler	build_vis	vector-build	consumer:crawler	per frame a 101x101 push loop, two indexed reads and a small call per pixel
+18_consumer_crawler	hydro_pitfill	vector-write	consumer:crawler	a priority flood on a min-heap of two parallel integer vectors
+18_consumer_crawler	talus_relax	vector-write	consumer:crawler	a 4-neighbour relaxation over const and & float vectors, 120 sweeps
+18_consumer_crawler	slice_shrink	text-build	consumer:crawler	a text shrunk one character at a time by slicing, and substrings sliced per line
+18_consumer_crawler	char_roundtrip	text-build	consumer:crawler	per character a code changed and formatted back as a character
+18_consumer_crawler	quadratic_out	text-build	consumer:crawler	a 2 MB text grown by out = out + "{v:.9}"
+18_consumer_crawler	binary_read	vector-build	consumer:crawler	a binary file read one i16 at a time (f#read(2) as i16)
+18_consumer_crawler	sort_floats	vector-write	consumer:crawler	a selection sort into a fresh vector per scanline
+18_consumer_crawler	format_specs	text-build	consumer:crawler	per-frame format widths and precisions, {x:4.1} {n:3} {m:X}
+19_stdlib_par	par_map_float	parallel	stdlib	a float kernel per element of a large vector, results gathered
+19_stdlib_par	par_records	parallel	stdlib	a vector of records read per worker, integer results gathered
+19_stdlib_par	par_reduce	parallel	stdlib	per-element integer work gathered, then summed
+19_stdlib_par	par_text	parallel	stdlib	per-element text formatting, texts gathered
+19_stdlib_par	par_small	parallel	stdlib	many small par regions: the fixed cost of one region
+hex_body	rig_world_frame3	float-kernel	library:hex_body	TWELVE parallel float vectors allocated per call to carry a Rodrigues + 3x3 matmul chain
+hex_body	bone_shape_has	call	library:hex_body	the whole chain re-walked on EVERY point query
+hex_body	rig_read	text-scan	library:hex_body	every word helper re-splits the line: a 12-field bone line is split ~15 times
+hex_draw	surface_fitted_spread	alloc-temp	library:hex_draw	FOUR full window sweeps, each returning a fresh five-vector run, for a result that needs one
+hex_fit	draft_fit_p	alloc-temp	library:hex_fit	each of up to 24 trials allocates a fresh edge set, element by element into two vectors
+hex_form	form_write	text-build	library:hex_form	interpolation and `+=` per side, called once per proposal in the recovery enumeration
+hex_form	form_read	text-scan	library:hex_form	every word helper re-splits the line: a 12-field line is split a dozen times
+hex_form	side_edges	record-build	library:hex_form	a window sweep appending into FIVE parallel vectors, re-run by every surface routine
+hex_form	boundary_loops	vector-read	library:hex_form	label propagation rescans all ORDERED pairs of boundary edges to a fixpoint
+hex_place	combine_cut	call	library:hex_place	a fresh set allocated and swept, then four reads and a write per boundary edge
+hex_place	field_union	vector-build	library:hex_place	a set allocated by a push loop, then written one cell at a time through an accessor
+hex_recover	forms_upto	call	library:hex_recover	six nested loops x a deep predicate chain x `form_write` x a LINEAR text dedup; the source itself calls it "th
+hex_recover	index_build	keyed	library:hex_recover	a hash probe + insert per candidate, keyed on a freshly built text
+hex_recover	field_digest	vector-write	library:hex_recover	twelve insertion sorts writing a growing vector in place
+hex_roof	roof_match	float-kernel	library:hex_roof	up to four fits; the ridge climb drives thousands of full-footprint sqrt sweeps
+hex_roof	roof_cone	float-kernel	library:hex_roof	one sqrt plus two accessor calls per cell: the cleanest one-op-per-cell float lane
+hex_shape	wall_chain_walk	vector-read	library:hex_shape	triple-nested rescans of the endpoint table, two O(n) helpers inside
+hex_terrain	terrain_surface_at	float-kernel	library:hex_terrain	per sample a weight vector ALLOCATED, a 3x4 kernel-tap loop, and hundreds of hashed-noise evaluations
+hex_terrain	terrain_hydrology	vector-read	library:hex_terrain	a SELECTION-scan priority flood, O(n^2) by its own comment, over seven parallel vectors
+hex_terrain	terrain_relief_pass	record-field	library:hex_terrain	the second pass reads a type through a NULLABLE record per cell
+hex_way	way_stamp	float-kernel	library:hex_way	two full window sweeps of sqrt / atan2 per point per segment
+hex_edge	sweep_path_from	float-kernel	library:hex_edge	up to 256 lattice steps, each solving 6 bisector intersections in doubles
+hex_field	stencil_rotate	record-field	library:hex_field	two full passes through four accessor families, then a halo pass of three calls per slot
+hex_field	doc_read	native-boundary	library:hex_field	one file-read builtin crossing PER CELL per section

@@ -2410,8 +2410,10 @@ pub fn fused_join_read<'a>(data: &Data, getter: &str, args: &'a [Value]) -> Opti
 /// because only a push emitted through the refreshing helper leaves the header current.
 ///
 /// [`HoistScalar`]: crate::vector::HoistScalar
-pub const FUSABLE_PUSHES: [(&str, &str, u32); 4] = [
+pub const FUSABLE_PUSHES: [(&str, &str, u32); 6] = [
     ("OpPushByte", "u8", 1),
+    ("OpPushInt4", "i32", 4),
+    ("OpPushCharacter", "u32", 4),
     ("OpPushInt", "i64", 8),
     ("OpPushSingle", "f32", 4),
     ("OpPushFloat", "f64", 8),
