@@ -175,7 +175,7 @@ filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_o
 test-group = 'heavy-serial'
 
 [[profile.ci.overrides]]
-filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native))'
+filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native))'
 slow-timeout = { period = "1200s", terminate-after = 1 }
 
 # The serial critical path starts FIRST.  nextest otherwise runs binaries in listing order, and on
@@ -192,7 +192,7 @@ slow-timeout = { period = "1200s", terminate-after = 1 }
 # at 600 s (its retry: 57 s), `changed_selects_subjects_by_path` killed twice — and the test phase
 # stayed at 63 min.  Those overlap the bulk better in listing order.
 [[profile.ci.overrides]]
-filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)) | (binary(wrap) & test(=loft_suite))'
+filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)) | (binary(wrap) & test(=loft_suite))'
 priority = 100
 
 

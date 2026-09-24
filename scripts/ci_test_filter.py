@@ -104,7 +104,7 @@ SERIAL_GROUPS = ["heavy-serial", "html-wasm-serial"]
 # `test(=name)` is nextest's EXACT matcher; the substring form would also take any
 # later test whose name merely contains `native_scripts`, and a test in two shards is
 # the failure mode the partition proof below exists to catch.
-CORPUS = "binary(native) & test(=native_scripts)"
+CORPUS = "binary(native) & test(/^native_scripts_[0-9]+$/)"
 
 
 # The heavier half of `rest`, BY DURATION.  ci.yml records that a duration-balanced split
