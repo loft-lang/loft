@@ -117,8 +117,18 @@ The catch-all backlog is no longer blocked on ranking — `reach` says 125 of it
 code production runs (B6b), so it is a read-one-at-a-time queue rather than something a filter
 will shrink.  **A SECOND queue now runs beside it (B6g), and it is the sharper one:** the
 catch-all list asks who forgot a variant, while `spellings` asks who can only see one of a
-notion's two IR spellings — **38** functions resolve a projection by OP NAME and **5** of them
-handle `TupleGet` (18 · 2 when B6g wrote this; the SCREEN was widened in B6i, not the family).  Following it produced three defects in one pass, two fixed here and one
+notion's two IR spellings — **93** functions resolve a projection by OP NAME and **15** of them
+handle `TupleGet` (18 · 2 when B6g wrote this; the SCREEN was widened in B6i, not the family).
+
+⚠ **Those two numbers had ROTTED, and the only reason anyone noticed is that a peer happened
+to mention moving one of them.**  This row read `38 · 5` until 2026-09-24, when the audit on
+the merged tree answered `93 · 15` — off by more than a factor of two in the first figure and
+three times in the second.  Nothing gates it: `quality_optional_table_matches_the_audit` gates
+the OPTIONAL row alone, so this one drifted silently while the row beside it was argued over
+by four branches in a single day.  The lesson is not "re-measure more often" — it is that an
+UNGATED derived row cannot be told apart from a measured one by reading it, so a reader who
+trusts it is being misled by the page rather than by any person.  Either gate a row or date
+it; this one is now dated, and the measuring command is named beside it.  Following it produced three defects in one pass, two fixed here and one
 filed as a design question (**loft#1102**: a tuple literal ALIASES a heap local while a struct
 literal and a vector literal copy it).  Reading the queue a second time produced a fourth
 (**loft#1104**, B6h): a tuple-element ARGUMENT cannot witness the @P290 bracket, so a
