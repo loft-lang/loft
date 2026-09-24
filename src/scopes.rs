@@ -253,6 +253,9 @@ struct Scopes<'s> {
     /// @PLN130 F2/F8 — view bindings live across a disturbance of their container, and which
     /// disturbance it was.  See [`collect_views_to_materialise`].
     views_to_materialise: HashMap<u16, Disturbance>,
+    /// The `text` payload views whose mirrors were dropped and already reported, so a binding
+    /// written several times says so once (loft#1665).
+    text_views_reported: HashSet<u16>,
     /// loft#721 — fn-ref variable -> the definition it was assigned, or
     /// `u32::MAX` when more than one definition reaches it.  A `CallRef`'s callee
     /// is a runtime value, so this local fact is what lets the lift ask the
@@ -600,6 +603,43 @@ fn view_place_in<'a>(
 
 /// The place a value block's TAIL views, with the block's own `Set`s added to `env` so a tail
 /// that names one of them resolves to the value it was bound to.
+/// The place a `text` PAYLOAD binding views: its bind reads `OpGetText(base, offset)`, the
+/// field of the subject `base` at `offset` (loft#1665).
+///
+/// Kept apart from [`value_view_places`] on purpose.  `OpGetText` answers an owned COPY of the
+/// characters, so it is no projection for the deps proxy or the ownership readers, and adding
+/// it to the shared projection list would change what every one of them answers.  Only a
+/// binding whose writes the parser MIRRORS into that field is a view of it, and only the
+/// disturbance walk asks.  A subject that is itself a projection names the place IT views; a
+/// base that is neither answers nothing, which costs the materialise and keeps today's mirror.
+fn text_payload_place(value: &Value, data: &Data, function: &Function) -> Option<(u16, u32)> {
+    let Value::Call(d_nr, args) = value.unspan() else {
+        return None;
+    };
+    if data.def(*d_nr).name() != "OpGetText" || args.len() != 2 {
+        return None;
+    }
+    match (args[0].unspan(), args[1].unspan()) {
+        (Value::Var(x), Value::Int(off)) if !function.is_compiler_generated(*x) => {
+            Some((*x, u32::try_from(*off).ok()?))
+        }
+        (base, _) => crate::use_analysis::view_source_place(data, base)
+            .filter(|(c, _)| !function.is_compiler_generated(*c)),
+    }
+}
+
+/// The binding a `text_mirror` block writes back: its one statement is
+/// `OpSetText(subject, offset, Var(binding))`.
+fn mirrored_binding(b: &Block) -> Option<u16> {
+    let [Value::Call(_, args)] = b.operators.as_slice() else {
+        return None;
+    };
+    match args.get(2).map(Value::unspan) {
+        Some(Value::Var(v)) => Some(*v),
+        _ => None,
+    }
+}
+
 fn block_tail_place<'a>(
     ops: &'a [Value],
     data: &Data,
@@ -643,6 +683,9 @@ fn report_materialised_view(
     fname: &str,
     via: Option<&str>,
 ) {
+    // The advice is the author's to read, so a payload binding is named as they wrote it.
+    let vname = crate::variables::author_spelling(vname);
+    let vname = vname.as_str();
     match cause {
         ViewCause::Reshaped => {
             crate::copy_manifest::note_materialised_view(vname, cname, fname, via);
@@ -2148,11 +2191,15 @@ impl ViewWalk<'_> {
             // a LOCAL (`c = &x`) names no container — `value_view_places` answers nothing for
             // `OpCreateStack` — so it opens nothing.  The materialise side never meets one:
             // an `&` link is refused at the disturbance rather than copied.
+            // A `text` PAYLOAD binding whose writes are mirrored into its subject's field
+            // (#673) is a view of that field on the same terms: the mirror is its write-through,
+            // and `(B-View)` ends it where the subject is disturbed (loft#1665).
             if !self.function.is_iteration_source(*v)
                 && (matches!(
                     self.function.tp(*v).base(),
                     Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
-                ) || is_place_link(self.function, *v))
+                ) || is_place_link(self.function, *v)
+                    || self.function.text_payload_views.contains(v))
             {
                 // The view belongs to the frame that owns its VARIABLE. Re-binding an outer
                 // local inside a nested block gives a view that outlives the block, and
@@ -2216,7 +2263,11 @@ impl ViewWalk<'_> {
                 {
                     self.whole_container.insert(*v, place);
                 }
-                for (container, field) in value_view_places(rhs, self.data, self.function) {
+                let mut places = value_view_places(rhs, self.data, self.function);
+                if places.is_empty() && self.function.text_payload_views.contains(v) {
+                    places.extend(text_payload_place(rhs, self.data, self.function));
+                }
+                for (container, field) in places {
                     let (container, field) = self.resolve_view_root(container, field);
                     if !self.open[idx].contains(&(*v, container, field)) {
                         self.open[idx].push((*v, container, field));
@@ -5986,6 +6037,7 @@ fn run_scan_phase(
         owner_witness: HashMap::new(),
         displaced_owned,
         views_to_materialise,
+        text_views_reported: HashSet::new(),
         fnref_target: collect_fnref_targets(orig_code, orig_vars),
         // Empty, and filled in SCAN ORDER (`Scopes::convert` arms each statement's hand-offs
         // after that statement is scanned).  A hand-off belongs to the assignment it follows
@@ -11058,6 +11110,25 @@ impl Scopes<'_> {
     #[allow(clippy::too_many_lines)]
     fn scan_inner(&mut self, val: &Value, function: &mut Function, data: &Data) -> Value {
         match val {
+            // @FR-B-View — a `text` payload view MATERIALISES where its subject is disturbed
+            // while it is still used: its value is the copy taken at the bind already, so what
+            // ends is the write-through, which is the #673 mirror.  Dropped for that binding, at
+            // every write, and reported as a record view's materialise is (loft#1665).
+            Value::Block(b)
+                if b.name == "text_mirror"
+                    && let Some(v) = mirrored_binding(b)
+                    && function.text_payload_views.contains(&v)
+                    && let Some(cause) = self.views_to_materialise.get(&v).copied() =>
+            {
+                if self.text_views_reported.insert(v) {
+                    let vname = function.name(v).to_string();
+                    let cname = function.name(cause.container).to_string();
+                    let fname = data.def(self.d_nr).original_name();
+                    let via = disturbance_via(data, &cause);
+                    report_materialised_view(cause.cause, &vname, &cname, &fname, via.as_deref());
+                }
+                Value::Null
+            }
             Value::Var(ov) => Value::Var(*self.var_mapping.get(ov).unwrap_or(ov)),
             Value::Set(ov, value) => self.scan_set(*ov, value, function, data),
             Value::Loop(lp) => {

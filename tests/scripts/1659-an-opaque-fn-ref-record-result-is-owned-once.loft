@@ -27,6 +27,9 @@
 //   CHANNEL: the store ceiling (the 70 000-call cells: `store table exhausted`) and the value
 //   (the capture cells read a freed record's bytes; the two write-through cells read the
 //   caller's capture changed — `formal/closures.md` D-clo-42).
+//   WITNESS: on the control, `inline1659(mk1659, 70000)` panics with `store table exhausted` in
+//   `src/database/allocation.rs`, and `bound1659` over the capture-or-mint closure answers
+//   `-1.0697e+305`-scale garbage where 25 is right.
 //   HOLDS: the LEAK count and the stack-store free refusal are equal on both trees and both
 //   backends.  Read off the receipt rather than assumed: `falsify.sh` prints only the channels
 //   that MOVE and requires HERE to be clean, so a channel absent from the two lines above was

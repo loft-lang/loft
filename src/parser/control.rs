@@ -6779,6 +6779,8 @@ impl Parser {
         let read = field_read.unspan().clone();
         self.text_payload_views
             .insert((self.context, bind_nr), read);
+        // The scope pass needs the same fact after the parser's registry is gone (loft#1665).
+        self.vars.text_payload_views.insert(bind_nr);
     }
 
     /// #673 / @PLN35 Phase 3 — point a multi-pattern branch's cloned body at the

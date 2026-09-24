@@ -29,6 +29,11 @@
 //   HOLDS: leak, panic, free-refusal and expectations are equal on BOTH trees, and the
 //   twelve value cells pass on both — the defect never moved a value, so a patch that moves
 //   one reintroduces something else.
+// @falsified-at: 04cc50b1e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   RE-SCORED 2026-09-24 after `rss_kb` was found answering -1 on every run (an unset
+//   `ASAN_OPTIONS` is null, and `null != ""` holds), which had made m1 vacuous everywhere
+//   since the null answer arrived.  The recorded patch no longer applies to this tree, so this
+//   is against the pre-fix commit itself; the channel is the same m1 assertion.
 
 struct V3 { n: integer, v: vector<integer> }
 struct T1 { n: integer, name: text }
@@ -180,8 +185,13 @@ fn c12() -> integer {
 /// The process's resident memory in KB, or -1 where it cannot be read — and under
 /// AddressSanitizer, whose quarantine keeps freed memory resident on purpose, so a growth
 /// there measures the sanitizer rather than the program.
+// -1 where the process's resident memory is not the program's: under AddressSanitizer, and
+// under valgrind, whose own shadow memory is in the count (it preloads `vgpreload_*`).  An
+// UNSET variable answers null, and `null != ""` holds — asked bare, the sanitizer test fired
+// on every run and the check below measured nothing, on every platform.
 fn rss_kb() -> integer {
-  if env_variable("ASAN_OPTIONS") != "" { return -1 }
+  if (env_variable("ASAN_OPTIONS") ?? "") != "" { return -1 }
+  if (env_variable("LD_PRELOAD") ?? "").contains("vgpreload") { return -1 }
   st = file("/proc/self/status").content() ?? "";
   for line in st.split('\n') {
     if line.starts_with("VmRSS:") {
@@ -198,9 +208,13 @@ fn m1() {
   t = 0;
   for i in 0..1000 { a = mk_v(i); b = mk_rows(i); c = mk_shape(i); t += len(a.v) + len(b.rows); }
   before = rss_kb();
-  for i in 0..300000 { a = mk_v(i); t += len(a.v); }
-  for i in 0..300000 { b = mk_rows(i); t += len(b.rows); }
-  for i in 0..300000 {
+  // The volume exists only to make a leak visible in `rss_kb`.  Where that answers -1 the
+  // check is vacuous, so each loop runs just long enough to exercise the refill (the
+  // valgrind sweep memchecks this file, and 900 000 turns there were 300 s of nothing).
+  turns = if before < 0 { 1000 } else { 300000 };
+  for i in 0..turns { a = mk_v(i); t += len(a.v); }
+  for i in 0..turns { b = mk_rows(i); t += len(b.rows); }
+  for i in 0..turns {
     c = mk_shape(i);
     match c {
       Dots { pts } => { t += len(pts); },

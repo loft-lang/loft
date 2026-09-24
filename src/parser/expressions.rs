@@ -7635,9 +7635,16 @@ use a separate collection or add after the loop"
                     && let Some(read) = self.text_payload_views.get(&(self.context, *v)).cloned()
                     && let Value::Call(_, read_args) = &read
                 {
-                    let write = self.cl(
-                        "OpSetText",
-                        &[read_args[0].clone(), read_args[1].clone(), Value::Var(*v)],
+                    // Marked, so the scope pass can drop it where `(B-View)` materialises the
+                    // binding — the subject disturbed while the binding is still used — and
+                    // tell it from an author's own `e.v = v`, which is the same op (loft#1665).
+                    let write = v_block(
+                        vec![self.cl(
+                            "OpSetText",
+                            &[read_args[0].clone(), read_args[1].clone(), Value::Var(*v)],
+                        )],
+                        Type::Void,
+                        "text_mirror",
                     );
                     let assign = std::mem::replace(code, Value::Null);
                     *code = Value::Insert(vec![assign, write]);

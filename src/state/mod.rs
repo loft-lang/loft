@@ -1393,11 +1393,14 @@ impl State {
         let depth = u32::try_from(self.call_stack.len())
             .unwrap_or(u32::MAX)
             .saturating_sub(1);
-        if let Some(at) = self
+        let tail = self
             .fnref_bufs
             .iter()
-            .rposition(|(d, b)| *d == depth && b.store_nr == store_nr)
-        {
+            .rev()
+            .take_while(|(d, _)| *d >= depth)
+            .position(|(d, b)| *d == depth && b.store_nr == store_nr);
+        if let Some(back) = tail {
+            let at = self.fnref_bufs.len() - 1 - back;
             self.fnref_bufs.remove(at);
         }
     }

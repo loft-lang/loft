@@ -22,9 +22,9 @@
 //! A one-element `vector<Node>` / `vector<TypeT>` field reads back as a single
 //! `Box<Value>` / `Box<Type>` (the box-of-one the writer used for single
 //! recursive children); an N-element vector reads back as a `Vec`.  `Block.name`
-//! is a `&'static str` in the native IR — reconstructed via a bounded
-//! [`Box::leak`], exactly as the @PLAN28 JSON decoder does (a loaded image holds
-//! a small fixed set of block names that live for the whole process anyway).
+//! is a `&'static str` in the native IR — reconstructed through [`intern`], so each
+//! DISTINCT name is allocated once per process and stays reachable, however many blocks
+//! carry it.
 
 use crate::data::{
     Attribute, Block, Data, DefType, Definition, ImpureCategory, IntegerSpec, LinkedFieldGroup,
@@ -340,13 +340,32 @@ fn read_int_spec(stores: &Stores, slot: Record) -> IntegerSpec {
 
 /// Read the referenced `Block` of an `NdBlock` / `NdLoop` record.  `Block.name`
 /// is `&'static str` — reconstructed via a bounded leak (see module note).
+/// The `&'static str` the native IR holds for a string read out of an image.
+///
+/// A block name, a synthetic tag and a text default are `&'static str` in the IR, so a
+/// loaded image has to give each one process lifetime.  They come from a small set — the
+/// block names the parser writes, one tag per synthetic definition, the declared text
+/// defaults — while the strings are read once per BLOCK: allocating per read made a warm
+/// start lose one allocation per block of the stdlib (386, measured under memcheck).  The
+/// set holds each distinct string once, and keeps it reachable for the rest of the process.
+fn intern(s: &str) -> &'static str {
+    static SEEN: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<&'static str>>> =
+        std::sync::OnceLock::new();
+    let mut seen = SEEN
+        .get_or_init(Default::default)
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if let Some(&known) = seen.get(s) {
+        return known;
+    }
+    let owned: &'static str = Box::leak(s.to_owned().into_boxed_str());
+    seen.insert(owned);
+    owned
+}
+
 fn read_block(stores: &Stores, slot: Node) -> Block {
     let blk = slot.block_rec(stores);
-    let name: &'static str = Box::leak(
-        blk.field_str(stores, ds::BLOCK_NAME)
-            .to_owned()
-            .into_boxed_str(),
-    );
+    let name = intern(blk.field_str(stores, ds::BLOCK_NAME));
     Block {
         name,
         operators: read_node_list(stores, blk.field_vec(ds::BLOCK_OPERATORS)),
@@ -680,7 +699,7 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         synthetic: if synthetic_s.is_empty() {
             None
         } else {
-            Some(Box::leak(synthetic_s.to_owned().into_boxed_str()))
+            Some(intern(synthetic_s))
         },
         name,
         position,
@@ -956,7 +975,7 @@ fn read_db_fields(stores: &Stores, parent: Record, off: u32) -> Vec<SchemaField>
 }
 
 /// Read one `DbContent` record into a native `keys::Content`.  A `Str` default
-/// is reconstructed via a bounded `Box::leak` (mirrors `database::snapshot`).
+/// is reconstructed through [`intern`] (mirrors `database::snapshot`).
 fn read_db_content(stores: &Stores, r: Record) -> Content {
     match r.discriminant(stores) {
         ds::DC_LONG => Content::Long(r.field_int(stores, ds::DCLONG_V)),
@@ -967,7 +986,7 @@ fn read_db_content(stores: &Stores, r: Record) -> Content {
             if s.is_empty() {
                 Content::Str(Str::new(""))
             } else {
-                Content::Str(Str::new(Box::leak(s.to_owned().into_boxed_str())))
+                Content::Str(Str::new(intern(s)))
             }
         }
         other => panic!("ir_read: unknown DbContent discriminant {other}"),
