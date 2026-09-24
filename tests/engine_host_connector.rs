@@ -62,6 +62,19 @@ impl Drop for Guard {
 /// connects to a port nobody is listening on yet, gets nothing, and the test fails
 /// fifteen seconds later reporting a missing keyframe.  Polling turns "probably long
 /// enough" into "actually ready", and costs 25ms rather than 800ms when it is.
+/// A child's output as a channel of lines, so every read can take a deadline.
+fn line_channel(out: impl std::io::Read + Send + 'static) -> mpsc::Receiver<String> {
+    let (tx, rx) = mpsc::channel::<String>();
+    std::thread::spawn(move || {
+        for line in BufReader::new(out).lines().map_while(Result::ok) {
+            if tx.send(line).is_err() {
+                break;
+            }
+        }
+    });
+    rx
+}
+
 fn wait_until_listening(port: u16) {
     let deadline = vm_deadline(15);
     loop {
@@ -855,7 +868,7 @@ fn main() {{
     {
         let _server = Guard(Some(spawn_loft(&server_prog, false)));
         wait_until_listening(port);
-        let client = Command::new(loft_bin())
+        let mut client = Command::new(loft_bin())
             .arg("--interpret")
             .arg("--no-warnings")
             .arg("--lib")
@@ -866,12 +879,24 @@ fn main() {{
             .stderr(Stdio::null())
             .spawn()
             .expect("native client");
+        let rx = line_channel(client.stdout.take().expect("piped client stdout"));
+        let _client = Guard(Some(client));
         std::thread::sleep(Duration::from_secs(3));
-        // Kill the server; the client sees the disconnect and exits.
+        // Kill the server; the client sees the disconnect and exits.  Read to `t:exited`
+        // under a deadline: a client that misses the disconnect is a failed transcript,
+        // never a wait that only the per-test limit ends.
         drop(_server);
-        let out = client.wait_with_output().expect("client output");
-        let stdout = String::from_utf8_lossy(&out.stdout);
-        let lines: Vec<&str> = stdout.lines().filter(|l| l.starts_with("t:")).collect();
+        let deadline = vm_deadline(15);
+        let mut lines = Vec::new();
+        while let Ok(l) = rx.recv_timeout(deadline.saturating_duration_since(Instant::now())) {
+            if l.starts_with("t:") {
+                let done = l == "t:exited";
+                lines.push(l);
+                if done {
+                    break;
+                }
+            }
+        }
         assert_eq!(lines, expect, "native transcript");
     }
 
@@ -911,14 +936,17 @@ fn main() {{
     // opened its socket, and the page reported `ERR_CONNECTION_REFUSED` (two of three
     // gates on 2026-09-22).  The deadline is the harness's own wait, so a page that never
     // connects still ends the test with the harness's verdict rather than a hang.
+    // The lines arrive through a channel: a BLOCKING read here waited for a line a server
+    // whose page never connected does not print, so the join below hung to the per-test
+    // kill instead of the deadline ending it.
+    let server_lines = line_channel(server_out);
     let server_killer = std::thread::spawn(move || {
         let deadline = vm_deadline(12);
-        let mut lines = BufReader::new(server_out).lines();
-        loop {
-            match lines.next() {
-                Some(Ok(l)) if l.trim() == "s:connected" => break,
-                Some(Ok(_)) if Instant::now() < deadline => continue,
-                _ => break,
+        while let Ok(l) =
+            server_lines.recv_timeout(deadline.saturating_duration_since(Instant::now()))
+        {
+            if l.trim() == "s:connected" {
+                break;
             }
         }
         std::thread::sleep(Duration::from_secs(1));
