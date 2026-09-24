@@ -49,9 +49,10 @@ an attribution.
 
 ## Not yet benched
 
-The census (`bench/portal/census.tsv`) still lists crypto, regex, arguments, cbor, zttext,
-imaging, server, game_protocol, pluginabi, graphics, stage, shapes, mesh3d, glb, assets and
-the hex_* family. The next wide wave takes one rank-1 row from each of these.
+After wave 2 the census (`bench/portal/census.tsv`) keeps only what a std-only twin cannot
+carry (regex, imaging's png, crypto's ed25519 and HPKE), the hex_* packages wave 2 did not
+reach (body, draw, fit, form, place, recover, roof, shape), and the consumer rows, which
+are modelled in `16_consumer_shapes` rather than benched in a library.
 
 ## Wave 2 — nineteen more libraries (2026-09-24, `35c3d39b2`)
 
