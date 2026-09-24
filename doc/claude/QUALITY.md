@@ -2819,6 +2819,19 @@ the wrapper, how many descend via the keystone — and the opaque QUEUE itself, 
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
+(2026-09-24, the EIGHTH join — `../loft2` @ `d2aa3bf79` (#1662, #1664), `157-native-4x` @
+`185e8fd54` (@PLN158 wave 3, #1666) and `../loft3` @ `b42007993` (the valgrind sweep, a warm
+stdlib start, #1665) onto `tuxedo-165-generics` — RE-MEASURED on the merged tree: **983 · 669 · 4
+· 310**, shape tests **2518**, opaque **1295**.  `--check-ratchet` reported `fell  opaque_tests:
+1299 -> 1295` and the pin moved with it; the conflict on the pin read `310 / 1299` here and
+`314 / 1301` on `157-native-4x`, and the merged tree is neither.  The spellings row moved to
+`94 · 15 · 79`: four call-only sites arrived with the joined work — `store_text_link_of` /
+`store_text_link_place` (a builder and its own recogniser), `field_read_parent_type` (declining a
+non-local base costs the group walk, never correctness) and `text_payload_place` (a base it cannot
+place keeps the pre-#1665 mirror).  The last was the one worth a probe: a tuple-element and a
+field subject both keep the write in the new value, which `(B-Disturb)` specifies — overwriting a
+PLACE is not a disturbance, the guard's cell m6 — so all four fallbacks are boundaries, not gaps.)
+
 (2026-09-24, the SEVENTH join — `../loft3`'s catalogue tag, `../loft`'s @PLN163 double_move
 hardening + spellings re-measure + CI sharding, and `157-native-4x`'s @PLN158 wave 2 and fused byte
 push — RE-MEASURED on the merged tree: **983 · 669 · 4 · 310**, shape tests **2519**, opaque
