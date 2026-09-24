@@ -827,7 +827,34 @@ impl State {
     ///
     /// Panics if `fn_var < 16` (the fn-ref slot is 16 bytes: `d_nr` + closure `DbRef`), or if
     /// the slot holds a negative definition number (un-initialised / null sentinel).
+    /// `OpCallRefStore` — a call through a function value that hands text fields or elements
+    /// to the `&text` parameters in `mask` (@PLN167 C3, loft#1656).  The slot's function is
+    /// called through its STORE instance; the slot itself is left as it was.
+    pub fn fn_call_ref_store(&mut self, fn_var: u16, arg_size: u16, mask: u64) {
+        let d_nr_i64 = self.get_var::<i64>(fn_var);
+        if d_nr_i64 >= 0 && !self.data_ptr.is_null() {
+            // SAFETY: the `Data` outlives this `State` — see `data_ptr`.
+            let data = unsafe { &*self.data_ptr };
+            let inst = data.store_text_instance(d_nr_i64 as u32, mask);
+            assert!(
+                inst != u32::MAX,
+                "a text field or element cannot be linked through `{}`'s `&text` parameter — it \
+                 has no loft body",
+                data.def(d_nr_i64 as u32).original_name()
+            );
+            self.fn_call_ref_to(fn_var, arg_size, Some(inst as usize));
+            return;
+        }
+        self.fn_call_ref_to(fn_var, arg_size, None);
+    }
+
     pub fn fn_call_ref(&mut self, fn_var: u16, arg_size: u16) {
+        self.fn_call_ref_to(fn_var, arg_size, None);
+    }
+
+    /// `fn_call_ref`, calling `target` in place of the function the slot holds when given —
+    /// the slot's closure and everything else about the frame are the slot's.
+    fn fn_call_ref_to(&mut self, fn_var: u16, arg_size: u16, target: Option<usize>) {
         // fn-ref slot is 20B ([d_nr:i64][closure:DbRef]); fn_var must be ≥ 20.
         assert!(
             fn_var >= 20,
@@ -839,7 +866,10 @@ impl State {
             d_nr_i64 >= 0,
             "fn_call_ref: d_nr={d_nr_i64} is negative — fn-ref slot was never assigned"
         );
-        let d_nr = d_nr_i64 as usize;
+        let d_nr = target.unwrap_or(d_nr_i64 as usize);
+        if target.is_none() && self.fn_ref_native(d_nr as u32) {
+            return;
+        }
         assert!(
             d_nr < self.fn_positions.len(),
             "fn_call_ref: d_nr={d_nr} out of range (fn_positions.len={})",
@@ -1110,11 +1140,7 @@ impl State {
                         && (f.d_nr as usize) < data.definitions.len()
                     {
                         let def = &data.definitions[f.d_nr as usize];
-                        let name = if def.name().starts_with("n_") {
-                            def.name()[2..].to_string()
-                        } else {
-                            def.name().to_owned()
-                        };
+                        let name = def.trace_name();
                         let file = def.position().file.clone();
                         // Fix #92: line resolution for parallel-worker frames.
                         // The CallFrame.line is only updated by `fn_call`, which
@@ -1238,6 +1264,17 @@ impl State {
         // Reserve generous headroom so a result-pushing native fn cannot
         // run past the buffer.  Native fns push bounded results (scalars /
         // Str / DbRef / small structs), so 1 KiB is ample.
+        self.invoke_native(call);
+    }
+
+    /// Run library function `call` on the arguments at the top of the stack, as `OpStaticCall`
+    /// does: it pops them and pushes its result.
+    fn invoke_native(&mut self, call: u16) {
+        // @P294: native lib fns push their results through the stack store
+        // via the `stack` DbRef, bypassing `put_stack`'s growth check.
+        // Reserve generous headroom so a result-pushing native fn cannot
+        // run past the buffer.  Native fns push bounded results (scalars /
+        // Str / DbRef / small structs), so 1 KiB is ample.
         self.ensure_stack(1024);
         let mut stack = self.stack_cur;
         stack.pos = 8 + self.stack_pos;
@@ -1245,6 +1282,54 @@ impl State {
         crate::extensions::set_current_lib_idx(call);
         self.library[call as usize](&mut self.database, &mut stack);
         self.stack_pos = stack.pos - 8;
+    }
+
+    /// loft#1658 (@FR-L-FnRef) — a call through a function value whose function has NO loft body (a native
+    /// declared `pub fn name(…) -> T;`).  Its definition's code is a bare return, which a direct
+    /// call never enters (`generate_call` emits `OpStaticCall` itself), so jumping there ran
+    /// nothing and returned whatever the frame held.  The arguments already sit on the stack as
+    /// a direct call pushes them, so the native runs in place.  The call site also pushed the
+    /// `&text` work buffers the widest candidate of the value's type could want: a native takes
+    /// none, except a text producer that has only a `_dest` variant, which takes one as its
+    /// destination and is answered, as a loft text callee is, by a `Str` into that buffer.
+    /// Answers `false` when `d_nr` has a loft body.
+    fn fn_ref_native(&mut self, d_nr: u32) -> bool {
+        if self.data_ptr.is_null() {
+            return false;
+        }
+        // SAFETY: the `Data` outlives this `State` — see `data_ptr`.
+        let data = unsafe { &*self.data_ptr };
+        let def = data.def(d_nr);
+        if !matches!(def.code, crate::data::Value::Null) {
+            return false;
+        }
+        let name = def.name().to_string();
+        let visible = def.attributes().iter().filter(|a| !a.hidden).count();
+        let pushed = data.fnref_text_buffers(visible, def.returned());
+        let buf_span = self.stack_step(size_ref());
+        let dest = if crate::state::codegen::is_text_dest_native(&name) {
+            self.library_names.get(&format!("{name}_dest")).copied()
+        } else {
+            None
+        };
+        if let Some(dest) = dest
+            && pushed >= 1
+        {
+            self.stack_pos -= (pushed as u32 - 1) * buf_span;
+            let buf: DbRef = self.get_stack();
+            self.put_stack(buf);
+            self.invoke_native(dest);
+            let s: &String = self.database.store(&buf).addr::<String>(buf.rec, buf.pos);
+            let result = Str::new(s);
+            self.put_stack(result);
+            return true;
+        }
+        let Some(&lib) = self.library_names.get(&name) else {
+            return false;
+        };
+        self.stack_pos -= pushed as u32 * buf_span;
+        self.invoke_native(lib);
+        true
     }
 
     /**

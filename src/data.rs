@@ -5462,6 +5462,14 @@ impl Definition {
         }
     }
 
+    /// Is this a STORE instance of a function (`<key>@st<mask>`, @PLN167 C3)?  Never a function
+    /// value: it is reached only through the call or dispatch arm that names the function it
+    /// copies, so a candidate walk over function values must pass it by.
+    #[must_use]
+    pub fn is_store_text_instance(&self) -> bool {
+        self.name.starts_with("n_") && self.name.contains('@')
+    }
+
     /// The name a trace, a profile or a runtime report shows for this definition: a free
     /// function's key decoded (`n_grow` and its store instance `n_grow@st1` are both `grow`),
     /// any other key as it is.
@@ -7607,6 +7615,49 @@ impl Data {
             "Cannot set attribute value twice"
         );
         self.definitions[d_nr as usize].attributes[a_nr].check = check;
+    }
+
+    /// @PLN167 C3 — is `arg`, handed to a `&text` parameter, the STORE kind of a text link: a
+    /// place in a record (`OpGetField`, `OpGetVector`, `OpVarRef` of a store-kind link) rather
+    /// than a text variable (`OpCreateStack`, or a stack link or parameter passed as a `Var`)?
+    /// The one test, asked where a call picks its instance and where a backend dispatches one.
+    #[must_use]
+    pub fn is_store_text_arg(&self, arg: &Value) -> bool {
+        match arg.unspan() {
+            Value::Call(g, _) => {
+                let def = self.def(*g);
+                def.name() != "OpCreateStack"
+                    && matches!(def.returned.base(), Type::Reference(_, _))
+            }
+            _ => false,
+        }
+    }
+
+    /// The positions among `params` where a `&text` parameter is handed the store kind, as a
+    /// bit mask (bit `i` for parameter `i`); `0` when every text link is the stack kind.
+    #[must_use]
+    pub fn store_text_mask(&self, params: &[Type], args: &[Value]) -> u64 {
+        let mut mask = 0u64;
+        for (i, (p, a)) in params.iter().zip(args).enumerate() {
+            if i < 64
+                && matches!(p.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                && self.is_store_text_arg(a)
+            {
+                mask |= 1 << i;
+            }
+        }
+        mask
+    }
+
+    /// The store instance of function `d` for `mask`, or `u32::MAX` when none was minted.  An
+    /// instance is keyed `<key>@st<mask>` under `d`'s own source (`parser/store_text.rs`).
+    #[must_use]
+    pub fn store_text_instance(&self, d: u32, mask: u64) -> u32 {
+        let def = self.def(d);
+        self.def_names
+            .get(&(format!("{}@st{mask}", def.name), def.source))
+            .copied()
+            .unwrap_or(u32::MAX)
     }
 
     /// A definition's name as the AUTHOR wrote it, for a diagnostic to say out loud.

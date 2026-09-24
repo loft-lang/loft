@@ -5265,24 +5265,18 @@ impl Parser {
 
     #[track_caller]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
-        // @PLN167 C3 (R5a) — a text field or element reaching a `&text` parameter HERE comes
-        // through a fn-ref call: a direct call lowers it to the place and picks the callee's
-        // store instance (`process_call_args`) before any conversion.  A fn-ref names one
-        // function, and which instance it would need is only known at the call, so the link
-        // cannot be honoured; below it would become a copy and the callee's write would be
-        // lost with nothing said.  `(B-Ref-Reshape)`: refuse rather than downgrade.
-        if !self.first_pass
-            && matches!(should.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+        // @PLN167 C3 (loft#1656) — a text field or element reaching a `&text` parameter HERE
+        // comes through a FUNCTION VALUE: a direct call lowers it to the place before any
+        // conversion (`process_call_args`).  It is lowered the same way: the argument is the
+        // slot's `DbRef`, and the call's store mask (`Data::store_text_mask`) makes both
+        // backends dispatch to the STORE instance of whichever function the value holds —
+        // minted for every candidate of the value's type after pass 2 (`store_text.rs`).
+        if matches!(should.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
             && self.is_text_place(code)
+            && let Some(place) = self.scalar_place_ref(code)
         {
-            diagnostic!(
-                self.lexer,
-                Level::Error,
-                "a function value's `&text` parameter cannot link to a text field or element — \
-                 which version of the function to call is decided per call site, and a function \
-                 value is fixed before it. Call the function by name, or copy into a local, pass \
-                 the local and write it back (`t = o.s; g(t); o.s = t`)"
-            );
+            self.store_text_args = true;
+            *code = place;
             return true;
         }
         // loft#1540 — a function value meets a function-typed slot only in the direction `const`

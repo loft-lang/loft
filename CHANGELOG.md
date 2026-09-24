@@ -23,11 +23,19 @@ The same is true when you pass it on to another `&text` function, recurse with i
 `&` link to it inside the function.  A `&` link to a text field (`t = &o.name`) can be passed
 too.
 
-Two related things are now caught at compile time instead of going wrong at run time:
-- Calling through a **function value** (`g = shout; g(o.name)`) is refused. That call still
-  lost the write in silence. Call the function by name for now.
-- A function that grows the collection a text element lives in, handed that element and the
-  collection together (`grow(h.names[0], h)`), is refused. The same program crashed.
+It works through a **function value** as well (`g = shout; g(o.name)`), which before also lost
+the write in silence. A function value with a `&text` parameter also compiles with `--native`
+now, whatever you pass it; before, it did not build even for a plain text variable.
+
+**A built-in function kept in a variable now runs when you call it.** `g = env_variable;
+g("HOME")` answered an empty text when the program was interpreted. It answered the variable
+under `--native`. The built-in was never called, and nothing said so. The same happened to any
+built-in without a loft body (`store_memory`, `directory`, `now`, …) called through a variable,
+a vector of functions or a parameter.
+
+A function that grows the collection a text element lives in, handed that element and the
+collection together (`grow(h.names[0], h)`), is now refused at compile time. The same program
+crashed.
 
 The same goes for a `&` link to a number or text *inside* a collection:
 `c = &v[1]; v += [x]; c = 99` is refused, because the growth may move the element `c` names.

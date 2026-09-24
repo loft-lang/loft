@@ -1250,6 +1250,9 @@ impl Output<'_> {
         let candidates =
             super::fnref::dispatch_arms(self.data, &self.reachable, &fn_type, args.len())
                 .unwrap_or_default();
+        // @PLN167 C3 (loft#1656) — a `&text` argument that is a text field or element picks
+        // every arm's STORE instance; the parser minted one per candidate.
+        let store_mask = self.data.store_text_mask(&param_types, args);
         // Phase 09 phase 00 step 0.7 — fn-ref dispatch routes each
         // candidate arm through `output_call_user_fn` (which dispatches
         // via `emit_op`), so a custom emitter registered for any
@@ -1366,8 +1369,20 @@ impl Output<'_> {
             } else {
                 None
             };
+            let text_link_arg = i < param_types.len()
+                && matches!(param_types[i].base(),
+                    Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
             if let Some(respelled) = tuple_place {
                 write!(w, "let _farg_{i} = {respelled}; ")?;
+            } else if text_link_arg && store_mask & (1 << i) == 0 && !candidates.is_empty() {
+                // A text VARIABLE for a `&text` parameter: the `&mut String` a direct call
+                // hands over, spelled by the one argument emitter (`emit_call_arg`) against a
+                // candidate — every candidate agrees on this parameter's type.
+                let cand = self.data.def(candidates[0].d_nr);
+                let mut buf = Vec::new();
+                self.emit_call_arg(&mut buf, cand, i, arg)?;
+                let spelled = String::from_utf8(buf).unwrap_or_default();
+                write!(w, "let _farg_{i} = {spelled}; ")?;
             } else if is_text_arg {
                 write!(
                     w,
@@ -1526,7 +1541,13 @@ impl Output<'_> {
                     // (Vector ret) or the sentinel literal.
                     synthetic.push(Value::RawExpr(heap_hbuf_expr.clone()));
                 } else if matches!(a.typedef, Type::RefVar(ref inner) if matches!(**inner, Type::Text(_)))
+                    && a.name != "__closure"
+                    && (a.hidden || user_idx >= user_arg_count)
                 {
+                    // A `&text` attribute is a WORK BUFFER only past the user positions
+                    // (`fnref::visible_fnref_attrs`); before them it is the user's own `&text`
+                    // parameter and takes its `_farg_N` below (loft#1656).
+                    //
                     // loft#1116 — the call site supplies exactly ONE text work buffer,
                     // because it cannot know which function the fn-typed slot holds.  A
                     // candidate declaring more than one used to receive that same
@@ -1560,7 +1581,22 @@ impl Output<'_> {
             // Route through output_call_user_fn → emit_op → custom emitter
             // (or DefaultEmitter::user_fn_call_body when no emitter is
             // registered for this candidate).
-            self.output_call_user_fn(w, candidate_def, &synthetic)?;
+            if store_mask == 0 {
+                self.output_call_user_fn(w, candidate_def, &synthetic)?;
+            } else {
+                let inst = self.data.store_text_instance(*d_nr, store_mask);
+                if inst == u32::MAX {
+                    // No loft body to link through (the parser could not mint an instance).
+                    write!(
+                        w,
+                        "panic!(\"a text field or element cannot be linked through `{}`'s `&text` parameter — it has no loft body\")",
+                        self.data.def(*d_nr).original_name()
+                    )?;
+                } else {
+                    let inst_def = self.data.def(inst);
+                    self.output_call_user_fn(w, inst_def, &synthetic)?;
+                }
+            }
             if arm_allocs_buf {
                 // The call site allocated this buffer, so the call site owns whatever it did
                 // not hand over — and WHICH of the two came back is a run-time fact, not a

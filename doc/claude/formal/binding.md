@@ -418,7 +418,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
 * **D-bind-56** *(opened 2026-09-24, CLOSED 2026-09-24; @PLN167 C2)* — `(B-Ref-Reshape)` for a
   `&` link to a SCALAR or TEXT place.  `c = &v[1]; v += [x]; c = 99` compiled and lost the write
@@ -975,15 +975,31 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   `tests/scripts/1602-a-ref-text-parameter-refuses-what-it-cannot-link.loft`, and the warm-cache
   cell `a_store_text_instance_reads_the_same_warm` (`tests/arc_e_program_cache.rs`).  The
   FUNCTION-VALUE spelling is D-bind-57.
-* **D-bind-57** *(opened 2026-09-24; loft#1656, @PLN167 R5a)* — `(B-Ref-Lvalue)` with `(F-ParamRef)` through
-  a FUNCTION VALUE: `g = app; g(o.a)` with `fn app(t: &text)` is refused ("a function value's
-  `&text` parameter cannot link to a text field or element"), where the rules say the parameter
-  links the place.  A store instance is chosen per call site and a function value is fixed
-  before the call, so the link cannot be honoured without the kind in the function TYPE
-  (`fn(&text)` per kind).  **Measured before the refusal:** both backends compiled it and
-  answered `alpha` — the conversion copied the field and the callee's write was lost with
-  nothing said, a silent-wrong on `main`.  Guard (the refusal's cell)
-  `tests/scripts/1602-a-ref-text-parameter-refuses-what-it-cannot-link.loft`.
+* **D-bind-57** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1656, @PLN167 R5a)* —
+  `(B-Ref-Lvalue)` with `(F-ParamRef)` through a FUNCTION VALUE: `g = app; g(o.a)` with
+  `fn app(t: &text)`.  On `main` both backends compiled it and answered `alpha`: the conversion
+  copied the field and the callee's write was lost with nothing said.  C3 first refused it,
+  because a store instance is picked per call site and a function value is fixed before the
+  call.  **Closed** by letting the CALL pick, since only the call knows the argument's kind: the
+  argument is lowered to the place as a direct call's is, the call's store mask
+  (`Data::store_text_mask`, the one test both backends ask) selects the STORE instance of
+  whichever function the value holds, and after pass 2 an instance is minted for every
+  candidate of the value's type (`fnref::dispatch_arms`, the candidate set's one home).  The
+  interpreter dispatches through `OpCallRefStore`, `OpCallRef` with the function swapped for its
+  instance for that one call (the slot is left as it was).  Native's arms call each candidate's
+  instance, and an instance is reachable with the function it copies.  **Found on the way, and
+  closed with it:** a `&text` parameter through a function value did not compile on `--native`
+  in EITHER kind.  `dispatch_arms` and the synthetic-argument loop took every `RefVar(Text)`
+  attribute for a text-return work buffer, so `fn(&text)` matched no function (an empty
+  `match`) and the argument was spelled empty.  The rule is now positional
+  (`fnref::visible_fnref_attrs`): the buffers follow every user parameter.  An instance is never
+  a candidate itself (`Definition::is_store_text_instance`), or `rec`'s instance acquired an
+  instance of its own.  Guards: `test_through_a_function_value` in
+  `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft` (a named function
+  re-pointed between two, the stack kind through the same value, a capturing lambda, a
+  text-returning one, an element of a vector of functions and an absent one), and the
+  warm-cache cell.  Not expressible yet, and not a deviation of this rule: a function TYPE
+  spelled with a `&` parameter (`fn(&text)`), so such a value arises by inference only.
 * **D-bind-58** *(opened 2026-09-24, CLOSED 2026-09-24; found by @PLN167 C3's K9 cell)* —
   `(O-NoDiverge)` for a `&text?` PARAMETER on `--native`: any read of it (`t == null`,
   `t == "x"`) emitted `*var_t`, a MOVE of the `String` behind the `&mut`, and rustc refused the
