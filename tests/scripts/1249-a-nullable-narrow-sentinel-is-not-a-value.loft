@@ -177,7 +177,10 @@ fn test_a_non_null_element_is_not_a_nullable_slot() {
   assert(n[0] == null, "a vector<u8?> element does reserve 255, got {n[0]}");
 }
 
-fn amp_write(px: &vector<u8>, i: integer, a: integer) { px[i] = a as u8?; }
+// The value is discharged: a `u8?` into a non-null `u8` element is refused at any index
+// (`@FR-N-Store`, loft#1660), and the cure the published `assets` took keeps the question
+// this cell asks — whether 255 survives the `&vector<u8>` parameter.
+fn amp_write(px: &vector<u8>, i: integer, a: integer) { px[i] = (a as u8?) ?? 0; }
 
 fn test_a_ref_parameter_is_still_its_referent() {
   // The cell the published `assets` library supplied and this guard did not have.  A write
