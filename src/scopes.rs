@@ -3072,26 +3072,15 @@ pub(crate) fn copy_moves_drop_from(
     if !copy_carries_drop(function, data, v, function.tp(src)) {
         return None;
     }
-    // @FR-H-Copy-Lease — a copy of what the caller still holds, of a type that declares
-    // `OpCopy`, takes a lease of its own: two structures, two drops, and no release moves.
-    if (function.is_argument(src) || function.holds_caller_record(src))
-        && function
-            .tp(v)
-            .base()
-            .heap_def_nr()
-            .is_some_and(|d| crate::lease::leases_whole(data, d))
-    {
+    // A copy of what the CALLER holds — a parameter, or a local holding the caller's record on
+    // every path (`Function::holds_caller_record`) — moves no release: the rules refuse it
+    // (`(H-Copy-Refuse)`) or it takes a lease of its own (@FR-H-Copy-Lease), and either way each
+    // structure drops for itself.  What moves is a value this function OWNS (`(H-Move)`): the
+    // copy releases it and the source stops.
+    if function.is_argument(src) || function.holds_caller_record(src) {
         return None;
     }
-    // A local that holds the caller's record on every path answers as the parameter it copies:
-    // its copies move nothing either (`Function::holds_caller_record`).
-    Some(
-        if function.is_argument(src) || function.holds_caller_record(src) {
-            v
-        } else {
-            src
-        },
-    )
+    Some(src)
 }
 
 /// Is `v` a local PROMOTED onto function `d_nr`'s hidden return buffer — `x = …; return x`
@@ -4423,18 +4412,6 @@ fn copy_record_handoff(args: &[Value], function: &Function, data: &Data) -> Opti
     {
         return Some(moved);
     }
-    // `(H-Drop)`'s closing clause: a copy off a PARAMETER moves nothing, the
-    // CALLER owns.  The branch above cannot reach it — a tuple argument's member
-    // has no backing variable in this frame, so `drop_bearing_source` declines
-    // rather than guess one — and the rule wants the DESTINATION suppressed, which
-    // is the same answer `copy_moves_drop_from` gives a plain struct parameter.
-    if let Some(leaf) = tuple_argument_member(&args[0], function)
-        && let Value::Var(dst) = args[1].unspan()
-        && function.name(*dst).starts_with("__ref")
-        && copy_carries_drop(function, data, *dst, leaf)
-    {
-        return Some(*dst);
-    }
     let moved = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
     if !moved
         && !copy_hands_off(&args[1], function, data)
@@ -4998,28 +4975,6 @@ fn tuple_member_backing(base: u16, i: u16, function: &Function) -> Option<u16> {
     }
     let dep = *deps.get(ordinal)?;
     (dep != u16::MAX).then_some(dep)
-}
-
-/// The member's own TYPE when a copy reads it out of a tuple ARGUMENT — `None` for any other
-/// source.
-///
-/// `heap.md (H-Drop)`'s closing clause is *a copy off a PARAMETER moves nothing: the caller
-/// owns*, and for a plain struct parameter [`copy_moves_drop_from`] answers it by suppressing
-/// the DESTINATION (`fn f(p: S) { u = p; }` releases once, in the caller). A tuple parameter
-/// reaches the same rule as a member read, and the member's backing is in the CALLER's dep
-/// space, so no variable of this frame names it — but the rule does not need one: what stops
-/// dropping is the callee's own copy either way. The TYPE is what is still needed, to ask
-/// whether copying that member carries a release at all.
-fn tuple_argument_member<'a>(src: &Value, function: &'a Function) -> Option<&'a Type> {
-    let Value::TupleGet(base, i) = src.unspan() else {
-        return None;
-    };
-    let (root, path) = tuple_copy_source_path(*base, *i, function);
-    if !function.is_argument(root) {
-        return None;
-    }
-    let (leaf, _) = tuple_leaf_at(function.tp(root), &path)?;
-    crate::data::is_dbref(leaf.base()).then_some(leaf)
 }
 
 /// The tuple a copy's member source ultimately reads, and the path of member indices from it

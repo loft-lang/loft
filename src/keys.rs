@@ -563,7 +563,9 @@ pub fn drop_copy_census_enabled() -> bool {
 /// many times each refused shape releases, which is what @PLN163 P5 removes the old release
 /// machinery against, and a cell that does not compile measures nothing.  It is also the first
 /// bisect step for a program that stopped compiling with `copy-of-droppable` or
-/// `read-after-move`.
+/// `read-after-move` — and only that: with the machinery that moved a release across a copy
+/// removed, a refused copy compiled under it is two structures that each release the resource.
+/// The switch shows WHICH line the rules refuse; the program it compiles is not a working one.
 #[must_use]
 pub fn lease_refuse_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

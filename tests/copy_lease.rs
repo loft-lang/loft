@@ -146,6 +146,14 @@ fn what_is_not_a_copy_runs_no_hook() {
             "fn main() { a = mk(1); b = a; println(\"R{b.id}\"); }",
             "R1 D1",
         ),
+        // A member of a tuple PARAMETER bound to a name is a view too (`(B-View)`); it once rode
+        // a reverse hand-off @PLN163 P5 removed, so it is pinned here.
+        (
+            "tuple_param_view",
+            "fn view(t: (H, integer)) { x = t.0; println(\"R{x.id} {t.1}\"); }\n\
+             fn main() { a = (mk(1), 5); view(a); println(\"back {a.0.id}\"); }",
+            "R1 5 back 1 D1",
+        ),
         (
             "argument",
             "fn show(p: H) { println(\"R{p.id}\"); }\n\
