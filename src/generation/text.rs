@@ -251,10 +251,12 @@ impl Output<'_> {
             // append when it holds the null sentinel — `s += x` on a null `s` stays null
             // (propagate). Gated on `Optional` so plain-text / `&mut String` work-buffer
             // appends (never null, and not always owned Strings) keep the bare emission.
-            let dest_nullable = matches!(
-                self.data.def(self.def_nr).variables().tp(*nr),
-                Type::Optional(_)
-            );
+            // A `&text?` parameter's nullability sits inside the reference.
+            let dest_nullable = match self.data.def(self.def_nr).variables().tp(*nr) {
+                Type::Optional(_) => true,
+                Type::RefVar(pointee) => matches!(pointee.as_ref(), Type::Optional(_)),
+                _ => false,
+            };
             if val.reads_var(*nr) {
                 if dest_nullable {
                     write!(

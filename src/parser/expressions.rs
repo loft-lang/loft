@@ -8446,7 +8446,13 @@ use a separate collection or add after the loop"
         let Type::RefVar(t) = f_type else {
             return false;
         };
-        if !matches!(**t, Type::Text(_)) {
+        // A `&text?` parameter is the same text slot, nullable: `s += x` appends, and on a
+        // null `s` it stays null (the local `text?`'s rule).
+        let pointee = match t.as_ref() {
+            Type::Optional(inner) => inner.as_ref(),
+            other => other,
+        };
+        if !matches!(pointee, Type::Text(_)) {
             return false;
         }
         self.append_to_text(code, op, var_nr, s_type);
