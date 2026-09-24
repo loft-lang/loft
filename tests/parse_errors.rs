@@ -1993,6 +1993,27 @@ fn op_drop_takes_only_self() {
     );
 }
 
+/// `(H-Copy-Lease)`: `OpCopy` runs on the new structure a copy makes, called by the compiler
+/// like `OpDrop`, so it answers nothing and takes nothing but `self`.
+#[test]
+fn op_copy_takes_only_self_and_cannot_return() {
+    code!(
+        "struct Tx { t: text }
+         fn OpDrop(self: Tx) { assert(self.t != \"\", \"t\") }
+         fn OpCopy(self: Tx, extra: integer) -> boolean { extra > 0 && self.t != \"\" }
+         fn test() { x = Tx { t: \"a\" }; }"
+    )
+    .error(
+        "`OpCopy` cannot return — it runs on the new copy with no caller to answer; \
+         anything whose failure matters stays an explicit call \
+         at op_copy_takes_only_self_and_cannot_return:3:48",
+    )
+    .error(
+        "`OpCopy` takes only `self` — the compiler calls it, so a second argument has \
+         nowhere to come from at op_copy_takes_only_self_and_cannot_return:3:48",
+    );
+}
+
 /// `@FR-F-Render` — a rendering that REACHES a tuple is refused, not only a bare one.
 ///
 /// Asked of the formatted type alone, `"{v}"` over a vector of tuples took the record walker

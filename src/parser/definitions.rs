@@ -2783,14 +2783,21 @@ impl Parser {
     ///
     /// **It must take exactly the receiver.** A drop is called by the compiler, so there is
     /// nowhere for a second argument to come from.
+    /// The two hooks the compiler calls on its own — `OpDrop` at a structure's death and
+    /// `OpCopy` on the new structure a copy makes (`formal/heap.md` `(H-Copy-Lease)`) — take
+    /// `self` alone and answer nothing, because no caller is there to pass or read anything.
     fn check_drop_signature(&mut self) {
         if self.context == u32::MAX || self.first_pass {
             return;
         }
         let def = self.data.def(self.context);
-        if !def.name().ends_with("_OpDrop") {
+        let (hook, when) = if def.name().ends_with("_OpDrop") {
+            ("OpDrop", "runs at scope end")
+        } else if def.name().ends_with("_OpCopy") {
+            ("OpCopy", "runs on the new copy")
+        } else {
             return;
-        }
+        };
         let declared = def
             .attributes()
             .iter()
@@ -2799,14 +2806,14 @@ impl Parser {
         let returns = !matches!(def.returned(), Type::Void);
         // The whole body is parsed before either check runs, so the cursor has already
         // reached the NEXT declaration — reporting at it sends the reader to an unrelated
-        // function that the message never mentions.  Point at the `OpDrop` itself.
+        // function that the message never mentions.  Point at the hook itself.
         let at = def.position().clone();
         if returns {
             diagnostic_at!(
                 self.lexer,
                 &at,
                 Level::Error,
-                "`OpDrop` cannot return — it runs at scope end with no caller to answer; \
+                "`{hook}` cannot return — it {when} with no caller to answer; \
                  anything whose failure matters stays an explicit call"
             );
         }
@@ -2815,7 +2822,7 @@ impl Parser {
                 self.lexer,
                 &at,
                 Level::Error,
-                "`OpDrop` takes only `self` — the compiler calls it, so a second argument \
+                "`{hook}` takes only `self` — the compiler calls it, so a second argument \
                  has nowhere to come from"
             );
         }
