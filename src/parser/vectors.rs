@@ -5891,6 +5891,27 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 ));
                 continue;
             }
+            // loft#1664 — a write through a VECTOR payload binding resolved to its origin field
+            // (`resolved_group_write`): record the type the binding's own spelling passes, so
+            // the scope pass can spell the write back to the binding where `(B-View)`
+            // materialises it.  The same value the plain arm below would pass as `known`.
+            if field_form
+                && !self.first_pass
+                && vec != u16::MAX
+                && self.vars.mv_field_origin.contains_key(&vec)
+            {
+                // A keyed binding's own spelling dispatches on its keyed type, a vector's on
+                // the element type the plain arm computes here.
+                let plain = if matches!(self.vars.tp(vec).base(), Type::Vector(_, _)) {
+                    Some(known_tp)
+                } else {
+                    let btp = self.vars.tp(vec).clone();
+                    self.keyed_known_type(&btp)
+                };
+                if let Some(plain) = plain {
+                    self.vars.group_write_views.insert(vec, plain);
+                }
+            }
             let fld = Value::Int(i32::from(u16::MAX));
             let app_v = if field_form {
                 self.new_record_field_op(val, parent_tp, "OpNewRecord")

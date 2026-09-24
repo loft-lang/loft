@@ -37,6 +37,15 @@ release freed the captured value, and later reads of it answered garbage without
 The result is now a copy in that case, so the captured value is left alone.  A write through the
 result (`s.v = 42.0`) no longer changes the captured value either.
 
+**A collection taken out of an enum in a `match` keeps its own copy once the value is replaced.**
+In `match e { Gy { g_data } => { e = two(); g_data += [r]; … } }`, the append went into the NEW
+`e` while `len(g_data)` read the old copy: 1 where 2 is right. And when the field was a keyed
+collection (`sorted`, `hash`, …), the binding kept pointing into storage the old value no longer
+owned: the answer was wrong when interpreted, and a `--native` program stopped with "Store
+access out of bounds". Now the binding is a copy from the moment `e` is replaced, and writes to
+it stay in the copy. Without a replacement, a write still reaches every collection linked to the
+field, as before.
+
 **A `text` taken out of an enum in a `match` stops writing into it once the value is replaced.**
 In `match e { Ei { v } => { e = Ei { v: "zz" }; v += "x" } }`, the write to `v` still landed in
 the field of the NEW `e`, so `e` read `"abx"` instead of `"zz"`. A struct taken out the same way

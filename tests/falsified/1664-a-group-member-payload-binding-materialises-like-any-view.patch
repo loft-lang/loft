@@ -1,0 +1,273 @@
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index b524de3ea..b66f48eaa 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -5891,27 +5891,6 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+                 ));
+                 continue;
+             }
+-            // loft#1664 — a write through a VECTOR payload binding resolved to its origin field
+-            // (`resolved_group_write`): record the type the binding's own spelling passes, so
+-            // the scope pass can spell the write back to the binding where `(B-View)`
+-            // materialises it.  The same value the plain arm below would pass as `known`.
+-            if field_form
+-                && !self.first_pass
+-                && vec != u16::MAX
+-                && self.vars.mv_field_origin.contains_key(&vec)
+-            {
+-                // A keyed binding's own spelling dispatches on its keyed type, a vector's on
+-                // the element type the plain arm computes here.
+-                let plain = if matches!(self.vars.tp(vec).base(), Type::Vector(_, _)) {
+-                    Some(known_tp)
+-                } else {
+-                    let btp = self.vars.tp(vec).clone();
+-                    self.keyed_known_type(&btp)
+-                };
+-                if let Some(plain) = plain {
+-                    self.vars.group_write_views.insert(vec, plain);
+-                }
+-            }
+             let fld = Value::Int(i32::from(u16::MAX));
+             let app_v = if field_form {
+                 self.new_record_field_op(val, parent_tp, "OpNewRecord")
+diff --git b/src/scopes.rs a/src/scopes.rs
+index fde0aa431..1b087c253 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -640,41 +640,6 @@ fn mirrored_binding(b: &Block) -> Option<u16> {
+     }
+ }
+ 
+-/// Is `v` a `match`/`is` payload binding of a KEYED collection field — a view of its subject
+-/// (`(B-View)`, the parser marks it never-free as one) that the materialise can copy with
+-/// `OpReplaceKeyed`?  Asked of the payload binding only: a keyed PROJECTION bound off an owned
+-/// base already copies at the bind (`(B-View-Base)`), and widening the view walk's type list
+-/// alone was measured unsound (the naming and the copy have to land together).
+-fn keyed_payload_view(function: &Function, v: u16) -> bool {
+-    crate::parser::vectors::is_keyed(function.tp(v)) && function.is_overwritten_view(v)
+-}
+-
+-/// The specific keyed collection's store type — what `OpReplaceKeyed` and a keyed
+-/// `OpNewRecord` dispatch on.  The same registration the parser's `keyed_known_type` makes,
+-/// which is idempotent for a type the program already uses.
+-fn keyed_type_id(database: &mut crate::database::Stores, data: &Data, tp: &Type) -> Option<u16> {
+-    let tp = tp.peel_link();
+-    let content = match tp {
+-        Type::Sorted(td, _, _)
+-        | Type::Hash(td, _, _)
+-        | Type::Index(td, _, _)
+-        | Type::Radix(td, _, _)
+-        | Type::Trie(td, _, _) => data.def(*td).known_type(),
+-        _ => return None,
+-    };
+-    if content == u16::MAX {
+-        return None;
+-    }
+-    Some(match tp {
+-        Type::Sorted(_, key, _) => database.sorted(content, key),
+-        Type::Hash(_, key, _) => database.hash(content, key),
+-        Type::Index(_, key, _) => database.index(content, key),
+-        Type::Radix(_, key, _) => database.spatial(content, key),
+-        Type::Trie(_, key, _) => database.trie(content, key),
+-        _ => return None,
+-    })
+-}
+-
+ fn block_tail_place<'a>(
+     ops: &'a [Value],
+     data: &Data,
+@@ -2234,9 +2199,7 @@ impl ViewWalk<'_> {
+                     self.function.tp(*v).base(),
+                     Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+                 ) || is_place_link(self.function, *v)
+-                    || self.function.text_payload_views.contains(v)
+-                    || self.function.group_write_views.contains_key(v)
+-                    || keyed_payload_view(self.function, *v))
++                    || self.function.text_payload_views.contains(v))
+             {
+                 // The view belongs to the frame that owns its VARIABLE. Re-binding an outer
+                 // local inside a nested block gives a view that outlives the block, and
+@@ -2469,15 +2432,6 @@ impl ViewWalk<'_> {
+         {
+             used.push(*x);
+         }
+-        // A write through a group-member binding is spelled against its origin FIELD and names
+-        // the binding only through the element it builds, whose type records the binding as
+-        // what it lives in — so that element is a use of the binding (loft#1664).
+-        let via_elements: Vec<u16> = used
+-            .iter()
+-            .flat_map(|x| self.function.tp(*x).depend())
+-            .filter(|d| self.function.group_write_views.contains_key(d))
+-            .collect();
+-        used.extend(via_elements);
+         for v in used {
+             if let Some(cause) = self.shaken.get(&v).copied() {
+                 record_cause(&mut self.out, v, cause);
+@@ -11170,51 +11124,6 @@ impl Scopes<'_> {
+     }
+ 
+     #[allow(clippy::too_many_lines)]
+-    /// The binding spelling of a group write resolved to its origin field, where that binding
+-    /// is materialised (loft#1664): `OpNewRecord(owner, T, f)` bound to an element of the
+-    /// binding becomes `OpNewRecord(binding, V, u16::MAX)`, and `OpFinishRecord(owner, elm, T,
+-    /// f)` the same — `V` being the collection type the binding's own spelling passes, recorded
+-    /// by the parser in `group_write_views`.  `None` for anything else, including a write whose
+-    /// destination already is the binding.
+-    fn respelled_group_write(
+-        &self,
+-        elm: Option<u16>,
+-        value: &Value,
+-        function: &Function,
+-        data: &Data,
+-    ) -> Option<Value> {
+-        let Value::Call(d, args) = value.unspan() else {
+-            return None;
+-        };
+-        let name = data.def(*d).name();
+-        let (elm, rest) = match (&*name, elm) {
+-            ("OpNewRecord", Some(e)) if args.len() == 3 => (e, &args[1..]),
+-            ("OpFinishRecord", None) if args.len() == 4 => match args[1].unspan() {
+-                Value::Var(e) => (*e, &args[2..]),
+-                _ => return None,
+-            },
+-            _ => return None,
+-        };
+-        let binding = function
+-            .tp(elm)
+-            .depend()
+-            .into_iter()
+-            .find(|b| function.group_write_views.contains_key(b))?;
+-        if !self.views_to_materialise.contains_key(&binding)
+-            || matches!(args[0].unspan(), Value::Var(x) if *x == binding)
+-            || rest.len() != 2
+-        {
+-            return None;
+-        }
+-        let plain = i32::from(function.group_write_views[&binding]);
+-        let mut out = args.clone();
+-        out[0] = Value::Var(binding);
+-        let n = out.len();
+-        out[n - 2] = Value::Int(plain);
+-        out[n - 1] = Value::Int(i32::from(u16::MAX));
+-        Some(Value::Call(*d, out))
+-    }
+-
+     fn scan_inner(&mut self, val: &Value, function: &mut Function, data: &Data) -> Value {
+         match val {
+             // @FR-B-View — a `text` payload view MATERIALISES where its subject is disturbed
+@@ -11237,22 +11146,6 @@ impl Scopes<'_> {
+                 Value::Null
+             }
+             Value::Var(ov) => Value::Var(*self.var_mapping.get(ov).unwrap_or(ov)),
+-            // @FR-B-View with @FR-Col-Group — a write through a group-member binding is spelled
+-            // against the origin field so it reaches the group's siblings; where the binding is
+-            // MATERIALISED that field is no longer the binding's, so the write is spelled back
+-            // to the binding's own copy (loft#1664).  Recognised by its element, whose type
+-            // records the binding, so an author's own `e.f += [r]` is never touched.
+-            Value::Set(elm, value)
+-                if let Some(rewritten) =
+-                    self.respelled_group_write(Some(*elm), value, function, data) =>
+-            {
+-                self.scan_set(*elm, &rewritten, function, data)
+-            }
+-            Value::Call(_, _)
+-                if let Some(rewritten) = self.respelled_group_write(None, val, function, data) =>
+-            {
+-                self.scan_inner(&rewritten, function, data)
+-            }
+             Value::Set(ov, value) => self.scan_set(*ov, value, function, data),
+             Value::Loop(lp) => {
+                 let scope = self.enter_scope();
+@@ -12888,15 +12781,10 @@ impl Scopes<'_> {
+         // precedes it is not at risk, and materialising it would lose a write that lands
+         // today — see `collect_views_to_materialise`.
+         let mut collection_copy: Option<(u16, i32)> = None;
+-        let mut keyed_copy: Option<(u16, i32)> = None;
+-        // Asked once, here: the arm below clears the never-free mark this reads, because a
+-        // materialised binding is no longer a view.
+-        let keyed_view = keyed_payload_view(function, v);
+-        if (matches!(
++        if matches!(
+             function.tp(v).base(),
+             Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+-        ) || keyed_view)
+-            && let Some(cause) = self.views_to_materialise.get(&v).copied()
++        ) && let Some(cause) = self.views_to_materialise.get(&v).copied()
+             && let Some(container) = base_container_var(unspanned_value, data)
+             // Every dep this binding carries names the container being disturbed — a VIEW
+             // test, not an ownership one, and deliberately not the empty-deps proxy: what
+@@ -12931,16 +12819,6 @@ impl Scopes<'_> {
+             // shape a whole-vector copy already takes (`ArmBind::CopyVector`): a `__lift_N`
+             // that owns its store for the function's life and is refilled in place, so a
+             // materialise inside a loop costs one store rather than one per iteration.
+-            // A KEYED payload binding is copied the same way through the keyed twin of the
+-            // refill, `OpReplaceKeyed` (loft#1664): a collection bind is decided at PARSE time,
+-            // so a scope-pass strip alone would leave the binding a view of a store its
+-            // subject no longer owns.
+-            if keyed_view && let Some(ktp) = keyed_type_id(self.database, data, function.tp(v)) {
+-                let tp = function.tp(v).without_deps();
+-                let tmp = self.new_buffer_var(function, &tp);
+-                function.set_skip_free(v);
+-                keyed_copy = Some((tmp, i32::from(ktp)));
+-            }
+             if let Type::Vector(inner, _) = function.tp(v).base().clone() {
+                 let wrapper = format!("main_vector<{}>", inner.name(data));
+                 if data.name_type(&wrapper, data.def(self.d_nr).source) != u16::MAX
+@@ -13120,16 +12998,6 @@ impl Scopes<'_> {
+         // refills it from what the view names, and the local then binds the buffer.  Writes
+         // through the local land in the copy, which is what `(B-View)`'s materialise means and
+         // what the advice already told the author.
+-        if let Some((tmp, ktp)) = keyed_copy {
+-            let view = std::mem::replace(&mut set_value, Value::Null);
+-            set_value = Value::Insert(vec![
+-                Value::Call(
+-                    data.def_nr("OpReplaceKeyed"),
+-                    vec![view, Value::Var(tmp), Value::Int(ktp)],
+-                ),
+-                Value::Var(tmp),
+-            ]);
+-        }
+         if let Some((tmp, elem)) = collection_copy {
+             let view = std::mem::replace(&mut set_value, Value::Null);
+             set_value = Value::Insert(vec![
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 337c5f9a0..c1f8514b7 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -420,12 +420,6 @@ pub struct Function {
+     /// view means (loft#1665).  Carried like `tuphold_origin`: the scope pass reads it after
+     /// parsing.
+     pub text_payload_views: std::collections::HashSet<u16>,
+-    /// A payload binding onto a VECTOR member of a linked group whose writes the parser spells
+-    /// against the ORIGIN FIELD (`Parser::resolved_group_write`, `(Col-Group)`), with the
+-    /// collection type the binding's own spelling passes.  The field spelling does not name the
+-    /// binding, so where `(B-View)` materialises it the scope pass rewrites those writes back to
+-    /// the binding and this type (loft#1664).  Carried like `text_payload_views`.
+-    pub group_write_views: HashMap<u16, u16>,
+     /// The backing work-ref of each HEAP LEAF of a tuple variable, in the same pre-order
+     /// `scopes::tuple_leaf_at` walks — `u16::MAX` for a leaf whose backing this table cannot
+     /// name.
+@@ -687,7 +681,6 @@ impl Function {
+             mv_field_origin: HashMap::new(),
+             tuphold_origin: HashMap::new(),
+             text_payload_views: std::collections::HashSet::new(),
+-            group_write_views: HashMap::new(),
+             tuple_backings: HashMap::new(),
+             tuple_backings_seen: std::collections::HashSet::new(),
+             loop_ord: 0,
+@@ -878,7 +871,6 @@ impl Function {
+         self.tuphold_origin.clone_from(&other.tuphold_origin);
+         self.text_payload_views
+             .clone_from(&other.text_payload_views);
+-        self.group_write_views.clone_from(&other.group_write_views);
+         // CARRIED for the same reason, and read by the same pass.
+         self.tuple_backings.clear();
+         self.tuple_backings.clone_from(&other.tuple_backings);
+@@ -967,7 +959,6 @@ impl Function {
+             // off the copy it works on, long after parsing.
+             tuphold_origin: other.tuphold_origin.clone(),
+             text_payload_views: other.text_payload_views.clone(),
+-            group_write_views: other.group_write_views.clone(),
+             tuple_backings: other.tuple_backings.clone(),
+             tuple_backings_seen: std::collections::HashSet::new(),
+             // loft#1145 — the ordinal RESTARTS per pass (it is what makes the key stable),
