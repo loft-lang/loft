@@ -15,6 +15,13 @@
 // thousand calls in a loop, since a work buffer left on the stack or taken off twice shows as a
 // drift there long before it shows in one call.
 //
+// @falsified-at: 065e07e7a — interpret exit 139 -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1658-a-native-called-through-a-function-value-runs.patch — interpret exit 139 -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// HOLDS: leak, panic and free-refusal are clean on both trees; the control exits 139 (a
+//   segfault reading the frame garbage as a text) where this tree exits 0.
+//
 // CHANNEL: assertion failures and exit, both backends.
 
 fn mine(n: text) -> text { "m{n}" }
