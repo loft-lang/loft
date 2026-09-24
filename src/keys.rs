@@ -1895,7 +1895,10 @@ pub fn element_in_place_enabled() -> bool {
 /// its own container has its field values evaluated BEFORE the element is minted —
 /// **DEFAULT ON**.  Opt OUT with `LOFT_NO_APPEND_STAGING` (read at PARSE time, BOTH
 /// backends): the values are evaluated between the mint and the finish again, and the first
-/// bisect step for a wrong or missing element out of `c += [S { f: g(c) }]`.
+/// bisect step for a wrong or missing element out of `c += [S { f: g(c) }]`.  The same switch
+/// covers the literal's PARTS (loft#1657): a part that hands the destination to a call that
+/// may write it is evaluated into a temp against the destination itself, where without it the
+/// call is handed the read snapshot and its element is lost (`v += [f(v)]`).
 #[must_use]
 pub fn append_staging_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

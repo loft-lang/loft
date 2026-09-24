@@ -14,6 +14,13 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**`v += [f(v)]` keeps what `f` appended.**  When a function in an appended list grew the
+same vector — `lines += [flush(lines)]`, with `flush` pushing a finished line first — the
+element it pushed was silently lost, because the function was handed a copy of the vector
+instead of the vector itself.  The call now runs against the real vector, and its answer is
+appended after everything it added: `v = [0]; v += [f(v)]` with `f` pushing `100` and
+answering `7` holds `[0, 100, 7]`.  Both backends were wrong the same way.
+
 **A `&` link now reaches a narrow integer field or element.**  `c = &o.count` where `count`
 is a `u8`, `&v[i]` into a `vector<i8>`, `&o.height` on a `limit(1000, 1100)` field — all of
 these used to be refused as *"not addressable"*.  So the one feature `&` exists for was
