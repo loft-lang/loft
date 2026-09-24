@@ -83,3 +83,8 @@ and base64). The ~3× of the web/ssh/random rows is a 1-byte callee against the 
 
 **Filed:** loft#1659.  **Open:** a fn-ref into an auto-built native library answering null
 from a `return <call>;` body (zttext's `token_width`, interpreter only).
+
+**The rules for the copy class** (the 100×+ rows) are written, not built: `(R-Rebind)`,
+`(R-Compact)`, `(R-Const)`, `(R-ValueLocal)` in `doc/claude/formal/rewrites.md` § *A value
+already home is not copied to a second one*, on the floor `(H-CopySelf)` (heap.md).  Each
+names its headline row and the hand-price to take first.

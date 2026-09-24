@@ -200,6 +200,17 @@ only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](
                is unaffected and keeps aliasing (@PLN130 F2/F4/F8).  This is the plain-bind
                answer; an explicit `&` is DECLINED at compile time instead (B-Ref-Reshape),
                because a copy is not what it asked for.
+  (H-CopySelf)  ⟨write(p, read(p)), σ⟩ → ⟨(), σ⟩    a whole value delivered onto the PLACE that
+               already holds it — a record copied onto itself, a vector delivered into the slot
+               whose handle it is — is a no-op: the heap is unchanged, nothing is released and
+               nothing is claimed.  The runtime decides it by IDENTITY at the delivery
+               (`Stores::vector_replace`: same store and same record → return; the record copy's
+               in-place arm the same), never by the type or by a compile-time bet, so a rewrite
+               that hands a value's own home as its destination (rewrites.md R-Rebind, R-Place's
+               "the buffer IS the place") writes exactly what a fresh copy would have left and
+               pays for none of it.  The no-op holds ONLY for the whole place: a delivery whose
+               source is a DIFFERENT place in the same store clears the destination first and
+               copies (`vector_add` snapshots a same-store source), which is H-Copy.
 ```
 
 **In words.** Whether a bind copies or aliases depends on **what is bound** — and the two backends
