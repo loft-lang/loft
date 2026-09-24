@@ -570,3 +570,73 @@ fn a_warm_run_keeps_the_owner_witness() {
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_dir_all(&cache_dir);
 }
+
+/// A per-variable fact the emitters read must survive the warm load, which is a second
+/// decoder of the parsed program.  A narrow local a `&` names holds its type's FIELD
+/// encoding (@PLN167 decision 1); the snapshot did not carry that fact, so a warm run read
+/// the encoded slot as the value — `-135` for the `-7` the cold run printed — with no
+/// diagnostic.  `i8` and a `limit` range both carry a non-zero bias, which is what makes
+/// the encoding differ from the value (`u8`'s is zero and reads the same either way).
+#[test]
+fn a_linked_narrow_local_reads_the_same_warm() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_linked_narrow_{pid}.loft"));
+    std::fs::write(
+        &script,
+        "fn main() {\n  x: i8 = -1;\n  p = &x;\n  p = -7;\n  h: integer limit(1000, 1100) = 1050;\n  q = &h;\n  q = 1020;\n  println(\"{x} {p} {h} {q}\");\n}\n",
+    )
+    .expect("write script");
+    let cache_dir = tmp.join(format!("loft_linked_narrow_cache_{pid}"));
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
+    assert!(ok_cold, "cold run failed: {out_cold}");
+    assert_eq!(out_cold.trim(), "-7 -7 1020 1020", "cold output");
+    for nth in ["first", "second"] {
+        let (ok_warm, out_warm) = run(&script, Some(&cache_dir));
+        assert!(ok_warm, "{nth} warm run failed: {out_warm}");
+        assert_eq!(
+            out_warm, out_cold,
+            "{nth} warm run of a linked narrow local"
+        );
+    }
+    let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}
+
+/// @PLN167 C3 — a `&text` parameter handed a text field is served by the function's STORE
+/// instance: a definition minted after pass 2 whose parameter carries `store_text_link`.  Both
+/// the minted definition and that per-variable fact must survive the warm load, or a warm run
+/// calls the stack instance with a slot reference and reads garbage.  Forwarding (`fwd` calls
+/// `app`) makes the instances close transitively, so two minted definitions ride the bundle,
+/// and a call through a function value (loft#1656) dispatches to one by the call's mask.
+#[test]
+fn a_store_text_instance_reads_the_same_warm() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_store_text_{pid}.loft"));
+    std::fs::write(
+        &script,
+        "struct O { a: text, b: text }\nfn app(t: &text, k: integer) { t += \"!{k}\"; }\nfn fwd(t: &text) { app(t, 7); t += \".\"; }\nfn main() {\n  o = O { a: \"alpha\", b: \"beta\" };\n  fwd(o.b);\n  v: vector<text> = [\"aa\", \"bb\"];\n  app(v[1], 2);\n  s = \"x\";\n  fwd(s);\n  g = app;\n  g(o.a, 9);\n  println(\"{o.a} {o.b} {v} {s}\");\n}\n",
+    )
+    .expect("write script");
+    let cache_dir = tmp.join(format!("loft_store_text_cache_{pid}"));
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
+    assert!(ok_cold, "cold run failed: {out_cold}");
+    assert_eq!(
+        out_cold.trim(),
+        "alpha!9 beta!7. [\"aa\",\"bb!2\"] x!7.",
+        "cold output"
+    );
+    for nth in ["first", "second"] {
+        let (ok_warm, out_warm) = run(&script, Some(&cache_dir));
+        assert!(ok_warm, "{nth} warm run failed: {out_warm}");
+        assert_eq!(
+            out_warm, out_cold,
+            "{nth} warm run of a store text instance"
+        );
+    }
+    let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}

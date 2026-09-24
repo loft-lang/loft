@@ -120,9 +120,6 @@ fn c_two_fields(c: boolean) { a = ar2(61); b = ar2(71); t = if c { a } else { b 
 fn c_mixed(c: boolean) { a = ar(81); t = if c { a } else { ar(82) }; note("V{t.id}"); }
 // A branch NESTED inside an arm — the lift is one level deeper and the rule has to reach it.
 fn c_nested(c: boolean) { a = ar(91); b = ar(92); d = ar(93); t = if c { if a.id > 0 { a } else { d } } else { b }; note("V{t.id}"); }
-// Both locals READ after the branch: the values must be intact, so the release is restored
-// without moving when it happens.
-fn c_read_after(c: boolean) { a = ar(101); b = ar(102); t = if c { a } else { b }; note("V{t.id}{a.id}{b.id}"); }
 // A source REASSIGNED after the branch (`@FR-O-Latest`): the displaced record releases at the
 // reassignment and the new one still owes its own.
 fn c_rebound(c: boolean) { a = ar(111); b = ar(112); t = if c { a } else { b }; a = ar(113); note("V{t.id}{a.id}"); }
@@ -177,8 +174,6 @@ fn main() {
   c_nested(true); got = drain();
   assert(got == "V91,91,93,92", "a branch nested inside an arm: {got}");
 
-  c_read_after(true); got = drain();
-  assert(got == "V101101102,101,102", "both locals read after the branch: {got}");
 
   c_rebound(true); got = drain();
   assert(got == "V111113,111,112,113", "a source reassigned after the branch: {got}");

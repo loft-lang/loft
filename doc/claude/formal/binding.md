@@ -418,8 +418,32 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 ## Deviations
 
-**OPEN: 1.**
+**OPEN: 0.**
 
+* **D-bind-56** *(opened 2026-09-24, CLOSED 2026-09-24; @PLN167 C2)* — `(B-Ref-Reshape)` for a
+  `&` link to a SCALAR or TEXT place.  `c = &v[1]; v += [x]; c = 99` compiled and lost the write
+  (`v[1]` stayed 22), `t = &v[1].s` read `null` after a growth, and `c = &v[1].n` crashed
+  `--native` on a misaligned store address — on both backends, where the same program with a
+  record link is refused.  **Where (measured).**  The view walk opened a view only for a binding
+  typed `Reference | Enum | Vector`, and the refusal read `is_amp_link`, a marker set only where
+  the parser leaves a struct projection unlowered.  A scalar or text place is LOWERED to a
+  `RefVar` local (@PLN167 A3, B1, C1), so it reached neither.  And one step further in: the walk
+  took every `Set(c, …)` for a re-binding, while on a scalar link `c = 99` writes the place — so
+  a write after the disturbance cleared the shake it should have reported.  **Closed** by
+  `scopes::is_place_link` (a non-argument `RefVar` local is a `&` link by construction) at the
+  two readers, and by `scopes::link_set_repoints`, the one re-point-or-write test, now asked by
+  both the walk and the interpreter's `set_var` (it was that function's private arm, D-bind-36).
+  A link to a LOCAL is unchanged: `OpCreateStack` names no container.  Measured: twelve refused
+  cells over integer, `u8`, float and text links, element / element field / record field, and
+  all four events plus a callee's growth, both backends; the controls (dead at the event,
+  another container, re-pointed after it, a link to a local) unchanged.  Guards
+  `tests/scripts/167-a-scalar-or-text-link-refuses-a-disturbance-of-its-container.loft`,
+  `tests/scripts/167-a-scalar-or-text-link-survives-what-does-not-disturb-it.loft`.
+  **R4 of the plan asked whether overwriting a linked text while a borrowed read of it is live
+  dangles** (`for c in t { o.a = … }`): measured no — a text walk binds its source once
+  (`(I-Text)`), both backends under `LOFT_POISON` and `LOFT_STRICT_STORES` — so no clause is
+  owed; the `loop-source-written` warning now reaches a write through the link as it reaches a
+  write to the field.
 * **D-bind-52** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD
   read through a link.  `y = e` with `e = &z`, and `y = p` with `p: &P` a parameter, bound `y`
   with a borrow dep on the link, so `y` VIEWED the record and `y.n = 9` wrote `z` — where a
@@ -910,7 +934,7 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   (loft#1567) CLOSED the same week: a link to a narrow STORE place now links, and the
   representation decision its entry asked for turned out to have been made already.
 
-* **D-bind-38** *(opened 2026-09-14, loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
+* **D-bind-38** *(opened 2026-09-14, CLOSED 2026-09-23; loft#1566)* — `(B-Ref-Lvalue)`: a link to a TEXT place is refused.  `a:
   vector<text> = ["aa"]; t = &a[0]` and `o = O{s: "aa"}; t = &o.s` stop with "`&` requires an
   addressable operand — a variable, struct field, or vector element", on both backends and already
   on the first bind, while the same spellings over an integer, float, enum or struct place link.  The
@@ -921,6 +945,69 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   link needs a representation for a text that lives in a store.  (The `u16` and `i32` places this
   entry first carried are narrow integer places and left with D-bind-39, which closed 2026-09-23;
   text is the only face of this rule still refused.)  Found while probing D-bind-36's repoint over every element kind.
+  **Closed** by @PLN167 C1: a text field or element is a place, and a `&` bind to one makes the
+  STORE kind of a text link — a link holding the slot's `DbRef` (the place `scalar_place_ref`
+  already gives a scalar), whose every mention is parsed as that field
+  (`OpGetText(OpVarRef(t), 0)`), so its read is the field read and its write the field's setter on
+  both backends.  The kind is a fact of the VARIABLE (`Variable::store_text_link`), carried
+  through the IR snapshot, and a bind of the other kind is refused — in either order and across
+  the arms of an `if` — because `(B-Ref-Repoint)` keeps a link's type.  A link to a text VARIABLE
+  is unchanged and its emission byte-identical.  Guards:
+  `tests/scripts/167-a-text-link-into-a-store.loft`,
+  `tests/scripts/167-a-text-link-keeps-its-kind.loft`.  The PARAMETER face is D-bind-55.
+* **D-bind-55** *(opened 2026-09-23, CLOSED 2026-09-24; loft#1566, loft#1602, @PLN167 C3)* —
+  `(B-Ref-Lvalue)` with `(F-ParamRef)`: a text field or element — or a store-kind text link —
+  handed to a `&text` PARAMETER was refused (loft#1602's stopgap; before it the call copied and
+  dropped the callee's write), where the rules say the parameter links to the place as the `&`
+  bind does.  **Closed** by instantiating the function per text-link KIND, decision 2's route:
+  the call hands the slot's `DbRef` (`scalar_place_ref`, the place the bind takes) and is pointed
+  at the function's STORE instance, minted after pass 2 (`parser/store_text.rs`) as a clone whose
+  parameter carries `store_text_link` and whose body is rewritten to C1's spelling — a read
+  `OpGetText(OpVarRef(t), 0)`, a write the field's setter.  The rewrite is total over a measured
+  closed set: across the 206 functions with a `&text` parameter in the stdlib and the corpus the
+  parameter is written only by `Set` and the `Op…Stack…` write ops, each of which has a twin on a
+  text variable.  The stack instance is the function as written, byte-identical
+  (`scripts/introspect_diff.sh`).  Instances close transitively (forwarding, recursion, a local
+  link bound from the parameter).  `(B-Ref-Reshape)`'s callee clause now reaches the text
+  spelling (`grow(h.v[0], h)` is refused; it crashed on both backends while admitted).  An
+  instance's key is `n_f@st<mask>` and every name decoder cuts at `@`, so messages, traces and
+  profiles name `f`.  Guards `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft`,
+  `tests/scripts/1602-a-ref-text-parameter-refuses-what-it-cannot-link.loft`, and the warm-cache
+  cell `a_store_text_instance_reads_the_same_warm` (`tests/arc_e_program_cache.rs`).  The
+  FUNCTION-VALUE spelling is D-bind-57.
+* **D-bind-57** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1656, @PLN167 R5a)* —
+  `(B-Ref-Lvalue)` with `(F-ParamRef)` through a FUNCTION VALUE: `g = app; g(o.a)` with
+  `fn app(t: &text)`.  On `main` both backends compiled it and answered `alpha`: the conversion
+  copied the field and the callee's write was lost with nothing said.  C3 first refused it,
+  because a store instance is picked per call site and a function value is fixed before the
+  call.  **Closed** by letting the CALL pick, since only the call knows the argument's kind: the
+  argument is lowered to the place as a direct call's is, the call's store mask
+  (`Data::store_text_mask`, the one test both backends ask) selects the STORE instance of
+  whichever function the value holds, and after pass 2 an instance is minted for every
+  candidate of the value's type (`fnref::dispatch_arms`, the candidate set's one home).  The
+  interpreter dispatches through `OpCallRefStore`, `OpCallRef` with the function swapped for its
+  instance for that one call (the slot is left as it was).  Native's arms call each candidate's
+  instance, and an instance is reachable with the function it copies.  **Found on the way, and
+  closed with it:** a `&text` parameter through a function value did not compile on `--native`
+  in EITHER kind.  `dispatch_arms` and the synthetic-argument loop took every `RefVar(Text)`
+  attribute for a text-return work buffer, so `fn(&text)` matched no function (an empty
+  `match`) and the argument was spelled empty.  The rule is now positional
+  (`fnref::visible_fnref_attrs`): the buffers follow every user parameter.  An instance is never
+  a candidate itself (`Definition::is_store_text_instance`), or `rec`'s instance acquired an
+  instance of its own.  Guards: `test_through_a_function_value` in
+  `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft` (a named function
+  re-pointed between two, the stack kind through the same value, a capturing lambda, a
+  text-returning one, an element of a vector of functions and an absent one), and the
+  warm-cache cell.  Not expressible yet, and not a deviation of this rule: a function TYPE
+  spelled with a `&` parameter (`fn(&text)`), so such a value arises by inference only.
+* **D-bind-58** *(opened 2026-09-24, CLOSED 2026-09-24; found by @PLN167 C3's K9 cell)* —
+  `(O-NoDiverge)` for a `&text?` PARAMETER on `--native`: any read of it (`t == null`,
+  `t == "x"`) emitted `*var_t`, a MOVE of the `String` behind the `&mut`, and rustc refused the
+  program (E0507) while the interpreter ran it.  The parameter arm tested `**inner` for `Text`
+  exactly, where the local-link arm beside it reads `inner.base()`.  **Closed** by asking the same
+  question as that arm.  A loud divergence, never a wrong value.  Guard: K9 in
+  `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft`
+  (`test_a_nullable_text_field`, the variable half).
 * **D-bind-37** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a
   `&τ` PARAMETER: `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-pointed the parameter's link
   on `--interpret` (after D-bind-36) and did not compile on `--native` — rustc E0308 for an element or

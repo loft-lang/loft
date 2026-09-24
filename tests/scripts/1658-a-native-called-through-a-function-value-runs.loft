@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A native function (declared `pub fn name(…) -> T;`, no loft body) called through a function
+// value runs, and answers what a direct call answers (loft#1658, `@FR-L-FnRef`).  On the
+// interpreter its definition's code is a bare return that a direct call never enters, and a
+// function value jumped straight into it: the native never ran, and the call answered whatever
+// the frame held — an empty text for `env_variable`, with no diagnostic, while `--native` was
+// right.  The fn-ref call now runs such a native in place, on the arguments the call pushed.
+//
+// The axes: a plain native returning text (`env_variable`, `ymd_days_ago` with an integer
+// argument), one returning an integer (`now`), text producers that exist only as a `_dest`
+// variant and are handed the call's work buffer as their destination (`directory`,
+// `json_errors`); a loft function through the same kind of value as the control; and ten
+// thousand calls in a loop, since a work buffer left on the stack or taken off twice shows as a
+// drift there long before it shows in one call.
+//
+// @falsified-at: 065e07e7a — interpret exit 139 -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1658-a-native-called-through-a-function-value-runs.patch — interpret exit 139 -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// HOLDS: leak, panic and free-refusal are clean on both trees; the control exits 139 (a
+//   segfault reading the frame garbage as a text) where this tree exits 0.
+//
+// CHANNEL: assertion failures and exit, both backends.
+
+fn mine(n: text) -> text { "m{n}" }
+
+fn test_one_call_each() {
+  g = env_variable;
+  assert(g("HOME") == env_variable("HOME"), "env_variable: {g("HOME")}");
+  y = ymd_days_ago;
+  assert(y(3) == ymd_days_ago(3), "ymd_days_ago: {y(3)}");
+  t = now;
+  assert(t() > 0, "now: {t()}");
+  d = directory;
+  assert(d("sub") == directory("sub") && d("sub").ends_with("sub"), "directory: {d("sub")}");
+  j = json_errors;
+  assert(j() == json_errors(), "json_errors");
+  k = mine;
+  assert(k("x") == "mx", "a loft function: {k("x")}");
+}
+
+fn test_many_calls_keep_the_stack() {
+  y = ymd_days_ago;
+  e = env_variable;
+  d = directory;
+  bad = 0;
+  for i in 0..10000 {
+    if y(3) != ymd_days_ago(3) { bad += 1; }
+    if e("HOME") != env_variable("HOME") { bad += 1; }
+    if d("x{i % 7}") != directory("x{i % 7}") { bad += 1; }
+  }
+  assert(bad == 0, "mismatches over 10000 rounds: {bad}");
+}

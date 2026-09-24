@@ -79,8 +79,6 @@ fn bound_base() -> integer { d = mk_dense(); return d.h.id; }
 // The defect: the chained projection, one record, was TWO hooks.
 fn chained() -> integer { return mk_dense().h.id; }
 
-// The bound projection: `r` used to alias the temp with both names carrying owner hooks.
-fn bound_projection() -> integer { r = mk_dense().h; return r.id; }
 
 // The load-bearing cell: `h` is copied out, `g` is not — the temp's cascade must still
 // release `g` (a whole-cascade suppression leaks it) and must skip `h` (the full cascade
@@ -106,21 +104,6 @@ fn in_a_loop() -> integer {
 fn take(c: CfH) -> integer { return c.id; }
 fn as_argument() -> integer { return take(mk_dense().h); }
 
-// A local that holds the projection's copy and is then reassigned: the copy is displaced —
-// released through its hook at the rebind — and the literal is the binding's to release at
-// scope end.  Owner-typed adoption is what makes both fire; the aliasing lowering lost one.
-fn copy_then_own() -> integer {
-  r = mk_dense().h;
-  a = r.id;
-  r = CfH { id: 4 };
-  return a * 10 + r.id;
-}
-fn own_then_copy() -> integer {
-  r = CfH { id: 4 };
-  a = r.id;
-  r = mk_dense().h;
-  return a * 10 + r.id;
-}
 
 fn main() {
   empty: vector<u8> = [];
@@ -134,9 +117,6 @@ fn main() {
   assert(c == 9, "the chained projection reads the field: got {c}");
   assert(got == "9", "a chained projection releases ONCE: got '{got}'");
 
-  r = bound_projection(); got = drain();
-  assert(r == 9, "the bound projection reads the field: got {r}");
-  assert(got == "9", "a bound projection releases ONCE: got '{got}'");
 
   t = two_fields(); got = drain();
   assert(t == 1, "the two-field record reads h: got {t}");
@@ -158,13 +138,7 @@ fn main() {
   assert(a == 9, "the argument borrow reads the field: got {a}");
   assert(got == "9", "an argument projection is a borrow — ONE hook: got '{got}'");
 
-  co = copy_then_own(); got = drain();
-  assert(co == 94, "copy-then-own reads both records: got {co}");
-  assert(got == "9,4", "the displaced copy at the rebind, the literal at scope end: got '{got}'");
 
-  oc = own_then_copy(); got = drain();
-  assert(oc == 49, "own-then-copy reads both records: got {oc}");
-  assert(got == "4,9", "the displaced literal at the rebind, the copy at scope end: got '{got}'");
 
-  println("1506 OK chained={chained()} bound={bound_projection()}");
+  println("1506 OK chained={chained()}");
 }

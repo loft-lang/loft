@@ -117,8 +117,18 @@ The catch-all backlog is no longer blocked on ranking — `reach` says 125 of it
 code production runs (B6b), so it is a read-one-at-a-time queue rather than something a filter
 will shrink.  **A SECOND queue now runs beside it (B6g), and it is the sharper one:** the
 catch-all list asks who forgot a variant, while `spellings` asks who can only see one of a
-notion's two IR spellings — **38** functions resolve a projection by OP NAME and **5** of them
-handle `TupleGet` (18 · 2 when B6g wrote this; the SCREEN was widened in B6i, not the family).  Following it produced three defects in one pass, two fixed here and one
+notion's two IR spellings — **93** functions resolve a projection by OP NAME and **15** of them
+handle `TupleGet` (18 · 2 when B6g wrote this; the SCREEN was widened in B6i, not the family).
+
+⚠ **Those two numbers had ROTTED, and the only reason anyone noticed is that a peer happened
+to mention moving one of them.**  This row read `38 · 5` until 2026-09-24, when the audit on
+the merged tree answered `93 · 15` — off by more than a factor of two in the first figure and
+three times in the second.  Nothing gates it: `quality_optional_table_matches_the_audit` gates
+the OPTIONAL row alone, so this one drifted silently while the row beside it was argued over
+by four branches in a single day.  The lesson is not "re-measure more often" — it is that an
+UNGATED derived row cannot be told apart from a measured one by reading it, so a reader who
+trusts it is being misled by the page rather than by any person.  Either gate a row or date
+it; this one is now dated, and the measuring command is named beside it.  Following it produced three defects in one pass, two fixed here and one
 filed as a design question (**loft#1102**: a tuple literal ALIASES a heap local while a struct
 literal and a vector literal copy it).  Reading the queue a second time produced a fourth
 (**loft#1104**, B6h): a tuple-element ARGUMENT cannot witness the @P290 bracket, so a
@@ -1683,11 +1693,14 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **14** |
+| **15** |
 
 The census this came from — how many functions resolve a projection by op name, and which ones
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
 LIST rather than a total, and the list is what tells you where to work.
+
+(2026-09-24, loft#1569 on `tuxedo-165-generics`, measured: **91 · 15 · 76** — `return_copies_a_leasing_value`
+reads a returned projection in both spellings, so the ratchet rose by one.)
 
 (2026-09-17, the SECOND join, re-measured at its end: **73 · 14 · 59**.  The ratchet — functions
 ALSO handling `TupleGet` — is unmoved at 14, which is what this row gates; the two descriptive
@@ -2773,12 +2786,38 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **315** |
+| **312** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-24, loft#1568 rebased onto `main` @ c2eec30c6 — RE-MEASURED on that tree: **971 · 653 ·
+4 · 314**, opaque tests **1301**, `--write-ratchet` re-pinned there.  The `if` reconcile's
+statement test (loft#1645) asks the arm's block type through `base()`, which takes `scan_if` off
+the opaque list; `main` read 315 / 1303 and the branch 313 / 1303 before the rebase, both on trees
+that did not contain the other.)
+
+(2026-09-24, the FOURTH join — `origin/main` @ c2eec30c6 plus THREE sources merged one at a
+time: `157-native-4x`, `tuxedo-1562-layout-gate` (C2/C3 and the seven `&`-link peels) and
+`tuxedo-165-generics` (the #1568 lease errors) — RE-MEASURED on the merged tree: functions
+discriminating on a `Type` variant **976**, opaque **312**; shape tests **2498**, opaque
+**1300**.
+
+**Four branches held four true numbers and not one of them was the merged tree's.**  Mine read
+314 / 1305, `tuxedo-1562-layout-gate` 313 / 1302 after its peel, `tuxedo-165-generics` 314 /
+1301 after its own rebase — and the join settles at 312 / 1300, BELOW all three.  That is not a
+tie-break between the inputs; the merged tree contains code none of them did.  This row is the
+one DEVELOPMENT.md says has carried a false figure on eight consecutive joins, and the reason
+is visible here: every side's number is defensible, so taking one always looks reasonable.
+
+⚠ **And this re-pin is the opposite act from the last one**, which is the distinction worth
+keeping.  On 2026-09-24 earlier the count GREW (1303 → 1305) and `--write-ratchet` was used
+anyway, which overrode the gate instead of answering it.  Here `--check-ratchet` reports
+`fell  opaque_functions: 314 -> 312` and `fell  opaque_tests: 1301 -> 1300`, and prints *"the
+count fell — re-pin it in this commit"*.  Same command, opposite meaning: read the verdict
+before writing the pin.)
 
 (2026-09-23, the THIRD join — `main` @ 6c188b612 plus `tuxedo-quality-2026-09-23` (which
 carried `tuxedo-165-generics` and `157-native-4x`), `tuxedo-1562-layout-gate` to its tip and

@@ -551,22 +551,23 @@ pub fn drop_copy_census_enabled() -> bool {
     *ON.get_or_init(|| env_set("LOFT_DROP_COPY_CENSUS"))
 }
 
-/// `LOFT_LEASE_REFUSE=1` — @PLN163 P3: a written copy of a droppable is a compile-time ERROR.
+/// @PLN163 P3: a written copy of a droppable is a compile-time ERROR, and so is a read of a name
+/// whose value moved — default ON; `LOFT_NO_LEASE_REFUSE=1` switches both off.
 ///
 /// `(H-Copy-Refuse)` makes a copy of a type that owns a droppable without `OpCopy` an error on
-/// the line that writes it, because two structures on one resource release it twice.  The census
-/// (`LOFT_DROP_COPY_CENSUS`) has reported that verdict since P2r; this is the same verdict raised
-/// as the rule states it.
+/// the line that writes it, because two structures on one resource release it twice; `(H-Spent)`
+/// makes a moved name spent, so a later read reads a value another structure now releases.  The
+/// census (`LOFT_DROP_COPY_CENSUS`) reports the first verdict; `crate::spent` finds the second.
 ///
-/// Opt-in while this repository's own corpus is converted — the rules refuse 227 lines across 29
-/// of the 38 files that declare `OpDrop`, and every one is a guard pinning the release machinery
-/// the refusal replaces.  The flip to default-on is P3's own step, after the conversion; no
-/// published library, consumer or registry package declares `OpDrop` (P0), so nothing outside
-/// this tree is waiting on it.
+/// The switch-off is the drop gate's (`tests/ownership_drop_gate.rs`): its cells measure how
+/// many times each refused shape releases, which is what @PLN163 P5 removes the old release
+/// machinery against, and a cell that does not compile measures nothing.  It is also the first
+/// bisect step for a program that stopped compiling with `copy-of-droppable` or
+/// `read-after-move`.
 #[must_use]
 pub fn lease_refuse_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| env_set("LOFT_LEASE_REFUSE"))
+    *ON.get_or_init(|| !env_set("LOFT_NO_LEASE_REFUSE"))
 }
 
 /// `LOFT_COPY_MANIFEST=1` — @PLN130: the emission-manifest GUARD. Each generator records every
@@ -1895,7 +1896,10 @@ pub fn element_in_place_enabled() -> bool {
 /// its own container has its field values evaluated BEFORE the element is minted —
 /// **DEFAULT ON**.  Opt OUT with `LOFT_NO_APPEND_STAGING` (read at PARSE time, BOTH
 /// backends): the values are evaluated between the mint and the finish again, and the first
-/// bisect step for a wrong or missing element out of `c += [S { f: g(c) }]`.
+/// bisect step for a wrong or missing element out of `c += [S { f: g(c) }]`.  The same switch
+/// covers the literal's PARTS (loft#1657): a part that hands the destination to a call that
+/// may write it is evaluated into a temp against the destination itself, where without it the
+/// call is handed the read snapshot and its element is lost (`v += [f(v)]`).
 #[must_use]
 pub fn append_staging_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();

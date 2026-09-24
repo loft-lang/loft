@@ -2977,9 +2977,10 @@ impl Parser {
             // named for closing this.
             return RefDelivery::MaterializeView;
         }
-        if l.last()
-            .is_some_and(|tail| self.return_projects_into_local(tail))
-        {
+        if l.last().is_some_and(|tail| {
+            self.return_projects_into_local(tail)
+                || (context == "return from block" && self.return_copies_a_leasing_value(tail))
+        }) {
             // The tail POINTS INTO something the callee frees, so it cannot be
             // renamed onto the caller's buffer — copy the record in first.
             //
@@ -13906,7 +13907,12 @@ impl Parser {
     fn materialize_view_return(&mut self, td: u32, tail: &mut Value) -> u16 {
         let ref_tp = Type::Reference(td, Deps::none());
         let w = self.vars.work_refs(&ref_tp, &mut self.lexer);
-        if self.return_buffer().is_none() {
+        // A join whose arms copy a type that declares `OpCopy` is copied per arm as well: a fresh
+        // arm copied WHOLE into `w` would be a second structure the rules never asked for, and the
+        // lease would run on a value nothing copied (`(H-Copy-Lease)`).
+        if self.return_buffer().is_none()
+            || (Self::return_tail_is_join(tail) && self.return_copies_a_leasing_value(tail))
+        {
             // A buffer-less return (`-> S?`) is delivered as the DbRef the tail yields, so
             // the copy is made only on the arms that VIEW something this frame frees: a
             // `null` arm stays null and an owned arm is handed up as it is (loft#1337).
@@ -13941,7 +13947,9 @@ impl Parser {
                 }
             }
             leaf => {
-                if !self.return_leaf_is_owned_or_null(leaf) {
+                if !self.return_leaf_is_owned_or_null(leaf)
+                    || self.return_copies_a_leasing_value(leaf)
+                {
                     self.materialize_return_into(td, leaf, w);
                 }
             }
@@ -14835,6 +14843,68 @@ impl Parser {
             Value::Block(bl) => bl.operators.last().map_or(v, Self::projection_base),
             Value::Insert(ops) => ops.last().map_or(v, Self::projection_base),
             other => other,
+        }
+    }
+
+    /// `(H-Copy-Lease)` at a `return`: does the function hand out a COPY of a value of a type that
+    /// declares `OpCopy` — a parameter, a member (`s.h`, `v[i]`, `t.0`), or a local that views
+    /// one?  `(H-Move)` makes each of those a copy, and the lowering would hand the caller a view
+    /// of the original instead, which takes no lease.  So the value is materialised into the
+    /// return buffer, where the copy is a site the lease pass follows with the hook.  A local the
+    /// function owns MOVES out and is not copied — a local promoted onto the buffer carries a dep
+    /// without viewing anything, so the test is [`Self::var_views_an_argument`], not a dep list, and
+    /// a local promoted onto the hidden return buffer is an argument by slot only
+    /// ([`Self::is_hidden_param`]);
+    /// a join is judged per arm at its own copies.
+    fn return_copies_a_leasing_value(&self, tail: &Value) -> bool {
+        let leases = self
+            .data
+            .def(self.context)
+            .returned()
+            .base()
+            .heap_def_nr()
+            .is_some_and(|d| crate::lease::leases_whole(&self.data, d));
+        if !leases {
+            return false;
+        }
+        let (get_field, get_vector) = (
+            self.data.def_nr("OpGetField"),
+            self.data.def_nr("OpGetVector"),
+        );
+        match tail.unspan() {
+            Value::Return(inner) => self.return_copies_a_leasing_value(inner),
+            Value::Block(bl) => bl
+                .operators
+                .last()
+                .is_some_and(|t| self.return_copies_a_leasing_value(t)),
+            Value::Insert(ops) => ops
+                .last()
+                .is_some_and(|t| self.return_copies_a_leasing_value(t)),
+            Value::Var(v) => {
+                *v < self.vars.count()
+                    && !self.vars.is_compiler_generated(*v)
+                    && ((self.vars.is_argument(*v) && !self.is_hidden_param(*v))
+                        || self.var_views_an_argument(*v))
+            }
+            Value::TupleGet(..) => true,
+            Value::Call(d, _) => *d == get_field || *d == get_vector,
+            // A join copies on the arms that do; [`Self::materialize_view_return`] copies those
+            // arms alone, so a fresh arm is handed up as the value it already is.
+            Value::If(_, t, f) => {
+                self.return_copies_a_leasing_value(t) || self.return_copies_a_leasing_value(f)
+            }
+            _ => false,
+        }
+    }
+
+    /// Is the value a return hands out a JOIN — an `if` at its tail, through blocks?
+    fn return_tail_is_join(tail: &Value) -> bool {
+        match tail.unspan() {
+            Value::Return(inner) => Self::return_tail_is_join(inner),
+            Value::Block(bl) => bl.operators.last().is_some_and(Self::return_tail_is_join),
+            Value::Insert(ops) => ops.last().is_some_and(Self::return_tail_is_join),
+            Value::If(..) => true,
+            _ => false,
         }
     }
 
@@ -16512,6 +16582,16 @@ impl Parser {
                         let placeholder = self.vars.var("__retbuf");
                         if placeholder != u16::MAX {
                             self.vars.retire_argument(placeholder);
+                            // loft#1651 — a retired placeholder OWNS NOTHING from here on.
+                            // The buffer role has just moved to `*v`, so whatever any later
+                            // site emits for this variable must release nothing: it holds no
+                            // store of its own, and the argument prologue that used to
+                            // reserve its slot no longer covers it, so a release would read
+                            // an unreserved slot.  An unreserved ref slot reads as store 0 —
+                            // the EVALUATION STACK — and the free is refused as `BUG (#306)`,
+                            // with only the allocator's guard between that and a whole-store
+                            // free of every live frame.
+                            self.vars.set_skip_free(placeholder);
                         }
                         self.vars.become_argument(*v);
                         dep.push(buf_attr as u16);
@@ -16948,7 +17028,8 @@ impl Parser {
                     other => other.clone(),
                 };
                 if let Type::Reference(td, ls) = &t {
-                    if self.return_projects_into_local(&v) {
+                    if self.return_projects_into_local(&v) || self.return_copies_a_leasing_value(&v)
+                    {
                         // The returned expression points INTO something this
                         // function frees — a field of an inline call's temporary
                         // (#425 / H9), or an element of a local's vector (H12).

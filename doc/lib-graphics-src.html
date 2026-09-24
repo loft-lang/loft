@@ -23,7 +23,7 @@
 <nav><div class="nav-links"><a href="index.html">Home</a> · <a href="install.html">Install</a> · <a href="roadmap.html">Roadmap</a> · <span class="cur">Libraries</span> · <span class="nav-sep">Language:</span> · <a href="00-vs-rust.html">vs Rust</a> · <a href="00-vs-python.html">vs Python</a> · <a href="00-performance.html">Performance</a> · <a href="01-keywords.html">Keywords</a> · <a href="02-text.html">Texts</a> · <a href="03-integer.html">Integers</a> · <a href="04-boolean.html">Boolean</a> · <a href="05-float.html">Float</a> · <a href="06-function.html">Functions</a> · <a href="07-vector.html">Vector</a> · <a href="08-struct.html">Structs</a> · <a href="09-enum.html">Enums</a> · <a href="10-sorted.html">Sorted</a> · <a href="11-index.html">Index</a> · <a href="12-hash.html">Hash</a> · <a href="13-file.html">File</a> · <a href="15-lexer.html">Lexer</a> · <a href="16-parser.html">Parser</a> · <a href="17-libraries.html">Libraries</a> · <a href="18-locks.html">Store Locks</a> · <a href="19-threading.html">Parallel execution</a> · <a href="20-logging.html">Logging</a> · <a href="22-time.html">Time</a> · <a href="23-safety.html">Safety</a> · <a href="24-json.html">JSON</a> · <a href="25-generics.html">Generics</a> · <a href="26-closures.html">Closures</a> · <a href="27-coroutines.html">Coroutines</a> · <a href="28-tuples.html">Tuples</a> · <a href="29-match.html">Match</a> · <a href="30-formatting.html">Formatting</a> · <a href="31-ref-forward.html">Reference parameter forwarding</a> · <a href="33-features.html">Feature catalogue</a> · <a href="34-running.html">Running your program</a> · <a href="35-testing.html">Testing your code</a> · <a href="36-debugging.html">Debugging</a> · <a href="37-projects.html">Projects and libraries</a> · <a href="38-call-it-yourself.html">Call it yourself</a> · <span class="nav-sep">Library:</span> · <a href="stdlib-types.html">Types</a> · <a href="stdlib-interfaces.html">Interfaces</a> · <a href="stdlib-math.html">Math</a> · <a href="stdlib-exp-ln-log2-log10.html">exp / ln / log2 / log10</a> · <a href="stdlib-min-max-clamp.html">min / max / clamp</a> · <a href="stdlib-text.html">Text</a> · <a href="stdlib-collections.html">Collections</a> · <a href="stdlib-output-and-diagnostics.html">Output and Diagnostics</a> · <a href="stdlib-vector-aggregates.html">Vector aggregates</a> · <a href="stdlib-assertions-that-report-both-sides.html">Assertions that report both sides</a> · <a href="stdlib-field-iteration-support-types.html">Field iteration support types</a> · <a href="stdlib-file-system.html">File System</a> · <a href="stdlib-environment.html">Environment</a> · <a href="stdlib-optional-c-libraries.html">Optional C libraries</a> · <a href="stdlib-system-directories.html">System directories</a> · <a href="stdlib-time.html">Time</a> · <a href="stdlib-memory-diagnostics.html">Memory diagnostics</a> · <a href="stdlib-vector-operations.html">Vector operations</a> · <a href="stdlib-stack-traces.html">Stack traces</a> · <a href="stdlib-coroutines.html">Coroutines</a> · <a href="stdlib-json.html">JSON</a> · <a href="stdlib-type-reflection.html">Type reflection</a></div><div class="search-wrap"><input type="search" id="search" placeholder="Search functions, types…" autocomplete="off"><div id="search-results" class="search-results" hidden></div></div></nav>
 <h1>graphics source</h1>
 <article>
-<p><a href="lib-graphics.html">← graphics</a> · <a href="lib-graphics-api.html">API reference</a> · version 0.9.1</p>
+<p><a href="lib-graphics.html">← graphics</a> · <a href="lib-graphics-api.html">API reference</a> · version 0.9.3</p>
 <p class="lib-legend">16 file(s), 3756 lines. This is the source the published version ships, and it is loft — the library is written in the same language you call it from.</p>
 <h2 id="items">Public items</h2>
 <p class="lib-legend">A <em>worked example</em> is a call site the author chose as the thing to read first. <em>Call sites</em> are every line naming the item, found mechanically over the source with comments excluded — so an item with no worked example is not an item nobody uses.</p>
@@ -1228,7 +1228,7 @@
 <span id="src-graphics-loft-L1056"><span class="cm">// Draw every group's cached VBO with the set's draw mode.  (Per-group frustum</span></span>
 <span id="src-graphics-loft-L1057"><span class="cm">// culling — skip groups whose world bounds fall outside the view — is a future</span></span>
 <span id="src-graphics-loft-L1058"><span class="cm">// addition; the bounds are already stored.)</span></span>
-<span id="src-graphics-loft-L1059"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">group_vbos_draw_all</span>(set: <span class="en">GroupVboSet</span>) {</span>
+<span id="src-graphics-loft-L1059"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">group_vbos_draw_all</span>(set: const <span class="en">GroupVboSet</span>) {</span>
 <span id="src-graphics-loft-L1060">  <span class="kw">for</span> gv <span class="kw">in</span> set.slots {</span>
 <span id="src-graphics-loft-L1061">    <span class="kw">if</span> gv.count &gt; <span class="nm">0</span> { <span class="fn-call">gl_draw_mode</span>(gv.vao, gv.count, set.draw_mode); }</span>
 <span id="src-graphics-loft-L1062">  }</span>
@@ -1242,7 +1242,7 @@
 <span id="src-graphics-loft-L1070"></span>
 <span id="src-graphics-loft-L1071"><span class="cm">// Set a mat4 uniform on a shader program. mat is a Mat4.m vector (16 floats).</span></span>
 <span id="src-graphics-loft-L1072"><span class="cm">// Native codegen: loft_gl_set_mat4(program: i32, name_ptr, name_len, mat_ptr: *const f64, count: u32)</span></span>
-<span id="src-graphics-loft-L1073"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gl_set_uniform_mat4</span>(program: <span class="ty"><a href="stdlib-types.html">integer</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>, mat: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;);</span>
+<span id="src-graphics-loft-L1073"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gl_set_uniform_mat4</span>(program: <span class="ty"><a href="stdlib-types.html">integer</a></span>, name: <span class="ty"><a href="stdlib-types.html">text</a></span>, mat: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">float</a></span>&gt;);</span>
 <span id="src-graphics-loft-L1074">#native <span class="st">"loft_gl_set_mat4"</span></span>
 <span id="src-graphics-loft-L1075"></span>
 <span id="src-graphics-loft-L1076"><span class="cm">// --- Uniforms ---</span></span>
@@ -1644,7 +1644,7 @@
 <span id="src-graphics-loft-L1472"></span>
 <span id="src-graphics-loft-L1473"><span class="cm">// Upload Canvas pixel data as a GL texture. Returns the texture ID.</span></span>
 <span id="src-graphics-loft-L1474"><span class="cm">// Converts 0xAARRGGBB packed integers to RGBA bytes for OpenGL.</span></span>
-<span id="src-graphics-loft-L1475"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gl_upload_canvas</span>(data: <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
+<span id="src-graphics-loft-L1475"><span class="kw">pub</span> <span class="kw">fn</span> <span class="fn-call">gl_upload_canvas</span>(data: const <span class="ty"><a href="stdlib-collections.html">vector</a></span>&lt;<span class="ty"><a href="stdlib-types.html">integer</a></span>&gt;, width: <span class="ty"><a href="stdlib-types.html">integer</a></span>, height: <span class="ty"><a href="stdlib-types.html">integer</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span>;</span>
 <span id="src-graphics-loft-L1476">#native <span class="st">"loft_gl_upload_canvas"</span></span>
 <span id="src-graphics-loft-L1477"></span>
 <span id="src-graphics-loft-L1478"><span class="cm">// Bind a texture to a texture unit (0-based) for rendering.</span></span>
@@ -3796,14 +3796,14 @@
 <span id="tests-worked-examples-loft-L21"><span class="cm">// chunk length, "IHDR", width, height, then one bit-depth byte.  2 = RGB,</span></span>
 <span id="tests-worked-examples-loft-L22"><span class="cm">// 6 = RGBA.  Lets the save example below read what was actually written.</span></span>
 <span id="tests-worked-examples-loft-L23"><span class="kw">fn</span> <span class="fn-call">png_colour_type</span>(path: <span class="ty"><a href="stdlib-types.html">text</a></span>) -&gt; <span class="ty"><a href="stdlib-types.html">integer</a></span> {</span>
-<span id="tests-worked-examples-loft-L24">  <span class="cm">// The scope block is what flushes and closes the handle; loft has no block</span></span>
-<span id="tests-worked-examples-loft-L25">  <span class="cm">// scoping, so `pct` is still readable after it.</span></span>
-<span id="tests-worked-examples-loft-L26">  {</span>
+<span id="tests-worked-examples-loft-L24">  <span class="cm">// The scope block is what flushes and closes the handle, and its value is the byte it</span></span>
+<span id="tests-worked-examples-loft-L25">  <span class="cm">// read: a local bound inside a block ends with the block.</span></span>
+<span id="tests-worked-examples-loft-L26">  pct = {</span>
 <span id="tests-worked-examples-loft-L27">    f = <span class="bi"><a href="stdlib-file-system.html">file</a></span>(path);</span>
 <span id="tests-worked-examples-loft-L28">    f#format = <span class="en">BigEndian</span>;</span>
 <span id="tests-worked-examples-loft-L29">    f#next = <span class="nm">25</span>;</span>
-<span id="tests-worked-examples-loft-L30">    pct = f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span>;</span>
-<span id="tests-worked-examples-loft-L31">  }</span>
+<span id="tests-worked-examples-loft-L30">    f#read <span class="kw">as</span> <span class="ty"><a href="stdlib-types.html">u8</a></span></span>
+<span id="tests-worked-examples-loft-L31">  };</span>
 <span id="tests-worked-examples-loft-L32">  pct</span>
 <span id="tests-worked-examples-loft-L33">}</span>
 <span id="tests-worked-examples-loft-L34"></span>

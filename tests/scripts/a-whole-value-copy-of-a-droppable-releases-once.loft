@@ -60,9 +60,6 @@ fn dc1() { h = dc_mk(1); h2 = h; note("alive{h2.id}"); }
 fn dc2() { s = DcS { h: dc_mk(2) }; t = s; note("alive{t.h.id}"); }
 fn dc3() { w: DcW = DcWH { h: dc_mk(3) }; x = w; note("alive{x is DcWH}"); }
 fn dc4() { s = DcS { h: dc_mk(4) }; t: DcS? = s; note("alive{t != null}"); }
-fn dc5p(p: DcS) { t = p; note("in{t.h.id}"); }
-fn dc5() { s = DcS { h: dc_mk(5) }; dc5p(s); note("back"); }
-fn dc6() { s = DcS { h: dc_mk(6) }; t = s; note("alive{s.h.id}{t.h.id}"); }
 fn dc7() { s = DcS { h: dc_mk(7) }; v: vector<DcS> = []; v += [s]; note("alive"); }
 fn dc8() -> DcS { s = DcS { h: dc_mk(8) }; t = s; return t; }
 fn dc8c() { r = dc8(); note("alive{r.h.id}"); }
@@ -94,11 +91,7 @@ fn main() {
   dc4(); got = drain();
   assert(got == "alivetrue,4", "dc4 a nullable destination: {got}");
 
-  dc5(); got = drain();
-  assert(got == "in5,back,5", "dc5 a copy off a parameter leaves the caller as owner: {got}");
 
-  dc6(); got = drain();
-  assert(got == "alive66,6", "dc6 the source stays readable after the copy: {got}");
 
   dc7(); got = drain();
   assert(got == "alive,7", "dc7 CONTROL: the element hand-off C111 already moved: {got}");

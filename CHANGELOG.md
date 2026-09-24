@@ -14,10 +14,95 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A `&text` parameter can be handed a text field or element, and the function writes it.**
+`fn shout(t: &text) { t += "!" }` could only ever reach a text *variable*.  Called as
+`shout(o.name)` or `shout(names[2])`, it first copied the text, and the function's write was
+lost with nothing said.  More recently that call was refused.  Now it works: the function writes
+the field in place, and a read of `o.name` inside the function already sees the new value.
+The same is true when you pass it on to another `&text` function, recurse with it, or take a
+`&` link to it inside the function.  A `&` link to a text field (`t = &o.name`) can be passed
+too.
+
+It works through a **function value** as well (`g = shout; g(o.name)`), which before also lost
+the write in silence. A function value with a `&text` parameter also compiles with `--native`
+now, whatever you pass it; before, it did not build even for a plain text variable.
+
+**A built-in function kept in a variable now runs when you call it.** `g = env_variable;
+g("HOME")` answered an empty text when the program was interpreted. It answered the variable
+under `--native`. The built-in was never called, and nothing said so. The same happened to any
+built-in without a loft body (`store_memory`, `directory`, `now`, …) called through a variable,
+a vector of functions or a parameter.
+
+A function that grows the collection a text element lives in, handed that element and the
+collection together (`grow(h.names[0], h)`), is now refused at compile time. The same program
+crashed.
+
+The same goes for a `&` link to a number or text *inside* a collection:
+`c = &v[1]; v += [x]; c = 99` is refused, because the growth may move the element `c` names.
+Before, that write was lost, as it already was refused for a link to a record.
+
+**`v += [f(v)]` keeps what `f` appended.**  When a function in an appended list grew the
+same vector — `lines += [flush(lines)]`, with `flush` pushing a finished line first — the
+element it pushed was silently lost, because the function was handed a copy of the vector
+instead of the vector itself.  The call now runs against the real vector, and its answer is
+appended after everything it added: `v = [0]; v += [f(v)]` with `f` pushing `100` and
+answering `7` holds `[0, 100, 7]`.  Both backends were wrong the same way.
+
+**A `&` link now reaches a narrow integer field or element.**  `c = &o.count` where `count`
+is a `u8`, `&v[i]` into a `vector<i8>`, `&o.height` on a `limit(1000, 1100)` field — all of
+these used to be refused as *"not addressable"*.  So the one feature `&` exists for was
+unavailable for exactly the types you declare in order to save space, and the workaround was
+to widen the field to a plain `integer` and give the saving back.  A link now reads and
+writes such a place at its own width, and a `&u8` behaves like any other link — you can
+re-point it and hand it to a `&` parameter:
+
+```loft
+fn bump(p: &u8) { p += 3; }      // declared WITH `&`…
+c = &o.count;  c = 9;            // write through the link
+bump(o.count);                   // …and called WITHOUT one
+```
+
+Two things keep a narrow link honest, and both are the same rule that a `&τ` is used exactly
+like a `τ`.  Writing `p = p + 3` inside that function is refused, because `p + 3` is an
+`integer` and narrowing it could lose data — use the compound step `p += 3`, or give it a
+fallback.  And a link carries its target's type, so re-pointing a `&u8` at an `i8` is refused
+rather than silently reading the bytes at the wrong width.
+
+**The debugger tells you the truth about those locals.**  A narrow local your program takes
+the address of is stored differently from one it does not, and every reader that did not
+know — the locals view, `stack_trace()`, a `setValue` edit, a watchpoint — reported a
+plausible wrong number rather than failing.  An `i8` holding `-1` displayed as `127`, a
+`limit(1000, 1100)` holding `1050` as `50`, and typing `-5` into the debugger resumed the run
+with `123`.  All four now decode.  If you ever debugged one of these and distrusted what you
+saw, you were right.
+
 **`loft self-update` and `loft install` download over a patched TLS stack.**  A
 dependency audit now runs every night, and its first run found that the TLS library
 loft downloads with carried a published advisory (RUSTSEC-2026-0285); the fixed version
 ships from this release on.  Nothing in a program changes.
+
+**A type with a release hook can say how a copy gets its own: `fn OpCopy(self: T)`.**  A copy
+of such a value copies the bytes and then runs `OpCopy` on the new one, so a reference-counted
+buffer can take a second reference and both copies are released once each.  A struct holding
+such a member runs its own `OpCopy` first, then its members'.  It covers every copy — a
+parameter bound or returned, a member placed in a literal, a tuple or a collection, a whole
+collection copied or appended to — and a copy is still refused when anything inside the type
+has a release hook and no `OpCopy`.
+
+**A value with a release hook is either moved or refused, and the compiler tells you which.**
+A type that declares `OpDrop` holds something outside the program — a file, a lock, a
+connection — and releasing it twice closes a handle you already closed.  Two new errors, on
+by default, stop that at compile time.  `copy-of-droppable` refuses a COPY of such a value
+the function does not own: a parameter (`x = p`), a member of a container (`Hold { h: s.h }`,
+`return d.h`), a member of a call result bound to a name.  `read-after-move` refuses a READ
+of a name after its value MOVED: `a = open(1); k = Hold { h: a }; a.id` — `k` holds the only
+lease now, so `a` is spent.  A move inside one branch of an `if`, or inside a loop, spends the
+name on that path, and a later read any such path reaches is refused.  Reading the name
+inside the statement that moves it is fine (`N { h: c, tag: c.id }`), and giving it a new
+value makes it usable again.  Each error says what to write instead: read the value through
+the structure it moved into, pass it as an argument, or build it where it belongs.
+`LOFT_NO_LEASE_REFUSE=1` switches both off, as the first step when a program stops
+compiling with one of them.
 
 **A ranged type you declare yourself answers an out-of-range step the same way `u8` does.**
 `type Small = integer limit(-100, 100) size(1)` holds 201 values inside a byte's 256, and

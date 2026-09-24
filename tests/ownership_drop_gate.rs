@@ -977,10 +977,19 @@ fn loft_bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_loft"))
 }
 
+/// Every loft the gate runs has the lease errors switched OFF: a cell measures how many times its
+/// shape releases, and the shapes `(H-Copy-Refuse)` and `(H-Spent)` refuse are the population
+/// @PLN163 P5 is verified against — refused, they would compile to nothing and measure nothing.
+fn gate_command() -> Command {
+    let mut cmd = Command::new(loft_bin());
+    cmd.env("LOFT_NO_LEASE_REFUSE", "1");
+    cmd
+}
+
 fn run_cell(dir: &Path, c: &Cell, mode: &str, timeout: &str) -> Verdict {
     let path = dir.join(format!("{}.loft", c.name));
     std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
-    let mut cmd = Command::new(loft_bin());
+    let mut cmd = gate_command();
     cmd.arg(mode)
         .arg(&path)
         .current_dir(dir)
@@ -1220,7 +1229,7 @@ fn census(dir: &Path, c: &Cell, prelude: &str) -> Option<(Vec<String>, String)> 
     let path = dir.join(format!("{}.loft", c.name));
     let text = program(c).replacen(PRELUDE, prelude, 1);
     std::fs::write(&path, text).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
-    let out = Command::new(loft_bin())
+    let out = gate_command()
         .arg("--interpret")
         .arg(&path)
         .current_dir(dir)
@@ -1447,7 +1456,6 @@ const PILOT_ONCE: &[&str] = &[
     "p_k5", "p_k6", "p_r1", "p_g2", "p_s8", // fresh values only
     "p_n1", "p_n2", "p_n3", "p_n4", // fresh values written into places, and a removal
     "p_t1", // a member read through a call result, which nothing outlives
-    "p_v4", // a vector parameter, which F-ParamHeap binds without copying
     // A collection a CALL answers is a fresh value placed where it is produced, which (H-Move)
     // moves: the local owns it and owes exactly one release.  `p_v5`–`p_v7` do not run it
     // (D-heap-13); `p_v8` and `p_v9` do, and are the controls that bound the defect.
@@ -1455,9 +1463,8 @@ const PILOT_ONCE: &[&str] = &[
     // A local the function OWNS, placed — each a MOVE since the 2026-09-17 ruling.
     "p_k1", "p_k2", "p_k3", "p_h1", "p_i1", // `x = a` of a local
     "p_o2", // `u = t` of a tuple the function built
-    "p_l1", "p_l2", "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
-    "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s4",
-    "p_s5", // a local in a join
+    "p_i2", "p_s6", "p_s7", // a local as an operand of `??`
+    "p_j1", "p_j2", "p_j3", "p_j4", "p_s1", "p_s2", "p_s3", "p_s5", // a local in a join
     // `d = v` of a droppable COLLECTION the function owns: a MOVE (`D-heap-23` closed it).
     "p_v1",
 ];
@@ -1466,16 +1473,24 @@ const PILOT_ONCE: &[&str] = &[
 /// still refuses after the 2026-09-17 ruling, each measured releasing twice.
 const PILOT_REFUSED: &[&str] = &[
     "p_k7", "p_h2", "p_h3", "p_h4", "p_h5", "p_h6", "p_h7", // `x = p` of a parameter
-    "p_o1", // `u = e` of a loop variable — a member of the container it iterates
+    // `u = p` of a vector PARAMETER — the same bind.  `(F-ParamHeap)` makes PASSING the vector
+    // a borrow; the whole-value bind in the body is still a copy.  It read as `Once` while the
+    // borrow elision deleted the copy before the census judged it, which made the verdict
+    // depend on whether a later line mutated `u`.
+    "p_v4", "p_o1", // `u = e` of a loop variable — a member of the container it iterates
     "p_o3", "p_o4", // `return` of a view, of a member, of a parameter
     "p_o5", "p_e1", "p_e2", // a member placed in a literal or appended
     "p_g1", "p_g3", "p_g4", "p_g5", // a member of a call result
     // `d = b.v` of a droppable COLLECTION held in a FIELD: the container still owns it.
     "p_v3",
-    // `d = v; v += […]`: the bind MOVES `v`, so the growth reads a SPENT name, which `(H-Spent)`
-    // makes a compile-time error — `D-heap-8`'s unbuilt second half (loft#1568), not a release
-    // to judge.  Reclassified 2026-09-23, which closed `D-heap-15`.
-    "p_v2",
+    // `(H-Spent)` — a name read, or placed again, after its value MOVED; a compile-time error
+    // since loft#1568 (`read-after-move`).  `d = v; v += […]`: the bind moves `v`, so the growth
+    // reads a spent name.  `p_l1` / `p_l2`: a local declared outside a loop moved by the `??`
+    // inside it, which the second pass reads spent.  `p_s4`: `y = a` after an arm that may have
+    // moved `a` into `x`.  The three were `Once` until the error existed — the move rule alone
+    // does not refuse them, and the gate's check against the compiler
+    // (`a_refused_cell_is_a_compile_error_and_a_once_cell_is_not`) is what found them.
+    "p_v2", "p_l1", "p_l2", "p_s4",
 ];
 
 /// What the lease rules require of the cell `name`, read — as the rule is read — off the cell's
@@ -1564,11 +1579,14 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
 /// census DOES refuse fails until it is removed, and a merely tolerant list would have gone green
 /// on the cure and stayed forever.
 ///
-/// `p_v2` entered it 2026-09-23 for a different blindness.  Its copy IS enumerated, and it is
-/// correctly a MOVE (`lease=move`).  What the rules refuse is the LATER read of the spent name
-/// (`d = v; v += […]`), `(H-Spent)`'s error, which no census arm implements yet (`D-heap-8`,
-/// loft#1568).  It leaves the day that error refuses it.
-const CENSUS_BLIND: &[&str] = &["p_v2"];
+/// What it holds since 2026-09-23 is a different thing, and permanent: the cells `(H-Spent)`
+/// refuses.  Each one's copies ARE enumerated and are correctly MOVES (`lease=move`); what the
+/// rules refuse is a LATER read of the spent name — `d = v; v += […]`, a `??` inside a loop over
+/// a local declared outside it, `y = a` after an arm that may have moved `a`.  The census answers
+/// the copy question only, by design; the spent read is `crate::spent`'s, raised as
+/// `read-after-move`, and [`a_refused_cell_is_a_compile_error_and_a_once_cell_is_not`] is the
+/// test that holds these four to it.
+const CENSUS_BLIND: &[&str] = &["p_v2", "p_l1", "p_l2", "p_s4"];
 
 /// Each OPEN deviation in `formal/heap.md` that a cell with a `Once` verdict still measures, with
 /// those cells.  A refused cell compiles today and is `D-heap-8`'s, so it is not listed.
@@ -1620,11 +1638,8 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
     ))
     .expect("read formal/heap.md");
     let mut wrong = Vec::new();
-    for dev in LEASE_DEVIATIONS
-        .iter()
-        .map(|(d, _)| *d)
-        .chain(["D-heap-8", "D-heap-9"])
-    {
+    // `D-heap-9` (`OpCopy` is not a hook) was chained here until it closed on 2026-09-24.
+    for dev in LEASE_DEVIATIONS.iter().map(|(d, _)| *d) {
         let header = format!("### {dev} — OPEN");
         // A closed entry's header — `— OPENED 2026-09-15, CLOSED 2026-09-17` — has the open
         // spelling as a PREFIX, so `starts_with` alone answers "it is open" about an entry that
@@ -1677,13 +1692,60 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
             }
         }
         eprintln!(
-            "  {backend}: {refused} of {} cells are refused by the lease rules (D-heap-8)",
+            "  {backend}: {refused} of {} cells are refused by the lease rules",
             cells.len()
         );
     }
     assert!(
         wrong.is_empty(),
         "\nlease verdicts:\n  {}\n",
+        wrong.join("\n  ")
+    );
+}
+
+/// The gate's verdicts ARE the compiler's: every cell the lease rules judge `Refused` fails to
+/// compile by default — `copy-of-droppable` or `read-after-move` — and every `Once` cell
+/// compiles.  The gate runs its cells with the errors switched off (`gate_command`), so without
+/// this the two could disagree in silence: a refused shape the compiler lets through is a copy
+/// released twice in a user's program, and a legal shape it refuses is a program broken.
+#[test]
+fn a_refused_cell_is_a_compile_error_and_a_once_cell_is_not() {
+    let cells = all_cells();
+    let answers = for_each_cell(&cells, "lease_default", workers(16), |dir, c| {
+        let path = dir.join(format!("{}.loft", c.name));
+        std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
+        let out = Command::new(loft_bin())
+            .arg("--check")
+            .arg("--interpret")
+            .arg(&path)
+            .current_dir(dir)
+            .env("LOFT_TIMEOUT", "60")
+            .env("LOFT_ERRORS", "compact")
+            .env_remove("LOFT_NO_LEASE_REFUSE")
+            .output()
+            .expect("spawn loft");
+        let text = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        text.contains("[copy-of-droppable]") || text.contains("[read-after-move]")
+    });
+    let mut wrong = Vec::new();
+    for (c, refused) in cells.iter().zip(answers) {
+        match (lease_verdict(&c.name), refused) {
+            (Lease::Refused, false) => {
+                wrong.push(format!("{}: the rules refuse it and it compiles", c.name))
+            }
+            (Lease::Once, true) => {
+                wrong.push(format!("{}: the rules permit it and it is refused", c.name))
+            }
+            _ => {}
+        }
+    }
+    assert!(
+        wrong.is_empty(),
+        "\nlease verdicts vs the compiler:\n  {}\n",
         wrong.join("\n  ")
     );
 }
@@ -1701,7 +1763,7 @@ fn every_emitted_copy_of_a_droppable_has_a_lease_verdict() {
     let reports = for_each_cell(&cells, "lease_manifest", workers(16), |dir, c| {
         let path = dir.join(format!("{}.loft", c.name));
         std::fs::write(&path, program(c)).unwrap_or_else(|e| panic!("write {}: {e}", c.name));
-        let out = Command::new(loft_bin())
+        let out = gate_command()
             .arg("--native-emit")
             .arg(dir.join(format!("{}.rs", c.name)))
             .arg(&path)

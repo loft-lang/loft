@@ -396,6 +396,7 @@ than it gets credit for. Measured on the current tree, not recalled:
 | **associated types** | **yes** | `type Rows: Cursor` in an interface body; `Self.Rows` in its signatures (@PLN125 arc A) |
 | **`x[i]` indexing** | **yes** | `fn OpIndex(self: T, i: τ) -> υ`; an interface requires it with `op []` (@PLN125 arc C) |
 | **run at scope end** | **yes** | `fn OpDrop(self: T)` — runs when the value's OWNER dies (@PLN125 arc B, @PLN139) |
+| **lease a copy** | **yes** | `fn OpCopy(self: T)` — runs on the new structure a copy makes (@PLN163 P4) |
 
 No gaps are left in the measured set. Each arc landed **inert first** — the
 contract declared, every existing program proved byte-identical in IR and native
@@ -461,8 +462,8 @@ fn work() {
 }                            // <- close() runs here, once
 ```
 
-The data is still copied — `s.h` is a copy of `h`, and reading `h` afterwards
-still works. What moves is the RESPONSIBILITY to release it. Without that move
+What moves is the value and the RESPONSIBILITY to release it: `h` is spent after
+that line, and reading it is `error[read-after-move]` — read it as `s.h` instead. Without that move
 the resource was released twice over: once by the source at its own scope end,
 and never by the container. That is invisible while both die in the same scope,
 and it is a use-after-free the moment the container outlives the source, which is
@@ -475,16 +476,40 @@ and so does a rebind from a call, to `null`, or inside a loop of a local declare
 it. The hook used to run at scope end only, and the first handle was never closed
 (loft#1362).
 
-**A plain whole-value copy is the same step.** `h2 = h`, `t = s` for a struct or a
-struct-enum holding a droppable, `t: S? = s`, the variable an `if` arm yields, and
-`t = s; return t` all copy the record, and the copy takes the release with it: the
-source stops dropping, the copy (or the caller that adopts the returned copy)
-releases once. A copy taken FROM A PARAMETER runs the other way — the caller owns
-the resource, since the parameter aliases it — so it is the callee's copy that never
-drops. Two shapes keep both releases, deliberately: a source or a copy that is
-assigned more than once (the move belongs to one assignment, and a per-variable fact
-cannot carry two), and two copies of one source, which the `double-move` warning
-names.
+**Whether a line copies or moves is read off that line.** A value the function OWNS
+— a local it bound to a fresh value — MOVES when it is placed: bound (`h2 = h`),
+written into a field, appended, or returned. The new structure releases it, and the
+old name is spent: reading it afterwards is `error[read-after-move]`, which names the
+line the value moved on. Anything else placed into a new structure is a COPY — a
+parameter (the caller still owns it), a member of a container (`s.h`, `v[i]`), a
+captured variable — and a copy of a droppable is `error[copy-of-droppable]` unless
+the type says how a copy gets its own lease, below. Passing a value as an argument,
+a `&` link and a view (`x = s.h`) make no second structure and are always legal.
+The rules are `formal/heap.md` `(H-Move)`, `(H-Spent)` and `(H-Copy-Refuse)`.
+
+### Copying one — `OpCopy`
+
+A type that CAN have two live copies — a reference-counted buffer, a read-only handle
+that can be reopened — declares `fn OpCopy(self: T)`. A copy then copies the bytes
+and runs `OpCopy` on the NEW structure, which takes its own lease there; each copy is
+released once, at its own death.
+
+```loft
+struct Buf { id: integer }
+fn OpDrop(self: Buf) { release(self.id); }
+fn OpCopy(self: Buf) { retain(self.id); }   // the copy holds a reference of its own
+
+fn keep(b: Buf) {
+  mine = b;          // a copy: `OpCopy` runs on `mine`
+}                    // <- `release` runs for `mine`; the caller's `b` releases later
+```
+
+Like `OpDrop`, it takes only `self` and answers nothing. A struct whose members
+declare `OpCopy` gets a synthesized cascade: its own `OpCopy` first, then its
+members'. A copy is refused if ANY droppable inside the type lacks `OpCopy`. A move,
+a vector's growth, a view and an argument run no hook — and neither does a copy the
+compiler skips altogether together with its release, which it may: never rely on the
+hook running for a particular copy, only on each copy that exists holding a lease.
 
 A container releases in this order:
 
@@ -539,16 +564,9 @@ omission:
   `index` shares its records with the collection it is indexed from, so releasing
   through one would release somebody else's element. Keep droppables in a plain
   `vector`, or release them explicitly.
-- **Moving one droppable into TWO containers releases it twice.** loft has no
-  move checker, so `a = C { h: h }; b = C { h: h }` compiles and both containers
-  release `h`'s resource. Build the second container from its own value.
-  `warning[double-move]` catches this where both hand-offs certainly run
-  (`LOFT_NO_DOUBLE_MOVE` opts out). It is deliberately quiet where they do not:
-  opposite `if` arms release once however the branch goes, and a reassignment
-  between the two hand-offs makes them two distinct values — but so is a
-  hand-off inside a LOOP, which the compiler sees once and the program runs N
-  times. A warning gates a library's CI, so it errs toward missing a defect
-  rather than failing correct code; the loop shape is on you.
+- **A value moves once.** `a = C { h: h }; b = C { h: h }` moves `h` into `a`, and
+  the second line reads a spent name: `error[read-after-move]`. Build the second
+  container from its own value, or give it a copy the type can lease (`OpCopy`).
 
 **When to reach for it.** A drop pays for itself when the value owns something
 the program cannot see — a `#c` handle, a lock, a file — and the release is

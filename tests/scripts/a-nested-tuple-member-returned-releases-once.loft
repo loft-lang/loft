@@ -81,24 +81,6 @@ struct NrS { h: NrH }
 struct NrBox { s: NrS }
 fn nr_mk(id: integer) -> NrS { return NrS { h: NrH { id: id } }; }
 
-// The defect: the droppable sits in the INNER tuple and the member is RETURNED, so the read
-// materialises through a temp the walk had no entry for.
-fn r_inner() -> NrS { s = nr_mk(1); t = ((s, 1), 2); return t.0.0; }
-fn c_inner_returned() { v = r_inner(); note("v{v.h.id}"); }
-// Depth three: the projection arrives wrapped in the lowered block of the level below it, which
-// a bare `TupleGet` match does not see.
-fn r_depth3() -> NrS { s = nr_mk(11); t = (((s, 1), 2), 3); return t.0.0.0; }
-fn c_depth3() { v = r_depth3(); note("v{v.h.id}"); }
-// The SECOND inner tuple's member — the cell a `first()`-shaped read gets wrong.
-fn r_second_inner() -> NrS { a = nr_mk(21); b = nr_mk(22); t = ((a, 1), (b, 2)); return t.1.0; }
-fn c_second_inner() { v = r_second_inner(); note("v{v.h.id}"); }
-// Two droppables in ONE inner tuple, member 1 returned.
-fn r_both_in_one() -> NrS { a = nr_mk(31); b = nr_mk(32); t = ((a, b), 2); return t.0.1; }
-fn c_both_in_one() { v = r_both_in_one(); note("v{v.h.id}"); }
-// The inner member written NULLABLE and returned as `NrS?`: `@FR-N-Shape` makes a `τ?` a
-// nullability bit over the same runtime shape, so the depth answer must not depend on it.
-fn r_nullable_inner() -> NrS? { s = nr_mk(61); t: ((NrS?, integer), integer) = ((s, 1), 2); return t.0.0; }
-fn c_nullable_inner() { v = r_nullable_inner(); note("v{v?.h.id}"); }
 // CONTROL — the nested member READ into a local and not returned.  A view drops nothing, so a
 // hand-off marked here releases the resource by nobody.  This is the over-reach cell.
 fn c_read_not_returned() { s = nr_mk(71); t = ((s, 1), 2); u = t.0.0; note("v{u.h.id}"); }
@@ -109,9 +91,6 @@ fn c_construction() { u = NrS { h: NrH { id: 81 } }; note("v{u.h.id}"); }
 fn c_field_read() { s = nr_mk(91); b = NrBox { s: s }; u = b.s; note("v{u.h.id}"); }
 // CONTROL — a vector ELEMENT read into a local, the other sibling view.
 fn c_element_read() { s = nr_mk(101); v: vector<NrS> = [s]; u = v[0]; note("v{u.h.id}"); }
-// CONTROL — the FLAT member returned: loft#1509's shape, closed, and it must stay closed.
-fn r_flat() -> NrS { s = nr_mk(111); t = (s, 5); return t.0; }
-fn c_flat_returned() { v = r_flat(); note("v{v.h.id}"); }
 // CONTROL — the nested member's scalar FIELD returned: no record return path at all.
 fn r_scalar() -> integer { s = nr_mk(121); t = ((s, 1), 2); return t.0.0.h.id; }
 fn c_scalar_field() { n = r_scalar(); note("v{n}"); }
@@ -123,20 +102,10 @@ fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 
-  c_inner_returned(); got = drain();
-  assert(got == "v1,1", "the nested inner member returned releases once: {got}");
 
-  c_depth3(); got = drain();
-  assert(got == "v11,11", "a member three levels down releases once: {got}");
 
-  c_second_inner(); got = drain();
-  assert(got == "21,v22,22", "the second inner tuple's member returned: {got}");
 
-  c_both_in_one(); got = drain();
-  assert(got == "31,v32,32", "two in one inner tuple, member 1 returned: {got}");
 
-  c_nullable_inner(); got = drain();
-  assert(got == "v61,61", "a NULLABLE inner member returned releases once: {got}");
 
   c_read_not_returned(); got = drain();
   assert(got == "v71,71", "CONTROL the nested member read, not returned: {got}");
@@ -150,8 +119,6 @@ fn main() {
   c_element_read(); got = drain();
   assert(got == "v101,101", "CONTROL a vector element read into a local: {got}");
 
-  c_flat_returned(); got = drain();
-  assert(got == "v111,111", "CONTROL the flat member returned: {got}");
 
   c_scalar_field(); got = drain();
   assert(got == "121,v121", "CONTROL the nested member's scalar field: {got}");

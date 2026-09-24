@@ -424,6 +424,12 @@ impl<'a> Frame<'a> {
         }
         let var = match leaf {
             Leaf::Fresh => return Lease::Move,
+            // A vector literal's value is a projection of its `__vdb_N` backing, and that store
+            // is the literal's own storage, not a container something else owns: the value is
+            // fresh (`member_container` says the same of a vector LOCAL's backing).
+            Leaf::Member(root) if self.is_vector_backing(self.resolve_view(root).0) => {
+                return Lease::Move;
+            }
             Leaf::Member(root) => {
                 return Lease::Refuse(self.member_owner(self.resolve_view(root).0));
             }
@@ -435,6 +441,22 @@ impl<'a> Frame<'a> {
         }
         // A compiler temp copies what it was given; a temp given nothing was built where it is.
         if self.func.is_compiler_generated(var) && !self.func.is_argument(var) {
+            // …unless the temp OWNS a type that leases: whatever filled it was a copy that took
+            // its own lease there (`(H-Copy-Lease)`), so the temp holds a structure of this
+            // function's, and placing it moves it.  A view temp (its type depends on its source)
+            // is still followed.
+            // @FR-O-Proxy asks copy — an empty dep list marks a temp that holds a COPY of its own
+            // rather than a view of its source, which is what makes placing it a move here.
+            if self.func.tp(var).depend().is_empty()
+                && self
+                    .func
+                    .tp(var)
+                    .base()
+                    .heap_def_nr()
+                    .is_some_and(|d| leases_whole(self.data, d))
+            {
+                return Lease::Move;
+            }
             if !followed.insert(var) {
                 return Lease::Move;
             }
@@ -491,6 +513,29 @@ impl<'a> Frame<'a> {
 
     /// Who holds a member of `root`: the caller when `root` is reached through a parameter, and
     /// otherwise the container itself.
+    /// Is `var` a compiler temp given nothing but members of the tuple `whole` (its null
+    /// initialiser aside) — the stash a nullable tuple member is copied through?
+    #[must_use]
+    pub fn stashes_member_of(&self, var: u16, whole: u16) -> bool {
+        if !self.func.is_compiler_generated(var) || self.func.is_argument(var) {
+            return false;
+        }
+        let given: Vec<Leaf> = self
+            .assigned(var)
+            .into_iter()
+            .filter(|l| *l != Leaf::Fresh)
+            .collect();
+        !given.is_empty()
+            && given
+                .iter()
+                .all(|l| matches!(l, Leaf::Member(x) if self.resolve_view(*x).0 == whole))
+    }
+
+    /// A vector's own backing store, which the compiler names `__vdb_N`.
+    fn is_vector_backing(&self, var: u16) -> bool {
+        self.func.is_compiler_generated(var) && self.func.name(var).starts_with("__vdb_")
+    }
+
     fn member_owner(&self, root: u16) -> Refusal {
         let holder = self.member_container(root).unwrap_or(root);
         if self.caller_holds(holder) {
@@ -859,4 +904,125 @@ impl Pass<'_> {
     fn names_prefix(&self, arg: Option<&Value>, prefix: &str) -> bool {
         matches!(arg.map(Value::unspan), Some(Value::Var(v)) if self.func.name(*v).starts_with(prefix))
     }
+}
+
+/// A type's own `OpCopy` hook, or `u32::MAX` — resolved the way [`Data::drop_hook_nr`] resolves
+/// `OpDrop`: through the type's own source first, so a library's private hook is found for its
+/// own type.
+#[must_use]
+pub fn copy_hook_nr(data: &Data, type_def: u32) -> u32 {
+    if type_def == u32::MAX || type_def as usize >= data.definitions() as usize {
+        return u32::MAX;
+    }
+    let def = data.def(type_def);
+    let key = Data::mangle_method(def.name(), "OpCopy");
+    let nr = data.source_nr(def.source, &key);
+    if nr != u32::MAX {
+        return nr;
+    }
+    data.def_nr(&key)
+}
+
+/// What a copy of a value of type `t` meets inside it, at any depth.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CopyReach {
+    /// A droppable with no `OpCopy` — a type that declares `OpDrop` alone, or a generator
+    /// handle: `(H-Copy-Refuse)` refuses the copy.
+    pub refused: bool,
+    /// A type that declares `OpCopy`: `(H-Copy-Lease)` runs it on the new structure.
+    pub leases: bool,
+}
+
+/// [`CopyReach`] for a value of type `t`: the walk [`Data::owns_droppable`] makes, asking of each
+/// definition on the way whether it can take a second lease.
+#[must_use]
+pub fn copy_reach(data: &Data, t: &Type) -> CopyReach {
+    let mut out = CopyReach::default();
+    reach_type(data, t, &mut HashSet::new(), &mut out);
+    out
+}
+
+fn reach_type(data: &Data, t: &Type, path: &mut HashSet<u32>, out: &mut CopyReach) {
+    match t {
+        Type::Reference(d, _)
+        | Type::Enum(d, true, _)
+        | Type::Sorted(d, _, _)
+        | Type::Index(d, _, _)
+        | Type::Radix(d, _, _)
+        | Type::Trie(d, _, _)
+        | Type::Hash(d, _, _) => reach_def(data, *d, path, out),
+        Type::Vector(elm, _) => reach_type(data, elm, path, out),
+        Type::Optional(inner) | Type::RefVar(inner) | Type::Rewritten(inner) => {
+            reach_type(data, inner, path, out);
+        }
+        Type::Tuple(elms) => {
+            for e in elms {
+                reach_type(data, e, path, out);
+            }
+        }
+        // A generator handle owns its frame (loft#1585) and has no way to take a second one.
+        Type::Iterator(_, _) => out.refused = true,
+        _ => {}
+    }
+}
+
+fn reach_def(data: &Data, d_nr: u32, path: &mut HashSet<u32>, out: &mut CopyReach) {
+    if d_nr == u32::MAX || d_nr as usize >= data.definitions() as usize || !path.insert(d_nr) {
+        return;
+    }
+    let drops = data.drop_hook_nr(d_nr) != u32::MAX;
+    let copies = copy_hook_nr(data, d_nr) != u32::MAX;
+    if d_nr == data.iterator_def() || (drops && !copies) {
+        out.refused = true;
+    }
+    if copies {
+        out.leases = true;
+    }
+    for a in data.def(d_nr).attributes() {
+        reach_type(data, &a.typedef, path, out);
+    }
+    // An enum's variants are its children, each with its own payload fields.
+    for c in data.children_of(d_nr) {
+        if data.def_type(c) == crate::data::DefType::EnumValue {
+            reach_def(data, c, path, out);
+        }
+    }
+}
+
+/// The function a copy site calls on the new structure: the type's synthesized copy cascade
+/// (`t_<LEN><Type>_OpCopyAll`) when its members lease, else its own `OpCopy`, else `u32::MAX` —
+/// the mirror of [`Data::drop_cascade_nr`].
+#[must_use]
+pub fn copy_cascade_nr(data: &Data, type_def: u32) -> u32 {
+    if type_def == u32::MAX || type_def as usize >= data.definitions() as usize {
+        return u32::MAX;
+    }
+    let key = data.drop_cascade_key(type_def, "OpCopyAll");
+    let nr = data.source_nr(data.def(type_def).source, &key);
+    if nr != u32::MAX {
+        return nr;
+    }
+    let nr = data.def_nr(&key);
+    if nr != u32::MAX {
+        return nr;
+    }
+    copy_hook_nr(data, type_def)
+}
+
+/// Does a copy of a value of the type `d` defines take a lease rather than being refused — a
+/// type declares `OpCopy` inside it, and no droppable inside it lacks one?
+#[must_use]
+pub fn leases_whole(data: &Data, d: u32) -> bool {
+    let r = copy_reach(data, &Type::Reference(d, crate::data::Deps::none()));
+    r.leases && !r.refused
+}
+
+/// The tail walk of the collection definition `vec_def` — `t_<LEN><vector<T>>_OpCopyTail(self,
+/// n)`, which leases the last `n` elements — or `u32::MAX`.
+#[must_use]
+pub fn copy_tail_nr(data: &Data, vec_def: u32) -> u32 {
+    if vec_def == u32::MAX || vec_def as usize >= data.definitions() as usize {
+        return u32::MAX;
+    }
+    data.def_nr(&data.drop_cascade_key(vec_def, "OpCopyTail"))
 }

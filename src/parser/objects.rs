@@ -689,6 +689,13 @@ impl Parser {
                     return t;
                 }
                 self.iter_op(code, name, &mut t, index_var);
+            } else if self.vars.is_store_text_link(index_var) {
+                // @PLN167 decision 2 — a link to a text field or element is spelled as that
+                // field wherever it is mentioned, so a read is the field read and an assignment
+                // the field's setter, both backends.  Its text borrows from the link.
+                self.var_usages(index_var, true);
+                *code = self.store_text_link_place(index_var);
+                t = Type::Text(crate::data::Deps::frame1(index_var));
             } else if let Value::Var(into) = code {
                 let v_nr = self.vars.var(name);
                 if matches!(self.vars.tp(v_nr), Type::Text(_)) {
@@ -3900,7 +3907,9 @@ impl Parser {
         match v.unspan() {
             Value::Var(_) => true,
             Value::Call(d, args) => {
-                data.def(*d).name().starts_with("OpGet")
+                // `OpVarRef(t)` is a store-kind text link's own place, spelled as the field
+                // it names (`OpGetText(OpVarRef(t), 0)`, @PLN167 decision 2).
+                (data.def(*d).name().starts_with("OpGet") || data.def(*d).name() == "OpVarRef")
                     && args
                         .first()
                         .is_some_and(|root| Self::is_source_place(root, data))

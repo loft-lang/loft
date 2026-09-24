@@ -64,7 +64,7 @@ pub fn dispatch_arms(
         if !matches!(def.def_type(), DefType::Function) {
             continue;
         }
-        if def.name().starts_with("Op") {
+        if def.name().starts_with("Op") || def.is_store_text_instance() {
             continue;
         }
         // A closure-capturing lambda has a hidden `__closure` param as its last
@@ -80,21 +80,12 @@ pub fn dispatch_arms(
         // `a = "first: {n}"; a`) — a name-prefix check would miss these and reject
         // otherwise matching candidates.  Closure records stay detected by the exact
         // `__closure` name (its typedef is plain `DbRef`).
-        let visible_attrs: Vec<&crate::data::Attribute> = def
-            .attributes
-            .iter()
-            .filter(|a| {
-                // PLAN51 V-c: `ref_return` appends a hidden Reference/Vector/struct-enum
-                // buffer arg to heap-returning user fns.  Excluding that synthetic attr
-                // keeps arity matching against the call site's user-visible arg count —
-                // without it every ref_return-promoted lambda fails the count and the
-                // dispatch emits only `_ => unreachable!` (probes 30, 59, 62 panicked
-                // with `invalid fn-ref`).
-                !a.hidden
-                    && !matches!(a.typedef, Type::RefVar(ref inner) if matches!(**inner, Type::Text(_)))
-                    && a.name != "__closure"
-            })
-            .collect();
+        // A user's own `&text` parameter is VISIBLE: the rule that tells it from a text-return
+        // work buffer is POSITION, since the buffers are appended after every user parameter
+        // (and flagged `hidden` — `Definition::text_work_buffers`).  Dropping every
+        // `RefVar(Text)` attribute made a `fn(&text)` value match no function at all, and its
+        // dispatch was an empty `match` on `--native` (loft#1656).
+        let visible_attrs = visible_fnref_attrs(def, user_arg_match);
         if visible_attrs.len() != user_arg_match {
             continue;
         }
@@ -117,6 +108,28 @@ pub fn dispatch_arms(
         });
     }
     Some(candidates)
+}
+
+/// The attributes of `def` that a fn-ref call's `user_args` visible arguments bind, in
+/// order: not hidden, not the `__closure` record, and — for a `&text` attribute — only while
+/// user positions remain, so a trailing text-return work buffer is not taken for a parameter.
+#[must_use]
+pub fn visible_fnref_attrs(
+    def: &crate::data::Definition,
+    user_args: usize,
+) -> Vec<&crate::data::Attribute> {
+    let mut out: Vec<&crate::data::Attribute> = Vec::new();
+    for a in &def.attributes {
+        if a.hidden || a.name == "__closure" {
+            continue;
+        }
+        let text_link = matches!(a.typedef.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
+        if text_link && out.len() >= user_args {
+            continue;
+        }
+        out.push(a);
+    }
+    out
 }
 
 /// Where a PARALLEL op carries its worker: `(index, minimum argument count)` of the

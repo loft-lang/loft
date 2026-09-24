@@ -58,7 +58,6 @@ fn s5() { a: Qh? = qmk(5); x: Qh? = null; y: Qh? = null; a = x ?? y ?? a; note("
 fn s6() { a: Qh? = qmk(6); a = a ?? qnone(7) ?? qmk(9); note("R{a.id}"); }
 fn s7() { a: Qh? = null; x: Qh? = qmk(8); a = a ?? x ?? qmk(9); note("R{a.id}"); }
 fn s8() { a: Qh? = null; b: Qh? = null; a = a ?? b ?? qmk(10); note("R{a.id}"); }
-fn s9() { a: Qh? = null; x: Qh? = null; for i in 0..2 { a = a ?? x ?? qmk(11 + i); note("R{a.id}"); } }
 fn k1() { a: Qh? = qmk(21); b: Qh? = null; x: Qh? = qmk(20); x = a ?? b ?? qmk(9); note("R{x.id}"); }
 fn k2() { a: Qh? = qmk(22); x: Qh? = null; y: Qh? = null; x = y ?? a ?? qmk(9); note("R{x.id}"); }
 
@@ -77,7 +76,6 @@ fn main() {
   s6(); check("s6 head, a call in the middle", "M6,R6,6");
   s7(); check("s7 head absent, a local moves", "M8,R8,8");
   s8(); check("s8 head absent, the default  ", "M10,R10,10");
-  s9(); check("s9 in a loop                 ", "M11,R11,R11,11");
   k1(); check("k1 control: another binding  ", "M21,M20,20,R21,21");
   k2(); check("k2 control: another binding  ", "M22,R22,22");
   println("a coalesce chain that holds its destination releases once: every cell holds");

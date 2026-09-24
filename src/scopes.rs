@@ -2073,6 +2073,13 @@ impl ViewWalk<'_> {
     /// view against its own establishment.
     fn record_target(&mut self, stmt: &Value) {
         if let Value::Set(v, rhs) = stmt.unspan() {
+            // A write through a place link binds nothing: the link still names the place it
+            // named, so its open view and any shake of it stand (`note_uses` saw the write).
+            if is_place_link(self.function, *v)
+                && !link_set_repoints(self.data, self.function, *v, rhs)
+            {
+                return;
+            }
             self.shaken.remove(v);
             for frame in &mut self.open {
                 frame.retain(|(view, _, _)| view != v);
@@ -2143,11 +2150,18 @@ impl ViewWalk<'_> {
             // `a-payload-binding-warns-when-its-subject-is-given-another-variant` read its
             // subject's new variant.  The fact belongs on the variable the lowering created,
             // not on the shape of its name.
+            // A `&` link to a SCALAR or TEXT place (`c = &v[1]`, `c = &o.v[0].n`, `t = &o.s`) is
+            // a view by the same relation a record `&` link is: it holds the place's `DbRef`,
+            // and a growth or removal moves the element under it.  `(B-Ref-Reshape)` keys on
+            // that aliasing relation, not on the element type, so it opens here too.  A link to
+            // a LOCAL (`c = &x`) names no container — `value_view_places` answers nothing for
+            // `OpCreateStack` — so it opens nothing.  The materialise side never meets one:
+            // an `&` link is refused at the disturbance rather than copied.
             if !self.function.is_iteration_source(*v)
-                && matches!(
+                && (matches!(
                     self.function.tp(*v).base(),
                     Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
-                )
+                ) || is_place_link(self.function, *v))
             {
                 // The view belongs to the frame that owns its VARIABLE. Re-binding an outer
                 // local inside a nested block gives a view that outlives the block, and
@@ -2358,6 +2372,15 @@ impl ViewWalk<'_> {
                 used.push(*x);
             }
         });
+        // A `Set` that writes THROUGH a place link uses it as surely as a read does: the
+        // write lands on the place the link names (`c = &v[1]; v += [x]; c = 99`).  Only a
+        // `Set` that re-points it is a new binding, which `record_target` handles.
+        if let Value::Set(x, rhs) = stmt.unspan()
+            && is_place_link(self.function, *x)
+            && !link_set_repoints(self.data, self.function, *x, rhs)
+        {
+            used.push(*x);
+        }
         for v in used {
             if let Some(cause) = self.shaken.get(&v).copied() {
                 record_cause(&mut self.out, v, cause);
@@ -2598,6 +2621,48 @@ pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<
     out
 }
 
+/// @FR-B-Ref-Repoint — whether `Set(var, value)` on a link RE-POINTS it rather than writing
+/// through it.  `p = &q` re-points; `p = 99` writes the place.  For a link to a SCALAR the
+/// right-hand side's TYPE separates the two: a place (`c = &v[0]`, `f = &o.y`) arrives as the
+/// place op itself, declared to return a reference, where a value read out of a place is typed
+/// as the scalar.  For a record or collection link an element's VALUE is a reference too, so
+/// only the install ops (`OpCreateStack`, `OpVarRef` — a re-point to the link another link
+/// holds) count.  Every write through a store-kind text link is parsed as the field's setter,
+/// so a `Set` of one is always its bind (@PLN167 decision 2).  Asked by the interpreter's
+/// `set_var` and by the view walk, so the two cannot disagree about which statement binds.
+pub(crate) fn link_set_repoints(data: &Data, function: &Function, var: u16, value: &Value) -> bool {
+    let Type::RefVar(tp) = function.tp(var).base() else {
+        return false;
+    };
+    let scalar_link = matches!(
+        tp.base(),
+        Type::Integer(_)
+            | Type::Boolean
+            | Type::Float
+            | Type::Single
+            | Type::Character
+            | Type::Enum(_, false, _)
+    );
+    if let Value::Call(d, _) = value.unspan() {
+        let def = data.def(*d);
+        matches!(def.name(), "OpCreateStack" | "OpVarRef")
+            || (scalar_link && matches!(def.returned.base(), Type::Reference(_, _)))
+            || function.is_store_text_link(var)
+    } else {
+        false
+    }
+}
+
+/// Whether `v` is a `&` link the author wrote, in either of its two spellings: a struct
+/// projection the parser leaves unlowered and marks (`Function::is_amp_link`), or a scalar or
+/// text place it LOWERS to a `RefVar` local (`c = &v[1]`, `t = &o.s`).  A local is typed
+/// `RefVar` only by a `&` bind; a `&` PARAMETER is `RefVar` too but is an argument, bound by
+/// its caller and never by a `Set` the walk sees.  @FR-B-Ref-Reshape keys on the aliasing
+/// relation, so both spellings reach it.
+fn is_place_link(function: &Function, v: u16) -> bool {
+    !function.is_argument(v) && matches!(function.tp(v).base(), Type::RefVar(_))
+}
+
 fn def_reshape_refusals(
     data: &Data,
     d_nr: u32,
@@ -2657,7 +2722,7 @@ fn def_reshape_refusals(
         // releases once today — is not in this set to begin with, and refusing it would reject
         // a sound program.  Measured over the cell matrix: the walk's answer and the copy-out
         // advice agree on every cell.
-        let amp = function.is_amp_link(view);
+        let amp = function.is_amp_link(view) || is_place_link(function, view);
         let drops = data.type_owns_droppable_anywhere(function.tp(view));
         if !amp && !drops {
             continue;
@@ -2826,8 +2891,14 @@ fn def_reshape_refusals(
                 let Some(attr) = cdef.attributes.get(j) else {
                     continue;
                 };
-                let scalar_link =
-                    matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
+                // A `&text` parameter handed a text field or element links that place too
+                // (@PLN167 C3): the argument is then the place op itself, never the
+                // `OpCreateStack` of a text variable, which names no element.
+                let text_place_link = matches!(attr.typedef.base(),
+                        Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                    && data.is_store_text_arg(arg);
+                let scalar_link = text_place_link
+                    || matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
                 let ptp = match &attr.typedef {
                     Type::RefVar(inner) => inner.as_ref(),
                     other => other,
@@ -2999,6 +3070,17 @@ pub(crate) fn copy_moves_drop_from(
         return None;
     }
     if !copy_carries_drop(function, data, v, function.tp(src)) {
+        return None;
+    }
+    // @FR-H-Copy-Lease — a copy of what the caller still holds, of a type that declares
+    // `OpCopy`, takes a lease of its own: two structures, two drops, and no release moves.
+    if (function.is_argument(src) || function.holds_caller_record(src))
+        && function
+            .tp(v)
+            .base()
+            .heap_def_nr()
+            .is_some_and(|d| crate::lease::leases_whole(data, d))
+    {
         return None;
     }
     // A local that holds the caller's record on every path answers as the parameter it copies:
@@ -6453,6 +6535,10 @@ fn elide_borrows(data: &mut Data) {
         let mut elide_v: HashMap<u16, Value> = HashMap::new();
         let mut elide_vdb: HashSet<u16> = HashSet::new();
         for p in plans {
+            // The elision deletes a copy the line wrote; the copy-lease rules still judge it.
+            if let Value::Var(src) = p.source.unspan() {
+                crate::copy_manifest::note_elided_copy(d_nr, p.var, *src);
+            }
             for &e in &p.borrowers {
                 data.definitions[d_nr as usize]
                     .variables
@@ -9161,6 +9247,8 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // verdict is the same `owns` fact `get_free_vars` uses, and that fact is only
     // final once the call-result rewrites (`make_independent`) have run.
     mark_borrowed_captures(data, database);
+    // `(H-Copy-Lease)` — every copy of a type that declares `OpCopy` runs it on the new structure.
+    crate::use_analysis::lease_calls(data);
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);
@@ -14542,10 +14630,13 @@ impl Scopes<'_> {
         // nothing unreleased.  Dropped from the join instead, the member fell to the bare
         // free on both paths and no hook ran (loft#1645).  A statement `if` only: after a
         // value `if` a statement would change its value.
-        let statement_if = [&scanned_true, &scanned_false].iter().all(|arm| {
-            matches!(arm.unspan(), Value::Null)
-                || matches!(arm.unspan(), Value::Block(b) if matches!(b.result, Type::Void))
-        });
+        let statement_if = [&scanned_true, &scanned_false]
+            .iter()
+            .all(|arm| match arm.unspan() {
+                Value::Null => true,
+                Value::Block(b) => matches!(b.result.base(), Type::Void),
+                _ => false,
+            });
         let mut disarms: Vec<Value> = Vec::new();
         if statement_if {
             let mut joined: Vec<(u16, u16)> = Vec::new();

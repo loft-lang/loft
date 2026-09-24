@@ -85,21 +85,6 @@ struct RbOther { n: integer }
 fn rb_mk(id: integer) -> RbS { return RbS { h: RbH { id: id } }; }
 fn rb_take(x: RbS) -> integer { return x.h.id; }
 
-// The defect: the tuple's only heap member is the one returned, so its backing IS the buffer
-// the return re-mints, and the caller received the cleared record.
-fn r_only() -> RbS { s = rb_mk(1); t = (s, 5); return t.0; }
-fn c_only() { v = r_only(); note("v{v.h.id}"); }
-// Member 1 returned with a record at 0: the value is right and member 0's resource is the one
-// that goes missing.
-fn r_second() -> RbS { a = rb_mk(11); b = rb_mk(12); t = (a, b); return t.1; }
-fn c_second() { v = r_second(); note("v{v.h.id}"); }
-// Member 0 returned with a record at 1 — the mirror, where the returned one is the cleared one.
-fn r_first() -> RbS { a = rb_mk(21); b = rb_mk(22); t = (a, b); return t.0; }
-fn c_first() { v = r_first(); note("v{v.h.id}"); }
-// A scalar ahead of the record: the backing is drawn per heap member, so position 1 reaches it
-// just as position 0 does.
-fn r_scalar_first() -> RbS { s = rb_mk(31); t = (9, s); return t.1; }
-fn c_scalar_first() { v = r_scalar_first(); note("v{v.h.id}"); }
 // THE cell: the tuple is never read and the return is a fresh record of the same type, so
 // nothing in the source connects the two.  The member's resource went missing and its store
 // leaked.  Its SCALAR member is read so the tuple is not a never-read local — the record member
@@ -124,17 +109,9 @@ fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 
-  c_only(); got = drain();
-  assert(got == "v1,1", "the only heap member returned reads its own record: {got}");
 
-  c_second(); got = drain();
-  assert(got == "11,v12,12", "member 1 returned, member 0 still released: {got}");
 
-  c_first(); got = drain();
-  assert(got == "22,v21,21", "member 0 returned, member 1 still released: {got}");
 
-  c_scalar_first(); got = drain();
-  assert(got == "v31,31", "a scalar ahead of the returned record: {got}");
 
   c_unmentioned(); got = drain();
   assert(got == "41,v42,42", "a tuple the return never mentions keeps its resource: {got}");

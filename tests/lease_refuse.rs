@@ -9,12 +9,10 @@
 //! (`LOFT_DROP_COPY_CENSUS`) has produced exactly these verdicts as a REPORT since P2r; this
 //! raises them.
 //!
-//! Opt-in behind `LOFT_LEASE_REFUSE` while this repository's own corpus is converted — the rules
-//! refuse 227 lines across 29 of the 38 files that declare `OpDrop`, and each is a guard pinning
-//! the release machinery the refusal replaces.  That makes the SWITCH part of the contract, so
-//! [`with_the_switch_off_the_copy_still_compiles`] pins it: a guard that only shows the error
-//! would pass just as well if the gate had been wired shut, which is the half that has to stay
-//! true until the flip.
+//! On by default; `LOFT_NO_LEASE_REFUSE=1` switches it off, which is what the drop gate runs its
+//! cells under (a refused cell measures no release).  That makes the SWITCH part of the
+//! contract, so [`with_the_switch_off_the_copy_still_compiles`] pins it from the other side: a
+//! guard that only shows the error would pass just as well if the switch were wired shut.
 //!
 //! These are subprocess cells rather than `code!` ones deliberately.  `code!` runs in-process and
 //! `keys.rs` caches every switch in a `OnceLock`, so the first test in a binary to read one fixes
@@ -63,7 +61,8 @@ fn check(tag: &str, source: &str, mode: &str, env: &[(&str, &str)]) -> (String, 
     )
 }
 
-const ON: &[(&str, &str)] = &[("LOFT_LEASE_REFUSE", "1")];
+/// The refusal is the default; the cells name no environment for it.
+const ON: &[(&str, &str)] = &[];
 
 const PRELUDE: &str = "struct H { id: integer }\n\
                        fn OpDrop(self: H) { print(\"D{self.id}\"); }\n\
@@ -112,6 +111,68 @@ fn a_copy_of_what_the_caller_owns_is_refused() {
     assert_ne!(code, Some(0), "a refused program must not compile\n{out}");
 }
 
+/// A copy the compiler later SKIPS is judged by the line that wrote it.  `(H-Copy-Refuse)` reads a
+/// copy off its own line "whatever the program does after that line", and `(H-Elide)` may elide a
+/// copy only after that verdict.  Two copies had no IR left by the time the census looked:
+///
+/// - `u = p` of a vector parameter that nothing mutates, which the borrow elision replaces by
+///   reads of `p` — while the same bind followed by a growth kept its copy and was refused, so a
+///   LATER line decided validity;
+/// - `p = p`, which the parser erases (#330), and which was judged only when the census's
+///   environment variable happened to be set.
+///
+/// The controls are the same two spellings on a value the function OWNS, which move.
+#[test]
+fn a_copy_the_compiler_skips_is_judged_by_its_own_line() {
+    for (tag, body) in [
+        (
+            "elided_vec",
+            "fn keep(p: vector<H>) { u = p; print(\"R{len(u)}\"); }\n\
+             fn main() { v: vector<H> = [mk(1)]; keep(v); }",
+        ),
+        (
+            "grown_vec",
+            "fn keep(p: vector<H>) { u = p; u += [mk(2)]; print(\"R{len(u)}\"); }\n\
+             fn main() { v: vector<H> = [mk(1)]; keep(v); }",
+        ),
+        (
+            "self_param",
+            "fn keep(p: H) { p = p; print(\"R{p.id}\"); }\n\
+             fn main() { a = mk(1); keep(a); }",
+        ),
+    ] {
+        for mode in ["--interpret", "--native"] {
+            let (out, code) = check(tag, &program(body), mode, ON);
+            assert!(
+                out.contains("[copy-of-droppable]") && out.contains("cannot copy `p` here"),
+                "{tag} {mode}: the copy of the parameter is refused on its own line\n{out}"
+            );
+            assert_ne!(
+                code,
+                Some(0),
+                "{tag} {mode}: a refused program must not compile\n{out}"
+            );
+        }
+    }
+    for (tag, body) in [
+        (
+            "owned_vec",
+            "fn vs() -> vector<H> { [mk(1), mk(2)] }\n\
+             fn main() { w = vs(); u = w; print(\"R{len(u)}\"); }",
+        ),
+        (
+            "owned_self",
+            "fn main() { a = mk(1); a = a; print(\"R{a.id}\"); }",
+        ),
+    ] {
+        let (out, code) = check(tag, &program(body), "--interpret", ON);
+        assert!(
+            !out.contains("[copy-of-droppable]") && code == Some(0),
+            "{tag}: a value the function owns moves, and stays legal\n{out}"
+        );
+    }
+}
+
 /// A value the function OWNS is a MOVE, wherever it is placed — the ruling's whole point, and
 /// the half that would go unnoticed if only the refusals were pinned.
 ///
@@ -140,6 +201,36 @@ fn a_value_the_function_owns_moves_wherever_it_is_placed() {
             "use_then_store",
             "fn main() { c = mk(1); n = c.id; v: vector<H> = [c]; print(\"{n}{len(v)}\"); }",
         ),
+        // The shapes a first version of the refusal wrongly refused (found converting the
+        // corpus, 2026-09-23), each a case the rules name as legal.  A tuple local RETURNED —
+        // as the tail, and by `return`, with a nullable member copied through a stash:
+        (
+            "tuple_returned_as_tail",
+            "fn f() -> (integer, H) { a = (1, mk(1)); a }\n\
+             fn main() { t = f(); print(\"{t.1.id}\"); }",
+        ),
+        (
+            "tuple_returned_nullable_member",
+            "fn g(id: integer) -> H? { if id == 0 { return null; } mk(id) }\n\
+             fn f(id: integer) -> (integer, H?) { a = (1, g(id)); return a; }\n\
+             fn main() { t = f(5); print(\"{t.1?.id ?? 0}\"); }",
+        ),
+        // A whole-tuple bind of a tuple the function owns, whose member is a vector:
+        (
+            "tuple_with_vector_member_moved",
+            "fn main() { t = ([mk(2)], 1); u = t; print(\"{len(u.0)}\"); }",
+        ),
+        // A vector literal inside a tuple literal: the literal's backing is its own storage.
+        (
+            "vector_literal_in_tuple",
+            "fn main() { t = ([mk(3)], 1); print(\"{len(t.0)}\"); }",
+        ),
+        // A member of a call result handed to a function as an argument:
+        (
+            "call_member_as_argument",
+            "fn box() -> S { S { h: mk(4) } }\n\
+             fn main() { take(box().h); }",
+        ),
     ] {
         let (out, code) = check(name, &program(body), "--interpret", ON);
         assert!(
@@ -151,8 +242,8 @@ fn a_value_the_function_owns_moves_wherever_it_is_placed() {
     }
 }
 
-/// The SWITCH is part of the contract until the corpus is converted, so it is pinned from both
-/// sides.  Without this, a guard asserting only the error would pass with the gate wired shut.
+/// The SWITCH is part of the contract — the drop gate runs under it — so it is pinned from both
+/// sides.  Without this, a guard asserting only the error would pass with the switch wired shut.
 #[test]
 fn with_the_switch_off_the_copy_still_compiles() {
     let (out, code) = check(
@@ -162,11 +253,11 @@ fn with_the_switch_off_the_copy_still_compiles() {
              fn main() { s = wrap(mk(1)); print(\"{s.h.id}\"); }",
         ),
         "--interpret",
-        &[],
+        &[("LOFT_NO_LEASE_REFUSE", "1")],
     );
     assert!(
         !out.contains("copy-of-droppable"),
-        "the refusal is opt-in while the corpus is converted\n{out}"
+        "`LOFT_NO_LEASE_REFUSE=1` switches the refusal off\n{out}"
     );
     assert_eq!(code, Some(0), "and the program still compiles\n{out}");
 }

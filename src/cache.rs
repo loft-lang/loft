@@ -70,7 +70,10 @@ use sha2::{Digest, Sha256};
 /// 167 → 183, @PLN165 D2/D3): an older image lays the record out differently.
 ///
 /// 11 — `Definition` carries `builtin` (stride 183 → 184, @PLN165 arc E).
-const CACHE_FORMAT_VERSION: u8 = 11;
+///
+/// 12 — `Variable` carries `linked_narrow` and `store_text_link` (@PLN167): a warm load
+/// without `linked_narrow` read a linked narrow local's field encoding as its value.
+const CACHE_FORMAT_VERSION: u8 = 12;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

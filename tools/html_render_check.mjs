@@ -456,6 +456,16 @@ function decodePngRgb(pngBuf) {
           returnByValue: true,
         });
         assertReport = { expr: opts.assertExpr, value: ev.result.value };
+        if (assertReport.value !== 'true') {
+          // A false assertion names the expression, not what the page showed; the page's own
+          // words (a status line, a compile error, a program's refusal) are what say why.
+          const page = await send('Runtime.evaluate', {
+            expression: `(() => { const t = (document.body && document.body.innerText) || '';
+                                  return t.length > 2000 ? '…' + t.slice(-2000) : t; })()`,
+            returnByValue: true,
+          });
+          assertReport.page = page.result.value;
+        }
       } catch (e) {
         assertReport = { expr: opts.assertExpr, error: e.message };
       }
@@ -476,6 +486,7 @@ function decodePngRgb(pngBuf) {
         failures.push({
           kind: 'assert',
           text: `--assert ${assertReport.expr} => ${assertReport.error || assertReport.value}`,
+          page: assertReport.page,
         });
       }
     }

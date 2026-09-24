@@ -135,6 +135,10 @@ test-group = 'html-wasm-serial'
 filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
 test-group = 'heavy-serial'
 
+[[profile.default.overrides]]
+filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
+test-group = 'heavy-serial'
+
 [[profile.ci.overrides]]
 filter = 'binary(html_wasm)'
 test-group = 'html-wasm-serial'
@@ -154,6 +158,24 @@ test-group = 'heavy-serial'
 [[profile.ci.overrides]]
 platform = 'cfg(windows)'
 filter = 'binary(wrap) & test(loft_suite)'
+slow-timeout = { period = "1200s", terminate-after = 1 }
+
+# The two native matrices — `native_scripts` (a rustc compile per `tests/scripts` program) and
+# the drop gate's native leg (one per generated cell) — grow with what they cover, and both
+# already compile in parallel inside the test.  Measured on the daily `Test (*)` jobs, 09-19..09-23:
+# `native_scripts` 463-571 s on ubuntu and 247-566 s on macOS, KILLED at 600 s on the first try
+# on macOS twice and on Windows every night; the drop gate 195-200 s → 374-392 s once its
+# `bound_`/`handover_` matrices landed, and KILLED at 600 s twice on Windows on 09-23.  The drop
+# gate also ran OUTSIDE `heavy-serial`, so its rustc pool contended with `native_scripts`' own —
+# the over-subscription the group exists to prevent, and why a killed first try passed its retry
+# in half the time.  Both get the longer ceiling on every platform; each program inside still
+# has its own per-run watchdog, which is the hang guard that matters for a matrix.
+[[profile.ci.overrides]]
+filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
+test-group = 'heavy-serial'
+
+[[profile.ci.overrides]]
+filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native))'
 slow-timeout = { period = "1200s", terminate-after = 1 }
 
 # The profile every sanitizer leg runs under: `miri.yml`'s nightly ASan sweep and leak gate,

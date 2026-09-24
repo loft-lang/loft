@@ -611,7 +611,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-8` and `D-heap-9`.  The count is the UNION of two branches that each
+OPEN: **0** — `D-heap-9` (loft#1569) CLOSED 2026-09-24: `OpCopy` runs on every copy a leasing
+type makes, the view-lowered ones materialised (`D-heap-8`, loft#1568, CLOSED 2026-09-23: both
+lease errors are on by default, and this repository's corpus is converted to them).  The count before that was the UNION of two branches that each
 closed entries the other still listed, and neither side's number was right for the join: this
 branch read 4 (`D-heap-8`, `9`, `36`, `38`) and `tuxedo-165-generics` read 3 (`D-heap-8`, `9`,
 `15`).  Taken per ENTRY rather than per side — `D-heap-15` closed here, `D-heap-36` and
@@ -1389,7 +1391,7 @@ CLOSED 2026-09-17, below.
   across 900 000 refills, and twelve value cells); plan cells
   `plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
 
-### D-heap-8 — OPEN (2026-09-15, loft#1568): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
+### D-heap-8 — OPENED 2026-09-15, CLOSED 2026-09-23 (loft#1568): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
 - **Violates:** (H-Copy-Refuse).
 - ⚠ **NARROWED 2026-09-17, when the owner ruled on the copy rules.**  `(H-Move)` now moves a value
@@ -1401,7 +1403,7 @@ CLOSED 2026-09-17, below.
   measured, both backends).  A SECOND half is `(H-Spent)`'s error for reading a name after its
   value moved — `c = open(1); if c { v += [c]; } … c.id` reads a value whose hook has already
   run, and no store instrument can see it because the memory is intact and only the resource is
-  gone.  **Built 2026-09-23, behind the same `LOFT_LEASE_REFUSE`** as `error[read-after-move]`
+  gone.  **Built 2026-09-23** as `error[read-after-move]`, on by default with the copy refusal
   (`src/spent.rs`): the moves are `lease.rs`'s own verdict (`Frame::spends`), read at every
   placement the parser writes, and the reads are followed through the body BEFORE the scope pass,
   whose releases and snapshots are reads of their own that no rule judges.  A read any spending
@@ -1468,8 +1470,8 @@ CLOSED 2026-09-17, below.
   cascades over one resource.  ⚠ `OpDropAll` is a generated per-type METHOD rather than an
   operator, so the operator census cannot see it: `OpFreeRef` being among the most emitted ops in
   the tree says nothing about how well that cascade is covered, and no instrument here measures it.
-- **Status:** OPEN — @PLN163 P2 (the refusal as a report, reworked to this rule) is done, and P3's
-  refusal is BUILT behind `LOFT_LEASE_REFUSE` (opt-in, 2026-09-17).  With the switch on, every
+- **Status:** CLOSED (below) — @PLN163 P2 (the refusal as a report, reworked to this rule) is done, and P3's
+  refusal was BUILT behind an opt-in switch on 2026-09-17, which the paragraph below describes.  With the switch on, every
   verdict above is raised as `error[copy-of-droppable]` naming the copy and what to write instead,
   identically on both backends — it is decided after the scope pass, before either generates, so
   the two cannot disagree.  The entry stays OPEN because the default is off: what the rules refuse
@@ -1481,8 +1483,36 @@ CLOSED 2026-09-17, below.
 - **Removal:** the corpus and the fixtures converted — the refused cells become refusal cells —
   and then the refusal on by default, with the switch left as the bisect step for a program the
   rules refuse.
+- ⚠ **CLOSED 2026-09-23 — both errors are on by default** (`LOFT_NO_LEASE_REFUSE=1` switches
+  them off; the drop gate runs every cell under it, since a refused cell measures no release and
+  those releases are what @PLN163 P5 is verified against).  Converting the corpus found the copy
+  refusal refusing FIVE shapes the rules permit, fixed at the census rather than converted: a
+  vector literal's own `__vdb_N` backing read as a container (a tuple literal holding `[mk()]`, a
+  `match` over a call's vector), a returned tuple local with no hold (`a` as a tail, `return t`,
+  a nullable member through its stash), a whole-tuple move's vector and nullable members, and a
+  member of a call result handed to a function as an argument.  Each is a legal cell in
+  `tests/lease_refuse.rs`.  The corpus then held 124 genuine sites in 25 files: three files'
+  incidental late reads were dropped in place (the cell measured a release, not the read), and
+  every other refused cell moved to a companion `<name>-refused.loft` that pins the refusal with
+  `@EXPECT_ERROR`, the original keeping its legal cells and controls.  The corpus runner
+  (`tests/wrap.rs`) now raises the census after the scope pass, where the CLI and `loft test`
+  do — it ran only a hand-picked pre-scope subset of the lints, so an `@EXPECT_ERROR` for either
+  error could never match there.  The `registry` fixture's arms no longer `disown` a cursor
+  they moved.
+- ⚠ **Two copies the census never saw, found 2026-09-24 and closed the same day** (#1569's
+  matrix).  Both had no IR left by the time the census walked the function.  `u = p` of a VECTOR
+  parameter that nothing mutates is deleted by the borrow elision (`scopes::elide_borrows`), which
+  rewrites every read of `u` to `p`; the same bind followed by `u += […]` kept its copy and was
+  refused, so a LATER line decided validity — `(H-Copy-Refuse)`'s *"whatever the program does
+  after that line"*, violated.  And `p = p`, which the parser erases (#330), was recorded for the
+  census only when `LOFT_DROP_COPY_CENSUS` was set, so by default it was never judged.  Each
+  erasure now records the copy it removed (`copy_manifest::note_elided_copy`,
+  `note_self_bind`) and the census judges the record by the written line.  The drop gate's `p_v4`
+  (`u = p` of a vector parameter) had been classified `Once` on the strength of the first hole;
+  it is `Refused`, with its record twins `p_k7`, `p_h2`–`p_h7`.  Pinned by
+  `tests/lease_refuse.rs::a_copy_the_compiler_skips_is_judged_by_its_own_line`, both backends.
 
-### D-heap-9 — OPEN (2026-09-15, loft#1569): `OpCopy` is not a hook
+### D-heap-9 — OPENED 2026-09-15, CLOSED 2026-09-24 (loft#1569): `OpCopy` is not a hook
 
 - **Violates:** (H-Copy-Lease), (H-Elide).
 - **Where:** `parser/definitions.rs` checks `OpDrop`'s signature (`check_drop_signature`) and
@@ -1492,9 +1522,42 @@ CLOSED 2026-09-17, below.
   both backends: `a = mk(1); b = a` prints no line from the hook, and the release moves to one of
   the two structures (`M1 R1 1 D1`).  A type that means to lease its copies gets neither the lease
   nor an error saying it has none.
-- **Status:** OPEN — @PLN163 P4; P5 then removes the release-moving machinery the lease replaces.
-- **Removal:** the signature check, the synthesized copy cascade, and a call at every copy site
-  on both backends; the moved release removed wherever a copy leases.
+- **Closed in two steps, 2026-09-24.**  The first built the hook.  `OpCopy`'s signature
+  is checked like `OpDrop`'s; a type whose members declare it gets a synthesized
+  `t_<LEN><Type>_OpCopyAll` (its own hook first, then its members', through the drop cascade's own
+  member walks with the hook as a parameter — `parser::definitions::Hook`); and every copy the
+  census can follow with a statement — a whole-value bind, an `OpCopyRecord` into a field, an
+  element or a buffer, a join arm — gets the cascade called on the new structure, in the IR after
+  the scope pass (`use_analysis::lease_calls`), so both backends run it.  `scopes::copy_moves_drop_from`
+  moves no release for such a copy, so each structure drops once.  A type leases when a droppable
+  inside it declares `OpCopy` and none lacks one (`lease::leases_whole`); a member without the hook
+  still refuses the whole copy.  Measured over a 19-cell matrix on both backends, identical under
+  `LOFT_POISON`, `LOFT_STRICT_STORES` and the native leak check; pinned by `tests/copy_lease.rs`.
+  The copies the lowering implemented as a VIEW, and which took no lease — with the refusal
+  off they released one resource twice, the lowering having skipped the copy and kept its drop —
+  were REFUSED for the first half and are MATERIALISED now, each only where the type leases, so
+  no other type's lowering moves:
+  - `p = p` of a parameter is not erased (#330 keeps erasing every other identity) and goes
+    through the parameter rebind's hoist — `tmp = p`, a leased copy, then `p = tmp`.  The census
+    judges a compiler temp that OWNS a leasing type as a move (`lease::Frame::written_leaf`): what
+    filled it took its lease there;
+  - a tuple item — a parameter, or a member of a record that owns a droppable — is copied into the
+    tuple's own storage (`tuple_member_owned_copy`);
+  - `return p`, `return s.h` and a tail doing the same are copied into the return buffer
+    (`return_copies_a_leasing_value` beside `return_projects_into_local`, at the statement and the
+    tail); a join is copied PER ARM (`materialize_view_arms`), so a fresh arm runs no hook — and a
+    local promoted onto the buffer is an argument by slot only (`is_hidden_param`), not a copy;
+  - a whole collection copied or appended leases the appended elements alone, through a
+    synthesized `t_<LEN><vector<T>>_OpCopyTail(self, n)` called with the source's length: the pass
+    after the scope pass cannot mint a loop counter, the slots being assigned.  A copy the borrow
+    elision removes together with its drop runs nothing — `(H-Elide)` — and is legal; a
+    self-append `v += v` reads a spent name and is `(H-Spent)`'s.
+  `par` was measured too: a worker reads its element in place (an argument, no copy), a worker
+  that returns a copy leases it in the worker, and the result crossing back is a byte move.  Every
+  cell — 29 on both backends — identical under `LOFT_POISON`, strict stores and the native leak
+  check; `tests/copy_lease.rs`.
+- **Status:** CLOSED 2026-09-24.  @PLN163 P5 — removing the release-moving machinery the lease
+  replaces — is a removal measured against these cells, not part of this entry.
 
 ### D-heap-13 — CLOSED (2026-09-20): a collection returned from a call and bound to a local never releases its elements
 

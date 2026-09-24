@@ -1727,6 +1727,24 @@ fn run_test_inner(
         }
     };
 
+    // @PLN163 P3 — the lease errors (`copy-of-droppable`, `read-after-move`) are raised after
+    // the scope pass, where the CLI and `loft test` raise them (`post_scope_lints`), so this is
+    // the one window they can be read in.  A refused file stops here, as any refused file does:
+    // its `@EXPECT_ERROR` lines are checked and nothing runs.
+    if diagnostics.level() < loft::diagnostics::Level::Error {
+        loft::use_analysis::drop_copy_census(&p_data, &mut diagnostics, &path);
+        if diagnostics.level() >= loft::diagnostics::Level::Error {
+            for l in diagnostics.lines() {
+                println!("{l}");
+            }
+            collected.extend(diagnostics.lines());
+            if depth == 0 {
+                check_diagnostics(collected, &expected, &exp_errors, &exp_ann_warns, true)?;
+            }
+            println!("  ok (errors consumed)");
+            return Ok(());
+        }
+    }
     for l in diagnostics.lines() {
         println!("{l}");
     }

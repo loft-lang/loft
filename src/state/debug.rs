@@ -697,6 +697,8 @@ impl State {
         is_arg: bool,
         narrow: Option<crate::data::NarrowSlot>,
     ) -> VariableValue {
+        // @FR-L-Narrow-Linked — reflection reaches a frame slot from ordinary loft code
+        // (`stack_trace()`), with no debugger attached, so it owes the same decode.
         match tp {
             // @PLN167 decision 1 — a LINKED narrow local holds its type's FIELD encoding, so
             // both integer arms below would report the stored CODE: `stack_trace()` reached

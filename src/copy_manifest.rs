@@ -287,6 +287,14 @@ pub fn sites() -> Vec<CopySite> {
 pub fn clear() {
     SITES.with(|s| s.borrow_mut().clear());
     SELF_BINDS.with(|s| s.borrow_mut().clear());
+    ELIDED_COPIES.with(|s| s.borrow_mut().clear());
+}
+
+/// Whether the copy-lease rules read the erased and elided records below: the census reports
+/// them, and the refusal — on by default — judges them.  Recording under the census alone made a
+/// verdict depend on an environment variable.
+fn lease_records_wanted() -> bool {
+    crate::keys::drop_copy_census_enabled() || crate::keys::lease_refuse_enabled()
 }
 
 thread_local! {
@@ -298,7 +306,7 @@ thread_local! {
 
 /// Record that the parser erased `var = var` at `line` in `def_nr`.
 pub fn note_self_bind(def_nr: u32, var: u16, line: u32) {
-    if crate::keys::drop_copy_census_enabled() {
+    if lease_records_wanted() {
         SELF_BINDS.with(|s| s.borrow_mut().insert((def_nr, var, line)));
     }
 }
@@ -311,6 +319,34 @@ pub fn self_binds(def_nr: u32) -> Vec<(u16, u32)> {
             .iter()
             .filter(|(d, _, _)| *d == def_nr)
             .map(|&(_, v, l)| (v, l))
+            .collect()
+    })
+}
+
+thread_local! {
+    /// Whole-value binds `var = src` that the borrow elision deleted before the census ran
+    /// (`scopes::elide_borrows`), by function: `(function, destination, source)`.  The elision is
+    /// `(H-Elide)`'s optimisation, and `(H-Copy-Refuse)` reads a copy off the line that WRITES it —
+    /// so a copy the compiler later decides it can skip is judged all the same.
+    static ELIDED_COPIES: RefCell<std::collections::BTreeSet<(u32, u16, u16)>> =
+        const { RefCell::new(std::collections::BTreeSet::new()) };
+}
+
+/// Record that the borrow elision deleted the copy `var = src` in `def_nr`.
+pub fn note_elided_copy(def_nr: u32, var: u16, src: u16) {
+    if lease_records_wanted() {
+        ELIDED_COPIES.with(|s| s.borrow_mut().insert((def_nr, var, src)));
+    }
+}
+
+/// The elided whole-value copies of `def_nr`, as `(destination, source)`.
+#[must_use]
+pub fn elided_copies(def_nr: u32) -> Vec<(u16, u16)> {
+    ELIDED_COPIES.with(|s| {
+        s.borrow()
+            .iter()
+            .filter(|(d, _, _)| *d == def_nr)
+            .map(|&(_, v, src)| (v, src))
             .collect()
     })
 }

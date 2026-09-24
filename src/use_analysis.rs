@@ -4826,7 +4826,8 @@ pub fn post_scope_lints(
     // loft#1397 — a payload binding whose subject's place is overwritten with another variant.
     warn_variant_overwritten(data, diags, fallback_file);
     // @PLN163 P0/P3 — the census of copies of a record with a release (gated
-    // `LOFT_DROP_COPY_CENSUS`), and the refusal the same verdicts raise (`LOFT_LEASE_REFUSE`).
+    // `LOFT_DROP_COPY_CENSUS`), and the errors the same verdicts raise (on by default;
+    // `LOFT_NO_LEASE_REFUSE=1` switches them off).
     drop_copy_census(data, diags, fallback_file);
 }
 
@@ -4893,6 +4894,10 @@ pub fn drop_copy_census(
                 pos: None,
                 refusals: Vec::new(),
                 sites: 0,
+                pending_site: None,
+                pending_tail: None,
+                lease_sites: Vec::new(),
+                quiet: false,
             };
             cx.scan(&def.code);
             // `x = x` leaves no IR (the parser erases it), but it places an existing droppable
@@ -4917,10 +4922,37 @@ pub fn drop_copy_census(
                     false,
                 );
             }
+            // A whole-value bind the borrow elision deleted is a copy the line WROTE: the
+            // elision is `(H-Elide)`'s to make after the verdict, never a reason to skip it.
+            for (var, src) in crate::copy_manifest::elided_copies(d_nr) {
+                if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
+                    continue;
+                }
+                // A type whose copies lease may have one elided together with the drop of the
+                // structure it would have made — `(H-Elide)`, which is what the elision did.
+                let reach = crate::lease::copy_reach(data, func.tp(var));
+                if reach.leases && !reach.refused {
+                    continue;
+                }
+                cx.line = func.var_source(var).0;
+                cx.pos = None;
+                let lease = cx
+                    .frame
+                    .written_var_verdict(src, crate::lease::Placement::Structure);
+                let tp = data.type_name_str(func.tp(var));
+                cx.emit(
+                    "bind",
+                    &tp,
+                    &[src],
+                    func.name(var),
+                    (Some(&lease), "-"),
+                    false,
+                );
+            }
             sites += cx.sites;
             if refuse {
                 raise_copy_refusals(&mut cx, def, diags, fallback_file);
-                raise_spent_reads(d_nr, def, diags, fallback_file);
+                raise_spent_reads(def, diags, fallback_file);
             }
         }
     }
@@ -5006,7 +5038,6 @@ fn raise_copy_refusals(
 /// the value moved on and the cure the rule gives: read it through the structure it moved into,
 /// or give the name a new value first.
 fn raise_spent_reads(
-    d_nr: u32,
     def: &crate::data::Definition,
     diags: &mut crate::diagnostics::Diagnostics,
     fallback_file: &str,
@@ -5016,7 +5047,7 @@ fn raise_spent_reads(
     } else {
         def.position.file.as_str()
     };
-    for read in crate::spent::take(d_nr) {
+    for read in crate::spent::take(def) {
         let (file, line, col) = match &read.pos {
             Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
@@ -5050,6 +5081,37 @@ fn raise_spent_reads(
             concept: "move",
             concept_ref: "@F106",
         });
+    }
+}
+
+/// The tuple local a `synthetic_tuple_return` block copies member by member, when it copies
+/// straight from the local rather than through a hold: the one root every member copy
+/// (`OpCopyRecord(TupleGet(t, i), …)`) reads.  `None` when the copies read no member or more
+/// than one tuple.
+fn tuple_returned_by_members(ops: &[Value], copy_d: u32) -> Option<u16> {
+    let mut roots: Vec<u16> = Vec::new();
+    for op in ops {
+        op.walk(&mut |n| {
+            let t = match n.unspan() {
+                // A member copied straight, or written through the stash a nullable member takes.
+                Value::Call(d, args) if *d == copy_d => match args.first().map(Value::unspan) {
+                    Some(Value::TupleGet(t, _)) => *t,
+                    _ => return,
+                },
+                Value::Set(_, rhs) => match rhs.unspan() {
+                    Value::TupleGet(t, _) => *t,
+                    _ => return,
+                },
+                _ => return,
+            };
+            if !roots.contains(&t) {
+                roots.push(t);
+            }
+        });
+    }
+    match roots.as_slice() {
+        [t] => Some(*t),
+        _ => None,
     }
 }
 
@@ -5092,9 +5154,40 @@ struct Census<'a> {
         String,
     )>,
     sites: usize,
+    /// The site `emit` is about to judge, where a leasing copy can be rewritten: the copy's node,
+    /// the new structure it makes, and that structure's type definition.  Set by the arms whose
+    /// copy is one statement the rewrite can follow; an arm that sets none keeps refusing.
+    pending_site: Option<(Value, Value, u32)>,
+    /// The site an APPEND is about to be judged at: the node, the collection appended to, the
+    /// appended source, and the collection's element definition.  The lease runs over the
+    /// appended tail only.
+    pending_tail: Option<(Value, Value, Value, u32)>,
+    /// `(H-Copy-Lease)` — the copies of a type that declares `OpCopy`: the copy's node and the call
+    /// to insert after it ([`crate::lease::copy_cascade_nr`], or a collection's tail walk).
+    lease_sites: Vec<(Value, Value)>,
+    /// Print no census line — the lease pass walks every function a second time.
+    quiet: bool,
 }
 
 impl Census<'_> {
+    /// Is `src` one member of the whole tuple being copied (`whole_tuple`) — read straight
+    /// (`t.0`), or through the stash a nullable member is written through (`__ref_2 = t.1`)?
+    /// That tuple's copy is ONE site, judged as the whole; its member copies are its parts, a
+    /// record's by `OpCopyRecord` and a vector's by an append.
+    fn member_of_whole_tuple(&self, src: &Value) -> bool {
+        let Some(whole) = self.whole_tuple else {
+            return false;
+        };
+        match src.unspan() {
+            Value::TupleGet(b, _) => self.frame.resolve_view(*b).0 == whole,
+            Value::Var(v) => {
+                self.frame.resolve_view(*v) == (whole, true)
+                    || self.frame.stashes_member_of(*v, whole)
+            }
+            _ => false,
+        }
+    }
+
     /// Record for the copy-manifest check (@PLN163 P2b) that the copy into `dest` has a lease
     /// verdict — and, when `dest` is one of the function's return buffers, that its result does.
     fn note_destination(&self, dest: &Value) {
@@ -5143,15 +5236,23 @@ impl Census<'_> {
                 // hold of the tuple (`__ref_3 = t`): one whole-tuple copy of `t`.
                 "synthetic_tuple_return" => {
                     self.placement = Placement::Return;
-                    if let Some(hold) = bl.operators.iter().find_map(|o| match o.unspan() {
-                        Value::Set(h, rhs)
-                            if matches!(rhs.unspan(), Value::Var(_))
-                                && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
-                        {
-                            Some(*h)
-                        }
-                        _ => None,
-                    }) {
+                    // The tuple is reached through a hold of it (`__ref_3 = t`) or, where the
+                    // return names the local itself (`a = (1, mk(1)); a`, `return t`), straight
+                    // from the member copies: every one reads a member of that one local.
+                    let hold = bl
+                        .operators
+                        .iter()
+                        .find_map(|o| match o.unspan() {
+                            Value::Set(h, rhs)
+                                if matches!(rhs.unspan(), Value::Var(_))
+                                    && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
+                            {
+                                Some(*h)
+                            }
+                            _ => None,
+                        })
+                        .or_else(|| tuple_returned_by_members(&bl.operators, self.copy_d));
+                    if let Some(hold) = hold {
                         let (root, through_member) = self.frame.resolve_view(hold);
                         let (lease, liveness) = if through_member {
                             let refused = Lease::Refuse(Refusal::Container(root));
@@ -5186,8 +5287,7 @@ impl Census<'_> {
                 if *d == self.copy_d
                     && args.len() >= 3
                     && copied_record_releases(self.data, &args[2])
-                    && !matches!(args[0].unspan(), Value::TupleGet(b, _)
-                        if self.whole_tuple == Some(self.frame.resolve_view(*b).0)) =>
+                    && !self.member_of_whole_tuple(&args[0]) =>
             {
                 let (kind, into) = match args[1].unspan() {
                     Value::Var(v) => {
@@ -5229,6 +5329,8 @@ impl Census<'_> {
                 let (lease, liveness) = if kind == "snapshot" {
                     (None, "-".to_string())
                 } else {
+                    self.pending_site = copied_record_def(self.data, &args[2])
+                        .map(|d| (node.clone(), args[1].clone(), d));
                     self.note_destination(&args[1]);
                     (
                         Some(self.frame.written_verdict(&args[0], placement)),
@@ -5252,6 +5354,7 @@ impl Census<'_> {
             Value::Call(d, args)
                 if *d == self.op_append
                     && args.len() >= 2
+                    && !self.member_of_whole_tuple(&args[1])
                     && matches!(args[0].unspan(), Value::Var(v)
                         if self.data.type_owns_droppable_anywhere(self.func.tp(*v).base())) =>
             {
@@ -5264,6 +5367,14 @@ impl Census<'_> {
                 let into = self.func.name(*dest).to_string();
                 let lease = self.frame.written_verdict(&args[1], self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_verdict(node, &args[1]));
+                // A self-append (`v += v`) re-reads the grown collection, so its tail length is not
+                // the source's: it is not given a lease site, and stays refused.
+                if !from.contains(dest)
+                    && let Type::Vector(elm, _) = self.func.tp(*dest).base()
+                    && let Some(ed) = elm.heap_def_nr()
+                {
+                    self.pending_tail = Some((node.clone(), args[0].clone(), args[1].clone(), ed));
+                }
                 self.note_destination(&args[0]);
                 self.emit(
                     "append",
@@ -5299,6 +5410,12 @@ impl Census<'_> {
                 let into = self.func.name(*v).to_string();
                 let lease = self.frame.written_var_verdict(*src, self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_var_verdict(node, *src));
+                self.pending_site = self
+                    .func
+                    .tp(*v)
+                    .base()
+                    .heap_def_nr()
+                    .map(|d| (node.clone(), Value::Var(*v), d));
                 crate::copy_manifest::note_lease_site(self.d_nr, *v);
                 self.emit(kind, &tp, &[*src], &into, (Some(&lease), &liveness), false);
             }
@@ -5437,7 +5554,23 @@ impl Census<'_> {
         if is_block {
             self.blocks.push(std::ptr::from_ref(node));
         }
-        node.for_each_child(&mut |c| self.scan(c));
+        // A member of a call result handed to a FUNCTION as an argument is lowered as a copy
+        // into a temporary the call reads (`take(mk().h)`, an `inline ref copy` block): passing
+        // binds without copying (calls.md F-ParamHeap), so nothing the author wrote places the
+        // value in a new structure.  Only that argument reads through; another argument that
+        // builds a structure (`take(S { h: p })`) is judged as written.
+        let user_call = matches!(node, Value::Call(op, _)
+            if !self.data.def(*op).name().starts_with("Op"));
+        node.for_each_child(&mut |c| {
+            if user_call && matches!(c.unspan(), Value::Block(b) if b.name == "inline ref copy") {
+                let saved = self.placement;
+                self.placement = Placement::ReadThrough;
+                self.scan(c);
+                self.placement = saved;
+            } else {
+                self.scan(c);
+            }
+        });
         if is_block {
             self.blocks.pop();
         }
@@ -5464,13 +5597,50 @@ impl Census<'_> {
         // taken: one chokepoint rather than eight arms that can drift apart.  A `snapshot` is the
         // scope pass's own copy and carries no verdict (`None`), so it can never be refused —
         // which the corpus agrees with, 0 refusals across 666 snapshot rows.
-        if crate::keys::lease_refuse_enabled()
-            && let Some(crate::lease::Lease::Refuse(r)) = lease
-        {
-            self.refusals
-                .push((self.pos.clone(), self.line, r.clone(), tp.to_string()));
+        let site = self.pending_site.take();
+        let tail = self.pending_tail.take();
+        if let Some(crate::lease::Lease::Refuse(r)) = lease {
+            // `(H-Copy-Lease)`: a copy of a type whose every droppable declares `OpCopy` is not
+            // refused — the new structure takes its own lease.  Only at a site the rewrite can
+            // reach; anywhere else the copy stays refused rather than silently unleased.
+            let tail_call = tail.and_then(|(node, dst, src, ed)| {
+                if !crate::lease::leases_whole(self.data, ed) {
+                    return None;
+                }
+                let Some(Value::Var(dv)) = Some(dst.unspan()) else {
+                    return None;
+                };
+                let Type::Vector(elm, _) = self.func.tp(*dv).base() else {
+                    return None;
+                };
+                let walk = crate::lease::copy_tail_nr(self.data, self.data.collection_def_nr(elm));
+                let len = self.data.def_nr("OpLengthVector");
+                (walk != u32::MAX && len != u32::MAX).then(|| {
+                    (
+                        node,
+                        Value::Call(walk, vec![dst, Value::Call(len, vec![src])]),
+                    )
+                })
+            });
+            match site {
+                _ if tail_call.is_some() => {
+                    self.lease_sites.extend(tail_call);
+                }
+                Some((node, dst, d)) if crate::lease::leases_whole(self.data, d) => {
+                    let cascade = crate::lease::copy_cascade_nr(self.data, d);
+                    if cascade != u32::MAX {
+                        self.lease_sites
+                            .push((node, Value::Call(cascade, vec![dst])));
+                    }
+                }
+                _ if crate::keys::lease_refuse_enabled() => {
+                    self.refusals
+                        .push((self.pos.clone(), self.line, r.clone(), tp.to_string()));
+                }
+                _ => {}
+            }
         }
-        if !crate::keys::drop_copy_census_enabled() {
+        if self.quiet || !crate::keys::drop_copy_census_enabled() {
             return;
         }
         let lease = lease.map_or_else(|| "-".to_string(), |l| lease_column(self.func, l.clone()));
@@ -5566,6 +5736,15 @@ fn push_copy_root(v: u16, func: &Function, out: &mut Vec<u16>, seen: &mut Vec<u1
 }
 
 /// The name of the record type an `OpCopyRecord`'s type argument names, or `?` when it names none.
+/// The definition an `OpCopyRecord`'s type operand names — [`copied_record_name`]'s lookup.
+fn copied_record_def(data: &Data, tp: &Value) -> Option<u32> {
+    let Value::Int(tp) = tp.unspan() else {
+        return None;
+    };
+    let known = u16::try_from(*tp & i32::from(crate::keys::COPY_TP_MASK)).ok()?;
+    (0..data.definitions()).find(|&d| data.def(d).known_type == known)
+}
+
 fn copied_record_name(data: &Data, tp: &Value) -> String {
     let Value::Int(tp) = tp.unspan() else {
         return "?".to_string();
@@ -8460,5 +8639,88 @@ mod ref_param_publish_tests {
     fn silent_without_a_publish() {
         let code = v_block(vec![free(1)], Type::Void, "body");
         assert!(run(&code).is_empty());
+    }
+}
+
+/// `(H-Copy-Lease)` — run `OpCopy` on the new structure every copy of a leasing type makes.
+/// Enforces @FR-H-Copy-Lease.
+///
+/// The copies are the census's (`drop_copy_census`): the one walk that sees every copy site with
+/// its `(H-Move)` verdict, proved complete against what both generators emit (`copy_manifest`).
+/// A site with a copy verdict on a type whose every droppable declares `OpCopy` gets the type's
+/// copy cascade called on the new structure as the statement right after the copy — in the IR,
+/// so both backends run it.  A move, the scope pass's `__disp_` snapshot and an elided copy have
+/// no copy verdict and run nothing.
+///
+/// Runs at the end of the scope pass, once per load.  Idempotent: a copy already followed by its
+/// call is left alone, so a later load's pass changes nothing.
+pub fn lease_calls(data: &mut Data) {
+    if !(0..data.definitions())
+        .any(|d| data.def(d).def_type == DefType::Function && data.def(d).name.ends_with("_OpCopy"))
+    {
+        return;
+    }
+    let copy_d = data.def_nr("OpCopyRecord");
+    for d_nr in 0..data.definitions() {
+        if !matches!(data.def(d_nr).def_type, DefType::Function) {
+            continue;
+        }
+        let sites = {
+            let def = data.def(d_nr);
+            let mut cx = Census {
+                data,
+                d_nr,
+                func: &def.variables,
+                frame: crate::lease::Frame::new(data, def),
+                fname: &def.name,
+                copy_d,
+                op_append: data.def_nr("OpAppendVector"),
+                returned: data
+                    .type_owns_droppable_anywhere(def.returned.base())
+                    .then(|| data.type_name_str(&def.returned)),
+                whole_tuple: None,
+                rhs_of: None,
+                placement: crate::lease::Placement::Structure,
+                blocks: Vec::new(),
+                line: 0,
+                pos: None,
+                refusals: Vec::new(),
+                sites: 0,
+                pending_site: None,
+                pending_tail: None,
+                lease_sites: Vec::new(),
+                quiet: true,
+            };
+            cx.scan(&def.code);
+            cx.lease_sites
+        };
+        if sites.is_empty() {
+            continue;
+        }
+        let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
+        insert_lease_calls(&mut code, &sites);
+        data.definitions[d_nr as usize].code = code;
+    }
+}
+
+/// Insert each lease site's call as the statement after its copy, where it is not there already.
+fn insert_lease_calls(node: &mut Value, sites: &[(Value, Value)]) {
+    node.for_each_child_mut(&mut |c| insert_lease_calls(c, sites));
+    let list = match node {
+        Value::Block(bl) | Value::Loop(bl) => &mut bl.operators,
+        Value::Insert(items) => items,
+        _ => return,
+    };
+    let old = std::mem::take(list);
+    let mut i = 0;
+    while i < old.len() {
+        let item = &old[i];
+        list.push(item.clone());
+        if let Some((_, call)) = sites.iter().find(|(n, _)| n == item || n == item.unspan())
+            && old.get(i + 1) != Some(call)
+        {
+            list.push(call.clone());
+        }
+        i += 1;
     }
 }
