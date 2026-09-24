@@ -174,19 +174,6 @@ slow-timeout = { period = "1200s", terminate-after = 1 }
 filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
 test-group = 'heavy-serial'
 
-# `native_scripts` compiles every `tests/scripts` program natively, and on Windows its FIRST run is
-# cold: the native binary cache is keyed on the compiler, so every commit misses it.  Measured on
-# the same run: the cold try ran past 1200 s, and its retry — reading the cache the cold try had
-# filled — passed in 114 s.  So a timeout there is not a hang but the test's real cost, and a
-# kill-then-retry costs MORE than finishing (and reports a flake that is not one).  The per-program
-# watchdog inside the test remains the hang guard.  ⚠ It must come BEFORE the all-platform 1200 s
-# override below: nextest takes the FIRST matching override for each setting, and placed after it
-# this one never applied (run 35983668588 killed the cold try at 1200 s again).
-[[profile.ci.overrides]]
-platform = 'cfg(windows)'
-filter = 'binary(native) & test(=native_scripts)'
-slow-timeout = { period = "2400s", terminate-after = 1 }
-
 [[profile.ci.overrides]]
 filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native))'
 slow-timeout = { period = "1200s", terminate-after = 1 }

@@ -177,6 +177,8 @@ jobs:
             # a person's time per run.
             if [ "${{ inputs.os }}" = "ubuntu-latest" ]; then
               echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
+            elif [ "${{ inputs.os }}" = "windows-latest" ]; then
+              echo 'legs=[{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
             else
               echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
             fi
@@ -186,7 +188,14 @@ jobs:
             # measured it), so the serial groups and the corpus overlap instead of queueing.
             echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           else
-            echo 'legs=[{"os":"ubuntu-latest"},{"os":"macos-latest"},{"os":"windows-latest"}]' >> "$GITHUB_OUTPUT"
+            # Windows is SHARDED here too: unsharded it ran every test green in 63-65 min and was
+            # then cancelled saving its cache at the 90-min job limit (runs 35972977751,
+            # 35983668588) — 4 cores against a suite whose serial chain alone is ~30 min cold.
+            # The limit is not the lever (the owner, 2026-09-24: never raise it); the legs are.
+            # Each leg pays the ~17 min build, and the tests divide.  Branch protection's
+            # `Test (windows-latest)` is the PR-path placeholder job, unaffected by the names
+            # these legs carry.
+            echo 'legs=[{"os":"ubuntu-latest"},{"os":"macos-latest"},{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           fi
       - id: diff
         shell: bash
