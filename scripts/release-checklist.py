@@ -896,6 +896,78 @@ def published_triples() -> list[str]:
     return mod.published_triples()
 
 
+def release_run_jobs(version: str, network: bool):
+    """The tag's `release.yml` run and its jobs: (state, evidence, jobs) — jobs is None
+    unless the run exists and could be read."""
+    if not network:
+        return UNKNOWN, "skipped (--no-network)", None
+    code, out = sh(
+        "gh", "run", "list", "--workflow", "release.yml", "--branch", f"v{version}",
+        "--json", "databaseId,conclusion", "--limit", "1", timeout=90,
+    )
+    if code != 0 or not out.strip():
+        return UNKNOWN, "no release.yml run for this tag yet", None
+    try:
+        runs = json.loads(out)
+    except json.JSONDecodeError:
+        return UNKNOWN, "could not parse `gh run list`", None
+    if not runs:
+        return UNKNOWN, "no release.yml run for this tag yet", None
+    run_id = runs[0]["databaseId"]
+    code, out = sh(
+        "gh", "api", f"repos/{REPO}/actions/runs/{run_id}/jobs", "--paginate", timeout=90,
+    )
+    if code != 0:
+        return UNKNOWN, "could not read the run's jobs", None
+    try:
+        return OK, str(run_id), json.loads(out).get("jobs", [])
+    except json.JSONDecodeError:
+        return UNKNOWN, "could not parse the run's jobs", None
+
+
+def check_consumers(version: str, network: bool):
+    """Did every consumer pass at the tag's commit, on both backends?
+
+    `release.yml` calls `consumer-main-health.yml`, whose jobs appear here as
+    `consumer-main-health.yml / <consumer>`.  A job's conclusion is not enough: the
+    private consumer's steps are all skipped when no token is set, and a job whose steps
+    all skipped concludes `success` — its own notice says "NOT checked (this is not a
+    pass)".  So the step that runs the packages is read, and a skipped one is UNKNOWN.
+    """
+    st, why, jobs = release_run_jobs(version, network)
+    if jobs is None:
+        return st, why
+    legs = [j for j in jobs if j.get("name", "").startswith("consumer-main-health.yml / ")]
+    if not legs:
+        return UNKNOWN, "the run has no consumer legs — this tag was built before release.yml called consumer-main-health"
+    passed, failed, unchecked, pending = [], [], [], []
+    for j in legs:
+        name = j["name"].split(" / ", 1)[1]
+        if j.get("status") != "completed":
+            pending.append(name)
+            continue
+        step = next((s for s in j.get("steps", []) if s.get("name") == "Check every package"), None)
+        if step is None or step.get("conclusion") == "skipped":
+            unchecked.append(name)
+        elif step.get("conclusion") == "success" and j.get("conclusion") == "success":
+            passed.append(name)
+        else:
+            failed.append(name)
+    if pending:
+        return UNKNOWN, "still running: " + ", ".join(pending)
+    if failed:
+        return (
+            FAIL,
+            "RED at the tag's commit: " + ", ".join(failed)
+            + " — loft moved under the consumer, or its tip is broken; which it is decides the release"
+            + (f" (not checked: {', '.join(unchecked)})" if unchecked else ""),
+        )
+    if unchecked and not passed:
+        return UNKNOWN, "no consumer was checked: " + ", ".join(unchecked)
+    tail = f"; NOT checked (no token): {', '.join(unchecked)}" if unchecked else ""
+    return OK, f"{len(passed)} consumer(s) green on both backends: {', '.join(passed)}{tail}"
+
+
 def check_smoke_ran(version: str, network: bool):
     """Did the bundle smoke actually RUN on all four legs, or did one skip?
 
@@ -1481,6 +1553,12 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "The bundle smoke RAN (did not skip) on every leg — the hands-on walkthrough",
             f"gh run list --workflow release.yml --branch v{version}",
             check=lambda: smoke,
+        ),
+        Item(
+            "A-consumers",
+            "Every consumer passes at the tag's commit — every package, both backends",
+            f"gh run list --workflow release.yml --branch v{version}   # the consumer-main-health.yml legs",
+            check=lambda: check_consumers(version, network),
         ),
         Item(
             "M-rosetta",

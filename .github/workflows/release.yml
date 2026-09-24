@@ -326,6 +326,19 @@ jobs:
           publish_dir: ./doc
           exclude_assets: 'claude/**'
 
+  # The programs built WITH loft, at this commit.  The bundle smoke above proves the
+  # artefact runs its own examples; this proves the language the artefact carries against
+  # its consumers — every package of moros, dryopea, crawler and the private economy
+  # model, on both backends, exactly as the nightly `consumer-main-health` runs them (the
+  # same file, called; it takes the tag's commit).  It does not gate the draft: a red here
+  # is either loft moving under a consumer or the consumer's own tip, and which it is
+  # decides whether the release ships — the owner's call, read from `make
+  # release-checklist`'s `A-consumers` row (RELEASE.md § What the tag pipeline proves).
+  consumers:
+    name: consumer-main-health.yml
+    uses: ./.github/workflows/consumer-main-health.yml
+    secrets: inherit
+
   crates-io:
     name: Publish to crates.io
     needs: build
