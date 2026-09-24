@@ -6443,6 +6443,53 @@ impl Parser {
                 self.fill_copy_cascade(t, c_nr);
             }
         }
+        // A collection's TAIL walk, for a copy APPENDED to a collection that already holds
+        // elements: `t_<LEN><vector<T>>_OpCopyTail(self, n)` leases the last `n` elements only,
+        // which are the ones the append made.  The pass after the scope pass cannot mint a loop
+        // counter of its own — the slots are assigned by then — so the walk is a function.
+        for d_nr in 0..self.data.definitions() {
+            let name = self.data.drop_cascade_key(d_nr, "OpCopyTail");
+            if self.data.def_type(d_nr) != DefType::Vector || self.data.def_nr(&name) != u32::MAX {
+                continue;
+            }
+            let Some((elem_tp, ed)) = self.collection_elem_cascade_for(Hook::Copy, d_nr) else {
+                continue;
+            };
+            let target = self.hook_cascade_nr(Hook::Copy, ed);
+            if target == u32::MAX {
+                continue;
+            }
+            let pos = self.data.def(d_nr).position().clone();
+            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
+            self.data.set_returned(c_nr, Type::Void);
+            let self_tp = self.cascade_self_type(d_nr);
+            let int_tp = self
+                .data
+                .def(self.data.def_nr("integer"))
+                .returned()
+                .clone();
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "self", self_tp.clone());
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "n", int_tp.clone());
+            let file = self.data.def(d_nr).position().file.clone();
+            let mut vars = Function::new(&name, &file);
+            let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
+            vars.become_argument(self_var);
+            vars.defined(self_var);
+            let n_var = vars.add_variable("n", &int_tp, &mut self.lexer);
+            vars.become_argument(n_var);
+            vars.defined(n_var);
+            let outer_vars = std::mem::replace(&mut self.vars, vars);
+            let outer_context = self.context;
+            self.context = c_nr;
+            let len = self.cl("OpLengthVector", &[Value::Var(self_var)]);
+            let start = self.cl("OpMinInt", &[len, Value::Var(n_var)]);
+            let walk = self.elements_loop_from(&Value::Var(self_var), 0, &elem_tp, target, start);
+            self.finish_drop_cascade(c_nr, vec![walk], outer_vars, outer_context);
+        }
     }
 
     /// The body of a record's or a collection's copy cascade — see [`Self::synth_copy_cascades`].
@@ -6949,6 +6996,18 @@ impl Parser {
         elem_tp: &Type,
         target: u32,
     ) -> Value {
+        self.elements_loop_from(field, idx, elem_tp, target, Value::Int(0))
+    }
+
+    /// [`Self::drop_elements_loop`] from element `start` on — the copy tail's walk.
+    fn elements_loop_from(
+        &mut self,
+        field: &Value,
+        idx: usize,
+        elem_tp: &Type,
+        target: u32,
+        start: Value,
+    ) -> Value {
         let int_tp = self
             .data
             .def(self.data.def_nr("integer"))
@@ -6997,7 +7056,7 @@ impl Parser {
         ];
         v_block(
             vec![
-                crate::data::v_set(i_var, Value::Int(0)),
+                crate::data::v_set(i_var, start),
                 crate::data::v_loop(body, "drop_elements"),
             ],
             Type::Void,

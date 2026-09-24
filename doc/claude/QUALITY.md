@@ -1683,11 +1683,14 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **14** |
+| **15** |
 
 The census this came from — how many functions resolve a projection by op name, and which ones
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
 LIST rather than a total, and the list is what tells you where to work.
+
+(2026-09-24, loft#1569 on `tuxedo-165-generics`, measured: **91 · 15 · 76** — `return_copies_a_leasing_value`
+reads a returned projection in both spellings, so the ratchet rose by one.)
 
 (2026-09-17, the SECOND join, re-measured at its end: **73 · 14 · 59**.  The ratchet — functions
 ALSO handling `TupleGet` — is unmoved at 14, which is what this row gates; the two descriptive

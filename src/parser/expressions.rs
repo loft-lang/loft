@@ -3217,10 +3217,20 @@ use a separate collection or add after the loop"
         // interpreter, null on native — and the two diverged).  Killing it
         // here covers BOTH backends and keeps the store identity stable
         // for any live borrows.
+        // …except where the identity is a COPY that takes a lease: `p = p` of a PARAMETER whose
+        // type declares `OpCopy` makes a structure of the callee's own (`(H-Copy-Lease)`), so it is
+        // parsed as the rebind it spells and the hook runs on the new structure.
         if op == "="
             && let Value::Var(lhs) = to
             && self.lexer.peek().has
                 == crate::lexer::LexItem::Identifier(self.vars.name(*lhs).to_string())
+            && !(self.vars.is_argument(*lhs)
+                && self
+                    .vars
+                    .tp(*lhs)
+                    .base()
+                    .heap_def_nr()
+                    .is_some_and(|d| crate::lease::leases_whole(&self.data, d)))
         {
             let link = self.lexer.link();
             self.lexer.cont();

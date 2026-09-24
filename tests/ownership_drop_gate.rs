@@ -1638,7 +1638,8 @@ fn every_cell_disagreeing_with_the_lease_rules_names_its_open_deviation() {
     ))
     .expect("read formal/heap.md");
     let mut wrong = Vec::new();
-    for dev in LEASE_DEVIATIONS.iter().map(|(d, _)| *d).chain(["D-heap-9"]) {
+    // `D-heap-9` (`OpCopy` is not a hook) was chained here until it closed on 2026-09-24.
+    for dev in LEASE_DEVIATIONS.iter().map(|(d, _)| *d) {
         let header = format!("### {dev} — OPEN");
         // A closed entry's header — `— OPENED 2026-09-15, CLOSED 2026-09-17` — has the open
         // spelling as a PREFIX, so `starts_with` alone answers "it is open" about an entry that

@@ -22,10 +22,10 @@ ships from this release on.  Nothing in a program changes.
 **A type with a release hook can say how a copy gets its own: `fn OpCopy(self: T)`.**  A copy
 of such a value copies the bytes and then runs `OpCopy` on the new one, so a reference-counted
 buffer can take a second reference and both copies are released once each.  A struct holding
-such a member runs its own `OpCopy` first, then its members'.  A copy is still refused when
-anything inside the type has a release hook and no `OpCopy`, and a few copies the compiler
-implements as a shared view — returning a parameter, a tuple item, copying a whole collection
-— stay refused for now.
+such a member runs its own `OpCopy` first, then its members'.  It covers every copy — a
+parameter bound or returned, a member placed in a literal, a tuple or a collection, a whole
+collection copied or appended to — and a copy is still refused when anything inside the type
+has a release hook and no `OpCopy`.
 
 **A value with a release hook is either moved or refused, and the compiler tells you which.**
 A type that declares `OpDrop` holds something outside the program — a file, a lock, a

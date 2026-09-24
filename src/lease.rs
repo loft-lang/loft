@@ -441,6 +441,22 @@ impl<'a> Frame<'a> {
         }
         // A compiler temp copies what it was given; a temp given nothing was built where it is.
         if self.func.is_compiler_generated(var) && !self.func.is_argument(var) {
+            // …unless the temp OWNS a type that leases: whatever filled it was a copy that took
+            // its own lease there (`(H-Copy-Lease)`), so the temp holds a structure of this
+            // function's, and placing it moves it.  A view temp (its type depends on its source)
+            // is still followed.
+            // @FR-O-Proxy asks copy — an empty dep list marks a temp that holds a COPY of its own
+            // rather than a view of its source, which is what makes placing it a move here.
+            if self.func.tp(var).depend().is_empty()
+                && self
+                    .func
+                    .tp(var)
+                    .base()
+                    .heap_def_nr()
+                    .is_some_and(|d| leases_whole(self.data, d))
+            {
+                return Lease::Move;
+            }
             if !followed.insert(var) {
                 return Lease::Move;
             }
@@ -999,4 +1015,14 @@ pub fn copy_cascade_nr(data: &Data, type_def: u32) -> u32 {
 pub fn leases_whole(data: &Data, d: u32) -> bool {
     let r = copy_reach(data, &Type::Reference(d, crate::data::Deps::none()));
     r.leases && !r.refused
+}
+
+/// The tail walk of the collection definition `vec_def` — `t_<LEN><vector<T>>_OpCopyTail(self,
+/// n)`, which leases the last `n` elements — or `u32::MAX`.
+#[must_use]
+pub fn copy_tail_nr(data: &Data, vec_def: u32) -> u32 {
+    if vec_def == u32::MAX || vec_def as usize >= data.definitions() as usize {
+        return u32::MAX;
+    }
+    data.def_nr(&data.drop_cascade_key(vec_def, "OpCopyTail"))
 }

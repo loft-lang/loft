@@ -507,9 +507,9 @@ fn keep(b: Buf) {
 Like `OpDrop`, it takes only `self` and answers nothing. A struct whose members
 declare `OpCopy` gets a synthesized cascade: its own `OpCopy` first, then its
 members'. A copy is refused if ANY droppable inside the type lacks `OpCopy`. A move,
-a vector's growth and a view run no hook. Some copies the compiler implements as
-views — a `return` of a parameter or of a member, a tuple item, a whole-collection
-copy — cannot take a lease yet and stay refused (`formal/heap.md` D-heap-9).
+a vector's growth, a view and an argument run no hook — and neither does a copy the
+compiler skips altogether together with its release, which it may: never rely on the
+hook running for a particular copy, only on each copy that exists holding a lease.
 
 A container releases in this order:
 

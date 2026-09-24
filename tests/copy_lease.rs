@@ -166,32 +166,80 @@ fn what_is_not_a_copy_runs_no_hook() {
     ]);
 }
 
-/// A member without `OpCopy` still refuses the whole copy, and the shapes the lowering makes a
-/// VIEW of — which cannot lease until the parser materialises them (`formal/heap.md` D-heap-9) —
-/// stay refused rather than silently unleased.
+/// The copies the lowering would otherwise make a VIEW of are materialised, so they lease too:
+/// the identity `p = p` of a parameter, a tuple item, a `return` of a parameter or a member (as a
+/// statement, as a tail, and per arm of a join — the fresh arm runs no hook), and a whole
+/// collection copied or appended, which leases only the appended elements.  A copy the compiler
+/// ELIDES together with its drop runs nothing, which is `(H-Elide)`.
 #[test]
-fn a_copy_that_cannot_lease_stays_refused() {
+fn a_copy_the_lowering_would_view_is_materialised_and_leases() {
     check(&[
         (
-            "member_without_hook",
-            "struct K { id: integer }\n\
-             fn OpDrop(self: K) { println(\"DK{self.id}\"); }\n\
-             struct S3 { h: H, k: K }\n\
-             fn cp(p: S3) { x = p; println(\"R{x.h.id}\"); }\n\
-             fn main() { s = S3 { h: mk(1), k: K { id: 7 } }; cp(s); println(\"back\"); }",
-            "error[copy-of-droppable]",
+            "self_rebind",
+            "fn keep(p: H) { p = p; println(\"R{p.id}\"); }\n\
+             fn main() { a = mk(1); keep(a); println(\"back {a.id}\"); }",
+            "C1 R101 D101 back 1 D1",
         ),
         (
-            "return_param",
-            "fn same(p: H) -> H { return p; }\n\
-             fn main() { a = mk(1); b = same(a); println(\"R{b.id} {a.id}\"); }",
-            "error[copy-of-droppable]",
-        ),
-        (
-            "tuple_item",
+            "tuple_items",
             "fn tup(p: H) { t = (p, 1); println(\"R{t.0.id}\"); }\n\
-             fn main() { a = mk(1); tup(a); println(\"back {a.id}\"); }",
-            "error[copy-of-droppable]",
+             fn main() { a = mk(1); tup(a); println(\"back {a.id}\"); \
+             s = S { h: mk(2), n: 0 }; u = (s.h, 5); println(\"R{u.0.id} {s.h.id}\"); }",
+            "C1 R101 D101 back 1 C2 R102 2 D102 D2 D1",
+        ),
+        (
+            "returns",
+            "fn same(p: H) -> H { return p; }\n\
+             fn tail(p: H) -> H { p }\n\
+             fn inner(s: S) -> H { return s.h; }\n\
+             fn own() -> H { a = mk(9); a }\n\
+             fn main() { a = mk(1); b = same(a); println(\"R{b.id} {a.id}\"); \
+             c = tail(a); println(\"R{c.id}\"); \
+             s = S { h: mk(2), n: 0 }; d = inner(s); println(\"R{d.id} {s.h.id}\"); \
+             e = own(); println(\"R{e.id}\"); }",
+            "C1 R101 1 C1 R101 C2 R102 2 R9 D9 D102 D2 D101 D101 D1",
+        ),
+        (
+            "join_return",
+            "fn pick(p: H?) -> H { return p ?? mk(9); }\n\
+             fn main() { a = mk(1); b = pick(a); println(\"R{b.id} {a.id}\"); \
+             c = pick(null); println(\"R{c.id}\"); }",
+            "C1 R101 1 R9 D9 D101 D1",
+        ),
+        (
+            "collection_copy",
+            "fn cp(p: vector<H>) { u = p; u += [mk(3)]; \
+             println(\"R{len(u)} {u[0].id} {u[1].id} {u[2].id}\"); }\n\
+             fn main() { w: vector<H> = [mk(1), mk(2)]; cp(w); println(\"back {w[0].id}\"); }",
+            "C1 C2 R3 101 102 3 D101 D102 D3 back 1 D1 D2",
+        ),
+        (
+            "collection_append",
+            "fn cat(p: vector<H>) { v: vector<H> = [mk(7)]; v += p; \
+             println(\"R{len(v)} {v[0].id} {v[1].id} {v[2].id}\"); }\n\
+             fn main() { w: vector<H> = [mk(1), mk(2)]; cat(w); println(\"back {w[0].id}\"); }",
+            "C1 C2 R3 7 101 102 D7 D101 D102 back 1 D1 D2",
+        ),
+        (
+            "collection_elided",
+            "fn cp(p: vector<H>) { u = p; println(\"R{len(u)} {u[0].id}\"); }\n\
+             fn main() { w: vector<H> = [mk(1), mk(2)]; cp(w); println(\"back {w[0].id}\"); }",
+            "R2 1 back 1 D1 D2",
         ),
     ]);
+}
+
+/// A member without `OpCopy` still refuses the whole copy: two structures would share the member's
+/// resource and release it twice.
+#[test]
+fn a_copy_that_cannot_lease_stays_refused() {
+    check(&[(
+        "member_without_hook",
+        "struct K { id: integer }\n\
+         fn OpDrop(self: K) { println(\"DK{self.id}\"); }\n\
+         struct S3 { h: H, k: K }\n\
+         fn cp(p: S3) { x = p; println(\"R{x.h.id}\"); }\n\
+         fn main() { s = S3 { h: mk(1), k: K { id: 7 } }; cp(s); println(\"back\"); }",
+        "error[copy-of-droppable]",
+    )]);
 }

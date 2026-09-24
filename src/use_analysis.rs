@@ -4895,6 +4895,7 @@ pub fn drop_copy_census(
                 refusals: Vec::new(),
                 sites: 0,
                 pending_site: None,
+                pending_tail: None,
                 lease_sites: Vec::new(),
                 quiet: false,
             };
@@ -4925,6 +4926,12 @@ pub fn drop_copy_census(
             // elision is `(H-Elide)`'s to make after the verdict, never a reason to skip it.
             for (var, src) in crate::copy_manifest::elided_copies(d_nr) {
                 if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
+                    continue;
+                }
+                // A type whose copies lease may have one elided together with the drop of the
+                // structure it would have made — `(H-Elide)`, which is what the elision did.
+                let reach = crate::lease::copy_reach(data, func.tp(var));
+                if reach.leases && !reach.refused {
                     continue;
                 }
                 cx.line = func.var_source(var).0;
@@ -5151,9 +5158,13 @@ struct Census<'a> {
     /// the new structure it makes, and that structure's type definition.  Set by the arms whose
     /// copy is one statement the rewrite can follow; an arm that sets none keeps refusing.
     pending_site: Option<(Value, Value, u32)>,
-    /// `(H-Copy-Lease)` — the copies of a type that declares `OpCopy`: the node, the new structure,
-    /// and the function to run on it ([`crate::lease::copy_cascade_nr`]).
-    lease_sites: Vec<(Value, Value, u32)>,
+    /// The site an APPEND is about to be judged at: the node, the collection appended to, the
+    /// appended source, and the collection's element definition.  The lease runs over the
+    /// appended tail only.
+    pending_tail: Option<(Value, Value, Value, u32)>,
+    /// `(H-Copy-Lease)` — the copies of a type that declares `OpCopy`: the copy's node and the call
+    /// to insert after it ([`crate::lease::copy_cascade_nr`], or a collection's tail walk).
+    lease_sites: Vec<(Value, Value)>,
     /// Print no census line — the lease pass walks every function a second time.
     quiet: bool,
 }
@@ -5356,6 +5367,14 @@ impl Census<'_> {
                 let into = self.func.name(*dest).to_string();
                 let lease = self.frame.written_verdict(&args[1], self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_verdict(node, &args[1]));
+                // A self-append (`v += v`) re-reads the grown collection, so its tail length is not
+                // the source's: it is not given a lease site, and stays refused.
+                if !from.contains(dest)
+                    && let Type::Vector(elm, _) = self.func.tp(*dest).base()
+                    && let Some(ed) = elm.heap_def_nr()
+                {
+                    self.pending_tail = Some((node.clone(), args[0].clone(), args[1].clone(), ed));
+                }
                 self.note_destination(&args[0]);
                 self.emit(
                     "append",
@@ -5579,14 +5598,40 @@ impl Census<'_> {
         // scope pass's own copy and carries no verdict (`None`), so it can never be refused —
         // which the corpus agrees with, 0 refusals across 666 snapshot rows.
         let site = self.pending_site.take();
+        let tail = self.pending_tail.take();
         if let Some(crate::lease::Lease::Refuse(r)) = lease {
             // `(H-Copy-Lease)`: a copy of a type whose every droppable declares `OpCopy` is not
             // refused — the new structure takes its own lease.  Only at a site the rewrite can
             // reach; anywhere else the copy stays refused rather than silently unleased.
+            let tail_call = tail.and_then(|(node, dst, src, ed)| {
+                if !crate::lease::leases_whole(self.data, ed) {
+                    return None;
+                }
+                let Some(Value::Var(dv)) = Some(dst.unspan()) else {
+                    return None;
+                };
+                let Type::Vector(elm, _) = self.func.tp(*dv).base() else {
+                    return None;
+                };
+                let walk = crate::lease::copy_tail_nr(self.data, self.data.collection_def_nr(elm));
+                let len = self.data.def_nr("OpLengthVector");
+                (walk != u32::MAX && len != u32::MAX).then(|| {
+                    (
+                        node,
+                        Value::Call(walk, vec![dst, Value::Call(len, vec![src])]),
+                    )
+                })
+            });
             match site {
+                _ if tail_call.is_some() => {
+                    self.lease_sites.extend(tail_call);
+                }
                 Some((node, dst, d)) if crate::lease::leases_whole(self.data, d) => {
-                    self.lease_sites
-                        .push((node, dst, crate::lease::copy_cascade_nr(self.data, d)));
+                    let cascade = crate::lease::copy_cascade_nr(self.data, d);
+                    if cascade != u32::MAX {
+                        self.lease_sites
+                            .push((node, Value::Call(cascade, vec![dst])));
+                    }
                 }
                 _ if crate::keys::lease_refuse_enabled() => {
                     self.refusals
@@ -8642,6 +8687,7 @@ pub fn lease_calls(data: &mut Data) {
                 refusals: Vec::new(),
                 sites: 0,
                 pending_site: None,
+                pending_tail: None,
                 lease_sites: Vec::new(),
                 quiet: true,
             };
@@ -8658,7 +8704,7 @@ pub fn lease_calls(data: &mut Data) {
 }
 
 /// Insert each lease site's call as the statement after its copy, where it is not there already.
-fn insert_lease_calls(node: &mut Value, sites: &[(Value, Value, u32)]) {
+fn insert_lease_calls(node: &mut Value, sites: &[(Value, Value)]) {
     node.for_each_child_mut(&mut |c| insert_lease_calls(c, sites));
     let list = match node {
         Value::Block(bl) | Value::Loop(bl) => &mut bl.operators,
@@ -8670,14 +8716,10 @@ fn insert_lease_calls(node: &mut Value, sites: &[(Value, Value, u32)]) {
     while i < old.len() {
         let item = &old[i];
         list.push(item.clone());
-        if let Some((_, dst, cascade)) = sites
-            .iter()
-            .find(|(n, _, c)| *c != u32::MAX && (n == item || n == item.unspan()))
+        if let Some((_, call)) = sites.iter().find(|(n, _)| n == item || n == item.unspan())
+            && old.get(i + 1) != Some(call)
         {
-            let call = Value::Call(*cascade, vec![dst.clone()]);
-            if old.get(i + 1) != Some(&call) {
-                list.push(call);
-            }
+            list.push(call.clone());
         }
         i += 1;
     }
