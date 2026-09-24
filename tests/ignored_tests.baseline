@@ -43,3 +43,4 @@ tests/ownership_fuzz_gate.rs::fuzz_gate_map54_full_replay	full both-backends rep
 tests/ownership_oracle.rs::oracle_dev_free_check_ratchet	dev-tier ratchet — sweeps tests/scripts under check-dev; run on demand
 tests/ownership_oracle.rs::oracle_fact_is_backend_identical_si2	native backend needs rustc per run — runs nightly in miri.yml's `release-gate-sweeps` job; by hand: `cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored`
 tests/ownership_oracle.rs::oracle_leak_scan_ratchet	experimental leak-scan ratchet — sweeps tests/scripts under check-leak; run on demand
+tests/wrap.rs::loft_suite_whole_corpus	the whole tests/scripts corpus in one process — the nightly release-gate job (miri.yml); run with --ignored

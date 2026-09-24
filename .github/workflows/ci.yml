@@ -1018,8 +1018,11 @@ jobs:
             ~/.loft/build-cache
             ${{ runner.os == 'Windows' && 'target/loft-native-cache' || 'target' }}
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+      # Not on Windows: nothing there restores it (the restore step above is non-Windows), and
+      # uploading ~1300 compiled script binaries took 26 of the Windows corpus shard's 61 min
+      # (run 36001391398) for a cache no later run reads.
       - name: Save the native-corpus binary cache
-        if: "!cancelled() && matrix.shard == 'corpus'"
+        if: "!cancelled() && matrix.shard == 'corpus' && runner.os != 'Windows'"
         uses: actions/cache/save@v4
         with:
           path: target/loft-native-cache
@@ -1393,9 +1396,10 @@ jobs:
       # install for `cargo` in the repo dir — and `-Zsanitizer` is nightly-only,
       # so a bare `cargo` here runs stable and errors "the option `Z` is only
       # accepted on the nightly compiler".
-      # `--profile sanitizer`, not `ci`: `loft_suite` runs every `tests/scripts` program
-      # inside one test process, and under `-Zsanitizer=address` it is the leg's whole
-      # clock — it grows with the corpus, not with any hang.  `ci`'s 600 s ceiling was
+      # `--profile sanitizer`: `ci`'s settings for the sanitizer build.  It once carried a
+      # longer ceiling for `loft_suite`, which ran every `tests/scripts` program inside one test
+      # process and under `-Zsanitizer=address` was the leg's whole clock; the corpus runner is
+      # chunked now (`loft_suite_00..07`) and the profile adds no per-test raise.  `ci`'s 600 s ceiling was
       # 587 s on the previous green run and killed at 600 s on the next commit that added
       # one script (run 34980517571: 2022 passed, 0 failed, 1 timed out).  The `sanitizer`
       # profile in `.config/nextest.toml` is `ci` with that one test's ceiling raised, made

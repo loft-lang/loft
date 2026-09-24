@@ -453,8 +453,8 @@ jobs:
         # real binary process::exits, so this is never a production leak).  The
         # deliberately-faulting fixtures run under the gate; the only exclusions are the
         # toolchain-sensitive meta-tests and the two "spawns a build" tests below.
-        # `--profile sanitizer` is `ci` with a longer ceiling for `loft_suite` alone, which
-        # outgrew 600 s under ASan as the corpus grew (.config/nextest.toml, loft#1527).
+        # `--profile sanitizer` is `ci` for the sanitizer build; the corpus runner that once
+        # needed a longer ceiling under ASan (loft#1527) is chunked (`loft_suite_00..07`).
         run: >
           cargo +nightly nextest run --profile sanitizer --release --no-fail-fast
           --target ${{ matrix.target }}
@@ -864,6 +864,14 @@ jobs:
 
       - name: Ownership oracle — backend fact identity (SI-2)
         run: cargo test --release --test ownership_oracle oracle_fact_is_backend_identical_si2 -- --ignored
+
+      # The whole `tests/scripts` corpus in ONE process.  The per-commit run is chunked
+      # (`loft_suite_00..07`), which keeps each test under the duration gate but gives up the
+      # interaction ACROSS chunks — one script corrupting shared state that a later, innocent
+      # one dies of (how loft#920 was found).  This is that run, nightly; its `#[ignore]`
+      # reason names this job.
+      - name: Interpreter corpus — whole, in one process
+        run: cargo test --release --test wrap loft_suite_whole_corpus -- --ignored
 
   debug-asserts:
     # @nightly-class: unsound — a violated internal invariant

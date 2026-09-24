@@ -307,15 +307,20 @@ fn wasm_dir() -> std::io::Result<()> {
     Ok(())
 }
 
-/// Run every `.loft` file in `tests/scripts/` in alphabetical order.
+/// Run the `.loft` files in `tests/scripts/` in alphabetical order — all of them, or one CHUNK.
 /// These are standalone loft programs that exercise compiler and interpreter features.
 /// Scripts may use `fn main()` or `fn test_*()` entry points — `run_test`
 /// discovers and executes all zero-parameter user functions automatically.
 /// To run a single file use the individual test functions below, e.g.:
 ///   cargo test --test wrap integers
-// @speed 5.8
-#[test]
-fn loft_suite() -> std::io::Result<()> {
+///
+/// The per-commit run is CHUNKED (`loft_suite_00` … `loft_suite_07`, every
+/// [`LOFT_SUITE_CHUNKS`]-th script from each offset): one test over the whole corpus took
+/// 650-760 s on the Windows runner, and the duration gate allows a test half its 600 s limit.
+/// What a chunk gives up is the WHOLE-corpus interaction — one script corrupting shared state
+/// that a later, innocent script dies of (how loft#920 was found) — so that run is kept as
+/// [`loft_suite_whole_corpus`], `#[ignore]`d and run by the nightly release-gate job.
+fn loft_suite_run(chunk: Option<usize>) -> std::io::Result<()> {
     let _g = WRAP_LOCK.lock().unwrap_or_else(|e| e.into_inner());
     let mut files: Vec<PathBuf> = std::fs::read_dir("tests/scripts")?
         .filter_map(|f| f.ok().map(|e| e.path()))
@@ -358,6 +363,14 @@ fn loft_suite() -> std::io::Result<()> {
             .map(|(_, p)| p)
             .collect();
     }
+    if let Some(k) = chunk {
+        files = files
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| i % LOFT_SUITE_CHUNKS == k)
+            .map(|(_, p)| p)
+            .collect();
+    }
     // Scripts with dedicated #[ignore] wrappers are skipped here to keep
     // loft_suite green while the feature is under development.
     let skip: HashSet<&str> = ignored_scripts();
@@ -380,6 +393,64 @@ fn loft_suite() -> std::io::Result<()> {
         outcome?;
     }
     Ok(())
+}
+
+/// How many tests the per-commit `loft_suite` run is split across — see [`loft_suite_run`].
+const LOFT_SUITE_CHUNKS: usize = 8;
+
+macro_rules! loft_suite_chunks {
+    ($($name:ident = $k:expr),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() -> std::io::Result<()> {
+                loft_suite_run(Some($k))
+            }
+        )*
+    };
+}
+
+loft_suite_chunks!(
+    loft_suite_00 = 0,
+    loft_suite_01 = 1,
+    loft_suite_02 = 2,
+    loft_suite_03 = 3,
+    loft_suite_04 = 4,
+    loft_suite_05 = 5,
+    loft_suite_06 = 6,
+    loft_suite_07 = 7,
+);
+
+/// Every chunk index has its test: a chunk count raised without a matching test would drop that
+/// slice of the corpus from every per-commit run, silently.
+#[test]
+fn loft_suite_chunks_cover_the_corpus() {
+    let names = [
+        "loft_suite_00",
+        "loft_suite_01",
+        "loft_suite_02",
+        "loft_suite_03",
+        "loft_suite_04",
+        "loft_suite_05",
+        "loft_suite_06",
+        "loft_suite_07",
+    ];
+    assert_eq!(
+        names.len(),
+        LOFT_SUITE_CHUNKS,
+        "one generated test per chunk"
+    );
+    let src = std::fs::read_to_string(file!()).expect("read tests/wrap.rs");
+    for n in names {
+        assert!(src.contains(&format!("{n} = ")), "{n} is generated");
+    }
+}
+
+/// The whole corpus in ONE process, in order — the interaction coverage the chunks give up, and
+/// the run `LOFT_SCRIPT_FIRST` / `LOFT_SCRIPT_LAST` bisect over.
+#[test]
+#[ignore = "the whole tests/scripts corpus in one process — the nightly release-gate job (miri.yml); run with --ignored"]
+fn loft_suite_whole_corpus() -> std::io::Result<()> {
+    loft_suite_run(None)
 }
 
 /// Every `.loft` file the two corpus runners execute, in sorted order.
