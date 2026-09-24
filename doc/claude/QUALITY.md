@@ -2812,7 +2812,7 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **310** |
+| **PENDING** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by

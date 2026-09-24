@@ -1,0 +1,57 @@
+// A `vector<u8>` / `vector<i8>` append is one fused `OpPushByte`, and on native a loop's byte
+// pushes go through the push header and window — every element is the byte `OpSetByte` writes.
+//
+// The byte kind used to take the general element path (`OpPreAllocVector · OpNewRecord ·
+// OpSetByte · OpFinishRecord`), ~20 ns an element against ~0.8 for a `vector<integer>` push.
+// It is now `OpPushByte(v, min, val)` on both backends, and a native loop holds a push header
+// for it whose element is `Store::byte_raw(min, val)` — the encoding `set_byte` writes, so a
+// bias (`i8`'s -128) and the edges (0, 255, -128, 127) come out exactly as the unfused path
+// wrote them.  Cells: edges of u8 and i8 (c1, c2), a record's vector field (c3), a
+// `&vector<u8>` parameter (c4), three pushes per iteration (c5), a nested field (c6), the
+// NULLABLE byte, which keeps the general path (c7), 100 000 elements through growth (c8),
+// and an i8 loop through the window (c9) — the one cell whose bias the WINDOW encodes, so the
+// one a wrong bias there fails.
+//
+// @falsified-at: hand-measured (2026-09-24, a sabotage) — the window's encoding written with
+//   `min` 0 instead of the element's bias: c9 fails on --native (every i8 element decodes 128
+//   low); --interpret (no window) passes.
+//   CHANNEL: assert (values).
+//   ARMED: nothing; LOFT_HOIST_VERIFY=1 re-derives the header and agrees.
+//   WITNESS: `c9: … first=-128 last=-25` on --native under the sabotage.
+//   HOLDS: identical output under LOFT_NO_FUSED_APPEND, LOFT_NO_PUSH_HOIST,
+//   LOFT_NO_PUSH_WINDOW and LOFT_NO_PUSH_FILL, on both backends.
+struct H { b: vector<u8>, n: integer }
+struct O { h: H }
+fn sum8(v: const vector<u8>) -> integer { t = 0; for x in v { t = t * 31 + (x as integer) + 1; t = t & 0xFFFFFFF; } t }
+fn sumi8(v: const vector<i8>) -> integer { t = 0; for x in v { t = t * 31 + (x as integer) + 200; t = t & 0xFFFFFFF; } t }
+fn fill_ref(px: &vector<u8>, n: integer) { for i in 0..n { px += [(i * 7) & 255 as u8]; } }
+fn main() {
+  a: vector<u8> = [];
+  a += [0 as u8]; a += [255 as u8]; a += [128 as u8];
+  assert("{a}" == "[0,255,128]" && len(a) == 3, "c1: {a}");
+  s: vector<i8> = [];
+  s += [-128 as i8]; s += [127 as i8]; s += [0 as i8]; s += [-1 as i8];
+  assert("{s}" == "[-128,127,0,-1]" && len(s) == 4, "c2: {s}");
+  h = H { b: [], n: 1 };
+  for i in 0..5 { h.b += [(i * 50) & 255 as u8]; }
+  assert("{h.b}" == "[0,50,100,150,200]" && h.n == 1, "c3: {h.b} {h.n}");
+  r: vector<u8> = [];
+  fill_ref(r, 40);
+  assert(len(r) == 40 && sum8(r) == 2488844 && (r[39] ?? 0) == 17, "c4: {len(r)} {sum8(r)}");
+  m: vector<u8> = [];
+  for i in 0..3 { m += [(i & 255) as u8, ((i + 10) & 255) as u8, ((i * 2) & 255) as u8]; }
+  assert("{m}" == "[0,10,0,1,11,2,2,12,4]", "c5: {m}");
+  o = O { h: H { b: [9 as u8], n: 2 } };
+  for i in 0..3 { o.h.b += [((i + 1) & 255) as u8]; }
+  assert("{o.h.b}" == "[9,1,2,3]", "c6: {o.h.b}");
+  q: vector<u8?> = [];
+  q += [1 as u8?]; q += [null];
+  assert("{q}" == "[1,null]", "c7: {q}");
+  g: vector<u8> = [];
+  for i in 0..100000 { g += [(i & 255) as u8]; }
+  assert(len(g) == 100000 && sum8(g) == 22924624 && (g[99999] ?? 0) == 159, "c8: {len(g)} {sum8(g)}");
+  si: vector<i8> = [];
+  for i in 0..1000 { si += [(i & 127) as i8]; }
+  assert(len(si) == 1000 && sumi8(si) == 124243444 && (si[0] ?? 0) == 0 && (si[999] ?? 0) == 103, "c9: … first={si[0] ?? 0} last={si[999] ?? 0}");
+  println("byte push ok");
+}

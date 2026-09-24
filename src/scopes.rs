@@ -2201,7 +2201,16 @@ impl ViewWalk<'_> {
                 // already meant value semantics, so losing write-through is consistent with
                 // what it asked for, and only a `&` is the ownership decision loft may not
                 // quietly downgrade.  Measured before this was written.
-                if self.function.is_amp_container_link(*v)
+                // A `match` PAYLOAD binding (`_mv_<field>`) is the other reference TO a
+                // container: the parser routes a write through it to the payload's own field
+                // (`items += [x]` appends to `e.items`), so it re-reads that slot exactly as a
+                // `&` link does, and the growth its own append causes must not end it.  Ended
+                // there, it was materialised, the append landed in the payload and every read
+                // of `items` saw the copy — `len(items)` answered 1 after `items += [121]` for a
+                // fused push into a variant's vector (the unfused append happened to be spared
+                // because its field NUMBER could not be placed on the enum's type).
+                let payload_view = self.function.name(*v).starts_with("_mv_");
+                if (self.function.is_amp_container_link(*v) || payload_view)
                     && let Some((place, false)) =
                         crate::use_analysis::view_source_place_indexed(self.data, rhs)
                 {

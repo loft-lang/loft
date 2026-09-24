@@ -257,6 +257,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     push_boolean,
     push_enum,
     push_character,
+    push_byte,
     replace_vector,
     claim_child_rec,
     ref_from_child_rec,
@@ -2369,6 +2370,13 @@ fn push_character(s: &mut State) {
     let v_val = char::from_u32(s.get_stack::<u32>()).unwrap_or('\0');
     let v_r = s.get_stack::<DbRef>();
     s.database.append_u32(&v_r, v_val as u32);
+}
+
+fn push_byte(s: &mut State) {
+    let v_min = s.code::<i32>();
+    let v_val = s.get_stack::<i64>();
+    let v_r = s.get_stack::<DbRef>();
+    s.database.append_byte_min(&v_r, v_min, v_val as i32);
 }
 
 fn replace_vector(s: &mut State) {

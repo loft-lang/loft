@@ -177,11 +177,12 @@ fn test_a_non_null_element_is_not_a_nullable_slot() {
   assert(n[0] == null, "a vector<u8?> element does reserve 255, got {n[0]}");
 }
 
-// The `?? 0` is load-bearing, not noise: `@FR-N-Store` asks an element PLACE's slot type,
-// so a nullable `u8?` into this non-null `u8` element is refused at a variable index just as
-// it is at a literal one (loft#1660).  The cell's subject is WHERE the write lands, so it
-// keeps the `&vector<u8>` element-write shape and discharges the cast rather than dropping
-// the `?` — which would make the line a different question.
+// The `?? 0` is load-bearing, not noise: `@FR-N-Store` asks an element PLACE's slot type, so a
+// nullable `u8?` into this non-null `u8` element is refused at a VARIABLE index just as it always
+// was at a literal one (loft#1660).  This is the cure the published `assets` took for the same
+// shape.  The cell's subject is WHERE the write lands — whether 255 survives a `&vector<u8>`
+// parameter — so it discharges the cast and keeps the element-write shape, rather than dropping
+// the `?`, which would quietly make the line a different question.
 fn amp_write(px: &vector<u8>, i: integer, a: integer) { px[i] = (a as u8?) ?? 0; }
 
 fn test_a_ref_parameter_is_still_its_referent() {

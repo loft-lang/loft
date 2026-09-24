@@ -4141,27 +4141,30 @@ impl Store {
     #[inline]
     pub fn set_byte(&mut self, rec: u32, fld: u32, min: i32, val: i32) -> bool {
         if rec != 0 && self.valid(rec, fld) {
-            if val == i32::MIN {
-                // The `u8` suffix is load-bearing: a bare `255` infers `i32`, so
-                // `addr_mut::<i32>` writes 4 bytes and zeroes the three packed
-                // fields after this one (silent sibling corruption on a null store).
-                self.write(rec, fld, 255u8);
-                true
-            } else if Self::byte_fits(min, val) {
-                self.write(rec, fld, (val - min) as u8);
-                true
-            } else {
-                // loft#984 — OUT OF RANGE: store the type's DEFAULT, the lowest value in
-                // range, and report `false` so the caller warns.  Never the old two
-                // answers: `min + 256` used to be admitted and stored `256 as u8` = 0,
-                // so it ALIASED onto `min`; anything further out was dropped, leaving
-                // whatever the field held before.  A byte encodes `val - min`, so the
-                // range is `min ..= min + 255` — one value, not 257.
-                self.write(rec, fld, 0u8);
-                false
-            }
+            // The `u8` type is load-bearing: a bare `255` infers `i32`, so `addr_mut::<i32>`
+            // would write 4 bytes and zero the three packed fields after this one.
+            self.write(rec, fld, Self::byte_raw(min, val));
+            val == i32::MIN || Self::byte_fits(min, val)
         } else {
             false
+        }
+    }
+
+    /// The byte a slot biased by `min` holds for `val` — the ONE definition of the byte
+    /// encoding, which [`Self::set_byte`] writes and a fused `vector<u8>` push writes too.
+    /// Null (`i32::MIN`) is `255`; a value in `min ..= min + 255` is `val - min`.  OUT OF
+    /// RANGE (loft#984) is the type's DEFAULT, the lowest value in range: never `256 as u8`,
+    /// which aliased `min + 256` onto `min`.  `set_byte` reports that case `false` so the
+    /// caller warns.
+    #[inline]
+    #[must_use]
+    pub fn byte_raw(min: i32, val: i32) -> u8 {
+        if val == i32::MIN {
+            255
+        } else if Self::byte_fits(min, val) {
+            (val - min) as u8
+        } else {
+            0
         }
     }
 

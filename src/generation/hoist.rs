@@ -2410,11 +2410,28 @@ pub fn fused_join_read<'a>(data: &Data, getter: &str, args: &'a [Value]) -> Opti
 /// because only a push emitted through the refreshing helper leaves the header current.
 ///
 /// [`HoistScalar`]: crate::vector::HoistScalar
-pub const FUSABLE_PUSHES: [(&str, &str, u32); 3] = [
+pub const FUSABLE_PUSHES: [(&str, &str, u32); 4] = [
+    ("OpPushByte", "u8", 1),
     ("OpPushInt", "i64", 8),
     ("OpPushSingle", "f32", 4),
     ("OpPushFloat", "f64", 8),
 ];
+
+/// The operands of a fused push: the vector, the byte kind's `min` bias, the value.  Every
+/// kind is `(vector, value)` except `OpPushByte(vector, min, value)`, whose element is the
+/// ENCODED byte (`Store::byte_raw`) — so every site that reads a push's value asks here,
+/// and none can take the unencoded value for the one kind that has a bias.
+#[must_use]
+pub fn push_operands<'a>(
+    name: &str,
+    args: &'a [Value],
+) -> Option<(&'a Value, Option<&'a Value>, &'a Value)> {
+    match (name, args) {
+        ("OpPushByte", [vector, min, val]) => Some((vector, Some(min), val)),
+        (_, [vector, val]) if name != "OpPushByte" => Some((vector, None, val)),
+        _ => None,
+    }
+}
 
 /// A push the emitter can route through a hoisted [`crate::vector::PushHeader`].
 pub struct FusedPush<'a> {
@@ -2424,6 +2441,8 @@ pub struct FusedPush<'a> {
     pub vector: &'a Value,
     /// The value pushed.
     pub val: &'a Value,
+    /// The byte kind's `min` bias: the element is `Store::byte_raw(min, val)`.
+    pub bias: Option<&'a Value>,
     /// The Rust type of the value.
     pub rust_type: &'static str,
     /// The element width in bytes.
@@ -4323,23 +4342,28 @@ pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
     let mut rust_type = "";
     let mut size = 0u32;
     let mut vals: Vec<&'a Value> = Vec::new();
+    // A biased push (the byte kind) writes an ENCODED element, so the one-value slice fill
+    // (which writes the value as it is) is not admitted for it; the reserve and the window
+    // are, since they write through the push emitter, which encodes.
+    let mut biased = false;
     for s in &stmts {
         if let Value::Call(d, args) = s.unspan()
             && let Some((rt, w)) = push_kind(d)
-            && args.len() == 2
-            && let Some(p) = vector_path(data, &args[0])
+            && let Some((vec_arg, bias, val)) = push_operands(data.def(*d).name(), args)
+            && let Some(p) = vector_path(data, vec_arg)
         {
+            biased |= bias.is_some();
             match &path {
                 Some(pp) if *pp != p => return decline("the pushes reach two paths"),
                 Some(_) => {}
                 None => {
                     path = Some(p);
-                    vector = Some(&args[0]);
+                    vector = Some(vec_arg);
                     rust_type = rt;
                     size = w;
                 }
             }
-            vals.push(&args[1]);
+            vals.push(val);
         }
     }
     let (Some(path), Some(vector)) = (path, vector) else {
@@ -4409,11 +4433,12 @@ pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
     if !simple_invariant(rc.hi, data, &banned) {
         return decline("the range's end is not a simple invariant");
     }
-    let fill = if vals.len() == 1 && plain == 0 && simple_invariant(vals[0], data, &banned) {
-        Some(vals[0])
-    } else {
-        None
-    };
+    let fill =
+        if !biased && vals.len() == 1 && plain == 0 && simple_invariant(vals[0], data, &banned) {
+            Some(vals[0])
+        } else {
+            None
+        };
     let pushes = u32::try_from(vals.len()).ok()?;
     Some(PushLoop {
         path,
@@ -4851,14 +4876,13 @@ pub fn pre_alloc_path(data: &Data, op: &str, args: &[Value]) -> Option<PathKey> 
 #[must_use]
 pub fn fused_push<'a>(data: &Data, op: &str, args: &'a [Value]) -> Option<FusedPush<'a>> {
     let (_, rust_type, size) = FUSABLE_PUSHES.iter().find(|(n, _, _)| *n == op)?;
-    if args.len() != 2 {
-        return None;
-    }
-    let path = vector_path(data, &args[0])?;
+    let (vector, bias, val) = push_operands(op, args)?;
+    let path = vector_path(data, vector)?;
     Some(FusedPush {
         path,
-        vector: &args[0],
-        val: &args[1],
+        vector,
+        val,
+        bias,
         rust_type,
         size: *size,
     })

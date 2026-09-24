@@ -49,6 +49,37 @@ an attribution.
 
 ## Not yet benched
 
-The census (`bench/portal/census.tsv`) still lists crypto, regex, arguments, cbor, zttext,
-imaging, server, game_protocol, pluginabi, graphics, stage, shapes, mesh3d, glb, assets and
-the hex_* family. The next wide wave takes one rank-1 row from each of these.
+After wave 2 the census (`bench/portal/census.tsv`) keeps only what a std-only twin cannot
+carry (regex, imaging's png, crypto's ed25519 and HPKE), the hex_* packages wave 2 did not
+reach (body, draw, fit, form, place, recover, roof, shape), and the consumer rows, which
+are modelled in `16_consumer_shapes` rather than benched in a library.
+
+## Wave 2 — nineteen more libraries (2026-09-24, `35c3d39b2`)
+
+55 rows, median **5.60×**.  The whole portal: 156 routines, median **2.75×**; libraries
+**3.67×** (102 rows, 62 over 3×) against the stdlib's 1.72×.  Visible reasons, still
+hypotheses, grouped by the MECHANISM they share. Each is a candidate lever, and the order
+is how many rows it would move:
+
+| mechanism | rows it explains | visible in |
+|---|---|---|
+| a `u8` / narrow element append takes the general element path (`FUSED_PUSH_KINDS` has no byte or short kind): ~22× a `vector<integer>` push | cbor `encode_bytes` 497×, `encode` 21×, `decode` 28×; pluginabi `check_request` 160×, `req_state_b64` 68× (they run cbor) | `LOFT_TRACE_PUSH_FILL`: "a mint's element does not qualify for the record push" |
+| a record rebuilt around a large field, `Doc { buf: d.buf, … }`, deep-copies that field | zttext `delete_range` 138×, `invert` 118×, `insert_text` 95× | the emitted `vector_add` of `d.buf` per edit |
+| a small record returned by value gets a store, a fill and a copy per call | mesh3d `mat4_mul` 37×, `mat4_transform` 22×, `sphere` 23×; game_protocol `msg_ping` 11× | `OpDatabase` + `OpCopyRecord` per call |
+| a fn-ref's record result is held to frame exit (loft#1659) | zttext `flow_layout_full` 107× | 20,000 live Style stores on native |
+| a loop whose body calls declines the push hoist | stage `pack_instances` 25×, mesh3d `mesh_to_floats` 40× | `LOFT_TRACE_HOIST_DECLINE` |
+| a view-returning scan through `self` declines the record address | hex_world `get_cell` 13×, hex_field `edgeset_count` 37× | `LOFT_TRACE_RECPTR`: "the remainder may grow a store" |
+| per-character text building | zttext `materialise` 23×, `seg` 8.6×, arguments `parse` 7×, server `header` 7× | `out += "{ch}"`, a `split` per lookup |
+
+The native crossing holds at about 1.0–1.1× where the callee does real work (crypto's sha256
+and base64). The ~3× of the web/ssh/random rows is a 1-byte callee against the crossing.
+
+**Found on the way, and fixed:**
+- a method's inline record result leaked one store per call;
+- `@FR-N-Store` checked an element store only at a literal index (loft#1660, owner-ruled);
+- `t += t` through a `&text` did not compile on native;
+- `+=` on a `&text?` was refused;
+- `now()` re-read its environment variable per call.
+
+**Filed:** loft#1659.  **Open:** a fn-ref into an auto-built native library answering null
+from a `return <call>;` body (zttext's `token_width`, interpreter only).
