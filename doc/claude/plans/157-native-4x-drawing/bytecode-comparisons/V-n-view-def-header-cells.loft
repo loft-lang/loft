@@ -39,10 +39,12 @@ fn c7() { cv = Cv { w: 0, data: [4, 5, 6] }; println("c7 {h7(cv)}"); }
 // c8 — the binding inside a loop body: derived per iteration, after the binding.
 fn h8(cvs: vector<Cv>) -> integer { s = 0; for k in 0..2 { c = cvs[k]?; d = &c.data; s += (d[0] ?? 0) * 10 + (d[1] ?? 0); } s }
 fn c8() { cvs: vector<Cv> = [Cv { w: 0, data: [1, 2] }, Cv { w: 0, data: [3, 4] }]; println("c8 {h8(cvs)}"); }
-// c9 — the ROOT reassigned after the binding: the compiler COPIES `d` out of `cv` first (its
-// advice says so), so `d` holds [1, 2] and reads 1; the reassignment is a store write the
-// gate sees either way.
-fn h9() -> integer { cv = Cv { w: 1, data: [1, 2] }; d = &cv.data; cv = Cv { w: 2, data: [7, 8, 9] }; (d[0] ?? -1) + len(cv.data) }
+// c9 — the ROOT reassigned in the block after the binding's reads: a store write the gate
+// sees.  The reassignment comes after the last read of `d` — a `&` link whose container is
+// reassigned while the link is still in use is REFUSED (`(B-Ref-Reshape)`, loft#1664; this cell
+// used to read the copy that preceded that refusal), so `d` reads [1, 2]'s 1 and the new
+// `cv.data` has length 3.
+fn h9() -> integer { cv = Cv { w: 1, data: [1, 2] }; d = &cv.data; x = d[0] ?? -1; cv = Cv { w: 2, data: [7, 8, 9] }; x + len(cv.data) }
 fn c9() { println("c9 {h9()}"); }
 // c10 — two views of SIBLING fields: two headers, kept apart.
 fn h10(p: P2) -> integer { a = &p.xs; b = &p.ys; (a[1] ?? 0) * 10 + (b[0] ?? 0) }
