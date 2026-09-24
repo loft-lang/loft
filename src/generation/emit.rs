@@ -46,7 +46,31 @@ impl Output<'_> {
         {
             return self.emit_invariant_use(w, &memo);
         }
+        // @PLN167 decision 2 — a store-kind text link IS the slot's `DbRef`, so the link a
+        // mention of it names (`OpGetText(OpVarRef(t), 0)`) is the variable itself.
+        if let Some(v) = self.store_text_link_ref(code) {
+            let name = sanitize(self.data.def(self.def_nr).variables().name(v));
+            return write!(w, "var_{name}");
+        }
         self.output_code_node(w, IrNode::Native(code))
+    }
+
+    /// The store-kind text link `OpVarRef(t)` names, or `None` for any other value.
+    pub(super) fn store_text_link_ref(&self, code: &Value) -> Option<u16> {
+        if let Value::Call(d, args) = code.unspan()
+            && self.data.def(*d).name() == "OpVarRef"
+            && let [arg] = args.as_slice()
+            && let Value::Var(v) = arg.unspan()
+            && self
+                .data
+                .def(self.def_nr)
+                .variables()
+                .is_store_text_link(*v)
+        {
+            Some(*v)
+        } else {
+            None
+        }
     }
 
     /// Central recursive dispatch from an IR node to its Rust representation
@@ -348,8 +372,10 @@ impl Output<'_> {
                     // A scalar `&` parameter is a raw pointer, read below exactly as a local
                     // link is (`is_raw_scalar_ref`, loft#1605).
                     if let Type::RefVar(inner) = variables.tp(var) {
-                        // By-ref argument: holds &mut T — dereference to read.
-                        if matches!(**inner, Type::Text(_)) {
+                        // By-ref argument: holds &mut T — dereference to read.  Through
+                        // `base()`, as the local-link arm below reads it: a `&text?` parameter
+                        // is the same `&mut String`, and read bare it MOVED the string (E0507).
+                        if matches!(inner.base(), Type::Text(_)) {
                             return write!(w, "&*var_{var_name}");
                         }
                         // A `&boolean` slot is the tri-state STORAGE byte (0/1/255),
@@ -1224,6 +1250,9 @@ impl Output<'_> {
         let candidates =
             super::fnref::dispatch_arms(self.data, &self.reachable, &fn_type, args.len())
                 .unwrap_or_default();
+        // @PLN167 C3 (loft#1656) — a `&text` argument that is a text field or element picks
+        // every arm's STORE instance; the parser minted one per candidate.
+        let store_mask = self.data.store_text_mask(&param_types, args);
         // Phase 09 phase 00 step 0.7 — fn-ref dispatch routes each
         // candidate arm through `output_call_user_fn` (which dispatches
         // via `emit_op`), so a custom emitter registered for any
@@ -1340,8 +1369,20 @@ impl Output<'_> {
             } else {
                 None
             };
+            let text_link_arg = i < param_types.len()
+                && matches!(param_types[i].base(),
+                    Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)));
             if let Some(respelled) = tuple_place {
                 write!(w, "let _farg_{i} = {respelled}; ")?;
+            } else if text_link_arg && store_mask & (1 << i) == 0 && !candidates.is_empty() {
+                // A text VARIABLE for a `&text` parameter: the `&mut String` a direct call
+                // hands over, spelled by the one argument emitter (`emit_call_arg`) against a
+                // candidate — every candidate agrees on this parameter's type.
+                let cand = self.data.def(candidates[0].d_nr);
+                let mut buf = Vec::new();
+                self.emit_call_arg(&mut buf, cand, i, arg)?;
+                let spelled = String::from_utf8(buf).unwrap_or_default();
+                write!(w, "let _farg_{i} = {spelled}; ")?;
             } else if is_text_arg {
                 write!(
                     w,
@@ -1500,7 +1541,13 @@ impl Output<'_> {
                     // (Vector ret) or the sentinel literal.
                     synthetic.push(Value::RawExpr(heap_hbuf_expr.clone()));
                 } else if matches!(a.typedef, Type::RefVar(ref inner) if matches!(**inner, Type::Text(_)))
+                    && a.name != "__closure"
+                    && (a.hidden || user_idx >= user_arg_count)
                 {
+                    // A `&text` attribute is a WORK BUFFER only past the user positions
+                    // (`fnref::visible_fnref_attrs`); before them it is the user's own `&text`
+                    // parameter and takes its `_farg_N` below (loft#1656).
+                    //
                     // loft#1116 — the call site supplies exactly ONE text work buffer,
                     // because it cannot know which function the fn-typed slot holds.  A
                     // candidate declaring more than one used to receive that same
@@ -1534,7 +1581,22 @@ impl Output<'_> {
             // Route through output_call_user_fn → emit_op → custom emitter
             // (or DefaultEmitter::user_fn_call_body when no emitter is
             // registered for this candidate).
-            self.output_call_user_fn(w, candidate_def, &synthetic)?;
+            if store_mask == 0 {
+                self.output_call_user_fn(w, candidate_def, &synthetic)?;
+            } else {
+                let inst = self.data.store_text_instance(*d_nr, store_mask);
+                if inst == u32::MAX {
+                    // No loft body to link through (the parser could not mint an instance).
+                    write!(
+                        w,
+                        "panic!(\"a text field or element cannot be linked through `{}`'s `&text` parameter — it has no loft body\")",
+                        self.data.def(*d_nr).original_name()
+                    )?;
+                } else {
+                    let inst_def = self.data.def(inst);
+                    self.output_call_user_fn(w, inst_def, &synthetic)?;
+                }
+            }
             if arm_allocs_buf {
                 // The call site allocated this buffer, so the call site owns whatever it did
                 // not hand over — and WHICH of the two came back is a run-time fact, not a

@@ -1,0 +1,112 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&` link to a text FIELD or ELEMENT writes that place (`@FR-B-Ref-Lvalue`,
+// `@FR-B-Ref-Write`, `@FR-B-Ref-Read`).  @PLN167 decision 2: the link is the STORE kind of a
+// text link — it holds the slot's `DbRef`, its read is the field read and its write the field's
+// setter, on both backends.  A link to a text VARIABLE (the stack kind) is unchanged.
+//
+// The axes: an element of a `vector<text>`; a text field that is not at offset 0 of a struct
+// element (a place that drops its offset writes the element's first field, D-bind-54); a read
+// of the linked store fed into a write to the SAME store in one statement (R3: the setter
+// claims a new string record while the value is read out of the old one); a re-point between
+// two fields of one record and a link copied from a link; a `text?` field read null and
+// written through the link (R7); a link re-bound on every pass of a loop; a character walk
+// over the link; the link as a by-value argument, a formatted value and a method receiver; a
+// link to an ABSENT element or to a field of a null record, which reads null and drops its
+// write as a scalar link does (B4, C80).
+//
+// CHANNEL: exit and assertion failures, both backends (the control refuses every `&`).
+// @falsified-at: ba778c9ac — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/167-a-text-link-into-a-store.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak and panic are clean on both trees and both backends.
+
+struct O { a: text, b: text }
+struct R { n: integer, s: text, k: integer }
+struct Q { m: text? }
+
+fn show(x: text) -> text { "<{x}>" }
+
+fn test_an_element_and_an_element_field() {
+  a: vector<text> = ["aa", "bb", "cc"];
+  e = &a[1];
+  e += "!";
+  assert("{a}" == "[\"aa\",\"bb!\",\"cc\"]", "element: {a}");
+  v: vector<R> = [R { n: 1, s: "p", k: 2 }, R { n: 3, s: "q", k: 4 }];
+  f = &v[1].s;
+  f = "Q9";
+  assert(v[0].s == "p" && v[1].s == "Q9", "field of element: {v[0].s} {v[1].s}");
+  assert(v[1].n == 3 && v[1].k == 4, "neighbours untouched: {v[1].n} {v[1].k}");
+}
+
+fn test_a_read_of_the_store_written_back_into_it() {
+  o = O { a: "alpha", b: "beta" };
+  t = &o.a;
+  o.b = t;
+  assert(o.a == "alpha" && o.b == "alpha", "o.b = t: {o.a} {o.b}");
+  o.b = "beta";
+  o.a = t;
+  t = t;
+  assert(o.a == "alpha", "self writes: {o.a}");
+  t += t;
+  assert(o.a == "alphaalpha" && t == "alphaalpha", "t += t: {o.a}");
+  t = "{t}-{o.b}-{t}";
+  assert(o.a == "alphaalpha-beta-alphaalpha", "formatted self: {o.a}");
+}
+
+fn test_a_re_point_and_a_link_to_a_link() {
+  o = O { a: "alpha", b: "beta" };
+  t = &o.a;
+  t = &o.b;
+  t += "2";
+  u = &t;
+  u += "3";
+  assert(o.a == "alpha", "the first place is left: {o.a}");
+  assert(o.b == "beta23" && t == "beta23" && u == "beta23", "re-point: {o.b} {t} {u}");
+}
+
+fn test_a_nullable_field() {
+  q = Q { m: null };
+  n = &q.m;
+  assert(n == null && q.m == null, "reads null");
+  n = "set";
+  assert(q.m == "set", "written: {q.m}");
+}
+
+fn test_in_a_loop() {
+  a: vector<text> = ["aa", "bb", "cc"];
+  for i in 0..3 {
+    w = &a[i];
+    w += "{i}";
+  }
+  assert("{a}" == "[\"aa0\",\"bb1\",\"cc2\"]", "each once: {a}");
+}
+
+fn test_read_as_a_value() {
+  o = O { a: "x", b: "beta23" };
+  t = &o.b;
+  s = "";
+  for c in t { s += "{c}{c#index}"; }
+  assert(s == "b0e1t2a32435", "walk: {s}");
+  assert(show(t) == "<beta23>", "argument: {show(t)}");
+  assert("[{t:>8}]" == "[  beta23]", "format: [{t:>8}]");
+  assert(t.starts_with("be") && len(t) == 6, "method and len");
+}
+
+fn test_an_absent_place() {
+  v: vector<text> = ["a", "b"];
+  t = &v[10];
+  assert(t == null, "an absent element reads null");
+  t = "zz";
+  assert("{v}" == "[\"a\",\"b\"]" && t == null, "its write lands nowhere: {v}");
+  o: O? = null;
+  f = &o.a;
+  assert(f == null, "a field of a null record reads null");
+}
+
+fn test_a_text_variable_link_is_unchanged() {
+  s = "loc";
+  u = &s;
+  u += "!";
+  assert(s == "loc!", "stack kind: {s}");
+}

@@ -66,11 +66,8 @@ impl OpEmitter for TextDispatchEmitter {
                     .format_single(&mut *ctx.w, args, name == "OpFormatStackSingle")
             }
             "OpFormatText" | "OpFormatStackText" => ctx.output.format_text(&mut *ctx.w, args),
-            "OpAppendText" => ctx.output.append_text(&mut *ctx.w, args),
-            "OpAppendStackText" => {
-                write!(ctx.w, "*")?;
-                ctx.output.append_text(&mut *ctx.w, args)
-            }
+            "OpAppendText" => ctx.output.append_text(&mut *ctx.w, args, false),
+            "OpAppendStackText" => ctx.output.append_text(&mut *ctx.w, args, true),
             "OpAppendCharacter" | "OpAppendStackCharacter" => {
                 ctx.output.append_character(&mut *ctx.w, args)
             }

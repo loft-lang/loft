@@ -1658,7 +1658,9 @@ use a separate collection or add after the loop"
             return;
         }
         let name = self.vars.written_name(root).to_string();
-        let what = if matches!(place.unspan(), Value::Var(_)) {
+        // A store-kind text link is spelled as the field it names, but the author wrote `t`.
+        let what = if matches!(place.unspan(), Value::Var(_)) || self.vars.is_store_text_link(root)
+        {
             format!("`{name}`")
         } else {
             format!("a field of `{name}`")
@@ -2983,6 +2985,48 @@ use a separate collection or add after the loop"
     /// [`Self::parse_assign_op_inner`], and this wraps it with the linked-group
     /// maintenance a whole-vector field write skips (loft#1152 — see
     /// [`Self::group_reindex_after_vector_write`]).
+    /// Is the place `to` a slot declared NON-null, reached through a vector element?  Two
+    /// shapes: the element itself (`parent` is the vector, its content says whether the slot
+    /// is `τ` or `τ?`), and a field of an element (`parent` is the element record, `S?` because
+    /// the element READ may be absent; the field's own declaration answers, found by the
+    /// offset the getter reads).  Anything else answers `false` and keeps its type.
+    fn element_slot_is_non_null(&self, to: &Value, parent: &Type) -> bool {
+        // A `&vector<τ>` parameter's place is the vector it points at.
+        let parent = match parent {
+            Type::RefVar(pointee) => pointee.as_ref(),
+            other => other,
+        };
+        match parent {
+            Type::Vector(elem, _) => !matches!(elem.as_ref(), Type::Optional(_)),
+            Type::Optional(inner) => {
+                let Type::Reference(d_nr, _) = inner.as_ref() else {
+                    return false;
+                };
+                let Value::Call(get, args) = to.unspan() else {
+                    return false;
+                };
+                let (true, Some(Value::Int(off))) = (
+                    self.data.def(*get).name().starts_with("OpGet"),
+                    args.get(1).map(Value::unspan),
+                ) else {
+                    return false;
+                };
+                let known = self.data.def(*d_nr).known_type;
+                if known == u16::MAX {
+                    return false;
+                }
+                let attrs = self.data.def(*d_nr).attributes();
+                attrs.iter().enumerate().any(|(a, attr)| {
+                    !attr.hidden
+                        && i32::from(self.database.position(known, &attr.name)) == *off
+                        && !self.data.attr_nullable(*d_nr, a)
+                        && !matches!(self.data.attr_type(*d_nr, a), Type::Optional(_))
+                })
+            }
+            _ => false,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     pub(crate) fn parse_assign_op(
         &mut self,
@@ -3020,6 +3064,18 @@ use a separate collection or add after the loop"
             Value::Call(d_nr, _)
                 if self.data.def(*d_nr).name() == "OpGetRecord"
                     && matches!(f_type, Type::Optional(_)) =>
+            {
+                Some(f_type.base().clone())
+            }
+            // The same for a VECTOR element place and for a field reached through one: the `?`
+            // an untrusted index puts on the READ (`@FR-N-Domain`, C80 — an overrun reads null)
+            // says nothing about the SLOT, whose type is what the collection or the record
+            // declares.  Carried into the place it made the target `τ?`, so `@FR-N-Store` was
+            // never asked: `v[i] = x as integer?` stored the null with no warning, and a narrow
+            // `v[i] = 300 as u8?` stored the default `0` where `v[0] = …` is refused — the
+            // check hung on how the index was SPELLED.
+            _ if matches!(f_type, Type::Optional(_))
+                && self.element_slot_is_non_null(to, &parent_tp) =>
             {
                 Some(f_type.base().clone())
             }
@@ -3754,6 +3810,27 @@ use a separate collection or add after the loop"
             } else {
                 None
             };
+            // @PLN167 C1 — a text FIELD or ELEMENT (`t = &o.s`, `t = &a[0]`): the STORE kind of
+            // a text link.  It holds the slot's `DbRef`, the place `scalar_place_ref` gives a
+            // scalar, and every later mention of the link is parsed as that field
+            // (`Parser::store_text_link_place`).  The annotated spelling (`t: &text = o.s`)
+            // arrives with `s_type` already the link type, hence the peel.
+            let text_place_ref = if stack_src.is_none()
+                && heap_ref.is_none()
+                && matches!(
+                    if let Type::RefVar(inner) = s_type.base() {
+                        inner.base()
+                    } else {
+                        s_type.base()
+                    },
+                    Type::Text(_)
+                )
+                && self.is_text_place(code)
+            {
+                self.scalar_place_ref(code)
+            } else {
+                None
+            };
             // `c = &b` where `b` is itself a link: `c` takes the link `b` holds — a re-point on a
             // reassignment (`@FR-B-Ref-Repoint`), a link copy on a first bind.  Spelled
             // `OpVarRef(b)` so it cannot be read as `c = b`, which writes `b`'s value through `c`
@@ -3761,10 +3838,18 @@ use a separate collection or add after the loop"
             // (`formal/binding.md` D-bind-41).
             let link_src = match *code.unspan() {
                 Value::Var(src) if matches!(self.vars.tp(src).base(), Type::RefVar(_)) => Some(src),
-                _ => None,
+                // A store-kind text link is parsed as its field, so `c = &t` arrives in that
+                // spelling rather than as `Var(t)`.
+                _ => self.store_text_link_of(code),
             };
             if let Some(src) = link_src {
                 amp_unlowered = false;
+                if self.vars.is_store_text_link(src) {
+                    self.bind_text_link_kind(var_nr, true);
+                } else if matches!(self.vars.tp(src).base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                {
+                    self.bind_text_link_kind(var_nr, false);
+                }
                 *code = self.cl("OpVarRef", &[Value::Var(src)]);
                 s_type = self.vars.tp(src).clone();
             } else if let Some(src) = stack_src {
@@ -3777,6 +3862,9 @@ use a separate collection or add after the loop"
                 // publishes it below as a dep; a SCALAR one owns no store and carries none,
                 // so it is recorded here for both.
                 self.vars.record_amp_link(var_nr, src);
+                if matches!(self.vars.tp(src).base(), Type::Text(_)) {
+                    self.bind_text_link_kind(var_nr, false);
+                }
                 let mut inner = self.vars.tp(src).clone();
                 // tuples.md T-Ref — a linked tuple local with a heap element is the
                 // `__tuple<…>` record.  On pass 1 its bind has not been rewritten yet (the fact
@@ -3823,6 +3911,16 @@ use a separate collection or add after the loop"
                 } else {
                     self.ref_var_type(linked)
                 };
+            } else if let Some(eref) = text_place_ref {
+                amp_unlowered = false;
+                self.bind_text_link_kind(var_nr, true);
+                *code = eref;
+                let text = if let Type::RefVar(inner) = s_type.base() {
+                    inner.base().clone()
+                } else {
+                    s_type.base().clone()
+                };
+                s_type = Type::RefVar(Box::new(text));
             } else if let Some(eref) = heap_ref {
                 amp_unlowered = false;
                 // `c`/`r` holds the field/element DbRef; interp reads/writes it via the
@@ -7219,6 +7317,16 @@ use a separate collection or add after the loop"
         let mut to = code.clone();
         for op in ["=", "+=", "-=", "*=", "%=", "/="] {
             if self.lexer.has_token(op) {
+                // @PLN167 C1 — `t = &…` BINDS the link: its target is the variable itself,
+                // not the text field every other mention of a store-kind link is spelled as.
+                if op == "="
+                    && self.lexer.peek_token("&")
+                    && let Some(link) = self.store_text_link_of(&to)
+                {
+                    to = Value::Var(link);
+                    *code = Value::Var(link);
+                    f_type = self.vars.tp(link).clone();
+                }
                 // loft#1212 — an EXPLICIT `??` coalesce is not a place.  `(E-Asgn-Discharge)`
                 // (@FR-E-Asgn-Discharge) says so in as many words: *"an explicit `(a ?? d)`
                 // names two values and no place; it takes no assignment at all"*, and
@@ -8408,7 +8516,13 @@ use a separate collection or add after the loop"
         let Type::RefVar(t) = f_type else {
             return false;
         };
-        if !matches!(**t, Type::Text(_)) {
+        // A `&text?` parameter is the same text slot, nullable: `s += x` appends, and on a
+        // null `s` it stays null (the local `text?`'s rule).
+        let pointee = match t.as_ref() {
+            Type::Optional(inner) => inner.as_ref(),
+            other => other,
+        };
+        if !matches!(pointee, Type::Text(_)) {
             return false;
         }
         self.append_to_text(code, op, var_nr, s_type);

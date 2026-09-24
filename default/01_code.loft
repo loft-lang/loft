@@ -1297,6 +1297,11 @@ fn OpPushEnum(r: vector, val: enumerate);
 #impure(parent_write)
 fn OpPushCharacter(r: vector, val: character);
 #rust"s.database.append_u32(&@r, @val as u32);"
+// The byte kind (`vector<u8>`, `vector<i8>`): `OpSetByte`'s `min` bias rides along, and the
+// element is written by the same setter, so the encoding has one definition (`Store::byte_raw`).
+#impure(parent_write)
+fn OpPushByte(r: vector, min: const i32, val: integer);
+#rust"s.database.append_byte_min(&@r, @min, @val as i32);"
 #impure(parent_write)
 // Replace `r`'s content with `other`'s, aliasing-safe: a no-op when `r` and
 // `other` are the SAME backing vector (NRVO return-into-own-buffer), so the

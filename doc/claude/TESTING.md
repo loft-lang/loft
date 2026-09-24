@@ -753,6 +753,16 @@ guard's original defect (measured 2026-09-23 on `102-expected-errors.loft`: a 91
 Restore the committed receipt with `git show HEAD:tests/falsified/<guard>.patch > <that file>`,
 and keep only the verdict lines from the run.
 
+**And a guard that covers TWO defects can hold only ONE patch**, so say in the file which
+receipt the patch belongs to.  Keep it for the receipt that moves on more channels and more
+backends, and record the other as its own `@falsified-at:` block with CHANNEL / WITNESS /
+HOLDS lines naming its ref.  `1647-a-moved-call-result-is-released-once.loft` is the worked
+example: M1–M11 move the VALUE channel on both backends, M12–M14 move the FREE-REFUSAL channel
+on the interpreter alone (native INERT, since that refusal is the interpreter allocator's
+guard and `--native` has no counterpart).  Without that line the next reader re-derives the
+patch for whichever defect they are working on and silently drops the stronger evidence — which
+is exactly how the overwrite above happens a second time.
+
 Deriving one is mechanical, because a control is not an arbitrary commit: it is the PARENT of
 the commit that added the guard, so the reintroducing patch is that commit's own source diff,
 reversed.  Measured over the 133 guards whose control is publicly unreachable, that holds for

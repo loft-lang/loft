@@ -4783,10 +4783,12 @@ impl Definition {
         while let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Instance) {
             name = parts.rest;
         }
-        match Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
-            Some(parts) => parts.rest,
-            None => name.strip_prefix("n_").unwrap_or(name),
+        if let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
+            return parts.rest;
         }
+        // A store instance (`n_grow@st1`, @PLN167 C3) displays as the author's `grow`.
+        let bare = name.strip_prefix("n_").unwrap_or(name);
+        bare.split('@').next().unwrap_or(bare)
     }
 
     /// Source-file id this definition was parsed from.
@@ -5277,6 +5279,13 @@ impl Definition {
         Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::FreeOverload)
     }
 
+    /// Is this a METHOD — keyed `t_<LEN><receiver>_<name>` (`D-Key`)?  Asked of the key's shape:
+    /// a declared method, never an instance (those are `i_`).
+    #[must_use]
+    pub fn is_method(&self) -> bool {
+        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::Method)
+    }
+
     /// Is this an INSTANCE of a generic — keyed `i_<LEN><types>_<template>` (`D-Key`)?  Asked
     /// of the key's shape, not of its prefix: the runtime's own `i_parse_*` helpers share the
     /// letter and are no instance.
@@ -5446,10 +5455,37 @@ impl Definition {
     /// The name the source wrote for the function keyed `key`: a method's or a free
     /// overload's `rest`, an instance's TEMPLATE's name, a plain `n_<name>`'s `<name>`.
     fn source_name_of_key(key: &str) -> String {
+        // A store instance (`n_grow@st1`, @PLN167 C3) is the author's `grow`; `@` occurs in no
+        // other key.
+        if let Some(rest) = key.strip_prefix("n_")
+            && let Some((base, _)) = rest.split_once('@')
+        {
+            return base.to_string();
+        }
         match Data::split_key(key) {
             Some(parts) if parts.kind == KeyKind::Instance => Self::source_name_of_key(parts.rest),
             Some(parts) => parts.rest.to_string(),
             None => key.get(2..).unwrap_or(key).to_string(),
+        }
+    }
+
+    /// Is this a STORE instance of a function (`<key>@st<mask>`, @PLN167 C3)?  Never a function
+    /// value: it is reached only through the call or dispatch arm that names the function it
+    /// copies, so a candidate walk over function values must pass it by.
+    #[must_use]
+    pub fn is_store_text_instance(&self) -> bool {
+        self.name.starts_with("n_") && self.name.contains('@')
+    }
+
+    /// The name a trace, a profile or a runtime report shows for this definition: a free
+    /// function's key decoded (`n_grow` and its store instance `n_grow@st1` are both `grow`),
+    /// any other key as it is.
+    #[must_use]
+    pub fn trace_name(&self) -> String {
+        if self.name.starts_with("n_") {
+            Self::source_name_of_key(&self.name)
+        } else {
+            self.name.clone()
         }
     }
 
@@ -7588,6 +7624,49 @@ impl Data {
         self.definitions[d_nr as usize].attributes[a_nr].check = check;
     }
 
+    /// @PLN167 C3 — is `arg`, handed to a `&text` parameter, the STORE kind of a text link: a
+    /// place in a record (`OpGetField`, `OpGetVector`, `OpVarRef` of a store-kind link) rather
+    /// than a text variable (`OpCreateStack`, or a stack link or parameter passed as a `Var`)?
+    /// The one test, asked where a call picks its instance and where a backend dispatches one.
+    #[must_use]
+    pub fn is_store_text_arg(&self, arg: &Value) -> bool {
+        match arg.unspan() {
+            Value::Call(g, _) => {
+                let def = self.def(*g);
+                def.name() != "OpCreateStack"
+                    && matches!(def.returned.base(), Type::Reference(_, _))
+            }
+            _ => false,
+        }
+    }
+
+    /// The positions among `params` where a `&text` parameter is handed the store kind, as a
+    /// bit mask (bit `i` for parameter `i`); `0` when every text link is the stack kind.
+    #[must_use]
+    pub fn store_text_mask(&self, params: &[Type], args: &[Value]) -> u64 {
+        let mut mask = 0u64;
+        for (i, (p, a)) in params.iter().zip(args).enumerate() {
+            if i < 64
+                && matches!(p.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                && self.is_store_text_arg(a)
+            {
+                mask |= 1 << i;
+            }
+        }
+        mask
+    }
+
+    /// The store instance of function `d` for `mask`, or `u32::MAX` when none was minted.  An
+    /// instance is keyed `<key>@st<mask>` under `d`'s own source (`parser/store_text.rs`).
+    #[must_use]
+    pub fn store_text_instance(&self, d: u32, mask: u64) -> u32 {
+        let def = self.def(d);
+        self.def_names
+            .get(&(format!("{}@st{mask}", def.name), def.source))
+            .copied()
+            .unwrap_or(u32::MAX)
+    }
+
     /// A definition's name as the AUTHOR wrote it, for a diagnostic to say out loud.
     ///
     /// Storage names are mangled — a free function is `n_<name>` and a method is
@@ -7604,7 +7683,8 @@ impl Data {
     pub fn user_facing_name(&self, d_nr: u32) -> String {
         let name = self.def(d_nr).name();
         if let Some(rest) = name.strip_prefix("n_") {
-            return rest.to_string();
+            // A store instance (`n_grow@st1`, @PLN167 C3) is the author's `grow`.
+            return rest.split('@').next().unwrap_or(rest).to_string();
         }
         match Self::split_key(name) {
             Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {

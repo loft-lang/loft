@@ -1,0 +1,245 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record returned by a fn-ref call whose TARGET is unresolved (a fn-typed parameter) has one
+// owner, whichever function the value holds (loft#1659, `formal/ownership.md` @FR-O-Unknown,
+// @FR-O-Owner, `formal/binding.md` @FR-B-Copy).
+//
+// Nothing static says whose store that record is: the fn type records nothing about what its
+// function's return borrows (@FR-O-Opaque).  The call's own return knows — it compares the
+// store handed back against the allocation counter as the call found it — and the bind reads
+// that: a store MINTED during the call is adopted, and the binding is its one owner; a store
+// that PREDATES the call (a capture, an argument) is copied, and left alone.
+//
+// Two defects, one rule:
+// * INLINE (`height(f(i))`, the filed shape): the result was never bound, so the frame's
+//   hand-up list held it until the frame ended — one store per call, and 70 000 calls
+//   exhausted the store table on both backends.  The cells count past the table: the exit
+//   leak gate cannot see this, because the frame frees everything.
+// * BOUND (`s = f(i)`): the bind was a plain adopt, so a closure that hands back its CAPTURE
+//   on some calls gave the binding the caller's capture as an owned store, and the
+//   binding's free released it.  Silent: the capture then read another record's bytes.  A
+//   closure returning ONLY its capture was not affected (its return is copied into the call
+//   site's buffer), which is why the cells here mix the two arms.
+//
+// @falsified-at: cd55af958 — interpret exit 1 -> 0, interpret 6 assertion failures -> 0, native exit 1 -> 0, native 12 assertion failures -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/1659-an-opaque-fn-ref-record-result-is-owned-once.patch — interpret exit 1 -> 0, interpret 6 assertion failures -> 0, native exit 1 -> 0, native 12 assertion failures -> 0, native panicked -> clean
+//   CHANNEL: the store ceiling (the 70 000-call cells: `store table exhausted`) and the value
+//   (the capture cells read a freed record's bytes; the two write-through cells read the
+//   caller's capture changed — `formal/closures.md` D-clo-42).
+//   HOLDS: the LEAK count and the stack-store free refusal are equal on both trees and both
+//   backends.  Read off the receipt rather than assumed: `falsify.sh` prints only the channels
+//   that MOVE and requires HERE to be clean, so a channel absent from the two lines above was
+//   equal on the control.
+//   ⚠ PANIC is NOT held here — `native panicked -> clean` is one of the channels that moves,
+//   which is unusual and is the point: a store ceiling reached at 70 000 calls ABORTS the
+//   native run rather than answering wrongly.  So a patch that merely restored the wrong VALUE
+//   without restoring the abort would move fewer channels than the control did, and this
+//   receipt says which ones it owes.  The leak count is the discriminator that keeps a
+//   different over-free from passing as this defect: the fault is a store held to frame exit,
+//   not one released twice.
+
+struct S1659 { v: float }
+
+enum Sh1659 {
+  Ci1659 { r: float },
+  Sq1659 { a: float }
+}
+
+fn mk1659(i: integer) -> S1659 { S1659 { v: (i & 7) as float } }
+fn height1659(s: S1659) -> float { s.v }
+fn hn1659(s: S1659?) -> float { if s == null { -1.0 } else { s.v } }
+
+fn inline1659(f: fn(integer) -> S1659, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { t += height1659(f(i)); }
+  t
+}
+
+fn bound1659(f: fn(integer) -> S1659, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { s = f(i); t += height1659(s); }
+  t
+}
+
+fn boundn1659(f: fn(integer) -> S1659?, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { s = f(i); t += hn1659(s); }
+  t
+}
+
+fn inlinen1659(f: fn(integer) -> S1659?, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { t += hn1659(f(i)); }
+  t
+}
+
+fn test_an_inline_result_is_released_per_call() {
+  // The filed shape: 70 000 > the store table, so a build holding one store per call never
+  // reaches the assert.  Σ (i & 7) over 0..70000 = 8750 × 28.
+  t = inline1659(mk1659, 70000);
+  assert(t == 245000.0, "inline sum: got {t}");
+}
+
+fn test_a_bound_result_is_released_per_call() {
+  // The control for the spelling: binding first was already clean, and must stay so.
+  t = bound1659(mk1659, 70000);
+  assert(t == 245000.0, "bound sum: got {t}");
+}
+
+fn test_a_capture_or_mint_bound_leaves_the_capture() {
+  // Early `return cap` on every call, a mint on none — but the closure CAN mint, so its
+  // return is not copied into the call-site buffer.  10 × 2.5.
+  cap = S1659 { v: 2.5 };
+  g = fn(i: integer) -> S1659 { if i > 1000 { return S1659 { v: 9.0 }; } return cap; };
+  t = bound1659(g, 10);
+  junk = [for j in 0..50 { S1659 { v: j as float } }];
+  assert(t == 25.0, "bound capture sum: got {t}");
+  assert(cap.v == 2.5, "the capture after 10 bound calls: got {cap.v}");
+  assert(len(junk) == 50, "filler");
+}
+
+fn test_a_capture_or_mint_inline_leaves_the_capture() {
+  // Even calls hand back the capture (2.5), odd ones mint 1.0: 5 × 2.5 + 5 × 1.0.
+  cap = S1659 { v: 2.5 };
+  g = fn(i: integer) -> S1659 { if i % 2 == 0 { cap } else { S1659 { v: 1.0 } } };
+  t = inline1659(g, 10);
+  t2 = bound1659(g, 10);
+  junk = [for j in 0..50 { S1659 { v: j as float } }];
+  assert(t == 17.5, "inline mixed sum: got {t}");
+  assert(t2 == 17.5, "bound mixed sum: got {t2}");
+  assert(cap.v == 2.5, "the capture: got {cap.v}");
+  assert(len(junk) == 50, "filler");
+}
+
+fn test_a_nullable_capture_or_null() {
+  // Even calls: the capture (1.5); odd: null (-1.0).  5 × 1.5 − 5.
+  capn: S1659? = S1659 { v: 1.5 };
+  g = fn(i: integer) -> S1659? { if i % 2 == 0 { capn } else { null } };
+  t = boundn1659(g, 10);
+  t2 = inlinen1659(g, 10);
+  junk = [for j in 0..50 { S1659 { v: j as float } }];
+  assert(t == 2.5, "bound nullable sum: got {t}");
+  assert(t2 == 2.5, "inline nullable sum: got {t2}");
+  assert(capn.v == 1.5, "the capture: got {capn.v}");
+  assert(len(junk) == 50, "filler");
+}
+
+fn test_a_coalesced_capture() {
+  // `capn ?? mint`: the capture is present, so every call hands it back.  10 × 1.5.
+  capn: S1659? = S1659 { v: 1.5 };
+  g = fn(i: integer) -> S1659? { capn ?? S1659 { v: 4.0 } };
+  t = boundn1659(g, 10);
+  t2 = inlinen1659(g, 10);
+  junk = [for j in 0..50 { S1659 { v: j as float } }];
+  assert(t == 15.0, "bound ?? sum: got {t}");
+  assert(t2 == 15.0, "inline ?? sum: got {t2}");
+  assert(capn.v == 1.5, "the capture: got {capn.v}");
+  assert(len(junk) == 50, "filler");
+}
+
+fn rebind1659(f: fn(integer) -> S1659, n: integer) -> S1659 {
+  x = S1659 { v: -1.0 };
+  for i in 0..n { x = f(i); }
+  x
+}
+
+fn test_a_rebound_local_releases_what_it_displaces() {
+  // The reassignment spelling, past the table; the last value is 69999 & 7.
+  x = rebind1659(mk1659, 70000);
+  assert(x.v == 7.0, "the last value: got {x.v}");
+}
+
+fn test_a_rebound_capture_is_a_copy() {
+  // Every call hands back the capture, and the rebound local must be INDEPENDENT of it
+  // (@FR-B-Copy): a write through the result must not reach the capture.
+  cap = S1659 { v: 2.5 };
+  g = fn(i: integer) -> S1659 { if i > 1000 { return S1659 { v: 9.0 }; } return cap; };
+  x = rebind1659(g, 4);
+  x.v = 99.0;
+  assert(x.v == 99.0, "the local: got {x.v}");
+  assert(cap.v == 2.5, "the capture after a write through the copy: got {cap.v}");
+}
+
+fn test_a_bound_capture_written_through_is_a_copy() {
+  cap = S1659 { v: 2.5 };
+  g = fn(i: integer) -> S1659 { if i > 1000 { return S1659 { v: 9.0 }; } return cap; };
+  f: fn(integer) -> S1659 = g;
+  s = f(1);
+  s.v = 42.0;
+  assert(s.v == 42.0, "the local: got {s.v}");
+  assert(cap.v == 2.5, "the capture after a write through the bound result: got {cap.v}");
+}
+
+fn nested1659(f: fn(integer) -> S1659, m: fn(S1659) -> float, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { t += m(f(i)); }
+  t
+}
+
+fn test_an_inline_result_handed_to_another_fn_ref() {
+  t = nested1659(mk1659, fn(s: S1659) -> float { s.v }, 70000);
+  assert(t == 245000.0, "nested sum: got {t}");
+}
+
+fn discard1659(f: fn(integer) -> S1659, n: integer) -> integer {
+  c = 0;
+  for i in 0..n { f(i); c += 1; }
+  c
+}
+
+fn test_a_discarded_result_is_released() {
+  c = discard1659(mk1659, 70000);
+  assert(c == 70000, "the count: got {c}");
+}
+
+fn fwd1659(f: fn(integer) -> S1659, i: integer) -> S1659 { h = f(i); h }
+
+fn test_a_forwarded_result_is_released_per_call() {
+  // A frame that RETURNS a record between the loop and the call: on `--native` such a frame
+  // hands its fn-ref stores up to its caller, so the loop's frame is the one that must not
+  // collect them.
+  t = 0.0;
+  for i in 0..70000 { t += height1659(fwd1659(mk1659, i)); }
+  assert(t == 245000.0, "forwarded sum: got {t}");
+}
+
+fn shape1659(i: integer) -> Sh1659 {
+  if i % 2 == 0 { Ci1659 { r: 1.0 } } else { Sq1659 { a: 2.0 } }
+}
+
+fn area1659(s: Sh1659) -> float {
+  match s {
+    Ci1659 { r } => r,
+    Sq1659 { a } => a
+  }
+}
+
+fn shapes1659(f: fn(integer) -> Sh1659, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { t += area1659(f(i)); }
+  t
+}
+
+fn test_a_struct_enum_result_is_released_per_call() {
+  // 35 000 × 1.0 + 35 000 × 2.0.
+  t = shapes1659(shape1659, 70000);
+  assert(t == 105000.0, "enum sum: got {t}");
+}
+
+fn through1659(f: fn(S1659) -> S1659, s: S1659, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { r = f(s); t += height1659(r); t += height1659(f(s)); }
+  t
+}
+
+fn test_an_argument_handed_back_is_left_to_its_owner() {
+  // The closure answers its ARGUMENT, which the caller still owns: the result's deps name it
+  // (@FR-O-Opaque), so neither spelling may free it.  20 reads of 3.0.
+  s = S1659 { v: 3.0 };
+  t = through1659(fn(p: S1659) -> S1659 { p }, s, 10);
+  junk = [for j in 0..50 { S1659 { v: j as float } }];
+  assert(t == 60.0, "argument sum: got {t}");
+  assert(s.v == 3.0, "the argument: got {s.v}");
+  assert(len(junk) == 50, "filler");
+}

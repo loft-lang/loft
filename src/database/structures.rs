@@ -1189,9 +1189,15 @@ impl Stores {
     /// A boolean or a plain enum: one byte, no sentinel (`OpSetBoolean` / `OpSetEnum`'s
     /// `set_byte(…, 0, v)`).
     pub fn append_byte(&mut self, db: &DbRef, v: i32) {
+        self.append_byte_min(db, 0, v);
+    }
+
+    /// One element of a `vector<u8>` / `vector<i8>` (a byte biased by `min`), written as
+    /// `OpSetByte` writes it — `OpPushByte`, the fused `v += [x]`.
+    pub fn append_byte_min(&mut self, db: &DbRef, min: i32, v: i32) {
         if let Some(slot) = self.append_slot(db, 1) {
             let store = self.store_mut(&slot);
-            store.set_byte(slot.rec, slot.pos, 0, v);
+            store.set_byte(slot.rec, slot.pos, min, v);
             Self::append_done(store, &slot);
         }
     }

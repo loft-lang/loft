@@ -13834,6 +13834,14 @@ impl Parser {
         if self.tail_is_closure_read(body.last()) {
             return true;
         }
+        // A dep on the closure RECORD itself: an `if` whose arm reads a capture carries
+        // `__closure` in the value's own deps, with no local in between to ask.
+        if ls
+            .iter()
+            .any(|&d| d < self.vars.count() && self.vars.name(d) == "__closure")
+        {
+            return true;
+        }
         ls.iter().any(|&v| self.var_views_a_capture(v, body))
             || body
                 .last()
@@ -16582,6 +16590,16 @@ impl Parser {
                         let placeholder = self.vars.var("__retbuf");
                         if placeholder != u16::MAX {
                             self.vars.retire_argument(placeholder);
+                            // loft#1651 — a retired placeholder OWNS NOTHING from here on.
+                            // The buffer role has just moved to `*v`, so whatever any later
+                            // site emits for this variable must release nothing: it holds no
+                            // store of its own, and the argument prologue that used to
+                            // reserve its slot no longer covers it, so a release would read
+                            // an unreserved slot.  An unreserved ref slot reads as store 0 —
+                            // the EVALUATION STACK — and the free is refused as `BUG (#306)`,
+                            // with only the allocator's guard between that and a whole-store
+                            // free of every live frame.
+                            self.vars.set_skip_free(placeholder);
                         }
                         self.vars.become_argument(*v);
                         dep.push(buf_attr as u16);
@@ -17018,7 +17036,20 @@ impl Parser {
                     other => other.clone(),
                 };
                 if let Type::Reference(td, ls) = &t {
-                    if self.return_projects_into_local(&v) || self.return_copies_a_leasing_value(&v)
+                    // ⚠ THREE disjuncts, and two of them arrived from different branches on
+                    // the same line.  @PLN163 P4 added the leasing-copy leg and loft#1659 the
+                    // capture leg, each as `projects_into_local || <its own>`; taking either
+                    // side of that merge whole would have silently dropped the other's fix,
+                    // which is the join-only defect neither branch's gate could see.  They are
+                    // independent reasons a mid-body `return` cannot hand its value back as it
+                    // stands, so the condition is their union.
+                    //
+                    // loft#1659, `@FR-F-Ret` — a CAPTURE handed back by an explicit `return`
+                    // is the closure's, not a fresh value: the tail selector's loft#1485 leg,
+                    // which no mid-body exit reached.
+                    if self.return_projects_into_local(&v)
+                        || self.return_copies_a_leasing_value(&v)
+                        || self.return_views_a_capture(ls, std::slice::from_ref(&v))
                     {
                         // The returned expression points INTO something this
                         // function frees — a field of an inline call's temporary

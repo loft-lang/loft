@@ -220,10 +220,38 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+**OPEN: 0** — `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
 CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
 2026-09-23; `D-clo-27` closed 2026-09-12).
 
+- **D-clo-42** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1659)* — `(F-Ret)` for a capture a
+  closure hands back from any exit but a bare tail.  loft#1485 made `fn(i) -> S { cap }` return a
+  fresh copy, through the tail selector's capture leg; `{ return cap; }`, an early `return cap;`
+  and an `if` whose arm is `cap` handed back the capture itself.  A caller that COPIES its result
+  never noticed, but one that binds it as a borrow did: `f: fn(integer) -> S = g; s = f(1);
+  s.v = 42.0` wrote `42` into `cap`, on both backends.  **Where (measured).**  Two readers of one
+  question: `parse_return`'s record arm had legs for a view of a local and a projection into one
+  but no capture leg, and `return_views_a_capture` asked whether a dep LOCAL views a capture, so
+  an `if` whose value names `__closure` itself, with no local between, answered no.  **Closed** in
+  both: `parse_return` asks `return_views_a_capture` beside `return_projects_into_local`, and a dep
+  on the closure record is a capture.  Guard: the two write-through cells of
+  `tests/scripts/1659-an-opaque-fn-ref-record-result-is-owned-once.loft`.
+- **D-clo-41** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1658)* — `(L-FnRef)` for a function with
+  NO loft body: `g = env_variable; g("HOME")` answered an empty text on the interpreter, and
+  `--native` answered the variable.  The same held for `store_memory` and `directory`, and for any
+  native declared `pub fn name(…) -> T;`.  A silent wrong value on one backend.  **Where
+  (measured).**  `State::def_code`'s `body_is_null` arm gives such a definition a frame and a bare
+  `OpReturn`.  A direct call never enters it, because `generate_call` emits `OpStaticCall` itself,
+  but a function value jumps to the definition's code position.  So the native never ran, and the
+  call answered whatever the frame held.  **Closed** at the one place a function value reaches a
+  definition, `State::fn_call_ref`: a bodiless target runs in place (`fn_ref_native`) on the
+  arguments the call pushed, exactly as `OpStaticCall` runs it (`invoke_native`, `static_call`'s
+  own tail).  The `&text` work buffers the call site pushed for the widest candidate of the value's
+  type are dropped: a native takes none, except a text producer that exists only as a `_dest`
+  variant, which takes one as its destination and answers a `Str` into it, as a loft text callee
+  does.  Measured: 40 000 calls through function values in a loop, plain and `_dest` natives with
+  text and integer arguments and results, 0 mismatches on both backends.  Guard
+  `tests/scripts/1658-a-native-called-through-a-function-value-runs.loft`.
 - **D-clo-40** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1642)* — `(L-FnAbsent)`, and C66: a
   production program never aborts on a user-attributable edge.  Calling a `vector<fn(…)>`
   element read out of range panicked the interpreter (`fn_call_ref: d_nr=… is negative`) and hit

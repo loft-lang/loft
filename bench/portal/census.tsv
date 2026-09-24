@@ -5,74 +5,17 @@
 # Surveyed 2026-09-21 from the published API (doc/claude/LIBRARIES.md) and the library
 # sources; a row moves to routines.tsv the day its lane prints it.  Line numbers are the
 # survey's, against the published package (~/.loft/registry) or the branch named there.
-markdown	render	text-build	loft	1	the block state machine: split, one pass per line, the document grown by `out +=` at 14 flush sites	a 120 KiB document 200x and a 4 KiB README 20,000x	a hand-written line state machine into one String (pulldown-cmark as a second column)
-markdown	render_inline	text-build	loft	1	one 1-character text built and appended PER CHARACTER (`char_str = "{c}"; out += char_str`), recursing per span	200,000 calls on a 400-byte paragraph with 6 spans	`String::push(char)` with the same recursion
-markdown	html_escape	text-build	loft	2	`for c in s` with `out += "{c}"` on the non-entity path	2,000,000 escapes of 200 bytes, 6 % entities	match + `push_str` / `push`
-markdown	slugify	alloc-temp	loft	2	every uppercase byte allocates a 1-char text AND its lowercased copy	2,000,000 slugifies of a 60-char heading	`chars().flat_map(char::to_lowercase).collect()`
-markdown	extract_headings	record-build	loft	2	a 3-field record with two built texts appended per heading	2,000 passes over a 2,196-line document	`Vec<Heading>` push with `String` fields
-html	escape_html	text-build	loft	1	the whole library is one per-character append loop; the doc viewer calls it 40+ times a page	2,000,000 escapes of 120 bytes, plus a 64 KiB blob	`String::with_capacity` + match + push
-cbor	encode	record-field	loft	1	canonical map order: since 0.1.5 each key is encoded ONCE into a flat buffer and ranked by an O(n^2) `key_lt` over slices (the O(n^3) re-encode this row was written against is gone); the head arithmetic went plain in 0.1.6 (`major: integer limit(0, 7)`)	2,000 encodes of a 12-entry map with a nested 8-entry map	a BTreeMap-ordered head + payload writer
-cbor	encode_bytes	vector-build	loft	2	a text payload appended ONE byte at a time (`buf += [value.byte_at(i) as u8]`)	500 encodes of 64 texts of 256 bytes	`Vec<u8>::extend_from_slice`
-cbor	decode	record-build	loft	1	one record appended per item, a fresh `Decoded` returned per node, recursion per element	2,000 decodes of the 12-entry map; 200 of a 4,096-integer array	recursive descent returning `(Value, usize)`
-time	parse	text-scan	loft	1	`digits_at` walks the WHOLE text per field and `parse` calls it 5 times	2,000,000 parses of an ISO timestamp	fixed-offset digit reads, each byte once
-time	format_iso	text-build	loft	2	three zero-padded interpolations through two helpers that each redo the civil-date arithmetic	2,000,000 calls over 512 rotating epoch values	`write!` into a reused String
-time	day	int-loop	loft	2	two helper hops, 4 divisions, a 3-tuple returned for one element	10,000,000 calls over 512 values	Hinnant civil_from_days returning a tuple
-time	iso_week	int-loop	loft	2	the heaviest integer path: four helpers deep	5,000,000 calls	the same composition
-random	get	int-loop	loft	2	a combined LCG in loft: 2 divisions and TWO field writes through the record per draw	20,000,000 draws	the same two Schrage steps on a plain struct
-random	indices	vector-write	loft	1	Fisher-Yates: 2 indexed reads + 2 indexed writes + a nested call per step	2,000 shuffles of 4,096	`Vec<i64>` with `swap`
-random	rand	native-boundary	native	2	the MINIMUM crossing: two integers in, one out, no store touched	20,000,000 calls	`Pcg64::next_u64` range-reduced
-random	rand_indices	native-boundary	native	2	a crossing that BUILDS and returns a store vector	2,000 calls of 4,096	`SliceRandom::shuffle`
-web	pack_u8	native-boundary	native	1	ONE crossing per BYTE: the calibration constant every other native ratio is read against	100,000 frames of 1 KiB	`Vec<u8>::push` in a loop — zero crossings
-web	byte_at	native-boundary	native	1	the receive-side mirror, re-passing the whole text pointer per byte	a 64 KiB frame read 2,000 times	`bytes[i]`
 crypto	sha256	native-boundary	native	2	one text in, 64 hex characters out: the boundary amortised over a growing digest	200,000 calls on 64 bytes; 2,000 on 1 MiB	the same function called from Rust
-crypto	base64_to_bytes	native-boundary	native	1	a crossing that ALLOCATES a store-owned `vector<u8>`	100,000 decodes of 4 KiB	decode into a `Vec<u8>`
 crypto	hpke_seal_base_deterministic	native-boundary	mixed	2	~18 crossings and ~15 base64 text concatenations per seal	5,000 seals of 256 bytes	the same suite on `&[u8]` with no base64 round-trips
 crypto	ed25519_sign	native-boundary	native	2	the control: one crossing around ~50 µs of callee work, so the ratio should read 1.0	50,000 signs	ed25519-dalek called directly
 regex	matches	native-boundary	native	2	every call allocates a String key and hashes the whole pattern to reach the cached Regex	500,000 calls over 20 rotating lines	a pre-compiled `Regex::is_match`
 regex	split_on	text-build	mixed	1	the REMAINDER of the input re-sliced per piece (`rest = input[pos..n]`): O(pieces x bytes)	a 256 KiB text into ~20,000 pieces, 200x	`Regex::split` collecting lengths
-arguments	parse	text-scan	loft	2	a linear scan of the options with a text compare per entry, per argv token	200,000 parses of 24 tokens against 40 options	a linear scan over `&[String]`
-game_protocol	msg_ping	alloc-temp	loft	2	a nested record pair built and returned by value, nothing else	10,000,000 calls	the same two structs constructed
-server	header	text-scan	loft	2	EVERY request header lowercased per lookup, the value rejoined piece by piece	2,000,000 lookups against 14 headers	`eq_ignore_ascii_case` + `split_once`
-graphics	fill_polygon	record-field	loft	1	per scanline a walk of `vector<Coord>` reading `.px/.py`, a FRESH crossings vector and an insertion sort	a 28-gon and a pentagram into 256x256, 200x	crossings into a reused `Vec<i64>` + `sort_unstable`
-graphics	fill_rect	vector-write	loft	1	the commonest primitive: `y*width+x` and a bounds test per pixel	4,000 rects of 64x48 into 1024x1024	nested `for` over a slice
-graphics	canvas	vector-write	loft	2	every frame, atlas and layer allocates one through the doubling fill	`canvas(1920, 1080, c)`, 200x	`vec![color; w*h]`
-graphics	clear	vector-write	loft	2	the per-frame wipe: one indexed store per pixel	a 1280x720 canvas, 500x	`data.fill(color)`
-graphics	blend_pixel	vector-read	loft	2	read-modify-write plus a `blend` call: 4 unpacks, 3 multiply-adds, a repack	262,144 blends, 50x	`fn blend(u32, u32) -> u32` over a slice
-graphics	fill_triangle	int-loop	loft	2	two multiply-before-divide edge interpolations per scanline	20,000 triangles into 512x512	scanline with integer edge steps
-graphics	draw_line	call	loft	2	Bresenham calling the METHOD `set_pixel` once per step	5,000 lines of ~700 px (3.5 M calls)	Bresenham writing the slice inline
-graphics	draw_bezier	alloc-temp	loft	2	two slice-copies of the whole explicit stack per subdivision	2,000 curves, ~6 levels	`Vec<[i64; 8]>` push / pop
-stage	render_stage	call	loft	1	THE per-frame software path: `get_pixel` + 3x `over` + `set_pixel` — five calls per pixel per node	200 nodes of 64x64 over 960x540, 30x	a span loop with `over` inlined
-stage	blur_region	vector-read	loft	1	`(2r+1)^2` clamped reads per pixel out of a copied source	320x240, radius 3, 20x	the same clamped box kernel
-stage	compose	record-field	loft	1	per node a cos/sin, an affine compose, and 12+ separate `self.st_nodes[i].field = …` writes	5,000 nodes, 200 calls	`let cur = &mut nodes[i]` and direct stores
-stage	pack_instances	vector-build	loft	1	16 separate one-element appends per visible node	5,000 nodes, 100x	`extend_from_slice([…; 16])`
-stage	draw_list	record-build	loft	2	a `vector<DrawRect>` of NESTED records, one `+=` at a time	5,000 nodes, 200x	`Vec<DrawRect>` push
-stage	composite_light	float-kernel	loft	2	`sqrt` + `pow` per light per pixel	8 lights over 640x360, 20x	a per-pixel f64 loop
-text2d	write_text	call	loft	1	one `set_pixel` call per lit sub-pixel of every glyph	500 lines of 40 characters at scale 2 (1.4 M calls)	a bitmask walk writing the slice
-text2d	draw_quads	vector-read	loft	2	`get_pixel` on the atlas + `set_pixel` on the target per texel	2,000 quads, 50x	two slices, row-wise copy with a zero test
-text2d	layout	record-build	loft	2	one `Quad` appended per character plus an atlas lookup	2,000 strings of 32 characters	`Vec<Quad>` push
-text2d	atlas_cell	keyed	loft	2	a LINEAR scan of the atlas codes per character	64,000 lookups in a 64-glyph atlas	`HashMap<u32, usize>`
-text2d	wrap	text-build	loft	1	per character `word += c`, per word a concatenation and a re-measure	a 20 kB paragraph to 40 columns, 100x	greedy wrap over `split_whitespace`
-gridmesh	build_index	keyed	loft	2	N dedup-inserts of a record into `hash<CellRef[ck]>`	100,000 cells, 20x	`HashMap<i64, usize>` insert
-gridmesh	field_add_cell	keyed	loft	2	an insert, a bucket probe + insert, a bucket append, up to 4 border dedup-inserts	50,000 paints	`entry().or_insert_with(Vec::new).push()`
-gridmesh	collect_dirty_inputs	keyed	loft	1	`cells x 6 x halo` hash lookups plus a seen-set insert each	10,000 cells, 200 dirty chunks, 50x	`HashMap` lookups + `HashSet` dedup
-gridmesh	emit_segment	vector-build	loft	2	NINE parallel narrow-vector appends per segment, each with a cast	500,000 segments	nine `Vec` pushes
-tween	ease	float-kernel	loft	2	an 11-arm match with cos / pow / sin / sqrt in the hot arms	33 curve pairs x 10,000 samples	a `match` with the same f64 formulae
-tween	value	call	loft	2	`progress` -> `ease` -> `lerp`: three calls and a record read for one number	2,000 tweens polled for 600 frames	the chain inlined
-shapes	proxies_overlap	call	loft	2	16 x 16 nested predicate calls, each reading 8 fields off two records	500 proxies, all pairs	nested `iter().any()`
 imaging	png	native-boundary	native	2	the decode is Rust; the cost is ONE STORE RECORD PER PIXEL across the boundary	a 2048x2048 PNG, 20x	`image::open` into `Vec<[u8; 4]>`
-glb	save_glb	record-field	loft	2	four walks of `vector<Vertex>` reading NESTED `.pos.x / .normal.y / .uv.x`	a 16,641-vertex sphere, 20x	`extend_from_slice` from `&[Vertex]`
-glb	save_scene_glb	text-build	loft	2	170 lines of `result += "…{x:.6}…"` per node, material and light	a 200-node scene, 20x	`write!` into one String
-mesh3d	sphere	record-build	loft	2	every vertex built from three nested records through `add_vertex`	`sphere(1.0, 128, 128)`, 20x	`Vec<Vertex>` + `Vec<[u32; 3]>` push
-mesh3d	mesh_to_floats	record-field	loft	1	per triangle an index, a null test and six fields two structs deep	32,768 triangles, 50x	`extend_from_slice` over `&[Vertex]`
-mesh3d	mat4_transform	alloc-temp	loft	2	12 float operations and a FRESH `Vec3` record returned per call	1,000,000 points	a `Copy` struct returned by value
-mesh3d	mat4_mul	float-kernel	loft	2	64 multiply-adds indexing a `vector<float>` INSIDE a record	500,000 multiplies	`[f64; 16]` column-major
 hex_recover	forms_upto	call	loft	1	six nested loops x a deep predicate chain x `form_write` x a LINEAR text dedup; the source itself calls it "the expensive part"	`forms_upto(2)`: 23,232 proposals, one timed call	the same loops with a `Vec<String>` linear dedup (a `HashSet` as the keyed contrast)
 hex_terrain	terrain_surface_at	float-kernel	loft	1	per sample a weight vector ALLOCATED, a 3x4 kernel-tap loop, and hundreds of hashed-noise evaluations	a 512x512 sample grid over a 96x96 terrain of 6 types	the same kernel + fbm with a `[f64; 8]` stack array
-hex_field	trace	vector-read	loft	1	the loop stitcher rescans ALL edges to find each next one: O(n^2) reads over five parallel vectors	the outline of a ~1,800-cell disk, 200x	the same O(n^2) stitch over four `Vec<i64>`
 hex_roof	roof_match	float-kernel	loft	1	up to four fits; the ridge climb drives thousands of full-footprint sqrt sweeps	a 500-cell hip roof, 5x	the same hill-climb over `Vec<f64>`
 hex_terrain	terrain_hydrology	vector-read	loft	1	a SELECTION-scan priority flood, O(n^2) by its own comment, over seven parallel vectors	one call on a 96x96 terrain (~85 M scanned slots)	the same selection flood (a BinaryHeap would change the algorithm)
 hex_world	tick_and_decay	record-field	loft	1	per tick: every cell's 6 neighbours, each a LINEAR scan of the chunk list, then every Cell record rebuilt	64 chunks 30 % filled, 20 ticks	`Vec<Chunk>` with the same linear scan, plus a `HashMap` index as the contrast
-hex_way	track_distance	float-kernel	loft	1	the innermost float primitive of hex_way AND hex_roof: a sqrt per straight, atan2 + wrap per arc	2,000,000 point queries against 16 segments	the same segment loop over `Vec<[f64; 6]>`
 hex_draw	surface_fitted_spread	alloc-temp	loft	1	FOUR full window sweeps, each returning a fresh five-vector run, for a result that needs one	a 61x61 window, 4 sides, 200x	one sweep into a `Vec<SideEdge>`
 hex_shape	wall_chain_walk	vector-read	loft	1	triple-nested rescans of the endpoint table, two O(n) helpers inside	a 60-period wall run in a 48x48 edge set, 200x	the same scan over two `Vec<i64>`
 hex_body	rig_world_frame3	float-kernel	loft	1	TWELVE parallel float vectors allocated per call to carry a Rodrigues + 3x3 matmul chain	a 24-bone rig, 200,000 calls	a `[f64; 12]` stack array, no heap
@@ -82,9 +25,6 @@ hex_form	form_write	text-build	loft	2	interpolation and `+=` per side, called on
 hex_form	side_edges	record-build	loft	2	a window sweep appending into FIVE parallel vectors, re-run by every surface routine	a 61x61 window, 4 sides, 200x	five `Vec` pushes (one `Vec<SideEdge>` as the contrast)
 hex_fit	draft_fit_p	alloc-temp	loft	2	each of up to 24 trials allocates a fresh edge set, element by element into two vectors	a 41x41 footprint, the worst case, 20x	ONE reused `Vec<u8>` buffer
 hex_edge	sweep_path_from	float-kernel	loft	2	up to 256 lattice steps, each solving 6 bisector intersections in doubles	20,000 segments across a walled 64x64 field	the same loop over a flat `Vec<i32>`
-hex_edge	passable	call	loft	2	the movement loop's innermost query: four calls and a 6-iteration search to read one slot	20,000,000 calls	one inlined fn indexing a `Vec<i32>`
-hex_edge	edges_cut	call	loft	2	every boundary edge pays a 6-deep helper chain	a 96x96 filled disk, 200x	the same loop with the slot index inlined
-hex_field	edgeset_count	call	loft	2	a triple loop through `edge_mat` -> `eg_index` -> `eg_dir_from`, which linear-scans six neighbours	a 64x64 edge set, 500x	the slot index computed inline
 hex_field	stencil_rotate	record-field	loft	2	two full passes through four accessor families, then a halo pass of three calls per slot	a 33x33 stencil, all 6 turns, 100x	a struct-of-Vec copy
 hex_field	doc_read	native-boundary	loft	2	one file-read builtin crossing PER CELL per section	a 128x128 document (~49,000 crossings), 50x	`fs::read` once + a slice decode
 hex_recover	index_build	keyed	loft	2	a hash probe + insert per candidate, keyed on a freshly built text	a 400-form candidate set, 20x	`HashMap<String, Form>`
@@ -93,35 +33,10 @@ hex_roof	roof_cone	float-kernel	loft	2	one sqrt plus two accessor calls per cell
 hex_way	way_stamp	float-kernel	loft	2	two full window sweeps of sqrt / atan2 per point per segment	a 96x96 window over 12 segments, 50x	the same two sweeps
 hex_place	combine_cut	call	loft	2	a fresh set allocated and swept, then four reads and a write per boundary edge	two overlapping 64x64 footprints, 200x	one fused pass over two `Vec<bool>`
 hex_place	field_union	vector-build	loft	2	a set allocated by a push loop, then written one cell at a time through an accessor	two 128x128 sets, 300x	`vec![false; w*h]` + a fused OR
-hex_grid	hex_neighbor	call	loft	2	a branchy parity table returning a TUPLE: the innermost callee of every 6-direction sweep in the family	20,000,000 calls	an inlined fn returning `(i64, i64)`
-hex_grid	px_to_hex	float-kernel	loft	2	two divides then a round with three `round`, three `abs` and a three-way branch	5,000,000 points	the same f64 chain
-hex_terrain	terrain_fbm	float-kernel	loft	2	per octave four integer hashes and a smoothstep lerp: the densest per-op kernel in the tree	5,000,000 calls of 8 octaves	the same hash + lerp in i64 / f64
 hex_terrain	terrain_relief_pass	record-field	loft	2	the second pass reads a type through a NULLABLE record per cell	a 128x128 terrain of 8 types, 200x	`Vec<TerrainType>` indexed directly
-hex_world	get_cell	keyed	loft	2	a linear scan of the chunk list comparing two fields, then a record returned BY VALUE	200 chunks, 2,000,000 reads	the same scan, plus a `HashMap` variant
 hex_world	world_save	native-boundary	loft	2	four file-append builtin crossings per filled cell	~20,000 cells (~80,000 crossings), 20x	serialise into a `Vec<u8>`, one `fs::write`
 hex_body	rig_read	text-scan	loft	2	every word helper re-splits the line: a 12-field bone line is split ~15 times	20,000 rig texts of 24 bones	`split_whitespace()` once per line
 hex_body	bone_shape_has	call	loft	2	the whole chain re-walked on EVERY point query	a 12-bone rig, 200,000 queries	the walk hoisted once — the gap is the measurement
-zttext	seg	text-scan	loft	1	the choke point of six entry points: it MATERIALISES the whole document, explodes it to characters, then classifies runs	a 100,000-character document (~18,000 tokens), 100x	a `&[char]` walk emitting tokens into a `Vec`
-zttext	insert_text	vector-build	loft	1	every keystroke copies the WHOLE append-only buffer element by element (`for c0 in d.buf { nb += [c0] }`): typing is quadratic	a 40,000-character document built by 2,000 inserts	a `Vec<char>` clone + push, the piece list rebuilt at the split
-zttext	flow_layout_full	alloc-temp	loft	1	per line, per token a fresh `vector<Run>` with a freshly built text per run, discarded at once — and built twice for the same tokens	a 100,000-character document wrapped to 72 columns, 20x	the same greedy loop over `&[Token]` with `&str` slices
-zttext	materialise	text-build	loft	1	every piece span concatenated ONE character at a time (`out += "{ch}"`)	a 100,000-character / 5,000-piece document, 200x	`String::push(ch)` over the same spans
-zttext	delete_range	record-build	loft	2	a fresh `vector<Piece>` per edit, and the piece count only grows	2,000 deletes on a ~5,000-piece document	`fn(&[Piece], a, b) -> Vec<Piece>`
-zttext	locate	record-field	loft	2	a linear scan reading `.count` off a record fetched through a vector, once per insert	200,000 calls on a 5,000-piece document	`for p in pieces { … cum += p.count }`
-zttext	invert	record-build	loft	2	undo REBUILDS the whole accumulated op vector on every op: quadratic in the op count	a 2,000-op transaction against a 20,000-character document	a `Vec<Op>` built forward then reversed
-zttext	patch	record-build	loft	2	the "incremental" path scans every old box and rebuilds every tail box per keystroke	one 5-character insert mid-document, 200x	a prefix `extend_from_slice` + a tail map
-fixstep	clock_advance	int-loop	loft	2	the per-frame door of every driver: `/`, `*`, `-`, two field writes and a nested call — no loop anywhere in the package, so the row IS call + record-field cost	10,000,000 calls	the same three lines on a plain struct
-fixstep	clock_pump	call	loft	2	three frames deep for roughly six integer operations: call overhead with no algorithm in the way	10,000,000 pumps	the same three functions, which rustc inlines into one
-fixstep	timer_spend	record-field	loft	2	four reads and writes of two fields behind three branches, every tick per timer	20,000 timers x 500 ticks	`&mut Timer` with the same branch ladder
-fixstep	approach	float-kernel	loft	2	one `exp()` per eased value per frame	4,000 values x 3,600 frames	the same closed form
-assets	cell_proxy	vector-read	loft	1	two banded texel passes per sprite: a bounds-checked `vector<u8>` read, then up to four reads-plus-writes into band accumulators	200 cells of 64x64, 16 bands	`Vec<i32>` accumulators + the same scan
-assets	opaque_texels	vector-read	loft	2	the alpha-count pass: a nested loop calling `texel_alpha` per texel	500 cells of 64x64 (~2 M reads)	`px[(y*stride+x)*4+3] > 8` counted over a slice
-assets	keys_near	keyed	loft	1	an `index` walk plus THREE hash lookups per surviving instance, then an O(n^2) linear dedup	5,000 placed instances over 200 defs / cells and 40 pages	`HashMap` lookups + a `HashSet` dedup
-assets	anim_of	keyed	loft	2	every lookup FORMATS its composite text key (`"{def}/{action}/{facing}"`) before it can hash it	1,000,000 lookups against 10,000 rows	`format!` into a reused String + `HashMap` get
-assets	blob_put	keyed	loft	2	a record carrying a `vector<u8>` inserted under a text key	20,000 inserts of 8 KiB	`HashMap<String, Blob>` insert
-pluginabi	check_request	alloc-temp	loft	2	the mandatory front door decodes the frame TWICE before six text compares	200,000 frames	one decode returning a Result, then a match
-pluginabi	req_state_b64	alloc-temp	loft	2	a whole CBOR tree decoded and discarded for ONE field; a host reading three fields decodes three times	200,000 frames of 4 KiB state	decode once, three borrows off the map
-pluginabi	request	record-build	mixed	2	three nested enum records built, two native base64 crossings, then a canonical encode	200,000 requests	a BTreeMap encode with `base64::decode`
-ssh	byte_at	native-boundary	native	2	one cdylib crossing PER RECEIVED BYTE; the callee is one indexed load, so the row is the crossing alone	50,000,000 calls over 1 MiB	`data[idx]` — the twin IS the callee body
 consumer:crawler	hydro_pitfill	vector-write	loft	2	a priority flood on a hand-rolled min-heap of TWO parallel integer vectors (a workaround for swapping records)	an 80x80 region	the same parallel-`Vec` heap, or a `BinaryHeap`
 consumer:crawler	build_walls / get_or_add	keyed	loft	2	every wall face FORMATS a text key `"{kx}_{ky}"` to probe a hash, appending a record on a miss	10,201 hexes x 6 edges	`HashMap<(i32, i32), u32>` — the loft side pays a format the twin does not
 consumer:crawler	build_vis_texture	vector-build	mixed	2	PER FRAME: 10,201 pushes, each two indexed reads and a trivial native call, then one upload	a 101x101 grid	`Vec<u32>` push per pixel

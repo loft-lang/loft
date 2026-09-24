@@ -145,6 +145,10 @@ pub(crate) struct VarSnapshot<'a> {
     pub lazy_buffer: bool,
     /// The one bind after an `if`'s pre-init is a first bind (`@FR-O-Move`); read by both emitters.
     pub deferred_first_bind: bool,
+    /// A `&` names this narrow local, which holds its field encoding (@PLN167 decision 1).
+    pub linked_narrow: bool,
+    /// A `&text` link to a text field or element — the store kind (@PLN167 decision 2).
+    pub store_text_link: bool,
     /// The owner witness of a mixed-ownership local (`@FR-O-Witness`), `u16::MAX` for none.
     pub owner_witness: u16,
 }
@@ -165,6 +169,8 @@ pub(crate) struct RestoredVar {
     pub view_elided: bool,
     pub lazy_buffer: bool,
     pub deferred_first_bind: bool,
+    pub linked_narrow: bool,
+    pub store_text_link: bool,
     pub owner_witness: u16,
 }
 
@@ -228,6 +234,16 @@ pub struct Variable {
     /// second pass at the `&`; read by both emitters, which run after the parse, so a use
     /// written before the `&` in the body is emitted with the fact as well.
     linked_narrow: bool,
+    /// Is this a `&text` link to a text FIELD or ELEMENT — the store kind (@PLN167 decision 2)?
+    ///
+    /// Such a link holds the `DbRef` of the record's text slot, and every mention of it is
+    /// parsed as that field (`OpGetText(OpVarRef(t), 0)`): its read is the field read and its
+    /// write the field's setter.  A link to a text VARIABLE (the stack kind) holds a pointer
+    /// to the variable's `String` and is unchanged.  The kind belongs to the VARIABLE, never
+    /// to a path: one link cannot name a stack text and a store text (`(B-Ref-Repoint)`).
+    /// Set on both passes at the bind, so a use on pass 2 already sees it; read by both
+    /// emitters.
+    store_text_link: bool,
     /// `@FR-B-Ref-Lvalue`, `@FR-O-Borrow-Scalar` — the `&` LINK variable that names this local
     /// as its place, or
     /// `u16::MAX`.  Recorded on the TARGET rather than on the link, because a re-point
@@ -717,6 +733,8 @@ impl Function {
             view_elided: v.view_elided,
             lazy_buffer: v.lazy_buffer,
             deferred_first_bind: v.deferred_first_bind,
+            linked_narrow: v.linked_narrow,
+            store_text_link: v.store_text_link,
             owner_witness: self.owner_witness(i as u16).unwrap_or(u16::MAX),
         }
     }
@@ -778,6 +796,8 @@ impl Function {
                 view_elided: r.view_elided,
                 lazy_buffer: r.lazy_buffer,
                 deferred_first_bind: r.deferred_first_bind,
+                linked_narrow: r.linked_narrow,
+                store_text_link: r.store_text_link,
                 // codegen-irrelevant post-parse defaults (not stored):
                 source: (0, 0),
                 scope: u16::MAX,
@@ -787,7 +807,6 @@ impl Function {
                 const_binding: false,
                 value_const: false,
                 amp_link: false,
-                linked_narrow: false,
                 amp_linked_by: u16::MAX,
                 amp_linked_many: false,
                 amp_container_link: false,
@@ -2495,6 +2514,7 @@ impl Function {
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
+            store_text_link: false,
             amp_linked_by: u16::MAX,
             amp_linked_many: false,
             amp_container_link: false,
@@ -2548,6 +2568,7 @@ impl Function {
             deferred_first_bind: false,
             amp_link: self.variables[var as usize].amp_link,
             linked_narrow: self.variables[var as usize].linked_narrow,
+            store_text_link: self.variables[var as usize].store_text_link,
             amp_container_link: self.variables[var as usize].amp_container_link,
             iteration_source: self.variables[var as usize].iteration_source,
             stack_allocated: false,
@@ -2588,6 +2609,7 @@ impl Function {
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
+            store_text_link: false,
             amp_linked_by: u16::MAX,
             amp_linked_many: false,
             amp_container_link: false,
@@ -2627,6 +2649,7 @@ impl Function {
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
+            store_text_link: false,
             amp_linked_by: u16::MAX,
             amp_linked_many: false,
             amp_container_link: false,
@@ -3493,12 +3516,29 @@ impl Function {
         }
     }
 
+    /// Record that `var_nr` is a `&text` link to a text field or element (see
+    /// `Variable::store_text_link`).
+    pub fn set_store_text_link(&mut self, var_nr: u16) {
+        if (var_nr as usize) < self.variables.len() {
+            self.variables[var_nr as usize].store_text_link = true;
+        }
+    }
+
+    /// Is `var_nr` a `&text` link to a text field or element (the store kind)?
+    #[must_use]
+    pub fn is_store_text_link(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].store_text_link
+    }
+
     /// The field encoding `var_nr` holds, when it is a linked narrow local — or every narrow
     /// local under `LOFT_LINK_ALL_NARROW=1`, the generation-time switch that makes the whole
     /// corpus exercise the linked shape (@PLN167 A1's instrument).  `None` for every other
     /// variable: the 8-byte slot, read and written as today.
     #[must_use]
     pub fn linked_narrow_slot(&self, var_nr: u16) -> Option<crate::data::NarrowSlot> {
+        // @FR-L-Narrow-Linked — the per-variable fact the rule's two shapes are picked by:
+        // `Some(kind)` means this local holds the FIELD encoding, so a link can reach it and
+        // every reader of its slot owes a decode.
         if (var_nr as usize) >= self.variables.len() {
             return None;
         }

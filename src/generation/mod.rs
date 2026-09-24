@@ -378,6 +378,22 @@ fn collect_fn_ref_literals(
 pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
     let mut reachable = HashSet::new();
     let mut queue: VecDeque<u32> = entry_defs.iter().copied().collect();
+    // @PLN167 C3 (loft#1656) — a function's STORE instances (`<key>@st<mask>`) are reachable
+    // with it: a call through a function value reaches an instance only through its dispatch
+    // arm, which names the function it copies.  Over-approximation, correctness-safe as the
+    // fn-ref rules below are: it can only emit an unused instance.
+    let mut instances: HashMap<(String, u16), Vec<u32>> = HashMap::new();
+    for d in 0..data.definitions() {
+        let def = data.def(d);
+        if def.is_store_text_instance()
+            && let Some((base, _)) = def.name().split_once('@')
+        {
+            instances
+                .entry((base.to_string(), def.source()))
+                .or_default()
+                .push(d);
+        }
+    }
     while let Some(d) = queue.pop_front() {
         if !reachable.insert(d) {
             continue;
@@ -398,6 +414,9 @@ pub fn reachable_functions(data: &Data, entry_defs: &[u32]) -> HashSet<u32> {
             if cascade != u32::MAX {
                 calls.insert(cascade);
             }
+        }
+        if let Some(list) = instances.get(&(def.name().to_string(), def.source())) {
+            calls.extend(list.iter().copied());
         }
         for c in calls {
             if !reachable.contains(&c) {
@@ -4668,6 +4687,15 @@ impl Output<'_> {
         {
             return slot.rust_type().to_string();
         }
+        // @PLN167 decision 2 — a link to a text field or element holds the slot's `DbRef`.
+        if self
+            .data
+            .def(self.def_nr)
+            .variables()
+            .is_store_text_link(var)
+        {
+            return "DbRef".to_string();
+        }
         rust_type(tp, &Context::Variable)
     }
 
@@ -8809,7 +8837,18 @@ extern crate loft;"
             if dropped == Some(i) {
                 continue;
             }
-            let tp = rust_type(&a.typedef, &Context::Argument);
+            // @PLN167 C3 — a `&text` parameter of a function's STORE instance holds the slot's
+            // `DbRef`, exactly as a store-kind local link does (`local_rust_type`).
+            let store_link = {
+                let vars = def.variables();
+                let v = vars.var(&a.name);
+                v != u16::MAX && vars.is_store_text_link(v)
+            };
+            let tp = if store_link {
+                "DbRef".to_string()
+            } else {
+                rust_type(&a.typedef, &Context::Argument)
+            };
             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
         }
         if let Some(t) = &twin {
@@ -9139,10 +9178,12 @@ extern crate loft;"
         let instrument = matches!(def.code(), Value::Block(_)) && (free || is_method(def));
         // The user-visible loft name for the shadow call stack.
         let source_name = def.original_name();
-        let loft_name = if def.name().starts_with("n_") || !free {
-            def.name().strip_prefix("n_").unwrap_or(def.name())
-        } else {
+        // An `n_` key decodes through the key's decoder too, which names a store instance
+        // (`n_grow@st1`, @PLN167 C3) as the author's `grow`.
+        let loft_name = if def.name().starts_with("n_") || free {
             source_name.as_str()
+        } else {
+            def.name()
         };
         let loft_file = &def.position().file;
         let loft_line = def.position().line;

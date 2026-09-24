@@ -413,11 +413,20 @@ impl State {
         let pos = self.code::<u16>();
         let tl_fn = text_tl_on().then(|| self.call_stack.last().map(|f| f.d_nr));
         let off = pos - size_ptr() as u16;
-        // Same order as `append_text`: decide and copy before the `&mut` exists.
-        let (dst_at, dst_cap) = {
+        // Same order as `append_text`: decide and copy before the `&mut` exists.  And the same
+        // null rule: a `&text?` whose text is null (the STRING_NULL sentinel) ignores the
+        // append and stays null; a non-null text is never the sentinel.
+        let (dst_at, dst_cap, is_null) = {
             let d = self.string_ref_mut(off);
-            (d.as_ptr() as usize, d.capacity())
+            (
+                d.as_ptr() as usize,
+                d.capacity(),
+                crate::keys::pln25_dn1_enabled() && d.as_str() == super::STRING_NULL,
+            )
         };
+        if is_null {
+            return;
+        }
         let owned = Self::aliased_source(dst_at, dst_cap, text.str());
         let v1 = self.string_ref_mut(off);
         let before = (v1.as_ptr() as usize, v1.capacity());

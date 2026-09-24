@@ -190,6 +190,12 @@ struct Variable {
   lazy_buffer: boolean,
   // @FR-O-Move — the one bind after an `if`'s pre-init is a first bind; read by both emitters
   deferred_first_bind: boolean,
+  // @PLN167 decision 1 — a `&` names this narrow local, so it holds its field encoding; read by
+  // both emitters, so a warm load without it read the encoded slot as the value
+  linked_narrow: boolean,
+  // @PLN167 decision 2 — a `&text` link to a text FIELD or ELEMENT (the store kind): it holds
+  // the slot's DbRef and is read and written through the field ops; read by both emitters
+  store_text_link: boolean,
   // @FR-O-Witness — the owner witness `__own_<name>` of a mixed-ownership local (u16::MAX = none);
   // read by both emitters, so it must survive the snapshot exactly as `skip_free` does
   owner_witness: integer,

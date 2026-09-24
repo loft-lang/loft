@@ -119,6 +119,24 @@ store written by one build readable by another *of the same layout*.
               minimum.  So the ENCODING is part of layout(τ) exactly as the width is, and every
               consumer of it — the schema `Parts`, the read/write ops, the key descriptor and the
               constructor generated `init()` emits — derives it from ONE choice.
+  (L-Narrow-Linked)  a narrow local a `&` can REACH holds the FIELD encoding, not the wide
+              local form.  An ordinary narrow local is an 8-byte frame slot holding the value;
+              one whose address is taken — by a `&` bind, a `&` argument or a re-point — holds
+              `value - start` in the type's stored width instead, exactly as a field does.  That
+              is what lets ONE pointer or `DbRef` read a local and a field alike
+              (`(B-Ref-Uniform)`): the link needs no kind and no branch, because there is one
+              representation to reach.  Only a LINKED local changes (`@PLN167` decision 1), so
+              the emitter holds two shapes and picks by a per-variable fact.
+              ⚠ The obligation runs to EVERY reader of the slot, not only to the two emitters.
+              A debugger's locals view, reflection through `stack_trace()`, a `setValue` edit and
+              a watchpoint all read frame slots directly, and each must decode.  Four did not
+              (@PLN167 A2) and none of them failed: they reported a plausible wrong number — `127`
+              for an `i8` holding `-1`, `50` for a `limit(1000, 1100)` holding `1050` — and an
+              edit of `-5` resumed the run with `123`.
+              ⚠ `u8` and `u16` are the trap.  Their minimum is zero, so encoded and wide agree
+              and a broken reader answers correctly for them alone; a cell that uses only those
+              two proves nothing about this rule.  Every cell for it carries an `i8`, a
+              `limit(1000, 1100)` or a `u8?` beside them.
   (L-Narrow-Decode)  those bytes hold `value - start`, where `start` is the declared range's
               MINIMUM.  So the width says how MANY bytes, the SIGN says how they are extended,
               and the minimum says what they MEAN: a reader needs all three.  Every decode of a

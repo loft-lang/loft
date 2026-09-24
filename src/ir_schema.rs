@@ -1129,7 +1129,7 @@ fn write_variables(out: &mut String, f: &crate::variables::Function) {
         write_type(out, v.type_def);
         let _ = write!(
             out,
-            ",\"stack_pos\":{},\"uses\":{},\"argument\":{},\"stack_allocated\":{},\"skip_free\":{},\"captured\":{},\"caller_hidden_buf\":{},\"view_elided\":{},\"lazy_buffer\":{},\"deferred_first_bind\":{},\"owner_witness\":{}}}",
+            ",\"stack_pos\":{},\"uses\":{},\"argument\":{},\"stack_allocated\":{},\"skip_free\":{},\"captured\":{},\"caller_hidden_buf\":{},\"view_elided\":{},\"lazy_buffer\":{},\"deferred_first_bind\":{},\"linked_narrow\":{},\"store_text_link\":{},\"owner_witness\":{}}}",
             v.stack_pos,
             v.uses,
             v.argument,
@@ -1140,6 +1140,8 @@ fn write_variables(out: &mut String, f: &crate::variables::Function) {
             v.view_elided,
             v.lazy_buffer,
             v.deferred_first_bind,
+            v.linked_narrow,
+            v.store_text_link,
             v.owner_witness
         );
     }
@@ -1289,6 +1291,8 @@ fn variables_from_parsed(
             view_elided: as_bool(field(it, "view_elided")?)?,
             lazy_buffer: as_bool(field(it, "lazy_buffer")?)?,
             deferred_first_bind: as_bool(field(it, "deferred_first_bind")?)?,
+            linked_narrow: as_bool(field(it, "linked_narrow")?)?,
+            store_text_link: as_bool(field(it, "store_text_link")?)?,
             owner_witness: as_u16(field(it, "owner_witness")?)?,
         });
     }

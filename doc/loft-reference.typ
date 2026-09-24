@@ -7744,13 +7744,14 @@ pub type i16 = integer limit(-32768, 32767) size(2)
 pub type i32 = integer size(4)
 ```
 
-4-byte signed: -2\_147\_483\_647 – 2\_147\_483\_647.  The bottom of the 32-bit range (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold — the same reservation `u32` makes at the top of its range.
+4-byte signed: -2\_147\_483\_647 – 2\_147\_483\_647.  The bottom of the 32-bit range (`-2147483648`) is the null sentinel, so it is not a value an `i32` can hold.
+`u32` reserves a code too, at the top of its range, and the two reservations LOOK alike and do not behave alike: an `i32` overflow reads `null`, a `u32` overflow reads `0`, the type's default.  That is not a claim that the reservations differ — it is C127's pragmatic exemption, allowed because losing one value out of 2^32 is cheap and being the one narrow type whose overflow is detectable is worth more (DESIGN\_DECISIONS.md C127 § Decision).  Pinned across both aliases by `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value`.
 
 ```rust
 pub type u32 = integer limit(0, 4294967294) size(4)
 ```
 
-4-byte unsigned: 0 – 4\_294\_967\_294.  size(4) forces 4-byte storage and serialisation symmetric with `i32`.  Stored as Parts::Int so the in-memory representation is signed i32; values in the upper half (2^31..2^32-2) round-trip through file I/O via 4-byte raw bytes but read back as negative i64s in expressions.  For full 0..2^32-1 values needed in expression-time arithmetic, declare the field / variable as plain `integer` (8-byte) instead — `u32` is for the file / wire-format use cases (magic numbers, counts, tick fields) where the byte width is the load-bearing property.
+4-byte unsigned: 0 – 4\_294\_967\_294.  The top code is reserved to buy the same refusal `i32` gets at the bottom (`u32 = 4294967295` does not compile) — and, unlike `i32`, it is NOT a null: an overflow here reads `0`, the type's default (C127, and the note on `i32` above says why the two differ).  size(4) forces 4-byte storage and serialisation symmetric with `i32`.  Stored as Parts::Int so the in-memory representation is signed i32; values in the upper half (2^31..2^32-2) round-trip through file I/O via 4-byte raw bytes but read back as negative i64s in expressions.  For full 0..2^32-1 values needed in expression-time arithmetic, declare the field / variable as plain `integer` (8-byte) instead — `u32` is for the file / wire-format use cases (magic numbers, counts, tick fields) where the byte width is the load-bearing property.
 
 == Interfaces
 
@@ -9061,19 +9062,19 @@ pub fn ymd_days_ago(days: integer) -> text
 Returns the UTC calendar date `days` days before today as `YYYY-MM-DD`. Use for cutoff dates in time-window filters; negative `days` clamps to today.
 
 ```rust
-pub fn directory(v: &text = "") -> text
+pub fn directory(v: text = "") -> text
 ```
 
 Returns the current working directory, optionally with v appended as a subpath. Use to construct absolute paths relative to where the program was launched.
 
 ```rust
-pub fn user_directory(v: &text = "") -> text
+pub fn user_directory(v: text = "") -> text
 ```
 
 Returns the current user's home directory, optionally with v appended. Use for storing user-specific data or configuration.
 
 ```rust
-pub fn program_directory(v: &text = "") -> text
+pub fn program_directory(v: text = "") -> text
 ```
 
 Returns the directory containing the running executable, optionally with v appended. Use to locate assets bundled alongside the program.

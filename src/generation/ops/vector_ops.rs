@@ -540,7 +540,18 @@ impl OpEmitter for HoistedPushEmitter {
             .active_push_window(&fused.path)
             .map(str::to_owned);
         write!(ctx.w, "{{ let __pv = (")?;
-        ctx.emit(fused.val)?;
+        if let Some(min) = fused.bias {
+            // The byte kind: the element is the ENCODED byte, the same `Store::byte_raw`
+            // `OpSetByte` writes, so the header's raw store and its growth step
+            // (`append_byte`, bias 0 on an already-encoded byte) agree with it.
+            write!(ctx.w, "loft::store::Store::byte_raw((")?;
+            ctx.emit(min)?;
+            write!(ctx.w, ") as i32, (")?;
+            ctx.emit(fused.val)?;
+            write!(ctx.w, ") as i32)")?;
+        } else {
+            ctx.emit(fused.val)?;
+        }
         if let Some(win) = window {
             write!(
                 ctx.w,

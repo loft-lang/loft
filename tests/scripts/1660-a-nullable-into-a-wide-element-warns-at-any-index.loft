@@ -1,0 +1,42 @@
+// @FR-N-Store's warning reaches a wide ELEMENT slot however the index is spelled.
+//
+// The WARN half of loft#1660: a nullable stored into a non-null `integer` / `float` element
+// PROCEEDS and the slot holds null — that is the rule's documented outcome — but it is said,
+// with a literal index and now with a variable one.  The values are asserted, so a change to
+// what the store does shows too.  The controls (a declared `vector<integer?>`, a declared
+// nullable field, a discharged value) assert their values; their SILENCE is not gated here
+// (the harness passes an unexpected warning), and was checked by hand when this landed.
+//
+// @falsified-at: hand-measured (2026-09-24, the build before the fix) — no warning for
+//   w1–w4; the values were the same.
+//   CHANNEL: expectations (the warnings below were not emitted).
+//   ARMED: nothing.
+//   WITNESS: none of the four `is stored into the assignment target` warnings.
+//   HOLDS: every assertion passes on both trees; the controls warn on neither.
+struct P { x: integer, y: integer? }
+struct H { v: vector<integer> }
+fn main() {
+  ii = 1;
+  iv: vector<integer> = [7, 9];
+  // @EXPECT_WARNING: a nullable `integer?` is stored into the assignment target of the non-null type `integer`
+  iv[ii] = "x" as integer?;
+  assert(!iv[1] && len(iv) == 2, "w1: {iv}");
+  fv: vector<float> = [1.5, 2.5];
+  // @EXPECT_WARNING: a nullable `float?` is stored into the assignment target of the non-null type `float`
+  fv[ii] = "y" as float?;
+  assert(!fv[1], "w2: {fv}");
+  ps = [P { x: 1, y: 2 }];
+  // @EXPECT_WARNING: a nullable `integer?` is stored into the assignment target of the non-null type `integer`
+  ps[ii - 1].x = "q" as integer?;
+  assert(!ps[0]?.x, "w3");
+  h = H { v: [1] };
+  // @EXPECT_WARNING: a nullable `integer?` is stored into the assignment target of the non-null type `integer`
+  h.v[ii - 1] = "z" as integer?;
+  assert(!h.v[0], "w4: {h.v}");
+  nv: vector<integer?> = [7, 9];
+  nv[ii] = "x" as integer?;
+  ps[ii - 1].y = "q" as integer?;
+  iv[ii] = ("x" as integer?) ?? 5;
+  assert("{nv}" == "[7,null]" && !ps[0]?.y && iv[1] ?? 0 == 5, "controls");
+  println("wide element warnings ok");
+}

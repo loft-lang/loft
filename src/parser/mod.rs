@@ -234,6 +234,17 @@ pub struct Parser {
     /// startup cache is enabled; gates [`Parser::parsed_sources`] tracking so a
     /// normal (non-cache) run pays nothing.
     pub track_sources: bool,
+    /// loft#1648 — when this parse began, for the H5 report alone.
+    ///
+    /// Both passes read every source from DISK independently (`load_main_file` ends in
+    /// `lexer.switch(filename)`), so a file that changes between them — a registry
+    /// extraction, an editor save, a concurrent `loft install` — is parsed twice from
+    /// different bytes.  The definitions then differ across the passes and H5 fires, with
+    /// nothing in the message pointing at the file.  Recorded as ONE instant rather than a
+    /// stamp per file: the cost is a single clock read on every parse, and the stats that
+    /// answer *"did anything move since then"* are paid only when the assert has already
+    /// decided to panic.
+    pass_started: Option<std::time::SystemTime>,
     /// @PLN11 arc E — paths of every source file parsed (stdlib + lazily-loaded
     /// libs + user file), in load order, recorded only when `track_sources`.
     /// Only the parser sees the dynamically-loaded lib set; the whole-program
@@ -704,6 +715,9 @@ pub struct Parser {
     /// by `do_tret_bind`'s gate on the THIRD pass so the promotion is forward-ref-safe:
     /// the attr is decided before the pass, so every caller re-lowers with the buffer.
     force_tret: std::collections::HashSet<u32>,
+    /// @PLN167 C3 — some call handed a text field or element to a `&text` parameter, so
+    /// `after_pass2` owes the store instances (`store_text.rs`).
+    store_text_args: bool,
     /// loft#808 — def_nrs resolved as a `par(r = f(x), N)` worker, recorded on BOTH
     /// passes and never cleared between them.  A worker's pure-value tuple return is
     /// the one shape that must still be BOXED into the synthetic `__tuple<…>` record:
@@ -772,6 +786,10 @@ pub struct Parser {
     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+    /// @PLN167 C1 — the kind of each `&text` link bound so far on pass 2, keyed by
+    /// `(function, variable)`: `true` for a text field or element (the store kind), `false` for
+    /// a text variable (the stack kind).  A second bind of the other kind is refused.
+    text_link_kinds: std::collections::HashMap<(u32, u16), bool>,
     /// loft#1371 — vector LOCALS bound by a `&` link (`pe = &e`, `pe: &vector<T> = e`),
     /// keyed `(function, name)`.  The bind SHARES the source's `DbRef`, which already
     /// aliases every element write and every append; a WHOLE-VALUE write is the one
@@ -1421,6 +1439,7 @@ pub(super) mod fields;
 pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
+pub(super) mod store_text;
 pub(super) mod vectors;
 
 impl Default for Parser {
@@ -1509,6 +1528,7 @@ impl Parser {
             todo_files: Vec::new(),
             track_sources: false,
             parsed_sources: Vec::new(),
+            pass_started: None,
             speculative_type_refs: std::collections::HashSet::new(),
             unresolved_names: 0,
             unresolved_types: 0,
@@ -1569,6 +1589,7 @@ impl Parser {
             limit_refused: false,
             ambiguity_reported: std::collections::HashSet::new(),
             force_tret: std::collections::HashSet::new(),
+            store_text_args: false,
             par_worker_defs: std::collections::HashSet::new(),
             par_deferred: Vec::new(),
             par_replay_body: None,
@@ -1576,6 +1597,7 @@ impl Parser {
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
+            text_link_kinds: std::collections::HashMap::new(),
             amp_vector_locals: std::collections::HashSet::new(),
             amp_vector_link_partners: std::collections::HashMap::new(),
             literal_chain_lhs: std::collections::HashSet::new(),
@@ -2349,6 +2371,10 @@ impl Parser {
         if self.track_sources {
             self.parsed_sources.push(filename.to_string());
         }
+        // loft#1648 — the H5 report reads this to tell a source that MOVED under the two
+        // passes from a genuine cross-pass bug.  Set in `parse_main`, which is the function
+        // that drives BOTH passes, so it brackets exactly the window they share.
+        self.pass_started = std::time::SystemTime::now().into();
         // @PLAN49 T1 — set the breadcrumb phase + initial file/line so
         // a watchdog-fired hard-kill localises any parse-time hang.
         crate::timeout::checkpoint_parse(filename, 0);
@@ -2751,6 +2777,9 @@ impl Parser {
         if !self.force_tret.is_empty() {
             self.targeted_tret_promotion();
         }
+        // After the promotion: a store instance clones its function's FINAL signature, and a
+        // call it retargets already carries any buffer the promotion added.
+        self.mint_store_text_instances();
     }
 
     /// What pass 1 owes pass 2, in one place: every declaration has been seen, so the
@@ -3112,9 +3141,10 @@ impl Parser {
                     || lazy_struct_instance,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
-                 (pass1={}, pass2={})",
+                 (pass1={}, pass2={})\n{}",
                 pass1_attr_counts.len(),
                 self.data.definitions.len(),
+                self.h5_divergence_report(pass1_attr_counts.len()),
             );
         }
         for (d, &c1) in pass1_attr_counts.iter().enumerate() {
@@ -5235,6 +5265,20 @@ impl Parser {
 
     #[track_caller]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+        // @PLN167 C3 (loft#1656) — a text field or element reaching a `&text` parameter HERE
+        // comes through a FUNCTION VALUE: a direct call lowers it to the place before any
+        // conversion (`process_call_args`).  It is lowered the same way: the argument is the
+        // slot's `DbRef`, and the call's store mask (`Data::store_text_mask`) makes both
+        // backends dispatch to the STORE instance of whichever function the value holds —
+        // minted for every candidate of the value's type after pass 2 (`store_text.rs`).
+        if matches!(should.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+            && self.is_text_place(code)
+            && let Some(place) = self.scalar_place_ref(code)
+        {
+            self.store_text_args = true;
+            *code = place;
+            return true;
+        }
         // loft#1540 — a function value meets a function-typed slot only in the direction `const`
         // allows: a function whose parameter is plain may not stand where the slot promises that
         // parameter is `const` (`ConstParams::stands_for`), or a caller trusting the promise hands a
@@ -15142,19 +15186,17 @@ impl Parser {
             // `(B-Ref-Reshape)`: refuse a link that cannot be honoured rather than downgrade it
             // to a copy.  A temporary (a literal, a computed text) keeps its work copy: nothing
             // names it, so nothing can miss the write.
+            // @PLN167 C3 — the parameter links that place: the argument is the slot's `DbRef`
+            // (the place a `&` bind of it takes), and after pass 2 the call is pointed at the
+            // callee's STORE instance, whose parameter reads and writes through the field ops
+            // (`store_text.rs`).  The stack instance is the function as written.
             if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
                 && self.is_text_place(&actual_code)
+                && let Some(place) = self.scalar_place_ref(&actual_code)
             {
-                if !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "a `&text` parameter cannot link to a text field or element, so the \
-                         function's write would be lost. Copy it into a local, pass the local and \
-                         write it back (`t = o.s; f(t); o.s = t`)"
-                    );
-                }
-                actual.push(actual_code);
+                self.store_text_args = true;
+                actual.push(place);
+                all_types[nr] = tp.clone();
                 continue;
             }
             if let Type::RefVar(inner) = &tp
@@ -17155,6 +17197,133 @@ impl Parser {
         )
     }
 
+    /// loft#1648 — everything a reader needs to attribute an H5 divergence, gathered where it
+    /// fires.
+    ///
+    /// The assert names ONE definition and two counts, which says that something diverged and
+    /// not why.  That gap is the whole cost of the flake it was written for: it reproduces
+    /// about one suite start in eight, on a consumer's tree, so the run that fails is rarely
+    /// the run anyone is watching, and by the time it is reported the only evidence is a
+    /// sentence naming a struct nobody can place.  Two reports and ~53 starts produced no
+    /// reproduction; what was missing each time was not persistence but PROVENANCE.
+    ///
+    /// So report the population and where it came from:
+    ///
+    ///   * the WHOLE pass-2-only range, each def with the facts the legality test reads.  The
+    ///     first illegal def is not the informative one — in loft#1648 `#2708 Coord` is first
+    ///     while `#2706` and `#2707` were legal lazy appends, and a group minted together
+    ///     names its own origin.
+    ///   * each def's SOURCE resolved to the FILE it was loaded from, and the whole id -> file
+    ///     table.  A divergence is nearly always a file pass 2 read and pass 1 did not.
+    ///   * any source whose mtime has MOVED since this parse began.  Both passes read every
+    ///     file from disk independently, so a file rewritten under them is parsed from
+    ///     different bytes and diverges for a reason that is not a compiler bug at all.  That
+    ///     case is indistinguishable from a real one in today's message, and it is the one a
+    ///     fresh checkout resolving its dependencies can actually produce.
+    ///
+    /// Costs nothing until it runs: the assert has already decided to panic.
+    fn h5_divergence_report(&self, pass1_defs: usize) -> String {
+        use std::fmt::Write as _;
+        // source id -> the file it was loaded from, inverted from `use_paths` (id -> path)
+        // through `get_source`.  Built here rather than kept: this is the only reader, and a
+        // map maintained for a panic would rot unnoticed.
+        let mut files: std::collections::BTreeMap<u16, &str> = std::collections::BTreeMap::new();
+        for (id, path) in &self.use_paths {
+            let src = self.data.get_source(id);
+            if src != u16::MAX {
+                files.insert(src, path.as_str());
+            }
+        }
+        let mut out =
+            String::from("  pass-2-only definitions (the population, not just the first):\n");
+        for d in pass1_defs..self.data.definitions.len() {
+            let def = self.data.def(d as u32);
+            let src = def.source;
+            let _ = writeln!(
+                out,
+                "    #{d:<6} {:<34} {:?}  source={src}{}{}{}",
+                def.name(),
+                self.data.def_type(d as u32),
+                files.get(&src).map_or_else(
+                    // Not a `use`d library: the two sources every program has.  Left blank
+                    // these read as "unknown", which sends the reader looking for a file
+                    // that was never missing.
+                    || match src {
+                        0 => " (stdlib)".to_string(),
+                        s if s == crate::data::MAIN_SOURCE =>
+                            " (the program's own file)".to_string(),
+                        _ => String::new(),
+                    },
+                    |f| format!(" ({f})")
+                ),
+                def.synthetic()
+                    .map_or(String::new(), |s| format!(" synthetic={s}")),
+                if def.instance_of == u32::MAX {
+                    String::new()
+                } else {
+                    format!(" instance_of=#{}", def.instance_of)
+                },
+            );
+        }
+        let _ = writeln!(out, "  sources loaded, id -> file:");
+        for (src, f) in &files {
+            let _ = writeln!(out, "    {src:<4} {f}");
+        }
+        let moved = self.sources_changed_during_parse(files.values().copied());
+        if files.is_empty() {
+            // Say what was CHECKED, not what was found.  An empty table means no `use`d
+            // library file was loaded, so nothing was re-stat'd — reporting that as "nothing
+            // changed" would be the same overstatement this report exists to remove, and it
+            // would point the reader at the compiler on no evidence.
+            let _ = writeln!(
+                out,
+                "  no `use`d library file was loaded, so nothing could be re-stat'd — the \
+                 divergence is in the stdlib or in the program's own file, and the source \
+                 column above says which."
+            );
+        } else if moved.is_empty() {
+            let _ = writeln!(
+                out,
+                "  none of the {} loaded source(s) above changed during this parse, so the \
+                 two passes read the same bytes — this is a compiler-side divergence.",
+                files.len()
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "  ⚠ {} SOURCE(S) CHANGED DURING THIS PARSE — the two passes did not read the \
+                 same bytes, so this is very likely not a compiler bug:",
+                moved.len()
+            );
+            for f in &moved {
+                let _ = writeln!(out, "    {f}");
+            }
+        }
+        out
+    }
+
+    /// Which of `files` have been written since this parse began?
+    ///
+    /// Split out from the report so the question has one home and can be exercised without
+    /// racing a parse: the report is only reachable by making two passes disagree, which is
+    /// the very thing nobody can do on demand here.
+    fn sources_changed_during_parse<'a>(
+        &self,
+        files: impl Iterator<Item = &'a str>,
+    ) -> Vec<String> {
+        let Some(started) = self.pass_started else {
+            return Vec::new();
+        };
+        files
+            .filter(|f| {
+                std::fs::metadata(f)
+                    .and_then(|m| m.modified())
+                    // A clock that cannot answer is not evidence of a change: say no.
+                    .is_ok_and(|m| m > started)
+            })
+            .map(str::to_string)
+            .collect()
+    }
     fn source_loaded_from(&self, f: &str) -> Option<u16> {
         let canonical = crate::portable_path::plain_canonical_str(f);
         // Every id that names this file, not just one of them: `use_paths` outlives a
@@ -19177,6 +19346,10 @@ impl Parser {
                         | "OpGetRef"
                         | "OpGetDbRef"
                         | "OpGetVectorNullable"
+                        // A text field or element (@PLN167 C1), and the base of a mention of
+                        // a store-kind text link (`OpGetText(OpVarRef(t), 0)`).
+                        | "OpGetText"
+                        | "OpVarRef"
                 );
                 // loft#1567 — every NARROW read op, asked from the one home that names them
                 // (`NarrowIntKind::get_op`) rather than re-listed here.  The hand-kept list
@@ -19198,6 +19371,77 @@ impl Parser {
         matches!(code.unspan(), Value::Call(d, args)
             if self.data.def(*d).name() == "OpGetText"
                 && args.first().is_some_and(|a| Self::is_amp_place(a, &self.data)))
+    }
+
+    /// A mention of store-kind text link `v`, spelled as the field it names:
+    /// `OpGetText(OpVarRef(v), 0)`.  The link holds the slot's `DbRef`, so this is the field
+    /// read `o.s` already is, and an assignment to it is the field's setter (@PLN167 decision 2:
+    /// the store kind reads and writes through the field ops, the stack kind is untouched).
+    pub(crate) fn store_text_link_place(&self, v: u16) -> Value {
+        Value::Call(
+            self.data.def_nr("OpGetText"),
+            vec![
+                Value::Call(self.data.def_nr("OpVarRef"), vec![Value::Var(v)]),
+                Value::Int(0),
+            ],
+        )
+    }
+
+    /// The store-kind text link a value is a mention of — the shape
+    /// [`Self::store_text_link_place`] builds — or `None`.  Anything else, a field read
+    /// included, is not a link and answers `None`.
+    pub(crate) fn store_text_link_of(&self, code: &Value) -> Option<u16> {
+        if let Value::Call(g, args) = code.unspan()
+            && self.data.def(*g).name() == "OpGetText"
+            && let [r, Value::Int(0)] = args.as_slice()
+            && let Value::Call(vr, vargs) = r.unspan()
+            && self.data.def(*vr).name() == "OpVarRef"
+            && let [Value::Var(v)] = vargs.as_slice()
+            && self.vars.is_store_text_link(*v)
+        {
+            Some(*v)
+        } else {
+            None
+        }
+    }
+
+    /// Record the kind a `&text` bind gives link `var_nr`: `store` for a text field or element,
+    /// otherwise a text variable.  One link names texts of ONE kind (`@FR-B-Ref-Repoint`: a
+    /// re-point keeps the link's `τ`, and the kind is part of what the link is), so a bind of
+    /// the other kind is refused, on any path — the kind is the variable's, never a path's.
+    pub(crate) fn bind_text_link_kind(&mut self, var_nr: u16, store: bool) {
+        if var_nr == u16::MAX {
+            return;
+        }
+        if store {
+            self.vars.set_store_text_link(var_nr);
+        }
+        if self.first_pass {
+            return;
+        }
+        match self.text_link_kinds.insert((self.context, var_nr), store) {
+            Some(prev) if prev != store => {
+                let name = self.vars.name(var_nr).to_string();
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "`{name}` links a {}, so it cannot also link a {} — a text field or element \
+                     and a text variable are different places to a link. Use a second link \
+                     for the other one",
+                    if prev {
+                        "text field or element"
+                    } else {
+                        "text variable"
+                    },
+                    if store {
+                        "text field or element"
+                    } else {
+                        "text variable"
+                    }
+                );
+            }
+            _ => {}
+        }
     }
 
     /// Is this `&` operand an integer STORE place narrower than 8 bytes — an element or a field
@@ -20105,10 +20349,11 @@ fn collect_vars_in(val: &Value, result: &mut HashSet<u16>) {
 /// ⚠ `OpCopyRecord` is NOT here — it writes through its SECOND argument, and its callers
 /// The fused scalar appends (@PLN157 § V-m): each `OpSet<Kind>` an element literal writes at
 /// offset 0 of a fresh element, and the ONE op `Parser::fuse_scalar_append` folds the
-/// `OpNewRecord · OpSet<Kind> · OpFinishRecord` triple into.  The one home for the seven
+/// `OpNewRecord · OpSet<Kind> · OpFinishRecord` triple into.  The one home for the eight
 /// names: every classifier that lists the element-build ops reads them from here
 /// ([`FUSED_PUSH_OPS`]), so a kind added to the fusion reaches them all at once.
-pub const FUSED_PUSH_KINDS: [(&str, &str); 7] = [
+pub const FUSED_PUSH_KINDS: [(&str, &str); 8] = [
+    ("OpSetByte", "OpPushByte"),
     ("OpSetInt", "OpPushInt"),
     ("OpSetInt4", "OpPushInt4"),
     ("OpSetFloat", "OpPushFloat"),
@@ -20119,7 +20364,8 @@ pub const FUSED_PUSH_KINDS: [(&str, &str); 7] = [
 ];
 
 /// The push half of [`FUSED_PUSH_KINDS`].
-pub const FUSED_PUSH_OPS: [&str; 7] = [
+pub const FUSED_PUSH_OPS: [&str; 8] = [
+    "OpPushByte",
     "OpPushInt",
     "OpPushInt4",
     "OpPushFloat",
@@ -22884,5 +23130,89 @@ mod plan86_admission_tests {
                 "{label}: an unprovable while must be rejected"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod h5_changed_source_tests {
+    use super::*;
+
+    /// loft#1648 — the question `h5_divergence_report` asks about every loaded file, exercised
+    /// where a parse cannot be raced.
+    ///
+    /// The report itself is only reachable by making the two passes disagree, which is exactly
+    /// what nobody can do on demand for this defect — so the decidable half is split out and
+    /// tested here.  All four answers matter: the two that report, and the two that must stay
+    /// SILENT, because a stat that cannot answer is not evidence of a change and saying
+    /// otherwise would send a reader hunting a file nobody touched.
+    fn tmp(name: &str, body: &str) -> String {
+        let p = std::env::temp_dir().join(format!(
+            "loft_h5_{}_{}_{name}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::write(&p, body).expect("write probe file");
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_file_written_after_the_parse_began_is_named() {
+        let f = tmp("moved", "before");
+        let mut p = Parser::new();
+        p.pass_started = Some(std::time::SystemTime::now());
+        // mtime resolution is finer than this everywhere loft builds, but a rewrite in the
+        // same instant would make the cell vacuous rather than wrong — so step past it.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&f, "after").expect("rewrite probe file");
+        assert_eq!(
+            p.sources_changed_during_parse(std::iter::once(f.as_str())),
+            vec![f.clone()],
+            "a source rewritten under the two passes must be named"
+        );
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn a_file_untouched_since_the_parse_began_is_not_named() {
+        let f = tmp("still", "unchanged");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let mut p = Parser::new();
+        p.pass_started = Some(std::time::SystemTime::now());
+        assert!(
+            p.sources_changed_during_parse(std::iter::once(f.as_str()))
+                .is_empty(),
+            "an untouched source must not be named — reporting it would point the reader at \
+             a file nobody wrote"
+        );
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_stat_ed_is_not_evidence() {
+        let mut p = Parser::new();
+        p.pass_started = Some(std::time::SystemTime::now());
+        assert!(
+            p.sources_changed_during_parse(std::iter::once("/nonexistent/loft/h5/probe.loft"))
+                .is_empty(),
+            "a failed stat says nothing about whether the file moved"
+        );
+    }
+
+    #[test]
+    fn without_a_recorded_start_nothing_is_claimed() {
+        let f = tmp("nostart", "x");
+        let p = Parser::new();
+        assert!(
+            p.pass_started.is_none(),
+            "a fresh parser has no start instant"
+        );
+        assert!(
+            p.sources_changed_during_parse(std::iter::once(f.as_str()))
+                .is_empty(),
+            "with no instant to compare against there is no answer, and silence is the honest one"
+        );
+        let _ = std::fs::remove_file(&f);
     }
 }

@@ -1148,6 +1148,18 @@ fn OpConstRef(d_nr: const integer) -> reference;
 // Push a Str pointing into the constant store for integer string literals.
 fn OpConstStoreText(rec: const integer, pos: const integer) -> text;
 #rust"s.string_from_const_store(@rec as u32, @pos as u32)"
+// A call through a function value whose `&text` parameters in `mask` are handed text fields or
+// elements (@PLN167 C3, loft#1656): dispatch to the STORE instance of whichever function the
+// value holds — the one whose parameter reads and writes through the field ops.  Operands as
+// `OpCallRef`'s.  Declared last so that it renumbers no earlier operator.
+fn OpCallRefStore(fn_var: const u16, arg_size: const u16, mask: const integer);
+#rust"s.fn_call_ref_store(@fn_var, @arg_size, @mask as u64);"
+// Bind the record a fn-ref call with an unresolved target handed back (loft#1659): copy it into
+// a fresh store at `pos` when it predates the call (a capture or an argument), adopt it
+// otherwise and take it off the frame's hand-up list.  Declared last, so it renumbers no
+// earlier operator.  Interpreter-only — the native backend does the same inline in
+// `generation::dispatch`.
+fn OpBindFnRefResult(src: reference, pos: const u16, tp: const u16);
 
 // ── Path helpers (moved from 03_text.loft so they're available
 //    before file-I/O code that wants to compose them) ─────────

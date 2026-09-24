@@ -2064,6 +2064,13 @@ impl ViewWalk<'_> {
     /// view against its own establishment.
     fn record_target(&mut self, stmt: &Value) {
         if let Value::Set(v, rhs) = stmt.unspan() {
+            // A write through a place link binds nothing: the link still names the place it
+            // named, so its open view and any shake of it stand (`note_uses` saw the write).
+            if is_place_link(self.function, *v)
+                && !link_set_repoints(self.data, self.function, *v, rhs)
+            {
+                return;
+            }
             self.shaken.remove(v);
             for frame in &mut self.open {
                 frame.retain(|(view, _, _)| view != v);
@@ -2134,11 +2141,18 @@ impl ViewWalk<'_> {
             // `a-payload-binding-warns-when-its-subject-is-given-another-variant` read its
             // subject's new variant.  The fact belongs on the variable the lowering created,
             // not on the shape of its name.
+            // A `&` link to a SCALAR or TEXT place (`c = &v[1]`, `c = &o.v[0].n`, `t = &o.s`) is
+            // a view by the same relation a record `&` link is: it holds the place's `DbRef`,
+            // and a growth or removal moves the element under it.  `(B-Ref-Reshape)` keys on
+            // that aliasing relation, not on the element type, so it opens here too.  A link to
+            // a LOCAL (`c = &x`) names no container — `value_view_places` answers nothing for
+            // `OpCreateStack` — so it opens nothing.  The materialise side never meets one:
+            // an `&` link is refused at the disturbance rather than copied.
             if !self.function.is_iteration_source(*v)
-                && matches!(
+                && (matches!(
                     self.function.tp(*v).base(),
                     Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
-                )
+                ) || is_place_link(self.function, *v))
             {
                 // The view belongs to the frame that owns its VARIABLE. Re-binding an outer
                 // local inside a nested block gives a view that outlives the block, and
@@ -2187,7 +2201,16 @@ impl ViewWalk<'_> {
                 // already meant value semantics, so losing write-through is consistent with
                 // what it asked for, and only a `&` is the ownership decision loft may not
                 // quietly downgrade.  Measured before this was written.
-                if self.function.is_amp_container_link(*v)
+                // A `match` PAYLOAD binding (`_mv_<field>`) is the other reference TO a
+                // container: the parser routes a write through it to the payload's own field
+                // (`items += [x]` appends to `e.items`), so it re-reads that slot exactly as a
+                // `&` link does, and the growth its own append causes must not end it.  Ended
+                // there, it was materialised, the append landed in the payload and every read
+                // of `items` saw the copy — `len(items)` answered 1 after `items += [121]` for a
+                // fused push into a variant's vector (the unfused append happened to be spared
+                // because its field NUMBER could not be placed on the enum's type).
+                let payload_view = self.function.name(*v).starts_with("_mv_");
+                if (self.function.is_amp_container_link(*v) || payload_view)
                     && let Some((place, false)) =
                         crate::use_analysis::view_source_place_indexed(self.data, rhs)
                 {
@@ -2349,6 +2372,15 @@ impl ViewWalk<'_> {
                 used.push(*x);
             }
         });
+        // A `Set` that writes THROUGH a place link uses it as surely as a read does: the
+        // write lands on the place the link names (`c = &v[1]; v += [x]; c = 99`).  Only a
+        // `Set` that re-points it is a new binding, which `record_target` handles.
+        if let Value::Set(x, rhs) = stmt.unspan()
+            && is_place_link(self.function, *x)
+            && !link_set_repoints(self.data, self.function, *x, rhs)
+        {
+            used.push(*x);
+        }
         for v in used {
             if let Some(cause) = self.shaken.get(&v).copied() {
                 record_cause(&mut self.out, v, cause);
@@ -2589,6 +2621,48 @@ pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<
     out
 }
 
+/// @FR-B-Ref-Repoint — whether `Set(var, value)` on a link RE-POINTS it rather than writing
+/// through it.  `p = &q` re-points; `p = 99` writes the place.  For a link to a SCALAR the
+/// right-hand side's TYPE separates the two: a place (`c = &v[0]`, `f = &o.y`) arrives as the
+/// place op itself, declared to return a reference, where a value read out of a place is typed
+/// as the scalar.  For a record or collection link an element's VALUE is a reference too, so
+/// only the install ops (`OpCreateStack`, `OpVarRef` — a re-point to the link another link
+/// holds) count.  Every write through a store-kind text link is parsed as the field's setter,
+/// so a `Set` of one is always its bind (@PLN167 decision 2).  Asked by the interpreter's
+/// `set_var` and by the view walk, so the two cannot disagree about which statement binds.
+pub(crate) fn link_set_repoints(data: &Data, function: &Function, var: u16, value: &Value) -> bool {
+    let Type::RefVar(tp) = function.tp(var).base() else {
+        return false;
+    };
+    let scalar_link = matches!(
+        tp.base(),
+        Type::Integer(_)
+            | Type::Boolean
+            | Type::Float
+            | Type::Single
+            | Type::Character
+            | Type::Enum(_, false, _)
+    );
+    if let Value::Call(d, _) = value.unspan() {
+        let def = data.def(*d);
+        matches!(def.name(), "OpCreateStack" | "OpVarRef")
+            || (scalar_link && matches!(def.returned.base(), Type::Reference(_, _)))
+            || function.is_store_text_link(var)
+    } else {
+        false
+    }
+}
+
+/// Whether `v` is a `&` link the author wrote, in either of its two spellings: a struct
+/// projection the parser leaves unlowered and marks (`Function::is_amp_link`), or a scalar or
+/// text place it LOWERS to a `RefVar` local (`c = &v[1]`, `t = &o.s`).  A local is typed
+/// `RefVar` only by a `&` bind; a `&` PARAMETER is `RefVar` too but is an argument, bound by
+/// its caller and never by a `Set` the walk sees.  @FR-B-Ref-Reshape keys on the aliasing
+/// relation, so both spellings reach it.
+fn is_place_link(function: &Function, v: u16) -> bool {
+    !function.is_argument(v) && matches!(function.tp(v).base(), Type::RefVar(_))
+}
+
 fn def_reshape_refusals(
     data: &Data,
     d_nr: u32,
@@ -2648,7 +2722,7 @@ fn def_reshape_refusals(
         // releases once today — is not in this set to begin with, and refusing it would reject
         // a sound program.  Measured over the cell matrix: the walk's answer and the copy-out
         // advice agree on every cell.
-        let amp = function.is_amp_link(view);
+        let amp = function.is_amp_link(view) || is_place_link(function, view);
         let drops = data.type_owns_droppable_anywhere(function.tp(view));
         if !amp && !drops {
             continue;
@@ -2817,8 +2891,14 @@ fn def_reshape_refusals(
                 let Some(attr) = cdef.attributes.get(j) else {
                     continue;
                 };
-                let scalar_link =
-                    matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
+                // A `&text` parameter handed a text field or element links that place too
+                // (@PLN167 C3): the argument is then the place op itself, never the
+                // `OpCreateStack` of a text variable, which names no element.
+                let text_place_link = matches!(attr.typedef.base(),
+                        Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                    && data.is_store_text_arg(arg);
+                let scalar_link = text_place_link
+                    || matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
                 let ptp = match &attr.typedef {
                     Type::RefVar(inner) => inner.as_ref(),
                     other => other,
@@ -12537,7 +12617,7 @@ impl Scopes<'_> {
         // `c` and there is no buffer — which is why only the nullable spelling had the fault.
         //
         // A work-ref's scope-exit free is FORCED (`is_work_ref` in `get_free_vars`), so it
-        // runs even where `in_ret` suppressed the local's own.  A returned nullable record was
+        // runs even where `leaves_frame` suppressed the local's own.  A returned nullable record was
         // therefore handed back through a store this frame had already released:
         // `fn f() -> S? { c: S? = S { x: 5 }; c }` answered `0xDEADBEEF` under `LOFT_POISON=1`
         // on both backends, and the right value on an ordinary build, which is why it stood.
@@ -16568,7 +16648,7 @@ impl Scopes<'_> {
         // a sibling path is absent and still freed by that path's sweep (no
         // global `skip_free` stamp — that would over-suppress and leak the
         // dead-path allocation).  The dep buffer of a BORROWING terminal
-        // (`_vec_N["__vdb_N"]`) is handled in the `in_ret` computation below.
+        // (`_vec_N["__vdb_N"]`) is handled in the `leaves_frame` computation below.
         //
         // The SET drives suppression ONLY for the heap-buffer block (Vector /
         // Reference / Enum / keyed).  TEXT and TUPLE returns keep their own,
@@ -16803,7 +16883,7 @@ impl Scopes<'_> {
                 let backs_return_source = return_sources
                     .iter()
                     .any(|&src| src != v && function.tp(src).depend().contains(&v));
-                // `in_ret` is really *"does `v` leave this frame"*, and until loft#1443 the
+                // `leaves_frame` is really *"does `v` leave this frame"*, and until loft#1443 the
                 // return was the only way out — a `&fn(…)` parameter did not compile.  Now it
                 // does, and a closure record written through one is delivered to the caller,
                 // which frees it at ITS scope exit under the fn-ref that received it.  Without
@@ -16815,7 +16895,7 @@ impl Scopes<'_> {
                 // A record whose link delivery the frame decides at run time
                 // (`@FR-L-CapKeep`) stands down above where the caller holds it, and is
                 // released here on the runs that did not deliver it.
-                let in_ret = ret_borrows_v
+                let leaves_frame = ret_borrows_v
                     || backs_return_source
                     || (link_delivered.contains(&v) && !self.closure_keep.decides_link(v))
                     || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v)
@@ -16842,7 +16922,7 @@ impl Scopes<'_> {
                 // returned-var, and return-source-backing checks above decide the
                 // suppression.  A debug sentinel used to scream when the old read
                 // would have "decided alone" (`tp.depend()` names `v` while
-                // `in_ret` is false), on the theory that such a case would need
+                // `leaves_frame` is false), on the theory that such a case would need
                 // the read re-added.  It does NOT: every firing is a FALSE positive
                 // of the retired POSITIONAL decode — a field / enum-field / match-
                 // arm return that COPIES its source into the caller's retbuf
@@ -16878,7 +16958,7 @@ impl Scopes<'_> {
                 // so a later `s += …` re-inits in place).  That self-dep is an
                 // ownership marker, not a borrow — treat it like `dep.is_empty()`
                 // so the store is freed at scope exit.  Mirrors the fn-ref
-                // ownership rule below.  Keyed-only + exact self-dep; `in_ret`
+                // ownership rule below.  Keyed-only + exact self-dep; `leaves_frame`
                 // still suppresses returned keyed locals.
                 // D-own-16 residual — a nullable heap local BOUND FROM A PARAMETER and later
                 // reassigned from a minting call owns its store on some paths and borrows on
@@ -16967,10 +17047,10 @@ impl Scopes<'_> {
                     capture_adoption_owns_free(data, function, &self.capture_build_backing, v);
                 // @PLN94 TEST-ONLY over-free injection (never set in production): force the scope-exit
                 // free of a NAMED borrowed var (owns=false) so the over-free check has a firing
-                // true-positive. Subject to the same !in_ret/!skip_free/!captured guards as a real free.
+                // true-positive. Subject to the same !leaves_frame/!skip_free/!captured guards as a real free.
                 let inject_free = inject_free_borrowed() == Some(function.name(v));
                 let emit = (owns || is_work_ref || inject_free)
-                    && !in_ret
+                    && !leaves_frame
                     && !function.is_skip_free(v)
                     && !self.free_transferred.contains(&v)
                     && !captured_ref;
@@ -17024,7 +17104,7 @@ impl Scopes<'_> {
                     // loft#1487 was first attributed to the wrong predicate.
                     eprintln!(
                         "[scope_debug] NOT freeing '{}' (var={v}, scope={}, to_scope={to_scope}): \
-                         dep_empty={} owns={owns} is_work_ref={is_work_ref} in_ret={in_ret} \
+                         dep_empty={} owns={owns} is_work_ref={is_work_ref} leaves_frame={leaves_frame} \
                          skip_free={} free_transferred={} captured_ref={captured_ref}",
                         function.name(v),
                         self.var_scope.get(&v).copied().unwrap_or(u16::MAX),
@@ -17133,7 +17213,7 @@ impl Scopes<'_> {
                     {
                         // loft#1317 — the buffer an inline record literal minted, whose store
                         // the local it was aliased into is now HANDING TO THE CALLER.  This
-                        // free is forced (`is_work_ref`) and so ran even though `in_ret`
+                        // free is forced (`is_work_ref`) and so ran even though `leaves_frame`
                         // suppressed the local's own: `fn f() -> S? { c: S? = S { x: 5 }; c }`
                         // returned a released store on both backends, right by luck on an
                         // ordinary build and `0xDEADBEEF` under `LOFT_POISON=1`.
@@ -17294,7 +17374,7 @@ impl Scopes<'_> {
                 // reads as "unless this is a kept holder that is not itself a function".
                 let dep_delivers = tp.depend().contains(&v)
                     && (!keep_holder || matches!(tp.base(), Type::Function(..)));
-                let in_ret = dep_delivers
+                let leaves_frame = dep_delivers
                     || ret_carries
                     || link_carries
                     || v == ret_var
@@ -17325,7 +17405,7 @@ impl Scopes<'_> {
                         && (r as usize) < function.count() as usize
                         && self.var_scope.get(&r) != self.var_scope.get(&v)
                 });
-                let emit = !in_ret && !function.is_skip_free(v) && !record_outlives;
+                let emit = !leaves_frame && !function.is_skip_free(v) && !record_outlives;
                 if emit {
                     if scope_debug {
                         eprintln!(
@@ -19569,7 +19649,31 @@ impl Scopes<'_> {
         };
         let d_nr = match self.fnref_target.get(v_nr).copied() {
             Some(d) if d != u32::MAX => d,
-            _ => return None,
+            // loft#1659 — an UNRESOLVED target (a fn-typed parameter, a slot two lambdas were
+            // assigned to).  Nothing static says whose store its record result is
+            // (@FR-O-Unknown), and not lifting left it to the frame's hand-up list: one
+            // store per call, held to frame exit.  The lift binds it the way the bound
+            // spelling does, through `OpBindFnRefResult` — the call's own return decides
+            // adopt (minted during the call) or copy (a capture or an argument) — so the
+            // temp OWNS on both arms and its scope-exit free is the release (@FR-O-Owner).
+            // Records only: `opaque_callref_bind` is the bind that makes that free right,
+            // and it answers only for a record.
+            _ => {
+                let Type::Function(_, ret, ..) = function.tp(*v_nr).base() else {
+                    return None;
+                };
+                let (returned, opt) = ret.peel_optional();
+                self.pending_join_witness.set(u16::MAX);
+                return match returned {
+                    Type::Reference(d, _) => {
+                        Some(Self::reopt(opt, Type::Reference(*d, Deps::none())))
+                    }
+                    Type::Enum(d, true, _) => {
+                        Some(Self::reopt(opt, Type::Enum(*d, true, Deps::none())))
+                    }
+                    _ => None,
+                };
+            }
         };
         let def = data.def(d_nr);
         // loft#1245 — the INVARIANT: a call's returned store is ADOPTED by the caller only
@@ -20057,9 +20161,16 @@ impl Scopes<'_> {
                 self.monomorph_fnref_return_is_fresh(val, data, def)
             } else {
                 // A free member of an overload set (`f_…`, @PLN162) is a free function in
-                // every respect but its key, and lifts as one.
+                // every respect but its key, and lifts as one.  So does a declared METHOD
+                // (`t_…`): its return deps are its own, never an instance's substituted ones,
+                // so the ownership oracle below decides it exactly as it decides `n_`.  The
+                // `t_` clause after this was written when an instance was keyed `t_` too; a
+                // method's call reached it and was lifted only with a `__retbuf`, so a
+                // method returning a loop's element through its hidden buffer — called in
+                // the free spelling, `get(w, i).a` — left one store unowned per call.
                 def.name.starts_with("n_")
                     || def.is_free_overload()
+                    || def.is_method()
                     || monomorph_returns_a_borrow
                     || ((def.name.starts_with("t_") || def.is_instance())
                         && (def.attr_names.contains_key("__retbuf")

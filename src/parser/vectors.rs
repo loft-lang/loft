@@ -3941,10 +3941,40 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // A capture spanning ALTERNATIVES (`is A | B { f }`) is deliberately absent from
         // `mv_field_origin`: it picks its origin from the runtime tag, so it has no one field
         // to be resolved to.
-        let binding_origin = if self.first_pass || is_field {
+        //
+        // ⚠ The resolution is NARROWED to the two conditions that earn it, because it commits
+        // the write to a place the binding may no longer name (loft#1662).  A payload binding
+        // is a reference TO its container, exactly as a `&` link is, and `(B-View)` gives it a
+        // COPY when the container is DISTURBED — after which "writes through it stop reaching
+        // the container".  The write spelled against the FIELD cannot follow that copy: it
+        // does not name the binding at all, so nothing downstream can redirect it, and the
+        // binding's reads and its writes end up in two different places.  Spelled against the
+        // BINDING it follows whatever the binding names, on both sides of the materialise —
+        // which is why the `&` link, which is never resolved back, answers both correctly.
+        //
+        // So the field spelling is kept exactly where it buys something the binding cannot:
+        //
+        //   * the destination is a member of a LINKED GROUP, where `record_finish` needs the
+        //     owning record and the field to reach the siblings ((Col-Group), loft#1160); and
+        //   * the write is a write THROUGH the binding, not a REBIND of it — `v = [7, 7]` is
+        //     `assign_replaces`, and the same statement was preparing the binding's own fresh
+        //     backing while sending the elements to the field: the binding read back EMPTY and
+        //     the field was APPENDED to rather than replaced.  A `=` is a rebind here as it is
+        //     for every other right-hand side (`v = <other>`, `v = []`) and for the struct-view
+        //     sibling `c = o.i; c = In { … }`.
+        let binding_origin = if self.first_pass
+            || is_field
+            || (self.assign_replaces && self.assign_target == vec && vec != u16::MAX)
+        {
             None
         } else {
-            self.vars.mv_field_origin.get(&vec).cloned()
+            self.vars
+                .mv_field_origin
+                .get(&vec)
+                .cloned()
+                .filter(|(origin, origin_parent)| {
+                    self.origin_is_group_member(origin, origin_parent)
+                })
         };
         //
         // `vec` is deliberately KEPT — the binding is a real variable and everything below
@@ -4477,6 +4507,37 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         })
     }
 
+    /// The hidden return buffer a vector-returning call answers a VIEW of: the argument in
+    /// the callee's hidden vector attribute, when the declared return depends on nothing
+    /// else.  `None` when the return also borrows a visible parameter — such an answer is
+    /// not the buffer's, and a temp typed as the buffer's view would misname what it holds.
+    fn call_retbuf(&self, part: &Value) -> Option<u16> {
+        let Value::Call(d, args) = part.unspan() else {
+            return None;
+        };
+        let def = self.data.def(*d);
+        let Type::Vector(_, deps) = def.returned().base() else {
+            return None;
+        };
+        let attrs = def.attributes();
+        if deps
+            .as_attr_indices()
+            .iter()
+            .any(|&i| attrs.get(i as usize).is_none_or(|a| !a.hidden))
+        {
+            return None;
+        }
+        attrs.iter().enumerate().find_map(|(i, a)| {
+            if !a.hidden || !matches!(a.typedef.base(), Type::Vector(_, _)) {
+                return None;
+            }
+            match args.get(i).map(Value::unspan) {
+                Some(Value::Var(b)) => Some(*b),
+                _ => None,
+            }
+        })
+    }
+
     /// § V-w — does `part` mention variable `v`, through a `Var` node or any of the
     /// variants that carry a var number outside one (`Set`, `TupleGet`, `TuplePut`,
     /// `Iter`, `CallRef`)?
@@ -4560,6 +4621,102 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         };
         if !reads {
             return None;
+        }
+        // `(E-Asgn-Compound)` — a literal's right-hand side is reduced, left to right and
+        // with its effects, BEFORE anything is appended.  A part that hands the destination to
+        // a call the destination may be WRITTEN by is therefore not a read the snapshot can
+        // carry: renamed onto the copy, the call grew the copy, and its element was lost
+        // (`v += [f(v)]` with `f` appending to `v` kept one element of two).  Every part is
+        // evaluated into a temp instead, in source order, against the destination itself —
+        // the same staging `stage_append_fields` gives a record literal's fields.  A RECORD
+        // part that is a call is evaluated into a result temp the same way, ahead of the
+        // element's mint: built into the element (§ V-d) it met a container its own call had
+        // grown.  A record part of any other shape that names the destination — a record
+        // literal reading it — keeps the snapshot, whose reads it needs under `=`.
+        let scalar_elem = crate::data::is_scalar(in_t) || matches!(in_t.base(), Type::Text(_));
+        let record_elem = matches!(in_t.base(), Type::Reference(_, _) | Type::Vector(_, _));
+        if literal && crate::keys::append_staging_enabled() && (scalar_elem || record_elem) {
+            let mut names = vec![vec];
+            names.extend(self.vector_link_partner_vars(vec));
+            let names_dest = |this: &Self, n: &Value| match &field_place {
+                Some(place) => this.field_place(n).is_some_and(|p| p == *place),
+                None => names.iter().any(|v| Self::mentions_var(n, *v)),
+            };
+            let constant = |p: &Value| {
+                matches!(
+                    p.unspan(),
+                    Value::Int(_)
+                        | Value::Long(_)
+                        | Value::Float(_)
+                        | Value::Single(_)
+                        | Value::Boolean(_)
+                        | Value::Text(_)
+                        | Value::Null
+                )
+            };
+            let user_call = |p: &Value| matches!(p.unspan(), Value::Call(_, _));
+            // The destination is an ARGUMENT of a call that is not a primitive or `#pure`, at
+            // a parameter that is not `const` (`value_const`, C124) — a place the callee may
+            // write through.  A read
+            // anywhere else keeps the snapshot.
+            let writes = parts.iter().any(|part| {
+                part.any_node(&mut |n| match n {
+                    Value::Call(d, args) => {
+                        let def = self.data.def(*d);
+                        let params = def.attributes();
+                        let primitive = matches!(def.code(), Value::Null) && !def.rust().is_empty();
+                        !(primitive || def.purity == crate::data::Purity::Pure)
+                            && args.iter().enumerate().any(|(i, a)| {
+                                params.get(i).is_none_or(|p| !p.value_const)
+                                    && a.any_node(&mut |m| names_dest(self, m))
+                            })
+                    }
+                    Value::CallRef(_, args) => args
+                        .iter()
+                        .any(|a| a.any_node(&mut |m| names_dest(self, m))),
+                    _ => false,
+                })
+            });
+            // Every record or vector part that names the destination must be a call for the
+            // staging to carry it; any other shape keeps the snapshot.
+            let vector_elem = matches!(in_t.base(), Type::Vector(_, _));
+            let stageable = scalar_elem
+                || parts.iter().all(|p| {
+                    (user_call(p) && (!vector_elem || self.call_retbuf(p).is_some()))
+                        || !p.any_node(&mut |n| names_dest(self, n))
+                });
+            if writes && stageable {
+                let mut temps: Vec<Value> = Vec::new();
+                for part in parts.iter_mut() {
+                    if constant(part) {
+                        continue;
+                    }
+                    if scalar_elem {
+                        let tmp = self.vars.work_refs(in_t, &mut self.lexer);
+                        self.change_var_type(tmp, in_t);
+                        temps.push(crate::data::v_set(
+                            tmp,
+                            std::mem::replace(*part, Value::Var(tmp)),
+                        ));
+                    } else if user_call(part) {
+                        // The temp holds the answer as a local bound from the call would: a
+                        // record it OWNS (the scope pass frees it, and the call's buffer
+                        // where distinct), a vector as a VIEW of the call's buffer.
+                        let tp = match (in_t.base(), self.call_retbuf(part)) {
+                            (Type::Vector(elem, _), Some(buf)) => {
+                                Type::Vector(elem.clone(), Deps::frame1(buf))
+                            }
+                            _ => in_t.clone(),
+                        };
+                        let tmp = self.vars.work_refs_p2(&tp, &mut self.lexer);
+                        temps.push(crate::data::v_set(
+                            tmp,
+                            std::mem::replace(*part, Value::Var(tmp)),
+                        ));
+                    }
+                }
+                return Some(temps);
+            }
         }
         // @PLN157 § V-w — a LITERAL's reads ride TEMPS instead of the whole-vector
         // snapshot where a temp provably carries them: (I-Comp)'s sentence — every read
@@ -5408,34 +5565,76 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             )
     }
 
+    /// Which RECORD TYPE declares the collection field that `val` reads, and at which byte
+    /// offset?
+    ///
+    /// One home, because two questions ask it and a disagreement between them is silent: the
+    /// record emission below resolves the field NUMBER against this type, and
+    /// [`Self::origin_is_group_member`] asks the schema whether that same field is a member of
+    /// a linked group.  Answered for a field READ (`OpGetField(base, pos, content)`) alone;
+    /// `None` for every other spelling, which is what keeps both callers on the path they
+    /// already have.
+    fn field_owner_and_offset(&self, val: &Value, parent_tp: &Type) -> Option<(u16, u16)> {
+        let Value::Call(_, ps) = val.unspan() else {
+            return None;
+        };
+        let parent = self.data.def(self.data.type_def_nr(parent_tp)).known_type();
+        // @PLN25 single-payload: appending to a NESTED collection field of a `__nullable<S>`
+        // element (`b.items += […]` where `b` is a nullable element) — the field-access
+        // unwrap already made `ps[0]` the dense-`S` payload sub-ref and `ps[1]` its
+        // S-relative offset, so resolve the field number against the payload's `S`, NOT the
+        // enum (`field_nr(enum, S_offset)` = 0 → `OpNewRecord(field=0)` = the wrong field).
+        // `key_owner` maps a synth `__nullable<S>` to its payload struct; identity otherwise.
+        let parent = self.database.key_owner(parent);
+        let Value::Int(pos) = ps.get(1)? else {
+            return None;
+        };
+        let pos = u16::try_from(*pos).ok()?;
+        // loft#977 — the same fact for a USER struct-enum: `c.limbs` where `c: Shape`
+        // and `limbs` lives in the `Circle` variant.  The enum type carries a variant
+        // list and no fields, so resolving against it answers field 0 and a `u16::MAX`
+        // field type, which `record_new` then uses as a type-table index.  Redirect to
+        // the variant that declares the field, named by the offset AND the content type
+        // the read (`OpGetField(base, pos, content)`) already resolved — two variants
+        // each holding a collection put its handle at the same offset, so the offset
+        // alone picks the wrong one.  Identity for a plain struct, so both halves of the
+        // append still agree for every non-enum parent.
+        // The content operand is matched UNSPANNED-FREE, exactly as the record emission has
+        // always matched it: a spanned operand fell back to the enum itself, and widening that
+        // here would change which variant a two-variant offset collision resolves to in a
+        // refactor that is meant to move no answer.
+        let owner = match ps.get(2) {
+            Some(Value::Int(content)) => match u16::try_from(*content) {
+                Ok(content) => self.database.variant_owning_field(parent, pos, content),
+                Err(_) => parent,
+            },
+            _ => parent,
+        };
+        Some((owner, pos))
+    }
+
+    /// Is the field a payload binding projects a member of a LINKED COLLECTION GROUP — the one
+    /// thing resolving the binding back to its field buys?
+    ///
+    /// `(Col-Group)` is what the resolution serves: a record entering through one member is in
+    /// every member, and `Stores::record_finish` can only walk the siblings when it is handed
+    /// the owning record and the field.  A field with no `other_indexes` has no siblings to
+    /// reach, so the field spelling answers exactly what the binding answers — and the binding
+    /// is the spelling that stays right when `(B-View)` MATERIALISES it (loft#1662).
+    fn origin_is_group_member(&self, origin: &Value, parent_tp: &Type) -> bool {
+        self.field_owner_and_offset(origin, parent_tp)
+            .is_some_and(|(owner, pos)| self.database.keyed_field_is_linked(owner, pos))
+    }
+
     pub(crate) fn new_record_field_op(&mut self, val: &Value, parent_tp: &Type, op: &str) -> Value {
         if let Value::Call(_, ps) = val.unspan() {
-            let parent = self.data.def(self.data.type_def_nr(parent_tp)).known_type();
-            // @PLN25 single-payload: appending to a NESTED collection field of a `__nullable<S>`
-            // element (`b.items += […]` where `b` is a nullable element) — the field-access
-            // unwrap already made `ps[0]` the dense-`S` payload sub-ref and `ps[1]` its
-            // S-relative offset, so resolve the field number against the payload's `S`, NOT the
-            // enum (`field_nr(enum, S_offset)` = 0 → `OpNewRecord(field=0)` = the wrong field).
-            // `key_owner` maps a synth `__nullable<S>` to its payload struct; identity otherwise.
-            let parent = self.database.key_owner(parent);
-            // loft#977 — the same fact for a USER struct-enum: `c.limbs` where `c: Shape`
-            // and `limbs` lives in the `Circle` variant.  The enum type carries a variant
-            // list and no fields, so resolving against it answers field 0 and a `u16::MAX`
-            // field type, which `record_new` then uses as a type-table index.  Redirect to
-            // the variant that declares the field, named by the offset AND the content type
-            // the read (`OpGetField(base, pos, content)`) already resolved — two variants
-            // each holding a collection put its handle at the same offset, so the offset
-            // alone picks the wrong one.  Identity for a plain struct, so both halves of the
-            // append still agree for every non-enum parent.
-            let parent = if let Value::Int(pos) = ps[1]
-                && let Some(Value::Int(content)) = ps.get(2)
-                && let Ok(pos) = u16::try_from(pos)
-                && let Ok(content) = u16::try_from(*content)
-            {
-                self.database.variant_owning_field(parent, pos, content)
-            } else {
-                parent
-            };
+            let parent = self.field_owner_and_offset(val, parent_tp).map_or_else(
+                || {
+                    self.database
+                        .key_owner(self.data.def(self.data.type_def_nr(parent_tp)).known_type())
+                },
+                |(owner, _)| owner,
+            );
             let field_nr = if let Value::Int(pos) = ps[1] {
                 self.database.field_nr(parent, pos)
             } else {
@@ -5925,12 +6124,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
 
     /// The fused scalar append (@PLN157 § V-m): when `ls` ends in exactly
     /// `elm = OpNewRecord(…) · OpSet<Kind>(elm, 0, val) · OpFinishRecord(…, elm, …)` for one
-    /// of the seven scalar setter kinds, replace the three with `OpPush<Kind>(container,
+    /// of the eight scalar setter kinds, replace the three with `OpPush<Kind>(container,
     /// val)` — `container` the vector reference the caller decided (`fused_container`).  `val` moves verbatim — every
-    /// conversion the literal lowering applied is already inside it.  A setter with a
-    /// `min` operand (the narrow-int kinds), a keyed container (`keyed_local_kind` at the
-    /// call site), a record or collection element (a different setter) and the field form
-    /// all fall through and keep the general path — the fallback is the shape as it was.
+    /// conversion the literal lowering applied is already inside it.  The byte kind's setter
+    /// carries a `min` bias (`OpSetByte(elm, 0, min, val)`), which moves into
+    /// `OpPushByte(container, min, val)`.  The other narrow kinds (a nullable byte, a short,
+    /// an unsigned int), a keyed container (`keyed_local_kind` at the call site), a record
+    /// or collection element (a different setter) and the field form all fall through and
+    /// keep the general path — the fallback is the shape as it was.
     fn fuse_scalar_append(&mut self, ls: &mut Vec<Value>, elm: u16, container: &Value) {
         let n = ls.len();
         let trace = std::env::var_os("LOFT_TRACE_FUSE").is_some();
@@ -5961,7 +6162,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             return;
         };
-        if !new_ok || !fin_ok || set_args.len() != 3 {
+        // `OpSetByte` carries the byte's `min` bias as a fourth operand; it rides along into
+        // `OpPushByte`.  Every other kind is `(elm, 0, val)`.
+        let biased = name_of(*set_d) == "OpSetByte";
+        let want_args = if biased { 4 } else { 3 };
+        if !new_ok || !fin_ok || set_args.len() != want_args {
             if trace {
                 eprintln!(
                     "[fuse] fn={} decline=shape new_ok={new_ok} fin_ok={fin_ok} nargs={}",
@@ -6016,9 +6221,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             return;
         };
-        let val = set_args[2].clone();
+        let push_args = if biased {
+            let Value::Int(_) = set_args[2].unspan() else {
+                return;
+            };
+            vec![container.clone(), set_args[2].clone(), set_args[3].clone()]
+        } else {
+            vec![container.clone(), set_args[2].clone()]
+        };
         ls.truncate(n - 3);
-        let fused = self.cl(push, &[container.clone(), val]);
+        let fused = self.cl(push, &push_args);
         ls.push(fused);
         if trace {
             eprintln!(
@@ -6064,7 +6276,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         };
         matches!(
             self.database.types.get(*elem as usize).map(|t| &t.parts),
-            Some(Parts::Base | Parts::Enum(_) | Parts::Int(_, _))
+            // A non-null byte is the one narrow kind with a fused push (`OpPushByte`); a
+            // nullable byte keeps `OpSetByteNullable` and the general path.
+            Some(Parts::Base | Parts::Enum(_) | Parts::Int(_, _) | Parts::Byte(_, false))
         )
     }
 
