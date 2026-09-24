@@ -237,6 +237,118 @@ fn a_copy_the_lowering_would_view_is_materialised_and_leases() {
     ]);
 }
 
+/// A MEMBER copied out of its owner leases a structure of its own, so the owner still releases the
+/// member it keeps: the call result's record at the end of its statement, a returned member's local
+/// at its function's end.  Their release used to be handed to the copy (`OpDropAllExcept`), which
+/// lost one of the two — @PLN163 P6 removed that hand-off.  A read THROUGH a member of a call
+/// result is a view of the call's record, with no copy and no hook.
+#[test]
+fn a_member_copied_out_leases_and_its_owner_keeps_its_release() {
+    check(&[
+        (
+            "call_member",
+            "fn mk_s(i: integer) -> S { S { h: mk(i), n: 0 } }\n\
+             fn main() { r = mk_s(1).h; println(\"R{r.id}\"); println(\"R{mk_s(2).h.id}\"); }",
+            "C1 D1 R101 R2 D2 D101",
+        ),
+        (
+            "argument_view",
+            "fn mk_s(i: integer) -> S { S { h: mk(i), n: 0 } }\n\
+             fn take(h: H) -> integer { h.id }\n\
+             fn main() { println(\"R{take(mk_s(1).h)}\"); }",
+            "R1 D1",
+        ),
+        (
+            "returned_member",
+            "fn f() -> H { s = S { h: mk(1), n: 0 }; return s.h; }\n\
+             fn main() { r = f(); println(\"R{r.id}\"); }",
+            "C1 D1 R101 D101",
+        ),
+    ]);
+}
+
+/// The RETURN of a struct-enum leases like a record's (found by loft2-d9: the enum arm of
+/// `parse_return` never asked the leasing question, so `return p` was refused as a copy the
+/// caller still owns), and so does a value returned from a LAMBDA: its own capture, a local copy
+/// of that capture — built in a work-ref the local views, and handed to the reserved `__retbuf`
+/// as a move — and a local copy of a PARAMETER, which holds a leased structure of its own rather
+/// than the caller's record.
+#[test]
+fn an_enum_or_lambda_return_leases_like_a_record() {
+    const E: &str = "enum EL { EL1 { h: H }, EL0 }\n\
+                     fn rd(e: EL) -> integer { match e { EL1 { h } => h.id, EL0 => 0 } }\n";
+    let enum_cells: Vec<(String, String, &str)> = vec![
+        (
+            "e_stmt",
+            "fn e(p: EL) -> EL { return p; }\n\
+          fn main() { a = EL1 { h: mk(1) }; b = e(a); println(\"R{rd(b)} {rd(a)}\"); }",
+            "C1 R101 1 D101 D1",
+        ),
+        (
+            "e_tail",
+            "fn e(p: EL) -> EL { p }\n\
+          fn main() { a = EL1 { h: mk(2) }; b = e(a); println(\"R{rd(b)} {rd(a)}\"); }",
+            "C2 R102 2 D102 D2",
+        ),
+        (
+            "e_member",
+            "struct SW { e: EL }\nfn e(s: SW) -> EL { return s.e; }\n\
+          fn main() { s = SW { e: EL1 { h: mk(3) } }; b = e(s); println(\"R{rd(b)} {rd(s.e)}\"); }",
+            "C3 R103 3 D103 D3",
+        ),
+        (
+            "e_join",
+            "fn e(p: EL, c: boolean) -> EL { if c { p } else { EL1 { h: mk(9) } } }\n\
+          fn main() { a = EL1 { h: mk(4) }; b = e(a, true); println(\"R{rd(b)}\"); \
+          c = e(a, false); println(\"R{rd(c)}\"); }",
+            "C4 R104 R9 D9 D104 D4",
+        ),
+        (
+            "e_unit",
+            "fn e(p: EL) -> EL { return p; }\n\
+          fn main() { a: EL = EL0; b = e(a); println(\"R{rd(b)}\"); }",
+            "R0",
+        ),
+        (
+            "l_capture",
+            "fn main() { c = mk(1); f = fn() -> H { c }; a = f(); println(\"R{a.id}\"); \
+          b = f(); println(\"R{b.id}\"); }",
+            "C1 R101 C1 R101 D101 D101 D1",
+        ),
+        (
+            "l_capture_local",
+            "fn main() { c = mk(1); f = fn() -> H { x = c; x }; a = f(); \
+          println(\"R{a.id}\"); }",
+            "C1 R101 D101 D1",
+        ),
+        (
+            "l_enum_capture_local",
+            "fn main() { c = EL1 { h: mk(2) }; f = fn() -> EL { x = c; x }; \
+          a = f(); println(\"R{rd(a)}\"); }",
+            "C2 R102 D102 D2",
+        ),
+        (
+            "l_owned",
+            "fn main() { f = fn() -> H { x = mk(7); x }; a = f(); println(\"R{a.id}\"); }",
+            "R7 D7",
+        ),
+        (
+            "param_local",
+            "fn g(c: H) -> H { x = c; x }\n\
+          fn main() { a = mk(1); b = g(a); println(\"R{b.id} {a.id}\"); }",
+            "C1 R101 1 D101 D1",
+        ),
+    ]
+    .into_iter()
+    .map(|(t, b, w)| (t.to_string(), format!("{E}{b}"), w))
+    .collect();
+    let cells: Vec<(&str, &str, &str)> = enum_cells
+        .iter()
+        .map(|(t, b, w)| (t.as_str(), b.as_str(), *w))
+        .collect();
+    check(&cells);
+}
+
 /// A member without `OpCopy` still refuses the whole copy: two structures would share the member's
 /// resource and release it twice.
 #[test]

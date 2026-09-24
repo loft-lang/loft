@@ -495,8 +495,10 @@ installed, which the frame does own.
              move it.
   (H-Copy-Lease) a copy of a type that declares `fn OpCopy(self: τ)` copies the bytes and
              then runs `OpCopy` on the NEW structure, which takes its own lease there.  A
-             struct holding such a member gets a synthesized copy cascade, the mirror of the
-             drop cascade: its own `OpCopy` first, then its members'.
+             struct, an enum variant or a collection holding such a member gets a synthesized
+             copy cascade, the mirror of the drop cascade: its own `OpCopy` first, then its
+             members'.  The copy is then a structure the function OWNS — a local it fills is
+             not the caller's record, and placing or returning it is a move.
   (H-Copy-Refuse) a COPY of a type that owns a droppable without `OpCopy` — the type itself,
              or a member at any depth — is a COMPILE-TIME ERROR on the line that writes it,
              whatever the program does after that line.  A copy places a value the function
@@ -571,12 +573,17 @@ use cases in `plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), each measured
-identical on both backends.  The copy rules have no conformance yet: `(H-Copy-Refuse)` is
-`D-heap-8`, `(H-Copy-Lease)` is `D-heap-9`, and `(H-View-Drop)` is `D-heap-11`.
+identical on both backends.  The copy rules conform since 2026-09-24: `(H-Copy-Refuse)` and
+`(H-Spent)` are compile-time errors (`D-heap-8`, closed), `(H-Copy-Lease)` runs `OpCopy` on every
+copy a leasing type makes (`D-heap-9`, closed), and `(H-View-Drop)` closed as `D-heap-11`.
 `tests/ownership_drop_gate.rs` classifies every generated cell under these rules and ties each
-cell that disagrees to its deviation.  Sites: the deaths are `scopes::displaced_drop` and
-`scopes::scope_end_drop`; `scopes::copy_moves_drop_from` and `scopes::copy_hands_off` move the
-release across copies these rules refuse, until `D-heap-8` closes.
+cell that disagrees to its deviation; `tests/copy_lease.rs` holds the leasing cells.  Sites: the
+deaths are `scopes::displaced_drop` and `scopes::scope_end_drop`; a release moves across a copy
+only where `(H-Move)` moves the value — `scopes::copy_moves_drop_from` and `copy_hands_off` for a
+source the function owns, per path through the hand-off flags.  The reverse hand-off for a copy
+of what the caller holds and the field hand-off (`OpDropAllExcept`) were removed by @PLN163 P5 and
+P6: a copy the rules accept either leases or does not exist, and a read through a member of a call
+result is a view of the call's record.
 
 ### The soundness bridge — a well-typed program never faults a free
 
@@ -1558,6 +1565,19 @@ CLOSED 2026-09-17, below.
   check; `tests/copy_lease.rs`.
 - **Status:** CLOSED 2026-09-24.  @PLN163 P5 — removing the release-moving machinery the lease
   replaces — is a removal measured against these cells, not part of this entry.
+- **Three follow-ups, found and fixed the same day** (the first by loft2-d9 reading the four
+  return-delivery arms side by side; the other two by the lambda cells built to test its note):
+  - a struct-ENUM `return p` / `return s.e` was refused — `parse_return`'s `Type::Enum` arm never
+    asked `return_copies_a_leasing_value`, which the `Type::Reference` arm and the tail path do;
+  - a local copy of a PARAMETER (`x = c; x`) kept the caller-record mark
+    (`scopes::caller_record_locals`), so the census judged the return a second copy: the hook ran
+    twice and the copy's own structure was never released — a leasing type's local never holds
+    the caller's record;
+  - a LAMBDA returning a local copy of its capture released it twice: the copy is built in a
+    work-ref the local views, the lambda's reserved `__retbuf` was not a delivery buffer to
+    `copy_record_handoff`, and the hand-off named the view instead of the work-ref its release
+    is emitted on.
+  Each pinned in `tests/copy_lease.rs::an_enum_or_lambda_return_leases_like_a_record`.
 
 ### D-heap-13 — CLOSED (2026-09-20): a collection returned from a call and bound to a local never releases its elements
 

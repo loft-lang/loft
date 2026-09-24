@@ -17103,7 +17103,13 @@ impl Parser {
                     {
                         let w = self.materialize_view_return(rtd, &mut v);
                         self.ref_return(&[w], std::slice::from_mut(&mut v), RetSite::MidReturn);
-                    } else if self.return_projects_into_local(&v) {
+                    } else if self.return_projects_into_local(&v)
+                        || self.return_copies_a_leasing_value(&v)
+                    {
+                        // `(H-Copy-Lease)` — a parameter, a member or a view of one returned as a
+                        // struct-enum of a type that declares `OpCopy` is a copy, materialised here
+                        // exactly as the Reference arm above does, so it takes its lease.
+                        //
                         // #425 sibling — `return mk().field` where `field` is a
                         // struct-enum (heap record): the inline-call base is freed
                         // at scope exit, so copy the field's record into an owned
@@ -17774,7 +17780,20 @@ impl Parser {
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
             arg_pos.push(self.lexer.peek_pos().clone());
-            let t = self.expression(&mut p);
+            let mut t = self.expression(&mut p);
+            // A member of a call result handed on as an argument is read where it lives
+            // (`call_member_view`): the argument binds without copying, so the copy the terminal
+            // projection made would be a structure nobody wrote.
+            if let Value::Block(bl) = p.unspan()
+                && bl.name == "inline ref copy"
+                && let Some(Value::Call(_, cargs)) = bl.operators.get(2).map(Value::unspan)
+                && let Some(src) = cargs.first().cloned()
+                && let Type::Reference(d_nr, _) = *t.base()
+                && let Some((viewed, view_tp)) = self.call_member_view(&src, d_nr)
+            {
+                p = viewed;
+                t = view_tp;
+            }
             self.expected = Type::Unknown(0);
             types.push(t);
             list.push(p);

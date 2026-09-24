@@ -2786,12 +2786,30 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **311** |
+| **310** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-24, the SIXTH join — `origin/main` @ c6d71f75b (the #1661 squash) plus
+`tuxedo-165-generics`'s @PLN163 P6b and the #1569 enum-return follow-ups — RE-MEASURED on the
+merged tree: functions discriminating on a `Type` variant **983**, see through the wrapper
+**669**, keystone **4**, opaque **310**; shape tests **2519**, opaque **1299**.
+`--check-ratchet` reported `fell  opaque_functions: 311 -> 310` and asked for the re-pin, which
+is the legitimate use of `--write-ratchet`.
+
+**Neither side's number was this tree's, and this time the conflict said so out loud.** The merge
+conflicted on exactly this row and on its pin — mine read 311 / 1299, `tuxedo-165-generics` read
+313 / 1301 — and the union measures **310**, below both. A conflict on a derived row is the one
+case where git asks the question the convention already answers: re-derive it, because picking
+either side is picking a measurement of a tree that no longer exists.)
+
+(2026-09-24, @PLN163 P6 on `tuxedo-165-generics`, measured: **972 · 655 · 4 · 313**, opaque tests
+**1301**, `--write-ratchet` re-pinned.  P6's new `call_member_view` briefly added one opaque
+function and two tests; it now names the nullable record it declines and peels the rest, and
+the argument site's peel took one existing function off the list.)
 
 (2026-09-24, loft#1568 rebased onto `main` @ c2eec30c6 — RE-MEASURED on that tree: **971 · 653 ·
 4 · 314**, opaque tests **1301**, `--write-ratchet` re-pinned there.  The `if` reconcile's

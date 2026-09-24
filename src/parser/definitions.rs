@@ -6316,12 +6316,6 @@ impl Parser {
         data.drop_cascade_key(type_def, "OpDropAll")
     }
 
-    /// The mangled name of a type's skip-capable cascade — `t_<LEN><Type>_OpDropAllExcept`.
-    /// See [`crate::data::Data::drop_cascade_except_nr`] for what it is for.
-    pub(crate) fn drop_cascade_except_name(data: &crate::data::Data, type_def: u32) -> String {
-        data.drop_cascade_key(type_def, "OpDropAllExcept")
-    }
-
     /// @PLN139 stage B — give every type that OWNS a droppable through a field a function
     /// that releases what it owns, so a container's death releases its members.
     ///
@@ -6642,51 +6636,8 @@ impl Parser {
             } else if self.data.def_type(t) == DefType::Enum {
                 self.fill_enum_drop_cascade(t, c_nr);
             } else {
-                self.fill_drop_cascade(t, c_nr, false);
+                self.fill_drop_cascade(t, c_nr);
             }
-        }
-        // D-heap-3 (loft#1506) — the skip-capable variant, for the mirror of
-        // `copy_hands_off`: a copy OUT of a record's field makes the copy that field's
-        // owner (`@FR-H-Drop`'s responsibility clause), so the record's own death must
-        // release everything EXCEPT that field. Only a STRUCT with releasable fields gets
-        // one: the copy-out sites project with `OpGetField`, which never reaches an enum
-        // payload or a collection element. Checked apart from `targets` above so a type
-        // whose full cascade predates this pass still gains its variant.
-        let mut except_made: Vec<(u32, u32)> = Vec::new();
-        for d_nr in 0..self.data.definitions() {
-            if self.data.def_type(d_nr) != DefType::Struct
-                || self.data.def(d_nr).known_type() == u16::MAX
-                || self.cascade_fields(d_nr).is_empty()
-                || self
-                    .data
-                    .def_nr(&Self::drop_cascade_except_name(&self.data, d_nr))
-                    != u32::MAX
-            {
-                continue;
-            }
-            let name = Self::drop_cascade_except_name(&self.data, d_nr);
-            let pos = self.data.def(d_nr).position().clone();
-            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
-            self.data.set_returned(c_nr, Type::Void);
-            let self_tp = self.cascade_self_type(d_nr);
-            let _ = self
-                .data
-                .add_attribute(&mut self.lexer, c_nr, "self", self_tp);
-            let int_tp = self
-                .data
-                .def(self.data.def_nr("integer"))
-                .returned()
-                .clone();
-            let _ = self
-                .data
-                .add_attribute(&mut self.lexer, c_nr, "skip", int_tp.clone());
-            let _ = self
-                .data
-                .add_attribute(&mut self.lexer, c_nr, "depth", int_tp);
-            except_made.push((d_nr, c_nr));
-        }
-        for (t, c_nr) in except_made {
-            self.fill_drop_cascade(t, c_nr, true);
         }
     }
 
@@ -7064,12 +7015,6 @@ impl Parser {
         )
     }
 
-    /// Build the body of the cascade declared for `t` — see [`Self::synth_drop_cascades`].
-    ///
-    /// `with_skip` builds the `…Except` variant instead: a second `skip` parameter carries a
-    /// field's byte offset, and each FIELD release is additionally guarded by `skip != off` —
-    /// the member whose responsibility a copy-out took. The type's own hook and its
-    /// collection fields are unconditional in both forms: a copy-out never takes those over.
     /// `@FR-H-Drop` / D-heap-13 — the element type of the `vector<T>` def `d_nr`, when that element owns a
     /// droppable and so gives the collection something to release.  `None` for every other
     /// def, which is what keeps a `vector<integer>` from earning a cascade.
@@ -7216,12 +7161,9 @@ impl Parser {
         self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
     }
 
-    fn fill_drop_cascade(&mut self, t: u32, c_nr: u32, with_skip: bool) {
-        let name = if with_skip {
-            Self::drop_cascade_except_name(&self.data, t)
-        } else {
-            Self::drop_cascade_name(&self.data, t)
-        };
+    /// Build the body of the cascade declared for `t` — see [`Self::synth_drop_cascades`].
+    fn fill_drop_cascade(&mut self, t: u32, c_nr: u32) {
+        let name = Self::drop_cascade_name(&self.data, t);
         let file = self.data.def(t).position().file.clone();
         let mut vars = Function::new(&name, &file);
         // The declaration's own answer, so the body and the signature cannot disagree about
@@ -7230,20 +7172,6 @@ impl Parser {
         let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
         vars.become_argument(self_var);
         vars.defined(self_var);
-        let skip_var = with_skip.then(|| {
-            let int_tp = self
-                .data
-                .def(self.data.def_nr("integer"))
-                .returned()
-                .clone();
-            let mut arg = |name: &str| {
-                let v = vars.add_variable(name, &int_tp, &mut self.lexer);
-                vars.become_argument(v);
-                vars.defined(v);
-                v
-            };
-            (arg("skip"), arg("depth"))
-        });
         // Build the body with the cascade's OWN table current, so anything `get_val` mints
         // for a field read lands in the function that will hold the code.
         let outer_vars = std::mem::replace(&mut self.vars, vars);
@@ -7324,42 +7252,11 @@ impl Parser {
             // and a drop is not, so a field on a record that was never written must not run
             // the author's release against a record that does not exist.
             let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
-            // In the Except variant the copied-out member is named by a PATH, not by a
-            // number: `skip` is its byte offset from the ROOT record and `depth` how many
-            // levels below this one it sits.  A nested struct is laid out INSIDE its
-            // owner's record, so the offsets ADD — the member is reached by handing this
-            // field's own Except cascade `skip - off` and `depth - 1`, and a `skip` that
-            // is NOT under this field lands outside the member's own offsets at every
-            // level below, so it matches nothing there.  A member type without the
-            // variant keeps the full cascade — the pre-transfer double release, never a
-            // leak.
-            let inner = match skip_var {
-                Some((sv, dv)) if self.data.drop_cascade_except_nr(fd) != u32::MAX => {
-                    let rel = self.cl("OpMinInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
-                    let deeper = self.cl("OpMinInt", &[Value::Var(dv), Value::Int(1)]);
-                    Value::Call(
-                        self.data.drop_cascade_except_nr(fd),
-                        vec![field, rel, deeper],
-                    )
-                }
-                _ => Value::Call(target, vec![field]),
-            };
-            let release = Value::If(Box::new(live), Box::new(inner), Box::new(Value::Null));
-            // The Except variant leaves the member to its new owner where this field IS it:
-            // the offset matches AND the member sits at THIS level.  Both halves are needed
-            // because a member at offset 0 of a nested record shares its owner's address —
-            // `d.p` and `d.p.a` are the same byte — so an offset test alone skips the whole
-            // subtree and loses every sibling under it.  `(skip ^ off) | depth` is zero
-            // exactly when both hold: `depth` is positive above the level that owns the
-            // skip and negative below it, so no other level can claim the match.
-            let release = if let Some((sv, dv)) = skip_var {
-                let same = self.cl("OpEorInt", &[Value::Var(sv), Value::Int(i32::from(off))]);
-                let both = self.cl("OpLorInt", &[same, Value::Var(dv)]);
-                let not_taken = self.cl("OpNeInt", &[both, Value::Int(0)]);
-                v_if(not_taken, release, Value::Null)
-            } else {
-                release
-            };
+            let release = Value::If(
+                Box::new(live),
+                Box::new(Value::Call(target, vec![field])),
+                Box::new(Value::Null),
+            );
             ops.push(release);
         }
 
