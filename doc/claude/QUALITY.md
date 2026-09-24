@@ -9329,6 +9329,23 @@ struct's name already existed as an enum variant in the same file, and `s/X/Y/g`
 Caught by the compiler in seconds, but the repair had to be by hand and the lesson is the one
 the tree keeps teaching — a rename is a scoped edit, not a text substitution.
 
+**⚠⚠ And the radius I published for the new refusal was the radius of my INSTRUMENT.**  I wrote
+"ONE corpus cell", having walked `tests/scripts/*.loft` plus the published libraries.  A
+sibling's gate then went red on a second cell — a `@PLN157` bytecode-comparison file under
+`doc/claude/plans/`, which a test binary reads and my sweep never looked at.  `doc/` holds
+**1376** `.loft` files against `tests/`' 2381, so the set I walked was a little over half the
+tree by that count and I had called it "the corpus".
+
+The honest measurement is cheap, which is the annoying part: a refusal NAMES ITSELF, so
+pre-filter every `.loft` in the tree to those containing a `&` bind
+(`grep -rlE '=[[:space:]]*&[a-zA-Z_]'` — **110 of 3867**), compile each with the old and the new
+binary, and count the message.  Done that way the answer is **two**, and both are now cited
+where the number is.  ⚠ Give the control binary `--path`: without it the cached falsify build
+loads no stdlib and scores ZERO on every file, which reads as "nothing moved" — the first run
+of this A/B said exactly that, including for a file that refuses on BOTH binaries, and only that
+impossible row showed the control was dead.  [[score-the-harness-before-the-code]], again, in
+the same session that cited it.
+
 ### "Which place does a write through a payload binding reach?" — three decoders, and a lint that stated the opposite (2026-09-24)
 
 `match e { Ei { v } => { e = Ei { v: [9,9,9] }; v += [7] } }` appended to the REASSIGNED
