@@ -117,10 +117,10 @@ The catch-all backlog is no longer blocked on ranking — `reach` says 125 of it
 code production runs (B6b), so it is a read-one-at-a-time queue rather than something a filter
 will shrink.  **A SECOND queue now runs beside it (B6g), and it is the sharper one:** the
 catch-all list asks who forgot a variant, while `spellings` asks who can only see one of a
-notion's two IR spellings — **77** functions resolve a projection by OP NAME and **15** of them
-handle `TupleGet` (18 · 2 when B6g wrote this; the SCREEN was widened in B6i, not the family;
-`93 · 15` at the fifth join of 2026-09-24, and **77 · 15** re-measured at the sixth, where
-@PLN163 P6b's removal of the field hand-off retired sixteen of them).
+notion's two IR spellings — **92** functions resolve a projection by OP NAME and **15** of them
+handle `TupleGet`, leaving **77** that see only the call spelling (18 · 2 when B6g wrote this; the
+SCREEN was widened in B6i, not the family; `93 · 15` at the fifth join of 2026-09-24 and
+`92 · 15 · 77` re-measured at the sixth).
 
 ⚠ **Those two numbers had ROTTED, and the only reason anyone noticed is that a peer happened
 to mention moving one of them.**  This row read `38 · 5` until 2026-09-24, when the audit on
@@ -132,12 +132,21 @@ UNGATED derived row cannot be told apart from a measured one by reading it, so a
 trusts it is being misled by the page rather than by any person.  Either gate a row or date
 it; this one is now dated, and the measuring command is named beside it.
 
-⚠ **And it moved again at the very next join, which is the argument for dating it rather than
-trusting the fix.**  `93 · 15` on 2026-09-24's fifth join was re-measured as `77 · 15` on the
-sixth, hours later: P6b deleted 296 lines of `scopes.rs` and took sixteen call-spelling-only
-sites with them.  A fall is the benign direction, and that is exactly why it would not have been
-noticed — nothing reads wrong, the queue is simply shorter than the page claims.  The row is
-still ungated, so every join owes it the one command above.  Following it produced three defects in one pass, two fixed here and one
+⚠ **It moved again at the very next join — by ONE — and the first attempt to record that wrote a
+WRONG number here, which is the more useful half of the story.**  `93 · 15` on 2026-09-24's fifth
+join re-measured as `92 · 15 · 77` on the sixth.  The audit prints THREE figures and this sentence
+uses the first two; a re-measurement that filtered the audit through a grep lost the
+`functions resolving a projection by OP NAME : 92` line — it says "projection", not "spelling" —
+and the two lines that survived read like a complete answer.  `77`, the call-only figure, went in
+as the total, turning a fall of ONE into a fabricated fall of sixteen, with a plausible cause
+attached (@PLN163 P6b deletes 296 lines of `scopes.rs`).
+
+So the hazard here is not only staleness.  An ungated row invites a careless re-measurement, and a
+WRONG re-measurement is harder to catch than a stale figure: it arrives with a date and a mechanism
+and looks freshly earned, where a stale number at least stays still.  The protection is to paste
+all three of the audit's figures instead of a filtered pair — `92 · 15 · 77` cannot be mistaken for
+`93 · 15` the way a bare `77` can.  Caught by a peer noticing their own re-measurement printed
+three numbers where this note carried two.  Following it produced three defects in one pass, two fixed here and one
 filed as a design question (**loft#1102**: a tuple literal ALIASES a heap local while a struct
 literal and a vector literal copy it).  Reading the queue a second time produced a fourth
 (**loft#1104**, B6h): a tuple-element ARGUMENT cannot witness the @P290 bracket, so a
