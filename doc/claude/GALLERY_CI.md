@@ -35,6 +35,20 @@ builtin does not usually leave the browser.  `make ci` gets the order right (it 
 rlibs before `gen_target_surface.py --check`); a hand-run is where it bites, and CLAUDE.md's
 *"rebuild that rlib first"* does not say which rebuild is meant.
 
+⚠ **And "first" is the wrong word — build them LAST.**  Measured again on 2026-09-24's seventh
+join, by someone following the paragraph above: both rlibs built, *then* `make wasm` (the bundle
+had conflicted in the merge, so it was owed), *then* `make surface-gen` — and it recorded the
+falsehood anyway, re-listing `store_load_url`, `store_load_url_trusted`, `load_url` and
+`load_url_verified`.  `make wasm` runs wasm-pack, which REBUILDS
+`wasm32-unknown-unknown`'s rlib with its own feature set and clobbers the one the two commands
+above produce.  So the order is `make wasm` → the two `cargo build --target wasm32-*` lines →
+`make surface-gen`: the rlibs go last, after anything that builds wasm at all.  Rebuilding them
+after `make wasm` and re-running `surface-gen` took the file back to byte-identical.
+
+**The COUNT is the cheap check, and it is the reason this was caught.**  `surface-gen` prints
+`N builtin(s) unavailable`; `2 → 4` is one line of output, while the four NAMES read like new
+work.  Compare the count with the last recorded one before believing any surface diff.
+
 ⚠ **`gallery.html` makes no DIRECT reference to the bundle — it reaches it one page down.**  It
 is an index linking to `gallery-run.html?example=…`, which is where `./pkg/loft.js` is actually
 imported.  The row above therefore names the page that HOLDS the relationship rather than the
