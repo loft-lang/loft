@@ -2812,12 +2812,23 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **PENDING** |
+| **310** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-24, the SEVENTH join — `../loft3`'s catalogue tag, `../loft`'s @PLN163 double_move
+hardening + spellings re-measure + CI sharding, and `157-native-4x`'s @PLN158 wave 2 and fused byte
+push — RE-MEASURED on the merged tree: **983 · 669 · 4 · 310**, shape tests **2519**, opaque
+**1299**.  `--check-ratchet` reports **at baseline**, so no re-pin is owed.
+
+This time the union's figure equals THIS side's pre-merge figure and not the other side's: the
+merge conflicted on the row with `310` against `314`, and 310 is what the merged tree measures.
+That is the same rule as the joins below, not an exception to it — the point was never that the
+union is always lower, only that it is its own tree's, and "re-measure" is the instruction whether
+the answer moves or not.  The spellings row is unmoved at `92 · 15 · 77`.)
 
 (2026-09-24, the SIXTH join — `origin/main` @ c6d71f75b (the #1661 squash) plus
 `tuxedo-165-generics`'s @PLN163 P6b and the #1569 enum-return follow-ups — RE-MEASURED on the
