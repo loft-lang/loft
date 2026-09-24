@@ -3088,8 +3088,32 @@ One command, one verdict, per-file logs in `target/vg/`.  It runs `loft --interp
 file (`--tests` for `tests/scripts`, whose files have no `main`) and, for `tests/docs`, builds
 each document with `loft --native` and hands the cached binary in `<dir>/.loft/cache/` to
 memcheck directly — the compiled program is where the native runtime's `unsafe` runs, and
-`--trace-children` cannot reach it without also tracing rustc.  About fifteen minutes on
-24 cores; `VG_JOBS` bounds the parallel memchecks (each takes ~200 MB).
+`--trace-children` cannot reach it without also tracing rustc.  `VG_JOBS` bounds the parallel
+memchecks (each takes ~200 MB); the default is every core on a machine of four or fewer (the
+CI runner) and five sixths of a larger one.
+
+It has to fit a 4-core runner inside the nightly job's limit, and it does so by doing less
+repeated work, never by a longer limit:
+
+- **The standard library is parsed once.**  Parsing `default/` under memcheck was ~5.5 s of a
+  trivial file's 6.9 s.  The first run parses it cold under memcheck and writes the stdlib
+  bundle into the sweep's own cache directory; every other run starts warm from that bundle
+  (`LOFT_STDLIB_CACHE=1`), so the parse, the writer and the reader are all still memchecked.
+- **A plain pre-pass plans the work.**  Each file runs once without memcheck (a median file
+  takes 0.04 s).  Its time predicts the memcheck cost, and the work starts longest first.  A
+  file that takes 0.5 s or more with two or more test functions is memchecked one function at
+  a time (`file::name`, the names read off the runner's own `(N fns: …)` line), so a
+  store-ceiling guard's 70 000-iteration cells spread over the jobs instead of running in
+  series into the per-run limit.
+- **A run the per-run limit ends is red**, not quietly counted: it exits 124 and was checked
+  only up to where it stopped.  A plan with no runs in it refuses to sweep rather than
+  reporting GREEN over nothing.
+
+Measured 2026-09-24 on the same corpus: 20 046 s of memcheck work before (1 753 runs, the CI job
+cancelled at its limit), 11 913 s with the warm start alone, all runs clean.  Two findings of the
+first warm sweeps were defects, not sweep costs, and are fixed: a loop of fn-ref calls was
+quadratic on the interpreter (`1323-…` 107 s → 1.6 s plain), and a stdlib generic's instance
+skipped the scope pass on a warm start.
 
 Two decisions are built in, and both are measurements rather than taste:
 
