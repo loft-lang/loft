@@ -1308,7 +1308,35 @@ impl State {
         let depth = u32::try_from(self.call_stack.len())
             .unwrap_or(u32::MAX)
             .saturating_sub(1);
-        self.fnref_bufs.push((depth, returned));
+        self.push_fnref_buf(depth, returned);
+    }
+
+    /// The entries of `fnref_bufs` at `depth`, newest first.  The list is ordered by depth —
+    /// a frame's entries are pushed while it runs, and every deeper entry was popped when its
+    /// frame returned — so this is a walk of the tail, never of the whole list.
+    fn fnref_bufs_at(&self, depth: u32) -> impl Iterator<Item = &DbRef> {
+        self.fnref_bufs
+            .iter()
+            .rev()
+            .take_while(move |(d, _)| *d >= depth)
+            .filter(move |(d, _)| *d == depth)
+            .map(|(_, b)| b)
+    }
+
+    /// Record `buf` against the frame at `depth` — once per STORE.  The release in
+    /// [`Self::release_fnref_bufs`] asks only which store an entry names and whether that store
+    /// is still live, so a second entry for the same store changes nothing it decides; kept,
+    /// it grew the list by one per call.  A loop in one frame calling a closure that answers
+    /// a store it minted handed one up per iteration, the caller freed each, and the stale
+    /// entries stayed until the frame returned — 140 000 of them in `1323-…`, with every
+    /// return scanning them all (95 % of that script's two minutes).
+    fn push_fnref_buf(&mut self, depth: u32, buf: DbRef) {
+        if !self
+            .fnref_bufs_at(depth)
+            .any(|b| b.store_nr == buf.store_nr)
+        {
+            self.fnref_bufs.push((depth, buf));
+        }
     }
 
     /// The allocation counter as the fn-ref call into `depth` found it, consuming the entry.
@@ -1371,11 +1399,8 @@ impl State {
         // (6 -> 13 concurrent on an 8-call probe), which is a shape no leak gate reports.
         // `fnref_bufs` at this depth IS that list and is still intact here — the hand-up loop
         // below is what drains it.
-        let own_buffer = returned.is_some_and(|r| {
-            self.fnref_bufs
-                .iter()
-                .any(|(d, b)| *d == depth && b.store_nr == r.store_nr)
-        });
+        let own_buffer =
+            returned.is_some_and(|r| self.fnref_bufs_at(depth).any(|b| b.store_nr == r.store_nr));
         self.fnref_borrowed_return = match (snapshot, returned) {
             (Some(_), Some(r))
                 if !minted_here && !own_buffer && r.store_nr != u16::MAX && r.rec != 0 =>
@@ -1390,14 +1415,8 @@ impl State {
             // the contract being made true, not the fix.
             _ => None,
         };
-        if minted_here
-            && let Some(r) = returned
-            && !self
-                .fnref_bufs
-                .iter()
-                .any(|(d, b)| *d == depth && b.store_nr == r.store_nr)
-        {
-            self.fnref_bufs.push((depth, r));
+        if minted_here && let Some(r) = returned {
+            self.push_fnref_buf(depth, r);
         }
         // The buffer the callee HANDED BACK moves up one frame rather than being forgotten.
         // The call site is the only owner it will ever have, and the caller's static type may
@@ -1432,7 +1451,7 @@ impl State {
         }
         if depth > 0 {
             for buf in handed_up {
-                self.fnref_bufs.push((depth - 1, buf));
+                self.push_fnref_buf(depth - 1, buf);
             }
         }
     }
