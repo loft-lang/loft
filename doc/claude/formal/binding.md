@@ -420,6 +420,30 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 1.**
 
+* **D-bind-56** *(opened 2026-09-24, CLOSED 2026-09-24; @PLN167 C2)* — `(B-Ref-Reshape)` for a
+  `&` link to a SCALAR or TEXT place.  `c = &v[1]; v += [x]; c = 99` compiled and lost the write
+  (`v[1]` stayed 22), `t = &v[1].s` read `null` after a growth, and `c = &v[1].n` crashed
+  `--native` on a misaligned store address — on both backends, where the same program with a
+  record link is refused.  **Where (measured).**  The view walk opened a view only for a binding
+  typed `Reference | Enum | Vector`, and the refusal read `is_amp_link`, a marker set only where
+  the parser leaves a struct projection unlowered.  A scalar or text place is LOWERED to a
+  `RefVar` local (@PLN167 A3, B1, C1), so it reached neither.  And one step further in: the walk
+  took every `Set(c, …)` for a re-binding, while on a scalar link `c = 99` writes the place — so
+  a write after the disturbance cleared the shake it should have reported.  **Closed** by
+  `scopes::is_place_link` (a non-argument `RefVar` local is a `&` link by construction) at the
+  two readers, and by `scopes::link_set_repoints`, the one re-point-or-write test, now asked by
+  both the walk and the interpreter's `set_var` (it was that function's private arm, D-bind-36).
+  A link to a LOCAL is unchanged: `OpCreateStack` names no container.  Measured: twelve refused
+  cells over integer, `u8`, float and text links, element / element field / record field, and
+  all four events plus a callee's growth, both backends; the controls (dead at the event,
+  another container, re-pointed after it, a link to a local) unchanged.  Guards
+  `tests/scripts/167-a-scalar-or-text-link-refuses-a-disturbance-of-its-container.loft`,
+  `tests/scripts/167-a-scalar-or-text-link-survives-what-does-not-disturb-it.loft`.
+  **R4 of the plan asked whether overwriting a linked text while a borrowed read of it is live
+  dangles** (`for c in t { o.a = … }`): measured no — a text walk binds its source once
+  (`(I-Text)`), both backends under `LOFT_POISON` and `LOFT_STRICT_STORES` — so no clause is
+  owed; the `loop-source-written` warning now reaches a write through the link as it reaches a
+  write to the field.
 * **D-bind-52** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1631)* — `(B-Copy)` for a RECORD
   read through a link.  `y = e` with `e = &z`, and `y = p` with `p: &P` a parameter, bound `y`
   with a borrow dep on the link, so `y` VIEWED the record and `y.n = 9` wrote `z` — where a

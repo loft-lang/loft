@@ -270,7 +270,8 @@ pub(crate) fn iter_init_steps(create_iter: Value) -> Vec<Value> {
 }
 
 /// Is this text source a PLACE — a variable, or a field path rooted at one — that the body
-/// could write?  The walk takes every source once (`@FR-I-Text`); a place's root is also
+/// could write?  A store-kind text link is one too: it is spelled as the field it names,
+/// `OpGetText(OpVarRef(t), 0)`, and a write through it is a write to that place.  The walk takes every source once (`@FR-I-Text`); a place's root is also
 /// recorded on the loop, so a write to it inside the body is reported (`loop-source-written`).
 fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
     match v.unspan() {
@@ -278,7 +279,7 @@ fn is_text_place(v: &Value, data: &crate::data::Data) -> bool {
         Value::Call(d, args) => {
             matches!(
                 data.def(*d).name(),
-                "OpGetText" | "OpGetField" | "OpGetRecord"
+                "OpGetText" | "OpGetField" | "OpGetRecord" | "OpVarRef"
             ) && args.first().is_some_and(|root| is_text_place(root, data))
         }
         _ => false,

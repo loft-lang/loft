@@ -1658,7 +1658,9 @@ use a separate collection or add after the loop"
             return;
         }
         let name = self.vars.written_name(root).to_string();
-        let what = if matches!(place.unspan(), Value::Var(_)) {
+        // A store-kind text link is spelled as the field it names, but the author wrote `t`.
+        let what = if matches!(place.unspan(), Value::Var(_)) || self.vars.is_store_text_link(root)
+        {
             format!("`{name}`")
         } else {
             format!("a field of `{name}`")

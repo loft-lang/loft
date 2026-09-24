@@ -1,0 +1,137 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Ref-Reshape` for a `&` link to a SCALAR or TEXT place (@PLN167 C2).  Such a link holds
+// the place's `DbRef` exactly as a record `&` link does, so `(B-Disturb)`'s four events end its
+// place too, and disturbing the container while the link is still live is a compile-time error.
+// Before this the walk opened no view for a `RefVar` local, and every cell below compiled: a
+// write through `c` after a growth was lost (`v[1]` stayed 22), a text link read `null`, and a
+// field-of-element link crashed `--native` on a misaligned store address.
+//
+// The axes: integer, narrow `u8`, float and text links; an element, a field of an element, a
+// field of a record; growth, removal, reassignment of the container, and a callee that grows
+// it; a READ after the disturbance and a WRITE after it (a write through a link is a use, not a
+// re-bind — `link_set_repoints` is the one test, shared with the interpreter's `set_var`).
+// What stays allowed is `167-a-scalar-or-text-link-survives-what-does-not-disturb-it.loft`.
+//
+// CHANNEL: the expected diagnostics, one per cell.
+//
+// @EXPECT_ERROR: cannot grow `ia` while `ca` references a place inside it
+// @EXPECT_ERROR: cannot grow `ib` while `cb` references a place inside it
+// @EXPECT_ERROR: cannot remove from `oc` while `cc` references a place inside it
+// @EXPECT_ERROR: cannot grow `id` while `cd` references a place inside it
+// @EXPECT_ERROR: cannot grow `ne` while `ce` references a place inside it
+// @EXPECT_ERROR: cannot remove from `ff` while `cf` references a place inside it
+// @EXPECT_ERROR: cannot grow `tg` while `lg` references a place inside it
+// @EXPECT_ERROR: cannot remove from `th` while `lh` references a place inside it
+// @EXPECT_ERROR: cannot grow `ti` while `li` references a place inside it
+// @EXPECT_ERROR: cannot give `oj` a new value while `lj` references a place inside it
+// @EXPECT_ERROR: cannot give `ok` a new value while `ck` references a place inside it
+// @EXPECT_ERROR: cannot call `grow` while `ll` references a place inside `hl`
+
+struct O { a: text, b: text }
+struct N { k: integer, v: vector<integer> }
+struct P { n: integer, s: text }
+struct B { x: u8 }
+struct H { v: vector<text> }
+
+fn grow(h: H) { for i in 0..50 { h.v += ["q{i}"]; } }
+
+fn integer_element_read() -> integer {
+  ia: vector<integer> = [1, 2, 3];
+  ca = &ia[0];
+  ia += [4];
+  ca
+}
+
+fn integer_element_written() {
+  ib: vector<integer> = [11, 22, 33];
+  cb = &ib[1];
+  for i in 0..200 { ib += [i]; }
+  cb = 99;
+}
+
+fn element_of_a_field_removed() -> integer {
+  oc = N { k: 5, v: [11, 22] };
+  cc = &oc.v[0];
+  oc.v.remove(0);
+  cc
+}
+
+fn field_of_an_element_written() {
+  id: vector<P> = [P { n: 1, s: "a" }, P { n: 2, s: "b" }];
+  cd = &id[1].n;
+  for i in 0..200 { id += [P { n: i, s: "x" }]; }
+  cd = 77;
+}
+
+fn narrow_field_of_an_element() -> integer {
+  ne: vector<B> = [B { x: 7 }];
+  ce = &ne[0].x;
+  ne += [B { x: 8 }];
+  ce
+}
+
+fn float_element() -> float {
+  ff: vector<float> = [1.5, 2.5];
+  cf = &ff[1];
+  ff.remove(0);
+  cf
+}
+
+fn text_element_grown() -> text {
+  tg: vector<text> = ["aa", "bb"];
+  lg = &tg[0];
+  tg += ["dd"];
+  lg
+}
+
+fn text_element_removed() -> text {
+  th: vector<text> = ["aa", "bb"];
+  lh = &th[0];
+  th.remove(0);
+  lh
+}
+
+fn text_field_of_an_element() -> text {
+  ti: vector<P> = [P { n: 1, s: "p" }, P { n: 2, s: "q" }];
+  li = &ti[1].s;
+  for i in 0..50 { ti += [P { n: i, s: "x{i}" }]; }
+  li
+}
+
+fn text_field_container_reassigned() -> text {
+  oj = O { a: "alpha", b: "beta" };
+  lj = &oj.a;
+  oj = O { a: "gamma", b: "delta" };
+  lj
+}
+
+fn integer_field_container_reassigned() -> integer {
+  ok = N { k: 1, v: [] };
+  ck = &ok.k;
+  ok = N { k: 7, v: [] };
+  ck
+}
+
+fn text_element_grown_by_a_callee() -> text {
+  hl = H { v: ["aa", "bb"] };
+  ll = &hl.v[0];
+  grow(hl);
+  ll
+}
+
+fn test_refused() {
+  integer_element_read();
+  integer_element_written();
+  element_of_a_field_removed();
+  field_of_an_element_written();
+  narrow_field_of_an_element();
+  float_element();
+  text_element_grown();
+  text_element_removed();
+  text_field_of_an_element();
+  text_field_container_reassigned();
+  integer_field_container_reassigned();
+  text_element_grown_by_a_callee();
+}

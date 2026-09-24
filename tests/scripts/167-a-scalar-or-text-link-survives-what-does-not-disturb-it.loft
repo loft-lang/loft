@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The other half of `167-a-scalar-or-text-link-refuses-a-disturbance-of-its-container.loft`:
+// what a `&` link to a scalar or text place survives (@PLN167 C2, `@FR-B-Ref-Reshape`,
+// `@FR-B-Disturb`).  LIVENESS is the condition, so a link dead at the disturbance compiles; a
+// growth of a DIFFERENT container disturbs nothing the link names; a link re-pointed after the
+// disturbance names a new place; and a link to a LOCAL names no container at all, so
+// reassigning the local overwrites the place the link names (`c = &x; x = 6` reads 6).
+//
+// A character walk over a store-kind text link reads its source ONCE (`@FR-I-Text`), as a walk
+// over the field itself does, so writing the link inside the body neither moves the walk nor
+// dangles; it is told so exactly as `for c in o.a { o.a = … }` is.
+//
+// CHANNEL: assertion failures, exit, and the one expected warning, both backends.
+//
+// @EXPECT_WARNING: the loop read `t` once, before its first round
+
+struct O { a: text, b: text }
+
+fn test_dead_at_the_disturbance() {
+  v: vector<text> = ["aa", "bb", "cc"];
+  t = &v[0];
+  t += "!";
+  v += ["dd"];
+  assert("{v}" == "[\"aa!\",\"bb\",\"cc\",\"dd\"]", "dead text link: {v}");
+  w: vector<integer> = [11, 22, 33];
+  c = &w[1];
+  c = 44;
+  w += [1];
+  assert("{w}" == "[11,44,33,1]", "dead integer link: {w}");
+}
+
+fn test_another_container_grows() {
+  v: vector<text> = ["aa", "bb"];
+  w: vector<text> = ["x"];
+  t = &v[0];
+  for i in 0..50 { w += ["y{i}"]; }
+  t += "!";
+  assert(t == "aa!" && v[0] == "aa!" && len(w) == 51, "other container: {t} {v[0]} {len(w)}");
+}
+
+fn test_re_pointed_after_the_disturbance() {
+  v: vector<integer> = [11, 22, 33];
+  w: vector<integer> = [5, 6];
+  c = &v[1];
+  c = 44;
+  v += [1];
+  c = &w[0];
+  c = 7;
+  assert("{v}" == "[11,44,33,1]" && "{w}" == "[7,6]" && c == 7, "re-point: {v} {w} {c}");
+}
+
+fn test_a_link_to_a_local() {
+  x = 5;
+  c = &x;
+  x = 6;
+  c += 1;
+  s = "ab";
+  t = &s;
+  s = "cd";
+  t += "!";
+  assert(x == 7 && c == 7 && s == "cd!" && t == "cd!", "locals: {x} {c} {s} {t}");
+}
+
+fn test_a_walk_over_the_link() {
+  o = O { a: "alphabeta", b: "beta" };
+  t = &o.a;
+  r = "";
+  for c in t {
+    t = "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz{c}";
+    o.b = "qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq";
+    r += "{c}";
+  }
+  assert(r == "alphabeta", "walked once: {r}");
+  assert(o.a == "zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzza", "last write: {o.a}");
+}
