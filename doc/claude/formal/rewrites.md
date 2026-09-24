@@ -2489,14 +2489,40 @@ to bisect to.
 - **`(R-Compact)`** — a vector rebuilt from its own elements, `te_new += [h.entries[i]]
   … h.entries = te_new`: dryopea `truncate_to` / `drop_oldest` **178×** (a prefix, a
   suffix; every entry owns two vectors, copied per push today, untouched in place),
-  zttext `invert`'s prepend (118×) and `insert_text`'s identity copy (95×, whose other
-  half is that a `character` push holds no push header on native — `OpPushCharacter`
-  is not in `hoist::FUSABLE_PUSHES`, the same gap `OpPushByte` closed for bytes).
+  zttext `invert`'s prepend (118×) and `insert_text`'s identity copy (95×; its other
+  half, a `character` push holding no push header on native, is closed — `OpPushCharacter`
+  and `OpPushInt4` joined `hoist::FUSABLE_PUSHES` on 2026-09-24).  **Hand-priced
+  2026-09-24** on `truncate_to`'s emitted Rust: the rebuild — a store for `te_new`, a copy of
+  every kept entry into it, a SECOND hidden store for the rebind, the entries copied again,
+  the old field cleared, copied back, both stores freed: three deep copies of every kept
+  element, each claiming its two inner vectors — replaced by one in-place compaction
+  (release each dropped element where it stands, one block move of the kept run, the
+  length set): **3.2–3.8 ms → 414–435 µs per op (−87 %)**, hash `31aefae` unchanged, clean
+  under the leak check, `LOFT_POISON` and `LOFT_STRICT_STORES`; against the twin's 13.8 µs
+  the row goes 207× → ~30×, and what remains is the per-push `Stroke` construction —
+  `(R-MoveAppend)` / `(R-Place)`'s class, not this rule's.  The runtime lacks the primitive
+  (a range compaction: `remove_vector` shifts one element and releases nothing,
+  `clear_vector_release` releases all) and its parts all exist; the 22-line composition is
+  what the build adds.  Found on the way: `clear_vector_release` derives the element type
+  only under a one-field `main_vector<T>` root, so a rebind of a vector FIELD of a
+  multi-field record released nothing and stranded every old element's owned heap in the
+  store — fixed beside this price (see heap.md's register).
 - **`(R-Const)`** — text2d `write_text` **86×**: `face_codes()` / `face_rows()` return
   vector literals of 56 and 392 elements, rebuilt for every glyph drawn and read only;
   moros `panel_build` (19×) copies a constant `vector<text>` into a list box per frame,
   which is a STORE into a field and keeps its copy under the rule — the rule removes the
-  rebuild, not the author's choice to store it.
+  rebuild, not the author's choice to store it.  **Hand-priced 2026-09-24** on the row's
+  emitted Rust: the two tables built once per process (a `OnceLock` holding the first
+  build's `DbRef`, minted with a null buffer so the store is its own) **117 → 7.0 ms per
+  op**, and the callers' hidden buffer struck as well (`(O-LazyBuffer)`'s mint before the
+  call and free at every exit, ~74 ns a pair over 38 000 calls) **→ 4.3 ms (−96 %)**; hash
+  `53aaaae5` unchanged, the leak check naming exactly the two resident tables and nothing
+  else; against the twin's 1.31 ms the row goes 86× → ~3.3×.  The caller's bind had NOT
+  copied — the emission binds the callee's buffer directly — so the second half of this
+  rule strikes a BUFFER, never a copy, and its landing note must say so.  What remains is
+  the per-pixel `set_pixel` (the call class) and one emitter waste found on the way: the
+  fused element write derives `text_span_of` on every call for an INTEGER element and
+  never uses it (9–13 % of the row).
 - **`(R-ValueLocal)`** — `(R-ValueRecord)` returns a small record in registers only where
   EVERY call site reads fields off it; a site that binds the whole record to a local, or
   rebinds its own argument, declined it and paid a store per call: mesh3d
@@ -2504,6 +2530,17 @@ to bisect to.
   `normalize3`, `vec2`, `vertex` per vertex), moros `resolve_move` (7.5×: `vec3`, a `Hex`
   answered as a VIEW of an element, a `HexAddress` from `world_to_hex`) and
   `emit_to_material` (14×), hex_body `bone_shape_has` (69×, three records per query).
+  **Hand-priced 2026-09-24** on `mat4_transform`'s emitted Rust: `p` carried as three `f64`
+  locals across the 500 000-call loop, the callee answering its tuple into them and `tv`
+  crossing as scalars, **45 → 3.1–4.0 ms per op (−92 %)**, hash `1871b40b` unchanged, the
+  leak check silent; against the twin's 1.85 ms the row goes 22× → ~1.7–2.2×.  The decline
+  `(R-ValueRecord)` makes today is its SITE gate — *a site consumes its record*: the local is
+  handed on as an argument — and what the site pays is not a deep copy but a store MINTED
+  and the previous one FREED per call (the buffer handed in is the null sentinel every
+  iteration), the same class.  What remains is twelve loop-invariant element reads of the
+  unwritten matrix per call: an instrument that hoists them reads ~1.2–1.5×, so the rule
+  that would own it — a loop-invariant ELEMENT read of a held, unwritten vector, where
+  `(R-Invariant)` covers integer chains only — is the next one to write for this class.
 
 **Landing (R-Switch).**  `(R-Rebind)`, `(R-Compact)` and `(R-Const)` are parse- or
 scope-pass rewrites the interpreter shares, so their falsifier is the switch A/B over

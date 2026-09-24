@@ -125,3 +125,22 @@ the way:** the pluginabi `request` twin moved ±40 % between two builds of UNCHA
 `stats.py`'s seven interleaved samples resample one binary and cannot see it, so a ratio near
 the bar on a small twin can move a class with no loft cause.  The cure, if wanted, is an
 alignment flag in the protocol's `rustc -O` line, not a source edit chasing a layout.
+
+**`(R-Const)` hand-priced** on `write_text`'s emitted Rust (2026-09-24): 117 → 4.3 ms/op (−96 %),
+86× → ~3.3×, hash unchanged — the two face tables rebuilt per glyph were the row; the rule's
+second half strikes `(O-LazyBuffer)`'s per-call buffer, not a copy.  Emitter waste found: the
+fused element write derives `text_span_of` per call for an integer element (9–13 % of what
+remains).  Probe: session scratch `rk/`.
+
+**`(R-ValueLocal)` hand-priced** on `mat4_transform`'s emitted Rust (2026-09-24): 45 → 3.1–4.0 ms/op
+(−92 %), 22× → ~1.7–2.2×, hash unchanged.  Today's site mints a store and frees the previous one
+per call (`(R-ValueRecord)` declines it: the local is also an argument).  The remainder is twelve
+loop-invariant element reads of the unwritten matrix per call (an instrument hoisting them:
+~1.2–1.5×) — a rule to write.  Probe: session scratch `rv/`.
+
+**`(R-Compact)` hand-priced** on `truncate_to`'s emitted Rust (2026-09-24): 3.2–3.8 ms → 414–435 µs/op
+(−87 %), 207× → ~30×, hash unchanged — the rebuild was three deep copies of every kept entry; the
+rest is the per-push record construction (`(R-Place)`'s class).  Found on the way and fixed: a
+vector FIELD rebind on a multi-field record stranded the old elements' owned heap inside the
+store.  Probe: session scratch `rc/` (`compact_vector_in_place` there is the primitive the
+runtime lacks).
