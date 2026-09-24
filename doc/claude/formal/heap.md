@@ -571,12 +571,17 @@ use cases in `plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), each measured
-identical on both backends.  The copy rules have no conformance yet: `(H-Copy-Refuse)` is
-`D-heap-8`, `(H-Copy-Lease)` is `D-heap-9`, and `(H-View-Drop)` is `D-heap-11`.
+identical on both backends.  The copy rules conform since 2026-09-24: `(H-Copy-Refuse)` and
+`(H-Spent)` are compile-time errors (`D-heap-8`, closed), `(H-Copy-Lease)` runs `OpCopy` on every
+copy a leasing type makes (`D-heap-9`, closed), and `(H-View-Drop)` closed as `D-heap-11`.
 `tests/ownership_drop_gate.rs` classifies every generated cell under these rules and ties each
-cell that disagrees to its deviation.  Sites: the deaths are `scopes::displaced_drop` and
-`scopes::scope_end_drop`; `scopes::copy_moves_drop_from` and `scopes::copy_hands_off` move the
-release across copies these rules refuse, until `D-heap-8` closes.
+cell that disagrees to its deviation; `tests/copy_lease.rs` holds the leasing cells.  Sites: the
+deaths are `scopes::displaced_drop` and `scopes::scope_end_drop`; a release moves across a copy
+only where `(H-Move)` moves the value — `scopes::copy_moves_drop_from` and `copy_hands_off` for a
+source the function owns, per path through the hand-off flags.  The reverse hand-off for a copy
+of what the caller holds and the field hand-off (`OpDropAllExcept`) were removed by @PLN163 P5 and
+P6: a copy the rules accept either leases or does not exist, and a read through a member of a call
+result is a view of the call's record.
 
 ### The soundness bridge — a well-typed program never faults a free
 

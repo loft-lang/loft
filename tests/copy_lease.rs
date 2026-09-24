@@ -237,6 +237,36 @@ fn a_copy_the_lowering_would_view_is_materialised_and_leases() {
     ]);
 }
 
+/// A MEMBER copied out of its owner leases a structure of its own, so the owner still releases the
+/// member it keeps: the call result's record at the end of its statement, a returned member's local
+/// at its function's end.  Their release used to be handed to the copy (`OpDropAllExcept`), which
+/// lost one of the two — @PLN163 P6 removed that hand-off.  A read THROUGH a member of a call
+/// result is a view of the call's record, with no copy and no hook.
+#[test]
+fn a_member_copied_out_leases_and_its_owner_keeps_its_release() {
+    check(&[
+        (
+            "call_member",
+            "fn mk_s(i: integer) -> S { S { h: mk(i), n: 0 } }\n\
+             fn main() { r = mk_s(1).h; println(\"R{r.id}\"); println(\"R{mk_s(2).h.id}\"); }",
+            "C1 D1 R101 R2 D2 D101",
+        ),
+        (
+            "argument_view",
+            "fn mk_s(i: integer) -> S { S { h: mk(i), n: 0 } }\n\
+             fn take(h: H) -> integer { h.id }\n\
+             fn main() { println(\"R{take(mk_s(1).h)}\"); }",
+            "R1 D1",
+        ),
+        (
+            "returned_member",
+            "fn f() -> H { s = S { h: mk(1), n: 0 }; return s.h; }\n\
+             fn main() { r = f(); println(\"R{r.id}\"); }",
+            "C1 D1 R101 D101",
+        ),
+    ]);
+}
+
 /// A member without `OpCopy` still refuses the whole copy: two structures would share the member's
 /// resource and release it twice.
 #[test]

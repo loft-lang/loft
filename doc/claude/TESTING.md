@@ -1748,6 +1748,13 @@ cargo test --release --test ownership_drop_gate                            # bot
 LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate     # only after reading the diff
 ```
 
+⚠ **A second instrument records the same fact.**  `tests/double_move.rs` also runs its cells with
+the refusal off and hard-codes each one's release and `double-move` warning counts, so a change
+that moves a release decider moves BOTH.  Re-blessing the drop gate while leaving it unmeasured
+ships its reds to whoever joins next — which is what @PLN163 P5 did (four cells, found at a
+sibling's join).  Run `--test double_move` beside the gate, and re-measure its counts from the
+program's own `DROP:` lines, not from the assertion that failed first.
+
 **The lease verdicts.**  `formal/heap.md`'s copy-lease rules give every cell a verdict
 (`lease_verdict`): `Once` (every copy is a move, a view or a fresh value) or `Refused` (a copy
 whose value is still used; `D-heap-8` until the refusal exists), or `Open` naming the plan's
@@ -1770,8 +1777,10 @@ where a refusal built on the IR alone would leak.
 
 **It can fail.**  `the_scorer_names_each_kind_of_wrong_release` feeds a hand-written trace for
 each kind, and `every_cell_is_distinct_and_mints` rejects a cell that could only ever be clean.
-Against the compiler: `LOFT_NO_FIELD_HANDOFF=1` switches one hand-off off, and the interpreter
-leg reports 11 NEW cells.
+Against the compiler: each release hand-off @PLN163 P5 and P6 removed moved exactly the cells
+that rode it — the caller-copy hand-off 15 cells on each backend, the field hand-off (while it was
+still a switch, `LOFT_NO_FIELD_HANDOFF`) 16, one of them the accepted `p_t1`, which is what kept it
+until P6 lowered the read through a call result as a view.
 
 ## Store-memory ceiling (`LOFT_MEMORY_LIMIT`)
 

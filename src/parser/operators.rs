@@ -17,6 +17,59 @@ fn int_literal(n: i64) -> Value {
 }
 
 impl Parser {
+    /// `(H-Elide)` / @PLN163 P6 — a READ THROUGH a member of a call result as a VIEW: when `proj`
+    /// projects a member (of type `d_nr`, owning a droppable) straight out of a user function's
+    /// fresh record, bind that record to a work-ref that adopts it and read the member where it
+    /// lives, answering the view block and its type.  The record is released once, whole, at the
+    /// work-ref's scope end.  Copying the member out instead made a second structure nobody wrote,
+    /// whose release had to be handed from the record to the copy.  `None` for any other shape,
+    /// which keeps whatever lowering it had.  Asked for a projection a chain reads on
+    /// (`mk_s(130).h.id`) and for one handed to a call as an argument (`take(mk().h)`) — an
+    /// argument binds without copying (`(F-ParamHeap)`); never for one BOUND to a name, which is a
+    /// written copy the rules refuse or lease.
+    pub(crate) fn call_member_view(&mut self, proj: &Value, d_nr: u32) -> Option<(Value, Type)> {
+        if self.first_pass || !self.data.owns_droppable(d_nr) {
+            return None;
+        }
+        let Value::Call(pd, pargs) = proj.unspan() else {
+            return None;
+        };
+        if !matches!(
+            self.data.def(*pd).name(),
+            "OpGetField" | "OpGetVector" | "OpVectorRef"
+        ) {
+            return None;
+        }
+        let Some(Value::Call(fd, _)) = pargs.first().map(Value::unspan) else {
+            return None;
+        };
+        let call_tp = self.data.def(*fd).returned().clone();
+        // A NULLABLE record (`-> S?`) keeps the copy: that lowering tests for absence before it
+        // reads the member, and a view would project out of a record that may not exist.
+        if matches!(call_tp, Type::Optional(_)) {
+            return None;
+        }
+        if self.data.def(*fd).name().starts_with("Op")
+            || !matches!(call_tp.base(), Type::Reference(_, rd) if rd.is_empty())
+        {
+            return None;
+        }
+        let pd = *pd;
+        let mut pargs = pargs.clone();
+        let holder = self.vars.work_refs(&call_tp, &mut self.lexer);
+        self.vars.mark_inline_ref(holder);
+        let call = std::mem::replace(&mut pargs[0], Value::Var(holder));
+        let tp = Type::Reference(d_nr, crate::data::Deps::frame1(holder));
+        Some((
+            v_block(
+                vec![v_set(holder, call), Value::Call(pd, pargs)],
+                tp.clone(),
+                "inline ref view",
+            ),
+            tp,
+        ))
+    }
+
     /// Whether a DIRECT write (`nr = …` / `nr += …`) with operator `op` to binding
     /// `nr` must be rejected.
     ///
@@ -1937,46 +1990,14 @@ impl Parser {
                     // droppable member then needed its release handed from the call's record to
                     // the copy.  Only for a member that owns a droppable, where the copy was
                     // observable; any other member keeps the copy below.
-                    let view_root = if !self.lexer.peek_token(".") && !self.lexer.peek_token("[")
-                        || !self.data.owns_droppable(d_nr)
-                    {
+                    let view = if !self.lexer.peek_token(".") && !self.lexer.peek_token("[") {
                         None
                     } else {
-                        match code.unspan() {
-                            Value::Call(pd, pargs)
-                                if matches!(
-                                    self.data.def(*pd).name(),
-                                    "OpGetField" | "OpGetVector" | "OpVectorRef"
-                                ) =>
-                            {
-                                match pargs.first().map(Value::unspan) {
-                                    Some(Value::Call(fd, _))
-                                        if !self.data.def(*fd).name().starts_with("Op")
-                                            && matches!(self.data.def(*fd).returned(),
-                                                Type::Reference(_, rd) if rd.is_empty()) =>
-                                    {
-                                        Some((
-                                            *pd,
-                                            pargs.clone(),
-                                            self.data.def(*fd).returned().clone(),
-                                        ))
-                                    }
-                                    _ => None,
-                                }
-                            }
-                            _ => None,
-                        }
+                        self.call_member_view(code, d_nr)
                     };
-                    if let Some((pd, mut pargs, call_tp)) = view_root {
-                        let holder = self.vars.work_refs(&call_tp, &mut self.lexer);
-                        self.vars.mark_inline_ref(holder);
-                        let call = std::mem::replace(&mut pargs[0], Value::Var(holder));
-                        *code = v_block(
-                            vec![v_set(holder, call), Value::Call(pd, pargs)],
-                            Type::Reference(d_nr, crate::data::Deps::frame1(holder)),
-                            "inline ref view",
-                        );
-                        t = Type::Reference(d_nr, crate::data::Deps::frame1(holder));
+                    if let Some((viewed, view_tp)) = view {
+                        *code = viewed;
+                        t = view_tp;
                     } else {
                         let w = self.vars.work_refs(&t.clone(), &mut self.lexer);
                         // Mark as inline-ref temp so parse_code inserts its

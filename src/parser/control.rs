@@ -17743,7 +17743,20 @@ impl Parser {
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
             arg_pos.push(self.lexer.peek_pos().clone());
-            let t = self.expression(&mut p);
+            let mut t = self.expression(&mut p);
+            // A member of a call result handed on as an argument is read where it lives
+            // (`call_member_view`): the argument binds without copying, so the copy the terminal
+            // projection made would be a structure nobody wrote.
+            if let Value::Block(bl) = p.unspan()
+                && bl.name == "inline ref copy"
+                && let Some(Value::Call(_, cargs)) = bl.operators.get(2).map(Value::unspan)
+                && let Some(src) = cargs.first().cloned()
+                && let Type::Reference(d_nr, _) = *t.base()
+                && let Some((viewed, view_tp)) = self.call_member_view(&src, d_nr)
+            {
+                p = viewed;
+                t = view_tp;
+            }
             self.expected = Type::Unknown(0);
             types.push(t);
             list.push(p);

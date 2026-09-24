@@ -2776,12 +2776,17 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **314** |
+| **313** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-24, @PLN163 P6 on `tuxedo-165-generics`, measured: **972 · 655 · 4 · 313**, opaque tests
+**1301**, `--write-ratchet` re-pinned.  P6's new `call_member_view` briefly added one opaque
+function and two tests; it now names the nullable record it declines and peels the rest, and
+the argument site's peel took one existing function off the list.)
 
 (2026-09-24, loft#1568 rebased onto `main` @ c2eec30c6 — RE-MEASURED on that tree: **971 · 653 ·
 4 · 314**, opaque tests **1301**, `--write-ratchet` re-pinned there.  The `if` reconcile's
