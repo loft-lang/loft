@@ -179,10 +179,25 @@ The branch is merged to main via a single PR when all items pass CI.
   COMPILE-BREAKs against `origin/main`, while `revalidate-libs.yml` on that exact commit was
   green — CI reads the CURRENT index and gets 0.9.3 and 0.3.3, and `imaging` 0.3.3 had been
   published that very day to cure the break. Two agents on the same box reproduced each other's
-  two phantom breaks, which is what a shared stale clone looks like from the inside. The run
-  prints `registry index: <sha> publish: <pkg>-<ver> (<date>)` as its first line: read that date
-  before reading the verdict, and `git -C ../loft-registry fetch` if it is not today's. A break
-  that CI does not also see is a local artefact until proven otherwise.
+  two phantom breaks, which is what a shared stale clone looks like from the inside — agreement
+  between siblings is not independent evidence when the input is shared, and the CI run on the
+  same commit was the independent one. The run prints
+  `registry index: <sha> publish: <pkg>-<ver> (<date>)` as its first line: read that date before
+  reading the verdict, and `git -C ../loft-registry fetch` if it is not today's. A break that CI
+  does not also see is a local artefact until proven otherwise.
+
+  **A SKIP is the same stale-input failure wearing the other face**: a package whose release TAG
+  the local clone lacks is reported "tag absent" rather than run, so a registry that has moved
+  silently SHRINKS the gate. The script does say so — it PRE-FLIGHTS the skips above the table
+  under *"these will SKIP, and a SKIP is not a pass"* — and the failure mode is therefore the
+  reader, who sees `N pass, 0 COMPILE-BREAK` at the bottom and stops. Fetch the library clones
+  along with the index; in a scratch layout `git clone --bare` copies are enough, because the
+  script only ever runs `git archive` against them.
+
+  ⚠ And the scratch-index recipe below DEFEATS that first line: a directory holding only an
+  `index.json` prints `registry index: not a git checkout (unknown date)`. There the freshness
+  evidence is the **VERSION COLUMN** — every row names the version it picked, so check those
+  against the registry's latest rather than trusting a header you have just disabled.
 
   ⚠ **Then: a COMPILE-BREAK is still not automatically yours, and an A/B is what says which are.**
   Build `origin/main` in a worktree of its own and run the gate there for the NAMED packages —
