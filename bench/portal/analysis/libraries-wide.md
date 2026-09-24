@@ -107,3 +107,7 @@ CHEAPER algorithm than the library (`bone_shape_has`, `rig_read`, `form_read`, a
 pluginabi's decoders from wave 2): those rows overstate loft's share and are to be
 re-aligned to the library's algorithm (bench/README.md rule 1), the library's own extra
 work listed beside them for its author.
+
+**`(R-Rebind)` hand-priced** on `delete_range`'s emitted Rust (2026-09-24): 61–64 → 4.2–4.6 ms/op
+(−93 %), 138× → ~6.5×, hash unchanged — the two whole-buffer copies were the row.  Probe:
+the session scratch `rb/dr.loft` (the bench row alone), `dr.rs` → `dr2.rs` the hand edit.

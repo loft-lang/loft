@@ -2474,8 +2474,15 @@ to bisect to.
 - **`(R-Rebind)`** — the immutable-update idiom, `doc = delete_range(doc, a, b)` with the
   callee ending in `Doc { buf: d.buf, pieces: np }`: zttext `delete_range` **138×**,
   `set_style`, and `invert`'s `cur = apply_op(cur, op)` (118× with `(R-Compact)`); the
-  `buf` field (100 000 characters) is copied per edit today and is H-CopySelf under the
-  rule, so an edit costs O(pieces) as the Rust twin's does.  `mat4_mul` (37×) DECLINES —
+  `buf` field (100 000 characters) is copied per edit today — TWICE: the exit mints a fresh
+  `Doc` and `vector_add`s `buf` into it, and the call site deep-copies that result into `doc`
+  again — and is H-CopySelf under the rule, so an edit costs O(pieces) as the Rust twin's
+  does.  **Hand-priced 2026-09-24** on the bench row's emitted Rust (the exit's mint and
+  `buf` copy struck, `pieces` delivered into `d`'s own record, `return d`; the call site
+  unchanged — its identity test already accepts a result that is its argument): **61–64 ms →
+  4.2–4.6 ms per op (−93 %)**, hash `cb409877` unchanged, native leak check clean; against
+  the twin's 0.68 ms the row goes 138× → ~6.5×, the remainder being the per-edit rebuild of
+  5 000 pieces, which the twin pays too.  `mat4_mul` (37×) DECLINES —
   it fills its result before reading `mb` — and stays where it is: its cost is the mint
   of a 16-float vector per call, which no copy rule removes.
 - **`(R-Compact)`** — a vector rebuilt from its own elements, `te_new += [h.entries[i]]
