@@ -1,0 +1,112 @@
+// An appended literal's part that WRITES the destination: `v += [f(v)]` with `f` appending
+// to `v` keeps both elements.
+//
+// `(E-Asgn-Compound)` (formal/operational.md): the right-hand side is reduced, left to right
+// and with its effects, before anything is appended.  So `f(v)` grows `v` first and its answer
+// is appended after that: `v = [0]; v += [fi(v)]` holds `[0, 100, 7]`.  A literal part that
+// READS its own destination is carried by a snapshot of it, and a part that handed the
+// destination to a call used to be renamed onto that snapshot too.  The call then grew the
+// copy, and its element was lost without a word.  Every part of such a literal is now
+// evaluated into a temp, in source order, against the destination itself.  loft#1548 is the
+// same rule for a record LITERAL's field expressions.  The interpreter is the oracle, and every
+// expected value below is hand-computed from the rule.
+//
+// Cells: an integer, text and float element (a1–a3); a reader before and after the writer
+// (a4, a13); a field destination (a5); a `&` parameter (a6); two writers (a7); a record
+// element (a8), in a loop (a9), through a field (a10), beside a record literal (a11) and twice
+// (a12); a text element in a loop (a14); an impure part that does not name the destination,
+// whose order must hold (a15); a vector element (a16).  The `=` assignment (c1), a
+// comprehension (c2) and a read-only part (c3) were right before and are the controls.
+//
+// @falsified-at: hand-measured (switch, 2026-09-24) — under LOFT_NO_APPEND_STAGING=1, which
+//   takes the pre-fix lowering, every `a` cell fails on --interpret and --native; the three
+//   `c` controls hold either way.  With the staging, all hold on both backends under
+//   LOFT_STRICT_STORES=1 LOFT_POISON=1 and LOFT_NATIVE_LEAK_CHECK=1.
+//   CHANNEL: the VALUE channel (assert): the control drops the element the call appended.
+//   ARMED: nothing for the values; LOFT_STRICT_STORES=1 LOFT_POISON=1 for the record and
+//   vector cells' ownership, which the first cut of the fix got wrong (a leak, then a double
+//   free) while every value was right.
+//   WITNESS: under the switch a1 reads `[0,7]` where this file says `[0,100,7]`, on both
+//   backends alike; the run exits 1 at that assertion.
+//   HOLDS: the controls c1–c3 pass on both trees, and no cell leaks or panics on either.
+struct R { k: integer }
+struct H { v: vector<integer>, rs: vector<R> }
+struct Ctr { n: integer }
+
+fn fi(v: vector<integer>) -> integer { v += [100]; 7 }
+fn ft(v: vector<text>, s: text) -> text { v += [s]; "ret" }
+fn ff(v: vector<float>) -> float { v += [1.5]; 2.5 }
+fn fr(v: vector<R>) -> R { v += [R { k: 100 }]; R { k: 7 } }
+fn fv(v: vector<vector<integer>>) -> vector<integer> { v += [[100]]; [7] }
+fn fref(v: &vector<integer>) -> integer { v += [100]; 7 }
+fn rd(v: const vector<integer>) -> integer { len(v) }
+fn bump(c: Ctr) -> integer { c.n += 1; c.n * 10 }
+
+fn ks(v: const vector<R>) -> text {
+  ks_o = "";
+  for r in v { ks_o += "{r.k},"; }
+  ks_o
+}
+
+fn main() {
+  a1: vector<integer> = [0];
+  a1 += [fi(a1)];
+  assert("{a1}" == "[0,100,7]", "a1: {a1}");
+  a2: vector<text> = ["a"];
+  a2 += [ft(a2, "p")];
+  assert("{a2}" == "[\"a\",\"p\",\"ret\"]", "a2: {a2}");
+  a3: vector<float> = [0.5];
+  a3 += [ff(a3)];
+  assert("{a3}" == "[0.5,1.5,2.5]", "a3: {a3}");
+  a4: vector<integer> = [0];
+  a4 += [len(a4), fi(a4), len(a4)];
+  assert("{a4}" == "[0,100,1,7,2]", "a4: {a4}");
+  a5 = H { v: [0], rs: [] };
+  a5.v += [fi(a5.v)];
+  assert("{a5.v}" == "[0,100,7]", "a5: {a5.v}");
+  a6: vector<integer> = [0];
+  a6 += [fref(a6)];
+  assert("{a6}" == "[0,100,7]", "a6: {a6}");
+  a7: vector<integer> = [0];
+  a7 += [fi(a7), fi(a7)];
+  assert("{a7}" == "[0,100,100,7,7]", "a7: {a7}");
+  a8: vector<R> = [R { k: 1 }];
+  a8 += [fr(a8)];
+  assert(ks(a8) == "1,100,7,", "a8: {ks(a8)}");
+  a9: vector<R> = [R { k: 1 }];
+  for _i in 0..3 { a9 += [fr(a9)]; }
+  assert(ks(a9) == "1,100,7,100,7,100,7,", "a9: {ks(a9)}");
+  a10 = H { v: [], rs: [R { k: 1 }] };
+  a10.rs += [fr(a10.rs)];
+  assert(ks(a10.rs) == "1,100,7,", "a10: {ks(a10.rs)}");
+  a11: vector<R> = [R { k: 1 }];
+  a11 += [R { k: 5 }, fr(a11)];
+  assert(ks(a11) == "1,100,5,7,", "a11: {ks(a11)}");
+  a12: vector<R> = [R { k: 1 }];
+  a12 += [fr(a12), fr(a12)];
+  assert(ks(a12) == "1,100,100,7,7,", "a12: {ks(a12)}");
+  a13: vector<integer> = [0];
+  a13 += [rd(a13), fi(a13), rd(a13)];
+  assert("{a13}" == "[0,100,1,7,2]", "a13: {a13}");
+  a14: vector<text> = ["a"];
+  for i in 0..3 { a14 += [ft(a14, "p{i}")]; }
+  assert("{a14}" == "[\"a\",\"p0\",\"ret\",\"p1\",\"ret\",\"p2\",\"ret\"]", "a14: {a14}");
+  c15 = Ctr { n: 0 };
+  a15: vector<integer> = [0];
+  a15 += [bump(c15), fi(a15), bump(c15)];
+  assert("{a15}" == "[0,100,10,7,20]" && c15.n == 2, "a15: {a15} {c15.n}");
+  a16: vector<vector<integer>> = [[1]];
+  for _j in 0..2 { a16 += [fv(a16)]; }
+  assert("{a16}" == "[[1],[100],[7],[100],[7]]", "a16: {a16}");
+
+  c1: vector<integer> = [0];
+  c1 = [fi(c1), len(c1)];
+  assert("{c1}" == "[7,2]", "c1: {c1}");
+  c2: vector<integer> = [0];
+  c2 += [for _k in 0..2 { fi(c2) }];
+  assert("{c2}" == "[0,100,100,7,7]", "c2: {c2}");
+  c3: vector<integer> = [0];
+  c3 += [rd(c3), rd(c3)];
+  assert("{c3}" == "[0,1,1]", "c3: {c3}");
+  println("append-part-writes ok");
+}

@@ -14,6 +14,13 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**`v += [f(v)]` keeps what `f` appended.**  When a function in an appended list grew the
+same vector — `lines += [flush(lines)]`, with `flush` pushing a finished line first — the
+element it pushed was silently lost, because the function was handed a copy of the vector
+instead of the vector itself.  The call now runs against the real vector, and its answer is
+appended after everything it added: `v = [0]; v += [f(v)]` with `f` pushing `100` and
+answering `7` holds `[0, 100, 7]`.  Both backends were wrong the same way.
+
 **`loft self-update` and `loft install` download over a patched TLS stack.**  A
 dependency audit now runs every night, and its first run found that the TLS library
 loft downloads with carried a published advisory (RUSTSEC-2026-0285); the fixed version

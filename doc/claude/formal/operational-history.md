@@ -234,6 +234,26 @@ only as strong as the rules above it, not only as strong as its oracle.
   found this, and the shared front end needs its own oracle rather than a differential one.
   Related: the reference-route discipline in [DEBUG.md](../DEBUG.md).
 
+### D-op-13 — OPENED AND CLOSED (2026-09-24, loft#1657): a literal part that wrote its own destination was handed the read snapshot
+
+- **Violates:** `(E-Asgn-Compound)` — *step 3 reduces the right-hand side before step 4
+  applies the operator*, with its effects on the state.  In `v += [f(v)]` the call runs first,
+  and whatever it appends to `v` is there before the answer is.
+- **Where:** `Parser::snapshot_read_destination` (`parser/vectors.rs`) carries a literal's reads
+  of its own destination on a copy taken when the statement begins (`(I-Comp)`), and it renamed
+  every mention of the destination onto that copy — a call's ARGUMENT included.
+- **Symptom:** the call grew the copy, and its element was lost: `v = [0]; v += [fi(v)]` read
+  `[0,7]` for `[0,100,7]` on both backends, silently, for integer, float, text, record and
+  vector elements, and for a local, a field or a `&` parameter as the destination.  text2d's
+  `wrap` dropped three of 618 lines.  `=` answered right only because the overwrite discards
+  the write anyway.
+- **Closed at:** the same function — a literal whose part hands the destination to a call that
+  may write it (`literal_part_hoistable` false) evaluates every part into a temp, in source
+  order, against the destination itself, before any append; a record part that is a call binds
+  an owning temp, and a vector part a view of the call's return buffer (`call_retbuf`).  Switch
+  `LOFT_NO_APPEND_STAGING` (loft#1548's, the same rule); guard
+  `tests/scripts/1657-an-appended-part-that-writes-its-destination.loft`.
+
 ### D-op-12 — OPENED AND CLOSED (2026-09-22, loft#1611): on `--native`, the work inside a conditional ARM ran before the test and on every path
 
 - **Violates:** `(E-Left)`, and `(E-And)`/`(E-Or)` with it — operands reduce left first, and a

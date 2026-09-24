@@ -4477,6 +4477,37 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         })
     }
 
+    /// The hidden return buffer a vector-returning call answers a VIEW of: the argument in
+    /// the callee's hidden vector attribute, when the declared return depends on nothing
+    /// else.  `None` when the return also borrows a visible parameter — such an answer is
+    /// not the buffer's, and a temp typed as the buffer's view would misname what it holds.
+    fn call_retbuf(&self, part: &Value) -> Option<u16> {
+        let Value::Call(d, args) = part.unspan() else {
+            return None;
+        };
+        let def = self.data.def(*d);
+        let Type::Vector(_, deps) = def.returned().base() else {
+            return None;
+        };
+        let attrs = def.attributes();
+        if deps
+            .as_attr_indices()
+            .iter()
+            .any(|&i| attrs.get(i as usize).is_none_or(|a| !a.hidden))
+        {
+            return None;
+        }
+        attrs.iter().enumerate().find_map(|(i, a)| {
+            if !a.hidden || !matches!(a.typedef.base(), Type::Vector(_, _)) {
+                return None;
+            }
+            match args.get(i).map(Value::unspan) {
+                Some(Value::Var(b)) => Some(*b),
+                _ => None,
+            }
+        })
+    }
+
     /// § V-w — does `part` mention variable `v`, through a `Var` node or any of the
     /// variants that carry a var number outside one (`Set`, `TupleGet`, `TuplePut`,
     /// `Iter`, `CallRef`)?
@@ -4560,6 +4591,102 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         };
         if !reads {
             return None;
+        }
+        // `(E-Asgn-Compound)` — a literal's right-hand side is reduced, left to right and
+        // with its effects, BEFORE anything is appended.  A part that hands the destination to
+        // a call the destination may be WRITTEN by is therefore not a read the snapshot can
+        // carry: renamed onto the copy, the call grew the copy, and its element was lost
+        // (`v += [f(v)]` with `f` appending to `v` kept one element of two).  Every part is
+        // evaluated into a temp instead, in source order, against the destination itself —
+        // the same staging `stage_append_fields` gives a record literal's fields.  A RECORD
+        // part that is a call is evaluated into a result temp the same way, ahead of the
+        // element's mint: built into the element (§ V-d) it met a container its own call had
+        // grown.  A record part of any other shape that names the destination — a record
+        // literal reading it — keeps the snapshot, whose reads it needs under `=`.
+        let scalar_elem = crate::data::is_scalar(in_t) || matches!(in_t.base(), Type::Text(_));
+        let record_elem = matches!(in_t.base(), Type::Reference(_, _) | Type::Vector(_, _));
+        if literal && crate::keys::append_staging_enabled() && (scalar_elem || record_elem) {
+            let mut names = vec![vec];
+            names.extend(self.vector_link_partner_vars(vec));
+            let names_dest = |this: &Self, n: &Value| match &field_place {
+                Some(place) => this.field_place(n).is_some_and(|p| p == *place),
+                None => names.iter().any(|v| Self::mentions_var(n, *v)),
+            };
+            let constant = |p: &Value| {
+                matches!(
+                    p.unspan(),
+                    Value::Int(_)
+                        | Value::Long(_)
+                        | Value::Float(_)
+                        | Value::Single(_)
+                        | Value::Boolean(_)
+                        | Value::Text(_)
+                        | Value::Null
+                )
+            };
+            let user_call = |p: &Value| matches!(p.unspan(), Value::Call(_, _));
+            // The destination is an ARGUMENT of a call that is not a primitive or `#pure`, at
+            // a parameter that is not `const` (`value_const`, C124) — a place the callee may
+            // write through.  A read
+            // anywhere else keeps the snapshot.
+            let writes = parts.iter().any(|part| {
+                part.any_node(&mut |n| match n {
+                    Value::Call(d, args) => {
+                        let def = self.data.def(*d);
+                        let params = def.attributes();
+                        let primitive = matches!(def.code(), Value::Null) && !def.rust().is_empty();
+                        !(primitive || def.purity == crate::data::Purity::Pure)
+                            && args.iter().enumerate().any(|(i, a)| {
+                                params.get(i).is_none_or(|p| !p.value_const)
+                                    && a.any_node(&mut |m| names_dest(self, m))
+                            })
+                    }
+                    Value::CallRef(_, args) => args
+                        .iter()
+                        .any(|a| a.any_node(&mut |m| names_dest(self, m))),
+                    _ => false,
+                })
+            });
+            // Every record or vector part that names the destination must be a call for the
+            // staging to carry it; any other shape keeps the snapshot.
+            let vector_elem = matches!(in_t.base(), Type::Vector(_, _));
+            let stageable = scalar_elem
+                || parts.iter().all(|p| {
+                    (user_call(p) && (!vector_elem || self.call_retbuf(p).is_some()))
+                        || !p.any_node(&mut |n| names_dest(self, n))
+                });
+            if writes && stageable {
+                let mut temps: Vec<Value> = Vec::new();
+                for part in parts.iter_mut() {
+                    if constant(part) {
+                        continue;
+                    }
+                    if scalar_elem {
+                        let tmp = self.vars.work_refs(in_t, &mut self.lexer);
+                        self.change_var_type(tmp, in_t);
+                        temps.push(crate::data::v_set(
+                            tmp,
+                            std::mem::replace(*part, Value::Var(tmp)),
+                        ));
+                    } else if user_call(part) {
+                        // The temp holds the answer as a local bound from the call would: a
+                        // record it OWNS (the scope pass frees it, and the call's buffer
+                        // where distinct), a vector as a VIEW of the call's buffer.
+                        let tp = match (in_t.base(), self.call_retbuf(part)) {
+                            (Type::Vector(elem, _), Some(buf)) => {
+                                Type::Vector(elem.clone(), Deps::frame1(buf))
+                            }
+                            _ => in_t.clone(),
+                        };
+                        let tmp = self.vars.work_refs_p2(&tp, &mut self.lexer);
+                        temps.push(crate::data::v_set(
+                            tmp,
+                            std::mem::replace(*part, Value::Var(tmp)),
+                        ));
+                    }
+                }
+                return Some(temps);
+            }
         }
         // @PLN157 § V-w — a LITERAL's reads ride TEMPS instead of the whole-vector
         // snapshot where a temp provably carries them: (I-Comp)'s sentence — every read
