@@ -8586,6 +8586,13 @@ impl Parser {
     ) {
         // Copy the variable table with substituted types.
         let mut vars = Function::copy(tmpl_vars);
+        // `done` says *this function's code already carries the scope pass's output*, and an
+        // instance's code is new: nothing has scoped it yet.  The copy inherits the TEMPLATE's
+        // flag, which a template loaded from the stdlib bundle carries as `true` (a snapshot is
+        // reconstructed as scoped) — so on a warm start `scopes::check` skipped every stdlib
+        // generic's instance, no variable got a slot, and `tree_walk<Crate>` was an internal
+        // compiler error on both backends where a cold start ran it.
+        vars.done = false;
         for (holder, bound_to) in bindings {
             vars.substitute_type(*holder, bound_to);
         }
