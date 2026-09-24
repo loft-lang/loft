@@ -27,6 +27,11 @@
 //   CHANNEL: the store ceiling (the 70 000-call cells: `store table exhausted`) and the value
 //   (the capture cells read a freed record's bytes; the two write-through cells read the
 //   caller's capture changed — `formal/closures.md` D-clo-42).
+//   WITNESS: on the control, `inline1659(mk1659, 70000)` panics with `store table exhausted` in
+//   `src/database/allocation.rs`, and `bound1659` over the capture-or-mint closure answers
+//   `-1.0697e+305`-scale garbage where 25 is right.
+//   HOLDS: leak and free-refusal are clean on both trees; only exit, assertions and the panic
+//   move.
 
 struct S1659 { v: float }
 
