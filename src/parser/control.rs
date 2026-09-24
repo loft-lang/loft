@@ -17072,7 +17072,13 @@ impl Parser {
                     {
                         let w = self.materialize_view_return(rtd, &mut v);
                         self.ref_return(&[w], std::slice::from_mut(&mut v), RetSite::MidReturn);
-                    } else if self.return_projects_into_local(&v) {
+                    } else if self.return_projects_into_local(&v)
+                        || self.return_copies_a_leasing_value(&v)
+                    {
+                        // `(H-Copy-Lease)` — a parameter, a member or a view of one returned as a
+                        // struct-enum of a type that declares `OpCopy` is a copy, materialised here
+                        // exactly as the Reference arm above does, so it takes its lease.
+                        //
                         // #425 sibling — `return mk().field` where `field` is a
                         // struct-enum (heap record): the inline-call base is freed
                         // at scope exit, so copy the field's record into an owned

@@ -3517,6 +3517,14 @@ fn caller_record_locals(code: &Value, function: &Function, data: &Data) -> BTree
             && !function.is_captured(v)
             && !function.was_loop_var(v)
             && !disqualified.contains(&v)
+            // A local of a type that declares `OpCopy` never holds the caller's record: the copy
+            // that filled it took a lease of its own (@FR-H-Copy-Lease), so what it holds is this
+            // function's structure, and returning or placing it MOVES it.
+            && !function
+                .tp(v)
+                .base()
+                .heap_def_nr()
+                .is_some_and(|d| crate::lease::leases_whole(data, d))
     };
     let mut marked: BTreeSet<u16> = BTreeSet::new();
     loop {
@@ -4325,12 +4333,29 @@ fn copy_record_handoff(args: &[Value], function: &Function, data: &Data) -> Opti
     // (or adopted by a caller who runs it), so the source stops dropping.  The
     // spelling is a parser `OpCopyRecord` rather than a `Set`, which is why the
     // arm below does not see it.
+    //
+    // A lambda's reserved `__retbuf` is such a buffer too — its return buffer is never renamed
+    // onto the returned local — and a source that is a whole-value VIEW of one compiler work-ref
+    // (`x = c` of a capture, built in `__ref_N` with `x` viewing it) hands off from that work-ref,
+    // which is the variable its release is emitted on.  Returning it is a move (`(H-Move)`), so
+    // the release goes with the value into the buffer instead of running at the lambda's end
+    // (@PLN163: a leased capture copy returned from a lambda was released twice).
     if let Some(src) = drop_bearing_source(&args[0], function)
         && let Value::Var(dst) = args[1].unspan()
-        && function.name(*dst).starts_with("__ref")
-        && let Some(moved) = copy_moves_drop_from(function, data, *dst, src, true)
+        && (function.name(*dst).starts_with("__ref") || function.name(*dst) == "__retbuf")
     {
-        return Some(moved);
+        let src = match function.tp(src).depend().as_slice() {
+            [w] if *w != src
+                && !function.is_argument(src)
+                && function.name(*w).starts_with("__ref_") =>
+            {
+                *w
+            }
+            _ => src,
+        };
+        if let Some(moved) = copy_moves_drop_from(function, data, *dst, src, true) {
+            return Some(moved);
+        }
     }
     let moved = matches!(args[2].unspan(), Value::Int(tp) if tp & 0x8000 != 0);
     if !moved

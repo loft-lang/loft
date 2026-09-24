@@ -495,8 +495,10 @@ installed, which the frame does own.
              move it.
   (H-Copy-Lease) a copy of a type that declares `fn OpCopy(self: τ)` copies the bytes and
              then runs `OpCopy` on the NEW structure, which takes its own lease there.  A
-             struct holding such a member gets a synthesized copy cascade, the mirror of the
-             drop cascade: its own `OpCopy` first, then its members'.
+             struct, an enum variant or a collection holding such a member gets a synthesized
+             copy cascade, the mirror of the drop cascade: its own `OpCopy` first, then its
+             members'.  The copy is then a structure the function OWNS — a local it fills is
+             not the caller's record, and placing or returning it is a move.
   (H-Copy-Refuse) a COPY of a type that owns a droppable without `OpCopy` — the type itself,
              or a member at any depth — is a COMPILE-TIME ERROR on the line that writes it,
              whatever the program does after that line.  A copy places a value the function
@@ -1563,6 +1565,19 @@ CLOSED 2026-09-17, below.
   check; `tests/copy_lease.rs`.
 - **Status:** CLOSED 2026-09-24.  @PLN163 P5 — removing the release-moving machinery the lease
   replaces — is a removal measured against these cells, not part of this entry.
+- **Three follow-ups, found and fixed the same day** (the first by loft2-d9 reading the four
+  return-delivery arms side by side; the other two by the lambda cells built to test its note):
+  - a struct-ENUM `return p` / `return s.e` was refused — `parse_return`'s `Type::Enum` arm never
+    asked `return_copies_a_leasing_value`, which the `Type::Reference` arm and the tail path do;
+  - a local copy of a PARAMETER (`x = c; x`) kept the caller-record mark
+    (`scopes::caller_record_locals`), so the census judged the return a second copy: the hook ran
+    twice and the copy's own structure was never released — a leasing type's local never holds
+    the caller's record;
+  - a LAMBDA returning a local copy of its capture released it twice: the copy is built in a
+    work-ref the local views, the lambda's reserved `__retbuf` was not a delivery buffer to
+    `copy_record_handoff`, and the hand-off named the view instead of the work-ref its release
+    is emitted on.
+  Each pinned in `tests/copy_lease.rs::an_enum_or_lambda_return_leases_like_a_record`.
 
 ### D-heap-13 — CLOSED (2026-09-20): a collection returned from a call and bound to a local never releases its elements
 
