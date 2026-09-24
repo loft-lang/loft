@@ -9215,7 +9215,7 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
-### "Can this mid-body `return` hand its value back as it stands?" — four sites, two carrying fewer legs (2026-09-24)
+### "Can this mid-body `return` hand its value back?" — four sites, two short of legs (2026-09-24)
 
 Found from a JOIN CONFLICT, which is the part worth keeping: `parser/control.rs`'s
 `Type::Reference` delivery arm reads `if self.return_projects_into_local(&v) || <…>`, and two
@@ -9230,7 +9230,7 @@ is not the only site answering this.**  Four are, and they do not carry the same
 | site | arm | projection | leasing copy | capture | views_local |
 |---|---|---|---|---|---|
 | `control.rs` ~17050 | `Type::Reference` | yes | yes | yes | yes |
-| `control.rs` ~17106 | `Type::Enum(_, true, ls)` — payload enum / `__nullable<S>` | yes | **no** | no (not needed) | yes |
+| `control.rs` ~17106 | `Type::Enum(_, true, ls)` payload enum | yes | **no** | not needed | yes |
 | `control.rs` ~17274 | vector delivery | yes | n/a | n/a (covered) | — |
 | `control.rs` ~2981+ | tail / `"return from block"` | yes | yes | yes | yes |
 
@@ -9254,12 +9254,29 @@ already decided this — it is a deviation, not a design call.  `(H-Copy-Lease)`
 STRUCT holding such a member") is narrower than `reach_def` implements and is the half that wants
 widening to *a struct, or an enum variant*.
 
-**The CAPTURE leg at that arm is NOT a defect, and this is the negative result worth not
-re-deriving.**  Probed at 70 000 calls on both spellings: values and leaks clean.  The reason is
-structural rather than lucky — that arm classifies as `Bind { substitute: true }`, a COPY, where
-the struct arm gives `Rename`, and the capture leg exists to guard a `Rename`'s ownership claim.
-The vector arm at ~17274 is likewise covered: a capture-viewing vector is caught by its
-argument-dep leg, because `__closure` is `become_argument`.
+**The CAPTURE leg at that arm is NOT a defect** — probed at 70 000 calls on both spellings,
+values and leaks clean.  The route is that the arm's `else` branch delivers by BIND into the
+return buffer (`ref_return` with an empty dep list), which is a COPY, and that is the same
+ownership outcome `materialize_view_return` reaches at the Reference arm: the caller is handed a
+copy either way, so it frees its own store rather than the closure's.
+
+⚠ **A first reading of this said the enum arm binds where the struct arm RENAMES, and that is
+wrong** — kept here because the wrong version is the tempting one.  `LOFT_TRACE_RETPROMO=1` on
+the two spellings shows BOTH classify `Bind { substitute: true }`, with `plain=false`, because
+`plain` is `is_plain_fn` and both subjects are LAMBDAS.  `classify_ret_promotion`'s
+`lambda_binds_reserved_buffer` suppresses `Rename` for any lambda whose return base is
+`Reference | Enum(_, true, _) | Vector`, so the struct/enum axis is not the mechanism and a
+capture-returning lambda renames at NONE of these arms.
+
+That leaves a real open question, untested at BOTH arms: the suppression also requires the
+`__retbuf` placeholder to still EXIST (`vars.var("__retbuf") != u16::MAX`), and loft#1651's
+`retire_argument` RETIRES that placeholder when the buffer role moves to a user local.  On that
+path `Rename` is re-enabled for a lambda — which is the shape where a capture leg would matter,
+and no probe here reached it.  Anyone extending this family should build that cell before
+concluding the capture question is closed.
+
+The vector arm at ~17274 is covered for a different and simpler reason: a capture-viewing vector
+is caught by its argument-dep leg, because `__closure` is `become_argument`.
 
 The generalisable half: a join conflict between two added disjuncts is a SIGNAL that the
 predicate has siblings, and the sibling set is what neither branch measured.  Adding a leg to one
