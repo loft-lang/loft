@@ -1,0 +1,36 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// What a `&text` parameter still refuses once it links a text field or element
+// (`1602-a-ref-text-parameter-links-a-text-field-or-element.loft`, @PLN167 C3):
+//
+// - a text field handed through a FUNCTION VALUE (`g = app; g(o.a)`).  The per-kind instance is
+//   chosen per call site, and a function value is fixed before the call, so the link cannot be
+//   honoured; the conversion would hand the callee a copy and lose its write, which is what
+//   both backends did in silence before (`(B-Ref-Reshape)`: refuse rather than downgrade).
+//   `binding.md` D-bind-57 (loft#1656) keeps it open;
+// - a text element handed beside its container to a callee that GROWS that container
+//   (`(B-Ref-Reshape)`'s callee clause, R10's text spelling): the growth moves the element the
+//   link names.  It crashed on both backends while it was allowed.
+//
+// Every expected error below is matched exactly once.
+//
+// CHANNEL: the expected diagnostics, one per refused call.
+//
+// @EXPECT_ERROR: a function value's `&text` parameter cannot link to a text field or element
+// @EXPECT_ERROR: cannot pass both `h` and a reference into it to `grow`
+
+struct O { a: text, b: text }
+struct H { v: vector<text> }
+
+fn app(t: &text) { t += "!"; }
+fn grow(t: &text, h: H) { for i in 0..50 { h.v += ["q{i}"]; } t += "!"; }
+
+fn main() {
+  o = O { a: "alpha", b: "beta" };
+  g = app;
+  g(o.a);
+  h = H { v: ["aa", "bb"] };
+  grow(h.v[0], h);
+  println("{o.a} {h.v[0]}");
+}

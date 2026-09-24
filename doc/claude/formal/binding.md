@@ -955,12 +955,43 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   is unchanged and its emission byte-identical.  Guards:
   `tests/scripts/167-a-text-link-into-a-store.loft`,
   `tests/scripts/167-a-text-link-keeps-its-kind.loft`.  The PARAMETER face is D-bind-55.
-* **D-bind-55** *(opened 2026-09-23; loft#1566, @PLN167 C3)* — `(B-Ref-Lvalue)` with
-  `(F-ParamRef)`: a text field or element — or a store-kind text link — handed to a `&text`
-  PARAMETER is refused ("a `&text` parameter cannot link to a text field or element"), where the
-  rules say the parameter links to the place as the `&` bind now does.  The refusal is loft#1602's
-  loud stopgap and stays until a `&text` parameter is instantiated per kind (C3); before it the
-  call copied and dropped the callee's write.  Found when D-bind-38 closed.
+* **D-bind-55** *(opened 2026-09-23, CLOSED 2026-09-24; loft#1566, loft#1602, @PLN167 C3)* —
+  `(B-Ref-Lvalue)` with `(F-ParamRef)`: a text field or element — or a store-kind text link —
+  handed to a `&text` PARAMETER was refused (loft#1602's stopgap; before it the call copied and
+  dropped the callee's write), where the rules say the parameter links to the place as the `&`
+  bind does.  **Closed** by instantiating the function per text-link KIND, decision 2's route:
+  the call hands the slot's `DbRef` (`scalar_place_ref`, the place the bind takes) and is pointed
+  at the function's STORE instance, minted after pass 2 (`parser/store_text.rs`) as a clone whose
+  parameter carries `store_text_link` and whose body is rewritten to C1's spelling — a read
+  `OpGetText(OpVarRef(t), 0)`, a write the field's setter.  The rewrite is total over a measured
+  closed set: across the 206 functions with a `&text` parameter in the stdlib and the corpus the
+  parameter is written only by `Set` and the `Op…Stack…` write ops, each of which has a twin on a
+  text variable.  The stack instance is the function as written, byte-identical
+  (`scripts/introspect_diff.sh`).  Instances close transitively (forwarding, recursion, a local
+  link bound from the parameter).  `(B-Ref-Reshape)`'s callee clause now reaches the text
+  spelling (`grow(h.v[0], h)` is refused; it crashed on both backends while admitted).  An
+  instance's key is `n_f@st<mask>` and every name decoder cuts at `@`, so messages, traces and
+  profiles name `f`.  Guards `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft`,
+  `tests/scripts/1602-a-ref-text-parameter-refuses-what-it-cannot-link.loft`, and the warm-cache
+  cell `a_store_text_instance_reads_the_same_warm` (`tests/arc_e_program_cache.rs`).  The
+  FUNCTION-VALUE spelling is D-bind-57.
+* **D-bind-57** *(opened 2026-09-24; loft#1656, @PLN167 R5a)* — `(B-Ref-Lvalue)` with `(F-ParamRef)` through
+  a FUNCTION VALUE: `g = app; g(o.a)` with `fn app(t: &text)` is refused ("a function value's
+  `&text` parameter cannot link to a text field or element"), where the rules say the parameter
+  links the place.  A store instance is chosen per call site and a function value is fixed
+  before the call, so the link cannot be honoured without the kind in the function TYPE
+  (`fn(&text)` per kind).  **Measured before the refusal:** both backends compiled it and
+  answered `alpha` — the conversion copied the field and the callee's write was lost with
+  nothing said, a silent-wrong on `main`.  Guard (the refusal's cell)
+  `tests/scripts/1602-a-ref-text-parameter-refuses-what-it-cannot-link.loft`.
+* **D-bind-58** *(opened 2026-09-24, CLOSED 2026-09-24; found by @PLN167 C3's K9 cell)* —
+  `(O-NoDiverge)` for a `&text?` PARAMETER on `--native`: any read of it (`t == null`,
+  `t == "x"`) emitted `*var_t`, a MOVE of the `String` behind the `&mut`, and rustc refused the
+  program (E0507) while the interpreter ran it.  The parameter arm tested `**inner` for `Text`
+  exactly, where the local-link arm beside it reads `inner.base()`.  **Closed** by asking the same
+  question as that arm.  A loud divergence, never a wrong value.  Guard: K9 in
+  `tests/scripts/1602-a-ref-text-parameter-links-a-text-field-or-element.loft`
+  (`test_a_nullable_text_field`, the variable half).
 * **D-bind-37** *(opened 2026-09-14, CLOSED 2026-09-14)* — `(O-NoDiverge)` for `(B-Ref-Repoint)` on a
   `&τ` PARAMETER: `fn f(c: &integer, v: vector<integer>) { c = &v[1]; … }` re-pointed the parameter's link
   on `--interpret` (after D-bind-36) and did not compile on `--native` — rustc E0308 for an element or

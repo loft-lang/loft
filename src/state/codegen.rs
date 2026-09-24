@@ -5255,7 +5255,8 @@ impl State {
             // was correct.  A re-point is not a value write at any width.
             // Every scalar, at every width — the arms became uniform when loft#1567 dropped the
             // narrow integer's, which is the shape of the fix as much as its effect.
-            let repoints = crate::scopes::link_set_repoints(stack.data, &stack.function, var, value);
+            let repoints =
+                crate::scopes::link_set_repoints(stack.data, &stack.function, var, value);
             if repoints {
                 self.generate(value, stack, false);
                 let var_pos = stack.var_pos(var);

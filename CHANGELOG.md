@@ -14,6 +14,25 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A `&text` parameter can be handed a text field or element, and the function writes it.**
+`fn shout(t: &text) { t += "!" }` could only ever reach a text *variable*.  Called as
+`shout(o.name)` or `shout(names[2])`, it first copied the text, and the function's write was
+lost with nothing said.  More recently that call was refused.  Now it works: the function writes
+the field in place, and a read of `o.name` inside the function already sees the new value.
+The same is true when you pass it on to another `&text` function, recurse with it, or take a
+`&` link to it inside the function.  A `&` link to a text field (`t = &o.name`) can be passed
+too.
+
+Two related things are now caught at compile time instead of going wrong at run time:
+- Calling through a **function value** (`g = shout; g(o.name)`) is refused. That call still
+  lost the write in silence. Call the function by name for now.
+- A function that grows the collection a text element lives in, handed that element and the
+  collection together (`grow(h.names[0], h)`), is refused. The same program crashed.
+
+The same goes for a `&` link to a number or text *inside* a collection:
+`c = &v[1]; v += [x]; c = 99` is refused, because the growth may move the element `c` names.
+Before, that write was lost, as it already was refused for a link to a record.
+
 **`loft self-update` and `loft install` download over a patched TLS stack.**  A
 dependency audit now runs every night, and its first run found that the TLS library
 loft downloads with carried a published advisory (RUSTSEC-2026-0285); the fixed version
