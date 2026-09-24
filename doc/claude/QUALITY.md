@@ -9270,6 +9270,65 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Did the author write `&` here?" — four spellings, and the refusal knew two (2026-09-24)
+
+Came out of loft#1664 (*a write through a LINK to a linked-group member reaches only that
+member*) and turned out to be blocked on a different rule, which is the part worth keeping:
+**the fix for the filed issue was not admissible until a deviation nobody had filed was
+closed first.**
+
+`(Col-Group)` says a record entering through one member of a group is in every member, by any
+write route.  Reaching the siblings needs the owning RECORD and the FIELD, because that is what
+`record_finish` walks `other_indexes` off — so the cure is to spell the write against its origin
+field, which is what loft#1160 already does for a `match` payload binding.  But loft#1662 had
+just established that spelling a write against the field is exactly what a binding cannot
+survive: `(B-View)` may hand it a copy, and the field-spelled write cannot follow.  So the
+question was whether a `&` LINK can be given a copy.
+
+| spelling | marker | disturbance of its container |
+|---|---|---|
+| struct projection `p = &o.r` | `is_amp_link` | refused |
+| scalar / text place `p = &o.r.n` | `is_place_link` (D-bind-56, the day before) | refused |
+| **collection `p = &o.v`** | **`is_amp_container_link`** | **materialised, with an advice** |
+| plain bind off a borrowed base | — | materialised, correctly `(B-View)` |
+
+Three spellings of one question, and the refusal gate knew two.  `(B-Ref-Reshape)` is explicit
+that the copy is the one answer a `&` may not be given — *"loft will not quietly downgrade the
+reference to a copy"* — and **the parser's own note beside `amp_container_link` had written the
+question down as open and named the rules' answer to it**, which is the second time in two days
+that the code site carried the answer before the walk asked.  `D-bind-60`.
+
+With that closed the link can never become a copy, so it still names its origin field at every
+write, and only then is the field spelling sound for it.  **The order is the finding**: had the
+issue been "fixed" first, it would have reproduced loft#1662's split at the `&` spelling.
+
+**Then the cure itself found two more sites answering one question.**  An over-reach cell — the
+`&` link to the KEYED member, written expecting it to pass — failed at `data=0` while the link
+to the VECTOR member passed.  Two causes behind it, neither visible from the other:
+
+* the record an append adds is built at **three** places (`build_vector_list`, the keyed
+  `+= <elem>` fast path, the keyed `+= [ … ]` list path) and only the first asked.  Found by
+  `#[track_caller]` on `new_record` after reading the code twice without converging — the probe
+  named `expressions.rs:3369`, which no amount of reading had;
+* and the membership test was one-DIRECTIONAL.  `keyed_field_is_linked` answers of the field
+  that LISTS its views, so it says `false` of the view member — half of every
+  vector-plus-keyed group.  My own gate for loft#1662 had been built on it, which means that
+  narrowing was *right for the wrong reason* for one member of the pair.
+
+`Parser::resolved_group_write` is the one home the three sites share;
+`Stores::field_is_group_member` asks both directions.
+
+**What stays open is the half that cannot take this cure** (`D-col-6`'s head): a payload
+BINDING onto a group member, which keeps the field spelling and so splits once it materialises.
+The mechanism to close it now exists — loft#1665's parser-emitted block that the scope pass
+drops for a condemned binding — used to REWRITE rather than drop.  Handed to the line that
+built it rather than re-derived here.
+
+**⚠ A blind `sed` rename clobbered an existing variant name** while adding a cell: the new
+struct's name already existed as an enum variant in the same file, and `s/X/Y/g` renamed both.
+Caught by the compiler in seconds, but the repair had to be by hand and the lesson is the one
+the tree keeps teaching — a rename is a scoped edit, not a text substitution.
+
 ### "Which place does a write through a payload binding reach?" — three decoders, and a lint that stated the opposite (2026-09-24)
 
 `match e { Ei { v } => { e = Ei { v: [9,9,9] }; v += [7] } }` appended to the REASSIGNED
