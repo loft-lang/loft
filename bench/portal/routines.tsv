@@ -164,3 +164,26 @@ hex_field	edgeset_count	call	library:hex_field	a triple loop through `edge_mat` 
 hex_field	trace	vector-read	library:hex_field	the loop stitcher rescans ALL edges to find each next one: O(n^2) reads over five parallel vectors
 hex_world	get_cell	keyed	library:hex_world	a linear scan of the chunk list comparing two fields, then a record returned BY VALUE
 hex_terrain	terrain_fbm	float-kernel	library:hex_terrain	per octave four integer hashes and a smoothstep lerp: the densest per-op kernel in the tree
+17_consumer_moros_dryopea	resolve_move	call	consumer:moros	per-frame physics: a chain of small functions passing small records by value
+17_consumer_moros_dryopea	panel_build	record-build	consumer:moros	one frame's panel: records with nested fields and texts, a hit test answering a struct-enum
+17_consumer_moros_dryopea	slope_path_with_undo	record-build	consumer:moros	per step a record read out of a nested container and appended by value into an undo stack
+17_consumer_moros_dryopea	emit_to_material	text-build	consumer:moros	per hex an integer formatted to text and a mesh list scanned comparing a text field
+17_consumer_moros_dryopea	map_json	text-build	consumer:moros	a whole map serialised with {m:j} and parsed back with Map.parse
+17_consumer_moros_dryopea	reload_and_record	keyed	consumer:dryopea	a two-way hash diff with u8 fields: walk A probing B, walk B probing A
+17_consumer_moros_dryopea	mapfile_to_painted	text-scan	consumer:dryopea	per entry a linear palette scan comparing a text field, then a composite-key insert
+17_consumer_moros_dryopea	truncate_to	vector-build	consumer:dryopea	a timeline of records with inner vectors rebuilt element by element to drop a prefix
+18_consumer_crawler	build_walls	keyed	consumer:crawler	a text key formatted per wall face probing a hash, a record appended on a miss
+18_consumer_crawler	build_vis	vector-build	consumer:crawler	per frame a 101x101 push loop, two indexed reads and a small call per pixel
+18_consumer_crawler	hydro_pitfill	vector-write	consumer:crawler	a priority flood on a min-heap of two parallel integer vectors
+18_consumer_crawler	talus_relax	vector-write	consumer:crawler	a 4-neighbour relaxation over const and & float vectors, 120 sweeps
+18_consumer_crawler	slice_shrink	text-build	consumer:crawler	a text shrunk one character at a time by slicing, and substrings sliced per line
+18_consumer_crawler	char_roundtrip	text-build	consumer:crawler	per character a code changed and formatted back as a character
+18_consumer_crawler	quadratic_out	text-build	consumer:crawler	a 2 MB text grown by out = out + "{v:.9}"
+18_consumer_crawler	binary_read	vector-build	consumer:crawler	a binary file read one i16 at a time (f#read(2) as i16)
+18_consumer_crawler	sort_floats	vector-write	consumer:crawler	a selection sort into a fresh vector per scanline
+18_consumer_crawler	format_specs	text-build	consumer:crawler	per-frame format widths and precisions, {x:4.1} {n:3} {m:X}
+19_stdlib_par	par_map_float	parallel	stdlib	a float kernel per element of a large vector, results gathered
+19_stdlib_par	par_records	parallel	stdlib	a vector of records read per worker, integer results gathered
+19_stdlib_par	par_reduce	parallel	stdlib	per-element integer work gathered, then summed
+19_stdlib_par	par_text	parallel	stdlib	per-element text formatting, texts gathered
+19_stdlib_par	par_small	parallel	stdlib	many small par regions: the fixed cost of one region
