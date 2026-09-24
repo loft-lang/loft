@@ -1386,6 +1386,22 @@ impl State {
         self.fnref_borrowed_return.take()
     }
 
+    /// Take the store `store_nr` off the RUNNING frame's hand-up list: a binding in this frame
+    /// has adopted it and is now its one owner (`OpBindFnRefResult`).  Only this frame's
+    /// entries are searched — an entry at another depth belongs to another frame's value.
+    pub(crate) fn disown_fnref_buf(&mut self, store_nr: u16) {
+        let depth = u32::try_from(self.call_stack.len())
+            .unwrap_or(u32::MAX)
+            .saturating_sub(1);
+        if let Some(at) = self
+            .fnref_bufs
+            .iter()
+            .rposition(|(d, b)| *d == depth && b.store_nr == store_nr)
+        {
+            self.fnref_bufs.remove(at);
+        }
+    }
+
     pub fn hand_up_returned(&mut self, returned: DbRef) {
         if returned.store_nr == u16::MAX || returned.rec == 0 {
             return;

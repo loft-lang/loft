@@ -5673,6 +5673,30 @@ fn cr_take_fnref_borrowed(store_nr: u16) -> bool {
     FNREF_BORROWED.with(|b| b.take().is_some_and(|r| r.store_nr == store_nr))
 }
 
+/// Bind the record an UNRESOLVED fn-ref call handed back: `true` ADOPTS it, `false` asks
+/// the caller to COPY it (`@FR-O-Unknown`, `@FR-B-Copy`, `@FR-O-Owner`).
+///
+/// The `--native` half of `State::bind_fn_ref_result`, reading the same one-hop verdict
+/// [`cr_fnref_minted`] left: a store that predates the call is a capture or an argument and
+/// is copied, left alone; any other was minted by the call and is adopted — and taken OFF the
+/// hand-up list, so the binding is its one owner and [`FnRefBufGuard`] does not hold it (or
+/// hand it up) as well.  A null `src` is adopted as the null it is.
+pub fn cr_fnref_adopt(src: DbRef) -> bool {
+    if cr_take_fnref_borrowed(src.store_nr) && src.rec != 0 {
+        return false;
+    }
+    if src.store_nr != u16::MAX {
+        FNREF_BUFS.with(|b| {
+            let mut list = b.borrow_mut();
+            if let Some(at) = list.iter().rposition(|(d, _)| d.store_nr == src.store_nr) {
+                list.remove(at);
+                FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
+            }
+        });
+    }
+    true
+}
+
 /// Give an owner to a store a fn-ref callee MINTED and handed back.
 ///
 /// The callee does not free what it returns, and the caller may be a forwarding function whose

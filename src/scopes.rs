@@ -19750,7 +19750,31 @@ impl Scopes<'_> {
         };
         let d_nr = match self.fnref_target.get(v_nr).copied() {
             Some(d) if d != u32::MAX => d,
-            _ => return None,
+            // loft#1659 — an UNRESOLVED target (a fn-typed parameter, a slot two lambdas were
+            // assigned to).  Nothing static says whose store its record result is
+            // (@FR-O-Unknown), and not lifting left it to the frame's hand-up list: one
+            // store per call, held to frame exit.  The lift binds it the way the bound
+            // spelling does, through `OpBindFnRefResult` — the call's own return decides
+            // adopt (minted during the call) or copy (a capture or an argument) — so the
+            // temp OWNS on both arms and its scope-exit free is the release (@FR-O-Owner).
+            // Records only: `opaque_callref_bind` is the bind that makes that free right,
+            // and it answers only for a record.
+            _ => {
+                let Type::Function(_, ret, ..) = function.tp(*v_nr).base() else {
+                    return None;
+                };
+                let (returned, opt) = ret.peel_optional();
+                self.pending_join_witness.set(u16::MAX);
+                return match returned {
+                    Type::Reference(d, _) => {
+                        Some(Self::reopt(opt, Type::Reference(*d, Deps::none())))
+                    }
+                    Type::Enum(d, true, _) => {
+                        Some(Self::reopt(opt, Type::Enum(*d, true, Deps::none())))
+                    }
+                    _ => None,
+                };
+            }
         };
         let def = data.def(d_nr);
         // loft#1245 — the INVARIANT: a call's returned store is ADOPTED by the caller only
