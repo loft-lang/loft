@@ -174,31 +174,40 @@ slow-timeout = { period = "1200s", terminate-after = 1 }
 filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
 test-group = 'heavy-serial'
 
-[[profile.ci.overrides]]
-filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native))'
-slow-timeout = { period = "1200s", terminate-after = 1 }
-
-# The long poles start FIRST.  nextest otherwise runs binaries in listing order, and on the
-# Windows `ci` host (4 cores) these seven queued behind ~5000 short tests: measured on run
-# 35972977751, the first 4910 tests finished 34 min in, `native_scripts` STARTED at 35 min and the
-# drop gate's native leg at 58 min, so the job's last 31 min were a tail of seven tests with
-# nothing to overlap — and the cache save that follows was cut off at the 90-min job limit
-# although every test had passed.  A priority orders both the global queue and the `heavy-serial`
-# group's own, so the serial chain begins at once and overlaps the bulk instead of trailing it.
-[[profile.ci.overrides]]
-filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)) | (binary(wrap) & test(=loft_suite)) | (binary(features) & test(=features_examples_interpret)) | (binary(doc_hygiene) & test(=changed_selects_subjects_by_path)) | binary(poison_claim) | (binary(exit_codes) & test(=w1_1_html_export_produces_file))'
-priority = 100
-
 # `native_scripts` compiles every `tests/scripts` program natively, and on Windows its FIRST run is
 # cold: the native binary cache is keyed on the compiler, so every commit misses it.  Measured on
 # the same run: the cold try ran past 1200 s, and its retry — reading the cache the cold try had
 # filled — passed in 114 s.  So a timeout there is not a hang but the test's real cost, and a
 # kill-then-retry costs MORE than finishing (and reports a flake that is not one).  The per-program
-# watchdog inside the test remains the hang guard.
+# watchdog inside the test remains the hang guard.  ⚠ It must come BEFORE the all-platform 1200 s
+# override below: nextest takes the FIRST matching override for each setting, and placed after it
+# this one never applied (run 35983668588 killed the cold try at 1200 s again).
 [[profile.ci.overrides]]
 platform = 'cfg(windows)'
 filter = 'binary(native) & test(=native_scripts)'
 slow-timeout = { period = "2400s", terminate-after = 1 }
+
+[[profile.ci.overrides]]
+filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native))'
+slow-timeout = { period = "1200s", terminate-after = 1 }
+
+# The serial critical path starts FIRST.  nextest otherwise runs binaries in listing order, and on
+# the Windows `ci` host (4 cores) the long tests queued behind ~5000 short ones: measured on run
+# 35972977751, the first 4910 tests finished 34 min in, `native_scripts` STARTED at 35 min and the
+# drop gate's native leg at 58 min, so the job's last 31 min were a tail with nothing to overlap,
+# and the cache save after it was cut off at the 90-min job limit although every test had passed.
+#
+# Only what is SERIAL gets the priority: the `heavy-serial` chain (`native_scripts`, then the drop
+# gate's native leg), and `loft_suite`, one process running the scripts one after another.  The
+# first version also raised four tests that run their OWN process pools (the poison census, the
+# feature examples, a doc-hygiene subject walk, an html export); started together on 4 cores they
+# starved each other — measured on run 35983668588: `features_examples_interpret` 438 s -> killed
+# at 600 s (its retry: 57 s), `changed_selects_subjects_by_path` killed twice — and the test phase
+# stayed at 63 min.  Those overlap the bulk better in listing order.
+[[profile.ci.overrides]]
+filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)) | (binary(wrap) & test(=loft_suite))'
+priority = 100
+
 
 # The profile every sanitizer leg runs under: `miri.yml`'s nightly ASan sweep and leak gate,
 # and `ci.yml`'s per-PR ASan sweep since 2026-09-15 (that one sat at 587 s of `ci`'s 600 s
