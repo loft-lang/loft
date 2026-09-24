@@ -56,6 +56,7 @@ GATE_WORKFLOWS = [
     ("repro-build.yml", "weekly"),
     ("api-compat.yml", "dispatch"),
     ("lib-main-health.yml", "scheduled"),
+    ("consumer-main-health.yml", "scheduled"),
     ("browser-threads.yml", "scheduled"),
     ("win-cdylib.yml", "dispatch"),
 ]

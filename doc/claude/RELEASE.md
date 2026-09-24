@@ -1020,7 +1020,8 @@ skip-list rows (`M-valgrind`, `M-ignores`, with `A-ignores` checking the rationa
 mechanically; the zero-leak gate is the suite's own assertion, carried by `A-ci` and the
 gate), the WASM endpoint gate (`M-wasm`), the nightlies (`A-release-gate`: one deliberate
 run of all five against HEAD's commit, measured — it replaced six hand-dispatched,
-hand-ticked items), the dependency audit (`A-audit`), step 9's
+hand-ticked items), the dependency audit (`A-audit`), the consumers at the tag
+(`A-consumers`), step 9's
 artefacts, step 10's
 binaries and registry entry, and the monthly reviews the cadence makes
 per-release work (`M-monthly-docs`, `M-monthly-bugs`, `M-close-plans`, and
@@ -1133,6 +1134,17 @@ tag, `loft verify-self`, and every `examples/*.loft` under `--interpret`.  The
 example check asserts **empty stderr**, not just exit 0 — a loft program that
 cannot write its output file prints `… — write skipped` and exits 0, so an
 exit-code-only smoke passes on a bundle whose examples do nothing.
+
+**And the consumers, at the tag's commit.**  `release.yml` calls
+`consumer-main-health.yml` — the nightly that runs every package of the programs built
+with loft (moros, dryopea, crawler, the private economy model) on BOTH backends — so a
+release is proven against the code that dogfoods the language and not only against
+loft's suite and its shipped examples.  The same file answers "main, tonight" on the
+schedule and "this release" under the tag, so the two cannot drift.  It does not gate
+the draft: a red consumer is either loft moving under it or the consumer's own tip, and
+which it is decides whether the release ships — `A-consumers` reads the run per consumer
+and the owner decides on the record.  Pre-tag, the same proof is the gate leg loft#1653
+still asks for.
 
 One leg cannot always run its own artifact: `x86_64-apple-darwin` is
 cross-built on an arm64 runner and needs Rosetta 2.  It reports a loud skip

@@ -50,6 +50,12 @@ substitutes and a 90-minute run proved nothing.  Changed:
   under 1.96.0, and an `msrv` leg in the nightly toolchain matrix that resolves it from
   the manifest — `--native` compiles a user's program with THEIR rustc, and the matrix
   tested beta and nightly, never a stable behind.
+- **The release is proven against its consumers (2026-09-24).**  `consumer-main-health.yml`
+  is callable, and `release.yml` calls it on the tag's commit: every package of moros,
+  dryopea, crawler and the private economy model, on both backends, in the run that
+  builds the bundles.  It does not gate the draft; `A-consumers` reads the run per
+  consumer and the owner decides.  The inner job is named after the consumer so that
+  reader (and the nightly's own job list) shows `dryopea`, not five matrix values.
 - **`make release-liveness`** tallies the last 14 scheduled runs per gate workflow, names
   the red jobs and flags a CHRONIC one (red in half the window or more); it read only
   the last run, which said "ci.yml in flight" over a Windows leg red ten nights in

@@ -211,9 +211,11 @@ the self-update path): its first run found RUSTSEC-2026-0285 in rustls 0.23.40 a
 RUSTSEC-2026-0204 in crossbeam-epoch — both bumped, `A-audit` and the nightly `audit` job
 keep asking.  An older stable for `--native` (`rust-version = "1.96"`, proven by a build,
 the `msrv` matrix leg keeps it true).  A fortnight's per-leg tally in the liveness census,
-which read only the last run.  **Missing, filed as loft#1653:** a consumer-apps leg (moros,
-dryopea) and `revalidate-libs`' native run made gating — it is `continue-on-error` while
-native is the backend users get.
+which read only the last run.  **The consumers at the tag** (2026-09-24): `release.yml`
+calls `consumer-main-health.yml` on the tag's commit — moros, dryopea, crawler and the
+economy model, both backends — and `A-consumers` reads it per consumer.  **Still filed as
+loft#1653:** the same proof as a pre-tag gate leg, and `revalidate-libs`' native run made
+gating — it is `continue-on-error` while native is the backend users get.
 
 **Effectiveness, measured.**  Every check that caught a real defect RUNS THE ARTEFACT:
 install.sh (shipped broken in 2026.8.0), valgrind on the candidate (#1357), the bundle

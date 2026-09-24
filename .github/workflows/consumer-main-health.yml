@@ -28,6 +28,12 @@
 #
 # The private consumer (Moros-Economy-Development) needs `secrets.CONSUMER_TOKEN` with read
 # access; without it that consumer is SKIPPED with a notice rather than reported green.
+#
+# Also a REUSABLE workflow: `release.yml` calls it on the tag's commit, so a release is
+# proven against the programs built with loft — both backends, every package — and not
+# only against loft's own suite and its shipped examples.  The caller's commit is what
+# `actions/checkout` takes, so the same file answers "main, tonight" on the schedule and
+# "this release" under the tag, and cannot drift between the two.
 name: consumer-main-health
 
 on:
@@ -39,6 +45,16 @@ on:
         description: 'Space-separated consumer names (default: all)'
         required: false
         type: string
+  workflow_call:
+    inputs:
+      consumers:
+        description: 'Space-separated consumer names (default: all)'
+        required: false
+        type: string
+    secrets:
+      CONSUMER_TOKEN:
+        description: 'read access to the private consumer; absent = that consumer is skipped with a notice'
+        required: false
 
 permissions:
   contents: read
@@ -48,6 +64,10 @@ env:
 
 jobs:
   check:
+    # The consumer's name alone, so a caller (the release checklist's `A-consumers`) can
+    # read the job as `consumer-main-health.yml / dryopea` instead of the matrix's five
+    # values run together.
+    name: ${{ matrix.name }}
     runs-on: ubuntu-latest
     timeout-minutes: 120   # dryopea's suite alone runs past ten minutes
     strategy:
