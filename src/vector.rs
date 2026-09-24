@@ -1379,6 +1379,7 @@ pub unsafe fn text_at(ptr: *const u8, size: u32, rec: u32) -> &'static str {
 /// a null vector.  Every text element of the vector is a record in that store, so a loop
 /// reading text elements slices them off the span with no store resolution per element.
 #[must_use]
+#[inline]
 pub fn text_span_of(h: &VecHeader, stores: &[Store]) -> (*const u8, u32) {
     stores
         .get(h.store_nr as usize)

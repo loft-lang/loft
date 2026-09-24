@@ -144,3 +144,13 @@ rest is the per-push record construction (`(R-Place)`'s class).  Found on the wa
 vector FIELD rebind on a multi-field record stranded the old elements' owned heap inside the
 store.  Probe: session scratch `rc/` (`compact_vector_in_place` there is the primitive the
 runtime lacks).
+
+**Two runtime levers out of the wide pass (2026-09-24).**  A `for e in hash` walk had no row:
+added as `15_stdlib_keyed/hash_walk` (5k records walked in key order, the twin sorting its
+keys per pass as loft does), it read 5.93× and profiled as 69 % sort — `keys::compare` resolving
+two stores per pair.  Decorated (`keys::sort_records`, keyed.md L8): 2.83×.  And
+`vector::text_span_of` was a CALL per fused element write — the one helper of the base family
+without `#[inline]`, 12.7 % of `write_text`'s hand-priced remainder; inlined, it is a load
+pair, and the dead span a non-text element binds folds away.  `write_text` re-measured
+124× (the row is the two tables rebuilt per glyph, `(R-Const)`; the inline is for what
+follows it).

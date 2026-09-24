@@ -1096,7 +1096,7 @@ pub fn arena_records(hash_ref: &DbRef, stores: &[Store]) -> Vec<u32> {
 #[must_use]
 pub fn records_sorted(hash_ref: &DbRef, stores: &[Store], keys: &[Key]) -> Vec<DbRef> {
     let mut recs = records(hash_ref, stores);
-    recs.sort_by(|a, b| keys::compare(a, b, stores, keys));
+    keys::sort_records(&mut recs, stores, keys);
     recs
 }
 

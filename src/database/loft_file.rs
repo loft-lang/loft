@@ -221,18 +221,18 @@ mod tests {
     #[test]
     fn a_read_fills_the_request_across_a_refill_and_stops_at_the_end() {
         let data: Vec<u8> = (0..100_000u32).map(|i| (i % 7) as u8).collect();
-        let p = scratch("fill", &data);
-        let mut f = open(&p);
-        let mut a = vec![0u8; CAPACITY - 3];
-        assert_eq!(f.read(&mut a).unwrap(), a.len());
-        let mut b = vec![0u8; 10];
-        assert_eq!(f.read(&mut b).unwrap(), 10);
-        assert_eq!(&b[..], &data[CAPACITY - 3..CAPACITY + 7]);
+        let path = scratch("fill", &data);
+        let mut file = open(&path);
+        let mut first = vec![0u8; CAPACITY - 3];
+        assert_eq!(file.read(&mut first).unwrap(), first.len());
+        let mut ten = vec![0u8; 10];
+        assert_eq!(file.read(&mut ten).unwrap(), 10);
+        assert_eq!(&ten[..], &data[CAPACITY - 3..CAPACITY + 7]);
         let mut rest = vec![0u8; 200_000];
-        let n = f.read(&mut rest).unwrap();
-        assert_eq!(n, data.len() - (CAPACITY + 7));
-        assert_eq!(f.read(&mut b).unwrap(), 0);
-        std::fs::remove_file(p).unwrap();
+        let got = file.read(&mut rest).unwrap();
+        assert_eq!(got, data.len() - (CAPACITY + 7));
+        assert_eq!(file.read(&mut ten).unwrap(), 0);
+        std::fs::remove_file(path).unwrap();
     }
 
     #[test]
@@ -267,7 +267,7 @@ mod tests {
         // Buffered bytes are unread, so the OS runs ahead: the cached 3 must still land at 3.
         assert_eq!(f.seek(SeekFrom::Start(3)).unwrap(), 3);
         f.write_all(b"Z").unwrap();
-        assert_eq!(f.seek(SeekFrom::Current(0)).unwrap(), 4);
+        assert_eq!(f.stream_position().unwrap(), 4);
         drop(f);
         assert_eq!(std::fs::read(&p).unwrap(), b"abcZef");
         std::fs::remove_file(p).unwrap();
