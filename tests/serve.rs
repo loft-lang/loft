@@ -798,15 +798,24 @@ fn serve_ws_game_launch_streams_and_stops() {
         &format!("{{\"id\":1,\"req\":\"launchGame\",\"file\":\"{jfile}\"}}"),
     );
     assert!(ws_recv(&mut ws).contains("\"ok\":true"), "launch ok");
-    // Poll until the game exits (bounded), accumulating drained output.
+    // Poll until the game exits, on a DEADLINE rather than a trip count (loft#1668).  Forty
+    // polls at 100 ms is four seconds of wall clock, which is a budget that SHRINKS exactly
+    // when the box is loaded — so the test went red under a gate while the server answered
+    // every one of its forty polls correctly and the game simply had not finished.  A trip
+    // count inverts the property a CI wait needs; `vm_deadline` is the idiom this file already
+    // uses for that, and it stretches ×3 on a shared machine (`common::deadline_scale`).
     let mut all = String::new();
     let mut exited = false;
-    for i in 0..40 {
+    let started = Instant::now();
+    let deadline = vm_deadline(20);
+    let mut polls = 0;
+    while Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(100));
         ws_send(
             ws.get_ref(),
-            &format!("{{\"id\":{},\"req\":\"gameStatus\"}}", 10 + i),
+            &format!("{{\"id\":{},\"req\":\"gameStatus\"}}", 10 + polls),
         );
+        polls += 1;
         let r = ws_recv(&mut ws);
         all.push_str(&r);
         if r.contains("\"running\":false") {
@@ -814,7 +823,12 @@ fn serve_ws_game_launch_streams_and_stops() {
             break;
         }
     }
-    assert!(exited, "game ran to completion: {all}");
+    // Say what was actually waited, so a future red is triage rather than a guess.
+    assert!(
+        exited,
+        "game ran to completion after {polls} polls in {:?}: {all}",
+        started.elapsed()
+    );
     assert!(
         all.contains("frame 0") && all.contains("frame 2"),
         "game output streamed through gameStatus: {all}"
