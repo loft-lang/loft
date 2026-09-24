@@ -111,3 +111,17 @@ work listed beside them for its author.
 **`(R-Rebind)` hand-priced** on `delete_range`'s emitted Rust (2026-09-24): 61–64 → 4.2–4.6 ms/op
 (−93 %), 138× → ~6.5×, hash unchanged — the two whole-buffer copies were the row.  Probe:
 the session scratch `rb/dr.loft` (the bench row alone), `dr.rs` → `dr2.rs` the hand edit.
+
+**Twins re-aligned to the library's algorithm (2026-09-24, bench rule 1).**  Four twins had
+been written with the census's IDIOMATIC algorithm rather than the library's, so their rows
+charged loft for work the library itself repeats: hex_body `bone_shape_has` re-poses the rig
+per query (97× → ~4.9×), `rig_read` and hex_form `form_read` re-split each line per field read
+(13.8× → ~1.8×, 5.2× → ~2.7×), pluginabi `check_request` decodes its frame twice and
+`req_state_b64` three times.  Each `bench.rs` now names that extra work for the library's
+author; the re-measured rows are in the results file.  **A twin's own noise floor, measured on
+the way:** the pluginabi `request` twin moved ±40 % between two builds of UNCHANGED source —
+`b64_decode` byte-identical, at a different address (function alignment 16 vs 32 mod 64);
+`codegen-units=1` inverts the order and `-C llvm-args=-align-all-functions=6` equalises them.
+`stats.py`'s seven interleaved samples resample one binary and cannot see it, so a ratio near
+the bar on a small twin can move a class with no loft cause.  The cure, if wanted, is an
+alignment flag in the protocol's `rustc -O` line, not a source edit chasing a layout.
