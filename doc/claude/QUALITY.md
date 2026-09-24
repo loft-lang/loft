@@ -2806,12 +2806,27 @@ rather than quietly carried.
 The growth is C1's, and it is already cured on the branch it came from: three `Type::RefVar`
 tests in `parse_assign_op_inner` ask their question without peeling, so a `&text?` does not
 match them (`D-bind-58`'s shape).  loft3-ca peeled those three and three more of C2/C3's with
-`.base()`, measuring **313 / 1302** on their tree.  The peel is deliberately NOT duplicated
-here: the assignment under two of those tests is `s_type = *inner`, and peeling the test
-without deciding what the `Optional` does to the assigned type would trade a missing match arm
-for a dropped nullability — which is the question that arc owns.  So this row comes DOWN to
-1302 when that peel arrives, and the next join must re-measure rather than take either
-branch's figure.)
+`.base()`.
+
+**The +2 is understood rather than merely consistent, which is the state a derived row has to
+reach.**  Measured by loft3-ca on this tree's own `src`: C1 made THREE tests opaque, and the
+same stack PEELED one pre-existing test (`ce4611043`, *"walks_text reads through base()"*).
++3 − 1 = +2, which is 1303 → 1305 exactly.  A row whose arithmetic closes only by coincidence
+does not survive the next join; this one closes by account.
+
+**And the objection that held the peel back was measured away rather than argued away.**  The
+worry was that two of those tests sit above `s_type = *inner`, so peeling the TEST without
+deciding what the `Optional` does to the ASSIGNED type could trade a missing match arm for a
+dropped nullability — the worse of the two failures.  It does not: both arms still take
+`inner.base()` as before, so an inner `text?` is treated exactly as it was, and the only input
+whose answer moves is an `s_type` wrapped `τ?` AROUND the `RefVar`.  Unpeeled, that fell to the
+else arm and built `RefVar(RefVar(Text))` — a link to a link, which is never a valid result.
+Peeled, it builds `RefVar(Text)`.  So the peel removes a wrong answer and drops no
+nullability.  Not duplicated here only because it is landed there (7df1e5b06, the C1–C3 guards
+green on both backends under `LOFT_POISON`).
+
+So this row comes DOWN to 1302 when that peel arrives, and the next join must re-measure
+rather than take either branch's figure.)
 
 (2026-09-23, the SECOND join — `main` @ 6c188b612 (the #1644 merge) plus `tuxedo-165-generics`,
 `157-native-4x` and `tuxedo-1562-layout-gate`, with @PLN167 A3 on top — RE-MEASURED on the joined
