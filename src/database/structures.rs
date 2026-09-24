@@ -502,6 +502,45 @@ impl Stores {
         false
     }
 
+    /// Is the field at byte offset `byte_off` a MEMBER of a linked collection group — several
+    /// routes to one record set (`@FR-Col-Group`)?
+    ///
+    /// [`Self::keyed_field_is_linked`] answers one DIRECTION of this and is not the same
+    /// question: `other_indexes` is populated on the field that HOLDS the records, listing its
+    /// views, so asking it of the view answers `false` for a one-vector-plus-one-keyed group —
+    /// the commonest shape there is.  Measured: `d = &a.vp_look; d += [r]` reached `vp_look`
+    /// alone while the direct `a.vp_look += [r]` reached both, so a caller using the linked test
+    /// to decide whether the field spelling buys anything got the wrong answer at exactly the
+    /// member whose spelling needs it (loft#1664).
+    ///
+    /// So both directions are asked: this field lists siblings, or some sibling lists this
+    /// field.  The `u16::MAX` marker is not a field number and never matches one.
+    #[must_use]
+    pub fn field_is_group_member(&self, struct_tp: u16, byte_off: u16) -> bool {
+        if (struct_tp as usize) >= self.types.len() {
+            return false;
+        }
+        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+            &self.types[struct_tp as usize].parts
+        else {
+            return false;
+        };
+        let Some(nr) = fields.iter().position(|f| f.position == byte_off) else {
+            return false;
+        };
+        let Ok(nr) = u16::try_from(nr) else {
+            return false;
+        };
+        fields[nr as usize]
+            .other_indexes
+            .iter()
+            .any(|&o| o != u16::MAX)
+            || fields
+                .iter()
+                .enumerate()
+                .any(|(i, f)| i != nr as usize && f.other_indexes.contains(&nr))
+    }
+
     /// The content type of the field at byte offset `byte_off` in struct /
     /// enum-value type `struct_tp`, or `None` when there is no such field.
     ///

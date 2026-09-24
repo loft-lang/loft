@@ -2722,7 +2722,23 @@ fn def_reshape_refusals(
         // releases once today — is not in this set to begin with, and refusing it would reject
         // a sound program.  Measured over the cell matrix: the walk's answer and the copy-out
         // advice agree on every cell.
-        let amp = function.is_amp_link(view) || is_place_link(function, view);
+        // Three spellings of one question — *"did the author write `&` here?"* — and until
+        // 2026-09-24 the refusal knew two of them.  `is_amp_link` is the struct projection the
+        // parser leaves unlowered; `is_place_link` is the scalar or text place, lowered to a
+        // `RefVar` local (D-bind-56, which merged that third reader in a day earlier).  The
+        // COLLECTION link (`p = &o.v`, `a = &s.h`) is the fourth, marked
+        // `is_amp_container_link` for the walk two thousand lines up — and it reached neither
+        // test, so `p = &o.v; o = S { … }; p += [7]` was MATERIALISED with an advice where the
+        // record and scalar spellings of the same program are refused.  `(B-Ref-Reshape)` is
+        // explicit that this is the one thing a `&` may not get: *"loft will not quietly
+        // downgrade the reference to a copy"*, and the parser's own note beside
+        // `amp_container_link` had already written the question down as open and named the
+        // rules' answer.  A PLAIN collection bind off a borrowed base aliases identically and
+        // is NOT in this set: `(B-View)` says that one materialises, which is why the marker
+        // exists at all.
+        let amp = function.is_amp_link(view)
+            || is_place_link(function, view)
+            || function.is_amp_container_link(view);
         let drops = data.type_owns_droppable_anywhere(function.tp(view));
         if !amp && !drops {
             continue;

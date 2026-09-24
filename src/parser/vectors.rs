@@ -3962,20 +3962,12 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         //     the field was APPENDED to rather than replaced.  A `=` is a rebind here as it is
         //     for every other right-hand side (`v = <other>`, `v = []`) and for the struct-view
         //     sibling `c = o.i; c = In { … }`.
-        let binding_origin = if self.first_pass
-            || is_field
-            || (self.assign_replaces && self.assign_target == vec && vec != u16::MAX)
-        {
-            None
-        } else {
-            self.vars
-                .mv_field_origin
-                .get(&vec)
-                .cloned()
-                .filter(|(origin, origin_parent)| {
-                    self.origin_is_group_member(origin, origin_parent)
-                })
-        };
+        let binding_origin =
+            if is_field || (self.assign_replaces && self.assign_target == vec && vec != u16::MAX) {
+                None
+            } else {
+                self.resolved_group_write(vec)
+            };
         //
         // `vec` is deliberately KEPT — the binding is a real variable and everything below
         // that reads it (the pre-allocation, and the `vars` lookups under it) needs one; only
@@ -5613,17 +5605,60 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         Some((owner, pos))
     }
 
+    /// The record type a field READ reads out of, for a `&` link's origin (`d = &cv.data`).
+    ///
+    /// `mv_field_origin` was built for the `match` payload binding, whose parent type the arm
+    /// already knows; a `&` link's bind site knows only the right-hand side, so the parent is
+    /// recovered from the base it names.  Answered for `OpGetField(<local>, pos, content)`
+    /// alone — a nested or computed base declines, which costs the group walk and never
+    /// correctness, since declining leaves the write exactly where it was.
+    pub(crate) fn field_read_parent_type(&self, val: &Value) -> Option<Type> {
+        let Value::Call(d, ps) = val.unspan() else {
+            return None;
+        };
+        if self.data.def(*d).name() != "OpGetField" {
+            return None;
+        }
+        match ps.first().map(Value::unspan) {
+            Some(Value::Var(v)) => Some(self.vars.tp(*v).clone()),
+            _ => None,
+        }
+    }
+
     /// Is the field a payload binding projects a member of a LINKED COLLECTION GROUP — the one
     /// thing resolving the binding back to its field buys?
     ///
     /// `(Col-Group)` is what the resolution serves: a record entering through one member is in
     /// every member, and `Stores::record_finish` can only walk the siblings when it is handed
-    /// the owning record and the field.  A field with no `other_indexes` has no siblings to
-    /// reach, so the field spelling answers exactly what the binding answers — and the binding
-    /// is the spelling that stays right when `(B-View)` MATERIALISES it (loft#1662).
+    /// the owning record and the field.  A field in no group has no sibling to reach, so the
+    /// field spelling answers exactly what the binding answers — and the binding is the
+    /// spelling that stays right when `(B-View)` MATERIALISES it (loft#1662).
+    ///
+    /// ⚠ Asked through `field_is_group_member`, NOT `keyed_field_is_linked`: the latter answers
+    /// one direction (a field that lists its views) and so says `false` of the VIEW member,
+    /// which is half of every one-vector-plus-one-keyed group.  That cost the keyed member's
+    /// `&` link its sibling while the vector member's got it (loft#1664).
     fn origin_is_group_member(&self, origin: &Value, parent_tp: &Type) -> bool {
         self.field_owner_and_offset(origin, parent_tp)
-            .is_some_and(|(owner, pos)| self.database.keyed_field_is_linked(owner, pos))
+            .is_some_and(|(owner, pos)| self.database.field_is_group_member(owner, pos))
+    }
+
+    /// Where a write spelled through a payload BINDING or a `&` LINK must be spelled instead —
+    /// against its ORIGIN FIELD — and `None` where the binding's own spelling is right.
+    ///
+    /// ONE home, because two sites build the record a write adds: `build_vector_list` for a
+    /// vector literal, and the keyed `+=` fast path in `expressions.rs`.  They answered
+    /// differently — the keyed one never asked at all — so `d = &a.vp_look; d += [r]` reached
+    /// `vp_look` and never the `vp_data` beside it, where the same link to the VECTOR member
+    /// reached both (loft#1664).  A caller that forgets to ask gets the binding's own
+    /// destination, which is never wrong, only blind to the siblings.
+    pub(crate) fn resolved_group_write(&self, vec: u16) -> Option<(Value, Type)> {
+        if self.first_pass || vec == u16::MAX {
+            return None;
+        }
+        let (origin, parent) = self.vars.mv_field_origin.get(&vec)?.clone();
+        self.origin_is_group_member(&origin, &parent)
+            .then_some((origin, parent))
     }
 
     pub(crate) fn new_record_field_op(&mut self, val: &Value, parent_tp: &Type, op: &str) -> Value {

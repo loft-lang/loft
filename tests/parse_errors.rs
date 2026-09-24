@@ -3452,6 +3452,41 @@ fn b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error() {
     );
 }
 
+/// B-Ref-Reshape (f3) — a `&` link to a whole COLLECTION, and the base is REASSIGNED.
+///
+/// `d = &cv.data` is a reference TO the container, so three of `(B-Disturb)`'s four events spare
+/// it — the slot it names is repointed by a growth and re-read.  The fourth does not: giving `cv`
+/// a new value leaves that slot with nothing to point at.  It was MATERIALISED with an advice
+/// until 2026-09-24, where the record spelling (`p = &o.r`) and the scalar one (`p = &o.r.n`,
+/// D-bind-56) of the same program were refused — and `(B-Ref-Reshape)` is explicit that a copy is
+/// the one answer a `&` may not be given: *"loft will not quietly downgrade the reference to a
+/// copy"*.
+///
+/// The cause was a fourth spelling of *"did the author write `&`?"*.  The refusal gate asked
+/// `is_amp_link` (the unlowered struct projection) and `is_place_link` (the `RefVar` local a
+/// scalar or text place lowers to); a COLLECTION link is neither, and carries a marker of its own
+/// — `is_amp_container_link`, which the materialise walk already read two thousand lines up to
+/// spare the link from its own container's growth.  The parser's note beside `amp_container_link`
+/// had written the question down as open and named the rules' answer to it.
+///
+/// Radius, measured: ONE corpus cell (the control this replaces, in
+/// `a-link-to-a-whole-container-survives-that-containers-growth.loft`) and ZERO published
+/// libraries — `revalidate_libs_local.sh` stayed 42/42 against a current index.
+#[test]
+fn b_ref_reshape_reassignment_of_a_container_link_base_is_error() {
+    code!(
+        "struct Cv { w: integer, data: vector<integer> } \
+         fn test() { cv = Cv { w: 0, data: [1, 2] }; \
+           d = &cv.data; cv = Cv { w: 9, data: [5, 6, 7] }; print(\"{len(d)}\\n\"); }"
+    )
+    .error(
+        "cannot give `cv` a new value while `d` references a place inside it — `d` names a place \
+         inside `cv`, and replacing `cv` leaves that place with nothing to point at. Move it \
+         after the last use of `d`, or bind without `&` to work on a copy at \
+         b_ref_reshape_reassignment_of_a_container_link_base_is_error:1:1",
+    );
+}
+
 /// H-View-Drop (a) — a PLAIN view of a droppable element, container GROWS.
 ///
 /// `(B-View)` would hand `e` its own copy, and a copy of a value that owns a droppable is a second
