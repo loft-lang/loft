@@ -91,7 +91,7 @@ names its headline row and the hand-price to take first.
 
 ## Wave 3 — the consumers modelled, the rest of hex_*, and par (2026-09-24)
 
-53 rows, median **5.51×**; the whole portal is now 209 routines.  The consumer lanes
+53 rows, median **5.51×**; the whole portal is now 203 routines (median 3.13×, libraries 4.25×).  The consumer lanes
 (`17_consumer_moros_dryopea`, `18_consumer_crawler`) model the games' hot loops at their own
 layouts; every row but `binary_read` was written with the copy class already named above,
 and the numbers say the same thing the rules do: `truncate_to` **207×** (`(R-Compact)`),
