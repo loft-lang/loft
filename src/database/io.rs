@@ -680,7 +680,8 @@ impl Stores {
                 match std::fs::File::create(&resolved_name) {
                     Ok(f) => {
                         s.set_i32_raw(file.rec, file.pos + 28, f_nr);
-                        self.files.push(Some(f));
+                        self.files
+                            .push(Some(crate::database::loft_file::LoftFile::new(f)));
                         file_ref = f_nr;
                     }
                     Err(e) => {

@@ -272,7 +272,9 @@ impl State {
                                 .store_mut(&file)
                                 .set_byte(file.rec, file.pos + 32, 0, 1);
                         }
-                        self.database.files.push(Some(f));
+                        self.database
+                            .files
+                            .push(Some(crate::database::loft_file::LoftFile::new(f)));
                         f_nr
                     }
                     Err(e) => {
@@ -468,7 +470,9 @@ impl State {
                             let _ = f.seek(SeekFrom::Start(next_pos as u64));
                         }
                         store.set_i32_raw(file.rec, file.pos + 28, f_nr);
-                        self.database.files.push(Some(f));
+                        self.database
+                            .files
+                            .push(Some(crate::database::loft_file::LoftFile::new(f)));
                         file_ref = f_nr;
                     }
                     Err(e) => {

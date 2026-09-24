@@ -10,6 +10,8 @@ mod format;
 mod io;
 pub mod journal;
 pub mod lazy;
+#[cfg(not(feature = "wasm"))]
+pub mod loft_file;
 mod search;
 pub mod snapshot;
 /// @PLN126 step 1 — does ordered insertion leave a finished record contiguous?
@@ -424,7 +426,7 @@ pub struct Stores {
     /// the containment frees instead of the teardown it could not run.
     pub(crate) lazy_driver_allocs: Option<Vec<u16>>,
     #[cfg(not(feature = "wasm"))]
-    pub files: Vec<Option<std::fs::File>>,
+    pub files: Vec<Option<loft_file::LoftFile>>,
     #[cfg(feature = "wasm")]
     pub files: Vec<()>,
     pub max: u16,
