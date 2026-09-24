@@ -136,7 +136,7 @@ filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use
 test-group = 'heavy-serial'
 
 [[profile.default.overrides]]
-filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
+filter = 'binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)'
 test-group = 'heavy-serial'
 
 [[profile.ci.overrides]]
@@ -152,23 +152,12 @@ test-group = 'heavy-serial'
 # test that grows with the corpus meets any ceiling eventually.  `scripts/test_duration_gate.py`
 # holds every test to HALF its limit; the owner rules out raising limits (2026-09-24).
 
-# The two native matrices — `native_scripts` (a rustc compile per `tests/scripts` program) and
-# the drop gate's native leg (one per generated cell) — grow with what they cover, and both
-# already compile in parallel inside the test.  Measured on the daily `Test (*)` jobs, 09-19..09-23:
-# `native_scripts` 463-571 s on ubuntu and 247-566 s on macOS, KILLED at 600 s on the first try
-# on macOS twice and on Windows every night; the drop gate 195-200 s → 374-392 s once its
-# `bound_`/`handover_` matrices landed, and KILLED at 600 s twice on Windows on 09-23.  The drop
-# gate also ran OUTSIDE `heavy-serial`, so its rustc pool contended with `native_scripts`' own —
-# the over-subscription the group exists to prevent, and why a killed first try passed its retry
-# in half the time.  `native_scripts` is chunked now and back under `ci`'s 600 s; the drop gate's
-# native leg keeps 1200 s only until it is chunked the same way (the duration gate needs it).
+# The drop gate's native leg compiles one binary per cell, so it runs in `heavy-serial`: its rustc
+# pool contended with `native_scripts`' own when it ran outside the group.  It is CHUNKED
+# (`…_on_native_0..3`) and needs no raised ceiling.
 [[profile.ci.overrides]]
-filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
+filter = 'binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)'
 test-group = 'heavy-serial'
-
-[[profile.ci.overrides]]
-filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
-slow-timeout = { period = "1200s", terminate-after = 1 }
 
 # The serial critical path starts FIRST.  nextest otherwise runs binaries in listing order, and on
 # the Windows `ci` host (4 cores) the long tests queued behind ~5000 short ones: measured on run
@@ -184,7 +173,7 @@ slow-timeout = { period = "1200s", terminate-after = 1 }
 # at 600 s (its retry: 57 s), `changed_selects_subjects_by_path` killed twice — and the test phase
 # stayed at 63 min.  Those overlap the bulk better in listing order.
 [[profile.ci.overrides]]
-filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)) | (binary(wrap) & test(/^loft_suite_[0-9]+$/))'
+filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)) | (binary(wrap) & test(/^loft_suite_[0-9]+$/))'
 priority = 100
 
 

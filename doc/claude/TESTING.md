@@ -1748,6 +1748,11 @@ cargo test --release --test ownership_drop_gate                            # bot
 LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate     # only after reading the diff
 ```
 
+The native leg is four tests (`every_cell_releases_each_resource_once_on_native_0..3`, every 4th
+cell from each offset) so no test outgrows the per-test duration gate.  Each checks, and under
+`LOFT_BLESS_DROP_GATE=1` rewrites, only its own cells' lines of the one native baseline — a merge
+under a lock file, so the bless command is unchanged and parallel chunks cannot clobber each other.
+
 ⚠ **A second instrument records the same fact.**  `tests/double_move.rs` also runs its cells with
 the refusal off and hard-codes each one's release and `double-move` warning counts, so a change
 that moves a release decider moves BOTH.  Re-blessing the drop gate while leaving it unmeasured
