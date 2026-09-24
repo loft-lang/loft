@@ -715,6 +715,9 @@ pub struct Parser {
     /// by `do_tret_bind`'s gate on the THIRD pass so the promotion is forward-ref-safe:
     /// the attr is decided before the pass, so every caller re-lowers with the buffer.
     force_tret: std::collections::HashSet<u32>,
+    /// @PLN167 C3 — some call handed a text field or element to a `&text` parameter, so
+    /// `after_pass2` owes the store instances (`store_text.rs`).
+    store_text_args: bool,
     /// loft#808 — def_nrs resolved as a `par(r = f(x), N)` worker, recorded on BOTH
     /// passes and never cleared between them.  A worker's pure-value tuple return is
     /// the one shape that must still be BOXED into the synthetic `__tuple<…>` record:
@@ -1436,6 +1439,7 @@ pub(super) mod fields;
 pub(super) mod fit;
 pub(super) mod objects;
 pub(super) mod operators;
+pub(super) mod store_text;
 pub(super) mod vectors;
 
 impl Default for Parser {
@@ -1585,6 +1589,7 @@ impl Parser {
             limit_refused: false,
             ambiguity_reported: std::collections::HashSet::new(),
             force_tret: std::collections::HashSet::new(),
+            store_text_args: false,
             par_worker_defs: std::collections::HashSet::new(),
             par_deferred: Vec::new(),
             par_replay_body: None,
@@ -2772,6 +2777,9 @@ impl Parser {
         if !self.force_tret.is_empty() {
             self.targeted_tret_promotion();
         }
+        // After the promotion: a store instance clones its function's FINAL signature, and a
+        // call it retargets already carries any buffer the promotion added.
+        self.mint_store_text_instances();
     }
 
     /// What pass 1 owes pass 2, in one place: every declaration has been seen, so the
@@ -5257,6 +5265,26 @@ impl Parser {
 
     #[track_caller]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+        // @PLN167 C3 (R5a) — a text field or element reaching a `&text` parameter HERE comes
+        // through a fn-ref call: a direct call lowers it to the place and picks the callee's
+        // store instance (`process_call_args`) before any conversion.  A fn-ref names one
+        // function, and which instance it would need is only known at the call, so the link
+        // cannot be honoured; below it would become a copy and the callee's write would be
+        // lost with nothing said.  `(B-Ref-Reshape)`: refuse rather than downgrade.
+        if !self.first_pass
+            && matches!(should.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+            && self.is_text_place(code)
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a function value's `&text` parameter cannot link to a text field or element — \
+                 which version of the function to call is decided per call site, and a function \
+                 value is fixed before it. Call the function by name, or copy into a local, pass \
+                 the local and write it back (`t = o.s; g(t); o.s = t`)"
+            );
+            return true;
+        }
         // loft#1540 — a function value meets a function-typed slot only in the direction `const`
         // allows: a function whose parameter is plain may not stand where the slot promises that
         // parameter is `const` (`ConstParams::stands_for`), or a caller trusting the promise hands a
@@ -15164,19 +15192,17 @@ impl Parser {
             // `(B-Ref-Reshape)`: refuse a link that cannot be honoured rather than downgrade it
             // to a copy.  A temporary (a literal, a computed text) keeps its work copy: nothing
             // names it, so nothing can miss the write.
+            // @PLN167 C3 — the parameter links that place: the argument is the slot's `DbRef`
+            // (the place a `&` bind of it takes), and after pass 2 the call is pointed at the
+            // callee's STORE instance, whose parameter reads and writes through the field ops
+            // (`store_text.rs`).  The stack instance is the function as written.
             if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
                 && self.is_text_place(&actual_code)
+                && let Some(place) = self.scalar_place_ref(&actual_code)
             {
-                if !self.first_pass {
-                    diagnostic!(
-                        self.lexer,
-                        Level::Error,
-                        "a `&text` parameter cannot link to a text field or element, so the \
-                         function's write would be lost. Copy it into a local, pass the local and \
-                         write it back (`t = o.s; f(t); o.s = t`)"
-                    );
-                }
-                actual.push(actual_code);
+                self.store_text_args = true;
+                actual.push(place);
+                all_types[nr] = tp.clone();
                 continue;
             }
             if let Type::RefVar(inner) = &tp

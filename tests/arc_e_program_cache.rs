@@ -603,3 +603,39 @@ fn a_linked_narrow_local_reads_the_same_warm() {
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_dir_all(&cache_dir);
 }
+
+/// @PLN167 C3 — a `&text` parameter handed a text field is served by the function's STORE
+/// instance: a definition minted after pass 2 whose parameter carries `store_text_link`.  Both
+/// the minted definition and that per-variable fact must survive the warm load, or a warm run
+/// calls the stack instance with a slot reference and reads garbage.  Forwarding (`fwd` calls
+/// `app`) makes the instances close transitively, so two minted definitions ride the bundle.
+#[test]
+fn a_store_text_instance_reads_the_same_warm() {
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir();
+    let script = tmp.join(format!("loft_store_text_{pid}.loft"));
+    std::fs::write(
+        &script,
+        "struct O { a: text, b: text }\nfn app(t: &text, k: integer) { t += \"!{k}\"; }\nfn fwd(t: &text) { app(t, 7); t += \".\"; }\nfn main() {\n  o = O { a: \"alpha\", b: \"beta\" };\n  fwd(o.b);\n  v: vector<text> = [\"aa\", \"bb\"];\n  app(v[1], 2);\n  s = \"x\";\n  fwd(s);\n  println(\"{o.b} {v} {s}\");\n}\n",
+    )
+    .expect("write script");
+    let cache_dir = tmp.join(format!("loft_store_text_cache_{pid}"));
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
+    assert!(ok_cold, "cold run failed: {out_cold}");
+    assert_eq!(
+        out_cold.trim(),
+        "beta!7. [\"aa\",\"bb!2\"] x!7.",
+        "cold output"
+    );
+    for nth in ["first", "second"] {
+        let (ok_warm, out_warm) = run(&script, Some(&cache_dir));
+        assert!(ok_warm, "{nth} warm run failed: {out_warm}");
+        assert_eq!(
+            out_warm, out_cold,
+            "{nth} warm run of a store text instance"
+        );
+    }
+    let _ = std::fs::remove_file(&script);
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}

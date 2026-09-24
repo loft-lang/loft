@@ -5281,13 +5281,12 @@ impl State {
                 line: self.line_at(pc),
             };
         }
-        let raw = data.def(d_nr).name();
         // An instance of a generic function is the function its author wrote (@FR-G-Key:
         // the key's one decoder).
         let function = if data.def(d_nr).is_instance() {
             data.def(d_nr).original_name()
         } else {
-            raw.strip_prefix("n_").unwrap_or(raw).to_string()
+            data.def(d_nr).trace_name()
         };
         let mut locals = Vec::new();
         let mut unheld = Vec::new();
@@ -5657,10 +5656,7 @@ impl State {
         self.call_stack
             .iter()
             .rev() // innermost first
-            .map(|frame| {
-                let name = data.def(frame.d_nr).name().to_owned();
-                name.strip_prefix("n_").unwrap_or(&name).to_string()
-            })
+            .map(|frame| data.def(frame.d_nr).trace_name())
             .collect()
     }
 
@@ -5946,10 +5942,7 @@ impl State {
         crate::timeout::note_interp_entry(name);
         crate::timeout::publish_interp_fns(data.definitions.iter().map(|def| {
             (
-                def.name()
-                    .strip_prefix("n_")
-                    .unwrap_or(def.name())
-                    .to_string(),
+                def.trace_name(),
                 def.position().file.clone(),
                 def.position().line,
             )
@@ -6630,8 +6623,7 @@ impl State {
                 if d == u32::MAX || d as usize >= data.definitions.len() {
                     "<worker>".to_string()
                 } else {
-                    let n = &data.def(d).name;
-                    n.strip_prefix("n_").unwrap_or(n).to_string()
+                    data.def(d).trace_name()
                 }
             })
             .collect();
@@ -6770,7 +6762,7 @@ impl State {
             return ("?".to_string(), format!("pc={pc} (line {line})"));
         }
         let def = data.def(d_nr);
-        let name = def.name.strip_prefix("n_").unwrap_or(&def.name).to_string();
+        let name = def.trace_name();
         let file = def.position.file.rsplit('/').next().unwrap_or("?");
         (
             name,

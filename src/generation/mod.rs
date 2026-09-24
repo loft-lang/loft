@@ -8818,7 +8818,18 @@ extern crate loft;"
             if dropped == Some(i) {
                 continue;
             }
-            let tp = rust_type(&a.typedef, &Context::Argument);
+            // @PLN167 C3 — a `&text` parameter of a function's STORE instance holds the slot's
+            // `DbRef`, exactly as a store-kind local link does (`local_rust_type`).
+            let store_link = {
+                let vars = def.variables();
+                let v = vars.var(&a.name);
+                v != u16::MAX && vars.is_store_text_link(v)
+            };
+            let tp = if store_link {
+                "DbRef".to_string()
+            } else {
+                rust_type(&a.typedef, &Context::Argument)
+            };
             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
         }
         if let Some(t) = &twin {
@@ -9148,10 +9159,12 @@ extern crate loft;"
         let instrument = matches!(def.code(), Value::Block(_)) && (free || is_method(def));
         // The user-visible loft name for the shadow call stack.
         let source_name = def.original_name();
-        let loft_name = if def.name().starts_with("n_") || !free {
-            def.name().strip_prefix("n_").unwrap_or(def.name())
-        } else {
+        // An `n_` key decodes through the key's decoder too, which names a store instance
+        // (`n_grow@st1`, @PLN167 C3) as the author's `grow`.
+        let loft_name = if def.name().starts_with("n_") || free {
             source_name.as_str()
+        } else {
+            def.name()
         };
         let loft_file = &def.position().file;
         let loft_line = def.position().line;

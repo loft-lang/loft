@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A text field or element handed to a `&text` parameter LINKS that place (`@FR-B-Ref-Lvalue`
+// with `@FR-F-ParamRef`, @PLN167 C3): the callee's write lands in the field, and a read of the
+// field inside the callee sees it — there is no copy in and no write back.  The function is
+// instantiated per text-link kind: its stack instance (the function as written) keeps serving
+// text variables, and a store instance, whose parameter reads and writes through the field
+// ops, serves fields and elements.  Until C3 this call was refused (loft#1602's stopgap), and
+// before that it copied and dropped the write in silence.
+//
+// The axes: a field, an element, a field of an element at a non-zero offset, a field reached
+// through a `&` record parameter, a store-kind local link handed on; the callee reading the
+// place by another route (K2); forwarding to another `&text` function (K4) and recursion (K6),
+// which close the instances transitively; a local link bound from the parameter inside the
+// callee (K8); a `text?` parameter written null and tested against null (K9, which also pins
+// that a `&text?` parameter compiles on `--native` at all — it read `*var_t`, a move); a text
+// returned beside the write (K11); both kinds of one function in one program; and a callee
+// growing a SIBLING collection of the linked element's record, which disturbs nothing it links.
+// A temporary (a literal, `directory`'s computed text) still takes a work copy.
+//
+// @falsified-at: 569caacf3 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1602-a-ref-text-parameter-links-a-text-field-or-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
+// CHANNEL: assertion failures and exit, both backends.
+
+struct O { a: text, b: text }
+struct R { n: integer, s: text, k: integer }
+struct Q { m: text? }
+struct H { v: vector<text>, w: vector<text> }
+
+fn app(t: &text, k: integer) { t += "!{k}"; }
+fn via_ref(q: &O) { app(q.b, 9); }
+fn peek(t: &text, o: O) -> text { t = "new"; "{o.a}/{len(t)}" }
+fn fwd(t: &text) { app(t, 7); t += "."; }
+fn rec(t: &text, n: integer) { if n > 0 { t += "{n}"; rec(t, n - 1); } }
+fn ln(t: &text) { u = &t; u += "?"; t += "!"; }
+fn setn(t: &text?) { if t == null { t = "was-null"; } else { t = null; } }
+fn ret(t: &text, k: integer) -> text { t += "!{k}"; "r{t}" }
+fn grow_other(t: &text, h: H) { for i in 0..50 { h.w += ["q{i}"]; } t += "!"; }
+
+fn test_a_field_an_element_and_a_field_of_an_element() {
+  o = O { a: "alpha", b: "beta" };
+  app(o.b, 1);
+  assert(o.a == "alpha" && o.b == "beta!1", "field: {o.a} {o.b}");
+  v: vector<text> = ["aa", "bb", "cc"];
+  app(v[1], 2);
+  assert("{v}" == "[\"aa\",\"bb!2\",\"cc\"]", "element: {v}");
+  w: vector<R> = [R { n: 1, s: "p", k: 2 }, R { n: 3, s: "q", k: 4 }];
+  app(w[1].s, 3);
+  assert(w[0].s == "p" && w[1].s == "q!3" && w[1].n == 3 && w[1].k == 4, "field of element: {w[1].s}");
+  via_ref(o);
+  assert(o.b == "beta!1!9", "through a & record parameter: {o.b}");
+  s = "loc";
+  app(s, 4);
+  assert(s == "loc!4", "a text variable keeps the stack instance: {s}");
+  app("lit", 5);
+  d = directory("sub");
+  assert(len(d) > 0, "a computed temporary still takes a work copy");
+}
+
+fn test_the_callee_reads_its_own_write() {
+  o = O { a: "alpha", b: "beta" };
+  r = peek(o.a, o);
+  assert(r == "new/3" && o.a == "new", "aliasing: {r} {o.a}");
+}
+
+fn test_a_store_link_handed_on() {
+  o = O { a: "alpha", b: "beta" };
+  l = &o.a;
+  app(l, 5);
+  assert(o.a == "alpha!5" && l == "alpha!5", "link: {o.a} {l}");
+}
+
+fn test_forwarding_and_recursion() {
+  o = O { a: "r", b: "beta" };
+  fwd(o.b);
+  s = "x";
+  fwd(s);
+  assert(o.b == "beta!7." && s == "x!7.", "forward: {o.b} {s}");
+  rec(o.a, 3);
+  assert(o.a == "r321", "recursion: {o.a}");
+}
+
+fn test_a_local_link_inside_the_callee() {
+  o = O { a: "alpha", b: "beta" };
+  ln(o.a);
+  assert(o.a == "alpha?!", "local link: {o.a}");
+}
+
+fn test_a_nullable_text_field() {
+  q = Q { m: null };
+  setn(q.m);
+  a = q.m;
+  setn(q.m);
+  assert(a == "was-null" && q.m == null, "nullable: {a}");
+  s: text? = null;
+  setn(s);
+  assert(s == "was-null", "nullable variable: {s}");
+}
+
+fn test_a_returned_text_beside_the_write() {
+  o = O { a: "alpha", b: "beta" };
+  r = ret(o.a, 1);
+  s = "x";
+  r2 = ret(s, 2);
+  assert(r == "ralpha!1" && o.a == "alpha!1" && r2 == "rx!2" && s == "x!2", "{r} {o.a} {r2} {s}");
+}
+
+fn test_a_sibling_collection_grows() {
+  h = H { v: ["aa", "bb"], w: [] };
+  grow_other(h.v[0], h);
+  assert(h.v[0] == "aa!" && len(h.w) == 50, "sibling growth: {h.v[0]} {len(h.w)}");
+}

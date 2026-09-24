@@ -372,8 +372,10 @@ impl Output<'_> {
                     // A scalar `&` parameter is a raw pointer, read below exactly as a local
                     // link is (`is_raw_scalar_ref`, loft#1605).
                     if let Type::RefVar(inner) = variables.tp(var) {
-                        // By-ref argument: holds &mut T — dereference to read.
-                        if matches!(**inner, Type::Text(_)) {
+                        // By-ref argument: holds &mut T — dereference to read.  Through
+                        // `base()`, as the local-link arm below reads it: a `&text?` parameter
+                        // is the same `&mut String`, and read bare it MOVED the string (E0507).
+                        if matches!(inner.base(), Type::Text(_)) {
                             return write!(w, "&*var_{var_name}");
                         }
                         // A `&boolean` slot is the tri-state STORAGE byte (0/1/255),

@@ -4783,10 +4783,12 @@ impl Definition {
         while let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Instance) {
             name = parts.rest;
         }
-        match Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
-            Some(parts) => parts.rest,
-            None => name.strip_prefix("n_").unwrap_or(name),
+        if let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
+            return parts.rest;
         }
+        // A store instance (`n_grow@st1`, @PLN167 C3) displays as the author's `grow`.
+        let bare = name.strip_prefix("n_").unwrap_or(name);
+        bare.split('@').next().unwrap_or(bare)
     }
 
     /// Source-file id this definition was parsed from.
@@ -5446,10 +5448,29 @@ impl Definition {
     /// The name the source wrote for the function keyed `key`: a method's or a free
     /// overload's `rest`, an instance's TEMPLATE's name, a plain `n_<name>`'s `<name>`.
     fn source_name_of_key(key: &str) -> String {
+        // A store instance (`n_grow@st1`, @PLN167 C3) is the author's `grow`; `@` occurs in no
+        // other key.
+        if let Some(rest) = key.strip_prefix("n_")
+            && let Some((base, _)) = rest.split_once('@')
+        {
+            return base.to_string();
+        }
         match Data::split_key(key) {
             Some(parts) if parts.kind == KeyKind::Instance => Self::source_name_of_key(parts.rest),
             Some(parts) => parts.rest.to_string(),
             None => key.get(2..).unwrap_or(key).to_string(),
+        }
+    }
+
+    /// The name a trace, a profile or a runtime report shows for this definition: a free
+    /// function's key decoded (`n_grow` and its store instance `n_grow@st1` are both `grow`),
+    /// any other key as it is.
+    #[must_use]
+    pub fn trace_name(&self) -> String {
+        if self.name.starts_with("n_") {
+            Self::source_name_of_key(&self.name)
+        } else {
+            self.name.clone()
         }
     }
 
@@ -7604,7 +7625,8 @@ impl Data {
     pub fn user_facing_name(&self, d_nr: u32) -> String {
         let name = self.def(d_nr).name();
         if let Some(rest) = name.strip_prefix("n_") {
-            return rest.to_string();
+            // A store instance (`n_grow@st1`, @PLN167 C3) is the author's `grow`.
+            return rest.split('@').next().unwrap_or(rest).to_string();
         }
         match Self::split_key(name) {
             Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {

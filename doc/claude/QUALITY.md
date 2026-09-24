@@ -2773,60 +2773,28 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **314** |
+| **313** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
-(2026-09-24, RE-MEASURED after the rebase onto `main` @ c2eec30c6 — which had taken five
-sibling lines in #1654 — with this branch's remaining eight commits on top: functions
-discriminating on a `Type` variant **971**, opaque **314**; shape tests **2482**, opaque
-**1305**; `--write-ratchet` re-pinned there.
+(2026-09-24, `tuxedo-1562-layout-gate` rebased onto `main` @ c2eec30c6 with @PLN167 C1–C3 —
+RE-MEASURED on that tree: functions discriminating on a `Type` variant **975**, opaque **313**;
+shape tests **2493**, opaque **1302**; `--write-ratchet` re-pinned.  `main` itself measured at the
+old pin (315 / 1303); the branch had first read 314 / 1309, six opaque tests of its own — C1's
+three `Type::RefVar` tests on an unpeeled `s_type` / `tp(src)` and C2/C3's four, each asking the
+`&text?` question D-bind-58 was — and peeling them is what took both counts below the pin.)
 
-The row moved 315 → 314 and the tests 2476 → 2482 / 1303 → 1305, and the direction is the
-point rather than the size.  The previous note had recorded 315 as *"one function more than
-the second join's 314 … the layout-gate branch's `&text` link work brought one more opaque
-function"* — and that branch's own fix peeled with `.base()`, which is exactly what takes it
-back off the queue.  So the number came back down not because a count drifted but because the
-work finished, and six more shape tests exist to be counted.
-
-Neither number could be carried across the rebase: `main` gained five lines and this branch
-kept eight, so the only tree either figure describes is the one in front of you.  That is the
-standing rule for every derived row here — re-measure on the join, never carry.
-
-⚠ **But the TEST count grew in the gated direction, and re-pinning is not what growth asks
-for.**  1303 → 1305 is exactly what `--check-ratchet` exists to refuse: its message says *"a
-new shape test cannot see through `τ?` — peel the scrutinee"*.  `--write-ratchet` writes
-unconditionally and returns 0, so it overrides that judgement rather than answering it, and
-re-pinning on a join hides a real growth inside a legitimate re-measurement.  Recorded here
-rather than quietly carried.
-
-The growth is C1's, and it is already cured on the branch it came from: three `Type::RefVar`
-tests in `parse_assign_op_inner` ask their question without peeling, so a `&text?` does not
-match them (`D-bind-58`'s shape).  loft3-ca peeled those three and three more of C2/C3's with
-`.base()`.
-
-**The +2 is understood rather than merely consistent, which is the state a derived row has to
-reach.**  Measured by loft3-ca on this tree's own `src`: C1 made THREE tests opaque, and the
-same stack PEELED one pre-existing test (`ce4611043`, *"walks_text reads through base()"*).
-+3 − 1 = +2, which is 1303 → 1305 exactly.  A row whose arithmetic closes only by coincidence
-does not survive the next join; this one closes by account.
-
-**And the objection that held the peel back was measured away rather than argued away.**  The
-worry was that two of those tests sit above `s_type = *inner`, so peeling the TEST without
-deciding what the `Optional` does to the ASSIGNED type could trade a missing match arm for a
-dropped nullability — the worse of the two failures.  It does not: both arms still take
-`inner.base()` as before, so an inner `text?` is treated exactly as it was, and the only input
-whose answer moves is an `s_type` wrapped `τ?` AROUND the `RefVar`.  Unpeeled, that fell to the
-else arm and built `RefVar(RefVar(Text))` — a link to a link, which is never a valid result.
-Peeled, it builds `RefVar(Text)`.  So the peel removes a wrong answer and drops no
-nullability.  Not duplicated here only because it is landed there (7df1e5b06, the C1–C3 guards
-green on both backends under `LOFT_POISON`).
-
-So this row comes DOWN to 1302 when that peel arrives, and the next join must re-measure
-rather than take either branch's figure.)
+(2026-09-23, the THIRD join — `main` @ 6c188b612 plus `tuxedo-quality-2026-09-23` (which
+carried `tuxedo-165-generics` and `157-native-4x`), `tuxedo-1562-layout-gate` to its tip and
+the two branches' later tip commits — RE-MEASURED on the joined tree: functions discriminating
+on a `Type` variant **971**, opaque **315**; shape tests **2476**, opaque **1303**;
+`--write-ratchet` re-pinned there.  One function more than the second join's 314 and three
+tests fewer than its 1306: the layout-gate branch's `&text` link work brought one more opaque
+function and the join settled three tests — neither side's number described this tree, and
+neither was carried.)
 
 (2026-09-23, the SECOND join — `main` @ 6c188b612 (the #1644 merge) plus `tuxedo-165-generics`,
 `157-native-4x` and `tuxedo-1562-layout-gate`, with @PLN167 A3 on top — RE-MEASURED on the joined

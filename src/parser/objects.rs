@@ -3907,7 +3907,9 @@ impl Parser {
         match v.unspan() {
             Value::Var(_) => true,
             Value::Call(d, args) => {
-                data.def(*d).name().starts_with("OpGet")
+                // `OpVarRef(t)` is a store-kind text link's own place, spelled as the field
+                // it names (`OpGetText(OpVarRef(t), 0)`, @PLN167 decision 2).
+                (data.def(*d).name().starts_with("OpGet") || data.def(*d).name() == "OpVarRef")
                     && args
                         .first()
                         .is_some_and(|root| Self::is_source_place(root, data))
