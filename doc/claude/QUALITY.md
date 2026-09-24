@@ -9215,6 +9215,63 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Can this mid-body `return` hand its value back as it stands?" — four sites, two carrying fewer legs (2026-09-24)
+
+Found from a JOIN CONFLICT, which is the part worth keeping: `parser/control.rs`'s
+`Type::Reference` delivery arm reads `if self.return_projects_into_local(&v) || <…>`, and two
+branches had each added a DIFFERENT second disjunct — @PLN163 P4 the leasing-copy leg, loft#1659
+the capture leg.  Neither branch's gate could see the other's, so the merge presented them as
+alternatives and taking either side whole would have dropped the other's fix.  They are
+independent reasons the value cannot go back as it stands, so the condition is their union.
+
+The question that conflict raises is the one neither branch was in a position to ask: **that arm
+is not the only site answering this.**  Four are, and they do not carry the same legs.
+
+| site | arm | projection | leasing copy | capture | views_local |
+|---|---|---|---|---|---|
+| `control.rs` ~17050 | `Type::Reference` | yes | yes | yes | yes |
+| `control.rs` ~17106 | `Type::Enum(_, true, ls)` — payload enum / `__nullable<S>` | yes | **no** | no (not needed) | yes |
+| `control.rs` ~17274 | vector delivery | yes | n/a | n/a (covered) | — |
+| `control.rs` ~2981+ | tail / `"return from block"` | yes | yes | yes | yes |
+
+Both absent legs SELF-GUARD, so the table alone does not say which is a defect.  Measured, they
+split:
+
+**The LEASING leg at the payload-enum arm IS a defect**, and it bites in the DEFAULT build as a
+refusal of a valid program.  With `H` declaring both hooks, `fn s_mid(p: SL) -> SL { return p; }`
+compiles and is correct (`OpCopy` runs on the new structure, each structure releases once), while
+the same body over `enum EL { EL1 { h: H }, EL0 }` is refused `copy-of-droppable`.  One cause for
+both halves: the Reference arm asks `return_copies_a_leasing_value` and therefore MATERIALISES the
+value, which makes the leaf a compiler temp whose type leases, and `lease.rs`'s `leases_whole`
+escape answers `Lease::Move`; the enum arm never asks, so nothing materialises, the leaf stays the
+user parameter, and `written_leaf` refuses it.  Under `LOFT_NO_LEASE_REFUSE=1` the same cause shows
+as the copy taking NO lease — no `OpCopy` at all where the struct spelling runs it.  The predicate
+was already live for an enum (`heap_def_nr` answers `Type::Enum(d, true, _)`, and
+`lease::reach_def` recurses into `EnumValue` children), so `leases_whole(EL)` is TRUE: two
+decoders, one question, opposite answers.  `(H-Copy-Refuse)` scopes itself to a droppable
+*without* `OpCopy` "at ANY DEPTH" and its own position list names "enum payload", so the rules had
+already decided this — it is a deviation, not a design call.  `(H-Copy-Lease)`'s wording ("a
+STRUCT holding such a member") is narrower than `reach_def` implements and is the half that wants
+widening to *a struct, or an enum variant*.
+
+**The CAPTURE leg at that arm is NOT a defect, and this is the negative result worth not
+re-deriving.**  Probed at 70 000 calls on both spellings: values and leaks clean.  The reason is
+structural rather than lucky — that arm classifies as `Bind { substitute: true }`, a COPY, where
+the struct arm gives `Rename`, and the capture leg exists to guard a `Rename`'s ownership claim.
+The vector arm at ~17274 is likewise covered: a capture-viewing vector is caught by its
+argument-dep leg, because `__closure` is `become_argument`.
+
+The generalisable half: a join conflict between two added disjuncts is a SIGNAL that the
+predicate has siblings, and the sibling set is what neither branch measured.  Adding a leg to one
+arm of a type-dispatch chain should be followed by naming the other arms and saying which legs
+each carries and why — the same discipline the rule-tag thread above asks of a rule's sites.
+
+☐ **ACTION** — owned by the @PLN163 line (agreed 2026-09-24, landing after P6 step B): add
+`return_copies_a_leasing_value` to the payload-enum arm, graduate an enum-return matrix
+(statement / tail / join × payload member / whole value, both backends) into `tests/copy_lease.rs`,
+and widen `(H-Copy-Lease)`'s wording.  P4's own matrix covered an enum BIND and never an enum
+RETURN, which is how the leg reached one arm only.
+
 ### "Does this closure record leave the frame?" — three sites, one of them documented (2026-09-08)
 
 `(L-CapOwn)` turns on ONE question: does the record outlive the frame that minted it?  Three
