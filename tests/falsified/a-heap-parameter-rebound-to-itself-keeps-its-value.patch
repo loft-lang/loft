@@ -1,0 +1,17 @@
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index c30e5fa67..0dbe0c7c0 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3087,12 +3087,6 @@ use a separate collection or add after the loop"
+         {
+             return;
+         }
+-        // `p = p` is the identity (#330): the statement was erased and assigns nothing, so it
+-        // displaces no store either.  Detaching the slot around it would leave the parameter
+-        // holding the sentinel with no value put back — every later read answered `null`.
+-        if matches!(code, Value::Insert(items) if items.is_empty()) {
+-            return;
+-        }
+         let orig = self.ensure_rebind_witness(var_nr);
+         let free = self.cl(
+             "OpFreeRefIfDistinct",

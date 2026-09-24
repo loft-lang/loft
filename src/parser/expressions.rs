@@ -3087,6 +3087,12 @@ use a separate collection or add after the loop"
         {
             return;
         }
+        // `p = p` is the identity (#330): the statement was erased and assigns nothing, so it
+        // displaces no store either.  Detaching the slot around it would leave the parameter
+        // holding the sentinel with no value put back — every later read answered `null`.
+        if matches!(code, Value::Insert(items) if items.is_empty()) {
+            return;
+        }
         let orig = self.ensure_rebind_witness(var_nr);
         let free = self.cl(
             "OpFreeRefIfDistinct",
