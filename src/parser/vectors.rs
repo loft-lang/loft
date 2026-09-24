@@ -6052,12 +6052,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
 
     /// The fused scalar append (@PLN157 § V-m): when `ls` ends in exactly
     /// `elm = OpNewRecord(…) · OpSet<Kind>(elm, 0, val) · OpFinishRecord(…, elm, …)` for one
-    /// of the seven scalar setter kinds, replace the three with `OpPush<Kind>(container,
+    /// of the eight scalar setter kinds, replace the three with `OpPush<Kind>(container,
     /// val)` — `container` the vector reference the caller decided (`fused_container`).  `val` moves verbatim — every
-    /// conversion the literal lowering applied is already inside it.  A setter with a
-    /// `min` operand (the narrow-int kinds), a keyed container (`keyed_local_kind` at the
-    /// call site), a record or collection element (a different setter) and the field form
-    /// all fall through and keep the general path — the fallback is the shape as it was.
+    /// conversion the literal lowering applied is already inside it.  The byte kind's setter
+    /// carries a `min` bias (`OpSetByte(elm, 0, min, val)`), which moves into
+    /// `OpPushByte(container, min, val)`.  The other narrow kinds (a nullable byte, a short,
+    /// an unsigned int), a keyed container (`keyed_local_kind` at the call site), a record
+    /// or collection element (a different setter) and the field form all fall through and
+    /// keep the general path — the fallback is the shape as it was.
     fn fuse_scalar_append(&mut self, ls: &mut Vec<Value>, elm: u16, container: &Value) {
         let n = ls.len();
         let trace = std::env::var_os("LOFT_TRACE_FUSE").is_some();
@@ -6088,7 +6090,11 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             return;
         };
-        if !new_ok || !fin_ok || set_args.len() != 3 {
+        // `OpSetByte` carries the byte's `min` bias as a fourth operand; it rides along into
+        // `OpPushByte`.  Every other kind is `(elm, 0, val)`.
+        let biased = name_of(*set_d) == "OpSetByte";
+        let want_args = if biased { 4 } else { 3 };
+        if !new_ok || !fin_ok || set_args.len() != want_args {
             if trace {
                 eprintln!(
                     "[fuse] fn={} decline=shape new_ok={new_ok} fin_ok={fin_ok} nargs={}",
@@ -6143,9 +6149,16 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             }
             return;
         };
-        let val = set_args[2].clone();
+        let push_args = if biased {
+            let Value::Int(_) = set_args[2].unspan() else {
+                return;
+            };
+            vec![container.clone(), set_args[2].clone(), set_args[3].clone()]
+        } else {
+            vec![container.clone(), set_args[2].clone()]
+        };
         ls.truncate(n - 3);
-        let fused = self.cl(push, &[container.clone(), val]);
+        let fused = self.cl(push, &push_args);
         ls.push(fused);
         if trace {
             eprintln!(
@@ -6191,7 +6204,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         };
         matches!(
             self.database.types.get(*elem as usize).map(|t| &t.parts),
-            Some(Parts::Base | Parts::Enum(_) | Parts::Int(_, _))
+            // A non-null byte is the one narrow kind with a fused push (`OpPushByte`); a
+            // nullable byte keeps `OpSetByteNullable` and the general path.
+            Some(Parts::Base | Parts::Enum(_) | Parts::Int(_, _) | Parts::Byte(_, false))
         )
     }
 
