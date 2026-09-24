@@ -256,10 +256,15 @@ make release-gate          # every nightly, THIS commit, one CI run, one verdict
 make release-checklist     # `A-release-gate` reads the newest run for HEAD's sha
 ```
 
-`release-gate.yml` calls five nightlies as reusable workflows — the full
+`release-gate.yml` calls six nightlies as reusable workflows — the full
 `ci.yml` matrix incl. Windows with the stdlib round-trip and the differential
-oracle, every `miri.yml` sanitizer and invariant gate, `revalidate-libs`,
-`browser-threads`, `repro-build` — and a `verdict` job goes
+oracle, every `miri.yml` sanitizer and invariant gate, `revalidate-libs` (both
+backends: a native failure gates unless the library's manifest declares
+`[native] build-deps` the runner may lack — `revalidate_matrix.py
+--native-policy`), `browser-threads`, `repro-build`, and `consumer-main-health`
+(every package of the applications built with loft, both backends — the same
+file `release.yml` calls at the tag, here BEFORE the candidate is chosen) — and a
+`verdict` job goes
 red if any leg did not succeed, `cancelled` and `skipped` included.  It also
 counts the jobs a PR shows as **advisory**: informational on a diff, blocking
 on a release.  It is keyed by commit on purpose — a green run on any other
