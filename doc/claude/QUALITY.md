@@ -2794,7 +2794,24 @@ work finished, and six more shape tests exist to be counted.
 
 Neither number could be carried across the rebase: `main` gained five lines and this branch
 kept eight, so the only tree either figure describes is the one in front of you.  That is the
-standing rule for every derived row here — re-measure on the join, never carry.)
+standing rule for every derived row here — re-measure on the join, never carry.
+
+⚠ **But the TEST count grew in the gated direction, and re-pinning is not what growth asks
+for.**  1303 → 1305 is exactly what `--check-ratchet` exists to refuse: its message says *"a
+new shape test cannot see through `τ?` — peel the scrutinee"*.  `--write-ratchet` writes
+unconditionally and returns 0, so it overrides that judgement rather than answering it, and
+re-pinning on a join hides a real growth inside a legitimate re-measurement.  Recorded here
+rather than quietly carried.
+
+The growth is C1's, and it is already cured on the branch it came from: three `Type::RefVar`
+tests in `parse_assign_op_inner` ask their question without peeling, so a `&text?` does not
+match them (`D-bind-58`'s shape).  loft3-ca peeled those three and three more of C2/C3's with
+`.base()`, measuring **313 / 1302** on their tree.  The peel is deliberately NOT duplicated
+here: the assignment under two of those tests is `s_type = *inner`, and peeling the test
+without deciding what the `Optional` does to the assigned type would trade a missing match arm
+for a dropped nullability — which is the question that arc owns.  So this row comes DOWN to
+1302 when that peel arrives, and the next join must re-measure rather than take either
+branch's figure.)
 
 (2026-09-23, the SECOND join — `main` @ 6c188b612 (the #1644 merge) plus `tuxedo-165-generics`,
 `157-native-4x` and `tuxedo-1562-layout-gate`, with @PLN167 A3 on top — RE-MEASURED on the joined
