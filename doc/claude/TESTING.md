@@ -2002,6 +2002,14 @@ localizing the hang to ONE test binary; other test binaries
 continue.  Full closure record at
 [`plans/finished/49-execution-timeout/`](plans/finished/49-execution-timeout).
 
+**The limit is a hang guard, and a healthy test stays under HALF of it.**
+`scripts/test_duration_gate.py` runs right after CI's Test step and fails the leg
+when any test's slowest attempt (a retried test is judged on its first try) passed
+half the `ci` profile's `slow-timeout`.  A test over that line is made cheaper —
+chunked (`native_scripts_NN`, `loft_suite_NN`, the drop gate's native chunks),
+parallelised, or given a deadline on every wait — and the limit is never raised: a
+raised limit only postpones the same kill while every run gets slower.
+
 ---
 
 ## `tests/wrap.rs` — shared runner for docs and scripts tests

@@ -710,6 +710,7 @@ jobs:
         run: rm -rf "$LOFT_SKIP_LEDGER" "$LOFT_TIMING_LEDGER"
 
       - name: Test
+        id: test
         # `index_hygiene` and `viewer_markdown` are extracted to their own advisory
         # ubuntu jobs (and the nightly): both are platform-independent — a whole-repo
         # doc-link check, and the markdown renderer's HTML output — so there is no
@@ -764,6 +765,17 @@ jobs:
           esac
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}${PART:+ }$PART"
           cargo nextest run --profile ci $FAILFAST $PART -E "$FILTER"
+
+      # Every test finishes inside HALF its per-test limit (the `ci` profile's slow-timeout).
+      # The limit is a hang guard, and a healthy test that reaches half of it is one noisy
+      # runner from a false kill — so the cure is to make it cheaper (split, parallelise,
+      # cache), never to raise the limit.  A GATE, not a report: a report of these numbers
+      # is read by nobody.  It reads the JUnit report of the step above, which the later
+      # nextest steps overwrite, so it must stay directly after it.
+      - name: Test duration gate
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        shell: bash
+        run: python3 scripts/test_duration_gate.py target/nextest/ci/junit.xml
 
       # Browser-render cross-check (Chrome + SwiftShader): the GPU/headless-browser
       # tests demoted off the per-PR path just above.  Runs on the DAILY schedule +
