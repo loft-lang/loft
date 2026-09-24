@@ -1,0 +1,46 @@
+// A `vector<character>` or `vector<i32>` append in a loop goes through the loop's push
+// header and window on native, encoded as its template encodes it.
+//
+// `OpPushCharacter` and `OpPushInt4` were fused ops with no native push header
+// (`hoist::FUSABLE_PUSHES` named `i64`, `f32`, `f64` and the byte), so every character or
+// `i32` push in a loop re-entered the runtime per element — zttext's `insert_text` copies
+// 100 000 characters that way.  Both kinds now hold a header and a window; the element a
+// header stores is what the template stores: a character its code point as `u32`, an `i32`
+// its value with the integer null kept as `i32::MIN`.  The interpreter runs no generator
+// rewrite and is the oracle.  Cells: 26 letters (c1), 100 000 characters through growth
+// (c2), 100 000 `i32` (c3), two record fields pushed in one loop (c4), two pushes per
+// iteration (c5), and a `vector<i32?>` holding a null pushed in a loop (c6) — the one cell
+// whose ENCODING can fail: written as a plain `as i32`, the null lands as 0.
+//
+// @falsified-at: hand-measured (2026-09-24, a sabotage) — the window's `i32` encoding
+//   written without the `i64::MIN -> i32::MIN` mapping: c6 reads `0` where this file says
+//   null, on --native; --interpret passes.
+//   CHANNEL: assert (values).
+//   ARMED: nothing; LOFT_HOIST_VERIFY=1 re-derives the header and agrees.
+//   WITNESS: `c6: 0` on --native under the sabotage.
+//   HOLDS: identical output under LOFT_NO_PUSH_HOIST, LOFT_NO_PUSH_WINDOW,
+//   LOFT_NO_PUSH_FILL and LOFT_NO_FUSED_APPEND on both backends.
+struct H { cs: vector<character>, iv: vector<i32> }
+fn sumc(v: const vector<character>) -> integer { t = 0; for c in v { t = (t * 31 + (c as integer)) & 0xFFFFFFF; } t }
+fn sumi(v: const vector<i32>) -> integer { t = 0; for x in v { t = (t * 31 + (x as integer) + 70000) & 0xFFFFFFF; } t }
+fn main() {
+  a: vector<character> = [];
+  for i in 0..26 { a += [(97 + i) as character]; }
+  assert(len(a) == 26 && "{a[0]?}{a[25]?}" == "az", "c1: {len(a)} {a[0]?}{a[25]?}");
+  b: vector<character> = [];
+  for i in 0..100000 { b += [(32 + (i % 90)?) as character]; }
+  assert(len(b) == 100000 && sumc(b) == 129141840, "c2: {len(b)} {sumc(b)}");
+  s: vector<i32> = [];
+  for i in 0..100000 { s += [((((i * 7) & 0xFFFF) - 32768) as i32?) ?? (0 as i32)]; }
+  assert(len(s) == 100000 && (s[0] ?? 1) == -32768 && (s[99999] ?? 0) == 11865 && sumi(s) == 27481904, "c3: {len(s)} {s[0] ?? 1} {s[99999] ?? 0} {sumi(s)}");
+  h = H { cs: [], iv: [] };
+  for i in 0..1000 { h.cs += [(65 + (i % 26)?) as character]; h.iv += [((i - 500) as i32?) ?? (0 as i32)]; }
+  assert(len(h.cs) == 1000 && len(h.iv) == 1000 && (h.iv[0] ?? 0) == -500 && "{h.cs[999]?}" == "L", "c4: {len(h.cs)} {h.iv[0] ?? 0} {h.cs[999]?}");
+  m: vector<character> = [];
+  for i in 0..3 { m += [(48 + i) as character, (65 + i) as character]; }
+  assert(len(m) == 6 && "{m[0]?}{m[5]?}" == "0C", "c5: {m}");
+  q: vector<i32?> = [];
+  for i in 0..10 { q += [if i == 4 { null } else { (i * 3) as i32? }]; }
+  assert(len(q) == 10 && !q[4] && (q[9] ?? 0) == 27 && (q[3] ?? 0) == 9, "c6: {q[4]} {q[9] ?? 0}");
+  println("push kinds ok");
+}

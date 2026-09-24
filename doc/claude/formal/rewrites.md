@@ -1025,8 +1025,9 @@ push's own is refreshed at the site, the record's length included (R-Refresh).  
 before each fast-path store).  Sites: `hoist::FUSABLE_PUSHES`, `hoist::fused_push`,
 `hoist::pre_alloc_path`, `Output::begin_vector_hoist`, the registry's `HoistedPushEmitter`
 and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_curved` 5.64× → 3.84×, `lock`
-4.39× → 3.51× of Rust, hashes unchanged.  The fusable kinds are `i64`, `f32`, `f64` and the
-BYTE (`vector<u8>` / `vector<i8>`, `OpPushByte`), whose element is the encoded byte
+4.39× → 3.51× of Rust, hashes unchanged.  The fusable kinds are `i64`, `f32`, `f64`, the
+`i32` (`OpPushInt4`, the integer null kept as `i32::MIN`), the CHARACTER (`OpPushCharacter`,
+the code point as `u32`) and the BYTE (`vector<u8>` / `vector<i8>`, `OpPushByte`), whose element is the encoded byte
 `Store::byte_raw(min, val)` — the one encoding `OpSetByte` writes, so the header's raw store,
 its growth step and the unfused path agree; `hoist::push_operands` is where every site reads a
 push's value, so none can take the unencoded one.  A byte loop's one-value slice fill is not
