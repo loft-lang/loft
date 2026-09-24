@@ -37,6 +37,13 @@ release freed the captured value, and later reads of it answered garbage without
 The result is now a copy in that case, so the captured value is left alone.  A write through the
 result (`s.v = 42.0`) no longer changes the captured value either.
 
+**A `text` taken out of an enum in a `match` stops writing into it once the value is replaced.**
+In `match e { Ei { v } => { e = Ei { v: "zz" }; v += "x" } }`, the write to `v` still landed in
+the field of the NEW `e`, so `e` read `"abx"` instead of `"zz"`. A struct taken out the same way
+already stopped there. The `text` now does too, and loft prints the same note: `v` was copied
+out of `e` because `e` is reassigned while `v` is in use. That note now names the variable you
+wrote (`v`), where it used to show an internal name.
+
 **A loop that calls a function value is fast again when interpreted.** Each call through a
 function value got slower the more calls the same function had already made, so such a loop
 took time growing with the square of its length: one test file took 107 seconds and now takes

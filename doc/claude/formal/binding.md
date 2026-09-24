@@ -420,6 +420,26 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-59** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1665)* — `(B-View)` for a `text`
+  PAYLOAD binding.  A `text` binding holds a copy of the characters, and #673 makes a write
+  through it mean the field write by MIRRORING the copy back into the subject after each write.
+  The mirror was unconditional, so `match e { Ei { v } => { e = Ei { v: "zz" }; v += "x" } }`
+  wrote `"abx"` into the NEW `e`, on both backends and with no advice line, where a record
+  payload binding in the same program materialises and says so.  **Where (measured).**  The
+  disturbance walk opened a view only for a binding typed `Reference | Enum | Vector` (or a
+  place link), and the mirror was a parse-time statement the scope pass could not tell from an
+  author's own `e.v = v`.  **Closed** at the walk, which is the home of the question: a mirrored
+  binding is recorded on the `Function` (`text_payload_views`), the walk opens it as a view of
+  the place its `OpGetText` read names (`scopes::text_payload_place`), and the mirror is emitted
+  inside a `text_mirror` block, which the scan drops for a binding the walk condemned.  The
+  binding keeps the copy taken at the bind, which is what materialising a text view means, and
+  the advice is the record view's.  A per-binding verdict, loops included — a parser-linear
+  *"reassigned since the bind"* flag would have answered wrongly through a back edge (the m5
+  cell).  The same change makes every materialise advice name a payload binding as the author
+  wrote it (`v`, not `_mv_v_1`), through one helper, `variables::author_spelling`.  Guard
+  `tests/scripts/1665-a-text-payload-binding-stops-writing-into-a-reassigned-subject.loft`, 7
+  cells, falsified at `a75a4d1ed` on both backends.
+
 * **D-bind-56** *(opened 2026-09-24, CLOSED 2026-09-24; @PLN167 C2)* — `(B-Ref-Reshape)` for a
   `&` link to a SCALAR or TEXT place.  `c = &v[1]; v += [x]; c = 99` compiled and lost the write
   (`v[1]` stayed 22), `t = &v[1].s` read `null` after a growth, and `c = &v[1].n` crashed
