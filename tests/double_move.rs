@@ -17,6 +17,17 @@
 //! lint's documented blind spot, pinned here so it stays a known boundary rather than drifting
 //! into an unnoticed one.
 //!
+//! ⚠ **The two channels are read in order.**  A cell asserts the warning count FIRST, and a failing
+//! assert ends the cell, so when the warning count moves the release count is not scored at all —
+//! a regression there cannot be read as "the warning moved, the releases held".  Re-measure both
+//! from the program's own output (`DROP:` lines and the diagnostics), never from the first failed
+//! assertion: loft2-d9 once reported a true warning as a false positive this way.
+//!
+//! **A cell that did not RUN fails loudly** ([`ran`]).  A `loft` that cannot even load its stdlib —
+//! a binary built with `CARGO_TARGET_DIR` outside the tree resolves `default/` relative to itself
+//! and finds nothing — prints no warning and no `DROP:`, which reads as `(0, 0)`: a plausible
+//! count, and exactly `m9`'s legitimate one.
+//!
 //! Binary-level, because the lint runs post-`scopes::check` from `main` (beside the dead-store
 //! lint) and only a real invocation reaches it.
 
@@ -78,6 +89,17 @@ struct S { h: H }
 struct Nest { s: S }
 ";
 
+/// Fail the cell unless its program actually ran: a stdlib that did not load, a compile error or a
+/// non-zero exit would otherwise read as zero warnings and zero releases.
+fn ran(name: &str, out: &std::process::Output) {
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success() && !stderr.contains("cannot load standard library"),
+        "{name}: the program did not run (exit {:?}) — its counts would be vacuous\n{stderr}",
+        out.status.code()
+    );
+}
+
 /// Run one cell and answer `(double_move_warnings, releases)`.
 fn cell(name: &str, body: &str) -> (usize, usize) {
     let src = format!("{PRELUDE}\nfn main() {{ {body} }}\n");
@@ -90,6 +112,7 @@ fn cell(name: &str, body: &str) -> (usize, usize) {
         .output()
         .expect("failed to invoke loft binary");
     let _ = std::fs::remove_file(&path);
+    ran(name, &out);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     (
@@ -308,6 +331,7 @@ fn cell_prog(name: &str, decls: &str, body: &str) -> (usize, usize) {
         .output()
         .expect("failed to invoke loft binary");
     let _ = std::fs::remove_file(&path);
+    ran(name, &out);
     let stderr = String::from_utf8_lossy(&out.stderr);
     let stdout = String::from_utf8_lossy(&out.stdout);
     (

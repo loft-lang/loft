@@ -1717,6 +1717,14 @@ The census this came from — how many functions resolve a projection by op name
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
 LIST rather than a total, and the list is what tells you where to work.
 
+(2026-09-24, after @PLN163 P6 on `tuxedo-165-generics`, measured: **90 · 15 · 75**, against **91 · 15 · 76**
+at `d055b78af` — the site LISTS diffed, not inferred: P6b deleted two call-only sites (`scan_args`'
+field-hand-off recogniser, `return_copy_out`) and P6's `call_member_view` added one, which views a
+member of a call result read by op name and not in its `TupleGet` spelling — a tuple member of a
+call result keeps the copy lowering, safe but a gap this list is for.  That half of the row is
+UNGATED, so a fall reddens nothing: re-run `ir_walker_audit.py spellings` at a join, and diff the
+LIST, since a total can move for reasons that cancel.)
+
 (2026-09-24, loft#1569 on `tuxedo-165-generics`, measured: **91 · 15 · 76** — `return_copies_a_leasing_value`
 reads a returned projection in both spellings, so the ratchet rose by one.)
 
