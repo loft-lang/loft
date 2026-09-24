@@ -2773,7 +2773,7 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **314** |
+| **312** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
@@ -2785,6 +2785,26 @@ comparison this row gates.
 statement test (loft#1645) asks the arm's block type through `base()`, which takes `scan_if` off
 the opaque list; `main` read 315 / 1303 and the branch 313 / 1303 before the rebase, both on trees
 that did not contain the other.)
+
+(2026-09-24, the FOURTH join — `origin/main` @ c2eec30c6 plus THREE sources merged one at a
+time: `157-native-4x`, `tuxedo-1562-layout-gate` (C2/C3 and the seven `&`-link peels) and
+`tuxedo-165-generics` (the #1568 lease errors) — RE-MEASURED on the merged tree: functions
+discriminating on a `Type` variant **976**, opaque **312**; shape tests **2498**, opaque
+**1300**.
+
+**Four branches held four true numbers and not one of them was the merged tree's.**  Mine read
+314 / 1305, `tuxedo-1562-layout-gate` 313 / 1302 after its peel, `tuxedo-165-generics` 314 /
+1301 after its own rebase — and the join settles at 312 / 1300, BELOW all three.  That is not a
+tie-break between the inputs; the merged tree contains code none of them did.  This row is the
+one DEVELOPMENT.md says has carried a false figure on eight consecutive joins, and the reason
+is visible here: every side's number is defensible, so taking one always looks reasonable.
+
+⚠ **And this re-pin is the opposite act from the last one**, which is the distinction worth
+keeping.  On 2026-09-24 earlier the count GREW (1303 → 1305) and `--write-ratchet` was used
+anyway, which overrode the gate instead of answering it.  Here `--check-ratchet` reports
+`fell  opaque_functions: 314 -> 312` and `fell  opaque_tests: 1301 -> 1300`, and prints *"the
+count fell — re-pin it in this commit"*.  Same command, opposite meaning: read the verdict
+before writing the pin.)
 
 (2026-09-23, the THIRD join — `main` @ 6c188b612 plus `tuxedo-quality-2026-09-23` (which
 carried `tuxedo-165-generics` and `157-native-4x`), `tuxedo-1562-layout-gate` to its tip and
