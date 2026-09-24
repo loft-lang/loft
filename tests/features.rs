@@ -81,39 +81,60 @@ fn features_examples_interpret() {
     // The timing is collected unconditionally and printed only ON FAILURE, so a green run stays
     // silent. It is not a threshold and it does not gate: it turns the next occurrence into
     // evidence about WHICH of the two shapes this is, which is what the issue is missing.
-    let mut timings: Vec<(std::time::Duration, PathBuf)> = Vec::new();
-    for f in &files {
-        let started = std::time::Instant::now();
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
-            .args(["--interpret", &f.to_string_lossy()])
-            .env("LOFT_TIMEOUT", "60")
-            // loft#1238 — arm the build timing in the CHILD, so a failure carries WHY it was
-            // slow and not merely that it was.  The example that trips this does `use random`,
-            // and the 60s is a cdylib rebuild: `make ci` rebuilds loft, which moves
-            // `native_artifact_cache_key` (a content hash of the loft build), which makes every
-            // cached native artifact stale, and the first user of each pays the rebuild. That
-            // showed up here as `cdylibstale loft_random|stamped=…|cur=…`, which is the line
-            // that ends the investigation.
-            //
-            // The child's stderr is captured and reproduced only on failure, so a green run
-            // prints nothing extra.
-            .env("LOFT_TIMING", "1")
-            .output()
-            .expect("spawn loft");
-        timings.push((started.elapsed(), f.clone()));
-        let combined = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        if !out.status.success() || combined.contains("panicked") {
-            // Wide enough to keep the `[loft-timing]` lines above the failure itself: the
-            // build events are emitted BEFORE the program runs, so a 6-line tail cut off
-            // exactly the evidence (loft#1238).
-            let tail: Vec<&str> = combined.lines().rev().take(20).collect();
-            let tail: Vec<&str> = tail.into_iter().rev().collect();
-            failures.push(format!("{}:\n  {}", f.display(), tail.join("\n  ")));
+    // The examples are independent processes, so they run several at a time: one after another
+    // they took 366-425 s on the Windows runner, where a test may take half its 600 s limit
+    // (`scripts/test_duration_gate.py`).  The cache warm above is what makes that safe — the
+    // library cdylibs are built before any example asks for one (loft#1238).  Results and
+    // timings are collected per example and reported in corpus order, as before.
+    let workers = std::thread::available_parallelism()
+        .map_or(2, std::num::NonZero::get)
+        .min(8);
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    type Outcome = (std::time::Duration, Option<String>);
+    let results: std::sync::Mutex<Vec<Option<Outcome>>> =
+        std::sync::Mutex::new(files.iter().map(|_| None).collect());
+    std::thread::scope(|scope| {
+        for _ in 0..workers {
+            scope.spawn(|| {
+                loop {
+                    let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                    let Some(f) = files.get(k) else {
+                        break;
+                    };
+                    let started = std::time::Instant::now();
+                    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+                        .args(["--interpret", &f.to_string_lossy()])
+                        .env("LOFT_TIMEOUT", "60")
+                        // loft#1238 — arm the build timing in the CHILD, so a failure carries
+                        // WHY it was slow (a `cdylibstale` line is what ends that investigation).
+                        // The child's stderr is reproduced only on failure.
+                        .env("LOFT_TIMING", "1")
+                        .output()
+                        .expect("spawn loft");
+                    let elapsed = started.elapsed();
+                    let combined = format!(
+                        "{}{}",
+                        String::from_utf8_lossy(&out.stdout),
+                        String::from_utf8_lossy(&out.stderr)
+                    );
+                    let failure =
+                        (!out.status.success() || combined.contains("panicked")).then(|| {
+                            // Wide enough to keep the `[loft-timing]` lines above the failure itself:
+                            // the build events are emitted BEFORE the program runs (loft#1238).
+                            let tail: Vec<&str> = combined.lines().rev().take(20).collect();
+                            let tail: Vec<&str> = tail.into_iter().rev().collect();
+                            format!("{}:\n  {}", f.display(), tail.join("\n  "))
+                        });
+                    results.lock().unwrap()[k] = Some((elapsed, failure));
+                }
+            });
         }
+    });
+    let mut timings: Vec<(std::time::Duration, PathBuf)> = Vec::new();
+    for (f, r) in files.iter().zip(results.into_inner().unwrap()) {
+        let (elapsed, failure) = r.expect("every example ran");
+        timings.push((elapsed, f.clone()));
+        failures.extend(failure);
     }
     let slowest = if failures.is_empty() {
         String::new()
