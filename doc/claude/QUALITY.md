@@ -9440,9 +9440,13 @@ in hand, and collapsing them is the early-abstraction failure the thread above w
 cheap half is the naming: `in_ret` should say `leaves_frame`, so the next route out reads as
 something the name already covers rather than as an exception to it.
 
-☐ **ACTION** — rename the two `in_ret` locals to `leaves_frame` and cite `@FR-L-CapOwn` at all
-three sites, so `scripts/rule_tags.py sites @FR-L-CapOwn` answers "which sites enforce this?"
-with three rather than with one.
+✅ **DONE (2026-09-24)** — the two `in_ret` locals are `leaves_frame`, so all three spellings now
+say the QUESTION rather than the answer one route gives, and the `scope_debug` line that prints
+the verdict says `leaves_frame=` with them.  The citation half had already closed on its own:
+`scripts/rule_tags.py sites @FR-L-CapOwn` answers **29**, not one — which is the second half of
+the lesson.  A queue row that names a COUNT as its finish condition can be met by unrelated work
+and then reads as open for weeks; the row that was actually left was the naming, and only
+re-running the tool said so.
 
 ### The heap-record family — one declared home, four sites that drifted off it (2026-08-30)
 

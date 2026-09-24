@@ -171,24 +171,31 @@ The branch is merged to main via a single PR when all items pass CI.
   true before you started; the closing line says so, so a red never sends you looking for a
   regression you did not cause.
 
-  ⚠ **But a COMPILE-BREAK is not automatically yours either, and only an A/B says which
-  are.** The sentence above is right about what the class MEANS and wrong as a reading of one
-  run: measured 2026-09-24, `tuxedo-quality-2026-09-24` printed **3 COMPILE-BREAKs** and
-  `origin/main` printed **2** — `graphics` (a `local-out-of-scope` refusal) and `imaging` (an
-  implicit-narrowing one) break on main as well, and only `assets` was the branch's. Taking the
-  first sentence literally meant owning three breaks instead of one, and the two that are not
-  yours are the ones you cannot fix from this repo at all. So when the count is not zero:
-  build `origin/main` in a worktree of its own, run the gate there for the NAMED packages, and
-  subtract. The A/B that settles it needs no second gate run — extract the tag ONCE with
-  `git archive` and run the two binaries against that one tree, which is also the only form
-  that rules out the extraction differing between the runs (`assets` answered
-  *"ok. 17 passed"* under main's binary and *"FAIL … (parse errors)"* under the branch's, same
-  directory, same command).
+  ⚠ **FIRST refresh `../loft-registry`, because the script reads a CLONE of the index and a
+  stale one measures versions that have been superseded.** `revalidate_matrix.py` picks each
+  package's latest non-yanked version out of `$siblings/loft-registry/index.json` — a checkout
+  someone pulled at some point, not the registry. Measured 2026-09-24: that clone was **5
+  commits behind**, so the run picked `graphics` 0.9.1 and `imaging` 0.3.2 and reported both as
+  COMPILE-BREAKs against `origin/main`, while `revalidate-libs.yml` on that exact commit was
+  green — CI reads the CURRENT index and gets 0.9.3 and 0.3.3, and `imaging` 0.3.3 had been
+  published that very day to cure the break. Two agents on the same box reproduced each other's
+  two phantom breaks, which is what a shared stale clone looks like from the inside. The run
+  prints `registry index: <sha> publish: <pkg>-<ver> (<date>)` as its first line: read that date
+  before reading the verdict, and `git -C ../loft-registry fetch` if it is not today's. A break
+  that CI does not also see is a local artefact until proven otherwise.
 
-  The scratch worktree needs the sibling clones beside it, because `$siblings` is
-  `dirname` of the script's own root — symlink `../loft-registry` and `../loft-libs-*` next
-  to it, or every package reports the SKIP that means "not cloned beside this one" and the
-  run reads as green.
+  ⚠ **Then: a COMPILE-BREAK is still not automatically yours, and an A/B is what says which are.**
+  Build `origin/main` in a worktree of its own and run the gate there for the NAMED packages —
+  with the same index both times, or the comparison measures the index instead of the change.
+  Symlink `../loft-registry` and `../loft-libs-*` NEXT TO that worktree (`$siblings` is `dirname`
+  of the script's root, and a missing clone reports the SKIP that reads as green); pointing the
+  symlink at a directory holding only a fresh `index.json` is enough, since the index is all the
+  script reads from there. Settle the residue on ONE tree: `git archive <pkg>-v<ver>` into a
+  scratch directory once and run BOTH binaries against it with `loft --interpret --tests tests`,
+  which also rules out the two gate runs extracting differently. On the same 2026-09-24 branch
+  that answered main 0 / branch 1 — `assets` 0.2.1, refused by loft#1660, which the issue body
+  and the commit's `Contract: strained … (owner-ruled)` trailer had already named as its blast
+  radius. Read those two before reporting a break as news.
 
   ⚠ **Red on warnings EXISTING, not on the set growing.** "Can it ship" is a question about
   the absolute state; a delta answers a different one. On the CI side this is the

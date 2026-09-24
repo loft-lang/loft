@@ -12617,7 +12617,7 @@ impl Scopes<'_> {
         // `c` and there is no buffer — which is why only the nullable spelling had the fault.
         //
         // A work-ref's scope-exit free is FORCED (`is_work_ref` in `get_free_vars`), so it
-        // runs even where `in_ret` suppressed the local's own.  A returned nullable record was
+        // runs even where `leaves_frame` suppressed the local's own.  A returned nullable record was
         // therefore handed back through a store this frame had already released:
         // `fn f() -> S? { c: S? = S { x: 5 }; c }` answered `0xDEADBEEF` under `LOFT_POISON=1`
         // on both backends, and the right value on an ordinary build, which is why it stood.
@@ -16648,7 +16648,7 @@ impl Scopes<'_> {
         // a sibling path is absent and still freed by that path's sweep (no
         // global `skip_free` stamp — that would over-suppress and leak the
         // dead-path allocation).  The dep buffer of a BORROWING terminal
-        // (`_vec_N["__vdb_N"]`) is handled in the `in_ret` computation below.
+        // (`_vec_N["__vdb_N"]`) is handled in the `leaves_frame` computation below.
         //
         // The SET drives suppression ONLY for the heap-buffer block (Vector /
         // Reference / Enum / keyed).  TEXT and TUPLE returns keep their own,
@@ -16883,7 +16883,7 @@ impl Scopes<'_> {
                 let backs_return_source = return_sources
                     .iter()
                     .any(|&src| src != v && function.tp(src).depend().contains(&v));
-                // `in_ret` is really *"does `v` leave this frame"*, and until loft#1443 the
+                // `leaves_frame` is really *"does `v` leave this frame"*, and until loft#1443 the
                 // return was the only way out — a `&fn(…)` parameter did not compile.  Now it
                 // does, and a closure record written through one is delivered to the caller,
                 // which frees it at ITS scope exit under the fn-ref that received it.  Without
@@ -16895,7 +16895,7 @@ impl Scopes<'_> {
                 // A record whose link delivery the frame decides at run time
                 // (`@FR-L-CapKeep`) stands down above where the caller holds it, and is
                 // released here on the runs that did not deliver it.
-                let in_ret = ret_borrows_v
+                let leaves_frame = ret_borrows_v
                     || backs_return_source
                     || (link_delivered.contains(&v) && !self.closure_keep.decides_link(v))
                     || ret_var != u16::MAX && function.tp(ret_var).depend().contains(&v)
@@ -16922,7 +16922,7 @@ impl Scopes<'_> {
                 // returned-var, and return-source-backing checks above decide the
                 // suppression.  A debug sentinel used to scream when the old read
                 // would have "decided alone" (`tp.depend()` names `v` while
-                // `in_ret` is false), on the theory that such a case would need
+                // `leaves_frame` is false), on the theory that such a case would need
                 // the read re-added.  It does NOT: every firing is a FALSE positive
                 // of the retired POSITIONAL decode — a field / enum-field / match-
                 // arm return that COPIES its source into the caller's retbuf
@@ -16958,7 +16958,7 @@ impl Scopes<'_> {
                 // so a later `s += …` re-inits in place).  That self-dep is an
                 // ownership marker, not a borrow — treat it like `dep.is_empty()`
                 // so the store is freed at scope exit.  Mirrors the fn-ref
-                // ownership rule below.  Keyed-only + exact self-dep; `in_ret`
+                // ownership rule below.  Keyed-only + exact self-dep; `leaves_frame`
                 // still suppresses returned keyed locals.
                 // D-own-16 residual — a nullable heap local BOUND FROM A PARAMETER and later
                 // reassigned from a minting call owns its store on some paths and borrows on
@@ -17047,10 +17047,10 @@ impl Scopes<'_> {
                     capture_adoption_owns_free(data, function, &self.capture_build_backing, v);
                 // @PLN94 TEST-ONLY over-free injection (never set in production): force the scope-exit
                 // free of a NAMED borrowed var (owns=false) so the over-free check has a firing
-                // true-positive. Subject to the same !in_ret/!skip_free/!captured guards as a real free.
+                // true-positive. Subject to the same !leaves_frame/!skip_free/!captured guards as a real free.
                 let inject_free = inject_free_borrowed() == Some(function.name(v));
                 let emit = (owns || is_work_ref || inject_free)
-                    && !in_ret
+                    && !leaves_frame
                     && !function.is_skip_free(v)
                     && !self.free_transferred.contains(&v)
                     && !captured_ref;
@@ -17104,7 +17104,7 @@ impl Scopes<'_> {
                     // loft#1487 was first attributed to the wrong predicate.
                     eprintln!(
                         "[scope_debug] NOT freeing '{}' (var={v}, scope={}, to_scope={to_scope}): \
-                         dep_empty={} owns={owns} is_work_ref={is_work_ref} in_ret={in_ret} \
+                         dep_empty={} owns={owns} is_work_ref={is_work_ref} leaves_frame={leaves_frame} \
                          skip_free={} free_transferred={} captured_ref={captured_ref}",
                         function.name(v),
                         self.var_scope.get(&v).copied().unwrap_or(u16::MAX),
@@ -17213,7 +17213,7 @@ impl Scopes<'_> {
                     {
                         // loft#1317 — the buffer an inline record literal minted, whose store
                         // the local it was aliased into is now HANDING TO THE CALLER.  This
-                        // free is forced (`is_work_ref`) and so ran even though `in_ret`
+                        // free is forced (`is_work_ref`) and so ran even though `leaves_frame`
                         // suppressed the local's own: `fn f() -> S? { c: S? = S { x: 5 }; c }`
                         // returned a released store on both backends, right by luck on an
                         // ordinary build and `0xDEADBEEF` under `LOFT_POISON=1`.
@@ -17374,7 +17374,7 @@ impl Scopes<'_> {
                 // reads as "unless this is a kept holder that is not itself a function".
                 let dep_delivers = tp.depend().contains(&v)
                     && (!keep_holder || matches!(tp.base(), Type::Function(..)));
-                let in_ret = dep_delivers
+                let leaves_frame = dep_delivers
                     || ret_carries
                     || link_carries
                     || v == ret_var
@@ -17405,7 +17405,7 @@ impl Scopes<'_> {
                         && (r as usize) < function.count() as usize
                         && self.var_scope.get(&r) != self.var_scope.get(&v)
                 });
-                let emit = !in_ret && !function.is_skip_free(v) && !record_outlives;
+                let emit = !leaves_frame && !function.is_skip_free(v) && !record_outlives;
                 if emit {
                     if scope_debug {
                         eprintln!(
