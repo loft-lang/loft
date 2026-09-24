@@ -88,3 +88,22 @@ from a `return <call>;` body (zttext's `token_width`, interpreter only).
 `(R-Compact)`, `(R-Const)`, `(R-ValueLocal)` in `doc/claude/formal/rewrites.md` § *A value
 already home is not copied to a second one*, on the floor `(H-CopySelf)` (heap.md).  Each
 names its headline row and the hand-price to take first.
+
+## Wave 3 — the consumers modelled, the rest of hex_*, and par (2026-09-24)
+
+53 rows, median **5.51×**; the whole portal is now 209 routines.  The consumer lanes
+(`17_consumer_moros_dryopea`, `18_consumer_crawler`) model the games' hot loops at their own
+layouts; every row but `binary_read` was written with the copy class already named above,
+and the numbers say the same thing the rules do: `truncate_to` **207×** (`(R-Compact)`),
+`slope_path_with_undo` 20× and `panel_build` 19× (records copied into stacks and panels),
+`resolve_move` 10× (`(R-ValueLocal)`), `map_json` 17× (`Map.parse` runs the source lexer).
+`binary_read` fell 224× → **33×** with the buffered `LoftFile` (each `f#read(2)` was a
+system call); the rest of its 33× is the per-read allocation and the crossing.  `par` holds
+0.7–2.4×: the pool is not the problem.  The hex_* rows are the same mechanisms again —
+`field_union` 173× and `bone_shape_has` 100× (a vector filled one push at a time, then read
+through nullable accessors; three records per query), `edgeset_count` 40×, `doc_read` 17×
+(one file-read crossing per cell), `stencil_rotate` 10× — with three twins that run a
+CHEAPER algorithm than the library (`bone_shape_has`, `rig_read`, `form_read`, and
+pluginabi's decoders from wave 2): those rows overstate loft's share and are to be
+re-aligned to the library's algorithm (bench/README.md rule 1), the library's own extra
+work listed beside them for its author.
