@@ -3001,26 +3001,15 @@ pub(crate) fn copy_moves_drop_from(
     if !copy_carries_drop(function, data, v, function.tp(src)) {
         return None;
     }
-    // @FR-H-Copy-Lease — a copy of what the caller still holds, of a type that declares
-    // `OpCopy`, takes a lease of its own: two structures, two drops, and no release moves.
-    if (function.is_argument(src) || function.holds_caller_record(src))
-        && function
-            .tp(v)
-            .base()
-            .heap_def_nr()
-            .is_some_and(|d| crate::lease::leases_whole(data, d))
-    {
+    // A copy of what the CALLER holds — a parameter, or a local holding the caller's record on
+    // every path (`Function::holds_caller_record`) — moves no release: the rules refuse it
+    // (`(H-Copy-Refuse)`) or it takes a lease of its own (@FR-H-Copy-Lease), and either way each
+    // structure drops for itself.  What moves is a value this function OWNS (`(H-Move)`): the
+    // copy releases it and the source stops.
+    if function.is_argument(src) || function.holds_caller_record(src) {
         return None;
     }
-    // A local that holds the caller's record on every path answers as the parameter it copies:
-    // its copies move nothing either (`Function::holds_caller_record`).
-    Some(
-        if function.is_argument(src) || function.holds_caller_record(src) {
-            v
-        } else {
-            src
-        },
-    )
+    Some(src)
 }
 
 /// Is `v` a local PROMOTED onto function `d_nr`'s hidden return buffer — `x = …; return x`
