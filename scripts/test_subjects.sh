@@ -140,9 +140,18 @@ curated_filter() {
 }
 
 # Every test binary this repo actually has.
+# Fork-free on purpose: the list is asked for inside loops, and a `basename` per test file is
+# ~360 processes per call — cheap on Linux, and minutes under Git Bash on Windows, where one
+# `changed_filter` spent ~7 min forking (`doc_hygiene::changed_selects_subjects_by_path` killed
+# at 600 s, twice).  Parameter expansion answers the same names without a process.
 all_binaries() {
-  local f
-  for f in "$(dirname "${BASH_SOURCE[0]}")/../tests"/*.rs; do basename "$f" .rs; done
+  local d f
+  d="${BASH_SOURCE[0]%/*}"
+  [[ "$d" == "${BASH_SOURCE[0]}" ]] && d=.
+  for f in "$d/../tests"/*.rs; do
+    f="${f##*/}"
+    echo "${f%.rs}"
+  done
 }
 
 # The nextest filterset for one subject.
@@ -156,9 +165,10 @@ all_binaries() {
 subject_filter() {
   local name="$1" parts=() p b pats
   pats=$(subject_patterns "$name") || return 1
-  local seen=" "
+  local seen=" " bins
+  bins=$(all_binaries)  # once per subject, not once per pattern
   for p in $pats; do
-    for b in $(all_binaries); do
+    for b in $bins; do
       case "$seen" in (*" $b "*) continue ;; esac
       pattern_matches "$p" "$b" && { seen="$seen$b "; parts+=("binary($b)"); }
     done
