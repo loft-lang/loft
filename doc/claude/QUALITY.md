@@ -1689,6 +1689,10 @@ The census this came from — how many functions resolve a projection by op name
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
 LIST rather than a total, and the list is what tells you where to work.
 
+(2026-09-24, after @PLN163 P6 on `tuxedo-165-generics`, measured: **90 · 15 · 75** — removing the field
+hand-off retired call-spelling-only sites; the total and the call-only queue fell, the ratchet held.
+That part of the row is UNGATED, so a fall reddens nothing: re-run `ir_walker_audit.py spellings` at a join.)
+
 (2026-09-24, loft#1569 on `tuxedo-165-generics`, measured: **91 · 15 · 76** — `return_copies_a_leasing_value`
 reads a returned projection in both spellings, so the ratchet rose by one.)
 
