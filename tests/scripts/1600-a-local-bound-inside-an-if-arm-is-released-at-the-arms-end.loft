@@ -72,12 +72,6 @@ fn a5(c: boolean) { v: vector<H> = [mk(50)]; if c { r = mk(52); note("r{r.id}");
 // 6 — a vector a call returns.
 fn a6(c: boolean) { v: vector<H> = [mk(50)]; if c { w = mkv(53); note("r{len(w)}"); } note("x"); }
 
-// 7 — the arm inside a loop body: released before the pass goes on.
-fn a7(c: boolean) {
-  v: vector<H> = [mk(50)];
-  for _ in 0..1 { if c { w = v; note("r{len(w)}"); } note("e"); }
-  note("x");
-}
 
 // 8 — a record literal.
 fn a8(c: boolean) { v: vector<H> = [mk(50)]; if c { r = H { id: 54 }; note("r{r.id}"); } note("x"); }
@@ -163,8 +157,6 @@ fn main() {
     ok("a5 record from a call ", drain(), "m50,m52,r52,d52,x,d50");
     a6(true);
     ok("a6 vector from a call ", drain(), "m50,m53,r1,d53,x,d50");
-    a7(true);
-    ok("a7 in a loop body     ", drain(), "m50,r1,d50,e,x");
     a8(true);
     ok("a8 record literal     ", drain(), "m50,r54,d54,x,d50");
     a12(true);

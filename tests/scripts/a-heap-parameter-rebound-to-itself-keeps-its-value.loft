@@ -1,0 +1,39 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `(B-Copy)`, `@FR-O-Detach` — `p = p` on a HEAP PARAMETER is the identity and leaves `p` holding
+// what it held.  The parser erases the statement (#330: a copy of a value onto itself has nothing to
+// do), and a parameter's whole-value rebind is otherwise lowered as free-prior, detach, assign — so
+// the erased statement was wrapped in a detach with nothing assigned back, and every later read of
+// the parameter answered `null`, silently and on both backends.  Pinned across the parameter kinds
+// that take that lowering (a record, a nullable record, a struct-enum, a keyed collection), the
+// identity under a branch and in a loop, and the identity followed by a real rebind, which must
+// still displace and release.  Every expected value is hand-computed; the caller keeps its value.
+//
+// @falsified-at: 1a7b0d910 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-heap-parameter-rebound-to-itself-keeps-its-value.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+struct P { id: integer, t: text }
+enum E { EA { a: integer }, EB { b: text } }
+struct R { k: integer, v: text }
+struct Holder { rs: hash<R[k]> }
+fn f1(p: P) -> text { p = p; "{p.id}/{p.t}" }
+fn f2(p: P?) -> text { p = p; if p { "{p.id}" } else { "none" } }
+fn f3(e: E) -> text { e = e; match e { EA { a } => "A{a}", EB { b } => "B{b}" } }
+fn f4(p: P, c: boolean) -> text { if c { p = p; } "{p.id}" }
+fn f5(p: P) -> text { for _i in 0..3 { p = p; } "{p.id}" }
+fn f6(p: P) -> text { p = p; p = P { id: p.id + 1, t: "{p.t}!" }; "{p.id}/{p.t}" }
+fn f7(h: hash<R[k]>) -> integer { h = h; len(h) }
+fn main() {
+  a = P { id: 7, t: "x" };
+  assert(f1(a) == "7/x", "f1 {f1(a)}");
+  assert(f2(a) == "7", "f2 {f2(a)}");
+  assert(f2(null) == "none", "f2n");
+  assert(f3(EA { a: 3 }) == "A3", "f3a");
+  assert(f3(EB { b: "q" }) == "Bq", "f3b");
+  assert(f4(a, true) == "7" && f4(a, false) == "7", "f4");
+  assert(f5(a) == "7", "f5 {f5(a)}");
+  assert(f6(a) == "8/x!", "f6 {f6(a)}");
+  hd = Holder { rs: [] };
+  hd.rs += [R { k: 1, v: "a" }, R { k: 2, v: "b" }];
+  assert(f7(hd.rs) == 2, "f7");
+  assert(a.id == 7 && a.t == "x", "caller keeps its value {a.id}");
+}

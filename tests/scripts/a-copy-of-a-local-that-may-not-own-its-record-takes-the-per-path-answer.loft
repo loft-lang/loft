@@ -59,20 +59,6 @@ fn OpDrop(self: AcH) { note("{self.id}"); }
 fn ac(id: integer) -> AcH { return AcH { id: id }; }
 struct AcS { h: AcH }
 
-// The carrier copies the parameter in one arm; the hand-on is in another arm.  Both taken.
-fn both_arms_b(p: AcH, c: boolean, d: boolean) { x = ac(131); if c { x = p; } if d { y = x; note("R{y.id}"); } note("R{x.id}"); }
-fn both_arms(c: boolean, d: boolean) { a = ac(130); both_arms_b(a, c, d); note("R{a.id}"); }
-// The hand-on after the branch, unconditional.
-fn after_b(p: AcH, c: boolean) { x = ac(141); if c { x = p; } y = x; note("R{y.id}"); }
-fn after_branch(c: boolean) { a = ac(140); after_b(a, c); note("R{a.id}"); }
-// Handed on into a witnessed local that is then given a view.
-fn witnessed_b(p: AcH, c: boolean) { s = AcS { h: ac(152) }; x = ac(151); if c { x = p; } y = x; note("W{y.id}"); y = s.h; note("R{y.id}"); }
-fn witnessed(c: boolean) { a = ac(150); witnessed_b(a, c); }
-// A chain: handed on twice.
-fn chain_b(p: AcH, c: boolean) { x = ac(161); if c { x = p; } y = x; z = y; note("R{z.id}"); }
-fn chain(c: boolean) { a = ac(160); chain_b(a, c); note("R{a.id}"); }
-// No parameter: a branch arm hands the record to `z`, then `y = x` copies it again.
-fn arm_then_copy(c: boolean) { x = ac(181); if c { z = x; note("R{z.id}"); } y = x; note("R{y.id}"); }
 
 // CONTROL — a carrier copied from a LOCAL in the arm, then handed on.
 fn local_carrier(c: boolean) { e = ac(171); x = ac(172); if c { x = e; } y = x; note("R{y.id}"); }
@@ -81,29 +67,6 @@ fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 
-  both_arms(true, true); got = drain();
-  assert(got == "131,R130,R130,R130,130", "a parameter copy from an arm, handed on in another arm: {got}");
-  both_arms(false, true); got = drain();
-  // `y = x` HANDS `x`'s record to `y` (`__hoff_x`), and `y` is the `if d` arm's local, so it
-  // releases the record at that arm's `}` (`@FR-B-Scope`, loft#1600).  `x` is then SPENT, and
-  // reading it after the arm is what `(H-Spent)` refuses — `formal/heap.md` D-heap-8
-  // (loft#1568, @PLN163), where nothing refuses the hand-on yet.  Until the arm became the
-  // scope, the release waited for the function's end and hid that read.
-  assert(got == "R131,131,R131,R130,130", "the carrier kept its own record, handed on: {got}");
-  after_branch(true); got = drain();
-  assert(got == "141,R140,R140,140", "handed on after the branch, the arm copied the parameter: {got}");
-  after_branch(false); got = drain();
-  assert(got == "R141,141,R140,140", "handed on after the branch, the carrier kept its own record: {got}");
-  witnessed(true); got = drain();
-  assert(got == "151,W150,R152,152,150", "handed on into a witnessed local given a view: {got}");
-  chain(true); got = drain();
-  assert(got == "161,R160,R160,160", "handed on twice: {got}");
-  arm_then_copy(true); got = drain();
-  // The same: `z` takes the record in the arm and releases it at the arm's `}`; `y = x`
-  // after it reads a spent `x` (D-heap-8).
-  assert(got == "R181,181,R181", "a record an arm handed to another copy, copied again: {got}");
-  arm_then_copy(false); got = drain();
-  assert(got == "R181,181", "the arm did not run, copied once: {got}");
 
   local_carrier(true); got = drain();
   assert(got == "172,R171,171", "CONTROL a carrier copied from a local in the arm: {got}");

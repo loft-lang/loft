@@ -2773,19 +2773,18 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **313** |
+| **314** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
-(2026-09-24, `tuxedo-1562-layout-gate` rebased onto `main` @ c2eec30c6 with @PLN167 C1–C3 —
-RE-MEASURED on that tree: functions discriminating on a `Type` variant **975**, opaque **313**;
-shape tests **2493**, opaque **1302**; `--write-ratchet` re-pinned.  `main` itself measured at the
-old pin (315 / 1303); the branch had first read 314 / 1309, six opaque tests of its own — C1's
-three `Type::RefVar` tests on an unpeeled `s_type` / `tp(src)` and C2/C3's four, each asking the
-`&text?` question D-bind-58 was — and peeling them is what took both counts below the pin.)
+(2026-09-24, loft#1568 rebased onto `main` @ c2eec30c6 — RE-MEASURED on that tree: **971 · 653 ·
+4 · 314**, opaque tests **1301**, `--write-ratchet` re-pinned there.  The `if` reconcile's
+statement test (loft#1645) asks the arm's block type through `base()`, which takes `scan_if` off
+the opaque list; `main` read 315 / 1303 and the branch 313 / 1303 before the rebase, both on trees
+that did not contain the other.)
 
 (2026-09-23, the THIRD join — `main` @ 6c188b612 plus `tuxedo-quality-2026-09-23` (which
 carried `tuxedo-165-generics` and `157-native-4x`), `tuxedo-1562-layout-gate` to its tip and

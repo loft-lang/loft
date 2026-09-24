@@ -12,6 +12,8 @@
 //! `doc/claude/plans/157-native-4x-drawing/DESIGN.md` § Zero-on-claim.
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 /// The scripts that still read un-initialised store words, by name.  Each is a PRODUCER
 /// that does not initialise what it hands out; the fix is at that site, never a wider
@@ -40,30 +42,61 @@ fn scripts() -> Vec<PathBuf> {
     out
 }
 
+/// True when `script` fails under a poisoned claim — it read a word nothing initialised.
+fn depends_on_zero_claim(script: &Path) -> bool {
+    let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+        .arg("--interpret")
+        .arg(script)
+        .env("LOFT_POISON_CLAIM", "1")
+        .env("LOFT_TIMEOUT", "60")
+        .output()
+        .expect("spawn loft");
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    text.contains("panicked")
+        || text.contains("BUG (#")
+        || text.contains("refused to walk")
+        || text.contains("out of bounds")
+}
+
+/// The names of the dependent scripts, in corpus order.  Each script is its own process, so
+/// they run several at a time: run one after another, the census grows with the corpus and
+/// outran the suite's per-test ceiling on every CI host.
+fn census(scripts: &[PathBuf]) -> Vec<String> {
+    let workers = std::thread::available_parallelism()
+        .map_or(2, std::num::NonZero::get)
+        .min(8);
+    let next = AtomicUsize::new(0);
+    let hits: Mutex<Vec<bool>> = Mutex::new(vec![false; scripts.len()]);
+    std::thread::scope(|s| {
+        for _ in 0..workers {
+            s.spawn(|| {
+                loop {
+                    let i = next.fetch_add(1, Ordering::Relaxed);
+                    if i >= scripts.len() {
+                        break;
+                    }
+                    let hit = depends_on_zero_claim(&scripts[i]);
+                    hits.lock().unwrap()[i] = hit;
+                }
+            });
+        }
+    });
+    let hits = hits.into_inner().unwrap();
+    scripts
+        .iter()
+        .zip(hits)
+        .filter(|(_, hit)| *hit)
+        .map(|(p, _)| p.file_stem().unwrap().to_string_lossy().to_string())
+        .collect()
+}
+
 #[test]
 fn the_zero_on_claim_census_only_shrinks() {
-    let mut dependent: Vec<String> = Vec::new();
-    for p in scripts() {
-        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
-            .arg("--interpret")
-            .arg(&p)
-            .env("LOFT_POISON_CLAIM", "1")
-            .env("LOFT_TIMEOUT", "60")
-            .output()
-            .expect("spawn loft");
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        if text.contains("panicked")
-            || text.contains("BUG (#")
-            || text.contains("refused to walk")
-            || text.contains("out of bounds")
-        {
-            dependent.push(p.file_stem().unwrap().to_string_lossy().to_string());
-        }
-    }
+    let dependent = census(&scripts());
     let unexpected: Vec<&String> = dependent
         .iter()
         .filter(|d| !KNOWN_DEPENDENT.contains(&d.as_str()))

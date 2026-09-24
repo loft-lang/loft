@@ -52,15 +52,6 @@ struct LpH { id: integer }
 fn OpDrop(self: LpH) { note("{self.id}"); }
 fn lp(id: integer) -> LpH { return LpH { id: id }; }
 
-// A fresh record, then the parameter copy, each iteration.
-fn fresh_then_copy_b(p: LpH) { x = lp(53); for i in 0..2 { x = lp(54 + i); note("W{x.id}"); x = p; } note("R{x.id}"); }
-fn fresh_then_copy() { a = lp(56); fresh_then_copy_b(a); note("R{a.id}"); }
-// The parameter copy, then a fresh record, each iteration.
-fn copy_then_fresh_b(p: LpH) { x = lp(61); for i in 0..2 { x = p; note("W{x.id}"); x = lp(62 + i); } note("R{x.id}"); }
-fn copy_then_fresh() { a = lp(60); copy_then_fresh_b(a); note("R{a.id}"); }
-// Only the parameter copy in the loop.
-fn copy_only_b(p: LpH) { x = lp(71); for _i in 0..2 { x = p; } note("R{x.id}"); }
-fn copy_only() { a = lp(70); copy_only_b(a); note("R{a.id}"); }
 
 // CONTROL — fresh records only.
 fn fresh_only() { x = lp(81); for i in 0..2 { x = lp(82 + i); } note("R{x.id}"); }
@@ -69,12 +60,6 @@ fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 
-  fresh_then_copy(); got = drain();
-  assert(got == "53,W54,54,W55,55,R56,R56,56", "a fresh record then a parameter copy, per iteration: {got}");
-  copy_then_fresh(); got = drain();
-  assert(got == "61,W60,62,W60,R63,63,R60,60", "a parameter copy then a fresh record, per iteration: {got}");
-  copy_only(); got = drain();
-  assert(got == "71,R70,R70,70", "only a parameter copy in the loop: {got}");
 
   fresh_only(); got = drain();
   assert(got == "81,82,R83,83", "CONTROL fresh records only: {got}");

@@ -88,28 +88,28 @@ fn ok(nm: text, got: text, want: text) {
 
 // 1 — the ORACLE: a plain bind of an owned local.  `(H-Move)` moves it, so the destination
 //     holds the lease and the hook is handed the record the destination holds.
-fn c1() { b = mk(2); x: H = b; x.id = 7; note("R{x.id}|B{b.id}"); }
+fn c1() { b = mk(2); x: H = b; x.id = 7; note("R{x.id}"); }
 
 // 2 — a `??` chain at STATEMENT level, the chosen operand an owned local.  The issue was filed
 //     against the `if` arm; this is the same defect with no `if` in it.
-fn c2() { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; note("R{x.id}|B{b.id}"); }
+fn c2() { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; note("R{x.id}"); }
 
 // 3 — the shape as filed: the chain inside an `if` arm, that arm taken.
-fn c3(k: integer) { s = SN { h: null }; b = mk(2); x: H = if k > 0 { s.h ?? b } else { mk(3) }; x.id = 7; note("R{x.id}|B{b.id}"); }
+fn c3(k: integer) { s = SN { h: null }; b = mk(2); x: H = if k > 0 { s.h ?? b } else { mk(3) }; x.id = 7; note("R{x.id}"); }
 
 // 4 — the OTHER arm of `c3`: the copy never ran, so the per-path flag is false and the source
 //     still owes its own release.  Both records are released, once each.
-fn c4(k: integer) { s = SN { h: null }; b = mk(2); x: H = if k > 0 { s.h ?? b } else { mk(3) }; x.id = 7; note("R{x.id}|B{b.id}"); }
+fn c4(k: integer) { s = SN { h: null }; b = mk(2); x: H = if k > 0 { s.h ?? b } else { mk(3) }; x.id = 7; note("R{x.id}"); }
 
 // 5 — the chain chooses the FIELD, which `(B-View)` makes an ALIAS: the write reaches `s`, and
 //     `s`'s cascade is what releases it.  Right before and after — the axis is the arm KIND.
-fn c5() { s = SN { h: mk(5) }; b = mk(2); x: H = s.h ?? b; x.id = 7; note("R{x.id}|B{b.id}|S{s.h?.id ?? -1}"); }
+fn c5() { s = SN { h: mk(5) }; b = mk(2); x: H = s.h ?? b; x.id = 7; note("R{x.id}|S{s.h?.id ?? -1}"); }
 
 // 6 — three operands, so the chain is a nest of arms rather than one.
-fn c6() { s = SN { h: null }; t = SN { h: null }; b = mk(2); x: H = s.h ?? t.h ?? b; x.id = 7; note("R{x.id}|B{b.id}"); }
+fn c6() { s = SN { h: null }; t = SN { h: null }; b = mk(2); x: H = s.h ?? t.h ?? b; x.id = 7; note("R{x.id}"); }
 
 // 7 — a `match` arm rather than an `if` arm: the same join, a different spelling.
-fn c7(k: integer) { s = SN { h: null }; b = mk(2); x: H = match k { 1 => { s.h ?? b }, _ => { mk(3) } }; x.id = 7; note("R{x.id}|B{b.id}"); }
+fn c7(k: integer) { s = SN { h: null }; b = mk(2); x: H = match k { 1 => { s.h ?? b }, _ => { mk(3) } }; x.id = 7; note("R{x.id}"); }
 
 // 8 — in a LOOP body, where the flag must be retired and re-set every pass: each iteration
 //     releases the record THAT pass's binding holds.
@@ -117,7 +117,7 @@ fn c8() { s = SN { h: null }; for i in 0..2 { b = mk(2 + i); x: H = s.h ?? b; x.
 
 // 9 — the release reached through a CASCADE instead of a direct hook: the droppable is a
 //     MEMBER of the bound type.  (Two droppable types behind nullable fields — loft#1622.)
-fn c9() { s = SW { w: null }; b = wmk(2); x: W = s.w ?? b; x.h.id = 7; note("R{x.h.id}|B{b.h.id}"); }
+fn c9() { s = SW { w: null }; b = wmk(2); x: W = s.w ?? b; x.h.id = 7; note("R{x.h.id}"); }
 
 // 10 — the SOURCE rebound after the chain.  The source's own new record is its own again
 //      (`@FR-O-Latest`), and the displaced release must not fire on a record it handed off —
@@ -125,59 +125,51 @@ fn c9() { s = SW { w: null }; b = wmk(2); x: W = s.w ?? b; x.h.id = 7; note("R{x
 fn c10() { s = SN { h: null }; b = mk(2); x: H = s.h ?? b; x.id = 7; b = mk(9); note("R{x.id}|B{b.id}"); }
 
 // 11 — the else arm a VARIABLE, so two locals are in play and only one of them is chosen.
-fn c11(k: integer) { s = SN { h: null }; b = mk(2); c = mk(4); x: H = if k > 0 { s.h ?? b } else { c }; x.id = 7; note("R{x.id}|B{b.id}|C{c.id}"); }
+fn c11(k: integer) { s = SN { h: null }; b = mk(2); c = mk(4); x: H = if k > 0 { s.h ?? b } else { c }; x.id = 7; note("R{x.id}"); }
 
 // 12 — the chain hand-grouped, which reaches the parser with a subject that is not a variable
 //      and is right-associated in the scopes pass instead (loft#1612).
-fn c12() { s = SN { h: null }; t = SN { h: null }; b = mk(2); x: H = s.h ?? (t.h ?? b); x.id = 7; note("R{x.id}|B{b.id}"); }
+fn c12() { s = SN { h: null }; t = SN { h: null }; b = mk(2); x: H = s.h ?? (t.h ?? b); x.id = 7; note("R{x.id}"); }
 
-// 13 — the loop axis the other way round: the chain's operand is declared OUTSIDE the loop, so
-//      the lift runs once per ITERATION over ONE record.  `(H-Spent)` refuses moving a name
-//      more than once and no error reports it yet, so the release stays with the SOURCE — put
-//      on the per-iteration lift it runs once a pass, which is a double release and a read of a
-//      freed record on the second.  `ownership_drop_gate`'s `p_l1` is this cell.
-fn c13() { a: H? = mk(24); for i in 0..2 { x = a ?? mk(25 + i); note("R{x.id}"); } }
 
 // Controls — the write-out path, right before and after.
 // k1: a plain VARIABLE arm, whose branch writes out per arm, so the binding owns its copy.
-fn k1(k: integer) { b = mk(2); x: H = if k > 0 { b } else { mk(3) }; x.id = 7; note("R{x.id}|B{b.id}"); }
+fn k1(k: integer) { b = mk(2); x: H = if k > 0 { b } else { mk(3) }; x.id = 7; note("R{x.id}"); }
 // k2: two variable arms — the unchosen one keeps its own release.
-fn k2(k: integer) { b = mk(2); c = mk(4); x: H = if k > 0 { b } else { c }; x.id = 7; note("R{x.id}|B{b.id}|C{c.id}"); }
+fn k2(k: integer) { b = mk(2); c = mk(4); x: H = if k > 0 { b } else { c }; x.id = 7; note("R{x.id}"); }
 
 fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
 
   c1();
-  ok("c1 the oracle, a plain bind ", drain(), "m2,R7|B2,d7");
+  ok("c1 the oracle, a plain bind ", drain(), "m2,R7,d7");
   c2();
-  ok("c2 a chain at statement level", drain(), "m2,R7|B2,d7");
+  ok("c2 a chain at statement level", drain(), "m2,R7,d7");
   c3(1);
-  ok("c3 a chain in an if arm     ", drain(), "m2,R7|B2,d7");
+  ok("c3 a chain in an if arm     ", drain(), "m2,R7,d7");
   c4(0);
-  ok("c4 the other arm            ", drain(), "m2,m3,R7|B2,d2,d7");
+  ok("c4 the other arm            ", drain(), "m2,m3,R7,d2,d7");
   c5();
-  ok("c5 the field arm, a view    ", drain(), "m5,m2,R7|B2|S7,d2,d7");
+  ok("c5 the field arm, a view    ", drain(), "m5,m2,R7|S7,d2,d7");
   c6();
-  ok("c6 three operands           ", drain(), "m2,R7|B2,d7");
+  ok("c6 three operands           ", drain(), "m2,R7,d7");
   c7(1);
-  ok("c7 a match arm              ", drain(), "m2,R7|B2,d7");
+  ok("c7 a match arm              ", drain(), "m2,R7,d7");
   c8();
   ok("c8 a chain in a loop        ", drain(), "m2,R70,d70,m3,R71,d71");
   c9();
-  ok("c9 through a cascade        ", drain(), "m2,R7|B2,d7");
+  ok("c9 through a cascade        ", drain(), "m2,R7,d7");
   c10();
   ok("c10 the source rebound      ", drain(), "m2,m9,R7|B9,d7,d9");
   c11(1);
-  ok("c11 the else arm a variable ", drain(), "m2,m4,R7|B2|C4,d7,d4");
+  ok("c11 the else arm a variable ", drain(), "m2,m4,R7,d7,d4");
   c12();
-  ok("c12 the chain hand-grouped  ", drain(), "m2,R7|B2,d7");
-  c13();
-  ok("c13 an operand outside a loop", drain(), "m24,R24,R24,d24");
+  ok("c12 the chain hand-grouped  ", drain(), "m2,R7,d7");
   k1(1);
-  ok("k1 control, a variable arm  ", drain(), "m2,R7|B2,d7");
+  ok("k1 control, a variable arm  ", drain(), "m2,R7,d7");
   k2(1);
-  ok("k2 control, two variable arms", drain(), "m2,m4,R7|B2|C4,d7,d4");
+  ok("k2 control, two variable arms", drain(), "m2,m4,R7,d7,d4");
 
   delete(trace_path());
   println("a lifted arm releases the record the binding holds: every cell holds");

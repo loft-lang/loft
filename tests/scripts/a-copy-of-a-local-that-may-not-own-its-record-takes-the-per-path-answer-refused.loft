@@ -1,0 +1,65 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: 301ed70c9 — interpret exit 1 -> 0, interpret expectations FAIL/6 -> 5/6 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/6 ->
+//   5/6 (the suite's verdict, not a count of matches)
+// @falsified-by:
+//   tests/falsified/a-copy-of-a-local-that-may-not-own-its-record-takes-the-per-path-answer-refused.patch
+//   — interpret exit 1 -> 0, interpret expectations FAIL/6 -> 5/6 (the suite's verdict, not a
+//   count of matches), native exit 1 -> 0, native expectations FAIL/6 -> 5/6 (the suite's
+//   verdict, not a count of matches)
+// CHANNEL: the expectations and the exit code, identically on both backends — on the control
+//   the refused cells compile, so every `@EXPECT_ERROR` goes unmatched.
+// ARMED: no instrument — the errors are on by default on this tree and off on the control.
+// WITNESS: on the control, `expected error not emitted` for each annotation.
+// HOLDS: leak and panic are unmoved on both trees; nothing runs on either.
+
+fn trace_path() -> text { return "loft_arm_carrier_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct AcH { id: integer }
+
+fn OpDrop(self: AcH) { note("{self.id}"); }
+
+fn ac(id: integer) -> AcH { return AcH { id: id }; }
+
+struct AcS { h: AcH }
+
+// The carrier copies the parameter in one arm; the hand-on is in another arm.  Both taken.
+// @EXPECT_ERROR: cannot copy `p` here
+// @EXPECT_ERROR: `x` is read after its value moved
+fn both_arms_b(p: AcH, c: boolean, d: boolean) { x = ac(131); if c { x = p; } if d { y = x; note("R{y.id}"); } note("R{x.id}"); }
+
+// The hand-on after the branch, unconditional.
+// @EXPECT_ERROR: cannot copy `p` here
+fn after_b(p: AcH, c: boolean) { x = ac(141); if c { x = p; } y = x; note("R{y.id}"); }
+
+// Handed on into a witnessed local that is then given a view.
+// @EXPECT_ERROR: cannot copy `p` here
+fn witnessed_b(p: AcH, c: boolean) { s = AcS { h: ac(152) }; x = ac(151); if c { x = p; } y = x; note("W{y.id}"); y = s.h; note("R{y.id}"); }
+
+// A chain: handed on twice.
+// @EXPECT_ERROR: cannot copy `p` here
+fn chain_b(p: AcH, c: boolean) { x = ac(161); if c { x = p; } y = x; z = y; note("R{z.id}"); }
+
+// No parameter: a branch arm hands the record to `z`, then `y = x` copies it again.
+// @EXPECT_ERROR: `x` is read after its value moved
+fn arm_then_copy(c: boolean) { x = ac(181); if c { z = x; note("R{z.id}"); } y = x; note("R{y.id}"); }

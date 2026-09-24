@@ -16,8 +16,7 @@
 //! refill in one arm, a move in an arm that returns, a type with no droppable, an argument, a
 //! view, and a loop that moves and refills on every pass.
 //!
-//! Opt-in behind `LOFT_LEASE_REFUSE` with the copy refusal, and for the same reason: this
-//! repository's own guards still read moved names (36 reads over 16 files, measured 2026-09-23).
+//! On by default with the copy refusal, and switched off with it by `LOFT_NO_LEASE_REFUSE=1`.
 //! Subprocess cells, as in `tests/lease_refuse.rs`: the switch is cached in a `OnceLock`.
 
 use std::path::PathBuf;
@@ -43,9 +42,9 @@ fn check(source: &str, mode: &str, on: bool) -> String {
         .env("LOFT_NO_CACHE", "1")
         .env("LOFT_ERRORS", "compact")
         .env("LOFT_TIMEOUT", "120")
-        .env_remove("LOFT_LEASE_REFUSE");
-    if on {
-        cmd.env("LOFT_LEASE_REFUSE", "1");
+        .env_remove("LOFT_NO_LEASE_REFUSE");
+    if !on {
+        cmd.env("LOFT_NO_LEASE_REFUSE", "1");
     }
     let out = cmd.output().expect("failed to invoke loft binary");
     let _ = std::fs::remove_file(&path);
@@ -168,7 +167,7 @@ fn a_legal_program_is_not_refused() {
     }
 }
 
-/// The switch is part of the contract until the corpus is converted: with it off, the same
+/// The switch is part of the contract (the drop gate runs under it): with it off, the same
 /// program compiles.  Without this the refused cells would pass just as well if the error were
 /// raised unconditionally.
 #[test]

@@ -59,92 +59,22 @@ fn pm(id: integer) -> PaH { return PaH { id: id }; }
 struct PaS { h: PaH }
 fn pm_s(id: integer) -> PaS { return PaS { h: pm(id) }; }
 
-// The then arm copies the parameter.
-fn then_b(p: PaH, c: boolean) { x = pm(51); if c { x = p; } note("V{x.id}"); }
-fn then_arm(c: boolean) { a = pm(52); then_b(a, c); }
-// The ELSE arm copies it, the then arm builds a fresh record.
-fn else_b(p: PaH, c: boolean) { x = pm(61); if c { x = pm(62); } else { x = p; } note("V{x.id}"); }
-fn else_arm(c: boolean) { a = pm(60); else_b(a, c); }
-// A later unconditional REBIND reads the same fact for the record it displaces.
-fn rebind_b(p: PaH, c: boolean) { x = pm(71); if c { x = p; } note("W{x.id}"); x = pm(72); note("V{x.id}"); }
-fn rebind_after(c: boolean) { a = pm(70); rebind_b(a, c); }
-// The written-out join: one arm a local, the other the parameter.
-fn join_b(p: PaH, c: boolean) { a = pm(82); x = pm(81); note("W{x.id}"); x = if c { a } else { p }; note("V{x.id}{a.id}"); }
-fn join(c: boolean) { q = pm(80); join_b(q, c); }
-// A branch NESTED inside an arm.
-fn nested_b(p: PaH, c: boolean) { x = pm(101); if c { if c { x = p; } } note("V{x.id}"); }
-fn nested(c: boolean) { a = pm(100); nested_b(a, c); }
-// A record that HOLDS the resource.
-fn member_b(p: PaS, c: boolean) { x = pm_s(111); if c { x = p; } note("V{x.h.id}"); }
-fn member(c: boolean) { s = pm_s(110); member_b(s, c); }
-// The MATCH spelling — it lowers to the same `If`.
-fn match_b(p: PaH, k: integer) { x = pm(121); match k { 1 => { x = p; }, _ => { note("N"); } } note("V{x.id}"); }
-fn match_arm(k: integer) { a = pm(120); match_b(a, k); }
-// A LOOP around the branch: the answer is per iteration.
-fn loop_b(p: PaH) { x = pm(161); for i in 0..3 { if i == 1 { x = p; } else { x = pm(162 + i); } } note("V{x.id}"); }
-fn in_a_loop() { a = pm(160); loop_b(a); }
 
-// CONTROL — every path copies a parameter.
-fn every_b(p: PaH, q: PaH, c: boolean) { x = pm(151); if c { x = p; } else { x = q; } note("V{x.id}"); }
-fn every_path(c: boolean) { a = pm(150); d = pm(152); every_b(a, d, c); }
-// CONTROL — the local was a parameter copy before the branch, so it is stopped on every path.
-fn stopped_b(p: PaH, q: PaH, c: boolean) { x = p; if c { x = q; } note("V{x.id}"); }
-fn stopped_before(c: boolean) { a = pm(140); d = pm(141); stopped_b(a, d, c); }
-// CONTROL — the copy in the arm is off a LOCAL, which takes that local's release (loft#1515).
-fn source_side(c: boolean) { x = pm(91); b = pm(92); if c { x = b; } note("V{x.id}{b.id}"); }
 
 fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 
-  then_arm(false); got = drain();
-  assert(got == "V51,51,52", "the path not taken releases the local's own record: {got}");
-  then_arm(true); got = drain();
-  assert(got == "51,V52,52", "the path taken releases the displaced record, the caller its own: {got}");
 
-  else_arm(true); got = drain();
-  assert(got == "61,V62,62,60", "the else arm copies, the then arm's fresh record is released: {got}");
-  else_arm(false); got = drain();
-  assert(got == "61,V60,60", "the else arm copies the parameter: {got}");
 
-  rebind_after(false); got = drain();
-  assert(got == "W71,71,V72,72,70", "a later rebind releases the record the copy did not replace: {got}");
-  rebind_after(true); got = drain();
-  assert(got == "71,W70,V72,72,70", "a later rebind releases nothing of the caller's: {got}");
 
-  join(true); got = drain();
-  assert(got == "W81,81,V8282,82,80", "the join's local arm releases the local's copy: {got}");
-  join(false); got = drain();
-  assert(got == "W81,81,V8082,82,80", "the join's parameter arm: {got}");
 
-  nested(false); got = drain();
-  assert(got == "V101,101,100", "a nested branch not taken: {got}");
 
-  member(false); got = drain();
-  assert(got == "V111,111,110", "a record holding the resource: {got}");
-  member(true); got = drain();
-  assert(got == "111,V110,110", "a record holding the resource, copied: {got}");
 
-  match_arm(0); got = drain();
-  assert(got == "N,V121,121,120", "a match arm not taken: {got}");
 
-  in_a_loop(); got = drain();
-  assert(got == "161,162,V164,164,160", "a loop releases per iteration: {got}");
 
-  every_path(true); got = drain();
-  assert(got == "151,V150,152,150", "CONTROL every path copies a parameter (then): {got}");
-  every_path(false); got = drain();
-  assert(got == "151,V152,152,150", "CONTROL every path copies a parameter (else): {got}");
 
-  stopped_before(true); got = drain();
-  assert(got == "V141,141,140", "CONTROL stopped before the branch: {got}");
-  stopped_before(false); got = drain();
-  assert(got == "V140,141,140", "CONTROL stopped before the branch, not copied again: {got}");
 
-  source_side(true); got = drain();
-  assert(got == "91,V9292,92", "CONTROL a copy off a local takes its release: {got}");
-  source_side(false); got = drain();
-  assert(got == "V9192,92,91", "CONTROL a copy off a local not taken: {got}");
 
   if !delete(trace_path()) { println("trace cleanup failed"); }
   println("parameter arm drop ok");

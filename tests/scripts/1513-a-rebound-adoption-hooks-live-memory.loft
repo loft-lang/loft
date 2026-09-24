@@ -59,46 +59,10 @@ struct Two { h: CfH, g: CfH }
 fn mk_dense() -> CfS { return CfS { h: CfH { id: 9 } }; }
 fn mk_two() -> Two { return Two { h: CfH { id: 1 }, g: CfH { id: 2 } }; }
 
-// The filed shape: the displaced literal hooks at the rebind, the adopted copy at scope
-// end — and the scope-end hook must read the record's own bytes, not a freed store's.
-fn own_then_copy() -> integer {
-  r = CfH { id: 4 };
-  a = r.id;
-  r = mk_dense().h;
-  return a * 10 + r.id;
-}
 
-// A loop rebind: pass 2 displaces pass 1's copy, scope end releases the last one.
-fn loop_rebind() -> integer {
-  r = CfH { id: 4 };
-  for i in 0..2 { r = mk_dense().h; }
-  return r.id;
-}
 
-// The adoption inside ONE arm: taken, the sentinel disarm rides inside the arm; not taken,
-// the work-ref never delivered and nothing changes.
-fn cond_rebind(c: boolean) -> integer {
-  r = CfH { id: 4 };
-  if c { r = mk_dense().h; }
-  return r.id;
-}
 
-// The load-bearing neighbour: `g` is still the lift's to release (the Except cascade),
-// `h`'s copy is the binding's, the displaced literal hooks at the rebind.
-fn two_field_rebind() -> integer {
-  r = CfH { id: 4 };
-  r = mk_two().h;
-  return r.id;
-}
 
-// The opposite order, unchanged: the copy is displaced at the rebind, the literal is the
-// binding's at scope end.
-fn copy_then_own() -> integer {
-  r = mk_dense().h;
-  a = r.id;
-  r = CfH { id: 4 };
-  return a * 10 + r.id;
-}
 
 // The tuple-literal spelling of the same one-claimant rule: the member's record hooks
 // through the ELEMENT free (live), and the construction's work-ref is disarmed.
@@ -111,29 +75,11 @@ fn main() {
   empty: vector<u8> = [];
   if !write_bytes(trace_path(), empty) { println("trace init failed"); }
 
-  v = own_then_copy(); got = drain();
-  assert(v == 49, "own-then-copy reads both records: got {v}");
-  assert(got == "4,9", "the displaced literal, then the adopted copy on LIVE memory: got '{got}'");
 
-  v = loop_rebind(); got = drain();
-  assert(v == 9, "the loop rebind reads the last copy: got {v}");
-  assert(got == "4,9,9", "each pass displaces the previous record, scope end the last: got '{got}'");
 
-  v = cond_rebind(true); got = drain();
-  assert(v == 9, "the taken arm adopts: got {v}");
-  assert(got == "4,9", "taken: displaced literal, then the copy on live memory: got '{got}'");
 
-  v = cond_rebind(false); got = drain();
-  assert(v == 4, "the untaken arm keeps the literal: got {v}");
-  assert(got == "4", "not taken: the literal alone, at scope end: got '{got}'");
 
-  v = two_field_rebind(); got = drain();
-  assert(v == 1, "the copied field reads: got {v}");
-  assert(got == "2,4,1", "g via the lift's cascade, the displaced literal, then h's copy live: got '{got}'");
 
-  v = copy_then_own(); got = drain();
-  assert(v == 94, "copy-then-own reads both records: got {v}");
-  assert(got == "9,4", "the displaced copy at the rebind, the literal at scope end: got '{got}'");
 
   v = tuple_literal_member(); got = drain();
   assert(v == 21, "the tuple literal member reads: got {v}");

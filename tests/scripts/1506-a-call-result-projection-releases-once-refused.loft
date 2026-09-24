@@ -1,0 +1,114 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// The REFUSED half of `1506-a-call-result-projection-releases-once.loft` (@PLN163 P3, `@FR-H-Copy-Refuse`, `@FR-H-Spent`).
+//
+// Each cell below measured how many times a shape released its resource, and the rules
+// now refuse that shape at compile time: a COPY of a value the function does not own
+// (`(H-Copy-Refuse)`), or a read of a name whose value an earlier statement MOVED
+// (`(H-Spent)`).  The release behaviour they pinned is the drop gate's to measure
+// (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
+// verified against.  Here each cell pins the refusal instead, with the words it must say.
+//
+// @falsified-at: 301ed70c9 — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 ->
+//   3/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1506-a-call-result-projection-releases-once-refused.patch —
+//   interpret exit 1 -> 0, interpret expectations FAIL/3 -> 3/3 (the suite's verdict, not a count
+//   of matches), native exit 1 -> 0, native expectations FAIL/3 -> 3/3 (the suite's verdict, not
+//   a count of matches)
+// CHANNEL: the expectations and the exit code, identically on both backends — on the control
+//   the refused cells compile, so every `@EXPECT_ERROR` goes unmatched.
+// ARMED: no instrument — the errors are on by default on this tree and off on the control.
+// WITNESS: on the control, `expected error not emitted` for each annotation.
+// HOLDS: leak and panic are unmoved on both trees; nothing runs on either.
+
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record-returning call whose result is PROJECTED releases each resource ONCE (loft#1506).
+//
+// `heap.md (H-Drop)` runs a type's `OpDrop` once per resource, and its responsibility clause
+// moves the release with a copy: the copy owns, the source stops dropping.  A projection of a
+// call result materialises a copy out of the lifted temp (`(B-View)`: the base dies inside the
+// statement), and the temp's cascade kept releasing the copied-out field — `x = mk().h.id` ran
+// the hook twice, and `r = mk().h` bound an ALIAS both of whose names carried owner hooks.
+//
+// The cure is field-grained responsibility transfer (D-heap-3): the copy-out registers the
+// (temp, offset) pairing, and the temp's scope-end release runs `t_<T>_OpDropAllExcept`, the
+// skip-capable cascade generated beside the full one from the same `cascade_fields` home.  The
+// two-droppable-field cell is the one that excluded every cheaper cure — the cascade does
+// NECESSARY work for `g` in the same call in which it duplicated `h` — so it is the
+// load-bearing cell here and must not be simplified away.
+//
+// ⚠ A release-count boundary alone cannot score this family: the adopt-base attempt (D-heap-3
+// exclusion 3) passed every count cell while reading freed memory.  The memory channels are
+// `LOFT_POISON=1` over tests/scripts/889-collection-through-a-call-s-field.loft (kept there)
+// and, since loft#1513 (whose poison face was this guard's own `own_then_copy` cell), the
+// poison runs of THIS guard in tests/store_lifetime_1512_1513.rs.
+//
+// The `?` receiver and the returned projection — D-heap-3's other two shapes, which used to
+// be listed here as open — closed 2026-09-10; their cells live in
+// tests/scripts/1506b-a-join-and-a-returned-projection-release-once.loft.  The mixed own/view
+// local closed as D-heap-4 (loft#1510), in tests/scripts/1510-a-mixed-own-view-locals-record
+// -hooks-once.loft.  The `own_then_copy` cell's poison face — the binding and the
+// materialising work-ref named one store and the declaration order decided whether the hook
+// read a live record — closed as D-heap-5 (loft#1513): the adoption now disarms the work-ref,
+// so the binding is the store's ONE claimant.  `copy_then_own` beside it is the opposite
+// order and was the always-clean control; keep the pair adjacent.
+//
+// @falsified-at: 636bd457 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1506-a-call-result-projection-releases-once.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: exit + asserts, BOTH backends equally — the count cells fail on the control
+//     (the chained projection reads two hooks where the guard demands one) and pass here.
+//   ARMED: nothing; a plain run scores it.  The leak channel is `none` on both trees —
+//     a doubled release is not a leak, which is why the count is asserted directly.
+//   HOLDS: leak, panic, refusals and expectations are equal on both trees; the memory
+//     channel for this family lives in the 889 poison cells, referenced above.
+fn trace_path() -> text { return "loft_1506_trace.tmp"; }
+
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+
+struct CfH { id: integer }
+
+fn OpDrop(self: CfH) { note("{self.id}"); }
+
+struct CfS { h: CfH }
+
+struct Two { h: CfH, g: CfH }
+
+struct Mid { h: CfH }
+
+struct Outer { m: Mid }
+
+fn mk_dense() -> CfS { return CfS { h: CfH { id: 9 } }; }
+
+// The bound projection: `r` used to alias the temp with both names carrying owner hooks.
+// @EXPECT_ERROR: cannot copy a member of the container here
+fn bound_projection() -> integer { r = mk_dense().h; return r.id; }
+
+// A local that holds the projection's copy and is then reassigned: the copy is displaced —
+// released through its hook at the rebind — and the literal is the binding's to release at
+// scope end.  Owner-typed adoption is what makes both fire; the aliasing lowering lost one.
+// @EXPECT_ERROR: cannot copy a member of the container here
+fn copy_then_own() -> integer {
+  r = mk_dense().h;
+  a = r.id;
+  r = CfH { id: 4 };
+  return a * 10 + r.id;
+}
+
+// @EXPECT_ERROR: cannot copy a member of the container here
+fn own_then_copy() -> integer {
+  r = CfH { id: 4 };
+  a = r.id;
+  r = mk_dense().h;
+  return a * 10 + r.id;
+}

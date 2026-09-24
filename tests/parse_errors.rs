@@ -1993,6 +1993,27 @@ fn op_drop_takes_only_self() {
     );
 }
 
+/// `(H-Copy-Lease)`: `OpCopy` runs on the new structure a copy makes, called by the compiler
+/// like `OpDrop`, so it answers nothing and takes nothing but `self`.
+#[test]
+fn op_copy_takes_only_self_and_cannot_return() {
+    code!(
+        "struct Tx { t: text }
+         fn OpDrop(self: Tx) { assert(self.t != \"\", \"t\") }
+         fn OpCopy(self: Tx, extra: integer) -> boolean { extra > 0 && self.t != \"\" }
+         fn test() { x = Tx { t: \"a\" }; }"
+    )
+    .error(
+        "`OpCopy` cannot return — it runs on the new copy with no caller to answer; \
+         anything whose failure matters stays an explicit call \
+         at op_copy_takes_only_self_and_cannot_return:3:48",
+    )
+    .error(
+        "`OpCopy` takes only `self` — the compiler calls it, so a second argument has \
+         nowhere to come from at op_copy_takes_only_self_and_cannot_return:3:48",
+    );
+}
+
 /// `@FR-F-Render` — a rendering that REACHES a tuple is refused, not only a bare one.
 ///
 /// Asked of the formatted type alone, `"{v}"` over a vector of tuples took the record walker
@@ -4959,8 +4980,9 @@ fn a_short_lambda_alone_cannot_bind_a_generic_literal() {
 /// that is refused — as for any stdlib method (`clear`).
 #[test]
 fn a_programs_own_reverse_for_a_vector_is_refused() {
+    let s = loft::platform::sep_str();
     code!("fn reverse<T>(v: vector<T>) -> integer { len(v) }\nfn test() { a = [1, 2]; assert(reverse(a) == 2, \"\"); }")
-        .error("Cannot redefine 'reverse' (already defined at default/01_code.loft) — a name has one body per receiver type, and `x.reverse(…)` and `reverse(x, …)` would reach different functions; declare it once as a `self` method, which takes both spellings, or rename one at a_programs_own_reverse_for_a_vector_is_refused:1:31");
+        .error(&format!("Cannot redefine 'reverse' (already defined at default{s}01_code.loft) — a name has one body per receiver type, and `x.reverse(…)` and `reverse(x, …)` would reach different functions; declare it once as a `self` method, which takes both spellings, or rename one at a_programs_own_reverse_for_a_vector_is_refused:1:31"));
 }
 
 /// @PLN165 E3 — `insert`'s element is a store into the vector's element slot and converts as

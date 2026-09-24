@@ -611,7 +611,8 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **2** — `D-heap-8` and `D-heap-9`.  The count is the UNION of two branches that each
+OPEN: **1** — `D-heap-9` (`D-heap-8`, loft#1568, CLOSED 2026-09-23: both lease errors are on
+by default, and this repository's corpus is converted to them).  The count before that was the UNION of two branches that each
 closed entries the other still listed, and neither side's number was right for the join: this
 branch read 4 (`D-heap-8`, `9`, `36`, `38`) and `tuxedo-165-generics` read 3 (`D-heap-8`, `9`,
 `15`).  Taken per ENTRY rather than per side — `D-heap-15` closed here, `D-heap-36` and
@@ -1389,7 +1390,7 @@ CLOSED 2026-09-17, below.
   across 900 000 refills, and twelve value cells); plan cells
   `plans/164-activation-arena/bytecode-comparisons/1549-pooled-buffer-release-cells.loft`.
 
-### D-heap-8 — OPEN (2026-09-15, loft#1568): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
+### D-heap-8 — OPENED 2026-09-15, CLOSED 2026-09-23 (loft#1568): nothing refuses a copy — a written copy of a droppable without `OpCopy` compiles
 
 - **Violates:** (H-Copy-Refuse).
 - ⚠ **NARROWED 2026-09-17, when the owner ruled on the copy rules.**  `(H-Move)` now moves a value
@@ -1401,7 +1402,7 @@ CLOSED 2026-09-17, below.
   measured, both backends).  A SECOND half is `(H-Spent)`'s error for reading a name after its
   value moved — `c = open(1); if c { v += [c]; } … c.id` reads a value whose hook has already
   run, and no store instrument can see it because the memory is intact and only the resource is
-  gone.  **Built 2026-09-23, behind the same `LOFT_LEASE_REFUSE`** as `error[read-after-move]`
+  gone.  **Built 2026-09-23** as `error[read-after-move]`, on by default with the copy refusal
   (`src/spent.rs`): the moves are `lease.rs`'s own verdict (`Frame::spends`), read at every
   placement the parser writes, and the reads are followed through the body BEFORE the scope pass,
   whose releases and snapshots are reads of their own that no rule judges.  A read any spending
@@ -1468,8 +1469,8 @@ CLOSED 2026-09-17, below.
   cascades over one resource.  ⚠ `OpDropAll` is a generated per-type METHOD rather than an
   operator, so the operator census cannot see it: `OpFreeRef` being among the most emitted ops in
   the tree says nothing about how well that cascade is covered, and no instrument here measures it.
-- **Status:** OPEN — @PLN163 P2 (the refusal as a report, reworked to this rule) is done, and P3's
-  refusal is BUILT behind `LOFT_LEASE_REFUSE` (opt-in, 2026-09-17).  With the switch on, every
+- **Status:** CLOSED (below) — @PLN163 P2 (the refusal as a report, reworked to this rule) is done, and P3's
+  refusal was BUILT behind an opt-in switch on 2026-09-17, which the paragraph below describes.  With the switch on, every
   verdict above is raised as `error[copy-of-droppable]` naming the copy and what to write instead,
   identically on both backends — it is decided after the scope pass, before either generates, so
   the two cannot disagree.  The entry stays OPEN because the default is off: what the rules refuse
@@ -1481,6 +1482,34 @@ CLOSED 2026-09-17, below.
 - **Removal:** the corpus and the fixtures converted — the refused cells become refusal cells —
   and then the refusal on by default, with the switch left as the bisect step for a program the
   rules refuse.
+- ⚠ **CLOSED 2026-09-23 — both errors are on by default** (`LOFT_NO_LEASE_REFUSE=1` switches
+  them off; the drop gate runs every cell under it, since a refused cell measures no release and
+  those releases are what @PLN163 P5 is verified against).  Converting the corpus found the copy
+  refusal refusing FIVE shapes the rules permit, fixed at the census rather than converted: a
+  vector literal's own `__vdb_N` backing read as a container (a tuple literal holding `[mk()]`, a
+  `match` over a call's vector), a returned tuple local with no hold (`a` as a tail, `return t`,
+  a nullable member through its stash), a whole-tuple move's vector and nullable members, and a
+  member of a call result handed to a function as an argument.  Each is a legal cell in
+  `tests/lease_refuse.rs`.  The corpus then held 124 genuine sites in 25 files: three files'
+  incidental late reads were dropped in place (the cell measured a release, not the read), and
+  every other refused cell moved to a companion `<name>-refused.loft` that pins the refusal with
+  `@EXPECT_ERROR`, the original keeping its legal cells and controls.  The corpus runner
+  (`tests/wrap.rs`) now raises the census after the scope pass, where the CLI and `loft test`
+  do — it ran only a hand-picked pre-scope subset of the lints, so an `@EXPECT_ERROR` for either
+  error could never match there.  The `registry` fixture's arms no longer `disown` a cursor
+  they moved.
+- ⚠ **Two copies the census never saw, found 2026-09-24 and closed the same day** (#1569's
+  matrix).  Both had no IR left by the time the census walked the function.  `u = p` of a VECTOR
+  parameter that nothing mutates is deleted by the borrow elision (`scopes::elide_borrows`), which
+  rewrites every read of `u` to `p`; the same bind followed by `u += […]` kept its copy and was
+  refused, so a LATER line decided validity — `(H-Copy-Refuse)`'s *"whatever the program does
+  after that line"*, violated.  And `p = p`, which the parser erases (#330), was recorded for the
+  census only when `LOFT_DROP_COPY_CENSUS` was set, so by default it was never judged.  Each
+  erasure now records the copy it removed (`copy_manifest::note_elided_copy`,
+  `note_self_bind`) and the census judges the record by the written line.  The drop gate's `p_v4`
+  (`u = p` of a vector parameter) had been classified `Once` on the strength of the first hole;
+  it is `Refused`, with its record twins `p_k7`, `p_h2`–`p_h7`.  Pinned by
+  `tests/lease_refuse.rs::a_copy_the_compiler_skips_is_judged_by_its_own_line`, both backends.
 
 ### D-heap-9 — OPEN (2026-09-15, loft#1569): `OpCopy` is not a hook
 

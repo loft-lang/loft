@@ -133,7 +133,8 @@ for key in $keys; do
 	fi
 	if [ "$rc" != 0 ]; then
 		echo "    FAIL: $key does not render — the page reports a failure state"
-		printf '%s\n' "$out" | head -8 | sed 's/^/      /'
+		# The whole record: its tail carries the page's own text, which says why.
+		printf '%s\n' "$out" | head -80 | sed 's/^/      /'
 		failed=$((failed + 1))
 	fi
 done

@@ -4826,7 +4826,8 @@ pub fn post_scope_lints(
     // loft#1397 — a payload binding whose subject's place is overwritten with another variant.
     warn_variant_overwritten(data, diags, fallback_file);
     // @PLN163 P0/P3 — the census of copies of a record with a release (gated
-    // `LOFT_DROP_COPY_CENSUS`), and the refusal the same verdicts raise (`LOFT_LEASE_REFUSE`).
+    // `LOFT_DROP_COPY_CENSUS`), and the errors the same verdicts raise (on by default;
+    // `LOFT_NO_LEASE_REFUSE=1` switches them off).
     drop_copy_census(data, diags, fallback_file);
 }
 
@@ -4917,10 +4918,31 @@ pub fn drop_copy_census(
                     false,
                 );
             }
+            // A whole-value bind the borrow elision deleted is a copy the line WROTE: the
+            // elision is `(H-Elide)`'s to make after the verdict, never a reason to skip it.
+            for (var, src) in crate::copy_manifest::elided_copies(d_nr) {
+                if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
+                    continue;
+                }
+                cx.line = func.var_source(var).0;
+                cx.pos = None;
+                let lease = cx
+                    .frame
+                    .written_var_verdict(src, crate::lease::Placement::Structure);
+                let tp = data.type_name_str(func.tp(var));
+                cx.emit(
+                    "bind",
+                    &tp,
+                    &[src],
+                    func.name(var),
+                    (Some(&lease), "-"),
+                    false,
+                );
+            }
             sites += cx.sites;
             if refuse {
                 raise_copy_refusals(&mut cx, def, diags, fallback_file);
-                raise_spent_reads(d_nr, def, diags, fallback_file);
+                raise_spent_reads(def, diags, fallback_file);
             }
         }
     }
@@ -5006,7 +5028,6 @@ fn raise_copy_refusals(
 /// the value moved on and the cure the rule gives: read it through the structure it moved into,
 /// or give the name a new value first.
 fn raise_spent_reads(
-    d_nr: u32,
     def: &crate::data::Definition,
     diags: &mut crate::diagnostics::Diagnostics,
     fallback_file: &str,
@@ -5016,7 +5037,7 @@ fn raise_spent_reads(
     } else {
         def.position.file.as_str()
     };
-    for read in crate::spent::take(d_nr) {
+    for read in crate::spent::take(def) {
         let (file, line, col) = match &read.pos {
             Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
@@ -5050,6 +5071,37 @@ fn raise_spent_reads(
             concept: "move",
             concept_ref: "@F106",
         });
+    }
+}
+
+/// The tuple local a `synthetic_tuple_return` block copies member by member, when it copies
+/// straight from the local rather than through a hold: the one root every member copy
+/// (`OpCopyRecord(TupleGet(t, i), …)`) reads.  `None` when the copies read no member or more
+/// than one tuple.
+fn tuple_returned_by_members(ops: &[Value], copy_d: u32) -> Option<u16> {
+    let mut roots: Vec<u16> = Vec::new();
+    for op in ops {
+        op.walk(&mut |n| {
+            let t = match n.unspan() {
+                // A member copied straight, or written through the stash a nullable member takes.
+                Value::Call(d, args) if *d == copy_d => match args.first().map(Value::unspan) {
+                    Some(Value::TupleGet(t, _)) => *t,
+                    _ => return,
+                },
+                Value::Set(_, rhs) => match rhs.unspan() {
+                    Value::TupleGet(t, _) => *t,
+                    _ => return,
+                },
+                _ => return,
+            };
+            if !roots.contains(&t) {
+                roots.push(t);
+            }
+        });
+    }
+    match roots.as_slice() {
+        [t] => Some(*t),
+        _ => None,
     }
 }
 
@@ -5095,6 +5147,24 @@ struct Census<'a> {
 }
 
 impl Census<'_> {
+    /// Is `src` one member of the whole tuple being copied (`whole_tuple`) — read straight
+    /// (`t.0`), or through the stash a nullable member is written through (`__ref_2 = t.1`)?
+    /// That tuple's copy is ONE site, judged as the whole; its member copies are its parts, a
+    /// record's by `OpCopyRecord` and a vector's by an append.
+    fn member_of_whole_tuple(&self, src: &Value) -> bool {
+        let Some(whole) = self.whole_tuple else {
+            return false;
+        };
+        match src.unspan() {
+            Value::TupleGet(b, _) => self.frame.resolve_view(*b).0 == whole,
+            Value::Var(v) => {
+                self.frame.resolve_view(*v) == (whole, true)
+                    || self.frame.stashes_member_of(*v, whole)
+            }
+            _ => false,
+        }
+    }
+
     /// Record for the copy-manifest check (@PLN163 P2b) that the copy into `dest` has a lease
     /// verdict — and, when `dest` is one of the function's return buffers, that its result does.
     fn note_destination(&self, dest: &Value) {
@@ -5143,15 +5213,23 @@ impl Census<'_> {
                 // hold of the tuple (`__ref_3 = t`): one whole-tuple copy of `t`.
                 "synthetic_tuple_return" => {
                     self.placement = Placement::Return;
-                    if let Some(hold) = bl.operators.iter().find_map(|o| match o.unspan() {
-                        Value::Set(h, rhs)
-                            if matches!(rhs.unspan(), Value::Var(_))
-                                && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
-                        {
-                            Some(*h)
-                        }
-                        _ => None,
-                    }) {
+                    // The tuple is reached through a hold of it (`__ref_3 = t`) or, where the
+                    // return names the local itself (`a = (1, mk(1)); a`, `return t`), straight
+                    // from the member copies: every one reads a member of that one local.
+                    let hold = bl
+                        .operators
+                        .iter()
+                        .find_map(|o| match o.unspan() {
+                            Value::Set(h, rhs)
+                                if matches!(rhs.unspan(), Value::Var(_))
+                                    && matches!(self.func.tp(*h).base(), Type::Tuple(_)) =>
+                            {
+                                Some(*h)
+                            }
+                            _ => None,
+                        })
+                        .or_else(|| tuple_returned_by_members(&bl.operators, self.copy_d));
+                    if let Some(hold) = hold {
                         let (root, through_member) = self.frame.resolve_view(hold);
                         let (lease, liveness) = if through_member {
                             let refused = Lease::Refuse(Refusal::Container(root));
@@ -5186,8 +5264,7 @@ impl Census<'_> {
                 if *d == self.copy_d
                     && args.len() >= 3
                     && copied_record_releases(self.data, &args[2])
-                    && !matches!(args[0].unspan(), Value::TupleGet(b, _)
-                        if self.whole_tuple == Some(self.frame.resolve_view(*b).0)) =>
+                    && !self.member_of_whole_tuple(&args[0]) =>
             {
                 let (kind, into) = match args[1].unspan() {
                     Value::Var(v) => {
@@ -5252,6 +5329,7 @@ impl Census<'_> {
             Value::Call(d, args)
                 if *d == self.op_append
                     && args.len() >= 2
+                    && !self.member_of_whole_tuple(&args[1])
                     && matches!(args[0].unspan(), Value::Var(v)
                         if self.data.type_owns_droppable_anywhere(self.func.tp(*v).base())) =>
             {
@@ -5437,7 +5515,23 @@ impl Census<'_> {
         if is_block {
             self.blocks.push(std::ptr::from_ref(node));
         }
-        node.for_each_child(&mut |c| self.scan(c));
+        // A member of a call result handed to a FUNCTION as an argument is lowered as a copy
+        // into a temporary the call reads (`take(mk().h)`, an `inline ref copy` block): passing
+        // binds without copying (calls.md F-ParamHeap), so nothing the author wrote places the
+        // value in a new structure.  Only that argument reads through; another argument that
+        // builds a structure (`take(S { h: p })`) is judged as written.
+        let user_call = matches!(node, Value::Call(op, _)
+            if !self.data.def(*op).name().starts_with("Op"));
+        node.for_each_child(&mut |c| {
+            if user_call && matches!(c.unspan(), Value::Block(b) if b.name == "inline ref copy") {
+                let saved = self.placement;
+                self.placement = Placement::ReadThrough;
+                self.scan(c);
+                self.placement = saved;
+            } else {
+                self.scan(c);
+            }
+        });
         if is_block {
             self.blocks.pop();
         }
