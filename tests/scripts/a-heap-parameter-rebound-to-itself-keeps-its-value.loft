@@ -11,6 +11,14 @@
 //
 // @falsified-at: 1a7b0d910 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/a-heap-parameter-rebound-to-itself-keeps-its-value.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic and the stack-store free refusal are equal on both trees and on both
+//   backends.  That is read off the receipt rather than assumed: `falsify.sh` prints only the
+//   channels that MOVE and requires HERE to be clean, so a channel absent from the two lines
+//   above was equal on the control.  It matters here because the defect answers a wrong VALUE
+//   — every later read of the parameter was `null` — and a patch that moved a LEAK instead
+//   would be reintroducing a different fault while still turning this file red.
+//   The caller's own value is asserted in every cell, so a control that merely stopped the
+//   callee crashing, and left the caller's record detached, would not pass here either.
 struct P { id: integer, t: text }
 enum E { EA { a: integer }, EB { b: text } }
 struct R { k: integer, v: text }
