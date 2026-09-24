@@ -611,8 +611,9 @@ pattern so any surviving `H-FreeTwice` / use-after-free surfaces as a corrupted 
 
 ## Deviations
 
-OPEN: **1** — `D-heap-9` (`D-heap-8`, loft#1568, CLOSED 2026-09-23: both lease errors are on
-by default, and this repository's corpus is converted to them).  The count before that was the UNION of two branches that each
+OPEN: **0** — `D-heap-9` (loft#1569) CLOSED 2026-09-24: `OpCopy` runs on every copy a leasing
+type makes, the view-lowered ones materialised (`D-heap-8`, loft#1568, CLOSED 2026-09-23: both
+lease errors are on by default, and this repository's corpus is converted to them).  The count before that was the UNION of two branches that each
 closed entries the other still listed, and neither side's number was right for the join: this
 branch read 4 (`D-heap-8`, `9`, `36`, `38`) and `tuxedo-165-generics` read 3 (`D-heap-8`, `9`,
 `15`).  Taken per ENTRY rather than per side — `D-heap-15` closed here, `D-heap-36` and
@@ -1511,7 +1512,7 @@ CLOSED 2026-09-17, below.
   it is `Refused`, with its record twins `p_k7`, `p_h2`–`p_h7`.  Pinned by
   `tests/lease_refuse.rs::a_copy_the_compiler_skips_is_judged_by_its_own_line`, both backends.
 
-### D-heap-9 — OPEN (2026-09-15, loft#1569): `OpCopy` is not a hook
+### D-heap-9 — OPENED 2026-09-15, CLOSED 2026-09-24 (loft#1569): `OpCopy` is not a hook
 
 - **Violates:** (H-Copy-Lease), (H-Elide).
 - **Where:** `parser/definitions.rs` checks `OpDrop`'s signature (`check_drop_signature`) and
@@ -1521,9 +1522,42 @@ CLOSED 2026-09-17, below.
   both backends: `a = mk(1); b = a` prints no line from the hook, and the release moves to one of
   the two structures (`M1 R1 1 D1`).  A type that means to lease its copies gets neither the lease
   nor an error saying it has none.
-- **Status:** OPEN — @PLN163 P4; P5 then removes the release-moving machinery the lease replaces.
-- **Removal:** the signature check, the synthesized copy cascade, and a call at every copy site
-  on both backends; the moved release removed wherever a copy leases.
+- **Closed in two steps, 2026-09-24.**  The first built the hook.  `OpCopy`'s signature
+  is checked like `OpDrop`'s; a type whose members declare it gets a synthesized
+  `t_<LEN><Type>_OpCopyAll` (its own hook first, then its members', through the drop cascade's own
+  member walks with the hook as a parameter — `parser::definitions::Hook`); and every copy the
+  census can follow with a statement — a whole-value bind, an `OpCopyRecord` into a field, an
+  element or a buffer, a join arm — gets the cascade called on the new structure, in the IR after
+  the scope pass (`use_analysis::lease_calls`), so both backends run it.  `scopes::copy_moves_drop_from`
+  moves no release for such a copy, so each structure drops once.  A type leases when a droppable
+  inside it declares `OpCopy` and none lacks one (`lease::leases_whole`); a member without the hook
+  still refuses the whole copy.  Measured over a 19-cell matrix on both backends, identical under
+  `LOFT_POISON`, `LOFT_STRICT_STORES` and the native leak check; pinned by `tests/copy_lease.rs`.
+  The copies the lowering implemented as a VIEW, and which took no lease — with the refusal
+  off they released one resource twice, the lowering having skipped the copy and kept its drop —
+  were REFUSED for the first half and are MATERIALISED now, each only where the type leases, so
+  no other type's lowering moves:
+  - `p = p` of a parameter is not erased (#330 keeps erasing every other identity) and goes
+    through the parameter rebind's hoist — `tmp = p`, a leased copy, then `p = tmp`.  The census
+    judges a compiler temp that OWNS a leasing type as a move (`lease::Frame::written_leaf`): what
+    filled it took its lease there;
+  - a tuple item — a parameter, or a member of a record that owns a droppable — is copied into the
+    tuple's own storage (`tuple_member_owned_copy`);
+  - `return p`, `return s.h` and a tail doing the same are copied into the return buffer
+    (`return_copies_a_leasing_value` beside `return_projects_into_local`, at the statement and the
+    tail); a join is copied PER ARM (`materialize_view_arms`), so a fresh arm runs no hook — and a
+    local promoted onto the buffer is an argument by slot only (`is_hidden_param`), not a copy;
+  - a whole collection copied or appended leases the appended elements alone, through a
+    synthesized `t_<LEN><vector<T>>_OpCopyTail(self, n)` called with the source's length: the pass
+    after the scope pass cannot mint a loop counter, the slots being assigned.  A copy the borrow
+    elision removes together with its drop runs nothing — `(H-Elide)` — and is legal; a
+    self-append `v += v` reads a spent name and is `(H-Spent)`'s.
+  `par` was measured too: a worker reads its element in place (an argument, no copy), a worker
+  that returns a copy leases it in the worker, and the result crossing back is a byte move.  Every
+  cell — 29 on both backends — identical under `LOFT_POISON`, strict stores and the native leak
+  check; `tests/copy_lease.rs`.
+- **Status:** CLOSED 2026-09-24.  @PLN163 P5 — removing the release-moving machinery the lease
+  replaces — is a removal measured against these cells, not part of this entry.
 
 ### D-heap-13 — CLOSED (2026-09-20): a collection returned from a call and bound to a local never releases its elements
 

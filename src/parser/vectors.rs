@@ -6260,7 +6260,14 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // value with no source to diverge from.
         let src = match val.unspan() {
             Value::Var(v) => {
-                if *v >= self.vars.count() || self.vars.is_argument(*v) {
+                // A parameter of a type that declares `OpCopy` is copied like any other source:
+                // the member takes a lease of its own (`(H-Copy-Lease)`), so it is no alias.
+                if *v >= self.vars.count()
+                    || (self.vars.is_argument(*v)
+                        && !tp
+                            .heap_def_nr()
+                            .is_some_and(|r| crate::lease::leases_whole(&self.data, r)))
+                {
                     return None;
                 }
                 Value::Var(*v)
@@ -6283,9 +6290,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // releases once.
             Value::Call(d, _)
                 if crate::use_analysis::is_projection_op(&self.data, *d)
-                    && tp
-                        .heap_def_nr()
-                        .is_some_and(|r| !self.data.owns_droppable(r)) =>
+                    && tp.heap_def_nr().is_some_and(|r| {
+                        !self.data.owns_droppable(r) || crate::lease::leases_whole(&self.data, r)
+                    }) =>
             {
                 val.unspan().clone()
             }

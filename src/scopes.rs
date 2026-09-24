@@ -3074,6 +3074,17 @@ pub(crate) fn copy_moves_drop_from(
     if !copy_carries_drop(function, data, v, function.tp(src)) {
         return None;
     }
+    // @FR-H-Copy-Lease — a copy of what the caller still holds, of a type that declares
+    // `OpCopy`, takes a lease of its own: two structures, two drops, and no release moves.
+    if (function.is_argument(src) || function.holds_caller_record(src))
+        && function
+            .tp(v)
+            .base()
+            .heap_def_nr()
+            .is_some_and(|d| crate::lease::leases_whole(data, d))
+    {
+        return None;
+    }
     // A local that holds the caller's record on every path answers as the parameter it copies:
     // its copies move nothing either (`Function::holds_caller_record`).
     Some(
@@ -9238,6 +9249,8 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // verdict is the same `owns` fact `get_free_vars` uses, and that fact is only
     // final once the call-result rewrites (`make_independent`) have run.
     mark_borrowed_captures(data, database);
+    // `(H-Copy-Lease)` — every copy of a type that declares `OpCopy` runs it on the new structure.
+    crate::use_analysis::lease_calls(data);
     // `LOFT_VAR_TABLE=<fn substring>` — the variable table beside the IR dump, with
     // each type dep resolved to `name(index)`.  Observer only; a no-op when unset.
     crate::variables::dump_var_tables(data, 0);
