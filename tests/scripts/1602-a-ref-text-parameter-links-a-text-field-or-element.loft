@@ -19,6 +19,10 @@
 // growing a SIBLING collection of the linked element's record, which disturbs nothing it links.
 // A temporary (a literal, `directory`'s computed text) still takes a work copy.
 //
+// @falsified-at: 569caacf3 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1602-a-ref-text-parameter-links-a-text-field-or-element.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: assertion failures and exit, both backends.
 
 struct O { a: text, b: text }

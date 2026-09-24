@@ -1,0 +1,690 @@
+diff --git b/src/data.rs a/src/data.rs
+index 8d82fbe9a..86d6a4652 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -4783,12 +4783,10 @@ impl Definition {
+         while let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Instance) {
+             name = parts.rest;
+         }
+-        if let Some(parts) = Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
+-            return parts.rest;
++        match Data::split_key(name).filter(|k| k.kind == KeyKind::Method) {
++            Some(parts) => parts.rest,
++            None => name.strip_prefix("n_").unwrap_or(name),
+         }
+-        // A store instance (`n_grow@st1`, @PLN167 C3) displays as the author's `grow`.
+-        let bare = name.strip_prefix("n_").unwrap_or(name);
+-        bare.split('@').next().unwrap_or(bare)
+     }
+ 
+     /// Source-file id this definition was parsed from.
+@@ -5448,13 +5446,6 @@ impl Definition {
+     /// The name the source wrote for the function keyed `key`: a method's or a free
+     /// overload's `rest`, an instance's TEMPLATE's name, a plain `n_<name>`'s `<name>`.
+     fn source_name_of_key(key: &str) -> String {
+-        // A store instance (`n_grow@st1`, @PLN167 C3) is the author's `grow`; `@` occurs in no
+-        // other key.
+-        if let Some(rest) = key.strip_prefix("n_")
+-            && let Some((base, _)) = rest.split_once('@')
+-        {
+-            return base.to_string();
+-        }
+         match Data::split_key(key) {
+             Some(parts) if parts.kind == KeyKind::Instance => Self::source_name_of_key(parts.rest),
+             Some(parts) => parts.rest.to_string(),
+@@ -5462,18 +5453,6 @@ impl Definition {
+         }
+     }
+ 
+-    /// The name a trace, a profile or a runtime report shows for this definition: a free
+-    /// function's key decoded (`n_grow` and its store instance `n_grow@st1` are both `grow`),
+-    /// any other key as it is.
+-    #[must_use]
+-    pub fn trace_name(&self) -> String {
+-        if self.name.starts_with("n_") {
+-            Self::source_name_of_key(&self.name)
+-        } else {
+-            self.name.clone()
+-        }
+-    }
+-
+     #[must_use]
+     pub fn original_name(&self) -> String {
+         // A GENERIC is keyed as a function is (`n_<name>`, `t_<LEN><type>_<name>`), and the
+@@ -7625,8 +7604,7 @@ impl Data {
+     pub fn user_facing_name(&self, d_nr: u32) -> String {
+         let name = self.def(d_nr).name();
+         if let Some(rest) = name.strip_prefix("n_") {
+-            // A store instance (`n_grow@st1`, @PLN167 C3) is the author's `grow`.
+-            return rest.split('@').next().unwrap_or(rest).to_string();
++            return rest.to_string();
+         }
+         match Self::split_key(name) {
+             Some(key) if key.kind == KeyKind::Method && !key.rest.is_empty() => {
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 42bf1be86..418634b13 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -372,10 +372,8 @@ impl Output<'_> {
+                     // A scalar `&` parameter is a raw pointer, read below exactly as a local
+                     // link is (`is_raw_scalar_ref`, loft#1605).
+                     if let Type::RefVar(inner) = variables.tp(var) {
+-                        // By-ref argument: holds &mut T — dereference to read.  Through
+-                        // `base()`, as the local-link arm below reads it: a `&text?` parameter
+-                        // is the same `&mut String`, and read bare it MOVED the string (E0507).
+-                        if matches!(inner.base(), Type::Text(_)) {
++                        // By-ref argument: holds &mut T — dereference to read.
++                        if matches!(**inner, Type::Text(_)) {
+                             return write!(w, "&*var_{var_name}");
+                         }
+                         // A `&boolean` slot is the tri-state STORAGE byte (0/1/255),
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index 21c71eabc..ad408b843 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -8818,18 +8818,7 @@ extern crate loft;"
+             if dropped == Some(i) {
+                 continue;
+             }
+-            // @PLN167 C3 — a `&text` parameter of a function's STORE instance holds the slot's
+-            // `DbRef`, exactly as a store-kind local link does (`local_rust_type`).
+-            let store_link = {
+-                let vars = def.variables();
+-                let v = vars.var(&a.name);
+-                v != u16::MAX && vars.is_store_text_link(v)
+-            };
+-            let tp = if store_link {
+-                "DbRef".to_string()
+-            } else {
+-                rust_type(&a.typedef, &Context::Argument)
+-            };
++            let tp = rust_type(&a.typedef, &Context::Argument);
+             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
+         }
+         if let Some(t) = &twin {
+@@ -9159,12 +9148,10 @@ extern crate loft;"
+         let instrument = matches!(def.code(), Value::Block(_)) && (free || is_method(def));
+         // The user-visible loft name for the shadow call stack.
+         let source_name = def.original_name();
+-        // An `n_` key decodes through the key's decoder too, which names a store instance
+-        // (`n_grow@st1`, @PLN167 C3) as the author's `grow`.
+-        let loft_name = if def.name().starts_with("n_") || free {
+-            source_name.as_str()
++        let loft_name = if def.name().starts_with("n_") || !free {
++            def.name().strip_prefix("n_").unwrap_or(def.name())
+         } else {
+-            def.name()
++            source_name.as_str()
+         };
+         let loft_file = &def.position().file;
+         let loft_line = def.position().line;
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 335dfa882..fdc5035ac 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3748,7 +3748,7 @@ use a separate collection or add after the loop"
+             let text_place_ref = if stack_src.is_none()
+                 && heap_ref.is_none()
+                 && matches!(
+-                    if let Type::RefVar(inner) = s_type.base() {
++                    if let Type::RefVar(inner) = &s_type {
+                         inner.base()
+                     } else {
+                         s_type.base()
+@@ -3776,7 +3776,7 @@ use a separate collection or add after the loop"
+                 amp_unlowered = false;
+                 if self.vars.is_store_text_link(src) {
+                     self.bind_text_link_kind(var_nr, true);
+-                } else if matches!(self.vars.tp(src).base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
++                } else if matches!(self.vars.tp(src), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                 {
+                     self.bind_text_link_kind(var_nr, false);
+                 }
+@@ -3845,7 +3845,7 @@ use a separate collection or add after the loop"
+                 amp_unlowered = false;
+                 self.bind_text_link_kind(var_nr, true);
+                 *code = eref;
+-                let text = if let Type::RefVar(inner) = s_type.base() {
++                let text = if let Type::RefVar(inner) = &s_type {
+                     inner.base().clone()
+                 } else {
+                     s_type.base().clone()
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index c647f33d5..eebf0fe65 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -704,9 +704,6 @@ pub struct Parser {
+     /// by `do_tret_bind`'s gate on the THIRD pass so the promotion is forward-ref-safe:
+     /// the attr is decided before the pass, so every caller re-lowers with the buffer.
+     force_tret: std::collections::HashSet<u32>,
+-    /// @PLN167 C3 — some call handed a text field or element to a `&text` parameter, so
+-    /// `after_pass2` owes the store instances (`store_text.rs`).
+-    store_text_args: bool,
+     /// loft#808 — def_nrs resolved as a `par(r = f(x), N)` worker, recorded on BOTH
+     /// passes and never cleared between them.  A worker's pure-value tuple return is
+     /// the one shape that must still be BOXED into the synthetic `__tuple<…>` record:
+@@ -1428,7 +1425,6 @@ pub(super) mod fields;
+ pub(super) mod fit;
+ pub(super) mod objects;
+ pub(super) mod operators;
+-pub(super) mod store_text;
+ pub(super) mod vectors;
+ 
+ impl Default for Parser {
+@@ -1577,7 +1573,6 @@ impl Parser {
+             limit_refused: false,
+             ambiguity_reported: std::collections::HashSet::new(),
+             force_tret: std::collections::HashSet::new(),
+-            store_text_args: false,
+             par_worker_defs: std::collections::HashSet::new(),
+             par_deferred: Vec::new(),
+             par_replay_body: None,
+@@ -2761,9 +2756,6 @@ impl Parser {
+         if !self.force_tret.is_empty() {
+             self.targeted_tret_promotion();
+         }
+-        // After the promotion: a store instance clones its function's FINAL signature, and a
+-        // call it retargets already carries any buffer the promotion added.
+-        self.mint_store_text_instances();
+     }
+ 
+     /// What pass 1 owes pass 2, in one place: every declaration has been seen, so the
+@@ -5248,26 +5240,6 @@ impl Parser {
+ 
+     #[track_caller]
+     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
+-        // @PLN167 C3 (R5a) — a text field or element reaching a `&text` parameter HERE comes
+-        // through a fn-ref call: a direct call lowers it to the place and picks the callee's
+-        // store instance (`process_call_args`) before any conversion.  A fn-ref names one
+-        // function, and which instance it would need is only known at the call, so the link
+-        // cannot be honoured; below it would become a copy and the callee's write would be
+-        // lost with nothing said.  `(B-Ref-Reshape)`: refuse rather than downgrade.
+-        if !self.first_pass
+-            && matches!(should.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+-            && self.is_text_place(code)
+-        {
+-            diagnostic!(
+-                self.lexer,
+-                Level::Error,
+-                "a function value's `&text` parameter cannot link to a text field or element — \
+-                 which version of the function to call is decided per call site, and a function \
+-                 value is fixed before it. Call the function by name, or copy into a local, pass \
+-                 the local and write it back (`t = o.s; g(t); o.s = t`)"
+-            );
+-            return true;
+-        }
+         // loft#1540 — a function value meets a function-typed slot only in the direction `const`
+         // allows: a function whose parameter is plain may not stand where the slot promises that
+         // parameter is `const` (`ConstParams::stands_for`), or a caller trusting the promise hands a
+@@ -15175,17 +15147,19 @@ impl Parser {
+             // `(B-Ref-Reshape)`: refuse a link that cannot be honoured rather than downgrade it
+             // to a copy.  A temporary (a literal, a computed text) keeps its work copy: nothing
+             // names it, so nothing can miss the write.
+-            // @PLN167 C3 — the parameter links that place: the argument is the slot's `DbRef`
+-            // (the place a `&` bind of it takes), and after pass 2 the call is pointed at the
+-            // callee's STORE instance, whose parameter reads and writes through the field ops
+-            // (`store_text.rs`).  The stack instance is the function as written.
+             if matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+                 && self.is_text_place(&actual_code)
+-                && let Some(place) = self.scalar_place_ref(&actual_code)
+             {
+-                self.store_text_args = true;
+-                actual.push(place);
+-                all_types[nr] = tp.clone();
++                if !self.first_pass {
++                    diagnostic!(
++                        self.lexer,
++                        Level::Error,
++                        "a `&text` parameter cannot link to a text field or element, so the \
++                         function's write would be lost. Copy it into a local, pass the local and \
++                         write it back (`t = o.s; f(t); o.s = t`)"
++                    );
++                }
++                actual.push(actual_code);
+                 continue;
+             }
+             if let Type::RefVar(inner) = &tp
+diff --git b/src/parser/store_text.rs a/src/parser/store_text.rs
+deleted file mode 100644
+index e6e92c141..000000000
+--- b/src/parser/store_text.rs
++++ /dev/null
+@@ -1,321 +0,0 @@
+-// Copyright (c) 2026 Jurjen Stellingwerff
+-// SPDX-License-Identifier: LGPL-3.0-or-later
+-
+-//! A `&text` parameter handed a text FIELD or ELEMENT (@PLN167 decision 2, arc C3).
+-//!
+-//! A text link has two kinds.  The STACK kind names a text variable and is what every
+-//! `&text` parameter was built for.  The STORE kind names a string slot inside a record and
+-//! holds that slot's `DbRef`; each mention of it is spelled as the field it names,
+-//! `OpGetText(OpVarRef(t), 0)`, and each write as the field's setter.  The kind is static, so a
+-//! function whose `&text` parameter is called with the store kind gets its own INSTANCE, and
+-//! the stack instance — the function as written — stays byte-identical.
+-//!
+-//! The instance is a clone of the function, minted after pass 2 (like `@PLN104`'s targeted
+-//! promotion: once every body is parsed, and past H5's pass-1/pass-2 definition count), with
+-//! the parameter marked `store_text_link` and its body rewritten to the store spelling.  The
+-//! rewrite is total over a closed set: a parameter of the stack kind is WRITTEN only by `Set`
+-//! and by the `Op…Stack…` write ops (`OpAppendStackText`, `OpAppendStackCharacter`,
+-//! `OpClearStackText`, `OpFormatStack*`), each of which has a twin taking a text variable; every
+-//! other mention is a read.
+-//!
+-//! Which kind a call passes is read off the argument: `OpCreateStack(x)` and a stack link or
+-//! parameter are the stack kind; a place op (`OpGetField`, `OpGetVector`, `OpVarRef` of a
+-//! store-kind link) is the store kind.
+-
+-use crate::data::{Type, Value};
+-use crate::diagnostics::{Level, diagnostic_format};
+-use std::collections::{HashMap, HashSet};
+-
+-use super::Parser;
+-
+-/// The stack-kind write ops, each with the name of its twin on a text variable.
+-fn stack_write_twin(name: &str) -> Option<&'static str> {
+-    Some(match name {
+-        "OpAppendStackText" => "OpAppendText",
+-        "OpAppendStackCharacter" => "OpAppendCharacter",
+-        "OpClearStackText" => "OpClearText",
+-        "OpFormatStackText" => "OpFormatText",
+-        "OpFormatStackInt" => "OpFormatInt",
+-        "OpFormatStackLong" => "OpFormatLong",
+-        "OpFormatStackFloat" => "OpFormatFloat",
+-        "OpFormatStackSingle" => "OpFormatSingle",
+-        "OpFormatStackDatabase" => "OpFormatDatabase",
+-        _ => return None,
+-    })
+-}
+-
+-fn is_text_link_type(tp: &Type) -> bool {
+-    matches!(tp.base(), Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+-}
+-
+-impl Parser {
+-    /// Is `arg`, handed to a `&text` parameter, the STORE kind — a place in a record rather
+-    /// than a text variable?
+-    fn is_store_text_arg(&self, arg: &Value) -> bool {
+-        match arg.unspan() {
+-            Value::Call(g, _) => {
+-                let def = self.data.def(*g);
+-                def.name() != "OpCreateStack"
+-                    && matches!(def.returned.base(), Type::Reference(_, _))
+-            }
+-            _ => false,
+-        }
+-    }
+-
+-    /// Mint a store instance for every call that hands a text place to a `&text` parameter,
+-    /// and point those calls at it.  Instances close transitively: an instance that forwards
+-    /// its parameter to another `&text` function asks for that function's instance in turn.
+-    pub(crate) fn mint_store_text_instances(&mut self) {
+-        if !self.store_text_args {
+-            return;
+-        }
+-        let mut memo: HashMap<(u32, u64), u32> = HashMap::new();
+-        let mut work: Vec<u32> = (0..self.data.definitions()).collect();
+-        while let Some(c) = work.pop() {
+-            if !matches!(self.data.def(c).code, Value::Block(_)) {
+-                continue;
+-            }
+-            let mut code =
+-                std::mem::replace(&mut self.data.definitions[c as usize].code, Value::Null);
+-            let mut minted = Vec::new();
+-            self.retarget_store_text_calls(&mut code, c, &mut memo, &mut minted);
+-            self.data.definitions[c as usize].code = code;
+-            work.extend(minted);
+-        }
+-    }
+-
+-    fn retarget_store_text_calls(
+-        &mut self,
+-        node: &mut Value,
+-        from: u32,
+-        memo: &mut HashMap<(u32, u64), u32>,
+-        minted: &mut Vec<u32>,
+-    ) {
+-        node.for_each_child_mut(&mut |c| self.retarget_store_text_calls(c, from, memo, minted));
+-        let Value::Call(d, args) = node else {
+-            return;
+-        };
+-        let callee = *d;
+-        if !matches!(
+-            self.data.def(callee).def_type,
+-            crate::data::DefType::Function
+-        ) {
+-            return;
+-        }
+-        let mut mask = 0u64;
+-        for (i, a) in self.data.def(callee).attributes.iter().enumerate() {
+-            if i < 64
+-                && is_text_link_type(&a.typedef)
+-                && args.get(i).is_some_and(|x| self.is_store_text_arg(x))
+-            {
+-                mask |= 1 << i;
+-            }
+-        }
+-        if mask == 0 {
+-            return;
+-        }
+-        let inst = if let Some(&i) = memo.get(&(callee, mask)) {
+-            i
+-        } else {
+-            let i = self.mint_store_text_instance(callee, mask, from);
+-            memo.insert((callee, mask), i);
+-            if i != u32::MAX {
+-                minted.push(i);
+-            }
+-            i
+-        };
+-        if inst != u32::MAX
+-            && let Value::Call(d, _) = node
+-        {
+-            *d = inst;
+-        }
+-    }
+-
+-    /// Clone `d` as the instance whose parameters in `mask` are store-kind text links.
+-    fn mint_store_text_instance(&mut self, d: u32, mask: u64, caller: u32) -> u32 {
+-        if !matches!(self.data.def(d).code, Value::Block(_)) {
+-            let name = self.data.def(d).original_name();
+-            let pos = self.data.def(caller).position.clone();
+-            diagnostic_at!(
+-                self.lexer,
+-                &pos,
+-                Level::Error,
+-                "`{name}` has no loft body to link a text field or element through, so its \
+-                 `&text` parameter cannot take one. Copy it into a local, pass the local and \
+-                 write it back (`t = o.s; {name}(t); o.s = t`)"
+-            );
+-            return u32::MAX;
+-        }
+-        let mut def = self.data.definitions[d as usize].clone();
+-        // `@` occurs in no other key (a dispatch stub's `n_hit__dyn_E#E` already uses `#`), so
+-        // the key stays unique and every name decoder cuts at it: the instance is the author's
+-        // function in every message, trace and profile.
+-        let name = format!("{}@st{mask}", def.name);
+-        let nd = self
+-            .data
+-            .add_def(&name, &def.position, crate::data::DefType::Function);
+-        def.name = name;
+-        def.source = self.data.definitions[nd as usize].source;
+-        self.data.definitions[nd as usize] = def;
+-        let params: HashSet<u16> = self.data.definitions[nd as usize]
+-            .attributes
+-            .iter()
+-            .enumerate()
+-            .filter(|(i, _)| *i < 64 && mask & (1 << i) != 0)
+-            .map(|(_, a)| self.data.definitions[nd as usize].variables.var(&a.name))
+-            .filter(|v| *v != u16::MAX)
+-            .collect();
+-        let saved_ctx = self.context;
+-        std::mem::swap(
+-            &mut self.vars,
+-            &mut self.data.definitions[nd as usize].variables,
+-        );
+-        self.context = nd;
+-        let mut links = params.clone();
+-        let mut code = std::mem::replace(&mut self.data.definitions[nd as usize].code, Value::Null);
+-        // A local link bound from a store-kind parameter (`u = &t`) names the same slot, so it
+-        // is a store-kind link too.  Closed before the rewrite, which spells every one alike.
+-        loop {
+-            let before = links.len();
+-            code.walk(&mut |v| {
+-                if let Value::Set(u, rhs) = v
+-                    && let Value::Call(g, a) = rhs.unspan()
+-                    && self.data.def(*g).name() == "OpVarRef"
+-                    && let [Value::Var(x)] = a.as_slice()
+-                    && links.contains(x)
+-                {
+-                    links.insert(*u);
+-                }
+-            });
+-            if links.len() == before {
+-                break;
+-            }
+-        }
+-        for &v in &links {
+-            self.vars.set_store_text_link(v);
+-        }
+-        self.vars.sync_work_counters();
+-        let work = self.vars.work_text(&mut self.lexer);
+-        self.rewrite_store_text(&mut code, &links, &params, work);
+-        if let Value::Block(bl) = &mut code {
+-            bl.operators
+-                .insert(0, crate::data::v_set(work, Value::Text(String::new())));
+-        }
+-        self.data.definitions[nd as usize].code = code;
+-        std::mem::swap(
+-            &mut self.vars,
+-            &mut self.data.definitions[nd as usize].variables,
+-        );
+-        self.context = saved_ctx;
+-        nd
+-    }
+-
+-    fn store_text_read(&mut self, v: u16) -> Value {
+-        let r = self.cl("OpVarRef", &[Value::Var(v)]);
+-        self.cl("OpGetText", &[r, Value::Int(0)])
+-    }
+-
+-    fn store_text_write(&mut self, v: u16, val: Value) -> Value {
+-        let r = self.cl("OpVarRef", &[Value::Var(v)]);
+-        self.cl("OpSetText", &[r, Value::Int(0), val])
+-    }
+-
+-    /// Rewrite one body to the store spelling of the links in `links`.  `params` are the
+-    /// parameters among them: a local link's bind (`u = &t`) is kept as the bind it is.
+-    fn rewrite_store_text(
+-        &mut self,
+-        node: &mut Value,
+-        links: &HashSet<u16>,
+-        params: &HashSet<u16>,
+-        work: u16,
+-    ) {
+-        match node {
+-            Value::Var(x) if links.contains(x) => {
+-                *node = self.store_text_read(*x);
+-            }
+-            Value::Set(x, rhs) if links.contains(x) => {
+-                let x = *x;
+-                let bind = matches!(rhs.unspan(), Value::Call(g, _)
+-                    if matches!(self.data.def(*g).name(), "OpVarRef" | "OpCreateStack"));
+-                if bind {
+-                    if params.contains(&x)
+-                        || !matches!(rhs.unspan(), Value::Call(g, a)
+-                        if self.data.def(*g).name() == "OpVarRef"
+-                            && matches!(a.as_slice(), [Value::Var(y)] if links.contains(y)))
+-                    {
+-                        let name = self.vars.name(x).to_string();
+-                        let pos = self.data.def(self.context).position.clone();
+-                        diagnostic_at!(
+-                            self.lexer,
+-                            &pos,
+-                            Level::Error,
+-                            "`{name}` links a text field or element here, so it cannot be \
+-                             re-pointed at a text variable — a text field or element and a text \
+-                             variable are different places to a link. Use a second link for the \
+-                             other one"
+-                        );
+-                    }
+-                    return;
+-                }
+-                let mut val = std::mem::replace(rhs.as_mut(), Value::Null);
+-                self.rewrite_store_text(&mut val, links, params, work);
+-                *node = self.store_text_write(x, val);
+-            }
+-            Value::Call(g, args) => {
+-                let g = *g;
+-                let name = self.data.def(g).name().to_string();
+-                // The slot itself (a link bound from the parameter, or a hand-on below) — not
+-                // a read of the text.
+-                if name == "OpVarRef" {
+-                    return;
+-                }
+-                if let Some(twin) = stack_write_twin(&name)
+-                    && let Some(Value::Var(x)) = args.first().map(Value::unspan)
+-                    && links.contains(x)
+-                {
+-                    let x = *x;
+-                    let mut rest: Vec<Value> = args.drain(1..).collect();
+-                    for a in &mut rest {
+-                        self.rewrite_store_text(a, links, params, work);
+-                    }
+-                    if twin == "OpClearText" {
+-                        *node = self.store_text_write(x, Value::Text(String::new()));
+-                        return;
+-                    }
+-                    let read = self.store_text_read(x);
+-                    let mut call = vec![Value::Var(work)];
+-                    call.extend(rest);
+-                    let op = self.cl(twin, &call);
+-                    let back = self.store_text_write(x, Value::Var(work));
+-                    *node = Value::Insert(vec![crate::data::v_set(work, read), op, back]);
+-                    return;
+-                }
+-                // A store-kind link handed on to another `&text` parameter is handed on as
+-                // the slot it holds; `retarget_store_text_calls` then picks that callee's
+-                // store instance.
+-                let attrs: Vec<bool> =
+-                    if matches!(self.data.def(g).def_type, crate::data::DefType::Function) {
+-                        self.data
+-                            .def(g)
+-                            .attributes
+-                            .iter()
+-                            .map(|a| is_text_link_type(&a.typedef))
+-                            .collect()
+-                    } else {
+-                        Vec::new()
+-                    };
+-                for (i, a) in args.iter_mut().enumerate() {
+-                    if attrs.get(i).copied().unwrap_or(false)
+-                        && let Value::Var(x) = a.unspan()
+-                        && links.contains(x)
+-                    {
+-                        *a = self.cl("OpVarRef", &[Value::Var(*x)]);
+-                        continue;
+-                    }
+-                    self.rewrite_store_text(a, links, params, work);
+-                }
+-            }
+-            _ => node.for_each_child_mut(&mut |c| self.rewrite_store_text(c, links, params, work)),
+-        }
+-    }
+-}
+diff --git b/src/scopes.rs a/src/scopes.rs
+index ca61354cb..0ba6fecdb 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2631,7 +2631,7 @@ pub fn reshape_refusals(data: &Data, database: &crate::database::Stores) -> Vec<
+ /// so a `Set` of one is always its bind (@PLN167 decision 2).  Asked by the interpreter's
+ /// `set_var` and by the view walk, so the two cannot disagree about which statement binds.
+ pub(crate) fn link_set_repoints(data: &Data, function: &Function, var: u16, value: &Value) -> bool {
+-    let Type::RefVar(tp) = function.tp(var).base() else {
++    let Type::RefVar(tp) = function.tp(var) else {
+         return false;
+     };
+     let scalar_link = matches!(
+@@ -2660,7 +2660,7 @@ pub(crate) fn link_set_repoints(data: &Data, function: &Function, var: u16, valu
+ /// its caller and never by a `Set` the walk sees.  @FR-B-Ref-Reshape keys on the aliasing
+ /// relation, so both spellings reach it.
+ fn is_place_link(function: &Function, v: u16) -> bool {
+-    !function.is_argument(v) && matches!(function.tp(v).base(), Type::RefVar(_))
++    !function.is_argument(v) && matches!(function.tp(v), Type::RefVar(_))
+ }
+ 
+ fn def_reshape_refusals(
+@@ -2891,16 +2891,8 @@ fn def_reshape_refusals(
+                 let Some(attr) = cdef.attributes.get(j) else {
+                     continue;
+                 };
+-                // A `&text` parameter handed a text field or element links that place too
+-                // (@PLN167 C3): the argument is then the place op itself, never the
+-                // `OpCreateStack` of a text variable, which names no element.
+-                let text_place_link = matches!(attr.typedef.base(),
+-                        Type::RefVar(inner) if matches!(inner.base(), Type::Text(_)))
+-                    && matches!(arg.unspan(), Value::Call(g, _)
+-                        if data.def(*g).name() != "OpCreateStack"
+-                            && matches!(data.def(*g).returned.base(), Type::Reference(_, _)));
+-                let scalar_link = text_place_link
+-                    || matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
++                let scalar_link =
++                    matches!(&attr.typedef, Type::RefVar(inner) if crate::data::is_scalar(inner));
+                 let ptp = match &attr.typedef {
+                     Type::RefVar(inner) => inner.as_ref(),
+                     other => other,
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 483476cbd..df85000f1 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -5255,8 +5255,7 @@ impl State {
+             // was correct.  A re-point is not a value write at any width.
+             // Every scalar, at every width — the arms became uniform when loft#1567 dropped the
+             // narrow integer's, which is the shape of the fix as much as its effect.
+-            let repoints =
+-                crate::scopes::link_set_repoints(stack.data, &stack.function, var, value);
++            let repoints = crate::scopes::link_set_repoints(stack.data, &stack.function, var, value);
+             if repoints {
+                 self.generate(value, stack, false);
+                 let var_pos = stack.var_pos(var);
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index 1ec1224ef..325a838fd 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -5275,12 +5275,13 @@ impl State {
+                 line: self.line_at(pc),
+             };
+         }
++        let raw = data.def(d_nr).name();
+         // An instance of a generic function is the function its author wrote (@FR-G-Key:
+         // the key's one decoder).
+         let function = if data.def(d_nr).is_instance() {
+             data.def(d_nr).original_name()
+         } else {
+-            data.def(d_nr).trace_name()
++            raw.strip_prefix("n_").unwrap_or(raw).to_string()
+         };
+         let mut locals = Vec::new();
+         let mut unheld = Vec::new();
+@@ -5647,7 +5648,10 @@ impl State {
+         self.call_stack
+             .iter()
+             .rev() // innermost first
+-            .map(|frame| data.def(frame.d_nr).trace_name())
++            .map(|frame| {
++                let name = data.def(frame.d_nr).name().to_owned();
++                name.strip_prefix("n_").unwrap_or(&name).to_string()
++            })
+             .collect()
+     }
+ 
+@@ -5933,7 +5937,10 @@ impl State {
+         crate::timeout::note_interp_entry(name);
+         crate::timeout::publish_interp_fns(data.definitions.iter().map(|def| {
+             (
+-                def.trace_name(),
++                def.name()
++                    .strip_prefix("n_")
++                    .unwrap_or(def.name())
++                    .to_string(),
+                 def.position().file.clone(),
+                 def.position().line,
+             )
+@@ -6614,7 +6621,8 @@ impl State {
+                 if d == u32::MAX || d as usize >= data.definitions.len() {
+                     "<worker>".to_string()
+                 } else {
+-                    data.def(d).trace_name()
++                    let n = &data.def(d).name;
++                    n.strip_prefix("n_").unwrap_or(n).to_string()
+                 }
+             })
+             .collect();
+@@ -6753,7 +6761,7 @@ impl State {
+             return ("?".to_string(), format!("pc={pc} (line {line})"));
+         }
+         let def = data.def(d_nr);
+-        let name = def.trace_name();
++        let name = def.name.strip_prefix("n_").unwrap_or(&def.name).to_string();
+         let file = def.position.file.rsplit('/').next().unwrap_or("?");
+         (
+             name,

@@ -12,6 +12,9 @@
 // over the field itself does, so writing the link inside the body neither moves the walk nor
 // dangles; it is told so exactly as `for c in o.a { o.a = … }` is.
 //
+// @falsified-at: 008573342 — interpret exit 1 -> 0, native exit 1 -> 0
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: assertion failures, exit, and the one expected warning, both backends.
 //
 // @EXPECT_WARNING: the loop read `t` once, before its first round

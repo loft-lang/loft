@@ -14,6 +14,9 @@
 // re-bind — `link_set_repoints` is the one test, shared with the interpreter's `set_var`).
 // What stays allowed is `167-a-scalar-or-text-link-survives-what-does-not-disturb-it.loft`.
 //
+// @falsified-at: 008573342 — interpret exit 1 -> 0, interpret expectations FAIL/12 -> 0/12 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/12 -> 0/12 (the suite's verdict, not a count of matches)
+// HOLDS: leak, panic and free-refusal are clean on both trees and both backends.
+//
 // CHANNEL: the expected diagnostics, one per cell.
 //
 // @EXPECT_ERROR: cannot grow `ia` while `ca` references a place inside it
