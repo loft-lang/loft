@@ -234,6 +234,17 @@ pub struct Parser {
     /// startup cache is enabled; gates [`Parser::parsed_sources`] tracking so a
     /// normal (non-cache) run pays nothing.
     pub track_sources: bool,
+    /// loft#1648 — when this parse began, for the H5 report alone.
+    ///
+    /// Both passes read every source from DISK independently (`load_main_file` ends in
+    /// `lexer.switch(filename)`), so a file that changes between them — a registry
+    /// extraction, an editor save, a concurrent `loft install` — is parsed twice from
+    /// different bytes.  The definitions then differ across the passes and H5 fires, with
+    /// nothing in the message pointing at the file.  Recorded as ONE instant rather than a
+    /// stamp per file: the cost is a single clock read on every parse, and the stats that
+    /// answer *"did anything move since then"* are paid only when the assert has already
+    /// decided to panic.
+    pass_started: Option<std::time::SystemTime>,
     /// @PLN11 arc E — paths of every source file parsed (stdlib + lazily-loaded
     /// libs + user file), in load order, recorded only when `track_sources`.
     /// Only the parser sees the dynamically-loaded lib set; the whole-program
@@ -1513,6 +1524,7 @@ impl Parser {
             todo_files: Vec::new(),
             track_sources: false,
             parsed_sources: Vec::new(),
+            pass_started: None,
             speculative_type_refs: std::collections::HashSet::new(),
             unresolved_names: 0,
             unresolved_types: 0,
@@ -2354,6 +2366,10 @@ impl Parser {
         if self.track_sources {
             self.parsed_sources.push(filename.to_string());
         }
+        // loft#1648 — the H5 report reads this to tell a source that MOVED under the two
+        // passes from a genuine cross-pass bug.  Set in `parse_main`, which is the function
+        // that drives BOTH passes, so it brackets exactly the window they share.
+        self.pass_started = std::time::SystemTime::now().into();
         // @PLAN49 T1 — set the breadcrumb phase + initial file/line so
         // a watchdog-fired hard-kill localises any parse-time hang.
         crate::timeout::checkpoint_parse(filename, 0);
@@ -3117,9 +3133,10 @@ impl Parser {
                     || lazy_struct_instance,
                 "H5: pass-2-only definition `{name}` (#{d}, {dt:?}) is not a lazy vector \
                  wrapper or generic instantiation — a real cross-pass divergence \
-                 (pass1={}, pass2={})",
+                 (pass1={}, pass2={})\n{}",
                 pass1_attr_counts.len(),
                 self.data.definitions.len(),
+                self.h5_divergence_report(pass1_attr_counts.len()),
             );
         }
         for (d, &c1) in pass1_attr_counts.iter().enumerate() {
@@ -17160,6 +17177,133 @@ impl Parser {
         )
     }
 
+    /// loft#1648 — everything a reader needs to attribute an H5 divergence, gathered where it
+    /// fires.
+    ///
+    /// The assert names ONE definition and two counts, which says that something diverged and
+    /// not why.  That gap is the whole cost of the flake it was written for: it reproduces
+    /// about one suite start in eight, on a consumer's tree, so the run that fails is rarely
+    /// the run anyone is watching, and by the time it is reported the only evidence is a
+    /// sentence naming a struct nobody can place.  Two reports and ~53 starts produced no
+    /// reproduction; what was missing each time was not persistence but PROVENANCE.
+    ///
+    /// So report the population and where it came from:
+    ///
+    ///   * the WHOLE pass-2-only range, each def with the facts the legality test reads.  The
+    ///     first illegal def is not the informative one — in loft#1648 `#2708 Coord` is first
+    ///     while `#2706` and `#2707` were legal lazy appends, and a group minted together
+    ///     names its own origin.
+    ///   * each def's SOURCE resolved to the FILE it was loaded from, and the whole id -> file
+    ///     table.  A divergence is nearly always a file pass 2 read and pass 1 did not.
+    ///   * any source whose mtime has MOVED since this parse began.  Both passes read every
+    ///     file from disk independently, so a file rewritten under them is parsed from
+    ///     different bytes and diverges for a reason that is not a compiler bug at all.  That
+    ///     case is indistinguishable from a real one in today's message, and it is the one a
+    ///     fresh checkout resolving its dependencies can actually produce.
+    ///
+    /// Costs nothing until it runs: the assert has already decided to panic.
+    fn h5_divergence_report(&self, pass1_defs: usize) -> String {
+        use std::fmt::Write as _;
+        // source id -> the file it was loaded from, inverted from `use_paths` (id -> path)
+        // through `get_source`.  Built here rather than kept: this is the only reader, and a
+        // map maintained for a panic would rot unnoticed.
+        let mut files: std::collections::BTreeMap<u16, &str> = std::collections::BTreeMap::new();
+        for (id, path) in &self.use_paths {
+            let src = self.data.get_source(id);
+            if src != u16::MAX {
+                files.insert(src, path.as_str());
+            }
+        }
+        let mut out =
+            String::from("  pass-2-only definitions (the population, not just the first):\n");
+        for d in pass1_defs..self.data.definitions.len() {
+            let def = self.data.def(d as u32);
+            let src = def.source;
+            let _ = writeln!(
+                out,
+                "    #{d:<6} {:<34} {:?}  source={src}{}{}{}",
+                def.name(),
+                self.data.def_type(d as u32),
+                files.get(&src).map_or_else(
+                    // Not a `use`d library: the two sources every program has.  Left blank
+                    // these read as "unknown", which sends the reader looking for a file
+                    // that was never missing.
+                    || match src {
+                        0 => " (stdlib)".to_string(),
+                        s if s == crate::data::MAIN_SOURCE =>
+                            " (the program's own file)".to_string(),
+                        _ => String::new(),
+                    },
+                    |f| format!(" ({f})")
+                ),
+                def.synthetic()
+                    .map_or(String::new(), |s| format!(" synthetic={s}")),
+                if def.instance_of == u32::MAX {
+                    String::new()
+                } else {
+                    format!(" instance_of=#{}", def.instance_of)
+                },
+            );
+        }
+        let _ = writeln!(out, "  sources loaded, id -> file:");
+        for (src, f) in &files {
+            let _ = writeln!(out, "    {src:<4} {f}");
+        }
+        let moved = self.sources_changed_during_parse(files.values().copied());
+        if files.is_empty() {
+            // Say what was CHECKED, not what was found.  An empty table means no `use`d
+            // library file was loaded, so nothing was re-stat'd — reporting that as "nothing
+            // changed" would be the same overstatement this report exists to remove, and it
+            // would point the reader at the compiler on no evidence.
+            let _ = writeln!(
+                out,
+                "  no `use`d library file was loaded, so nothing could be re-stat'd — the \
+                 divergence is in the stdlib or in the program's own file, and the source \
+                 column above says which."
+            );
+        } else if moved.is_empty() {
+            let _ = writeln!(
+                out,
+                "  none of the {} loaded source(s) above changed during this parse, so the \
+                 two passes read the same bytes — this is a compiler-side divergence.",
+                files.len()
+            );
+        } else {
+            let _ = writeln!(
+                out,
+                "  ⚠ {} SOURCE(S) CHANGED DURING THIS PARSE — the two passes did not read the \
+                 same bytes, so this is very likely not a compiler bug:",
+                moved.len()
+            );
+            for f in &moved {
+                let _ = writeln!(out, "    {f}");
+            }
+        }
+        out
+    }
+
+    /// Which of `files` have been written since this parse began?
+    ///
+    /// Split out from the report so the question has one home and can be exercised without
+    /// racing a parse: the report is only reachable by making two passes disagree, which is
+    /// the very thing nobody can do on demand here.
+    fn sources_changed_during_parse<'a>(
+        &self,
+        files: impl Iterator<Item = &'a str>,
+    ) -> Vec<String> {
+        let Some(started) = self.pass_started else {
+            return Vec::new();
+        };
+        files
+            .filter(|f| {
+                std::fs::metadata(f)
+                    .and_then(|m| m.modified())
+                    // A clock that cannot answer is not evidence of a change: say no.
+                    .is_ok_and(|m| m > started)
+            })
+            .map(str::to_string)
+            .collect()
+    }
     fn source_loaded_from(&self, f: &str) -> Option<u16> {
         let canonical = crate::portable_path::plain_canonical_str(f);
         // Every id that names this file, not just one of them: `use_paths` outlives a
@@ -22964,5 +23108,89 @@ mod plan86_admission_tests {
                 "{label}: an unprovable while must be rejected"
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod h5_changed_source_tests {
+    use super::*;
+
+    /// loft#1648 — the question `h5_divergence_report` asks about every loaded file, exercised
+    /// where a parse cannot be raced.
+    ///
+    /// The report itself is only reachable by making the two passes disagree, which is exactly
+    /// what nobody can do on demand for this defect — so the decidable half is split out and
+    /// tested here.  All four answers matter: the two that report, and the two that must stay
+    /// SILENT, because a stat that cannot answer is not evidence of a change and saying
+    /// otherwise would send a reader hunting a file nobody touched.
+    fn tmp(name: &str, body: &str) -> String {
+        let p = std::env::temp_dir().join(format!(
+            "loft_h5_{}_{}_{name}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_nanos())
+        ));
+        std::fs::write(&p, body).expect("write probe file");
+        p.to_string_lossy().into_owned()
+    }
+
+    #[test]
+    fn a_file_written_after_the_parse_began_is_named() {
+        let f = tmp("moved", "before");
+        let mut p = Parser::new();
+        p.pass_started = Some(std::time::SystemTime::now());
+        // mtime resolution is finer than this everywhere loft builds, but a rewrite in the
+        // same instant would make the cell vacuous rather than wrong — so step past it.
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        std::fs::write(&f, "after").expect("rewrite probe file");
+        assert_eq!(
+            p.sources_changed_during_parse(std::iter::once(f.as_str())),
+            vec![f.clone()],
+            "a source rewritten under the two passes must be named"
+        );
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn a_file_untouched_since_the_parse_began_is_not_named() {
+        let f = tmp("still", "unchanged");
+        std::thread::sleep(std::time::Duration::from_millis(20));
+        let mut p = Parser::new();
+        p.pass_started = Some(std::time::SystemTime::now());
+        assert!(
+            p.sources_changed_during_parse(std::iter::once(f.as_str()))
+                .is_empty(),
+            "an untouched source must not be named — reporting it would point the reader at \
+             a file nobody wrote"
+        );
+        let _ = std::fs::remove_file(&f);
+    }
+
+    #[test]
+    fn a_file_that_cannot_be_stat_ed_is_not_evidence() {
+        let mut p = Parser::new();
+        p.pass_started = Some(std::time::SystemTime::now());
+        assert!(
+            p.sources_changed_during_parse(std::iter::once("/nonexistent/loft/h5/probe.loft"))
+                .is_empty(),
+            "a failed stat says nothing about whether the file moved"
+        );
+    }
+
+    #[test]
+    fn without_a_recorded_start_nothing_is_claimed() {
+        let f = tmp("nostart", "x");
+        let p = Parser::new();
+        assert!(
+            p.pass_started.is_none(),
+            "a fresh parser has no start instant"
+        );
+        assert!(
+            p.sources_changed_during_parse(std::iter::once(f.as_str()))
+                .is_empty(),
+            "with no instant to compare against there is no answer, and silence is the honest one"
+        );
+        let _ = std::fs::remove_file(&f);
     }
 }
