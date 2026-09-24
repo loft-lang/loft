@@ -220,10 +220,22 @@ with the closure's environment in scope.
 
 ## Deviations
 
-**OPEN: 0** — `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
+**OPEN: 0** — `D-clo-42` (opened and CLOSED 2026-09-24, loft#1659); `D-clo-41` (opened and CLOSED 2026-09-24, loft#1658); `D-clo-40` (opened and CLOSED 2026-09-23, loft#1642); `D-clo-39` (opened and CLOSED 2026-09-23; `D-clo-38`, loft#1624, opened and
 CLOSED the same day; `D-clo-36` and `D-clo-37` opened 2026-09-22 with `D-clo-35` and CLOSED
 2026-09-23; `D-clo-27` closed 2026-09-12).
 
+- **D-clo-42** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1659)* — `(F-Ret)` for a capture a
+  closure hands back from any exit but a bare tail.  loft#1485 made `fn(i) -> S { cap }` return a
+  fresh copy, through the tail selector's capture leg; `{ return cap; }`, an early `return cap;`
+  and an `if` whose arm is `cap` handed back the capture itself.  A caller that COPIES its result
+  never noticed, but one that binds it as a borrow did: `f: fn(integer) -> S = g; s = f(1);
+  s.v = 42.0` wrote `42` into `cap`, on both backends.  **Where (measured).**  Two readers of one
+  question: `parse_return`'s record arm had legs for a view of a local and a projection into one
+  but no capture leg, and `return_views_a_capture` asked whether a dep LOCAL views a capture, so
+  an `if` whose value names `__closure` itself, with no local between, answered no.  **Closed** in
+  both: `parse_return` asks `return_views_a_capture` beside `return_projects_into_local`, and a dep
+  on the closure record is a capture.  Guard: the two write-through cells of
+  `tests/scripts/1659-an-opaque-fn-ref-record-result-is-owned-once.loft`.
 - **D-clo-41** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1658)* — `(L-FnRef)` for a function with
   NO loft body: `g = env_variable; g("HOME")` answered an empty text on the interpreter, and
   `--native` answered the variable.  The same held for `store_memory` and `directory`, and for any

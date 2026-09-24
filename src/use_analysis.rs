@@ -3612,6 +3612,35 @@ pub fn callref_join_first_bind(
     Some((*rec, base))
 }
 
+/// loft#1659 — does a bind of this value into an OWNING record local go through
+/// `OpBindFnRefResult`, the runtime adopt-or-copy?  `Some(record_def)` names the record type
+/// to allocate on the copy arm.
+///
+/// That is a `CallRef` whose target cannot be resolved (a fn-typed parameter, a slot two
+/// lambdas were assigned to): `@FR-O-Unknown` — nothing was derived about its result, and the
+/// reader must decide.  The one place the answer exists is the call's own return, which
+/// compares the store handed back against the allocation counter as the call found it; the op
+/// reads that verdict.  A store that predates the call is COPIED (`@FR-B-Copy`), any other is
+/// ADOPTED and the binding becomes its one owner (`@FR-O-Owner`).
+///
+/// `tp` must say the binding OWNS (empty deps): a binding whose deps name an argument the
+/// call may hand back is skip-free, and a copy into it would be a store nobody frees.  A
+/// resolved target answers `None` — the heap first-bind dispatch's `CallRef` arms decide
+/// those from the callee's own return summary, which is the stronger fact.
+#[must_use]
+pub fn opaque_callref_bind(data: &Data, d_nr: u32, tp: &Type, value: &Value) -> Option<u32> {
+    let (Type::Reference(rec, _) | Type::Enum(rec, true, _)) = tp.base() else {
+        return None;
+    };
+    if !tp.depend().is_empty() || !matches!(value.unspan(), Value::CallRef(_, _)) {
+        return None;
+    }
+    if callee_of(data, d_nr, value).is_some() {
+        return None;
+    }
+    Some(*rec)
+}
+
 /// @PLN157 § V-g — the record locals of `body` that are only ever READ: every occurrence of
 /// the variable outside its one defining `Set` sits at arg 0 of a scalar getter
 /// (`OpGetFloat`, `OpGetInt`, …, a `len`) or of a PROJECTION chain that itself ends in a

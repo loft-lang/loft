@@ -2581,6 +2581,53 @@ impl State {
                 // nullability marker (@FR-L-Null), and asked bare this arm left `c: S? =
                 // keep(other)` on `set_var`'s plain `OpPutRef`: an ALIAS of the argument,
                 // where @FR-B-Copy says the bound variable is independent (loft#1336).
+                // loft#1659 — an UNRESOLVED fn-ref target, which the arm below cannot
+                // resolve, takes `OpBindFnRefResult`: the reassignment twin of the first-bind
+                // arm, and the site an inline fn-ref argument's lift temp reaches.  The
+                // displaced store was released above (or is stashed, and `free_stashed`
+                // releases it unless the bind kept it).  The slot takes the sentinel after the
+                // call, so the copy arm allocates a FRESH store — never in place over what the
+                // call may still read.  No @P290 bracket: the op never frees its source.  A
+                // witnessed local keeps its own route, which its `__own_` witness is
+                // maintained against.
+                if owned_ref
+                    && !witnessed
+                    && !stack.function.is_argument(v)
+                    && !stack.function.is_view_elided(v)
+                    && let Some(rec) = crate::use_analysis::opaque_callref_bind(
+                        stack.data,
+                        stack.def_nr,
+                        stack.function.tp(v),
+                        value,
+                    )
+                {
+                    let tp_nr = stack.data.def(rec).known_type();
+                    let ref_size = size_of::<crate::keys::DbRef>() as u16;
+                    let slot_end = stack.function.stack(v).saturating_add(ref_size);
+                    if stack.position < slot_end {
+                        let bump = stack.step(slot_end) - stack.position;
+                        stack.add_op("OpReserveFrame", self);
+                        self.code_add(bump);
+                        stack.position += bump;
+                    }
+                    self.generate(value, stack, false);
+                    let slot_offset = stack.var_pos(v);
+                    stack.add_op("OpInitRefSentinel", self);
+                    self.code_add(slot_offset);
+                    stack.add_op("OpBindFnRefResult", self);
+                    self.code_add(stack.var_pos(v));
+                    self.code_add(tp_nr);
+                    if stash_old_for_post_free {
+                        self.free_stashed(stack, v, entry_w);
+                    }
+                    crate::copy_manifest::record(
+                        stack.def_nr,
+                        v,
+                        tp_nr,
+                        crate::copy_manifest::Origin::InterpReassignCall,
+                    );
+                    return;
+                }
                 if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
                     stack.function.tp(v).base().clone()
                     && !stack.function.is_argument(v)
@@ -3293,6 +3340,17 @@ impl State {
             } else {
                 self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
             }
+        } else if let Some(rec) = crate::use_analysis::opaque_callref_bind(
+            stack.data,
+            stack.def_nr,
+            stack.function.tp(v),
+            value,
+        ) {
+            // loft#1659 — a closure call whose target is unresolved.  Adopted as a plain
+            // `PutRef` it took a capture the closure handed back as an owned store, and the
+            // scope-exit free released the caller's capture; `OpBindFnRefResult` copies that
+            // arm and adopts the minted one (@FR-O-Unknown decides here, @FR-B-Copy).
+            self.gen_set_first_ref_fnref(stack, v, value, rec);
         } else if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
             stack.function.tp(v).clone()
             // loft#1245 — BOTH spellings of a call, because a `CallRef` reaching a
@@ -3858,6 +3916,30 @@ impl State {
         stack.add_op("OpInitRefSentinel", self);
         self.code_add(slot_offset);
         stack.add_op("OpBindOrCopy", self);
+        self.code_add(stack.var_pos(v));
+        self.code_add(tp_nr);
+    }
+
+    /// First bind of an unresolved fn-ref call's record result (`OpBindFnRefResult`): the
+    /// call's own return says whether the store was minted during it, and the op adopts or
+    /// copies on that.  The slot preamble is `gen_set_first_ref_join`'s, and for its reason:
+    /// the copy arm allocates INTO the slot, so it must hold the sentinel, written only after
+    /// the call is evaluated.
+    fn gen_set_first_ref_fnref(&mut self, stack: &mut Stack, v: u16, value: &Value, d_nr: u32) {
+        let tp_nr = stack.data.def(d_nr).known_type();
+        let ref_size = size_of::<crate::keys::DbRef>() as u16;
+        let slot_end = stack.function.stack(v).saturating_add(ref_size);
+        if stack.position < slot_end {
+            let bump = stack.step(slot_end) - stack.position;
+            stack.add_op("OpReserveFrame", self);
+            self.code_add(bump);
+            stack.position += bump;
+        }
+        self.generate(value, stack, false);
+        let slot_offset = stack.var_pos(v);
+        stack.add_op("OpInitRefSentinel", self);
+        self.code_add(slot_offset);
+        stack.add_op("OpBindFnRefResult", self);
         self.code_add(stack.var_pos(v));
         self.code_add(tp_nr);
     }

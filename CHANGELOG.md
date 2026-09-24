@@ -27,6 +27,16 @@ It works through a **function value** as well (`g = shout; g(o.name)`), which be
 the write in silence. A function value with a `&text` parameter also compiles with `--native`
 now, whatever you pass it; before, it did not build even for a plain text variable.
 
+**A struct returned through a function parameter is released once, and never takes what the
+function captured.**  With `fn build(f: fn(integer) -> S, …)`, a loop calling
+`height(f(i))` kept every result until `build` returned, so 70 000 calls ran out of stores and
+stopped the program.  Each result is now released as soon as it has been used.  Binding it
+first (`s = f(i)`) was already released, but if the function you passed sometimes returns
+something it captured (`fn(i: integer) -> S { if i > 9 { S { v: 1.0 } } else { cap } }`), that
+release freed the captured value, and later reads of it answered garbage without any error.
+The result is now a copy in that case, so the captured value is left alone.  A write through the
+result (`s.v = 42.0`) no longer changes the captured value either.
+
 **A built-in function kept in a variable now runs when you call it.** `g = env_variable;
 g("HOME")` answered an empty text when the program was interpreted. It answered the variable
 under `--native`. The built-in was never called, and nothing said so. The same happened to any

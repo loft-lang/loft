@@ -1,0 +1,416 @@
+diff --git b/default/02_files.loft a/default/02_files.loft
+index 38fdfb806..27073c2a7 100644
+--- b/default/02_files.loft
++++ a/default/02_files.loft
+@@ -1154,12 +1154,6 @@ fn OpConstStoreText(rec: const integer, pos: const integer) -> text;
+ // `OpCallRef`'s.  Declared last so that it renumbers no earlier operator.
+ fn OpCallRefStore(fn_var: const u16, arg_size: const u16, mask: const integer);
+ #rust"s.fn_call_ref_store(@fn_var, @arg_size, @mask as u64);"
+-// Bind the record a fn-ref call with an unresolved target handed back (loft#1659): copy it into
+-// a fresh store at `pos` when it predates the call (a capture or an argument), adopt it
+-// otherwise and take it off the frame's hand-up list.  Declared last, so it renumbers no
+-// earlier operator.  Interpreter-only — the native backend does the same inline in
+-// `generation::dispatch`.
+-fn OpBindFnRefResult(src: reference, pos: const u16, tp: const u16);
+ 
+ // ── Path helpers (moved from 03_text.loft so they're available
+ //    before file-I/O code that wants to compose them) ─────────
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index 8fccc15a6..2a10bc9bd 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -5673,30 +5673,6 @@ fn cr_take_fnref_borrowed(store_nr: u16) -> bool {
+     FNREF_BORROWED.with(|b| b.take().is_some_and(|r| r.store_nr == store_nr))
+ }
+ 
+-/// Bind the record an UNRESOLVED fn-ref call handed back: `true` ADOPTS it, `false` asks
+-/// the caller to COPY it (`@FR-O-Unknown`, `@FR-B-Copy`, `@FR-O-Owner`).
+-///
+-/// The `--native` half of `State::bind_fn_ref_result`, reading the same one-hop verdict
+-/// [`cr_fnref_minted`] left: a store that predates the call is a capture or an argument and
+-/// is copied, left alone; any other was minted by the call and is adopted — and taken OFF the
+-/// hand-up list, so the binding is its one owner and [`FnRefBufGuard`] does not hold it (or
+-/// hand it up) as well.  A null `src` is adopted as the null it is.
+-pub fn cr_fnref_adopt(src: DbRef) -> bool {
+-    if cr_take_fnref_borrowed(src.store_nr) && src.rec != 0 {
+-        return false;
+-    }
+-    if src.store_nr != u16::MAX {
+-        FNREF_BUFS.with(|b| {
+-            let mut list = b.borrow_mut();
+-            if let Some(at) = list.iter().rposition(|(d, _)| d.store_nr == src.store_nr) {
+-                list.remove(at);
+-                FNREF_LEN.with(|n| n.set(u32::try_from(list.len()).unwrap_or(u32::MAX)));
+-            }
+-        });
+-    }
+-    true
+-}
+-
+ /// Give an owner to a store a fn-ref callee MINTED and handed back.
+ ///
+ /// The callee does not free what it returns, and the caller may be a forwarding function whose
+diff --git b/src/fill.rs a/src/fill.rs
+index 1ab24b86c..1e9bb4a5d 100644
+--- b/src/fill.rs
++++ a/src/fill.rs
+@@ -341,7 +341,6 @@ pub const OPERATORS: &[fn(&mut State)] = &[
+     const_ref,
+     const_store_text,
+     call_ref_store,
+-    bind_fn_ref_result,
+ ];
+ 
+ fn goto(s: &mut State) {
+@@ -2854,7 +2853,3 @@ fn call_ref_store(s: &mut State) {
+     let v_mask = s.code::<i64>();
+     s.fn_call_ref_store(v_fn_var, v_arg_size, v_mask as u64);
+ }
+-
+-fn bind_fn_ref_result(s: &mut State) {
+-    s.bind_fn_ref_result();
+-}
+diff --git b/src/generation/dispatch.rs a/src/generation/dispatch.rs
+index 5921dc026..0e7b69809 100644
+--- b/src/generation/dispatch.rs
++++ a/src/generation/dispatch.rs
+@@ -1376,48 +1376,6 @@ impl Output<'_> {
+             );
+             return Ok(());
+         }
+-        // loft#1659 — the interpreter's `OpBindFnRefResult`: a closure call whose target is
+-        // unresolved.  The call's return left the minted-or-borrowed verdict; adopt the mint
+-        // (and take it off the hand-up list), copy a store that predates the call.  The copy
+-        // takes NO source-free bit: its source is a capture or an argument, owned further up.
+-        if let Some(rec) = crate::use_analysis::opaque_callref_bind(
+-            self.data,
+-            self.def_nr,
+-            variables.tp(var),
+-            to_unspanned,
+-        ) {
+-            let tp_nr = self.data.def(rec).known_type();
+-            let first_bind = !self.declared.contains(&var);
+-            if first_bind {
+-                self.declared.insert(var);
+-                let tp_str = self.local_rust_type(var, variables.tp(var));
+-                // The null sentinel, not a `null_named` placeholder: the adopt arm — every
+-                // minting call — would only free it as displaced, and `OpDatabase` on the
+-                // copy arm turns the sentinel into a fresh store.
+-                writeln!(w, "let mut var_{name}: {tp_str} = DbRef::NULL;")?;
+-                self.indent(w)?;
+-            }
+-            write!(w, "{{ let _dst = var_{name}; let _src = ")?;
+-            self.output_code_inner(w, to)?;
+-            let disp = displaced_free(&format!(
+-                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
+-                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
+-            ));
+-            let target = copy_target("_dst", first_bind);
+-            write!(
+-                w,
+-                "; if codegen_runtime::cr_fnref_adopt(_src) {{ {disp}var_{name} = _src; }} \
+-                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
+-                 OpCopyRecord(cell,_src, var_{name}, {tp_nr}_i32); }} }}"
+-            )?;
+-            crate::copy_manifest::record(
+-                self.def_nr,
+-                var,
+-                tp_nr,
+-                crate::copy_manifest::Origin::NativeCallReturn,
+-            );
+-            return Ok(());
+-        }
+         // @PLN130 F1/F2 — MATERIALISE an element/field read into a store `var` owns.
+         //
+         // Sibling of the interpreter's `gen_set_first_ref_elem_copy`.  `c = v[i]` normally
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 253e17772..da68ea598 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -13833,14 +13833,6 @@ impl Parser {
+         if self.tail_is_closure_read(body.last()) {
+             return true;
+         }
+-        // A dep on the closure RECORD itself: an `if` whose arm reads a capture carries
+-        // `__closure` in the value's own deps, with no local in between to ask.
+-        if ls
+-            .iter()
+-            .any(|&d| d < self.vars.count() && self.vars.name(d) == "__closure")
+-        {
+-            return true;
+-        }
+         ls.iter().any(|&v| self.var_views_a_capture(v, body))
+             || body
+                 .last()
+@@ -16966,12 +16958,7 @@ impl Parser {
+                     other => other.clone(),
+                 };
+                 if let Type::Reference(td, ls) = &t {
+-                    // loft#1659, `@FR-F-Ret` — a CAPTURE handed back by an explicit `return`
+-                    // is the closure's, not a fresh value: the tail selector's loft#1485 leg,
+-                    // which no mid-body exit reached.
+-                    if self.return_projects_into_local(&v)
+-                        || self.return_views_a_capture(ls, std::slice::from_ref(&v))
+-                    {
++                    if self.return_projects_into_local(&v) {
+                         // The returned expression points INTO something this
+                         // function frees — a field of an inline call's temporary
+                         // (#425 / H9), or an element of a local's vector (H12).
+diff --git b/src/scopes.rs a/src/scopes.rs
+index e302d943c..5fb6af14e 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -19750,31 +19750,7 @@ impl Scopes<'_> {
+         };
+         let d_nr = match self.fnref_target.get(v_nr).copied() {
+             Some(d) if d != u32::MAX => d,
+-            // loft#1659 — an UNRESOLVED target (a fn-typed parameter, a slot two lambdas were
+-            // assigned to).  Nothing static says whose store its record result is
+-            // (@FR-O-Unknown), and not lifting left it to the frame's hand-up list: one
+-            // store per call, held to frame exit.  The lift binds it the way the bound
+-            // spelling does, through `OpBindFnRefResult` — the call's own return decides
+-            // adopt (minted during the call) or copy (a capture or an argument) — so the
+-            // temp OWNS on both arms and its scope-exit free is the release (@FR-O-Owner).
+-            // Records only: `opaque_callref_bind` is the bind that makes that free right,
+-            // and it answers only for a record.
+-            _ => {
+-                let Type::Function(_, ret, ..) = function.tp(*v_nr).base() else {
+-                    return None;
+-                };
+-                let (returned, opt) = ret.peel_optional();
+-                self.pending_join_witness.set(u16::MAX);
+-                return match returned {
+-                    Type::Reference(d, _) => {
+-                        Some(Self::reopt(opt, Type::Reference(*d, Deps::none())))
+-                    }
+-                    Type::Enum(d, true, _) => {
+-                        Some(Self::reopt(opt, Type::Enum(*d, true, Deps::none())))
+-                    }
+-                    _ => None,
+-                };
+-            }
++            _ => return None,
+         };
+         let def = data.def(d_nr);
+         // loft#1245 — the INVARIANT: a call's returned store is ADOPTED by the caller only
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 1ff4a0031..b25ec5820 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -2581,53 +2581,6 @@ impl State {
+                 // nullability marker (@FR-L-Null), and asked bare this arm left `c: S? =
+                 // keep(other)` on `set_var`'s plain `OpPutRef`: an ALIAS of the argument,
+                 // where @FR-B-Copy says the bound variable is independent (loft#1336).
+-                // loft#1659 — an UNRESOLVED fn-ref target, which the arm below cannot
+-                // resolve, takes `OpBindFnRefResult`: the reassignment twin of the first-bind
+-                // arm, and the site an inline fn-ref argument's lift temp reaches.  The
+-                // displaced store was released above (or is stashed, and `free_stashed`
+-                // releases it unless the bind kept it).  The slot takes the sentinel after the
+-                // call, so the copy arm allocates a FRESH store — never in place over what the
+-                // call may still read.  No @P290 bracket: the op never frees its source.  A
+-                // witnessed local keeps its own route, which its `__own_` witness is
+-                // maintained against.
+-                if owned_ref
+-                    && !witnessed
+-                    && !stack.function.is_argument(v)
+-                    && !stack.function.is_view_elided(v)
+-                    && let Some(rec) = crate::use_analysis::opaque_callref_bind(
+-                        stack.data,
+-                        stack.def_nr,
+-                        stack.function.tp(v),
+-                        value,
+-                    )
+-                {
+-                    let tp_nr = stack.data.def(rec).known_type();
+-                    let ref_size = size_of::<crate::keys::DbRef>() as u16;
+-                    let slot_end = stack.function.stack(v).saturating_add(ref_size);
+-                    if stack.position < slot_end {
+-                        let bump = stack.step(slot_end) - stack.position;
+-                        stack.add_op("OpReserveFrame", self);
+-                        self.code_add(bump);
+-                        stack.position += bump;
+-                    }
+-                    self.generate(value, stack, false);
+-                    let slot_offset = stack.var_pos(v);
+-                    stack.add_op("OpInitRefSentinel", self);
+-                    self.code_add(slot_offset);
+-                    stack.add_op("OpBindFnRefResult", self);
+-                    self.code_add(stack.var_pos(v));
+-                    self.code_add(tp_nr);
+-                    if stash_old_for_post_free {
+-                        self.free_stashed(stack, v, entry_w);
+-                    }
+-                    crate::copy_manifest::record(
+-                        stack.def_nr,
+-                        v,
+-                        tp_nr,
+-                        crate::copy_manifest::Origin::InterpReassignCall,
+-                    );
+-                    return;
+-                }
+                 if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
+                     stack.function.tp(v).base().clone()
+                     && !stack.function.is_argument(v)
+@@ -3340,17 +3293,6 @@ impl State {
+             } else {
+                 self.gen_set_first_ref_join(stack, v, value, join_d_nr, base);
+             }
+-        } else if let Some(rec) = crate::use_analysis::opaque_callref_bind(
+-            stack.data,
+-            stack.def_nr,
+-            stack.function.tp(v),
+-            value,
+-        ) {
+-            // loft#1659 — a closure call whose target is unresolved.  Adopted as a plain
+-            // `PutRef` it took a capture the closure handed back as an owned store, and the
+-            // scope-exit free released the caller's capture; `OpBindFnRefResult` copies that
+-            // arm and adopts the minted one (@FR-O-Unknown decides here, @FR-B-Copy).
+-            self.gen_set_first_ref_fnref(stack, v, value, rec);
+         } else if let Type::Reference(d_nr, _) | Type::Enum(d_nr, true, _) =
+             stack.function.tp(v).clone()
+             // loft#1245 — BOTH spellings of a call, because a `CallRef` reaching a
+@@ -3920,30 +3862,6 @@ impl State {
+         self.code_add(tp_nr);
+     }
+ 
+-    /// First bind of an unresolved fn-ref call's record result (`OpBindFnRefResult`): the
+-    /// call's own return says whether the store was minted during it, and the op adopts or
+-    /// copies on that.  The slot preamble is `gen_set_first_ref_join`'s, and for its reason:
+-    /// the copy arm allocates INTO the slot, so it must hold the sentinel, written only after
+-    /// the call is evaluated.
+-    fn gen_set_first_ref_fnref(&mut self, stack: &mut Stack, v: u16, value: &Value, d_nr: u32) {
+-        let tp_nr = stack.data.def(d_nr).known_type();
+-        let ref_size = size_of::<crate::keys::DbRef>() as u16;
+-        let slot_end = stack.function.stack(v).saturating_add(ref_size);
+-        if stack.position < slot_end {
+-            let bump = stack.step(slot_end) - stack.position;
+-            stack.add_op("OpReserveFrame", self);
+-            self.code_add(bump);
+-            stack.position += bump;
+-        }
+-        self.generate(value, stack, false);
+-        let slot_offset = stack.var_pos(v);
+-        stack.add_op("OpInitRefSentinel", self);
+-        self.code_add(slot_offset);
+-        stack.add_op("OpBindFnRefResult", self);
+-        self.code_add(stack.var_pos(v));
+-        self.code_add(tp_nr);
+-    }
+-
+     /// First-assignment reference from a function call — deep copy to prevent aliasing.
+     ///
+     /// Sets the `0x8000` "free source" bit on `OpCopyRecord` so the
+diff --git b/src/state/io.rs a/src/state/io.rs
+index b9fa109b2..06a3ecfbd 100644
+--- b/src/state/io.rs
++++ a/src/state/io.rs
+@@ -1940,42 +1940,6 @@ impl State {
+         }
+     }
+ 
+-    /// `OpBindFnRefResult` — bind the record a fn-ref call with an UNRESOLVED target handed
+-    /// back into the owned slot `pos` (`@FR-O-Owner`, `@FR-B-Copy`, `@FR-O-Unknown`).
+-    ///
+-    /// No static fact says whose store that is: the target is chosen at run time, and a fn
+-    /// type records nothing about what its function's return borrows (`@FR-O-Opaque`).
+-    /// `release_fnref_bufs` has just answered it for this one call, by the `alloc_serial`
+-    /// stamp against the snapshot taken when the call began:
+-    ///
+-    /// - a store that PREDATES the call is a capture or an argument, owned further up — copy
+-    ///   it into a fresh store at `pos`, and leave the source alone;
+-    /// - anything else was minted by the call (its own mint, or the buffer this call site
+-    ///   allocated) — adopt it, and take it OFF this frame's hand-up list, so the local is its
+-    ///   one owner and its free at scope exit is the release.  Left on the list as well, the
+-    ///   store had two owners, and the list held one entry per call until the frame ended.
+-    ///
+-    /// A null `src` is adopted as the null it is.
+-    pub fn bind_fn_ref_result(&mut self) {
+-        let pos = self.code::<u16>();
+-        let tp = self.code::<u16>();
+-        let code_pos = self.code_pos;
+-        let src = self.get_stack::<DbRef>();
+-        let borrowed = self
+-            .take_fnref_borrowed_return()
+-            .is_some_and(|b| b.store_nr == src.store_nr);
+-        if borrowed && src.rec != 0 {
+-            self.alloc_record_at(pos, tp, code_pos);
+-            let new_dst = self.get_var::<DbRef>(pos);
+-            self.do_copy_record(src, new_dst, tp);
+-            return;
+-        }
+-        if src.store_nr != u16::MAX {
+-            self.disown_fnref_buf(src.store_nr);
+-        }
+-        *self.mut_var::<DbRef>(pos) = src;
+-    }
+-
+     /// @P295 — deep-copy a keyed collection (`sorted`/`hash`/`index`) into a
+     /// keyed-collection LOCAL `dest`, replacing its prior contents.  Unlike
+     /// `copy_record` there is NO `copy_block`: a keyed local's slot is a
+diff --git b/src/state/mod.rs a/src/state/mod.rs
+index d5f4f3098..f3151812f 100644
+--- b/src/state/mod.rs
++++ a/src/state/mod.rs
+@@ -1386,22 +1386,6 @@ impl State {
+         self.fnref_borrowed_return.take()
+     }
+ 
+-    /// Take the store `store_nr` off the RUNNING frame's hand-up list: a binding in this frame
+-    /// has adopted it and is now its one owner (`OpBindFnRefResult`).  Only this frame's
+-    /// entries are searched — an entry at another depth belongs to another frame's value.
+-    pub(crate) fn disown_fnref_buf(&mut self, store_nr: u16) {
+-        let depth = u32::try_from(self.call_stack.len())
+-            .unwrap_or(u32::MAX)
+-            .saturating_sub(1);
+-        if let Some(at) = self
+-            .fnref_bufs
+-            .iter()
+-            .rposition(|(d, b)| *d == depth && b.store_nr == store_nr)
+-        {
+-            self.fnref_bufs.remove(at);
+-        }
+-    }
+-
+     pub fn hand_up_returned(&mut self, returned: DbRef) {
+         if returned.store_nr == u16::MAX || returned.rec == 0 {
+             return;
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index fdf243f7f..792f94d6b 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -3612,35 +3612,6 @@ pub fn callref_join_first_bind(
+     Some((*rec, base))
+ }
+ 
+-/// loft#1659 — does a bind of this value into an OWNING record local go through
+-/// `OpBindFnRefResult`, the runtime adopt-or-copy?  `Some(record_def)` names the record type
+-/// to allocate on the copy arm.
+-///
+-/// That is a `CallRef` whose target cannot be resolved (a fn-typed parameter, a slot two
+-/// lambdas were assigned to): `@FR-O-Unknown` — nothing was derived about its result, and the
+-/// reader must decide.  The one place the answer exists is the call's own return, which
+-/// compares the store handed back against the allocation counter as the call found it; the op
+-/// reads that verdict.  A store that predates the call is COPIED (`@FR-B-Copy`), any other is
+-/// ADOPTED and the binding becomes its one owner (`@FR-O-Owner`).
+-///
+-/// `tp` must say the binding OWNS (empty deps): a binding whose deps name an argument the
+-/// call may hand back is skip-free, and a copy into it would be a store nobody frees.  A
+-/// resolved target answers `None` — the heap first-bind dispatch's `CallRef` arms decide
+-/// those from the callee's own return summary, which is the stronger fact.
+-#[must_use]
+-pub fn opaque_callref_bind(data: &Data, d_nr: u32, tp: &Type, value: &Value) -> Option<u32> {
+-    let (Type::Reference(rec, _) | Type::Enum(rec, true, _)) = tp.base() else {
+-        return None;
+-    };
+-    if !tp.depend().is_empty() || !matches!(value.unspan(), Value::CallRef(_, _)) {
+-        return None;
+-    }
+-    if callee_of(data, d_nr, value).is_some() {
+-        return None;
+-    }
+-    Some(*rec)
+-}
+-
+ /// @PLN157 § V-g — the record locals of `body` that are only ever READ: every occurrence of
+ /// the variable outside its one defining `Set` sits at arg 0 of a scalar getter
+ /// (`OpGetFloat`, `OpGetInt`, …, a `len`) or of a PROJECTION chain that itself ends in a
