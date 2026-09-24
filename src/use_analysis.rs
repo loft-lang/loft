@@ -4918,6 +4918,27 @@ pub fn drop_copy_census(
                     false,
                 );
             }
+            // A whole-value bind the borrow elision deleted is a copy the line WROTE: the
+            // elision is `(H-Elide)`'s to make after the verdict, never a reason to skip it.
+            for (var, src) in crate::copy_manifest::elided_copies(d_nr) {
+                if !data.type_owns_droppable_anywhere(func.tp(var).base()) {
+                    continue;
+                }
+                cx.line = func.var_source(var).0;
+                cx.pos = None;
+                let lease = cx
+                    .frame
+                    .written_var_verdict(src, crate::lease::Placement::Structure);
+                let tp = data.type_name_str(func.tp(var));
+                cx.emit(
+                    "bind",
+                    &tp,
+                    &[src],
+                    func.name(var),
+                    (Some(&lease), "-"),
+                    false,
+                );
+            }
             sites += cx.sites;
             if refuse {
                 raise_copy_refusals(&mut cx, def, diags, fallback_file);

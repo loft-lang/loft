@@ -1498,6 +1498,18 @@ CLOSED 2026-09-17, below.
   do — it ran only a hand-picked pre-scope subset of the lints, so an `@EXPECT_ERROR` for either
   error could never match there.  The `registry` fixture's arms no longer `disown` a cursor
   they moved.
+- ⚠ **Two copies the census never saw, found 2026-09-24 and closed the same day** (#1569's
+  matrix).  Both had no IR left by the time the census walked the function.  `u = p` of a VECTOR
+  parameter that nothing mutates is deleted by the borrow elision (`scopes::elide_borrows`), which
+  rewrites every read of `u` to `p`; the same bind followed by `u += […]` kept its copy and was
+  refused, so a LATER line decided validity — `(H-Copy-Refuse)`'s *"whatever the program does
+  after that line"*, violated.  And `p = p`, which the parser erases (#330), was recorded for the
+  census only when `LOFT_DROP_COPY_CENSUS` was set, so by default it was never judged.  Each
+  erasure now records the copy it removed (`copy_manifest::note_elided_copy`,
+  `note_self_bind`) and the census judges the record by the written line.  The drop gate's `p_v4`
+  (`u = p` of a vector parameter) had been classified `Once` on the strength of the first hole;
+  it is `Refused`, with its record twins `p_k7`, `p_h2`–`p_h7`.  Pinned by
+  `tests/lease_refuse.rs::a_copy_the_compiler_skips_is_judged_by_its_own_line`, both backends.
 
 ### D-heap-9 — OPEN (2026-09-15, loft#1569): `OpCopy` is not a hook
 

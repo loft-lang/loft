@@ -6453,6 +6453,10 @@ fn elide_borrows(data: &mut Data) {
         let mut elide_v: HashMap<u16, Value> = HashMap::new();
         let mut elide_vdb: HashSet<u16> = HashSet::new();
         for p in plans {
+            // The elision deletes a copy the line wrote; the copy-lease rules still judge it.
+            if let Value::Var(src) = p.source.unspan() {
+                crate::copy_manifest::note_elided_copy(d_nr, p.var, *src);
+            }
             for &e in &p.borrowers {
                 data.definitions[d_nr as usize]
                     .variables

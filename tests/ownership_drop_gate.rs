@@ -1456,7 +1456,6 @@ const PILOT_ONCE: &[&str] = &[
     "p_k5", "p_k6", "p_r1", "p_g2", "p_s8", // fresh values only
     "p_n1", "p_n2", "p_n3", "p_n4", // fresh values written into places, and a removal
     "p_t1", // a member read through a call result, which nothing outlives
-    "p_v4", // a vector parameter, which F-ParamHeap binds without copying
     // A collection a CALL answers is a fresh value placed where it is produced, which (H-Move)
     // moves: the local owns it and owes exactly one release.  `p_v5`–`p_v7` do not run it
     // (D-heap-13); `p_v8` and `p_v9` do, and are the controls that bound the defect.
@@ -1474,7 +1473,11 @@ const PILOT_ONCE: &[&str] = &[
 /// still refuses after the 2026-09-17 ruling, each measured releasing twice.
 const PILOT_REFUSED: &[&str] = &[
     "p_k7", "p_h2", "p_h3", "p_h4", "p_h5", "p_h6", "p_h7", // `x = p` of a parameter
-    "p_o1", // `u = e` of a loop variable — a member of the container it iterates
+    // `u = p` of a vector PARAMETER — the same bind.  `(F-ParamHeap)` makes PASSING the vector
+    // a borrow; the whole-value bind in the body is still a copy.  It read as `Once` while the
+    // borrow elision deleted the copy before the census judged it, which made the verdict
+    // depend on whether a later line mutated `u`.
+    "p_v4", "p_o1", // `u = e` of a loop variable — a member of the container it iterates
     "p_o3", "p_o4", // `return` of a view, of a member, of a parameter
     "p_o5", "p_e1", "p_e2", // a member placed in a literal or appended
     "p_g1", "p_g3", "p_g4", "p_g5", // a member of a call result

@@ -111,6 +111,68 @@ fn a_copy_of_what_the_caller_owns_is_refused() {
     assert_ne!(code, Some(0), "a refused program must not compile\n{out}");
 }
 
+/// A copy the compiler later SKIPS is judged by the line that wrote it.  `(H-Copy-Refuse)` reads a
+/// copy off its own line "whatever the program does after that line", and `(H-Elide)` may elide a
+/// copy only after that verdict.  Two copies had no IR left by the time the census looked:
+///
+/// - `u = p` of a vector parameter that nothing mutates, which the borrow elision replaces by
+///   reads of `p` — while the same bind followed by a growth kept its copy and was refused, so a
+///   LATER line decided validity;
+/// - `p = p`, which the parser erases (#330), and which was judged only when the census's
+///   environment variable happened to be set.
+///
+/// The controls are the same two spellings on a value the function OWNS, which move.
+#[test]
+fn a_copy_the_compiler_skips_is_judged_by_its_own_line() {
+    for (tag, body) in [
+        (
+            "elided_vec",
+            "fn keep(p: vector<H>) { u = p; print(\"R{len(u)}\"); }\n\
+             fn main() { v: vector<H> = [mk(1)]; keep(v); }",
+        ),
+        (
+            "grown_vec",
+            "fn keep(p: vector<H>) { u = p; u += [mk(2)]; print(\"R{len(u)}\"); }\n\
+             fn main() { v: vector<H> = [mk(1)]; keep(v); }",
+        ),
+        (
+            "self_param",
+            "fn keep(p: H) { p = p; print(\"R{p.id}\"); }\n\
+             fn main() { a = mk(1); keep(a); }",
+        ),
+    ] {
+        for mode in ["--interpret", "--native"] {
+            let (out, code) = check(tag, &program(body), mode, ON);
+            assert!(
+                out.contains("[copy-of-droppable]") && out.contains("cannot copy `p` here"),
+                "{tag} {mode}: the copy of the parameter is refused on its own line\n{out}"
+            );
+            assert_ne!(
+                code,
+                Some(0),
+                "{tag} {mode}: a refused program must not compile\n{out}"
+            );
+        }
+    }
+    for (tag, body) in [
+        (
+            "owned_vec",
+            "fn vs() -> vector<H> { [mk(1), mk(2)] }\n\
+             fn main() { w = vs(); u = w; print(\"R{len(u)}\"); }",
+        ),
+        (
+            "owned_self",
+            "fn main() { a = mk(1); a = a; print(\"R{a.id}\"); }",
+        ),
+    ] {
+        let (out, code) = check(tag, &program(body), "--interpret", ON);
+        assert!(
+            !out.contains("[copy-of-droppable]") && code == Some(0),
+            "{tag}: a value the function owns moves, and stays legal\n{out}"
+        );
+    }
+}
+
 /// A value the function OWNS is a MOVE, wherever it is placed — the ruling's whole point, and
 /// the half that would go unnoticed if only the refusals were pinned.
 ///
