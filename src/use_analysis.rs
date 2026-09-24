@@ -4894,6 +4894,9 @@ pub fn drop_copy_census(
                 pos: None,
                 refusals: Vec::new(),
                 sites: 0,
+                pending_site: None,
+                lease_sites: Vec::new(),
+                quiet: false,
             };
             cx.scan(&def.code);
             // `x = x` leaves no IR (the parser erases it), but it places an existing droppable
@@ -5144,6 +5147,15 @@ struct Census<'a> {
         String,
     )>,
     sites: usize,
+    /// The site `emit` is about to judge, where a leasing copy can be rewritten: the copy's node,
+    /// the new structure it makes, and that structure's type definition.  Set by the arms whose
+    /// copy is one statement the rewrite can follow; an arm that sets none keeps refusing.
+    pending_site: Option<(Value, Value, u32)>,
+    /// `(H-Copy-Lease)` — the copies of a type that declares `OpCopy`: the node, the new structure,
+    /// and the function to run on it ([`crate::lease::copy_cascade_nr`]).
+    lease_sites: Vec<(Value, Value, u32)>,
+    /// Print no census line — the lease pass walks every function a second time.
+    quiet: bool,
 }
 
 impl Census<'_> {
@@ -5306,6 +5318,8 @@ impl Census<'_> {
                 let (lease, liveness) = if kind == "snapshot" {
                     (None, "-".to_string())
                 } else {
+                    self.pending_site = copied_record_def(self.data, &args[2])
+                        .map(|d| (node.clone(), args[1].clone(), d));
                     self.note_destination(&args[1]);
                     (
                         Some(self.frame.written_verdict(&args[0], placement)),
@@ -5377,6 +5391,12 @@ impl Census<'_> {
                 let into = self.func.name(*v).to_string();
                 let lease = self.frame.written_var_verdict(*src, self.placement);
                 let liveness = lease_column(self.func, self.frame.liveness_var_verdict(node, *src));
+                self.pending_site = self
+                    .func
+                    .tp(*v)
+                    .base()
+                    .heap_def_nr()
+                    .map(|d| (node.clone(), Value::Var(*v), d));
                 crate::copy_manifest::note_lease_site(self.d_nr, *v);
                 self.emit(kind, &tp, &[*src], &into, (Some(&lease), &liveness), false);
             }
@@ -5558,13 +5578,24 @@ impl Census<'_> {
         // taken: one chokepoint rather than eight arms that can drift apart.  A `snapshot` is the
         // scope pass's own copy and carries no verdict (`None`), so it can never be refused —
         // which the corpus agrees with, 0 refusals across 666 snapshot rows.
-        if crate::keys::lease_refuse_enabled()
-            && let Some(crate::lease::Lease::Refuse(r)) = lease
-        {
-            self.refusals
-                .push((self.pos.clone(), self.line, r.clone(), tp.to_string()));
+        let site = self.pending_site.take();
+        if let Some(crate::lease::Lease::Refuse(r)) = lease {
+            // `(H-Copy-Lease)`: a copy of a type whose every droppable declares `OpCopy` is not
+            // refused — the new structure takes its own lease.  Only at a site the rewrite can
+            // reach; anywhere else the copy stays refused rather than silently unleased.
+            match site {
+                Some((node, dst, d)) if crate::lease::leases_whole(self.data, d) => {
+                    self.lease_sites
+                        .push((node, dst, crate::lease::copy_cascade_nr(self.data, d)));
+                }
+                _ if crate::keys::lease_refuse_enabled() => {
+                    self.refusals
+                        .push((self.pos.clone(), self.line, r.clone(), tp.to_string()));
+                }
+                _ => {}
+            }
         }
-        if !crate::keys::drop_copy_census_enabled() {
+        if self.quiet || !crate::keys::drop_copy_census_enabled() {
             return;
         }
         let lease = lease.map_or_else(|| "-".to_string(), |l| lease_column(self.func, l.clone()));
@@ -5660,6 +5691,15 @@ fn push_copy_root(v: u16, func: &Function, out: &mut Vec<u16>, seen: &mut Vec<u1
 }
 
 /// The name of the record type an `OpCopyRecord`'s type argument names, or `?` when it names none.
+/// The definition an `OpCopyRecord`'s type operand names — [`copied_record_name`]'s lookup.
+fn copied_record_def(data: &Data, tp: &Value) -> Option<u32> {
+    let Value::Int(tp) = tp.unspan() else {
+        return None;
+    };
+    let known = u16::try_from(*tp & i32::from(crate::keys::COPY_TP_MASK)).ok()?;
+    (0..data.definitions()).find(|&d| data.def(d).known_type == known)
+}
+
 fn copied_record_name(data: &Data, tp: &Value) -> String {
     let Value::Int(tp) = tp.unspan() else {
         return "?".to_string();
@@ -8554,5 +8594,91 @@ mod ref_param_publish_tests {
     fn silent_without_a_publish() {
         let code = v_block(vec![free(1)], Type::Void, "body");
         assert!(run(&code).is_empty());
+    }
+}
+
+/// `(H-Copy-Lease)` — run `OpCopy` on the new structure every copy of a leasing type makes.
+/// Enforces @FR-H-Copy-Lease.
+///
+/// The copies are the census's (`drop_copy_census`): the one walk that sees every copy site with
+/// its `(H-Move)` verdict, proved complete against what both generators emit (`copy_manifest`).
+/// A site with a copy verdict on a type whose every droppable declares `OpCopy` gets the type's
+/// copy cascade called on the new structure as the statement right after the copy — in the IR,
+/// so both backends run it.  A move, the scope pass's `__disp_` snapshot and an elided copy have
+/// no copy verdict and run nothing.
+///
+/// Runs at the end of the scope pass, once per load.  Idempotent: a copy already followed by its
+/// call is left alone, so a later load's pass changes nothing.
+pub fn lease_calls(data: &mut Data) {
+    if !(0..data.definitions())
+        .any(|d| data.def(d).def_type == DefType::Function && data.def(d).name.ends_with("_OpCopy"))
+    {
+        return;
+    }
+    let copy_d = data.def_nr("OpCopyRecord");
+    for d_nr in 0..data.definitions() {
+        if !matches!(data.def(d_nr).def_type, DefType::Function) {
+            continue;
+        }
+        let sites = {
+            let def = data.def(d_nr);
+            let mut cx = Census {
+                data,
+                d_nr,
+                func: &def.variables,
+                frame: crate::lease::Frame::new(data, def),
+                fname: &def.name,
+                copy_d,
+                op_append: data.def_nr("OpAppendVector"),
+                returned: data
+                    .type_owns_droppable_anywhere(def.returned.base())
+                    .then(|| data.type_name_str(&def.returned)),
+                whole_tuple: None,
+                rhs_of: None,
+                placement: crate::lease::Placement::Structure,
+                blocks: Vec::new(),
+                line: 0,
+                pos: None,
+                refusals: Vec::new(),
+                sites: 0,
+                pending_site: None,
+                lease_sites: Vec::new(),
+                quiet: true,
+            };
+            cx.scan(&def.code);
+            cx.lease_sites
+        };
+        if sites.is_empty() {
+            continue;
+        }
+        let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
+        insert_lease_calls(&mut code, &sites);
+        data.definitions[d_nr as usize].code = code;
+    }
+}
+
+/// Insert each lease site's call as the statement after its copy, where it is not there already.
+fn insert_lease_calls(node: &mut Value, sites: &[(Value, Value, u32)]) {
+    node.for_each_child_mut(&mut |c| insert_lease_calls(c, sites));
+    let list = match node {
+        Value::Block(bl) | Value::Loop(bl) => &mut bl.operators,
+        Value::Insert(items) => items,
+        _ => return,
+    };
+    let old = std::mem::take(list);
+    let mut i = 0;
+    while i < old.len() {
+        let item = &old[i];
+        list.push(item.clone());
+        if let Some((_, dst, cascade)) = sites
+            .iter()
+            .find(|(n, _, c)| *c != u32::MAX && (n == item || n == item.unspan()))
+        {
+            let call = Value::Call(*cascade, vec![dst.clone()]);
+            if old.get(i + 1) != Some(&call) {
+                list.push(call);
+            }
+        }
+        i += 1;
     }
 }

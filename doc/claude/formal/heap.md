@@ -1511,7 +1511,7 @@ CLOSED 2026-09-17, below.
   it is `Refused`, with its record twins `p_k7`, `p_h2`–`p_h7`.  Pinned by
   `tests/lease_refuse.rs::a_copy_the_compiler_skips_is_judged_by_its_own_line`, both backends.
 
-### D-heap-9 — OPEN (2026-09-15, loft#1569): `OpCopy` is not a hook
+### D-heap-9 — OPEN (2026-09-15, loft#1569), NARROWED 2026-09-24: `OpCopy` runs at every copy but the view-lowered ones
 
 - **Violates:** (H-Copy-Lease), (H-Elide).
 - **Where:** `parser/definitions.rs` checks `OpDrop`'s signature (`check_drop_signature`) and
@@ -1521,9 +1521,26 @@ CLOSED 2026-09-17, below.
   both backends: `a = mk(1); b = a` prints no line from the hook, and the release moves to one of
   the two structures (`M1 R1 1 D1`).  A type that means to lease its copies gets neither the lease
   nor an error saying it has none.
-- **Status:** OPEN — @PLN163 P4; P5 then removes the release-moving machinery the lease replaces.
-- **Removal:** the signature check, the synthesized copy cascade, and a call at every copy site
-  on both backends; the moved release removed wherever a copy leases.
+- **Status:** OPEN, NARROWED 2026-09-24 — @PLN163 P4's first half is built.  `OpCopy`'s signature
+  is checked like `OpDrop`'s; a type whose members declare it gets a synthesized
+  `t_<LEN><Type>_OpCopyAll` (its own hook first, then its members', through the drop cascade's own
+  member walks with the hook as a parameter — `parser::definitions::Hook`); and every copy the
+  census can follow with a statement — a whole-value bind, an `OpCopyRecord` into a field, an
+  element or a buffer, a join arm — gets the cascade called on the new structure, in the IR after
+  the scope pass (`use_analysis::lease_calls`), so both backends run it.  `scopes::copy_moves_drop_from`
+  moves no release for such a copy, so each structure drops once.  A type leases when a droppable
+  inside it declares `OpCopy` and none lacks one (`lease::leases_whole`); a member without the hook
+  still refuses the whole copy.  Measured over a 19-cell matrix on both backends, identical under
+  `LOFT_POISON`, `LOFT_STRICT_STORES` and the native leak check; pinned by `tests/copy_lease.rs`.
+  **Still open** — the copies the lowering implements as a VIEW, which can take no lease until the
+  parser materialises them, and which therefore stay REFUSED rather than run unleased: a `return`
+  of a parameter or of a member (`return p`, `return s.h` — the result type depends on `p`), a
+  tuple item (`(p, 1)` stores `p`), a whole-collection copy (`u = p` of a `vector<H>`, an append
+  that would need the hook on the appended range alone), and an erased `p = p`.  With the refusal
+  switched off those shapes released one resource twice: the lowering skipped the copy and kept
+  its drop, which is not the elision `(H-Elide)` permits.
+- **Removal:** the four view-lowered shapes above materialised as copies that lease — or elided
+  together with their drop, `(H-Elide)` — then P5 removes the moved-release machinery.
 
 ### D-heap-13 — CLOSED (2026-09-20): a collection returned from a call and bound to a local never releases its elements
 

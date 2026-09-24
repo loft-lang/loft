@@ -6345,7 +6345,172 @@ impl Parser {
     /// collection element is deliberately NOT cascaded yet (stages D and E): emitting half a
     /// cascade would be worse than none, because a partial release reads as a working one.
     /// So the members walked here are exactly the members emitted here.
+    /// Does `hook` reach definition `d`: a droppable for `OpDrop`, a type that declares `OpCopy`
+    /// somewhere inside it for `OpCopy`?
+    fn hook_wants_def(&self, hook: Hook, d: u32) -> bool {
+        match hook {
+            Hook::Drop => self.data.owns_droppable(d),
+            Hook::Copy => {
+                crate::lease::copy_reach(&self.data, &Type::Reference(d, crate::data::Deps::none()))
+                    .leases
+            }
+        }
+    }
+
+    /// [`Self::hook_wants_def`] for a member's TYPE.
+    fn hook_wants_type(&self, hook: Hook, t: &Type) -> bool {
+        match hook {
+            Hook::Drop => self.data.type_owns_droppable_anywhere(t),
+            Hook::Copy => crate::lease::copy_reach(&self.data, t).leases,
+        }
+    }
+
+    /// The function a member of type `d` is handed to: its cascade, else its own hook.
+    fn hook_cascade_nr(&self, hook: Hook, d: u32) -> u32 {
+        match hook {
+            Hook::Drop => self.data.drop_cascade_nr(d),
+            Hook::Copy => crate::lease::copy_cascade_nr(&self.data, d),
+        }
+    }
+
+    /// The type's own hook — `OpDrop` or `OpCopy` — or `u32::MAX`.
+    fn hook_own_nr(&self, hook: Hook, t: u32) -> u32 {
+        match hook {
+            Hook::Drop => self.data.drop_hook_nr(t),
+            Hook::Copy => crate::lease::copy_hook_nr(&self.data, t),
+        }
+    }
+
+    /// The key of the type's synthesized cascade for `hook`.
+    fn hook_cascade_name(&self, hook: Hook, t: u32) -> String {
+        match hook {
+            Hook::Drop => Self::drop_cascade_name(&self.data, t),
+            Hook::Copy => self.data.drop_cascade_key(t, "OpCopyAll"),
+        }
+    }
+
+    /// `(H-Copy-Lease)` — give every type whose MEMBERS declare `OpCopy` a function that runs the
+    /// hooks of a structure a copy just made: `t_<LEN><Type>_OpCopyAll(self)`, the mirror of the
+    /// drop cascade.  Its own `OpCopy` first, then each member's, in declaration order — the
+    /// container fixes itself up before the things it owns, as its drop releases before them.
+    ///
+    /// A type whose only hook is its own gets no cascade: a copy site calls the hook directly,
+    /// as a drop site does ([`crate::lease::copy_cascade_nr`]).  Keyed collections are left out
+    /// as they are for drops (`(H-Drop-Not)`), and so is a generator handle, which cannot be
+    /// copied at all.  Enforces @FR-H-Copy-Lease (the cascade half).
+    fn synth_copy_cascades(&mut self) {
+        if !(0..self.data.definitions()).any(|d| {
+            self.data.def(d).def_type == DefType::Function
+                && self.data.def(d).name().ends_with("_OpCopy")
+        }) {
+            return;
+        }
+        let mut targets: Vec<u32> = Vec::new();
+        for d_nr in 0..self.data.definitions() {
+            if self.data.def_nr(&self.hook_cascade_name(Hook::Copy, d_nr)) != u32::MAX {
+                continue;
+            }
+            let wanted = match self.data.def_type(d_nr) {
+                DefType::Struct | DefType::EnumValue => {
+                    self.data.def(d_nr).known_type() != u16::MAX
+                        && (!self.cascade_fields_for(Hook::Copy, d_nr).is_empty()
+                            || !self.cascade_vectors_for(Hook::Copy, d_nr).is_empty())
+                }
+                DefType::Enum => !self.cascade_variants_for(Hook::Copy, d_nr).is_empty(),
+                DefType::Vector => self.collection_elem_cascade_for(Hook::Copy, d_nr).is_some(),
+                _ => false,
+            };
+            if wanted {
+                targets.push(d_nr);
+            }
+        }
+        let mut made: Vec<(u32, u32)> = Vec::new();
+        for &t in &targets {
+            let name = self.hook_cascade_name(Hook::Copy, t);
+            let pos = self.data.def(t).position().clone();
+            let c_nr = self.data.add_def(&name, &pos, DefType::Function);
+            self.data.set_returned(c_nr, Type::Void);
+            let self_tp = self.cascade_self_type(t);
+            let _ = self
+                .data
+                .add_attribute(&mut self.lexer, c_nr, "self", self_tp);
+            made.push((t, c_nr));
+        }
+        for (t, c_nr) in made {
+            if self.data.def_type(t) == DefType::Enum {
+                self.fill_enum_cascade(Hook::Copy, t, c_nr);
+            } else {
+                self.fill_copy_cascade(t, c_nr);
+            }
+        }
+    }
+
+    /// The body of a record's or a collection's copy cascade — see [`Self::synth_copy_cascades`].
+    fn fill_copy_cascade(&mut self, t: u32, c_nr: u32) {
+        let name = self.hook_cascade_name(Hook::Copy, t);
+        let file = self.data.def(t).position().file.clone();
+        let mut vars = Function::new(&name, &file);
+        let self_tp = self.cascade_self_type(t);
+        let self_var = vars.add_variable("self", &self_tp, &mut self.lexer);
+        vars.become_argument(self_var);
+        vars.defined(self_var);
+        let outer_vars = std::mem::replace(&mut self.vars, vars);
+        let outer_context = self.context;
+        self.context = c_nr;
+        let mut ops: Vec<Value> = Vec::new();
+        if let Some((elem_tp, ed)) = self.collection_elem_cascade_for(Hook::Copy, t) {
+            let target = self.hook_cascade_nr(Hook::Copy, ed);
+            if target != u32::MAX {
+                ops.push(self.drop_elements_loop(&Value::Var(self_var), 0, &elem_tp, target));
+            }
+            self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
+            return;
+        }
+        let own = self.hook_own_nr(Hook::Copy, t);
+        if own != u32::MAX {
+            ops.push(Value::Call(own, vec![Value::Var(self_var)]));
+        }
+        for (n, (off, vec_tp, elem_tp, ed)) in self
+            .cascade_vectors_for(Hook::Copy, t)
+            .into_iter()
+            .enumerate()
+        {
+            let target = self.hook_cascade_nr(Hook::Copy, ed);
+            if target == u32::MAX {
+                continue;
+            }
+            let field = self.get_val(
+                &vec_tp,
+                false,
+                u32::from(off),
+                Value::Var(self_var),
+                u32::MAX,
+            );
+            ops.push(self.drop_elements_loop(&field, n, &elem_tp, target));
+        }
+        for (off, ftype, fd) in self.cascade_fields_for(Hook::Copy, t) {
+            let target = self.hook_cascade_nr(Hook::Copy, fd);
+            if target == u32::MAX {
+                continue;
+            }
+            let field = self.get_val(
+                &ftype,
+                false,
+                u32::from(off),
+                Value::Var(self_var),
+                u32::MAX,
+            );
+            // An absent member (a nullable field holding nothing) has no structure to fix up.
+            let live = self.cl("OpConvBoolFromRef", std::slice::from_ref(&field));
+            ops.push(v_if(live, Value::Call(target, vec![field]), Value::Null));
+        }
+        self.finish_drop_cascade(c_nr, ops, outer_vars, outer_context);
+    }
+
     pub(crate) fn synth_drop_cascades(&mut self) {
+        // `(H-Copy-Lease)`'s cascades are independent of the drop ones and can exist in a program
+        // that declares no `OpDrop`, so they are made before the drop pass's early return.
+        self.synth_copy_cascades();
         // Cheap exit for the overwhelmingly common program: no `OpDrop` anywhere means no
         // type can own a droppable, so nothing below can fire.
         // …and a generator handle held by a record or a collection (loft#1585), which its
@@ -6499,6 +6664,11 @@ impl Parser {
     /// A variant with nothing to release gets no arm at all, so a unit-only enum synthesizes
     /// no cascade and an enum with one droppable variant tests once rather than per variant.
     fn cascade_variants(&self, e_nr: u32) -> Vec<(u32, i32)> {
+        self.cascade_variants_for(Hook::Drop, e_nr)
+    }
+
+    /// [`Self::cascade_variants`] for either hook.
+    fn cascade_variants_for(&self, hook: Hook, e_nr: u32) -> Vec<(u32, i32)> {
         let mut out = Vec::new();
         for v in self.data.children_of(e_nr) {
             if self.data.def_type(v) != DefType::EnumValue
@@ -6506,7 +6676,9 @@ impl Parser {
             {
                 continue;
             }
-            if self.cascade_fields(v).is_empty() && self.cascade_vectors(v).is_empty() {
+            if self.cascade_fields_for(hook, v).is_empty()
+                && self.cascade_vectors_for(hook, v).is_empty()
+            {
                 continue;
             }
             let vname = self.data.def(v).name().to_string();
@@ -6532,14 +6704,19 @@ impl Parser {
     /// RECORD (the discriminator sits at its head), which is why the arm can hand `self`
     /// straight to a cascade whose parameter is typed as that variant.
     fn fill_enum_drop_cascade(&mut self, t: u32, c_nr: u32) {
-        let variants = self.cascade_variants(t);
+        self.fill_enum_cascade(Hook::Drop, t, c_nr);
+    }
+
+    /// The enum cascade for either hook: the type's own hook, then the present variant's.
+    fn fill_enum_cascade(&mut self, hook: Hook, t: u32, c_nr: u32) {
+        let variants = self.cascade_variants_for(hook, t);
         let Some(&(first, _)) = variants.first() else {
             return;
         };
         let disc_pos = self
             .database
             .position(self.data.def(first).known_type(), "enum");
-        let name = Self::drop_cascade_name(&self.data, t);
+        let name = self.hook_cascade_name(hook, t);
         let file = self.data.def(t).position().file.clone();
         let mut vars = Function::new(&name, &file);
         let self_tp = self.cascade_self_type(t);
@@ -6551,7 +6728,7 @@ impl Parser {
         self.context = c_nr;
 
         let mut ops: Vec<Value> = Vec::new();
-        let own = self.data.drop_hook_nr(t);
+        let own = self.hook_own_nr(hook, t);
         if own != u32::MAX {
             ops.push(Value::Call(own, vec![Value::Var(self_var)]));
         }
@@ -6561,7 +6738,7 @@ impl Parser {
         );
         let disc = self.cl("OpConvIntFromEnum", &[get_enum]);
         for (v, number) in variants {
-            let target = self.data.drop_cascade_nr(v);
+            let target = self.hook_cascade_nr(hook, v);
             if target == u32::MAX {
                 continue;
             }
@@ -6573,7 +6750,14 @@ impl Parser {
             ));
         }
 
-        let body = v_block(ops, Type::Void, "drop_cascade_enum");
+        let body = v_block(
+            ops,
+            Type::Void,
+            match hook {
+                Hook::Drop => "drop_cascade_enum",
+                Hook::Copy => "copy_cascade_enum",
+            },
+        );
         let built = std::mem::replace(&mut self.vars, outer_vars);
         self.context = outer_context;
         self.data.definitions[c_nr as usize].code = body;
@@ -6637,6 +6821,11 @@ impl Parser {
     /// [`Data::type_owns_droppable`] follows, so `synth_drop_cascades` never declares a cascade
     /// it cannot fully fill — and never skips one it owed.
     fn cascade_fields(&self, d_nr: u32) -> Vec<(u16, Type, u32)> {
+        self.cascade_fields_for(Hook::Drop, d_nr)
+    }
+
+    /// [`Self::cascade_fields`] for either hook: the fields whose type `hook` reaches.
+    fn cascade_fields_for(&self, hook: Hook, d_nr: u32) -> Vec<(u16, Type, u32)> {
         let kt = self.data.def(d_nr).known_type();
         let mut out = Vec::new();
         for a_nr in 0..self.data.def(d_nr).attributes().len() {
@@ -6655,7 +6844,7 @@ impl Parser {
             {
                 continue;
             }
-            if fd == d_nr || !self.data.owns_droppable(fd) {
+            if fd == d_nr || !self.hook_wants_def(hook, fd) {
                 continue; // a self-field cannot exist inline; skip defensively
             }
             let name = self.data.attr_name(d_nr, a_nr);
@@ -6677,6 +6866,11 @@ impl Parser {
     /// would release somebody else's element; they need the ownership question answered first
     /// and are deliberately out of stage E.
     fn cascade_vectors(&self, d_nr: u32) -> Vec<(u16, Type, Type, u32)> {
+        self.cascade_vectors_for(Hook::Drop, d_nr)
+    }
+
+    /// [`Self::cascade_vectors`] for either hook.
+    fn cascade_vectors_for(&self, hook: Hook, d_nr: u32) -> Vec<(u16, Type, Type, u32)> {
         let kt = self.data.def(d_nr).known_type();
         let mut out = Vec::new();
         for a_nr in 0..self.data.def(d_nr).attributes().len() {
@@ -6687,10 +6881,10 @@ impl Parser {
             let Type::Vector(elm, _) = a.typedef.base() else {
                 continue;
             };
-            let Some((elm, ed)) = self.cascade_element((**elm).clone()) else {
+            let Some((elm, ed)) = self.cascade_element_for(hook, (**elm).clone()) else {
                 continue;
             };
-            if !self.data.type_owns_droppable_anywhere(&elm) {
+            if !self.hook_wants_type(hook, &elm) {
                 continue;
             }
             let name = self.data.attr_name(d_nr, a_nr);
@@ -6821,13 +7015,16 @@ impl Parser {
     /// droppable and so gives the collection something to release.  `None` for every other
     /// def, which is what keeps a `vector<integer>` from earning a cascade.
     fn collection_elem_cascade(&self, d_nr: u32) -> Option<(Type, u32)> {
+        self.collection_elem_cascade_for(Hook::Drop, d_nr)
+    }
+
+    /// [`Self::collection_elem_cascade`] for either hook.
+    fn collection_elem_cascade_for(&self, hook: Hook, d_nr: u32) -> Option<(Type, u32)> {
         let Type::Vector(elm, _) = self.data.def(d_nr).returned().base() else {
             return None;
         };
-        let (elm, ed) = self.cascade_element((**elm).clone())?;
-        self.data
-            .type_owns_droppable_anywhere(&elm)
-            .then_some((elm, ed))
+        let (elm, ed) = self.cascade_element_for(hook, (**elm).clone())?;
+        self.hook_wants_type(hook, &elm).then_some((elm, ed))
     }
 
     /// loft#1601 — the KEYED collection fields of `d_nr` whose records hold a generator, as
@@ -6897,7 +7094,14 @@ impl Parser {
     /// generator handle (loft#1585) is read as a reference to its SLOT and released by
     /// `t_8iterator_OpDropAll`.
     fn cascade_element(&self, elm: Type) -> Option<(Type, u32)> {
+        self.cascade_element_for(Hook::Drop, elm)
+    }
+
+    /// [`Self::cascade_element`] for either hook.  A generator handle has no copy — a copy that
+    /// reaches one is refused (`(H-Copy-Refuse)`) — so the copy cascade never walks one.
+    fn cascade_element_for(&self, hook: Hook, elm: Type) -> Option<(Type, u32)> {
         match elm.base() {
+            Type::Iterator(_, _) | Type::Tuple(_) if hook == Hook::Copy => None,
             Type::Reference(ed, _) | Type::Enum(ed, true, _) => {
                 let ed = *ed;
                 Some((elm, ed))
@@ -6925,7 +7129,7 @@ impl Parser {
             // A VECTOR element (loft#1597, @FR-H-Drop): released through its own collection's cascade —
             // the `vector<T>` def's walk of its elements — read as the vector the element's
             // slot holds, as `v[i]` reads it.  A vector of vectors released nothing.
-            Type::Vector(inner, _) if self.data.type_owns_droppable_anywhere(inner) => {
+            Type::Vector(inner, _) if self.hook_wants_type(hook, inner) => {
                 let cd = self.data.collection_def_nr(inner);
                 (cd != u32::MAX).then(|| (elm.clone(), cd))
             }
@@ -7354,4 +7558,13 @@ pub(crate) struct HeaderVar {
     pub(crate) bounds: Vec<String>,
     /// Where it is written.
     pub(crate) at: crate::lexer::Position,
+}
+
+/// Which of the two hooks the compiler calls on its own a cascade serves: `OpDrop` at a
+/// structure's death, `OpCopy` on the new structure a copy makes (`formal/heap.md`
+/// `(H-Copy-Lease)`).  The member walks are shared; only what they ask of a member differs.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Hook {
+    Drop,
+    Copy,
 }

@@ -11,6 +11,8 @@
 //
 // @falsified-at: 1a7b0d910 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/a-heap-parameter-rebound-to-itself-keeps-its-value.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   HOLDS: leak, panic and free-refusal are clean on BOTH trees — the defect is a VALUE (`f1`
+//   answers `null/null` where the file says `7/x`), so the assertion channel is the measurement.
 struct P { id: integer, t: text }
 enum E { EA { a: integer }, EB { b: text } }
 struct R { k: integer, v: text }
