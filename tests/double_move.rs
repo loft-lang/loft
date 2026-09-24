@@ -742,7 +742,7 @@ fn g6_written_copy_of_a_parameter_releases_its_member_twice_and_is_named() {
          fn g(p: S) { x = p; x.h = mk(96); c = Hold { h: x.h }; println(\"{c.h.id}\"); }",
         "s = S { h: mk(95) }; g(s); println(\"{s.h.id}\");",
         1,
-       3,
+        3,
     );
 }
 
