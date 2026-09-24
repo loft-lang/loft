@@ -6,11 +6,11 @@
 # directory `loft-bench-libs` beside this repository) and fast-forwards it when it is clean.
 # These are the bench's OWN checkouts: a run writes build caches into them, which is why the
 # pass never measures from a library author's working tree.
-loft-libs-graphics	laptop-perf-bench	drawing=drawing,gridmesh=gridmesh,text2d=text2d,tween=tween
-loft-libs-core	laptop-perf-bench	random=random
+loft-libs-graphics	laptop-perf-bench	drawing=drawing,gridmesh=gridmesh,text2d=text2d,tween=tween,graphics=graphics,stage=stage,shapes=shapes
+loft-libs-core	laptop-perf-bench	random=random,crypto=crypto,cbor=cbor,arguments=arguments,zttext=zttext
 loft-libs-docs	laptop-perf-bench	markdown=markdown,html=html
 loft-libs-game	laptop-perf-bench	time=time,fixstep=fixstep
-loft-libs-net	laptop-perf-bench	web=web,ssh=ssh
-loft-libs-assets	main	-
-loft-libs-plugins	main	-
-loft-libs-world	main	-
+loft-libs-net	laptop-perf-bench	web=web,ssh=ssh,server=server,game_protocol=game_protocol
+loft-libs-assets	laptop-perf-bench	mesh3d=mesh3d,glb=glb,assets=assets
+loft-libs-plugins	laptop-perf-bench	pluginabi=pluginabi
+loft-libs-world	laptop-perf-bench	hex_grid=hex_grid,hex_way=hex_way,hex_edge=hex_edge,hex_field=hex_field,hex_world=hex_world,hex_terrain=hex_terrain
