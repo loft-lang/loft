@@ -76,3 +76,35 @@ drawing	resize	vector-read	library:drawing	Lanczos resample 1024 to 256
 16_consumer_shapes	composite_hash	keyed	consumer:dryopea	`paint_line`: a hash on a COMPOSITE two-integer key — find-or-insert, removal by null, probes
 16_consumer_shapes	f32_build	vector-build	consumer:crawler	`emit_hex_tris`: `vector<single>` built six values at a time, 331,776 pushes
 16_consumer_shapes	catalog_churn	alloc-temp	consumer:crawler	`game_items`: a 64-record catalogue with text fields REBUILT on every call, one field read
+gridmesh	collect_dirty_inputs	keyed	library:gridmesh	halo-cell hash lookups plus a seen-set insert per dirty chunk
+gridmesh	build_index	keyed	library:gridmesh	100,000 dedup-inserts of a record into a hash
+gridmesh	field_add_cell	keyed	library:gridmesh	a paint: an insert, a bucket probe and append, border dedup-inserts
+gridmesh	emit_segment	vector-build	library:gridmesh	nine parallel narrow-vector appends per segment
+text2d	write_text	call	library:text2d	one set_pixel call per lit sub-pixel of every glyph
+text2d	atlas_cell	keyed	library:text2d	a linear scan of the atlas codes per character
+text2d	layout	record-build	library:text2d	one Quad record appended per character
+text2d	draw_quads	vector-read	library:text2d	get_pixel on the atlas and set_pixel on the target per texel
+tween	value	call	library:tween	progress, ease and lerp: three calls and a record read per number
+tween	ease	float-kernel	library:tween	an 11-arm match with cos, pow, sin and sqrt
+random	rand	native-boundary	library:random	the minimum crossing: two integers in, one out
+random	rand_indices	native-boundary	library:random	a crossing that builds and returns a store vector
+random	get	int-loop	library:random	a combined LCG in loft: two divisions and two field writes per draw
+random	indices	vector-write	library:random	Fisher-Yates: two indexed reads and two writes per step
+markdown	render_inline	text-build	library:markdown	a 1-character text built and appended per character, recursing per span
+markdown	html_escape	text-build	library:markdown	a character walk appending an entity or the character
+markdown	slugify	alloc-temp	library:markdown	a 1-character text and its lowercased copy per uppercase byte
+markdown	extract_headings	record-build	library:markdown	a 3-field record with two built texts appended per heading
+markdown	render	text-build	library:markdown	the block state machine over a 107 KiB document
+html	escape_html	text-build	library:html	one per-character append loop over a 120-byte text
+html	escape_html_blob	text-build	library:html	the same loop over a 64 KiB blob
+time	parse	text-scan	library:time	an ISO timestamp parsed with a whole-text digit walk per field
+time	format_iso	text-build	library:time	three zero-padded interpolations through two helpers
+time	day	int-loop	library:time	civil-date arithmetic: two helper hops, four divisions, a tuple
+time	iso_week	int-loop	library:time	the ISO week: four helpers deep
+fixstep	clock_pump	call	library:fixstep	three frames deep for about six integer operations
+fixstep	clock_advance	int-loop	library:fixstep	divisions, two field writes and a nested call per frame
+fixstep	timer_spend	record-field	library:fixstep	two fields read and written behind three branches per timer per tick
+fixstep	approach	float-kernel	library:fixstep	one exp per eased value per frame
+web	pack_u8	native-boundary	library:web	one cdylib crossing per byte packed: the calibration constant
+web	byte_at	native-boundary	library:web	one cdylib crossing per byte read
+ssh	byte_at	native-boundary	library:ssh	one cdylib crossing per received byte; the callee is one load
