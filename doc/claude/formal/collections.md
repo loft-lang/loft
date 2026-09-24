@@ -500,6 +500,17 @@ so it reaches the group exactly as the direct spelling does (loft#1160, and loft
 the one route still outside it, and not by omission — it picks its origin from the runtime tag,
 so there is no one field to resolve it to.
 
+⚠ **The resolution is scoped to a GROUP MEMBER, and that scoping is what the rule buys.**
+Resolving a write back to the field replaces the destination and so erases the BINDING from the
+statement — and `(B-Disturb)`'s fourth event then hands that binding a copy
+([binding.md](binding.md) `(B-View)`), after which nothing downstream can redirect a write that
+no longer names it: reads and write landed in two places, in silence (loft#1662).  A field with
+no `other_indexes` has no sibling to reach, so the binding spelling answers exactly what the
+field spelling answers AND keeps answering it after the materialise; the resolution is
+therefore applied where the siblings are and nowhere else
+(`Parser::origin_is_group_member`).  That leaves a payload binding onto a member itself —
+`D-col-6` below, which is the SAME gap the `&` link route has.
+
 **The element-level writes through the vector member were the routes that reached no
 chokepoint** (2026-09-05, the `@FR-Col-Group` walk).  Every route that ADDS a record reaches
 `record_finish`; a keyed removal and `e#remove` emit the unlinks (loft#900, loft#903).  But
@@ -564,7 +575,20 @@ tests/scripts/901-linked-group-fill.loft.
 
 ## 3. Deviations / decided edges
 
-**OPEN: 0.**
+**OPEN: 1.**
+
+- **`D-col-6`** — OPENED 2026-09-24 (loft#1664): **a write through a LINK to a group member
+  reaches only that member**, against `(Col-Group)`'s *"by any write route"*.  `d = &p.p_data;
+  d += [r]` leaves `p_look` empty, and so does a `match` / `is` payload binding onto a member
+  once [binding.md](binding.md) `(B-View)` has materialised it — the one route the loft#1662
+  narrowing could not take off the field spelling.  ONE cause: `OpNewRecord` /
+  `OpFinishRecord` take the OWNING RECORD and the FIELD, and `Stores::record_finish` walks
+  `other_indexes` off that pair, so a destination that is a link has nothing to walk from.
+  Resolving it means making *"which record owns this collection, at which field"* answerable
+  from the DESTINATION rather than from the syntax that produced it — carried on the link, or
+  derived at run time — which is a design call and not a narrowing.  Both spellings are
+  measured in `tests/scripts/1662-a-payload-bindings-write-follows-the-binding.loft`, whose
+  cell `g1` pins the half that does work so the narrowing cannot silently undo it.
 
 `D-col-5` (loft#1576) was opened 2026-09-21 and CLOSED 2026-09-22: a repeated key displaced the
 older record from the one MEMBER of a linked group it collided in, not from the group, and a group

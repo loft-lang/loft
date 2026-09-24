@@ -9270,6 +9270,71 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Which place does a write through a payload binding reach?" — three decoders, and a lint that stated the opposite (2026-09-24)
+
+`match e { Ei { v } => { e = Ei { v: [9,9,9] }; v += [7] } }` appended to the REASSIGNED
+subject while every read of `v` came from the copy `(B-View)` had just given it — and printed
+an `advice` line saying *"writes through `_mv_v_1` no longer reach `e`"* on the way. Filed as
+loft#1662 with *"under either reading of the binding this is wrong"*; the rules had already
+decided it, which is the first thing worth keeping.
+
+**The rules settle it, and the settling is a two-rule conjunction neither site was holding.**
+`(B-Disturb)`'s fourth event is the container REASSIGNED; `(B-View)` then materialises the
+binding *"so writes through it stop reaching the container"*. Separately, `collections.md`
+`(Col-Group)` says a write through a payload binding is resolved back to the field it projects,
+so a record reaches the whole group. Each site implemented its own rule faithfully. The
+resolution replaces the destination and therefore ERASES the binding from the statement, so
+after the materialise there is nothing left downstream to redirect — the binding's reads and
+its write end in two places, and no site is wrong on its own.
+
+**The in-file oracle decided which half to move.** The `&` LINK is the same relation spelled
+with the token — `p = &o.v; o = S { v: [9,9,9] }; p += [7]` answers `p=[1,2,3,7] o=[9,9,9]`,
+correctly, on both backends — and the only structural difference is that a link is never
+resolved back. So the resolution is the half that is wrong, and it is now kept exactly where it
+buys something the binding cannot carry: a LINKED-GROUP member, where `record_finish` needs the
+owning record and the field to reach the siblings.
+
+| site | question it answers | what it had |
+|---|---|---|
+| `parser/vectors.rs::build_vector_list` | where does this write go? | the FIELD, always — committed before the materialise is decided |
+| `parser/expressions.rs` `text_payload_views` (#673) | the same, for a `text` payload | the binding, MIRRORED to the field by an extra statement |
+| `scopes.rs` `shake` / `names_container_itself` | does the binding still name its place? | the authority, and the only one of the three that knows |
+
+**The probe found more faces than the issue, and one of them needed no disturbance at all.**
+`v = [7, 7]` through a payload binding was preparing the binding's own fresh backing *while*
+sending the elements to the field: the binding read back EMPTY and the field was APPENDED to
+rather than replaced — an answer no reading of the language gives, with nothing disturbed
+anywhere, in a shape a reader would write. It had been sitting under the same substitution and
+no cell had ever spelled it, because every existing payload-binding cell writes with `+=`. Two
+more: a write written BEFORE the reassignment was LOST entirely, and a subject given ANOTHER
+variant took the write into a record whose tag had just stopped saying so.
+
+**A `=` is a REBIND here**, which is what the three other right-hand sides were already doing
+(`v = <other>`, `v = []`, `v = 7`) and what the struct-view sibling does (`c = o.i;
+c = In { n: 9 }` leaves `o` at 1). The broken literal form was the outlier, not the rule.
+
+**What was NOT merged, and why it is one residual with two faces.**
+`OpNewRecord` / `OpFinishRecord` take the owning RECORD and the FIELD, so a destination that is
+a LINK has nothing for `other_indexes` to be walked from. That leaves a payload binding onto a
+group member still resolved back — and therefore still split once it materialises — and it is
+the same gap `p = &s.data; p += [r]`, which reaches `data` and never `look`, has had all along
+(**loft#1664**). Making the question answerable from the DESTINATION rather than from the
+syntax that produced it is a design call, not a narrowing. The `text` mirror is **loft#1665**:
+the mirror IS the write-through there, so it has no alternative spelling and needs the scope
+pass to drop it — and a parser-linear *"already reassigned?"* flag must not be built for it,
+because a loop's back edge puts the body's own reassignment ahead of the next turn's write.
+
+**The lint was the sharpest evidence and I nearly read past it.** The `advice` line fires on the
+materialise and states the promise `(B-View)` makes; the program then did the opposite. A
+diagnostic that describes a rule is a second implementation of it, and where it disagrees with
+what the program does, one of the two is a defect — reading the sentence against the output was
+cheaper than any of the probes that followed it.
+
+**Blast radius measured rather than argued:** emitted IR A/B'd against a pristine `HEAD`
+worktree over all **1715** corpus files — **5** moved, every diff the same
+`OpPush*(OpGetField(subject, f), …)` becoming `OpPush*(_mv_binding, …)`. That is the number
+that says a narrowing is a narrowing.
+
 ### "Can this mid-body `return` hand its value back?" — four sites, two short of legs (2026-09-24)
 
 Found from a JOIN CONFLICT, which is the part worth keeping: `parser/control.rs`'s

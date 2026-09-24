@@ -19,6 +19,8 @@
 // and the field to reach the siblings — and a `=` is a REBIND, as it already is for
 // `v = <other>` and `v = []` and as it is for the struct-view sibling `c = o.i; c = In { … }`.
 //
+// Twenty cells.
+//
 // Axes this file MOVES:  the write route (`+=`, `v[i] =`, `.remove`, `= <literal>`), the write
 //                        ORDER against the disturbance (before and after), the binding
 //                        spelling (`match` arm and `is` capture), the subject kind (a local, a
@@ -38,15 +40,17 @@
 // which no link carries, and that is the same gap `p = &s.data; p += [r]` has.  Cell g1 pins
 // the half that does work (the sibling is reached) so the narrowing cannot silently undo it.
 //
-// @falsified-at: hand-measured (2026-09-24, the build before the fix) — on both backends d1
-//   read `[1,2,3]` where the subject read `[9,9,9,7]`, d5's append was LOST entirely, d6 wrote
-//   into a record whose tag had just been set to another variant, and u5/d4 read `[]` while
-//   the field was APPENDED to rather than replaced.
-//   CHANNEL: assert (values).
-//   ARMED: nothing.
-//   WITNESS: `d1: [1,2,3] / [9,9,9,7]` — the binding's contents against the subject's.
-//   HOLDS: leak, panic, free-refusal and exit are clean on both trees; the assert channel
-//   carries this one.
+// @falsified-at: 3eed749fb — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1662-a-payload-bindings-write-follows-the-binding.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert (values).  The count is 1 because a failed assert stops the run and d1 is
+//   the first cell the control fails; on that tree d4's append was LOST entirely, d5 wrote into
+//   a record whose tag had just been set to another variant, and r1/r4 read `[]` while the
+//   field was APPENDED to rather than replaced.
+//   ARMED: no instrument — every cell is a value read back through the two spellings.
+//   WITNESS: `d1 append after the reassign: [1,2,3] / [9,9,9,7]` — the binding's contents
+//   against the subject's, which on the control are the two halves of one statement.
+// HOLDS: leak, panic, free-refusal and exit-beyond-the-assert are clean on both trees and both
+//   backends, measured by `make falsify`, which prints only the channels that MOVE.
 struct Vb { vb_k: integer, vb_nm: text }
 enum E { En, Ei { v: vector<integer> } }
 enum G { Gn, Gd { g_data: vector<Vb>, g_look: sorted<Vb[vb_k]> } }
