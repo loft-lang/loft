@@ -3,6 +3,8 @@
 
 //! A `&text` parameter handed a text FIELD or ELEMENT (@PLN167 decision 2, arc C3).
 //!
+//! @F21 — References `&T`: the STORE kind of a `&text` parameter's link.
+//!
 //! A text link has two kinds.  The STACK kind names a text variable and is what every
 //! `&text` parameter was built for.  The STORE kind names a string slot inside a record and
 //! holds that slot's `DbRef`; each mention of it is spelled as the field it names,
