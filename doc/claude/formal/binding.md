@@ -420,6 +420,27 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-60** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1664)* — `(B-Ref-Reshape)` for a
+  `&` link to a whole COLLECTION.  `p = &o.v; o = S { … }; p += [7]` was MATERIALISED with an
+  advice, where the record spelling (`p = &o.r`) and the scalar one (`p = &o.r.n`, D-bind-56 the
+  day before) of the same program are refused — and this rule is explicit that the copy is the
+  one answer a `&` may not be given: *"loft will not quietly downgrade the reference to a
+  copy"*.  **Where (measured).**  A FOURTH spelling of *"did the author write `&`?"*.  The
+  refusal gate asked `is_amp_link` (the struct projection the parser leaves unlowered) and
+  `is_place_link` (the `RefVar` local a scalar or text place lowers to); a collection link is
+  neither and carries `is_amp_container_link`, which the MATERIALISE walk already read — to
+  spare the link from its own container's growth — while the REFUSAL walk beside it did not.
+  The parser's own note beside `amp_container_link` had written the question down as open and
+  named this rule's answer to it.  **Closed** by the third disjunct at the refusal gate.  A
+  PLAIN collection bind off a borrowed base is deliberately NOT in the set: `(B-View)` says that
+  one materialises, which is what the marker exists to distinguish.  Radius, measured: ONE
+  corpus cell — a control that pinned the materialise, moved to
+  `parse_errors::b_ref_reshape_reassignment_of_a_container_link_base_is_error` exactly as the
+  reference-INTO cell in the same file was — and ZERO published libraries (42/42 against a
+  current index).  The three events that do NOT disturb a reference TO a container are
+  unchanged.  It is also what makes [collections.md](collections.md)'s `D-col-6` answerable for
+  this spelling: a link that can never become a copy still names its origin field at every
+  write.
 * **D-bind-59** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1665)* — `(B-View)` for a `text`
   PAYLOAD binding.  A `text` binding holds a copy of the characters, and #673 makes a write
   through it mean the field write by MIRRORING the copy back into the subject after each write.

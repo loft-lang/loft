@@ -3358,17 +3358,19 @@ use a separate collection or add after the loop"
                     // `OpGetDbRef` itself, and `record_new`'s kind dispatch reads the
                     // COLLECTION type when the field is `u16::MAX` — the same two
                     // substitutions the `dbref_append_target` routes below make.
+                    // loft#1664 — `resolved_group_write` is the one home for *"spell this
+                    // write against its origin field instead"*, and this LIST spelling of the
+                    // keyed append is the third site that builds an appended record.  A
+                    // capture is excluded for the reason above: it has no owning struct to
+                    // resolve to.
                     let steps = if captured_keyed {
                         self.new_record(&mut to.clone(), f_type, elm, u16::MAX, &[item], &elm_tp)
                     } else {
-                        self.new_record(
-                            &mut Value::Var(var_nr),
-                            f_type,
-                            elm,
-                            var_nr,
-                            &[item],
-                            &elm_tp,
-                        )
+                        let (mut dest, parent) = match self.resolved_group_write(var_nr) {
+                            Some((origin, parent)) => (origin, parent),
+                            None => (Value::Var(var_nr), f_type.clone()),
+                        };
+                        self.new_record(&mut dest, &parent, elm, var_nr, &[item], &elm_tp)
                     };
                     all_steps.extend(steps);
                 }
@@ -3436,14 +3438,16 @@ use a separate collection or add after the loop"
             }
             let mut steps: Vec<Value> = Vec::new();
             if !self.first_pass {
-                steps = self.new_record(
-                    &mut Value::Var(var_nr),
-                    f_type,
-                    elm,
-                    var_nr,
-                    &[item],
-                    &elm_tp,
-                );
+                // loft#1664 — the second site that builds an appended record, and it asked
+                // nothing: a `&` link or a payload binding onto a KEYED group member added
+                // through the link alone, so the vector beside it never saw the record while
+                // the same link to the VECTOR member reached both.  `resolved_group_write` is
+                // the one home for *"spell this write against its origin field instead"*.
+                let (mut dest, parent) = match self.resolved_group_write(var_nr) {
+                    Some((origin, parent)) => (origin, parent),
+                    None => (Value::Var(var_nr), f_type.clone()),
+                };
+                steps = self.new_record(&mut dest, &parent, elm, var_nr, &[item], &elm_tp);
             }
             *code = Value::Insert(steps);
             return Type::Void;
@@ -3668,6 +3672,26 @@ use a separate collection or add after the loop"
         // silent downgrade the rules say to refuse — is that separate question, left open.
         if amp_collection_bind && var_nr != u16::MAX {
             self.vars.set_amp_container_link(var_nr);
+            // @FR-Col-Group, loft#1664 — and this is the OTHER half of the question left open
+            // above.  `(Col-Group)` says a record entering through one member of a linked group
+            // is in every member, BY ANY WRITE ROUTE, and a `&` link is a write route:
+            // `d = &p.p_data; d += [r]` reached `p_data` and never `p_look`, because
+            // `record_finish` walks `other_indexes` off an (owning record, field) pair and a
+            // link carries neither.  The payload binding already resolves back to its field for
+            // exactly this (loft#1160); registering the link's origin in the same table gives it
+            // the same route.
+            //
+            // It is sound here for the reason the clause above now establishes: a collection
+            // link reaches `(B-Ref-Reshape)`, so it can never be quietly downgraded to a copy,
+            // and the field it named at the bind is the field it still names at every write.
+            // That is exactly what loft#1662 showed a MATERIALISED binding cannot promise — the
+            // write, spelled against the field, could not follow the copy — so the two halves
+            // had to land together or not at all.
+            if let Some(parent) = self.field_read_parent_type(code) {
+                self.vars
+                    .mv_field_origin
+                    .insert(var_nr, (code.clone(), parent));
+            }
         }
         // loft#1371 — the share aliases element writes and appends, but a WHOLE-VALUE write
         // (`pe = [2, 2]`) would mint a fresh store and re-point `pe` at it, leaving the

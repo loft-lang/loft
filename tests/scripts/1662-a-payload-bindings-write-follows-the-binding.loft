@@ -13,11 +13,16 @@
 // write ended up in two different places, on both backends, with an `advice` line stating the
 // opposite of what happened.
 //
-// The `&` LINK is the in-file oracle: the same relation spelled with the token, never resolved
-// back, and right on both sides.  So the resolution is kept exactly where it buys something
-// the binding cannot — a LINKED-GROUP member, where `record_finish` needs the owning record
-// and the field to reach the siblings — and a `=` is a REBIND, as it already is for
-// `v = <other>` and `v = []` and as it is for the struct-view sibling `c = o.i; c = In { … }`.
+// The `&` LINK is the in-file oracle, and what it answers is the whole argument: the same
+// relation spelled with the token, never resolved back, and right on the UNDISTURBED side —
+// while on the disturbed side it is not materialised at all but REFUSED, because
+// `(B-Ref-Reshape)` says a `&` may not be quietly downgraded to a copy (`D-bind-60`).  That is
+// the asymmetry the cure rests on: a link can keep its field spelling because it can never
+// become a copy, and a plain binding cannot, because `(B-View)` gives it one.  So the
+// resolution is kept exactly where it buys something the binding cannot — a LINKED-GROUP
+// member, where `record_finish` needs the owning record and the field to reach the siblings —
+// and a `=` is a REBIND, as it already is for `v = <other>` and `v = []` and as it is for the
+// struct-view sibling `c = o.i; c = In { … }`.
 //
 // Twenty cells.
 //
@@ -35,10 +40,12 @@
 // is OVERWRITTEN rather than reassigned, which `(B-Disturb)` says is not a disturbance at all,
 // so the binding survives and reads the new payload (c2).
 //
-// ⚠ RESIDUAL, loft#1664: a binding onto a LINKED-GROUP member keeps the field spelling, so the
-// split survives there — a write through a link to a group member needs the owning record,
-// which no link carries, and that is the same gap `p = &s.data; p += [r]` has.  Cell g1 pins
-// the half that does work (the sibling is reached) so the narrowing cannot silently undo it.
+// ⚠ RESIDUAL, loft#1664 / `D-col-6`: a binding onto a LINKED-GROUP member keeps the field
+// spelling, so the split survives there — the write needs the owning record, which the binding
+// does not carry.  The `&` spelling of that gap is answered (`D-bind-60`, and the link's origin
+// registered in the same table); this one is not, because only a plain binding can become a
+// copy.  Cell g1 pins the half that does work — the sibling IS reached — so the narrowing
+// cannot silently undo it.
 //
 // @falsified-at: 3eed749fb — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
 // @falsified-by: tests/falsified/1662-a-payload-bindings-write-follows-the-binding.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
