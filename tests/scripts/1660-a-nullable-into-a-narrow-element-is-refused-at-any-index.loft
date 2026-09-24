@@ -1,0 +1,26 @@
+// @FR-N-Store's refusal reaches a narrow ELEMENT slot however the index is spelled.
+//
+// A variable index types the element READ `u8?` (an overrun reads null, C80), and the
+// assignment used to take its target type from that read — so `w[i] = v as u8?` compiled and
+// silently stored the default 0 where `w[0] = v as u8?` is refused.  The slot's type is the
+// collection's element type (or the record field's), and the rule asks THAT.  Cells: a local
+// vector, a record's vector field, a `&vector<u8>` parameter, and a narrow field reached
+// through an element.  loft#1660.
+//
+// @falsified-at: hand-measured (2026-09-24, the build before the fix) — every function below
+//   compiled with no diagnostic and the program printed `0 0 0 0`.
+//   CHANNEL: expectations (a refusal the build before did not make).
+//   ARMED: nothing.
+//   WITNESS: no `cannot be stored into the assignment target` error; exit 0, output `0 0 0 0`.
+//   HOLDS: nothing else in the file compiles differently.
+struct H { b: vector<u8> }
+struct P { x: integer, n: u8 }
+// @EXPECT_ERROR: a nullable `integer(0, 255)?` cannot be stored into the assignment target of the non-null type `integer(0, 255)`
+fn a1(i: integer) -> u8 { w: vector<u8> = [7 as u8, 9 as u8]; w[i] = 300 as u8?; w[i] ?? 1 }
+// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `integer(0, 255)`
+fn a2(i: integer) -> u8 { h = H { b: [7 as u8] }; h.b[i] = 300 as u8?; h.b[i] ?? 1 }
+// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `integer(0, 255)`
+fn a3(px: &vector<u8>, i: integer) { px[i] = 300 as u8?; }
+// @EXPECT_ERROR: cannot be stored into the assignment target of the non-null type `integer(0, 255)`
+fn a4(i: integer) -> u8 { ps = [P { x: 1, n: 2 }]; ps[i].n = 300 as u8?; ps[0]?.n ?? 1 }
+fn main() { v: vector<u8> = [1 as u8]; a3(v, 0); println("{a1(0)} {a2(0)} {v[0] ?? 1} {a4(0)}"); }

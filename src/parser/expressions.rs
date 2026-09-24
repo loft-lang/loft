@@ -2985,6 +2985,48 @@ use a separate collection or add after the loop"
     /// [`Self::parse_assign_op_inner`], and this wraps it with the linked-group
     /// maintenance a whole-vector field write skips (loft#1152 — see
     /// [`Self::group_reindex_after_vector_write`]).
+    /// Is the place `to` a slot declared NON-null, reached through a vector element?  Two
+    /// shapes: the element itself (`parent` is the vector, its content says whether the slot
+    /// is `τ` or `τ?`), and a field of an element (`parent` is the element record, `S?` because
+    /// the element READ may be absent; the field's own declaration answers, found by the
+    /// offset the getter reads).  Anything else answers `false` and keeps its type.
+    fn element_slot_is_non_null(&self, to: &Value, parent: &Type) -> bool {
+        // A `&vector<τ>` parameter's place is the vector it points at.
+        let parent = match parent {
+            Type::RefVar(pointee) => pointee.as_ref(),
+            other => other,
+        };
+        match parent {
+            Type::Vector(elem, _) => !matches!(elem.as_ref(), Type::Optional(_)),
+            Type::Optional(inner) => {
+                let Type::Reference(d_nr, _) = inner.as_ref() else {
+                    return false;
+                };
+                let Value::Call(get, args) = to.unspan() else {
+                    return false;
+                };
+                let (true, Some(Value::Int(off))) = (
+                    self.data.def(*get).name().starts_with("OpGet"),
+                    args.get(1).map(Value::unspan),
+                ) else {
+                    return false;
+                };
+                let known = self.data.def(*d_nr).known_type;
+                if known == u16::MAX {
+                    return false;
+                }
+                let attrs = self.data.def(*d_nr).attributes();
+                attrs.iter().enumerate().any(|(a, attr)| {
+                    !attr.hidden
+                        && i32::from(self.database.position(known, &attr.name)) == *off
+                        && !self.data.attr_nullable(*d_nr, a)
+                        && !matches!(self.data.attr_type(*d_nr, a), Type::Optional(_))
+                })
+            }
+            _ => false,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     pub(crate) fn parse_assign_op(
         &mut self,
@@ -3022,6 +3064,18 @@ use a separate collection or add after the loop"
             Value::Call(d_nr, _)
                 if self.data.def(*d_nr).name() == "OpGetRecord"
                     && matches!(f_type, Type::Optional(_)) =>
+            {
+                Some(f_type.base().clone())
+            }
+            // The same for a VECTOR element place and for a field reached through one: the `?`
+            // an untrusted index puts on the READ (`@FR-N-Domain`, C80 — an overrun reads null)
+            // says nothing about the SLOT, whose type is what the collection or the record
+            // declares.  Carried into the place it made the target `τ?`, so `@FR-N-Store` was
+            // never asked: `v[i] = x as integer?` stored the null with no warning, and a narrow
+            // `v[i] = 300 as u8?` stored the default `0` where `v[0] = …` is refused — the
+            // check hung on how the index was SPELLED.
+            _ if matches!(f_type, Type::Optional(_))
+                && self.element_slot_is_non_null(to, &parent_tp) =>
             {
                 Some(f_type.base().clone())
             }
@@ -8462,7 +8516,13 @@ use a separate collection or add after the loop"
         let Type::RefVar(t) = f_type else {
             return false;
         };
-        if !matches!(**t, Type::Text(_)) {
+        // A `&text?` parameter is the same text slot, nullable: `s += x` appends, and on a
+        // null `s` it stays null (the local `text?`'s rule).
+        let pointee = match t.as_ref() {
+            Type::Optional(inner) => inner.as_ref(),
+            other => other,
+        };
+        if !matches!(pointee, Type::Text(_)) {
             return false;
         }
         self.append_to_text(code, op, var_nr, s_type);

@@ -1,0 +1,54 @@
+// A text appended to itself through a `&mut String` target compiles on `--native`.
+//
+// `t += t` lowers to `OpAppendStackText` when `t` is a `&text` parameter or a returned local
+// promoted onto the return buffer.  The native emitter wrote the dereference `*` in front of the
+// whole emission, and the self-append form is a block (the right-hand side is copied first, so
+// the `+=` never borrows its own target), so the `*` landed on the block: rustc refused the
+// program with E0368 and E0614.  The interpreter was always right, and is the oracle here.  Cells:
+// a returned local appended to itself (r1), to itself plus a literal (r2), to a format of itself
+// (r3), and a control with no self-read (r4); a `&text` parameter the same three ways (p1–p3);
+// a plain local (l1), a nullable local (n1) and a field (o1) — the forms that did not go through
+// the stack op — as controls.
+//
+// @falsified-at: hand-measured (2026-09-24, the build before the fix) — `--native` refused the
+//   file at rustc (E0368 `+=` on `&mut String`, E0614 on `()`), exit 1; the interpreter passed.
+//   CHANNEL: exit (a compile refusal on --native only).
+//   ARMED: nothing.
+//   WITNESS: `error[E0368]: binary assignment operation \`+=\` cannot be applied to type
+//   \`&mut String\`` from the emitted `*{ let __p222_tmp: String = …; var_t += &__p222_tmp; }`.
+//   HOLDS: every assertion passes on the interpreter on both trees.
+struct O { s: text }
+
+fn r1() -> text { t = "ab"; t += t; t }
+fn r2() -> text { t = "ab"; t += t + "x"; t }
+fn r3() -> text { t = "ab"; t += "{t}-{t}"; t }
+fn r4() -> text { t = "ab"; t += "c"; t }
+fn p1(s: &text) { s += s; }
+fn p2(s: &text) { s += "{s}!"; }
+fn p3(s: &text) { s += "z"; }
+
+fn main() {
+  assert(r1() == "abab", "r1: {r1()}");
+  assert(r2() == "ababx", "r2: {r2()}");
+  assert(r3() == "abab-ab", "r3: {r3()}");
+  assert(r4() == "abc", "r4: {r4()}");
+  a = "ab";
+  p1(a);
+  assert(a == "abab", "p1: {a}");
+  b = "ab";
+  p2(b);
+  assert(b == "abab!", "p2: {b}");
+  c = "ab";
+  p3(c);
+  assert(c == "abz", "p3: {c}");
+  l = "ab";
+  l += l;
+  assert(l == "abab", "l1: {l}");
+  n: text? = "ab";
+  n += n;
+  assert((n ?? "") == "abab", "n1: {n}");
+  o = O { s: "ab" };
+  o.s += o.s;
+  assert(o.s == "abab", "o1: {o.s}");
+  println("text self-append ok");
+}

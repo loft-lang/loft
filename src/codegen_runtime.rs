@@ -2777,7 +2777,16 @@ pub fn OpAppendCopy(cell: &std::cell::UnsafeCell<Stores>, data: DbRef, count: i6
 /// interpreter does.
 #[cfg(any(not(target_arch = "wasm32"), target_os = "wasi"))]
 fn fake_clock_env(var: &str) -> Option<i64> {
-    std::env::var(var).ok()?.parse::<i64>().ok()
+    // Read once per process: `now()` and `ticks()` sit in hot loops, and an environment
+    // lookup plus a parse per call cost more than the clock read itself.
+    static NOW: std::sync::OnceLock<Option<i64>> = std::sync::OnceLock::new();
+    static TICKS: std::sync::OnceLock<Option<i64>> = std::sync::OnceLock::new();
+    let cell = if var == "LOFT_FAKE_NOW_MS" {
+        &NOW
+    } else {
+        &TICKS
+    };
+    *cell.get_or_init(|| std::env::var(var).ok()?.parse::<i64>().ok())
 }
 
 /// Return milliseconds since the Unix epoch (1970-01-01T00:00:00 UTC).

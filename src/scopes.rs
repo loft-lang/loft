@@ -20237,9 +20237,16 @@ impl Scopes<'_> {
                 self.monomorph_fnref_return_is_fresh(val, data, def)
             } else {
                 // A free member of an overload set (`f_…`, @PLN162) is a free function in
-                // every respect but its key, and lifts as one.
+                // every respect but its key, and lifts as one.  So does a declared METHOD
+                // (`t_…`): its return deps are its own, never an instance's substituted ones,
+                // so the ownership oracle below decides it exactly as it decides `n_`.  The
+                // `t_` clause after this was written when an instance was keyed `t_` too; a
+                // method's call reached it and was lifted only with a `__retbuf`, so a
+                // method returning a loop's element through its hidden buffer — called in
+                // the free spelling, `get(w, i).a` — left one store unowned per call.
                 def.name.starts_with("n_")
                     || def.is_free_overload()
+                    || def.is_method()
                     || monomorph_returns_a_borrow
                     || ((def.name.starts_with("t_") || def.is_instance())
                         && (def.attr_names.contains_key("__retbuf")

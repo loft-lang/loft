@@ -223,9 +223,23 @@ impl Output<'_> {
     }
 
     /// Use this to emit `OpAppendText` as a `+=` on the target string variable.
-    pub(super) fn append_text(&mut self, w: &mut dyn Write, vals: &[Value]) -> std::io::Result<()> {
+    /// `through_ref` is `OpAppendStackText`'s target: a `&mut String` (a `&text` parameter,
+    /// a returned local promoted to the return buffer), dereferenced at the `+=` itself — a
+    /// `*` written in front of the whole emission lands on a block in the self-append and
+    /// nullable forms, which then do not compile.
+    pub(super) fn append_text(
+        &mut self,
+        w: &mut dyn Write,
+        vals: &[Value],
+        through_ref: bool,
+    ) -> std::io::Result<()> {
         if let [Value::Var(nr), val] = vals {
-            let s_nr = self.var_place(*nr);
+            let place = self.var_place(*nr);
+            let s_nr = if through_ref {
+                format!("(*{place})")
+            } else {
+                place
+            };
             let val_expr = self.generate_expr_buf(val)?;
             // P222: when the RHS expression references the destination
             // variable (e.g. `s = s + s` lowers to OpAppendText(s, Var(s))
@@ -237,10 +251,12 @@ impl Output<'_> {
             // append when it holds the null sentinel — `s += x` on a null `s` stays null
             // (propagate). Gated on `Optional` so plain-text / `&mut String` work-buffer
             // appends (never null, and not always owned Strings) keep the bare emission.
-            let dest_nullable = matches!(
-                self.data.def(self.def_nr).variables().tp(*nr),
-                Type::Optional(_)
-            );
+            // A `&text?` parameter's nullability sits inside the reference.
+            let dest_nullable = match self.data.def(self.def_nr).variables().tp(*nr) {
+                Type::Optional(_) => true,
+                Type::RefVar(pointee) => matches!(pointee.as_ref(), Type::Optional(_)),
+                _ => false,
+            };
             if val.reads_var(*nr) {
                 if dest_nullable {
                     write!(

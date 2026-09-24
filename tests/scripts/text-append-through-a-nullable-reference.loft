@@ -1,0 +1,36 @@
+// `s += x` on a `&text?` parameter appends, and a null `s` stays null — the local `text?`'s rule.
+//
+// `+=` on a `&text?` was refused with "No matching operator 'Add' on '&text?' and '&text?'",
+// naming the right-hand side a type it was not: the `&text` route asked for `RefVar(Text)` and
+// the nullable pointee is `RefVar(Optional(Text))`.  Once admitted, the interpreter's
+// stack-text append also had to learn the null rule its local twin already kept (a null
+// accumulator ignores the append), and the native emitter had to see the nullability inside
+// the reference.  Cells: a plain append (q1), a null one (q2), a self-append (q3) and a null
+// self-append (q4); the local `text?` (q5) is the control.
+//
+// @falsified-at: hand-measured (2026-09-24, the build before the fix) — refused at compile
+//   time on both backends: "No matching operator 'Add' on '&text?' and '&text?'".
+//   CHANNEL: exit (a refusal).
+//   ARMED: nothing.
+//   WITNESS: `error: No matching operator 'Add' on '&text?' and '&text?'` at q1's function.
+//   HOLDS: the control q5 passes on both trees.
+fn growq(s: &text?) { s += "x"; }
+fn selfq(s: &text?) { s += s; }
+fn main() {
+  a: text? = "ab";
+  growq(a);
+  assert((a ?? "") == "abx", "q1: {a}");
+  n: text? = null;
+  growq(n);
+  assert(!n, "q2: {n}");
+  c: text? = "cd";
+  selfq(c);
+  assert((c ?? "") == "cdcd", "q3: {c}");
+  m: text? = null;
+  selfq(m);
+  assert(!m, "q4: {m}");
+  l: text? = null;
+  l += "x";
+  assert(!l, "q5: {l}");
+  println("nullable text reference ok");
+}

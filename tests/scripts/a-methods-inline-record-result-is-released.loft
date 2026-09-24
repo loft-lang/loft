@@ -1,0 +1,51 @@
+// A declared METHOD's record result used inline — `get(w, i).a`, the free spelling of a
+// method — is released once per call.
+//
+// A method is keyed `t_<LEN><receiver>_<name>`, and the scope pass lifted an inline `t_` call
+// only when the callee had a `__retbuf` or a body it could prove fresh — the rule written when
+// a generic INSTANCE was keyed `t_` too.  A method returning a loop's element through its
+// hidden buffer (named `__ref_N`, not `__retbuf`) was neither, so its inline result was owned
+// by nothing: one store per call, 65 535 calls exhausting the store table on both backends.
+// A method is now decided like a free function, by the ownership oracle.  The borrow cells —
+// a method handing back its receiver, or a field of it — must still read the caller's record
+// after the calls; the leak cells run past the store table, so the build before the fix
+// panics with nothing armed.
+//
+// @falsified-at: hand-measured (2026-09-24, the build before the fix) — the interpreter
+//   panicked "store table exhausted: 65535 stores live at once" at the first leak cell, and
+//   the native build did the same.
+//   CHANNEL: panic (both backends); under LOFT_STRICT_STORES=1 at 10 calls, a NEVER FREED
+//   `Cell×10`.
+//   ARMED: nothing for the panic.
+//   WITNESS: `store table exhausted: 65535 stores live at once` from the l1 loop.
+//   HOLDS: the borrow cells b1–b3 read 7, 3 and 2 after their calls on both trees.
+struct Cell { a: integer }
+struct Box2 { inner: Cell, n: integer }
+struct World { cells: vector<Cell> }
+
+fn get(self: World, i: integer) -> Cell {
+  for c in self.cells { if c#index == i { return c; } }
+  Cell { a: 0 }
+}
+fn same(self: Cell) -> Cell { self }
+fn inner_of(self: Box2) -> Cell { self.inner }
+
+fn main() {
+  w = World { cells: [Cell { a: 1 }, Cell { a: 2 }] };
+  n = 0;
+  for k in 0..70000 { n += get(w, k & 1).a; }
+  assert(n == 105000, "l1: {n}");
+  for k in 0..70000 { get(w, k & 1); }
+  m = 0;
+  for k in 0..10 { m += w.get(k & 1).a; }
+  assert(m == 15, "l3: {m}");
+  c = Cell { a: 7 };
+  t = 0;
+  for _k in 0..10 { t += same(c).a; }
+  assert(t == 70 && c.a == 7, "b1: {t} {c.a}");
+  b = Box2 { inner: Cell { a: 3 }, n: 1 };
+  for _k in 0..10 { t += inner_of(b).a; }
+  assert(t == 100 && b.inner.a == 3, "b2: {t} {b.inner.a}");
+  assert(w.cells[1]?.a == 2, "b3: {w.cells[1]?.a}");
+  println("method inline result ok");
+}
