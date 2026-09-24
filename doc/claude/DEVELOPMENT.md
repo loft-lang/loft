@@ -171,6 +171,25 @@ The branch is merged to main via a single PR when all items pass CI.
   true before you started; the closing line says so, so a red never sends you looking for a
   regression you did not cause.
 
+  ⚠ **But a COMPILE-BREAK is not automatically yours either, and only an A/B says which
+  are.** The sentence above is right about what the class MEANS and wrong as a reading of one
+  run: measured 2026-09-24, `tuxedo-quality-2026-09-24` printed **3 COMPILE-BREAKs** and
+  `origin/main` printed **2** — `graphics` (a `local-out-of-scope` refusal) and `imaging` (an
+  implicit-narrowing one) break on main as well, and only `assets` was the branch's. Taking the
+  first sentence literally meant owning three breaks instead of one, and the two that are not
+  yours are the ones you cannot fix from this repo at all. So when the count is not zero:
+  build `origin/main` in a worktree of its own, run the gate there for the NAMED packages, and
+  subtract. The A/B that settles it needs no second gate run — extract the tag ONCE with
+  `git archive` and run the two binaries against that one tree, which is also the only form
+  that rules out the extraction differing between the runs (`assets` answered
+  *"ok. 17 passed"* under main's binary and *"FAIL … (parse errors)"* under the branch's, same
+  directory, same command).
+
+  The scratch worktree needs the sibling clones beside it, because `$siblings` is
+  `dirname` of the script's own root — symlink `../loft-registry` and `../loft-libs-*` next
+  to it, or every package reports the SKIP that means "not cloned beside this one" and the
+  run reads as green.
+
   ⚠ **Red on warnings EXISTING, not on the set growing.** "Can it ship" is a question about
   the absolute state; a delta answers a different one. On the CI side this is the
   `Release-ready` STEP inside each library's own matrix leg in `revalidate-libs.yml` — one
