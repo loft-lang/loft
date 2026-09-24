@@ -1393,13 +1393,32 @@ impl State {
         let depth = u32::try_from(self.call_stack.len())
             .unwrap_or(u32::MAX)
             .saturating_sub(1);
-        if let Some(at) = self
+        let tail = self
             .fnref_bufs
             .iter()
-            .rposition(|(d, b)| *d == depth && b.store_nr == store_nr)
-        {
+            .rev()
+            .take_while(|(d, _)| *d >= depth)
+            .position(|(d, b)| *d == depth && b.store_nr == store_nr);
+        if let Some(back) = tail {
+            let at = self.fnref_bufs.len() - 1 - back;
             self.fnref_bufs.remove(at);
         }
+    }
+
+    /// Does the frame at `depth` hold `store_nr` on its hand-up list?
+    ///
+    /// The list is a STACK ordered by depth — a buffer is pushed at the depth of the frame it
+    /// was allocated for, and handed up one level when that frame returns — so a frame's
+    /// entries are the list's TAIL.  Only the tail is read.  Walking the whole list made every
+    /// fn-ref return pay for the entries the frames BELOW still hold, whose stores their own
+    /// bindings may already have released: a loop of fn-ref calls in one frame then ran in
+    /// time quadratic in its trip count (measured: 0.07 / 0.20 / 0.63 s at 5k / 10k / 20k).
+    fn frame_names_fnref_buf(&self, depth: u32, store_nr: u16) -> bool {
+        self.fnref_bufs
+            .iter()
+            .rev()
+            .take_while(|(d, _)| *d >= depth)
+            .any(|(d, b)| *d == depth && b.store_nr == store_nr)
     }
 
     pub fn hand_up_returned(&mut self, returned: DbRef) {
@@ -1472,11 +1491,7 @@ impl State {
         // (6 -> 13 concurrent on an 8-call probe), which is a shape no leak gate reports.
         // `fnref_bufs` at this depth IS that list and is still intact here — the hand-up loop
         // below is what drains it.
-        let own_buffer = returned.is_some_and(|r| {
-            self.fnref_bufs
-                .iter()
-                .any(|(d, b)| *d == depth && b.store_nr == r.store_nr)
-        });
+        let own_buffer = returned.is_some_and(|r| self.frame_names_fnref_buf(depth, r.store_nr));
         self.fnref_borrowed_return = match (snapshot, returned) {
             (Some(_), Some(r))
                 if !minted_here && !own_buffer && r.store_nr != u16::MAX && r.rec != 0 =>
@@ -1493,10 +1508,7 @@ impl State {
         };
         if minted_here
             && let Some(r) = returned
-            && !self
-                .fnref_bufs
-                .iter()
-                .any(|(d, b)| *d == depth && b.store_nr == r.store_nr)
+            && !self.frame_names_fnref_buf(depth, r.store_nr)
         {
             self.fnref_bufs.push((depth, r));
         }
