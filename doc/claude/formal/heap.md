@@ -706,6 +706,30 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
 
+### D-heap-43 — OPENED AND CLOSED (2026-09-24, loft#1666): clearing a vector FIELD of a multi-field record released nothing of its elements
+
+- **Violates:** (H-ClearRelease) — *clearing a vector that outlives the clear releases what its
+  elements own*.  The rule names no root shape; the code answered for one.
+- **Where:** `Stores::clear_vector_release` derived the element type only when the store's ROOT
+  was the one-field `main_vector<T>` wrapper (`field_type(kt, 0)`); any other root — a user
+  record with a vector field, `h.entries` on a two-field `Timeline` — answered `u16::MAX`, and
+  the per-element walk never ran.  The rebind `h.entries = kept` therefore reset the length and
+  left every old element's owned heap (each entry's two inner vectors) claimed inside the store.
+- **Effect:** an intra-store leak, invisible to `LOFT_NATIVE_LEAK_CHECK` and `LOFT_STRICT_STORES`
+  (the store is freed whole at scope exit): dryopea's `History`, rebuilt on every push past the
+  50th, held 19 340 claims / 1.6 MB after one op of the portal's `truncate_to` row where 98
+  claims / 1 118 words were live — unbounded over a session.  Both backends identical (the
+  function is shared).  Seen by nothing in the suite; found by the `(R-Compact)` hand-price's
+  store-usage instrument.
+- **Closed at:** the type is read off the ROOT's field whose position is `db.pos` less the
+  8-byte record header, on any struct root; the one-field wrapper keeps its store-reset fast
+  path (H-RootExtent), a multi-field root takes the element walk.  A vector field of a NESTED
+  record (not record 1) still keeps the plain reset — a record that is not the root carries no
+  type word — and is the remaining edge of this rule.  The `LOFT_TRACE_CLEAR` line now prints
+  the type the release acts on (one derivation serves the trace and the release), and the
+  rebind pays the release it used to skip (+50 % on that row, until `(R-Compact)` removes the
+  rebind).  Guard `tests/clear_release_field.rs`, both backends, pinned on that trace line.
+
 ### D-heap-42 — OPENED AND CLOSED (2026-09-23, loft#1628): a returned witnessed local released the record it handed out, and a rebind released what it displaced in the wrong place
 
 - **Violates:** (H-Move) — a `return` moves what it answers — and (H-Drop)'s reassignment
