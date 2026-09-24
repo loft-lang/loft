@@ -8590,6 +8590,25 @@ impl Parser {
             vars.substitute_type(*holder, bound_to);
         }
         vars.drop_scalar_deps();
+        // @FR-G-Mono — a match payload binding is decided by its FIELD's type, and the template
+        // decided it before that type was known: a field of type `T` reads as a record, so the
+        // binding became a VIEW of the subject (a dep on it, never freed).  Bound to `text`, the
+        // twin's binding is an owned copy — `OpGetText` hands it a `String` of its own, freed at
+        // scope exit — and keeping the view marking leaked that copy once per call on the
+        // interpreter.  The instance takes the twin's answer.  A payload binding is named
+        // `_mv_<field>` and marked `skip_free` when it is a view — the pair
+        // `Function::is_overwritten_view` reads — and the template's `mv_field_origin` is gone
+        // by now (it is per pass, cleared when the parse hands the table back).
+        for v in 0..vars.count() {
+            if vars.name(v).starts_with("_mv_")
+                && matches!(vars.tp(v).base(), Type::Text(_))
+                && vars.is_skip_free(v)
+            {
+                vars.clear_skip_free(v);
+                let owned = vars.tp(v).without_deps();
+                vars.set_type(v, owned);
+            }
+        }
         // P241 fix (2026-05-11): post-substitution rewrite of the
         // parametric vector-element-write triplet to the primitive
         // shape, plus elm-var type patch.  Runs after both code
