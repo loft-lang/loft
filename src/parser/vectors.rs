@@ -3941,10 +3941,40 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // A capture spanning ALTERNATIVES (`is A | B { f }`) is deliberately absent from
         // `mv_field_origin`: it picks its origin from the runtime tag, so it has no one field
         // to be resolved to.
-        let binding_origin = if self.first_pass || is_field {
+        //
+        // ⚠ The resolution is NARROWED to the two conditions that earn it, because it commits
+        // the write to a place the binding may no longer name (loft#1662).  A payload binding
+        // is a reference TO its container, exactly as a `&` link is, and `(B-View)` gives it a
+        // COPY when the container is DISTURBED — after which "writes through it stop reaching
+        // the container".  The write spelled against the FIELD cannot follow that copy: it
+        // does not name the binding at all, so nothing downstream can redirect it, and the
+        // binding's reads and its writes end up in two different places.  Spelled against the
+        // BINDING it follows whatever the binding names, on both sides of the materialise —
+        // which is why the `&` link, which is never resolved back, answers both correctly.
+        //
+        // So the field spelling is kept exactly where it buys something the binding cannot:
+        //
+        //   * the destination is a member of a LINKED GROUP, where `record_finish` needs the
+        //     owning record and the field to reach the siblings ((Col-Group), loft#1160); and
+        //   * the write is a write THROUGH the binding, not a REBIND of it — `v = [7, 7]` is
+        //     `assign_replaces`, and the same statement was preparing the binding's own fresh
+        //     backing while sending the elements to the field: the binding read back EMPTY and
+        //     the field was APPENDED to rather than replaced.  A `=` is a rebind here as it is
+        //     for every other right-hand side (`v = <other>`, `v = []`) and for the struct-view
+        //     sibling `c = o.i; c = In { … }`.
+        let binding_origin = if self.first_pass
+            || is_field
+            || (self.assign_replaces && self.assign_target == vec && vec != u16::MAX)
+        {
             None
         } else {
-            self.vars.mv_field_origin.get(&vec).cloned()
+            self.vars
+                .mv_field_origin
+                .get(&vec)
+                .cloned()
+                .filter(|(origin, origin_parent)| {
+                    self.origin_is_group_member(origin, origin_parent)
+                })
         };
         //
         // `vec` is deliberately KEPT — the binding is a real variable and everything below
@@ -5535,34 +5565,76 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             )
     }
 
+    /// Which RECORD TYPE declares the collection field that `val` reads, and at which byte
+    /// offset?
+    ///
+    /// One home, because two questions ask it and a disagreement between them is silent: the
+    /// record emission below resolves the field NUMBER against this type, and
+    /// [`Self::origin_is_group_member`] asks the schema whether that same field is a member of
+    /// a linked group.  Answered for a field READ (`OpGetField(base, pos, content)`) alone;
+    /// `None` for every other spelling, which is what keeps both callers on the path they
+    /// already have.
+    fn field_owner_and_offset(&self, val: &Value, parent_tp: &Type) -> Option<(u16, u16)> {
+        let Value::Call(_, ps) = val.unspan() else {
+            return None;
+        };
+        let parent = self.data.def(self.data.type_def_nr(parent_tp)).known_type();
+        // @PLN25 single-payload: appending to a NESTED collection field of a `__nullable<S>`
+        // element (`b.items += […]` where `b` is a nullable element) — the field-access
+        // unwrap already made `ps[0]` the dense-`S` payload sub-ref and `ps[1]` its
+        // S-relative offset, so resolve the field number against the payload's `S`, NOT the
+        // enum (`field_nr(enum, S_offset)` = 0 → `OpNewRecord(field=0)` = the wrong field).
+        // `key_owner` maps a synth `__nullable<S>` to its payload struct; identity otherwise.
+        let parent = self.database.key_owner(parent);
+        let Value::Int(pos) = ps.get(1)? else {
+            return None;
+        };
+        let pos = u16::try_from(*pos).ok()?;
+        // loft#977 — the same fact for a USER struct-enum: `c.limbs` where `c: Shape`
+        // and `limbs` lives in the `Circle` variant.  The enum type carries a variant
+        // list and no fields, so resolving against it answers field 0 and a `u16::MAX`
+        // field type, which `record_new` then uses as a type-table index.  Redirect to
+        // the variant that declares the field, named by the offset AND the content type
+        // the read (`OpGetField(base, pos, content)`) already resolved — two variants
+        // each holding a collection put its handle at the same offset, so the offset
+        // alone picks the wrong one.  Identity for a plain struct, so both halves of the
+        // append still agree for every non-enum parent.
+        // The content operand is matched UNSPANNED-FREE, exactly as the record emission has
+        // always matched it: a spanned operand fell back to the enum itself, and widening that
+        // here would change which variant a two-variant offset collision resolves to in a
+        // refactor that is meant to move no answer.
+        let owner = match ps.get(2) {
+            Some(Value::Int(content)) => match u16::try_from(*content) {
+                Ok(content) => self.database.variant_owning_field(parent, pos, content),
+                Err(_) => parent,
+            },
+            _ => parent,
+        };
+        Some((owner, pos))
+    }
+
+    /// Is the field a payload binding projects a member of a LINKED COLLECTION GROUP — the one
+    /// thing resolving the binding back to its field buys?
+    ///
+    /// `(Col-Group)` is what the resolution serves: a record entering through one member is in
+    /// every member, and `Stores::record_finish` can only walk the siblings when it is handed
+    /// the owning record and the field.  A field with no `other_indexes` has no siblings to
+    /// reach, so the field spelling answers exactly what the binding answers — and the binding
+    /// is the spelling that stays right when `(B-View)` MATERIALISES it (loft#1662).
+    fn origin_is_group_member(&self, origin: &Value, parent_tp: &Type) -> bool {
+        self.field_owner_and_offset(origin, parent_tp)
+            .is_some_and(|(owner, pos)| self.database.keyed_field_is_linked(owner, pos))
+    }
+
     pub(crate) fn new_record_field_op(&mut self, val: &Value, parent_tp: &Type, op: &str) -> Value {
         if let Value::Call(_, ps) = val.unspan() {
-            let parent = self.data.def(self.data.type_def_nr(parent_tp)).known_type();
-            // @PLN25 single-payload: appending to a NESTED collection field of a `__nullable<S>`
-            // element (`b.items += […]` where `b` is a nullable element) — the field-access
-            // unwrap already made `ps[0]` the dense-`S` payload sub-ref and `ps[1]` its
-            // S-relative offset, so resolve the field number against the payload's `S`, NOT the
-            // enum (`field_nr(enum, S_offset)` = 0 → `OpNewRecord(field=0)` = the wrong field).
-            // `key_owner` maps a synth `__nullable<S>` to its payload struct; identity otherwise.
-            let parent = self.database.key_owner(parent);
-            // loft#977 — the same fact for a USER struct-enum: `c.limbs` where `c: Shape`
-            // and `limbs` lives in the `Circle` variant.  The enum type carries a variant
-            // list and no fields, so resolving against it answers field 0 and a `u16::MAX`
-            // field type, which `record_new` then uses as a type-table index.  Redirect to
-            // the variant that declares the field, named by the offset AND the content type
-            // the read (`OpGetField(base, pos, content)`) already resolved — two variants
-            // each holding a collection put its handle at the same offset, so the offset
-            // alone picks the wrong one.  Identity for a plain struct, so both halves of the
-            // append still agree for every non-enum parent.
-            let parent = if let Value::Int(pos) = ps[1]
-                && let Some(Value::Int(content)) = ps.get(2)
-                && let Ok(pos) = u16::try_from(pos)
-                && let Ok(content) = u16::try_from(*content)
-            {
-                self.database.variant_owning_field(parent, pos, content)
-            } else {
-                parent
-            };
+            let parent = self.field_owner_and_offset(val, parent_tp).map_or_else(
+                || {
+                    self.database
+                        .key_owner(self.data.def(self.data.type_def_nr(parent_tp)).known_type())
+                },
+                |(owner, _)| owner,
+            );
             let field_nr = if let Value::Int(pos) = ps[1] {
                 self.database.field_nr(parent, pos)
             } else {
