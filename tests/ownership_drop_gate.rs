@@ -1538,7 +1538,9 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
     ];
     const REFUSED_PILOTS: &[&str] = &[
         "p_k7", "p_o1", "p_o3", "p_o4", "p_o5", "p_l1", "p_l2", "p_h2", "p_h3", "p_h4", "p_h5",
-        "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4", "p_t1",
+        "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4",
+        // `p_t1` (`mk_s(130).h.id`) left 2026-09-24 (@PLN163 P6): a read through a member of a
+        // call result is a VIEW of the call's record now, so no copy exists for either reading.
         // The collection binds, under the superseded reading too: `p_v2` grows `v` after the copy,
         // so the source is used again (`refuse:later`), and `p_v3` copies a member `b` still
         // holds (`refuse:container`).  `p_v1` is deliberately absent — its `v` is dead after the

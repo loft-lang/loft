@@ -648,7 +648,9 @@ fn g1_parameter_member_overwritten_after_the_copy() {
     );
 }
 
-/// SILENT — a whole parameter bound to a local is a plain value, and releases once.
+/// SILENT — a whole parameter bound to a local.  A copy of what the caller holds, so the default
+/// build refuses it (`copy-of-droppable`); under this file's opt-out it is two structures, each
+/// releasing for itself since @PLN163 P5 removed the reverse hand-off that stopped the copy.
 #[test]
 fn g2_whole_parameter_bound_to_a_local() {
     check_prog(
@@ -656,7 +658,7 @@ fn g2_whole_parameter_bound_to_a_local() {
         "fn g(p: H) { t = p; println(\"{t.id}\"); }",
         "a = mk(80); g(a); println(\"{a.id}\");",
         0,
-        1,
+        2,
     );
 }
 
@@ -714,8 +716,9 @@ fn g5_plain_member_into_a_mixed_container() {
     );
 }
 
-/// A local COPY of a parameter, its member into a container: the local holds the caller's record,
-/// so the caller releases the member and the container releases it too.
+/// A local COPY of a parameter, its member into a container.  Refused by default; under the
+/// opt-out the caller, the local (since @PLN163 P5 a structure releasing for itself) and the
+/// container each release the member.
 #[test]
 fn f9_member_of_a_local_holding_the_callers_record() {
     check_prog(
@@ -723,23 +726,23 @@ fn f9_member_of_a_local_holding_the_callers_record() {
         "struct Hold { h: H }\nfn g(p: S) { x = p; c = Hold { h: x.h }; println(\"{c.h.id}\"); }",
         "s = S { h: mk(93) }; g(s); println(\"{s.h.id}\");",
         1,
-        2,
+        3,
     );
 }
 
-/// SILENT — that local WRITTEN through before the copy.  A copy off a parameter stops its
-/// destination, so the scope pass emits no drop of `x`, and the member the frame made is released
-/// by the container alone: each record once.  The lint asks whether anything besides the container
-/// releases the member, and here nothing does.
+/// That local WRITTEN through before the copy.  Refused by default.  Under the opt-out, since
+/// @PLN163 P5 `x` releases for itself — the reverse hand-off that stopped it is gone — so the member
+/// the frame made is released by `x` AND by the container: measured `DROP:96` twice on both
+/// backends, and the warning names exactly that.  It was silent while `x` released nothing.
 #[test]
-fn g6_written_copy_of_a_parameter_releases_nothing_itself() {
+fn g6_written_copy_of_a_parameter_releases_its_member_twice_and_is_named() {
     check_prog(
         "g6",
         "struct Hold { h: H }\n\
          fn g(p: S) { x = p; x.h = mk(96); c = Hold { h: x.h }; println(\"{c.h.id}\"); }",
         "s = S { h: mk(95) }; g(s); println(\"{s.h.id}\");",
-        0,
-        2,
+        1,
+       3,
     );
 }
 
@@ -770,10 +773,9 @@ fn f10_parameter_member_as_the_tail() {
     );
 }
 
-/// SILENT — a local copy of a parameter copied on TWICE.  Neither copy releases: a copy off a
-/// parameter moves nothing, and a copy of that copy is still the caller's record.  Released
-/// once, by the caller.  The pairing reads that through the caller-record mark the scope pass
-/// sets, which is why the lint runs after it on every path.
+/// SILENT — a local copy of a parameter copied on TWICE.  Refused by default; under the opt-out,
+/// since @PLN163 P5, every structure releases for itself — `x`, `t`, `u` and the caller's — four
+/// releases where the removed reverse hand-off left the caller's alone.
 #[test]
 fn g7_copy_of_a_parameter_copy_handed_on_twice() {
     check_prog(
@@ -781,7 +783,7 @@ fn g7_copy_of_a_parameter_copy_handed_on_twice() {
         "fn g(p: H) { x = p; t = x; u = x; println(\"{t.id}{u.id}\"); }",
         "a = mk(97); g(a); println(\"{a.id}\");",
         0,
-        1,
+        4,
     );
 }
 
