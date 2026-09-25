@@ -4943,6 +4943,14 @@ impl Function {
         self.work_buffer_refs.insert(v);
     }
 
+    /// `@FR-R-WorkBuffer`'s transitive clause — work-ref `v` became this function's own
+    /// work-buffer parameter, so it leaves the sets of refs this frame mints for its callees.
+    pub fn retire_work_buffer_ref(&mut self, v: u16) {
+        self.work_buffer_refs.remove(&v);
+        self.work_refs.remove(&v);
+        self.variables[v as usize].caller_hidden_buf = false;
+    }
+
     pub fn is_work_buffer_ref(&self, v: u16) -> bool {
         self.work_buffer_refs.contains(&v)
     }
