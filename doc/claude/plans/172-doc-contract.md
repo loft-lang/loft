@@ -99,8 +99,11 @@ Rules it must carry (the current homes in brackets; the ones marked *new* have n
 
 **Maintainer docs** (`doc/claude/`) — *new*
 - A doc answers one question. If a reader needs two headings to say what it is for, it is two docs.
-- A size ceiling per file. Proposed **600 lines**; the owner sets the number
-  (⚠ owner input). Formal rule docs and generated reports are exempt and say so in their header.
+- A size ceiling per file: **1000 lines, a hard ceiling** (owner, 2026-09-25). Under it,
+  the file's internal structure carries the weight — headings a reader can navigate, one
+  topic per section — so a long doc that is well sectioned is fine and a short one that is
+  not still fails review. Formal rule docs and generated reports are exempt and say so in
+  their header.
 - Every doc is reachable from the CLAUDE.md index in at most two hops, and each index
   entry names the *start here* doc for its topic, not a list of peers.
 - A dated ruling ("the owner ruled on …", "retired …") is a CHANGELOG_TECHNICAL entry,
@@ -190,7 +193,8 @@ bypass.
 
 ## Open decisions for the owner
 
-- The `size` ceiling (600 proposed).
+- ~~The `size` ceiling~~ — **decided 2026-09-25: 1000 lines, hard**, with structure judged
+  by the reviewer below it.
 - Whether `doc/claude/formal/` and `plans/` are exempt from `orphan` (proposed: `formal/`
   exempt via its README, `plans/` reachable via `plans/README.md`, so no exemption needed).
 - Whether the PR gate lands in Phase 2 or waits one cycle behind the report, so the first
