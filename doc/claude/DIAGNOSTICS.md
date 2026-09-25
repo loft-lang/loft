@@ -587,6 +587,156 @@ type's spelling wrong are exactly the ones nobody had a symptom for.
    FOLLOWING function, which is the same defect item 6 had just removed. `missing_return_not_null`
    is the guard that caught it.
 
+## Switching a diagnostic off
+
+How a run picks its renderer, and the environment switch that silences each lint — with what
+the lint catches, where it is quiet, and why it is a `warning` or an `advice`.  A switch is
+an opt-out for one run; the lint's cure is always an edit at the site it names.
+
+**Error rendering (@PLN28):** `LOFT_ERRORS=pretty|compact` (or `--errors=…`) picks the
+user renderer — `pretty` (default: `file:line:col` + source line + caret) vs `compact`
+(single line; the test harness pins this). Diagnostic toggles (default-on opt-outs, except
+the last two which are opt-in): `LOFT_NO_WARN_RUNTIME` (undefended-fault-site warning) ·
+`LOFT_NO_HINT_NOT_NULL` (`not null` field hint) · `LOFT_FORMAT_BARE_NULL` (drop the `(reason)`
+suffix on `null`) · `LOFT_NO_DEAD_STORES` (@PLN107 dead-store lint: a copy mutated but never
+read, e.g. `d = self.data; d[i]=x` where the bind COPIES so the write is lost — a `len(d)`
+BOUND GUARD does not count as reading it, since a length cannot witness an element write;
+that hole made the lint silent on `if i < len(d) { d[i]=x }`, the exact shape the `v[i]`
+may-be-null warning asks for, and the published `graphics` canvas shipped every drawing
+primitive as a no-op through it) ·
+`LOFT_NO_DOUBLE_MOVE` (@PLN139 stage G: one droppable handed to TWO owners — `s1 = S{h:c};
+s2 = S{h:c}` — where each owner's death releases what it owns, so the resource is released
+twice. Counts hand-offs per source with the SAME predicate that suppresses the source's own
+drop, so lint and mechanism cannot drift. `warning` because ignoring it produces a wrong
+result; therefore an UNDER-approximation — silent across opposite `if` arms, a reassignment
+between the hand-offs, and a terminator, and blind to the iteration count of a loop) ·
+`LOFT_NO_LOST_TEMP_WRITE` (loft#894, the second `lost-write` shape: a call writing through a
+by-value struct parameter GIVEN a value returned by another call — `hurt(first(s), 10.0)`
+writes a copy that is freed at the end of the statement, while `hurt(s.es[0] ?? E{}, 10.0)`
+lands, and nothing at the call site said which. Needs BOTH facts to meet: the callee writes
+through that parameter (read off its own body) and the argument copies a place the caller
+can still REACH (read off the return type's deps) — the second is what keeps
+`hurt(fresh(), …)` and the write-then-return builder idiom quiet) ·
+`LOFT_NO_STEER` (@PLN102 arc C recommended-idiom channel: a call FROM OWNED source to a
+`#superseded "Y"` symbol warns *"`X` is superseded — use `Y`"* + a CI fold-lint; inert until a
+symbol is marked — see [COMPATIBILITY.md § Folding](COMPATIBILITY.md)) ·
+`LOFT_NO_PARAM_COUNT` (≥8 REQUIRED parameters — defaulted and compiler-hidden ones
+excluded; separate from complexity because a caller's burden and a reader's burden have
+different fixes: a struct vs an extracted function) · `LOFT_NO_API_ADVICE` (the two API-design advices, `@FR-R-Escape`: `api-copies-collection`,
+a `pub` function answering a copy of its parameter's collection, and `api-redoes-per-field`,
+a `pub` function building a heap-owning intermediate from its parameter and answering ONE
+value of it — per-call work the CONTRACT forces on every caller and no rewrite can share
+across the calls a consumer makes; measured 11–55× on the pluginabi accessors.  `advice`,
+reaching the library's author only; a rewrite-reachable shape such as an edit answered as
+a fresh record is NOT flagged — a construction merely outside what the rewrites reach is
+not a design fault.  Census 2026-09-25: 13 sites in 42 library packages, every one an
+accessor that decodes or derives per call) ·
+`LOFT_NO_DEFAULT_HINT` (≥2 trailing
+booleans with no default — advertises default parameters, which are under-used and free to
+adopt: adding a default is additive, so existing callers keep working) ·
+`LOFT_NO_NARROW_FALLBACK` (C127 `narrow-fallback` ADVICE: a compound step into a
+DECLARED narrow range whose result does not fit takes the type's DEFAULT — `x: u8 = 250;
+x += 10` answers `0`, `h: integer limit(1000, 1100) = 1050; h += 5000` answers `1000` —
+and nothing at the site says so.  The WRITTEN-OUT `x = x + 10` is refused at compile
+time, so the compound step is the one arithmetic shape where the language cannot ask the
+author what an unfitting result should become.  The cure is the pair `@FR-E-Uncomp-Seen`
+already fuses (`if !x { … }` as the very next statement) or choosing the value with
+`x = (x + n) ?? d`.  `advice`, not `warning`: the default IS what the language promises
+for an unfitting value, so ignoring it cannot produce a result the language did not
+promise.  Quiet where the target keeps a code for its own failure — a `τ?`, an `i32`, a
+plain `integer` — where the check IS fused, and where the author chose the value; census
+2026-09-23: 16 of 1 653 corpus files, every one of them a test about narrow overflow) ·
+`LOFT_NO_OMITTED_FIELD` (loft#914 `omitted-field-zero` ADVICE: a struct literal that names
+SOME fields and leaves another out — the omitted one takes its type's zero and nothing in the
+declaration chose it, which bites where zero is a meaningful value of the field's domain
+(dryopea's palette index wanted `-1`; `0` is the entry that erases). Advertises the DECLARED
+FIELD DEFAULT (`palette_pick: integer = -1`), the cure that already exists and was simply
+undiscoverable. `advice`, not `warning`: the zero is documented behaviour, so ignoring it
+cannot produce a result the language did not promise. Quiet on a field with a declared
+default, on a NULLABLE field (absence is a value it holds), and on a bare `S {}` — that asks
+for the whole default record; the ambiguity is only in the PARTIAL literal) ·
+`LOFT_NO_VARIANT_OVERWRITTEN` (loft#1397 `variant-overwritten-binding` WARNING: a
+`match`/`is` PAYLOAD binding still read after the subject's PLACE is given a DIFFERENT
+variant — `match w.st { Holder{inner} => { w.st = Empty{z: 0}; inner.a }, … }` reads
+`Empty`'s `z` at `Holder`'s offset. `(B-Disturb)` makes overwriting a place NOT a
+disturbance, so the value is what the rules give and both backends agree; what was
+missing is loft#980's `variant-field-unchecked`, whose exemption for a per-arm binding
+assumes the variant cannot change under it. Keyed on the ARM's own tag test, so it cannot
+drift from the parser's numbering. Quiet on a SAME-variant overwrite (the value is
+right), on an unrelated field, and on a LOCAL subject — that is a reassignment `(B-View)`
+already materialises) ·
+`LOFT_NO_LINKED_GROUP` (loft#926 `linked-group-double-fill` ADVICE: one struct literal
+gives RECORDS to two members of a linked collection group — two keyed collections over one
+element type are two routes to a SINGLE record set, so both end up holding everything and
+nothing at the literal says so. Quiet on a member written `[]`, which is how every group is
+constructed, and quiet when only one member is filled — those are the deliberate uses.
+`advice`, not `warning`: the result IS what the language documents, so ignoring it cannot
+produce a result the language did not promise; what is wrong is the author's model) ·
+`LOFT_NO_GROUP_APART` (`linked-group-apart` ADVICE, the DECLARATION-side half of the same
+question: a linked group whose members are declared APART, with an unrelated field between
+them — `{ entities: vector<E>, tick: integer, spawn_index: hash<E[id]> }`. The declaration is
+the only place the pairing is decidable; by the time a `len` reads 0 a group that did not
+form looks exactly like an empty one. Adjacency is the signal rather than the group itself,
+because the idiom is written TOGETHER while a group nobody intended is two fields added at
+different times for different reasons. Quiet on adjacent members, on a pair with no keyed
+member, and on a LIBRARY's struct, which a consumer cannot rearrange) ·
+`LOFT_NO_LIB_OUTRANKED` (loft#1352 `lib-flag-outranked` ADVICE: `use <id>` resolved
+somewhere other than a `--lib` directory that also provides it — resolution is first-wins
+and a project-local `lib/`, a declared dependency and the script's own directory are
+searched BEFORE the flag, so a `--lib` override run from a tree with a `lib/` measures the
+original in silence; reports the precedence rather than moving it, once per id, quiet when
+the winner lies inside the flag's directory) ·
+`LOFT_NO_UNDECLARED_DEP` (loft#968 `undeclared-dependency` ADVICE: `use <pkg>` resolved a
+REGISTRY package the project's `loft.toml` never declares — so nothing distinguishes "we
+depend on this" from "this happens to be installed on the box that built it", the negative
+gate *drop the dependency and the tests must stop compiling* cannot be written, and an
+undeclared package is not pinned either (measured: it resolves to the NEWEST installed).
+The resolution stays — auto-load is deliberate; the silence was the defect. Quiet for a
+bare script with no manifest above it, and for a package parsed out of the registry cache,
+whose manifest is someone else's to fix. `advice`, not `warning`: the program computes
+what the language promises on this box, and what is wrong is that the manifest does not
+describe the project) ·
+`LOFT_NO_SHADOWED_BY_METHOD` (loft#940 `shadowed-by-method` WARNING: a LIBRARY's free
+`fn f(x: τ, …)` that no bare call can reach, because `find_fn` resolves the method
+spelling `t_<τ>_f` before the free `n_f` and reaches it through the stdlib row from
+every source — so the shadow covers the declaring file and the library's own other
+modules, not just a consumer, and `pub` is not the axis. @PLN102 C97 keeps the
+DEFINITION legal on purpose (module-scoped, so the stdlib can grow without breaking a
+shipped library) and `lib::f` still reaches it; the silence was the defect. `warning`,
+not advice: the published `regex::find(pattern, input)` has the stdlib's exact arity and
+argument types, so a bare `find(p, i)` type-checks and answers the wrong thing. Quiet
+where the same name is a method on ANOTHER receiver type — arg-type dispatch keeps that
+one reachable — and quiet for a collision with a stdlib FREE function, which the import
+outranks) ·
+`LOFT_NO_VARIANT_FIELD` (loft#980 `variant-field-unchecked` WARNING: `c.field` on a
+struct-enum names a field only SOME variants declare. The access resolves at COMPILE
+time to the first variant that has it, and the layout gives a shared name+type one
+slot — so the read is right for the variants declaring it and reads ANOTHER variant's
+bytes for the rest, with the tag never consulted: `a.n` on an `Anon` answered
+`Anon.k`'s value, and `a.label = "x"` wrote into a record whose tag still said `Anon`,
+after which `match` still reported `Anon`. Direct payload access STAYS — C89 decided
+permanently that enum payloads are named fields you read straight, with matching for
+DISPATCH and never for extraction; the silence was the defect. `warning`, not advice:
+the value read is another variant's, typed as this one's. Quiet when EVERY variant
+declares the field (one shared slot — measured correct even where the variants'
+preceding fields differ in width), quiet for `match`/`is` bindings, which are per-arm
+and are the cure it names, and quiet for a synthetic `__nullable<S>`, whose payload
+access is @PLN25's null model rather than a variant question) ·
+`LOFT_NO_COMPLEXITY` (function-complexity ADVICE: cognitive complexity ≥ 40 — a
+construct costs `1 + nesting`, so 8 sequential `if`s cost 8, 3 nested cost 6, a flat
+`match` costs 1 whatever its arm count; counted at PARSE time because the IR is
+post-desugar and would charge `??` and `for` as branches the author never wrote;
+names the deepest-nesting line, since that is where a split pays) ·
+`LOFT_NO_STRICT_INDEX_TEXT` (@PLN110 3a text strict-index units lint: warns on
+`for i in 0..len(s) { s[i] }` AND `{ s.byte_at(i) }`, incl. via a local (`n = len(s); 0..n`) —
+`len(text)` is a CHARACTER count but both reads are byte-indexed, so the loop truncates
+multi-byte text silently (the `cbor` encoder shipped this); advisory, use `for c in s` or
+`0..size(s)`) ·
+`LOFT_LINT_STRICT_INDEX` (**opt-in**, @PLN102 case-D audit: warns where a for-loop iter var
+bounded by `len(<one vector>)` indexes a DIFFERENT vector — `for i in 0..len(v) { w[i] }` types
+non-null yet reads C80-null on overrun; advisory, the type is unchanged) ·
+`LOFT_DEV_SOFT_HALT` (**opt-in**: demote dev raises to log-and-continue so one run surfaces every fault).
+
 ## See also
 
 - [COPY_DIAGNOSTICS.md](COPY_DIAGNOSTICS.md) — the copy-vs-borrow model behind `avoidable-copy`.
