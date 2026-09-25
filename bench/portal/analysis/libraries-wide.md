@@ -229,3 +229,26 @@ its two inner vectors — `(R-MoveAppend)` / `(R-Place)`'s class.  Left for the 
 forms: zttext `invert` (the prepend, 99×) and `insert_text` (the identity copy, 62×), and
 any filter (`for e in V { if p { t += [e] } }`), which needs a loop rewrite with a write
 index rather than a range.
+
+**The API-design advices (2026-09-25, `LOFT_NO_API_ADVICE`).**  The owner's question: the
+rows a rewrite can never reach because the LIBRARY'S CONTRACT forces the work on every
+caller — can the language say so at the site, since 20× and more "feels broken"?  Two shapes
+qualify, and the criterion that keeps them apart from everything else is *inherently
+problematic*, never *merely not yet optimised*: `api-copies-collection` (a `pub` function
+answers a copy of its parameter's collection; a caller cannot borrow across an API) and
+`api-redoes-per-field` (a `pub` function builds a heap-owning intermediate from its parameter
+and answers one value of it; three values cost three decodes).  Not flagged, on purpose: an
+edit answered as a fresh record (`(R-Rebind)`'s and, for a caller that keeps both, a needed
+copy), a no-heap intermediate (registers), a stdlib producer, an answered intermediate, a
+private function.  The cure both name is the builder form — make the record, then read or
+fill it through its methods.  Census over the 42 library packages, from inside each so its
+source is owned: **14 sites** — `Stage.order` (a getter), pluginabi's seven frame accessors
+(`req_op`, `req_state_b64`, `req_arg_b64`, `reply_is_ok`, `reply_out_b64`, `reply_err_code`,
+`check_request`: the portal's 55× and 11.5× rows, each decoding the whole frame per field),
+hex_form's `boundary_ends` / `boundary_branches` (the same boundary vector rebuilt per
+accessor) and `form_canon_text`, hex_fit's `draft_canon_text`, hex_recover's
+`field_exact_text` / `field_norm_text` (a derivation rendered per call).  Measured on the
+consumer's side first: zttext's edit API costs a consumer the same ~1.2 ms per edit pair on
+an 11 k-character document whether the library is a cdylib or compiled in, and whether the
+rebind rewrite is on or off — the cost is `insert_text`'s own manual copy (the identity
+form), not the boundary; that is why the edit-answered-as-copy shape is NOT an advice.

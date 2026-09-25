@@ -35,6 +35,20 @@ const CODES: &[(&str, &str)] = &[
         "struct H { v: vector<integer> }\nfn u(h: H) -> integer { len(h.v) }\n\
          fn main() { s = [1, 2, 3]; h = H { v: s }; print(\"{u(h)} {len(s)}\"); }",
     ),
+    // The two API-design advices (@FR-R-Escape): per-call work a `pub` contract forces on
+    // every caller and no rewrite can share — a parameter's collection answered by copy, and
+    // a heap-owning intermediate built from the parameter and discarded after one value.
+    (
+        "api-copies-collection",
+        "struct S { v: vector<integer> }\npub fn items(s: S) -> vector<integer> { s.v }\n\
+         fn main() { s = S { v: [1, 2] }; print(\"{len(items(s))}\"); }",
+    ),
+    (
+        "api-redoes-per-field",
+        "struct D { f: vector<integer> }\nfn dec(x: vector<integer>) -> D { D { f: x } }\n\
+         pub fn n(x: vector<integer>) -> integer { len(dec(x).f) }\n\
+         fn main() { print(\"{n([1, 2])}\"); }",
+    ),
     // @PLN139 stage G — one `H` handed to two containers. The cascade releases what each
     // container owns, so this closes one resource twice; both hand-offs are straight-line,
     // which is the certainty the lint requires.

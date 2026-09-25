@@ -1429,6 +1429,16 @@ pub fn trace_compact() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_COMPACT"))
 }
 
+/// The two API-design advices (`api-copies-collection`, `api-redoes-per-field`): a `pub`
+/// function whose CONTRACT forces per-call work no rewrite can share across the calls a
+/// consumer makes — a copy of a parameter's collection answered per call, or a heap-owning
+/// intermediate built from the parameter and discarded after one value.  `advice`, never a
+/// gate; `LOFT_NO_API_ADVICE=1` opts out of both.
+pub fn api_advice_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_API_ADVICE"))
+}
+
 /// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
 /// its host and destination count, or the decline with the reason.
 pub fn trace_place() -> bool {

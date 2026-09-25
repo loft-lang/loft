@@ -622,7 +622,16 @@ can still REACH (read off the return type's deps) — the second is what keeps
 symbol is marked — see [COMPATIBILITY.md § Folding](doc/claude/COMPATIBILITY.md)) ·
 `LOFT_NO_PARAM_COUNT` (≥8 REQUIRED parameters — defaulted and compiler-hidden ones
 excluded; separate from complexity because a caller's burden and a reader's burden have
-different fixes: a struct vs an extracted function) · `LOFT_NO_DEFAULT_HINT` (≥2 trailing
+different fixes: a struct vs an extracted function) · `LOFT_NO_API_ADVICE` (the two API-design advices, `@FR-R-Escape`: `api-copies-collection`,
+a `pub` function answering a copy of its parameter's collection, and `api-redoes-per-field`,
+a `pub` function building a heap-owning intermediate from its parameter and answering ONE
+value of it — per-call work the CONTRACT forces on every caller and no rewrite can share
+across the calls a consumer makes; measured 11–55× on the pluginabi accessors.  `advice`,
+reaching the library's author only; a rewrite-reachable shape such as an edit answered as
+a fresh record is NOT flagged — a construction merely outside what the rewrites reach is
+not a design fault.  Census 2026-09-25: 13 sites in 42 library packages, every one an
+accessor that decodes or derives per call) ·
+`LOFT_NO_DEFAULT_HINT` (≥2 trailing
 booleans with no default — advertises default parameters, which are under-used and free to
 adopt: adding a default is additive, so existing callers keep working) ·
 `LOFT_NO_NARROW_FALLBACK` (C127 `narrow-fallback` ADVICE: a compound step into a
