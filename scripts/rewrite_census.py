@@ -26,6 +26,10 @@ checkout exists (`bench/portal/libs.tsv`, `checkout_libs.sh`).  A library row ca
 checkout's commit; when the checkout has moved since the baseline, its rows are not judged —
 the library changed, not the compiler.
 
+Each program is emitted TWICE and the two sources must be the same bytes: the census needs a
+deterministic emitter, and so does every native cache keyed on the source (a hash-ordered walk
+once made a work-buffer function's exit frees change order from run to run).
+
 The baseline is `bench/portal/rewrite_census.tsv`.  A DROP fails; a rise, a new program or a
 new rule is printed and passes.  A deliberate decline lands with `--bless` in the same commit,
 so the drop is visible in its review.  A program absent from this run (no checkout) is skipped.
@@ -60,16 +64,26 @@ def programs():
 
 
 def census(loft, prog):
+    """The program's admissions, from the first of two emissions; the second must be the
+    same bytes — the emitter is deterministic, and a hash-ordered walk that is not makes the
+    same program a different source from run to run (a native cache miss for nothing)."""
     name, commit, cwd, argv = prog
     with tempfile.TemporaryDirectory() as tmp:
         tsv = Path(tmp) / "census.tsv"
-        proc = subprocess.run(
-            [loft, "--native-emit", str(Path(tmp) / "out.rs"), "--lean", *argv],
-            cwd=cwd, capture_output=True, text=True, timeout=300,
-            env={**os.environ, "LOFT_REWRITE_CENSUS": str(tsv)},
-        )
-        if proc.returncode != 0 or not tsv.exists():
-            return name, commit, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
+        emitted = []
+        for i in range(2):
+            out = Path(tmp) / f"out{i}.rs"
+            proc = subprocess.run(
+                [loft, "--native-emit", str(out), "--lean", *argv],
+                cwd=cwd, capture_output=True, text=True, timeout=300,
+                env={**os.environ, "LOFT_REWRITE_CENSUS": str(tsv) if i == 0 else ""},
+            )
+            if proc.returncode != 0 or not out.exists() or (i == 0 and not tsv.exists()):
+                return name, commit, None, proc.stderr.strip().splitlines()[-1:] or ["no output"]
+            emitted.append(out.read_bytes().splitlines())
+        if emitted[0] != emitted[1]:
+            at = next((k for k, (a, b) in enumerate(zip(*emitted)) if a != b), min(map(len, emitted)))
+            return name, commit, None, [f"two emissions differ from line {at + 1} — the emitter is not deterministic"]
         counts = {}
         for line in tsv.read_text().splitlines():
             rule, _, n = line.partition("\t")

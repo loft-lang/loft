@@ -3720,10 +3720,14 @@ impl Function {
     }
 
     /// @PLN87 P2.1 — every (param, witness) pair, for the entry stash and the
-    /// function-exit `OpFreeRefIfDistinct`.
+    /// function-exit `OpFreeRefIfDistinct`, in parameter order: the map's own order is a
+    /// hash's, and it made the same program emit its exit frees in a different order from
+    /// run to run (a work-buffer function holds one pair per buffer).
     #[must_use]
     pub fn rebind_params(&self) -> Vec<(u16, u16)> {
-        self.rebind_orig.iter().map(|(&p, &o)| (p, o)).collect()
+        let mut pairs: Vec<(u16, u16)> = self.rebind_orig.iter().map(|(&p, &o)| (p, o)).collect();
+        pairs.sort_unstable();
+        pairs
     }
 
     /// Record that local `v` releases its stores through the owner witness `w`
