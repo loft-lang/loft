@@ -100,7 +100,8 @@ the detail, and that place wins if the two ever differ — fix this line, not th
 
 **Documentation**
 
-21. **A guide at `docs/01-getting-started.loft`** is required, runs on both backends, and
+21. **A guide at `docs/01-getting-started.loft`** is owed by every library (CI runs it when it
+    exists; the monthly doc review lists who still owes one), runs on both backends, and
     every number it asserts is measured.  [§ 2c](#2c-the-guide--docs01-getting-startedloft)
 22. **A doc comment on every `pub` item** — present tense, why to use it.
     [DOC_QUALITY.md](DOC_QUALITY.md)
@@ -512,7 +513,9 @@ the only kind worth a reader's trust.
 **Your CI runs it, in its own step.** Not `loft test` — that scans `tests/`, and a guide is a
 program, not a suite, which is why the guides written before this rule existed were never
 executed by anything. The `Guide` step in `library-ci-reusable.yml` runs every `docs/*.loft`
-on **both backends** and diffs the two outputs; a package with no guide says so and passes.
+on **both backends** and diffs the two outputs.  CI does not check that a guide EXISTS — a
+package with none says so and passes — so the obligation is kept by the monthly doc review,
+which lists every library that still owes one ([LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md)).
 Run it yourself the same way:
 
 ```sh

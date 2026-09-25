@@ -480,10 +480,10 @@ Run through this list before pushing.  Skip items that are clearly unaffected.
 | Document | Update when… |
 |---|---|
 | `doc/claude/CHANGELOG_TECHNICAL.md` | Always — add a detailed entry under `## [Unreleased]` for every change (internal phase/opcode/slot detail welcome) |
-| `CHANGELOG.md` | When a change is user-visible — add a friendly, jargon-free entry under `## Unreleased`.  Entry-level programmers are the audience |
+| `CHANGELOG.md` | When a change is user-visible — add a friendly, jargon-free entry under the current cycle's `## YYYY-MM` section.  Entry-level programmers are the audience |
 | `doc/claude/ROADMAP.md` | Sprint items were completed or reprioritised |
 | `doc/claude/PLANNING.md` | Items were completed (remove) or new items discovered (add) |
-| `doc/claude/PROBLEMS.md` | Bugs were fixed (mark resolved) or **any new bug found during the sprint** (add with reproducer) |
+| A GitHub Issue ([ISSUE_TRACKING.md](ISSUE_TRACKING.md)) | **Any new bug found during the sprint** that is not fixed in it (filed with a both-backend reproducer); a fixed one gets `Fixes #N` in its commit.  `PROBLEMS.md` is the closed archive and gains no rows |
 | `doc/claude/CAVEATS.md` | Edge cases were fixed or **any new workaround discovered** (add with test reference) |
 | `doc/claude/TESTING.md` § Coverage Gaps | Test coverage improved or new gaps identified |
 | `README.md` | New user-facing features, CLI commands, or examples added |
@@ -753,7 +753,7 @@ The **last commit** on a branch updates documentation:
 ```
 docs: {ID} — update CHANGELOG, PLANNING
 
-- CHANGELOG: add feature/fix entry under Unreleased
+- CHANGELOG: add feature/fix entry under the current `## YYYY-MM` section
 - PLANNING: remove completed item section and quick-reference row
 ```
 
@@ -874,7 +874,7 @@ When (3) doesn't apply, the gap goes to its CANONICAL home.
 **Never invent a parallel catalog** — that creates the
 "two places to keep in sync" problem and dilutes the action
 surface (`./scripts/idx broken`, the broken-tag validator,
-the open-issues fast index in PROBLEMS.md, etc.).
+the GitHub Issues labels, etc.).
 
 | Item shape | Canonical home | Where to scan for them |
 |---|---|---|
@@ -1116,7 +1116,7 @@ behaviour and update them as needed.  Common files to check:
 | File | Update when |
 |---|---|
 | `doc/claude/CHANGELOG_TECHNICAL.md` | Always — add a detailed entry under Unreleased |
-| `CHANGELOG.md` | When the change is user-visible — add a plain-language entry under Unreleased |
+| `CHANGELOG.md` | When the change is user-visible — add a plain-language entry under the current `## YYYY-MM` section |
 | `PLANNING.md` | Always — remove the item section and Quick Reference row |
 | `ROADMAP.md` | Always — remove or update the row(s) for the completed item(s) |
 | `RELEASE.md` | Gate criteria or release checklist changed |
@@ -1131,7 +1131,7 @@ Stage all files that required a change:
 ```
 docs: P1 lambda expressions — update CHANGELOG, PLANNING, LOFT, STDLIB
 
-- CHANGELOG: add P1 feature entry under Unreleased
+- CHANGELOG: add P1 feature entry under the current `## YYYY-MM` section
 - PLANNING: remove P1 section (all three phases complete)
 - LOFT.md: document lambda syntax in the Declarations section
 - STDLIB.md: document map/filter/reduce accepting lambda arguments

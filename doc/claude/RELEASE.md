@@ -547,9 +547,9 @@ claim)* — the tool lists every one and a red item can't be skipped silently.
 whole surface; thereafter the ratchet re-surfaces only what changed or is scheduled,
 so coverage stays total without re-reading unchanged, still-valid prose.
 
-**Current stdlib baseline (0a):** 36 findings (15 missing docs + 21 doc-quality),
-tracked by the tool (`scripts/api_lint.py -c`) — a burn-down **goal**, not a release
-precondition (loft's own findings never block loft's release).
+**The stdlib's position (0a)** is what `scripts/api_lint.py -c default/*.loft` reports; the goal
+is `0 active`.  It is a burn-down goal, not a release precondition: loft's own findings never
+block loft's release.
 
 ### Deferred for pre-external-developer releases (2026-05-15)
 
@@ -576,7 +576,7 @@ delays the release without strengthening it.
 **The author will do these manually** when they have the
 feedback signal that makes them meaningful.  Until then:
 
-  - Step 5 (user docs vs Unreleased changelog) — defer.
+  - Step 5 (user docs vs this cycle's changelog) — defer.
   - Step 6 (DEVELOPERS.md + comparison pages) — defer.
   - Step 7 (topic-flow ordering) — defer.
 
@@ -592,8 +592,10 @@ grammar symlink on Windows — no release had recorded either.
 
 Steps 1-4 + 8 + 9 (internal-doc hygiene, broken-link
 audit, clippy-suppression review, gendoc + PDF) are NOT
-deferred — they protect the shipped artefact regardless of
-external-user presence and stay as release gates.
+deferred — they run every release, because they protect the
+shipped artefact whether or not external users exist.  Like
+the rest of this review they are advisory: only the safety
+gate blocks a release.
 
 The safety gate above (crashes / memory / leaks / test-suite
 integrity) is also NOT deferred — it blocks every release,
@@ -607,9 +609,9 @@ happens.
 
 ### 1 — Audit doc/claude/ for stale problem documentation
 
-- Open PROBLEMS.md: every bug entry there should either be open or clearly crossed out / labelled FIXED with the fix date.  Remove entries that are fixed and already recorded in CHANGELOG.md.
+- Open bugs live in GitHub Issues (`make work`); PROBLEMS.md is the closed archive and has no open rows to audit.  Check that every issue the cycle fixed carries its `Fixes #N` commit.
 - Open PLANNING.md: every item should be open.  Done items must have been removed (not marked done in-place) before this release.
-- Open project_status.md in memory/: verify it reflects current state.
+- Agent memory is per-agent and is not release evidence; anything durable in it belongs in a repo doc (CLAUDE.md § Conventions).
 
 ### 2 — Verify code links in doc/claude/
 
@@ -621,9 +623,8 @@ Helpful command: `grep -rn 'src/' doc/claude/` and cross-check against `ls src/`
 
 ### 3 — Verify doc/claude/ discoverability
 
-- Every file in `doc/claude/` must be reachable from at least one other file or from the MEMORY.md index.
-- Files that are only referenced from MEMORY.md should still link to at least one sibling document.
-- Orphaned files (nothing links to them) must be added to an existing doc or removed.
+- Every file in `doc/claude/` is reachable from the CLAUDE.md index in at most two hops ([DOC_CONTRACT.md](DOC_CONTRACT.md) rule 30).  Agent memory is per-agent and never counts as a route.
+- Orphaned files (nothing links to them) are added to the doc that owns their topic, or removed.
 
 ### 4 — Compact verbose sections
 
@@ -634,7 +635,7 @@ Read through any doc/claude/ file that has grown since the previous release and 
 > The corpus-wide checks here are now the **step 0** gate (0a–0e).  This step
 > remains the *changelog-driven* cross-check: that each shipped change is reflected.
 
-For each feature and bug-fix entry in CHANGELOG.md under `[Unreleased]`:
+For each feature and bug-fix entry in CHANGELOG.md under this cycle's `## YYYY-MM` section:
 - Find the corresponding section in the HTML reference (a file in `tests/docs/*.loft` or `doc/`).
 - Confirm the user-visible behaviour is correctly described.
 - If the feature has no user documentation, add it (either a new `.loft` example or an update to an existing one).

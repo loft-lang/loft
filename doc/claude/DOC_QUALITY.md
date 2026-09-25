@@ -536,7 +536,7 @@ let the ratchet block only *new* ones, then shrink the baseline over time:
 
 ```bash
 scripts/lint_comments.sh --baseline   # T0: accept today's flagged lines
-                                       #     (writes .lint_comments_baseline)
+                                       #     (writes scripts/.lint_comments_baseline)
 scripts/lint_comments.sh --check       # CI: list only NEW flags (advisory)
 scripts/lint_comments.sh --prune        # after a cleanup pass: drop fixed lines
 ```

@@ -11,9 +11,9 @@ consistent — not to invent new structure.
 
 ## The documentation you maintain
 
-- `doc/claude/PROBLEMS.md` — the open-issue / fixed-issue register.
-  Quick-reference table at the top; detailed entries below with a
-  `### ~~N~~. Title — FIXED` convention once closed.
+- Open bugs are GitHub Issues ([ISSUE_TRACKING.md](../../doc/claude/ISSUE_TRACKING.md));
+  you do not file them.  `doc/claude/PROBLEMS.md` is the closed archive and gains
+  no new rows.
 - `doc/claude/CAVEATS.md` — verifiable edge cases with reproducers;
   `### ~~Cx~~ — … — DONE` on close.
 - `doc/claude/plans/` — multi-phase initiatives.  Each has a
@@ -25,7 +25,7 @@ consistent — not to invent new structure.
   precise and justified.
 - `CHANGELOG.md` — the user-facing release history at repo root.
   New user-visible behaviour, removed APIs, migration notes.
-  Entries live under `## [Unreleased]` until a release cut; each
+  Entries live under the current cycle's `## YYYY-MM` section; each
   gets a short heading (e.g. `### Integer → i64 migration`) with
   a "What users see" paragraph and, where relevant, a "Downsides
   recorded" cross-reference to CAVEATS.md.
@@ -60,11 +60,13 @@ consistent — not to invent new structure.
    readers: common words over fancy ones, short one-idea sentences,
    no idioms or metaphors, explain a term on first use.
    Maintainer-facing design docs (most of `doc/claude/`) may be
-   denser.  NOTE: DOC_QUALITY's plan-tag/date and "no change-history"
-   rules are *code-comment* rules — they do NOT override your doc
-   conventions.  Docs legitimately carry fix dates, plan refs, and
-   change records (a PROBLEMS "Root cause / Fix" entry, a CHANGELOG
-   note); keep those.
+   denser.  Dates and plan refs depend on the kind of doc
+   ([DOC_QUALITY.md](../../doc/claude/DOC_QUALITY.md) § Maintainer docs, rule 4):
+   a RECORD doc — CHANGELOG, a plan, a `releases/` directory, a
+   PROBLEMS "Root cause / Fix" entry — keeps its dates; a CONTRACT
+   doc — a reference or rule set in force — states the current rule,
+   and a dated ruling moves to CHANGELOG_TECHNICAL or its
+   `<doc>-history.md` companion.
 
 ## What you do NOT do
 
@@ -109,10 +111,6 @@ edit.
   PROBLEMS.md's quick-ref table row is struck, the longform `###`
   entry below must also be struck (and vice versa).  Update both
   or neither.
-- **`problems_p54_jobject_layout_matches_stdlib`** — PROBLEMS.md § P54
-  must name `vector<JsonField>` as the JObject storage form, since
-  that's what `default/06_json.loft` actually declares.  An earlier
-  draft used `hash<JsonField[name]>`; never revert to that.
 - **`ignored_tests_baseline_is_current`** — when you un-ignore a
   test or add a new `#[ignore]`, update `tests/ignored_tests.baseline`.
   Regenerate with

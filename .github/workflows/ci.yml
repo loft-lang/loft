@@ -1350,10 +1350,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: New comment-quality flags beyond .lint_comments_baseline
+      - name: New comment-quality flags beyond scripts/.lint_comments_baseline
         # Advisory (not a required check): lists comment lines matching the
         # history-stamp / change-narration patterns that are NOT already in
-        # .lint_comments_baseline.  The script always exits 0 — new flags
+        # scripts/.lint_comments_baseline.  The script always exits 0 — new flags
         # surface as GitHub warning annotations, never block the PR.  Standard
         # + baseline ratchet + cleanup workflow: doc/claude/DOC_QUALITY.md § Check.
         run: scripts/lint_comments.sh --check
