@@ -552,6 +552,7 @@ fn admit(
         ops,
         tracked: HashSet::from([v]),
         aliases: Vec::new(),
+        copy_bound: copy_bound(code, data, v),
     };
     // An alias found on one round is judged on the next; the set only grows.
     loop {
@@ -566,6 +567,24 @@ fn admit(
         }
         walk.tracked.extend(new);
     }
+}
+
+/// Is `v` filled only by one whole copy of another vector (see `Walk::copy_bound`)?
+fn copy_bound(code: &Value, data: &Data, v: u16) -> bool {
+    let (mut copies, mut builds) = (0, 0);
+    code.walk(&mut |x| {
+        if let Value::Call(d, args) = x
+            && args.first().is_some_and(|a| is_var(a, v))
+        {
+            let name = data.def(*d).name();
+            if copied_from_at_1(name) {
+                copies += 1;
+            } else if name.starts_with("OpPush") || name == "OpInsertVector" {
+                builds += 1;
+            }
+        }
+    });
+    copies == 1 && builds == 0
 }
 
 /// Where a node stands: an argument of a call (named) or anywhere else.
@@ -584,6 +603,9 @@ struct Walk<'a> {
     ops: &'a Ops,
     tracked: HashSet<u16>,
     aliases: Vec<u16>,
+    /// `v`'s only fill is one whole copy of another vector: nothing pushes or inserts into
+    /// it, so it is the bind `a = s.v` and not a buffer built up (`v += extra` among pushes).
+    copy_bound: bool,
 }
 
 /// An operator that reads or writes its first operand's vector IN PLACE, or yields an
@@ -717,35 +739,26 @@ impl Walk<'_> {
                 {
                     return Err("an element place not read or written as a scalar");
                 }
-                // Copied OUT of the frame — into a record's field or into a parameter such as
-                // the return buffer: the element-first build (`@FR-R-ElemFirst`) and the
-                // return-buffer adoption (`@FR-R-RetAdopt`) build such a local where it
-                // ends up, which saves the copy a work buffer keeps, and both decline a
-                // promoted local.
-                if copied_from_at_1(name)
-                    && args.get(1).is_some_and(
-                        |a| matches!(a.unspan(), Value::Var(x) if self.tracked.contains(x)),
-                    )
-                    && args.first().is_some_and(|a| match a.unspan() {
-                        Value::Call(g, _) => *g == self.ops.get_field,
-                        Value::Var(x) => self.function.is_argument(*x),
-                        _ => false,
-                    })
-                {
-                    return Err("copied out of the frame");
-                }
-                // Filled by a copy of another vector (`a = s.v`): the copy elision's
-                // borrow tiers and the transparent link remove that copy entirely, and
-                // both ask for a LOCAL, which a promoted buffer no longer is.
-                if copied_from_at_1(name)
-                    && args.first().is_some_and(
-                        |a| matches!(a.unspan(), Value::Var(x) if self.tracked.contains(x)),
-                    )
-                    && !args.get(1).is_some_and(
-                        |a| matches!(a.unspan(), Value::Var(x) if self.tracked.contains(x)),
-                    )
-                {
-                    return Err("filled by a copy of another vector");
+                // A work buffer is a local whose contents are used where they stand.  A
+                // WHOLE copy is what another rewrite removes outright — a local that is only
+                // a copy of another vector (`a = s.v`: the copy elision's borrow tiers, the
+                // transparent link; `copy_bound`), or one copied out into a field, an element or the return buffer, directly
+                // or through a staging local (the move elision, `@FR-R-ElemFirst`,
+                // `@FR-R-RetAdopt`) — and every one of them asks for a LOCAL, which a
+                // promoted buffer no longer is.  A copy between two tracked names is an
+                // alias, judged on its own.
+                if copied_from_at_1(name) {
+                    let tracked = |i: usize| {
+                        args.get(i).is_some_and(
+                            |a| matches!(a.unspan(), Value::Var(x) if self.tracked.contains(x)),
+                        )
+                    };
+                    if tracked(1) && !tracked(0) {
+                        return Err("copied whole into another place");
+                    }
+                    if tracked(0) && !tracked(1) && self.copy_bound {
+                        return Err("bound as a copy of another vector");
+                    }
                 }
                 for (i, a) in args.iter().enumerate() {
                     self.node(a, Pos::Arg { name, d: *d, i })?;

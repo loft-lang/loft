@@ -16,19 +16,19 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ("n_c1", &["v"]),        // the probe
     ("n_c2", &["v"]),        // recursion
     ("n_c3", &["xs", "ks"]), // two buffers
-    ("n_c4", &["v"]),        // declared inside a loop
+    ("n_c4", &[]),           // declared inside a loop: @FR-R-LoopBuffer / @FR-R-LitHoist keep it
     ("n_c5", &["v"]),        // every in-place use, the walk's alias included
     ("n_c6", &["t"]),        // beside a return buffer
     ("n_c7", &[]),           // handed to a loft-bodied call
     ("n_c8", &[]),           // a text element
     ("n_c9", &[]),           // assigned a second time
-    ("n_c10", &["v", "w"]),  // the tail COPIES the local into the return buffer
+    ("n_c10", &[]), // v copied whole into the return buffer (@FR-R-RetAdopt), w a copy-bind
     ("t_3Acc_bump", &["v"]), // a method
-    ("n_c12w", &[]),         // a par worker
-    ("n_c12", &["out"]),     // the par caller's own collector
-    ("n_c13", &["v"]),       // an early return
-    ("n_c15", &["acc"]),     // a buffer-holding caller
-    ("n_c16", &["v"]),       // beside a parse-time return buffer of its own
+    ("n_c12w", &[]), // a par worker
+    ("n_c12", &["out"]), // the par caller's own collector
+    ("n_c13", &["v"]), // an early return
+    ("n_c15", &["acc"]), // a buffer-holding caller
+    ("n_c16", &["v"]), // beside a parse-time return buffer of its own
 ];
 
 fn loft() -> Command {
