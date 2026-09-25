@@ -504,6 +504,18 @@ fn admit(
     if trio_sites(code, v, db, ops) != 1 {
         return Err("declared other than once as `[]`");
     }
+    // Declared inside a loop: `@FR-R-LoopBuffer` keeps its store across the passes and
+    // `@FR-R-LitHoist` builds an invariant literal once, both keyed on the declaration this
+    // promotion would rewrite — and per pass, where the work buffer saves once per call.
+    let mut in_loop = false;
+    code.walk(&mut |x| {
+        if matches!(x, Value::Loop(_)) && trio_sites(x, v, db, ops) > 0 {
+            in_loop = true;
+        }
+    });
+    if in_loop {
+        return Err("declared inside a loop");
+    }
     let sets = set_counts(code);
     if sets.get(&v).copied().unwrap_or(0) != 1 {
         if crate::keys::trace_work_buffer() {
@@ -705,18 +717,35 @@ impl Walk<'_> {
                 {
                     return Err("an element place not read or written as a scalar");
                 }
-                // Copied into a record's field: the element-first build (`@FR-R-ElemFirst`)
-                // builds such a local inside the record, which saves the copy a work
-                // buffer keeps, and a promoted local would decline it.
+                // Copied OUT of the frame — into a record's field or into a parameter such as
+                // the return buffer: the element-first build (`@FR-R-ElemFirst`) and the
+                // return-buffer adoption (`@FR-R-RetbufAdopt`) build such a local where it
+                // ends up, which saves the copy a work buffer keeps, and both decline a
+                // promoted local.
                 if copied_from_at_1(name)
                     && args.get(1).is_some_and(
                         |a| matches!(a.unspan(), Value::Var(x) if self.tracked.contains(x)),
                     )
+                    && args.first().is_some_and(|a| match a.unspan() {
+                        Value::Call(g, _) => *g == self.ops.get_field,
+                        Value::Var(x) => self.function.is_argument(*x),
+                        _ => false,
+                    })
+                {
+                    return Err("copied out of the frame");
+                }
+                // Filled by a copy of another vector (`a = s.v`): the copy elision's
+                // borrow tiers and the transparent link remove that copy entirely, and
+                // both ask for a LOCAL, which a promoted buffer no longer is.
+                if copied_from_at_1(name)
                     && args.first().is_some_and(
-                        |a| matches!(a.unspan(), Value::Call(g, _) if *g == self.ops.get_field),
+                        |a| matches!(a.unspan(), Value::Var(x) if self.tracked.contains(x)),
+                    )
+                    && !args.get(1).is_some_and(
+                        |a| matches!(a.unspan(), Value::Var(x) if self.tracked.contains(x)),
                     )
                 {
-                    return Err("copied into a record's field");
+                    return Err("filled by a copy of another vector");
                 }
                 for (i, a) in args.iter().enumerate() {
                     self.node(a, Pos::Arg { name, d: *d, i })?;
