@@ -8915,6 +8915,7 @@ fn main() {
     // skip parsing the user file (and its lib loads) entirely.  (The `[sandbox]`
     // policy was loaded above, before the warm-load gate, so designations form
     // during this parse — and a sandboxed program is never warm-loaded.)
+    let t_parse_user = std::time::Instant::now();
     if !program_warm {
         // @PLN13 — parse the desugared script (auto-detected above), or for a normal
         // program parse the file unchanged.
@@ -8952,9 +8953,25 @@ fn main() {
     // stops at the check below and is never compiled, so it needs neither.
     // A lint that needs what the scope pass decided asks the deciding pass rather than
     // re-deriving it — the copy notice asks `place_result` (@PLN164 B2 units 2-3).
+    let parse_user_ms = t_parse_user.elapsed().as_secs_f64() * 1000.0;
+    let (mut scopes_ms, mut lints_ms) = (0.0, 0.0);
     if p.diagnostics.level() < Level::Error {
+        let t = std::time::Instant::now();
         scopes::check(&mut p.data, &mut p.database);
+        scopes_ms = t.elapsed().as_secs_f64() * 1000.0;
+        let t = std::time::Instant::now();
         loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+        lints_ms = t.elapsed().as_secs_f64() * 1000.0;
+    }
+    // The front end by phase.  `front_end` is measured on its own clock from the start of
+    // `parse_default`, so the four phases summing to it is the check that none is missed or
+    // counted twice; the remainder is the `#c` gate between the parse and the scope pass.
+    if std::env::var("LOFT_TIMING").is_ok() {
+        eprintln!(
+            "LOFT_TIMING parse_user={parse_user_ms:.2}ms scopes={scopes_ms:.2}ms \
+             lints={lints_ms:.2}ms front_end={:.2}ms",
+            t_parse_default.elapsed().as_secs_f64() * 1000.0
+        );
     }
     // @PLN102 build step 2/3 — report-only link oracles (no-op unless LOFT_DUMP_LINK_SAFE/OBS).
     loft::use_analysis::dump_link_safety(&p.data);
