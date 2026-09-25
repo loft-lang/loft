@@ -512,6 +512,18 @@ pub fn materialize_data_at(stores: &mut Stores, root: DbRef, data: &Data) {
         ur.set_field_str(stores, ds::USENAME_NAME, &name);
         ur.set_field_int(stores, ds::USENAME_SOURCE, i64::from(source));
     }
+    // The type-variable placeholders and their bound keys: a parse that continues this
+    // Data (the stdlib cache, a warm program) asks them which placeholder a `<T>` header
+    // already names, and without them mints a second one.  Sorted, so the bundle's bytes
+    // do not depend on a hash map's order.
+    let tvbs = r.field_recvec(ds::DATA_TYPE_VAR_BOUNDS, ds::TVB_STRIDE);
+    let mut pairs: Vec<(&u32, &String)> = data.type_var_bound_keys.iter().collect();
+    pairs.sort();
+    for (holder, bounds) in pairs {
+        let tr = tvbs.push(stores);
+        tr.set_field_int(stores, ds::TVB_HOLDER, i64::from(*holder));
+        tr.set_field_str(stores, ds::TVB_BOUNDS, bounds);
+    }
 }
 
 // ─── Database type schema materializer (D2a) ─────────────────────────────────

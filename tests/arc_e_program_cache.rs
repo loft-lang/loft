@@ -676,6 +676,22 @@ fn run_with_stdlib(
     )
 }
 
+/// Warm both caches the way the edit loop does.  The first run parses the stdlib and writes
+/// its cache; the program is then EDITED, so the second run misses the program cache and
+/// takes the stdlib from its own cache — the bundle it writes is the one that carries no
+/// stdlib sources of its own; the third run is served from that bundle.  Without the edit
+/// the bundle comes from a run that parsed the stdlib, and a cell never reaches the case.
+fn warm_through_an_edit(script: &std::path::Path, root: &std::path::Path, cache: &std::path::Path) {
+    let (ok, out) = run_with_stdlib(script, root, cache);
+    assert!(ok && out.contains("v=1"), "first run: {out}");
+    let src = std::fs::read_to_string(script).expect("script");
+    std::fs::write(script, format!("{src}// edited\n")).expect("edit");
+    for _ in 0..2 {
+        let (ok, out) = run_with_stdlib(script, root, cache);
+        assert!(ok && out.contains("v=1"), "warming run: {out}");
+    }
+}
+
 /// A scratch `<root>/default/` holding the real stdlib plus one probe file.
 fn scratch_stdlib(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
     let root = std::env::temp_dir().join(format!("loft_b1_{tag}_{}", std::process::id()));
@@ -702,10 +718,7 @@ fn an_edited_stdlib_function_is_never_served_from_a_cache() {
     let cache = root.join("cache");
     let script = root.join("prog.loft");
     std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
-    for _ in 0..2 {
-        let (ok, out) = run_with_stdlib(&script, &root, &cache);
-        assert!(ok && out.contains("v=1"), "warming run: {out}");
-    }
+    warm_through_an_edit(&script, &root, &cache);
     std::fs::write(
         dflt.join("99_b1_probe.loft"),
         "pub fn b1probe() -> integer { 2 }\n",
@@ -725,10 +738,7 @@ fn an_added_stdlib_file_is_seen_after_an_edit_loop() {
     let cache = root.join("cache");
     let script = root.join("prog.loft");
     std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
-    for _ in 0..2 {
-        let (ok, out) = run_with_stdlib(&script, &root, &cache);
-        assert!(ok && out.contains("v=1"), "warming run: {out}");
-    }
+    warm_through_an_edit(&script, &root, &cache);
     std::fs::write(
         dflt.join("98_b1_extra.loft"),
         "pub fn b1extra() -> integer { 7 }\n",
@@ -751,10 +761,7 @@ fn a_removed_stdlib_file_is_never_served_from_a_cache() {
     let cache = root.join("cache");
     let script = root.join("prog.loft");
     std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
-    for _ in 0..2 {
-        let (ok, out) = run_with_stdlib(&script, &root, &cache);
-        assert!(ok && out.contains("v=1"), "warming run: {out}");
-    }
+    warm_through_an_edit(&script, &root, &cache);
     std::fs::remove_file(dflt.join("99_b1_probe.loft")).expect("remove");
     let (ok, out) = run_with_stdlib(&script, &root, &cache);
     assert!(

@@ -1444,6 +1444,19 @@ pub fn data_to_json(data: &Data) -> String {
         write_str(&mut out, name);
         let _ = write!(out, ",\"source\":{source}}}");
     }
+    // The type-variable placeholders' bound keys: like `use_names`, not derivable from the
+    // definitions, and a parse continuing this Data needs them.  Sorted for a stable text.
+    out.push_str("],\"type_var_bounds\":[");
+    let mut tvbs: Vec<(&u32, &String)> = data.type_var_bound_keys.iter().collect();
+    tvbs.sort();
+    for (i, (holder, bounds)) in tvbs.into_iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let _ = write!(out, "{{\"holder\":{holder},\"bounds\":");
+        write_str(&mut out, bounds);
+        out.push('}');
+    }
     out.push_str("]}");
     out
 }
@@ -1502,6 +1515,12 @@ pub fn data_from_json(src: &str) -> Result<Data, TypeDecodeError> {
             pairs.push((as_str(field(it, "name")?)?, as_u16(field(it, "source")?)?));
         }
         data.set_use_names(pairs);
+    }
+    if let Ok(Parsed::Array(items)) = field(&parsed, "type_var_bounds") {
+        for it in items {
+            data.type_var_bound_keys
+                .insert(as_u32(field(it, "holder")?)?, as_str(field(it, "bounds")?)?);
+        }
     }
     data.rebuild_indices();
     Ok(data)

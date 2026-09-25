@@ -273,12 +273,22 @@ struct UseName {
   source: integer,
 }
 
+// One type-variable placeholder and the bound-set key it stands for
+// (src/data.rs::Data.type_var_bound_keys).  Not derivable from the definitions: an
+// attribute-less struct and a placeholder look alike there, and a parse that continues a
+// loaded Data asks this map which placeholder a header `<T: Bound>` already names.
+struct TypeVarBound {
+  holder: integer,
+  bounds: text,
+}
+
 struct Data {
   // src/data.rs::Data (the stored core)
   definitions: vector<Definition>,
   source: integer,
   imports: vector<AppliedImport>,
   use_names: vector<UseName>,
+  type_var_bounds: vector<TypeVarBound>,
 }
 
 // ---- Database type schema (src/database) ------------------------------------

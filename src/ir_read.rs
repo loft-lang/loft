@@ -436,6 +436,14 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
         });
     }
     data.set_applied_imports(applied);
+    let tvbs = r.field_recvec(ds::DATA_TYPE_VAR_BOUNDS, ds::TVB_STRIDE);
+    for i in 0..tvbs.len(stores) {
+        let tr = tvbs.get(i, stores);
+        data.type_var_bound_keys.insert(
+            tr.field_int(stores, ds::TVB_HOLDER) as u32,
+            tr.field_str(stores, ds::TVB_BOUNDS).to_string(),
+        );
+    }
     let uses = r.field_recvec(ds::DATA_USE_NAMES, ds::USENAME_STRIDE);
     data.set_use_names((0..uses.len(stores)).map(|i| {
         let ur = uses.get(i, stores);

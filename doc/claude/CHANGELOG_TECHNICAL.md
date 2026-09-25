@@ -9,6 +9,23 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### The edit loop reuses the stdlib cache; the program manifest pins its stdlib (@PLN166 B1, 2026-09-25)
+
+A program-cache miss — every run after an edit — used to parse `default/` fresh, so that each
+stdlib file landed in the new bundle's source list; the stdlib cache was opt-in and bypassed.
+It now takes the stdlib from its cache whenever the program cache is on, and the program
+manifest carries a required `stdk` line: the stdlib cache key over every `default/` file's
+name and content, compared on every warm load, so an edited, added, removed or renamed stdlib
+file can never be served from a bundle.  `Data::type_var_bound_keys` is now part of the IR
+schema (`TypeVarBound`, `CACHE_FORMAT_VERSION` 13): without it a parse continuing a loaded
+stdlib minted duplicate type-variable placeholders.  Edit-loop instructions on a small
+program: 573 M → 88.5 M.  Cells: `tests/arc_e_program_cache.rs` (edited / added / removed).
+
+### Definition lookups borrow their key (@PLN166 B2, 2026-09-25)
+
+`Data`'s definition index is queried through `NameKey`, so a lookup no longer allocates a
+`String`; the front end's allocations fall ~30 % (the C1 gate, `tests/frontend_counts.rs`).
+
 ### The release checks re-cut: a gate that can end in evidence, rows that say what they are (2026-09-23)
 
 An audit of the accumulated release checks found the release gate (`release-gate.yml`)

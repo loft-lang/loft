@@ -73,7 +73,7 @@ use sha2::{Digest, Sha256};
 ///
 /// 12 — `Variable` carries `linked_narrow` and `store_text_link` (@PLN167): a warm load
 /// without `linked_narrow` read a linked narrow local's field encoding as its value.
-const CACHE_FORMAT_VERSION: u8 = 12;
+const CACHE_FORMAT_VERSION: u8 = 13;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

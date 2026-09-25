@@ -8855,7 +8855,7 @@ fn main() {
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
     let warm_user_start = if program_cache_on && !p.sandbox_is_active() {
-        loft::startup_cache::warm_load_program(&mut p, &abs_file, &mut warm_store)
+        loft::startup_cache::warm_load_program(&mut p, &abs_file, &default_str, &mut warm_store)
     } else {
         None
     };
@@ -8874,8 +8874,7 @@ fn main() {
         // When building a program cache, parse `default/` fresh so every stdlib
         // file lands in the program's drift manifest; otherwise use the D2b
         // stdlib cache.
-        let stdlib_warm =
-            !program_cache_on && loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
+        let stdlib_warm = loft::startup_cache::warm_load_stdlib(&mut p, &default_str);
         if !stdlib_warm {
             if let Err(e) = p.parse_dir(&default_str, true, false) {
                 eprintln!(
@@ -8890,9 +8889,7 @@ fn main() {
                 );
                 std::process::exit(1);
             }
-            if !program_cache_on {
-                loft::startup_cache::save_stdlib_cache(&p, &default_str);
-            }
+            loft::startup_cache::save_stdlib_cache(&p, &default_str);
         }
     }
     // #358 — on a warm load the def table already holds stdlib + user defs, so
@@ -9345,7 +9342,7 @@ fn main() {
     // the interpreted image would pin it, so the "rebuild once editing settles" check
     // would never run on a warm load.
     if program_cache_on && !program_warm && !has_auto_native && !any_dev_interpret {
-        loft::startup_cache::save_program(&p, &abs_file, start_def, &placed_libs);
+        loft::startup_cache::save_program(&p, &abs_file, &default_str, start_def, &placed_libs);
     }
     // @PLAN28 debug/validation hook — when `LOFT_DUMP_SNAPSHOT=<path>` is set,
     // write the parsed `Data` as the startup-cache JSON snapshot and exit.

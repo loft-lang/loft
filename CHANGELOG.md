@@ -14,6 +14,11 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**Running a program again after editing it is faster.**  loft keeps a compiled copy of each
+program, and when you change the program it used to read the whole standard library again as
+well.  It now reuses the standard library it already read, so a small program starts in about
+a sixth of the work it took before.  A changed standard library is still always read again.
+
 **A tuple returned with a list in a `hash` member keeps the list's records.**
 `fn f() -> (hash<K[k]>, integer) { v = [K { … }]; return (v, 2); }` compiled, and the caller
 read an empty hash. A `sorted` member answered the wrong record for a key, and an `index` kept
