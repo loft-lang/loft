@@ -5683,8 +5683,9 @@ impl Parser {
                         "streaming `match` over an `iterator<{en}>` is not yet supported (only scalar, text, or struct-enum element types) — collect it first: `match [for x in <iter> {{ x }}] {{ … }}`"
                     );
                 }
+                let match_pos = self.lexer.pos().clone();
                 let (buf, vec_tp, setup) =
-                    self.collect_iterator_subject(subject, &iter_tp, &elm_tp);
+                    self.collect_iterator_subject(subject, &iter_tp, &elm_tp, &match_pos);
                 let mut match_code = Value::Null;
                 let result_tp = self.parse_vector_match(Value::Var(buf), &vec_tp, &mut match_code);
                 let mut ops = setup;
@@ -7453,6 +7454,7 @@ impl Parser {
         subject: Value,
         iter_tp: &Type,
         elm_tp: &Type,
+        match_pos: &crate::lexer::Position,
     ) -> (u16, Type, Vec<Value>) {
         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
         let buf = self.create_unique("stream_buf", &vec_tp);
@@ -7549,6 +7551,41 @@ impl Parser {
             Type::Void,
             "stream append",
         );
+        // `@FR-P-IterBound` — the pull is BOUNDED by `max_lookahead`, and exceeding it is a
+        // defined runtime error, never a hang (loft#1678).  The subject is materialised before
+        // the patterns run (`35p-iterator-match.loft`), so an endless source had no ceiling and
+        // filled memory on both backends — 2 GB in 18 s on `--native`.  The count is of
+        // elements APPENDED, and the stop is `panic`, the language's defined error: it names
+        // the `match`, the bound and the switch, and runs on both backends alike.  The bound is
+        // a compile-time constant, `LOFT_MAX_LOOKAHEAD` (default one million, `0` = unbounded):
+        // far above any pattern a program matches over a finite source, far below an
+        // allocation that takes the machine down.
+        let limit = max_lookahead();
+        let append = if limit > 0 {
+            let n = self.create_unique("stream_n", &I32);
+            self.vars.defined(n);
+            setup.push(v_set(n, Value::Int(0)));
+            let bump = self.cl("OpAddInt", &[Value::Var(n), Value::Int(1)]);
+            let over = self.cl("OpLtInt", &[Value::Int(limit), Value::Var(n)]);
+            let stop = Value::Call(
+                self.data.def_nr("n_panic"),
+                vec![
+                    Value::str(&format!(
+                        "a `match` over an iterator read more than {limit} elements (max_lookahead) — \
+                         the source may be endless; bound it, or raise LOFT_MAX_LOOKAHEAD"
+                    )),
+                    Value::str(&match_pos.file),
+                    Value::Int(match_pos.line as i32),
+                ],
+            );
+            v_block(
+                vec![v_set(n, bump), v_if(over, stop, Value::Null), append],
+                Type::Void,
+                "stream bounded append",
+            )
+        } else {
+            append
+        };
         let loop_body = vec![
             v_if(Value::Var(done), Value::Break(0), Value::Null),
             v_set(x, next_call),
@@ -19765,4 +19802,19 @@ impl Parser {
         let n = self.vars.name(v);
         !n.starts_with('_') && !n.contains('#') && !self.vars.was_loop_var(v)
     }
+}
+
+/// `@FR-P-IterBound`'s `max_lookahead`: how many elements a `match` over an iterator may pull
+/// before it stops with a defined error (loft#1678).  `LOFT_MAX_LOOKAHEAD` overrides the default
+/// of one million; `0` removes the bound.  Read at compile time, so both backends bake the same
+/// constant into the pull loop.
+fn max_lookahead() -> i32 {
+    static LIMIT: std::sync::OnceLock<i32> = std::sync::OnceLock::new();
+    *LIMIT.get_or_init(|| {
+        std::env::var("LOFT_MAX_LOOKAHEAD")
+            .ok()
+            .and_then(|v| v.trim().parse::<i32>().ok())
+            .filter(|v| *v >= 0)
+            .unwrap_or(1_000_000)
+    })
 }

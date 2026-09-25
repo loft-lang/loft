@@ -100,6 +100,98 @@ fn loft_test_reports_a_compile_error_instead_of_a_scope_panic() {
     );
 }
 
+/// `formal/matching.md` `(P-IterBound)`: a `match` over an iterator is bounded by
+/// `max_lookahead`, and exceeding it is a DEFINED runtime error, never a hang (loft#1678).  The
+/// subject is materialised before the patterns run, and the pull had no ceiling: an endless source
+/// filled memory on both backends (2 GB in 18 s on `--native`) until something outside the
+/// program killed it.
+///
+/// Asserted on the PROCESS because the claim is about it: the run stops, exits non-zero, and the
+/// message names the bound.  `LOFT_MAX_LOOKAHEAD=10` keeps each cell to milliseconds; the default
+/// bound is one million.  The endless source yields INTEGERS: a generator that yields a RECORD
+/// from an endless loop runs eagerly on `--native` (COROUTINE.md § CL-9) and never reaches the
+/// `match` at all, which is the generator's laziness, not this bound.  `LOFT_TIMEOUT` stops a
+/// build without the bound, so a missing ceiling fails the cell rather than hanging the suite.
+#[test]
+fn a_match_over_an_iterator_stops_at_max_lookahead() {
+    let dir = std::env::temp_dir().join(format!("loft_iterbound_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let src = |name: &str, body: &str| {
+        let p = dir.join(name);
+        std::fs::write(&p, body).expect("write");
+        p
+    };
+    let endless = src(
+        "endless.loft",
+        "fn nums() -> iterator<integer> { i = 0; while true { yield i; i = i + 1; } }\n\
+         fn main() { r = match nums() { [a, b, ..] => a + b, _ => -1 }; print(\"matched {r}\\n\"); }\n",
+    );
+    let upto = |k: u32| {
+        src(
+            &format!("upto{k}.loft"),
+            &format!(
+                "enum Tok {{ V {{ n: integer }}, W {{ m: integer }} }}\n\
+                 fn upto(k: integer) -> iterator<Tok> {{ for i in 0..k {{ yield V {{ n: i }}; }} }}\n\
+                 fn main() {{ r = match upto({k}) {{ [(xs: V)*] => len(xs), _ => -1 }}; print(\"matched {{r}}\\n\"); }}\n"
+            ),
+        )
+    };
+    let at_bound = upto(10);
+    let over_bound = upto(11);
+    let run = |mode: &str, file: &std::path::Path, bound: &str| {
+        let out = Command::new(loft_bin())
+            .arg(mode)
+            .arg(file)
+            .env("LOFT_MAX_LOOKAHEAD", bound)
+            .env("LOFT_TIMEOUT", "60")
+            .current_dir(workspace_root())
+            .output()
+            .expect("failed to invoke loft binary");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        (out.status.code(), all)
+    };
+    for mode in ["--interpret", "--native"] {
+        let (code, all) = run(mode, &endless, "10");
+        assert_eq!(
+            code,
+            Some(1),
+            "{mode} endless: a defined stop, not a hang or a kill: {all}"
+        );
+        assert!(
+            all.contains("read more than 10 elements (max_lookahead)"),
+            "{mode} endless: {all}"
+        );
+        assert!(
+            all.contains("endless.loft"),
+            "{mode} endless: the message names the match: {all}"
+        );
+
+        let (code, all) = run(mode, &at_bound, "10");
+        assert!(
+            code == Some(0) && all.contains("matched 10"),
+            "{mode} at the bound matches: {all}"
+        );
+
+        let (code, all) = run(mode, &over_bound, "10");
+        assert_eq!(code, Some(1), "{mode} one past the bound stops: {all}");
+        assert!(
+            all.contains("max_lookahead"),
+            "{mode} one past the bound: {all}"
+        );
+
+        let (code, all) = run(mode, &over_bound, "0");
+        assert!(
+            code == Some(0) && all.contains("matched 11"),
+            "{mode} `0` is unbounded: {all}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An unresolvable `#native` symbol (no cdylib provides it) must surface a LOUD
 /// diagnostic at LOAD time — naming the symbol and how to rebuild — not stay
 /// silent until a generic panic at first call.  The warning is non-fatal: a

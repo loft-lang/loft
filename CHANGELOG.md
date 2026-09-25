@@ -14,6 +14,12 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A `match` over an endless iterator stops with an error instead of filling memory.**  The
+values a `match` pulls from an iterator are now limited to one million (`LOFT_MAX_LOOKAHEAD` to
+change it, `0` for no limit). Past the limit the program stops with a message naming the
+`match` and the limit. Before, an iterator that never ends made the program allocate memory
+until the machine killed it.
+
 **A generator can hand out lambdas that capture its variables.**  `yield fn(a: integer) ->
 integer { v += [a]; len(v) }` used to crash when the lambda was kept after the generator
 finished, gave wrong answers when two such lambdas captured the same variable, printed an

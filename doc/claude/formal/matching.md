@@ -244,6 +244,12 @@ cannot be re-indexed), a failed alternative must *replay* pulled items, so two o
                 DEFINED runtime error (never a hang) — preserving termination.
 ```
 
+**How it is built.**  `(P-Anchor)` and `(P-Revert)` describe a memoising cursor, and the ops they
+name were never built: the shipped design MATERIALISES the subject into a buffer and runs the
+vector-match machinery over it.  For a source without side effects the two agree on every
+observable — every item a revert would replay is in the buffer — and `(P-IterBound)` is enforced
+by bounding that materialise (D-match-6).
+
 A side-effecting pull (a generator that mutates external state per item) cannot be reverted;
 matching over such a source is UB-by-contract (documented in [../CAVEATS.md](../CAVEATS.md)) — the
 same assumption `Lexer` makes about its token stream.
@@ -258,7 +264,26 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 ## Deviations
 
 OPEN: **0** — a *rules* doc: it shrinks operational.md's D-op-1 and carries no open
-deviation of its own.  `D-match-5` closed 2026-09-14; `D-match-4` closed 2026-09-12.
+deviation of its own.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed
+2026-09-14; `D-match-4` closed 2026-09-12.
+
+- **D-match-6 — OPENED AND CLOSED 2026-09-25 (loft#1678).** `(P-IterBound)` promised a bound and
+  a defined error; there was neither.  A `match` over an iterator MATERIALISES its subject before
+  the patterns run (`collect_iterator_subject`; `tests/scripts/35p-iterator-match.loft` states the
+  design), and the pull had no counter, so an endless source filled memory on both backends —
+  2 GB in 18 s on `--native` — until something outside the program killed it.  Closed in the
+  pull: it counts what it appends and, past `max_lookahead`, stops with `panic`, the language's
+  defined error, naming the `match`'s line and the bound.  `max_lookahead` is one million by
+  default, `LOFT_MAX_LOOKAHEAD` overrides it (`0` = no bound), read at compile time so both
+  backends bake the same constant.  The two decisions the issue named (what the error is, what
+  the bound is) were taken on the rule's own words — "a DEFINED runtime error" — and stand to be
+  overruled.  The endless source must yield something a native generator runs LAZILY: an
+  endless loop yielding RECORDS runs eagerly on `--native` and never reaches the `match`
+  (`coroutines.md` Conformance, COROUTINE.md § CL-9), which is `(G-Next)`'s gap, not this bound.
+  Guard: `tests/exit_codes.rs` `a_match_over_an_iterator_stops_at_max_lookahead` (the stop, the
+  bound and `0`, both backends, on the process); falsified by hand against `ee5faae15` — the
+  endless cell aborts on allocation interpreted (exit 134) and is killed by the timeout on
+  `--native` (exit 143), where this tree stops with exit 1 and the message.
 
 - **D-match-1 — OPENED AND CLOSED 2026-09-04 (loft#1343).** `(M-Bool)` did not exist, and the
   edge it names was answered wrong: a boolean match spelling both arms was lowered with the
