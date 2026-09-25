@@ -1175,6 +1175,10 @@ impl Parser {
     /// reload host to swap in behind the old def's number.  `None` when the new world cannot
     /// take it: a tuple the set no longer decides is reported exactly as at a dynamic site,
     /// and the host then refuses the add that caused it.
+    ///
+    /// Compiled where its one caller is: the reload host (`live_reload.rs`) is not built for
+    /// `wasm32`, and there this method was dead code the wasm lib build warned about.
+    #[cfg(not(target_arch = "wasm32"))]
     pub(crate) fn rebuild_specialisation(&mut self, old: u32, world: u32) -> Option<u32> {
         let def = self.data.def(old);
         let full = def.name.clone();
