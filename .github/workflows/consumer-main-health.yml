@@ -242,8 +242,13 @@ jobs:
                     legs="$legs ok |"
                   else
                     legs="$legs FAIL |"; fail=1
-                    echo "::error title=$name ($mode): tests fail on loft main::$(grep -E 'FAIL|error' "/tmp/$name$mode.log" | head -3 | tr '\n' ' ')"
-                    grep -E 'FAIL|error|test result' "/tmp/$name$mode.log" | head -40
+                    # The runner's own failure line is `  FAIL  tests/<file>…` — anchored on
+                    # that shape, because a bare `FAIL|error` also matched every `ok` line
+                    # that lists a test NAMED `…_fails` or `…_is_an_error` and the expected
+                    # `FAILED at line` output of tests that check a failure is reported, and
+                    # the 40-line window filled with those before the real one arrived.
+                    echo "::error title=$name ($mode): tests fail on loft main::$(grep -E '^ *FAIL +tests/' "/tmp/$name$mode.log" | head -3 | tr '\n' ' ')"
+                    grep -E '^ *FAIL +tests/|^error|test result' "/tmp/$name$mode.log" | head -40
                   fi
                 done
                 summary="$summary| \`$name\` |$legs\n"
