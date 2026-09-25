@@ -248,8 +248,13 @@ it, not a standing fact.
   value tuple does, and a diagnostic names it `&(text, text)` rather than the `__tuple<…>`
   record.  Guard: `tests/scripts/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft`
   (argument, return, bind-is-a-copy, write, swap, a write in a loop, a local link), both
-  representations per cell.  The DESTRUCTURE half — `(a, b) = p` on both representations and
-  from both sources — is guarded by `tests/scripts/a-destructure-unpacks-a-reference-tuple.loft`.
+  representations per cell.  The bind is a copy on BOTH representations, so they agree. The
+  record-backed one already copied before this fix, and deeply: `q = p` over
+  `&(vector<text>, integer)` copies the vector, so `q.0 += […]` leaves `p` alone. That is
+  `(B-Copy)`'s whole-value row. It also means a record-backed `q = p` ALLOCATES, so it is not
+  free, and a caller who wants to share the tuple should write `q = &p`.  The DESTRUCTURE half —
+  `(a, b) = p` on both representations and from both sources — is guarded by
+  `tests/scripts/a-destructure-unpacks-a-reference-tuple.loft`.
 
 - **D-tup-10** *(CLOSED 2026-09-16, loft#1423 / loft#1451)* — `(T-Absent)` said no
   `Optional(Tuple)` exists while the code minted one wherever absence is synthesised:

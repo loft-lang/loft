@@ -1927,7 +1927,22 @@ because it builds into the repo's own `target/`.
 
 So when reading that gate locally, separate the two populations before believing a red: an assert
 inside `src/` is the gate speaking, and a test-file `assert!` on a spawned process's exit status
-is probably the target dir.  The same applies to
+is probably the target dir.
+
+**Replaying ONE guard file on that binary has two more traps, and each gives a red that
+means nothing** (measured 2026-09-25, the loft#1670 red-then-green run):
+
+```bash
+LOFT_STORE_GUARD=1 /tmp/loft-da/release/loft --path <checkout> --tests [--native] tests/scripts/<guard>.loft
+```
+
+1. Without `--path <checkout>` a binary outside the checkout exits 1 with *"cannot load
+   standard library"* before it parses anything, so no cell has run.
+2. `--tests` takes the file IMMEDIATELY after it.  `--tests --errors=compact <file>` runs the
+   WHOLE corpus, benches included, until the 300 s watchdog ends it with exit 124.
+
+Read a red as the guard's own only when it names cells and its sibling cells pass.  The same
+applies to
 every other `#[cfg(debug_assertions)]` item in `src/` — **93 of them**, including
 `check_arg_ref_allocs` and `check_ref_leaks`.  The store LEAK check is unaffected because
 it is not gated at all.
