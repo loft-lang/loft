@@ -236,10 +236,19 @@ a deviation — recorded here so it is not mistaken for a bug:
   comparing the two backends' output: it records each event into a heap-struct parameter, which
   a generator can write across a yield. Giving it that assertion is what found the text-field
   cell above — the trace was written as text first, and recording it made the generator eager.
-- **`yield from` is out of scope** — delegation (CO1.4) is deferred to 1.1+; when it lands it
-  extends `G-Yield` (a delegated yield forwards the sub-generator's values) and gets its own
-  rule + oracle case. Until then a `yield from` is a parse-level unsupported form, not an
+- **`yield from` was out of scope** — delegation (CO1.4) was deferred to 1.1+; when it landed
+  it would extend `G-Yield` (a delegated yield forwards the sub-generator's values) and get its
+  own rule + oracle case. Until then a `yield from` was a parse-level unsupported form, not an
   unspecified runtime behaviour.
+
+  ⚠ **RESOLVED 2026-09-25, and the deferral outlived the construct.** `yield from` shipped and
+  was guarded (loft#1277) while this note, `coroutines.md`'s scope line and three entries in
+  [VERIFICATION.md](VERIFICATION.md) all still called it deferred — so the rule it was owed was
+  never written and the chapter's `OPEN: 0` had no oracle over it. Three defects were living
+  there: on `--native` the statements before a `yield from` re-ran on every advance the
+  delegation served (silent — the produced sequence is identical), and a `yield from` beside a
+  loop in either lowering did not compile at all. The rule it is owed is `(G-Delegate)`, written
+  that day.
 
 ## Carried by coroutines.md until 2026-09-04
 

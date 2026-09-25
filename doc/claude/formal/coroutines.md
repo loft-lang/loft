@@ -15,8 +15,14 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > single area where the two backends differ **most**: the interpreter suspends by serialising a
 > frame, native compiles a resumable **state machine**.
 >
-> Scope: single-value `yield` (CO1.1–CO1.6, shipped 0.8.3). `yield from` (delegation) is deferred
-> to 1.1+ ([COROUTINE.md](../COROUTINE.md) CO1.4) and is not specified here.
+> Scope: single-value `yield` (CO1.1–CO1.6, shipped 0.8.3) **and `yield from`** (delegation),
+> which ships and is specified below as `(G-Delegate)`.
+>
+> ⚠ That line read *"`yield from` is deferred to 1.1+ ([COROUTINE.md](../COROUTINE.md) CO1.4) and
+> is not specified here"* until 2026-09-25, long after the construct shipped and was guarded
+> (`tests/scripts/1277-…`, loft#1277).  A shipped construct declared out of scope has no rule, so
+> nothing measured it and this chapter's `OPEN: 0` read green over three defects in it at once —
+> one of them silent.  A scope line is a claim to re-read whenever the chapter is opened.
 
 ## The model in one line
 
@@ -83,9 +89,22 @@ restarts and never faults).
                v becomes next's result, ρ (the generator's locals AND every active nested
                call's frame) is serialised into fr, and control returns to the consumer.
                Execution resumes at the statement AFTER this yield on the next G-Next.
-  (G-YieldDepth)  `yield` is valid at ANY call depth within the generator (stackful): a
-                  `yield` inside a helper `h()` called from g suspends g's WHOLE stack, not
-                  just h's frame.
+  (G-YieldDepth)  the FRAME is stackful: `fr` holds the generator's whole saved call stack,
+                  so a nested call active across a suspension is preserved with it and
+                  delegation needs no trampoline.  What this does NOT give is a `yield` in a
+                  function that is not itself a generator: `(G-Yield)`'s static clause refuses
+                  it, because a `yield` in a function whose return type is not iterator<T> has
+                  no type to produce into.  The surface the stackful frame buys is
+                  `(G-Delegate)` below, where the deeper frame is a generator of its own.
+
+  (G-Delegate)   ⟨yield from g₂, ⟨ρ, H⟩⟩ where g₂ : iterator<T> —
+                   the sub-generator is created ONCE, on the first advance that reaches this
+                   point, and each later advance takes its next value (G-Next) and forwards
+                   it unchanged.  When g₂ is done (G-Done) it is released and the outer body
+                   continues after the `yield from`.
+                   A delegation SUSPENDS, so it is a resume point like any other yield: the
+                   statements that led to it belong to the slice BEFORE it and run once per
+                   activation, never again on an advance the delegation serves.
 ```
 
 **In words.** `yield v` hands `v` to whoever advanced the iterator and freezes the generator
@@ -93,7 +112,13 @@ exactly where it is — including any helper functions it was in the middle of c
 stackful property). On the next advance it thaws and continues from the statement right after the
 `yield`, with every local restored. `yield` is rejected by the compiler outside a generator
 function (a `yield` where the return type is not `iterator<T>` is a static error, not a runtime
-one).
+one) — and that includes a plain helper called from a generator, so "stackful" is a property of
+the saved FRAME and not a licence to write `yield` anywhere.  `yield from g₂` is how a generator
+hands a stretch of its sequence to another one: `g₂` is built on the first advance that reaches
+the delegation, its values pass through unchanged, and when it is done the outer body carries on.
+Because the delegation suspends, everything the generator did to reach it has already happened —
+an advance that resumes a delegation resumes INSIDE it, and does not re-run the statements
+that led there.
 
 ### A `for` over a generator is I-For over `next`
 
@@ -183,8 +208,31 @@ Every deviation this doc has carried is closed; the record is in the companion
   the values agree and the side effects do not, an interleaving difference COROUTINE.md § CL-9
   records rather than a divergence of values — and an ENDLESS loop of one of those shapes never
   hands out a value on native, so write it with the yield on the straight line.
-- **Stackful (`G-YieldDepth`)** — a `yield` inside a helper called from the generator produces
-  the value and resumes correctly past the helper — the same sequence on both backends.
+- **Stackful (`G-YieldDepth`)** — a nested non-yielding CALL active across a suspension is
+  preserved with the frame and resumes correctly past it, on both backends.  A `yield` inside a
+  helper that is not itself a generator is REFUSED, identically on both backends — *"yield is
+  only allowed inside generator functions (return type must be iterator<T>)"*.
+  ⚠ This line read *"a `yield` inside a helper called from the generator produces the value and
+  resumes correctly past the helper"* until 2026-09-25, when it was measured and does not.
+  [VERIFICATION.md](VERIFICATION.md) had said so in three places — *"deferred G-YieldDepth — a
+  `yield` INSIDE a helper (true stackful) needs `yield from`"* — so the two records disagreed
+  about the same rule, and this is the one a reader of the rules meets.  A conformance line is a
+  measurement, not a restatement of the rule above it.
+- **Delegation (`G-Delegate`)** —
+  `tests/scripts/a-delegations-prefix-runs-once-per-activation.loft`: the statements before a
+  `yield from` run once per activation (a counter, three statements, a loop, and an append to a
+  vector the program reads afterwards), a delegation before and after a lazily-lowered loop, an
+  prefix between two of them, and a consumer that stops after one value — values on both
+  backends.  `a-delegation-beside-a-loop-compiles.loft` is the exit-channel half: a delegation
+  after a lazily-lowered loop, after one with a resume slice, after an EAGER loop, and two of
+  them around a loop.  `tests/scripts/1277-…` covers arguments and exhaustion, and
+  `tests/coroutine_matrix.rs`'s X5 column crosses delegation with the yielded TYPE — integer,
+  text, record, tuple, float, single and enum.
+  ⚠ Before 2026-09-25 the native state machine re-ran a delegation's prefix on every advance it
+  served (silent: the produced sequence is unchanged), a `yield from` beside a loop in either
+  lowering did not compile, and a delegated TUPLE did not compile.  The X5 column that crosses
+  exactly this was closed on the stale scope line above, which is how all four survived.  The
+  delegated fn-ref is loft#1676 and still open.
 - **Exhaustion (`G-Done`)** — a finite generator produces its sequence then reports done; further
   advances stay done (no restart, no fault).
 - **Ownership (`G-Own`)** — `tests/scripts/1589-a-yielded-record-is-the-consumers.loft`: a

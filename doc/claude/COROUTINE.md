@@ -4,7 +4,10 @@
 
 # Coroutine Design
 
-> **Status: completed in 0.8.3.** CO1.1–CO1.6 implemented; `yield from` (CO1.4) deferred to 1.1+.
+> **Status: completed in 0.8.3.** CO1.1–CO1.6 implemented, `yield from` (CO1.4) included —
+> it ships, is guarded (loft#1277 and the two `a-delegation…` files) and is specified as
+> `(G-Delegate)` in [formal/coroutines.md](formal/coroutines.md). This line said "deferred to
+> 1.1+" until 2026-09-25, long after it landed.
 > Open enhancement: **native lazy loop yields** ([Design: lazy loop yields (CL-9)](#design-lazy-loop-yields-cl-9))
 > — slice 1 has landed (loft#836), and the `while` half of slice 3 with it (loft#1586): a `for` or
 > `while` loop with one `yield` on its body's straight line is lazy on `--native`, statements
@@ -15,9 +18,12 @@ Coroutines give loft programs generator functions: functions that can suspend
 execution with `yield`, return a value to the caller, and resume from the same
 point on the next iteration. The suspended function's entire stack — including
 any nested calls active at the point of `yield` — is serialised to a
-heap-allocated, extensible frame. This makes loft coroutines **stackful**: a
-`yield` inside a helper called from the generator is valid, and `yield from`
-delegates cleanly to a sub-generator.
+heap-allocated, extensible frame. This makes loft coroutines **stackful**, which is
+what lets `yield from` delegate to a sub-generator with no trampoline. It does not
+make `yield` legal in a helper that is not itself a generator: that is refused at
+compile time, because a `yield` in a function whose return type is not `iterator<T>`
+has no type to produce into (`formal/coroutines.md` `(G-Yield)` / `(G-YieldDepth)`;
+this sentence claimed the opposite until it was measured on 2026-09-25).
 
 ---
 
@@ -42,8 +48,10 @@ delegates cleanly to a sub-generator.
 - Allow any function returning `iterator<T>` to use `yield` to produce values
   lazily, one at a time.
 - Preserve the full call stack at the point of `yield` (stackful semantics),
-  not only the generator's own locals. This allows `yield` inside helper
-  functions and makes `yield from` implementable without a trampoline.
+  not only the generator's own locals, so `yield from` is implementable without a
+  trampoline. ⚠ This goal also read "allows `yield` inside helper functions"; the
+  surface never admitted that spelling and `(G-Yield)` refuses it — the realised
+  form of the goal is delegation, where the deeper frame is a generator of its own.
 - Integrate naturally with the existing `for item in expr { }` loop syntax.
 - Keep the hot path (all existing code that does not use coroutines) completely
   unaffected: no overhead on ordinary `fn_call` / `fn_return`.

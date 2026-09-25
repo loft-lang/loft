@@ -61,7 +61,9 @@ plan for the new rules — the oracle already guards each *area*; this drives it
 > F-Return (implicit tail), T-Paren (`(e)` is grouping), L-Escape (a returned closure works on
 > native). Still ☐ / covered-elsewhere: **F-ParamRef** (`&` write-back — binding.md's domain, 0
 > deviations, PR#436), **C-Order hash-par** (a documented edge; probe syntax pending),
-> **G-YieldDepth** (stackful yield — likely needs `yield from`, deferred to 1.1+). (**D-clo-2**
+> **G-YieldDepth** (stackful yield — resolved 2026-09-25: `yield from` SHIPPED, and a `yield` in a
+> plain helper is refused by `(G-Yield)`, so the rule was restated and `(G-Delegate)` written for
+> the construct that did ship). (**D-clo-2**
 > — the stored-short-lambda crash — is now CLOSED, see below.) The load-bearing rules are now
 > pinned; the residue is edge/deferred.
 
@@ -177,8 +179,14 @@ oracle — which is the argument for this section existing.
   the same edge one row deeper, not a second one. *Guard: `tests/scripts/1356-…`.*
 - ✓ **G-Next values / G-Done** — one value per advance (sum 30); exhaustion (take-first-2 ⇒ 1),
   both backends. Nested CALL between yields works too. *Guard: oracle `12`.*
-- deferred **G-YieldDepth** — a `yield` INSIDE a helper (true stackful) needs `yield from` (CO1.4,
-  deferred to 1.1+). A nested non-yielding call between yields ✓.
+- ✓ **G-YieldDepth** (restated 2026-09-25) — a nested non-yielding call across a suspension ✓
+  both backends; a `yield` INSIDE a plain helper is REFUSED on both, so the old rule text
+  promised a shape the language rejects and the chapter's conformance line claimed it verified.
+  The stackful frame's realised surface is `yield from`, which shipped.
+- ✓ **G-Delegate** (new 2026-09-25) — the sub-generator is built once, its values pass through,
+  and the statements before the `yield from` run once per ACTIVATION.  *Guard:
+  `tests/scripts/a-delegations-prefix-runs-once-per-activation.loft`; arguments and exhaustion
+  in `tests/scripts/1277-…`.*
 - ✓ **G-For** — `for x in gen()` visits the produced sequence (both backends). *Guard: oracle `12`.*
 
 ## concurrency.md
@@ -271,7 +279,8 @@ sweep is green.
   edge, unobservable under a commutative reduction.
 - **F-ParamRef** — [binding.md](binding.md)'s domain (0 deviations, its own ladder tests).
 - **stackful yield** — a nested CALL between yields works both backends ✓; a `yield` INSIDE a
-  helper (G-YieldDepth) needs `yield from` (CO1.4, deferred to 1.1+).
+  plain helper is REFUSED on both (measured 2026-09-25), which is what `(G-YieldDepth)` says
+  now.  `yield from` shipped and is `(G-Delegate)`.
 
 **Still open after verification (not testable-to-close — they need action, not probes):**
 1. **CL-9 / the coroutine decided edge** — native eager loop yields. Removal DESIGN written

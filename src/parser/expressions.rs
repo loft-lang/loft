@@ -1261,6 +1261,12 @@ impl Parser {
                 }
                 return Type::Void;
             }
+            // `@FR-G-Yield` — a `yield` whose enclosing return type is not `iterator<T>` is a
+            // STATIC error: there is no type for it to produce into.  This reaches a plain
+            // helper called from a generator too, which is what `@FR-G-YieldDepth` means when
+            // it says "stackful" is a property of the saved FRAME and not a licence to write
+            // `yield` at any depth: the realised surface for a deeper yield is `yield from`
+            // (`@FR-G-Delegate`), where the deeper frame is a generator of its own.
             let r_type = self.data.def(self.context).returned().clone();
             if !matches!(r_type, Type::Iterator(_, _)) && !self.first_pass {
                 diagnostic!(

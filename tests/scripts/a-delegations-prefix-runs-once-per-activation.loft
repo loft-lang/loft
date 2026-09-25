@@ -1,0 +1,279 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-G-Next` / `@FR-G-Delegate` — an advance runs ONE slice, from the resume point.  So
+// the statements a generator runs before it suspends run once per ACTIVATION, never once
+// per advance.  The
+// resume point of a suspended `yield from` is inside the delegation; it is not the top of
+// the statements that led there.
+//
+// `--native` lowers a generator to a state machine, one state per segment.  A `yield from`
+// segment took ONE state and had to stay in it to keep pulling, so every advance re-entered
+// the state at its top — where the segment's `pre` sits.  The prefix therefore ran again on
+// every advance the delegation served: a counter incremented three times for one increment,
+// a `v += [7]` landing three elements in a vector the program reads afterwards.  The
+// produced SEQUENCE is identical under either lowering, so no value of the generator itself
+// said so and the differential oracle read green.  `ForLoopLazy` already answered the
+// identical question with a dedicated once-only setup state; the cure is that answer.
+//
+// Two more faces of the same segment's bookkeeping travel with it, and they are native
+// COMPILE failures rather than wrong values.  They live in
+// `a-delegation-beside-a-loop-compiles.loft` and not here ON PURPOSE: a generator that does
+// not compile ends the whole run before any assertion is reached, so holding both faces in
+// one file would leave the five value cells below UNSCORED against the very tree they were
+// written to catch.  One channel per guard.
+//
+// Axes this file MOVES:  where the prefix sits (before the delegation, between two of them,
+//                        after the last one, none at all), what the prefix IS (one
+//                        statement, three of them, a loop, an append to a caller-visible
+//                        vector), what PRECEDES the delegation (nothing, a plain `yield`,
+//                        another delegation), and how much the consumer takes (all of it,
+//                        one value).
+// Axes it HOLDS FIXED:   the delegate is a plain two-yield generator throughout — its own
+//                        shape was never the question, and the cell below measures that its
+//                        prologue already ran exactly once.  A LOOP before the delegation is
+//                        the other file's axis, because there it is an exit-channel question
+//                        and here it would be an unscorable one.  The yielded TYPE is
+//                        `tests/coroutine_matrix.rs`'s X5 column.
+//
+// @falsified-at: 2026-09-25 by hand, against the tree before the cure (e40409f5f),
+//   `--native` only — the interpreter is the values oracle and passes every cell on BOTH
+//   trees, which is the whole shape of the defect:
+//   test_the_prefix_of_a_delegation_runs_once        pro=3, expected 1
+//   test_every_statement_of_the_prefix_runs_once     11/100 -> 33/300
+//   test_a_prefix_that_appends_appends_once          len=3, expected 1
+//   test_a_prefix_loop_runs_once                     pro=9, expected 3
+//   test_a_prefix_between_two_delegations_runs_once  pro=3, expected 1
+//   test_the_prefix_runs_once_per_activation_...     pro=6, expected 2
+//   Each of those five was scored on its OWN run with `main` cut down to that cell, because
+//   the first failed assertion ends the program and only one of the five would otherwise
+//   speak; the four control cells were scored the same way and PASS on the control tree.
+//   CHANNEL: assert — both backends run and compute, and the values disagree.  Not exit:
+//   nothing crashes.  Not leak: nothing leaked either way, which is part of why this
+//   survived — the sub-generator frame is NOT re-minted per advance (the cell below
+//   measures that), only the caller's own statements re-ran.
+//   ARMED: no instrument — `--interpret` is the values oracle and a plain `--native` run
+//   reads every cell.  Clean under `LOFT_POISON=1 LOFT_STRICT_STORES=1`.
+//   WITNESS: `test_the_prefix_of_a_delegation_runs_once` — one counter, incremented once by
+//   the program's own control flow, read after the generator is drained.
+//   HOLDS: the six control cells at the end.  A prefix before a plain `yield`, a prefix
+//   before a lazily-lowered loop, a delegation with no prefix at all and two adjacent
+//   delegations all answered identically before the cure, and must keep doing so — they are
+//   what says the once-only state was added to the delegation and nowhere else.
+//   Two of those six also BOUND the defect: a delegation under an `if` arm and one inside a
+//   loop body answer correctly on the control tree, because a block, loop or `if` containing
+//   a yield sends the whole generator to the EAGER collector and the state machine is never
+//   reached.  So the defect is exactly a `yield from` at the generator's TOP LEVEL, and the
+//   cells written expecting a PASS are what established that.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct GdLog { n: integer, m: integer }
+
+fn gd_two() -> iterator<integer> { yield 1; yield 2; }
+
+fn gd_counting(lg: reference<GdLog>) -> iterator<integer> { lg.m = lg.m + 1; yield 8; yield 9; }
+
+fn prefix_before(lg: reference<GdLog>) -> iterator<integer> {
+  lg.n = lg.n + 1;
+  yield from gd_two();
+  yield 3;
+}
+
+fn prefix_of_three(lg: reference<GdLog>) -> iterator<integer> {
+  lg.n = lg.n + 1;
+  lg.n = lg.n + 10;
+  lg.m = lg.m + 100;
+  yield from gd_two();
+}
+
+fn prefix_appends(acc: vector<integer>) -> iterator<integer> {
+  acc += [7];
+  yield from gd_two();
+  yield 3;
+}
+
+fn prefix_is_a_loop(lg: reference<GdLog>) -> iterator<integer> {
+  for i in 0..3 { lg.n = lg.n + 1 + i * 0; }
+  yield from gd_two();
+}
+
+fn prefix_between_two(lg: reference<GdLog>) -> iterator<integer> {
+  yield from gd_two();
+  lg.n = lg.n + 1;
+  yield from gd_two();
+}
+
+// --- controls: shapes that already agreed, and must keep agreeing ---
+
+fn prefix_before_a_plain_yield(lg: reference<GdLog>) -> iterator<integer> {
+  lg.n = lg.n + 1;
+  yield 1; yield 2; yield 3;
+}
+
+fn prefix_before_a_lazy_loop(lg: reference<GdLog>) -> iterator<integer> {
+  lg.n = lg.n + 1;
+  for i in 1..4 { yield i; }
+}
+
+fn delegation_under_a_branch(lg: reference<GdLog>, on: boolean) -> iterator<integer> {
+  lg.n = lg.n + 1;
+  if on { yield from gd_two(); }
+  yield 3;
+}
+
+fn delegation_in_a_loop_body(lg: reference<GdLog>) -> iterator<integer> {
+  lg.n = lg.n + 1;
+  for _ in 0..2 { yield from gd_two(); }
+}
+
+fn delegation_with_no_prefix() -> iterator<integer> {
+  yield from gd_two();
+  yield 3;
+}
+
+fn two_adjacent_delegations() -> iterator<integer> {
+  yield from gd_two();
+  yield from gd_two();
+}
+
+fn test_the_prefix_of_a_delegation_runs_once() {
+  // The statement that needs no rule reference: one increment in the program's control
+  // flow, four advances (1, 2, 3, done), and the counter reads 1.
+  lg = GdLog { n: 0, m: 0 };
+  t = 0;
+  for x in prefix_before(lg) { t = t + x; }
+  assert(lg.n == 1, "the prefix runs once per activation: {lg.n}");
+  assert(t == 6, "and the sequence is unchanged: {t}");
+}
+
+fn test_every_statement_of_the_prefix_runs_once() {
+  lg = GdLog { n: 0, m: 0 };
+  t = 0;
+  for x in prefix_of_three(lg) { t = t + x; }
+  assert(lg.n == 11, "both prefix statements run once: {lg.n}");
+  assert(lg.m == 100, "the third one too: {lg.m}");
+  assert(t == 3, "sequence 1,2: {t}");
+}
+
+fn test_a_prefix_that_appends_appends_once() {
+  // The damaging face: a container the program reads after the generator is drained.
+  acc: vector<integer> = [];
+  t = 0;
+  for x in prefix_appends(acc) { t = t + x; }
+  assert(len(acc) == 1, "one append, one element: {len(acc)}");
+  assert(acc[0] == 7, "and it is the value appended: {acc[0]}");
+  assert(t == 6, "sequence 1,2,3: {t}");
+}
+
+fn test_a_prefix_loop_runs_once() {
+  lg = GdLog { n: 0, m: 0 };
+  t = 0;
+  for x in prefix_is_a_loop(lg) { t = t + x; }
+  assert(lg.n == 3, "a loop in the prefix runs once, not once per advance: {lg.n}");
+  assert(t == 3, "sequence 1,2: {t}");
+}
+
+fn test_a_prefix_between_two_delegations_runs_once() {
+  lg = GdLog { n: 0, m: 0 };
+  t = 0;
+  for x in prefix_between_two(lg) { t = t + x; }
+  assert(lg.n == 1, "a prefix between two delegations runs once: {lg.n}");
+  assert(t == 6, "sequence 1,2,1,2: {t}");
+}
+
+fn test_the_delegates_own_prologue_still_runs_once() {
+  // Measured BEFORE the cure and already correct: the sub-generator frame is minted once,
+  // not re-minted per advance.  Here so the cure is not read as having fixed that too.
+  lg = GdLog { n: 0, m: 0 };
+  t = 0;
+  for x in gd_counting(lg) { t = t + x; }
+  assert(lg.m == 1, "the delegate's own prologue runs once: {lg.m}");
+  assert(t == 17, "sequence 8,9: {t}");
+}
+
+fn test_the_shapes_that_already_ran_the_prefix_once() {
+  // Controls.  A prefix before a plain `yield` and before a lazily-lowered loop each sit in
+  // a segment that already had somewhere to put a once-only statement.
+  a = GdLog { n: 0, m: 0 };
+  ta = 0;
+  for x in prefix_before_a_plain_yield(a) { ta = ta + x; }
+  assert(a.n == 1, "prefix before a plain yield: {a.n}");
+  assert(ta == 6, "sequence 1,2,3: {ta}");
+
+  b = GdLog { n: 0, m: 0 };
+  tb = 0;
+  for x in prefix_before_a_lazy_loop(b) { tb = tb + x; }
+  assert(b.n == 1, "prefix before a lazy loop: {b.n}");
+  assert(tb == 6, "sequence 1,2,3: {tb}");
+}
+
+fn test_the_delegation_shapes_that_already_compiled() {
+  // Controls for the two compile faces: with no earlier segment, and with an adjacent one,
+  // the segment index and the state index agreed and the field was found.
+  ta = 0;
+  for x in delegation_with_no_prefix() { ta = ta + x; }
+  assert(ta == 6, "delegation then a yield: {ta}");
+
+  tb = 0;
+  for x in two_adjacent_delegations() { tb = tb + x; }
+  assert(tb == 6, "two adjacent delegations: {tb}");
+}
+
+fn test_the_prefix_runs_once_per_activation_not_once_per_program() {
+  // The rule says once per ACTIVATION, and this is the cell that tests that word: the same
+  // generator is activated twice over one shared counter.  `scripts/matrix_axes.py` named the
+  // axis (A9, evaluation count) on the otherwise-finished file — every other cell here
+  // activates exactly once, so "once" and "once per activation" were indistinguishable.
+  lg = GdLog { n: 0, m: 0 };
+  t = 0;
+  for x in prefix_before(lg) { t = t + x; }
+  for x in prefix_before(lg) { t = t + x; }
+  assert(lg.n == 2, "two activations run the prefix twice, not more: {lg.n}");
+  assert(t == 12, "and each yields 1,2,3: {t}");
+}
+
+fn test_a_delegation_under_a_branch_or_in_a_loop_keeps_its_prefix_once() {
+  // Over-reach controls, and they are what bounds the defect: BOTH of these answered
+  // correctly on the control tree.  A block, loop or `if` containing a yield sends the whole
+  // generator to the EAGER collector (`collect_segments`), whose factory runs the body once
+  // up front — so the state machine, and with it the question this file is about, is never
+  // reached.  The defect is exactly a `yield from` at the generator's TOP LEVEL.
+  a = GdLog { n: 0, m: 0 };
+  ta = 0;
+  for x in delegation_under_a_branch(a, true) { ta = ta + x; }
+  assert(a.n == 1 && ta == 6, "branch taken: {a.n} / {ta}");
+
+  b = GdLog { n: 0, m: 0 };
+  tb = 0;
+  for x in delegation_under_a_branch(b, false) { tb = tb + x; }
+  assert(b.n == 1 && tb == 3, "branch not taken: {b.n} / {tb}");
+
+  c = GdLog { n: 0, m: 0 };
+  tc = 0;
+  for x in delegation_in_a_loop_body(c) { tc = tc + x; }
+  assert(c.n == 1 && tc == 6, "delegation in a loop body: {c.n} / {tc}");
+}
+
+fn test_a_consumer_that_stops_early_runs_the_prefix_once() {
+  // One advance always ran the prefix exactly once — the divergence began at the second.
+  // The cell that reads right on both trees, kept because it bounds the defect.
+  lg = GdLog { n: 0, m: 0 };
+  first = 0;
+  for x in prefix_before(lg) { first = x; break; }
+  assert(first == 1, "the first value arrives: {first}");
+  assert(lg.n == 1, "and the prefix ran once: {lg.n}");
+}
+
+fn main() {
+  test_the_prefix_of_a_delegation_runs_once();
+  test_every_statement_of_the_prefix_runs_once();
+  test_a_prefix_that_appends_appends_once();
+  test_a_prefix_loop_runs_once();
+  test_a_prefix_between_two_delegations_runs_once();
+  test_the_prefix_runs_once_per_activation_not_once_per_program();
+  test_a_delegation_under_a_branch_or_in_a_loop_keeps_its_prefix_once();
+  test_the_delegates_own_prologue_still_runs_once();
+  test_the_shapes_that_already_ran_the_prefix_once();
+  test_the_delegation_shapes_that_already_compiled();
+  test_a_consumer_that_stops_early_runs_the_prefix_once();
+}

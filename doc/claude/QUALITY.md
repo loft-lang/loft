@@ -9304,6 +9304,140 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Where does an advance resume?" — a construct declared out of scope, and the four defects under its `OPEN: 0` (2026-09-25)
+
+`@FR-G-Next` says an advance runs ONE slice, from the resume point.  On `--native` the
+statements before a `yield from` ran again on **every advance the delegation served**: a
+prologue counted three times for one increment, a `v += [7]` landing three elements in a
+vector the program reads afterwards.  The produced SEQUENCE is identical under either
+lowering, so no value of the generator itself said so — silent, no diagnostic, both
+backends running.
+
+**The rule was picked for what it was MISSING.**  Of `coroutines.md`'s nine rules, four
+carried zero code citations and zero guards — `(G-For)`, `(G-Next)`, `(G-Yield)`,
+`(G-YieldDepth)` — while `Yield` is the second most-omitted IR variant across partial
+walkers (78.9 %) with 37 bugs behind it, and `par/coroutine` rose 3.9 % → 6.2 % in
+`make bug-review`'s newest band.  NOT a re-plough of CL-9: `836`/`1586` already pin the
+eager-loop boundary, and this is a different construct.
+
+**What made the rules disagree with each other is what found it.**  `(G-YieldDepth)` says
+*"`yield` is valid at ANY call depth … a `yield` inside a helper `h()` called from g"*,
+while `(G-Yield)` says a `yield` whose return type is not `iterator<T>` is a static error.
+Both cannot hold.  Measured: the helper spelling is REFUSED identically on both backends,
+so `(G-YieldDepth)` promised a shape the language rejects — and the chapter's own
+Conformance section asserted it *verified on both backends*.  ⚠ **`VERIFICATION.md` had
+said the opposite in three places** (*"deferred G-YieldDepth — a `yield` INSIDE a helper
+(true stackful) needs `yield from`"*).  Two records, one rule, opposite answers, and the
+one a reader of the rules meets was the wrong one.  A conformance line is a MEASUREMENT,
+not a restatement of the rule above it.
+
+**And the construct that did ship had no rule at all, because the chapter declared it out
+of scope.**  The scope line read *"`yield from` (delegation) is deferred to 1.1+ and is not
+specified here"* long after `yield from` shipped, was guarded (loft#1277) and was named in
+`1589`'s own conformance list.  Nothing in the register covered it, so `OPEN: 0` was green
+over **four** defects in it at once — one silent, three that do not compile.  ⚠ The lesson generalises past this chapter: an
+`OPEN: n` is only as strong as its oracle, and a SCOPE line silently shrinks that oracle to
+nothing.  **Six** places called it deferred — the scope line, three rows in
+`VERIFICATION.md`, `coroutines-history.md` and COROUTINE.md's status banner — and all six are
+corrected; the construct has a rule now, `(G-Delegate)`.
+
+**One segment, and every question about it answered in more than one place.**  The cure is
+not a peel — each face is two sites giving one question two answers:
+
+* `sub_N`, the field holding the sub-generator, is DECLARED and INITIALISED by SEGMENT index
+  and was USED by STATE index.  Those read the same number only while every earlier segment
+  took one state — a lazily-lowered loop takes two, three with a resume slice — so a
+  `yield from` after one named a field nobody declared (rustc **E0609**).
+* the struct declared that field for every `yield from` segment without asking whether the
+  generator took the EAGER lowering, whose factory drives the sub-generator through a LOCAL
+  and initialises no field (rustc **E0063**).  *"Is this generator eager?"* was spelled
+  `segments.iter().any(|s| matches!(s, ForLoopBody))` at **six** sites and named at none; it
+  is `is_eager` now, and the struct definition is the seventh caller — the one that never
+  asked.
+* the silent face is *"where does this segment put a statement that must run once?"*:
+  `YieldFrom` took ONE state and had to stay in it to keep pulling, so re-entry ran the top
+  of its arm — where `pre` sits.  `ForLoopLazy` answers the
+  identical question next door with a dedicated once-only setup state, and the `yield from`
+  arm already had a once-only mechanism for the sub-generator (`if self.sub_N.is_none()`)
+  and none for its prefix.  The cure is the neighbour's answer, not a new one.
+* and the fourth, found later by opening the matrix column below: *"what shape does an
+  advance of the sub-generator have?"*  The `next_into` channel (a yielded tuple or fn-ref)
+  answers a BOOL and writes into the consumer's buffer where every other channel answers the
+  value.  The `Simple` yield arm has had per-shape branches for it since @PLAN16; this arm
+  emitted the value-channel call, `next_into(stores)` for a two-argument method — rustc
+  **E0061** on every delegated tuple or closure.
+
+**Three instruments, and the values half was the weakest.**  The value matrix is 20 cells on
+both backends, every expectation hand-computed first (a wrong one — `0,1,1,2` folded as
+`t*10+x` is 112, not 12 — is what proved the harness can fail).  ⚠ **Three cells read
+"agree" having measured nothing**: a `never-read` warning printed ahead of the program's own
+answer, and the harness was scoring the head of the combined stream.  Scoring stdout and
+stderr APART inverted all three — one of them, `E1`, is the container face that states the
+whole defect.  [[a-report-can-lose-to-a-panic]] is the same shape one channel over.
+⚠ And the cell that hid it for everyone else is `H1`: a prefix of `s = "a"; s += "b"` reads
+identically however many times it runs, because a REBIND is idempotent — which is what most
+prefixes are, and why this survived in a guarded construct.
+
+**The instrument that should have caught all of it had the construct's whole column switched
+off.**  `tests/coroutine_matrix.rs` crosses yielded TYPE against consuming CONTEXT, and its
+X5 column — `yield from`, nine cells, every type — read `CLOSED:CO1.4-deferred` for its whole
+life, on the strength of the same stale sentence.  ⚠ **A closed cell is a claim about the
+language, and nothing pointed it back at the sentence it depended on.**  Opening it took seven
+of the nine green on both backends immediately and is what found the FOURTH face above — no
+corpus program delegates a tuple, so nothing else could have, and the emitted-Rust sweep
+confirms it: the radius is the same with and without that branch.  Fixed here; delegate and
+delegator share a yield type, so the sub-generator's write already lands in the layout this
+one owes its consumer and there is nothing to re-encode.  The ninth cell,
+a delegated **fn-ref**, is a different site and filed as **loft#1676** — `BUG (#306)` twice on
+the interpreter and, on native, the loop-body collector's refusal about a program containing no
+loop, with two rustc errors leaking past it.  Its row now reads `CLOSED:measured-loft#1676`, so
+it reopens with the fix rather than with a rewritten status line.
+
+⚠ **And one cell's NAME claimed the coverage the false conformance line was resting on.**
+`y1_x1_int_generator_with_helper_yield`, comment *"generator whose body calls a HELPER that
+yields.  Stackful semantics"*, actually consumes a generator with a `for` — no helper, no yield
+at depth.  A reader asking "is stackful yield tested?" found a green cell with exactly the right
+name.  Renamed to `y1_x1_int_consumes_another_generator`, which is what it does.
+
+⚠ **A guard can also withhold its own coverage by citing a CLOSED issue.**
+`a-generator-exhausts-only-past-its-own-end.loft` limited its delegation cells to the
+argument-free form because *"`yield from sub(arg)` does not compile on --native (loft#1277)"* —
+loft#1277 being the fix that closed exactly that.  Measured the same day, `yield from sub(5)`
+answers identically on both backends.
+
+**Radius, measured rather than reasoned**: emitted Rust for **2 782** corpus programs
+(`tests/scripts` plus `doc/`) under a pristine build of the tree before the cure — **5 files
+differ, and every one contains a `yield from`**: this fix's two new guards, loft#1277's guard,
+`51-coroutines` and `a-generator-exhausts-only-past-its-own-end`.  ⚠ The sweep's first form was
+dead: a control binary run without `--path` loads no stdlib, errors before parsing and scores
+zero on everything — caught only because a cell that MUST reproduce the defect did not.
+[[a-trustworthy-thing-beside-an-unchecked-claim]].
+
+**`matrix_axes.py` on the FINISHED guard named the axis the rule's own wording depends on.**
+Every cell activated the generator exactly once, so "runs once" and "runs once per
+ACTIVATION" — the words the rule is written in — were indistinguishable.  Activating the same
+generator twice answers `2` here and **`6`** on the control tree, so that cell falsifies on
+its own; it is in the file now.  ⚠ Two cells the analyser also asked for turned out to BOUND
+the defect instead: a delegation under an `if` arm, and one inside a loop body, both answer
+correctly on the control tree — a block, loop or `if` containing a yield sends the whole
+generator to the EAGER collector, so the state machine this defect lives in is never reached.
+The defect is exactly a `yield from` at the generator's TOP LEVEL, and the cells written
+expecting a PASS are what established that.  [[the-over-reach-cell-finds-neighbours]],
+[[matrix-axes-finds-bugs-not-just-gaps]].
+
+Guards: `tests/scripts/a-delegations-prefix-runs-once-per-activation.loft`, eleven cells,
+carrying the four controls that say the once-only state was added to the delegation and
+nowhere else: a prefix before a plain `yield`, a prefix before a lazily-lowered loop, a
+delegation with no prefix, and two adjacent delegations.  The delegate's own prologue is a
+cell too — it already ran exactly once, so the frame was never re-minted, and the cure must
+not be read as having fixed that.  The two COMPILE faces are a SEPARATE file,
+`a-delegation-beside-a-loop-compiles.loft`: a generator that does not compile ends the run
+before any assertion is reached, so one file would have left the five value cells unscored
+against the very tree they were written to catch.  ⚠ Attributing that file's column needed
+each shape in a program of its OWN — `--native` compiles every generator in a file, so with
+`main` cut down to one cell a sibling's E0609 reached both CONTROLS and they read as failures
+the cure had caused.
+
 ### "Is this member a heap value?" — an accessor used as a proxy, and a rule that held for three of four kinds (2026-09-25)
 
 `@FR-T-Cons` says a heap element is COPIED into a tuple.  Measured, a COLLECTION-typed member
