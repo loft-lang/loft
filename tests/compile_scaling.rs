@@ -98,3 +98,63 @@ fn issue854_a_vector_literal_compiles_in_linear_time() {
          and see PERFORMANCE.md § Profiling a run."
     );
 }
+
+/// `LOFT_TIMING` splits the front end by phase, and the phases account for all of it.
+///
+/// `parse_default`, `parse_user`, `scopes` and `lints` are four timers, and `front_end` is a
+/// fifth clock started with the first of them.  A timer wired around the wrong span reports
+/// zero or double-counts, and either way the four stop summing to the fifth, which is what
+/// this compares.  The only work between them is the `#c` binding gate, so a healthy sum
+/// sits within a few percent of the total; the bound is loose because it is a WIRING check,
+/// not a measurement.
+#[test]
+fn loft_timing_phases_sum_to_the_front_end() {
+    let dir = std::env::temp_dir().join(format!("loft_timing_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let file = dir.join("t.loft");
+    std::fs::write(
+        &file,
+        "fn main() {\n  x = 0;\n  for i in 0..10 { x += i; }\n  println(\"{x}\");\n}\n",
+    )
+    .expect("write fixture");
+    let out = Command::new(loft_bin())
+        .arg("--interpret")
+        .arg("--check")
+        .arg(&file)
+        // A warm cache skips the parse, and a parse that did not run times nothing.
+        .env("LOFT_NO_CACHE", "1")
+        .env("LOFT_TIMING", "1")
+        .env("LOFT_TIMEOUT", "120")
+        .output()
+        .expect("failed to invoke the loft binary");
+    let _ = std::fs::remove_dir_all(&dir);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "fixture must compile: {stderr}");
+    let field = |name: &str| -> f64 {
+        let key = format!("{name}=");
+        let at = stderr
+            .find(&key)
+            .unwrap_or_else(|| panic!("LOFT_TIMING printed no `{name}=`:\n{stderr}"));
+        let rest = &stderr[at + key.len()..];
+        rest[..rest.find("ms").expect("a value in ms")]
+            .parse()
+            .expect("a number")
+    };
+    let phases = ["parse_default", "parse_user", "scopes", "lints"].map(field);
+    let total = field("front_end");
+    for (name, v) in ["parse_default", "parse_user", "scopes", "lints"]
+        .iter()
+        .zip(phases)
+    {
+        assert!(
+            v > 0.0,
+            "`{name}` timed nothing ({v} ms) — its timer is not around the phase"
+        );
+    }
+    let sum: f64 = phases.iter().sum();
+    assert!(
+        (sum - total).abs() <= total * 0.10,
+        "the phases sum to {sum:.2} ms against a front end of {total:.2} ms — a timer is \
+         missing a phase or counting one twice:\n{stderr}"
+    );
+}

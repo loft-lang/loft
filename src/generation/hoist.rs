@@ -871,12 +871,9 @@ pub fn hoistable(
         let retbuf = retbuf_var(data, def_nr);
         let others = out.vectors.iter().any(|(q, _)| !mover(q));
         if pushes.len() + mints.len() > 1 || others {
-            if !pushes
-                .iter()
-                .map(|(p, _)| p)
-                .chain(mints.iter())
-                .all(|p| owned_local(vars, p.0) || Some(p.0) == retbuf)
-            {
+            if !pushes.iter().map(|(p, _)| p).chain(mints.iter()).all(|p| {
+                owned_local(vars, p.0) || Some(p.0) == retbuf || work_buffer_arg(data, def_nr, p.0)
+            }) {
                 return LoopHoist::default();
             }
             let any_retbuf = pushes
@@ -1019,6 +1016,20 @@ fn owned_local(vars: &crate::variables::Function, r: u16) -> bool {
             .depend()
             .iter()
             .all(|d| vars.name(*d).starts_with("__vdb"))
+}
+
+/// Is `r` a parameter `@FR-R-WorkBuffer` promoted from a local?  Its store is a scratch
+/// buffer the caller mints per call site and hands to this call alone, so nothing but this
+/// activation reaches it — exclusive, as the owned local it was.  Argument slots follow
+/// attribute order.
+fn work_buffer_arg(data: &Data, def_nr: u32, r: u16) -> bool {
+    let def = data.def(def_nr);
+    def.variables()
+        .arguments()
+        .iter()
+        .position(|&a| a == r)
+        .and_then(|i| def.attributes().get(i))
+        .is_some_and(|a| a.work_buffer)
 }
 
 /// The variable of `def_nr`'s hidden return buffer, when it has one.
@@ -4581,7 +4592,9 @@ pub fn push_window_ok(
     let vars = data.def(def_nr).variables();
     let root = p.path.0;
     let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
-    if root >= vars.count() || !(owned_local(vars, root) || root_is_retbuf) {
+    if root >= vars.count()
+        || !(owned_local(vars, root) || root_is_retbuf || work_buffer_arg(data, def_nr, root))
+    {
         return Err("the pushed vector's root is not exclusive".to_string());
     }
     let Some(body) = push_loop_body(lp) else {
@@ -4846,7 +4859,9 @@ pub fn mint_window_ok(
     let vars = data.def(def_nr).variables();
     let root = m.path.0;
     let root_is_retbuf = retbuf_var(data, def_nr) == Some(root);
-    if root >= vars.count() || !(owned_local(vars, root) || root_is_retbuf) {
+    if root >= vars.count()
+        || !(owned_local(vars, root) || root_is_retbuf || work_buffer_arg(data, def_nr, root))
+    {
         return Err("the appended vector's root is not exclusive".to_string());
     }
     let Some(body) = plain_for_body(lp) else {

@@ -1,0 +1,135 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-ByteCopy` — a text copied into a byte vector one byte at a time is ONE append.
+//
+// `for i in lo..hi { buf += [(t.byte_at(i) & 255) as u8] }` — the byte-wise copy a binary
+// encoder spells — paid a bounds-checked byte read, a null-aware mask and a fused push per
+// byte.  Where the loop is exactly that, over pure bounds, into a byte vector stored raw,
+// it is one block copy behind `0 <= lo && lo <= hi && hi <= size(t)`, the loop as written
+// running for every range the guard refuses.  The value never changes: every cell answers
+// the same with `LOFT_NO_BYTE_COPY=1`, and that A/B is the falsifier together with the pin
+// (`tests/byte_copy.rs`).  Bytes hand-computed: "héllo" is 104 195 169 108 108 111 (é is
+// two bytes); "ab<de" is 97 98 60 100 101, sum 456.
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-09-25): with the guard's `hi <= size(t)` test struck in `byte_copy::guarded`, b5
+//   fails on both backends — the runtime append takes nothing for a range past the text,
+//   where the loop pushes the two zero bytes the out-of-range reads answer.
+//   CHANNEL: the VALUE channel (an assertion) on both backends.
+//   WITNESS: under the sabotage b5's length reads 0 for 8, on both backends.
+//   HOLDS: leak, panic and free-refusal are equal on both trees and clean here; the append
+//   claims through the vector's own growth, so a patch that moves them reintroduces a
+//   neighbour.
+
+struct O { s: text }
+
+fn copy_all(t: text) -> vector<u8> {
+  buf: vector<u8> = [];
+  n = size(t);
+  for i in 0..n { buf += [(t.byte_at(i) & 255) as u8]; }
+  buf
+}
+
+fn byte_sum(v: vector<u8>) -> integer {
+  s = 0;
+  for b in v { s += b as integer; }
+  s
+}
+
+fn three() -> integer { 3 }
+
+// the encoder's spelling: every byte of a text with a two-byte character
+fn b1() {
+  v = copy_all("héllo");
+  assert(len(v) == 6 && v[1] == 195 as u8 && v[2] == 169 as u8 && v[5] == 111 as u8, "b1 got {v}");
+  assert(byte_sum(v) == 795, "b1 sum {byte_sum(v)}");
+}
+
+// literal bounds inside the text
+fn b3() {
+  t = "héllo"; buf: vector<u8> = [];
+  for i in 1..4 { buf += [(t.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 3 && buf[0] == 195 as u8 && buf[2] == 108 as u8, "b3 got {buf}");
+}
+
+// variable bounds
+fn b4() {
+  t = "héllo"; buf: vector<u8> = []; lo = 2; hi = 5;
+  for i in lo..hi { buf += [(t.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 3 && buf[0] == 169 as u8 && buf[1] == 108 as u8, "b4 got {buf}");
+}
+
+// an end past the text: the guard refuses it and the loop runs, pushing the zero the reads answer
+fn b5() {
+  t = "héllo"; buf: vector<u8> = []; n = size(t) + 2;
+  for i in 0..n { buf += [(t.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 8, "b5 length {len(buf)}");
+  assert(buf[5] == 111 as u8 && buf[6] == 0 as u8 && buf[7] == 0 as u8, "b5 tail {buf[6]} {buf[7]}");
+}
+
+// an empty range appends nothing
+fn b6() {
+  t = "héllo"; buf: vector<u8> = [];
+  for i in 3..3 { buf += [(t.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 0, "b6 got {buf}");
+}
+
+// the bytes land after what the vector already holds
+fn b7() {
+  t = "ab"; buf: vector<u8> = [1 as u8, 2 as u8];
+  for i in 0..size(t) { buf += [(t.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 4 && buf[0] == 1 as u8 && buf[2] == 97 as u8 && buf[3] == 98 as u8, "b7 got {buf}");
+}
+
+// an integer destination is not a byte push: the loop as written
+fn b8() {
+  t = "héllo"; out: vector<integer> = [];
+  for i in 0..size(t) { out += [t.byte_at(i) & 255]; }
+  assert(len(out) == 6 && out[1] == 195 && out[5] == 111, "b8 got {out}");
+}
+
+// a second statement in the body keeps the loop
+fn b9() {
+  t = "héllo"; buf: vector<u8> = []; count = 0;
+  for i in 0..size(t) { buf += [(t.byte_at(i) & 255) as u8]; count += 1; }
+  assert(len(buf) == 6 && count == 6 && buf[3] == 108 as u8, "b9 got {buf} {count}");
+}
+
+// a text FIELD as the source keeps the loop
+fn b10() {
+  o = O { s: "héllo" }; buf: vector<u8> = [];
+  for i in 0..size(o.s) { buf += [(o.s.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 6 && buf[1] == 195 as u8, "b10 got {buf}");
+}
+
+// past several growth steps, with the bound spelled as `size(t)` in the range itself
+fn b11() {
+  t = "";
+  for k in 0..1000 { t += "ab<de"; }
+  buf: vector<u8> = [];
+  for i in 0..size(t) { buf += [(t.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 5000, "b11 length {len(buf)}");
+  assert(byte_sum(buf) == 456000, "b11 sum {byte_sum(buf)}");
+  assert(buf[2] == 60 as u8 && buf[4999] == 101 as u8, "b11 ends {buf[2]} {buf[4999]}");
+}
+
+// the same text twice into one buffer
+fn b12() {
+  t = "héllo"; buf: vector<u8> = [];
+  for i in 0..size(t) { buf += [(t.byte_at(i) & 255) as u8]; }
+  for i in 0..size(t) { buf += [(t.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 12 && buf[6] == 104 as u8 && buf[11] == 111 as u8, "b12 got {buf}");
+}
+
+// a bound that is a call keeps the loop
+fn b14() {
+  t = "héllo"; buf: vector<u8> = [];
+  for i in 0..three() { buf += [(t.byte_at(i) & 255) as u8]; }
+  assert(len(buf) == 3 && buf[2] == 169 as u8, "b14 got {buf}");
+}
+
+fn main() {
+  b1(); b3(); b4(); b5(); b6(); b7(); b8(); b9(); b10(); b11(); b12(); b14();
+  println("done");
+}

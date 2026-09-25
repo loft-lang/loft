@@ -2218,6 +2218,8 @@ Codegen consistency genuinely needs consolidation — in which case the correct 
 REVERSE (fold the ~5 hand-written emitters INTO `#rust`, making `#rust` the single source of
 truth), a fresh plan, NOT @PLN81's "everything → emitters, delete the template path."
 
+**Later (2026-09-25):** "recommended" is for BRIDGING a capability loft lacks. `#rust` is not a speed-up for a routine loft can express — that is `(Perf-Cure)` in [formal/performance.md](formal/performance.md): a slow routine is cured in the engine or in its loft algorithm.
+
 ## C88 — the scope-exit free gate stays dep-derived; simplify it (if ever) by promoting @PLN94's ownership oracle to authority, NOT by @PLN79's "drop the gate half + rely on idempotent free" (@PLN79 closed)
 
 ### Question
@@ -2514,6 +2516,7 @@ The maintainer's only irreducibly-human steps become **policy**: admit a namespa
 - The **V1–V6 validation gate** ([library-ship-validation.md](plans/102-stability-contract/library-ship-validation.md)) runs before signing; the signature attests validation.
 - **Rejected:** the trust-root in CI (a leak breaks every install); a fully-automatic push→signed-release (can't be kept safe); a mutable single-signed index blob (the re-sign foot-gun — it broke installs once already). A scoped delegated CI key is a fancier key-absent tier, deferred until unattended CI publishing is a real need; the submission-PR defer is the MVP.
 - Owner ruling 2026-07-15 (`tuxedo` default = local key). Proven in part: `scripts/registry_maintain.sh` + the local file key shipped shapes 0.3.0 + time 0.2.1. Freeze-gate companion: `.github/workflows/revalidate-libs.yml`.
+- **Later (2026-09-25), as `scripts/registry-sign.sh` stands:** the card signs when a PKCS#11 module is present; otherwise the local key file signs after a typed `yes`, or with no prompt under `--expect <pkg>@<ver>`, whose scope check refuses anything else in the diff. That supersedes "no prompt" above; the tier boundary (key present signs, key absent defers) is unchanged.
 
 ## C97 — A library's public symbols live under its module, not the global namespace (so the stdlib can grow without breaking a shipped lib)
 
@@ -4339,3 +4342,40 @@ repository's corpus alone.
 - **Revisit when** — for what stands: a keyed type has a use a record set genuinely cannot
   express (C110's own trigger, unchanged); or a target wants an OPEN set of hole kinds, with
   third parties opting their own types in, and says so.
+
+---
+
+## C128 — a yielded lambda owns copies of what it captures
+
+**Catalogue:** loft#1676 · `formal/coroutines.md` `(G-Own)`
+
+### Question
+
+A generator yields a lambda that captures one of the generator's heap locals.  Does the lambda
+share the local with the generator (the rule for a lambda that is NOT yielded), or does it get
+a value of its own?
+
+### Decision
+
+**Its own stores.**  The owner, 2026-09-25: *"I do not mind if a fn yield gets its own stores,
+as long as they are released correctly, this is a semantic decision, actual rustc however can
+still decide to actually reuse the store on this point if that is safe."*
+
+So every heap capture of a yielded lambda is copied at the yield into a store the closure
+record owns and releases.  A lambda that is not yielded still shares (`(L-CapWrite)`, "heap is
+shared"), and a `&` capture still aliases its caller.  The copy is the SEMANTICS; eliding it
+where no difference is observable is an optimisation the rule allows.
+
+### Why
+
+The alternatives were measured before the ruling: sharing the local means the closure outlives
+the frame that owns it, which needs either a refusal (loses the feature) or a yielded closure
+that keeps the generator's frame alive (a second owner of the frame, `(G-Hold)` extended).  A
+copy is what `(G-Own)` already does for a yielded record: a generator hands out values, not
+windows into its own state.
+
+### Consequence
+
+A yielded lambda's writes to a captured heap value reach its copy, not the generator — a
+program that relied on the generator seeing them reads the generator's own value instead.  No
+corpus program did.

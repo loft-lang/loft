@@ -647,9 +647,27 @@ impl State {
                 );
                 // A raw put, not a `Set`: `generate_set` releases an owned local's old value
                 // before it writes, and that value is the record being handed over.
+                //
+                // A temp declared INSIDE the yielded value (a yielded lambda's capture copies,
+                // loft#1676) ended with its block: its slot may already hold a live local, and
+                // nulling it there lost the generator's own `v`.  Such a temp is not in the
+                // frame's release sweep either, so it needs no forgetting — the native emitter
+                // skips it for the same reason (`eager_snapshot_push`'s `inner_scopes`).
+                let mut inner_scopes = std::collections::HashSet::new();
+                node.yield_inner().to_owned_value().walk(&mut |n| {
+                    if let Value::Block(b) = n {
+                        inner_scopes.insert(b.scope);
+                    }
+                });
+                let handed: Vec<u16> = handed
+                    .into_iter()
+                    .filter(|t| !inner_scopes.contains(&stack.function.scope(*t)))
+                    .collect();
                 for tmp in handed {
                     stack.add_op("OpNullRefSentinel", self);
-                    let pos = stack.var_pos(tmp);
+                    // A fn-ref's handle is its closure half, after the 8-byte `d_nr`.
+                    let fn_ref = matches!(stack.function.tp(tmp).base(), Type::Function(..));
+                    let pos = stack.var_pos(tmp) - if fn_ref { 8 } else { 0 };
                     stack.add_op("OpPutRef", self);
                     self.code_add(pos);
                 }
@@ -863,7 +881,11 @@ impl State {
                 // parser accepts the read, emits `TupleGet`, and this panics — a clean refusal
                 // traded for an ICE.
                 let Type::Tuple(ref elems) = *tuple_tp.base() else {
-                    panic!("TupleGet on non-tuple variable");
+                    panic!(
+                        "TupleGet on non-tuple variable `{}` ({var_nr}) of type {}",
+                        stack.function.name(var_nr),
+                        tuple_tp.name(stack.data)
+                    );
                 };
                 let idx = elem_idx as usize;
                 let elem_tp = elems[idx].clone();

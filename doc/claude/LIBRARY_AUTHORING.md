@@ -16,6 +16,117 @@ and the `lib_plans/12-library-extraction/` topical files into
 a single narrative.  The CLI commands referenced here all live
 in the loft binary — no extra tooling install needed.
 
+**Touching a library?  Read the contract below first**; the numbered sections are the how.
+
+---
+
+## The library contract
+
+The standing rules for every loft library, one line each.  Each names the place that owns
+the detail, and that place wins if the two ever differ — fix this line, not the rule.
+
+**Who and where**
+
+1. **The loft stream builds and fixes libraries.**  A consumer reports a gap and never edits
+   the library; consumer applications stay read-only to this stream.
+   [§ Who a library belongs to](#who-a-library-belongs-to--the-standing-rule)
+2. **One library, several consumers.**  Adding is free and breaking is not; whoever gets there
+   first is the author; a consumer's private copy is the failure to fix.  (same section)
+3. **Develop and test on the testbed** — a worktree of the library's `origin/main` outside
+   the loft tree, this tree's loft, the declared dependencies only, both backends with warnings
+   denied.  A consumer's gap becomes a test in the library.
+   [§ The testbed](#the-testbed--a-library-tested-with-minimal-dependencies)
+4. **The source lives in its `loft-libs-<chunk>` repo only.**  Never fix a library in the loft
+   tree or its fixture; a file only the fixture has is a fork.
+   [§ 2b](#2b-never-leave-a-capability-in-the-fixture-only),
+   [§ 5e](#5e-fix-a-library-bug--the-clean-dev-checkout-flow)
+5. **Read a library's API from the catalogue**, never from a clone or an installed copy:
+   `make libcatalogue`, then `doc/claude/LIBRARIES.md` (@PLN112, [CLAUDE.md](../../CLAUDE.md)).
+   A consumer project reads the stubs of the version it locked (loft-write skill).
+6. **Own your dependencies** — an external library is fine unless the stack already owns
+   the capability.  [BUS_FACTOR.md](BUS_FACTOR.md)
+
+**The source and its API**
+
+7. **Written in loft, readable first.**  A slow routine is cured in the engine or in its own
+   loft algorithm; a native rewrite is a per-routine exception with its reason beside it.
+   `#rust` and a native crate bridge a capability loft lacks, never speed.
+   [formal/performance.md](formal/performance.md) `(Perf-Cure)`
+8. **Every public routine pulls its weight**: measured per release against a same-hash
+   reference twin in an industry language, within 3× per routine and 2× at the median.
+   [formal/performance.md](formal/performance.md) `(Perf-Weight)`,
+   [LIBRARY_CHECKLIST.md § Goal G](LIBRARY_CHECKLIST.md)
+9. **A public function needs a production caller**, or is labelled "built for consumers,
+   none yet".  [§ 2e](#2e-a-surface-proven-only-by-its-own-tests-is-a-surface-nobody-has-agreed-to)
+10. **Written so it can be placed** — a `pub fn` is not itself a native; answer a value, not a
+    cursor; closures do not cross; a returned view cannot be placed.
+    [PLACEMENT.md](PLACEMENT.md)
+11. **The exported API is the rewrite boundary**: rewrites are free inside a library, and
+    anything that escapes keeps its promised representation.
+    [formal/rewrites.md](formal/rewrites.md) `(R-Escape)`
+12. **Declare the sandbox side** (trusted engine or admissible loft) while writing the API.
+    [§ 2d](#2d-declare-which-side-of-the-sandbox-boundary-the-library-is-on)
+13. **A clean surface** — no duplicates or confusable names, no footguns or hidden setup
+    ([API_SURFACE.md](API_SURFACE.md) S1–S7); public names live under the library's module,
+    so the stdlib can grow beside them, and a free function a same-named method would
+    silently shadow is refused (DESIGN_DECISIONS.md C95, C97, C101; `warning[shadowed-by-method]`);
+    a parameter or field that is never written is `const` (loft-write skill).
+14. **Only a browser-declared library knows JavaScript**; a platform-blind one carries bytes,
+    and a blocking-looking primitive yields.  [BROWSER_INTEROP.md](BROWSER_INTEROP.md)
+
+**Compatibility**
+
+15. **Three declared levels** — `loft`, `api_compatible_with`, `data_compatible_with` — and
+    raising a floor is the only way to declare a break.  The version number is not a
+    compatibility signal.  `loft compat check` runs per PR; `levels` and `check --full` run
+    before the tag.  [§ 3](#3-pre-release-checklist),
+    [COMPATIBILITY.md](COMPATIBILITY.md)
+16. **Call only what loft `origin/main` has**; a new loft symbol moves the `loft` floor in the
+    same change.  [LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md) § Structure & packaging
+17. **Deprecation is a signal and a fold, never a removal.**  A yank is for a broken or
+    vulnerable version, and a `versions` entry is never deleted.
+    [COMPATIBILITY.md](COMPATIBILITY.md), [§ 5b](#5b-yank-a-vulnerable-version)
+
+**Diagnostics, targets and builds**
+
+18. **`warning` gates, `advice` never does** — a diagnostic gates only when ignoring it can
+    produce a wrong result; library CI runs with `LOFT_DENY_WARNINGS=1`.  A diagnostic reaches
+    only whoever can act on its cure.  [DIAGNOSTICS.md](DIAGNOSTICS.md)
+19. **Claim only the targets you have passed**: interpret, native, wasm and browser give one
+    answer on every claimed target.  loft-ship skill § the parity gate
+20. **Ship lean**: every cdylib is built `--native-release` (`opt-level=3`,
+    `codegen-units=1`), and a performance number comes from that tier only.
+    [NATIVE.md](NATIVE.md) § Optimisation tiers
+
+**Documentation**
+
+21. **A guide at `docs/01-getting-started.loft`** is owed by every library (CI runs it when it
+    exists; the monthly doc review lists who still owes one), runs on both backends, and
+    every number it asserts is measured.  [§ 2c](#2c-the-guide--docs01-getting-startedloft)
+22. **A doc comment on every `pub` item** — present tense, why to use it.
+    [DOC_QUALITY.md](DOC_QUALITY.md)
+23. **User-facing text has one home, the library.**  The README is hand-written today; the
+    generated one is [USER_DOCS.md](USER_DOCS.md)'s design.
+24. **Worked examples** point at a real call site, and only where it teaches more than the
+    signature.  [§ 2a](#2a-worked-examples--point-at-a-real-call-site)
+
+**Publishing and health**
+
+25. **Run the publish gate's own command before tagging**; `categories` is required and
+    `description` overwrites the index; the package is deterministic; the tag is
+    `<name>-v<version>`.  [§ 3](#3-pre-release-checklist), [§ 4](#4-publish)
+26. **A registry dependency must be in the live signed index** before anything that builds
+    it is pushed.  [§ 3](#3-pre-release-checklist)
+27. **Our libraries publish through `registry_maintain.sh`, signed by the maintainer**: the
+    hardware key when present, else the key file after a typed `yes` or under a checked
+    `--expect <pkg>@<ver>`.  An external author signs nothing.  [§ 4](#4-publish),
+    loft-ship skill (`references/publish.md`)
+28. **Healthy means** no open branches, `main` green against the current loft, zero warnings.
+    [§ 5](#5-maintain)
+
+The review side of the same rules — what a registry PR checks — is
+[LIBRARY_CHECKLIST.md](LIBRARY_CHECKLIST.md).
+
 ---
 
 ## Who a library belongs to — the standing rule
@@ -94,6 +205,9 @@ native, guide, WASM cross-build, compatibility, transitive deps), set up in five
    `LOFT_DENY_WARNINGS=1 loft --interpret --tests tests`, `… loft test --native`, and every
    `docs/*.loft` guide with `--interpret` and `--native`.  A library that claims the browser
    also runs its `--native-wasm` / `--html` gate (loft-ship skill § the parity gate).
+   ⚠ A `use`d library with a native crate runs as its cdylib **even under `--interpret`**, so
+   the two runs measure one binary twice; set `LOFT_NO_NATIVE_LIBS=1` on the interpreter run
+   when the question is the library's loft source.
 5. **The published position** — `scripts/revalidate_libs_local.sh --native <pkg>` checks the
    RELEASED versions against this loft: the question a language change must answer before it
    ships.  Refresh `../loft-registry` first (a stale index validates old versions).
@@ -367,7 +481,91 @@ The automated gate only sees a citation that *dangles* or *duplicates* — stale
 clearest) are caught by the monthly by-hand pass in
 [LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md).
 
-## 2a. Declare which side of the sandbox boundary the library is on
+### 2b. Never leave a capability in the fixture only
+
+`tests/fixtures/libs/` snapshots each chunk repo at a pinned tag. A fixture that is **behind**
+its tag is ordinary and recoverable — re-sync. A fixture carrying a **file the canonical repo
+has never had** is a fork: nothing recovers it, an installed package silently lacks whatever it
+provides, and the fixture's own tests stay green while saying nothing about that.
+
+That is not hypothetical. @PLN106's Android GL backend (`android_gl.rs`) lived in the graphics
+fixture and on no branch of `loft-libs-graphics`, so `--native-android` shipped while
+`loft install graphics` had no Android rendering, input or audio at all — and the goldens that
+proved it proved the fixture.
+
+`scripts/sync-fixtures.sh --check-unreleased` gates this (CI job `fixtures-unreleased`, unlike
+the advisory full-drift check). Either take the file upstream, or declare it in that script's
+`UNRELEASED_FILES` **with a tracking reference** — a row without one is refused, since knowing
+about it is what the previous arrangement already had.
+
+### 2c. The guide — `docs/01-getting-started.loft`
+
+A reference tells a reader what a function's type is. It does not tell them **where to
+start**, and those are different questions asked by different people: one has already decided
+to use the library, the other has not. The API reference is generated and complete; the guide
+is written and short, and only one of them can be either.
+
+**One file, in the package, in the topic format the language pages use** — `@NAME` / `@TITLE`,
+prose in `//` comments, code between. That format is not decoration: the guide is a **running
+loft program**, so an example that stops working stops compiling. A guide that cannot rot is
+the only kind worth a reader's trust.
+
+**Your CI runs it, in its own step.** Not `loft test` — that scans `tests/`, and a guide is a
+program, not a suite, which is why the guides written before this rule existed were never
+executed by anything. The `Guide` step in `library-ci-reusable.yml` runs every `docs/*.loft`
+on **both backends** and diffs the two outputs.  CI does not check that a guide EXISTS — a
+package with none says so and passes — so the obligation is kept by the monthly doc review,
+which lists every library that still owes one ([LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md)).
+Run it yourself the same way:
+
+```sh
+LOFT_DENY_WARNINGS=1 loft --interpret docs/01-getting-started.loft
+LOFT_DENY_WARNINGS=1 loft --native    docs/01-getting-started.loft
+```
+
+Warnings are denied there as they are in the suite, so a guide that teaches an idiom the
+compiler warns about does not ship.
+
+It is rendered in two places from that one file, with no further work: `loft doc <name>`
+locally, and `doc/lib-<name>-guide.html` on the published site, linked from the library's
+card. Writing the file is the whole of what it takes to appear there.
+
+#### What goes in it, in order
+
+1. **What it is, in one paragraph — and what it is not.** Name the neighbouring library a
+   reader might have wanted instead. This is the paragraph that saves the wrong reader ten
+   minutes, and it is the one most guides skip.
+2. **The smallest complete program that does something**, with its real output. Not a
+   fragment: something a reader can paste and run.
+3. **The three or four calls that carry the library**, each with a worked example. Not the
+   whole surface — that is the reference's job, and duplicating it here creates a second home
+   that drifts.
+4. **The one thing that surprises people.** Every library has one. `graphics`'s is that
+   `rgb()` and a hand-written hex literal differ in the alpha byte; `markdown`'s is that three
+   of `render`'s four arguments are URL rewriting and `""` turns each off. It is invisible
+   from the signature, which is exactly why the reference cannot carry it.
+5. **Where to go next** — the reference, and the package's own tests, which are the
+   best-explained calls in it.
+
+#### `main` must call every section
+
+Split the guide into a function per section if you like — it reads better than one long
+`main`. But **`main` has to call each of them**, because nothing else does. A zero-parameter
+function that no one calls still compiles, so a renamed API is still caught; its **asserts
+never run**, and those are the half that checks the example is *right* rather than merely
+*spelled correctly*.
+
+Measured, not hypothetical: `graphics`'s guide defines `drawing_shapes()` and `aa_example()`
+and `main` calls neither, so two of its three sections have never executed an assertion. The
+page reads as verified and one third of it is.
+
+#### What it is not
+
+Not the reference: no attempt at completeness, and no per-function catalogue. Not the README
+either — the README is what GitHub shows and is read before installing; the guide is read
+after, by someone with the package in hand. Where they overlap, the README is the shorter one.
+
+### 2d. Declare which side of the sandbox boundary the library is on
 
 Decide this **while the API is being written**. @PLN86 shipped admission control
 (`src/sandbox.rs`, `[sandbox]` in `loft.toml`): a designated function is admitted only if
@@ -387,7 +585,7 @@ load.**
 
 See [SANDBOX.md](SANDBOX.md).
 
-## 2a1. A surface proven only by its own tests is a surface nobody has agreed to
+### 2e. A surface proven only by its own tests is a surface nobody has agreed to
 
 Before a `pub fn` is published, ask whether anything **outside the package's own test suite**
 calls it. Not *"is it tested?"* — *"is it used?"*
@@ -426,7 +624,7 @@ is in exactly that position: every caller is a test. That is not a reason to del
 dogfood loop deliberately builds the library first — but it IS a reason to say which functions
 have never been used in anger, so a consumer knows which parts of the surface are a proposal.
 
-## 2a2. `use self::<m>` and a `m::` qualifier are mutually exclusive
+### 2f. `use self::<m>` and a `m::` qualifier are mutually exclusive
 
 loft#976's cure is `use self::<module>;` for a module your own package ships, and the
 compiler suggests it. ⚠ **It cannot be applied to a file that QUALIFIES that module.**
@@ -444,88 +642,6 @@ files before starting the sweep**, because nothing marks them until they fail.
 ⚠⚠ An alias re-enters the shared slot, so choose one no other package would take
 (`<pkg>_<module>`), not the module's own name — otherwise the sweep hands back the
 capture it was performed to prevent.
-
-## 2b. Never leave a capability in the fixture only
-
-`tests/fixtures/libs/` snapshots each chunk repo at a pinned tag. A fixture that is **behind**
-its tag is ordinary and recoverable — re-sync. A fixture carrying a **file the canonical repo
-has never had** is a fork: nothing recovers it, an installed package silently lacks whatever it
-provides, and the fixture's own tests stay green while saying nothing about that.
-
-That is not hypothetical. @PLN106's Android GL backend (`android_gl.rs`) lived in the graphics
-fixture and on no branch of `loft-libs-graphics`, so `--native-android` shipped while
-`loft install graphics` had no Android rendering, input or audio at all — and the goldens that
-proved it proved the fixture.
-
-`scripts/sync-fixtures.sh --check-unreleased` gates this (CI job `fixtures-unreleased`, unlike
-the advisory full-drift check). Either take the file upstream, or declare it in that script's
-`UNRELEASED_FILES` **with a tracking reference** — a row without one is refused, since knowing
-about it is what the previous arrangement already had.
-
-## 2c. The guide — `docs/01-getting-started.loft`
-
-A reference tells a reader what a function's type is. It does not tell them **where to
-start**, and those are different questions asked by different people: one has already decided
-to use the library, the other has not. The API reference is generated and complete; the guide
-is written and short, and only one of them can be either.
-
-**One file, in the package, in the topic format the language pages use** — `@NAME` / `@TITLE`,
-prose in `//` comments, code between. That format is not decoration: the guide is a **running
-loft program**, so an example that stops working stops compiling. A guide that cannot rot is
-the only kind worth a reader's trust.
-
-**Your CI runs it, in its own step.** Not `loft test` — that scans `tests/`, and a guide is a
-program, not a suite, which is why the guides written before this rule existed were never
-executed by anything. The `Guide` step in `library-ci-reusable.yml` runs every `docs/*.loft`
-on **both backends** and diffs the two outputs; a package with no guide says so and passes.
-Run it yourself the same way:
-
-```sh
-LOFT_DENY_WARNINGS=1 loft --interpret docs/01-getting-started.loft
-LOFT_DENY_WARNINGS=1 loft --native    docs/01-getting-started.loft
-```
-
-Warnings are denied there as they are in the suite, so a guide that teaches an idiom the
-compiler warns about does not ship.
-
-It is rendered in two places from that one file, with no further work: `loft doc <name>`
-locally, and `doc/lib-<name>-guide.html` on the published site, linked from the library's
-card. Writing the file is the whole of what it takes to appear there.
-
-### What goes in it, in order
-
-1. **What it is, in one paragraph — and what it is not.** Name the neighbouring library a
-   reader might have wanted instead. This is the paragraph that saves the wrong reader ten
-   minutes, and it is the one most guides skip.
-2. **The smallest complete program that does something**, with its real output. Not a
-   fragment: something a reader can paste and run.
-3. **The three or four calls that carry the library**, each with a worked example. Not the
-   whole surface — that is the reference's job, and duplicating it here creates a second home
-   that drifts.
-4. **The one thing that surprises people.** Every library has one. `graphics`'s is that
-   `rgb()` and a hand-written hex literal differ in the alpha byte; `markdown`'s is that three
-   of `render`'s four arguments are URL rewriting and `""` turns each off. It is invisible
-   from the signature, which is exactly why the reference cannot carry it.
-5. **Where to go next** — the reference, and the package's own tests, which are the
-   best-explained calls in it.
-
-### `main` must call every section
-
-Split the guide into a function per section if you like — it reads better than one long
-`main`. But **`main` has to call each of them**, because nothing else does. A zero-parameter
-function that no one calls still compiles, so a renamed API is still caught; its **asserts
-never run**, and those are the half that checks the example is *right* rather than merely
-*spelled correctly*.
-
-Measured, not hypothetical: `graphics`'s guide defines `drawing_shapes()` and `aa_example()`
-and `main` calls neither, so two of its three sections have never executed an assertion. The
-page reads as verified and one third of it is.
-
-### What it is not
-
-Not the reference: no attempt at completeness, and no per-function catalogue. Not the README
-either — the README is what GitHub shows and is read before installing; the guide is read
-after, by someone with the package in hand. Where they overlap, the README is the shorter one.
 
 ## 3. Pre-release checklist
 
@@ -630,10 +746,9 @@ Before you ship a version:
 
       `loft test` runs the **installed** loft; `registry_maintain.sh` runs the
       loft built in the **checkout it is invoked from**, and the two can
-      disagree while both report the same version — a local shadowing a stdlib
-      function name (`now = …`) passed every `loft test` and blocked the
-      publish of `imaging` 0.2.2 with *"Cannot redefine function 'now' as a
-      variable"*. The gate is the right authority: a published library must
+      disagree while both report the same version, so a source the installed
+      loft accepts can be refused by the loft the publish runs. The gate is the
+      right authority: a published library must
       parse under whatever loft its **consumers** hold, not just the one on the
       publishing machine. Run it before tagging, not after.
 - [ ] `loft.toml` has the new version under `[package] version`.
@@ -662,6 +777,15 @@ Before you ship a version:
       else carries groups nothing.  Same refresh rule as `description`: the
       manifest is authoritative and propagates on every publish, and a manifest
       that declares none leaves the index's curated list alone.
+- [ ] `loft compat levels` and `loft compat check --full` pass **before the tag and
+      the GitHub release exist**.  `levels` is the registry-admission gate for the
+      three declared levels; a release that fails it must be re-cut, not amended.
+- [ ] Every registry dependency the package declares is in the **live, signed**
+      `index.json` — not only in a local cache or a registry PR.  A dependency that
+      has not landed yet turns every consumer's install red; hold the push until it
+      has.
+- [ ] `native/Cargo.toml` names no machine-local `path =` dependency.  It builds on
+      the publishing machine and nowhere else.
 - [ ] README, doc comments on every `pub fn` / `pub struct`.
 - [ ] CHANGELOG note for the version (free-form).
 - [ ] Local re-package produces a byte-identical sha256 across
@@ -729,10 +853,12 @@ in gzip + tar headers).  The sha256 is stable across
 machines; the registry's gate-3 re-runs `loft package` from
 the tagged source to verify byte-for-byte equality.
 
-**Prebuilt cdylibs build automatically (@PLN21).**  A *native*
-library's own CI calls the reusable producer workflow so a
-consumer can `use` it with **no Rust toolchain** — and so a
-broken host build is caught before merge:
+**Prebuilt cdylibs (@PLN21) — the producer is shipped, and no library calls it
+yet.**  The distribution half (workflow artefacts into `index.json`
+`binaries[<triple>]`) is open ([PACKAGES.md](PACKAGES.md) § PKG.PREBUILT), so
+today a consumer builds a native library from source on first use.  A *native*
+library adopts it by calling the reusable producer workflow, so a consumer can
+`use` it with **no Rust toolchain** and a broken host build is caught before merge:
 
 ```yaml
 # .github/workflows/prebuild.yml
@@ -740,7 +866,7 @@ on:
   pull_request:
     paths: ['native/**', 'loft.toml']   # PR → validate it builds on every host
   push:
-    tags: ['v*']                        # tag → build + attach to the release
+    tags: ['*-v*']                      # a `<name>-v<version>` tag → build + attach
 jobs:
   prebuild:
     uses: loft-lang/loft/.github/workflows/prebuild-native.yml@main
@@ -791,8 +917,16 @@ Flags:
 
 ### 4d. Open the registry PR
 
-Manually clone `loft-lang/registry`, paste the emitted block
-into `index.json`, and open a PR:
+This is the route for an author who does not hold the signing key; our own
+libraries publish through `registry_maintain.sh` (§ 4).  The recommended form
+is a `submissions/<name>-<version>.json` staging file that never touches
+`index.json` ([REGISTRY_SUBMIT.md § 4](REGISTRY_SUBMIT.md)); the direct edit
+below is what the registry repo's own `SUBMITTING.md` still documents.  Either
+way you sign nothing: a maintainer re-signs the index when folding it in, and
+an `index.json` merged unsigned breaks every `loft install`.
+
+To edit `index.json` directly, clone `loft-lang/registry`, paste the emitted
+block into `index.json`, and open a PR:
 
 ```
 $ git clone git@github.com:loft-lang/registry.git
@@ -834,6 +968,11 @@ also add the package block above the versions:
 customize.
 
 ## 5. Maintain
+
+**A library is healthy when it has no open branches, its `main` is green against the current
+loft, and it builds with zero warnings.**  That is the bar `LIBRARY_BRANCHES.md` (generated)
+and `scripts/revalidate_libs_local.sh` report against; a branch that never shipped is work
+somebody still owes.
 
 ### 5a. Patch releases
 
@@ -921,8 +1060,9 @@ test-suite exercises through a pinned source mirror under
 [`loft-lang/loft`](https://github.com/loft-lang/loft)'s
 `tests/fixtures/libs/<pkg>/` — the dogfood libraries (`arguments`,
 `graphics`, `gridmesh`, `shapes`, `imaging`, `game_protocol`, `web`,
-`hex_world`, `time`).  A pure registry-only library has no fixture; skip
-to step 5c's registry PR and you're done.
+`hex_world`, `time`, `assets`) — the list `scripts/sync-fixtures.sh`'s
+`PINNED_REFS` owns.  A pure registry-only library has no fixture; skip to
+§ 4d's registry PR and you're done.
 
 The fixture is a **deliberate snapshot, not auto-latest** — so a
 library change that affects the compiler tests is a reviewable commit in
@@ -968,16 +1108,18 @@ repo, **out of the loft tree**, so no stale artifacts accrue in loft:
    [ISSUE_TRACKING.md § Convention](ISSUE_TRACKING.md) — so `Fixes #N` is
    same-repo and the `fixed-pending-merge` lifecycle works.  (A bug mis-filed in
    `loft-lang/loft` whose fix is library code gets re-homed there.)
-2. **Checkout — out of tree.** Clone the chunk repo to a dedicated dev dir
-   *outside* the loft working tree (e.g. `~/loft-dev/<chunk>`), never into
-   `loft/lib/<pkg>/`.  The pre-extraction `lib/<pkg>/` layout is being removed;
+2. **Checkout — out of tree, on the testbed** ([§ The testbed](#the-testbed--a-library-tested-with-minimal-dependencies)):
+   a worktree of the chunk repo's `origin/main` in a scratch directory *outside* the
+   loft working tree, never the sibling checkout itself (another agent may be working
+   there) and never `loft/lib/<pkg>/`.  The pre-extraction `lib/<pkg>/` layout is being removed;
    any leftover skeleton there (build cruft, no source, no `.git`) is **stale and
    should be deleted** — it only pollutes loft's `git status` and creates "is the
    source here?" ambiguity (the trap that hid `graphics/native/src/text.rs`
    during the @P340 / `@GH252` follow-up — the real source was in the fixture +
    chunk repo, never in `lib/graphics/`).
-3. **Fix + test.** Edit the package source in the checkout; run the library's own
-   suite there, or test it against loft with `--lib ~/loft-dev/<chunk>`.  The
+3. **Fix + test.** Edit the package source in the worktree and run the testbed's
+   steps there: this tree's loft, the declared dependencies only, both backends with
+   warnings denied.  The
    checkout shadows nothing in loft's tree and builds in its **own** `target/`.
 4. **Tag + push.** Commit with `Fixes #N` (chunk-repo issue), tag
    `<pkg>-vX.Y.Z`, push.  The chunk repo's own apply/strip workflows label then
@@ -986,7 +1128,7 @@ repo, **out of the loft tree**, so no stale artifacts accrue in loft:
    `sync-fixtures.sh`, and commit the `tests/fixtures/libs/<pkg>/` diff in loft as
    **one reviewable commit** — separate from the issue close.  loft now tracks the
    fixed snapshot.
-6. **Teardown.** `rm -rf ~/loft-dev/<chunk>`, then `loft cache prune` — it drops the
+6. **Teardown.** `git worktree remove` the scratch worktree, then `loft cache prune` — it drops the
    generations this loft can no longer select and leaves the live one, so the next
    build does not start cold (`loft cache status` first if you want the figure).
    The loft tree is pristine; no stale artifacts remain.
@@ -1048,7 +1190,8 @@ Common causes:
 resolution chain via `loft list-installed` + the closest
 `loft.lock`.  Sidecar `<script>.loft.lock` takes precedence
 over walk-up `loft.lock`.  `LOFT_OFFLINE=1` blocks
-auto-install.
+auto-install.  That chain picks the VERSION; where the compiler looks for a
+`use` at all, and which location wins, is [PACKAGES.md § Resolution order](PACKAGES.md#resolution-order).
 
 **Native crate fails to build from `~/.loft/registry/.../native/`**
 — the cargo build redirects to `~/.loft/build-cache/<pkg>-<ver>/`

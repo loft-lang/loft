@@ -715,6 +715,9 @@ pub struct Parser {
     /// by `do_tret_bind`'s gate on the THIRD pass so the promotion is forward-ref-safe:
     /// the attr is decided before the pass, so every caller re-lowers with the buffer.
     force_tret: std::collections::HashSet<u32>,
+    /// `@FR-R-WorkBuffer` — every definition given a work-buffer parameter, kept across
+    /// `after_pass2` runs so a caller built later (a rebuilt specialisation) is patched too.
+    pub(crate) work_buffer_promoted: std::collections::HashSet<u32>,
     /// @PLN167 C3 — some call handed a text field or element to a `&text` parameter, so
     /// `after_pass2` owes the store instances (`store_text.rs`).
     store_text_args: bool,
@@ -1105,6 +1108,11 @@ pub struct Parser {
     // outer variable numbers captured by the most recently parsed lambda.
     // Consumed by try_fn_ref_call to mark them as read at call-injection time.
     pub(crate) last_closure_captured_vars: Vec<u16>,
+    /// loft#1676 — per (function, local): how many closure builds captured it, and how many of
+    /// those were yielded and took a copy (`yield_owned_closure`).  Equal counts mean the local
+    /// is the generator's own again.
+    pub(crate) closure_capture_builds: std::collections::HashMap<(u32, u16), u32>,
+    pub(crate) yield_copied_captures: std::collections::HashMap<(u32, u16), u32>,
     /// #314: capturing lambdas synthesized during each function body in
     /// pass 1, keyed by the enclosing context's def_nr.  Consumed by
     /// `reject_shared_mutable_scalar_captures` at the parent's body end
@@ -1441,6 +1449,7 @@ pub(super) mod objects;
 pub(super) mod operators;
 pub(super) mod store_text;
 pub(super) mod vectors;
+pub(super) mod work_buffer;
 
 impl Default for Parser {
     fn default() -> Self {
@@ -1592,6 +1601,7 @@ impl Parser {
             limit_refused: false,
             ambiguity_reported: std::collections::HashSet::new(),
             force_tret: std::collections::HashSet::new(),
+            work_buffer_promoted: std::collections::HashSet::new(),
             store_text_args: false,
             par_worker_defs: std::collections::HashSet::new(),
             par_deferred: Vec::new(),
@@ -1685,6 +1695,8 @@ impl Parser {
             last_closure_work_var: u16::MAX,
             last_closure_alloc: None,
             last_closure_captured_vars: vec![],
+            closure_capture_builds: std::collections::HashMap::new(),
+            yield_copied_captures: std::collections::HashMap::new(),
             init_field_tracking: false,
             init_field_deps: Vec::new(),
             init_reads_record: false,
@@ -2782,6 +2794,10 @@ impl Parser {
         if !self.force_tret.is_empty() {
             self.targeted_tret_promotion();
         }
+        // `@FR-R-WorkBuffer` — after the text promotion, whose `a == v` renumbering settles
+        // the argument order this reads, and before the store-text instances below clone
+        // their function's final signature.
+        self.promote_work_buffers();
         // After the promotion: a store instance clones its function's FINAL signature, and a
         // call it retargets already carries any buffer the promotion added.
         self.mint_store_text_instances();

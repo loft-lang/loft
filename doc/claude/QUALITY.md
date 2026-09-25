@@ -2812,7 +2812,7 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **308** |
+| **307** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
@@ -9303,6 +9303,122 @@ The **5 remaining sites spell the BARE five** — `scopes.rs`'s return-type chec
 behaviour change per site and needs its own probe.  They stay on the checklist rather than being
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
+
+### "Is this rule shipped?" — a banner that covered fourteen rules and was true of eleven (2026-09-25)
+
+`matching.md`'s PEG section opens **"@PLN35 · SHIPPED"** and its register reads `OPEN: 0`.
+Three of the fourteen rules under that banner describe machinery that does not exist:
+`(P-Anchor)` and `(P-Revert)` name `OpMatchAnchor` / `OpMatchRevert`, which appear nowhere in
+`src/`, and `(P-IterBound)`'s `max_lookahead` appears only inside one doc comment.
+
+**The observable cost is a memory runaway.**  `(P-IterBound)` promises *"a DEFINED runtime
+error (never a hang) — preserving termination"*.  Measured on a repetition over an endless
+generator: **696 MB in 13 s** on `--interpret`, hard-killed by `LOFT_TIMEOUT`, and **2.13 GB in
+18 s** on `--native`, which stopped only against an externally imposed `ulimit -v`.  Nothing in
+the language ends either run — `LOFT_MEMORY_LIMIT` is a test-run ceiling and ordinary runs are
+never capped, and a time bound does not bound memory.  This is the loft#796 class, where the
+global OOM killer took two unrelated agent sessions with it.  **D-match-6 / loft#1678**;
+`matching.md` goes `OPEN: 0` → 1.
+
+**The control is what says the defect is the ceiling and not the design.**  A FINITE source of
+200 000 elements matches correctly on both backends in 0.45 s and 36 MB.  The shipped design
+MATERIALISES an iterator subject into a vector and runs the vector machinery over it, and
+`tests/scripts/35p-iterator-match.loft` says so in its own header — so the three rules describe
+a memoising cursor that was never built, while the thing that WAS built is fine at any finite
+size.
+
+⚠ **`VERIFICATION.md` marked all three `☐`, which its own legend defines as *shipped +
+both-backends*.**  That is the second time in two days that the chapter and the ledger
+disagreed about a rule — and the opposite way round from the first: at `(G-YieldDepth)` the
+ledger was right and the conformance line was wrong, here the chapter's banner and the ledger
+are wrong together.  Neither direction is catchable by `rule_tags.py`, which checks that
+citations RESOLVE and that counts AGREE, never that a sentence was ever run.
+
+⚠ **A section banner is read as covering the rules underneath it**, so it has to name its
+exceptions; "SHIPPED" over a list is a claim about every member.  Corrected in both homes.
+
+**And the chapter's own coverage number was wrong in the other direction.**  Twelve of the
+fourteen `@FR-P-*` rules read as having no guard, which is what made this chapter the next one
+to read — but `tests/scripts/35*.loft` is twenty-three files that DO exercise them.  The banner
+named them verified "via `tests/scripts/35*.loft`" and not one of those files cited a rule
+back, so the measurement said zero.  Twelve files now carry the citation for the rule each is
+the guard for: guard coverage 180 → **187 of 388**.  A collective pointer from prose to a glob
+is not a citation, and only the citation is measurable.
+
+### "Is a fn-ref callee name a READ?" — one question, two sites, and neither said yes (2026-09-25)
+
+`(B-Scope)` has two halves and a fn-ref local got neither.  *"A bind after the `}` starts a new
+binding in the enclosing block"* — so `for f in fs { … } f = two; f(1)` must call `two`.  It
+called the ENDED binding.  *"A read of it after the `}` is refused"* — so `for f in fs { … }
+f(1)` must be refused like `for i in 0..3 { } i` is.  It compiled.
+
+**The filed scope was wrong, and the widening is the useful part.**  loft#1679 was filed (by me)
+as *"answers null"*, with the loop as the axis and the REBIND's slot write as the mechanism.  The
+write is right.  The READ is wrong, the loop is not the axis, and `null` is only the face you see
+when the ended binding was a loop variable, because loop exit leaves the exhausted sentinel in
+the old slot.  Bind the name in an `if` arm instead and the ended binding is still LIVE: the call
+runs the WRONG FUNCTION and answers 101 where the program spells 201.  That is the cell to lead
+with, because it states the defect without reference to a sentinel.
+
+**One question, two decoders, each one member short of its own list.**  The scopes pass gives the
+second binding its own slot (`scan_set`'s `copy_variable`) and remaps every read through
+`var_mapping` — `Var`, `TupleGet`, `TuplePut`, `FnRef`, `FnRefDnr`.  @PLAN53 cluster 2 extended
+that list once, with a comment reading *"exactly like `Var`/`TupleGet`/`TuplePut` above"*, and
+stopped short of `CallRef`, whose callee index the walk copied through verbatim.  The parser's
+two indirect-call sites (one per ARITY) resolve the name with `self.vars.var(name)` rather than
+through the bare-name read that asks `check_block_scope` — so the refusal had a hole at exactly
+the one kind of local a program can only use by CALLING.  Neither site is a second
+implementation of the rule; each is a caller that never asked.  D-bind-62.
+
+⚠ **`--native` ran the broken half, and for a reason that is not a fix.**  It names its locals
+`var_<name>`, so the two bindings are ONE Rust local there and the rebind shadows it.  Right by
+accident — which is why this reads as an interpreter-only defect and why a differential check
+between the backends was the only instrument that could see it at all.
+
+⚠ **The enumeration is the hazard, so the catch-all now names the set.**  `scan`'s pass-through
+arm carries a debug assertion that no var-carrying variant reaches it: dropping an arm is a
+failed assertion rather than a wrong slot read on one backend.  It cannot catch a NEW variant
+that carries a variable — nothing cheap can — so the set is written down where the next reader
+of that walk will meet it.
+
+**What the corpus said about the refusal.**  Adding a refusal is the half that can break working
+programs, and 991 corpus and suite tests plus the published-library gate pass unchanged: no
+program in the tree calls a fn-ref after its binding block has ended.  The refused spelling has
+its own guard rather than a cell in `1600b`/`1600c` — those two are the homes of the READ
+spelling and their falsification receipts count their own expectations, so a cell added there
+would have re-derived two receipts to record one new spelling.
+
+### "Where does an inclusive range stop?" — the loop answered it, and the rewrites' tail did not (2026-09-25)
+
+`(I-RangeIncl)` was one of the 96 rules with neither a code citation nor a guard, though loft#1525
+had fixed the loop it describes: `for i in (m-2)..=m` with `m` the `integer` maximum stops, because
+the stop is decided on the value just yielded and `m + 1` is never formed.  The #1525 guard is
+thorough about the LOOP and held three axes fixed doing it — the loop form (a statement), the
+counter type (`integer`), and whether a native rewrite replaces the loop at all.  `matrix_axes`
+reads the same thing off it: a literal argument spelling, a single evaluation, no loop body form.
+
+**The rule has more sites than the loop.**  Six native rewrites handle an inclusive range on their
+own (the slice fill, the push fill, the push window, the bounded nest, the guarded chain, the
+range proof), and each is a place that could form `hi + 1`.  Nineteen cells over the forms, on
+both backends, were all right — and the generation traces then showed that almost none of them
+had reached a rewrite: the fill declined every `w[i] = c` local, the nest declines inclusive
+ranges on purpose.  A passing cell that a rewrite declined is a cell about the loop again.
+
+**The cell that reached the fill needed a base no program writes.**  The fill admits a range only
+when `base + lo .. base + hi` lands inside the vector, so it reaches `hi = MAX` only through a base
+near `-MAX`: `d[base + x]` with `base = 2 - m`.  There the fill wrote the right elements and then
+panicked in its TAIL, the code that leaves the counters as the loop would have: `next = hi + 1`,
+in plain Rust, under the `--native` build's overflow checks.  Both callers of that tail (fill and
+push fill) and both of its arms (computed and literal start): four panics.  The interpreter runs
+the loop and was right; the shipped `--native-release` build wrapped the add into a counter nothing
+reads and was right by accident.  D-iter-7.
+
+**One question, three spellings.**  "What does the emitter write for the counter's step?" was
+answered at a fill's start and a trip count's start as `op_add_int` (the checked add that yields
+the null sentinel, exactly as the loop steps) and in the tail as a bare `+`.  The tail's own
+comment says it exists "so the two cannot leave a counter differently" — and the bare add was the
+one way it could.  `counter_step` is now the home and all three sites read it; the exclusive
+arm's `hi - 1` stays, because that arm runs only after the fill's admission proved `lo <= hi - 1`.
 
 ### "Where does an advance resume?" — a construct declared out of scope, and the four defects under its `OPEN: 0` (2026-09-25)
 

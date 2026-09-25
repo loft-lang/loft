@@ -394,7 +394,7 @@ impl Program {
         let n_retbuf = def
             .attributes()
             .iter()
-            .filter(|a| a.hidden && is_compound(&a.typedef))
+            .filter(|a| a.hidden && !a.work_buffer && is_compound(&a.typedef))
             .count();
         if n_retbuf > 1 {
             return Err(LoftError::Unsupported {
@@ -410,8 +410,17 @@ impl Program {
         for (i, (val, ty)) in args.iter().zip(params.iter()).enumerate() {
             wargs.push(marshal_arg(func, i, val, ty)?);
         }
-        if n_retbuf == 1 {
-            wargs.push(WorkerArg::Ref(retbuf));
+        // The hidden compound parameters, in declaration order: the return buffer takes
+        // the caller's offer; a work buffer (`@FR-R-WorkBuffer`) takes the null sentinel,
+        // on which the callee mints a store of its own and releases it at exit.
+        for a in def.attributes() {
+            if a.hidden && is_compound(&a.typedef) {
+                wargs.push(WorkerArg::Ref(if a.work_buffer {
+                    crate::keys::DbRef::NULL
+                } else {
+                    retbuf
+                }));
+            }
         }
 
         let out = self

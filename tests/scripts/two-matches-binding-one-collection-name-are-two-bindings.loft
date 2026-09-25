@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A pattern binding is a NEW binding (`formal/binding.md` `(B-Scope)`): every `match` arm binds
+// its names fresh.  Two `match`es in one function that bind the same COLLECTION name — a
+// `..rest` slice, a `(xs: V)*` run, a `( V { n } )*` projection — did not compile on `--native`
+// (rustc E0425, `var_rest` out of scope): the second bind was lowered as a REASSIGNMENT of the
+// first (a clear and a refill, no declaring `Set`), because the name's type still carried the
+// first binding's store dep, and native declares that first binding inside its own arm.  The
+// interpreter answered correctly, which is how it went unseen.  A scalar binding was never
+// affected: it has no store to reuse.
+//
+// @falsified-at: 1e323c73b — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/two-matches-binding-one-collection-name-are-two-bindings.patch — the same channels.
+//   CHANNEL: the native exit code — on the control the file does not compile (rustc E0425,
+//     `var_rest` / `var_xs` / `var_n` out of scope), so no cell runs.
+//   ARMED: no instrument — an ordinary `--native` run.
+//   WITNESS: on 1e323c73b the second `[..rest]` lowers to `OpClearVector(rest)` with no `Set`.
+//   HOLDS: the interpreter answers every cell correctly on both trees; c1, the scalar binding,
+//     compiles on both.
+
+enum Tok { V { n: integer }, W { m: integer } }
+
+fn toks(k: integer) -> iterator<Tok> { for i in 0..k { yield V { n: i + 1 }; } }
+
+fn test_r1_two_rest_bindings() {
+  v: vector<Tok> = [V { n: 1 }, V { n: 2 }];
+  c = match v { [..rest] => len(rest), _ => -1 };
+  d = match v { [..rest] => len(rest) * 10, _ => -1 };
+  assert(c == 2 && d == 20, "got {c} {d}");
+}
+
+fn test_r2_two_repetition_bindings() {
+  v: vector<Tok> = [V { n: 1 }, V { n: 2 }];
+  a = match v { [(xs: V)*] => len(xs), _ => -1 };
+  b = match v { [(xs: V)*] => len(xs) * 10, _ => -1 };
+  assert(a == 2 && b == 20, "got {a} {b}");
+}
+
+fn test_r3_two_field_projections() {
+  v: vector<Tok> = [V { n: 3 }, V { n: 4 }];
+  a = match v { [( V { n } )*] => n[0] + n[1], _ => -1 };
+  b = match v { [( V { n } )*] => n[0] * n[1], _ => -1 };
+  assert(a == 7 && b == 12, "got {a} {b}");
+}
+
+fn test_r4_over_iterators() {
+  a = match toks(3) { [(xs: V)*] => len(xs), _ => -1 };
+  b = match toks(5) { [(xs: V)*] => len(xs), _ => -1 };
+  assert(a == 3 && b == 5, "got {a} {b}");
+}
+
+fn test_r5_repeated_in_a_loop() {
+  v: vector<Tok> = [V { n: 1 }, V { n: 2 }, V { n: 3 }];
+  s = 0;
+  for i in 0..200 {
+    s += match v { [..rest] => len(rest), _ => -1 };
+    s += match v { [_, ..rest] => len(rest), _ => -1 };
+  }
+  assert(s == 1000, "each pass binds rest twice: got {s}");
+}
+
+fn test_c1_a_scalar_binding_control() {
+  w: vector<integer> = [7, 8, 9];
+  a = match w { [x, ..] => x, _ => -1 };
+  b = match w { [x, y, ..] => x + y, _ => -1 };
+  assert(a == 7 && b == 15, "got {a} {b}");
+}

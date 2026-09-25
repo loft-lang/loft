@@ -480,10 +480,10 @@ Run through this list before pushing.  Skip items that are clearly unaffected.
 | Document | Update when… |
 |---|---|
 | `doc/claude/CHANGELOG_TECHNICAL.md` | Always — add a detailed entry under `## [Unreleased]` for every change (internal phase/opcode/slot detail welcome) |
-| `CHANGELOG.md` | When a change is user-visible — add a friendly, jargon-free entry under `## Unreleased`.  Entry-level programmers are the audience |
+| `CHANGELOG.md` | When a change is user-visible — add a friendly, jargon-free entry under the current cycle's `## YYYY-MM` section.  Entry-level programmers are the audience |
 | `doc/claude/ROADMAP.md` | Sprint items were completed or reprioritised |
 | `doc/claude/PLANNING.md` | Items were completed (remove) or new items discovered (add) |
-| `doc/claude/PROBLEMS.md` | Bugs were fixed (mark resolved) or **any new bug found during the sprint** (add with reproducer) |
+| A GitHub Issue ([ISSUE_TRACKING.md](ISSUE_TRACKING.md)) | **Any new bug found during the sprint** that is not fixed in it (filed with a both-backend reproducer); a fixed one gets `Fixes #N` in its commit.  `PROBLEMS.md` is the closed archive and gains no rows |
 | `doc/claude/CAVEATS.md` | Edge cases were fixed or **any new workaround discovered** (add with test reference) |
 | `doc/claude/TESTING.md` § Coverage Gaps | Test coverage improved or new gaps identified |
 | `README.md` | New user-facing features, CLI commands, or examples added |
@@ -753,7 +753,7 @@ The **last commit** on a branch updates documentation:
 ```
 docs: {ID} — update CHANGELOG, PLANNING
 
-- CHANGELOG: add feature/fix entry under Unreleased
+- CHANGELOG: add feature/fix entry under the current `## YYYY-MM` section
 - PLANNING: remove completed item section and quick-reference row
 ```
 
@@ -772,7 +772,7 @@ out of a plan directory is one).  It then rebuilds the index and runs the drift 
 exactly one tracked path ends in every segment the link names, so that the link names the
 thing and only its position is wrong.  Anything else is printed as a `flag` for a person: a
 target that has left the tree (a library now in a `loft-libs-*` repo wants that repo's URL)
-or a name several files share.  `tests/index_hygiene.rs::every_markdown_link_resolves` fails
+or a name several files share.  `tests/doc_hygiene.rs::every_markdown_link_resolves` fails
 on either kind, so a broken link cannot land.  Not links: fenced blocks, inline code spans,
 `<placeholder>` targets, a line marked `<!--noindex-->`, and `tests/fixtures/`.
 
@@ -874,7 +874,7 @@ When (3) doesn't apply, the gap goes to its CANONICAL home.
 **Never invent a parallel catalog** — that creates the
 "two places to keep in sync" problem and dilutes the action
 surface (`./scripts/idx broken`, the broken-tag validator,
-the open-issues fast index in PROBLEMS.md, etc.).
+the GitHub Issues labels, etc.).
 
 | Item shape | Canonical home | Where to scan for them |
 |---|---|---|
@@ -890,15 +890,14 @@ which choice (1 / 2 / 3).  Reference the canonical home so
 the workaround stays self-explaining:
 
 ```loft
-// @P276 — `s[i] ?? '<char>'` chain-compare trips rustc E0308 in
-// native; remove `??` and rely on the surrounding `i < n` guard.
+// `s[i] ?? '<char>'` fails to compile on native (loft#<N>); the
+// surrounding `i < n` guard already keeps `i` in range, so read it bare.
 c = line[i];
 ```
 
 ```loft
-// stdlib gap (STDLIB.md § Open work, "vector.sort"): no
-// vector.sort() yet.  Use sorted<TagSlot[name]> as a sort
-// proxy for now.
+// vector has no sort (STDLIB.md § Open work, "vector.sort");
+// sorted<TagSlot[name]> keeps the entries in name order instead.
 struct TagSlot { name: text not null }
 ```
 
@@ -1116,7 +1115,7 @@ behaviour and update them as needed.  Common files to check:
 | File | Update when |
 |---|---|
 | `doc/claude/CHANGELOG_TECHNICAL.md` | Always — add a detailed entry under Unreleased |
-| `CHANGELOG.md` | When the change is user-visible — add a plain-language entry under Unreleased |
+| `CHANGELOG.md` | When the change is user-visible — add a plain-language entry under the current `## YYYY-MM` section |
 | `PLANNING.md` | Always — remove the item section and Quick Reference row |
 | `ROADMAP.md` | Always — remove or update the row(s) for the completed item(s) |
 | `RELEASE.md` | Gate criteria or release checklist changed |
@@ -1131,7 +1130,7 @@ Stage all files that required a change:
 ```
 docs: P1 lambda expressions — update CHANGELOG, PLANNING, LOFT, STDLIB
 
-- CHANGELOG: add P1 feature entry under Unreleased
+- CHANGELOG: add P1 feature entry under the current `## YYYY-MM` section
 - PLANNING: remove P1 section (all three phases complete)
 - LOFT.md: document lambda syntax in the Declarations section
 - STDLIB.md: document map/filter/reduce accepting lambda arguments

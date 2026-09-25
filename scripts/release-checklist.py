@@ -618,6 +618,32 @@ def check_skills_review():
     )
 
 
+def check_docs_lint():
+    """The documentation lint did not grow since its baseline (DOC_CONTRACT.md, @PLN172).
+
+    `make docs-lint` counts every checkable documentation finding per (file, rule) against
+    `doc/claude/releases/docs-lint.baseline`.  The PR gate refuses growth change by change;
+    this row catches what reached the tree some other way (a direct push, a gate that was
+    skipped), and is where a burn-down is re-pinned — a baseline left above the count
+    hides the next regrowth under the headroom.
+    """
+    code, out = sh(sys.executable, os.path.join(ROOT, "scripts", "doc_lint.py"), "--all",
+                   "--baseline", "doc/claude/releases/docs-lint.baseline", timeout=120)
+    if code != 0:
+        return UNKNOWN, "scripts/doc_lint.py failed"
+    m = re.search(r"since the baseline: (\d+) new, (\d+) fixed \((\d+) → (\d+)\)", out)
+    if not m:
+        return UNKNOWN, "no baseline to compare with — `make docs-lint-baseline`"
+    new, fixed, old, now = (int(g) for g in m.groups())
+    if new:
+        return FAIL, (f"{new} findings more than the baseline ({old} → {now}) — `make docs-lint` "
+                      f"names the files; fix them, or re-pin only for a finding that is meant")
+    if fixed:
+        return FAIL, (f"{fixed} fewer findings than the baseline pins ({old} → {now}) — re-pin with "
+                      f"`make docs-lint-baseline` so the headroom cannot hide regrowth")
+    return OK, f"{now} findings, as pinned"
+
+
 def check_ignored_tests():
     """Every shipped `#[ignore]` still carries a rationale.
 
@@ -1381,13 +1407,30 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
         Item(
             "M-docs-review",
             "Pre-release documentation review (RELEASE.md steps 1-4 + 8)",
-            "load the doc-quality skill first, then walk the steps; step 8 is "
-            "`make clippy-review`",
+            "a reviewer session (DOC_CONTRACT.md § Reviewer pass) loads the doc-quality "
+            "skill, then walks the steps; step 8 is `make clippy-review`",
             "stale problem docs removed, code links resolve, every doc reachable, "
             "clippy suppressions measured (dead ones named, live ones explained).  "
             "Steps 5-7 are deferred (2026-05-15)",
             cadence="mid pre",
             report=True,
+        ),
+        Item(
+            "A-docs-lint",
+            "The documentation lint did not grow since its baseline, and the baseline is current",
+            "make docs-lint   # re-pin after a burn-down: make docs-lint-baseline",
+            check=check_docs_lint,
+            cadence="mid pre",
+        ),
+        Item(
+            "M-doc-review",
+            "One maintainer doc brought fully under DOC_CONTRACT.md this cycle",
+            "a fresh session loads the doc-quality skill and takes the top doc from "
+            "`make docs-lint`'s worklist (DOC_CONTRACT.md § Reviewer pass)",
+            "the doc is split, its history moved out and its index entry fixed, in one PR "
+            "that changes no code; tick with the PR link.  One doc per cycle — the owner "
+            "may pick another than the worklist's first",
+            cadence="mid",
         ),
         Item(
             "M-monthly-docs",

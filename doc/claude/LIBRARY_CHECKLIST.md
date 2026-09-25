@@ -27,16 +27,21 @@ that fail silently; humans judge the things that need taste (legibility, fun).
 ## How "verified" is administered
 
 **The lints never block a release.** A library releases and installs regardless of
-api_lint / doc_review findings — only correctness (the test suite) can fail its CI.
+api_lint / doc_review findings — its CI fails only on correctness: the test suite, a
+`warning` (the suite runs with `LOFT_DENY_WARNINGS=1`; an `advice` never gates), and a
+compatibility break it did not declare.
 The **`verified` mark is the only place clean lints are required**: it gates the
 *badge*, not the library's existence. This keeps a doc-quality finding from ever
 holding a bug fix (same rule as `lint_comments.sh` — advisory, never fails CI).
 
-1. **`[auto]` half** — the library's `library-ci.yml` runs the tests as a hard gate
-   (both backends, gold, deterministic package, `loft.toml` validity, naming,
-   lifecycle stubs), and runs api_lint / doc_review **advisory** (`continue-on-error`)
-   so findings are visible but non-blocking. Clean lints are required to *grant*
-   `verified`, checked at the registry PR — not to merge or release.
+1. **`[auto]` half** — the library's `library-ci.yml` (which calls loft's
+   `library-ci-reusable.yml`) gates the suite on interpret and native, the guide, a WASM
+   cross-build, `loft compat check`, the Rust integration tests and the transitive
+   dependencies' tests; worked-example tags are checked there too, advisory.  The
+   deterministic package and the manifest are checked by the registry's own gate at the
+   registry PR.  `scripts/api_lint.py` and `scripts/doc_review.py` run in no CI: their
+   clean result is required to *grant* `verified`, checked at the registry PR — never
+   to merge or release.
 2. **`[review]` half** — judged once during the **registry PR** (the human gate
    that already exists). The reviewer records the result in the package's
    `index.json` entry, next to `yanked`:
@@ -109,10 +114,10 @@ holding a bug fix (same rule as `lint_comments.sh` — advisory, never fails CI)
 - [ ] No store-lifetime surprises: heap values freed at scope end, no hidden retention. `[auto]` via `LOFT_STORE_GUARD` for store-managing libs; `[review]` that the API doesn't leak ownership the caller can't reason about.
 
 ### Goal G — Performance — `[review]` (see [GOALS.md § Goal G](GOALS.md))
-- [ ] **Performance lane** — the library carries a `bench/` with a Rust reference twin per judged routine that produces the same hash, and a recorded native-vs-reference ratio table (`python3 bench/stats.py --tsv`). Every judged row is under the 4× bar, and any row over it is named with its reason. `drawing` is the first entry.
+- [ ] **Performance lane** — the library carries a `bench/` with a Rust reference twin per judged routine that produces the same hash, and a recorded native-vs-reference ratio table (`python3 bench/stats.py --tsv`). Every judged row is within the `(Perf-Weight)` bar — 3× per routine, 2× at the median ([formal/performance.md](formal/performance.md)) — and any row over it is named with its reason. `drawing` is the first entry.
 
 ### Goal C — Capability via dogfood — `[review]`
-- [ ] At least one **real consumer or example** exercises the public API (a genuine use, not a toy).
+- [ ] Every public function has a **production caller** — a real consumer, not the library's own tests or an example — or the docs label it *"built for consumers, none yet"* ([LIBRARY_AUTHORING.md § 2e](LIBRARY_AUTHORING.md)).
 - [ ] Tests cover the public surface — each `pub fn` / `pub struct` has a test or example path.
       *(`loft test` lists the functions a suite never entered — see
       [TESTING.md § What a run did NOT check](TESTING.md#what-a-run-did-not-check--scope-admission-coverage).

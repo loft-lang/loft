@@ -28,7 +28,7 @@
 #
 # Baseline ratchet — adopt on a legacy tree with no big-bang cleanup:
 #   T0   scripts/lint_comments.sh --baseline   # accept today's flagged lines
-#                                               # into .lint_comments_baseline
+#                                               # into scripts/.lint_comments_baseline
 #   CI   scripts/lint_comments.sh --check       # advisory: lists only NEW
 #                                               # flagged lines (not in baseline)
 #   fix  scripts/lint_comments.sh --prune        # after a cleanup pass, drop the

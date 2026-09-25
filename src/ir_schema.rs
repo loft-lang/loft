@@ -845,7 +845,7 @@ fn write_attribute(out: &mut String, a: &Attribute) {
     write_type(out, &a.typedef);
     let _ = write!(
         out,
-        ",\"mutable\":{},\"constant\":{},\"init\":{},\"nullable\":{},\"primary\":{},\"hidden\":{},\"const_field\":{},\"value_const\":{}",
+        ",\"mutable\":{},\"constant\":{},\"init\":{},\"nullable\":{},\"primary\":{},\"hidden\":{},\"const_field\":{},\"value_const\":{},\"work_buffer\":{}",
         a.mutable,
         a.constant,
         a.init,
@@ -853,7 +853,8 @@ fn write_attribute(out: &mut String, a: &Attribute) {
         a.primary,
         a.hidden,
         a.const_field,
-        a.value_const
+        a.value_const,
+        a.work_buffer
     );
     out.push_str(",\"value\":");
     write_value(out, &a.value);
@@ -904,6 +905,11 @@ fn attribute_from_parsed(p: &Parsed) -> Result<Attribute, TypeDecodeError> {
         nullable: as_bool(field(p, "nullable")?)?,
         primary: as_bool(field(p, "primary")?)?,
         hidden: as_bool(field(p, "hidden")?)?,
+        // `@FR-R-WorkBuffer` — tolerant of older JSON without the field.
+        work_buffer: match field(p, "work_buffer") {
+            Ok(f) => as_bool(f)?,
+            Err(_) => false,
+        },
         value: value_from_parsed(field(p, "value")?)?,
         check: value_from_parsed(field(p, "check")?)?,
         check_message: value_from_parsed(field(p, "check_message")?)?,
@@ -1444,6 +1450,19 @@ pub fn data_to_json(data: &Data) -> String {
         write_str(&mut out, name);
         let _ = write!(out, ",\"source\":{source}}}");
     }
+    // The type-variable placeholders' bound keys: like `use_names`, not derivable from the
+    // definitions, and a parse continuing this Data needs them.  Sorted for a stable text.
+    out.push_str("],\"type_var_bounds\":[");
+    let mut tvbs: Vec<(&u32, &String)> = data.type_var_bound_keys.iter().collect();
+    tvbs.sort();
+    for (i, (holder, bounds)) in tvbs.into_iter().enumerate() {
+        if i > 0 {
+            out.push(',');
+        }
+        let _ = write!(out, "{{\"holder\":{holder},\"bounds\":");
+        write_str(&mut out, bounds);
+        out.push('}');
+    }
     out.push_str("]}");
     out
 }
@@ -1502,6 +1521,12 @@ pub fn data_from_json(src: &str) -> Result<Data, TypeDecodeError> {
             pairs.push((as_str(field(it, "name")?)?, as_u16(field(it, "source")?)?));
         }
         data.set_use_names(pairs);
+    }
+    if let Ok(Parsed::Array(items)) = field(&parsed, "type_var_bounds") {
+        for it in items {
+            data.type_var_bound_keys
+                .insert(as_u32(field(it, "holder")?)?, as_str(field(it, "bounds")?)?);
+        }
     }
     data.rebuild_indices();
     Ok(data)
@@ -2139,6 +2164,7 @@ mod tests {
             nullable: false,
             primary: true,
             hidden: false,
+            work_buffer: false,
             value: Value::Int(5),
             check: Value::Call(9, vec![Value::Var(0), Value::Int(100)]),
             check_message: Value::Text("too big".to_string()),
@@ -2175,6 +2201,7 @@ mod tests {
             nullable: true,
             primary: false,
             hidden: false,
+            work_buffer: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
@@ -2202,6 +2229,7 @@ mod tests {
             nullable: false,
             primary: false,
             hidden: false,
+            work_buffer: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
@@ -2212,7 +2240,7 @@ mod tests {
         };
         assert_eq!(
             attribute_to_json(&a),
-            r#"{"name":"x","typedef":{"k":"Boolean"},"mutable":false,"constant":true,"init":false,"nullable":false,"primary":false,"hidden":false,"const_field":false,"value_const":false,"value":{"k":"Null"},"check":{"k":"Null"},"check_message":{"k":"Null"},"alias_d_nr":0,"assigned_lambda_d_nr":0,"links":""}"#
+            r#"{"name":"x","typedef":{"k":"Boolean"},"mutable":false,"constant":true,"init":false,"nullable":false,"primary":false,"hidden":false,"const_field":false,"value_const":false,"work_buffer":false,"value":{"k":"Null"},"check":{"k":"Null"},"check_message":{"k":"Null"},"alias_d_nr":0,"assigned_lambda_d_nr":0,"links":""}"#
         );
     }
 
@@ -2254,6 +2282,7 @@ mod tests {
                     nullable: true,
                     primary: false,
                     hidden: false,
+                    work_buffer: false,
                     value: Value::Null,
                     check: Value::Null,
                     check_message: Value::Null,
@@ -2273,6 +2302,7 @@ mod tests {
                     nullable: true,
                     primary: false,
                     hidden: false,
+                    work_buffer: false,
                     value: Value::Int(0),
                     check: Value::Null,
                     check_message: Value::Null,

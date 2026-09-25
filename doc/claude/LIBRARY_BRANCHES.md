@@ -4,7 +4,7 @@
 
 Unmerged branches across the `loft-lang/loft-libs-*` repos — in-flight or stranded library
 work not yet on each repo's default branch. Squash-merge safe (compared by CONTENT, not
-ancestry). The current installable/origin-main API is , a local build (, not committed); this is
+ancestry). The current installable/origin-main API is `doc/claude/LIBRARIES.md`, a local build (`make libcatalogue`, not committed); this is
 the branch-level view of what is still IN FLIGHT. A branch with an **open PR** is active; one
 that is **unmerged with no open PR** is an *orphan* — stranded work to land or delete.
 Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).

@@ -1,37 +1,24 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// Plan-37 phase 03 + 09 — CI gate for the tracker-tag indexer.
+// The tracker index (`index/tags.json`) stays sound.  One test, `index_hygiene_clean`,
+// rebuilds the index with `make index` and then checks that
 //
-// Two tests, both gated against `index/tags.json`:
+//   - the index covers exactly the files git carries;
+//   - every tracker tag (`@P<n>`, `@PLN<n>`, `@F<n>`, …) resolves to a real row, plan or
+//     issue;
+//   - every markdown link the scanner records resolves.
 //
-//   `no_broken_tracker_tags` (phase 03) — every `@P-id` /
-//   `@PLAN-id` reference resolves to an existing PROBLEMS.md
-//   row or plan directory.
+// It is one test rather than several because two tests running `make index` at once
+// corrupt `index/tags.json`, and that is also why this binary runs in its own advisory
+// CI job.  The whole-tree link check that does not need the index is
+// `tests/doc_hygiene.rs::every_markdown_link_resolves`, in the required matrix.
 //
-//   `no_broken_markdown_links` (phase 09 follow-up, enabled
-//   2026-05-14 once the cleanup pass shipped) — every
-//   `[text](path.md)` markdown link resolves to an existing
-//   file.
+// An INTENTIONAL fake reference (a doc showing what a broken tag looks like, a template
+// placeholder) carries the literal `<!--noindex-->` marker on its line.
 //
-// To pass with an INTENTIONAL fake reference (e.g., a design
-// doc explaining what a broken tag looks like, or a template
-// placeholder), put the literal `<!--noindex-->` marker on
-// the same line; the scanner skips those lines.
-//
-// To DEBUG a failing run:
-//   ./scripts/idx broken         # for phase-03 failures
-//   ./scripts/idx broken-links   # for phase-09 failures
-//
-// To FIX:
-//   - phase 03: rename the @P-id / @PLAN-id to a real one,
-//     add the missing PROBLEMS.md row / plan dir, or add
-//     `<!--noindex-->` to the line.
-//   - phase 09: fix the relative path (often an off-by-one
-//     `..` after a file moves to `finished/`), point at the
-//     correct doc, or add `<!--noindex-->` for intentional
-//     placeholder examples.  `tools/indexer/fix_broken_links.py`
-//     auto-fixes the common off-by-one cases.
+// To debug a failure: `./scripts/idx broken` (tags) and `./scripts/idx broken-links`
+// (links).  To repair links: `make doc-fix`.
 
 use std::process::Command;
 
@@ -143,29 +130,6 @@ fn check_index_matches_git() {
              enumerating a fixed list of roots"
         );
     }
-}
-
-/// Every relative link in the tracked markdown resolves.  Wider than the
-/// index's `broken_links` bucket, which resolves only the links its scanner
-/// recognises: this reads each file the way a markdown renderer does (fences
-/// and inline code spans are not links) and exempts what `scripts/linkcheck.sh`
-/// exempts.  It reads no index, so it cannot race `make index`.
-#[test]
-fn every_markdown_link_resolves() {
-    let out = Command::new("python3")
-        .arg("tools/indexer/fix_broken_links.py")
-        .output()
-        .expect("failed to spawn tools/indexer/fix_broken_links.py");
-    let stdout = String::from_utf8_lossy(&out.stdout);
-    assert!(
-        out.status.success() && !stdout.contains("  fix "),
-        "broken markdown links:\n{stdout}{}\n\
-         `make doc-fix` writes each `fix` line; a `flag` line needs a person \
-         (point it at the thing's new home, or mark an intentional placeholder \
-         with `<!--noindex-->` or a code span).  A directory move is \
-         `make plan-move FROM=… TO=…`, which rewrites the links as it moves.",
-        String::from_utf8_lossy(&out.stderr)
-    );
 }
 
 #[test]

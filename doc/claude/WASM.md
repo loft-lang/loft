@@ -167,16 +167,16 @@ window layer they have nothing to do with.
    code writes the Rust PATH.  A privately-`use`d one is `E0603` on wasm with
    the native build green beside it (graphics' `n_audio_play_raw`).
 
-**Nothing gates this today, in either half.**  The shared library CI
-(`.github/workflows/library-ci-reusable.yml`) builds `--interpret` and
-`--native` and no wasm target, and `loft test` has no `--native-wasm` mode at
-all — it compiles a program and a suite is not one — so a library reporting a
-green suite has said nothing about whether it cross-builds.  Until that changes,
-a package with a `[native] crate` carries its own guard: graphics'
-`native/tests/headless_safety.rs` holds an ALLOW-list of wasm-clean
-unconditional dependencies (always runs, no toolchain needed, so a NEW
-dependency fails until someone places it) plus a real cross-build that skips
-where the target is absent.  A deny-list of known-bad crates would be silent
+**What gates this.**  The shared library CI
+(`.github/workflows/library-ci-reusable.yml`) cross-builds every package's
+`[native] crate` for wasm32 in its **WASM cross-build** step, unless the package
+declares `.wasm_exempt`, whose contents are the stated reason and are printed into
+the run's summary.  `loft test` itself has no `--native-wasm` mode — it compiles a
+program and a suite is not one — so the cross-build proves the crate BUILDS for
+wasm, not that the suite passes there.  A package can hold a sharper guard of its
+own: graphics' `native/tests/headless_safety.rs` holds an ALLOW-list of wasm-clean
+unconditional dependencies (always runs, no toolchain needed, so a NEW dependency
+fails until someone places it).  A deny-list of known-bad crates would be silent
 about the next one.
 
 ### The page filesystem (`--html`)

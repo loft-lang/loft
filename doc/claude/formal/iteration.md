@@ -179,8 +179,8 @@ case past it (QUALITY.md B8i).
 ## Deviations
 
 **OPEN: 0.**  Every deviation is closed; the record is in the companion
-[iteration-history.md](iteration-history.md) — the latest, D-iter-6 (loft#1619, a place source
-and a range bound re-read per round), closed 2026-09-23 by owner ruling.
+[iteration-history.md](iteration-history.md) — the latest, D-iter-7 (a native fast path
+stepped an inclusive range past its end in plain Rust), closed 2026-09-25.
 
 ## Conformance
 
@@ -193,6 +193,12 @@ and a range bound re-read per round), closed 2026-09-23 by owner ruling.
   case: `for c in "e" + U+0301 + "X"` visits **3** codepoints (`c#index = 0, 1, 3`), not 2
   graphemes — proven identical on both backends. `t.map(…)` is a static error (`Unknown field
   text.map`); `[for c in t { … }]` is how you map over text.
+- **An inclusive range to the maximum (`I-RangeIncl`)** — `for i in (m-2)..=m` with `m` the
+  `integer` maximum runs three rounds and stops, on both backends, whether the loop runs as
+  written or a native rewrite replaces it: the slice fill, the push fill, the push window and
+  the comprehension answer the same elements and leave no `m + 1` behind.  Guards
+  `tests/scripts/1525-an-inclusive-range-stops-on-the-value-it-yielded.loft` (the loop) and
+  `tests/scripts/an-inclusive-fast-path-never-forms-the-end-plus-one.loft` (the rewrites).
 - **Empty/null (`I-Empty` / `I-NullSrc`)** — `for x in [] { … }` and a `for` over a null
   collection both run the body zero times and continue.
 - **Fresh result (`I-Comp`)** — `ys = xs.map(f)` leaves `xs` unchanged (a new store, `H-Alloc`).

@@ -1,0 +1,205 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-B-Scope` — "a bind after the `}` starts a new binding in the enclosing block", so a CALL
+// through that name reaches the new binding.  A fn-ref local did not.
+//
+// The scopes pass gives the second binding its own slot (`scan_set`'s `copy_variable`) and
+// remaps every read of the name through `var_mapping`.  A `CallRef`'s CALLEE index was not
+// remapped, so `f = two; f(1)` called whatever the ended binding held: `one` where that binding
+// was still live — a silently WRONG FUNCTION, the face the issue did not have — and the
+// exhausted sentinel, printed `null`, where it was a loop variable.  `--interpret` only:
+// `--native` names its locals `var_<name>`, so both bindings are one Rust local there and the
+// rebind shadows it, which is right by accident and is why one backend ran (loft#1679).
+//
+// The refusal half is in `102b-pass1-expected-errors.loft`: with NO rebind, a call through the
+// name is a read of an ended binding, and `(B-Scope)` refuses it.  The two halves are one
+// question — whether a fn-ref callee name is a READ of that variable — asked at the parser
+// (`check_block_scope`) and at the scopes pass (`var_mapping`).
+//
+// Axes this file MOVES:  what ENDED the earlier binding (a loop body, an `if` arm, a sibling
+//                        `if` arm, two loops over one name), the later value (a bare fn, a
+//                        capturing lambda), the call's ARITY (0 and 1 — the parser resolves a
+//                        fn-ref callee at two sites), the return TYPE (integer, text — a text
+//                        fn-ref call carries hidden work buffers), and WHERE the call stands
+//                        (the same block, a nested block, a later loop, a comprehension).
+// Axes it HOLDS FIXED:   one parameter type throughout, and a single split per program — the
+//                        binding COUNT was never the question, the remap is per name.
+//
+// ⚠ One axis CANNOT be written, and it is what makes `Value::Iter`'s own var index safe without
+// a remap of its own: a loop whose header binds a name an enclosing block already bound is
+// REFUSED — *"loop variable 'x' shadows a local named 'x'"*.  So a loop binding is never the
+// SECOND of two, and the reverse order (the loop first, a bind after it) is the rebind these
+// cells measure.
+//
+// @falsified-at: 87b57a29e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native
+//   INERT (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1679-a-call-through-a-rebound-name-reaches-the-new-binding.patch
+//   — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+//   CHANNEL: assert — every cell computes a value on both trees, and the control's answers are
+//   the ended binding's.  Not exit (nothing crashes: a fn-ref whose d_nr is the sentinel is
+//   CALLED and answers the type's null, which is why this was silent), and not leak.
+//   ARMED: no instrument — a plain run on either backend reads it, because the two backends
+//   DISAGREE (the interpreter answers the ended binding, `--native` the new one).
+//   `LOFT_STRICT_STORES=1 LOFT_POISON=1` is clean on both trees: the split costs no store, so
+//   the closure-record cell has nothing to leak either way.
+//   HOLDS: the three reads that were never wrong — through a copy, handed to a function that
+//   calls it, and a `text` local through the same split — answer identically on both trees, and
+//   the shadow refusal still refuses a loop header that rebinds an enclosing block's name.
+//   WITNESS: `test_an_if_arm_binding_is_not_what_the_call_reaches`, the cell whose control
+//   answer is 101 — `one` called where the program spells `two`.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+fn one1679(a: integer) -> integer { a + 100 }
+fn two1679(a: integer) -> integer { a + 200 }
+fn zero_one1679() -> integer { 11 }
+fn zero_two1679() -> integer { 22 }
+fn text_one1679() -> text { "A" }
+fn text_two1679() -> text { "B" }
+fn mk1679(n: integer) -> fn(integer) -> integer { fn(a: integer) -> integer { a + n } }
+fn apply1679(g: fn(integer) -> integer, x: integer) -> integer { return g(x); }
+
+fn test_an_if_arm_binding_is_not_what_the_call_reaches() {
+  // The WITNESS.  No loop anywhere: the ended binding is still live, so the control does not
+  // answer `null` — it answers `one`, which is the defect statable without a rule reference.
+  if 1 > 0 { f: fn(integer) -> integer = one1679; assert(f(1) == 101, "the arm's own call: {f(1)}"); }
+  f = two1679;
+  assert(f(1) == 201, "the call after the arm reaches the new binding: {f(1)}");
+}
+
+fn test_a_loop_variable_is_not_what_the_call_reaches() {
+  // The issue's own shape.  The ended binding is a loop variable, which holds the exhausted
+  // sentinel — so here the control answers `null` rather than the wrong function.
+  fs: vector<fn(integer) -> integer> = [one1679];
+  for f in fs { assert(f(1) == 101, "the loop's own call: {f(1)}"); }
+  f = two1679;
+  assert(f(1) == 201, "the call after the loop reaches the new binding: {f(1)}");
+}
+
+fn test_two_sibling_arms_each_bind_the_name() {
+  if 1 > 0 { g: fn(integer) -> integer = one1679; assert(g(1) == 101, "first arm: {g(1)}"); }
+  if 1 > 0 { g: fn(integer) -> integer = two1679; assert(g(1) == 201, "second arm: {g(1)}"); }
+}
+
+fn test_two_loops_over_one_name_then_a_rebind() {
+  // Each loop gets its own binding (`loop_binding`: `f`, then `f#1`), so the rebind splits from
+  // the LAST of them.  The count of ended bindings is not the question, which this pins.
+  fs: vector<fn(integer) -> integer> = [one1679];
+  for h in fs { assert(h(1) == 101, "first loop: {h(1)}"); }
+  for h in fs { assert(h(1) == 101, "second loop: {h(1)}"); }
+  h = two1679;
+  assert(h(1) == 201, "the rebind after two loops: {h(1)}");
+}
+
+fn test_a_zero_argument_call_resolves_at_its_own_site() {
+  // The parser resolves a fn-ref callee at TWO sites, one per arity.
+  zs: vector<fn() -> integer> = [zero_one1679];
+  for z in zs { assert(z() == 11, "the loop's own call: {z()}"); }
+  z = zero_two1679;
+  assert(z() == 22, "the zero-argument call after the loop: {z()}");
+}
+
+fn test_a_text_returning_call_carries_its_work_buffers() {
+  ts: vector<fn() -> text> = [text_one1679];
+  for t in ts { assert(t() == "A", "the loop's own call: {t()}"); }
+  t = text_two1679;
+  assert(t() == "B", "the text call after the loop: {t()}");
+}
+
+fn test_the_later_value_may_capture() {
+  fs: vector<fn(integer) -> integer> = [one1679];
+  for c in fs { assert(c(1) == 101, "the loop's own call: {c(1)}"); }
+  c = mk1679(300);
+  assert(c(1) == 301, "a capturing lambda after the loop: {c(1)}");
+}
+
+fn test_the_call_may_stand_in_a_nested_block_or_a_later_loop() {
+  fs: vector<fn(integer) -> integer> = [one1679];
+  for d in fs { assert(d(1) == 101, "the loop's own call: {d(1)}"); }
+  d = two1679;
+  if 1 > 0 { assert(d(1) == 201, "in a nested block: {d(1)}"); }
+  for x in [1, 2] { assert(d(x) == 200 + x, "in a later loop: {d(x)}"); }
+}
+
+fn test_the_call_may_stand_in_a_comprehension() {
+  fs: vector<fn(integer) -> integer> = [one1679];
+  for e in fs { assert(e(1) == 101, "the loop's own call: {e(1)}"); }
+  e = two1679;
+  rs: vector<integer> = [for x in [1, 2] { e(x) }];
+  assert(len(rs) == 2, "the comprehension ran: {len(rs)}");
+  assert((rs[0] ?? 0) == 201 && (rs[1] ?? 0) == 202, "through a comprehension: {rs[0] ?? 0} {rs[1] ?? 0}");
+}
+
+fn test_the_reads_that_were_never_wrong() {
+  // The CONTROLS, and they are what says the cure did not widen: a `Var` read of the same split
+  // name was remapped all along, through a copy and as an argument.  They answer identically on
+  // both trees.
+  fs: vector<fn(integer) -> integer> = [one1679];
+  for k in fs { assert(k(1) == 101, "the loop's own call: {k(1)}"); }
+  k = two1679;
+  m = k;
+  assert(m(1) == 201, "read through a copy: {m(1)}");
+  assert(apply1679(k, 1) == 201, "read as an argument: {apply1679(k, 1)}");
+}
+
+fn test_a_text_local_through_the_same_split() {
+  // The second control: the split itself is sound at a non-fn type, so the defect was the CALL
+  // and not `copy_variable`.
+  if 1 > 0 { s = "A"; assert(s == "A", "the arm's own read: {s}"); }
+  s = "B";
+  assert(s == "B", "after the arm: {s}");
+}
+
+fn test_a_match_arm_binding_is_not_what_the_call_reaches() {
+  // The third block kind `(B-Scope)` names, beside the loop body and the `if` arm.
+  match 1 { 1 => { p: fn(integer) -> integer = one1679; assert(p(1) == 101, "the arm's own call: {p(1)}"); }, _ => { } }
+  p = two1679;
+  assert(p(1) == 201, "the call after the match reaches the new binding: {p(1)}");
+}
+
+fn test_the_earlier_binding_may_be_a_capturing_closure() {
+  // Both bindings OWN a closure record, so this is the leak channel's cell as well as the
+  // value channel's: `--native` collapses the two into one `var_<name>` local and the second
+  // `let` shadows the first, which is where a release of the wrong record would show.
+  if 1 > 0 { r = mk1679(300); assert(r(1) == 301, "the arm's own call: {r(1)}"); }
+  r = mk1679(400);
+  assert(r(1) == 401, "a second closure after the arm: {r(1)}");
+}
+
+fn test_a_link_naming_the_new_binding() {
+  // `@FR-B-Ref-Uniform`: a `&fn(…)` local names a fn-ref slot and is callable, through the
+  // materialising temp `call_through_fn_link` binds — a third call spelling over the split.
+  fs: vector<fn(integer) -> integer> = [one1679];
+  for n in fs { assert(n(1) == 101, "the loop's own call: {n(1)}"); }
+  n = two1679;
+  l: &fn(integer) -> integer = n;
+  assert(l(1) == 201, "through a link: {l(1)}");
+}
+
+fn test_a_lambda_that_captures_the_new_binding() {
+  // The call is in ANOTHER def, so the capture — not the remap — carries the binding there.
+  fs: vector<fn(integer) -> integer> = [one1679];
+  for w in fs { assert(w(1) == 101, "the loop's own call: {w(1)}"); }
+  w = two1679;
+  wrapped = fn(a: integer) -> integer { w(a) };
+  assert(apply1679(wrapped, 1) == 201, "through a capturing lambda: {apply1679(wrapped, 1)}");
+}
+
+fn main() {
+  test_an_if_arm_binding_is_not_what_the_call_reaches();
+  test_a_loop_variable_is_not_what_the_call_reaches();
+  test_two_sibling_arms_each_bind_the_name();
+  test_two_loops_over_one_name_then_a_rebind();
+  test_a_zero_argument_call_resolves_at_its_own_site();
+  test_a_text_returning_call_carries_its_work_buffers();
+  test_the_later_value_may_capture();
+  test_the_call_may_stand_in_a_nested_block_or_a_later_loop();
+  test_the_call_may_stand_in_a_comprehension();
+  test_a_match_arm_binding_is_not_what_the_call_reaches();
+  test_the_earlier_binding_may_be_a_capturing_closure();
+  test_a_link_naming_the_new_binding();
+  test_a_lambda_that_captures_the_new_binding();
+  test_the_reads_that_were_never_wrong();
+  test_a_text_local_through_the_same_split();
+}

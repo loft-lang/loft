@@ -25,6 +25,63 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::{Result, Write};
 use std::num::NonZeroU8;
 
+/// A `(name, source)` key for [`Data`]'s definition index that can be BORROWED.
+///
+/// The index is keyed by `(String, u16)`, and a lookup with that key type has to allocate a
+/// `String` for every name it asks about — the front end asks hundreds of thousands of times
+/// per compile.  Both the owned tuple and `(&str, u16)` implement this trait, and the owned
+/// key borrows as it, so `def_names.get(&(name, source) as &dyn NameKey)` finds the same
+/// entry with no allocation.  The hash is the tuple's own (the name, then the source), which
+/// is what makes the two spellings land in the same bucket.
+trait NameKey {
+    fn name(&self) -> &str;
+    fn source(&self) -> u16;
+}
+
+impl NameKey for (String, u16) {
+    fn name(&self) -> &str {
+        &self.0
+    }
+    fn source(&self) -> u16 {
+        self.1
+    }
+}
+
+impl NameKey for (&str, u16) {
+    fn name(&self) -> &str {
+        self.0
+    }
+    fn source(&self) -> u16 {
+        self.1
+    }
+}
+
+impl<'a> std::borrow::Borrow<dyn NameKey + 'a> for (String, u16) {
+    fn borrow(&self) -> &(dyn NameKey + 'a) {
+        self
+    }
+}
+
+impl std::hash::Hash for dyn NameKey + '_ {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.name().hash(state);
+        self.source().hash(state);
+    }
+}
+
+impl PartialEq for dyn NameKey + '_ {
+    fn eq(&self, other: &Self) -> bool {
+        self.source() == other.source() && self.name() == other.name()
+    }
+}
+
+impl Eq for dyn NameKey + '_ {}
+
+/// The borrowed form of a definition-index key: see [`NameKey`].
+fn name_key(name: &str, source: u16) -> (&str, u16) {
+    (name, source)
+}
+
 static OPERATORS: &[&str] = &[
     "OpAdd", "OpMin", "OpMul", "OpDiv", "OpRem", "OpPow", "OpNot", "OpBitNot", "OpLand", "OpLor",
     "OpEor", "OpSLeft", "OpSRight", "OpEq", "OpNe", "OpLt", "OpLe", "OpGt", "OpGe", "OpAppend",
@@ -4228,6 +4285,13 @@ pub struct Attribute {
     /// Hidden return-mechanism parameter added by `text_return` or `ref_return`.
     /// Not a user-declared parameter — should be excluded from dep propagation.
     pub hidden: bool,
+    /// `@FR-R-WorkBuffer` — this hidden parameter is a WORK BUFFER: a vector local of the
+    /// body that never leaves its frame, promoted to storage the caller supplies.  Hidden
+    /// and compound like a return buffer, but not one: it carries no result, so every
+    /// route that builds a frame by hand (the argv entry, a par worker, the shared-cdylib
+    /// bridge, the engine host, placement) reads this mark to hand it a scratch store or
+    /// the null sentinel — never the caller's offered result record.
+    pub work_buffer: bool,
     /// The initial value of this attribute if it is not given.
     pub value: Value,
     /// A constraint expression checked on every field write.
@@ -4871,6 +4935,7 @@ impl Definition {
     pub fn hidden_return_buffer_attr(&self) -> Option<usize> {
         self.attributes.iter().position(|a| {
             a.hidden
+                && !a.work_buffer
                 && matches!(
                     &a.typedef,
                     Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
@@ -6579,7 +6644,9 @@ impl Data {
             self.rebuild_indices();
             for (name, src, nr) in expected {
                 assert_eq!(
-                    self.def_names.get(&(name.clone(), src)).copied(),
+                    self.def_names
+                        .get(&name_key(&name, src) as &dyn NameKey)
+                        .copied(),
                     Some(nr),
                     "a rollback dropped the import alias `{name}` visible from source                      {src} (definition #{nr}).  `rebuild_indices` reconstructs                      `def_names` from `definitions`, which know only their own source,                      so any cross-source binding has to be replayed — see                      `Data::replay_imports`.  A dropped alias makes every `use`d name                      unresolvable for the rest of the session."
                 );
@@ -6976,6 +7043,7 @@ impl Data {
             nullable: true,
             primary: false,
             hidden: false,
+            work_buffer: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,
@@ -7017,7 +7085,7 @@ impl Data {
             assert!(
                 !self
                     .def_names
-                    .contains_key(&(name.to_string(), self.source)),
+                    .contains_key(&name_key(name, self.source) as &dyn NameKey),
                 "Dual definition of {name} at {position}"
             );
             self.def_names.insert((name.to_string(), self.source), rec);
@@ -9551,7 +9619,10 @@ impl Data {
             self.definitions[template as usize].name,
             spelled.join(",")
         );
-        if let Some(&nr) = self.def_names.get(&(name.clone(), STD_SOURCE)) {
+        if let Some(&nr) = self
+            .def_names
+            .get(&name_key(&name, STD_SOURCE) as &dyn NameKey)
+        {
             return nr;
         }
         // Termination (@PLN165 D7): a template mentioning itself IRREGULARLY
@@ -9793,10 +9864,16 @@ impl Data {
         }
         let inner_names: Vec<String> = types.iter().map(|t| t.name(self)).collect();
         let name = format!("__tuple<{}>", inner_names.join(","));
-        if let Some(&nr) = self.def_names.get(&(name.clone(), STD_SOURCE)) {
+        if let Some(&nr) = self
+            .def_names
+            .get(&name_key(&name, STD_SOURCE) as &dyn NameKey)
+        {
             return nr;
         }
-        if let Some(&nr) = self.def_names.get(&(name.clone(), self.source)) {
+        if let Some(&nr) = self
+            .def_names
+            .get(&name_key(&name, self.source) as &dyn NameKey)
+        {
             return nr;
         }
         let d = self.add_def(&name, lexer.pos(), DefType::Struct);
@@ -9912,7 +9989,7 @@ impl Data {
                 let def = self.definitions.get(*syn as usize)?;
                 let inner = def.name.strip_prefix("__nullable<")?.strip_suffix('>')?;
                 self.def_names
-                    .get(&(inner.to_string(), def.source))
+                    .get(&name_key(inner, def.source) as &dyn NameKey)
                     .copied()
             }
             _ => None,
@@ -9998,7 +10075,10 @@ impl Data {
         // struct (a different `self.source`) resolves to the same synth via the struct's source,
         // because deps parse before dependents.
         let struct_source = self.definitions[struct_d as usize].source;
-        if let Some(&nr) = self.def_names.get(&(name.clone(), struct_source)) {
+        if let Some(&nr) = self
+            .def_names
+            .get(&name_key(&name, struct_source) as &dyn NameKey)
+        {
             return nr;
         }
         let pos = lexer.pos().clone();
@@ -10089,10 +10169,16 @@ impl Data {
     /// across every `Type::Function(...)` value in the program.
     pub fn fn_ref_def(&mut self, lexer: &mut Lexer) -> u32 {
         let name = "__fn_ref".to_string();
-        if let Some(&nr) = self.def_names.get(&(name.clone(), STD_SOURCE)) {
+        if let Some(&nr) = self
+            .def_names
+            .get(&name_key(&name, STD_SOURCE) as &dyn NameKey)
+        {
             return nr;
         }
-        if let Some(&nr) = self.def_names.get(&(name.clone(), self.source)) {
+        if let Some(&nr) = self
+            .def_names
+            .get(&name_key(&name, self.source) as &dyn NameKey)
+        {
             return nr;
         }
         let d = self.add_def(&name, lexer.pos(), DefType::Struct);
@@ -10393,9 +10479,15 @@ impl Data {
     /// This will test both the own source file or the standard library data.
     #[must_use]
     pub fn def_nr(&self, name: &str) -> u32 {
-        if let Some(nr) = self.def_names.get(&(name.to_string(), self.source)) {
+        if let Some(nr) = self
+            .def_names
+            .get(&name_key(name, self.source) as &dyn NameKey)
+        {
             *nr
-        } else if let Some(nr) = self.def_names.get(&(name.to_string(), STD_SOURCE)) {
+        } else if let Some(nr) = self
+            .def_names
+            .get(&name_key(name, STD_SOURCE) as &dyn NameKey)
+        {
             *nr
         } else {
             u32::MAX
@@ -11021,7 +11113,7 @@ impl Data {
         if source == u16::MAX {
             return self.def_nr(name);
         }
-        let Some(nr) = self.def_names.get(&(name.to_string(), source)) else {
+        let Some(nr) = self.def_names.get(&name_key(name, source) as &dyn NameKey) else {
             return u32::MAX;
         };
         *nr
@@ -11033,9 +11125,12 @@ impl Data {
     */
     #[must_use]
     pub fn name_type(&self, name: &str, source: u16) -> u16 {
-        let nr = if let Some(nr) = self.def_names.get(&(name.to_string(), source)) {
+        let nr = if let Some(nr) = self.def_names.get(&name_key(name, source) as &dyn NameKey) {
             *nr
-        } else if let Some(nr) = self.def_names.get(&(name.to_string(), STD_SOURCE)) {
+        } else if let Some(nr) = self
+            .def_names
+            .get(&name_key(name, STD_SOURCE) as &dyn NameKey)
+        {
             *nr
         } else {
             return u16::MAX;
@@ -11049,7 +11144,7 @@ impl Data {
     */
     #[must_use]
     pub fn source_name(&self, source: u16, name: &str) -> &Definition {
-        let Some(nr) = self.def_names.get(&(name.to_string(), source)) else {
+        let Some(nr) = self.def_names.get(&name_key(name, source) as &dyn NameKey) else {
             panic!("Unknown definition {name}");
         };
         &self.definitions[*nr as usize]
@@ -11236,7 +11331,10 @@ impl Data {
     /// re-exporting another's, or the same `use` seen twice — is not a
     /// question at all.
     fn note_ambiguity(&mut self, name: &str, into_source: u16, def_nr: u32) {
-        let Some(&sitting) = self.def_names.get(&(name.to_string(), into_source)) else {
+        let Some(&sitting) = self
+            .def_names
+            .get(&name_key(name, into_source) as &dyn NameKey)
+        else {
             return; // nothing there yet: this import wins outright
         };
         if sitting == def_nr || self.definitions[sitting as usize].source == into_source {
@@ -11259,7 +11357,7 @@ impl Data {
     #[must_use]
     pub fn ambiguous_with(&self, name: &str) -> &[u32] {
         self.ambiguous
-            .get(&(name.to_string(), self.source))
+            .get(&name_key(name, self.source) as &dyn NameKey)
             .map_or(&[][..], Vec::as_slice)
     }
 
@@ -11304,7 +11402,9 @@ impl Data {
             .iter()
             .filter(|imp| imp.lib_source == me && imp.into_source != me)
             .find_map(|imp| {
-                let d_nr = *self.def_names.get(&(name.to_string(), imp.into_source))?;
+                let d_nr = *self
+                    .def_names
+                    .get(&name_key(name, imp.into_source) as &dyn NameKey)?;
                 let def = &self.definitions[d_nr as usize];
                 if matches!(def.def_type(), DefType::Unknown) {
                     return None;
@@ -11342,7 +11442,7 @@ impl Data {
         let bind_fn_key = format!("n_{bind}");
         let found_plain = self
             .def_names
-            .get(&(name.to_string(), lib_source))
+            .get(&name_key(name, lib_source) as &dyn NameKey)
             .copied()
             .filter(|&d| self.definitions[d as usize].pub_visible);
         let found_fn = self
@@ -11436,7 +11536,7 @@ impl Data {
         let bind_fn_key = format!("n_{bind}");
         let found_plain = self
             .def_names
-            .get(&(name.to_string(), lib_source))
+            .get(&name_key(name, lib_source) as &dyn NameKey)
             .copied()
             .filter(|&d| self.definitions[d as usize].pub_visible);
         let found_fn = self

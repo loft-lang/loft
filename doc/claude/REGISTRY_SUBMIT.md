@@ -61,16 +61,15 @@ You do NOT need:
 
 ### 1. Tag the release in your source repo
 
-The tag scheme depends on the repo layout.  The loft-lang libraries ship as
-**domain monorepos** (`loft-libs-core`, `loft-libs-net`, `loft-libs-graphics`,
-`loft-libs-game`, `loft-libs-world`, `loft-libs-assets`) — several packages per
-repo — so the tag is **`<pkg>-v<version>`** to disambiguate.  A
-one-repo-per-package layout uses a bare `v<version>`.
+The tag is **`<pkg>-v<version>`** whatever the repo layout: the loft-lang
+libraries ship as **domain monorepos** (`loft-libs-core`, `loft-libs-net`,
+`loft-libs-graphics`, `loft-libs-game`, `loft-libs-world`, `loft-libs-assets`),
+several packages per repo, and `loft package` names the release it expects that
+way for a one-package repo too.
 
 ```sh
-cd loft-libs-core/                 # the monorepo
-git tag crypto-v0.2.1              # MONOREPO:  <pkg>-v<version>
-# git tag v0.2.1                   # one-repo-per-package: bare v<version>
+cd loft-libs-core/
+git tag crypto-v0.2.1              # <pkg>-v<version>
 git push --tags
 ```
 
@@ -164,7 +163,7 @@ then edit `index.json`:
 +      "yanked": [],
 +      "versions": {
 +        "0.1.0": {
-+          "url": "https://github.com/<owner>/<repo>/releases/download/v0.1.0/my-lib-0.1.0.tar.gz",
++          "url": "https://github.com/<owner>/<repo>/releases/download/my-lib-v0.1.0/my-lib-0.1.0.tar.gz",
 +          "sha256": "<hex from step 2>",
 +          "size": <N from step 2>,
 +          "loft": ">=0.8",
@@ -248,6 +247,13 @@ is trusted.  The **`submissions/` path** fixes both (@PLN102 C96): you add a sma
 staging file that *never touches `index.json`*, and the maintainer's `loft ship` run
 puts it through the full validation gate before folding it in.
 
+> ⚠ **Reconciled on the registry side on branch `tuxedo-submitting-guide` of
+> `loft-lang/registry`, not yet merged**: its `SUBMITTING.md` documents this route, and
+> its reproducible-build gate clones the tag the release `url` names (on `main` it
+> still assumes a bare `v<version>` for a one-package repo; every published library
+> is a chunk-repo member, where the two agree).  Until that merges, the text below
+> describes the registry's `main`.
+>
 > ⚠ **Only the maintainer half of this is wired, and the registry repo says
 > otherwise.**  `scripts/registry_maintain.sh` drains `submissions/` (vet → fold →
 > re-sign → `git rm`, one atomic commit) and treats an absent directory as an empty
@@ -272,13 +278,13 @@ else:
   "name": "my-lib",
   "version": "0.1.0",
   "repo": "<owner>/<repo>",
-  "tag": "v0.1.0",
+  "tag": "my-lib-v0.1.0",
   "subpath": "my-lib",
   "description": "One sentence on what the library does.",
   "homepage": "https://github.com/<owner>/<repo>",
   "categories": ["text"],
   "entry": {
-    "url": "https://github.com/<owner>/<repo>/releases/download/v0.1.0/my-lib-0.1.0.tar.gz",
+    "url": "https://github.com/<owner>/<repo>/releases/download/my-lib-v0.1.0/my-lib-0.1.0.tar.gz",
     "sha256": "<hex from step 2>",
     "size": <N from step 2>,
     "loft": ">=0.8",
@@ -295,7 +301,7 @@ Fields:
 | `name` | ✓ | the package name (matches its `loft.toml`) |
 | `version` | ✓ | the version being submitted (matches `loft.toml`) |
 | `repo` | ✓ | `<owner>/<repo>` GitHub source — the vetter clones it |
-| `tag` | ✓ | the **release tag** from step 1 (`v0.1.0`, or `<name>-v<version>` in a multi-package repo) |
+| `tag` | ✓ | the **release tag** from step 1, `<name>-v<version>` |
 | `subpath` | ✓ for a multi-package repo | the package **dir** inside the repo (e.g. `crypto`); defaults to `name` |
 | `entry` | ✓ | the index entry — exactly what `loft package` prints (step 2), so `url` / `sha256` / `size` / `loft`; `deps` etc. as needed. **Omit `published`** — the fold stamps it. |
 | `description`, `homepage` | optional for an existing package | seed a brand-new package's index metadata (ignored if the package already exists) |
@@ -329,7 +335,7 @@ Four gates:
 |---|---|---|
 | Schema lint | Required fields, correct types, `schema_version` unchanged | Typo in field name, wrong type (`size` as string instead of int), forgot `published` |
 | Tarball verify | Download `url`, hash it, compare to PR's `sha256` | Re-uploaded the GitHub release asset after opening the PR; pasted wrong sha256 |
-| Reproducible-build re-check | Clone `<homepage>` at `v<version>`, run `loft package`, compare sha256 | Source repo's tag points at different bytes than the uploaded tarball; build environment leaked content (e.g. uncommitted files) into the tarball |
+| Reproducible-build re-check | Clone the repo at the tag the release `url` names, run `loft package`, compare sha256 | Source repo's tag points at different bytes than the uploaded tarball; build environment leaked content (e.g. uncommitted files) into the tarball |
 | Trigger uniqueness | Every Tier-1 `method:receiver` trigger is owned by at most one package across the whole registry | Your `[triggers]`-enabled package declares a `pub fn` method-on-type (`matches:text`, …) that another package already claims |
 
 If a gate fails, CI surfaces the error as a PR comment.  Fix
@@ -500,9 +506,10 @@ Published releases are immutable, so v2026.7.2 and earlier can never gain one.
 
 ## Yanking a broken release
 
-A yanked version stays listed in the index (lockfile pins
-still resolve) but new `loft install` calls skip it unless
-the user passes `--allow-yanked`.
+A yanked version stays listed in the index: a range or `*`
+never picks it, so nothing new installs it by accident, while
+an exact pin — a `loft.lock` entry, or `"0.1.2"` in a
+manifest — still resolves it.
 
 To yank `v0.1.2`:
 
@@ -549,16 +556,21 @@ the tarball" is yours.  Common mistakes:
 
 ## Etiquette
 
-- **Semantic versioning.**  `MAJOR.MINOR.PATCH`.  Breaking
-  changes bump major; new features bump minor; bugfixes bump
-  patch.  Pre-1.0 minor counts as major for the purpose of
-  breakage (you can break in `0.2.0` → `0.3.0`).
+- **Compatibility is declared, not implied by the version
+  number.**  `MAJOR.MINOR.PATCH` is only an identity; what
+  says a release is safe to take is its three declared levels
+  (`loft`, `api_compatible_with`, `data_compatible_with`), and
+  raising a floor is how a break is declared.  `loft compat
+  check --full` verifies the claim before you tag
+  ([LIBRARY_AUTHORING.md § 3](LIBRARY_AUTHORING.md)).
 - **`loft = ">=X.Y"`** in your version entry should match the
   oldest loft you actually tested against.  Don't claim
   `>=0.8` if you used a 0.8.4-only feature.
-- **Deprecation** has no first-class registry support yet.
-  Convention: mark deprecated versions yanked with a reason
-  pointing at the new package or branch.
+- **Deprecation is a signal, never a removal**: point at the
+  successor in the docs and keep the old version working
+  ([COMPATIBILITY.md](COMPATIBILITY.md)).  Yank only a version
+  that is broken or vulnerable, never one that is merely
+  superseded.
 - **Multiple maintainers**: file an issue against
   `loft-lang/registry` requesting co-maintainer status.  The
   registry maintainers will add a co-author to the package's
@@ -581,7 +593,7 @@ PR (or after running `loft package`).  Options:
 
 ### "Reproducible-build sha256 mismatch"
 
-CI cloned `<homepage>` at `v<version>` and ran `loft
+CI cloned the repo at the tag your release `url` names and ran `loft
 package`, but the resulting sha256 doesn't match.  Causes:
 
 - The tag was force-pushed AFTER you generated the original

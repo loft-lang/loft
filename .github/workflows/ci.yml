@@ -1350,10 +1350,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - name: New comment-quality flags beyond .lint_comments_baseline
+      - name: New comment-quality flags beyond scripts/.lint_comments_baseline
         # Advisory (not a required check): lists comment lines matching the
         # history-stamp / change-narration patterns that are NOT already in
-        # .lint_comments_baseline.  The script always exits 0 — new flags
+        # scripts/.lint_comments_baseline.  The script always exits 0 — new flags
         # surface as GitHub warning annotations, never block the PR.  Standard
         # + baseline ratchet + cleanup workflow: doc/claude/DOC_QUALITY.md § Check.
         run: scripts/lint_comments.sh --check
@@ -1659,6 +1659,17 @@ jobs:
 
       - name: Run drift checks
         run: scripts/check_doc_drift.sh
+
+      # The documentation lint's PR gate (doc/claude/DOC_CONTRACT.md, @PLN172).  It blocks
+      # only GROWTH: a change may not add a stamp, history or two-h1 finding, and may not
+      # push a doc across the 1000-line ceiling.  What the base already carries is not the
+      # PR's problem.  On a pull request the checkout is the PR merged into its base, so a
+      # diff against the base tip is exactly the PR's own change.
+      - name: Documentation lint — no new gated finding
+        if: github.event_name == 'pull_request'
+        run: |
+          git fetch --no-tags --depth=1 origin "${{ github.base_ref }}"
+          python3 scripts/doc_lint.py --gate --since FETCH_HEAD --changed
 
       # The label guard's parser (`.github/scripts/label-guard.js`) decides which
       # triage labels an issue body asks for.  Every way it can be wrong is

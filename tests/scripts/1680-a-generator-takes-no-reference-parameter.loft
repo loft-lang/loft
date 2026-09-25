@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A generator takes no `&` parameter (`formal/coroutines.md` `(G-NoRefParam)`, loft#1680).
+// Calling a generator binds its arguments into a frame that runs LATER (`(G-Call)`), and a `&`
+// parameter writes through to the caller's place (`(F-ParamRef)`), so the generator would hold
+// a reference into a frame it can outlive.  The interpreter ran it with that dangling risk and
+// `--native` failed with rustc E0106 in generated code.  It is refused on both backends, and
+// nothing is lost: the cursor idiom — a record argument the generator advances,
+// `fn tokens(c: Cursor) -> iterator<Tok>` writing `c.pos` — is SHARED with the caller already
+// and lives in a store, so it cannot dangle.
+//
+// @falsified-at: f37900dfa — interpret exit 1 -> 0, interpret expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/2 -> 1/2 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1680-a-generator-takes-no-reference-parameter.patch — the same channels.
+//   CHANNEL: the expectations — on the control neither refusal exists, so both `@EXPECT_ERROR`
+//     go unmatched (the first sits before any `fn`, so the runner reads it as file-level and
+//     counts one per-function expectation: `1/2` is its display of "both matched").
+//   ARMED: no instrument.
+//   WITNESS: on f37900dfa the interpreter runs `by_ref` and native fails with rustc E0106.
+//   HOLDS: nothing runs on this tree; the refusal is the whole claim.
+
+// @EXPECT_ERROR: a generator cannot take the `&` parameter `p`
+fn by_ref(p: &vector<integer>) -> iterator<integer> { p += [9]; yield len(p); }
+
+// @EXPECT_ERROR: a generator cannot take the `&` parameter `n`
+fn by_ref_scalar(n: &integer) -> iterator<integer> { n += 1; yield n; }

@@ -9,7 +9,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > examples). Run once per monthly release cycle, alongside the
 > [RELEASE.md](RELEASE.md) checklist. This is a **hygiene ratchet, not a gate** —
 > it never blocks a release; the automated `check_doc_drift.sh examples` gate
-> does that.
+> does that inside loft, and only advises in a library repo (below).
 
 ## Why a by-hand pass exists
 
@@ -262,7 +262,8 @@ release is the owner's step.
 ## What this is NOT
 
 - **Not a gate.** It never blocks a release — the `examples` gate blocks on
-  dangling/duplicate; this is a report, like `make speed`.
+  dangling/duplicate inside loft and advises in a library repo; this is a report,
+  like `make speed`.
 - **Not a full re-sweep.** The watermark + changed-since worklist bound each
   pass to what moved. A month with no library changes is a five-minute pass.
 - **Not a coverage mandate.** A low citation count is healthy when the uncited

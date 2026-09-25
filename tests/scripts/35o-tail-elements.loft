@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-P-Rep` / `@FR-P-Seq` — the rule(s) this file is the guard for; the chapter's banner
+// named them verified via `tests/scripts/35*.loft` without any file citing one back,
+// so `rule_tags.py coverage` read them as unguarded (corrected 2026-09-25).
 // @PLN35 slice 3 (L3.4) — NON-LITERAL tail elements after a repetition `( V )*`: bare-name binds
 // and variant sub-patterns `V { f }`, matched from the END (element j at `-(tail_len - j)`), and
 // mixable with literals.  The tail length is counted first (a link/revert look-ahead) so every

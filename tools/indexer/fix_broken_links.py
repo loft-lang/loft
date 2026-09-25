@@ -118,6 +118,75 @@ def repair(raw: str, src: str, paths: set[str]) -> tuple[str | None, str]:
     return rel(src_dir, found[0], path_part.endswith("/")) + suffix, ""
 
 
+def scan(path: str, text: str, paths: set[str]) -> tuple[str, list]:
+    """The repaired text of one markdown file, and a finding per broken link:
+    `(line, target, repaired target or None, reason)`.  `doc_lint.py` asks this
+    too, so the two tools cannot disagree about what a link is."""
+    lines = text.split("\n")
+    found: list = []
+    # Code spans can wrap, so they are found per paragraph: a run of
+    # non-blank lines outside a fence.
+    para: list[int] = []
+    in_fence = False
+
+    def flush() -> None:
+        if not para:
+            return
+        block = "\n".join(lines[k] for k in para)
+        spans = code_spans(block)
+        starts = []
+        pos = 0
+        for k in para:
+            starts.append(pos)
+            pos += len(lines[k]) + 1
+
+        def line_of(off: int) -> int:
+            idx = 0
+            while idx + 1 < len(starts) and starts[idx + 1] <= off:
+                idx += 1
+            return para[idx] + 1
+
+        def sub(m):
+            if any(a <= m.start() < b for a, b in spans):
+                return m.group(0)
+            n = line_of(m.start())
+            if "<!--noindex-->" in lines[n - 1]:
+                return m.group(0)
+            new, why = repair(m.group(2), path, paths)
+            if new is not None:
+                found.append((n, m.group(2), new, ""))
+                return m.group(1) + new
+            if why:
+                found.append((n, m.group(2), None, why))
+            return m.group(0)
+
+        block = INLINE_LINK.sub(sub, block)
+        block = REF_DEF_M.sub(sub, block)
+        for k, text_line in zip(para, block.split("\n")):
+            lines[k] = text_line
+        para.clear()
+
+    for k, line in enumerate(lines):
+        if FENCE.match(line):
+            flush()
+            in_fence = not in_fence
+            continue
+        if in_fence:
+            continue
+        if line.strip() == "":
+            flush()
+            continue
+        para.append(k)
+    flush()
+    return "\n".join(lines), found
+
+
+def in_scope(path: str) -> bool:
+    """Markdown this tool checks: every tracked `.md` but the generated index and the
+    fixtures, which hold dead links on purpose."""
+    return path.endswith(".md") and not path.startswith(("index/", "tests/fixtures/"))
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--apply", action="store_true")
@@ -127,76 +196,22 @@ def main() -> int:
     paths = all_paths(files)
     fixed = flagged = 0
     for f in sorted(files):
-        if not f.endswith(".md") or f.startswith(("index/", "tests/fixtures/")):
+        if not in_scope(f):
             continue
         p = REPO_ROOT / f
         if not p.is_file():
             continue
         text = p.read_text(encoding="utf-8")
-        lines = text.split("\n")
-        changed = False
-        # Code spans can wrap, so they are found per paragraph: a run of
-        # non-blank lines outside a fence.
-        para: list[int] = []
-        in_fence = False
-
-        def flush() -> None:
-            nonlocal changed, fixed, flagged
-            if not para:
-                return
-            block = "\n".join(lines[k] for k in para)
-            spans = code_spans(block)
-            starts = []
-            pos = 0
-            for k in para:
-                starts.append(pos)
-                pos += len(lines[k]) + 1
-
-            def line_of(off: int) -> int:
-                idx = 0
-                while idx + 1 < len(starts) and starts[idx + 1] <= off:
-                    idx += 1
-                return para[idx] + 1
-
-            def sub(m):
-                nonlocal fixed, flagged, changed
-                if any(a <= m.start() < b for a, b in spans):
-                    return m.group(0)
-                n = line_of(m.start())
-                if "<!--noindex-->" in lines[n - 1]:
-                    return m.group(0)
-                new, why = repair(m.group(2), f, paths)
-                if new is not None:
-                    print(f"  fix   {f}:{n}: {m.group(2)} -> {new}")
-                    fixed += 1
-                    changed = True
-                    return m.group(1) + new
-                if why:
-                    print(f"  flag  {f}:{n}: {m.group(2)} ({why})")
-                    flagged += 1
-                return m.group(0)
-
-            block = INLINE_LINK.sub(sub, block)
-            block = REF_DEF_M.sub(sub, block)
-            for k, text_line in zip(para, block.split("\n")):
-                lines[k] = text_line
-            para.clear()
-
-        for k, line in enumerate(lines):
-            if FENCE.match(line):
-                flush()
-                in_fence = not in_fence
-                continue
-            if in_fence:
-                continue
-            if line.strip() == "":
-                flush()
-                continue
-            para.append(k)
-        flush()
-        out = lines
-        if changed and a.apply:
-            p.write_text("\n".join(out), encoding="utf-8")
+        new_text, found = scan(f, text, paths)
+        for n, target, new, why in found:
+            if new is not None:
+                print(f"  fix   {f}:{n}: {target} -> {new}")
+                fixed += 1
+            else:
+                print(f"  flag  {f}:{n}: {target} ({why})")
+                flagged += 1
+        if a.apply and new_text != text:
+            p.write_text(new_text, encoding="utf-8")
 
     verb = "fixed" if a.apply else "fixable (dry run; --apply to write)"
     print(f"{verb}: {fixed} / flagged: {flagged}")

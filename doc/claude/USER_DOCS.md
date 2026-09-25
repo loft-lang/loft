@@ -286,8 +286,7 @@ substring test, so `render` still finds `markdown::render`, and the qualifier is
 four packages' `render` apart in the result list. The search covered the bundled stdlib only
 (228 entries); with the distribution in it, 1296.
 
-⚠ **13 of the 42 published versions carry no `api` array** — the field was added after they
-were published. Their pages say exactly that and name the two routes that do work
+⚠ **A version published before the `api` field existed carries no `api` array.** Their pages say exactly that and name the two routes that do work
 (`loft api <name>`, which reads the package itself, and the source), because an empty list
 reads as *this library exports nothing*, which is false for every one of them. The gap closes
 itself: the field is filled at each package's next release, so this is a shrinking number and
@@ -425,18 +424,15 @@ slightly less interactive.
 
 ## The README
 
-### What is wrong with the current one
+### Why it was rewritten
 
-Nothing is inaccurate — I checked every claim: `doc/learn-loft.md` exists, `examples/` holds
-exactly seven files, Brick Buster is 1,849 lines, `editors/vscode` is there, ten skills ship.
-One number is stale: *"~73k lines of documentation"* is now **115,560**.
-
-The problem is the **positioning**. The title is *"build small games, share a link, anyone
-plays"* and the first 40% is one arcade game. That was the right README for a project proving
+The README before this design was accurate — every file and feature it named existed.  The
+problem was the **positioning**. The title was *"build small games, share a link, anyone
+plays"* and the first 40% was one arcade game. That was the right README for a project proving
 it could produce something; it is the wrong one for a distribution with 42 libraries, four
 targets, a registry, a compatibility contract and eight applications built on it. A reader
 evaluating loft as a language they might depend on has to get past a game to find out that
-`loft install` exists, and the libraries appear as a five-row table two-thirds of the way
+`loft install` existed, and the libraries appeared as a five-row table two-thirds of the way
 down, described as "batteries".
 
 Nothing that follows argues for making it drier. Brick Buster is the best evidence in the
@@ -464,9 +460,11 @@ repository that the thing works, and it stays. It stops being the *thesis* and b
 ### The one-home rule, applied here too
 
 The library table in the README is the same facts the registry index carries, and a
-hand-maintained table of 42 rows is a drift generator. It is generated from `index.json`
+hand-maintained table is a drift generator.  The design is to generate it from `index.json`
 between markers, refreshed by the same script that builds `LIBRARIES.md`, with a CI check that
-fails if the committed block does not match. Same rule as § *The invariant*: one home, every
+fails if the committed block does not match.  **That generator and its check are not built**:
+the block between the `registry-summary` markers is hand-kept, grouped by area, and nothing
+compares it with the index. Same rule as § *The invariant*: one home, every
 reader path renders it.
 
 ---
@@ -539,9 +537,9 @@ independently shippable and none blocks the next except where marked.
    a cheaper route than `loft doc`: the registry index's own `api` array already carries every
    `pub` signature with its doc comment, so the reference needs no package installed and no
    clone. One `doc/lib-<name>-api.html` per package, linked from the card, plus every name in
-   the site's search index — a reference nobody can find is half-published. ⚠ **13 of the 42
-   versions predate the `api` field**, and those pages say so and name the two routes that do
-   work, rather than rendering an empty list that reads as *this library exports nothing*.
+   the site's search index — a reference nobody can find is half-published. ⚠ A version that
+   predates the `api` field says so and names the two routes that do work, rather than
+   rendering an empty list that reads as *this library exports nothing*.
 6. ~~**The source browser**~~ **Landed** — one `doc/lib-<name>-src.html` per package, every
    `.loft` file it ships, highlighted and line-anchored, with a public-item table carrying
    both signals. ⚠ Two things the design got wrong and the build corrected: the citations do

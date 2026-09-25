@@ -35,7 +35,8 @@ step, because the two tiers differ by an order of magnitude:
   the compiler emits the variant for each target automatically. **There is no bridge to
   build.** Shipping = write → `loft.toml` → cross-mode test → publish. Most libraries are
   here; keep them here (prefer `#rust` inline over `#native` external whenever the Rust is
-  small) precisely so you never enter Tier 2.
+  small) precisely so you never enter Tier 2.  `#rust` bridges a CAPABILITY loft lacks; it
+  is never a speed-up for a routine loft can express (formal/performance.md `(Perf-Cure)`).
 - **Tier 2 — `#native` external Rust bindings.** The browser column has no automatic path:
   you must hand-build a **`wasm.bridge` crate** (host-import module + JS/WASI host shim). This
   is where the real cost and nearly all the bugs live. Only pay it when the binding genuinely
@@ -65,8 +66,9 @@ rewrite for speed is a per-routine edge case with its reason recorded.
 3. **Declare the target matrix in `loft.toml`** — there is NO `targets =` field; the real
    knobs are `[build] default-targets` / `[build.target.<name>]` and `[test] targets`
    (PACKAGES.md § Build targets), plus a `.wasm_exempt` marker for a justified wasm
-   opt-out (LIBRARY_CHECKLIST.md). Run the suite per target with
-   `loft --tests --native-wasm <dir>` (and its siblings). Tier 2 adds a
+   opt-out (LIBRARY_CHECKLIST.md). The suite runs on `loft test` and `loft test --native`;
+   the test runner has no wasm mode, so the wasm target is checked by the library CI's
+   WASM cross-build and by a program entry, `loft --native-wasm <program>.loft`. Tier 2 adds a
    `[wasm.bridge]` block. Don't claim a target you haven't passed the parity gate on — a
    claimed-but-broken target is worse than an honestly-omitted one.
 4. **(Tier 2 only) Build the wasm bridge** — the host-import module, the host shim, asyncify
@@ -100,7 +102,9 @@ start, not after you're stuck.
 
 - **The re-sign foot-gun (publish).** Editing the registry `index.json` *without re-signing*
   it breaks **all** `loft install`s — every install fails with "registry index
-  signature INVALID" (`src/install.rs` verifies before anything else). Every registry PR must re-sign. → `references/publish.md`.
+  signature INVALID" (`src/install.rs` verifies before anything else). Every change to
+  `index.json` is re-signed by the maintainer (`registry_maintain.sh`); an external author's
+  submission signs nothing. → `references/publish.md`.
 - **Asyncify for suspending calls (bridge).** A bridge function that yields/awaits (a socket
   read, a frame yield) needs asyncify wiring; `yield_frame()` only *sets a flag*, it does not
   trigger a suspend — a dedicated suspend import (e.g. `loft_web.ws_yield`) does. → bridge ref.

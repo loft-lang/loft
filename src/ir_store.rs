@@ -243,6 +243,7 @@ fn write_attribute(stores: &mut Stores, r: &Record, a: &Attribute) {
     r.set_field_bool(stores, ds::ATTR_HIDDEN, a.hidden);
     r.set_field_bool(stores, ds::ATTR_CONST_FIELD, a.const_field);
     r.set_field_bool(stores, ds::ATTR_VALUE_CONST, a.value_const);
+    r.set_field_bool(stores, ds::ATTR_WORK_BUFFER, a.work_buffer);
     node_child(stores, r, ds::ATTR_VALUE, &a.value);
     node_child(stores, r, ds::ATTR_CHECK, &a.check);
     node_child(stores, r, ds::ATTR_CHECK_MESSAGE, &a.check_message);
@@ -511,6 +512,18 @@ pub fn materialize_data_at(stores: &mut Stores, root: DbRef, data: &Data) {
         let ur = uses.push(stores);
         ur.set_field_str(stores, ds::USENAME_NAME, &name);
         ur.set_field_int(stores, ds::USENAME_SOURCE, i64::from(source));
+    }
+    // The type-variable placeholders and their bound keys: a parse that continues this
+    // Data (the stdlib cache, a warm program) asks them which placeholder a `<T>` header
+    // already names, and without them mints a second one.  Sorted, so the bundle's bytes
+    // do not depend on a hash map's order.
+    let tvbs = r.field_recvec(ds::DATA_TYPE_VAR_BOUNDS, ds::TVB_STRIDE);
+    let mut pairs: Vec<(&u32, &String)> = data.type_var_bound_keys.iter().collect();
+    pairs.sort();
+    for (holder, bounds) in pairs {
+        let tr = tvbs.push(stores);
+        tr.set_field_int(stores, ds::TVB_HOLDER, i64::from(*holder));
+        tr.set_field_str(stores, ds::TVB_BOUNDS, bounds);
     }
 }
 
@@ -1535,6 +1548,7 @@ mod tests {
             nullable: true,
             primary: false,
             hidden: false,
+            work_buffer: false,
             value: Value::Int(7),
             check: Value::Null,
             check_message: Value::Text("bad".into()),

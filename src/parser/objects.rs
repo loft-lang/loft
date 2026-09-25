@@ -264,7 +264,13 @@ impl Parser {
     /// asked of the VARIABLE's name, not the spelling: a text parameter written in a block
     /// is promoted to a `__tp_<name>` copy the spelling then resolves to, and that copy is
     /// still the parameter.
-    fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
+    ///
+    /// The ONE home for the question, asked from every site that RESOLVES a name to a local.
+    /// The bare-name read below is one; the two indirect-call sites are the others, because
+    /// `f(1)` on a fn-ref local resolves `f` itself instead of going through that read
+    /// (loft#1679: a fn-ref loop variable called after the loop was the one spelling the
+    /// refusal missed, and it answered the exhausted sentinel as `null` instead).
+    pub(crate) fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
         let own = self.vars.name(var);
         if self.vars.is_argument(var) || own.starts_with("__") {
             return;
@@ -3910,12 +3916,12 @@ impl Parser {
                 in_type.clone(),
                 I32.clone(),
             );
-            // loft#1525 — an INCLUSIVE range stops on the value it just yielded, BEFORE the
-            // step, so it never has to represent `till + 1`.  The overshoot test below cannot
-            // do that job when `till` is the type's maximum: the step overflows to the null
-            // sentinel (`i64::MIN` for `integer`), and `till < null` is false under the plain
-            // order — so the loop either restarts (the null-init form reads the sentinel as
-            // "not started yet") or runs on with `i = null` forever.
+            // `@FR-I-RangeIncl` (loft#1525) — an INCLUSIVE range stops on the value it just
+            // yielded, BEFORE the step, so it never has to represent `till + 1`.  The overshoot
+            // test below cannot do that job when `till` is the type's maximum: the step
+            // overflows to the null sentinel (`i64::MIN` for `integer`), and `till < null` is
+            // false under the plain order — so the loop either restarts (the null-init form
+            // reads the sentinel as "not started yet") or runs on with `i = null` forever.
             //
             // Both spellings of the counter take this test unchanged.  In the plain-counter
             // form `i` starts at `lo - 1`, so `i == till` on entry is exactly the empty range

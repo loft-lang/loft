@@ -247,6 +247,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     cast_vector_from_text,
     remove_vector,
     keep_vector_range,
+    append_text_bytes,
     insert_vector,
     new_record,
     finish_record,
@@ -2311,6 +2312,14 @@ fn keep_vector_range(s: &mut State) {
     let v_lo = s.get_stack::<i64>();
     let v_r = s.get_stack::<DbRef>();
     s.database.keep_vector_range(&v_r, v_tp, v_lo, v_hi)
+}
+
+fn append_text_bytes(s: &mut State) {
+    let v_hi = s.get_stack::<i64>();
+    let v_lo = s.get_stack::<i64>();
+    let v_t = s.string();
+    let v_r = s.get_stack::<DbRef>();
+    s.database.append_text_bytes(&v_r, v_t.str(), v_lo, v_hi)
 }
 
 fn insert_vector(s: &mut State) {

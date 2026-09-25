@@ -1768,6 +1768,35 @@ guard `tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft` and th
 23.8× → 6.87× and `flow_layout_full` 107× → 14.8× (bench/portal/analysis/libraries-wide.md).
 The stdlib's own `char_slice` takes it too.
 
+### A text copied byte by byte is one append
+
+```
+  (R-ByteCopy)   `for i in lo..hi { buf += [t.byte_at(i) as u8] }` — a counted range over
+                 `i` whose body is the one push of `t`'s byte at `i` into a byte vector
+                 `buf` stored raw, the byte masked with 255 or not, `t` a text variable
+                 and the bounds pure (a literal, a variable, `size(t)`) — is ONE append
+                 of the bytes `[lo, hi)` of `t` behind the guard
+                 `0 <= lo && lo <= hi && hi <= size(t)`, the loop as written running for
+                 every range the guard refuses (an index past the text reads its null,
+                 and the loop pushes what it always pushed).  A second statement in the
+                 body, a text that is a field or an element, a destination whose element
+                 is not a raw byte, and a bound that is any other call keep the loop.
+```
+
+**In words.**  A binary encoder copies a text payload into its byte buffer one byte at a
+time because that is the only spelling the language offers; the per-byte read, mask and
+push cost 4.3 ns a byte against a block copy.  The append grows the vector the way the push
+grows it (`vector::append_bytes`, one home with `vector_append`'s doubling), because a
+reservation to the exact length reallocated on every chunk.
+
+**BUILT** (2026-09-25, `src/byte_copy.rs` after the compaction pass, `LOFT_NO_BYTE_COPY`;
+guard `tests/scripts/a-byte-wise-text-copy-is-one-append.loft`, pin `tests/byte_copy.rs`).
+The probe (256-byte texts appended 64 000 times, `--native-release`): 2.8–3.0 → 0.34–0.50 ns
+a byte.  cbor `encode_bytes`, re-measured on the same box: **94.7× → 43.1×** of Rust — the
+copy is gone and what the row still pays is the buffer's own growth (each doubling claims,
+zero-fills and relocates) and the per-text work around the copy
+(bench/portal/analysis/libraries-wide.md).
+
 ### A lookup by one integer key takes the typed entry
 
 ```
@@ -2018,6 +2047,74 @@ pooling one produces on the interpreter, plan 51 cluster 3's shape); the positiv
 declines — which is how the condition is falsified rather than asserted.  Switches
 `LOFT_NO_RETBUF_REUSE`, `LOFT_NO_JOIN_BUFFER_WITNESS`.  Sites:
 `scopes::reuse_record_buffers`, `scopes::tail_calls`.
+
+### A local that never leaves the frame is the caller's buffer
+
+```
+  (R-WorkBuffer) a vector local of a callee — `v: vector<τ> = []`, τ a scalar — whose
+                 every mention, its own and its aliases' (`for x in v` binds one), is an
+                 operand of a vector operator that reads or writes the vector IN PLACE
+                 (a push, an append in either role, a reservation, the length, a clear,
+                 a removal, an element read or written through a scalar getter or
+                 setter) is STORAGE OF THE CALLER: a hidden `vector<τ>` parameter,
+                 named as the local and marked a work buffer, that every call site
+                 supplies as the per-site work-ref a hidden return buffer already takes
+                 (O-LazyBuffer: minted once per activation, on a path that makes the
+                 call, freed at the caller's exit), and that the callee CLEARS where the
+                 declaration stood.  A callee handed the null sentinel — an entry the
+                 runtime enters, a host's call — takes the rebound-parameter road at
+                 that same site: a store of its own, minted there and released at exit
+                 against the entry witness (O-Buffer's callee half), so no route owes
+                 the callee a buffer and a null is never a wrong answer.  The mention
+                 test IS the escape proof: with a scalar element every admitted operand
+                 position yields a scalar or nothing, so no view, copy or link of the
+                 store can leave the frame.  Declines, keeping the mint: a mention as an
+                 argument of a loft-bodied call, in a return or a tail, in a literal, a
+                 tuple, a link or a capture, a second assignment, a copy into a local
+                 that is then not so used; an element type that is a record or a text;
+                 a body that suspends or forks; `main`; a generic, a synthetic, a
+                 lambda, a function whose address is taken; a local numbered before an
+                 existing argument.
+```
+
+**In words.**  The overview's largest language-side bucket is a value Rust keeps on the
+stack and loft mints as a STORE: a vector made fresh per call and freed at its end, 67 ns on
+the smallest such function against ~20 ns for a `Vec` created and dropped, and the whole cbor
+bench binary spending ~45 % of its time in that bookkeeping.  What removes the mint is not a
+cheaper mint but no mint: the store lives across calls, in the caller's frame, exactly as the
+text work buffer and the hidden return buffer already do — the rule is those two read once
+more for a LOCAL.  Decided after pass 2 on the settled IR (`Parser::promote_work_buffers`,
+beside the targeted `__tret` promotion, whose caller-patching it shares), so a forward- or
+backward-referenced caller is patched alike; the callee's shape is the one the parser already
+emits for `if c { v = [] } else { v.clear() }` on a by-value vector parameter (entry witness,
+guarded frees), with `OpRefIsNull(v)` as the condition.  The attribute carries an explicit
+`work_buffer` mark because every route that builds a frame by hand — the argv entry, the par
+worker, the shared-cdylib bridge, the engine host, placement — reads the hidden compound
+attribute as THE return buffer, and a second one would have been pushed as a result or
+refused.  Measured on the probe (`fn f(salt) { v: vector<integer> = []; …; len(v) }`,
+2 M calls, `--native-release`): 81 → 33–34 ns a call.  Census of the library corpus
+(2026-09-25): 371 vector locals declared `[]`, 77 with no escaping mention by the crude
+test, 194 results (another rule's), 90 handed to a call (the next widening: a by-value
+parameter of a callee whose return carries no dep on it).
+
+**BUILT** (2026-09-25, `src/parser/work_buffer.rs`, run from `after_pass2` beside the
+targeted `__tret` promotion; `LOFT_NO_WORK_BUFFER`, `LOFT_TRACE_WORK_BUFFER`; guard
+`tests/scripts/a-non-escaping-vector-local-is-a-caller-buffer.loft`, pin
+`tests/work_buffer.rs`, and `LOFT_WORK_BUFFER_NULL` the positive control that runs every
+promoted callee down its null road on both backends).  The attribute mark is
+`Attribute::work_buffer` (serialised; cache format 13), read by the engine host (a null
+where it offered its result record), placement (a function with one runs in-process) and
+the shared-cdylib bridge (a fresh scratch, released after the call whatever was returned);
+the argv entry, the native `main` and the par worker's queue already allocate one store per
+hidden vector attribute and free it after.  A `par(…)` worker is declined by name of the
+builtin's `func` operand: its scalar route builds the frame from the element alone.  The
+probe on the release tier, 2 M calls: **78–91 → 29–36 ns a call**, the hand-written
+caller-buffer form 26.  Census of the walk over six libraries (2026-09-25): 98 locals
+promoted (hex_body 15, hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29), the
+decline that counts being *handed to a call* (41).  A buffer lives as long as its caller's
+activation, so a promoted call site in `main` keeps its buffer for the run exactly as a
+return buffer does; `LOFT_STORES=warn`'s high-water heuristic (more than 30 live stores)
+reads such a `main` as a possible leak, and it is a working set.
 
 ### A leaf carries no frame
 

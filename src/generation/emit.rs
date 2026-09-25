@@ -180,6 +180,15 @@ impl Output<'_> {
                     write!(w, "{{ let _ = (")?;
                     self.output_code_node(w, node.yield_inner())?;
                     write!(w, "); compile_error!(\"{msg}\"); }}")?;
+                } else if self.yield_collect_fnref && self.yield_collect_kinds.is_some() {
+                    // loft#1676 — a yielded fn-ref: two slot images, and the closure record it
+                    // hands over is forgotten (`Output::eager_fnref_push`).
+                    let inner = node.yield_inner();
+                    let mut buf: Vec<u8> = Vec::new();
+                    self.output_code_node(&mut buf, inner)?;
+                    let code = String::from_utf8_lossy(&buf).into_owned();
+                    let push = self.eager_fnref_push(&inner.to_owned_value(), &code);
+                    write!(w, "{push}")?;
                 } else if let Some(kinds) = self.yield_collect_kinds.clone() {
                     // A by-value tuple yield: push each element's `i64` image FLAT, in the
                     // slot order `yield_slot_i64` defines, so the `next_into` reader pops

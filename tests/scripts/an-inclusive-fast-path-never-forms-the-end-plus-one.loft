@@ -1,0 +1,94 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN INCLUSIVE FAST PATH NEVER FORMS THE END PLUS ONE.  `@FR-I-RangeIncl` decides an inclusive
+// range's stop on the value it just yielded, so `for x in lo..=hi` never has to represent
+// `hi + 1` — which is what makes the range exact when `hi` is the type's MAXIMUM (loft#1525).
+//
+// Two native rewrites replace such a loop with one operation: the slice FILL (`@FR-R-Fill`,
+// `d[base + x] = c`) and the PUSH FILL (`@FR-R-PushFill`, `v += [c]`).  After the operation they
+// leave the loop's counters as the loop would have, and that tail wrote the counter past the end
+// as `hi + 1` in plain Rust.  At `hi = i64::MAX` the `--native` build — which checks overflow —
+// panicked with `attempt to add with overflow` after the fill had already written the right
+// elements; the interpreter, which runs the loop, answered correctly.  The tail now steps the
+// way the loop steps (`op_add_int`, the null sentinel there), so it cannot leave a counter the
+// loop would not.  The shipped `--native-release` build wrapped the add silently and was right
+// by accident: nothing reads the counter after the loop.
+//
+// A fill reaches `hi = MAX` only through a large negative base (`base + x` must land inside the
+// vector), which is why the cells pass `2 - mx`.  Every expected value is worked out by hand.
+// The controls are the shapes that were already right: an EXCLUSIVE range to the maximum (its
+// tail forms `hi - 1`, which the fill's own admission proved exists), and both rewrites on an
+// ordinary in-range loop.  The last two cells are the push WINDOW (`v += [x]` with a value that
+// depends on the counter), a sibling rewrite with its own local counter, at the same maximum.
+//
+// @falsified-at: 838779752 — native exit 1 -> 0, native panicked -> clean; interpret INERT
+//   (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/an-inclusive-fast-path-never-forms-the-end-plus-one.patch —
+//   the same channels.
+// CHANNEL: the exit code — the panic ends the run, identically for every to-maximum cell.
+// WITNESS: `attempt to add with overflow` from the generated fill tail, on --native only.
+// HOLDS: the interpreter answers every cell on both trees; the controls answer on both
+//   backends on both trees.
+
+struct Cv { data: vector<integer> }
+
+fn fill_computed(cv: Cv, base: integer, x0: integer, x1: integer, ink: integer) {
+  d = &cv.data;
+  for x in x0..=x1 { d[base + x] = ink; }
+}
+fn fill_literal(cv: Cv, base: integer, x1: integer, ink: integer) {
+  d = &cv.data;
+  for x in 9223372036854775805..=x1 { d[base + x] = ink; }
+}
+fn fill_exclusive(cv: Cv, base: integer, x0: integer, x1: integer, ink: integer) {
+  d = &cv.data;
+  for x in x0..x1 { d[base + x] = ink; }
+}
+fn push_computed(x0: integer, x1: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for _ in x0..=x1 { v += [4]; }
+  v
+}
+fn push_literal(x1: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for _ in 9223372036854775806..=x1 { v += [4]; }
+  v
+}
+fn window(x0: integer, x1: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for i in x0..=x1 { v += [i - x1]; }
+  v
+}
+fn comprehension(x0: integer, x1: integer) -> vector<integer> { [for i in x0..=x1 { i - x1 }] }
+
+fn main() {
+  mx = 9223372036854775807;
+  a = Cv { data: [0, 0, 0, 0] };
+  fill_computed(a, 2 - mx, mx - 2, mx, 7);
+  assert("{a.data}" == "[7,7,7,0]", "fill, computed start, to the maximum: {a.data}");
+  b = Cv { data: [0, 0, 0, 0] };
+  fill_literal(b, 2 - mx, mx, 6);
+  assert("{b.data}" == "[6,6,6,0]", "fill, literal start, to the maximum: {b.data}");
+  p1 = push_computed(mx - 1, mx);
+  assert("{p1}" == "[4,4]", "push fill, computed start, to the maximum: {p1}");
+  p2 = push_literal(mx);
+  assert("{p2}" == "[4,4]", "push fill, literal start, to the maximum: {p2}");
+  // controls
+  c = Cv { data: [0, 0, 0, 0] };
+  fill_exclusive(c, 2 - mx, mx - 2, mx, 5);
+  assert("{c.data}" == "[5,5,0,0]", "fill, exclusive, to the maximum: {c.data}");
+  d = Cv { data: [0, 0, 0, 0] };
+  fill_computed(d, 1, 0, 2, 3);
+  assert("{d.data}" == "[0,3,3,3]", "fill, in range: {d.data}");
+  p3 = push_computed(1, 3);
+  assert("{p3}" == "[4,4,4]", "push fill, in range: {p3}");
+  p4 = push_computed(3, 2);
+  assert(len(p4) == 0, "push fill, empty: {p4}");
+  // the push window and the comprehension, at the same maximum
+  w1 = window(mx - 2, mx);
+  assert("{w1}" == "[-2,-1,0]", "push window to the maximum: {w1}");
+  w2 = comprehension(mx - 1, mx);
+  assert("{w2}" == "[-1,0]", "comprehension to the maximum: {w2}");
+  println("an inclusive fast path never forms the end plus one: every cell holds");
+}

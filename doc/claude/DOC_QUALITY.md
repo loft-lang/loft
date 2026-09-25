@@ -1,7 +1,10 @@
-# In-Code Documentation Quality
+# Documentation Quality
 
-How to comment Rust code in this repo. This is the longer companion to
-[CODE.md § Doc Comments](CODE.md#doc-comments), with the evidence behind each rule.
+How to write documentation in this repo: code comments first, then the rules that
+apply to every doc and to the maintainer docs in `doc/claude/`.  The one-line form of
+every rule, for every surface, is [DOC_CONTRACT.md](DOC_CONTRACT.md); this doc is the
+detail and the evidence.  For code comments it is the longer companion to
+[CODE.md § Doc Comments](CODE.md#doc-comments).
 
 **The main idea:** a comment describes the **code as it is now**. Write what a
 future reader needs but cannot get from the code itself. Anything you could find
@@ -12,7 +15,8 @@ commit message.
 **Fast path:** in a hurry, read [§ The rules](#the-rules). The
 rest is evidence and worked examples.
 
-**Doing a review?** Load the **`doc-quality` skill** at the start
+**Writing?** The doc-lint edit hook (`make hooks`) reports what a script can check as you
+write.  **Doing a review?** Load the **`doc-quality` skill** at the start
 of any documentation review (release doc review, a PR's doc changes, a doc-edit
 pass). It is the loadable companion to this doc — the rules condensed with
 the stamp-vs-pointer test — so the review applies them consistently instead of
@@ -533,7 +537,7 @@ let the ratchet block only *new* ones, then shrink the baseline over time:
 
 ```bash
 scripts/lint_comments.sh --baseline   # T0: accept today's flagged lines
-                                       #     (writes .lint_comments_baseline)
+                                       #     (writes scripts/.lint_comments_baseline)
 scripts/lint_comments.sh --check       # CI: list only NEW flags (advisory)
 scripts/lint_comments.sh --prune        # after a cleanup pass: drop fixed lines
 ```
@@ -549,8 +553,59 @@ scripts/lint_comments.sh --prune        # after a cleanup pass: drop fixed lines
 
 ---
 
+## Maintainer docs (`doc/claude/`, CLAUDE.md, skills)
+
+The rules above are about code.  These are about the docs the project is maintained from.
+Maintainer docs may use denser, project-specific language; the plain-language bar is not a
+gate here.  What is:
+
+1. **A doc answers one question.**  If it takes two headings to say what a doc is for, it is
+   two docs.
+2. **1000 lines is a hard ceiling** (owner, 2026-09-25).  Under it, the internal structure
+   carries the weight: headings a reader can navigate and one topic per section.  A long doc
+   that is well sectioned is fine; a short one that is not still fails review.  Formal rule
+   docs and generated reports are exempt and say so in their header.  `make file-sizes`
+   reports the files over it.
+3. **Every doc is reachable from the CLAUDE.md index in at most two hops**, and each index
+   entry names the *start here* doc for its topic, not a list of peers.
+4. **A contract doc states the current rule; a record doc keeps its dates.**  A contract doc
+   (a reference, a rule set, a design that is in force) says what holds now.  A dated ruling
+   in it — "the owner ruled on …", "retired on …" — becomes a CHANGELOG_TECHNICAL entry or
+   moves to its `<doc>-history.md` companion, and the doc is edited to state the outcome as
+   the rule.  A record doc (CHANGELOG, a plan, a `releases/` directory, an investigation)
+   is history by design and keeps its dates and plan references.
+5. **Commit the goal, never the position.**  A live claim states the goal and names the
+   command that reports where things stand (`make rule-coverage`, `ir_walker_audit.py
+   optional`).  A number written into prose is stale the moment it is committed, and a stale
+   figure does not read as stale — it reads as a measurement.  A dated record keeps its
+   figures.
+6. **Prose beside a gated number carries the reason, not the value.**  When a gate checks a
+   row, a sentence restating the row's number is a second answer nobody checks.  After
+   changing a gated number, grep the file for the old value.
+7. **Search the doc before adding to it.**  A fact you measured yourself feels new; that is
+   not evidence nobody wrote it down.  Grep the target doc for the fact's key noun first.
+8. **Read the code before a doc states what the code does.**  A doc written beside a fix
+   records what its author understood, and the change can land somewhere else.  A pinned test
+   outranks prose and the decision register when they disagree about what the language does.
+9. **Name the tree.**  A fact about "the tree" or "the build" is ambiguous when several
+   checkouts and branches exist; say which one ("on `main`", "on this branch", "in the
+   installed loft").
+10. **A cure ships with its signpost.**  When a fix or an opt-in exists, the place the reader
+    meets the problem — the diagnostic, the error, the section they will search — names it.
+11. **A cure written beside its cause is read back against it.**  Two paragraphs that are each
+    plausible can contradict; check that the proposed fix can act on the cause as stated.
+12. **A doc block is read from above.**  `grep -A` after a symbol shows the NEXT item's
+    documentation; use `grep -B` to read a symbol's own block.  (Rule 10 above is the writing
+    half.)
+13. **A small doc edit rides the branch it belongs to.**  Documentation ships in the same branch
+    as the code it describes, in its own commit; a few lines of docs never get a PR, a cycle,
+    or a question of their own ([DEVELOPMENT.md § Documentation updates](DEVELOPMENT.md)).
+
+---
+
 ## See also
-- **`doc-quality` skill** (`.claude/skills/doc-quality/SKILL.md`) — the actionable form of this reference; auto-loads when writing or editing comments and docs.
+- **`doc-quality` skill** (`.claude/skills/doc-quality/SKILL.md`) — the reviewer's pass: the judgment this reference asks for, applied to one doc from the `make docs-lint` worklist.
+- `scripts/doc_lint.py` — the checkable rules of [DOC_CONTRACT.md](DOC_CONTRACT.md): the edit hook, the PR gate (`make docs-lint-gate`) and the report (`make docs-lint`).
 - [CODE.md](CODE.md) — Code quality rules (naming, functions, doc comments, clippy, deps)
 - [DEVELOPMENT.md](DEVELOPMENT.md) — Contribution workflow and validation against CODE.md
 - [DOC.md](DOC.md) — HTML doc generation from `tests/docs/` (a different "doc": user-facing language docs)

@@ -37,12 +37,11 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-# A file over its kind's bar is a CANDIDATE, nothing more — the split signal decides.
-# The bars are set where a file stops fitting in one reading rather than at a round
-# number: a doc past ~700 lines no longer renders as one page a reader scrolls, and a
-# source file past ~1200 lines stops fitting the "one file, one subject" test the
-# module tree is built on.
-DOC_BAR = 700
+# A doc over DOC_BAR breaks a rule: 1000 lines is the hard ceiling for a maintainer doc
+# (DOC_QUALITY.md § Maintainer docs, rule 2).  A source file over CODE_BAR is a CANDIDATE,
+# nothing more — the split signal decides; past ~1200 lines it stops fitting the "one file,
+# one subject" test the module tree is built on.
+DOC_BAR = 1000
 CODE_BAR = 1200
 
 # Below this share, the largest section is not the file's subject — it is one of

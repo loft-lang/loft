@@ -2295,7 +2295,7 @@ writing ~20 large files during a routine `cargo test` run.
 
 Not connected to the `Test` builder API. The `last` test runs only the final file for fast iteration.
 
-Docs files, `00`–`38` — **36** of them.  The table below covers `00`–`22`; the rest are
+Docs files, `00`–`38`.  The table below covers `00`–`22`; the rest are
 listed by `ls tests/docs`, which is the only count that cannot go stale.  A library's
 getting-started page is NOT here: it lives in the library, under its own `docs/`, and is
 run by that package's CI (@PLN149 step 9).

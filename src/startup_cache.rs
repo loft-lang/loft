@@ -22,7 +22,9 @@ use crate::parser::Parser;
 /// `None` to disable (env var unset/empty, or `default/` unreadable).
 #[cfg(feature = "mmap")]
 fn cache_target(default_dir: &str) -> Option<std::path::PathBuf> {
-    if std::env::var_os("LOFT_STDLIB_CACHE").is_none_or(|v| v.is_empty()) {
+    if std::env::var_os("LOFT_STDLIB_CACHE").is_none_or(|v| v.is_empty())
+        && !crate::cache::program_cache_enabled()
+    {
         return None;
     }
     let srcs = crate::cache::collect_stdlib_sources(default_dir);
@@ -86,6 +88,21 @@ pub fn save_stdlib_cache(_p: &Parser, _default_dir: &str) {}
 // skips ALL parsing.  The caller (`main.rs`) gates these on the cache env var;
 // they assume the gate has already passed.
 
+/// The stdlib a program bundle was built against, as the `stdk` line of its manifest:
+/// the stdlib cache key over every `default/` file's name and content.  A program bundle
+/// holds the parsed stdlib, and a program-cache miss may take the stdlib from its own cache,
+/// so the bundle's source list need not name the stdlib files at all — this line is what
+/// ties the bundle to the library it was parsed against, and an edited, added, removed or
+/// renamed `default/` file changes it.  `None` when `default/` cannot be read.
+#[cfg(feature = "mmap")]
+fn stdlib_key_hex(default_dir: &str) -> Option<String> {
+    let srcs = crate::cache::collect_stdlib_sources(default_dir);
+    if srcs.is_empty() {
+        return None;
+    }
+    Some(hex32(&crate::cache::stdlib_cache_key(&srcs)))
+}
+
 #[cfg(feature = "mmap")]
 fn hex32(key: &[u8; 32]) -> String {
     use std::fmt::Write as _;
@@ -146,7 +163,7 @@ struct ManifestState {
 /// manifest.  `None` on a miss: absent manifest, stale build signature, or any
 /// source drifted since the bundle was written.
 #[cfg(feature = "mmap")]
-fn manifest_state(manifest: &std::path::Path) -> Option<ManifestState> {
+fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<ManifestState> {
     let text = std::fs::read_to_string(manifest).ok()?;
     let mut lines = text.lines();
     // @PLN11 G2/M6 — the first line pins THIS build's signature.  A binary
@@ -155,6 +172,13 @@ fn manifest_state(manifest: &std::path::Path) -> Option<ManifestState> {
     // (`Store::is_store_file`'s fixed magic can't catch a layout change).
     match lines.next().and_then(|l| l.strip_prefix("sig ")) {
         Some(sig) if sig == crate::cache::build_signature() => {}
+        _ => return None,
+    }
+    // `stdk <key>`: the stdlib this bundle was parsed against (`stdlib_key_hex`).  Required —
+    // a bundle that cannot name its stdlib could be one built over a library that has since
+    // changed, and serving it answers with the old library in silence.
+    match lines.next().and_then(|l| l.strip_prefix("stdk ")) {
+        Some(k) if k == stdlib_key => {}
         _ => return None,
     }
     // @PLN11 — optional `prel <0|1>` header: the parse-time `program_relative`
@@ -277,10 +301,11 @@ fn manifest_state(manifest: &std::path::Path) -> Option<ManifestState> {
 pub fn warm_load_program(
     p: &mut Parser,
     script_abspath: &str,
+    default_dir: &str,
     store_out: &mut Option<(crate::database::Stores, crate::keys::DbRef)>,
 ) -> Option<u32> {
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, &p.lib_dirs);
-    let state = manifest_state(&manifest)?;
+    let state = manifest_state(&manifest, &stdlib_key_hex(default_dir)?)?;
     // #310 — re-resolve the parse-time `[library] native` registrations the
     // warm load skips, BEFORE committing to the bundle: each cdylib gets the
     // same prebuilt-or-auto-build freshness check a cold parse runs (a loft
@@ -388,10 +413,14 @@ pub fn warm_load_program(
 pub fn save_program(
     p: &Parser,
     script_abspath: &str,
+    default_dir: &str,
     user_def_start: u32,
     placed_libs: &[(String, String, crate::lib_placement::Placement)],
 ) {
     use std::fmt::Write as _;
+    let Some(stdk) = stdlib_key_hex(default_dir) else {
+        return; // no readable stdlib → a bundle that could not be tied to one
+    };
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, &p.lib_dirs);
 
     let mut paths: Vec<&String> = p.parsed_sources.iter().collect();
@@ -401,6 +430,7 @@ pub fn save_program(
     // @PLN11 G2/M6 — pin the build signature first so a binary upgrade
     // invalidates this bundle (see `manifest_matches`).
     let _ = writeln!(lines, "sig {}", crate::cache::build_signature());
+    let _ = writeln!(lines, "stdk {stdk}");
     // @PLN11 — persist the parse-time path-resolution mode (the `#cwd` directive's
     // resolved effect) so a warm load (which skips parsing) can restore it.
     let _ = writeln!(lines, "prel {}", u8::from(p.database.program_relative));
@@ -489,6 +519,7 @@ pub fn save_program(
 pub fn warm_load_program(
     _p: &mut Parser,
     _script_abspath: &str,
+    _default_dir: &str,
     _store_out: &mut Option<(crate::database::Stores, crate::keys::DbRef)>,
 ) -> Option<u32> {
     None
@@ -497,6 +528,7 @@ pub fn warm_load_program(
 pub fn save_program(
     _p: &Parser,
     _script_abspath: &str,
+    _default_dir: &str,
     _user_def_start: u32,
     _placed_libs: &[(String, String, crate::lib_placement::Placement)],
 ) {
@@ -519,14 +551,14 @@ mod ncrate_manifest_tests {
         let hash = crate::cache::file_hash(&src_str).expect("hash source");
         let manifest = dir.join("m.manifest");
         let content = format!(
-            "sig {}\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\n{} {}\n",
+            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\n{} {}\n",
             crate::cache::build_signature(),
             hex32(&hash),
             src_str,
         );
         std::fs::write(&manifest, &content).unwrap();
 
-        let state = manifest_state(&manifest).expect("valid manifest hit");
+        let state = manifest_state(&manifest, "k").expect("valid manifest hit");
         assert_eq!(
             state.native_crate_regs,
             vec![("loft-foo".to_string(), "/pkgs/foo".to_string())],
