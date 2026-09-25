@@ -142,6 +142,10 @@ fn write_pins(rows: &[(String, String, u64)]) {
 /// exact, and it may only fall.  A count that FELL passes and names the re-pin, so a
 /// change that made the front end cheaper is never blocked by its own improvement; a
 /// build with no pin (another OS) reports its count and passes until someone pins it.
+///
+/// Falsified on its own change: one extra `name.to_string()` in `Data::def_nr` failed it with
+/// `tiny: 1077867 → 1400822 (+322955), medium: 3562376 → 4202195 (+639819)` on linux-release —
+/// and measured, by the way, how often the front end looks a name up.
 #[test]
 fn front_end_allocations_do_not_grow() {
     let key = key();

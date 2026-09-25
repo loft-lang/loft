@@ -618,5 +618,6 @@ are never dropped. [DIAGNOSTICS.md § Who a diagnostic is addressed to](doc/clau
 - **Both-backend optimisations** — parse-time and scope-pass lowering (record placement, call
   buffers, `??` chains, store confinement, …) and runtime store policies (keyed collections,
   clears, prefill, the free tree): [BOTH_BACKEND_SWITCHES.md](doc/claude/BOTH_BACKEND_SWITCHES.md).
-  Both backends share these, so agreement between them is no evidence; the falsifiers are
-  `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and `LOFT_POISON_CLAIM=1`.
+  Both backends share these, so agreement between them is no evidence; the falsifiers are the
+  switch A/B against hand-computed values, and `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+  `LOFT_POISON_CLAIM=1`.
