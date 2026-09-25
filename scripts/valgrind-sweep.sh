@@ -43,6 +43,9 @@ command -v valgrind >/dev/null || { echo "valgrind is not installed — the gate
 [ -x target/release/loft ] || { echo "target/release/loft is not built — cargo build --release first"; exit 2; }
 
 OUT=${VG_OUT:-target/vg}
+# Absolute from here on: the stdlib cache below is `$OUT/xdg-cache`, and prefixing `$PWD` to an
+# absolute VG_OUT wrote that cache INSIDE the repository.
+case "$OUT" in /*) ;; *) OUT="$PWD/$OUT" ;; esac
 rm -rf "$OUT"; mkdir -p "$OUT"
 # Every core on a small machine — the CI runner has 4 and runs nothing else — and a sixth of
 # them left free on a large shared one.
@@ -57,7 +60,7 @@ VG="valgrind --error-exitcode=77 --leak-check=full --errors-for-leak-kinds=defin
 # language server takes, which puts the READER under memcheck on every file).  The cache
 # directory is the sweep's own, so the writer run always starts with no bundle and a bundle
 # from another build is never read.
-export XDG_CACHE_HOME="$PWD/$OUT/xdg-cache"
+export XDG_CACHE_HOME="$OUT/xdg-cache"
 export VG OUT
 
 # The population: every argument (a file or a directory), or the two shipped corpora.
