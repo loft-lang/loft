@@ -21,7 +21,7 @@
 //                        backends whatever the source, which `102b-pass1-expected-errors.loft`
 //                        is the home for.
 //
-// @falsified-at: e3cd94abf — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-at: 16ecfbe29 — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/a-destructure-unpacks-a-reference-tuple.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: exit — on the control the program never runs: every destructuring cell is refused
 //   at parse (*"Cannot destructure a non-tuple value"*), so no value is computed and no leak is

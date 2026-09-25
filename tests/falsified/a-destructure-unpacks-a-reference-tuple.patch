@@ -1,8 +1,8 @@
 diff --git b/src/parser/control.rs a/src/parser/control.rs
-index 7ec71918a..6507d7424 100644
+index 173dbabc8..254852f57 100644
 --- b/src/parser/control.rs
 +++ a/src/parser/control.rs
-@@ -6657,23 +6657,26 @@ impl Parser {
+@@ -6830,23 +6830,26 @@ impl Parser {
          (arm, exhaustive)
      }
  
@@ -13,11 +13,11 @@ index 7ec71918a..6507d7424 100644
 +    /// is a DbRef into the subject's record, so its type must carry a borrow
 +    /// dep on this var (see the call site).
      ///
--    /// `@FR-B-Ref-Uniform` / `(T-Ref)` — a `&(…)` binding denotes the bound tuple itself, so
+-    /// `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the bound tuple itself, so
 -    /// every site that wants the tuple AS A VALUE asks here rather than testing the type's
 -    /// shape for `Type::Tuple`: a bare test answers no for the `&` spelling, and the two
 -    /// callers this has are the two the question has — a tuple PATTERN over the binding
--    /// (loft#1530) and a DESTRUCTURE of it.  `(T-Ref-Rep)` gives
+-    /// (loft#1530) and a DESTRUCTURE of it.  `@FR-T-Ref-Rep` gives
 +    /// A bare `Var` subject is the common `match m { … }` / `match self.f { … }`-
 +    /// into-a-temp case.  A subject reached through GETTERS (`Wrap { inner: Holder
 +    /// { items } }` binds from `OpGetField(w, …)`, and so does `match w.inner`)
@@ -41,7 +41,7 @@ index 7ec71918a..6507d7424 100644
          let Value::Var(v) = subject.unspan() else {
              return None;
          };
-@@ -6718,19 +6721,6 @@ impl Parser {
+@@ -6891,19 +6894,6 @@ impl Parser {
          }
      }
  
@@ -62,7 +62,7 @@ index 7ec71918a..6507d7424 100644
          match subject_val.unspan() {
              Value::Var(v) => Some(*v),
 diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 2c1bd1df0..defb91863 100644
+index b4f4b72c8..defb91863 100644
 --- b/src/parser/expressions.rs
 +++ a/src/parser/expressions.rs
 @@ -6991,19 +6991,7 @@ use a separate collection or add after the loop"
@@ -70,8 +70,8 @@ index 2c1bd1df0..defb91863 100644
              }
              let mut rhs = Value::Null;
 -            let mut rhs_type = self.expression(&mut rhs);
--            // `@FR-B-Ref-Uniform` / `(T-Ref)` — a `&(…)` binding denotes the bound tuple
--            // itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
+-            // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
+-            // bound tuple itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
 -            // shape test below asks the type for `Type::Tuple`, which answers NO for a `&`
 -            // spelling whichever representation `(T-Ref-Rep)` gave the binding, so the
 -            // destructure was refused with *"Cannot destructure a non-tuple value"* — a
