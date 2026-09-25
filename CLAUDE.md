@@ -21,7 +21,12 @@ exercises a real consumer; when a slice surfaces a gap, fix on the spot if XS/S,
 canonical home ([DEVELOPMENT.md § Inserting Discovered Enhancements](doc/claude/DEVELOPMENT.md#inserting-discovered-enhancements-into-the-active-plan)).
 **Two-agent split:** this stream BUILDS + FIXES the language and documents the contract; the
 consumer's own agent USES + adversarially BREAKS it and reports gaps.
-**Edit ONLY this repo** — the symmetric half of the consumer's "the engine is read-only" rule.
+**Library work is in scope HERE (owner, 2026-09-25)** — the `loft-libs-*` repos (the published
+libraries: fix, test, republish via the **loft-ship skill**) are this stream's to edit, never
+delegated to a dogfood project's agent.  Work in a worktree of the library's `origin/main` (a
+sibling checkout may hold someone's uncommitted work).  The consumer APPLICATIONS below stay
+read-only.
+**Edit ONLY this repo and the libraries** — the symmetric half of the consumer's "the engine is read-only" rule.
 Read their tree freely (source, docs, `git log`, their `LOFT_HANDOFF.md`); never write to it. They
 are often working in it concurrently, so a staged test file or a `git checkout` lands in someone
 else's uncommitted work. Verify a consumer-reported bug from a **scratchpad** package that points at
