@@ -1711,7 +1711,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **15** |
+| **16** |
 
 The census this came from — how many functions resolve a projection by op name, and which ones
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
@@ -2818,6 +2818,13 @@ The census behind it — how many functions discriminate on a `Type` variant, ho
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-25, the NINTH join — `../loft2` @ `8e741579f` (#1668–#1671), `../loft3` @ `d7577c30b`
+(#1664's binding half, #1648) and `157-native-4x`'s two new commits, cherry-picked, onto `main` @
+`dd36c8311` — RE-MEASURED on the merged tree: optional **310 / 1295**, `--check-ratchet` at
+baseline; spellings **98 · 16 · 82** (functions resolving a projection by OP NAME · also handling
+`TupleGet` · call spelling only).  The gated middle figure ROSE, 15 → 16, and the row moved with
+it; `doc_hygiene::quality_spellings_table_matches_the_audit` is what asked.)
 
 (2026-09-24, the EIGHTH join — `../loft2` @ `d2aa3bf79` (#1662, #1664), `157-native-4x` @
 `185e8fd54` (@PLN158 wave 3, #1666) and `../loft3` @ `b42007993` (the valgrind sweep, a warm
@@ -9282,6 +9289,199 @@ The **5 remaining sites spell the BARE five** — `scopes.rs`'s return-type chec
 behaviour change per site and needs its own probe.  They stay on the checklist rather than being
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
+
+### "Does a variable with no uses hold a store?" — the premise was written down, and it was false for one type (2026-09-25)
+
+A peer's nightly valgrind went red with **8 bytes definitely lost** and they measured the first
+leaking commit (`a6b6afbe4`, loft#1657's append staging) before I had finished inferring one
+from the guard's authorship — worth recording in that order, because my inference named a
+different commit and was wrong. A measurement beat a reading, again.
+
+The cause was not in that commit. `Vars::unregister_work_ref` retires a substituted-out work ref
+by marking it never-free, and its doc comment states the premise it rests on:
+
+> `substitute_work_ref` lists every `Value` variant explicitly (no wildcard arm), so the rewrite
+> is TOTAL — a surviving use of `var_nr` is not possible, **and a variable with no uses holds no
+> store.**
+
+That last clause is true of a reference, whose dead `= null` is a dead store. It is false of a
+`text`: the work-ref PREAMBLE null-initialises every work reference so the slot allocator sees a
+`first_def`, and on a text `= null` lowers to `OpConvTextFromNull` plus an `OpAppendText` that
+ALLOCATES. So the retirement orphaned a buffer, and the frame slot — shared with the next text
+variable, legally, since the retired one is dead — was re-initialised over it.
+
+**The bytecode named it and the prose could not.** Four lines of `loft introspect`:
+
+```
+  6: InitText(var[24]) var=__ref_1[24]:text
+ 10: AppendText(var[24], …)                       <- the RawVec grow valgrind reports
+ 13: InitText(var[24]) var=__work_3[24]:text      <- same slot, re-init, buffer orphaned
+```
+
+`__work_1` is at 72 and `__work_2` at 48; three `FreeText` at exit cover 72, 48 and 24, and the
+one for 24 is `__work_3`'s.
+
+The cure is the other decoder of the same question, already right: `Scopes::pre_inits` asks the
+type and gives a text the empty string. The work-ref preamble did not. One `let init = …`.
+
+**Three instruments were green on the leaking tree, and each for its own reason.** This is the
+part worth carrying, because it is what a leak of this class costs to find:
+
+- `make ci` — the corpus leak gate (`tests/wrap.rs`) counts STORES, and a Rust `String` is not
+  one;
+- `--interpret`'s own leak report — same counter;
+- `make falsify` — recorded the guard **INERT**, `0|0|none|none|0` on both trees and both
+  backends, because its leak column reads that same store report. Its header says so; the
+  receipt in the guard now says so too, and the guard is HAND-SCORED instead.
+
+⚠ And the hand scoring had its own trap: the falsify control cache builds `dev`, so the first
+A/B compared a debug control against a release binary here — two profiles, not two trees. Redone
+matched: control 48 bytes in 6 blocks, fixed tree 0. Six blocks for five leaking cells is the
+arithmetic agreeing with the mechanism rather than a loose end — the preamble runs once per
+ACTIVATION, which the loop cell establishes, and the two-member cell stages two temps.
+
+### "Which element does this index name?" — two decoders, and only one read the sign (2026-09-25)
+
+`@FR-H-Index` is a rule about what an INDEX MEANS: *"an index is end-relative when it is
+negative, so out of bounds is `i >= len(r)` or `i < -len(r)`"*.  A rule of that shape is worth
+walking precisely because its sites are scattered — every operation that turns an index into an
+address asks it — and the disagreement, when there is one, is silent by construction: an index
+that names the wrong element still names an element.
+
+The walk found **eight sites** that normalise (`State::vec_get_or_raise` and its native twin,
+`vector::get_vector`, `insert_vector`, `remove_vector`, the two `text_char_or_raise` halves, the
+format index) and **one that refuses**: `Stores::remove_vector_at`, the one home for *"delete
+the element at this index"*, which branches by LAYOUT and whose linked branch opened
+`if data.is_null() || index < 0 { return false; }`.
+
+So `v.remove(-1)` removed the last element, or nothing at all, according to whether any keyed
+collection over the element type existed anywhere in the program — because that is what turns a
+`vector<T>` from inline elements into 4-byte record ids.  Silent, both backends, no diagnostic
+(loft#1669, `silent-wrong`).  A schema property the author never spells at the call site decided
+what an index means.
+
+**The instructive part is where the guard already was.**
+`tests/scripts/a-vector-removal-releases-what-the-element-owned.loft` covers `remove(-1)` and
+`remove(-9)` — at the INLINE layout — and `remove(0)` at the LINKED one, in the same file, by
+the same line.  Two axes, each moved, never crossed.  That is what
+`scripts/matrix_axes.py cross` exists to ask, and asking it by eye is what keeps failing: the
+file reads as thorough because both axes appear in it.
+
+**The fix is the deletion of the second decoder, not a sign test added to it.**  The inline
+branch carries a comment saying why it delegates — *"`get_vector` is the same index -> element
+map `remove_vector` walks … so the guard and the removal cannot disagree about which indices
+name an element"* — and the linked branch owed the same and hand-rolled it instead.  It now
+reads its slot from `vector::get_vector` too; at that layout the slot holds a record id rather
+than the element, which is the whole of the difference.  Null container, `i64::MIN`, an
+unallocated vector and either out-of-range end all come back as `rec == 0` from the one map.
+
+Guard `tests/scripts/1669-a-negative-index-removes-from-the-end-at-either-layout.loft`, six
+functions rather than one because they score different channels — value, the keyed member
+unlink, the over-reach no-ops, and the release of what a removed element owned, which a failed
+assert in an earlier cell would have left unscored.
+
+**And then the RELATED cases found the bigger one.**  With the removal closed, the walk asked
+the rest of `@FR-H-Index`'s neighbourhood at both layouts — slice bounds, `insert`, `reverse`,
+`reserve`, the literal pre-allocation, a slice PATTERN — every cell written expecting a PASS.
+Two failed, and not at the edge the walk was about: `insert` corrupts a linked vector at EVERY
+index (`1,2,3` + `insert(1, 9)` reads back `1,2,0,null,`) and `reverse` answers `null,null,3,`
+for `3,2,1,` (loft#1670, `sev:high`, both backends, no diagnostic).
+
+That is a different rule one step over — `@FR-H-Stride`, *"the distance between consecutive
+elements"* — and the same shape of defect as the one just closed.
+`Parser::element_store_size` is the ONE home for the element width, made so by loft#1420 after
+the number had been re-derived wrongly six times, and it never asked `Stores::is_linked`: for a
+linked element it answers the STRUCT's size where the slot is a 4-byte record id.  Of its five
+callers, the two that MOVE bytes by the number slid a span twice as wide, which is
+word-for-word what loft#903 closed for `remove` — its doc comment says so — arriving at the two
+operations that fix did not reach.  The other three only reserve or address, and survived; the
+two reserving ones were quietly claiming twice the bytes they needed.
+
+The chokepoint fix is three lines in `element_store_size`, and it cures `reverse` whole.
+`insert` needs a second half — its element write is inline-shaped, so with the stride right the
+slot lands in the right place and takes the record id as an integer — which is a lowering
+change rather than a width one, and is `loft3-ca`'s on their own branch stacked on this commit.
+The halves are ORDERED, which is the part worth saying out loud when handing one over: fixing
+the element write against the old stride would have been measured on a container whose slots
+were still being addressed at the wrong distance.  Guard
+`tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft` for the half that
+landed; the `insert` cells land with their own fix rather than here.
+
+### "Did the author write `&` here?" — four spellings, and the refusal knew two (2026-09-24)
+
+Came out of loft#1664 (*a write through a LINK to a linked-group member reaches only that
+member*) and turned out to be blocked on a different rule, which is the part worth keeping:
+**the fix for the filed issue was not admissible until a deviation nobody had filed was
+closed first.**
+
+`(Col-Group)` says a record entering through one member of a group is in every member, by any
+write route.  Reaching the siblings needs the owning RECORD and the FIELD, because that is what
+`record_finish` walks `other_indexes` off — so the cure is to spell the write against its origin
+field, which is what loft#1160 already does for a `match` payload binding.  But loft#1662 had
+just established that spelling a write against the field is exactly what a binding cannot
+survive: `(B-View)` may hand it a copy, and the field-spelled write cannot follow.  So the
+question was whether a `&` LINK can be given a copy.
+
+| spelling | marker | disturbance of its container |
+|---|---|---|
+| struct projection `p = &o.r` | `is_amp_link` | refused |
+| scalar / text place `p = &o.r.n` | `is_place_link` (D-bind-56, the day before) | refused |
+| **collection `p = &o.v`** | **`is_amp_container_link`** | **materialised, with an advice** |
+| plain bind off a borrowed base | — | materialised, correctly `(B-View)` |
+
+Three spellings of one question, and the refusal gate knew two.  `(B-Ref-Reshape)` is explicit
+that the copy is the one answer a `&` may not be given — *"loft will not quietly downgrade the
+reference to a copy"* — and **the parser's own note beside `amp_container_link` had written the
+question down as open and named the rules' answer to it**, which is the second time in two days
+that the code site carried the answer before the walk asked.  `D-bind-60`.
+
+With that closed the link can never become a copy, so it still names its origin field at every
+write, and only then is the field spelling sound for it.  **The order is the finding**: had the
+issue been "fixed" first, it would have reproduced loft#1662's split at the `&` spelling.
+
+**Then the cure itself found two more sites answering one question.**  An over-reach cell — the
+`&` link to the KEYED member, written expecting it to pass — failed at `data=0` while the link
+to the VECTOR member passed.  Two causes behind it, neither visible from the other:
+
+* the record an append adds is built at **three** places (`build_vector_list`, the keyed
+  `+= <elem>` fast path, the keyed `+= [ … ]` list path) and only the first asked.  Found by
+  `#[track_caller]` on `new_record` after reading the code twice without converging — the probe
+  named `expressions.rs:3369`, which no amount of reading had;
+* and the membership test was one-DIRECTIONAL.  `keyed_field_is_linked` answers of the field
+  that LISTS its views, so it says `false` of the view member — half of every
+  vector-plus-keyed group.  My own gate for loft#1662 had been built on it, which means that
+  narrowing was *right for the wrong reason* for one member of the pair.
+
+`Parser::resolved_group_write` is the one home the three sites share;
+`Stores::field_is_group_member` asks both directions.
+
+**What stays open is the half that cannot take this cure** (`D-col-6`'s head): a payload
+BINDING onto a group member, which keeps the field spelling and so splits once it materialises.
+The mechanism to close it now exists — loft#1665's parser-emitted block that the scope pass
+drops for a condemned binding — used to REWRITE rather than drop.  Handed to the line that
+built it rather than re-derived here.
+
+**⚠ A blind `sed` rename clobbered an existing variant name** while adding a cell: the new
+struct's name already existed as an enum variant in the same file, and `s/X/Y/g` renamed both.
+Caught by the compiler in seconds, but the repair had to be by hand and the lesson is the one
+the tree keeps teaching — a rename is a scoped edit, not a text substitution.
+
+**⚠⚠ And the radius I published for the new refusal was the radius of my INSTRUMENT.**  I wrote
+"ONE corpus cell", having walked `tests/scripts/*.loft` plus the published libraries.  A
+sibling's gate then went red on a second cell — a `@PLN157` bytecode-comparison file under
+`doc/claude/plans/`, which a test binary reads and my sweep never looked at.  `doc/` holds
+**1376** `.loft` files against `tests/`' 2381, so the set I walked was a little over half the
+tree by that count and I had called it "the corpus".
+
+The honest measurement is cheap, which is the annoying part: a refusal NAMES ITSELF, so
+pre-filter every `.loft` in the tree to those containing a `&` bind
+(`grep -rlE '=[[:space:]]*&[a-zA-Z_]'` — **110 of 3867**), compile each with the old and the new
+binary, and count the message.  Done that way the answer is **two**, and both are now cited
+where the number is.  ⚠ Give the control binary `--path`: without it the cached falsify build
+loads no stdlib and scores ZERO on every file, which reads as "nothing moved" — the first run
+of this A/B said exactly that, including for a file that refuses on BOTH binaries, and only that
+impossible row showed the control was dead.  [[score-the-harness-before-the-code]], again, in
+the same session that cited it.
 
 ### "Which place does a write through a payload binding reach?" — three decoders, and a lint that stated the opposite (2026-09-24)
 

@@ -1278,9 +1278,7 @@ pub fn OpInsertVector(
     db_tp: i32,
 ) -> DbRef {
     let stores: &mut Stores = unsafe { &mut *cell.get() };
-    let new_value = vector::insert_vector(&data, size as u32, index, &mut stores.allocations);
-    stores.set_default_value(db_tp as u16, &new_value);
-    new_value
+    stores.insert_vector_element(&data, size as u32, index, db_tp as u16)
 }
 
 /// P213: read element [0] of a vector field as a `DbRef`, or null

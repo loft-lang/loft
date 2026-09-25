@@ -159,7 +159,10 @@ fn t11() {
 }
 
 // t12 — the builder delivered into a FIELD and into an ELEMENT, the same delivered shape
-// as t1 at two other destinations; `pt12` is admitted only if every one is.
+// as t1 at two other destinations; `pt12` is admitted only if every one is.  Each goes
+// through a `__lift_N` temp, which declined until `(R-ValueLocal)` (2026-09-25) made a
+// call-bound lift a value local: the copy FROM it materialises the tuple into the field
+// or the element, and `pt12` is admitted.
 struct Holder { hp: Pt, hn: integer }
 fn pt12(px: float, py: float) -> Pt { Pt { ptx: px, pty: py } }
 fn t12() {

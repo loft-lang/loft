@@ -1135,7 +1135,15 @@ impl Parser {
         ) {
             return None;
         }
-        let coll = args.first()?.unspan().clone();
+        self.vector_group_site(args.first()?.unspan())
+    }
+
+    /// The linked-group facts of a VECTOR member named as a collection — `w.es` as the
+    /// `OpGetField(base, off)` it resolved to.  The one derivation both an element write
+    /// ([`Self::vector_group_elem_site`]) and a whole-vector `insert` ask.  `None` when the
+    /// vector is not a group member.
+    fn vector_group_site(&self, coll: &Value) -> Option<GroupElemSite> {
+        let coll = coll.clone();
         let (struct_tp, byte_off) = self.keyed_field_site(&coll)?;
         let members = self.database.keyed_group_members(struct_tp, byte_off);
         if members.len() < 2 {
@@ -6723,6 +6731,21 @@ use #count instead"
         if let Some((_, _, n)) = crate::data::Data::narrow_vector_element(elm) {
             return i32::from(n);
         }
+        // @FR-H-Stride — the distance between consecutive elements, which at the LINKED
+        // layout is the FOUR-byte record id the slot holds and not the element's own record.
+        // A `vector<T>` becomes linked as soon as any keyed collection over `T` exists
+        // anywhere in the program, so this is not a property of the declaration in front of
+        // the reader.  Asked nowhere, the two callers that MOVE bytes by this number slid a
+        // span several slots long: `insert` lost the element and destroyed its neighbours at
+        // every index and `reverse` answered `null,null,3` for `3,2,1`, silently and on both
+        // backends (loft#1670).  It is the same defect loft#903 closed for `remove`, whose own
+        // comment records it, arriving at the two operations that one did not reach.
+        //
+        // Read off the def already resolved above rather than through `get_type`: a lookup
+        // that MINTS a type here would renumber every id after it (loft#739).
+        if elm_td != u32::MAX && self.database.is_linked(self.data.def(elm_td).known_type()) {
+            return 4;
+        }
         // B5 (2026-04-13): for a mixed struct-enum element type
         // (`Type::Enum(_, true, _)`), the parent enum's `known_type` is
         // a byte-sized enumerate (size 1) — wrong for vector storage,
@@ -6989,6 +7012,24 @@ use #count instead"
         };
         steps.push(v_set(tmp, insert_call));
         steps.push(set_val);
+        // `@FR-Col-Group` — a record entering through any member is in every member, by any
+        // write route.  An append reaches the keyed siblings at `OpFinishRecord`; an insert
+        // reaches no such point, so the new element is handed to them here, once its fields
+        // (and so its key) are written — the relink an element write through the group does
+        // (`group_elem_write`, loft#1670).
+        if let Some(site) = self.vector_group_site(list[0].unspan())
+            && let Some(fld) = self.database.field_index_at(site.struct_tp, site.byte_off)
+        {
+            steps.push(self.cl(
+                "OpLinkRecord",
+                &[
+                    site.base.clone(),
+                    Value::Var(tmp),
+                    Value::Int(i32::from(site.struct_tp)),
+                    Value::Int(i32::from(fld)),
+                ],
+            ));
+        }
         *val = v_block(steps, Type::Void, "insert");
         Type::Void
     }

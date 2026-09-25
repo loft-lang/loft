@@ -119,8 +119,10 @@ fn n6() {
   println("n6 {a.at} {a.value} {b.at} {b.value}");
 }
 
-// n7 — a chain to a callee ANOTHER site passes on as a record: `mk7` declines, and the
-// chain in `fwd7` then forwards a record, so `fwd7` declines with it.
+// n7 — a chain to a callee ANOTHER site passes on: until `(R-ValueLocal)` (2026-09-25)
+// `mk7` declined (the site consumed a record) and `fwd7`'s chain forwarded a record with
+// it; now `sum7`'s read-only parameter is a TUPLE PARAMETER, the site is served, and both
+// are admitted.
 fn mk7(i: integer) -> Scan { Scan { ok: true, at: i, value: 7.0 } }
 fn sum7(s: Scan) -> integer { s.at + (s.value as integer) }
 fn fwd7(i: integer) -> Scan {

@@ -1,0 +1,172 @@
+// A small no-heap record handed to a by-value parameter — the values the record form
+// answers, pinned before `(R-ValueLocal)` carries such a parameter as a TUPLE on native.
+//
+// `(R-ValueLocal)` (formal/rewrites.md § A value already home is not copied to a second
+// one): a by-value parameter of a plain no-heap record of at most six scalar fields is
+// received as the tuple of its fields where the callee reads it only field-wise, hands it
+// on to another such parameter, copies FROM it, or answers it as its own value leaf — and
+// the callee's body (with every function it calls) writes no record of that type other
+// than through a return buffer, because a by-value parameter is a VIEW of the argument's
+// place and a write through any other route to that place would be invisible to a tuple.
+// The interpreter keeps the record and is the values oracle; `LOFT_NO_VALUE_LOCAL=1` keeps
+// the record parameter on native and `LOFT_TRACE_VALUEREC=1` names each parameter admitted
+// and declined.  Cells: the bench's rebind loop (c1), a transitive hand-off and a record
+// expression at the site (c2), a write through a second by-value parameter viewing the same record (c3, must
+// decline), a write through a parent's INLINE sub-record (c4, must decline), a write
+// through an element view of the container the argument came from (c5, must decline), a
+// parameter the callee writes (c6, keeps the record), a nullable parameter (c7), a copy of
+// the parameter into a collection (c8), a parameter answered as the callee's own leaf (c9),
+// a loop in the callee over the parameter (c10), a link to the parameter (c11, must
+// decline), a copy from the parameter then written (c12), a one-field record (c13), boolean
+// and integer fields (c14), recursion through an admitted call (c15), a nested record (c16,
+// not a candidate), a fresh record of the same type written in the callee (c17) and the
+// parameter rebound in the body (c18, keeps the record).  Every value is hand-computed.
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a
+//   SABOTAGE (2026-09-25): with the parameter gate's write-set test struck
+//   (`hoist::tuple_param_candidates`, `sound` forced true), native fails c3 — the tuple read
+//   at the call answers 1 where the write through the other parameter made it 5 — the first
+//   cell the sabotage reaches.  LOFT_NO_VALUE_LOCAL=1 is the A/B: every cell answers the
+//   same.
+struct V3 { x: float, y: float, z: float }
+struct M { m: vector<float> }
+struct Seg { a: V3, b: V3 }
+struct Bag { pts: vector<V3> }
+struct Coin { v: integer }
+struct Flag { on: boolean, n: integer }
+struct Vtx { pos: V3, nrm: V3 }
+
+fn v3(a: float, b: float, c: float) -> V3 { V3 { x: a, y: b, z: c } }
+
+// c1 — the bench's shape: a transform rebinding its own argument
+fn xf(tm: const M, tv: const V3) -> V3 {
+  V3 {
+    x: tm.m[0] * tv.x + tm.m[4] * tv.y + tm.m[8] * tv.z + tm.m[12],
+    y: tm.m[1] * tv.x + tm.m[5] * tv.y + tm.m[9] * tv.z + tm.m[13],
+    z: tm.m[2] * tv.x + tm.m[6] * tv.y + tm.m[10] * tv.z + tm.m[14]
+  }
+}
+
+// c2 — a transitive hand-off
+fn dot3(a: const V3, b: const V3) -> float { a.x * b.x + a.y * b.y + a.z * b.z }
+fn len2(v: const V3) -> float { dot3(v, v) }
+
+// c3 — a write through a second parameter viewing the same record: must decline
+fn bump(p: V3, w: V3) -> float { w.x = 5.0; p.x }
+
+// c4 — a write through the PARENT's inline sub-record: must decline
+fn tip(p: V3, s: Seg) -> float { s.a.x = 7.0; p.x + s.b.x }
+
+// c5 — a write through an element view of the container the argument came from
+fn grow(p: V3, v: vector<V3>) -> float { e = v[0]; e.x = 9.0; p.x }
+
+// c6 — the callee WRITES the parameter: the write lands in the caller's record
+fn zero_x(p: V3) -> float { p.x = 0.0; p.y }
+
+// c7 — a nullable parameter
+fn nx(p: V3?) -> float { p.x ?? -1.0 }
+
+// c8 — the parameter copied into a collection
+fn add_pt(b: Bag, p: V3) { b.pts += [p]; }
+
+// c9 — a parameter answered as the callee's own value leaf
+fn pick(a: V3, b: V3, first: boolean) -> V3 { if first { a } else { b } }
+
+// c10 — a loop in the callee over the parameter
+fn sum_n(p: V3, n: integer) -> float {
+  s = 0.0;
+  for i in 0..n { s += p.x * (i as float) + p.z; }
+  s
+}
+
+// c11 — a link to the parameter: must decline
+fn via_link(p: V3) -> float { r = &p; r.y }
+
+// c12 — a copy FROM the parameter, then the copy written
+fn copy_then(p: V3) -> float { q = p; q.x = 9.0; p.x + q.x }
+
+// c13 — a one-field record
+fn dbl(c: Coin) -> integer { c.v * 2 }
+
+// c14 — boolean and integer fields, handed on
+fn tally(f: Flag) -> integer { if f.on { f.n } else { -f.n } }
+fn tally2(f: Flag) -> integer { tally(f) * 2 }
+
+// c15 — recursion through an admitted call
+fn walk(p: V3, n: integer) -> float { if n == 0 { p.x } else { walk(v3(p.x + 1.0, p.y, p.z), n - 1) } }
+
+// c16 — a nested record is not a candidate
+fn vx(v: Vtx) -> float { v.pos.x + v.nrm.y }
+
+// c17 — a fresh record of the parameter's type written in the callee
+fn mkoff(p: V3) -> V3 { q = V3 { x: p.x + 1.0, y: p.y, z: p.z }; q.z = q.z * 2.0; q }
+
+// c18 — the parameter REBOUND in the body: keeps the record
+fn rebound(p: V3, w: V3) -> float { p = w; p.x + w.y }
+
+fn main() {
+  // c1: scale x by 2, y by 3, translate (1, 0, -1); three passes from (1, 2, 3)
+  m1 = M { m: [2.0, 0.0, 0.0, 0.0,  0.0, 3.0, 0.0, 0.0,  0.0, 0.0, 1.0, 0.0,  1.0, 0.0, -1.0, 0.0] };
+  p1 = v3(1.0, 2.0, 3.0);
+  acc1 = 0.0;
+  for _ in 0..3 { p1 = xf(m1, p1); acc1 += p1.x; }
+  assert(p1.x == 15.0 && p1.y == 54.0 && p1.z == 0.0 && acc1 == 25.0, "c1 {p1.x} {p1.y} {p1.z} {acc1}");
+  // c2: |(1,2,2)|² = 9 through a value local; |(3,0,4)|² = 25 through a loop variable
+  q2 = v3(1.0, 2.0, 2.0);
+  pts2: vector<V3> = [v3(3.0, 0.0, 4.0)];
+  s2 = 0.0;
+  for q in pts2 { s2 += len2(q); }
+  assert(len2(q2) == 9.0 && s2 == 25.0, "c2 {len2(q2)} {s2}");
+  // c3: the second parameter writes the record the first one views
+  a3 = v3(1.0, 2.0, 3.0);
+  r3 = bump(a3, a3);
+  assert(r3 == 5.0 && a3.x == 5.0, "c3 {r3} {a3.x}");
+  // c4: the parent's sub-record write reaches the parameter's record
+  sg4 = Seg { a: v3(1.0, 2.0, 3.0), b: v3(4.0, 5.0, 6.0) };
+  r4 = tip(sg4.a, sg4);
+  assert(r4 == 11.0 && sg4.a.x == 7.0, "c4 {r4} {sg4.a.x}");
+  // c5: the element write reaches the parameter's record
+  vs5: vector<V3> = [v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0)];
+  r5 = grow(vs5[0], vs5);
+  assert(r5 == 9.0 && (vs5[0]?.x) == 9.0, "c5 {r5}");
+  // c6: the callee's write lands in the caller's record
+  a6 = v3(1.0, 2.0, 3.0);
+  r6 = zero_x(a6);
+  assert(r6 == 2.0 && a6.x == 0.0, "c6 {r6} {a6.x}");
+  // c7: a nullable parameter, absent and present
+  a7: V3? = null;
+  b7 = v3(8.0, 0.0, 0.0);
+  assert(nx(a7) == -1.0 && nx(b7) == 8.0, "c7 {nx(a7)} {nx(b7)}");
+  // c8: two records copied into the bag, one from a call and one from a local
+  bag8 = Bag { pts: [] };
+  add_pt(bag8, v3(1.0, 2.0, 3.0));
+  q8 = v3(4.0, 5.0, 6.0);
+  add_pt(bag8, q8);
+  assert(len(bag8.pts) == 2 && (bag8.pts[1]?.y) == 5.0 && (bag8.pts[0]?.z) == 3.0, "c8 {len(bag8.pts)}");
+  // c9: the leaf answered is the parameter chosen
+  r9a = pick(v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0), false);
+  r9b = pick(v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0), true);
+  assert(r9a.y == 5.0 && r9b.x == 1.0, "c9 {r9a.y} {r9b.x}");
+  // c10: 2·(0+1+2+3) + 4·1 = 16
+  assert(sum_n(v3(2.0, 0.0, 1.0), 4) == 16.0, "c10 {sum_n(v3(2.0, 0.0, 1.0), 4)}");
+  // c11: through the link
+  assert(via_link(v3(1.0, 2.0, 3.0)) == 2.0, "c11");
+  // c12: the copy is a record of its own: 1 + 9
+  a12 = v3(1.0, 2.0, 3.0);
+  assert(copy_then(a12) == 10.0 && a12.x == 1.0, "c12 {copy_then(a12)} {a12.x}");
+  // c13
+  assert(dbl(Coin { v: 21 }) == 42, "c13");
+  // c14
+  assert(tally(Flag { on: true, n: 4 }) == 4 && tally(Flag { on: false, n: 4 }) == -4 && tally2(Flag { on: true, n: 4 }) == 8, "c14");
+  // c15: five steps of +1 from 0
+  assert(walk(v3(0.0, 0.0, 0.0), 5) == 5.0, "c15 {walk(v3(0.0, 0.0, 0.0), 5)}");
+  // c16: 1 + 5
+  assert(vx(Vtx { pos: v3(1.0, 2.0, 3.0), nrm: v3(4.0, 5.0, 6.0) }) == 6.0, "c16");
+  // c17: (2, 2, 6), the argument untouched
+  a17 = v3(1.0, 2.0, 3.0);
+  o17 = mkoff(a17);
+  assert(o17.x == 2.0 && o17.y == 2.0 && o17.z == 6.0 && a17.z == 3.0, "c17 {o17.x} {o17.y} {o17.z}");
+  // c18: 4 + 5
+  assert(rebound(v3(1.0, 2.0, 3.0), v3(4.0, 5.0, 6.0)) == 9.0, "c18");
+  println("tuple parameter cells ok");
+}

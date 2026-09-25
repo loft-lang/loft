@@ -1982,6 +1982,44 @@ fn every_rule_citation_resolves() {
     );
 }
 
+/// The register report asks the tracker about the issue an entry was FILED AS.
+///
+/// `rule_tags.py registers --issues` names an OPEN deviation whose issue has since closed, as
+/// a pair to re-measure.  That line is only worth reading while it is true, and reading the
+/// whole of an entry head made it false: a head explains itself, an explanation cross-references
+/// other issues, and a closed cross-reference then reported as work nobody owed.  Measured
+/// 2026-09-25, the single line the report printed was exactly that (`D-col-6`, tracked by the
+/// open loft#1664, naming the closed loft#1662 in its own sentence), so the report was at zero
+/// precision — the state in which a reader learns to skip it.
+///
+/// `selftest` holds the seven cells for the rule that replaced it, each proven able to fail
+/// against a different break (whole head, attribution with no fallback, first issue only, a
+/// fallback that invents an answer).  It runs here for the same reason `check` does: a tool
+/// nothing runs is a tool that drifts from what it claims.
+#[test]
+fn register_entries_name_their_tracking_issue() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let out = match std::process::Command::new("python3")
+        .arg(root.join("scripts/rule_tags.py"))
+        .arg("selftest")
+        .current_dir(root)
+        .output()
+    {
+        Ok(o) => o,
+        Err(e) => {
+            eprintln!("SKIP register_entries_name_their_tracking_issue: python3 unavailable ({e})");
+            return;
+        }
+    };
+    assert!(
+        out.status.success(),
+        "the register report disagrees with its own cells:\n{}{}\n\
+         Run `python3 scripts/rule_tags.py selftest` to reproduce.",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr),
+    );
+}
+
 /// A diagnostic spells a type the way its reader could have written it.
 ///
 /// `Type::name` is the SCHEMA KEY — `typedef.rs` builds wrapper types from it and `state`

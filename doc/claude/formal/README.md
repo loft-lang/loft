@@ -326,9 +326,15 @@ system grows, anchor the question on the RULE, not on the code*.
 - **Removal:** <the change that makes the code obey the rule>
 ```
 
-**Every OPEN deviation a release can close has a tracking issue, named in its head as
-`loft#NNNN`** — in the heading, or in the first line of a register bullet, which is where
-`rule_tags.py` reads it.  A register records a deviation; it does not make anyone fix it, and a
+**Every OPEN deviation a release can close has a tracking issue, named in its ATTRIBUTION as
+`loft#NNNN`** — the dated parenthetical that opens the entry, in the heading or in the first
+line of a register bullet, which is where `rule_tags.py` reads it.  The attribution, not the
+head as a whole: the rest of the head explains the entry, an explanation cross-references other
+issues, and reading those as trackers made the report ask the tracker about work nobody owed
+(2026-09-25: its only line was `D-col-6`, tracked by the open loft#1664, naming the closed
+loft#1662 in its own sentence).  Several issues in one attribution are all trackers
+(`D-bind-55`); an attribution carrying only dates falls back to the whole head, which is how
+`heap.md` writes `— CLOSED (2026-09-20): … (loft#1551)`.  A register records a deviation; it does not make anyone fix it, and a
 deviation only this directory knows about is deferred work the tracker cannot count, rank or
 schedule.  The owner's standing is that no deviation a release can resolve ships in one, so
 each is filed the day it is opened — as a bug, with a both-backend repro, a verified workaround

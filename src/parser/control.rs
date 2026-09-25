@@ -2704,6 +2704,23 @@ impl Parser {
                 // already delivered the mid-body), so this never double-delivers.
                 let elm_ty = (**elm).clone();
                 self.deliver_mid_vector_returns(&elm_ty, l, buf_var);
+            } else if crate::keys::rebind_place_enabled()
+                && matches!(l.last().map(Value::unspan), Some(Value::Return(_)))
+                && self
+                    .data
+                    .def(self.context)
+                    .returned()
+                    .base()
+                    .heap_def_nr()
+                    .is_some()
+            {
+                // `@FR-R-Rebind`, `@FR-R-Place`'s callee clause — a body whose LAST statement
+                // is an explicit `return` reached no tail delivery at all (the block's value
+                // is the return's, never a tail expression), so every `return S { … }` in it
+                // minted a store of its own and the caller copied it over: the shape the
+                // libraries write (`return Doc { buf: d.buf, pieces: np };`).  Such a body
+                // takes the same pass a bare tail's mid-body exits take.
+                self.literal_exits_into_buffer(l);
             }
         }
         tp
@@ -3026,6 +3043,21 @@ impl Parser {
                 // the buffer the caller allocated stays empty and the record handed
                 // back is a store minted per call.  Build into the buffer instead.
                 // A buffer only chain exits renamed is the caller's too (@PLN164 B2).
+                if crate::keys::trace_ret_promotion() {
+                    eprintln!(
+                        "[retpromo] classify fn={} ctx={context} tail_workref={:?} only_tail={:?} unpromoted={:?} last={}",
+                        self.data.def(self.context).name(),
+                        Self::tail_fresh_object_workref(last),
+                        Self::tail_fresh_object_workref(last)
+                            .map(|w| self.workref_is_only_the_tail(l, w)),
+                        self.unpromoted_return_buffer_var(),
+                        match last.unspan() {
+                            Value::Return(_) => "Return",
+                            Value::Block(b) => &b.name,
+                            _ => "other",
+                        }
+                    );
+                }
                 if crate::keys::value_return_enabled()
                     && let Some(work_ref) = Self::tail_fresh_object_workref(last)
                     && self.workref_is_only_the_tail(l, work_ref)
@@ -3281,6 +3313,139 @@ impl Parser {
         Self::guard_literal_alloc(&mut l[last], work_ref, guard, db_nr);
         Self::substitute_work_ref(&mut l[last], work_ref, buf_var);
         self.vars.set_skip_free(work_ref);
+        if crate::keys::rebind_place_enabled() {
+            self.rebind_safe_literal(&mut l[last], buf_var);
+        }
+    }
+
+    /// The by-value parameters whose record type is `td` — the ones a rebind site may hand
+    /// in as this function's return buffer (`@FR-R-Rebind`).
+    fn same_type_by_value_params(&self, td: u32) -> Vec<u16> {
+        let def = self.data.def(self.context);
+        def.attributes()
+            .iter()
+            .filter(|a| !a.hidden && a.typedef.base().heap_def_nr() == Some(td))
+            .map(|a| self.vars.var(&a.name))
+            .filter(|&v| v != u16::MAX && self.vars.is_argument(v))
+            .collect()
+    }
+
+    /// `@FR-R-Rebind` — make an exit literal built into an OFFERED buffer correct when that
+    /// buffer IS a by-value parameter's record, which is what a rebind site hands in.
+    ///
+    /// The literal's writes then land on the record its own field expressions read, so two
+    /// things change and nothing else: a vector field's `OpAppendVector` into the buffer's
+    /// field becomes `OpReplaceVector`, whose runtime self-test makes `buf: d.buf` cost
+    /// nothing when the two are one vector (`@FR-H-CopySelf`) and copies as the append did
+    /// when they are not — and its zeroing default is dropped, because a zeroed handle is
+    /// exactly what the self-test could no longer see; and a SCALAR field expression that
+    /// reads such a parameter is staged into a temp before the first write, so `S { a: s.b,
+    /// b: s.a }` reads both before it overwrites either (`@FR-R-InPlaceLiteral`'s staging
+    /// clause, one site over).  On a fresh, a pooled or a placed buffer every rewritten op
+    /// answers what it answered before.  A read the staging cannot take — a text, a
+    /// reference, a vector read at ANOTHER field — is left as written, and the scope pass
+    /// (`rebind_place`) reads it as a write that consults the parameter and declines the
+    /// site: the parser makes the literal safe where it can, the scope pass admits only
+    /// what it made safe.
+    fn rebind_safe_literal(&mut self, tail: &mut Value, buf_var: u16) {
+        let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
+            return;
+        };
+        let params = self.same_type_by_value_params(td);
+        if params.is_empty() {
+            return;
+        }
+        let mut viewers: HashSet<u16> = params.iter().copied().collect();
+        for &p in &params {
+            viewers.extend(self.vars.store_viewers(p));
+        }
+        let struct_tp = self.data.def(td).known_type();
+        let vec_offs: HashSet<i32> = (0..self.data.attributes(td))
+            .filter(|&aid| matches!(self.data.attr_type(td, aid).base(), Type::Vector(_, _)))
+            .map(|aid| {
+                i32::from(
+                    self.database
+                        .position(struct_tp, &self.data.attr_name(td, aid)),
+                )
+            })
+            .collect();
+        let append = self.data.def_nr("OpAppendVector");
+        let replace = self.data.def_nr("OpReplaceVector");
+        let get_field = self.data.def_nr("OpGetField");
+        let set_int4 = self.data.def_nr("OpSetInt4");
+        let mut node = tail;
+        let bl = loop {
+            match node {
+                Value::Span(b) => node = &mut b.1,
+                Value::Return(inner) => node = inner,
+                Value::Block(bl) if bl.name == "Object" => break bl,
+                _ => return,
+            }
+        };
+        let field_off = |v: &Value| -> Option<i32> {
+            match v.unspan() {
+                Value::Call(d, a)
+                    if *d == get_field
+                        && a.len() == 3
+                        && matches!(a[0].unspan(), Value::Var(x) if *x == buf_var) =>
+                {
+                    match a[1].unspan() {
+                        Value::Int(off) => Some(*off),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            }
+        };
+        let mut replaced: HashSet<i32> = HashSet::new();
+        for op in &mut bl.operators {
+            if let Value::Call(d, args) = op
+                && *d == append
+                && args.len() == 3
+                && let Some(off) = field_off(&args[0])
+                && vec_offs.contains(&off)
+            {
+                *d = replace;
+                replaced.insert(off);
+            }
+        }
+        bl.operators.retain(|op| {
+            !matches!(op.unspan(), Value::Call(d, args) if *d == set_int4
+                && args.len() == 3
+                && matches!(args[0].unspan(), Value::Var(x) if *x == buf_var)
+                && matches!(args[1].unspan(), Value::Int(off) if replaced.contains(off))
+                && matches!(args[2].unspan(), Value::Int(0)))
+        });
+        if self.first_pass {
+            return;
+        }
+        let mut staged: Vec<Value> = Vec::new();
+        for op in &mut bl.operators {
+            let Value::Call(d, args) = op else { continue };
+            let name = self.data.def(*d).name();
+            if !name.starts_with("OpSet")
+                || matches!(name, "OpSetText" | "OpSetRef" | "OpSetDbRef" | "OpSetEnum")
+                || args.len() < 3
+                || !matches!(args[0].unspan(), Value::Var(x) if *x == buf_var)
+            {
+                continue;
+            }
+            let last = args.len() - 1;
+            if !viewers.iter().any(|&v| args[last].reads_var(v)) {
+                continue;
+            }
+            let tp = self.data.attr_type(*d, last);
+            let n = self.vars.count();
+            let tmp = self
+                .vars
+                .add_variable(&format!("__stg_p2_{n}"), &tp, &mut self.lexer);
+            let val = std::mem::replace(&mut args[last], Value::Var(tmp));
+            staged.push(v_set(tmp, val));
+        }
+        if !staged.is_empty() {
+            staged.append(&mut bl.operators);
+            bl.operators = staged;
+        }
     }
 
     /// @PLN164 B2 (`@FR-R-Place`, the callee clause) — once the tail's delivery is
@@ -3311,6 +3476,12 @@ impl Parser {
         let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
             return;
         };
+        // `@FR-R-Rebind` — an exit answering a by-value parameter of the buffer's type
+        // (`if b <= a { return d; }`) answers the buffer itself at a rebind site, where the
+        // caller hands that parameter's record in AS the buffer, and a view of the argument
+        // everywhere else, which the call site copies as it always has.  Such an exit writes
+        // nothing, so it neither needs the buffer nor forbids the literal exits beside it.
+        let params = self.same_type_by_value_params(td);
         let mut work_refs: Vec<u16> = Vec::new();
         let mut all_literal = true;
         for op in l.iter() {
@@ -3326,6 +3497,8 @@ impl Parser {
                         }
                         // A chain exit answers what its callee wrote into this same buffer.
                         _ if Self::returns_through_chain(inner, buf_var) => {}
+                        _ if crate::keys::rebind_place_enabled()
+                            && matches!(inner.unspan(), Value::Var(p) if params.contains(p)) => {}
                         _ => all_literal = false,
                     }
                 }

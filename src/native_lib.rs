@@ -715,7 +715,9 @@ fn shared_bridge_wrapper(
     // either way — so the C boundary keeps its record contract while the loft-to-loft
     // call inside the cdylib takes the value path.
     let value_rec = crate::generation::hoist::value_records(data, stores);
-    let value_fields = value_rec.fields.get(&d_nr).cloned();
+    let value_fields = value_rec
+        .fn_fields(d_nr)
+        .map(<[(i64, &'static str)]>::to_vec);
     use std::fmt::Write as _;
     let def = data.def(d_nr);
     // Same identifier the emitted program uses for this fn (#305).
@@ -820,7 +822,21 @@ fn shared_bridge_wrapper(
                 let read = bridge_read(&a.typedef, &format!("a[{slot}]"));
                 let _ = writeln!(body, "    let {var}: {ty} = {read};");
                 slot += 1;
-                let _ = write!(fwd, ", {var}");
+                // `(R-ValueLocal)` — a TUPLE PARAMETER: the C boundary hands a record, the
+                // inner fn takes its fields (`hoist::tuple_reads`, the live arm's spelling).
+                if let Some(layout) = value_rec
+                    .param_type(d_nr, i)
+                    .and_then(|tp| value_rec.types.get(&tp))
+                {
+                    let reads = crate::generation::hoist::tuple_reads(
+                        &layout.fields,
+                        &var,
+                        "unsafe { &*cell.get() }",
+                    );
+                    let _ = write!(fwd, ", {reads}");
+                } else {
+                    let _ = write!(fwd, ", {var}");
+                }
             }
         }
     }

@@ -497,7 +497,7 @@ impl OpEmitter for OpCopyRecordEmitter {
             // without a call, a buffer or a whole-record copy.
             if let Value::Var(v) = src.unspan()
                 && let Some(d) = ctx.output.value_record_locals.get(v).copied()
-                && ctx.output.value_records.fields.contains_key(&d)
+                && ctx.output.value_records.types.contains_key(&d)
             {
                 let name = super::super::sanitize(
                     ctx.output.data.def(ctx.output.def_nr).variables().name(*v),

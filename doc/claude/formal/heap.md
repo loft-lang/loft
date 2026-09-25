@@ -104,6 +104,8 @@ value is unrestricted under [capabilities.md](capabilities.md)'s `Cap-Own`).
                 removal slides by (collections.md `Col-RemoveDense`) — is fixed by the declared
                 TYPE τ, NEVER by the DEFINITION τ resolves to.  A definition names a KIND; the
                 width lives in the type's own spec, and one definition may serve many widths.
+                And where the container is LINKED — its slots hold 4-byte record ids rather
+                than the elements — the stride is FOUR, whatever τ's own record measures.
 ```
 
 **In words.** Reading a field/element is a read at the pointer's offset (`pos + field_offset`,
@@ -136,6 +138,16 @@ The shape is worth naming, because it is what makes this rule so easy to violate
 sites converts a TYPE to a definition and back — `type_elm`, `type_def_nr`, `attr_type(_,
 usize::MAX)` — and the round trip is lossy in exactly one place, for exactly one primitive.
 Nothing at the call site looks like a width decision.
+
+**And the LINKED layout is the same trap with a different handle.** A `vector<T>` holds its
+elements inline until any keyed collection over `T` exists ANYWHERE in the program, at which
+point every `vector<T>` becomes a vector of 4-byte record ids — a `vector`/`sorted` turning
+into an `array`/`ordered`, `Stores::is_linked`'s answer. So the stride is not a property of the
+declaration in front of the reader, and a site that reads the element's own width is wrong by a
+factor for every program that happens to key that type. loft#903 closed it for the by-index
+removal; loft#1670 found `reverse` and `insert` had never been reached, both sliding a span
+twice as wide, both silent on both backends. `Parser::element_store_size` is where the two
+questions meet, and it now asks `is_linked` before it measures the record.
 
 Two homes hold the answer. `Data::vector_element_type` names the element's storage TYPE, and
 `Data::narrow_vector_element` names its `(spec, nullable, width)` — the latter being what

@@ -316,6 +316,7 @@ pub mod paged_reader;
 pub mod place_result;
 pub mod placement;
 pub mod portable_path;
+pub mod rebind_place;
 pub mod resolution;
 pub mod resolution_scope;
 pub mod scopes;

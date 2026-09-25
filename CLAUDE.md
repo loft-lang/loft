@@ -1184,13 +1184,29 @@ record-returning call on native.  It was opt-in for two days because its call-si
 did not hold over the script corpus (376 compile errors, 218 of them the fn-ref
 DISPATCH: every arm of the `match` a `CallRef` emits shares one return type); the gate
 now declines every arm by reading the arm set from `fnref::dispatch_arms`, the
-emitter's own home for that question, and the two other classes (a `__lift_` temp bound
-from a CALL, a mixed-arm branch) are declined by shape.  A `__lift_` temp bound from a
+emitter's own home for that question, and a mixed-arm branch is declined by shape (a
+`__lift_` temp bound from a CALL was too, until `(R-ValueLocal)` made it a value local).
+A `__lift_` temp bound from a
 VIEW — a selecting tail's arm over a by-value parameter — is a value local bound to the
 view's field tuple and never a view leaf (read as one it leaked the store its copy
 mints, one record per call; found 2026-09-15 with the generic instance's statement join,
 whose arms bind the join local the same way and did not compile).
 `LOFT_TRACE_VALUEREC=1` names each admission and decline.
+**`LOFT_NO_VALUE_LOCAL=1`** (`@FR-R-ValueLocal`, default-ON since 2026-09-25, generation
+time, `--native` only) keeps every by-value record PARAMETER a `DbRef` again — with it
+off, a parameter of a plain no-heap record of ≤6 scalars is received as the TUPLE of its
+fields where the callee reads it only field-wise, hands it to another such parameter,
+copies from it or answers it, AND the callee's body (with everything it calls) writes no
+record of that type through any route a caller could view — a by-value record parameter
+is a VIEW of its argument (`bump(p, w) { w.x = 5.0; p.x }` called `bump(a, a)` answers 5),
+so the write set keyed by record type decides, a callee's return buffer and the frame's
+own records set apart from it (`WriteSet::reaches_record`); a call site hands a value
+local or an admitted call as it is and reads the fields off any other record at the site
+(mesh3d `mat4_transform` 9.9 → 2.64 ms, 5.0× → 1.32× of Rust; `sphere` −38 %) — and is
+the first bisect step for a wrong field read through a small-record parameter on native.
+The interpreter is the values oracle; `LOFT_TRACE_VALUEREC=1` names each parameter
+carried and each declined with the reason, and the aliasing cells are
+`tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
 **`LOFT_POISON_CLAIM=1`** (`Store::poison_fill`) fills a freshly CLAIMED payload with
 `0xDEADBEEF` instead of zeros — the claim-side twin of `LOFT_POISON`'s poison-on-free, and
 the falsifier for *"does this caller rely on zero-init?"*: a handle or length read out of
@@ -1253,6 +1269,19 @@ destination in a local record, a loop, a rejoin of a stored and a held path all 
 Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
 gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
 within noise) because the record relocated there carries no heap on that scene.
+**`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON since 2026-09-24, parse time +
+scope pass, BOTH backends) keeps `x = f(x, …)` minting the callee's exit record in a store
+of its own and copying it over `x` again — with it off, the call's hidden buffer argument IS
+`x`, so the callee's exit literal writes x's record in place (a vector field that views the
+same field, `Doc { buf: d.buf, … }`, is `(H-CopySelf)` and costs nothing; a scalar the
+literal reads off the parameter is STAGED ahead of the first write; `return d` answers the
+buffer itself), and a body whose last statement is an explicit `return` takes the buffer
+road at all (zttext `delete_range` 138× → 9.6×) — and is the first bisect step for a wrong
+field, a leak or a double free out of a local rebound from a call that takes it.
+`LOFT_TRACE_REBIND=1` names each admission and each decline (a text field or a vector read
+at ANOTHER field of the parameter, a literal-list vector field, a chain exit, a promoted
+buffer, the local handed in twice, a view or witnessed local each decline); the falsifiers
+are `LOFT_STRICT_STORES` / `LOFT_POISON` / the native leak check on the cells.
 **`LOFT_NO_ELEMENT_IN_PLACE=1`** (@PLN164 C1, `@FR-R-InPlaceLiteral`, parse time, BOTH
 backends) makes `v[i] = S { … }` build its record in a temp store and deep-copy it into the
 slot again — with it off, the literal writes the slot's fields, as the FIELD destination

@@ -1,0 +1,66 @@
+diff --git b/src/database/search.rs a/src/database/search.rs
+index 78f31f6b3..0f02f25be 100644
+--- b/src/database/search.rs
++++ a/src/database/search.rs
+@@ -999,22 +999,21 @@ impl Stores {
+             }
+             return vector::remove_vector(data, size, index, &mut self.allocations);
+         }
+-        // `get_vector` again, for the reason the inline branch above gives: it is the same
+-        // index -> element map `remove_vector` walks, so the guard and the removal cannot
+-        // disagree about which indices name an element.  At this layout the slot it answers
+-        // holds a 4-byte record id rather than the element, so the id is read off it.
+-        //
+-        // @FR-H-Index — reading the slot by hand here instead cost exactly that rule
+-        // (loft#1669): the hand-rolled guard opened `if index < 0 { return false }`, so a
+-        // NEGATIVE index was refused at this layout while the inline one counted it from the
+-        // end.  `v.remove(-1)` therefore removed the last element or nothing at all depending
+-        // on whether any keyed collection over the element type existed — a schema property
+-        // the author never spells at the call site — silently, on both backends.
+-        let slot = vector::get_vector(data, 4, index, &self.allocations);
+-        if slot.rec == 0 {
++        if data.is_null() || index < 0 {
++            return false;
++        }
++        let vec_rec = self.store(data).get_u32_raw(data.rec, data.pos);
++        if vec_rec == 0 {
++            return false;
++        }
++        let len = self.store(data).get_u32_raw(vec_rec, 4);
++        let Ok(slot) = u32::try_from(index) else {
++            return false;
++        };
++        if slot >= len {
+             return false;
+         }
+-        let rec = self.store(data).get_u32_raw(slot.rec, slot.pos);
++        let rec = self.store(data).get_u32_raw(vec_rec, 8 + slot * 4);
+         // Unlink first, release the record's claims second, delete it last — the
+         // order [`Stores::remove_owned`] uses, and for the same reason: the walk
+         // reads the record's own fields, so nothing may have freed them yet.
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 54469064e..170a7a52e 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -6723,21 +6723,6 @@ use #count instead"
+         if let Some((_, _, n)) = crate::data::Data::narrow_vector_element(elm) {
+             return i32::from(n);
+         }
+-        // @FR-H-Stride — the distance between consecutive elements, which at the LINKED
+-        // layout is the FOUR-byte record id the slot holds and not the element's own record.
+-        // A `vector<T>` becomes linked as soon as any keyed collection over `T` exists
+-        // anywhere in the program, so this is not a property of the declaration in front of
+-        // the reader.  Asked nowhere, the two callers that MOVE bytes by this number slid a
+-        // span several slots long: `insert` lost the element and destroyed its neighbours at
+-        // every index and `reverse` answered `null,null,3` for `3,2,1`, silently and on both
+-        // backends (loft#1670).  It is the same defect loft#903 closed for `remove`, whose own
+-        // comment records it, arriving at the two operations that one did not reach.
+-        //
+-        // Read off the def already resolved above rather than through `get_type`: a lookup
+-        // that MINTS a type here would renumber every id after it (loft#739).
+-        if elm_td != u32::MAX && self.database.is_linked(self.data.def(elm_td).known_type()) {
+-            return 4;
+-        }
+         // B5 (2026-04-13): for a mixed struct-enum element type
+         // (`Type::Enum(_, true, _)`), the parent enum's `known_type` is
+         // a byte-sized enumerate (size 1) — wrong for vector storage,

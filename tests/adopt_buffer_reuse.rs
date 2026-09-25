@@ -94,9 +94,17 @@ fn the_entry_witness_guards_the_promoted_buffer() {
         r1.contains("__rbw_cv(0):ref(Canvas)[\"__rbw_cv\"] = OpRefAlias(cv(0));"),
         "render_lit_then_call: the entry witness is minted"
     );
-    let free = r1
-        .find("FreeRefIfDistinct(placeholder")
-        .expect("render_lit_then_call: the rebind's displaced free is guarded");
+    // Two spellings of the same guard: one witness (`FreeRefIfDistinct`) or, since the
+    // hidden buffer of the call became a witness too (`@FR-O-Buffer`, the pooled-buffer
+    // rebind), the entry beside it (`FreeRefUnlessEntry`, which declines on either).
+    let free = [
+        r1.find("FreeRefIfDistinct(placeholder"),
+        r1.find("FreeRefUnlessEntry(placeholder"),
+    ]
+    .into_iter()
+    .flatten()
+    .min()
+    .expect("render_lit_then_call: the rebind's displaced free is guarded");
     let call = r1
         .find("fn=n_alloc_canvas)")
         .expect("render_lit_then_call calls alloc_canvas");

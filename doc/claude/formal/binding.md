@@ -420,6 +420,20 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-61** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1664)* — `(B-View)` for a KEYED
+  payload binding.  `match k { Ky { k_look } => { k = Ky { … }; k_look += [r]; len(k_look) } }`
+  answered a wrong length on the interpreter and panicked `--native` with *"Store access out of
+  bounds"*, in a linked group or out of one: the binding kept naming a store its subject no
+  longer owned.  **Where (measured).**  The disturbance walk opened a view only for a binding
+  typed `Reference | Enum | Vector`, so a keyed binding was never condemned, and the materialise
+  arm had no keyed copy.  **Closed** for the PAYLOAD binding (`scopes::keyed_payload_view`: a
+  keyed `_mv_` binding the parser marked never-free) — the walk opens it, and the materialise
+  copies it at the bind through `OpReplaceKeyed` into a buffer, the keyed twin of the vector
+  arm's `OpReplaceVector`.  Asked of the payload binding only, because widening the walk's type
+  list alone was measured unsound: a keyed projection bound off an owned base already copies
+  (`(B-View-Base)`).  Guard: cells a6 and b2 of
+  `tests/scripts/1664-a-group-member-payload-binding-materialises-like-any-view.loft`.
+
 * **D-bind-60** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1664)* — `(B-Ref-Reshape)` for a
   `&` link to a whole COLLECTION.  `p = &o.v; o = S { … }; p += [7]` was MATERIALISED with an
   advice, where the record spelling (`p = &o.r`) and the scalar one (`p = &o.r.n`, D-bind-56 the
@@ -433,11 +447,14 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   The parser's own note beside `amp_container_link` had written the question down as open and
   named this rule's answer to it.  **Closed** by the third disjunct at the refusal gate.  A
   PLAIN collection bind off a borrowed base is deliberately NOT in the set: `(B-View)` says that
-  one materialises, which is what the marker exists to distinguish.  Radius, measured: ONE
-  corpus cell — a control that pinned the materialise, moved to
+  one materialises, which is what the marker exists to distinguish.  Radius, measured: TWO
+  cells tree-wide and ZERO published libraries (42/42 against a current index).  One is a
+  control that pinned the materialise, moved to
   `parse_errors::b_ref_reshape_reassignment_of_a_container_link_base_is_error` exactly as the
-  reference-INTO cell in the same file was — and ZERO published libraries (42/42 against a
-  current index).  The three events that do NOT disturb a reference TO a container are
+  reference-INTO cell in the same file was; the other is a `@PLN157` bytecode-comparison cell
+  under `doc/claude/plans/`, found by a sibling's gate after the first measurement said "one"
+  having walked `tests/scripts` alone.  A refusal's radius is every `.loft` in the tree, and
+  `doc/` holds 1376 of them.  The three events that do NOT disturb a reference TO a container are
   unchanged.  It is also what makes [collections.md](collections.md)'s `D-col-6` answerable for
   this spelling: a link that can never become a copy still names its origin field at every
   write.

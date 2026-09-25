@@ -230,6 +230,10 @@ REG_ENTRY_STRICT = re.compile(
 REG_ENTRY_BULLET = re.compile(
     rf"^[-*]\s+\*\*`?(?P<tag>{DEV_TAG})(?![A-Za-z0-9_'-])", re.M)
 REG_ISSUE = re.compile(r"loft#(\d+)")
+# The ATTRIBUTION — the first parenthetical of an entry's head, which is where the dates and
+# the issue it was filed as are written.  Bounded so it cannot run past the head into the
+# explanation; see `_tracking_issues`.
+REG_ATTRIBUTION = re.compile(r"^[^(]{0,80}\(([^)]*)\)")
 # An open entry that no release can close says so in its head, with its reason in the entry.
 UNRESOLVABLE = "not resolvable in a release"
 
@@ -270,6 +274,35 @@ def chapter_registers():
     return out
 
 
+def _tracking_issues(head):
+    """The issues an entry was FILED AS — not every issue its head mentions.
+
+    An entry's head opens with an ATTRIBUTION — `*(opened 2026-09-24, CLOSED 2026-09-24;
+    loft#1664)*`, `(closed 2026-09-07, loft#1446)`, `(2026-09-17, NARROWED 2026-09-21, …,
+    loft#1563, loft#1645)` — and then explains itself.  The explanation cross-references OTHER
+    issues, because that is what an explanation does: the record former of the same question,
+    the stopgap that came before, the split this one survives.  Reading the whole head makes
+    every such cross-reference a tracking issue, and a CLOSED cross-reference then reports as a
+    pair to re-measure that nobody owes.
+
+    Measured 2026-09-25: of the four open entries the register carried, the single re-measure
+    line `registers --issues` printed was exactly that — `D-col-6`, tracked by the OPEN
+    loft#1664, naming the CLOSED loft#1662 in its own sentence.  Four of the eight heads that
+    name more than one issue are this shape.  A report whose only line is a false positive
+    teaches its reader to skip the line, which is the failure that matters here.
+
+    So the attribution decides, WHEN IT NAMES AN ISSUE AT ALL.  `heap.md` writes some entries
+    with the date alone in the parenthetical and the issue at the end of the sentence
+    (`— CLOSED (2026-09-20): a collection … (loft#1551)`), and a head may open with a rule name
+    in parentheses instead, so an attribution carrying no issue falls back to the whole head.
+    That fallback is what makes the change safe in the direction that matters: it can DISCARD a
+    cross-reference, never lose the tracker.
+    """
+    m = REG_ATTRIBUTION.search(head)
+    named = REG_ISSUE.findall(m.group(1)) if m else []
+    return named or REG_ISSUE.findall(head)
+
+
 def _register_entries(body, pattern):
     """{tag: (tag, status, [issues], unresolvable)} for one scan of one body.
 
@@ -290,7 +323,7 @@ def _register_entries(body, pattern):
         head = REG_OPEN.sub("", body[e.end():stop].split("\n\n")[0][:400])
         out[e.group("tag")] = (e.group("tag"),
                                "CLOSED" if "closed" in head.lower() else "OPEN",
-                               REG_ISSUE.findall(head),
+                               _tracking_issues(head),
                                UNRESOLVABLE in " ".join(head.lower().split()))
     return out
 
@@ -471,6 +504,61 @@ def main():
             print(f"{f}:{n}")
         print(f"\n@FR-{tag}: {len(cites.get(tag, []))} citation(s)")
         return 0
+
+    if cmd == "selftest":
+        # The cells for `_tracking_issues`, which decides which issue an open entry is asking
+        # the tracker about.  They are here rather than in a test file because the question is
+        # about TEXT the docs already write in four shapes, and a cell is one string; the
+        # `check` subcommand is gated by `doc_hygiene::every_rule_citation_resolves`, and this
+        # rides the same route.
+        #
+        # Each was proven able to fail before it was kept, against a DIFFERENT break: c1 and c6
+        # against reading the whole head (the defect this closes), c3 and c5 against reading
+        # the attribution ALONE with no fallback, c2 against taking only the first issue, and
+        # c4 against a fallback that answers something for a head naming nothing.
+        cells = [
+            ("c1 attribution, then a cross-reference in the prose (D-col-6)",
+             "** - OPEN, opened 2026-09-24 (loft#1664): a write through a payload BINDING "
+             "stops reaching the other members, which is loft#1662 split surviving.",
+             ["1664"]),
+            ("c2 an attribution naming several (D-bind-55)",
+             "** *(opened 2026-09-23, CLOSED 2026-09-24; loft#1566, loft#1602, @PLN167 C3)* "
+             "- `(B-Ref-Lvalue)` with `(F-ParamRef)`: a text field handed to a `&text` "
+             "parameter was refused.",
+             ["1566", "1602"]),
+            ("c3 the date alone in the attribution, the issue at the end (heap.md D-heap-13)",
+             " - CLOSED (2026-09-20): a collection returned from a call and bound to a local "
+             "never releases its elements (loft#1551)",
+             ["1551"]),
+            ("c4 a head naming no issue at all (D-op-1 shape)",
+             "** - OPEN, not resolvable in a release: the operator set is what the parser "
+             "computes, and no release can make it finite.",
+             []),
+            ("c5 a rule name in the first parenthetical, the issue after it",
+             "** - OPEN: `(Col-Group)` says a record entering through one member is in every "
+             "member, and it does not (loft#1700).",
+             ["1700"]),
+            ("c6 the same issue in the attribution and in the prose (D-clo-28)",
+             "** *(closed 2026-09-08, loft#1443)* - `(L-CapOwn)` recognised exactly one way "
+             "of leaving, and loft#1443 opened the second.",
+             ["1443"]),
+        ]
+        bad = []
+        for name, head, want in cells:
+            got = _tracking_issues(head)
+            if got != want:
+                bad.append(f"  {name}\n    want {want}, got {got}")
+        # And one cell for the WIRING, because a helper can be right while the caller still
+        # asks the old question: the same c1 head, read the way a chapter is read.
+        wired = _register_entries(
+            "* **D-col-9** - OPEN, opened 2026-09-25 (loft#1664): a write, which is "
+            "loft#1662 split surviving.\n", REG_ENTRY_BULLET)
+        if list(wired) != ["D-col-9"] or wired["D-col-9"][2] != ["1664"]:
+            bad.append(f"  c7 `_register_entries` reads the attribution\n    got {wired}")
+        for line in bad:
+            print(line)
+        print(f"{len(cells) + 1} cell(s), {len(bad)} failed")
+        return 1 if bad else 0
 
     if cmd == "registers":
         # The three decoders side by side: the chapter's stated `OPEN: n`, the entries it

@@ -1,0 +1,166 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `match`/`is` payload binding onto a collection field is a VIEW of that field, and
+// `(B-View)` materialises it where its subject is DISTURBED while it is still used — whether
+// the field is a vector or a keyed collection, and whether or not it is a member of a LINKED
+// GROUP (loft#1664, `formal/binding.md` @FR-B-View, `formal/collections.md` @FR-Col-Group).
+//
+// Two defects, one rule:
+// * A GROUP member's writes are spelled against its origin FIELD, so they reach the group's
+//   siblings (`(Col-Group)`).  That spelling does not name the binding, so once the binding was
+//   materialised the write still went to the reassigned subject while every read came from
+//   the copy: `binding_len` read 1 where the subject read 3.  The scope pass now spells those
+//   writes back to the binding where it materialises it; undisturbed, they still reach every
+//   member (a3, b1).
+// * A KEYED payload binding was never a view in the disturbance walk at all, so it was never
+//   copied: after its subject was reassigned it named a store nobody owned.  The interpreter
+//   answered a wrong length, `--native` panicked "Store access out of bounds" — in or out of a
+//   group (a6, b2).  It is now copied at the bind like its vector twin, through
+//   `OpReplaceKeyed`.
+//
+// Expected values are hand-computed: two() gives the subject two records, and a linked group's
+// members hold the same records (`(Col-Group)`), so a subject answers "2/2".
+//
+// @falsified-at: b938c9cb4 — interpret exit 1 -> 0, interpret 8 assertion failures -> 0, native exit 1 -> 0, native 14 assertion failures -> 0
+// @falsified-by: tests/falsified/1664-a-group-member-payload-binding-materialises-like-any-view.patch — interpret exit 1 -> 0, interpret 8 assertion failures -> 0, native exit 1 -> 0, native 14 assertion failures -> 0
+//   CHANNEL: the value (lengths of the binding and of the reassigned subject's members).
+//   WITNESS (measured on the control's build): a1's binding read 1 with the subject "3/3"; a6
+//   read binding 3 with the subject "3/3" on the interpreter, and a lone a6 run panicked
+//   `--native` with "Store access out of bounds" (src/store.rs); b2 read the subject 2 where 1
+//   is right.
+//   HOLDS: leak and free-refusal are clean on both trees, and the undisturbed controls (a3, a4,
+//   b1) pass on both — the sibling-reaching field spelling is kept wherever the binding lives.
+
+struct Vb1664 { vb_k: integer, vb_n: integer }
+enum G1664 { Gn, Gy { g_data: vector<Vb1664>, g_look: sorted<Vb1664[vb_k]> } }
+enum H1664 { Hn, Hy { h_look: sorted<Vb1664[vb_k]>, h_data: vector<Vb1664> } }
+enum K1664 { Kn, Ky { k_look: sorted<Vb1664[vb_k]> } }
+
+fn one1664() -> G1664 { Gy { g_data: [Vb1664 { vb_k: 1, vb_n: 10 }], g_look: [] } }
+fn two1664() -> G1664 {
+  Gy { g_data: [Vb1664 { vb_k: 5, vb_n: 50 }, Vb1664 { vb_k: 6, vb_n: 60 }], g_look: [] }
+}
+fn lens1664(e: G1664) -> text {
+  match e { Gy { g_data, g_look } => "{len(g_data)}/{len(g_look)}", _ => "-" }
+}
+
+fn test_a1_the_filed_shape() {
+  e = one1664();
+  b = 0;
+  match e { Gy { g_data } => { e = two1664(); g_data += [Vb1664 { vb_k: 2, vb_n: 20 }]; b = len(g_data); }, _ => {} };
+  assert(b == 2, "the binding's own copy: got {b}");
+  assert(lens1664(e) == "2/2", "the reassigned subject: got {lens1664(e)}");
+}
+
+fn test_a2_a_write_with_no_later_read() {
+  e = one1664();
+  match e { Gy { g_data } => { e = two1664(); g_data += [Vb1664 { vb_k: 2, vb_n: 20 }]; }, _ => {} };
+  assert(lens1664(e) == "2/2", "the reassigned subject: got {lens1664(e)}");
+}
+
+fn test_a3_undisturbed_writes_reach_every_member() {
+  e = one1664();
+  b = 0;
+  match e {
+    Gy { g_data } => {
+      g_data += [Vb1664 { vb_k: 2, vb_n: 20 }];
+      g_data += [Vb1664 { vb_k: 3, vb_n: 30 }];
+      b = len(g_data);
+    },
+    _ => {}
+  };
+  assert(b == 3, "the binding: got {b}");
+  assert(lens1664(e) == "3/3", "both members: got {lens1664(e)}");
+}
+
+fn test_a4_a_disturbance_after_the_last_use() {
+  e = one1664();
+  mid = "";
+  match e { Gy { g_data } => { g_data += [Vb1664 { vb_k: 2, vb_n: 20 }]; mid = lens1664(e); e = two1664(); }, _ => {} };
+  assert(mid == "2/2", "before the reassignment: got {mid}");
+  assert(lens1664(e) == "2/2", "after: got {lens1664(e)}");
+}
+
+fn test_a5_a_reassignment_reached_through_the_back_edge() {
+  e = one1664();
+  b = 0;
+  match e {
+    Gy { g_data } => {
+      for i in 0..2 { g_data += [Vb1664 { vb_k: 20 + i, vb_n: i }]; e = two1664(); }
+      b = len(g_data);
+    },
+    _ => {}
+  };
+  assert(b == 3, "every write in the binding's copy: got {b}");
+  assert(lens1664(e) == "2/2", "the subject: got {lens1664(e)}");
+}
+
+fn test_a6_a_keyed_group_member() {
+  e = one1664();
+  b = 0;
+  match e { Gy { g_look } => { e = two1664(); g_look += [Vb1664 { vb_k: 2, vb_n: 20 }]; b = len(g_look); }, _ => {} };
+  assert(b == 2, "the keyed binding's own copy: got {b}");
+  assert(lens1664(e) == "2/2", "the reassigned subject: got {lens1664(e)}");
+}
+
+fn test_a7_the_members_declared_keyed_first() {
+  h: H1664 = Hy { h_look: [], h_data: [Vb1664 { vb_k: 1, vb_n: 10 }] };
+  b = 0;
+  match h {
+    Hy { h_data } => {
+      h = Hy { h_look: [], h_data: [Vb1664 { vb_k: 5, vb_n: 5 }, Vb1664 { vb_k: 6, vb_n: 6 }] };
+      h_data += [Vb1664 { vb_k: 2, vb_n: 2 }];
+      b = len(h_data);
+    },
+    _ => {}
+  };
+  s = match h { Hy { h_look, h_data } => "{len(h_data)}/{len(h_look)}", _ => "-" };
+  assert(b == 2, "the binding: got {b}");
+  assert(s == "2/2", "the subject: got {s}");
+}
+
+fn test_a8_the_is_spelling() {
+  e = one1664();
+  b = 0;
+  if e is Gy { g_data } { e = two1664(); g_data += [Vb1664 { vb_k: 2, vb_n: 20 }]; b = len(g_data); }
+  assert(b == 2, "the binding: got {b}");
+  assert(lens1664(e) == "2/2", "the subject: got {lens1664(e)}");
+}
+
+fn test_a9_a_two_element_append() {
+  e = one1664();
+  b = 0;
+  match e {
+    Gy { g_data } => {
+      e = two1664();
+      g_data += [Vb1664 { vb_k: 2, vb_n: 20 }, Vb1664 { vb_k: 3, vb_n: 30 }];
+      b = len(g_data);
+    },
+    _ => {}
+  };
+  assert(b == 3, "the binding: got {b}");
+  assert(lens1664(e) == "2/2", "the subject: got {lens1664(e)}");
+}
+
+fn test_b1_an_undisturbed_keyed_member_reaches_its_sibling() {
+  e = one1664();
+  match e { Gy { g_look } => { g_look += [Vb1664 { vb_k: 2, vb_n: 20 }]; }, _ => {} };
+  assert(lens1664(e) == "2/2", "both members: got {lens1664(e)}");
+}
+
+fn test_b2_a_keyed_binding_in_no_group() {
+  k: K1664 = Ky { k_look: [Vb1664 { vb_k: 1, vb_n: 10 }] };
+  b = 0;
+  match k {
+    Ky { k_look } => {
+      k = Ky { k_look: [Vb1664 { vb_k: 7, vb_n: 70 }] };
+      k_look += [Vb1664 { vb_k: 2, vb_n: 20 }];
+      b = len(k_look);
+    },
+    _ => {}
+  };
+  s = match k { Ky { k_look } => len(k_look), _ => -1 };
+  assert(b == 2, "the binding's own copy: got {b}");
+  assert(s == 1, "the reassigned subject: got {s}");
+}

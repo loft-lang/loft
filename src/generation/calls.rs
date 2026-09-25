@@ -256,6 +256,10 @@ impl Output<'_> {
                 continue;
             }
             self.emit_call_arg(w, def_fn, idx, v)?;
+            // An argument that is itself a call leaves `current_call_def` naming ITS callee;
+            // the next argument's questions (`(R-ValueLocal)`'s tuple parameter, the `&`
+            // parameter forms) are about this call, so it is restored per argument.
+            self.current_call_def = callee_nr;
         }
         if let Some(extra) = &twin_args {
             for e in extra {
@@ -290,7 +294,7 @@ impl Output<'_> {
                 w,
                 "; if !(__vd.store_nr != u16::MAX && __vd.rec != 0) {{ __vd = OpDatabase(cell, __vd, {tp}_i32); }} "
             )?;
-            self.write_tuple_fields(w, callee_nr, &Value::RawExpr("__vd".to_string()), "__vt")?;
+            self.write_tuple_fields(w, tp, &Value::RawExpr("__vd".to_string()), "__vt")?;
             write!(w, "__vd }}")?;
         }
         Ok(())
@@ -315,6 +319,29 @@ impl Output<'_> {
         idx: usize,
         v: &Value,
     ) -> std::io::Result<()> {
+        // `(R-ValueLocal)` (`@FR-R-ValueLocal`) — a TUPLE PARAMETER takes the tuple: a value
+        // local or an admitted call is one already (`hoist::tuple_arg_ready`, the same
+        // question the site gate asked); any other record expression is read field by
+        // field at the site, which is what the callee's own first reads would have done.
+        if (self.current_call_def as usize) < self.data.definitions.len()
+            && std::ptr::eq(self.data.def(self.current_call_def), def_fn)
+            && let Some(tp) = self.value_records.param_type(self.current_call_def, idx)
+        {
+            if super::hoist::tuple_arg_ready(v, &self.value_records.fns, &self.value_record_locals)
+            {
+                return self.output_code_inner(w, v);
+            }
+            // A record VARIABLE is read field by field as the variable — so a `(R-RecPtr)`
+            // view reads through its held address, as the callee's own reads would have.
+            if matches!(v.unspan(), Value::Var(_)) {
+                return self.output_record_tuple(w, tp, v);
+            }
+            write!(w, "{{ let __tp: DbRef = ")?;
+            self.output_code_inner(w, v)?;
+            write!(w, "; ")?;
+            self.output_record_tuple(w, tp, &Value::RawExpr("__tp".to_string()))?;
+            return write!(w, " }}");
+        }
         // A scalar `&` parameter is a raw `*mut T` (`is_raw_scalar_ref`, loft#1605): a local
         // passes its address, and a link or a `&` parameter passes the pointer it holds.
         let raw_param = idx < def_fn.attributes().len()

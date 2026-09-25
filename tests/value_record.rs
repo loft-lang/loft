@@ -23,8 +23,10 @@ const EXPECTED: &[(&str, bool)] = &[
     ("n_mk_smp_kept", true), // c3: a site appends it — a copy FROM the tuple, materialised (§ V-ah)
     ("n_mk_owner", false),   // c4: a `text` field owns heap
     ("n_mk_big", false),     // c5: past the field-count bound
-    ("n_mk_smp_passed", false), // c6: the result is passed on
-    ("n_mk_cond", false),    // c7: the arms build INTO one shared buffer local and the tail
+    ("n_mk_smp_passed", false), // c6: passed on to a parameter the callee WRITES (a record)
+    ("n_mk_smp_read", true), // c6b: passed on to a read-only parameter — a TUPLE PARAMETER
+    // (`(R-ValueLocal)`), so the nested call is a value local and the maker is admitted
+    ("n_mk_cond", false), // c7: the arms build INTO one shared buffer local and the tail
     // RETURNS that local — an owned tail, which the value form would have to mint (declines)
     ("n_mk_inner", true), // c8: read field-wise inside an admitted caller's own build
     ("n_mk_ret", true),   // c9: its caller forwards it — a forwarding tail (§ V-ah)
@@ -37,27 +39,29 @@ const EXPECTED: &[(&str, bool)] = &[
 const TAIL_CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-ah-value-tail-cells.loft";
 const TAIL_EXPECTED: &[(&str, bool)] = &[
-    ("n_pt", true),           // t1: delivered into a push slot — the tuple is materialised
-    ("n_half", true),         // t2: a forwarding tail
-    ("n_mk_kept", true),      // t3: its record is appended — a copy FROM a value local materialises
-    ("n_fwd_kept", true),     // t3: forwards an admitted callee
-    ("n_pt5", true),          // t5: forwarded by `half5`, itself admitted now (E-1)
-    ("n_half5", true),        // t5: the join local is its buffer — a forward (E-1)
-    ("n_sel", true),          // t6: a selecting tail (a view of a `const` parameter)
-    ("n_ctrl", true),         // t7: a selecting tail with an early return
-    ("n_half_chord", true),   // t8: selecting calls without their brackets, then a forward
-    ("n_own", false),         // t9: an OWNED tail — the value form would mint per call
-    ("n_pt10", false),        // t10: a discharge arm joined with a variable
-    ("n_maybe", false),       // t10: a nullable result has no tuple
-    ("n_ping", true),         // t11: a branch of two admitted calls, mutually recursive
-    ("n_pong", true),         // t11: the forwarding half of the pair
-    ("n_pt12", false),        // t12: delivered into a field / element through a `__lift_` temp
-    ("n_pt13", false),        // t13: its result is passed as an argument (`disc(given)`)
-    ("n_disc", false),        // t13: a JOIN tail — a view on one arm, a mint on the other
-    ("i_2Pt_n_gpick", true),  // t14: a generic instance's statement-join selecting tail
+    ("n_pt", true),         // t1: delivered into a push slot — the tuple is materialised
+    ("n_half", true),       // t2: a forwarding tail
+    ("n_mk_kept", true),    // t3: its record is appended — a copy FROM a value local materialises
+    ("n_fwd_kept", true),   // t3: forwards an admitted callee
+    ("n_pt5", true),        // t5: forwarded by `half5`, itself admitted now (E-1)
+    ("n_half5", true),      // t5: the join local is its buffer — a forward (E-1)
+    ("n_sel", true),        // t6: a selecting tail (a view of a `const` parameter)
+    ("n_ctrl", true),       // t7: a selecting tail with an early return
+    ("n_half_chord", true), // t8: selecting calls without their brackets, then a forward
+    ("n_own", false),       // t9: an OWNED tail — the value form would mint per call
+    ("n_pt10", false),      // t10: a discharge arm joined with a variable
+    ("n_maybe", false),     // t10: a nullable result has no tuple
+    ("n_ping", true),       // t11: a branch of two admitted calls, mutually recursive
+    ("n_pong", true),       // t11: the forwarding half of the pair
+    ("n_pt12", true),       // t12: delivered into a field / element through a `__lift_`
+    // temp — a value local since `(R-ValueLocal)` made call-bound lifts eligible
+    // (2026-09-25); the copy FROM it materialises the tuple into the destination
+    ("n_pt13", false), // t13: its result is passed as an argument (`disc(given)`)
+    ("n_disc", false), // t13: a JOIN tail — a view on one arm, a mint on the other
+    ("i_2Pt_n_gpick", true), // t14: a generic instance's statement-join selecting tail
     ("i_4Coin_n_gmax", true), // t14: the same over a ONE-field record — the `(i64,)` tuple
-    ("n_sel15", true),        // t15: a lifted selecting tail over by-value parameters
-    ("n_sel15c", true),       // t15: the same over `const` parameters
+    ("n_sel15", true), // t15: a lifted selecting tail over by-value parameters
+    ("n_sel15c", true), // t15: the same over `const` parameters
 ];
 
 /// The § V-an chains (`bytecode-comparisons/V-an-chain-cells.loft`): the parser's
@@ -68,20 +72,21 @@ const TAIL_EXPECTED: &[(&str, bool)] = &[
 const CHAIN_CELLS: &str =
     "doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-an-chain-cells.loft";
 const CHAIN_EXPECTED: &[(&str, bool)] = &[
-    ("n_scan_fail", true),   // every site is a chain or a tail of an admitted body
-    ("n_read_uint", true),   // n1: two early `return scan_fail()` chains before an Object tail
-    ("n_hit", true),         // n2: chained from inside a `while` body
-    ("n_find_eq", true),     // n2: the chain in the loop, the tail forwards `scan_fail`
-    ("n_lo", true),          // n3: the first of two chains
-    ("n_hi", true),          // n3: the second
-    ("n_pick", true),        // n3: two chains to different callees, then an Object tail
-    ("n_count_down", true),  // n4: a recursive chain
-    ("n_bump", true),        // n5: chained with a record LITERAL argument
-    ("n_via_obj", true),     // n5: the chain whose sibling buffer holds that literal
-    ("n_mk6", false),        // n6: chained from a body that keeps its buffer
-    ("n_keep6", false),      // n6: an owned tail after a field write — not a value shape
-    ("n_mk7", false),        // n7: passed on as a record by `sum7`
-    ("n_fwd7", false),       // n7: its chain forwards a declined callee
+    ("n_scan_fail", true),  // every site is a chain or a tail of an admitted body
+    ("n_read_uint", true),  // n1: two early `return scan_fail()` chains before an Object tail
+    ("n_hit", true),        // n2: chained from inside a `while` body
+    ("n_find_eq", true),    // n2: the chain in the loop, the tail forwards `scan_fail`
+    ("n_lo", true),         // n3: the first of two chains
+    ("n_hi", true),         // n3: the second
+    ("n_pick", true),       // n3: two chains to different callees, then an Object tail
+    ("n_count_down", true), // n4: a recursive chain
+    ("n_bump", true),       // n5: chained with a record LITERAL argument
+    ("n_via_obj", true),    // n5: the chain whose sibling buffer holds that literal
+    ("n_mk6", false),       // n6: chained from a body that keeps its buffer
+    ("n_keep6", false),     // n6: an owned tail after a field write — not a value shape
+    ("n_mk7", true),        // n7: passed on to `sum7`, whose read-only parameter is a
+    // TUPLE PARAMETER since `(R-ValueLocal)` (2026-09-25) — the site is served
+    ("n_fwd7", true),        // n7: its chain forwards a callee that is now admitted
     ("n_read_num8", true),   // n8: bound into the caller's PROMOTED local
     ("n_at_width", true),    // n8: the promoted local is the phantom, read as the tuple
     ("n_scan3_fail", true),  // n9: forwarded by `read_rgb_at`
@@ -182,12 +187,17 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
     );
     // The join buffers of a branch that binds a TUPLE are dead: minted by nothing, freed by
     // nothing (t4); a branch that keeps a record arm still mints its buffer (t5).
+    // The live-reload arm is not the body: it materialises a TUPLE PARAMETER into a record
+    // for the parked interpreter call (`(R-ValueLocal)`), a mint the pins are not about.
     let body_of = |name: &str| {
         rust.split(&format!("\nfn {name}("))
             .nth(1)
             .and_then(|s| s.split("\nfn ").next())
             .unwrap_or_else(|| panic!("{name} emitted"))
-            .to_string()
+            .lines()
+            .filter(|l| !l.contains("live_dispatch::live_flipped"))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     let t4 = body_of("n_t4");
     assert!(
@@ -227,8 +237,9 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
         );
     }
     // The source-level selecting tail lifts each arm's parameter read into a `__lift_N`
-    // copy (t15): the lift is a value local bound to the parameter's field tuple, so the
-    // arm mints nothing and the store the record form hands up is never made.
+    // copy (t15): the lift is a value local bound to the parameter's tuple, so the arm
+    // mints nothing and the store the record form hands up is never made.  The parameter
+    // itself is a TUPLE PARAMETER (`(R-ValueLocal)`), so the lift binds it as it is.
     for name in ["n_sel15", "n_sel15c"] {
         let body = body_of(name);
         assert!(
@@ -236,8 +247,13 @@ fn each_tail_cell_returns_by_value_exactly_where_predicted() {
             "{name}'s lifts are tuples: no mint, no copy"
         );
         assert!(
-            body.contains("var___lift_1 = (") && body.contains("let mut var___lift_1: (f64, f64)"),
-            "{name}'s lift is bound to the view's field tuple"
+            body.contains("var___lift_1 = var_a;")
+                && body.contains("let mut var___lift_1: (f64, f64)"),
+            "{name}'s lift is bound to the parameter's tuple"
+        );
+        assert!(
+            body.contains("mut var_a: (f64, f64), mut var_b: (f64, f64)"),
+            "{name}'s parameters are tuples"
         );
     }
     let _ = std::fs::remove_file(&out);
@@ -255,12 +271,17 @@ fn each_chain_cell_returns_by_value_exactly_where_predicted() {
             "{name}: returns its record by value"
         );
     }
+    // The live-reload arm is not the body: it materialises a TUPLE PARAMETER into a record
+    // for the parked interpreter call (`(R-ValueLocal)`), a mint the pins are not about.
     let body_of = |name: &str| {
         rust.split(&format!("\nfn {name}("))
             .nth(1)
             .and_then(|s| s.split("\nfn ").next())
             .unwrap_or_else(|| panic!("{name} emitted"))
-            .to_string()
+            .lines()
+            .filter(|l| !l.contains("live_dispatch::live_flipped"))
+            .collect::<Vec<_>>()
+            .join("\n")
     };
     // The chain's assignment lands in the phantom, declared at its tuple's zero and bound
     // from the callee's tuple call — no buffer argument, no mint, no copy.

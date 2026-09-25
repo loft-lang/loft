@@ -2375,6 +2375,8 @@ impl Parser {
         // passes from a genuine cross-pass bug.  Set in `parse_main`, which is the function
         // that drives BOTH passes, so it brackets exactly the window they share.
         self.pass_started = std::time::SystemTime::now().into();
+        // loft#1648 — both passes of this parse read each file's bytes once (H5).
+        self.lexer.begin_parse();
         // @PLAN49 T1 — set the breadcrumb phase + initial file/line so
         // a watchdog-fired hard-kill localises any parse-time hang.
         crate::timeout::checkpoint_parse(filename, 0);
@@ -16451,7 +16453,10 @@ impl Parser {
             let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&auto_use_scan_file) {
                 c.clone()
             } else {
-                let src = Self::read_source(&auto_use_scan_file);
+                let src = self
+                    .lexer
+                    .source_text(&auto_use_scan_file)
+                    .map_or_else(|| Self::read_source(&auto_use_scan_file), str::to_string);
                 let pair = (
                     crate::libscan::scan_qualified_lib_refs(&src),
                     crate::libscan::scan_method_calls(&src),

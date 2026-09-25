@@ -121,10 +121,12 @@ fn a_view_binds_its_address_and_reads_and_writes_go_through_it() {
         main.contains("vector::rec_set::<i64>(__pa_"),
         "r2's write through the view is one store through the address:\n{main}"
     );
-    // r5 — the callee's twin takes its two inputs read through the address at the call.
+    // r5 — the callee's parameter is a TUPLE PARAMETER (`(R-ValueLocal)`, 2026-09-25), so
+    // the site reads the view's two fields through the address into the tuple it hands
+    // over — where the `__inv` twin took them as inputs read the same way before.
     assert!(
-        main.contains("n_rp_ex__inv(cell, var_e, 100_i64, unsafe { vector::rec_get::<i64>(__pa_"),
-        "r5's call must take the twin with its inputs read through the address:\n{main}"
+        main.contains("n_rp_ex(cell, (unsafe { vector::rec_get::<i64>(__pa_"),
+        "r5's call must read its tuple argument through the address:\n{main}"
     );
     // r4 — a field projection view, read and written; r11 — a view written beside an
     // element write through the vector.
@@ -153,9 +155,10 @@ fn the_switches_restore_the_store_reads() {
             "{switch}=1 must read and write through the store again"
         );
         let main = body(&rust, "n_main");
+        // r5's tuple argument is read through the store again, field by field.
         assert!(
-            main.contains("n_rp_ex(cell, var_e, 100_i64)"),
-            "{switch}=1: r5 keeps the plain call:\n{main}"
+            main.contains("n_rp_ex(cell, ({{let db = (var_e); if db.rec == 0"),
+            "{switch}=1: r5 reads its tuple argument through the store:\n{main}"
         );
     }
 }

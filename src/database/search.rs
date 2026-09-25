@@ -999,21 +999,22 @@ impl Stores {
             }
             return vector::remove_vector(data, size, index, &mut self.allocations);
         }
-        if data.is_null() || index < 0 {
+        // `get_vector` again, for the reason the inline branch above gives: it is the same
+        // index -> element map `remove_vector` walks, so the guard and the removal cannot
+        // disagree about which indices name an element.  At this layout the slot it answers
+        // holds a 4-byte record id rather than the element, so the id is read off it.
+        //
+        // @FR-H-Index — reading the slot by hand here instead cost exactly that rule
+        // (loft#1669): the hand-rolled guard opened `if index < 0 { return false }`, so a
+        // NEGATIVE index was refused at this layout while the inline one counted it from the
+        // end.  `v.remove(-1)` therefore removed the last element or nothing at all depending
+        // on whether any keyed collection over the element type existed — a schema property
+        // the author never spells at the call site — silently, on both backends.
+        let slot = vector::get_vector(data, 4, index, &self.allocations);
+        if slot.rec == 0 {
             return false;
         }
-        let vec_rec = self.store(data).get_u32_raw(data.rec, data.pos);
-        if vec_rec == 0 {
-            return false;
-        }
-        let len = self.store(data).get_u32_raw(vec_rec, 4);
-        let Ok(slot) = u32::try_from(index) else {
-            return false;
-        };
-        if slot >= len {
-            return false;
-        }
-        let rec = self.store(data).get_u32_raw(vec_rec, 8 + slot * 4);
+        let rec = self.store(data).get_u32_raw(slot.rec, slot.pos);
         // Unlink first, release the record's claims second, delete it last — the
         // order [`Stores::remove_owned`] uses, and for the same reason: the walk
         // reads the record's own fields, so nothing may have freed them yet.

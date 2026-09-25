@@ -575,38 +575,50 @@ tests/scripts/901-linked-group-fill.loft.
 
 ## 3. Deviations / decided edges
 
-**OPEN: 1.**
+**OPEN: 0.**
 
-- **`D-col-6`** — OPEN, opened 2026-09-24 (loft#1664): **a write through a payload BINDING to a
-  group member stops reaching the other members once `(B-View)` has materialised it.**  The
-  binding keeps the field spelling — which is the one thing that reaches the siblings — so after
-  the materialise the write goes to the subject while the reads come from the copy, which is
-  loft#1662's split surviving exactly where the resolution must stay.  The `&` LINK spelling of
-  the same defect was answered the same day (below), and against `(Col-Group)`'s *"by any write
-  route"*.  `d = &p.p_data; d += [r]` left `p_look` empty, and so did a `match` / `is`
-  payload binding onto a member once [binding.md](binding.md) `(B-View)` had materialised it.
-  ONE cause: `OpNewRecord` / `OpFinishRecord` take the OWNING RECORD and the FIELD, and
-  `Stores::record_finish` walks `other_indexes` off that pair, so a destination that is a link
-  has nothing to walk from.
-  **The `&` spelling is settled** by registering the link's origin field in the table the payload
-  binding already uses, which is sound for a link and not for a plain bind: `D-bind-60` makes a
-  collection link reach `(B-Ref-Reshape)`, so it can never be downgraded to a copy and the field
-  it named at the bind is the field it still names at every write.  Three things had to move
-  together, and each was a site answering one question differently: the record a write adds is
-  built at THREE places — `build_vector_list`, the keyed `+= <elem>` fast path and the keyed
-  `+= [ … ]` list path — of which only the first asked, so the link to a KEYED member reached
-  one member while the same link to the VECTOR member reached both; and the membership test
-  itself was one-directional (`keyed_field_is_linked` answers of the field that LISTS its views,
-  so it says `false` of the view, which is half of every vector-plus-keyed group —
-  `Stores::field_is_group_member` asks both directions).  `Parser::resolved_group_write` is the
-  one home the three sites now share.
-  **What remains is the head of this entry.**  Resolving it means
-  making *"which record owns this collection, at which field"* answerable from the DESTINATION
-  — carried on the binding, or tested at run time against the owner the parser also knows — which
-  is a design call and not a narrowing.  Measured in
-  `tests/scripts/1160-a-variant-binding-write-means-the-field-write.loft` (all four link
-  directions, both declaration orders) and
-  `tests/scripts/1662-a-payload-bindings-write-follows-the-binding.loft` (cell `g1`).
+- **`D-col-7`** — opened and CLOSED 2026-09-25 (loft#1670): **`insert` and `reverse` did not act
+  on a LINKED vector's layout.**  A `vector<T>` is linked — each slot a 4-byte record id, each
+  element a record of its own — as soon as any keyed collection over `T` exists, which the author
+  never spells at the call site, so neither may change what these operations do.  Two defects:
+  `Parser::element_store_size`, the `@FR-H-Stride` home, answered the STRUCT's size for a linked
+  element, so both operations slid the wrong span (`reverse` of `1,2,3` read `null,null,3,`); and
+  with the stride right, `insert` still wrote the element's FIELDS over the slot's record id
+  (`1,4294967298,null,3,`), and a group insert reached no keyed sibling.  **Closed** at the
+  stride home (it answers 4 for a linked element), and at one runtime body both backends' ops run,
+  `Stores::insert_vector_element`: a linked slot is given a record claimed the way an append claims
+  one, its id written into the slot, and the RECORD answered for the fields to be written into.
+  `parse_insert` then hands the element to a group's keyed siblings (`OpLinkRecord`), since an
+  insert, unlike an append, reaches no `OpFinishRecord`; the group site is the one
+  `vector_group_site` derivation an element write through the group already reads.  Guards
+  `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft` (reverse, both
+  layouts) and `tests/scripts/1670-an-insert-writes-the-element-its-layout-holds.loft` (10 cells:
+  every index, negative and out-of-range, a text-owning element, a copied variable, an insert
+  then a remove, and three through a group), falsified at `ea45d5fdf` on both backends.
+
+- **`D-col-6`** — opened and CLOSED 2026-09-24 (loft#1664): **a write through a payload BINDING
+  to a group member kept the field spelling after `(B-View)` had materialised the binding**, so
+  the write went to the reassigned subject while the reads came from the copy
+  (`binding_len` 1, the subject 3), which is loft#1662's split surviving exactly where the
+  resolution must stay.  The `&` LINK spelling of the same question was settled the same day by
+  making a collection link reach `(B-Ref-Reshape)` (`D-bind-60`), so it can never be downgraded
+  to a copy and the field it named at the bind is the field it still names at every write; three
+  sites that build an appended record (`build_vector_list`, the keyed `+= <elem>` fast path and
+  the keyed `+= [ … ]` list path) now share `Parser::resolved_group_write`, and membership is
+  asked both ways (`Stores::field_is_group_member`).
+  **The binding half is closed where the materialise is decided.**  The field-spelled write is
+  recognised by its ELEMENT, whose type records the binding it lives in, and `new_record` records
+  on the `Function` the collection type the binding's own spelling passes
+  (`group_write_views`).  The walk counts such a write as a USE of the binding; where the binding
+  is condemned, the scope pass spells `OpNewRecord` / `OpFinishRecord` back to
+  `(binding, its collection type, u16::MAX)`, so the write lands in the copy — which is what
+  `(B-View)` says a materialised view's write does.  Undisturbed, the write keeps the field
+  spelling and still reaches every member.  A KEYED member needed the materialise itself first
+  ([binding.md](binding.md) `D-bind-61`).  Guard
+  `tests/scripts/1664-a-group-member-payload-binding-materialises-like-any-view.loft`, 11 cells
+  (vector and keyed members, both declaration orders, a back edge, the `is` spelling, a
+  two-element append, and the undisturbed controls), falsified at `b938c9cb4` on both backends;
+  `1160-…` and `1662-…` unchanged.
 
 `D-col-5` (loft#1576) was opened 2026-09-21 and CLOSED 2026-09-22: a repeated key displaced the
 older record from the one MEMBER of a linked group it collided in, not from the group, and a group

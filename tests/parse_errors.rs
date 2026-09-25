@@ -3469,9 +3469,20 @@ fn b_ref_reshape_growth_of_a_field_container_under_amp_link_is_error() {
 /// spare the link from its own container's growth.  The parser's note beside `amp_container_link`
 /// had written the question down as open and named the rules' answer to it.
 ///
-/// Radius, measured: ONE corpus cell (the control this replaces, in
-/// `a-link-to-a-whole-container-survives-that-containers-growth.loft`) and ZERO published
-/// libraries — `revalidate_libs_local.sh` stayed 42/42 against a current index.
+/// Radius, measured: TWO cells tree-wide and ZERO published libraries
+/// (`revalidate_libs_local.sh` stayed 42/42 against a current index).  The cells are the
+/// control this replaces, in `a-link-to-a-whole-container-survives-that-containers-growth.loft`,
+/// and `doc/claude/plans/157-native-4x-drawing/bytecode-comparisons/V-n-view-def-header-cells.loft`.
+///
+/// ⚠ The second one was found by a SIBLING's gate, not by me, and that is the lesson in this
+/// entry.  The first measurement said "one corpus cell" and had walked `tests/scripts/*.loft`
+/// plus the published libraries — which is not the radius but the radius of that instrument:
+/// a test binary reads `.loft` files outside `tests/scripts` too, and `doc/` holds 1376 of
+/// them.  A REFUSAL's radius is every `.loft` in the tree, and the sweep that answers it is
+/// cheap because the refusal names itself: pre-filter to files containing a `&` bind
+/// (`grep -rlE '=[[:space:]]*&[a-zA-Z_]' --include='*.loft'` — 110 of 3867), compile each with
+/// both binaries and count this message.  Done that way the answer is two, and the control
+/// binary must be given `--path`, or it loads no stdlib and every file scores zero.
 #[test]
 fn b_ref_reshape_reassignment_of_a_container_link_base_is_error() {
     code!(

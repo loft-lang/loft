@@ -1375,6 +1375,28 @@ pub fn place_result_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_PLACE_RESULT"))
 }
 
+/// `LOFT_NO_REBIND_PLACE=1` (read at PARSE time and in the scope pass): `x = f(x, …)` keeps
+/// minting the callee's exit record in a store of its own and copying it over `x` — the
+/// before-half of the A/B on one binary (`@FR-R-Rebind`: the callee is handed x's OWN
+/// record as its return buffer, its exit literal writes the fields in place and a field
+/// that views the same field costs nothing), and the first bisect step for a wrong field,
+/// a leak or a double free out of a local rebound from a call that takes it.  With it set,
+/// a body whose last statement is an explicit `return` keeps every `return S { … }` in a
+/// store of its own too.  `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+/// `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers; `LOFT_TRACE_REBIND=1` names each admission
+/// and each decline.
+pub fn rebind_place_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_PLACE"))
+}
+
+/// `LOFT_TRACE_REBIND=1` — name each `(R-Rebind)` site admitted and each declined, with the
+/// reason.
+pub fn trace_rebind() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_REBIND"))
+}
+
 /// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
 /// its host and destination count, or the decline with the reason.
 pub fn trace_place() -> bool {

@@ -79,13 +79,25 @@ fn c5() {
   println("c5 {t}");
 }
 
-// c6 — the result is PASSED ON to another function: declines, values exact.
-fn take_smp(s: const Smp) -> float { s.sa + s.sb }
+// c6 — the result is PASSED ON to another function that WRITES its parameter: the
+// parameter keeps its record (`(R-ValueLocal)` carries only a parameter the callee never
+// writes through), so the site consumes a record and the maker declines.  Values exact.
+fn take_smp(s: Smp) -> float { s.sr = 0.0; s.sa + s.sb }
 fn mk_smp_passed(v: float) -> Smp { Smp { sa: v, sr: v * 2.0, sg: v * 3.0, sb: v * 4.0 } }
 fn c6() {
   t = 0.0;
   for i in 0..3 { t = (t + take_smp(mk_smp_passed((i as float) + 1.0))) ?? 0.0; }
   println("c6 {t}");
+}
+// c6b — passed on to a function that only READS its parameter: since `(R-ValueLocal)`
+// (2026-09-25) that parameter is a TUPLE, the nested call is a value local, and the maker
+// is admitted — the fields cross the call as scalars.
+fn read_smp(s: const Smp) -> float { s.sa + s.sb }
+fn mk_smp_read(v: float) -> Smp { Smp { sa: v, sr: v * 2.0, sg: v * 3.0, sb: v * 4.0 } }
+fn c6b() {
+  t = 0.0;
+  for i in 0..3 { t = (t + read_smp(mk_smp_read((i as float) + 1.0))) ?? 0.0; }
+  println("c6b {t}");
 }
 
 // c7 — a CONDITIONAL construction: both arms build the record, the caller reads fields.
@@ -122,4 +134,4 @@ fn c9() {
   println("c9 {r.sa} {r.sb}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c7(); c8(); c9(); }
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c6b(); c7(); c8(); c9(); }

@@ -75,11 +75,16 @@ jobs:
       matrix:
         include:
           # repo, branch, the package directories that carry tests (a glob), and whether
-          # the job only BUILDS (no tests/ anywhere).
+          # the job only BUILDS (no tests/ anywhere).  `siblings` are repos the consumer's
+          # own tests read by a RELATIVE path beside its clone (moros's field_io reads
+          # loft-libs-world's hex_field fixtures as `../../../../loft-libs-world/…`), cloned
+          # next to it read-only; without them those tests fail with a load error that says
+          # nothing about loft.
           - name: moros
             repo: jjstwerff/moros
             ref: main
             packages: 'lib/*'
+            siblings: 'loft-lang/loft-libs-world'
             private: false
           - name: dryopea
             repo: jjstwerff/dryopea
@@ -136,6 +141,15 @@ jobs:
           path: consumer
           token: ${{ matrix.private && secrets.CONSUMER_TOKEN || github.token }}
 
+      - name: Checkout the repos the consumer reads beside it
+        if: steps.tok.outputs.run == 'true' && matrix.siblings != ''
+        run: |
+          set -euo pipefail
+          for repo in ${{ matrix.siblings }}; do
+            git clone --quiet --depth 1 "https://github.com/$repo.git" "$(basename "$repo")"
+            echo "beside the consumer: $repo @ $(git -C "$(basename "$repo")" rev-parse --short HEAD)"
+          done
+
       - name: Install mold and a virtual display
         if: steps.tok.outputs.run == 'true'
         run: sudo apt-get update -y && sudo apt-get install -y mold xvfb
@@ -158,6 +172,44 @@ jobs:
           cargo build --release --lib --bin loft
           echo "$PWD/target/release" >> "$GITHUB_PATH"
 
+      # A dependency with a native crate names the system packages that crate needs in its
+      # manifest (`[native] build-deps` — graphics: libgl-dev, libasound2-dev).  Without them
+      # its cdylib does not build, and a consumer using it (dryopea, crawler's `story`) went
+      # red on `alsa-sys` — the runner's state, reported as the consumer failing on loft.  The
+      # packages are read from every resolved manifest through `revalidate_matrix.py`'s
+      # `native_policy`, the one reader of that field, and installed before any test runs.
+      - name: Install the system packages the consumer's native dependencies declare
+        if: steps.tok.outputs.run == 'true'
+        working-directory: consumer
+        run: |
+          set -uo pipefail
+          for pat in ${{ matrix.packages }}; do
+            for dir in $pat; do
+              [ -f "$dir/loft.toml" ] && ( cd "$dir" && loft install >/dev/null 2>&1 ) || true
+            done
+          done
+          deps="$(python3 - "$GITHUB_WORKSPACE/loft-src/scripts" <<'EOF'
+          import pathlib, sys
+          sys.path.insert(0, sys.argv[1])
+          from revalidate_matrix import native_policy
+          found = set()
+          for root in (pathlib.Path.home() / ".loft" / "registry", pathlib.Path(".")):
+              for manifest in root.rglob("loft.toml"):
+                  try:
+                      verdict, deps = native_policy(manifest.read_text())
+                  except Exception:
+                      continue
+                  found.update(d.strip() for d in deps.split(",") if d.strip())
+          print(" ".join(sorted(found)))
+          EOF
+          )"
+          if [ -n "$deps" ]; then
+            echo "declared build-deps: $deps"
+            sudo apt-get install -y $deps
+          else
+            echo "no dependency declares system build-deps"
+          fi
+
       # Per package: the suite on the interpreter, then on native.  A package with no
       # tests/ is BUILT (`loft --check` on its entry) so a refusal still shows.
       - name: Check every package
@@ -179,12 +231,24 @@ jobs:
               if [ -d "$dir/tests" ]; then
                 legs=""
                 for mode in --interpret --native; do
+                  # Each backend starts from a clean tests/actual/, as the consumer's own
+                  # runner does (dryopea's scripts/test.sh).  The interpreter pass leaves its
+                  # outputs there, and a test that asserts a cold start with no save file
+                  # (dryopea's test_smoke_full_cycle) then failed on native only — the
+                  # previous pass's file, reported as a native-only break.  `git clean`
+                  # removes only what git does not track, so a tracked golden file stays.
+                  ( cd "$dir" && git clean -fdxq -- tests/actual 2>/dev/null; mkdir -p tests/actual )
                   if ( cd "$dir" && LOFT_TIMEOUT=600 xvfb-run -a loft test $mode > "/tmp/$name$mode.log" 2>&1 ); then
                     legs="$legs ok |"
                   else
                     legs="$legs FAIL |"; fail=1
-                    echo "::error title=$name ($mode): tests fail on loft main::$(grep -E 'FAIL|error' "/tmp/$name$mode.log" | head -3 | tr '\n' ' ')"
-                    grep -E 'FAIL|error|test result' "/tmp/$name$mode.log" | head -40
+                    # The runner's own failure line is `  FAIL  tests/<file>…` — anchored on
+                    # that shape, because a bare `FAIL|error` also matched every `ok` line
+                    # that lists a test NAMED `…_fails` or `…_is_an_error` and the expected
+                    # `FAILED at line` output of tests that check a failure is reported, and
+                    # the 40-line window filled with those before the real one arrived.
+                    echo "::error title=$name ($mode): tests fail on loft main::$(grep -E '^ *FAIL +tests/' "/tmp/$name$mode.log" | head -3 | tr '\n' ' ')"
+                    grep -E '^ *FAIL +tests/|^error|test result' "/tmp/$name$mode.log" | head -40
                   fi
                 done
                 summary="$summary| \`$name\` |$legs\n"

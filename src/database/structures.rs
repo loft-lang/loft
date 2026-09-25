@@ -167,6 +167,38 @@ impl Stores {
         tp
     }
 
+    /// `insert(v, index, …)`: make room at `index` and answer the element the caller then
+    /// writes — the one body both backends' `OpInsertVector` run.
+    ///
+    /// An INLINE vector holds its elements in its slots, so the reserved slot IS the element.
+    /// A LINKED vector's slot holds a 4-byte record id (`Parts::Array`), and the element is a
+    /// record of its own — so the reserved slot is given one, claimed the way
+    /// [`Self::record_new`] claims a linked element (its owner at offset 4), with the id
+    /// written into the slot, and the RECORD is what is answered.  Answered as the slot, the
+    /// caller wrote the element's fields over the 4-byte id: `[1,2,3]` + `insert(1, …)` read
+    /// back `1,4294967298,null,3,` (loft#1670).  `size` is the slot width
+    /// (`Parser::element_store_size`, 4 for a linked element).  An out-of-range index answers
+    /// the absent element, and nothing is claimed.
+    pub fn insert_vector_element(
+        &mut self,
+        data: &DbRef,
+        size: u32,
+        index: i64,
+        elem_tp: u16,
+    ) -> DbRef {
+        let slot = vector::insert_vector(data, size, index, &mut self.allocations);
+        if slot.rec == 0 || !self.is_linked(elem_tp) {
+            self.set_default_value(elem_tp, &slot);
+            return slot;
+        }
+        let rec = self.claim(&slot, 1 + ((u32::from(self.size(elem_tp)) + 7) >> 3));
+        self.store_mut(&rec).set_u32_raw(rec.rec, 4, data.rec);
+        self.store_mut(&slot)
+            .set_u32_raw(slot.rec, slot.pos, rec.rec);
+        self.set_default_value(elem_tp, &rec);
+        rec
+    }
+
     /// Create a fresh record for a collection element / nullable field and return its `DbRef`.
     ///
     /// # Panics
@@ -1163,7 +1195,7 @@ impl Stores {
         // absence are different values, and only the whole-value replace may turn one into
         // the other — an `a += b` must leave `a` alone.
         if o_db.store_nr == u16::MAX {
-            vector::clear_vector(db, &mut self.allocations);
+            self.clear_vector_release(db);
             self.mark_collection_absent(db);
             return;
         }
@@ -1172,7 +1204,11 @@ impl Stores {
         if db.store_nr == o_db.store_nr && dest_rec != 0 && dest_rec == src_rec {
             return;
         }
-        vector::clear_vector(db, &mut self.allocations);
+        // `@FR-H-ClearRelease` — the destination may be a LIVE vector (`@FR-R-Rebind` hands a
+        // callee the caller's own record as its buffer), so what its elements own is
+        // released before the source is copied in; on a fresh or a zeroed buffer this is
+        // the same length reset it always was.
+        self.clear_vector_release(db);
         self.vector_add(db, o_db, known);
     }
 

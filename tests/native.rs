@@ -4670,3 +4670,65 @@ fn test_1311_sibling_after() { assert(2 == 2, \"after\"); }
 
     let _ = std::fs::remove_file(&entry);
 }
+
+/// A generation run's per-definition facts are about ONE program.
+///
+/// `non_sentinel::callee_returns_non_sentinel` memoised "does this function ever return
+/// null?" per definition NUMBER in a thread-local that nothing cleared, and this harness
+/// generates the whole corpus in one thread — so a script's `fn n_int() -> integer? { return
+/// null; }` was answered from an EARLIER script whose definition of the same number never
+/// returned null, and `n_int() ?? 99` was emitted as `if true` (`407-cluster-d-null-sentinel-
+/// roundtrip` read null where it asked for 99, in `native_scripts_04` only, and only for the
+/// chunk order a join produced).  A single `loft --native` run never showed it.
+///
+/// Two programs whose `f` gets the SAME definition number — one returning a literal, one
+/// returning null — generated one after the other in this thread.  The second must keep its
+/// null test.
+#[test]
+fn a_generation_run_does_not_read_the_previous_programs_facts() {
+    let dir = std::env::temp_dir().join(format!("loft_gen_memo_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let emit = |name: &str, body: &str| -> (u32, String) {
+        let src = dir.join(name);
+        std::fs::write(
+            &src,
+            format!("fn f() -> integer? {{ {body} }}\nfn main() {{ x = f() ?? 99; println(\"{{x}}\"); }}\n"),
+        )
+        .unwrap();
+        let mut p = Parser::new();
+        p.parse_dir("default", true, false).unwrap();
+        p.parse(src.to_str().unwrap(), false);
+        assert!(
+            p.diagnostics.level() < loft::diagnostics::Level::Error,
+            "{:?}",
+            p.diagnostics.lines()
+        );
+        scopes::check(&mut p.data, &mut p.database);
+        let mut state = State::new(p.database);
+        byte_code(&mut state, &mut p.data);
+        let main_nr = p.data.def_nr("n_main");
+        let f_nr = p.data.def_nr("n_f");
+        let till = p.data.definitions();
+        let mut buf: Vec<u8> = Vec::new();
+        let mut out = Output::new(&p.data, &state.database);
+        out.output_native_reachable(&mut buf, 0, till, &[main_nr])
+            .expect("emit");
+        (f_nr, String::from_utf8(buf).expect("utf8"))
+    };
+    let (f_first, first) = emit("first.loft", "return 5;");
+    let (f_second, second) = emit("second.loft", "return null;");
+    assert_eq!(
+        f_first, f_second,
+        "the two `f`s must share a definition number, or the cell tests nothing"
+    );
+    // Calibration: the literal-returning `f` IS proven non-null, so its test folds away.
+    assert!(
+        !first.contains("op_conv_bool_from_int((var___ncc"),
+        "the first program's `f` returns a literal: its `??` test should fold, or this cell cannot tell a stale fact from none"
+    );
+    assert!(
+        second.contains("op_conv_bool_from_int((var___ncc"),
+        "the second program's `f` returns null, so `f() ?? 99` must keep its null test — it was folded from the first program's fact"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
