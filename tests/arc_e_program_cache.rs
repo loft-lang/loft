@@ -640,3 +640,126 @@ fn a_store_text_instance_reads_the_same_warm() {
     let _ = std::fs::remove_file(&script);
     let _ = std::fs::remove_dir_all(&cache_dir);
 }
+
+/// A stdlib that changed under a cached program is never served stale (@PLN166 B1).
+///
+/// The program bundle holds the parsed stdlib, and on a program-cache miss the stdlib
+/// itself may come from its own cache.  Either one read after `default/` changed would
+/// answer with the OLD library, and nothing would say so.  Each cell works on a scratch
+/// copy of `default/` (passed with `--path`), warms both caches, changes the library, and
+/// requires the next run to see the change: an EDITED function returns its new value, an
+/// ADDED file's function resolves, a REMOVED file's function is refused.
+fn run_with_stdlib(
+    script: &std::path::Path,
+    root: &std::path::Path,
+    cache_dir: &std::path::Path,
+) -> (bool, String) {
+    let out = Command::new(loft_bin())
+        .arg("--path")
+        .arg(root)
+        .arg("--interpret")
+        .arg(script)
+        .current_dir(workspace_root())
+        .env_remove("LOFT_STDLIB_CACHE")
+        .env_remove("LOFT_NO_CACHE")
+        .env("LOFT_PROGRAM_CACHE", "1")
+        .env("XDG_CACHE_HOME", cache_dir)
+        .output()
+        .expect("failed to invoke loft binary");
+    (
+        out.status.success(),
+        format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        ),
+    )
+}
+
+/// A scratch `<root>/default/` holding the real stdlib plus one probe file.
+fn scratch_stdlib(tag: &str) -> (std::path::PathBuf, std::path::PathBuf) {
+    let root = std::env::temp_dir().join(format!("loft_b1_{tag}_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    let dflt = root.join("default");
+    std::fs::create_dir_all(&dflt).expect("scratch default/");
+    for e in std::fs::read_dir(workspace_root().join("default")).expect("default/") {
+        let p = e.expect("entry").path();
+        if p.extension().and_then(|x| x.to_str()) == Some("loft") {
+            std::fs::copy(&p, dflt.join(p.file_name().expect("name"))).expect("copy");
+        }
+    }
+    std::fs::write(
+        dflt.join("99_b1_probe.loft"),
+        "pub fn b1probe() -> integer { 1 }\n",
+    )
+    .expect("probe");
+    (root, dflt)
+}
+
+#[test]
+fn an_edited_stdlib_function_is_never_served_from_a_cache() {
+    let (root, dflt) = scratch_stdlib("edit");
+    let cache = root.join("cache");
+    let script = root.join("prog.loft");
+    std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
+    for _ in 0..2 {
+        let (ok, out) = run_with_stdlib(&script, &root, &cache);
+        assert!(ok && out.contains("v=1"), "warming run: {out}");
+    }
+    std::fs::write(
+        dflt.join("99_b1_probe.loft"),
+        "pub fn b1probe() -> integer { 2 }\n",
+    )
+    .expect("edit");
+    let (ok, out) = run_with_stdlib(&script, &root, &cache);
+    assert!(
+        ok && out.contains("v=2"),
+        "an edited stdlib must be re-read, got: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_added_stdlib_file_is_seen_after_an_edit_loop() {
+    let (root, dflt) = scratch_stdlib("add");
+    let cache = root.join("cache");
+    let script = root.join("prog.loft");
+    std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
+    for _ in 0..2 {
+        let (ok, out) = run_with_stdlib(&script, &root, &cache);
+        assert!(ok && out.contains("v=1"), "warming run: {out}");
+    }
+    std::fs::write(
+        dflt.join("98_b1_extra.loft"),
+        "pub fn b1extra() -> integer { 7 }\n",
+    )
+    .expect("add");
+    // An edit: the program cache misses, so the stdlib must come from a parse or a cache
+    // that knows about the new file.
+    std::fs::write(&script, "fn main() { print(\"v={b1extra()}\\n\"); }\n").expect("script");
+    let (ok, out) = run_with_stdlib(&script, &root, &cache);
+    assert!(
+        ok && out.contains("v=7"),
+        "an added stdlib file must be seen, got: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn a_removed_stdlib_file_is_never_served_from_a_cache() {
+    let (root, dflt) = scratch_stdlib("remove");
+    let cache = root.join("cache");
+    let script = root.join("prog.loft");
+    std::fs::write(&script, "fn main() { print(\"v={b1probe()}\\n\"); }\n").expect("script");
+    for _ in 0..2 {
+        let (ok, out) = run_with_stdlib(&script, &root, &cache);
+        assert!(ok && out.contains("v=1"), "warming run: {out}");
+    }
+    std::fs::remove_file(dflt.join("99_b1_probe.loft")).expect("remove");
+    let (ok, out) = run_with_stdlib(&script, &root, &cache);
+    assert!(
+        !ok && !out.contains("v=1"),
+        "a removed stdlib function must be refused, not served from a cache: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}
