@@ -154,6 +154,14 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                       a = S{n:2}; b = S{n:3}; p = &a; p = &b; p.n = 9;  a.n == 2, b.n == 9
                       c = "ab"; d = "cde"; pc = &c; pc = &d;           len(c) == 2, len(pc) == 3
                   Every τ alike — scalar, text, vector, record — and both backends.
+                  A TEXT link also has a KIND, the kind of place it names: a text
+                  VARIABLE (a frame slot) or a text FIELD or ELEMENT (a slot in a
+                  store, `t = &o.s`, `t = &v[i]`).  The kind is part of the link's type,
+                  so a re-point keeps it: binding one link to both kinds is a COMPILE
+                  ERROR (`text-link-kind`), whichever order the binds come in and
+                  across the arms of an `if`; a second link reaches the other place.
+                      c = "ab"; o = O{s:"cd"}; t = &c; t = &o.s;       refused
+                      t = &o.s; t = &o2.s;                             re-points
   (B-View)        a STRUCT-typed PROJECTION (`s = o.inner`, `e = v[i]` where the element
                   IS a struct) is a VIEW that aliases WITHOUT `&` ([heap.md](heap.md)
                   H-View: `c = o.i; c.v=9` ⇒ `o.i.v==9`) — the one place aliasing is the

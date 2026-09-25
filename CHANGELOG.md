@@ -27,6 +27,11 @@ It works through a **function value** as well (`g = shout; g(o.name)`), which be
 the write in silence. A function value with a `&text` parameter also compiles with `--native`
 now, whatever you pass it; before, it did not build even for a plain text variable.
 
+One `&` link reaches one kind of text place: a text variable, or a text field or element.
+Binding the same link to both (`t = &name; t = &o.name`) is refused, and that error now carries
+the code `text-link-kind`, so it can be looked up and `--explain` names the fix: a second link
+for the other place.
+
 **A struct returned through a function parameter is released once, and never takes what the
 function captured.**  With `fn build(f: fn(integer) -> S, …)`, a loop calling
 `height(f(i))` kept every result until `build` returned, so 70 000 calls ran out of stores and

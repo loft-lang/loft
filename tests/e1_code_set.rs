@@ -71,6 +71,13 @@ const CODES: &[(&str, &str)] = &[
     ),
     // @PLN107 dead-store lint. `d = s.items` COPIES (C86), so writing `d` cannot reach
     // `s`, and `d` is never read afterwards — the write is lost.
+    // @PLN167 C1's refusal, coded with its arc's formal half (D): a text link keeps the kind of
+    // place it was first bound to, `(B-Ref-Repoint)` keeping a link's type.
+    (
+        "text-link-kind",
+        "struct O { s: text }\nfn main() { v = \"ab\"; o = O { s: \"cd\" }; t = &v; t = &o.s; \
+         print(\"{t}\"); }",
+    ),
     (
         "lost-write",
         "struct D { items: vector<integer> }\n\

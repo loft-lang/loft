@@ -19459,6 +19459,7 @@ impl Parser {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
+                    code = "text-link-kind",
                     "`{name}` links a {}, so it cannot also link a {} — a text field or element \
                      and a text variable are different places to a link. Use a second link \
                      for the other one",
@@ -19473,6 +19474,19 @@ impl Parser {
                         "text variable"
                     }
                 );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: "bind a second `&` link for the other place".to_string(),
+                    condition: Some(
+                        "both places are wanted: a link keeps the kind of place it was first \
+                         bound to (a text variable, or a text field or element), so one link \
+                         cannot serve both"
+                            .to_string(),
+                    ),
+                    edit: None,
+                    concept: "references",
+                    concept_ref: "@F21",
+                });
             }
             _ => {}
         }
