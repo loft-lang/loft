@@ -14,6 +14,11 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A tuple returned with a list in a `hash` member keeps the list's records.**
+`fn f() -> (hash<K[k]>, integer) { v = [K { … }]; return (v, 2); }` compiled, and the caller
+read an empty hash. A `sorted` member answered the wrong record for a key, and an `index` kept
+only one. Each record is now inserted by its key, as it already was for a struct field.
+
 **A `&(…)` tuple parameter can be used whole.**  `fn f(p: &(integer, integer))` could read
 and write `p.0` and `p.1`, but passing `p` on, returning it, copying it (`q = p`) or assigning
 it a new tuple (`p = (8, 9)`) stopped the compiler with an internal error.  All four work now,

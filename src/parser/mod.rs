@@ -13217,6 +13217,62 @@ impl Parser {
         Some(self.emit_nullable_slot_write(syn, &slot, value.clone()))
     }
 
+    /// Whether `value` is a plain `vector<…>` — the source a keyed member must FILL from rather
+    /// than copy from (loft#1675).  Read off the node that carries the type: a variable, a
+    /// tuple member, a call's return, a block's result.  Any other node answers `false`, which
+    /// keeps the keyed copy: that is the behaviour before this question was asked, so a shape
+    /// this cannot type loses the fix and never gains a wrong fill.
+    fn value_is_plain_vector(&self, value: &Value) -> bool {
+        let tp = match value.unspan() {
+            Value::Var(v) if *v < self.vars.count() => self.vars.tp(*v).clone(),
+            Value::TupleGet(t, i) if *t < self.vars.count() => match self.vars.tp(*t).base() {
+                Type::Tuple(elems) => elems.get(*i as usize).cloned().unwrap_or(Type::Unknown(0)),
+                _ => return false,
+            },
+            Value::Call(d, _) => self.data.def(*d).returned.clone(),
+            Value::Block(bl) => bl.result.clone(),
+            _ => return false,
+        };
+        matches!(tp.base(), Type::Vector(..))
+    }
+
+    /// Write a whole VALUE into a keyed collection member of a record (a struct field, a
+    /// tuple member), replacing what it held.  A keyed source is copied with `OpReplaceKeyed`.
+    /// A plain VECTOR source is inserted record by record with `OpFillKeyed`, after the
+    /// member is cleared — the pair loft#1159 gave the keyed struct-field ASSIGNMENT, and
+    /// what `(T-Cons)` and `(F-Ret)` owe a tuple member: `OpReplaceKeyed` walks its source
+    /// under the destination's type, so a vector read as a `hash` answered empty, an `index`
+    /// kept one record and a `sorted` searched unsorted storage (loft#1675).  The member is
+    /// the collection the fill names (`field_nr == u16::MAX`): a tuple member belongs to no
+    /// linked group, and a struct field that does is written by the group-aware assignment
+    /// in `collections.rs`, not here.
+    fn keyed_member_write(
+        &mut self,
+        field_ref: Value,
+        value: Value,
+        kt: u16,
+        tp_val: i32,
+    ) -> Value {
+        if !self.value_is_plain_vector(&value) {
+            return self.cl("OpReplaceKeyed", &[value, field_ref, Value::Int(tp_val)]);
+        }
+        let clear = self.cl(
+            "OpClearKeyed",
+            &[field_ref.clone(), Value::Int(i32::from(kt))],
+        );
+        let fill = self.cl(
+            "OpFillKeyed",
+            &[
+                field_ref,
+                value,
+                Value::Int(tp_val),
+                Value::Int(i32::from(kt)),
+                Value::Int(i32::from(u16::MAX)),
+            ],
+        );
+        Value::Insert(vec![clear, fill])
+    }
+
     /// Emit the OpSet* (or recursive flatten) for a single tuple
     /// element at a fixed byte offset within the host record.
     /// Returns a vec because nested-tuple elements expand to multiple
@@ -13336,7 +13392,7 @@ impl Parser {
                         "OpGetField",
                         &[ref_code.clone(), pos_v, Value::Int(i32::from(kt))],
                     );
-                    self.cl("OpReplaceKeyed", &[value, field_ref, Value::Int(tp_val)])
+                    self.keyed_member_write(field_ref, value, kt, tp_val)
                 }
             }
             // Plan-06 phase 4d: nested tuple element — recurse into
@@ -13975,7 +14031,7 @@ impl Parser {
                     "OpGetField",
                     &[ref_code, pos_val, Value::Int(i32::from(kt))],
                 );
-                self.cl("OpReplaceKeyed", &[val_code, field_ref, Value::Int(tp_val)])
+                self.keyed_member_write(field_ref, val_code, kt, tp_val)
             }
             Type::Vector(_, _)
             | Type::Hash(_, _, _)
