@@ -17,13 +17,38 @@ ABIN=${ABIN:?set ABIN to an ASan-instrumented loft binary}
 demangle() { if command -v rustfilt >/dev/null; then rustfilt; \
   elif command -v c++filt >/dev/null; then c++filt; else cat; fi; }
 
+# The files are independent processes, so they run several at a time and are REPORTED in
+# order afterwards: one after another the scan took 32 of the nightly job's 60 minutes, which
+# put the job one slow runner from its limit (cancelled on 2026-09-24).  Capped at 4 because
+# an ASan process is memory-hungry and the macOS runner is small; the limit is not raised.
+jobs=${JOBS:-$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 2)}
+[ "$jobs" -gt 4 ] && jobs=4
+tmp=$(mktemp -d "${TMPDIR:-/tmp}/asan-leak-scan.XXXXXX") || { echo "::error::cannot create a scratch directory"; exit 2; }
+trap 'rm -rf "$tmp"' EXIT
+i=0
+for f in "$@"; do
+  [ -f "$f" ] || continue
+  printf '%s\n' "$f" > "$tmp/$i.name"
+  i=$((i + 1))
+done
+total=$i
+scan_one() {
+  local f
+  f=$(cat "$tmp/$1.name")
+  ASAN_OPTIONS="detect_leaks=1:${ASAN_OPTIONS:-}" "$ABIN" --interpret "$f" >"$tmp/$1.out" 2>&1 || true
+}
+export -f scan_one
+export ABIN tmp
+[ "$total" -gt 0 ] && seq 0 $((total - 1)) | xargs -P "$jobs" -I{} bash -c 'scan_one {}'
+
 fail=0
 scanned=0
 leakers=0
-for f in "$@"; do
-  [ -f "$f" ] || continue
+# `seq 0 -1` counts DOWN on BSD (macOS), so an empty list must not reach it.
+for i in $( [ "$total" -gt 0 ] && seq 0 $((total - 1)) ); do
+  f=$(cat "$tmp/$i.name")
   scanned=$((scanned + 1))
-  out=$(ASAN_OPTIONS="detect_leaks=1:${ASAN_OPTIONS:-}" "$ABIN" --interpret "$f" 2>&1 || true)
+  out=$(cat "$tmp/$i.out" 2>/dev/null)
   roots=$(printf '%s\n' "$out" | grep -c '^Direct leak' || true)
   if [ "$roots" -gt 0 ]; then
     fail=1
