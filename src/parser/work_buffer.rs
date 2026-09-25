@@ -20,7 +20,9 @@
 //! caller patching (`patch_tret_call`) it shares, so a forward- and a backward-referenced
 //! caller are patched alike.  The mention test IS the escape proof: with a scalar element,
 //! every admitted operand position yields a scalar or nothing, so no view, copy or link of
-//! the store can leave the frame.  The fallback of every walk here is a DECLINE, which costs
+//! the store can leave the frame; a loft-bodied callee may take it by value where its answer
+//! carries no dep on that parameter (`Walk::loft_callee_admits`).  The fallback of every walk
+//! here is a DECLINE, which costs
 //! the program the mint it already pays and never a wrong answer — an operator or a node this
 //! file does not name keeps the local a local.
 //!
@@ -240,6 +242,14 @@ impl Parser {
         // and a frame number after the locals — so it would rewrite the attribute list.
         if !self.data.def(self.context).returned.depend().is_empty() {
             return None;
+        }
+        if crate::keys::trace_work_buffer() {
+            eprintln!(
+                "[work-buffer] fn={} local={} ({v}) takes the number of `{}` ({last})",
+                self.data.def(self.context).name(),
+                self.vars.name(v),
+                self.vars.name(last)
+            );
         }
         if crate::keys::trace_work_buffer() {
             eprintln!(
@@ -714,10 +724,64 @@ impl Walk<'_> {
         if i == 1 && copied_from_at_1(name) {
             return true;
         }
-        i == 0
+        if i == 0
             && self
                 .one_op_wrapper(d)
                 .is_some_and(|op| in_place_at_0(self.data.def(op).name()))
+        {
+            return true;
+        }
+        self.loft_callee_admits(d, i)
+    }
+
+    /// A loft-bodied callee may take a tracked vector at parameter `i` BY VALUE when its
+    /// answer cannot hold it.  A by-value heap parameter is a view for the call's duration
+    /// (F-ParamHeap) that no store of the callee's retains by identity — a field store or a
+    /// bind copies (B-Copy), a link cannot be stored, and a rebind (F-ParamRebind) is the
+    /// callee's own store, released at its exit against the entry witness — so the store
+    /// leaves the callee only through its ANSWER: `heap_return_delivery` is the one home of
+    /// "does this function's result view an argument" (a `View` names a parameter's store),
+    /// a field of a returned record may view a parameter on its own (O-ViewField), which the
+    /// nested types' deps carry, and a function value could capture the parameter.  A `&`
+    /// parameter is declined: a rebind through it repoints the CALLER's variable, which is
+    /// the buffer.  A callee with no loft body — an operator, a native, a parallel builtin —
+    /// is judged by the operator lists alone.
+    fn loft_callee_admits(&self, d: u32, i: usize) -> bool {
+        let def = self.data.def(d);
+        if def.def_type() != DefType::Function
+            || !def.rust().is_empty()
+            || !matches!(def.code().unspan(), Value::Block(_))
+        {
+            return false;
+        }
+        let Some(a) = def.attributes().get(i) else {
+            return false;
+        };
+        if !matches!(a.typedef.base(), Type::Vector(_, _)) {
+            return false;
+        }
+        if crate::keys::trace_work_buffer() {
+            let ret = def.returned();
+            eprintln!(
+                "[work-buffer]   callee {} param {i}: returned={} depend={:?} heap_dep={:?} delivery={:?} ownership={:?}",
+                def.name(),
+                ret.name(self.data), // schema-key — a developer trace
+                ret.depend(),
+                ret.heap_dep(),
+                crate::use_analysis::heap_return_delivery(self.data, d),
+                crate::use_analysis::return_ownership(self.data, d)
+            );
+        }
+        if crate::use_analysis::heap_return_delivery(self.data, d)
+            == crate::use_analysis::HeapDelivery::View
+        {
+            return false;
+        }
+        let idx = i as u16;
+        !def.returned().any_node(&mut |t| {
+            t.heap_dep().is_some_and(|deps| deps.contains(&idx))
+                || matches!(t.base(), Type::Function(..))
+        })
     }
 
     fn node(&mut self, node: &Value, pos: Pos<'_>) -> Result<(), &'static str> {

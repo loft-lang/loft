@@ -100,8 +100,8 @@ element-first build).  The shave was not built; the temporaries that still
 mint are the record and text elements (252 in that census), and the results, which are
 another rule's.  One lesson cost a re-measure: the native emitter's ownership test read the
 promoted parameter as a possibly aliased view and declined the push window it had for the
-local, which made push-heavy rows 1.5× SLOWER; `Variable::work_buffer` now tells
-`hoist::owned_local` the parameter is exclusive.
+local, which made push-heavy rows 1.5× SLOWER; `hoist::work_buffer_arg` now admits the
+parameter as exclusive at the push and mint windows.
 
 Measured clean on the final build (2026-09-26): `rig_world_frame3` 9.57× → 5.26×, cbor
 `encode` 18.1× → 11.5× and `encode_bytes` 43.3× → 27.1×, `fill_rect` 4.08× → 3.10×,

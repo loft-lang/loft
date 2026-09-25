@@ -1063,14 +1063,11 @@ fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
 }
 
 /// Does local `r` OWN the store it names — so no other variable of this frame can name
-/// that store (@PLN157 § V-q)?  Enforces `@FR-R-Alias`'s exclusivity test.  Not a parameter
-/// (the caller's store) — unless it is the callee's WORK BUFFER (`@FR-R-WorkBuffer`), a
-/// store the caller hands to this parameter alone and never reads, which is exclusive
-/// exactly as a local's own — not a `&` link, an empty dep list (`@FR-O-Proxy`), and not
-/// captured by a closure.
+/// that store (@PLN157 § V-q)?  Enforces `@FR-R-Alias`'s exclusivity test.  Not a parameter (the caller's store), not a `&` link, an
+/// empty dep list (`@FR-O-Proxy`), and not captured by a closure.
 fn owned_local(vars: &crate::variables::Function, r: u16) -> bool {
     // `.base()`: the shape question sees through a `τ?` slot (`@FR-N-Shape`).
-    (!vars.is_argument(r) || vars.is_work_buffer(r))
+    !vars.is_argument(r)
         && !matches!(vars.tp(r).base(), Type::RefVar(_))
         && !vars.is_captured(r)
         // A local vector's dep list names its OWN hidden store witness (`__vdb_N`), which

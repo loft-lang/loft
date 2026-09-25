@@ -2078,15 +2078,19 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  released at its exit.  Declines, keeping the mint: a hand-off to a `&`
                  parameter (a rebind through it repoints the caller's variable), to a
                  callee answering a view or a function value, to a native or a parallel
-                 builtin, or through a function value; a copy into an ELEMENT'S FIELD
-                 (`out += [Rec { pts: v }]`), which the native emitter builds inside the
-                 appended element with no store at all (R-ElemFirst) and a buffer would
-                 turn into a copy; a declaration that is not `[]` — a copy (`v = p`), which
-                 the borrow elision removes outright, or a literal with elements, which the
-                 literal hoist builds once per activation — and a local declared INSIDE a
-                 loop, whose store the native emitter already keeps across the passes with
-                 a length reset (R-LoopBuffer) cheaper than a clear; a local the dead-store
-                 lint counts no read for; a mention in a return or a tail,
+                 builtin, or through a function value; a copy OUT of the frame — into a
+                 record's field (`out += [Rec { pts: v }]`, which the native emitter
+                 builds inside the appended element with no store at all, R-ElemFirst;
+                 `a.items = v`, which the move elision builds straight into the field),
+                 or into a parameter such as the return buffer, which adopts the local
+                 (R-RetAdopt) — where a buffer would turn a saved copy into a paid one; a
+                 declaration filled by a copy of another vector (`v = s.v`), which the
+                 borrow elision removes outright; a local declared INSIDE a loop, whose
+                 store the native emitter already keeps across the passes with a length
+                 reset (R-LoopBuffer) cheaper than a clear, and whose invariant literal the
+                 literal hoist builds once (R-LitHoist); a local written and never read, the
+                 dead-store lint's subject; an ENTRY POINT, which no caller hands a buffer;
+                 a mention in a return or a tail,
                  in a literal, a tuple, a link or a capture, a second assignment, a copy
                  into a local that is then not so used; an element type that is a
                  record or a text; a body that suspends or forks; `main`; a generic, a
@@ -2131,12 +2135,13 @@ eight libraries, library code alone, 82 promoted once the by-value clause admitt
 hand-offs whose callee answers no view (28 hand-offs still decline: a native, a `&`
 parameter, a callee answering a view) and the element-field clause kept 37 for the emitter.
 Two things the first measurement taught, both on the drawing bench (2026-09-25/26): the
-promoted parameter must carry `Variable::work_buffer` (serialised, cache format 13), which
-the native emitter's `hoist::owned_local` reads as ownership — without it the emitter took
-the parameter for a possibly aliased view and declined its push window, and `render_marks`
-and `resize` ran 1.5× SLOWER; and a local the emitter already builds inside an appended
-element (`fronds`' `fd_wid`) must stay a local, or the buffer costs a copy and the loop
-its hoists (`fronds` 1.95× → 4.3×).  A lazy mint for a callee's buffer lands in the arm
+native emitter must read the promoted parameter as EXCLUSIVE where a rewrite only needs
+nothing else to reach the store — `hoist::work_buffer_arg`, the attribute's mark looked up
+by argument position, admitted beside an owned local at the push window, the mint window
+and the loop hoist's mover set — because taken for a possibly aliased view it declined the
+push window, and `render_marks` and `resize` ran 1.5× SLOWER; and a local the emitter
+already builds inside an appended element (`fronds`' `fd_wid`) must stay a local, or the
+buffer costs a copy and the loop its hoists (`fronds` 1.95× → 4.3×).  A lazy mint for a callee's buffer lands in the arm
 that makes the call, not before the whole value `if` (`scopes::place_in_if`) — cbor's
 `encode` minted its map arm's four buffers on every call.  A promotion is only a gain
 where the emitter still sees an owner and the form it replaces was a store at all.  The

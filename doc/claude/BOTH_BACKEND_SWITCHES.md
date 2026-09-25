@@ -219,7 +219,8 @@ double free or a wrong value at a call that takes a hidden buffer.
 makes a vector local that never leaves its frame mint its store at the declaration and free
 it at the exit again — with it off, `v: vector<τ> = []` (τ a scalar) whose every mention is
 an operand of an in-place vector operator (push, append, length, clear, remove, an element
-read or written as a scalar; `for x in v` included) is a hidden WORK-BUFFER parameter the
+read or written as a scalar; `for x in v` included) or a by-value argument of a loft-bodied
+callee whose answer carries no dep on that parameter is a hidden WORK-BUFFER parameter the
 caller supplies as the per-site work-ref a return buffer already takes (minted once per
 activation, freed at the caller's exit), and the callee CLEARS it where the declaration
 stood; a callee handed the null sentinel takes the rebound-parameter road at that site (its
@@ -228,10 +229,14 @@ it nothing (the probe 81 → 33 ns a call).  It is the first bisect step for a w
 leaked vector inside a function that declares one, or for a frame-shape fault at a hand-built
 entry.  `LOFT_TRACE_WORK_BUFFER=1` names each local promoted and each candidate declined with
 the reason; `LOFT_WORK_BUFFER_NULL=1` is the positive control for the null road (every
-caller-side buffer left null, both backends).  A mention as an argument of a loft-bodied
-call, in a return, a literal, a link or a capture, a record or text element, a body that
-suspends or forks, `main`, a generic, a lambda and a function whose address is taken keep
-the mint.
+caller-side buffer left null, both backends).  A hand-off to a `&` parameter or to a callee
+answering a view, a copy out of the frame (into a record's field, where the emitter builds
+the local in place, or into a parameter such as the return buffer, which adopts it), a
+declaration filled by a copy of another vector (the borrow elision's), a local declared
+inside a loop (`@FR-R-LoopBuffer`'s length reset is cheaper than a clear), a local written
+and never read (the dead-store lint's), a mention in a return, a literal, a link or a
+capture, a record or text element, a body that suspends or forks, an entry point, a generic,
+a lambda, a function whose address is taken and a `par` worker keep the mint.
 
 ## Lowering: `??` chains and nested literals
 

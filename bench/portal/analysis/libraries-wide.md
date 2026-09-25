@@ -304,7 +304,7 @@ which admits a hand-off to a loft-bodied callee whose answer carries no dep on t
 (82 promoted over eight libraries' own code with it, 28 hand-offs still declined, 37 kept for
 the emitter's element-first build); what still mints is a record or text element and a result
 (another rule's).  Lessons, measured the same day: the emitter must be told the parameter is
-exclusive (`Variable::work_buffer` → `hoist::owned_local`), or the push window it lost cost
+exclusive (`hoist::work_buffer_arg` at the push and mint windows), or the push window it lost cost
 `render_marks` and `resize` 1.5×; a local the emitter builds inside an appended element must
 stay one (`fronds` 1.95× → 4.3× promoted); and a callee's lazy buffer mint must land in the
 arm that calls, not before the whole match (cbor `encode` 18× → 25×).  Clean re-measure on

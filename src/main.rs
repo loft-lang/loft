@@ -10898,9 +10898,10 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                     if portable_path::is_stdlib_source(&def.position.file) {
                         continue;
                     }
-                    let has_user_params = def.attributes.iter().any(|a| {
-                        !a.hidden && !a.name.starts_with("__work_") && !a.name.starts_with("__ref_")
-                    });
+                    let has_user_params = def
+                        .attributes
+                        .iter()
+                        .any(|a| !a.name.starts_with("__work_") && !a.name.starts_with("__ref_"));
                     if has_user_params {
                         continue;
                     }
@@ -10938,11 +10939,6 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                                 let wname = format!("_w_{i}");
                                 let _ = writeln!(f, "    let mut {wname} = String::new();");
                                 work_args.push(format!("&mut {wname}"));
-                            } else if attr.work_buffer {
-                                // `@FR-R-WorkBuffer` — the callee's scratch: handed the null
-                                // sentinel, it takes its null road (a store of its own,
-                                // released at its exit), so the entry owes it nothing.
-                                work_args.push("DbRef::NULL".to_string());
                             } else if attr.name.starts_with("__ref_") {
                                 let wname = format!("_r_{i}");
                                 let _ = writeln!(
