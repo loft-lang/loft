@@ -17759,6 +17759,11 @@ impl Parser {
                 if let Type::Function(param_types, ret_type, ..) = slot_tp.clone()
                     && param_types.is_empty()
                 {
+                    // `@FR-B-Scope` is asked HERE because this site resolves the name itself
+                    // rather than through the bare-name read that asks it (loft#1679).
+                    if !self.first_pass {
+                        self.check_block_scope(v_nr, name, name_pos);
+                    }
                     // @PLN85 L1 — callee-attr-space deps must not leak into the
                     // caller (see `fnref_result_type`), and an index naming no visible
                     // argument names the closure this slot carries (loft#1180).
@@ -18410,7 +18415,7 @@ impl Parser {
                 val, source, name, &args, &tps, named_args, arg_pos, name_pos,
             );
         }
-        if let Some(tp) = self.try_fn_ref_call(val, name, list, types) {
+        if let Some(tp) = self.try_fn_ref_call(val, name, list, types, name_pos) {
             return tp;
         }
         self.call(
@@ -18451,6 +18456,7 @@ impl Parser {
         name: &str,
         list: &[Value],
         types: &[Type],
+        name_pos: &Position,
     ) -> Option<Type> {
         // P215: name lookup for outer-scope fn-ref captures.
         //
@@ -18492,6 +18498,12 @@ impl Parser {
         let Type::Function(param_types, ret_type, _, param_consts) = slot_tp.clone() else {
             return None;
         };
+        // `@FR-B-Scope`, asked only once the name is known to BE a fn-ref slot: a name that is
+        // no local's falls through to the ordinary call below, where the function's own
+        // spelling decides.  The zero-argument twin asks the same question at its own site.
+        if !self.first_pass {
+            self.check_block_scope(v_nr, name, name_pos);
+        }
         // @PLN85 L1 — callee-attr-space deps must not leak into the caller
         // (see `fnref_result_type`): map visible-param deps through the actual
         // argument types; an index naming no visible argument names the closure this slot

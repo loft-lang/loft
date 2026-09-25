@@ -9345,6 +9345,49 @@ back, so the measurement said zero.  Twelve files now carry the citation for the
 the guard for: guard coverage 180 → **187 of 388**.  A collective pointer from prose to a glob
 is not a citation, and only the citation is measurable.
 
+### "Is a fn-ref callee name a READ?" — one question, two sites, and neither said yes (2026-09-25)
+
+`(B-Scope)` has two halves and a fn-ref local got neither.  *"A bind after the `}` starts a new
+binding in the enclosing block"* — so `for f in fs { … } f = two; f(1)` must call `two`.  It
+called the ENDED binding.  *"A read of it after the `}` is refused"* — so `for f in fs { … }
+f(1)` must be refused like `for i in 0..3 { } i` is.  It compiled.
+
+**The filed scope was wrong, and the widening is the useful part.**  loft#1679 was filed (by me)
+as *"answers null"*, with the loop as the axis and the REBIND's slot write as the mechanism.  The
+write is right.  The READ is wrong, the loop is not the axis, and `null` is only the face you see
+when the ended binding was a loop variable, because loop exit leaves the exhausted sentinel in
+the old slot.  Bind the name in an `if` arm instead and the ended binding is still LIVE: the call
+runs the WRONG FUNCTION and answers 101 where the program spells 201.  That is the cell to lead
+with, because it states the defect without reference to a sentinel.
+
+**One question, two decoders, each one member short of its own list.**  The scopes pass gives the
+second binding its own slot (`scan_set`'s `copy_variable`) and remaps every read through
+`var_mapping` — `Var`, `TupleGet`, `TuplePut`, `FnRef`, `FnRefDnr`.  @PLAN53 cluster 2 extended
+that list once, with a comment reading *"exactly like `Var`/`TupleGet`/`TuplePut` above"*, and
+stopped short of `CallRef`, whose callee index the walk copied through verbatim.  The parser's
+two indirect-call sites (one per ARITY) resolve the name with `self.vars.var(name)` rather than
+through the bare-name read that asks `check_block_scope` — so the refusal had a hole at exactly
+the one kind of local a program can only use by CALLING.  Neither site is a second
+implementation of the rule; each is a caller that never asked.  D-bind-62.
+
+⚠ **`--native` ran the broken half, and for a reason that is not a fix.**  It names its locals
+`var_<name>`, so the two bindings are ONE Rust local there and the rebind shadows it.  Right by
+accident — which is why this reads as an interpreter-only defect and why a differential check
+between the backends was the only instrument that could see it at all.
+
+⚠ **The enumeration is the hazard, so the catch-all now names the set.**  `scan`'s pass-through
+arm carries a debug assertion that no var-carrying variant reaches it: dropping an arm is a
+failed assertion rather than a wrong slot read on one backend.  It cannot catch a NEW variant
+that carries a variable — nothing cheap can — so the set is written down where the next reader
+of that walk will meet it.
+
+**What the corpus said about the refusal.**  Adding a refusal is the half that can break working
+programs, and 991 corpus and suite tests plus the published-library gate pass unchanged: no
+program in the tree calls a fn-ref after its binding block has ended.  The refused spelling has
+its own guard rather than a cell in `1600b`/`1600c` — those two are the homes of the READ
+spelling and their falsification receipts count their own expectations, so a cell added there
+would have re-derived two receipts to record one new spelling.
+
 ### "Where does an advance resume?" — a construct declared out of scope, and the four defects under its `OPEN: 0` (2026-09-25)
 
 `@FR-G-Next` says an advance runs ONE slice, from the resume point.  On `--native` the
