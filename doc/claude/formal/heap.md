@@ -184,7 +184,11 @@ index becomes `nullref` plus a recoverable fault rather than a silent read.
 side). Both are the SAME test at the same place: an out-of-range index produces `nullref`, and
 every typed setter refuses to resolve a store for it, so `v[9] = x` on a three-element vector
 and `absent.f = x` through a keyed miss take the identical step (measured on both backends —
-value, length and the neighbouring records all unchanged). A write to a **locked** store is refused (the `#lock` runtime guard / const store),
+value, length and the neighbouring records all unchanged; the standing guard is
+`tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`, which also pins that a
+heap-owning literal written there is released and its source untouched, and that every
+native rewrite writing an element without a `DbRef` — the hoisted header and base, the slice
+fill, the record-view address, the guarded index chain — answers the same). A write to a **locked** store is refused (the `#lock` runtime guard / const store),
 never silently applied. Crucially, a write's target ROOT decides whose state it touches: a
 write whose root is a **parameter** mutates the caller's value; a write to a **local** touches
 only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](capabilities.md)'s
@@ -3322,6 +3326,12 @@ The rules are checkable directly, and every check is a program both backends mus
 - **Null/OOB continue (`H-ReadNull` / `H-Index`)** — reading a field of `nullref`, or `v[i]`
   with `i ≥ len(v)`, is **null** and the program continues; it never halts (operational.md
   C80, extended to the heap).
+- **Null/OOB write is a no-op (`H-WriteNull` / `H-WriteOOB`)** — `v[9] = x`, `v[i] = x` with
+  `i < -len` or `i` the integer null, `v[9].f = x`, `e = v[9]; e.f = x` and a keyed miss
+  `h[7].f = x` change nothing (value, length, neighbours), a literal written there is
+  released, and a negative `i ∈ [-len, -1]` LANDS at the element from the end; identical on
+  both backends and on every native fast path —
+  `tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`.
 - **Parameter-root write escapes, local-root write does not (`H-Write` / `H-Copy`)** —
   `fn f(v: vector<integer>) { v[0] = 99 }` mutates the caller's vector (`orig[0] == 99`);
   binding first, `fn f(v) { c = v; c[0] = 99 }`, does not (`orig[0] == 1`). This IS the

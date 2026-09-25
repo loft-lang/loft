@@ -1,0 +1,251 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A WRITE TO AN ABSENT ELEMENT LANDS NOWHERE.  `@FR-H-WriteOOB` and `@FR-H-WriteNull` are the
+// write half of the null discipline: an index at or past the length, below `-len`, or the
+// integer null names no element, and a write to it is a no-op the program continues past —
+// the length, the neighbours and the written value's own source are untouched, and a literal
+// written there is released.  A NEGATIVE index in `[-len, -1]` is NOT absent: it names the
+// element that far from the end (`@FR-H-Index`) and the write LANDS.  `@FR-H-WriteNull` is the
+// same step through a null VIEW (`e = r[9]; e.x = 5`) and a keyed miss (`h[7].n = 5`).
+//
+// Both backends decide "absent" at ONE site each — `State::vec_get_or_raise` and its native
+// twin `Stores::vec_get_or_raise_runtime` — and every typed setter opens with the `rec == 0`
+// test the `OpSet*` templates in `default/01_code.loft` carry.  The native rewrites that write
+// an element without building a `DbRef` answer the same question on their own fast path and
+// route every other index back to the twin: the hoisted header and BASE (`vec_set_at`,
+// `vec_set_hoisted_or_raise_runtime`, `@FR-R-Base`), the slice FILL (`fill_hoisted`, which
+// declines a range with any index outside `[0, len)` and leaves it to the per-element loop),
+// the record VIEW address (`rec_set`, a null address writes nothing, `@FR-R-RecPtr`) and the
+// guarded index chain (`@FR-R-GuardedChain`).  Each has a cell here, and `LOFT_TRACE_BASE`,
+// `LOFT_TRACE_RECPTR`, `LOFT_TRACE_CHAIN` and a `--native-emit` grep for `fill_hoisted`
+// confirmed the rewrite fired on its cell: a green cell a rewrite declined measures nothing.
+//
+// The axes moved: index shape (literal, variable, null, negative in and below range, a loop
+// counter through negative values), element type (integer, u8, nullable u8, float, text,
+// record, heap-owning record, struct-enum, vector), the write's spelling (plain, compound,
+// whole-record literal and variable, field through the element, nested field path, view then
+// write, write-back idiom), the container root (local, parameter, `&` alias, field, a call's result), the
+// container kind (vector, LINKED vector — a keyed collection over the element type exists —
+// hash, sorted and index miss) and the statement context (straight line, an `if` arm, a loop body,
+// hoisted loop, fill loop, guarded-chain grid).  Every expected value is worked out by hand; every cell also pins the
+// length, and the heap-owning cells run under the interpreter's leak gate.
+//
+// @falsified-at: f4f10cc5e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   (the tree before loft#1378's fix, where a narrow element write took its width from the
+//   definition: `b[-8] = 9` on a `vector<u8>` of eight wrote eight bytes and zeroed the seven
+//   neighbours.  No durable patch: that tree is 135 302 source lines away, so a diff against it
+//   would reintroduce everything since, not this defect.)
+// CHANNEL: the asserts (a wrong element, length or neighbour), and the interpreter's leak gate
+//   for the heap-owning literals written out of range.
+// ARMED: the leak gate is armed by the script corpus runner (wrap.rs), not by `--tests`.
+// WITNESS: `u8: 9 0 0 0 0 0 0 0 8` — the `u8` cell's own message, on both backends.
+// HOLDS: every other cell answers the same on both trees; only the narrow-width cell moved.
+
+struct P { x: integer, y: integer }
+struct Q { pos: P, n: integer }
+struct H { name: text, tags: vector<integer> }
+struct K { id: integer, n: integer }
+struct Idx { by: hash<K[id]> }
+struct Cv { data: vector<integer> }
+struct O { v: vector<integer> }
+struct G { w: integer, h: integer }
+enum E { A { n: integer }, B { n: integer } }
+
+fn write_param(v: vector<integer>) { v[9] = 5; v[-1] = 6; }
+fn loop_header(v: vector<integer>) { for i in 0..6 { v[i] = i * 10; } }
+fn loop_read_write(v: vector<integer>) { for i in 0..6 { v[i] = v[i] + 100; } }
+fn loop_negative_counter(v: vector<integer>) { for i in -2..2 { v[i] = 50 + i; } }
+fn fill(cv: Cv, base: integer, n: integer, ink: integer) { d = &cv.data; for i in 0..n { d[base + i] = ink; } }
+fn view_loop(r: vector<P>) { for i in 0..5 { e = r[i]; e.x = 100 + i; } }
+fn view_loop_discharged(r: vector<P>) { for i in 0..5 { e = r[i]?; e.x = 100 + i; } }
+fn literal_loop(r: vector<P>) { for i in 0..5 { r[i] = P { x: 100 + i, y: i }; } }
+fn write_back(r: vector<P>) { for i in 0..5 { e = r[i]?; e.x += 1; r[i] = e; } }
+fn nested_loop(q: vector<Q>) { for i in 0..4 { e = q[i]; e.pos.x = 100 + i; } }
+fn narrow_loop(b: vector<u8>) { for i in 0..6 { b[i] = i & 255; } }
+fn text_loop(t: vector<text>) { for i in 0..4 { t[i] = "x{i}"; } }
+fn mk() -> vector<integer> { [11, 22, 33] }
+fn grid(v: vector<integer>, g: G) { for j in 0..g.h { for i in 0..g.w { v[j * g.w + i] = j * 10 + i; } } }
+
+fn main() {
+  // straight-line scalar writes: literal, variable, null and negative indices
+  v1: vector<integer> = [11, 22, 33];
+  v1[9] = 5;
+  i1 = 9;
+  v1[i1] = 5;
+  mx = 9223372036854775807;
+  nul = mx + 1;
+  v1[nul] = 5;
+  v1[-4] = 8;
+  i2 = -100;
+  v1[i2] = 9;
+  assert("{v1}" == "[11,22,33]" && len(v1) == 3, "absent scalar writes: {v1} {len(v1)}");
+  v1[-1] = 7;
+  v1[-3] = 9;
+  assert("{v1}" == "[9,22,7]" && len(v1) == 3, "negative in range lands: {v1}");
+  // compound
+  v2: vector<integer> = [11, 22, 33];
+  v2[9] += 1;
+  v2[5] -= 1;
+  v2[-7] *= 2;
+  v2[-1] += 100;
+  assert("{v2}" == "[11,22,133]" && len(v2) == 3, "compound: {v2}");
+  // element types
+  // eight elements, because a narrow write that took its width from the DEFINITION (loft#1378)
+  // wrote eight bytes: `b[-8] = 9` then zeroed the seven neighbours after it
+  b: vector<u8> = [1, 2, 3, 4, 5, 6, 7, 8];
+  b[9] = 7;
+  b[-9] = 4;
+  b[-8] = 9;
+  b[-1] = 6;
+  assert(b[0] == 9 && b[1] == 2 && b[2] == 3 && b[3] == 4 && b[4] == 5 && b[5] == 6 && b[6] == 7 && b[7] == 6 && len(b) == 8,
+    "u8: {b[0]} {b[1]} {b[2]} {b[3]} {b[4]} {b[5]} {b[6]} {b[7]} {len(b)}");
+  bn: vector<u8?> = [1, null, 3];
+  bn[9] = 7;
+  bn[-4] = 4;
+  bn[-1] = 9;
+  assert(bn[0] == 1 && !bn[1] && bn[2] == 9 && len(bn) == 3, "nullable u8: {bn[0]} {bn[1]} {bn[2]}");
+  f: vector<float> = [1.5, 2.5];
+  f[5] = 9.5;
+  f[-3] = 8.5;
+  f[-2] = 0.5;
+  assert(f[0] == 0.5 && f[1] == 2.5 && len(f) == 2, "float: {f[0]} {f[1]}");
+  t: vector<text> = ["a", "b"];
+  t[5] = "z";
+  t[-3] = "w";
+  t[-1] = "y";
+  assert(t[0] == "a" && t[1] == "y" && len(t) == 2, "text: {t[0]} {t[1]}");
+  vv: vector<vector<integer>> = [[1, 2], [3, 4]];
+  vv[9][0] = 5;
+  vv[0][9] = 6;
+  vv[1][5] = 7;
+  vv[9] = [5, 6];
+  i3 = -5;
+  vv[i3] = [7, 8];
+  vv[-1][-1] = 44;
+  assert("{vv}" == "[[1,2],[3,44]]" && len(vv) == 2 && len(vv[1]) == 2, "nested: {vv}");
+  es: vector<E> = [A { n: 1 }];
+  es[9].n = 5;
+  es[-1].n = 9;
+  assert(es[0].n == 9 && len(es) == 1, "struct-enum: {es[0].n} {len(es)}");
+  // records: field through the element, whole literal, whole variable, null view
+  r1: vector<P> = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];
+  r1[9].x = 5;
+  r1[-3].y = 6;
+  r1[9] = P { x: 5, y: 6 };
+  i4 = 7;
+  r1[i4] = P { x: 5, y: 6 };
+  r1[-3] = P { x: 9, y: 9 };
+  e1 = r1[9];
+  e1.x = 5;
+  assert("{e1.x}" == "null" && r1[0].x == 1 && r1[0].y == 2 && r1[1].x == 3 && r1[1].y == 4 && len(r1) == 2,
+    "absent record writes: {e1.x} {r1[0].x} {r1[0].y} {r1[1].x} {r1[1].y} {len(r1)}");
+  r1[-1].x = 50;
+  r1[-2] = P { x: 7, y: 8 };
+  g1 = r1[-1];
+  g1.y = 77;
+  assert(r1[0].x == 7 && r1[0].y == 8 && r1[1].x == 50 && r1[1].y == 77 && len(r1) == 2,
+    "negative record writes land: {r1[0].x} {r1[0].y} {r1[1].x} {r1[1].y}");
+  // heap-owning literal and variable written out of range: released, source intact
+  h1: vector<H> = [H { name: "a", tags: [1] }];
+  h1[9] = H { name: "zz", tags: [5, 6, 7] };
+  i5 = 4;
+  h1[i5] = H { name: "yy", tags: [8] };
+  h1[-3] = H { name: "xx", tags: [9] };
+  hv = H { name: "qq", tags: [5, 6] };
+  h1[9] = hv;
+  h1[i5] = hv;
+  h1[9].tags = [5, 6];
+  h1[9].tags += [7];
+  h1[9].name = "q";
+  h1[-2].name = "w";
+  assert(h1[0].name == "a" && "{h1[0].tags}" == "[1]" && hv.name == "qq" && "{hv.tags}" == "[5,6]" && len(h1) == 1,
+    "heap-owning: {h1[0].name} {h1[0].tags} {hv.name} {hv.tags} {len(h1)}");
+  // the linked layout: a keyed collection over K makes vector<K> a vector of record ids
+  lk: vector<K> = [K { id: 1, n: 10 }, K { id: 2, n: 20 }];
+  ix = Idx { by: [K { id: 5, n: 50 }] };
+  lk[9].n = 5;
+  lk[-3].n = 6;
+  lk[9] = K { id: 3, n: 30 };
+  lk[-1].n = 99;
+  assert(lk[0].n == 10 && lk[1].n == 99 && len(lk) == 2 && len(ix.by) == 1, "linked: {lk[0].n} {lk[1].n} {len(lk)}");
+  // keyed miss
+  hk: hash<K[id]> = [K { id: 1, n: 10 }];
+  hk[7].n = 5;
+  hk[1].n = 11;
+  sk: sorted<K[id]> = [K { id: 2, n: 20 }];
+  sk[9].n = 6;
+  sk[2].n = 21;
+  assert(hk[1].n == 11 && len(hk) == 1 && sk[2].n == 21 && len(sk) == 1, "keyed miss: {hk[1].n} {len(hk)} {sk[2].n} {len(sk)}");
+  // container roots
+  p1: vector<integer> = [11, 22, 33];
+  write_param(p1);
+  a1: vector<integer> = [11, 22, 33];
+  ra = &a1;
+  ra[9] = 5;
+  ra[-1] = 6;
+  o1 = O { v: [11, 22, 33] };
+  o1.v[9] = 5;
+  o1.v[-1] = 6;
+  cr = mk();
+  cr[9] = 5;
+  cr[-1] = 6;
+  // a write straight into a call's temporary: nothing to observe but the leak gate and the exit
+  mk()[9] = 5;
+  mk()[-1] = 6;
+  assert("{p1}" == "[11,22,6]" && "{a1}" == "[11,22,6]" && "{o1.v}" == "[11,22,6]" && "{cr}" == "[11,22,6]",
+    "roots: {p1} {a1} {o1.v} {cr}");
+  // loops: the hoisted header and base, a negative counter, the fill, the view address
+  l1: vector<integer> = [11, 22, 33];
+  loop_header(l1);
+  l2: vector<integer> = [11, 22, 33];
+  loop_read_write(l2);
+  l3: vector<integer> = [11, 22, 33];
+  loop_negative_counter(l3);
+  assert("{l1}" == "[0,10,20]" && "{l2}" == "[111,122,133]" && "{l3}" == "[50,51,49]", "loops: {l1} {l2} {l3}");
+  c1 = Cv { data: [1, 2, 3, 4] };
+  fill(c1, 2, 6, 8);
+  c2 = Cv { data: [1, 2, 3, 4] };
+  fill(c2, -2, 2, 7);
+  assert("{c1.data}" == "[1,2,8,8]" && "{c2.data}" == "[1,2,7,7]", "fill: {c1.data} {c2.data}");
+  r2: vector<P> = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];
+  view_loop(r2);
+  r3: vector<P> = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];
+  view_loop_discharged(r3);
+  r4: vector<P> = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];
+  literal_loop(r4);
+  r5: vector<P> = [P { x: 1, y: 2 }, P { x: 3, y: 4 }];
+  write_back(r5);
+  assert(r2[0].x == 100 && r2[1].x == 101 && len(r2) == 2, "view loop: {r2[0].x} {r2[1].x} {len(r2)}");
+  assert(r3[0].x == 100 && r3[1].x == 101 && len(r3) == 2, "discharged view loop: {r3[0].x} {r3[1].x} {len(r3)}");
+  assert(r4[0].x == 100 && r4[1].x == 101 && r4[1].y == 1 && len(r4) == 2, "literal loop: {r4[0].x} {r4[1].x} {len(r4)}");
+  assert(r5[0].x == 2 && r5[1].x == 4 && len(r5) == 2, "write-back: {r5[0].x} {r5[1].x} {len(r5)}");
+  q1: vector<Q> = [Q { pos: P { x: 1, y: 2 }, n: 0 }, Q { pos: P { x: 3, y: 4 }, n: 0 }];
+  q1[9].pos.x = 5;
+  q1[-1].pos.y = 7;
+  nested_loop(q1);
+  assert(q1[0].pos.x == 100 && q1[1].pos.x == 101 && q1[1].pos.y == 7 && len(q1) == 2, "nested field path: {q1[0].pos.x} {q1[1].pos.x} {q1[1].pos.y}");
+  b2: vector<u8> = [9, 9, 9];
+  narrow_loop(b2);
+  t2: vector<text> = ["a", "b"];
+  text_loop(t2);
+  assert(b2[0] == 0 && b2[1] == 1 && b2[2] == 2 && len(b2) == 3 && t2[0] == "x0" && t2[1] == "x1" && len(t2) == 2,
+    "narrow and text loops: {b2[0]} {b2[1]} {b2[2]} {t2[0]} {t2[1]}");
+  gv: vector<integer> = [9, 9, 9, 9, 9, 9, 9];
+  grid(gv, G { w: 3, h: 4 });
+  assert("{gv}" == "[0,1,2,10,11,12,20]" && len(gv) == 7, "guarded chain grid: {gv}");
+  // an `index` miss, a boolean element, and the write under an `if` arm and in a loop body here
+  ik: index<K[id]> = [K { id: 3, n: 30 }];
+  ik[8].n = 5;
+  ik[3].n = 31;
+  bv: vector<boolean> = [true, false];
+  bv[9] = true;
+  bv[-3] = true;
+  bv[-1] = true;
+  assert(ik[3].n == 31 && len(ik) == 1 && bv[0] && bv[1] && len(bv) == 2, "index miss and boolean: {ik[3].n} {len(ik)} {bv[0]} {bv[1]}");
+  w1: vector<integer> = [11, 22, 33];
+  if len(w1) == 3 { w1[9] = 5; w1[-1] = 6; } else { w1[0] = 0; }
+  for k in 0..2 { w1[k + 7] = 1; w1[k - 3] = 40 + k; }
+  assert("{w1}" == "[40,41,6]" && len(w1) == 3, "if arm and loop body: {w1}");
+  println("a write to an absent element lands nowhere: every cell holds");
+}

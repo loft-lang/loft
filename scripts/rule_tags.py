@@ -50,8 +50,14 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # rules docs live; CITE_DIRS (colon-separated) is where citations are scanned.
 FORMAL = os.environ.get("RULES_DIR", os.path.join(ROOT, "doc/claude/formal"))
 SRC = os.path.join(ROOT, "src")
-CITE_DIRS = os.environ.get("CITE_DIRS", "").split(":") if os.environ.get("CITE_DIRS") else [SRC]
-CITE_EXTS = os.environ.get("CITE_EXTS", ".rs").split(",")
+# `default/*.loft` is code too: the `#rust"…"` operator templates there are the SHARED half of
+# both backends (`src/fill.rs` is generated from them, and the native emitter pastes them), so
+# a rule a template enforces is cited THERE, once, and nowhere in `src/`.  Scanning `src/`
+# alone read `@FR-H-WriteNull` as unannotated while its one home carried the tag (2026-09-25).
+DEFAULT = os.path.join(ROOT, "default")
+CITE_DIRS = (os.environ["CITE_DIRS"].split(":")
+             if os.environ.get("CITE_DIRS") else [SRC, DEFAULT])
+CITE_EXTS = os.environ.get("CITE_EXTS", ".rs,.loft").split(",")
 
 # `coverage`'s second tier and the contract-1 MINIMUM THRESHOLDS it reports against.  These
 # are floors, not targets: the owner's informed estimate of the least coverage that could earn

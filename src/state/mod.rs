@@ -5976,7 +5976,10 @@ impl State {
     /// counts from the end" and "out of range answers nullref" are decided for the
     /// interpreter.  `Stores::vec_get_or_raise_runtime` is the native twin, and
     /// `vec_get_hoisted_or_raise_runtime` sends every non-fast-path index back to it, so the
-    /// normalisation has one definition per backend rather than one per call site.
+    /// normalisation has one definition per backend rather than one per call site.  The
+    /// WRITE side asks nothing of its own (`@FR-H-WriteOOB`): `v[i] = x` is
+    /// `OpSet*(OpGetVector(v, i), 0, x)`, so the element's address is this answer and an
+    /// absent one is the `nullref` the setter's `rec != 0` test declines (`@FR-H-WriteNull`).
     #[must_use]
     pub fn vec_get_or_raise(
         &mut self,
