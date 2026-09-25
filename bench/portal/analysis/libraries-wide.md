@@ -188,3 +188,22 @@ row read 22× before `(R-Rebind)` took the forward), `sphere` 6.5 → 4.05 ms (1
 Cells: `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.  The portal's
 pinned rows at `8a513e42b` (2026-09-25): `mat4_transform` **1.42×**, `sphere` 14.5×,
 `mesh_to_floats` 21.3× (noisy), `mat4_mul` 31.9×.
+
+**`(R-Const)` BUILT (2026-09-25, `LOFT_NO_CONST_VIEW`).**  A literal-bodied function is a
+CONSTANT: the parser gives `fn face_rows() -> vector<integer> { [0, 0, 0, 4, …] }` a
+synthetic constant twin, pre-built once in the constant store exactly as a top-level
+`NAMES = [ … ]` is, and the scope pass answers each call whose result only lands in read
+positions — bound and indexed, measured, iterated, or read straight under an index — with
+the constant's `OpConstRef`; a call whose result is written, appended, handed to a user
+call, stored, returned or linked keeps the call and its own store.  text2d, same box:
+`write_text` **165.3 → 4.23 ms per op, 125× → 3.23×** of Rust — the hand-price to the number;
+the library's two face tables were rebuilt per glyph and are now read from one store —
+the other four text2d rows unmoved.  Reach beyond text2d, by census of the library
+checkouts and the consumers: the shape is rare in the LIBRARIES (182 tables are top-level
+`const`s already; text2d's two are the only literal-bodied vector functions) and present in
+the crawler (five name tables in `items.loft` / `bundles.loft`, four terrain tables in
+`ortlerdata.loft`); ~30 zero-parameter functions return a RECORD literal (`no_mark()`,
+`scan_fail()`, a default `Rig {}`), which this rule leaves alone — their callers write the
+result.  Found on the way, to be filed (this box could not authenticate to GitHub for writes; the text waits in `doc/claude/plans/157-native-4x-drawing/to-file-const-bind-panic.md`): a plain local bound from a TOP-LEVEL constant
+and then written panics on both backends ("Write to read-only store") — the bind has no copy
+road; the same for a constant handed to a callee that writes its parameter.

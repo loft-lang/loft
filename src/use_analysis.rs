@@ -3656,7 +3656,48 @@ pub fn opaque_callref_bind(data: &Data, d_nr: u32, tp: &Type, value: &Value) -> 
 /// iteration subject, a tuple put.  So the set can only SHRINK on a shape the walk does not
 /// understand, never grow, and a variable that never occurs at all is read-only vacuously
 /// (its bind is then the only thing that happens to it).
+///
+/// The plain form of [`read_only_uses`]: no call is marked and neither extension is on, so
+/// the answer is exactly the walk above.
 pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) -> Vec<bool> {
+    read_only_uses(body, n_vars, data, &|_| false, false).locals
+}
+
+/// What [`read_only_uses`] answers: the read-only locals, and the marked calls in a
+/// read-only position.
+pub(crate) struct ReadOnly {
+    /// Per variable number: only ever read, as [`read_only_record_locals`] defines it.
+    pub locals: Vec<bool>,
+    /// The MARKED call nodes, by the address of their `Value`, whose result is only ever
+    /// read: the call sits at arg 0 of a scalar getter or of a projection chain that ends
+    /// in one, or it is the value of the single `Set` of a local that is read-only.
+    pub calls: HashSet<usize>,
+}
+
+/// `@FR-R-Const` — the walk behind [`read_only_record_locals`], generalised to answer the
+/// same question about a CALL's result: a call `marked(callee)` whose value lands only in
+/// read positions can answer a view of a value that already exists instead of building one.
+///
+/// `through` switches on two extensions the plain form keeps off, so that the plain form's
+/// answers never move:
+///
+/// * a block in argument position hands its TAIL on in that position (`OpGetVectorNullable(
+///   { __ref_p2_1 = f(…); __ref_p2_1 }, 8, i)` reads the block's result), its other
+///   statements being statements as before;
+/// * a bare copy `w = v` is an ALIAS of `v` rather than a reach: `v` is read-only only if
+///   `w` is, which is how `for x in c` (lowered to `_vector_N = c`) reads `c` — every use
+///   of the alias is classified by the same rules, so nothing reaches `v` through `w` that
+///   would not have removed `w` from the set.
+///
+/// The fallback is the plain form's: any position not named here reaches the value, and
+/// a marked call it does not admit stays the call the program already pays for.
+pub(crate) fn read_only_uses(
+    body: &Value,
+    n_vars: usize,
+    data: &Data,
+    marked: &dyn Fn(u32) -> bool,
+    through: bool,
+) -> ReadOnly {
     #[derive(Clone, Copy, PartialEq)]
     enum Pos {
         /// A pure read: the value is observed and nothing can reach the record.
@@ -3687,20 +3728,46 @@ pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) 
     }
     struct Cx<'a> {
         data: &'a Data,
+        marked: &'a dyn Fn(u32) -> bool,
+        through: bool,
         ok: Vec<bool>,
         sets: Vec<u32>,
+        /// Marked calls met in a pure-read position.
+        calls: HashSet<usize>,
+        /// Marked calls that are the value of a `Set`, with the local set.
+        bound: Vec<(usize, u16)>,
+        /// `w = v` binds, as (w, v).
+        aliases: Vec<(u16, u16)>,
     }
     fn deny(cx: &mut Cx, v: u16) {
         if let Some(slot) = cx.ok.get_mut(v as usize) {
             *slot = false;
         }
     }
-    /// `arg` is an argument of the op whose classification gave it `pos`.
-    fn arg(cx: &mut Cx, arg: &Value, pos: Pos, under_getter: bool) {
-        match arg.unspan() {
+    /// `val` is an argument of the op whose classification gave it `pos`.
+    fn arg(cx: &mut Cx, val: &Value, pos: Pos, under_getter: bool) {
+        match val.unspan() {
             Value::Var(v) => {
                 if !(under_getter && pos == Pos::Read) {
                     deny(cx, *v);
+                }
+            }
+            call @ Value::Call(op, args) if (cx.marked)(*op) => {
+                if under_getter && pos == Pos::Read {
+                    cx.calls.insert(std::ptr::from_ref(call) as usize);
+                }
+                for a in args {
+                    arg(cx, a, Pos::Reach, false);
+                }
+            }
+            Value::Block(bl) if cx.through => {
+                let n = bl.operators.len();
+                for (i, op) in bl.operators.iter().enumerate() {
+                    if i + 1 == n {
+                        arg(cx, op, pos, under_getter);
+                    } else {
+                        walk(cx, op, Pos::Read);
+                    }
                 }
             }
             other => walk(cx, other, pos),
@@ -3734,7 +3801,16 @@ pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) 
                 if let Some(n) = cx.sets.get_mut(*v as usize) {
                     *n += 1;
                 }
-                arg(cx, rhs, Pos::Reach, false);
+                match rhs.unspan() {
+                    Value::Var(u) if cx.through => cx.aliases.push((*v, *u)),
+                    call @ Value::Call(op, args) if (cx.marked)(*op) => {
+                        cx.bound.push((std::ptr::from_ref(call) as usize, *v));
+                        for a in args {
+                            arg(cx, a, Pos::Reach, false);
+                        }
+                    }
+                    _ => arg(cx, rhs, Pos::Reach, false),
+                }
             }
             Value::Var(v) => deny(cx, *v),
             Value::Iter(v, a, b, c) => {
@@ -3772,8 +3848,13 @@ pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) 
     }
     let mut cx = Cx {
         data,
+        marked,
+        through,
         ok: vec![true; n_vars],
         sets: vec![0; n_vars],
+        calls: HashSet::new(),
+        bound: Vec::new(),
+        aliases: Vec::new(),
     };
     walk(&mut cx, body, Pos::Read);
     for (v, ok) in cx.ok.iter_mut().enumerate() {
@@ -3781,7 +3862,27 @@ pub(crate) fn read_only_record_locals(body: &Value, n_vars: usize, data: &Data) 
             *ok = false;
         }
     }
-    cx.ok
+    // An alias that is not read-only reaches what it copies; chains settle in a few rounds.
+    let mut moved = true;
+    while moved {
+        moved = false;
+        for &(w, v) in &cx.aliases {
+            let w_ok = cx.ok.get(w as usize).copied().unwrap_or(false);
+            if !w_ok && cx.ok.get(v as usize).copied().unwrap_or(false) {
+                cx.ok[v as usize] = false;
+                moved = true;
+            }
+        }
+    }
+    for (addr, v) in cx.bound {
+        if cx.ok.get(v as usize).copied().unwrap_or(false) {
+            cx.calls.insert(addr);
+        }
+    }
+    ReadOnly {
+        locals: cx.ok,
+        calls: cx.calls,
+    }
 }
 
 /// @PLN164 B1 — does the bind `v = value` ADOPT the record the callee minted?  True when

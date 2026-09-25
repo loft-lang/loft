@@ -9201,6 +9201,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-Rebind` — `x = f(x, …)` hands the callee x's own record as its buffer:
         // decided here for the same reason, on the same settled IR.
         crate::rebind_place::rewrite(data, database, d_nr);
+        // `@FR-R-Const` — a call of a literal-bodied function whose result is only read
+        // answers a view of the pre-built constant: decided on the same settled IR.
+        crate::const_fn::rewrite(data, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {

@@ -1,0 +1,115 @@
+// `fn codes() -> vector<integer> { [32, 33, …] }` — a table spelled as a function is a
+// CONSTANT, and a call whose result is only read answers a view of the one pre-built vector.
+//
+// `(R-Const)` (formal/rewrites.md § A value already home is not copied to a second one):
+// the parser gives a zero-parameter function whose body is one vector literal over literals
+// a synthetic constant twin, pre-built once in the constant store like a top-level `NAMES =
+// [ … ]`, and `const_fn::rewrite` answers each call whose result lands only in read
+// positions with `OpConstRef` — the node a top-level constant's use site emits.  Every other
+// position keeps the call, since the constant store is write-locked and a program's own copy
+// must be its own.  These cells are the values the rewrite must keep, hand-computed, and the
+// oracle its switch A/B (`LOFT_NO_CONST_VIEW=1`) compares against; `LOFT_TRACE_CONST=1`
+// names which calls are admitted and which decline.  Cells: the read-only bind (c1), the
+// direct index (c2), the iteration (c3), the length (c4); the declines that must copy — a
+// write through the local (c5), an append (c6), a hand-off to a callee that writes its
+// parameter (c7) and to one that reads (c8, declined too: a user call's argument may be
+// written through), a store into a field (c9), a return (c10), a copy into a local that is
+// then written (c11); the iteration over the bound local (c12, admitted through the
+// iteration alias); a table of flat records (c13) and of texts (c14); a function with a
+// parameter (c15), a body with a statement before its literal (c16: the local it feeds the
+// literal; c16b: a call it does not), a nested vector (c17)
+// and a body whose literal folds arithmetic (c18); the glyph-table shape (c19: bound, measured,
+// indexed in a loop); two calls in one frame (c21), a call inside a loop (c22), and a written
+// copy beside a read-only one of the same table (c23).  After every cell the table reads as
+// written (c24).
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-09-25): with the "a user call's argument reaches the value" classification struck in
+//   `use_analysis::read_only_uses` (every argument position read as a pure read), the
+//   interpreter fails c7 with "Write to read-only store" — the callee's write lands in the
+//   constant store; with the parser's one-literal test struck (`sole_vector_literal`
+//   accepting a body with a statement before the literal), c16 would answer 5 for 7 on both
+//   backends — no: c16's literal reads the local, which the constant store refuses on its own,
+//   so the struck test is caught by the PIN (`tests/const_fn.rs`), where `with_call`'s body —
+//   a call the literal never reads — is made a constant and c16b's call is rewritten.
+//   LOFT_NO_CONST_VIEW=1 is the A/B: every cell answers the same.
+struct Row { a: integer, b: integer }
+struct H { v: vector<integer> }
+
+fn codes() -> vector<integer> {
+  [32, 33, 35, 37, 39]
+}
+fn rows() -> vector<Row> { [Row { a: 1, b: 2 }, Row { a: 3, b: 4 }, Row { a: 5, b: 6 }] }
+fn names() -> vector<text> { ["ash", "birch", "cedar"] }
+fn with_param(n: integer) -> vector<integer> { [1, 2, n] }
+fn with_statement() -> vector<integer> { x = 7; [x, 2] }
+fn touch() { println("touched"); }
+fn with_call() -> vector<integer> { touch(); [1, 2] }
+fn nested() -> vector<vector<integer>> { [[1, 2], [3]] }
+fn folded() -> vector<integer> { [-5, 2 + 3, 10 * 10] }
+fn glyph_rows() -> vector<integer> { [0, 4, 10, 31, 10, 10, 31, 10, 0, 17, 18, 4, 4, 4, 9, 17] }
+
+fn param_writes(v: vector<integer>) -> integer { v[0] = 9; v[0] ?? -1 }
+fn param_reads(v: vector<integer>) -> integer { v[4] ?? -1 }
+
+fn c1(i: integer) -> integer { c = codes(); c[i] ?? -1 }
+fn c2(i: integer) -> integer { codes()[i] ?? -1 }
+fn c3() -> integer { s = 0; for x in codes() { s += x; } s }
+fn c4() -> integer { len(codes()) }
+fn c5() -> integer { c = codes(); c[0] = 5; (c[0] ?? -1) * 100 + (codes()[0] ?? -1) }
+fn c6() -> integer { c = codes(); c += [7]; len(c) * 100 + len(codes()) }
+fn c7() -> integer { param_writes(codes()) * 100 + (codes()[0] ?? -1) }
+fn c8() -> integer { param_reads(codes()) }
+fn c9() -> integer { h = H { v: codes() }; h.v[0] = 1; (h.v[0] ?? -1) * 100 + (codes()[0] ?? -1) }
+fn c10() -> vector<integer> { codes() }
+fn c11() -> integer { c = codes(); d = c; d[0] = 1; (d[0] ?? -1) * 100 + (c[0] ?? -1) }
+fn c12() -> integer { c = codes(); s = 0; for x in c { s += x; } s + len(c) }
+fn c13() -> integer { r = rows(); (r[1]?.b) * 10 + r[2]?.a }
+fn c14() -> text { n = names(); n[1] ?? "none" }
+fn c15() -> integer { v = with_param(3); v[2] ?? -1 }
+fn c16() -> integer { v = with_statement(); v[0] ?? -1 }
+fn c16b() -> integer { v = with_call(); v[1] ?? -1 }
+fn c17() -> integer { v = nested(); len(v[0]) * 10 + (v[1][0] ?? -1) }
+fn c18() -> integer { f = folded(); (f[0] ?? 0) + (f[1] ?? 0) + (f[2] ?? 0) }
+fn c19(at: integer) -> integer {
+  rows = glyph_rows();
+  acc = 0;
+  if at < len(rows) - 7 {
+    for ry in 0..7 { acc = acc * 2 + (rows[at + ry] ?? 0); }
+  }
+  acc
+}
+fn c21() -> integer { a = codes(); b = codes(); (a[0] ?? -1) + (b[4] ?? -1) }
+fn c22() -> integer { s = 0; for i in 0..3 { c = codes(); s += c[i] ?? 0; } s }
+fn c23() -> integer { a = codes(); b = codes(); b[0] = 1; (a[0] ?? -1) * 10 + (b[0] ?? -1) }
+
+fn main() {
+  assert(c1(2) == 35, "c1 {c1(2)}");
+  assert(c1(9) == -1, "c1 absent {c1(9)}");
+  assert(c2(3) == 37, "c2 {c2(3)}");
+  assert(c3() == 176, "c3 {c3()}");
+  assert(c4() == 5, "c4 {c4()}");
+  assert(c5() == 532, "c5 {c5()}");
+  assert(c6() == 605, "c6 {c6()}");
+  assert(c7() == 932, "c7 {c7()}");
+  assert(c8() == 39, "c8 {c8()}");
+  assert(c9() == 132, "c9 {c9()}");
+  r = c10();
+  r[0] = 2;
+  assert((r[0] ?? -1) == 2 and len(r) == 5, "c10 {r[0] ?? -1} {len(r)}");
+  assert(c11() == 132, "c11 {c11()}");
+  assert(c12() == 181, "c12 {c12()}");
+  assert(c13() == 45, "c13 {c13()}");
+  assert(c14() == "birch", "c14 {c14()}");
+  assert(c15() == 3, "c15 {c15()}");
+  assert(c16() == 7, "c16 {c16()}");
+  assert(c16b() == 2, "c16b {c16b()}");
+  assert(c17() == 23, "c17 {c17()}");
+  assert(c18() == 100, "c18 {c18()}");
+  assert(c19(1) == 1264, "c19 {c19(1)}");
+  assert(c21() == 71, "c21 {c21()}");
+  assert(c22() == 100, "c22 {c22()}");
+  assert(c23() == 321, "c23 {c23()}");
+  assert(codes()[0] == 32 and len(codes()) == 5, "c24 {codes()[0]} {len(codes())}");
+  println("ok");
+}

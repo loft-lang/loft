@@ -2562,6 +2562,47 @@ to bisect to.
   the per-pixel `set_pixel` (the call class) and one emitter waste found on the way: the
   fused element write derives `text_span_of` on every call for an INTEGER element and
   never uses it (9–13 % of the row).
+  **BUILT 2026-09-25** (`LOFT_NO_CONST_VIEW`, `LOFT_TRACE_CONST`; parse time + scope pass,
+  BOTH backends), on the machinery a top-level constant already has rather than on a
+  `OnceLock`: the parser gives a zero-parameter function whose whole body is ONE vector
+  literal over literals a synthetic `DefType::Constant` twin holding that literal
+  (`Parser::literal_body_constant`, linked through `Definition::literal_const`; the twin is
+  added on pass 1 and its literal re-stored on pass 2 like `parse_constant`'s), which
+  `compile::build_const_vectors` and the native `emit_const_vectors` pre-build ONCE in
+  `CONST_STORE` from the same extractor — so an element the constant store cannot hold
+  (`const_elem_unsupported`, `const_vector_blocker`) simply leaves the function a function.
+  The scope pass (`const_fn::rewrite`, beside `(R-Place)` and `(R-Rebind)` on the settled
+  IR) then answers each call whose result lands only in READ positions with `OpConstRef`,
+  the node a top-level constant's use site emits, and removes the call's lazy mint guard
+  where the buffer has no other user; the bind, the index, the `len` and the iteration that
+  follow are the forms both backends already emit for `NAMES[i]`.  The admission is
+  `use_analysis::read_only_uses`, the walk behind `(R-ValueRecord)`'s read-only record
+  locals generalised to classify a marked CALL node by the same positions — arg 0 of a
+  scalar getter or of a projection chain ending in one, or the value of the single bind of
+  a local that is read-only — with two extensions the plain form keeps off so its own
+  answers never move: a block in argument position hands its tail on (the `__ref_p2_N`
+  inline container of `codes()[i]`), and a bare copy `w = v` is an ALIAS of `v` rather than
+  a reach, which is how `for x in c` (lowered to `_vector_N = c`) reads `c`.  Every other
+  position keeps the call — a write or append through the local, a hand-off to ANY user
+  call (a by-value vector parameter is written through), a store into a field or element, a
+  return, a `?`-discharged record element (its absent arm mints), a `&` link — because the
+  constant store is write-locked and a program's copy must be its own; a wrong decline is
+  the build the program already paid.  The second half of the rule as written — the bind
+  of the view is B-Copy's copy the moment the local is written — lands as that decline:
+  the copy is the call's own store, so no copy road was added.  ⚠ Found on the way, NOT
+  fixed here: a plain local bound from a TOP-LEVEL constant and then written (`c = NAMES;
+  c[0] = 5`, `c += [7]`, `f(NAMES)` with `f` writing its parameter) has no copy road at all
+  and PANICS on both backends with "Write to read-only store" — the use site emits the view
+  and nothing places the copy this rule says the bind owes (an issue to file: this box could not authenticate to GitHub for writes — its text waits in `plans/157-native-4x-drawing/to-file-const-bind-panic.md`).  Measured on the
+  portal's text2d lane, same box: `write_text` **165.3 → 4.23 ms per op, 125× → 3.23×** of
+  Rust (the hand-price said ~3.3×; the rest of the row is `set_pixel`, the call class), the
+  other four rows unmoved.  Cells: `tests/scripts/a-literal-bodied-function-is-a-constant.loft`
+  (c1–c24, hand-computed, both backends under `LOFT_STRICT_STORES` / `LOFT_POISON` /
+  `LOFT_POISON_CLAIM` / the native leak check, the switch A/B answering the same); the
+  admission is pinned on the emitted Rust in `tests/const_fn.rs` (which calls read the
+  constant store, which keep their call), since the values pass on either form.  Sabotage
+  receipts: every argument position read as a pure read fails c7 on the interpreter with the
+  write-locked panic; the one-literal test struck answers 5 for 7 in c16 on both backends.
 - **`(R-ValueLocal)`** — `(R-ValueRecord)` returns a small record in registers only where
   EVERY call site reads fields off it; a site that binds the whole record to a local, or
   rebinds its own argument, declined it and paid a store per call: mesh3d
@@ -2654,7 +2695,8 @@ per-element release, `write_text` with the two tables hoisted to statics,
 `mat4_transform` with `p` carried as three floats — the price the twin sets is the
 ceiling each is measured against.  Written 2026-09-24 from the wide pass's measurements,
 ahead of the code, so that the code changes to match them; `(R-Rebind)` was built the same
-day (its entry above), the other three are NOT BUILT.
+day, `(R-ValueLocal)` and `(R-Const)` the day after (their entries above); `(R-Compact)` is
+NOT BUILT.
 
 ## Validating the emitted routines against their assumptions
 

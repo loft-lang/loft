@@ -1397,6 +1397,22 @@ pub fn trace_rebind() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_REBIND"))
 }
 
+/// `@FR-R-Const` — a literal-bodied function is a constant: a call whose result is only
+/// READ answers a view of the one pre-built vector instead of building it again.
+/// `LOFT_NO_CONST_VIEW=1` keeps every call (the switch, read by the parser and the scope
+/// pass); the interpreter and native share the rewrite, so the switch A/B is its falsifier.
+pub fn const_view_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CONST_VIEW"))
+}
+
+/// `LOFT_TRACE_CONST=1` — name each literal-bodied function made a constant, and each call
+/// of one admitted or declined with the reason.
+pub fn trace_const() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_CONST"))
+}
+
 /// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
 /// its host and destination count, or the decline with the reason.
 pub fn trace_place() -> bool {

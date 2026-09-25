@@ -932,7 +932,8 @@ fn attribute_from_parsed(p: &Parsed) -> Result<Attribute, TypeDecodeError> {
 //             bounds, forced_size, purity, field_groups, synthetic
 //   derived : attr_names (rebuilt from attributes on load)
 //   omitted : code_position / code_length / const_ref (codegen output → 0/None;
-//             byte_code_from recomputes them)
+//             byte_code_from recomputes them); literal_const (a parse-time link the
+//             scope pass consumes before the bundle is written — `const_fn::rewrite`)
 //
 // **Scope (C2): type-level definitions.**  `Definition.variables` (the
 // per-function `Function` debug-symbol table) is reconstructed *empty* via
@@ -1341,6 +1342,7 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
         code_position: 0,
         code_length: 0,
         const_ref: None,
+        literal_const: u32::MAX,
         source: as_u16(field(p, "source")?)?,
         def_type: def_type_from_str(&as_str(field(p, "def_type")?)?)?,
         parent: as_u32(field(p, "parent")?)?,
@@ -2306,6 +2308,7 @@ mod tests {
             instance_args: vec![Type::Text(Deps::none()), Type::Reference(7, Deps::none())],
             builtin: true,
             const_ref: None,
+            literal_const: u32::MAX,
             forced_size: Some(4),
             purity: Purity::Impure(ImpureCategory::HostIo),
             field_groups: vec![LinkedFieldGroup {
@@ -2385,6 +2388,7 @@ mod tests {
             instance_args: Vec::new(),
             builtin: false,
             const_ref: None,
+            literal_const: u32::MAX,
             forced_size: None,
             purity: Purity::Unknown,
             field_groups: Vec::new(),

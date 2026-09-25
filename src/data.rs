@@ -4647,6 +4647,14 @@ pub struct Definition {
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
+    /// `@FR-R-Const` — the CONSTANT definition a literal-bodied function stands for, or
+    /// `u32::MAX`.  A zero-parameter function whose whole body is one vector literal over
+    /// literals (`fn codes() -> vector<integer> { [32, 33, …] }`) is given a synthetic
+    /// `DefType::Constant` twin holding that literal, pre-built once in `CONST_STORE` like
+    /// a top-level constant; `const_fn::rewrite` answers a call that only READS the result
+    /// with a view of it (`OpConstRef`) instead of the call.  Parse-time only: the scope
+    /// pass consumes it before the bundle is written, so the codec omits it.
+    pub literal_const: u32,
     /// Post-2c: explicit `size(N)` annotation on an integer subtype
     /// (e.g. `pub type i32 = integer size(4);`).  `None` means use the
     /// limit()-based heuristic; `Some(n)` forces the stored-width to n
@@ -7039,6 +7047,7 @@ impl Data {
             instance_args: Vec::new(),
             builtin: false,
             const_ref: None,
+            literal_const: u32::MAX,
             forced_size: None,
             purity: Purity::Unknown,
             field_groups: Vec::new(),

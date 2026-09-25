@@ -1157,6 +1157,165 @@ impl Parser {
                 Some(Value::Var(v)) if seen.contains(v))
     }
 
+    /// `@FR-R-Const` — a zero-parameter function whose whole body is ONE vector literal over
+    /// literals is a CONSTANT: give it a synthetic `DefType::Constant` twin holding the
+    /// literal, pre-built once in `CONST_STORE` like a top-level `NAMES = [ … ]`, and link
+    /// the function to it (`Definition::literal_const`) for `const_fn::rewrite`, which
+    /// answers a call whose result is only read with a view of it.
+    ///
+    /// The twin is added on pass 1 and its literal RE-STORED on pass 2, as `parse_constant`
+    /// does, because pass 2's literal carries the settled types and field offsets.  A body
+    /// pass 2 no longer reads as one literal unlinks the function (the twin then stays
+    /// unused).  Declined, keeping every call: a parameter that is not the hidden return
+    /// buffer, a method, a generic instance, a synthetic function, a result that is not a
+    /// plain vector, an element type the constant store cannot hold
+    /// ([`Self::const_elem_unsupported`]) and a literal it cannot pre-build
+    /// (`compile::const_vector_blocker` — an element known only at run time).
+    fn literal_body_constant(&mut self) {
+        if !crate::keys::const_view_enabled() || self.context == u32::MAX {
+            return;
+        }
+        let d_nr = self.context;
+        let linked = self.data.def(d_nr).literal_const;
+        let admitted = {
+            let def = self.data.def(d_nr);
+            def.def_type() == DefType::Function
+                && def.instance_of == u32::MAX
+                && def.synthetic.is_none()
+                && def.attributes().iter().all(|a| a.hidden)
+                && def.hidden_return_buffer_attr().is_some()
+        };
+        let tp = self.data.def(d_nr).returned().clone();
+        // A nullable result (`-> vector<T>?`) is not the constant's shape: its use sites
+        // discharge a null the constant never is.
+        let (base, nullable) = tp.peel_optional();
+        let mut blocked: Option<String> = None;
+        let literal = if admitted
+            && !nullable
+            && let Type::Vector(elem, _) = base
+            && self.const_elem_unsupported(elem).is_none()
+        {
+            Self::sole_vector_literal(self.data.def(d_nr).code(), &self.data).filter(|lit| {
+                blocked = crate::compile::const_vector_blocker(lit, &self.data);
+                blocked.is_none()
+            })
+        } else {
+            None
+        };
+        let Some(literal) = literal else {
+            // Pass 1 linked a twin that pass 2 cannot fill: unlink, so no call is rewritten.
+            if linked != u32::MAX {
+                self.data.definitions[d_nr as usize].literal_const = u32::MAX;
+            }
+            if crate::keys::trace_const() && !self.first_pass && admitted {
+                let def = self.data.def(d_nr);
+                if let Some(why) = &blocked {
+                    eprintln!(
+                        "[const] fn={} is NOT a constant: its literal is built from {why}",
+                        def.name()
+                    );
+                } else {
+                    let kind = |v: &Value| -> String {
+                        let s = format!("{:?}", v.unspan());
+                        s.chars().take(120).collect()
+                    };
+                    let shape: Vec<String> = match def.code().unspan() {
+                        Value::Block(bl) => bl
+                            .operators
+                            .iter()
+                            .map(|op| match op.unspan() {
+                                Value::Set(v, rhs) => format!("Set({v}, {})", kind(rhs)),
+                                Value::Return(inner) => format!("Return({})", kind(inner)),
+                                Value::Block(b) => format!("Block#{}", b.name),
+                                other => kind(other),
+                            })
+                            .collect(),
+                        other => vec![kind(other)],
+                    };
+                    eprintln!(
+                        "[const] fn={} is NOT a constant: returned {}, body [{}]",
+                        def.name(),
+                        tp.source_name(&self.data),
+                        shape.join(", ")
+                    );
+                }
+            }
+            return;
+        };
+        if self.first_pass {
+            if linked != u32::MAX {
+                return;
+            }
+            let name = format!("__const_{}", self.data.def(d_nr).name());
+            let pos = self.data.def(d_nr).position().clone();
+            let c_nr = self.data.add_def(&name, &pos, DefType::Constant);
+            self.data.set_returned(c_nr, tp);
+            self.data.definitions[c_nr as usize].code = literal;
+            self.data.definitions[c_nr as usize].synthetic = Some("literal_const");
+            self.data.definitions[d_nr as usize].literal_const = c_nr;
+        } else if linked != u32::MAX {
+            // Written straight into the slot: `set_returned` is set-once and pass 1's
+            // answer is still there — this is the replacement pass 2 owes.
+            self.data.definitions[linked as usize].returned = tp;
+            self.data.definitions[linked as usize].code = literal;
+            if crate::keys::trace_const() {
+                eprintln!(
+                    "[const] fn={} is a constant: its body is one vector literal",
+                    self.data.def(d_nr).name()
+                );
+            }
+        }
+    }
+
+    /// The one vector literal a body consists of, or `None`: every other statement of the
+    /// body is entry bookkeeping — a work-ref or work-text null init, the return buffer's
+    /// clear, its witness alias, in a list of their own or not — and the one remaining
+    /// statement is the literal block (`v_block(…, "Vector")`), bare or under `return`.  A
+    /// body with any other statement is a function that DOES something, and stays one: a
+    /// call of anything that is not an `Op…` over variables and literals, or an `Op…` given
+    /// an expression, is such a statement.
+    fn sole_vector_literal(body: &Value, data: &crate::data::Data) -> Option<Value> {
+        fn plain_operand(v: &Value) -> bool {
+            matches!(
+                v.unspan(),
+                Value::Var(_) | Value::Int(_) | Value::Null | Value::Text(_)
+            )
+        }
+        fn op_call(v: &Value, data: &crate::data::Data) -> bool {
+            matches!(v.unspan(), Value::Call(d, args)
+                if data.def(*d).name().starts_with("Op") && args.iter().all(plain_operand))
+        }
+        fn bookkeeping(v: &Value, data: &crate::data::Data) -> bool {
+            match v.unspan() {
+                Value::Set(_, rhs) => plain_operand(rhs) || op_call(rhs, data),
+                Value::Insert(ls) => ls.iter().all(|op| bookkeeping(op, data)),
+                Value::Line(_) | Value::Null => true,
+                other => op_call(other, data),
+            }
+        }
+        let Value::Block(bl) = body.unspan() else {
+            return None;
+        };
+        let mut found: Option<Value> = None;
+        for op in &bl.operators {
+            let candidate = match op.unspan() {
+                Value::Return(inner) => inner.unspan(),
+                other => other,
+            };
+            if let Value::Block(inner) = candidate
+                && inner.name == "Vector"
+            {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(candidate.clone());
+            } else if !bookkeeping(op, data) {
+                return None;
+            }
+        }
+        found
+    }
+
     /// loft#702 — what about this vector-constant ELEMENT type the constant store cannot
     /// pre-build, or `None` when the element is flat enough to hold.
     ///
@@ -2419,6 +2578,7 @@ impl Parser {
                 }
             }
             self.parse_code();
+            self.literal_body_constant();
             // #314 — pass-1 sibling of the pass-2 flip above: now that
             // the whole body is parsed, `scalars_to_box` is final;
             // reject any mutated scalar that more than one closure

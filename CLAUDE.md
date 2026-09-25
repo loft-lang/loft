@@ -1288,6 +1288,23 @@ field, a leak or a double free out of a local rebound from a call that takes it.
 at ANOTHER field of the parameter, a literal-list vector field, a chain exit, a promoted
 buffer, the local handed in twice, a view or witnessed local each decline); the falsifiers
 are `LOFT_STRICT_STORES` / `LOFT_POISON` / the native leak check on the cells.
+**`LOFT_NO_CONST_VIEW=1`** (`@FR-R-Const`, default-ON since 2026-09-25, parse time + scope
+pass, BOTH backends) makes a literal-bodied function build its vector on every call again —
+with it off, a zero-parameter function whose whole body is ONE vector literal over literals
+(`fn face_rows() -> vector<integer> { [0, 0, 0, 4, …] }`, the idiom the `const` diagnostics
+themselves prescribe for what the constant store cannot paste) is given a synthetic constant
+twin, pre-built ONCE in `CONST_STORE` like a top-level `NAMES = [ … ]`, and a call whose
+result only lands in READ positions — the single bind of a local that is only indexed,
+measured, iterated or copied into another such local, or the call itself under an index,
+a `len` or an iteration — answers `OpConstRef`, the node a top-level constant's use site
+emits; the call's lazy buffer is never minted.  Every other position keeps the call (a
+write or append through the local, a hand-off to ANY user call, a store into a field or
+element, a return, a `&` link), because the constant store is write-locked and the
+program's copy must be its own — and is the first bisect step for a wrong element, a
+"write to read-only store" panic or a stale table out of a call of such a function.
+`LOFT_TRACE_CONST=1` names each function made a constant (and each that is not, with its
+body's shape) and each call admitted or declined; the interpreter and native share the
+rewrite, so the switch A/B and the cells' hand-computed values are the falsifier.
 **`LOFT_NO_ELEMENT_IN_PLACE=1`** (@PLN164 C1, `@FR-R-InPlaceLiteral`, parse time, BOTH
 backends) makes `v[i] = S { … }` build its record in a temp store and deep-copy it into the
 slot again — with it off, the literal writes the slot's fields, as the FIELD destination
