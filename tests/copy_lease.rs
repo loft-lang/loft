@@ -29,6 +29,10 @@ const PRELUDE: &str = "struct H { id: integer }\n\
 /// Run `body` after the prelude in `mode`; answer the program's lines joined by spaces, or the
 /// first `error[code]` when it does not compile.
 fn run(tag: &str, body: &str, mode: &str) -> String {
+    run_env(tag, body, mode, &[])
+}
+
+fn run_env(tag: &str, body: &str, mode: &str, env: &[(&str, &str)]) -> String {
     static NEXT: AtomicU32 = AtomicU32::new(0);
     let path = std::env::temp_dir().join(format!(
         "loft_copy_lease_{tag}_{}_{}.loft",
@@ -40,6 +44,7 @@ fn run(tag: &str, body: &str, mode: &str) -> String {
         .arg(mode)
         .arg(&path)
         .env("LOFT_TIMEOUT", "240")
+        .envs(env.iter().copied())
         .output()
         .expect("run loft");
     let _ = std::fs::remove_file(&path);
@@ -362,4 +367,58 @@ fn a_copy_that_cannot_lease_stays_refused() {
          fn main() { s = S3 { h: mk(1), k: K { id: 7 } }; cp(s); println(\"back\"); }",
         "error[copy-of-droppable]",
     )]);
+}
+
+/// `(H-Elide)` — the compiler MAY elide a copy of a leasing type together with the drop of the
+/// structure it would have made, and neither hook may rely on running for an elided copy
+/// (@PLN163 P6).  Every route that elides a copy is asked, with the transparent-link widening
+/// (`LOFT_LINK_WIDEN`, the one switch that widens elision) OFF and ON, on both backends, and each
+/// must print the trace written here by hand: where the copy is KEPT its `OpCopy` runs and both
+/// structures drop once, where it is ELIDED (a read through a parameter's member) neither hook
+/// runs for it, and the widening changes no trace.  Measured 2026-09-25: it elides no leasing copy
+/// today — the rule is permissive, so that is compliance, and this cell holds it there.
+#[test]
+fn an_elided_copy_skips_its_hook_and_its_drop_together() {
+    let cells: &[(&str, &str, &str)] = &[
+        (
+            "param",
+            "fn f(p: H) { u = p; println(\"R{u.id}\"); }\nfn main() { a = mk(1); f(a); }",
+            "C1 R101 D101 D1",
+        ),
+        (
+            "member_read",
+            "fn h(o: S) { u = o.h; println(\"R{u.id}\"); }\nfn main() { s = S { h: mk(3), n: 0 }; h(s); }",
+            "R3 D3",
+        ),
+        (
+            "chain",
+            "fn f(p: H) { u = p; v = u; println(\"R{v.id}\"); }\nfn main() { a = mk(5); f(a); }",
+            "C5 R105 D105 D5",
+        ),
+        (
+            "ret_field",
+            "fn f(p: H) -> integer { u = p; u.id }\nfn main() { a = mk(8); x = f(a); println(\"R{x}\"); }",
+            "C8 D108 R108 D8",
+        ),
+        (
+            "nested",
+            "fn g(q: H) -> integer { w = q; w.id }\nfn f(p: H) -> integer { u = p; g(u) }\nfn main() { a = mk(9); println(\"R{f(a)}\"); }",
+            "C9 C109 D209 D109 R209 D9",
+        ),
+    ];
+    let mut wrong = Vec::new();
+    for (tag, body, want) in cells {
+        for mode in ["--interpret", "--native"] {
+            for widen in [&[][..], &[("LOFT_LINK_WIDEN", "1")][..]] {
+                let got = run_env(tag, body, mode, widen);
+                if got != *want {
+                    wrong.push(format!(
+                        "{tag} {mode} widen={}: got `{got}`, want `{want}`",
+                        !widen.is_empty()
+                    ));
+                }
+            }
+        }
+    }
+    assert!(wrong.is_empty(), "\n{}", wrong.join("\n"));
 }
