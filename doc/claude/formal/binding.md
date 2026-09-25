@@ -447,11 +447,14 @@ answered a value no statement had assigned (loft#1600, owner ruling).
   The parser's own note beside `amp_container_link` had written the question down as open and
   named this rule's answer to it.  **Closed** by the third disjunct at the refusal gate.  A
   PLAIN collection bind off a borrowed base is deliberately NOT in the set: `(B-View)` says that
-  one materialises, which is what the marker exists to distinguish.  Radius, measured: ONE
-  corpus cell — a control that pinned the materialise, moved to
+  one materialises, which is what the marker exists to distinguish.  Radius, measured: TWO
+  cells tree-wide and ZERO published libraries (42/42 against a current index).  One is a
+  control that pinned the materialise, moved to
   `parse_errors::b_ref_reshape_reassignment_of_a_container_link_base_is_error` exactly as the
-  reference-INTO cell in the same file was — and ZERO published libraries (42/42 against a
-  current index).  The three events that do NOT disturb a reference TO a container are
+  reference-INTO cell in the same file was; the other is a `@PLN157` bytecode-comparison cell
+  under `doc/claude/plans/`, found by a sibling's gate after the first measurement said "one"
+  having walked `tests/scripts` alone.  A refusal's radius is every `.loft` in the tree, and
+  `doc/` holds 1376 of them.  The three events that do NOT disturb a reference TO a container are
   unchanged.  It is also what makes [collections.md](collections.md)'s `D-col-6` answerable for
   this spelling: a link that can never become a copy still names its origin field at every
   write.

@@ -58,6 +58,21 @@
 //   channels that MOVE, and requires HERE to be clean, so each of those is clean on both. The
 //   assertions/exit channel carries this one on that backend. The native side was not scored
 //   in that run.
+//
+// ⚠ THIS FILE NOW HOLDS TWO RECEIPTS, and a guard holds only ONE patch — so the patch below
+// belongs to the SECOND defect, the `&` write route (loft#1664), and the receipt above is the
+// original loft#1160 / loft#1161 one, scored by commit.  Re-scoring either with `make falsify`
+// overwrites the patch silently, so say which one you re-scored.
+//
+// @falsified-at: 964e651ba — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1160-a-variant-binding-write-means-the-field-write.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert (values).  The count is 1 because a failed assert stops the run and the
+//   first `&`-link cell is the one the control fails; on that tree the link to the KEYED member
+//   answered `data=0` where the direct spelling answers `data=1`.
+//   ARMED: no instrument — every cell reads the two members back by length and by lookup.
+//   WITNESS: `the \`&\` link to the KEYED member reaches the vector: data=0 look=2`.
+// HOLDS: leak, panic, free-refusal and exit-beyond-the-assert are clean on both trees and both
+//   backends, measured by `make falsify`, which prints only the channels that MOVE.
 
 struct Vb { vb_k: integer, vb_nm: text }
 

@@ -9283,6 +9283,122 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Which element does this index name?" — two decoders, and only one read the sign (2026-09-25)
+
+`@FR-H-Index` is a rule about what an INDEX MEANS: *"an index is end-relative when it is
+negative, so out of bounds is `i >= len(r)` or `i < -len(r)`"*.  A rule of that shape is worth
+walking precisely because its sites are scattered — every operation that turns an index into an
+address asks it — and the disagreement, when there is one, is silent by construction: an index
+that names the wrong element still names an element.
+
+The walk found **eight sites** that normalise (`State::vec_get_or_raise` and its native twin,
+`vector::get_vector`, `insert_vector`, `remove_vector`, the two `text_char_or_raise` halves, the
+format index) and **one that refuses**: `Stores::remove_vector_at`, the one home for *"delete
+the element at this index"*, which branches by LAYOUT and whose linked branch opened
+`if data.is_null() || index < 0 { return false; }`.
+
+So `v.remove(-1)` removed the last element, or nothing at all, according to whether any keyed
+collection over the element type existed anywhere in the program — because that is what turns a
+`vector<T>` from inline elements into 4-byte record ids.  Silent, both backends, no diagnostic
+(loft#1669, `silent-wrong`).  A schema property the author never spells at the call site decided
+what an index means.
+
+**The instructive part is where the guard already was.**
+`tests/scripts/a-vector-removal-releases-what-the-element-owned.loft` covers `remove(-1)` and
+`remove(-9)` — at the INLINE layout — and `remove(0)` at the LINKED one, in the same file, by
+the same line.  Two axes, each moved, never crossed.  That is what
+`scripts/matrix_axes.py cross` exists to ask, and asking it by eye is what keeps failing: the
+file reads as thorough because both axes appear in it.
+
+**The fix is the deletion of the second decoder, not a sign test added to it.**  The inline
+branch carries a comment saying why it delegates — *"`get_vector` is the same index -> element
+map `remove_vector` walks … so the guard and the removal cannot disagree about which indices
+name an element"* — and the linked branch owed the same and hand-rolled it instead.  It now
+reads its slot from `vector::get_vector` too; at that layout the slot holds a record id rather
+than the element, which is the whole of the difference.  Null container, `i64::MIN`, an
+unallocated vector and either out-of-range end all come back as `rec == 0` from the one map.
+
+Guard `tests/scripts/1669-a-negative-index-removes-from-the-end-at-either-layout.loft`, six
+functions rather than one because they score different channels — value, the keyed member
+unlink, the over-reach no-ops, and the release of what a removed element owned, which a failed
+assert in an earlier cell would have left unscored.
+
+### "Did the author write `&` here?" — four spellings, and the refusal knew two (2026-09-24)
+
+Came out of loft#1664 (*a write through a LINK to a linked-group member reaches only that
+member*) and turned out to be blocked on a different rule, which is the part worth keeping:
+**the fix for the filed issue was not admissible until a deviation nobody had filed was
+closed first.**
+
+`(Col-Group)` says a record entering through one member of a group is in every member, by any
+write route.  Reaching the siblings needs the owning RECORD and the FIELD, because that is what
+`record_finish` walks `other_indexes` off — so the cure is to spell the write against its origin
+field, which is what loft#1160 already does for a `match` payload binding.  But loft#1662 had
+just established that spelling a write against the field is exactly what a binding cannot
+survive: `(B-View)` may hand it a copy, and the field-spelled write cannot follow.  So the
+question was whether a `&` LINK can be given a copy.
+
+| spelling | marker | disturbance of its container |
+|---|---|---|
+| struct projection `p = &o.r` | `is_amp_link` | refused |
+| scalar / text place `p = &o.r.n` | `is_place_link` (D-bind-56, the day before) | refused |
+| **collection `p = &o.v`** | **`is_amp_container_link`** | **materialised, with an advice** |
+| plain bind off a borrowed base | — | materialised, correctly `(B-View)` |
+
+Three spellings of one question, and the refusal gate knew two.  `(B-Ref-Reshape)` is explicit
+that the copy is the one answer a `&` may not be given — *"loft will not quietly downgrade the
+reference to a copy"* — and **the parser's own note beside `amp_container_link` had written the
+question down as open and named the rules' answer to it**, which is the second time in two days
+that the code site carried the answer before the walk asked.  `D-bind-60`.
+
+With that closed the link can never become a copy, so it still names its origin field at every
+write, and only then is the field spelling sound for it.  **The order is the finding**: had the
+issue been "fixed" first, it would have reproduced loft#1662's split at the `&` spelling.
+
+**Then the cure itself found two more sites answering one question.**  An over-reach cell — the
+`&` link to the KEYED member, written expecting it to pass — failed at `data=0` while the link
+to the VECTOR member passed.  Two causes behind it, neither visible from the other:
+
+* the record an append adds is built at **three** places (`build_vector_list`, the keyed
+  `+= <elem>` fast path, the keyed `+= [ … ]` list path) and only the first asked.  Found by
+  `#[track_caller]` on `new_record` after reading the code twice without converging — the probe
+  named `expressions.rs:3369`, which no amount of reading had;
+* and the membership test was one-DIRECTIONAL.  `keyed_field_is_linked` answers of the field
+  that LISTS its views, so it says `false` of the view member — half of every
+  vector-plus-keyed group.  My own gate for loft#1662 had been built on it, which means that
+  narrowing was *right for the wrong reason* for one member of the pair.
+
+`Parser::resolved_group_write` is the one home the three sites share;
+`Stores::field_is_group_member` asks both directions.
+
+**What stays open is the half that cannot take this cure** (`D-col-6`'s head): a payload
+BINDING onto a group member, which keeps the field spelling and so splits once it materialises.
+The mechanism to close it now exists — loft#1665's parser-emitted block that the scope pass
+drops for a condemned binding — used to REWRITE rather than drop.  Handed to the line that
+built it rather than re-derived here.
+
+**⚠ A blind `sed` rename clobbered an existing variant name** while adding a cell: the new
+struct's name already existed as an enum variant in the same file, and `s/X/Y/g` renamed both.
+Caught by the compiler in seconds, but the repair had to be by hand and the lesson is the one
+the tree keeps teaching — a rename is a scoped edit, not a text substitution.
+
+**⚠⚠ And the radius I published for the new refusal was the radius of my INSTRUMENT.**  I wrote
+"ONE corpus cell", having walked `tests/scripts/*.loft` plus the published libraries.  A
+sibling's gate then went red on a second cell — a `@PLN157` bytecode-comparison file under
+`doc/claude/plans/`, which a test binary reads and my sweep never looked at.  `doc/` holds
+**1376** `.loft` files against `tests/`' 2381, so the set I walked was a little over half the
+tree by that count and I had called it "the corpus".
+
+The honest measurement is cheap, which is the annoying part: a refusal NAMES ITSELF, so
+pre-filter every `.loft` in the tree to those containing a `&` bind
+(`grep -rlE '=[[:space:]]*&[a-zA-Z_]'` — **110 of 3867**), compile each with the old and the new
+binary, and count the message.  Done that way the answer is **two**, and both are now cited
+where the number is.  ⚠ Give the control binary `--path`: without it the cached falsify build
+loads no stdlib and scores ZERO on every file, which reads as "nothing moved" — the first run
+of this A/B said exactly that, including for a file that refuses on BOTH binaries, and only that
+impossible row showed the control was dead.  [[score-the-harness-before-the-code]], again, in
+the same session that cited it.
+
 ### "Which place does a write through a payload binding reach?" — three decoders, and a lint that stated the opposite (2026-09-24)
 
 `match e { Ei { v } => { e = Ei { v: [9,9,9] }; v += [7] } }` appended to the REASSIGNED

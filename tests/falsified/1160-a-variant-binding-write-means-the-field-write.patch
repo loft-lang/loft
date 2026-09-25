@@ -1,0 +1,259 @@
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index d6c4134e7..5d32904f8 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -502,45 +502,6 @@ impl Stores {
+         false
+     }
+ 
+-    /// Is the field at byte offset `byte_off` a MEMBER of a linked collection group — several
+-    /// routes to one record set (`@FR-Col-Group`)?
+-    ///
+-    /// [`Self::keyed_field_is_linked`] answers one DIRECTION of this and is not the same
+-    /// question: `other_indexes` is populated on the field that HOLDS the records, listing its
+-    /// views, so asking it of the view answers `false` for a one-vector-plus-one-keyed group —
+-    /// the commonest shape there is.  Measured: `d = &a.vp_look; d += [r]` reached `vp_look`
+-    /// alone while the direct `a.vp_look += [r]` reached both, so a caller using the linked test
+-    /// to decide whether the field spelling buys anything got the wrong answer at exactly the
+-    /// member whose spelling needs it (loft#1664).
+-    ///
+-    /// So both directions are asked: this field lists siblings, or some sibling lists this
+-    /// field.  The `u16::MAX` marker is not a field number and never matches one.
+-    #[must_use]
+-    pub fn field_is_group_member(&self, struct_tp: u16, byte_off: u16) -> bool {
+-        if (struct_tp as usize) >= self.types.len() {
+-            return false;
+-        }
+-        let (Parts::Struct(fields) | Parts::EnumValue(_, fields)) =
+-            &self.types[struct_tp as usize].parts
+-        else {
+-            return false;
+-        };
+-        let Some(nr) = fields.iter().position(|f| f.position == byte_off) else {
+-            return false;
+-        };
+-        let Ok(nr) = u16::try_from(nr) else {
+-            return false;
+-        };
+-        fields[nr as usize]
+-            .other_indexes
+-            .iter()
+-            .any(|&o| o != u16::MAX)
+-            || fields
+-                .iter()
+-                .enumerate()
+-                .any(|(i, f)| i != nr as usize && f.other_indexes.contains(&nr))
+-    }
+-
+     /// The content type of the field at byte offset `byte_off` in struct /
+     /// enum-value type `struct_tp`, or `None` when there is no such field.
+     ///
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index bce0f5b36..fe796b08a 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3363,19 +3363,17 @@ use a separate collection or add after the loop"
+                     // `OpGetDbRef` itself, and `record_new`'s kind dispatch reads the
+                     // COLLECTION type when the field is `u16::MAX` — the same two
+                     // substitutions the `dbref_append_target` routes below make.
+-                    // loft#1664 — `resolved_group_write` is the one home for *"spell this
+-                    // write against its origin field instead"*, and this LIST spelling of the
+-                    // keyed append is the third site that builds an appended record.  A
+-                    // capture is excluded for the reason above: it has no owning struct to
+-                    // resolve to.
+                     let steps = if captured_keyed {
+                         self.new_record(&mut to.clone(), f_type, elm, u16::MAX, &[item], &elm_tp)
+                     } else {
+-                        let (mut dest, parent) = match self.resolved_group_write(var_nr) {
+-                            Some((origin, parent)) => (origin, parent),
+-                            None => (Value::Var(var_nr), f_type.clone()),
+-                        };
+-                        self.new_record(&mut dest, &parent, elm, var_nr, &[item], &elm_tp)
++                        self.new_record(
++                            &mut Value::Var(var_nr),
++                            f_type,
++                            elm,
++                            var_nr,
++                            &[item],
++                            &elm_tp,
++                        )
+                     };
+                     all_steps.extend(steps);
+                 }
+@@ -3443,16 +3441,14 @@ use a separate collection or add after the loop"
+             }
+             let mut steps: Vec<Value> = Vec::new();
+             if !self.first_pass {
+-                // loft#1664 — the second site that builds an appended record, and it asked
+-                // nothing: a `&` link or a payload binding onto a KEYED group member added
+-                // through the link alone, so the vector beside it never saw the record while
+-                // the same link to the VECTOR member reached both.  `resolved_group_write` is
+-                // the one home for *"spell this write against its origin field instead"*.
+-                let (mut dest, parent) = match self.resolved_group_write(var_nr) {
+-                    Some((origin, parent)) => (origin, parent),
+-                    None => (Value::Var(var_nr), f_type.clone()),
+-                };
+-                steps = self.new_record(&mut dest, &parent, elm, var_nr, &[item], &elm_tp);
++                steps = self.new_record(
++                    &mut Value::Var(var_nr),
++                    f_type,
++                    elm,
++                    var_nr,
++                    &[item],
++                    &elm_tp,
++                );
+             }
+             *code = Value::Insert(steps);
+             return Type::Void;
+@@ -3677,26 +3673,6 @@ use a separate collection or add after the loop"
+         // silent downgrade the rules say to refuse — is that separate question, left open.
+         if amp_collection_bind && var_nr != u16::MAX {
+             self.vars.set_amp_container_link(var_nr);
+-            // @FR-Col-Group, loft#1664 — and this is the OTHER half of the question left open
+-            // above.  `(Col-Group)` says a record entering through one member of a linked group
+-            // is in every member, BY ANY WRITE ROUTE, and a `&` link is a write route:
+-            // `d = &p.p_data; d += [r]` reached `p_data` and never `p_look`, because
+-            // `record_finish` walks `other_indexes` off an (owning record, field) pair and a
+-            // link carries neither.  The payload binding already resolves back to its field for
+-            // exactly this (loft#1160); registering the link's origin in the same table gives it
+-            // the same route.
+-            //
+-            // It is sound here for the reason the clause above now establishes: a collection
+-            // link reaches `(B-Ref-Reshape)`, so it can never be quietly downgraded to a copy,
+-            // and the field it named at the bind is the field it still names at every write.
+-            // That is exactly what loft#1662 showed a MATERIALISED binding cannot promise — the
+-            // write, spelled against the field, could not follow the copy — so the two halves
+-            // had to land together or not at all.
+-            if let Some(parent) = self.field_read_parent_type(code) {
+-                self.vars
+-                    .mv_field_origin
+-                    .insert(var_nr, (code.clone(), parent));
+-            }
+         }
+         // loft#1371 — the share aliases element writes and appends, but a WHOLE-VALUE write
+         // (`pe = [2, 2]`) would mint a fresh store and re-point `pe` at it, leaving the
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index b66f48eaa..75e199065 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3962,12 +3962,20 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         //     the field was APPENDED to rather than replaced.  A `=` is a rebind here as it is
+         //     for every other right-hand side (`v = <other>`, `v = []`) and for the struct-view
+         //     sibling `c = o.i; c = In { … }`.
+-        let binding_origin =
+-            if is_field || (self.assign_replaces && self.assign_target == vec && vec != u16::MAX) {
+-                None
+-            } else {
+-                self.resolved_group_write(vec)
+-            };
++        let binding_origin = if self.first_pass
++            || is_field
++            || (self.assign_replaces && self.assign_target == vec && vec != u16::MAX)
++        {
++            None
++        } else {
++            self.vars
++                .mv_field_origin
++                .get(&vec)
++                .cloned()
++                .filter(|(origin, origin_parent)| {
++                    self.origin_is_group_member(origin, origin_parent)
++                })
++        };
+         //
+         // `vec` is deliberately KEPT — the binding is a real variable and everything below
+         // that reads it (the pre-allocation, and the `vars` lookups under it) needs one; only
+@@ -5605,60 +5613,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         Some((owner, pos))
+     }
+ 
+-    /// The record type a field READ reads out of, for a `&` link's origin (`d = &cv.data`).
+-    ///
+-    /// `mv_field_origin` was built for the `match` payload binding, whose parent type the arm
+-    /// already knows; a `&` link's bind site knows only the right-hand side, so the parent is
+-    /// recovered from the base it names.  Answered for `OpGetField(<local>, pos, content)`
+-    /// alone — a nested or computed base declines, which costs the group walk and never
+-    /// correctness, since declining leaves the write exactly where it was.
+-    pub(crate) fn field_read_parent_type(&self, val: &Value) -> Option<Type> {
+-        let Value::Call(d, ps) = val.unspan() else {
+-            return None;
+-        };
+-        if self.data.def(*d).name() != "OpGetField" {
+-            return None;
+-        }
+-        match ps.first().map(Value::unspan) {
+-            Some(Value::Var(v)) => Some(self.vars.tp(*v).clone()),
+-            _ => None,
+-        }
+-    }
+-
+     /// Is the field a payload binding projects a member of a LINKED COLLECTION GROUP — the one
+     /// thing resolving the binding back to its field buys?
+     ///
+     /// `(Col-Group)` is what the resolution serves: a record entering through one member is in
+     /// every member, and `Stores::record_finish` can only walk the siblings when it is handed
+-    /// the owning record and the field.  A field in no group has no sibling to reach, so the
+-    /// field spelling answers exactly what the binding answers — and the binding is the
+-    /// spelling that stays right when `(B-View)` MATERIALISES it (loft#1662).
+-    ///
+-    /// ⚠ Asked through `field_is_group_member`, NOT `keyed_field_is_linked`: the latter answers
+-    /// one direction (a field that lists its views) and so says `false` of the VIEW member,
+-    /// which is half of every one-vector-plus-one-keyed group.  That cost the keyed member's
+-    /// `&` link its sibling while the vector member's got it (loft#1664).
++    /// the owning record and the field.  A field with no `other_indexes` has no siblings to
++    /// reach, so the field spelling answers exactly what the binding answers — and the binding
++    /// is the spelling that stays right when `(B-View)` MATERIALISES it (loft#1662).
+     fn origin_is_group_member(&self, origin: &Value, parent_tp: &Type) -> bool {
+         self.field_owner_and_offset(origin, parent_tp)
+-            .is_some_and(|(owner, pos)| self.database.field_is_group_member(owner, pos))
+-    }
+-
+-    /// Where a write spelled through a payload BINDING or a `&` LINK must be spelled instead —
+-    /// against its ORIGIN FIELD — and `None` where the binding's own spelling is right.
+-    ///
+-    /// ONE home, because two sites build the record a write adds: `build_vector_list` for a
+-    /// vector literal, and the keyed `+=` fast path in `expressions.rs`.  They answered
+-    /// differently — the keyed one never asked at all — so `d = &a.vp_look; d += [r]` reached
+-    /// `vp_look` and never the `vp_data` beside it, where the same link to the VECTOR member
+-    /// reached both (loft#1664).  A caller that forgets to ask gets the binding's own
+-    /// destination, which is never wrong, only blind to the siblings.
+-    pub(crate) fn resolved_group_write(&self, vec: u16) -> Option<(Value, Type)> {
+-        if self.first_pass || vec == u16::MAX {
+-            return None;
+-        }
+-        let (origin, parent) = self.vars.mv_field_origin.get(&vec)?.clone();
+-        self.origin_is_group_member(&origin, &parent)
+-            .then_some((origin, parent))
++            .is_some_and(|(owner, pos)| self.database.keyed_field_is_linked(owner, pos))
+     }
+ 
+     pub(crate) fn new_record_field_op(&mut self, val: &Value, parent_tp: &Type, op: &str) -> Value {
+diff --git b/src/scopes.rs a/src/scopes.rs
+index f3ce650b3..c465fa24d 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -2722,23 +2722,7 @@ fn def_reshape_refusals(
+         // releases once today — is not in this set to begin with, and refusing it would reject
+         // a sound program.  Measured over the cell matrix: the walk's answer and the copy-out
+         // advice agree on every cell.
+-        // Three spellings of one question — *"did the author write `&` here?"* — and until
+-        // 2026-09-24 the refusal knew two of them.  `is_amp_link` is the struct projection the
+-        // parser leaves unlowered; `is_place_link` is the scalar or text place, lowered to a
+-        // `RefVar` local (D-bind-56, which merged that third reader in a day earlier).  The
+-        // COLLECTION link (`p = &o.v`, `a = &s.h`) is the fourth, marked
+-        // `is_amp_container_link` for the walk two thousand lines up — and it reached neither
+-        // test, so `p = &o.v; o = S { … }; p += [7]` was MATERIALISED with an advice where the
+-        // record and scalar spellings of the same program are refused.  `(B-Ref-Reshape)` is
+-        // explicit that this is the one thing a `&` may not get: *"loft will not quietly
+-        // downgrade the reference to a copy"*, and the parser's own note beside
+-        // `amp_container_link` had already written the question down as open and named the
+-        // rules' answer.  A PLAIN collection bind off a borrowed base aliases identically and
+-        // is NOT in this set: `(B-View)` says that one materialises, which is why the marker
+-        // exists at all.
+-        let amp = function.is_amp_link(view)
+-            || is_place_link(function, view)
+-            || function.is_amp_container_link(view);
++        let amp = function.is_amp_link(view) || is_place_link(function, view);
+         let drops = data.type_owns_droppable_anywhere(function.tp(view));
+         if !amp && !drops {
+             continue;
