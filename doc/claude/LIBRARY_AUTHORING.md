@@ -20,13 +20,24 @@ in the loft binary — no extra tooling install needed.
 
 ## Who a library belongs to — the standing rule
 
-**A library is used by MULTIPLE first projects, any of them may ADD to it at
-will, and the one obligation is to keep the library contract in place.**
+**A library is used by MULTIPLE first projects, and the one obligation is to keep the
+library contract in place.**
 
-There is no single owning project and no gatekeeper to ask.  A consumer that
-needs something the library does not yet do adds it, in the library, and every
-other consumer gets it.  That is the normal way these libraries grow — not an
-exception to be justified.
+**Who does the library work (owner, 2026-09-25): the loft stream.**  Library development is
+NOT delegated to a dogfood project's agent any more.  A consumer (moros, dryopea, crawler)
+builds up a large suite for its PRIMARY function — a game, a crawler — which is right for it,
+and the library work done there was being crowded out by that suite.  So:
+
+- a consumer that needs something the library does not do **reports the gap** (an issue in the
+  library's repo, or a message), and the loft stream builds it — in the library, for every
+  consumer;
+- the loft stream edits the `loft-libs-*` repos directly and republishes them (the
+  **loft-ship skill**); the consumer APPLICATIONS stay read-only to it;
+- a library is developed and tested on its **testbed** (next section), never inside a consumer's
+  tree and never against a consumer's suite.
+
+There is still no single owning project: whichever consumer's need came first shaped the API,
+and every consumer gets what any of them asked for.
 
 **And a library is written IN loft, readable first.**  The libraries double as the
 project's teaching corpus, so the "fast pass" pattern — readable code shadowed by an
@@ -58,6 +69,38 @@ The corollary for planning: a plan that waits for "a second consumer to
 justify extraction" has the economics backwards.  The library exists so that
 several projects share one contract; the second consumer is the *point*, not
 the *permission*.
+
+## The testbed — a library tested with minimal dependencies
+
+A library is tested on its own: its code, the loft under development, and the packages its
+`loft.toml` declares — nothing else.  No consumer application is in the loop.  Its suite is
+about its primary function, so it cannot say what the library promises, and a library that
+only passes inside one consumer's tree has an undeclared dependency on that tree.
+
+**The testbed is the library's own CI, run locally** (`library-ci-reusable.yml`: interpret,
+native, guide, WASM cross-build, compatibility, transitive deps), set up in five steps:
+
+1. **Checkout — a worktree of the library's `origin/main`, outside the loft tree** (§ 5e):
+   `git -C ../loft-libs-<chunk> worktree add --detach <scratch>/<chunk> origin/main`.  Never the
+   sibling checkout itself: another agent may have uncommitted work there.
+2. **Loft — the one under development**: this tree's `target/release/loft`, not the installed
+   one.  `make check-rlib` first when native runs are part of it.
+3. **Dependencies — only what `loft.toml` declares**, resolved from the registry at the declared
+   version (`loft install` in the package directory).  A dependency you are changing in the same
+   arc gets an explicit `--lib <its worktree>` for that run.  `advice[undeclared-dependency]`
+   and `advice[lib-flag-outranked]` are the testbed's own checks: either one means the run is
+   resolving something other than what you think.
+4. **The suite, both backends, warnings denied** — the steps the library's CI gates on:
+   `LOFT_DENY_WARNINGS=1 loft --interpret --tests tests`, `… loft test --native`, and every
+   `docs/*.loft` guide with `--interpret` and `--native`.  A library that claims the browser
+   also runs its `--native-wasm` / `--html` gate (loft-ship skill § the parity gate).
+5. **The published position** — `scripts/revalidate_libs_local.sh --native <pkg>` checks the
+   RELEASED versions against this loft: the question a language change must answer before it
+   ships.  Refresh `../loft-registry` first (a stale index validates old versions).
+
+**A gap a consumer found becomes a test in the library**, written on the testbed from the
+consumer's report, never a fix in the consumer's tree.  The library owns the test of its promise,
+and every consumer then gets the fix and the test.
 
 ---
 

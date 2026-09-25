@@ -23,9 +23,10 @@ canonical home ([DEVELOPMENT.md § Inserting Discovered Enhancements](doc/claude
 consumer's own agent USES + adversarially BREAKS it and reports gaps.
 **Library work is in scope HERE (owner, 2026-09-25)** — the `loft-libs-*` repos (the published
 libraries: fix, test, republish via the **loft-ship skill**) are this stream's to edit, never
-delegated to a dogfood project's agent.  Work in a worktree of the library's `origin/main` (a
-sibling checkout may hold someone's uncommitted work).  The consumer APPLICATIONS below stay
-read-only.
+delegated to a dogfood project's agent — a consumer reports the gap, this stream builds it and
+tests it on the library's TESTBED (its own CI run locally, declared dependencies only, no consumer
+in the loop): [LIBRARY_AUTHORING.md § The testbed](doc/claude/LIBRARY_AUTHORING.md).  The
+consumer APPLICATIONS below stay read-only.
 **Edit ONLY this repo and the libraries** — the symmetric half of the consumer's "the engine is read-only" rule.
 Read their tree freely (source, docs, `git log`, their `LOFT_HANDOFF.md`); never write to it. They
 are often working in it concurrently, so a staged test file or a `git checkout` lands in someone
