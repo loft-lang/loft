@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A NEGATIVE index names the element that far from the END, at both vector layouts.
+//
+// @FR-H-Index — *"an index is end-relative when it is negative, so out of bounds is
+// `i >= len(r)` or `i < -len(r)`"*.  That is a language-wide rule about what an INDEX means,
+// so it cannot depend on how the container happens to be stored.  A `vector<T>` holds its
+// elements INLINE until any keyed collection over `T` exists, at which point every
+// `vector<T>` in the program becomes a vector of 4-byte record ids — a schema property the
+// author never spells at the call site.
+//
+// `v.remove(-1)` read that property anyway (loft#1669): it removed the last element at the
+// inline layout and NOTHING at the linked one, silently, on both backends.
+// `Stores::remove_vector_at` is the one home for *"delete the element at this index"* and has
+// two branches by layout; the inline one hands the index to `vector::get_vector` and
+// `vector::remove_vector`, which normalise it, while the linked one read the slot by hand
+// behind `if index < 0 { return false }` — a second decoder of the same question, and the
+// only one that refused a negative.
+//
+// Axes this file MOVES:  the LAYOUT (inline / linked / linked reached through the group it
+//                        belongs to), the index (`-1`, `-len`, `-len - 1`, `len`, and an
+//                        empty container), and what the element OWNS (nothing / a text and a
+//                        nested vector, so the release is scored too).
+// Axes it HOLDS FIXED:   the removal spelling is `v.remove(i)`.  `e#remove` reaches the same
+//                        home with a cursor index, which is never negative, so there is no
+//                        cell it could have.
+//
+// The cells live in separate functions because they score different CHANNELS: a failed assert
+// ends the run, so a value cell that fails would leave the release cell unscored.
+
+struct Ti { k: integer }
+struct Tl { k: integer }
+struct Own { k: integer, label: text, tags: vector<integer> }
+
+struct Holder { els: vector<Tl>, by_k: hash<Tl[k]> }
+struct OwnBox { owns: vector<Own>, by_own: hash<Own[k]> }
+
+fn dump_i(xs: vector<Ti>) -> text { s = ""; for x in xs { s += "{x.k},"; } return s; }
+fn dump_l(xs: vector<Tl>) -> text { s = ""; for x in xs { s += "{x.k},"; } return s; }
+fn dump_o(xs: vector<Own>) -> text { s = ""; for x in xs { s += "{x.k},"; } return s; }
+
+// 1 — the INLINE layout, which was always right.  The control: it is what says the linked
+// cells below are measuring the layout and not the rule.
+fn test_a_negative_index_removes_from_the_end_inline() {
+  a: vector<Ti> = [Ti { k: 1 }, Ti { k: 2 }, Ti { k: 3 }];
+  a.remove(-1);
+  assert(len(a) == 2, "inline -1: len {len(a)}, want 2");
+  assert(dump_i(a) == "1,2,", "inline -1: {dump_i(a)}, want 1,2,");
+
+  b: vector<Ti> = [Ti { k: 1 }, Ti { k: 2 }, Ti { k: 3 }];
+  b.remove(-3);
+  assert(len(b) == 2, "inline -3: len {len(b)}, want 2");
+  assert(dump_i(b) == "2,3,", "inline -3: {dump_i(b)}, want 2,3,");
+}
+
+// 2 — the LINKED layout: the same two indices, the same two answers.  This is loft#1669.
+fn test_a_negative_index_removes_from_the_end_linked() {
+  a: vector<Tl> = [Tl { k: 1 }, Tl { k: 2 }, Tl { k: 3 }];
+  a.remove(-1);
+  assert(len(a) == 2, "linked -1: len {len(a)}, want 2");
+  assert(dump_l(a) == "1,2,", "linked -1: {dump_l(a)}, want 1,2,");
+
+  b: vector<Tl> = [Tl { k: 1 }, Tl { k: 2 }, Tl { k: 3 }];
+  b.remove(-3);
+  assert(len(b) == 2, "linked -3: len {len(b)}, want 2");
+  assert(dump_l(b) == "2,3,", "linked -3: {dump_l(b)}, want 2,3,");
+}
+
+// 3 — the linked vector reached through the GROUP it belongs to, where the removal owes the
+// sibling member too: an element removed from the end must stop being findable by its key.
+// Removing nothing and unlinking nothing read the same on the vector alone.
+fn test_a_negative_index_through_a_group_unlinks_the_keyed_member() {
+  w = Holder { els: [Tl { k: 10 }, Tl { k: 20 }, Tl { k: 30 }], by_k: [] };
+  assert(len(w.by_k) == 3, "group before: keyed len {len(w.by_k)}, want 3");
+  w.els.remove(-1);
+  assert(len(w.els) == 2, "group -1: vector len {len(w.els)}, want 2");
+  assert(dump_l(w.els) == "10,20,", "group -1: {dump_l(w.els)}, want 10,20,");
+  assert(len(w.by_k) == 2, "group -1: keyed len {len(w.by_k)}, want 2");
+  assert(w.by_k[30] == null, "group -1: key 30 is still findable");
+  assert(w.by_k[20] != null, "group -1: key 20 stopped being findable");
+}
+
+// 4 — the indices that name NO element stay a no-op at BOTH layouts.  The over-reach cells:
+// they must pass before the fix as well as after, so a normalisation that reaches too far
+// (one past either end, or an empty container) fails here rather than somewhere quiet.
+fn test_an_index_that_names_no_element_removes_nothing_at_either_layout() {
+  a: vector<Ti> = [Ti { k: 1 }, Ti { k: 2 }, Ti { k: 3 }];
+  a.remove(-4);
+  assert(dump_i(a) == "1,2,3,", "inline -4: {dump_i(a)}, want 1,2,3,");
+  a.remove(3);
+  assert(dump_i(a) == "1,2,3,", "inline 3: {dump_i(a)}, want 1,2,3,");
+
+  b: vector<Tl> = [Tl { k: 1 }, Tl { k: 2 }, Tl { k: 3 }];
+  b.remove(-4);
+  assert(dump_l(b) == "1,2,3,", "linked -4: {dump_l(b)}, want 1,2,3,");
+  b.remove(3);
+  assert(dump_l(b) == "1,2,3,", "linked 3: {dump_l(b)}, want 1,2,3,");
+
+  e: vector<Tl> = [];
+  e.remove(-1);
+  assert(len(e) == 0, "linked empty -1: len {len(e)}, want 0");
+  e.remove(0);
+  assert(len(e) == 0, "linked empty 0: len {len(e)}, want 0");
+}
+
+// 5 — the RELEASE channel, in a function of its own so no earlier assert can leave it
+// unscored.  A linked element owns a text and a nested vector; removing it from the END must
+// release exactly what removing it from the front does — the suite's leak check scores this,
+// and a double free would fault here.
+fn test_a_negative_removal_releases_what_the_element_owned() {
+  front = OwnBox { owns: [], by_own: [] };
+  back = OwnBox { owns: [], by_own: [] };
+  for i in 0..40 {
+    front.owns += [Own { k: i, label: "front-{i}", tags: [i, i + 1, i + 2] }];
+    back.owns += [Own { k: i, label: "back-{i}", tags: [i, i + 1, i + 2] }];
+  }
+  for _ in 0..40 {
+    front.owns.remove(0);
+    back.owns.remove(-1);
+  }
+  assert(len(front.owns) == 0, "release front: len {len(front.owns)}, want 0");
+  assert(len(back.owns) == 0, "release back: len {len(back.owns)}, want 0");
+  assert(len(front.by_own) == 0, "release front keyed: len {len(front.by_own)}, want 0");
+  assert(len(back.by_own) == 0, "release back keyed: len {len(back.by_own)}, want 0");
+  assert(dump_o(back.owns) == "", "release back: {dump_o(back.owns)}, want empty");
+}
+
+// 6 — the survivors keep their own values after a removal from the end, which is what says
+// the shift moved the right span and not a neighbour.
+fn test_the_survivors_of_a_negative_removal_keep_their_values() {
+  v: vector<Own> = [
+    Own { k: 1, label: "one", tags: [11] },
+    Own { k: 2, label: "two", tags: [22, 33] },
+    Own { k: 3, label: "three", tags: [44] },
+  ];
+  v.remove(-1);
+  assert(len(v) == 2, "survivors: len {len(v)}, want 2");
+  first = v[0] ?? Own { k: -1, label: "x", tags: [] };
+  second = v[1] ?? Own { k: -1, label: "x", tags: [] };
+  assert(first.label == "one", "survivor 0 label {first.label}, want one");
+  assert(second.label == "two", "survivor 1 label {second.label}, want two");
+  assert(len(second.tags) == 2, "survivor 1 tags len {len(second.tags)}, want 2");
+  assert((second.tags[1] ?? 0) == 33, "survivor 1 tags[1] {second.tags[1] ?? 0}, want 33");
+}
