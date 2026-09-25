@@ -272,3 +272,22 @@ appended — the next shape); zttext `materialise` **23.8× → 6.87×**, `flow_
 own `char_slice` takes it as well.  What `materialise` still pays is the per-piece `buf[j]?`
 read through a `?`-discharge on a `vector<character>` and the character walk around it.
 
+**`(R-ByteCopy)` BUILT (2026-09-25, `LOFT_NO_BYTE_COPY`).**  cbor's text payload was copied
+into its byte buffer one byte at a time — `for i in 0..n { buf += [(value.byte_at(i) & 255)
+as u8] }`, the only spelling the language offered — at 4.3 ns a byte against a block copy.
+The loop is now one append of the text's bytes behind an in-range guard, the loop as written
+running for any range the guard refuses; the append grows the vector with the push's own
+doubling (`vector::append_bytes`, one home with `vector_append`), because a reservation to the
+exact length reallocated on every chunk and read as 2 ns a byte on the probe.  Probe
+(256-byte texts appended 64 000 times, `--native-release`): 2.8–3.0 → 0.34–0.50 ns a byte.
+The row, same box: `encode_bytes` **94.7× → 43.1×** (7.13 → 3.20 ms per op).  What the row
+still pays is not the copy: a profile of the whole cbor bench binary puts ~45 % of its time in
+the store mint, claim and free bookkeeping (`op_database_inner` 14 %, `set_free_header` 9 %,
+`enum_parent_size` 6 %, `database_named` 5 %, the claim and free-list routines 14 %) — the
+temporaries-minted-per-call mechanism the overview names first — with the encoder's own loop
+at 11 % and the remaining per-byte pushes (headers, integers) at 10 %.  Reach: the byte-wise
+text copy is spelled once in the 42 library packages (cbor); the lever was built because the
+bulk routine already existed and the rewrite makes the code as written fast, which is the
+order the owner set — the compiler takes the natural spelling first, a tool names the spot
+later.
+

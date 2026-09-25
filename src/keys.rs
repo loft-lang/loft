@@ -1429,6 +1429,20 @@ pub fn trace_compact() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_COMPACT"))
 }
 
+/// `LOFT_NO_BYTE_COPY=1` — a text copied into a byte vector one byte at a time keeps its
+/// loop (`@FR-R-ByteCopy` off): the first bisect step for a wrong, missing or extra byte out
+/// of such a copy.
+pub fn byte_copy_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BYTE_COPY"))
+}
+
+/// `LOFT_TRACE_BYTE_COPY=1` — name each byte-wise copy made one append and each kept.
+pub fn trace_byte_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_BYTE_COPY"))
+}
+
 /// `LOFT_NO_FORMAT_APPEND=1` — a format string appended to a text keeps its work buffer
 /// (`@FR-R-FormatAppend` off): the first bisect step for a wrong, missing or doubled part of
 /// a text built by `out += "…{e}…"`.

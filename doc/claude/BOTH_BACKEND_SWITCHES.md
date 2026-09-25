@@ -173,6 +173,14 @@ counted loop whose start is a variable or an expression.  Every value the compar
 step see is unchanged, so the edges are too — including loft#1525, an inclusive range to
 the type MAXIMUM that never terminates on either form.
 
+**`LOFT_NO_BYTE_COPY=1`** (`@FR-R-ByteCopy`, default-ON, scope pass, BOTH backends) makes
+`for i in lo..hi { buf += [t.byte_at(i) as u8] }` push byte by byte again — with it off, the
+loop is one append of the bytes `[lo, hi)` behind `0 <= lo && lo <= hi && hi <= size(t)`,
+the loop as written running for a range the guard refuses (cbor `encode_bytes` 94.7× →
+43.1×; 2.9 → 0.4 ns a byte on the probe) — and is the first bisect step for a wrong, missing
+or extra byte out of such a copy.  `LOFT_TRACE_BYTE_COPY=1` names each site admitted and
+each kept.
+
 ## Lowering: adopting and minting call buffers
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**

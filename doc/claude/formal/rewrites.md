@@ -1768,6 +1768,35 @@ guard `tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft` and th
 23.8× → 6.87× and `flow_layout_full` 107× → 14.8× (bench/portal/analysis/libraries-wide.md).
 The stdlib's own `char_slice` takes it too.
 
+### A text copied byte by byte is one append
+
+```
+  (R-ByteCopy)   `for i in lo..hi { buf += [t.byte_at(i) as u8] }` — a counted range over
+                 `i` whose body is the one push of `t`'s byte at `i` into a byte vector
+                 `buf` stored raw, the byte masked with 255 or not, `t` a text variable
+                 and the bounds pure (a literal, a variable, `size(t)`) — is ONE append
+                 of the bytes `[lo, hi)` of `t` behind the guard
+                 `0 <= lo && lo <= hi && hi <= size(t)`, the loop as written running for
+                 every range the guard refuses (an index past the text reads its null,
+                 and the loop pushes what it always pushed).  A second statement in the
+                 body, a text that is a field or an element, a destination whose element
+                 is not a raw byte, and a bound that is any other call keep the loop.
+```
+
+**In words.**  A binary encoder copies a text payload into its byte buffer one byte at a
+time because that is the only spelling the language offers; the per-byte read, mask and
+push cost 4.3 ns a byte against a block copy.  The append grows the vector the way the push
+grows it (`vector::append_bytes`, one home with `vector_append`'s doubling), because a
+reservation to the exact length reallocated on every chunk.
+
+**BUILT** (2026-09-25, `src/byte_copy.rs` after the compaction pass, `LOFT_NO_BYTE_COPY`;
+guard `tests/scripts/a-byte-wise-text-copy-is-one-append.loft`, pin `tests/byte_copy.rs`).
+The probe (256-byte texts appended 64 000 times, `--native-release`): 2.8–3.0 → 0.34–0.50 ns
+a byte.  cbor `encode_bytes`, re-measured on the same box: **94.7× → 43.1×** of Rust — the
+copy is gone and what the row still pays is the buffer's own growth (each doubling claims,
+zero-fills and relocates) and the per-text work around the copy
+(bench/portal/analysis/libraries-wide.md).
+
 ### A lookup by one integer key takes the typed entry
 
 ```
