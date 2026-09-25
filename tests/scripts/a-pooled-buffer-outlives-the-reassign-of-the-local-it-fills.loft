@@ -53,8 +53,11 @@ fn mk(id: integer) -> PB { PB { id: id } }
 
 fn main() {
   drain();
-  a: PB? = null;
-  for i in 0..3 { x = a ?? mk(2 + i); note("alive{x.id}"); }
+  // `a` is a fresh null every pass: a `PB` declares `OpDrop` and no `OpCopy`, so binding `x`
+  // from it MOVES it (`(H-Copy-Refuse)`), and one `a` declared before the loop was read after
+  // that move on the next pass — refused as `read-after-move` once #1568's lease rules met
+  // this cell.  The site, the loop and the pooled buffer are the same.
+  for i in 0..3 { a: PB? = null; x = a ?? mk(2 + i); note("alive{x.id}"); }
   got = drain();
   assert(got == "alive2,2,alive3,3,alive4,4", "one record per pass, released once: {got}");
   println("pooled buffer ok");
