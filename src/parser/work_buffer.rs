@@ -719,7 +719,7 @@ impl Walk<'_> {
                 }
                 // Copied OUT of the frame — into a record's field or into a parameter such as
                 // the return buffer: the element-first build (`@FR-R-ElemFirst`) and the
-                // return-buffer adoption (`@FR-R-RetbufAdopt`) build such a local where it
+                // return-buffer adoption (`@FR-R-RetAdopt`) build such a local where it
                 // ends up, which saves the copy a work buffer keeps, and both decline a
                 // promoted local.
                 if copied_from_at_1(name)
