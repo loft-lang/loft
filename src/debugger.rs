@@ -381,6 +381,22 @@ pub fn unmark_for_debug(data: &mut crate::data::Data, bp_fn: u32) -> usize {
     count
 }
 
+/// A pause asked for from OUTSIDE the running program — a DAP `pause`, read on another thread
+/// while the debuggee runs.  The debug loops consume it at their next stop check and suspend
+/// there, as at a breakpoint.  Process-wide because a debugger process debugs one program.
+pub static INTERRUPT: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Set by a debug loop when it suspended for [`INTERRUPT`] and for nothing else, so the report
+/// names the stop `pause` rather than `breakpoint`.  Consumed by the report.
+pub static STOPPED_BY_INTERRUPT: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Take a pending [`INTERRUPT`]: true once per pause request.
+#[must_use]
+pub fn take_interrupt() -> bool {
+    INTERRUPT.swap(false, std::sync::atomic::Ordering::Relaxed)
+}
+
 impl Debugger {
     /// Register a bytecode offset as a breakpoint.
     pub fn add_offset(&mut self, offset: u32) {

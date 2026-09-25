@@ -977,3 +977,121 @@ fn reverse_continue_walks_back_to_the_floor() {
     d.disconnect();
     let _ = std::fs::remove_file(&path);
 }
+
+// ── pause — an interrupt reaches a RUNNING program ───────────────────────────────────────
+// `pause` arrives while `continue` runs, on a thread the adapter keeps for reading, so the
+// run stops where it is with reason `pause`.  The response comes BEFORE the `stopped` event
+// (DAP's order), the run then continues to its own end with the right answer (the interrupt
+// was consumed, not left to fire again), and a `pause` sent while the program is already
+// stopped is answered and changes nothing: the next `continue` runs to the end.
+#[test]
+fn pause_stops_a_running_program_and_continue_resumes_it() {
+    const SRC: &str = "fn main() {\n  n = 0;\n  for i in 0..20000000 { n += i % 7; }\n  println(\"done {n}\");\n}\n";
+    // sum(i % 7 for i in 0..20_000_000), computed outside loft.
+    const DONE: &str = "done 59999997";
+
+    // 1. A pause during the run.
+    let mut d = Dap::start();
+    d.handshake();
+    let path = d.launch("pause_run", SRC, false);
+    d.configuration_done();
+    std::thread::sleep(std::time::Duration::from_millis(300));
+    let pause = d.request("pause", r#"{"threadId":1}"#);
+    let mut order = Vec::new();
+    let mut stopped = None;
+    for _ in 0..64 {
+        let m = d.recv();
+        match (
+            field_str(&m, "type").as_deref(),
+            field_str(&m, "event").as_deref(),
+        ) {
+            (Some("response"), _) if field_i64(&m, "request_seq") == Some(pause) => {
+                assert_eq!(
+                    field_bool(&m, "success"),
+                    Some(true),
+                    "pause is answered: {m:?}"
+                );
+                order.push("response");
+            }
+            (Some("event"), Some("stopped")) => {
+                stopped = field(&m, "body").cloned();
+                order.push("stopped");
+            }
+            (Some("event"), Some("terminated")) => {
+                panic!("the run ended before the pause: {order:?}")
+            }
+            _ => {}
+        }
+        if order.len() == 2 {
+            break;
+        }
+    }
+    assert_eq!(
+        order,
+        ["response", "stopped"],
+        "the response precedes the stopped event"
+    );
+    let stopped = stopped.expect("a stopped event");
+    assert_eq!(
+        field_str(&stopped, "reason").as_deref(),
+        Some("pause"),
+        "{stopped:?}"
+    );
+
+    // 2. Continue after the pause: the run resumes and ends with the right answer.
+    let cont = d.request("continue", r#"{"threadId":1}"#);
+    d.recv_response(cont);
+    let mut out = String::new();
+    for _ in 0..64 {
+        let m = d.recv();
+        match field_str(&m, "event").as_deref() {
+            Some("output") => {
+                out.push_str(
+                    &field(&m, "body")
+                        .and_then(|b| field_str(b, "output"))
+                        .unwrap_or_default(),
+                );
+            }
+            Some("stopped") => panic!("the consumed pause fired again: {m:?}"),
+            Some("terminated") => break,
+            _ => {}
+        }
+    }
+    assert!(
+        out.contains(DONE),
+        "the resumed run finishes with its own answer: {out:?}"
+    );
+    d.disconnect();
+    let _ = std::fs::remove_file(&path);
+
+    // 3. A pause while already stopped changes nothing.
+    let mut d = Dap::start();
+    d.handshake();
+    let path = d.launch("pause_stopped", SRC, true);
+    d.configuration_done();
+    let entry = d.recv_event("stopped");
+    assert_eq!(field_str(&entry, "reason").as_deref(), Some("entry"));
+    let pause = d.request("pause", r#"{"threadId":1}"#);
+    assert_eq!(field_bool(&d.recv_response(pause), "success"), Some(true));
+    let cont = d.request("continue", r#"{"threadId":1}"#);
+    d.recv_response(cont);
+    let mut out = String::new();
+    for _ in 0..64 {
+        let m = d.recv();
+        match field_str(&m, "event").as_deref() {
+            Some("output") => {
+                out.push_str(
+                    &field(&m, "body")
+                        .and_then(|b| field_str(b, "output"))
+                        .unwrap_or_default(),
+                );
+            }
+            Some("stopped") => panic!("a pause sent while stopped fired on the next run: {m:?}"),
+            Some("terminated") => break,
+            _ => {}
+        }
+    }
+    assert!(out.contains(DONE), "{out:?}");
+    d.disconnect();
+    let _ = std::fs::remove_file(&path);
+}

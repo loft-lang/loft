@@ -93,7 +93,7 @@ DAP names from the spec):
 | `evaluate {expression, frameId, context}` | `{"req":"eval","expr":expression}` | `debug_eval_json` (`repl.rs:2261`) | `{result, type, variablesReference:0}` |
 | `setVariable` / `setExpression` | `{"req":"setValue","target":name,"value":val}` | `debug_set` (`repl.rs:1957`) | `{value}` (from the refreshed frame) |
 | `disconnect` / `terminate` | `{"req":"disconnect"}` | — (returns `disconnect=true`) | `terminated`; loop ends |
-| `pause` | *(no RPC — v1 has no async interrupt)* | — | error; advertise `supportsTerminateRequest` instead |
+| `pause` | *(no RPC — the adapter raises `debugger::INTERRUPT` from its request-reader thread)* | the running op loop suspends at its next stop check | `pause` response, then `stopped{reason:"pause"}` |
 
 The RPC → DAP **event** map is direct (`report`, `src/rpc.rs:365`): RPC `stopped`
 (reason `breakpoint`/`step`/`watch`/`entry`) → DAP `stopped`; RPC `output`
@@ -275,9 +275,8 @@ until its translation is proven against `rpc::handle` in a test.
   (name+value), and that a stale reference after a resume returns empty.
 - **D5 — stepping + continue.** `next`/`stepIn`/`stepOut` → RPC
   `stepOver`/`stepIn`/`stepOut` → `stopped{reason:"step"}`; `continue` → RPC `continue`
-  (`{allThreadsContinued:true}` then the next stop / `terminated`). `pause` is
-  unsupported in v1 (no async interrupt) — advertise `supportsTerminateRequest` and map
-  a stop request to `disconnect`. *Gate:* step over/in/out and assert each lands on the
+  (`{allThreadsContinued:true}` then the next stop / `terminated`). `pause` was
+  unsupported in v1 (no async interrupt); it is BUILT since 2026-09-25 (§ pause). *Gate:* step over/in/out and assert each lands on the
   expected line; continue runs to the next breakpoint or to `terminated`.
 - **D6 — evaluate + setVariable.** `evaluate {expression, frameId, context}` → RPC
   `eval` → `{result, type}` (identifier / field-access / call, per the RPC's evaluator);
@@ -297,10 +296,15 @@ Each boundary below is now designed as a small-step spine in
 [DAP_ADVANCED.md](DAP_ADVANCED.md) (grounded in probes on the `--rpc` path); until built,
 each stays an honest capability bit or clean error.
 
-- **`pause`** (async interrupt) — the RPC v1 has no mid-run interrupt; loft-dap does
-  not fake one. It advertises `supportsTerminateRequest` and honours a step budget
-  (`--max-steps`) instead. A `pause` request returns a clean "not supported" error.
-  (Not in DAP_ADVANCED — needs an interrupt path, its own plan.)
+- **`pause`** (async interrupt) — **BUILT 2026-09-25.**  Requests are read on their own thread,
+  because while `continue` runs the main loop is inside the engine and reads nothing.  The
+  reader raises `loft::debugger::INTERRUPT` and answers the `pause` at once (DAP's order: the
+  response, then the `stopped` event); both debug loops (`State::debug_check` for the first run,
+  `State::debug_step` for `continue`/steps) take it at their next stop check and suspend there,
+  and the report names the stop `pause`.  The main loop clears an interrupt nothing took — a
+  `pause` while already stopped, or after the end — so it never fires on the next run.  A
+  stepping run installs the debugger even with no breakpoint, or a run with none could not be
+  paused.  Gate: `dap_transport::pause_stops_a_running_program_and_continue_resumes_it`.
 - **Reverse-execution stepping** (`stepBack`/`reverseContinue`) — **BUILT**: a bounded
   snapshot ring checkpoints each forward step, so `stepBack` / `reverseContinue` restore the
   prior state (heap + registers) byte-identically
@@ -333,7 +337,7 @@ response.
 | `rpc::handle` is `pub(crate)`; `loft-dap` is a separate crate | D1 widens it to `pub` (or a `pub fn drive` wrapper); the only engine-side change |
 | RPC `stackTrace` returns a single frame, not the call stack | v1 shows one `StackFrame`; surfacing TR1.3's `vector<StackFrame>` (`native.rs:2362`) on the RPC wire is the one engine follow-up for real multi-frame |
 | RPC frame locals carry no per-local `type` | DAP `variables.type` is `""` in v1 (optional in DAP); add a `type` to `frame_field` if editors want it |
-| No async `pause` in the engine | Advertise `supportsTerminateRequest`, not `pause`; map stop → `disconnect` |
+| No async `pause` in the engine | CLOSED 2026-09-25 — `debugger::INTERRUPT`, taken at the stop checks (see § pause) |
 | DAP handshake ordering (`initialize` response before `initialized` event) | Fixed in D1's envelope layer; a harness assertion pins the order |
 | `seq`/`request_seq` bookkeeping | Two counters: forward the request `seq` as the RPC `id`; mint outgoing `seq` locally |
 | Multi-worker (`par`) threads | One synthetic thread in v1; one-per-worker is a follow-up over the same translation (§ Multi-worker) |

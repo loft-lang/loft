@@ -375,9 +375,8 @@ copy-on-write refinement is the fallback.
 
 ## Not designed here (still honest refusals)
 
-- **`pause` (async interrupt).** Orthogonal to these four — it needs an interrupt/signal
-  path into the running interpreter, not a data or history capability. Remains a clean "not
-  supported" error until an interrupt mechanism exists (its own plan).
+- **`pause` (async interrupt).** Orthogonal to these four — an interrupt path into the running
+  interpreter.  **Built 2026-09-25** (DAP.md § pause).
 - **Multi-worker `par` threads.** One synthetic thread today; one-per-worker rides SF's
   multi-frame machinery once `par` worker frames are surfaced — a follow-up over SF.
 

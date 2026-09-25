@@ -5084,8 +5084,16 @@ impl State {
         }
         self.profile_flush_check(data);
         let is_bp = self.debug.as_ref().is_some_and(|d| d.is_breakpoint(pc));
-        if !is_bp {
+        // A pause from outside (`debugger::INTERRUPT`) suspends only a STEPPING run — the
+        // record-and-continue mode has no stop to report, so it leaves the request pending.
+        let interrupted = !is_bp
+            && self.debug.as_ref().is_some_and(|d| d.stepping)
+            && crate::debugger::take_interrupt();
+        if !is_bp && !interrupted {
             return false;
+        }
+        if interrupted {
+            crate::debugger::STOPPED_BY_INTERRUPT.store(true, std::sync::atomic::Ordering::Relaxed);
         }
         let hit = self.capture_break_frame(pc, data);
         let suspended = if let Some(d) = self.debug.as_mut() {
@@ -7243,7 +7251,14 @@ impl State {
             if !first {
                 let pc = self.code_pos;
                 let at_bp = self.debug.as_ref().is_some_and(|d| d.is_breakpoint(pc));
-                let stop = at_bp || watch_fired || {
+                // A pause from outside (`debugger::INTERRUPT`): suspend here, and say so in
+                // the report when nothing else stopped the step.
+                let interrupted = crate::debugger::take_interrupt();
+                if interrupted && !at_bp && !watch_fired {
+                    crate::debugger::STOPPED_BY_INTERRUPT
+                        .store(true, std::sync::atomic::Ordering::Relaxed);
+                }
+                let stop = at_bp || watch_fired || interrupted || {
                     let depth = self.call_stack.len();
                     let line = self.line_at(pc);
                     match mode {
