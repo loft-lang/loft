@@ -7,7 +7,42 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Active — Phase 1 in progress.** Tracks [@PLN172](https://github.com/loft-lang/plans/issues/172).
+**Active — Phase 1 done; Phase 2 next.** Tracks [@PLN172](https://github.com/loft-lang/plans/issues/172).
+
+**Phase 1, as built (2026-09-25):**
+- [DOC_CONTRACT.md](../DOC_CONTRACT.md): 41 rules in 71 lines, each naming its owning doc
+  and the gate or report that checks it.  It was written from a sweep of every place a
+  documentation rule is stated.
+- DOC_QUALITY.md now covers every surface.  Its § Maintainer docs is the repo home for rules
+  that had lived only in agent memory, and for the 1000-line hard ceiling;
+  `scripts/file-sizes.py` reports against 1000.
+- The link check is a real gate: `every_markdown_link_resolves` moved to `tests/doc_hygiene.rs`,
+  in the required matrix.
+- The sweep's contradictions are resolved against the tree.  Among them:
+  - the bug-filing home and the CHANGELOG heading;
+  - the plan-file location and where a plan's status lives;
+  - `api_lint`'s gate claim (its two findings are fixed, so the stdlib reads `0 active`);
+  - the lint baseline path;
+  - CODE.md against DOC_QUALITY;
+  - `//` against `///`;
+  - the library guide obligation;
+  - the README's false `GENERATED` marker;
+  - the doc-writer agent's stale test and date rule;
+  - the doc-quality skill's rule numbering.
+- CLAUDE.md points at the contract, and DRAWING.md is reachable.
+
+**One sequencing change:** the `doc-quality` skill is reduced to the reviewer pass in the
+same change that installs Phase 2's edit hook, not in Phase 1.  Reducing it first would leave
+a builder with neither the skill nor the hook.
+
+**The reviewer's worklist, measured at Phase 1:**
+- **Over the ceiling:** `make file-sizes` reports 55 docs over 1000 lines.  **CLAUDE.md is
+  first**: most of its length is one section, `## LOFT_LOG quick reference`, which catalogues
+  the `LOFT_NO_*` switches and belongs in NATIVE.md, DEBUG.md and DIAGNOSTICS.md.
+- **More than one H1:** PACKAGES.md, NATIVE.md, TUPLES.md, THREADING.md and the two plan
+  templates.
+- **A restated register:** formal/README.md's areas table restates each chapter's `OPEN: n`,
+  and says so itself.
 
 Two things built elsewhere feed into this plan:
 

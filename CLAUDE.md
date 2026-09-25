@@ -433,6 +433,9 @@ the bug-filing policy above). It never blocks.
 
 ## Documentation index
 
+**Writing or changing any doc or comment: [DOC_CONTRACT.md](doc/claude/DOC_CONTRACT.md) is the
+rule set** (one line per rule, each pointing at its home).
+
 **Language / stdlib:** [LOFT.md](doc/claude/LOFT.md) syntax · [STDLIB.md](doc/claude/STDLIB.md) stdlib API ·
 [INTERFACES.md](doc/claude/INTERFACES.md) traits/generics · [TUPLES.md](doc/claude/TUPLES.md) ·
 [COROUTINE.md](doc/claude/COROUTINE.md) (1.1+) · [INCONSISTENCIES.md](doc/claude/INCONSISTENCIES.md) ·
@@ -550,7 +553,7 @@ repositioning from one-game project to distribution ·
 
 **Skills** (`.claude/skills/`): `loft-write` (.loft authoring) · `loft-debug` (runtime crashes) ·
 `loft-test` · `loft-codegen` · `loft-ship` (library cross-target + publish) · `engineering-rigor` /
-`design-protocol` (rigor) · `doc-quality` · `draw` · `loft-plan-workflow`.
+`design-protocol` (rigor) · `doc-quality` · `draw` ([DRAWING.md](doc/claude/DRAWING.md), the method it follows) · `loft-plan-workflow`.
 
 ## `LOFT_LOG` quick reference
 

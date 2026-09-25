@@ -69,7 +69,10 @@ gate on every edit.
    user-facing or on-ramp doc): common words over fancy ones, short one-idea
    sentences, no idioms or metaphors, explain a term on first use, lead with a
    concrete example. Plain and short — not long and simple. *(Goal B.)*
-8. **Document the CONTRACT, not the INCIDENT.** The body of a comment says what the
+8. **A reference row naming something absent is worse than no row.**  When a table
+   and the code disagree, check whether the row is what a reader would reach for, and
+   if so make the name real; a capability with two spellings names the other in both.
+9. **Document the CONTRACT, not the INCIDENT.** The body of a comment says what the
    code computes and what a caller may rely on — the rule it enforces, the domain it
    is defined over, the invariant it holds, the trade-off it takes. A bug may be
    *cited*; it is never the *subject*. One clause or a link, at the edge — never the
@@ -79,13 +82,12 @@ gate on every edit.
 
    This is a different axis from rules 1 and 2, and a comment can pass both and still
    fail this one: present-tense, no date stamp, and still built around "the bug we
-   hit". Rules 1–2 are about tense and bookkeeping; rule 8 is about **what the
+   hit". Rules 1–2 are about tense and bookkeeping; rule 9 is about **what the
    documentation is about**. Evidence, a worked rewrite, and why the detector for it
-   deliberately under-reports: `DOC_QUALITY.md` § B2 (rule **9** in that document's own
-   list). `scripts/lint_comments.sh incident` finds the loud cases only — the deletion
+   deliberately under-reports: `DOC_QUALITY.md` § B2. `scripts/lint_comments.sh incident` finds the loud cases only — the deletion
    test below is the real check.
 
-## Rule 8 in practice: the deletion test, and the conversion
+## Rule 9 in practice: the deletion test, and the conversion
 
 **The test.** Delete every sentence about the incident. Does what remains still say
 what the code does and what a caller may rely on? If not, the comment was documenting
@@ -131,7 +133,7 @@ carries a *pointer* to it. That is rule 2's stamp-vs-pointer distinction again.
 
 **When a formal rule exists, cite it.** `doc/claude/formal/` is the timeless statement by
 construction, and `@FR-<Rule>` is its name — so *"Enforces `@FR-L-Null` for the narrow
-widths"* is the ideal rule-8 comment: it says what the code guarantees, and it resolves
+widths"* is the ideal rule-9 comment: it says what the code guarantees, and it resolves
 (`scripts/rule_tags.py sites @FR-L-Null`) to every other site guaranteeing the same
 thing. If the invariant you are about to narrate has no rule yet, that is a signal the
 rule is missing — not that the story should stay.
@@ -141,10 +143,15 @@ rule is missing — not that the story should stay.
 - **Function `///` description** → rule 5: *why to use it*.
 - **Inline body comment** → rule 6: *what* the non-obvious code does.
 - **Prose docs (`.md`)** → rule 7 (plain language) always applies to user-facing
-  and on-ramp docs. But rules 1–2 are softer here: a changelog, a plan, or
-  `GOALS.md` legitimately carries dates and plan refs. The stamp ban is a *code*
-  rule. Maintainer-facing design docs may use denser, project-specific language;
-  do not let that creep into the user-facing surface.
+  and on-ramp docs.  Dates and plan refs depend on the kind of doc
+  (`DOC_QUALITY.md` § Maintainer docs, rule 4): a RECORD doc — a changelog, a plan,
+  a release record — keeps them; a CONTRACT doc — a reference or rule set in force —
+  states the current rule, and its dated rulings move to CHANGELOG_TECHNICAL or its
+  `-history.md` companion.  Maintainer-facing design docs may use denser,
+  project-specific language; do not let that creep into the user-facing surface.
+- **A doc block belongs to the item below it** (`DOC_QUALITY.md` rule 10): insert a
+  new item above the neighbour's block, never at its signature, and read a symbol's
+  own block with `grep -B`.
 
 ## Stamp vs pointer (the one distinction to get right)
 

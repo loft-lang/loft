@@ -890,15 +890,14 @@ which choice (1 / 2 / 3).  Reference the canonical home so
 the workaround stays self-explaining:
 
 ```loft
-// @P276 — `s[i] ?? '<char>'` chain-compare trips rustc E0308 in
-// native; remove `??` and rely on the surrounding `i < n` guard.
+// `s[i] ?? '<char>'` fails to compile on native (loft#<N>); the
+// surrounding `i < n` guard already keeps `i` in range, so read it bare.
 c = line[i];
 ```
 
 ```loft
-// stdlib gap (STDLIB.md § Open work, "vector.sort"): no
-// vector.sort() yet.  Use sorted<TagSlot[name]> as a sort
-// proxy for now.
+// vector has no sort (STDLIB.md § Open work, "vector.sort");
+// sorted<TagSlot[name]> keeps the entries in name order instead.
 struct TagSlot { name: text not null }
 ```
 
