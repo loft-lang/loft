@@ -1,0 +1,61 @@
+// `@FR-O-Buffer` — a local rebound from a call that builds into the caller's POOLED buffer
+// keeps that buffer alive across the rebind, on the interpreter as on native.
+//
+// `x = a ?? mk(i)` in a loop: the call arm's lift is rebound every pass, and the hidden
+// buffer it hands `mk` is minted once and re-entered through `OpClear` (one store per site
+// per activation).  `mk` builds its record INTO that buffer and hands it back, so after the
+// first pass the lift holds the buffer's store.  The interpreter freed the store the lift was
+// displacing BEFORE the call — unconditionally — while native frees it after the call and only
+// when the new value names another store.  On the second pass the pre-free released the pooled
+// buffer under the callee, the callee wrote its record into a freed store, and the next store
+// minted (here by `note`'s text and byte work) took the slot: the drop hook then read the
+// bytes of whatever landed there — `alive2,2,alive3,8` for `alive2,2,alive3,3`, garbage under
+// `LOFT_POISON=1`.  The Set now takes the guarded post-free (`OpFreeRefIfDistinct` of the old
+// store against the new one), the identity test the exit free and native's rebind already use.
+// The callee is spelled as a BARE TAIL on purpose: that road built into the buffer before
+// `(R-Rebind)` extended it to `return`-ending bodies, so this cell fails on the build before
+// the fix whatever the switch says.  The drop hook's trace is the channel, as in
+// `a-join-bound-local-owns-what-it-was-handed`.
+//
+// @falsified-at: 185e8fd54 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-pooled-buffer-outlives-the-reassign-of-the-local-it-fills.patch — interpret exit 1 -> 0,
+//   interpret 1 assertion failures -> 0; native INERT (expected for a backend-divergence guard — only one side can move)
+// CHANNEL: the assertion count and the exit code on the interpreter; native holds, because its
+//   rebind already frees the displaced store by identity after the call.
+// ARMED: no instrument — each hook call is written to this guard's own trace file; `LOFT_POISON=1`
+//   turns the stale id into garbage but is not needed for the cell to move.
+// WITNESS: on the control the second pass drains `alive3,8` (a freed record read back through
+//   whatever `note` minted into its slot) where the fix drains `alive3,3`.
+// HOLDS: leak and panic are unmoved on both trees; native answers the same on both.
+
+fn trace_path() -> text { return "loft_pooled_buffer_trace.tmp"; }
+fn note(s: text) {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  if cur != "" { cur += ","; }
+  cur += s;
+  bytes: vector<u8> = [];
+  for c in cur { bytes += [c as u8 ?? 0]; }
+  if !write_bytes(trace_path(), bytes) { println("trace write failed"); }
+}
+fn drain() -> text {
+  f = file(trace_path());
+  cur = f.content() ?? "";
+  empty: vector<u8> = [];
+  if !write_bytes(trace_path(), empty) { println("trace clear failed"); }
+  return cur;
+}
+
+struct PB { id: integer }
+fn OpDrop(self: PB) { note("{self.id}"); }
+fn mk(id: integer) -> PB { PB { id: id } }
+
+fn main() {
+  drain();
+  a: PB? = null;
+  for i in 0..3 { x = a ?? mk(2 + i); note("alive{x.id}"); }
+  got = drain();
+  assert(got == "alive2,2,alive3,3,alive4,4", "one record per pass, released once: {got}");
+  println("pooled buffer ok");
+}

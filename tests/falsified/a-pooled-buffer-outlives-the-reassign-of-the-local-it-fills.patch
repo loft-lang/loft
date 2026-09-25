@@ -1,0 +1,367 @@
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index aee744f24..5d32904f8 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -1124,7 +1124,7 @@ impl Stores {
+         // absence are different values, and only the whole-value replace may turn one into
+         // the other — an `a += b` must leave `a` alone.
+         if o_db.store_nr == u16::MAX {
+-            self.clear_vector_release(db);
++            vector::clear_vector(db, &mut self.allocations);
+             self.mark_collection_absent(db);
+             return;
+         }
+@@ -1133,11 +1133,7 @@ impl Stores {
+         if db.store_nr == o_db.store_nr && dest_rec != 0 && dest_rec == src_rec {
+             return;
+         }
+-        // `@FR-H-ClearRelease` — the destination may be a LIVE vector (`@FR-R-Rebind` hands a
+-        // callee the caller's own record as its buffer), so what its elements own is
+-        // released before the source is copied in; on a fresh or a zeroed buffer this is
+-        // the same length reset it always was.
+-        self.clear_vector_release(db);
++        vector::clear_vector(db, &mut self.allocations);
+         self.vector_add(db, o_db, known);
+     }
+ 
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index b27ad966c..22ab6c040 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -2627,19 +2627,6 @@ impl Output<'_> {
+                 .get(&self.def_nr)
+                 .map(|f| f.iter().map(|(_, rt)| *rt).collect())
+                 .unwrap_or_default();
+-            // `@FR-R-Rebind` — the STAGED reads the parser put in front of the writes
+-            // (`Parser::rebind_safe_literal`): a scalar the literal reads off a by-value
+-            // parameter of its own type, bound to a temp before the first write so the
+-            // literal can be built onto that parameter's record.  The tuple reads those
+-            // temps, so they are emitted ahead of it as the statements they are; a `Set`
+-            // is the only statement the parser puts in an `Object` block besides its writes.
+-            for op in &bl.operators {
+-                if matches!(op.unspan(), Value::Set(..)) {
+-                    self.indent(w)?;
+-                    self.output_code_inner(w, op)?;
+-                    writeln!(w, ";")?;
+-                }
+-            }
+             // An `Object` that RETURNS what it builds (`hoist::object_own_return`): the
+             // tuple is evaluated first, the block's other statements — the frees the
+             // return owes — run in their order, and the tuple is returned.
+@@ -2766,7 +2753,7 @@ impl Output<'_> {
+                 };
+                 for op in &bl.operators {
+                     match op.unspan() {
+-                        Value::Return(_) | Value::Var(_) | Value::Line(_) | Value::Set(..) => {}
++                        Value::Return(_) | Value::Var(_) | Value::Line(_) => {}
+                         o if builds(o) => {}
+                         _ => {
+                             self.indent(w)?;
+diff --git b/src/keys.rs a/src/keys.rs
+index d8ee70592..adaaa5833 100644
+--- b/src/keys.rs
++++ a/src/keys.rs
+@@ -1372,28 +1372,6 @@ pub fn place_result_enabled() -> bool {
+     *ON.get_or_init(|| !env_set("LOFT_NO_PLACE_RESULT"))
+ }
+ 
+-/// `LOFT_NO_REBIND_PLACE=1` (read at PARSE time and in the scope pass): `x = f(x, …)` keeps
+-/// minting the callee's exit record in a store of its own and copying it over `x` — the
+-/// before-half of the A/B on one binary (`@FR-R-Rebind`: the callee is handed x's OWN
+-/// record as its return buffer, its exit literal writes the fields in place and a field
+-/// that views the same field costs nothing), and the first bisect step for a wrong field,
+-/// a leak or a double free out of a local rebound from a call that takes it.  With it set,
+-/// a body whose last statement is an explicit `return` keeps every `return S { … }` in a
+-/// store of its own too.  `LOFT_STRICT_STORES=1`, `LOFT_POISON=1` and
+-/// `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers; `LOFT_TRACE_REBIND=1` names each admission
+-/// and each decline.
+-pub fn rebind_place_enabled() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_PLACE"))
+-}
+-
+-/// `LOFT_TRACE_REBIND=1` — name each `(R-Rebind)` site admitted and each declined, with the
+-/// reason.
+-pub fn trace_rebind() -> bool {
+-    static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| env_set("LOFT_TRACE_REBIND"))
+-}
+-
+ /// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
+ /// its host and destination count, or the decline with the reason.
+ pub fn trace_place() -> bool {
+diff --git b/src/lib.rs a/src/lib.rs
+index fb4d8803e..ce56ef962 100644
+--- b/src/lib.rs
++++ a/src/lib.rs
+@@ -316,7 +316,6 @@ pub mod paged_reader;
+ pub mod place_result;
+ pub mod placement;
+ pub mod portable_path;
+-pub mod rebind_place;
+ pub mod resolution;
+ pub mod resolution_scope;
+ pub mod scopes;
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 2858cfc82..c9b0a00ae 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -2704,23 +2704,6 @@ impl Parser {
+                 // already delivered the mid-body), so this never double-delivers.
+                 let elm_ty = (**elm).clone();
+                 self.deliver_mid_vector_returns(&elm_ty, l, buf_var);
+-            } else if crate::keys::rebind_place_enabled()
+-                && matches!(l.last().map(Value::unspan), Some(Value::Return(_)))
+-                && self
+-                    .data
+-                    .def(self.context)
+-                    .returned()
+-                    .base()
+-                    .heap_def_nr()
+-                    .is_some()
+-            {
+-                // `@FR-R-Rebind`, `@FR-R-Place`'s callee clause — a body whose LAST statement
+-                // is an explicit `return` reached no tail delivery at all (the block's value
+-                // is the return's, never a tail expression), so every `return S { … }` in it
+-                // minted a store of its own and the caller copied it over: the shape the
+-                // libraries write (`return Doc { buf: d.buf, pieces: np };`).  Such a body
+-                // takes the same pass a bare tail's mid-body exits take.
+-                self.literal_exits_into_buffer(l);
+             }
+         }
+         tp
+@@ -3042,21 +3025,6 @@ impl Parser {
+                 // the buffer the caller allocated stays empty and the record handed
+                 // back is a store minted per call.  Build into the buffer instead.
+                 // A buffer only chain exits renamed is the caller's too (@PLN164 B2).
+-                if crate::keys::trace_ret_promotion() {
+-                    eprintln!(
+-                        "[retpromo] classify fn={} ctx={context} tail_workref={:?} only_tail={:?} unpromoted={:?} last={}",
+-                        self.data.def(self.context).name(),
+-                        Self::tail_fresh_object_workref(last),
+-                        Self::tail_fresh_object_workref(last)
+-                            .map(|w| self.workref_is_only_the_tail(l, w)),
+-                        self.unpromoted_return_buffer_var(),
+-                        match last.unspan() {
+-                            Value::Return(_) => "Return",
+-                            Value::Block(b) => &b.name,
+-                            _ => "other",
+-                        }
+-                    );
+-                }
+                 if crate::keys::value_return_enabled()
+                     && let Some(work_ref) = Self::tail_fresh_object_workref(last)
+                     && self.workref_is_only_the_tail(l, work_ref)
+@@ -3312,139 +3280,6 @@ impl Parser {
+         Self::guard_literal_alloc(&mut l[last], work_ref, guard, db_nr);
+         Self::substitute_work_ref(&mut l[last], work_ref, buf_var);
+         self.vars.set_skip_free(work_ref);
+-        if crate::keys::rebind_place_enabled() {
+-            self.rebind_safe_literal(&mut l[last], buf_var);
+-        }
+-    }
+-
+-    /// The by-value parameters whose record type is `td` — the ones a rebind site may hand
+-    /// in as this function's return buffer (`@FR-R-Rebind`).
+-    fn same_type_by_value_params(&self, td: u32) -> Vec<u16> {
+-        let def = self.data.def(self.context);
+-        def.attributes()
+-            .iter()
+-            .filter(|a| !a.hidden && a.typedef.base().heap_def_nr() == Some(td))
+-            .map(|a| self.vars.var(&a.name))
+-            .filter(|&v| v != u16::MAX && self.vars.is_argument(v))
+-            .collect()
+-    }
+-
+-    /// `@FR-R-Rebind` — make an exit literal built into an OFFERED buffer correct when that
+-    /// buffer IS a by-value parameter's record, which is what a rebind site hands in.
+-    ///
+-    /// The literal's writes then land on the record its own field expressions read, so two
+-    /// things change and nothing else: a vector field's `OpAppendVector` into the buffer's
+-    /// field becomes `OpReplaceVector`, whose runtime self-test makes `buf: d.buf` cost
+-    /// nothing when the two are one vector (`@FR-H-CopySelf`) and copies as the append did
+-    /// when they are not — and its zeroing default is dropped, because a zeroed handle is
+-    /// exactly what the self-test could no longer see; and a SCALAR field expression that
+-    /// reads such a parameter is staged into a temp before the first write, so `S { a: s.b,
+-    /// b: s.a }` reads both before it overwrites either (`@FR-R-InPlaceLiteral`'s staging
+-    /// clause, one site over).  On a fresh, a pooled or a placed buffer every rewritten op
+-    /// answers what it answered before.  A read the staging cannot take — a text, a
+-    /// reference, a vector read at ANOTHER field — is left as written, and the scope pass
+-    /// (`rebind_place`) reads it as a write that consults the parameter and declines the
+-    /// site: the parser makes the literal safe where it can, the scope pass admits only
+-    /// what it made safe.
+-    fn rebind_safe_literal(&mut self, tail: &mut Value, buf_var: u16) {
+-        let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
+-            return;
+-        };
+-        let params = self.same_type_by_value_params(td);
+-        if params.is_empty() {
+-            return;
+-        }
+-        let mut viewers: HashSet<u16> = params.iter().copied().collect();
+-        for &p in &params {
+-            viewers.extend(self.vars.store_viewers(p));
+-        }
+-        let struct_tp = self.data.def(td).known_type();
+-        let vec_offs: HashSet<i32> = (0..self.data.attributes(td))
+-            .filter(|&aid| matches!(self.data.attr_type(td, aid).base(), Type::Vector(_, _)))
+-            .map(|aid| {
+-                i32::from(
+-                    self.database
+-                        .position(struct_tp, &self.data.attr_name(td, aid)),
+-                )
+-            })
+-            .collect();
+-        let append = self.data.def_nr("OpAppendVector");
+-        let replace = self.data.def_nr("OpReplaceVector");
+-        let get_field = self.data.def_nr("OpGetField");
+-        let set_int4 = self.data.def_nr("OpSetInt4");
+-        let mut node = tail;
+-        let bl = loop {
+-            match node {
+-                Value::Span(b) => node = &mut b.1,
+-                Value::Return(inner) => node = inner,
+-                Value::Block(bl) if bl.name == "Object" => break bl,
+-                _ => return,
+-            }
+-        };
+-        let field_off = |v: &Value| -> Option<i32> {
+-            match v.unspan() {
+-                Value::Call(d, a)
+-                    if *d == get_field
+-                        && a.len() == 3
+-                        && matches!(a[0].unspan(), Value::Var(x) if *x == buf_var) =>
+-                {
+-                    match a[1].unspan() {
+-                        Value::Int(off) => Some(*off),
+-                        _ => None,
+-                    }
+-                }
+-                _ => None,
+-            }
+-        };
+-        let mut replaced: HashSet<i32> = HashSet::new();
+-        for op in &mut bl.operators {
+-            if let Value::Call(d, args) = op
+-                && *d == append
+-                && args.len() == 3
+-                && let Some(off) = field_off(&args[0])
+-                && vec_offs.contains(&off)
+-            {
+-                *d = replace;
+-                replaced.insert(off);
+-            }
+-        }
+-        bl.operators.retain(|op| {
+-            !matches!(op.unspan(), Value::Call(d, args) if *d == set_int4
+-                && args.len() == 3
+-                && matches!(args[0].unspan(), Value::Var(x) if *x == buf_var)
+-                && matches!(args[1].unspan(), Value::Int(off) if replaced.contains(off))
+-                && matches!(args[2].unspan(), Value::Int(0)))
+-        });
+-        if self.first_pass {
+-            return;
+-        }
+-        let mut staged: Vec<Value> = Vec::new();
+-        for op in &mut bl.operators {
+-            let Value::Call(d, args) = op else { continue };
+-            let name = self.data.def(*d).name();
+-            if !name.starts_with("OpSet")
+-                || matches!(name, "OpSetText" | "OpSetRef" | "OpSetDbRef" | "OpSetEnum")
+-                || args.len() < 3
+-                || !matches!(args[0].unspan(), Value::Var(x) if *x == buf_var)
+-            {
+-                continue;
+-            }
+-            let last = args.len() - 1;
+-            if !viewers.iter().any(|&v| args[last].reads_var(v)) {
+-                continue;
+-            }
+-            let tp = self.data.attr_type(*d, last);
+-            let n = self.vars.count();
+-            let tmp = self
+-                .vars
+-                .add_variable(&format!("__stg_p2_{n}"), &tp, &mut self.lexer);
+-            let val = std::mem::replace(&mut args[last], Value::Var(tmp));
+-            staged.push(v_set(tmp, val));
+-        }
+-        if !staged.is_empty() {
+-            staged.append(&mut bl.operators);
+-            bl.operators = staged;
+-        }
+     }
+ 
+     /// @PLN164 B2 (`@FR-R-Place`, the callee clause) — once the tail's delivery is
+@@ -3475,12 +3310,6 @@ impl Parser {
+         let Some(td) = self.vars.tp(buf_var).base().heap_def_nr() else {
+             return;
+         };
+-        // `@FR-R-Rebind` — an exit answering a by-value parameter of the buffer's type
+-        // (`if b <= a { return d; }`) answers the buffer itself at a rebind site, where the
+-        // caller hands that parameter's record in AS the buffer, and a view of the argument
+-        // everywhere else, which the call site copies as it always has.  Such an exit writes
+-        // nothing, so it neither needs the buffer nor forbids the literal exits beside it.
+-        let params = self.same_type_by_value_params(td);
+         let mut work_refs: Vec<u16> = Vec::new();
+         let mut all_literal = true;
+         for op in l.iter() {
+@@ -3496,8 +3325,6 @@ impl Parser {
+                         }
+                         // A chain exit answers what its callee wrote into this same buffer.
+                         _ if Self::returns_through_chain(inner, buf_var) => {}
+-                        _ if crate::keys::rebind_place_enabled()
+-                            && matches!(inner.unspan(), Value::Var(p) if params.contains(p)) => {}
+                         _ => all_literal = false,
+                     }
+                 }
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 984595455..0e12fb273 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -9028,9 +9028,6 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
+         // live: decided here, after the scan has settled the function's frees and before the
+         // slot intervals are computed off the final IR.  One home for both backends.
+         crate::place_result::rewrite(data, d_nr);
+-        // `@FR-R-Rebind` — `x = f(x, …)` hands the callee x's own record as its buffer:
+-        // decided here for the same reason, on the same settled IR.
+-        crate::rebind_place::rewrite(data, database, d_nr);
+         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
+         // variants (gated; no-op in normal builds).
+         if tag_mode {
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 246264b70..0d28cc714 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -2432,31 +2432,8 @@ impl State {
+             // the allocation), since the local may be holding a VIEW at that moment and an
+             // in-place `OpDatabase` would write the copy into the viewed record.
+             let witnessed = stack.function.owner_witness(v).is_some();
+-            // `@FR-O-Buffer` — a right-hand side that CALLS a loft function may hand back the
+-            // very store `v` is displacing: the callee builds its result into the hidden
+-            // buffer it was handed, and a POOLED buffer (`OpClear` on re-entry, one store per
+-            // site per activation) holds the previous call's record — which is what `v` holds
+-            // now.  Native frees the displaced store after the call and only when the new
+-            // value names another store (`owned_ref_reassign`); the unconditional pre-Set
+-            // free here released the pooled buffer under the callee, and the next pass wrote
+-            // into a freed store (measured: `x = a ?? mk(i)` in a loop, `a-join-bound-local-
+-            // owns-what-it-was-handed` jo2, once every exit literal built into the buffer).
+-            // So such a Set takes the guarded post-free, the identity test native has.
+-            let rhs_calls_a_loft_fn = {
+-                let mut hit = false;
+-                value.walk(&mut |n| {
+-                    if let Value::Call(d, _) = n
+-                        && (*d as usize) < stack.data.definitions.len()
+-                        && *stack.data.def(*d).code() != Value::Null
+-                    {
+-                        hit = true;
+-                    }
+-                });
+-                hit
+-            };
+             let mut stash_old_for_post_free = false;
+-            if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local || rhs_calls_a_loft_fn)
+-            {
++            if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
+                 let free_pos = stack.var_pos(v);
+                 stack.add_op("OpVarRef", self);
+                 self.code_add(free_pos);

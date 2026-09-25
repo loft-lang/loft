@@ -2435,6 +2435,44 @@ impl State {
             // the allocation), since the local may be holding a VIEW at that moment and an
             // in-place `OpDatabase` would write the copy into the viewed record.
             let witnessed = stack.function.owner_witness(v).is_some();
+            // `@FR-O-Buffer` — the hidden buffer a right-hand-side CALL is handed may come
+            // back as the call's result, and a POOLED buffer (`OpClear` on re-entry, one store
+            // per site per activation) holds the previous call's record — which is what `v`
+            // holds now.  Native frees the displaced store after the call and only when the new
+            // value names another store (`owned_ref_reassign`); the unconditional pre-Set free
+            // here released the pooled buffer under the callee, and the next pass wrote its
+            // record into a freed store (measured: `x = a ?? mk(i)` in a loop,
+            // `a-join-bound-local-owns-what-it-was-handed` jo2, once every exit literal built
+            // into the buffer).  So the buffer is one more WITNESS of the displaced free below:
+            // it keeps its position ahead of the call (the adopt pins read it there) and stops
+            // firing exactly when the store it would release is the buffer's.
+            let buffer_witness: Option<u16> = {
+                let call = match value.unspan() {
+                    Value::Insert(steps) => steps.last().map(Value::unspan),
+                    other => Some(other),
+                };
+                match call {
+                    Some(Value::Call(f, args))
+                        if (*f as usize) < stack.data.definitions.len()
+                            && *stack.data.def(*f).code() != Value::Null =>
+                    {
+                        stack
+                            .data
+                            .def(*f)
+                            .hidden_return_buffer_attr()
+                            .and_then(|b| args.get(b))
+                            .and_then(|a| match a.unspan() {
+                                Value::Var(w)
+                                    if *w != v && stack.function.is_compiler_generated(*w) =>
+                                {
+                                    Some(*w)
+                                }
+                                _ => None,
+                            })
+                    }
+                    _ => None,
+                }
+            };
             let mut stash_old_for_post_free = false;
             if owned_ref && (rhs_reads_v || rhs_is_new_record || nullable_local) {
                 let free_pos = stack.var_pos(v);
@@ -2469,7 +2507,11 @@ impl State {
                     crate::use_analysis::projection_container_var(stack.data, value)
                 } else {
                     None
-                };
+                }
+                // A projection and a call are different right-hand sides, so the container
+                // witness and the buffer witness never both apply; whichever the RHS is
+                // supplies the one witness beside the entry's.
+                .or(buffer_witness);
                 match (witness, entry_w) {
                     (Some(container), Some(entry)) => {
                         self.push_var_ref(stack, container);

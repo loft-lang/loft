@@ -1,24 +1,31 @@
 // `x = f(x, …)` — the value a whole-value rebind from a call taking the same local answers,
 // pinned on the unrewritten form.
 //
-// `(R-Rebind)` (formal/rewrites.md § A value already home is not copied to a second one) is
-// written and priced but NOT built: it will hand `x`'s own record to the callee as its
-// return buffer, so the callee's exit literal writes the field that views the same field
-// onto itself (`(H-CopySelf)`) and copies nothing.  These cells are the values the rewrite
-// must keep, taken from the form that copies today, and they are the oracle its switch A/B
-// compares against.  Cells: the plain rebind (c1), the early exit that answers the parameter
+// `(R-Rebind)` (formal/rewrites.md § A value already home is not copied to a second one)
+// hands `x`'s own record to the callee as its return buffer, so the callee's exit literal
+// writes the field that views the same field onto itself (`(H-CopySelf)`) and copies
+// nothing.  These cells are the values the rewrite must keep, written on the form that
+// copied, and they are the oracle its switch A/B (`LOFT_NO_REBIND_PLACE=1`) compares
+// against; `LOFT_TRACE_REBIND=1` names which cells are admitted and which decline.  Cells: the plain rebind (c1), the early exit that answers the parameter
 // (c2), an exit literal naming the fields in the other order (c3), a swap THROUGH the result
 // (c4, c4b, c4c — the fields read the place they overwrite), a view of `x` live across the
 // call, which reads what it viewed (c5), the same local handed twice (c6), recursion (c7), a
 // callee that fills its result BEFORE reading its parameter (c8, the `mat4_mul` shape), a
 // nullable `x` (c9), the bench's loop (c11), a plain caller whose argument stays live (c12),
-// a chain exit (c13) and a vector FIELD rebound from a call taking it (c14).  Every value is
+// a chain exit (c13), a vector FIELD rebound from a call taking it (c14), a vector-field swap
+// (c15), a text field off the parameter (c16), a literal list beside a self-view (c17), an
+// append through the parameter before the exit (c18), a discarded result (c19) and a staged
+// scalar beside a self-view in a loop (c20).  Every value is
 // hand-computed; the file runs under LOFT_STRICT_STORES / LOFT_POISON / the native leak
 // check on both backends.
 //
-// @falsified-at: none — these cells pin the unrewritten form's values (they pass on the build
-//   they were written on, 2026-09-24); the receipt belongs to the rewrite that will have to
-//   keep them, whose switch A/B is what scores this file.
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-09-24): with the parser's staging struck (`rebind_safe_literal`), the interpreter
+//   fails c4 (the scalar swap reads the field it just overwrote); with the scope pass's
+//   "a write to the buffer consults the parameter" decline struck (`rebind_place.rs`), native
+//   fails c15 (the vector-field swap clears the field the second replace still reads —
+//   native's value-record tuple reads every scalar before it writes, so only the second
+//   sabotage reaches it).  LOFT_NO_REBIND_PLACE=1 is the A/B: every cell answers the same.
 struct Piece { start: integer, count: integer }
 struct Doc { buf: vector<integer>, pieces: vector<Piece> }
 struct S { a: integer, b: integer }
@@ -100,6 +107,38 @@ fn main() {
   // c14 — a field place: o.k rebound from a call taking o.k
   k14 = Keep { k: [1, 2, 3] }; k14.k = grow(k14.k);
   assert(len(k14.k) == 4 && (k14.k[3] ?? 0) == 7, "c14");
+  // c15 — a swap of two VECTOR fields through the result: the first replace would clear the
+  //       field the second still reads, so the site must keep the copy
+  t15 = Two { p: [1, 2], q: [3, 4, 5] }; t15 = swv(t15);
+  assert(len(t15.p) == 3 && (t15.p[0] ?? 0) == 3 && len(t15.q) == 2 && (t15.q[1] ?? 0) == 2, "c15 {len(t15.p)} {len(t15.q)}");
+  t15 = swv(t15);
+  assert(len(t15.p) == 2 && (t15.p[1] ?? 0) == 2 && len(t15.q) == 3, "c15b");
+  // c16 — a text field read off the parameter (not staged: the site keeps the copy)
+  n16 = Named { name: "ab", k: 1 }; n16 = suffix(n16);
+  assert(n16.name == "ab!" && n16.k == 2, "c16 {n16.name} {n16.k}");
+  n16 = suffix(n16);
+  assert(n16.name == "ab!!" && n16.k == 3, "c16b {n16.name}");
+  // c17 — a vector field rebuilt from a literal list beside a self-view
+  d17 = mk(); d17 = reset_pieces(d17);
+  assert(len(d17.buf) == 6 && len(d17.pieces) == 1 && (d17.pieces[0]?.count) == 6, "c17");
+  // c18 — the callee appends THROUGH the parameter before its exit names both fields as views
+  d18 = mk(); d18 = push_piece(d18);
+  assert(len(d18.pieces) == 3 && (d18.pieces[2]?.start) == 6 && len(d18.buf) == 6, "c18 {len(d18.pieces)}");
+  // c19 — the result discarded: the argument is unchanged and nothing leaks
+  d19 = mk(); del(d19, 1, 4);
+  assert(len(d19.pieces) == 2, "c19");
+  // c20 — a scalar read staged beside a vector self-view, in a loop
+  m20 = Mixed { n: 1, v: [1, 2, 3] };
+  for i in 0..4 { m20 = bump(m20); }
+  assert(m20.n == 1 + 6 * 4 && len(m20.v) == 3, "c20 {m20.n}");
   println("rebind cells ok");
 }
 fn grow(v: vector<integer>) -> vector<integer> { w = v; w += [7]; return w; }
+struct Two { p: vector<integer>, q: vector<integer> }
+fn swv(t: Two) -> Two { return Two { p: t.q, q: t.p }; }
+struct Named { name: text, k: integer }
+fn suffix(n: Named) -> Named { return Named { name: n.name + "!", k: n.k + 1 }; }
+fn reset_pieces(d: Doc) -> Doc { return Doc { buf: d.buf, pieces: [Piece { start: 0, count: len(d.buf) }] }; }
+fn push_piece(d: Doc) -> Doc { d.pieces += [Piece { start: len(d.buf), count: 0 }]; return Doc { buf: d.buf, pieces: d.pieces }; }
+struct Mixed { n: integer, v: vector<integer> }
+fn bump(m: Mixed) -> Mixed { s = 0; for x in m.v { s += x; } return Mixed { n: m.n + s, v: m.v }; }

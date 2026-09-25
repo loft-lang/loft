@@ -1195,7 +1195,7 @@ impl Stores {
         // absence are different values, and only the whole-value replace may turn one into
         // the other — an `a += b` must leave `a` alone.
         if o_db.store_nr == u16::MAX {
-            vector::clear_vector(db, &mut self.allocations);
+            self.clear_vector_release(db);
             self.mark_collection_absent(db);
             return;
         }
@@ -1204,7 +1204,11 @@ impl Stores {
         if db.store_nr == o_db.store_nr && dest_rec != 0 && dest_rec == src_rec {
             return;
         }
-        vector::clear_vector(db, &mut self.allocations);
+        // `@FR-H-ClearRelease` — the destination may be a LIVE vector (`@FR-R-Rebind` hands a
+        // callee the caller's own record as its buffer), so what its elements own is
+        // released before the source is copied in; on a fresh or a zeroed buffer this is
+        // the same length reset it always was.
+        self.clear_vector_release(db);
         self.vector_add(db, o_db, known);
     }
 

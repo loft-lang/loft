@@ -1253,6 +1253,19 @@ destination in a local record, a loop, a rejoin of a stored and a held path all 
 Measured 2026-09-16 on the drawing bench's parse row: one store fewer per line and the copy
 gone, and a WASH on every counter (`perf stat`: instructions, cycles and cache misses equal
 within noise) because the record relocated there carries no heap on that scene.
+**`LOFT_NO_REBIND_PLACE=1`** (`@FR-R-Rebind`, default-ON since 2026-09-24, parse time +
+scope pass, BOTH backends) keeps `x = f(x, …)` minting the callee's exit record in a store
+of its own and copying it over `x` again — with it off, the call's hidden buffer argument IS
+`x`, so the callee's exit literal writes x's record in place (a vector field that views the
+same field, `Doc { buf: d.buf, … }`, is `(H-CopySelf)` and costs nothing; a scalar the
+literal reads off the parameter is STAGED ahead of the first write; `return d` answers the
+buffer itself), and a body whose last statement is an explicit `return` takes the buffer
+road at all (zttext `delete_range` 138× → 9.6×) — and is the first bisect step for a wrong
+field, a leak or a double free out of a local rebound from a call that takes it.
+`LOFT_TRACE_REBIND=1` names each admission and each decline (a text field or a vector read
+at ANOTHER field of the parameter, a literal-list vector field, a chain exit, a promoted
+buffer, the local handed in twice, a view or witnessed local each decline); the falsifiers
+are `LOFT_STRICT_STORES` / `LOFT_POISON` / the native leak check on the cells.
 **`LOFT_NO_ELEMENT_IN_PLACE=1`** (@PLN164 C1, `@FR-R-InPlaceLiteral`, parse time, BOTH
 backends) makes `v[i] = S { … }` build its record in a temp store and deep-copy it into the
 slot again — with it off, the literal writes the slot's fields, as the FIELD destination

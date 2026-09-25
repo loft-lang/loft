@@ -2486,6 +2486,45 @@ to bisect to.
   5 000 pieces, which the twin pays too.  `mat4_mul` (37×) DECLINES —
   it fills its result before reading `mb` — and stays where it is: its cost is the mint
   of a 16-float vector per call, which no copy rule removes.
+  **BUILT 2026-09-24** (`LOFT_NO_REBIND_PLACE`, `LOFT_TRACE_REBIND`), in three pieces.
+  The parser (`Parser::rebind_safe_literal`, on every exit literal built into an offered
+  buffer): a vector field's `OpAppendVector` into the buffer becomes `OpReplaceVector`,
+  whose runtime self-test is `(H-CopySelf)` and whose clear releases (`(H-ClearRelease)`,
+  `Stores::vector_replace`), and its zeroing default is dropped; a SCALAR field expression
+  that reads a by-value parameter of the buffer's type is staged into a temp ahead of the
+  first write (native's value-record tuple emits those temps ahead of the tuple); and a
+  body whose LAST statement is an explicit `return` now takes the buffer road at all —
+  until then only a bare tail did, so every `return S { … }`-ending function, the shape the
+  libraries write, minted a store per exit and its callers copied.  `return <by-value
+  parameter>` is admitted as an exit beside the literals.  The scope pass
+  (`src/rebind_place.rs`, after `place_result`): at `x = f(x, …)` the hidden buffer
+  argument becomes `x` — the one IR change; the `Set` stays, since the bind's identity
+  test already frees nothing when the result is its argument.  Admission reads the
+  callee's IR (the parser lowered it first): every exit answers the parameter or a literal
+  into `__retbuf` whose writes consult the parameter only through the staged temps or the
+  same-field self-view replace, and no vector field keeps a zeroing default.  DECLINES,
+  measured on the cells: a text or reference field read off the parameter (not staged),
+  a vector read at another of the parameter's fields (the two-vector swap), a vector
+  field built from a literal list or omitted, a chain exit, a promoted buffer, the local
+  handed in twice, a view local, a witnessed local, recursion.  Measured on the zttext
+  bench, same binary (`LOFT_NO_REBIND_PLACE=1` 88.5 ms/op, 211×): `delete_range` 4.1 ms/op
+  (**138× → 9.6×**, the twin's lane noisy at ±5 %), `insert_text` 95× → 63× (its own `nb`
+  copy of the buffer remains, the library's algorithm), `invert` 118× → 99× — `apply_op`'s
+  exits are CHAINS
+  (`return delete_range(d, …)`), the next admission to write: a chain whose callee is
+  rebind-safe on the parameter it is handed and whose buffer is handed on answers the
+  buffer too.  21 sites admitted across 6 corpus files; the cells
+  `a-rebind-from-a-call-taking-the-same-local-keeps-its-values` c1–c20 pass on both
+  backends under the falsifiers, and a build with the staging and the consults-the-
+  parameter decline struck fails them.  **Found on the way, and fixed:** the interpreter's
+  pre-Set free of a local rebound from a CALL released the store the local was displacing
+  before the call ran — and once a callee builds into a pooled buffer (`OpClear` on
+  re-entry), that store IS the buffer, so the second pass of `x = a ?? mk(i)` wrote its
+  record into a freed store (`a-join-bound-local-owns-what-it-was-handed` jo2 read a stale
+  id; garbage under `LOFT_POISON`).  Native had always freed by identity after the call.
+  The Set now takes the guarded post-free (`state/codegen.rs`, `@FR-O-Buffer`); the
+  bare-tail road had carried the defect since @PLN157 § V, pinned by
+  `a-pooled-buffer-outlives-the-reassign-of-the-local-it-fills`.
 - **`(R-Compact)`** — a vector rebuilt from its own elements, `te_new += [h.entries[i]]
   … h.entries = te_new`: dryopea `truncate_to` / `drop_oldest` **178×** (a prefix, a
   suffix; every entry owns two vectors, copied per push today, untouched in place),
@@ -2560,8 +2599,9 @@ emitted Rust of its headline row before any emitter code: `delete_range` with `v
 handed as the buffer and the `buf` copy struck, `truncate_to` as a length set plus the
 per-element release, `write_text` with the two tables hoisted to statics,
 `mat4_transform` with `p` carried as three floats — the price the twin sets is the
-ceiling each is measured against.  **NOT BUILT** (2026-09-24): written from the wide
-pass's measurements, ahead of the code, so that the code changes to match them.
+ceiling each is measured against.  Written 2026-09-24 from the wide pass's measurements,
+ahead of the code, so that the code changes to match them; `(R-Rebind)` was built the same
+day (its entry above), the other three are NOT BUILT.
 
 ## Validating the emitted routines against their assumptions
 

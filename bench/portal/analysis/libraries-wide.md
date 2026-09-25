@@ -154,3 +154,22 @@ without `#[inline]`, 12.7 % of `write_text`'s hand-priced remainder; inlined, it
 pair, and the dead span a non-text element binds folds away.  `write_text` re-measured
 124× (the row is the two tables rebuilt per glyph, `(R-Const)`; the inline is for what
 follows it).
+
+**`(R-Rebind)` BUILT (2026-09-24, `LOFT_NO_REBIND_PLACE`).**  Three pieces: the parser makes
+every exit literal built into an offered buffer safe when that buffer is a by-value parameter's
+record (appends into vector fields → `OpReplaceVector`, self-detecting and releasing; scalar
+reads of the parameter staged ahead of the first write), admits `return <parameter>` beside the
+literals, and — the change with the widest reach — lets a body whose LAST statement is an
+explicit `return` take the buffer road at all: until now only a bare tail did, so every
+`return S { … }`-ending function minted a store per exit and its callers copied.  The scope
+pass (`src/rebind_place.rs`) then hands `x` in as the buffer at `x = f(x, …)` where the
+callee's IR proves its exits safe.  Same binary, zttext: `delete_range` 88.5 → 4.1 ms/op
+(**211× → 9.6×** on that binary's own A/B; 138× on the portal's earlier row), `insert_text`
+95× → 63× (the library's own copy of the buffer into `nb`
+remains), `invert` 118× → 99× — `apply_op`'s exits are chains (`return delete_range(d, …)`),
+the next admission to write.  Falsified: a build with the staging struck fails the scalar
+swap on the interpreter, one with the consults-the-parameter decline struck fails the
+vector-field swap on native.  21 sites admitted across 6 corpus files.  Found on the way and fixed: the interpreter pre-freed the store a local rebound from a
+call was displacing, which with a pooled buffer is the buffer itself — a use-after-free the
+bare-tail road had carried since @PLN157 § V, visible once `return`-ending bodies took the
+same road (`@FR-O-Buffer`, `a-pooled-buffer-outlives-the-reassign-of-the-local-it-fills`).

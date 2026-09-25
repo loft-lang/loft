@@ -9198,6 +9198,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // live: decided here, after the scan has settled the function's frees and before the
         // slot intervals are computed off the final IR.  One home for both backends.
         crate::place_result::rewrite(data, d_nr);
+        // `@FR-R-Rebind` — `x = f(x, …)` hands the callee x's own record as its buffer:
+        // decided here for the same reason, on the same settled IR.
+        crate::rebind_place::rewrite(data, database, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {

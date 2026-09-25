@@ -2689,6 +2689,19 @@ impl Output<'_> {
                 .get(&self.def_nr)
                 .map(|f| f.iter().map(|(_, rt)| *rt).collect())
                 .unwrap_or_default();
+            // `@FR-R-Rebind` — the STAGED reads the parser put in front of the writes
+            // (`Parser::rebind_safe_literal`): a scalar the literal reads off a by-value
+            // parameter of its own type, bound to a temp before the first write so the
+            // literal can be built onto that parameter's record.  The tuple reads those
+            // temps, so they are emitted ahead of it as the statements they are; a `Set`
+            // is the only statement the parser puts in an `Object` block besides its writes.
+            for op in &bl.operators {
+                if matches!(op.unspan(), Value::Set(..)) {
+                    self.indent(w)?;
+                    self.output_code_inner(w, op)?;
+                    writeln!(w, ";")?;
+                }
+            }
             // An `Object` that RETURNS what it builds (`hoist::object_own_return`): the
             // tuple is evaluated first, the block's other statements — the frees the
             // return owes — run in their order, and the tuple is returned.
@@ -2815,7 +2828,7 @@ impl Output<'_> {
                 };
                 for op in &bl.operators {
                     match op.unspan() {
-                        Value::Return(_) | Value::Var(_) | Value::Line(_) => {}
+                        Value::Return(_) | Value::Var(_) | Value::Line(_) | Value::Set(..) => {}
                         o if builds(o) => {}
                         _ => {
                             self.indent(w)?;
