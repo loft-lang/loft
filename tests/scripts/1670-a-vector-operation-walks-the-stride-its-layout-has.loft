@@ -32,11 +32,14 @@ struct Sl { k: integer }
 struct Own { k: integer, label: text, tags: vector<integer> }
 
 struct Grp { els: vector<Sl>, by_k: hash<Sl[k]> }
+struct Ss { k: integer }
+struct SortedGrp { els: vector<Ss>, by_k: sorted<Ss[k]> }
 struct OwnGrp { owns: vector<Own>, by_own: hash<Own[k]> }
 
 fn di(v: vector<Si>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
 fn dl(v: vector<Sl>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
 fn do_(v: vector<Own>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
+fn ds(v: vector<Ss>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
 
 // 1 — the INLINE layout, which was always right.  The control that says the cells below
 // measure the layout and not the operation.
@@ -112,4 +115,23 @@ fn test_reverse_keeps_what_the_linked_elements_own() {
   assert(first.label == "own-11", "own first label {first.label}, want own-11");
   assert((first.tags[0] ?? -1) == 11, "own first tags[0] {first.tags[0] ?? -1}, want 11");
   assert(len(g.by_own) == 12, "own: keyed len {len(g.by_own)}, want 12");
+}
+
+// 6 — the layout is triggered by ANY keyed kind over the element type, not by a `hash`: a
+// `sorted` links the vector the same way, and a guard that only ever spells `hash` is pinning
+// the trigger rather than the rule.
+fn test_the_layout_a_sorted_triggers_reverses_the_same() {
+  a: vector<Ss> = [Ss { k: 1 }, Ss { k: 2 }, Ss { k: 3 }];
+  a.reverse();
+  assert(ds(a) == "3,2,1,", "sorted-linked odd: {ds(a)}, want 3,2,1,");
+
+  b: vector<Ss> = [Ss { k: 1 }, Ss { k: 2 }, Ss { k: 3 }, Ss { k: 4 }];
+  b.reverse();
+  assert(ds(b) == "4,3,2,1,", "sorted-linked even: {ds(b)}, want 4,3,2,1,");
+
+  w = SortedGrp { els: [Ss { k: 10 }, Ss { k: 20 }, Ss { k: 30 }], by_k: [] };
+  w.els.reverse();
+  assert(ds(w.els) == "30,20,10,", "sorted group: {ds(w.els)}, want 30,20,10,");
+  assert(len(w.by_k) == 3, "sorted group: keyed len {len(w.by_k)}, want 3");
+  assert(w.by_k[20] != null, "sorted group: key 20 stopped being findable");
 }

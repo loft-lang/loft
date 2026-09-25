@@ -51,11 +51,14 @@ struct Tl { k: integer }
 struct Own { k: integer, label: text, tags: vector<integer> }
 
 struct Holder { els: vector<Tl>, by_k: hash<Tl[k]> }
+struct Ts { k: integer }
+struct SortedHolder { els: vector<Ts>, by_k: sorted<Ts[k]> }
 struct OwnBox { owns: vector<Own>, by_own: hash<Own[k]> }
 
 fn dump_i(xs: vector<Ti>) -> text { s = ""; for x in xs { s += "{x.k},"; } return s; }
 fn dump_l(xs: vector<Tl>) -> text { s = ""; for x in xs { s += "{x.k},"; } return s; }
 fn dump_o(xs: vector<Own>) -> text { s = ""; for x in xs { s += "{x.k},"; } return s; }
+fn dump_s(xs: vector<Ts>) -> text { s = ""; for x in xs { s += "{x.k},"; } return s; }
 
 // 1 — the INLINE layout, which was always right.  The control: it is what says the linked
 // cells below are measuring the layout and not the rule.
@@ -159,4 +162,19 @@ fn test_the_survivors_of_a_negative_removal_keep_their_values() {
   assert(second.label == "two", "survivor 1 label {second.label}, want two");
   assert(len(second.tags) == 2, "survivor 1 tags len {len(second.tags)}, want 2");
   assert((second.tags[1] ?? 0) == 33, "survivor 1 tags[1] {second.tags[1] ?? 0}, want 33");
+}
+
+// 7 — the layout is triggered by ANY keyed kind, so the guard must not be a `hash` guard: a
+// `sorted` over the element type links the vector exactly the same way.  Without this cell the
+// axis the file moves is "does a hash exist", which is not the rule.
+fn test_the_layout_a_sorted_triggers_answers_the_same() {
+  a: vector<Ts> = [Ts { k: 1 }, Ts { k: 2 }, Ts { k: 3 }];
+  a.remove(-1);
+  assert(dump_s(a) == "1,2,", "sorted-linked -1: {dump_s(a)}, want 1,2,");
+
+  w = SortedHolder { els: [Ts { k: 10 }, Ts { k: 20 }, Ts { k: 30 }], by_k: [] };
+  w.els.remove(-1);
+  assert(dump_s(w.els) == "10,20,", "sorted group -1: {dump_s(w.els)}, want 10,20,");
+  assert(len(w.by_k) == 2, "sorted group -1: keyed len {len(w.by_k)}, want 2");
+  assert(w.by_k[30] == null, "sorted group -1: key 30 is still findable");
 }
