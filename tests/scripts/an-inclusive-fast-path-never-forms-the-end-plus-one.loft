@@ -22,6 +22,10 @@
 // ordinary in-range loop.  The last two cells are the push WINDOW (`v += [x]` with a value that
 // depends on the counter), a sibling rewrite with its own local counter, at the same maximum.
 //
+// @falsified-at: 838779752 — native exit 1 -> 0, native panicked -> clean; interpret INERT
+//   (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/an-inclusive-fast-path-never-forms-the-end-plus-one.patch —
+//   the same channels.
 // CHANNEL: the exit code — the panic ends the run, identically for every to-maximum cell.
 // WITNESS: `attempt to add with overflow` from the generated fill tail, on --native only.
 // HOLDS: the interpreter answers every cell on both trees; the controls answer on both
