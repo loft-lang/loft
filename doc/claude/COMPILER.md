@@ -351,6 +351,19 @@ pass-2-only def or attr.  The appends are safe precisely because they are
 name-keyed and trailing: call sites are re-parsed in pass 2 against the final
 attr list, and no pass-1 number moves.
 
+**The contract presumes both passes parse the SAME text, and the lexer is what makes that true
+(loft#1648).**  Each pass `switch`es to every source again, and a file read twice from disk can
+change in between: a registry package another process is still extracting into the shared
+`~/.loft/registry/`, a concurrent `loft install`, an editor save.  Parsed from two texts, the
+passes mint different definitions and H5 refuses a program nothing is wrong with. That was the
+flaky *"pass-2-only definition `Coord`"* suite start, `Coord` being a struct of the `graphics`
+package.  So `Lexer::switch` keeps the bytes of the first read of each path
+(`parse_snapshot`) and answers every later switch to it in the same parse from them;
+`Parser::parse_main` clears the snapshot at the start of each parse (`Lexer::begin_parse`), so the
+next parse reads the disk as it is then.  Text scans that run beside the parse (the auto-`use`
+pre-scan, the declared-name count) read through `Lexer::source_text`, so they see the same bytes.
+Guard: `lexer::test::one_parse_reads_a_file_once_and_the_next_parse_reads_it_again`.
+
 The snapshot is taken AFTER `reserve_late_return_buffers`, which is what lets a buffer be
 reserved between the passes for a return type pass 1 could not classify (#675). That is also
 the limit of what this check can see: it compares COUNTS. A fix aimed at the count can leave

@@ -10,8 +10,7 @@ use crate::diagnostics::{Diagnostics, Fix, FixKind, Level, diagnostic_format};
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::fmt::{Debug, Display, Formatter};
-use std::fs::File;
-use std::io::{BufRead, BufReader, Result as IoResult};
+use std::io::Result as IoResult;
 use std::iter::Peekable;
 use std::rc::Rc;
 use std::vec::IntoIter;
@@ -145,6 +144,18 @@ pub struct Lexer {
     /// (REPL snippets, probes, live-reload's "<live-reload>") — names like
     /// `<probe>` are not openable paths on any platform.
     virtual_files: std::collections::HashMap<String, String>,
+    /// The bytes each file on disk had when this parse first read it (loft#1648).
+    ///
+    /// A parse reads every source TWICE — pass 1 and pass 2 each `switch` to it — and the
+    /// two passes must parse ONE program: the H5 contract compares their definitions and
+    /// refuses a divergence.  Read from disk both times, a file that changed in between (a
+    /// registry package another process was still extracting, a concurrent `loft install`,
+    /// an editor save) was parsed from different bytes, and H5 fired on a program nothing was
+    /// wrong with — the flaky "pass-2-only definition" start.  So the first read keeps the
+    /// bytes and every later `switch` to that path in the SAME parse answers them.  Cleared by
+    /// [`Self::begin_parse`] at the start of each parse, so the next one sees the disk as it
+    /// is then.
+    parse_snapshot: std::collections::HashMap<String, String>,
     iter: Peekable<IntoIter<char>>,
     peek: LexResult,
     /// Keep the scanned items in memory when a Link is created to return when reverted to this link.
@@ -448,6 +459,7 @@ impl Default for Lexer {
         let cfg = LexConfig::default();
         Lexer {
             virtual_files: std::collections::HashMap::new(),
+            parse_snapshot: std::collections::HashMap::new(),
             prev_end: Position {
                 file: String::new(),
                 line: 0,
@@ -520,6 +532,7 @@ impl Lexer {
     ) -> Lexer {
         Lexer {
             virtual_files: std::collections::HashMap::new(),
+            parse_snapshot: std::collections::HashMap::new(),
             prev_end: Position {
                 file: filename.to_string(),
                 line: 0,
@@ -2083,7 +2096,14 @@ impl Lexer {
             self.restart(filename);
             return;
         }
-        let Ok(fp) = File::open(filename) else {
+        if let Some(content) = self.parse_snapshot.get(filename) {
+            // `str::lines`, the same splitting `BufRead::lines` gave the disk read.
+            let v: Vec<IoResult<String>> = content.lines().map(|l| Ok(String::from(l))).collect();
+            self.lines = Box::new(v.into_iter());
+            self.restart(filename);
+            return;
+        }
+        let Ok(bytes) = std::fs::read(filename) else {
             // Mistyping the path is one of the commonest FIRST things anyone does
             // (`loft examples/helo.loft`), so answer it the way a mistyped
             // function or type is answered: name the file and offer the nearest
@@ -2096,8 +2116,39 @@ impl Lexer {
             self.diagnostics.add(Level::Fatal, &msg);
             return;
         };
-        self.lines = Box::new(BufReader::new(fp).lines());
+        // A file that is not UTF-8 keeps the line reader it always had, which reports the
+        // offending line through the lexer rather than failing the open.
+        let content = match String::from_utf8(bytes) {
+            Ok(content) => content,
+            Err(e) => {
+                let reader = std::io::BufRead::lines(std::io::Cursor::new(e.into_bytes()));
+                self.lines = Box::new(reader);
+                self.restart(filename);
+                return;
+            }
+        };
+        let v: Vec<IoResult<String>> = content.lines().map(|l| Ok(String::from(l))).collect();
+        self.parse_snapshot.insert(filename.to_string(), content);
+        self.lines = Box::new(v.into_iter());
         self.restart(filename);
+    }
+
+    /// The text this parse read for `filename` — an in-memory source, or the snapshot the
+    /// first `switch` to it took — or `None` when this parse has not read it.  Anything that
+    /// scans a source's TEXT next to the parse (the auto-`use` pre-scan) asks this first, so
+    /// it reads the bytes the parse parsed rather than the disk at a later moment.
+    #[must_use]
+    pub fn source_text(&self, filename: &str) -> Option<&str> {
+        self.virtual_files
+            .get(filename)
+            .or_else(|| self.parse_snapshot.get(filename))
+            .map(String::as_str)
+    }
+
+    /// Start a new parse: forget the bytes the previous one read, so this one reads the disk
+    /// as it is NOW, once per file, for both its passes.  See `parse_snapshot`.
+    pub fn begin_parse(&mut self) {
+        self.parse_snapshot.clear();
     }
 
     fn restart(&mut self, filename: &str) {
@@ -2701,6 +2752,32 @@ mod test {
     }
 
     use super::*;
+
+    /// loft#1648 — both passes of ONE parse read a file's bytes once, and the next parse
+    /// reads the disk again.  A file rewritten between the passes (a registry package still
+    /// being extracted by another process, a concurrent install, an editor save) used to be
+    /// parsed from two different texts, which the H5 contract then refused as a "pass-2-only
+    /// definition" with nothing wrong in the program.
+    #[test]
+    fn one_parse_reads_a_file_once_and_the_next_parse_reads_it_again() {
+        let path = std::env::temp_dir().join(format!("loft_1648_{}.loft", std::process::id()));
+        let path_s = path.to_string_lossy().to_string();
+        std::fs::write(&path, "first_pass_text").unwrap();
+        let mut lexer = Lexer::default();
+        lexer.begin_parse();
+        lexer.switch(&path_s);
+        test_id(&lexer, "first_pass_text");
+        // Rewritten between the two passes, as a concurrent extraction would.
+        std::fs::write(&path, "second_pass_text").unwrap();
+        lexer.switch(&path_s);
+        test_id(&lexer, "first_pass_text");
+        // A new parse sees the disk as it is now.
+        lexer.begin_parse();
+        lexer.switch(&path_s);
+        test_id(&lexer, "second_pass_text");
+        let _ = std::fs::remove_file(&path);
+    }
+
     fn validate(s: &'static str, data: &[LexItem]) {
         let res = array(&mut Lexer::from_str(s, "validate"));
         assert_eq!(res, data);

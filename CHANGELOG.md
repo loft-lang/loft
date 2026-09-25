@@ -37,6 +37,12 @@ release freed the captured value, and later reads of it answered garbage without
 The result is now a copy in that case, so the captured value is left alone.  A write through the
 result (`s.v = 42.0`) no longer changes the captured value either.
 
+**A test run no longer fails at random when a library is being installed at the same time.**
+loft reads each source file twice while compiling it. If another process was still unpacking a
+library into the shared package folder, or an editor saved a file, between those two reads, the
+compiler saw two different programs and stopped with an internal error (`pass-2-only
+definition …`); the next run passed. Each file is now read once per compile.
+
 **A collection taken out of an enum in a `match` keeps its own copy once the value is replaced.**
 In `match e { Gy { g_data } => { e = two(); g_data += [r]; … } }`, the append went into the NEW
 `e` while `len(g_data)` read the old copy: 1 where 2 is right. And when the field was a keyed

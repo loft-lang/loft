@@ -442,7 +442,7 @@ impl Parser {
         if !self.declared_fn_names.contains_key(&file) {
             let text = self
                 .lexer
-                .virtual_source(&file)
+                .source_text(&file)
                 .map_or_else(|| Self::read_source(&file), str::to_string);
             let mut counts: std::collections::HashMap<String, usize> =
                 std::collections::HashMap::new();
