@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// The REFUSED half of `1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft`: a yielded
+// lambda takes a copy of every heap value it captures (loft#1676), and a value that owns a
+// resource cannot be copied without releasing that resource twice (`(H-Copy-Refuse)`).  So
+// yielding such a lambda is a compile-time error, as yielding the existing value itself is.
+//
+// @falsified-at: ee5faae15 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 1/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1676b-a-yielded-lambda-over-a-droppable-is-refused.patch — the same channels.
+//   CHANNEL: the expectation — on the control the lambda is built with a handle to `s`, so
+//     the `@EXPECT_ERROR` goes unmatched.
+//   WITNESS: on ee5faae15 the file compiles on both backends.
+//   HOLDS: nothing runs on this tree; the refusal is the whole claim.
+
+struct H1676b { id: integer }
+fn OpDrop(self: H1676b) { }
+struct S1676b { h: H1676b }
+
+// @EXPECT_ERROR: cannot yield a lambda that captures `s`
+fn gen() -> iterator<fn() -> integer> {
+  s = S1676b { h: H1676b { id: 7 } };
+  yield fn() -> integer { s.h.id };
+}
+
+fn main() { for f in gen() { print("{f()}\n"); } }

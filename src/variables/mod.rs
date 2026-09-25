@@ -4832,6 +4832,12 @@ impl Function {
         self.variables[v as usize].captured = true;
     }
 
+    /// Undo [`Self::set_captured`]: every record that captured `v` took a copy instead
+    /// (loft#1676, a yielded lambda's own stores), so the frame owns `v` again.
+    pub fn clear_captured(&mut self, v: u16) {
+        self.variables[v as usize].captured = false;
+    }
+
     /// Register an existing variable as a work-reference so that `parse_code`
     /// inserts `Set(v, Null)` at the function body start.  This pre-reserves v
     /// in the outer scope, ensuring its frame slot survives inner-block FreeStack.

@@ -2072,6 +2072,10 @@ or build a local and use that."
                 let v_nr = self.vars.var(&cap_name);
                 if v_nr != u16::MAX {
                     captured_var_nrs.push(v_nr);
+                    *self
+                        .closure_capture_builds
+                        .entry((self.context, v_nr))
+                        .or_insert(0) += 1;
                     // mark as captured so test_used does not emit
                     // a false "never read" warning.  Do NOT call var_usages —
                     // that would interfere with the dead-assignment check.
@@ -6728,6 +6732,152 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         let owned_tp = Type::Vector(Box::new(elm), Deps::frame1(o));
         *val.unspan_mut() = crate::data::v_block(ops, owned_tp.clone(), "tuple_member_copy");
         Some(owned_tp)
+    }
+
+    /// A capturing lambda a `yield` hands over gets STORES OF ITS OWN — `formal/coroutines.md`
+    /// `(G-Own)`'s fn-ref clause, the owner's ruling on loft#1676.  Every HEAP capture the closure
+    /// record would have named (`OpSetDbRef(__clos, pos, v)`, a handle to the generator's own
+    /// local) is copied into a fresh local first, and the record names — and so ADOPTS
+    /// (`@FR-L-CapOwn`) — the copy.  The generator keeps `v`; the consumer's closure releases
+    /// its copy when it dies.  A record, a vector and a keyed collection copy as a plain bind
+    /// copies them; a type that owns a droppable is refused, as a yield of an existing one is
+    /// (`(H-Copy-Refuse)`).  A scalar or text capture is already a value in the record.
+    ///
+    /// Shared, the capture was a handle into the generator's frame: a closure kept past the
+    /// generator read a released store, and two lambdas over one `v` corrupted it on both
+    /// backends, differently.  The store the rebuild DISPLACED (the previous pass's record) is
+    /// the consumer's now, so the displaced release the build prefixes is dropped with it.
+    pub(crate) fn yield_owned_closure(&mut self, val: &mut Value) {
+        if self.first_pass {
+            return;
+        }
+        let Value::Block(bl) = val.unspan_mut() else {
+            return;
+        };
+        if bl.name != "fn_ref_with_closure" {
+            return;
+        }
+        let Some(Value::FnRef(_, w, _)) = bl.operators.last().map(Value::unspan) else {
+            return;
+        };
+        let w = *w;
+        if w == u16::MAX {
+            return;
+        }
+        let set_dbref = self.data.def_nr("OpSetDbRef");
+        let ops = std::mem::take(&mut bl.operators);
+        // Everything before the record's own `Set(w, Null)` is the displaced release.
+        let start = ops
+            .iter()
+            .position(|o| matches!(o, Value::Set(v, n) if *v == w && matches!(**n, Value::Null)))
+            .unwrap_or(0);
+        let mut out = Vec::with_capacity(ops.len());
+        for op in ops.into_iter().skip(start) {
+            let Value::Call(d, args) = &op else {
+                out.push(op);
+                continue;
+            };
+            let captured = match (
+                args.first().map(Value::unspan),
+                args.get(2).map(Value::unspan),
+            ) {
+                (Some(Value::Var(r)), Some(Value::Var(c))) if *d == set_dbref && *r == w => {
+                    Some(*c)
+                }
+                _ => None,
+            };
+            let Some(c) = captured else {
+                out.push(op);
+                continue;
+            };
+            let tp = self.vars.tp(c).clone();
+            if matches!(tp, Type::RefVar(_)) {
+                out.push(op);
+                continue;
+            }
+            if self.data.type_owns_droppable_anywhere(tp.base()) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot yield a lambda that captures `{}` — a yielded lambda gets a copy of \
+                     what it captures, and `{}` owns a resource, so the copy would release it a \
+                     second time",
+                    self.vars.name(c),
+                    tp.source_name(&self.data)
+                );
+                out.push(op);
+                continue;
+            }
+            let Some((copy_ops, o)) = self.yield_capture_copy(c, &tp) else {
+                out.push(op);
+                continue;
+            };
+            out.extend(copy_ops);
+            let mut args = args.clone();
+            args[2] = Value::Var(o);
+            out.push(Value::Call(*d, args));
+            self.vars.set_captured(o);
+            let key = (self.context, c);
+            let copied = self.yield_copied_captures.entry(key).or_insert(0);
+            *copied += 1;
+            if self.closure_capture_builds.get(&key).copied().unwrap_or(0) <= *copied {
+                // Every record that captured `v` so far took a copy: the generator's `v` is
+                // its own again, and its frame releases it.  A later kept build marks it again.
+                self.vars.clear_captured(c);
+            }
+        }
+        bl.operators = out;
+    }
+
+    /// The owned copy [`Self::yield_owned_closure`] hands a record in place of capture `c`,
+    /// and the ops that build it — the copy a plain bind makes of each heap kind.
+    fn yield_capture_copy(&mut self, c: u16, tp: &Type) -> Option<(Vec<Value>, u16)> {
+        let owned = tp.with_deps(&Deps::none());
+        if let Type::Vector(elm, _) = owned.base() {
+            let elm = (**elm).clone();
+            let o = self.create_unique("ycap", &owned.base().clone());
+            self.vars.defined(o);
+            let mut ops = self.vector_db(&elm, o);
+            let elem_tp = self.append_elem_tp(&elm);
+            ops.push(self.cl(
+                "OpAppendVector",
+                &[Value::Var(o), Value::Var(c), Value::Int(elem_tp)],
+            ));
+            return Some((ops, o));
+        }
+        if is_keyed(&owned) {
+            let kt = self.keyed_known_type(&owned)?;
+            let o = self.create_unique("ycap", &owned.base().clone());
+            self.vars.defined(o);
+            let ops = vec![
+                v_set(o, Value::Null),
+                self.cl("OpDatabase", &[Value::Var(o), Value::Int(i32::from(kt))]),
+                self.cl(
+                    "OpReplaceKeyed",
+                    &[Value::Var(c), Value::Var(o), Value::Int(i32::from(kt))],
+                ),
+            ];
+            return Some((ops, o));
+        }
+        let d_nr = match owned.base() {
+            Type::Reference(d, _) | Type::Enum(d, true, _) => *d,
+            _ => return None,
+        };
+        let kt = self.data.def(d_nr).known_type();
+        if kt == u16::MAX {
+            return None;
+        }
+        let o = self.create_unique("ycap", &owned.base().clone());
+        self.vars.defined(o);
+        let ops = vec![
+            v_set(o, Value::Null),
+            self.cl("OpDatabase", &[Value::Var(o), Value::Int(i32::from(kt))]),
+            self.cl(
+                "OpCopyRecord",
+                &[Value::Var(c), Value::Var(o), Value::Int(i32::from(kt))],
+            ),
+        ];
+        Some((ops, o))
     }
 
     /// Make the value a `yield` hands over one the consumer owns — `formal/coroutines.md`

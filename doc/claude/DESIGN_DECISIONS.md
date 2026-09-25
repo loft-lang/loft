@@ -4342,3 +4342,40 @@ repository's corpus alone.
 - **Revisit when** — for what stands: a keyed type has a use a record set genuinely cannot
   express (C110's own trigger, unchanged); or a target wants an OPEN set of hole kinds, with
   third parties opting their own types in, and says so.
+
+---
+
+## C128 — a yielded lambda owns copies of what it captures
+
+**Catalogue:** loft#1676 · `formal/coroutines.md` `(G-Own)`
+
+### Question
+
+A generator yields a lambda that captures one of the generator's heap locals.  Does the lambda
+share the local with the generator (the rule for a lambda that is NOT yielded), or does it get
+a value of its own?
+
+### Decision
+
+**Its own stores.**  The owner, 2026-09-25: *"I do not mind if a fn yield gets its own stores,
+as long as they are released correctly, this is a semantic decision, actual rustc however can
+still decide to actually reuse the store on this point if that is safe."*
+
+So every heap capture of a yielded lambda is copied at the yield into a store the closure
+record owns and releases.  A lambda that is not yielded still shares (`(L-CapWrite)`, "heap is
+shared"), and a `&` capture still aliases its caller.  The copy is the SEMANTICS; eliding it
+where no difference is observable is an optimisation the rule allows.
+
+### Why
+
+The alternatives were measured before the ruling: sharing the local means the closure outlives
+the frame that owns it, which needs either a refusal (loses the feature) or a yielded closure
+that keeps the generator's frame alive (a second owner of the frame, `(G-Hold)` extended).  A
+copy is what `(G-Own)` already does for a yielded record: a generator hands out values, not
+windows into its own state.
+
+### Consequence
+
+A yielded lambda's writes to a captured heap value reach its copy, not the generator — a
+program that relied on the generator seeing them reads the generator's own value instead.  No
+corpus program did.

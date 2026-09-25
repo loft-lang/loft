@@ -238,6 +238,14 @@ fn channel_0_carries(tp: &Type) -> bool {
 /// `(integer, P)` carries a [`YieldSlot::Ref`] and is not.
 #[must_use]
 pub fn eager_tuple_kinds(tp: &Type) -> Option<Vec<YieldSlot>> {
+    // A yielded fn-ref rides the eager buffer as the two `i64` images the lazy `next_into`
+    // path already writes (`d_nr | store_nr << 32`, then `rec | pos << 32`), so the consumer's
+    // channel-2 rebuild reads both paths alike.  Buffering the closure HANDLE is sound because
+    // each yield builds a record of its own and hands it over (`(G-Own)`, loft#1676): no later
+    // iteration rewrites a record an earlier slot names.
+    if matches!(tp.base(), Type::Function(..)) {
+        return Some(vec![YieldSlot::Int, YieldSlot::Int]);
+    }
     let kinds = tuple_kinds(tp)?;
     kinds
         .iter()
@@ -319,15 +327,25 @@ pub fn yield_handed_over(tp: &Type) -> bool {
 #[must_use]
 pub fn yield_handed_temps(data: &Data, def_nr: u32, val: &Value) -> Vec<u16> {
     let def = data.def(def_nr);
-    if !matches!(def.returned().base(), Type::Iterator(inner, _) if yield_handed_over(inner)) {
+    // A yielded LAMBDA hands over its closure record too (loft#1676): the record holds the
+    // copies of its captures (`Parser::yield_owned_closure`), so it is the consumer's from the
+    // yield on, and a generator abandoned after it must not release it.  Asked here and not of
+    // `yield_handed_over`, which gates the VALUE copy a fn-ref does not take.
+    if !matches!(def.returned().base(), Type::Iterator(inner, _)
+        if yield_handed_over(inner) || matches!(inner.base(), Type::Function(..)))
+    {
         return Vec::new();
     }
     let vars = def.variables();
+    // A fn-ref temp holds a closure record in its handle half, so it is handed over too — the
+    // `yield from` item a delegated lambda arrives in (loft#1676).  Each forgetting site writes
+    // the null into that HALF (`Output::handed_place`, the interpreter's `+ 8`).
     let temp = |v: u16| {
         v < vars.count()
             && !vars.is_argument(v)
             && vars.is_compiler_generated(v)
-            && crate::data::is_dbref(vars.tp(v).base())
+            && (crate::data::is_dbref(vars.tp(v).base())
+                || matches!(vars.tp(v).base(), Type::Function(..)))
     };
     let mut out = Vec::new();
     handed_temps(data, val, &temp, &mut out);
@@ -347,6 +365,27 @@ pub fn yield_handed_temps(data: &Data, def_nr: u32, val: &Value) -> Vec<u16> {
 
 /// The walk behind [`yield_handed_temps`]: the value's tail, and each member of a tuple.
 fn handed_temps(data: &Data, val: &Value, temp: &impl Fn(u16) -> bool, out: &mut Vec<u16>) {
+    // A yielded lambda's closure build: the record hands over the copies it adopted as well
+    // (loft#1676) — each `OpSetDbRef(record, pos, copy)` fill, whose own store the dependency
+    // pass in `yield_handed_temps` then adds.  Abandoning the generator released them
+    // otherwise, and a kept lambda read a store the next allocation reused.
+    if let Value::Block(bl) = val.unspan()
+        && bl.name == "fn_ref_with_closure"
+        && let Some(Value::FnRef(_, w, _)) = bl.operators.last().map(Value::unspan)
+    {
+        let set_dbref = data.def_nr("OpSetDbRef");
+        for op in &bl.operators {
+            if let Value::Call(d, args) = op.unspan()
+                && *d == set_dbref
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(r)) if r == w)
+                && let Some(Value::Var(c)) = args.get(2).map(Value::unspan)
+                && temp(*c)
+                && !out.contains(c)
+            {
+                out.push(*c);
+            }
+        }
+    }
     let mut tail = val.unspan();
     while let Value::Block(bl) = tail {
         let Some(last) = bl.operators.last() else {
@@ -356,6 +395,8 @@ fn handed_temps(data: &Data, val: &Value, temp: &impl Fn(u16) -> bool, out: &mut
     }
     match tail {
         Value::Var(v) if temp(*v) => out.push(*v),
+        // The fn-ref spelling: its second field is the closure record's work var.
+        Value::FnRef(_, w, _) if *w != u16::MAX && temp(*w) => out.push(*w),
         Value::Call(d, args) => {
             for (a, arg) in data.def(*d).attributes().iter().zip(args) {
                 if let Value::Var(v) = arg.unspan()

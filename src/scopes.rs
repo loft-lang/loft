@@ -9856,9 +9856,18 @@ fn adopted_store_key(
     record: u32,
     a: usize,
 ) -> (u16, u32) {
+    // "Groups with nothing" has to be unique per FIELD, not per record: keyed by the record
+    // local alone, two captures of ONE record collided, read as one store with two adopters,
+    // and the second was demoted to a borrow its cascade then skipped — a leaked store per
+    // build.  Reached where a build names no capture the field's name resolves to: a yielded
+    // lambda's record names the COPY it took (loft#1676), and a record rebuilt in a loop.
+    let unique = (
+        u16::MAX,
+        (u32::from(record_local) << 16) | (a as u32 & 0xFFFF),
+    );
     let capture = function.var(&data.attr_name(record, a).clone());
     if capture == u16::MAX || builds.rebuilt_in_loop.contains(&capture) {
-        return (u16::MAX, u32::from(record_local));
+        return unique;
     }
     match builds
         .adopted
@@ -9867,7 +9876,7 @@ fn adopted_store_key(
     {
         Some((_, generation)) => (capture, *generation),
         // No build for it in this body: key it uniquely so it groups with nothing.
-        None => (u16::MAX, u32::from(record_local)),
+        None => unique,
     }
 }
 

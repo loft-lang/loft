@@ -19,6 +19,14 @@ program, and when you change the program it used to read the whole standard libr
 well.  It now reuses the standard library it already read, so a small program starts in about
 a sixth of the work it took before.  A changed standard library is still always read again.
 
+**A generator can hand out lambdas that capture its variables.**  `yield fn(a: integer) ->
+integer { v += [a]; len(v) }` used to crash when the lambda was kept after the generator
+finished, gave wrong answers when two such lambdas captured the same variable, printed an
+internal `BUG` line when a loop consumed them to the end, and did not compile with `--native`
+through `yield from`.  Each yielded lambda now gets its own copy of the values it captures, so
+it keeps working after the generator is gone, and changing the copy leaves the generator's
+variable alone.  A lambda that is not yielded still shares what it captures, as before.
+
 **A tuple returned with a list in a `hash` member keeps the list's records.**
 `fn f() -> (hash<K[k]>, integer) { v = [K { … }]; return (v, 2); }` compiled, and the caller
 read an empty hash. A `sorted` member answered the wrong record for a key, and an `index` kept

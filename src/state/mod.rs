@@ -1668,6 +1668,14 @@ impl State {
             if !vars.owns_store(v) {
                 continue;
             }
+            // A local a closure record ADOPTED is the record's to release (`@FR-L-CapOwn`), and
+            // the frame's own scope exit skips it for that reason (`capture_adoption_owns_free`).
+            // Abandonment has to agree: a yielded lambda's capture copies (loft#1676) outlive the
+            // generator in the consumer's closure, and releasing them here freed a store a live
+            // closure still reads — through a slot the copies share, which named the wrong store.
+            if vars.is_captured(v) {
+                continue;
+            }
             let slot = vars.stack(v);
             if slot == u16::MAX {
                 continue;
@@ -2222,6 +2230,27 @@ impl State {
             && value_size == size_ref()
         {
             self.put_stack(DbRef::NULL);
+            return;
+        }
+        // loft#1676 — the FN-REF channel's null is the pair a typed fn-ref null is everywhere
+        // else (`codegen::gen_null`'s `Type::Function` arm): the null `d_nr`, then the
+        // null-closure sentinel.  Zero bytes made the closure half `{store 0, rec 0}` — the
+        // STACK store — so a drained `for` over a fn-ref generator freed a value the exhausting
+        // advance never produced, and the free printed `BUG (#306)` on every run.
+        if tag == 2 && value_size == 8 + size_ref() {
+            let step = self.stack_step(value_size);
+            self.ensure_stack(step);
+            let dst = self.database.store_mut(&self.stack_cur).addr_span_mut(
+                self.stack_cur.rec,
+                self.stack_cur.pos + self.stack_pos,
+                value_size as usize,
+            );
+            unsafe {
+                std::ptr::write_bytes(dst, 0, value_size as usize);
+                std::ptr::write_unaligned(dst.cast::<i64>(), i64::MIN);
+                std::ptr::write_unaligned(dst.add(8).cast::<DbRef>(), DbRef::NULL);
+            }
+            self.stack_pos += step;
             return;
         }
         match value_size {
