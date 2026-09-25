@@ -5,6 +5,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Language Server + Debug Adapter — design
 
+**Status: FINISHED (closed 2026-09-25).**  loft-lsp and loft-dap are built through every
+LSP.1–LSP.3 step and every DAP advanced tool; the last one, `pause`, is gated by
+`tests/dap_transport.rs::pause_stops_a_running_program_and_continue_resumes_it`.  The
+follow-ups named below as "Remaining" (the strict-index codeAction, extract-function, the rename
+tail, per-worker `par` threads, the dedicated marketplace plugins) moved to **@PLN171**; the
+browser-hosted server belongs to **@PLN62**.
+
 Loft's editor-integration story is built around two protocol-agnostic
 servers that any modern IDE knows how to consume:
 
