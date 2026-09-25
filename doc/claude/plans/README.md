@@ -775,7 +775,7 @@ already built, and the library-integration audit), [`RENDERER.md`](144-2d-stage/
 
 **Not in these plans, on purpose:** co-op lives in
 [`lib_plans/64-game-client`](../lib_plans/64-game-client/README.md); the sandbox boundary is a
-rule in [LIBRARY_AUTHORING.md](../LIBRARY_AUTHORING.md) § 2a, because it is a property of an API
+rule in [LIBRARY_AUTHORING.md](../LIBRARY_AUTHORING.md) § 2d, because it is a property of an API
 rather than a phase.
 
 ## Where to look for plans by state

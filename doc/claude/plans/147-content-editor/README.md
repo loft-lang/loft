@@ -152,7 +152,7 @@ free and a fix to the silhouette fixes every frame at once.
   `stage` 0.18.1 are the rest of what the editor draws with.
 - **SANDBOX.md / @PLN86** — `V2` is an application of shipped admission, not new work.
 - **The sandbox boundary and package-authoring rules** apply here as in the sibling plans; see
-  [LIBRARY_AUTHORING.md](../../LIBRARY_AUTHORING.md) § 2a.
+  [LIBRARY_AUTHORING.md](../../LIBRARY_AUTHORING.md) § 2d.
 
 ## See also
 
