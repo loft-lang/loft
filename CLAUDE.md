@@ -89,6 +89,10 @@ make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the bui
                                          #   Every new tests/scripts file records its answer
                                          #   (`@falsified-at:`, gated) — TESTING.md
 make speed                               # what got slower/faster — a REPORT, never a gate
+make speed-gate                          # the one speed GATE: a test 3x and +5 s slower than on
+                                         #   main (median speed divided out) that is STILL that slow
+                                         #   rerun alone.  Runs in `make ci` and on every Linux PR leg;
+                                         #   contention never repeats alone — scripts/test_speed_gate.py
 make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
                                          #   every bench lane here and renders ONE page,
                                          #   doc/claude/PERF_PORTAL.md — a median per mechanism

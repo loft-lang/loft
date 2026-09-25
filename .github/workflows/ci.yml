@@ -66,6 +66,8 @@ concurrency:
 
 permissions:
   contents: read
+  # The test speed gate reads main's latest green run (its job log) as the baseline.
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -776,6 +778,18 @@ jobs:
         if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
         shell: bash
         run: python3 scripts/test_duration_gate.py target/nextest/ci/junit.xml
+
+      # A test HARD slower than on main (3x and 5 s more, after the run's median speed is
+      # divided out) fails the PR — but only once the test, rerun ALONE, is still that slow:
+      # on the same commit the suite's contention alone moves single tests up to 8x, and a
+      # contention spike does not repeat.  Linux PR legs only: the baseline is main's
+      # unsharded ubuntu job.  Reads the same junit as the step above, so it stays here.
+      - name: Test speed gate
+        if: ${{ !cancelled() && steps.test.outcome == 'success' && github.event_name == 'pull_request' && runner.os == 'Linux' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml
 
       # Browser-render cross-check (Chrome + SwiftShader): the GPU/headless-browser
       # tests demoted off the per-PR path just above.  Runs on the DAILY schedule +
