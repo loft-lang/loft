@@ -6833,11 +6833,11 @@ impl Parser {
     /// The element reads a tuple VALUE read takes over a `&(…)` binding, with the element
     /// types, when `value` is such a binding — `None` for every other value.
     ///
-    /// `@FR-B-Ref-Uniform` / `(T-Ref)` — a `&(…)` binding denotes the bound tuple itself, so
+    /// `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the bound tuple itself, so
     /// every site that wants the tuple AS A VALUE asks here rather than testing the type's
     /// shape for `Type::Tuple`: a bare test answers no for the `&` spelling, and the two
     /// callers this has are the two the question has — a tuple PATTERN over the binding
-    /// (loft#1530) and a DESTRUCTURE of it.  `(T-Ref-Rep)` gives
+    /// (loft#1530) and a DESTRUCTURE of it.  `@FR-T-Ref-Rep` gives
     /// the binding two representations and the reads follow each: a STACK-backed tuple (all
     /// scalar members) is projected through the reference with `TupleGet`, which the
     /// generators already read that way; a `__tuple<…>` RECORD is unboxed the way a record

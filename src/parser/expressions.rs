@@ -6992,8 +6992,8 @@ use a separate collection or add after the loop"
             }
             let mut rhs = Value::Null;
             let mut rhs_type = self.expression(&mut rhs);
-            // `@FR-B-Ref-Uniform` / `(T-Ref)` — a `&(…)` binding denotes the bound tuple
-            // itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
+            // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
+            // bound tuple itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
             // shape test below asks the type for `Type::Tuple`, which answers NO for a `&`
             // spelling whichever representation `(T-Ref-Rep)` gave the binding, so the
             // destructure was refused with *"Cannot destructure a non-tuple value"* — a

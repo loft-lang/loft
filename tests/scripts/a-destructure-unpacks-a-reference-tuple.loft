@@ -1,8 +1,9 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// A `&(τ₁, …, τₙ)` binding "denotes the bound tuple itself" (formal/tuples.md `(T-Ref)`,
-// `@FR-B-Ref-Uniform`), so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  Both
-// representations `(T-Ref-Rep)` gives the binding take the destructure: an all-scalar tuple is
+// A `&(τ₁, …, τₙ)` binding "denotes the bound tuple itself" (`@FR-T-Ref`, `@FR-B-Ref-Uniform`),
+// so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does — `@FR-T-Destr` binds each name
+// to the i-th element and says nothing that excludes this source.  Both
+// representations `@FR-T-Ref-Rep` gives the binding take the destructure: an all-scalar tuple is
 // STACK-backed, one with a heap member is a `__tuple<…>` RECORD.  Neither did.  The shape test
 // at the destructure asked the type for `Type::Tuple`, which answers NO for a `&` spelling
 // whichever representation it has, so the statement was refused with *"Cannot destructure a
@@ -20,7 +21,8 @@
 //                        backends whatever the source, which `102b-pass1-expected-errors.loft`
 //                        is the home for.
 //
-// @falsified-at: PENDING
+// @falsified-at: e3cd94abf — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-destructure-unpacks-a-reference-tuple.patch — interpret exit 1 -> 0, native exit 1 -> 0
 //   CHANNEL: exit — on the control the program never runs: every destructuring cell is refused
 //   at parse (*"Cannot destructure a non-tuple value"*), so no value is computed and no leak is
 //   reachable.  Here every cell passes.  Not assert and not leak.
@@ -113,7 +115,7 @@ fn test_the_destructure_reads_the_tuple_at_the_statement() {
 }
 
 fn test_a_reference_tuple_local() {
-  // `(T-Ref-Src)`: the source of a `&(…)` local is a tuple VARIABLE, and the local means the
+  // `@FR-T-Ref-Src`: the source of a `&(…)` local is a tuple VARIABLE, and the local means the
   // same thing the parameter does.
   a = (4, 5);
   b: &(integer, integer) = a;

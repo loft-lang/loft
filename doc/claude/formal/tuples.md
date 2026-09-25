@@ -79,6 +79,14 @@ tuple-returning call: `(x, y) = pair()` unpacks the returned tuple directly (ver
 integer)`), pass one, and unpack it at the caller. Returning a tuple is the idiomatic
 "return two things," and the result is independent like any return (calls.md).
 
+⚠ **A tuple YIELDED by a generator is the one position with a decided edge, and it lives in
+another chapter.** `--native` refuses a `yield` whose tuple has a `text` member or a nested one,
+naming the type and the cure (wrap it in a struct), where `--interpret` runs it —
+[coroutines-history.md](coroutines-history.md) D-cor-2, closed 2026-08-28 with the channel ladder
+that decided it. It is written down there and was not written here, so a reader of this chapter
+met it as an ICE-shaped surprise (measured 2026-09-25, during the `(T-Destr)` walk). A decided
+edge a reader cannot reach from the rule it bounds is, for that reader, undecided.
+
 **A tuple type takes no `?`.** `(N-Opt)` licenses `τ?` for every τ and a tuple is the one former
 with no representation for absence: it is its members' bytes, so `(L-Null)`'s sentinel has no
 value to reserve and `(L-Null-Tag)`'s discriminant is for a struct stored INLINE. So
@@ -146,9 +154,12 @@ the same two cures. The gap between the rule and the model is
               element's own offset — the same `(ref, offset)` pair an ordinary struct FIELD
               uses (binding.md B-Ref).  For a parameter the tuple is the CALLER's; for a local
               it is the source variable's, so the two positions are one mechanism and not two.
-              A tuple PATTERN over the binding is a projection of every element at once, so a
-              `match` reads each element through the reference exactly as `p.i` does, and a
-              heap member read that way borrows the tuple rather than owning a copy.
+              A tuple PATTERN over the binding, and a DESTRUCTURE of it (`(a, b) = p`), are
+              each a projection of every element at once, so both read each element through the
+              reference exactly as `p.i` does, and a heap member read that way borrows the tuple
+              rather than owning a copy.  Reading the binding as a tuple has ONE home,
+              `Parser::ref_tuple_subject`; a site that tests the type for `Type::Tuple` instead
+              answers no for both representations and refuses what this rule admits.
   (T-Ref-Rep) the tuple a `&(…)` names is STACK-backed when every τᵢ is a scalar, and a
               `__tuple<τ₁, …, τₙ>` RECORD otherwise — the same record a heap-tuple RETURN and
               the loop variable over a `vector<(…)>` already are.  A tuple LOCAL that is the
@@ -208,7 +219,27 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 0.**  D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
+**OPEN: 1.**  D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
+
+- **D-tup-16** *(OPEN 2026-09-25, loft#1673)* — `(T-Ref-El)` says of a `&(…)` binding
+  *"Never a runtime fault and never an ICE"*, and a whole-value READ or WRITE of the
+  STACK-backed form is an ICE on both backends: `take(p)`, `return p` and `q = p` panic in the
+  codegen link-read ladder, `p = (…)` in its write twin.  The RECORD-backed twin answers all
+  four correctly, which is what makes this a deviation rather than an undecided edge — the two
+  representations `(T-Ref-Rep)` gives are meant to differ only in where the tuple lives, and
+  `@FR-B-Ref-Uniform` says no operation on a `&τ` is special-cased.
+
+  Two smaller faces of the same "the representation is observable" defect travel with it:
+  `print("{p}")` refuses on the stack-backed form and prints the compiler's own
+  `{_0:…,_1:…}` field spelling on the record-backed one, and both `==` diagnostics name
+  `&__tuple<text,text>`, a type no author writes (`Type::source_name` is the home for that).
+
+  The DESTRUCTURE half of the same walk is closed (2026-09-25): `(a, b) = p` answers on both
+  representations and from both sources, guarded by
+  `tests/scripts/a-destructure-unpacks-a-reference-tuple.loft`.  What remains open is the
+  whole-value position, whose cure must leave the record-backed form passing the record — at
+  those positions it already works, and materialising it would turn a reference into a deep
+  copy of its heap members.
 
 - **D-tup-10** *(CLOSED 2026-09-16, loft#1423 / loft#1451)* — `(T-Absent)` said no
   `Optional(Tuple)` exists while the code minted one wherever absence is synthesised:

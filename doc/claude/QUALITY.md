@@ -2812,12 +2812,26 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **310** |
+| **309** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-25, the `@FR-B-Ref-Uniform` walk on `tuxedo-quality-2026-09-24`, RE-MEASURED after the
+rebase onto `main` @ `989d30214` (the #1672 squash): **989 · 676 · 4 · 309**, shape tests **2518**,
+opaque **1293**; the spellings row is unmoved at `98 · 16 · 82`.  `--check-ratchet` reported `fell
+opaque_functions: 310 -> 309` and `fell  opaque_tests: 1295 -> 1293` before the rebase and reads
+AT BASELINE after it — the pin is this tree's, and the first two figures are NOT (pre-rebase they
+read `983 · 670`: main brought six more functions discriminating on a `Type` variant and all six
+see through the wrapper, so quoting the pre-rebase pair here would have described a tree that no
+longer exists).  **The drop is
+ATTRIBUTABLE and that is the interesting part**: `output_init` left the opaque list, and the code
+that put it there was a `deps` map the emitter built and never read — the audit had been naming a
+dead decoder as an opaque one the whole time, which is exactly how such a decoder reads to a
+human as well.  Deleting it moved a derived row, so a derived row can be a gauge of dead code
+and not only of live drift.)
 
 (2026-09-25, the NINTH join — `../loft2` @ `8e741579f` (#1668–#1671), `../loft3` @ `d7577c30b`
 (#1664's binding half, #1648) and `157-native-4x`'s two new commits, cherry-picked, onto `main` @
@@ -9289,6 +9303,75 @@ The **5 remaining sites spell the BARE five** — `scopes.rs`'s return-type chec
 behaviour change per site and needs its own probe.  They stay on the checklist rather than being
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
+
+### "Is this value a tuple?" — one home, and the two sites that never asked it (2026-09-25)
+
+`@FR-T-Destr` had **zero code citations and zero guards**, and `tuple` is the only mechanism class
+`make bug-review` still reports as RISING (+1.5pp, 25 of the newest band's 275 bugs; the `Tuple` IR
+variant is 78.2 % omitted across partial walkers with 59 bugs behind it).  So the rule was picked
+for what it is missing rather than for how scattered it is.
+
+**Forty cells of `(T-Destr)` are clean, and that is the first product.**  Source shape (literal,
+variable, call, vector element at a constant AND a variable index, struct field, generator, plain
+tuple parameter) × member kind (all-integer, `text` second, `text` FIRST, `float`, `u8`, a vector,
+a struct, a struct-enum, a nullable member present and absent) × position (straight-line, loop
+body, branch arm) × arity (2 and 3), on both backends, every expected value hand-computed first.
+Five arity-mismatch cells are refused identically on both backends with the count in the message
+and exit 1.  ⚠ Do not re-run this; the axes it HELD fixed are nested destructuring (refused, by
+`(T-Destr)`'s own "n names"), and `par` (the block spelling is not what I wrote and the cells
+never compiled — not measured, and not claimed).
+
+**And `(T-Destr)` is `(T-Proj)` n times, including the copy/view boundary, which the rule does not
+say.**  `(a, b) = t` binds each name exactly as `a = t.0` does: a RECORD member VIEWS (a write
+through the name reaches the tuple), a COLLECTION member COPIES, a scalar and a `text` copy —
+measured side by side in one program, both backends agreeing, which is `@FR-B-Copy` /
+`@FR-B-View-Base`'s table for a one-level projection off an owned base and not a second rule.  The
+rule text says only "bind each xᵢ to the i-th element", and a reader who needs to know whether a
+write through `b` reaches `t` cannot get it from there.  That is the shape of omission this doc
+already priced once, at `B-Copy`: three correct behaviours filed as bugs in one week.
+
+**The defect was in the one axis the rules make a promise about and the oracle never crossed: the
+`&` spelling.**  `(a, b) = p` over a `&(…)` binding was refused on both backends, in both
+representations `(T-Ref-Rep)` gives it, from both sources `(T-Ref-Src)` allows — *"Cannot
+destructure a non-tuple value"*, about a value that IS a tuple, followed by one *"Unknown
+variable"* per name because the refusal left them undefined.  The sibling arm one screen up
+already knew that second trap and types its targets anyway "so the refusal is the ONLY report"
+(loft#1423).
+
+The cause is the class `Type::peel_link`'s own doc comment describes — "a bare `matches!` against
+the un-peeled type silently answers no for every `&` spelling" — and the cure was not a peel.
+**`Parser::ref_tuple_subject` was already the one home for reading such a binding AS a tuple**,
+built for the tuple PATTERN (loft#1530) and answering both representations with the right
+ownership: `TupleGet` through the reference for the stack-backed form, `unbox_tuple_from_dbref` for
+the record, whose heap members are typed as BORROWING the binding. It had one caller. The
+destructure is its second, and its doc now asks "the tuple as a VALUE" rather than "the match
+subject" so the third asker finds it.  Emitted Rust is byte-identical on all 1561 `tests/scripts`
+files that emit — no corpus program destructures a `&(…)`, which is why this survived.
+
+**Then the same enumeration found a crash, and the record-backed twin is what proved it a
+deviation.**  loft#1673: a whole-value READ or WRITE of a **stack-backed** `&(τ, τ)` — `take(p)`,
+`return p`, `q = p`, `p = (…)` — is an ICE on both backends (`codegen.rs:5043` and `:5544`), while
+all four answer correctly on the record-backed twin.  `(T-Ref-El)` states *"Never a runtime fault
+and never an ICE"* in the rule, so this is D-tup-16 and not an undecided edge.  Two smaller faces
+travel with it: `print("{p}")` refuses on one representation and prints the compiler's own
+`{_0:…,_1:…}` spelling on the other, and both `==` diagnostics name `&__tuple<text,text>`.
+
+⚠ **The record-backed column read as "also refused" on the first pass, and it was the harness.**
+A read-only `&` parameter trips *"has & but is never modified"*, which fires BEFORE codegen and
+masks every cell behind it; adding one write through the reference turned four refusals into four
+correct answers and inverted the conclusion.  A diagnostic that fires early is a blind instrument,
+and the cell that exposed it was the one I expected to agree with its neighbour.
+
+⚠ **One more measured asymmetry, unfiled because it is a lint and not a value**: the same
+never-written `&(…)` parameter is a WARNING (`needless-reference-parameter`) when its members are
+scalars and an ERROR (*"has & but is never modified"*) when one is heap. Two decoders for one
+question, chosen by representation.
+
+⚠ **A generator yielding a tuple with a `text` member runs on `--interpret` and is REFUSED on
+`--native`** — which cost a probe before I found it recorded, because it is written down in
+`coroutines.md` (D-cor-2, closed) and nowhere in `tuples.md`, whose `(T-Ret)` says a tuple is a
+first-class value you can return and pass.  A decided edge a reader of the tuple chapter cannot
+reach is, for that reader, an undecided one.
 
 ### "Does a variable with no uses hold a store?" — the premise was written down, and it was false for one type (2026-09-25)
 
