@@ -171,7 +171,12 @@ fn admit(
     if func.is_argument(local) || func.is_compiler_generated(local) {
         return Err("the local is a parameter or a compiler temp");
     }
-    let Type::Reference(td, _) = func.tp(local) else {
+    // A NULLABILITY question, spelled (`@FR-N-Shape`): a nullable local holds no record
+    // to hand as the buffer on its null path, so the rewrite keeps to the plain spelling.
+    if func.tp(local).peel_optional().1 {
+        return Err("the local is nullable");
+    }
+    let Type::Reference(td, _) = func.tp(local).base() else {
         return Err("the local is not a dense record");
     };
     let td = *td;
@@ -237,7 +242,7 @@ fn admit(
     }
     let param_idx = param_idx.ok_or("the local is not an argument of the call")?;
     let attr = &callee.attributes()[param_idx];
-    if attr.hidden || matches!(attr.typedef, Type::RefVar(_)) {
+    if attr.hidden || matches!(attr.typedef.base(), Type::RefVar(_)) {
         return Err("the parameter receiving the local is not by value");
     }
     if attr.typedef.base().heap_def_nr() != Some(td) {

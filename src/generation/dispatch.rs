@@ -1201,6 +1201,10 @@ impl Output<'_> {
                 // boolean→u8 wrap and tripped rustc E0308 (issue #366).
                 for (idx, arg) in args.iter().enumerate() {
                     write!(w, ", ")?;
+                    // The callee this argument belongs to, for the questions `emit_call_arg`
+                    // asks of it (`(R-ValueLocal)`'s tuple parameter): this site spells the
+                    // call itself, so it names the callee as `output_call_inner` would.
+                    self.current_call_def = fn_nr;
                     self.emit_call_arg(w, callee, idx, arg)?;
                 }
                 for extra in twin_args.iter().flatten() {
@@ -1780,6 +1784,9 @@ impl Output<'_> {
                 if let Some(ref tmp) = hoisted[idx] {
                     write!(w, "{tmp}")?;
                 } else {
+                    // The callee, for `emit_call_arg`'s tuple-parameter question
+                    // (`(R-ValueLocal)`): this path spells the call itself.
+                    self.current_call_def = *call_dnr;
                     self.emit_call_arg(w, def_fn, idx, arg)?;
                 }
             }

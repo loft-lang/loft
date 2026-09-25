@@ -173,3 +173,16 @@ vector-field swap on native.  21 sites admitted across 6 corpus files.  Found on
 call was displacing, which with a pooled buffer is the buffer itself — a use-after-free the
 bare-tail road had carried since @PLN157 § V, visible once `return`-ending bodies took the
 same road (`@FR-O-Buffer`, `a-pooled-buffer-outlives-the-reassign-of-the-local-it-fills`).
+
+**`(R-ValueLocal)` BUILT (2026-09-25, `LOFT_NO_VALUE_LOCAL`).**  The TUPLE PARAMETER: a
+by-value parameter of a small no-heap record is received as its fields where the callee
+reads it only field-wise, hands it on, copies from it or answers it, and the callee's body
+writes no record of that type through any route a caller could view (a by-value record
+parameter ALIASES its argument, so the write set decides; a callee's return buffer and the
+frame's own records are set apart from it).  Call-bound `__lift_` temps are value locals
+now, so a nested call argument is served.  mesh3d, same binary, the twin 1.99 ms:
+`mat4_transform` 9.9 → 2.64 ms/op (5.0× → 1.32× — the hand-priced form to the number; the
+row read 22× before `(R-Rebind)` took the forward), `sphere` 6.5 → 4.05 ms (13×),
+`mesh_to_floats` 12.7 → 8.4 ms, `mat4_mul` 51 → 44 ms.  Left in the row: `sphere`'s
+`add_vertex` (an 8-scalar `Vertex`, past the tuple width) and `mat4_mul`'s 16-float mint.
+Cells: `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.

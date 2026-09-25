@@ -951,10 +951,14 @@ pub struct Output<'a> {
     /// is returned BY VALUE (a Rust tuple in registers, no return buffer), computed once
     /// for the whole program because the admission asks every call site.
     pub value_records: hoist::ValueRecords,
+    /// Whether `value_records` has been computed for this program — a whole-program
+    /// analysis asked once, whatever it answered (an empty answer is an answer).
+    pub value_records_done: bool,
     /// @PLN157 § V-aa — the CURRENT function's locals bound from an admitted call: each
     /// holds a Rust tuple, not a `DbRef`, so its `let` type, its field reads and its
-    /// release all take the value form.  Local → the callee's def nr.
-    pub value_record_locals: HashMap<u16, u32>,
+    /// release all take the value form.  Local → the record type its tuple carries; a
+    /// tuple PARAMETER (`(R-ValueLocal)`) is here too, seeded by `hoist::value_locals_in`.
+    pub value_record_locals: HashMap<u16, u16>,
     /// @PLN157 § V-ah — the value LEAVES of the current (admitted) function, by node
     /// address (`hoist::value_leaves`): a view `Var` emits as the tuple of its getters, an
     /// `Object` block as the tuple of its writes, and nothing else converts.
@@ -2189,7 +2193,7 @@ impl<'a> Output<'a> {
             wrapper_inline_disabled: std::env::var("LOFT_NO_WRAPPER_INLINE")
                 .is_ok_and(|v| v != "0"),
             wrapper_cache: HashMap::new(),
-            input_cache: HashMap::new(),
+            input_cache: hoist::InputCache::default(),
             push_headers: Vec::new(),
             push_hoist_disabled: std::env::var("LOFT_NO_PUSH_HOIST").is_ok_and(|v| v != "0"),
             mint_hoist_disabled: std::env::var("LOFT_NO_MINT_HOIST").is_ok_and(|v| v != "0"),
@@ -2224,6 +2228,7 @@ impl<'a> Output<'a> {
             complete_write_disabled: std::env::var("LOFT_NO_COMPLETE_WRITE")
                 .is_ok_and(|v| v != "0"),
             value_records: hoist::ValueRecords::default(),
+            value_records_done: false,
             value_record_locals: HashMap::new(),
             value_leaves: hoist::ValueLeaves::default(),
             value_phantom: None,
@@ -2508,15 +2513,28 @@ impl Output<'_> {
         self.value_phantom = None;
         self.dead_buffers.clear();
         self.forward_sites.clear();
-        if !self.value_records.fns.is_empty() {
+        // `(R-ValueLocal)` — a program with tuple PARAMETERS and no admitted function
+        // still binds value locals (the parameters themselves), so the setup runs for
+        // either table.  Measured without the second test: a `w9_key(e: const Ent, k)`
+        // whose file returned no record anywhere took the tuple in its signature and read
+        // `e` through the store in its body (E0609 over 75 corpus scripts).
+        if !self.value_records.fns.is_empty() || !self.value_records.params.is_empty() {
             self.dead_buffers = hoist::dead_buffers(self.data, def_nr, &self.value_records);
-            let admitted: HashSet<u32> = self.value_records.fns.keys().copied().collect();
-            self.value_record_locals =
-                hoist::value_locals_in(self.data, def_nr, &admitted, &self.value_records.view_offs);
-            self.forward_sites =
-                hoist::forward_sites(self.data, def_nr, &admitted, &self.value_record_locals);
+            self.value_record_locals = hoist::value_locals_in(
+                self.data,
+                def_nr,
+                &self.value_records.fns,
+                &self.value_records.params,
+                &self.value_records.view_offs,
+            );
+            self.forward_sites = hoist::forward_sites(
+                self.data,
+                def_nr,
+                &self.value_records.fns,
+                &self.value_record_locals,
+            );
             self.value_leaves = hoist::value_leaves(self.data, def_nr, &self.value_records);
-            if admitted.contains(&def_nr) {
+            if self.value_records.fns.contains_key(&def_nr) {
                 let def = self.data.def(def_nr);
                 self.value_phantom = hoist::ret_buffer_attr(def)
                     .map(|a| def.variables().var(&def.attributes()[a].name))
@@ -4399,9 +4417,13 @@ impl Output<'_> {
         }
         let mut twin_params: HashSet<(u32, u16)> = HashSet::new();
         for (g, p) in candidates {
-            if self
-                .callee_inputs_of(g)
-                .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
+            // `(R-ValueLocal)` — a TUPLE PARAMETER is the same use of the address at the
+            // call: the site reads the view's fields into the tuple where the twin read its
+            // inputs, so the view keeps its address for them.
+            if self.value_records.param_type(g, usize::from(p)).is_some()
+                || self
+                    .callee_inputs_of(g)
+                    .is_some_and(|ci| ci.scalars.iter().any(|(q, _, _)| *q == p))
             {
                 twin_params.insert((g, p));
             }
@@ -4671,10 +4693,10 @@ impl Output<'_> {
     /// holds a value-returned record, otherwise what `rust_type` says.
     #[must_use]
     pub fn local_rust_type(&self, var: u16, tp: &Type) -> String {
-        if let Some(d) = self.value_record_locals.get(&var)
-            && let Some(t) = self.value_records.tuple.get(d)
+        if let Some(tp) = self.value_record_locals.get(&var)
+            && let Some(t) = self.value_records.types.get(tp)
         {
-            return t.clone();
+            return t.tuple.clone();
         }
         // @PLN167 decision 1 — a LINKED narrow local is declared at its storage width and
         // holds its field encoding; `narrow_local_enc` wraps every write, `narrow_local_dec`
@@ -4739,8 +4761,8 @@ impl Output<'_> {
     /// and the same reference an empty-literal exit delivers.  `Default` cannot give it,
     /// because a `DbRef`'s null is a sentinel store number rather than a zero.
     #[must_use]
-    pub fn value_tuple_zero(&self, d: u32) -> String {
-        let Some(fields) = self.value_records.fields.get(&d) else {
+    pub fn value_tuple_zero(&self, tp: u16) -> String {
+        let Some(fields) = self.value_records.types.get(&tp).map(|t| &t.fields) else {
             return "Default::default()".to_string();
         };
         if !fields.iter().any(|(_, rt)| hoist::is_view_part(rt)) {
@@ -4769,25 +4791,20 @@ impl Output<'_> {
     pub(crate) fn write_tuple_fields(
         &mut self,
         w: &mut dyn Write,
-        d: u32,
+        tp: u16,
         dst: &Value,
         tuple: &str,
     ) -> std::io::Result<()> {
-        let Some(fields) = self.value_records.fields.get(&d).cloned() else {
+        let Some(fields) = self.value_records.types.get(&tp).map(|t| t.fields.clone()) else {
             return Ok(());
         };
-        let tp = self.value_records.fns.get(&d).copied();
         for (i, (off, rt)) in fields.iter().enumerate() {
             let part = Value::RawExpr(format!("{tuple}.{i}"));
             let off_v = Value::Int(i32::try_from(*off).unwrap_or(i32::MAX));
             if hoist::is_view_part(rt) {
-                let (vec_tp, elem_tp) = tp
-                    .and_then(|t| hoist::view_field_types(self.stores, t, *off))
+                let (vec_tp, elem_tp) = hoist::view_field_types(self.stores, tp, *off)
                     .unwrap_or_else(|| {
-                        panic!(
-                            "the view part at +{off} of {} has no vector type",
-                            self.data.def(d).name()
-                        )
+                        panic!("the view part at +{off} of record type {tp} has no vector type")
                     });
                 let clear = Value::Call(
                     self.data.def_nr("OpSetInt4"),
@@ -4863,7 +4880,7 @@ impl Output<'_> {
             if self
                 .value_records
                 .view_offs
-                .get(&self.def_nr)
+                .get(&tp)
                 .is_some_and(|offs| offs.contains(&i64::from(*off)))
             {
                 continue;
@@ -4878,8 +4895,7 @@ impl Output<'_> {
         // leaf replaces, and the emitter answers the place instead.
         let views: HashSet<usize> = self
             .value_records
-            .fields
-            .get(&self.def_nr)
+            .fn_fields(self.def_nr)
             .map(|fs| {
                 fs.iter()
                     .enumerate()
@@ -5426,11 +5442,34 @@ impl Output<'_> {
             .contains_key(&self.def_nr)
             .then(|| hoist::ret_buffer_attr(def))
             .flatten();
+        // `(R-ValueLocal)` — a tuple parameter is MATERIALISED into a record of its own for
+        // the parked call (the interpreter takes a `DbRef`), and that record is released
+        // after it: the mints stand before the thunk, the frees after.
+        let mut pre = String::new();
+        let mut post = String::new();
         for (i, a) in def.attributes().iter().enumerate() {
             // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted fn has no return buffer
             // parameter, so the live-reload arm must not push one either: the
             // interpreter allocates its own for the parked call.
             if dropped == Some(i) {
+                continue;
+            }
+            if let Some(tp) = self.value_records.param_type(self.def_nr, i)
+                && let Some(layout) = self.value_records.types.get(&tp)
+            {
+                let name = sanitize(&a.name);
+                let _ = write!(
+                    pre,
+                    " let __lp_{i}: DbRef = {{ let __d = OpDatabase(cell, DbRef::NULL, {tp}_i32); let __s = unsafe {{ &mut *cell.get() }};"
+                );
+                for (k, (off, rt)) in layout.fields.iter().enumerate() {
+                    let setter =
+                        hoist::tuple_field_setter(*off, rt, "__d", &format!("var_{name}.{k}"));
+                    let _ = write!(pre, " __s.store_mut(&__d).{setter};");
+                }
+                let _ = write!(pre, " __d }};");
+                let _ = write!(pushes, " st.put_stack(__lp_{i});");
+                let _ = write!(post, " OpFreeRef(cell, __lp_{i}, \"__lp_{i}\");");
                 continue;
             }
             match &a.typedef {
@@ -5467,36 +5506,16 @@ impl Output<'_> {
         // shape, a `DbRef` into the interpreter's record, while an admitted function's
         // signature says tuple.  Read the fields back out of that record, in field
         // order, so the reload path and the value path agree on what a call returns.
-        if let Some(fields) = self.value_records.fields.get(&self.def_nr) {
-            let reads: Vec<String> = fields
-                .iter()
-                .map(|(off, rt)| match *rt {
-                    "f64" => format!("__s.store(&__lv).get_float(__lv.rec, __lv.pos + {off}u32)"),
-                    "f32" => format!("__s.store(&__lv).get_single(__lv.rec, __lv.pos + {off}u32)"),
-                    "bool" => {
-                        format!("__s.store(&__lv).get_byte(__lv.rec, __lv.pos + {off}u32, 0) == 1")
-                    }
-                    // @PLN164 C5 — a VIEW LEAF is a reference, and the record the reload
-                    // arm answers holds that field at its own offset: the leaf is the
-                    // field SLOT of that record, which is what the value form hands over.
-                    hoist::VIEW_LEAF_PART => format!(
-                        "DbRef {{ store_nr: __lv.store_nr, rec: __lv.rec, pos: __lv.pos + {off}u32 }}"
-                    ),
-                    _ => format!("__s.store(&__lv).get_int(__lv.rec, __lv.pos + {off}u32)"),
-                })
-                .collect();
-            // The 1-tuple's trailing comma, as in `hoist::value_records` and the `Object`
-            // tail: this is the THIRD site that builds the tuple, and each one needs it.
-            // A single-field record made all three emit `(x)` — a parenthesised scalar —
-            // against a signature that by then said `(bool,)`.
-            let tail = if reads.len() == 1 { "," } else { "" };
+        if let Some(fields) = self.value_records.fn_fields(self.def_nr) {
+            // The tuple read back out of the record: ONE spelling (`hoist::tuple_reads`),
+            // shared with the cdylib bridge, the trailing comma of a 1-tuple included.
+            let reads = hoist::tuple_reads(fields, "__lv", "__s");
             return Some(format!(
-                "  if loft::live_dispatch::live_flipped({idx}) {{ let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); let __s: &Stores = unsafe {{ &*cell.get() }}; return ({}{tail}); }}\n",
-                reads.join(", ")
+                "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lv = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} let __s: &Stores = unsafe {{ &*cell.get() }}; return {reads}; }}\n"
             ));
         }
         Some(format!(
-            "  if loft::live_dispatch::live_flipped({idx}) {{ return loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }}); }}\n"
+            "  if loft::live_dispatch::live_flipped({idx}) {{{pre} let __lr = loft::live_dispatch::{thunk}(cell, {idx}, |st| {{{pushes} }});{post} return __lr; }}\n"
         ))
     }
 
@@ -8079,14 +8098,18 @@ extern crate loft;"
         };
         // @PLN157 § V-aa — whole-program, computed once: the admission asks every call
         // site, so it cannot be a per-function analysis.
-        if self.value_records.fns.is_empty() {
+        if !self.value_records_done {
+            self.value_records_done = true;
             self.value_records = hoist::value_records(self.data, self.stores);
+            // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
+            // from the same table, so a twin never asks for a tuple parameter's fields.
+            self.input_cache.params = self.value_records.params.clone();
             if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
                 for (d, tp) in &self.value_records.fns {
                     eprintln!(
                         "[valuerec] {} -> {} (tp={tp})",
                         self.data.def(*d).name(),
-                        self.value_records.tuple[d]
+                        self.value_records.fn_tuple(*d).unwrap_or("?")
                     );
                 }
             }
@@ -8831,7 +8854,7 @@ extern crate loft;"
         )?;
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — an admitted function returns its
         // record's fields in registers, so it needs no return BUFFER to write them into.
-        let value_rec = self.value_records.tuple.get(&def_nr).cloned();
+        let value_rec = self.value_records.fn_tuple(def_nr).map(str::to_owned);
         let dropped = value_rec.as_ref().and_then(|_| hoist::ret_buffer_attr(def));
         for (i, a) in def.attributes().iter().enumerate() {
             if dropped == Some(i) {
@@ -8839,6 +8862,9 @@ extern crate loft;"
             }
             // @PLN167 C3 — a `&text` parameter of a function's STORE instance holds the slot's
             // `DbRef`, exactly as a store-kind local link does (`local_rust_type`).
+            // `(R-ValueLocal)` (`@FR-R-ValueLocal`) — a tuple parameter is received as the
+            // tuple of its record's fields; the body reads it as a value local.  The two are
+            // disjoint (a text link, a record), so the order between them decides nothing.
             let store_link = {
                 let vars = def.variables();
                 let v = vars.var(&a.name);
@@ -8847,7 +8873,14 @@ extern crate loft;"
             let tp = if store_link {
                 "DbRef".to_string()
             } else {
-                rust_type(&a.typedef, &Context::Argument)
+                match self
+                    .value_records
+                    .param_type(def_nr, i)
+                    .and_then(|t| self.value_records.types.get(&t))
+                {
+                    Some(t) => t.tuple.clone(),
+                    None => rust_type(&a.typedef, &Context::Argument),
+                }
             };
             write!(w, ", mut var_{}: {tp}", sanitize(&a.name))?;
         }
@@ -8954,7 +8987,7 @@ extern crate loft;"
                     // @PLN157 § V-ah — a returned VALUE local is its tuple, bound at the
                     // tuple's zero: it never names a store.
                     if let Some(d) = self.value_record_locals.get(&v).copied()
-                        && let Some(t) = self.value_records.tuple.get(&d)
+                        && let Some(t) = self.value_records.types.get(&d).map(|t| &t.tuple)
                     {
                         let zero = self.value_tuple_zero(d);
                         let _ = write!(
@@ -9067,7 +9100,7 @@ extern crate loft;"
                     let av = vars.var(&a.name);
                     if av != u16::MAX
                         && let Some(d) = self.value_record_locals.get(&av).copied()
-                        && let Some(t) = self.value_records.tuple.get(&d)
+                        && let Some(t) = self.value_records.types.get(&d).map(|t| &t.tuple)
                     {
                         use std::fmt::Write as _;
                         let zero = self.value_tuple_zero(d);

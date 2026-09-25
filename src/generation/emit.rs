@@ -1776,11 +1776,27 @@ impl Output<'_> {
     /// the record form's later read would.  A boolean getter answers the storage byte, so
     /// it is coerced to the `bool` the tuple carries.
     fn output_view_tuple(&mut self, w: &mut dyn Write, var: u16) -> std::io::Result<()> {
+        let Some(tp) = self.value_records.fns.get(&self.def_nr).copied() else {
+            return write!(w, "()");
+        };
+        self.output_record_tuple(w, tp, &Value::Var(var))
+    }
+
+    /// The tuple of record type `tp` read off the record `src` evaluates to — one IR getter
+    /// per field, in field order, so a null record answers each field's null exactly as a
+    /// later field read would.  A view leaf at a value position and a record handed to a
+    /// TUPLE PARAMETER (`(R-ValueLocal)`, `Output::emit_call_arg`) are both this.
+    pub(super) fn output_record_tuple(
+        &mut self,
+        w: &mut dyn Write,
+        tp: u16,
+        src: &Value,
+    ) -> std::io::Result<()> {
         let fields = self
             .value_records
-            .fields
-            .get(&self.def_nr)
-            .cloned()
+            .types
+            .get(&tp)
+            .map(|t| t.fields.clone())
             .unwrap_or_default();
         write!(w, "(")?;
         for (i, (off, rt)) in fields.iter().enumerate() {
@@ -1795,7 +1811,7 @@ impl Output<'_> {
             } else {
                 self.data.def_nr(super::hoist::value_getter(rt))
             };
-            let call = Value::Call(getter, vec![Value::Var(var), Value::Int(*off as i32)]);
+            let call = Value::Call(getter, vec![src.clone(), Value::Int(*off as i32)]);
             if *rt == "bool" {
                 write!(w, "((")?;
                 self.output_code_inner(w, &call)?;
@@ -2685,8 +2701,7 @@ impl Output<'_> {
         {
             let kinds: Vec<&'static str> = self
                 .value_records
-                .fields
-                .get(&self.def_nr)
+                .fn_fields(self.def_nr)
                 .map(|f| f.iter().map(|(_, rt)| *rt).collect())
                 .unwrap_or_default();
             // `@FR-R-Rebind` — the STAGED reads the parser put in front of the writes
@@ -2713,8 +2728,7 @@ impl Output<'_> {
             write!(w, "(")?;
             let offs: Vec<i64> = self
                 .value_records
-                .fields
-                .get(&self.def_nr)
+                .fn_fields(self.def_nr)
                 .map(|f| f.iter().map(|(off, _)| *off).collect())
                 .unwrap_or_default();
             for (i, val) in parts.iter().enumerate() {

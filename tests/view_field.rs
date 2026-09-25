@@ -153,18 +153,32 @@ fn a_forward_writes_the_tuple_into_its_own_buffer() {
             "{func} is forwarded, and stays admitted:\n{sig}"
         );
     }
-    for func in ["fr", "fz", "fp", "fr_outer"] {
+    for func in ["fr", "fp", "fr_outer"] {
         let sig = signature(&both, func);
         assert!(
             sig.contains(") -> DbRef {"),
             "{func} keeps its record:\n{sig}"
         );
     }
+    // q4's `fz` kept its record because a site STORED it through a `__lift_` temp; since
+    // `(R-ValueLocal)` (2026-09-25) a call-bound lift is a value local and the copy from it
+    // materialises the tuple, so `fz` is admitted and its `sz` chain is the value-local
+    // form rather than a forward.
+    {
+        let sig = signature(&both, "fz");
+        assert!(
+            sig.contains("-> ("),
+            "fz is admitted through its lifted site:\n{sig}"
+        );
+        assert!(
+            both.contains("var___ref_1 = n_sz(cell, "),
+            "fz's chain binds sz's tuple to its phantom buffer"
+        );
+    }
     for call in [
         "{ let __vt = n_nm(cell); let mut __vd = var___ref_1; \
          if !(__vd.store_nr != u16::MAX && __vd.rec != 0) { __vd = OpDatabase(cell, __vd, ",
         "{ let __vt = n_hit(cell, var_sc, 2_i64); let mut __vd = var___ref_1; ",
-        "{ let __vt = n_sz(cell, ",
     ] {
         assert!(
             both.contains(call),

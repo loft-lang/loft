@@ -2580,6 +2580,59 @@ to bisect to.
   unwritten matrix per call: an instrument that hoists them reads ~1.2–1.5×, so the rule
   that would own it — a loop-invariant ELEMENT read of a held, unwritten vector, where
   `(R-Invariant)` covers integer chains only — is the next one to write for this class.
+  **BUILT 2026-09-25** (`LOFT_NO_VALUE_LOCAL`, `LOFT_TRACE_VALUEREC`; generation time,
+  `--native` only, the interpreter the values oracle), as the TUPLE PARAMETER: a by-value
+  parameter of a plain no-heap record of at most six scalars is received as the tuple of
+  its fields (`hoist::tuple_param_candidates`, decided in `value_records`' fixpoint beside
+  the value locals, the layout per TYPE in `ValueRecords::types` — one home for a result,
+  a local and a parameter of the same record).  The callee reads it as a value local (a
+  field read is a tuple index, a copy FROM it materialises, `return p` is the tuple), a
+  call site hands a value local or an admitted call as it is and reads the fields off any
+  other record expression at the site (`Output::emit_call_arg`, the same question the site
+  gate asked through `hoist::tuple_arg_ready`), the `__inv` twin takes no input for it,
+  the live-reload arm materialises it into a record for the parked call, and the cdylib
+  bridge reads the tuple off the record the C boundary hands (`hoist::tuple_reads`, one
+  spelling).  Its soundness is the parameter's ALIASING: a by-value record parameter is a
+  VIEW of the argument's place — `fn bump(p: V3, w: V3) { w.x = 5.0; p.x }` called
+  `bump(a, a)` answers 5, the `slow-reference-parameter` advice says as much — so the
+  callee's body, with every function it calls, must write no record of that type through
+  any route a caller could hold a view of: the write set keyed by record type
+  (`hoist::body_writes`), with a callee's return buffer and this frame's own records
+  (`WriteSet::retbufs`, `WriteSet::own`: a buffer minted from its sentinel, a discharge
+  buffer, a loop record, a released record) set apart from the `whole` writes that reach
+  an existing place — the parameter gate asks `reaches_record`, the loop hoist's `evicts`
+  still counts all of them.  The frame's own return buffer is seeded FRESH for that walk,
+  so a literal exit and its sub-record copies contribute nothing; `(R-Rebind)` is what
+  makes that exemption hold, since it hands a callee the caller's record as its buffer
+  only where every read of the parameter is staged ahead of the first write.  Declines:
+  a parameter the body rebinds, a nullable or `&` one, a record with a view leaf, a
+  function reached through a fn-ref dispatch, and any body the walk cannot type
+  (recursion, a `CallRef`, a `par`, a local record literal written after its mint).  With
+  it, a `__lift_` temp bound from a CALL is a value local (until then declined by shape),
+  because a nested call argument — `vertex(vec3(…), …)` — is exactly such a lift and a
+  tuple parameter is served only by a lift that is a tuple.  Two emitter facts the corpus
+  walk found: the per-function value-local setup ran only for a program with an admitted
+  FUNCTION, so a program with tuple parameters alone took the tuple in its signature and
+  read the parameter through the store (E0609 over 75 scripts); and the three sites that
+  spell a call themselves (`output_call_inner`, the adopt-or-copy bind, the hoisted-argument
+  bind) each name the callee for the argument question, restored per argument because a
+  nested call argument had left the outer call's callee naming the inner one.  A `(R-RecPtr)`
+  view handed to a tuple parameter keeps its address for the hand-off, exactly as it did for
+  the twin's inputs, and the site reads the fields through it.  MEASURED on the mesh3d bench,
+  same binary, the twin at 1.99 ms: `mat4_transform` **9.9 → 2.64 ms per op (−73 %, 5.0× →
+  1.32×)** — the hand-priced form to the number; `sphere` 6.5 → 4.05 ms (23× → 13×, its
+  `vertex` and `normalize3` parameters tuples); `mesh_to_floats` 12.7 → 8.4 ms;
+  `mat4_mul` 51 → 44 ms (its `mb` parameter, `(R-Rebind)` declining it still).  The cells:
+  `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft` (18, every alias
+  route that must decline beside the shapes that admit; receipt: a sabotage of the
+  write-set test fails c3 on native, `1` for `5`); the value-record pins
+  (`tests/value_record.rs`) carry the three predictions the rule flips (a result passed to
+  a read-only parameter, a chain to it, a lift into a field).  Falsified further by
+  `LOFT_HOIST_VERIFY=1` on the bench (the twin clause: the tuple beside a held header),
+  `LOFT_STRICT_STORES` / `LOFT_POISON` / the native leak check on every cell corpus, and
+  the switch A/B.  Not yet: a parameter of a record with a view leaf, a copy of a
+  parameter into a fresh local (`q = p` declines as an untyped mint), and the
+  loop-invariant element reads the price named.
 
 **Landing (R-Switch).**  `(R-Rebind)`, `(R-Compact)` and `(R-Const)` are parse- or
 scope-pass rewrites the interpreter shares, so their falsifier is the switch A/B over

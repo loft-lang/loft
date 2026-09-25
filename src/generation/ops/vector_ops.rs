@@ -65,14 +65,13 @@ impl OpEmitter for ViewFieldReadEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [base, fld, ..] = args
             && let Value::Var(v) = base.unspan()
-            && let Some(d) = ctx.output.value_record_locals.get(v).copied()
-            && let Some(tp) = ctx.output.value_records.fns.get(&d).copied()
+            && let Some(tp) = ctx.output.value_record_locals.get(v).copied()
             && let Value::Int(off) = fld.unspan()
             && ctx
                 .output
                 .value_records
                 .view_offs
-                .get(&d)
+                .get(&tp)
                 .is_some_and(|offs| offs.contains(&i64::from(*off)))
             && let Some(idx) = ctx
                 .output
@@ -99,8 +98,7 @@ impl OpEmitter for FusedElementReadEmitter {
         // every scalar getter and a later insert would silently replace it.
         if let [base, fld, ..] = args
             && let Value::Var(v) = base.unspan()
-            && let Some(d) = ctx.output.value_record_locals.get(v).copied()
-            && let Some(tp) = ctx.output.value_records.fns.get(&d).copied()
+            && let Some(tp) = ctx.output.value_record_locals.get(v).copied()
             && let Value::Int(off) = fld.unspan()
             && let Some(idx) = ctx
                 .output
