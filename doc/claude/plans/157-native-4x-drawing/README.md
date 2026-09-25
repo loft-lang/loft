@@ -7,6 +7,21 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
+**FINISHED (closed 2026-09-25).**  The goal holds: on the x86-64 lane (`compare.py --repeat 3
+--n-ref 500 --n-native 500`, 14/14 hashes agree) every judged row is under the 4× bar, median
+1.42×, the highest `parse` at 2.63× after `(R-LazySplit)`; the arm64 lane agrees (median ≈1.71×,
+every row under 4×).  The library's loft source is unchanged, every rewrite is a rule in
+[formal/rewrites.md](../../formal/rewrites.md) with its switch and falsifier, and P5 made the
+lane the per-library standard ([LIBRARY_CHECKLIST.md § Goal G](../../LIBRARY_CHECKLIST.md)).
+loft#1426 is closed.  The rest of § Phase ordering's queue — frame-local record temporaries,
+runtime ownership at calls, the vector append path, LTO into the rlib, range proofs for
+sentinel elision, `parse`'s store traffic — is general performance work, not this pass's bar,
+and moved to **@PLN158** (the release performance pass).  Performance work goes on; what this
+plan leaves behind for it is the infrastructure — the same-hash reference lane and
+`bench/stats.py`, `make perf-portal`, the native checkpoint profiler, the release-pass ceiling,
+the emission audit, and one bisect switch plus one falsifier per rewrite.  What follows is the
+record.
+
 > **This is the one home for the scoreboard.**
 > [loft#1426](https://github.com/loft-lang/loft/issues/1426) is the *surfaced report* —
 > what crawler hit, and whether it is resolved for them — and it carries `status:planned`
@@ -2296,7 +2311,7 @@ unless said otherwise.
 | **V-af** — a value BRANCH of buffer-delivering calls (`v = if c { mk(i) } else { mk2(i) }`) witnesses every arm's hidden buffer (`scopes` pairing per tail call, `@FR-O-Complete`): the buffers are allocated once by `reuse_record_buffers` and the local's scope-exit free is the existing multi-buffer `OpDistinctStore` ladder; an IR fact, both backends; switch `LOFT_NO_JOIN_BUFFER_WITNESS`, `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` the falsifiers.  Beside it: the uncached `LOFT_TRACE_CLEAR` read and the per-allocation prefix compare removed from the runtime hot path | [DESIGN.md § V-af](DESIGN.md) | a j-cell answers wrong or reports a use-after-free under strict stores; `tests/join_witness.rs` no longer sees the preamble allocations or the ladder; a consumer hash disagrees | **Shipped 2026-09-13** — 12 cells exact on both backends under strict stores, poison and the switch, store allocations 85 → 45; `smooth` −26 % standalone, 10.5× → 9.0× in the consumer table, allocations per call 33 → 17 |
 | **V-ag** — clearing a store-ROOT vector RESETS its store: the shape `@FR-H-ClearRelease` already tests says the vector owns the store's whole extent, so the release is one `Store::init` plus the two records re-established (the wrapper by a claim, the vector by `pre_alloc_vector`) instead of a delete per element into the free tree; both claims bump, and `claim`'s `bump_tail` fast path is restored.  The first unit under PERFORMANCE.md § 3e.  Switch `LOFT_NO_STORE_RESET_CLEAR`; `LOFT_STRICT_STORES=1` / `LOFT_POISON=1` the falsifiers | [DESIGN.md § V-ag](DESIGN.md) | an r-cell answers wrong or reports a use-after-free under strict stores; skipping the root re-claim (the falsified sabotage) panics in `vector.rs`; a consumer hash disagrees | **Shipped 2026-09-14** — 13 cells exact on both backends under five levers; `fronds` −35.8 % on a switch A/B, **4.67× → 3.42× (under the bar)**, every other row flat |
 | **V-ai** — the reset buffer keeps the capacity it reached: § V-ag's reset re-establishes the root vector at the capacity the previous fill reached (`vector::reached_capacity`, read off the record before `Store::init`; `vector::vector_capacity` the one home of the inverse formula), so the growth ladder runs once per buffer and the freed rungs that took every later claim into the free tree are never made.  Switch `LOFT_NO_RESET_CAPACITY`; `LOFT_TRACE_CLEAR=1` prints each reset's capacity | [DESIGN.md § V-ai](DESIGN.md) | a cell answers wrong under strict stores or poison; `tests/reset_capacity.rs` sees the minimum with the unit on, or a rung with it off; a consumer hash disagrees | **Shipped 2026-09-14** — nine hand-derived cells exact on both backends; `fr_only` −22.5 % on a switch A/B, consumer `fronds` **4.28× → 3.42× (under the bar on x86-64)**, every other row flat |
-| **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | Open |
+| **P5** — the pass becomes the per-library standard (LIBRARY_CHECKLIST.md row; `drawing` first) | [DESIGN.md § P5](DESIGN.md) | a library without a `bench/` passes review | **Shipped 2026-09-25** — [LIBRARY_CHECKLIST.md § Goal G](../../LIBRARY_CHECKLIST.md) |
 
 ## Joined-tree verification (2026-09-07)
 
