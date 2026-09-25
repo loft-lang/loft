@@ -17,7 +17,8 @@ CLOSED.  D-iter-4 opened and closed 2026-09-06: the LITERAL was the fourth kind,
 `@FR-O-Detach` rather than this doc's own corpus — which varied what the comprehension reads and
 never asked whether a literal reads at all.  D-iter-5 opened and closed the same day: the two
 destinations D-iter-4's snapshot could not NAME.  D-iter-6 opened and closed 2026-09-23 (loft#1619, below): a
-place source and a range bound were re-read per round.
+place source and a range bound were re-read per round.  D-iter-7 opened and closed 2026-09-25
+(below): two native rewrites stepped an inclusive range past its end in plain Rust.
 
 > **D-iter-4 — OPENED AND CLOSED (2026-09-06). A vector LITERAL that reads its destination.**
 > `I-Comp` was walked three times for the comprehension (D-iter-1..3) and the literal — the same
@@ -56,6 +57,22 @@ place source and a range bound were re-read per round.
 > end is a slot of its own, and `n`'s span now ends at the bind).  Guard:
 > `tests/scripts/1619-a-loop-reads-its-bounds-and-its-text-once.loft`, thirteen cells on both
 > backends.
+
+> **D-iter-7 — OPENED AND CLOSED (2026-09-25). A fast path formed `hi + 1` for an inclusive
+> range.**  `(I-RangeIncl)` promises `for x in lo..=hi` never has to represent `hi + 1`, and
+> loft#1525 made the LOOP keep that promise.  Two `--native` rewrites replace such a loop with one
+> operation — the slice fill (`@FR-R-Fill`) and the push fill (`@FR-R-PushFill`) — and then leave
+> the loop's counters as the loop would have, in `range_tail`.  That tail wrote the counter past
+> `last` as a plain Rust `+ 1_i64`, so at `hi = i64::MAX` the overflow-checking `--native` build
+> panicked after the fill had written the right elements.  Fill and push fill, computed and literal
+> start: four panics; the interpreter right; `--native-release` right by accident (the add wrapped
+> into a value nothing reads).  Found by walking the rule rather than the loop: the #1525 guard
+> held the loop FORM fixed, and every rewrite with its own inclusive handling was an axis it could
+> not reach.  Closed by giving the counter step one home, `counter_step` (`op_add_int`, the null
+> sentinel at the maximum), which the tail and the two start computations now share.  Guard
+> `tests/scripts/an-inclusive-fast-path-never-forms-the-end-plus-one.loft`, falsified at
+> 838779752.  The push window, the comprehension and the exclusive tail were measured at the same
+> maximum and were already right.
 
 > **D-iter-5 — OPENED AND CLOSED (2026-09-06, loft#1391). The two destinations the snapshot
 > could not name.**  `(I-Comp)` is *whichever destination*, and D-iter-4's cure reached the

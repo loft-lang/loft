@@ -9388,6 +9388,38 @@ its own guard rather than a cell in `1600b`/`1600c` — those two are the homes 
 spelling and their falsification receipts count their own expectations, so a cell added there
 would have re-derived two receipts to record one new spelling.
 
+### "Where does an inclusive range stop?" — the loop answered it, and the rewrites' tail did not (2026-09-25)
+
+`(I-RangeIncl)` was one of the 96 rules with neither a code citation nor a guard, though loft#1525
+had fixed the loop it describes: `for i in (m-2)..=m` with `m` the `integer` maximum stops, because
+the stop is decided on the value just yielded and `m + 1` is never formed.  The #1525 guard is
+thorough about the LOOP and held three axes fixed doing it — the loop form (a statement), the
+counter type (`integer`), and whether a native rewrite replaces the loop at all.  `matrix_axes`
+reads the same thing off it: a literal argument spelling, a single evaluation, no loop body form.
+
+**The rule has more sites than the loop.**  Six native rewrites handle an inclusive range on their
+own (the slice fill, the push fill, the push window, the bounded nest, the guarded chain, the
+range proof), and each is a place that could form `hi + 1`.  Nineteen cells over the forms, on
+both backends, were all right — and the generation traces then showed that almost none of them
+had reached a rewrite: the fill declined every `w[i] = c` local, the nest declines inclusive
+ranges on purpose.  A passing cell that a rewrite declined is a cell about the loop again.
+
+**The cell that reached the fill needed a base no program writes.**  The fill admits a range only
+when `base + lo .. base + hi` lands inside the vector, so it reaches `hi = MAX` only through a base
+near `-MAX`: `d[base + x]` with `base = 2 - m`.  There the fill wrote the right elements and then
+panicked in its TAIL, the code that leaves the counters as the loop would have: `next = hi + 1`,
+in plain Rust, under the `--native` build's overflow checks.  Both callers of that tail (fill and
+push fill) and both of its arms (computed and literal start): four panics.  The interpreter runs
+the loop and was right; the shipped `--native-release` build wrapped the add into a counter nothing
+reads and was right by accident.  D-iter-7.
+
+**One question, three spellings.**  "What does the emitter write for the counter's step?" was
+answered at a fill's start and a trip count's start as `op_add_int` (the checked add that yields
+the null sentinel, exactly as the loop steps) and in the tail as a bare `+`.  The tail's own
+comment says it exists "so the two cannot leave a counter differently" — and the bare add was the
+one way it could.  `counter_step` is now the home and all three sites read it; the exclusive
+arm's `hi - 1` stays, because that arm runs only after the fill's admission proved `lo <= hi - 1`.
+
 ### "Where does an advance resume?" — a construct declared out of scope, and the four defects under its `OPEN: 0` (2026-09-25)
 
 `@FR-G-Next` says an advance runs ONE slice, from the resume point.  On `--native` the
