@@ -11602,7 +11602,19 @@ impl Scopes<'_> {
             }
             Value::CallRef(v_nr, args) => {
                 let (preamble, ls, _postamble) = self.scan_args(args, function, data, u32::MAX);
-                let call = Value::CallRef(*v_nr, ls);
+                // The CALLEE slot is a READ of the variable, so it is remapped like every
+                // other var-carrying node (`Var`, `TupleGet`, `FnRefDnr`, … below).  @PLAN53
+                // cluster 2 extended that list once and stopped one member short of it: a
+                // `Set` to a name whose block has ended starts a NEW binding
+                // (`@FR-B-Scope`), which `scan_set` gives its own slot through
+                // `copy_variable`, and a call through the name then still named the ENDED
+                // binding's slot — `for f in fs { … } f = two; f(1)` called `one` where the
+                // earlier binding was live and answered `null` where the loop had left the
+                // exhausted sentinel, on `--interpret` only (loft#1679).  `--native` names
+                // its locals `var_<name>`, so both bindings are one Rust local there and the
+                // rebind shadows it — right for the wrong reason, which is why one backend
+                // ran and the other did not.
+                let call = Value::CallRef(*self.var_mapping.get(v_nr).unwrap_or(v_nr), ls);
                 if preamble.is_empty() {
                     call
                 } else {
@@ -11735,7 +11747,30 @@ impl Scopes<'_> {
                     Value::with_span(b.0.clone(), scanned)
                 }
             }
-            _ => val.clone(),
+            _ => {
+                // EVERY node that carries a variable index needs an arm above, because a
+                // split binding (`scan_set`'s `copy_variable`) gives the second binding its
+                // own slot and the index this walk copies through is the FIRST one's.  The
+                // enumeration is what keeps failing — `FnRefDnr`/`FnRef` were added one
+                // release after `Var`/`TupleGet`, `CallRef` one after those (loft#1679) —
+                // so name the set here: dropping an arm is then a failed assertion rather
+                // than a wrong slot read on one backend.
+                debug_assert!(
+                    !matches!(
+                        val,
+                        Value::Var(_)
+                            | Value::Set(..)
+                            | Value::CallRef(..)
+                            | Value::TupleGet(..)
+                            | Value::TuplePut(..)
+                            | Value::FnRef(..)
+                            | Value::FnRefDnr(_)
+                            | Value::Iter(..)
+                    ),
+                    "scan: a var-carrying node reached the pass-through arm, so its variable                      index escapes `var_mapping`"
+                );
+                val.clone()
+            }
         }
     }
 

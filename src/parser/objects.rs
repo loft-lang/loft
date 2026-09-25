@@ -264,7 +264,13 @@ impl Parser {
     /// asked of the VARIABLE's name, not the spelling: a text parameter written in a block
     /// is promoted to a `__tp_<name>` copy the spelling then resolves to, and that copy is
     /// still the parameter.
-    fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
+    ///
+    /// The ONE home for the question, asked from every site that RESOLVES a name to a local.
+    /// The bare-name read below is one; the two indirect-call sites are the others, because
+    /// `f(1)` on a fn-ref local resolves `f` itself instead of going through that read
+    /// (loft#1679: a fn-ref loop variable called after the loop was the one spelling the
+    /// refusal missed, and it answered the exhausted sentinel as `null` instead).
+    pub(crate) fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
         let own = self.vars.name(var);
         if self.vars.is_argument(var) || own.starts_with("__") {
             return;

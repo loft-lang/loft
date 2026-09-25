@@ -428,6 +428,32 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-62** *(opened 2026-09-25, CLOSED 2026-09-25; loft#1679)* — `(B-Scope)` at the CALL
+  spelling, both halves of it.  The rule says a bind after the `}` starts a NEW binding and a
+  read of the ended one is refused; a fn-ref local got neither.  With a rebind,
+  `for f in fs { … } f = two; f(1)` called the ENDED binding — `one` where that binding was
+  still live (an `if` arm: a silently wrong FUNCTION, answering 101 where the program spells
+  201) and the exhausted sentinel, printed `null`, where it was a loop variable, on
+  `--interpret` only.  With no rebind, `for f in fs { … } f(1)` was not refused at all, on both
+  backends, where `for i in 0..3 { } i` is.  **Where (measured).**  One question — is a fn-ref
+  callee name a READ of that variable? — answered at two places, and each missed it.  The scopes
+  pass gives the second binding its own slot (`scan_set`'s `copy_variable`) and remaps every
+  read through `var_mapping`: `Var`, `TupleGet`, `TuplePut`, `FnRef`, `FnRefDnr` — @PLAN53
+  cluster 2 extended that list once and stopped one member short of `CallRef`, whose callee
+  index `scan` copied through verbatim.  And the parser's two indirect-call sites (one per
+  ARITY) resolve the name with `self.vars.var(name)` instead of through the bare-name read that
+  asks `check_block_scope`, so `(B-Scope)`'s refusal had a hole exactly at the one kind of local
+  a program can only use by calling.  `--native` ran the first half because it names its locals
+  `var_<name>`: both bindings are one Rust local there and the rebind shadows it — right by
+  accident, which is why one backend answered and the other did not.  **Closed** by remapping
+  the `CallRef` arm and by asking `check_block_scope` at both call sites (it is `pub(crate)`
+  now, and its doc names itself the one home for the question).  Guards:
+  `tests/scripts/1679-a-call-through-a-rebound-name-reaches-the-new-binding.loft` (11 cells: what
+  ended the binding, the later value, arity 0 and 1, integer and text return, the call in a
+  nested block / a later loop / a comprehension, plus the reads that were never wrong) and
+  `tests/scripts/1679b-a-call-through-a-name-whose-block-has-ended-is-refused.loft` (the refusal
+  half; `1600b`/`1600c` remain the homes of the READ spelling, and neither called the name).
+
 * **D-bind-61** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1664)* — `(B-View)` for a KEYED
   payload binding.  `match k { Ky { k_look } => { k = Ky { … }; k_look += [r]; len(k_look) } }`
   answered a wrong length on the interpreter and panicked `--native` with *"Store access out of

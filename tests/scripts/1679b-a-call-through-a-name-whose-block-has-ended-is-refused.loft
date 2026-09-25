@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-B-Scope` at the CALL spelling.  A local that a block bound ends at that block's `}`, and
+// reading it after is `local-out-of-scope` — `1600b-a-local-read-after-its-block-is-refused.loft`
+// is the home of that clause and `1600c-a-loop-variable-ends-with-its-loop.loft` of its loop
+// clause.  Both read the name; NEITHER calls it.  A fn-ref local is the one kind of local a
+// program can only use by calling, and the two indirect-call sites in the parser resolved the
+// name themselves (`self.vars.var(name)`) instead of through the read that asks the question, so
+// the refusal had a hole exactly there: `for f in fs { … } f(1)` compiled and answered the
+// exhausted sentinel as `null` on both backends, where `for i in 0..3 { } i` is refused
+// (loft#1679).
+//
+// One cell per resolution site, because the parser has one per ARITY: a one-argument call after
+// a loop (`s1f`), a zero-argument call after a loop (`s2g`), and a one-argument call after an
+// `if` arm (`s3h`) — the arm spelling matters because there the ended binding is still LIVE, so
+// without the refusal the call runs and answers the wrong function rather than null.
+//
+// The running cells are the neighbours the refusal must leave alone: a call after a REBIND,
+// which `(B-Scope)` makes a new binding (o1), a call inside the loop that bound the name (o2), a
+// call through a local bound BEFORE the loop and assigned inside it (o3), and a call through a
+// parameter, which is bound for the whole function (o4).
+//
+// @EXPECT_ERROR: `s1f` was bound inside a block that has ended
+// @EXPECT_ERROR: `s2g` was bound inside a block that has ended
+// @EXPECT_ERROR: `s3h` was bound inside a block that has ended
+// @falsified-at: PENDING
+//   CHANNEL: the EXPECTATION channel — on the control every refused cell compiles, so none of
+//   the three refusals fires and the suite scores the file FAIL.
+//   WITNESS: on the control `s1` compiles and `s1f(1)` answers `null` after its loop.
+//   HOLDS: leak and panic are equal on both trees; the running cells o1–o4 answer the same.
+
+fn one1679b(a: integer) -> integer { a + 100 }
+fn two1679b(a: integer) -> integer { a + 200 }
+fn zero1679b() -> integer { 11 }
+
+fn s1() {
+  fs: vector<fn(integer) -> integer> = [one1679b];
+  for s1f in fs { }
+  assert(s1f(1) == 101, "s1");
+}
+
+fn s2() {
+  zs: vector<fn() -> integer> = [zero1679b];
+  for s2g in zs { }
+  assert(s2g() == 11, "s2");
+}
+
+fn s3() {
+  if 1 > 0 { s3h: fn(integer) -> integer = one1679b; }
+  assert(s3h(1) == 101, "s3");
+}
+
+fn o1() {
+  fs: vector<fn(integer) -> integer> = [one1679b];
+  for f in fs { }
+  f = two1679b;
+  assert(f(1) == 201, "o1 {f(1)}");
+}
+
+fn o2() {
+  fs: vector<fn(integer) -> integer> = [one1679b];
+  n = 0;
+  for f in fs { n += f(1); }
+  assert(n == 101, "o2 {n}");
+}
+
+fn o3() {
+  fs: vector<fn(integer) -> integer> = [two1679b];
+  g: fn(integer) -> integer = one1679b;
+  for f in fs { g = f; }
+  assert(g(1) == 201, "o3 {g(1)}");
+}
+
+fn o4(p: fn(integer) -> integer) -> integer { return p(1); }
+
+fn o4call() { assert(o4(two1679b) == 201, "o4"); }
