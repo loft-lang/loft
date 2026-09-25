@@ -64,13 +64,41 @@ index 5aa6844e0..b80e98e1c 100644
                  // P242 fix: when `d_nr` is the current generic
                  // function's type variable AND the bound supplies
 diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
-index 9d47c05b5..defb91863 100644
+index 92cb6091e..defb91863 100644
 --- b/src/parser/expressions.rs
 +++ a/src/parser/expressions.rs
-@@ -3040,57 +3040,6 @@ use a separate collection or add after the loop"
+@@ -3039,98 +3039,6 @@ use a separate collection or add after the loop"
+         }
      }
  
-     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
+-    /// The tuple a `&(…)` link `to` names, as the type a whole write's right-hand side is
+-    /// parsed against: its members for a stack-backed link, the `__tuple<…>` record's member
+-    /// types for a record-backed one.  `None` for any other target, and for the link BIND
+-    /// `q = &t`, which makes the link rather than writing through it.
+-    fn ref_tuple_expected(&self, op: &str, to: &Value) -> Option<Type> {
+-        if op != "=" || self.amp_pending {
+-            return None;
+-        }
+-        let Value::Var(p) = to.unspan() else {
+-            return None;
+-        };
+-        if !self.vars.exists(*p) {
+-            return None;
+-        }
+-        let Type::RefVar(inner) = self.vars.tp(*p).base() else {
+-            return None;
+-        };
+-        match inner.base() {
+-            Type::Tuple(_) => Some(inner.base().clone()),
+-            Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => {
+-                Some(Type::Tuple(
+-                    self.data.def(*d).attributes.iter().map(|a| a.typedef.clone()).collect(),
+-                ))
+-            }
+-            _ => None,
+-        }
+-    }
+-
 -    /// `p = (a, b)` where `p` is a `&(…)` link: `@FR-B-Ref-Uniform` makes a `&τ` written exactly
 -    /// as a `τ` is, so the whole value is written THROUGH the link — each element into the
 -    /// caller's tuple, as `p.0 = a; p.1 = b` writes it (loft#1673).  The right-hand side is
@@ -110,22 +138,50 @@ index 9d47c05b5..defb91863 100644
 -            }
 -            _ => return None,
 -        };
+-        // RECORD-backed: the right-hand side is built as a record of the link's OWN
+-        // `__tuple<…>` type — the builder a record-backed tuple local's `t = (…)` uses, which
+-        // converts each member into the member type (a list literal into a `hash` member) and
+-        // gives every heap member storage of its own, so `p = (p.1, p.0)` reads nothing this
+-        // write clears — and then copied over the linked record whole, which replaces what
+-        // each member held.  Written member by member instead, `set_field` (a FRESH record's
+-        // initialiser) appended to a live vector member (`["old"]` became `["old", "new"]`)
+-        // and filled a `hash` member with nothing.
+-        if let Some(d) = record {
+-            let rec = Type::Reference(d, Deps::none());
+-            let w = self.vars.work_refs(&rec, &mut self.lexer);
+-            let kt = self.data.def(d).known_type();
+-            let mut built = rhs.clone();
+-            self.rewrite_tail_tuple_with_work_ref(d, kt, w, &mut built);
+-            let copy = self.copy_ref(&Value::Var(p), &Value::Var(w), &rec);
+-            return Some(v_block(vec![built, copy], Type::Void, "ref_tuple_write"));
+-        }
 -        let tmp = self.create_unique("wtuple", &rhs_tp.without_deps());
 -        let mut steps = vec![v_set(tmp, rhs.clone())];
 -        for i in 0..n {
--            let val = Value::TupleGet(tmp, i as u16);
--            steps.push(match record {
--                None => Value::TuplePut(p, i as u16, Box::new(val)),
--                Some(d) => self.set_field(d, i, 0, Value::Var(p), val),
--            });
+-            steps.push(Value::TuplePut(p, i as u16, Box::new(Value::TupleGet(tmp, i as u16))));
 -        }
 -        Some(v_block(steps, Type::Void, "ref_tuple_write"))
 -    }
 -
+     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
      pub(crate) fn parse_assign_op(
          &mut self,
-         code: &mut Value,
-@@ -3694,10 +3643,6 @@ use a separate collection or add after the loop"
+@@ -3618,13 +3526,7 @@ use a separate collection or add after the loop"
+         let prev_target = std::mem::replace(&mut self.assign_target, var_nr);
+         let prev_replaces = std::mem::replace(&mut self.assign_replaces, op == "=");
+         let prev_snapshot_len = std::mem::take(&mut self.build_snapshot_len);
+-        // A whole write through a `&(…)` link (`p = (…)`, loft#1673) expects the TUPLE the link
+-        // names, member by member, so a list literal for a `hash` member is built as that hash
+-        // exactly as it is for a tuple local declared with the same type.  Expected as the link
+-        // itself, the literal had no member types to steer it.
+-        let link_tuple = self.ref_tuple_expected(op, to);
+-        let expect = link_tuple.as_ref().unwrap_or(f_type);
+-        let mut s_type = self.parse_operators(expect, code, &mut parent_tp, 0);
++        let mut s_type = self.parse_operators(f_type, code, &mut parent_tp, 0);
+         // `@FR-L-Null-Which` — a LOCAL spells `S?` as the POINTER (`Optional(Reference(S))`,
+         // `nullref` for absence); the tagged `__nullable<S>` is a SLOT's spelling — an embedded
+         // field, a vector element, a tuple member.  A projection of such a slot bound to a
+@@ -3741,10 +3643,6 @@ use a separate collection or add after the loop"
          let snapshot_len = std::mem::replace(&mut self.build_snapshot_len, prev_snapshot_len);
          self.amp_head = AmpHead::No;
          self.expected = prev_read_target;

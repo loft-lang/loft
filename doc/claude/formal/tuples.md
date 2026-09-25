@@ -240,10 +240,19 @@ it, not a standing fact.
   ✅ **Closed at the rules' own answer, on both representations.**  A whole READ is the tuple of
   the element reads through the link (the interpreter's `generate_var`; native derefs a local
   link's `*mut (…)`, as it already did a parameter's `&mut`), so a bind `q = p` is a COPY
-  (`(B-Copy)`) and the caller's tuple is untouched.  A whole WRITE is written THROUGH, element
-  by element, exactly as `p.0 = a; p.1 = b` is — the right-hand side evaluated into a temp
-  first, so `p = (p.1, p.0)` swaps — and the record-backed form writes its fields in place, so
-  its heap members are never deep-copied.  The local link bind `q = &t` stays the bind it is.
+  (`(B-Copy)`) and the caller's tuple is untouched.  A whole WRITE writes THROUGH the link and
+  REPLACES every member, the same as `p.0 = a; p.1 = b`.  The right-hand side is parsed
+  against the tuple the link names, so a list literal becomes a `hash` member as it would for
+  a tuple local of that type.  A stack-backed tuple is written element by element from a temp.
+  A record-backed tuple is built as a record of the link's own `__tuple<…>` type and then
+  copied over the linked record whole.  Each heap member gets its own storage before
+  anything is overwritten, so `p = (p.1, p.0)` swaps.  The link bind `q = &t` stays a bind.
+  ⚠ The fix's first version wrote a record-backed member with `set_field`, which only
+  initialises a FRESH record. It appended to a live vector member (`["old"]` became
+  `["old", "new", "pair"]`) and left a `hash` member empty. Nothing reported either: the guard's
+  write cells started from an EMPTY member, where appending and replacing give the same
+  result. A peer's cells found it (loft2-d9, 2026-09-25). The c-cells now start from a
+  non-empty member and check element 0 as well as the length.
   The two smaller faces went with it: a record-backed link refuses `"{p}"` exactly as its
   value tuple does, and a diagnostic names it `&(text, text)` rather than the `__tuple<…>`
   record.  Guard: `tests/scripts/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft`

@@ -24,6 +24,9 @@
 //     write a type error.
 //   WITNESS: on 989d30214 the run stops at compile time before any cell runs.
 //   HOLDS: leak and panic are equal on both trees.
+//   The c-cells (a collection member REPLACED) have a second control: bb120030f, this fix's
+//   first version, which appended to a live vector member and left a `hash` member empty —
+//   there they fail on the assertion channel (5 on interpret, 10 on native), exit 1 -> 0.
 
 fn take1673(q: (integer, integer)) -> integer { q.0 + q.1 }
 fn takes1673(q: (integer, text)) -> text { "{q.0}{q.1}" }
@@ -95,4 +98,59 @@ fn test_l1_a_local_link_read_and_written_whole() {
   q = (6, 7);
   assert(s == 9, "the read through the local link: got {s}");
   assert(t.0 == 6 && t.1 == 7, "the write through the local link: got {t.0},{t.1}");
+}
+
+// A whole write REPLACES a collection member; it does not append to it.  Every cell starts
+// from a NON-EMPTY member and reads element 0 as well as the length, because append and
+// replace agree on an empty member — the cells above could not tell them apart, and the
+// first version of this fix appended (`["old"]` became `["old", "new", "pair"]`).
+struct S1673 { v: vector<text>, n: integer }
+struct K1673 { k: integer, s: text }
+fn put_v(p: &(vector<text>, integer), i: integer) { p = (["v{i}", "w{i}"], i); }
+fn swap_v(p: &(vector<text>, vector<text>)) { p = (p.1, p.0); }
+fn put_st(p: &(S1673, integer)) { p = (S1673 { v: ["s1", "s2"], n: 5 }, 6); }
+fn put_h(p: &(hash<K1673[k]>, integer)) { p = ([K1673 { k: 5, s: "five" }], 1); }
+fn put_nv(p: &(vector<vector<integer>>, integer)) { p = ([[1, 2], [3]], 9); }
+
+fn test_c1_a_vector_member_is_replaced() {
+  t: (vector<text>, integer) = (["old"], 0);
+  put_v(t, 1);
+  assert(len(t.0) == 2 && t.0[0] == "v1" && t.0[1] == "w1" && t.1 == 1,
+    "got {len(t.0)} {t.0[0]} {t.1}");
+}
+
+fn test_c2_repeated_writes_do_not_accumulate() {
+  t: (vector<text>, integer) = (["old"], 0);
+  for i in 0..4 { put_v(t, i); }
+  assert(len(t.0) == 2 && t.0[0] == "v3" && t.1 == 3, "got {len(t.0)} {t.0[0]} {t.1}");
+}
+
+fn test_c3_two_vector_members_swap() {
+  u: (vector<text>, vector<text>) = (["a1", "a2"], ["b1"]);
+  swap_v(u);
+  assert(len(u.0) == 1 && u.0[0] == "b1", "member 0: got {len(u.0)} {u.0[0]}");
+  assert(len(u.1) == 2 && u.1[0] == "a1" && u.1[1] == "a2", "member 1: got {len(u.1)} {u.1[0]}");
+  for _ in 0..3 { swap_v(u); }
+  assert(len(u.0) == 2 && u.0[0] == "a1" && len(u.1) == 1, "after 4 swaps, the original order: got {len(u.0)} {u.0[0]}");
+}
+
+fn test_c4_a_struct_member_is_replaced() {
+  x: (S1673, integer) = (S1673 { v: ["o1", "o2", "o3"], n: 1 }, 0);
+  put_st(x);
+  assert(len(x.0.v) == 2 && x.0.v[0] == "s1" && x.0.n == 5 && x.1 == 6,
+    "got {len(x.0.v)} {x.0.v[0]} {x.0.n} {x.1}");
+}
+
+fn test_c5_a_hash_member_is_replaced() {
+  t: (hash<K1673[k]>, integer) = ([K1673 { k: 1, s: "one" }, K1673 { k: 2, s: "two" }], 0);
+  put_h(t);
+  assert(len(t.0) == 1 && t.0[5].s == "five" && t.0[1] == null && t.1 == 1,
+    "got {len(t.0)} {t.1}");
+}
+
+fn test_c6_a_nested_vector_member_is_replaced() {
+  y: (vector<vector<integer>>, integer) = ([[7, 7, 7], [8], [9]], 0);
+  put_nv(y);
+  assert(len(y.0) == 2 && len(y.0[0]) == 2 && y.0[0][1] == 2 && y.0[1][0] == 3 && y.1 == 9,
+    "got {len(y.0)} {len(y.0[0])}");
 }
