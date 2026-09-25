@@ -14,7 +14,7 @@ Two things built elsewhere feed into this plan:
 - **The `link` check already exists.** `tools/indexer/fix_broken_links.py` reads every tracked
   markdown file the way a renderer does (fences and code spans are not links). It repairs a
   link only when exactly one tracked path matches, and flags the rest.
-  `tests/index_hygiene.rs::every_markdown_link_resolves` gates it (@PLN45). `doc_lint.py`
+  `tests/doc_hygiene.rs::every_markdown_link_resolves` gates it (@PLN45). `doc_lint.py`
   calls that, not `check_doc_drift.sh`'s narrower plan-link check.
 - **The contract shape is proven.** [LIBRARY_AUTHORING.md § The library contract](../LIBRARY_AUTHORING.md)
   states 28 library rules, one line each, each pointing at its home. It was written from a

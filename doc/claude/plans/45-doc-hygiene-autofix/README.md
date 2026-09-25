@@ -23,7 +23,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   plans at their new numbers, and prose placeholders are now code spans.  One more (the
   `02_images.loft` link) had a wrong `../` depth, which the fixer then repaired itself.
 - **Phase 5 changed form:** a gate replaces the opt-in auto-fix mode.
-  `tests/index_hygiene.rs::every_markdown_link_resolves` fails on any repairable or flagged
+  `tests/doc_hygiene.rs::every_markdown_link_resolves` fails on any repairable or flagged
   link and names `make doc-fix` as the cure; it was falsified with a planted gone target and a
   planted misplaced one.  A test that mutates the tree was never the right shape (ground rule 1).
 - **Phase 6:** [DEVELOPMENT.md § Moving a doc, and repairing links](../../DEVELOPMENT.md#moving-a-doc-and-repairing-links).

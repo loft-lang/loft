@@ -772,7 +772,7 @@ out of a plan directory is one).  It then rebuilds the index and runs the drift 
 exactly one tracked path ends in every segment the link names, so that the link names the
 thing and only its position is wrong.  Anything else is printed as a `flag` for a person: a
 target that has left the tree (a library now in a `loft-libs-*` repo wants that repo's URL)
-or a name several files share.  `tests/index_hygiene.rs::every_markdown_link_resolves` fails
+or a name several files share.  `tests/doc_hygiene.rs::every_markdown_link_resolves` fails
 on either kind, so a broken link cannot land.  Not links: fenced blocks, inline code spans,
 `<placeholder>` targets, a line marked `<!--noindex-->`, and `tests/fixtures/`.
 
