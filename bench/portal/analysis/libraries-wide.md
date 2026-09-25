@@ -207,3 +207,12 @@ the crawler (five name tables in `items.loft` / `bundles.loft`, four terrain tab
 result.  Found on the way, to be filed (this box could not authenticate to GitHub for writes; the text waits in `doc/claude/plans/157-native-4x-drawing/to-file-const-bind-panic.md`): a plain local bound from a TOP-LEVEL constant
 and then written panics on both backends ("Write to read-only store") — the bind has no copy
 road; the same for a constant handed to a callee that writes its parameter.
+
+**`field_union` 173× attributed (2026-09-25).**  Not the library crossing: the hex_place bench
+built with `LOFT_NO_NATIVE_LIBS=1` (hex_field compiled into the program) reads the same
+27 ns per cell as the cdylib form (4.44 vs 4.50 ms per op).  The row is six accessor CALLS
+per cell — `hexset_get` twice, `hexset_set`, each through `hs_index`, plus the loop bounds'
+accessors per row — against a twin that ORs two `bool` arrays, which rustc vectorises to
+~0.15 ns per cell.  The call class, measured against a SIMD floor: the lever is inlining the
+accessors' bodies into the loop (a callee whose body is a field read or an index of its
+by-value record parameter), not the bridge.
