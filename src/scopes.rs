@@ -23384,6 +23384,35 @@ fn collect_adopted_block_results(ir: &Value, freed: &HashSet<u16>, result: &mut 
     });
 }
 
+/// Whether every binding of `v` IS the store of one of its own deps, and that dep is freed —
+/// a local BUILT in a work ref (`t = { OpDatabase(__ref_1); …; __ref_1 }`, how a record-backed
+/// tuple that a `&(…)` link names is built, `tuples.md (T-Ref-Rep)`), whose store is released by
+/// the work ref's free.  Such a local is not a leak.  `check_ref_leaks`'s text-work-deps warning
+/// read it as one, because it asks only what the deps are NAMED: a `&(text, text)` argument
+/// printed *"Store will leak at runtime"* on every call on the debug-assertions leg (12 times in
+/// the loft#1673 guard), about a store `OpFreeRef(__ref_1)` releases.
+///
+/// Answers `false` when `v` has no binding or any binding ends in something else, which keeps
+/// the warning: the case it exists for — a struct that COPIED a text yet kept the work ref's
+/// dep — is bound to its own store, not to the work ref's.
+#[cfg(debug_assertions)]
+fn is_a_freed_backing(ir: &Value, v: u16, dep: &crate::data::Deps, freed: &HashSet<u16>) -> bool {
+    let mut bound = false;
+    let mut all_backing = true;
+    ir.walk(&mut |n| {
+        if let Value::Set(lhs, rhs) = n
+            && *lhs == v
+        {
+            bound = true;
+            match block_tail_var(rhs) {
+                Some(d) if freed.contains(&d) && dep.iter().any(|x| *x == d) => {}
+                _ => all_backing = false,
+            }
+        }
+    });
+    bound && all_backing
+}
+
 /// Debug-only check: refuse to compile a text-returning function that frees a
 /// local text on a path that REACHES a `Return` handing that same local back.
 /// The returned Str would dangle into freed `String` memory — the interpreter
@@ -23947,6 +23976,7 @@ fn check_ref_leaks(
             if !dep.is_empty()
                 && !ret_deps.contains(&v)
                 && !freed.contains(&v)
+                && !is_a_freed_backing(ir, v, dep, &freed)
                 && dep.iter().all(|d| {
                     function.name(*d).starts_with("__ref_")
                         || function.name(*d).starts_with("__rref_")
