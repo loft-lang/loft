@@ -23384,33 +23384,141 @@ fn collect_adopted_block_results(ir: &Value, freed: &HashSet<u16>, result: &mut 
     });
 }
 
-/// Whether every binding of `v` IS the store of one of its own deps, and that dep is freed —
-/// a local BUILT in a work ref (`t = { OpDatabase(__ref_1); …; __ref_1 }`, how a record-backed
-/// tuple that a `&(…)` link names is built, `tuples.md (T-Ref-Rep)`), whose store is released by
-/// the work ref's free.  Such a local is not a leak.  `check_ref_leaks`'s text-work-deps warning
-/// read it as one, because it asks only what the deps are NAMED: a `&(text, text)` argument
-/// printed *"Store will leak at runtime"* on every call on the debug-assertions leg (12 times in
-/// the loft#1673 guard), about a store `OpFreeRef(__ref_1)` releases.
+/// Whether `v`'s store is released through the variables it VIEWS: every binding of `v` ends
+/// in a record that lives in some freed variable's store (or a parameter's, which the caller
+/// frees), so `v` owns no store of its own and a free of `v` is not owed.  The root is found
+/// through a block's or insert's tail, BOTH arms of an `if` (a `??` discharge answers the
+/// element on one arm and a default record on the other), a projection's base (`items[0]`
+/// lives in the store of `items`' record), and another local whose own bindings resolve the
+/// same way.
 ///
-/// Answers `false` when `v` has no binding or any binding ends in something else, which keeps
-/// the warning: the case it exists for — a struct that COPIED a text yet kept the work ref's
-/// dep — is bound to its own store, not to the work ref's.
+/// Two shapes printed `check_ref_leaks`'s text-work-deps warning (*"Store will leak at
+/// runtime"*) about a store that IS released, because the warning asks only what the deps
+/// are NAMED: a tuple local a `&(…)` link names is BUILT in its work ref
+/// (`t = { OpDatabase(__ref_1); …; __ref_1 }`, `tuples.md (T-Ref-Rep)`) — 12 times in the
+/// loft#1673 guard — and `e = make().items[0] ?? P {}` VIEWS either the container's work ref or
+/// the default's.
+///
+/// Answers `false` for any binding it cannot root — a call, a mint, a literal — which keeps the
+/// warning: the case it exists for, a struct that COPIED a text yet kept the work ref's dep,
+/// owns a store of its own.
 #[cfg(debug_assertions)]
-fn is_a_freed_backing(ir: &Value, v: u16, dep: &crate::data::Deps, freed: &HashSet<u16>) -> bool {
-    let mut bound = false;
-    let mut all_backing = true;
+fn is_a_freed_backing(
+    ir: &Value,
+    v: u16,
+    function: &Function,
+    data: &Data,
+    freed: &HashSet<u16>,
+) -> bool {
+    let mut visiting = HashSet::new();
+    view_rooted_in_freed(ir, v, function, data, freed, &mut visiting)
+}
+
+#[cfg(debug_assertions)]
+fn view_rooted_in_freed(
+    ir: &Value,
+    v: u16,
+    function: &Function,
+    data: &Data,
+    freed: &HashSet<u16>,
+    visiting: &mut HashSet<u16>,
+) -> bool {
+    if !visiting.insert(v) {
+        return false;
+    }
+    let mut rhss = Vec::new();
     ir.walk(&mut |n| {
         if let Value::Set(lhs, rhs) = n
             && *lhs == v
         {
-            bound = true;
-            match block_tail_var(rhs) {
-                Some(d) if freed.contains(&d) && dep.iter().any(|x| *x == d) => {}
-                _ => all_backing = false,
-            }
+            rhss.push((**rhs).clone());
         }
     });
-    bound && all_backing
+    if rhss.is_empty() {
+        return false;
+    }
+    rhss.iter()
+        .all(|rhs| rooted(rhs, ir, v, function, data, freed, visiting))
+}
+
+/// Member `i` of the tuple LITERAL a binding ends in, or `None` for any other right-hand side.
+#[cfg(debug_assertions)]
+fn tuple_literal_member(rhs: &Value, i: u16) -> Option<Value> {
+    match rhs.unspan() {
+        Value::Tuple(elems) => elems.get(i as usize).cloned(),
+        Value::Block(bl) => bl.operators.last().and_then(|t| tuple_literal_member(t, i)),
+        Value::Insert(ops) => ops.last().and_then(|t| tuple_literal_member(t, i)),
+        _ => None,
+    }
+}
+
+#[cfg(debug_assertions)]
+fn rooted(
+    rhs: &Value,
+    ir: &Value,
+    v: u16,
+    function: &Function,
+    data: &Data,
+    freed: &HashSet<u16>,
+    visiting: &mut HashSet<u16>,
+) -> bool {
+    match rhs.unspan() {
+        Value::Var(d) if *d == v => false,
+        Value::Var(d) => {
+            freed.contains(d)
+                || function.is_argument(*d)
+                || view_rooted_in_freed(ir, *d, function, data, freed, visiting)
+        }
+        Value::Block(bl) => bl
+            .operators
+            .last()
+            .is_some_and(|t| rooted(t, ir, v, function, data, freed, visiting)),
+        Value::Insert(ops) => ops
+            .last()
+            .is_some_and(|t| rooted(t, ir, v, function, data, freed, visiting)),
+        Value::If(_, a, b) => {
+            rooted(a, ir, v, function, data, freed, visiting)
+                && rooted(b, ir, v, function, data, freed, visiting)
+        }
+        // A `null` binding holds no store at all, in either spelling.
+        Value::Null => true,
+        Value::Call(d, _) if data.def(*d).name() == "OpNullRefSentinel" => true,
+        // A destructured member (`m = __ref_3.1`) views whatever the tuple's literal put there.
+        Value::TupleGet(base, i) => {
+            let mut members = Vec::new();
+            ir.walk(&mut |n| {
+                if let Value::Set(lhs, rhs) = n
+                    && lhs == base
+                {
+                    members.push(tuple_literal_member(rhs, *i));
+                }
+            });
+            !members.is_empty()
+                && members.iter().all(|m| {
+                    m.as_ref()
+                        .is_some_and(|m| rooted(m, ir, v, function, data, freed, visiting))
+                })
+        }
+        // A nullable element read (`OpGetVectorNullable`, `OpVectorRefNullable`) is a projection
+        // exactly as its non-null twin is, so the twin is what is asked: the shared predicate
+        // names only the four the borrow walk needs, and a list of the nullable spellings here
+        // would miss the next one.
+        Value::Call(d, args)
+            if crate::use_analysis::is_projection_op(data, *d)
+                || data
+                    .def(*d)
+                    .name()
+                    .strip_suffix("Nullable")
+                    .map(|twin| data.def_nr(twin))
+                    .is_some_and(|t| {
+                        t != u32::MAX && crate::use_analysis::is_projection_op(data, t)
+                    }) =>
+        {
+            args.first()
+                .is_some_and(|base| rooted(base, ir, v, function, data, freed, visiting))
+        }
+        _ => false,
+    }
 }
 
 /// Debug-only check: refuse to compile a text-returning function that frees a
@@ -23976,7 +24084,7 @@ fn check_ref_leaks(
             if !dep.is_empty()
                 && !ret_deps.contains(&v)
                 && !freed.contains(&v)
-                && !is_a_freed_backing(ir, v, dep, &freed)
+                && !is_a_freed_backing(ir, v, function, data, &freed)
                 && dep.iter().all(|d| {
                     function.name(*d).starts_with("__ref_")
                         || function.name(*d).starts_with("__rref_")
