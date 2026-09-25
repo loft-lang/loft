@@ -5,8 +5,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN44 — Viewer discoverability cleanups
 
-**Status:** Future — opened 2026-05-15 from a structure
-evaluation of the viewer's routes and inbound-link graph.
+**Status: FINISHED (closed 2026-09-25).**  All three phases shipped in one commit.  The site
+header reads `dashboard · tree · docs · welcome · tags`, so `/welcome` is reachable from every page
+(phase 1).  The dashboard's four hardcoded tag examples are now one pointer to the index (phase 2).
+Phase 3 shipped option **(b)**, not (a): `/welcome` turned out to list no tags at all, so it was
+not a sensible target for a link named `tags`.  The new `/tags` route lists every canonical `@`-tag in
+`index/tags.json`, grouped by family, with its reference count, and links each to `/tag/<bare>`.
+It was checked against the index (1060 tags; the counts for `@PLN157` and `@FR-B-Copy` agree), and
+the page is byte-identical on `--interpret` and `--native-release`.  Opened 2026-05-15 from a
+structure evaluation of the viewer's routes and inbound-link graph.
 
 ## Why
 
