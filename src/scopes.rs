@@ -11620,17 +11620,12 @@ impl Scopes<'_> {
             Value::CallRef(v_nr, args) => {
                 let (preamble, ls, _postamble) = self.scan_args(args, function, data, u32::MAX);
                 // The CALLEE slot is a READ of the variable, so it is remapped like every
-                // other var-carrying node (`Var`, `TupleGet`, `FnRefDnr`, … below).  @PLAN53
-                // cluster 2 extended that list once and stopped one member short of it: a
-                // `Set` to a name whose block has ended starts a NEW binding
-                // (`@FR-B-Scope`), which `scan_set` gives its own slot through
-                // `copy_variable`, and a call through the name then still named the ENDED
-                // binding's slot — `for f in fs { … } f = two; f(1)` called `one` where the
-                // earlier binding was live and answered `null` where the loop had left the
-                // exhausted sentinel, on `--interpret` only (loft#1679).  `--native` names
-                // its locals `var_<name>`, so both bindings are one Rust local there and the
-                // rebind shadows it — right for the wrong reason, which is why one backend
-                // ran and the other did not.
+                // other var-carrying node (`Var`, `TupleGet`, `FnRefDnr`, … below).  A `Set`
+                // to a name whose block has ended starts a NEW binding (`@FR-B-Scope`) with a
+                // slot of its own (`scan_set` → `copy_variable`), and a call through the name
+                // must reach that binding, never the ended one (loft#1679).  `--native` names
+                // its locals `var_<name>`, so both bindings share one Rust local there and a
+                // missing remap is invisible: the interpreter is where it shows.
                 let call = Value::CallRef(*self.var_mapping.get(v_nr).unwrap_or(v_nr), ls);
                 if preamble.is_empty() {
                     call

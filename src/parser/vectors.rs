@@ -6791,7 +6791,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 continue;
             };
             let tp = self.vars.tp(c).clone();
-            if matches!(tp, Type::RefVar(_)) {
+            if matches!(tp.base(), Type::RefVar(_)) {
                 out.push(op);
                 continue;
             }

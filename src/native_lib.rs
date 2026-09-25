@@ -883,9 +883,9 @@ fn shared_bridge_wrapper(
     // boundary; native whole-program has no bridge and is unaffected).
     let mut free_orphans = String::new();
     for var in &work_bufs {
-        let _ = write!(
+        let _ = writeln!(
             free_orphans,
-            "    if {var}_fresh {{ unsafe {{ (&mut *cell.get()).free_named(&{var}, \"__shared_work_buffer\"); }} }}\n",
+            "    if {var}_fresh {{ unsafe {{ (&mut *cell.get()).free_named(&{var}, \"__shared_work_buffer\"); }} }}",
         );
     }
     for var in &fresh_dests {

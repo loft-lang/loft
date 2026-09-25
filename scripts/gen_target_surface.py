@@ -90,12 +90,14 @@ def missing_methods(methods: list[str], target: dict[str, str]) -> set[str]:
     """Methods absent on `target`, per rustc. Empty when the probe compiles clean."""
     rlib_dir = ROOT / target["rlib"]
     rlib = rlib_dir / "libloft.rlib"
-    if not rlib.exists():
-        sys.exit(
-            f"missing {rlib}\n"
-            f"  build it first:  cargo build --release --target {target['triple']} "
-            f"--lib --no-default-features --features random"
-        )
+    # Build the rlib here rather than trust the one on disk: the gallery bundle writes the
+    # same path with the `wasm` feature, whose `cfg`s differ (`Stores::load_url` exists only
+    # without it), so reading whichever was built last recorded the gallery's surface as
+    # `--html`'s.  Cargo makes this a no-op when the `--html` build is already current.
+    build = ["cargo", "build", "--release", "--target", target["triple"], "--lib",
+             "--no-default-features", "--features", "random"]
+    if subprocess.run(build, cwd=ROOT).returncode != 0 or not rlib.exists():
+        sys.exit(f"could not build {rlib}:  {' '.join(build)}")
     src = ["#![allow(unused)]", "use loft::database::Stores;"]
     for i, m in enumerate(methods):
         src.append(f"fn p{i}() {{ let _ = Stores::{m}; }}")

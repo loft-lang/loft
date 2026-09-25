@@ -170,7 +170,13 @@ impl Parser {
         if vars.name(v).starts_with('_') {
             return None;
         }
-        let Type::Vector(elem, _) = vars.tp(v) else {
+        // A nullable vector local keeps its mint: null is a value the work buffer, which is
+        // cleared where the declaration stood, cannot hold (the nullability question, asked
+        // on its own — @FR-N-Shape).
+        if vars.tp(v).peel_optional().1 {
+            return None;
+        }
+        let Type::Vector(elem, _) = vars.tp(v).base() else {
             return None;
         };
         let decline = |why: &str| {
@@ -235,7 +241,7 @@ impl Parser {
     fn promote_one(&mut self, code: &mut Value, v: u16, db: u16, ops: &Ops) {
         let d = self.context;
         let name = self.vars.name(v).to_string();
-        let Type::Vector(elem, _) = self.vars.tp(v).clone() else {
+        let Type::Vector(elem, _) = self.vars.tp(v).base().clone() else {
             return;
         };
         // #306 — the attribute's type carries no deps: the local's dep names a callee frame
