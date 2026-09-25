@@ -22,6 +22,13 @@
 # A program whose output differs between two runs with the rewrite ON is nondeterministic
 # (time, randomness, a temp path) and is reported as NOISE, never as a defect.  Exit 1 when
 # any defect is found, 0 otherwise.
+#
+# A program whose output MEASURES what a switch changes — a hash table's byte size under
+# LOFT_NO_HALF_LOAD (a writer's sizing policy no reader assumes), a store's occupancy — moves
+# with that switch without any meaning moving.  It says so in its header with
+# `// @observes: LOFT_NO_<REWRITE>`, and the difference is reported as OBSERVED, not as a
+# defect.  The annotation names ONE switch: under every other switch the same program is
+# compared as usual.
 set -uo pipefail
 if [ $# -lt 1 ] || [[ "$1" != LOFT_NO_* ]]; then
   echo "usage: $0 LOFT_NO_<REWRITE> [--consumer DIR]..." >&2
@@ -75,7 +82,7 @@ for mode in on off; do
   printf '%s\n' "${files[@]}" | xargs -P "$JOBS" -I{} bash -c "run_one $mode {}"
 done
 
-defects=0; noise=0; timeouts=0
+defects=0; noise=0; timeouts=0; observed=0
 for f in "${files[@]}"; do
   base="$(basename "$f" .loft)"
   if grep -q '^\[timeout\] deadline reached' "$WORK/on/$base.out" "$WORK/off/$base.out"; then
@@ -88,6 +95,9 @@ for f in "${files[@]}"; do
     if ! cmp -s "$WORK/on/$base.out" "$WORK/on2/$base.out"; then
       noise=$((noise + 1))
       echo "NOISE   $f (differs between two runs with the rewrite on)"
+    elif grep -qE "^// @observes:.*\b$SWITCH\b" "$f"; then
+      observed=$((observed + 1))
+      echo "OBSERVED $f (its output measures what $SWITCH changes, as its header declares)"
     else
       defects=$((defects + 1))
       echo "DEFECT  $f — output moves with $SWITCH:"
@@ -108,5 +118,5 @@ for dir in "${CONSUMERS[@]}"; do
   fi
 done
 
-echo "$SWITCH: ${#files[@]} programs, $defects defect(s), $noise noisy, $timeouts timed out"
+echo "$SWITCH: ${#files[@]} programs, $defects defect(s), $observed observed, $noise noisy, $timeouts timed out"
 [ "$defects" -eq 0 ]

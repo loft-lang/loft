@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @observes: LOFT_NO_HALF_LOAD — its output measures the bucket table's byte size, which the load factor that rebuilds it decides.
 //
 // @PLN110 sub-arc 1c — `size(hash)` = the full bucket table, HOLES INCLUDED.
 // The hash's own allocation is the bucket array: `elms` slots, each a 4-byte
