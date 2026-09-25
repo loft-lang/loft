@@ -507,11 +507,13 @@ exactly this way.
 
 ## Pre-Release Documentation Review
 
-> **Load the `doc-quality` skill first** (`/doc-quality`) — and at the start of
-> *any* documentation review, not just the release. It carries the comment/doc
-> rules (legible-on-contact, serve-the-reader, matches-reality + stamp-vs-pointer)
-> these steps apply; reviewing without it is how stale stamps and author-bookkeeping
-> creep back in.
+> **Run it as a reviewer session** ([DOC_CONTRACT.md § Reviewer pass](DOC_CONTRACT.md)):
+> a fresh session that loads the `doc-quality` skill, never the session that wrote the
+> text.  The skill carries the judgment the lint cannot make; what a script can check is
+> `scripts/doc_lint.py`'s, reported by `make docs-lint`.  Two checklist rows sit beside
+> this review on the `[mid]` beat: **`A-docs-lint`** (the lint's count did not grow since
+> its baseline, and a burn-down is re-pinned) and **`M-doc-review`** (one maintainer doc
+> brought fully under the contract this cycle, the top of the lint's worklist).
 
 Run these steps before tagging a release.  **They are advisory, not blocking** —
 only the [Safety gate](#safety-gate--blocks-every-release) (crashes / memory / leaks

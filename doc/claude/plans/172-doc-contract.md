@@ -7,7 +7,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Active — Phases 1 and 2 done; Phase 3 (the release-checklist rows) next.** Tracks [@PLN172](https://github.com/loft-lang/plans/issues/172).
+**Active — Phases 1–3 done; Phase 4 (the burn-down, one doc per `[mid]`) is the standing work.**
+
+**Phase 3, as built (2026-09-25):** two rows in `scripts/release-checklist.py`.
+- **`A-docs-lint`** (automatic, `mid pre`) fails on growth since the baseline, and also on a
+  burn-down left un-pinned, because headroom would hide the next regrowth.  It was falsified
+  both ways.
+- **`M-doc-review`** (by hand, `mid`) is one doc per cycle, ticked with the PR link.
+- **D-user** is the existing `M-docs-review` row, now pointed at the reviewer session.
+  RELEASE.md § Pre-Release Documentation Review names all three. Tracks [@PLN172](https://github.com/loft-lang/plans/issues/172).
 
 **Phase 1, as built (2026-09-25):**
 - [DOC_CONTRACT.md](../DOC_CONTRACT.md): 41 rules in 71 lines, each naming its owning doc
