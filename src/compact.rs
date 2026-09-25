@@ -232,7 +232,7 @@ fn guarded(r: Rebuild, original: Vec<Value>, cx: &Cx) -> Value {
 
 // ── the matcher ─────────────────────────────────────────────────────────────────────────
 
-fn call<'a>(v: &'a Value, op: u32) -> Option<&'a [Value]> {
+fn call(v: &Value, op: u32) -> Option<&[Value]> {
     match v.unspan() {
         Value::Call(d, args) if *d == op => Some(args),
         _ => None,
@@ -276,21 +276,21 @@ fn same(a: &Value, b: &Value) -> bool {
 }
 
 /// `[a] OpDatabase(vdb, _); [b] t = OpGetField(vdb, 0, _); [c] OpSetInt4(vdb, 0, 0)`.
-fn match_decl(s: &[(usize, &Value)], ops: &Ops) -> Option<(u16, u16)> {
-    let a = call(s.first()?.1, ops.database)?;
-    let vdb = var(a.first()?)?;
-    let Value::Set(t, rhs) = s.get(1)?.1.unspan() else {
+fn match_decl(stmts: &[(usize, &Value)], ops: &Ops) -> Option<(u16, u16)> {
+    let mint = call(stmts.first()?.1, ops.database)?;
+    let vdb = var(mint.first()?)?;
+    let Value::Set(target, rhs) = stmts.get(1)?.1.unspan() else {
         return None;
     };
-    let b = call(rhs, ops.get_field)?;
-    if var(b.first()?)? != vdb || int(b.get(1)?)? != 0 {
+    let field = call(rhs, ops.get_field)?;
+    if var(field.first()?)? != vdb || int(field.get(1)?)? != 0 {
         return None;
     }
-    let c = call(s.get(2)?.1, ops.set_int4)?;
-    if var(c.first()?)? != vdb || int(c.get(1)?)? != 0 || int(c.get(2)?)? != 0 {
+    let zero = call(stmts.get(2)?.1, ops.set_int4)?;
+    if var(zero.first()?)? != vdb || int(zero.get(1)?)? != 0 || int(zero.get(2)?)? != 0 {
         return None;
     }
-    Some((*t, vdb))
+    Some((*target, vdb))
 }
 
 /// A bound the guard may re-evaluate: a literal, a variable (not one the loop writes), or
@@ -391,51 +391,55 @@ fn match_loop<'a>(v: &'a Value, ops: &Ops) -> Option<(u16, Value, Value, &'a Blo
 }
 
 /// The body `t += [V[i]?]` for a record element; answers `V`.
-fn match_record_append(body: &Block, t: u16, i: u16, ops: &Ops) -> Option<Value> {
-    let s = &body.operators;
-    if s.len() != 4 {
+fn match_record_append(body: &Block, target: u16, index: u16, ops: &Ops) -> Option<Value> {
+    let stmts = &body.operators;
+    if stmts.len() != 4 {
         return None;
     }
-    let pre = call(&s[0], ops.pre_alloc)?;
-    if var(&pre[0]) != Some(t) {
+    let pre = call(&stmts[0], ops.pre_alloc)?;
+    if var(&pre[0]) != Some(target) {
         return None;
     }
-    let Value::Set(elm, mint) = s[1].unspan() else {
+    let Value::Set(elm, mint) = stmts[1].unspan() else {
         return None;
     };
-    let nr = call(mint, ops.new_record)?;
-    if var(&nr[0]) != Some(t) {
+    let new_rec = call(mint, ops.new_record)?;
+    if var(&new_rec[0]) != Some(target) {
         return None;
     }
-    let parent_tp = int(&nr[1])?;
-    let cp = call(&s[2], ops.copy_record)?;
-    if var(&cp[1]) != Some(*elm) {
+    let parent_tp = int(&new_rec[1])?;
+    let copy = call(&stmts[2], ops.copy_record)?;
+    if var(&copy[1]) != Some(*elm) {
         return None;
     }
-    let fin = call(&s[3], ops.finish_record)?;
-    if var(&fin[0]) != Some(t) || var(&fin[1]) != Some(*elm) || int(&fin[2]) != Some(parent_tp) {
+    let fin = call(&stmts[3], ops.finish_record)?;
+    if var(&fin[0]) != Some(target) || var(&fin[1]) != Some(*elm) || int(&fin[2]) != Some(parent_tp)
+    {
         return None;
     }
     // The copied value: `{ ncc = OpGetVectorNullable(V, size, i); if ncc then ncc else {Object} }`.
-    let ncc = block(&cp[0], "ncc")?;
+    let ncc = block(&copy[0], "ncc")?;
     if ncc.operators.len() != 2 {
         return None;
     }
-    let Value::Set(n, read) = ncc.operators[0].unspan() else {
+    let Value::Set(read_var, read) = ncc.operators[0].unspan() else {
         return None;
     };
-    let gv = call(read, ops.get_vector_nullable)?;
-    if gv.len() != 3 || var(&gv[2]) != Some(i) || !is_place(&gv[0], ops) {
+    let get = call(read, ops.get_vector_nullable)?;
+    if get.len() != 3 || var(&get[2]) != Some(index) || !is_place(&get[0], ops) {
         return None;
     }
-    let Value::If(c, then, absent) = ncc.operators[1].unspan() else {
+    let Value::If(cond, then, absent) = ncc.operators[1].unspan() else {
         return None;
     };
-    let cb = call(c, ops.conv_bool_from_ref)?;
-    if var(&cb[0]) != Some(*n) || var(then) != Some(*n) || block(absent, "Object").is_none() {
+    let test = call(cond, ops.conv_bool_from_ref)?;
+    if var(&test[0]) != Some(*read_var)
+        || var(then) != Some(*read_var)
+        || block(absent, "Object").is_none()
+    {
         return None;
     }
-    Some(gv[0].unspan().clone())
+    Some(get[0].unspan().clone())
 }
 
 /// The rebind `V = t`: the field form (5 statements) or the local form (4); answers the span
