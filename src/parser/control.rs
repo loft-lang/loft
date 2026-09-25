@@ -7616,6 +7616,15 @@ impl Parser {
         step: i32,
         bindings: &mut Vec<Value>,
     ) {
+        // A pattern binding is a NEW binding (`@FR-B-Scope`): the arm binds its names fresh, and
+        // an earlier `match` that bound the same name in a block that has ended left only a type
+        // carrying ITS store's dep.  Read through that dep, `vector_needs_db` lowered this bind as
+        // a reassignment (`OpClearVector` + refill) with no declaring `Set`, so the scope pass had
+        // nothing to split and native — which declares the first binding inside its own arm —
+        // could not see the name: two `match`es binding one `..rest` or `(xs: V)*` did not
+        // compile.  Starting from the owned type makes it the fresh bind it is.
+        self.vars
+            .set_type(rest_var, vec_tp.with_deps(&Deps::none()));
         let lo_slot = self.create_unique("rest_lo", &I32);
         let hi_slot = self.create_unique("rest_hi", &I32);
         let idx = self.create_unique("rest_idx", &I32);
@@ -7732,6 +7741,9 @@ impl Parser {
         step: i32,
         bindings: &mut Vec<Value>,
     ) {
+        // A fresh binding, for `materialize_named_rest`'s reason.
+        self.vars
+            .set_type(proj_var, proj_vec_tp.with_deps(&Deps::none()));
         let lo_slot = self.create_unique("proj_lo", &I32);
         let hi_slot = self.create_unique("proj_hi", &I32);
         let idx = self.create_unique("proj_idx", &I32);
