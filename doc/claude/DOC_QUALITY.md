@@ -15,7 +15,8 @@ commit message.
 **Fast path:** in a hurry, read [§ The rules](#the-rules). The
 rest is evidence and worked examples.
 
-**Doing a review?** Load the **`doc-quality` skill** at the start
+**Writing?** The doc-lint edit hook (`make hooks`) reports what a script can check as you
+write.  **Doing a review?** Load the **`doc-quality` skill** at the start
 of any documentation review (release doc review, a PR's doc changes, a doc-edit
 pass). It is the loadable companion to this doc — the rules condensed with
 the stamp-vs-pointer test — so the review applies them consistently instead of
@@ -603,7 +604,8 @@ gate here.  What is:
 ---
 
 ## See also
-- **`doc-quality` skill** (`.claude/skills/doc-quality/SKILL.md`) — the actionable form of this reference; auto-loads when writing or editing comments and docs.
+- **`doc-quality` skill** (`.claude/skills/doc-quality/SKILL.md`) — the reviewer's pass: the judgment this reference asks for, applied to one doc from the `make docs-lint` worklist.
+- `scripts/doc_lint.py` — the checkable rules of [DOC_CONTRACT.md](DOC_CONTRACT.md): the edit hook, the PR gate (`make docs-lint-gate`) and the report (`make docs-lint`).
 - [CODE.md](CODE.md) — Code quality rules (naming, functions, doc comments, clippy, deps)
 - [DEVELOPMENT.md](DEVELOPMENT.md) — Contribution workflow and validation against CODE.md
 - [DOC.md](DOC.md) — HTML doc generation from `tests/docs/` (a different "doc": user-facing language docs)

@@ -427,7 +427,9 @@ commit BEFORE inserting it.
 
 Run **`make hooks`** once per clone: the `commit-msg` hook reports an issue mentioned without a
 `Fixes #N` trailer (that trailer is what the push workflow labels `fixed-pending-merge` off — see
-the bug-filing policy above). It never blocks.
+the bug-filing policy above), and a Claude Code edit hook runs the documentation lint on every
+file you write, reporting only what the edit added ([DOC_CONTRACT.md](doc/claude/DOC_CONTRACT.md)).
+Neither blocks.
 
 ---
 

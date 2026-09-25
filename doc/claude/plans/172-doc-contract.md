@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Active — Phase 1 done; Phase 2 next.** Tracks [@PLN172](https://github.com/loft-lang/plans/issues/172).
+**Active — Phases 1 and 2 done; Phase 3 (the release-checklist rows) next.** Tracks [@PLN172](https://github.com/loft-lang/plans/issues/172).
 
 **Phase 1, as built (2026-09-25):**
 - [DOC_CONTRACT.md](../DOC_CONTRACT.md): 41 rules in 71 lines, each naming its owning doc
@@ -30,6 +30,27 @@ SPDX-License-Identifier: LGPL-3.0-or-later
   - the doc-writer agent's stale test and date rule;
   - the doc-quality skill's rule numbering.
 - CLAUDE.md points at the contract, and DRAWING.md is reachable.
+
+**Phase 2, as built (2026-09-25):**
+- `scripts/doc_lint.py`: nine rules (`stamp`, `narration`, `history`, `timeline`, `size`,
+  `two-h1`, `orphan`, `hedge`, `link`).  Each pattern is read from the tool that already
+  owned it, so the patterns cannot drift apart.  `fix_broken_links.py` gained the `scan()`
+  function both tools call.  `history` is kept narrow on purpose: phrasing only a change
+  story uses.  A hand-read sample of its hits was about 80 % real; the misses were method
+  prose, and they are excluded.
+- **Caller 1, the edit hook:** `.claude/settings.json` is per-machine and git-ignored (a
+  2026-07-08 decision), so the hook travels through `scripts/install_claude_hooks.py`, which
+  `make hooks` runs; it merges and is idempotent.  It was proved in a live session: a planted
+  sentence came back as context, and the revert was silent.
+- **Caller 2, the PR gate:** a step in ci.yml's `Doc hygiene` job, and `make docs-lint-gate`
+  locally.  It compares against the base, never a baseline, so inherited findings cannot block
+  it.  That is why it landed in this phase rather than one cycle behind the report (the open
+  decision).  It was falsified four ways: a new stamp and a new history line exit 1; moved
+  text, and a file already over the ceiling growing further, exit 0.
+- **Caller 3, the report:** `make docs-lint` against `doc/claude/releases/docs-lint.baseline`,
+  which pins counts per file and rule (510 rows), never line text.  `make docs-lint-baseline`
+  re-pins it.
+- The `doc-quality` skill is reduced to the reviewer pass, in the same change as the hook.
 
 **One sequencing change:** the `doc-quality` skill is reduced to the reviewer pass in the
 same change that installs Phase 2's edit hook, not in Phase 1.  Reducing it first would leave
@@ -232,8 +253,8 @@ bypass.
   by the reviewer below it.
 - Whether `doc/claude/formal/` and `plans/` are exempt from `orphan` (proposed: `formal/`
   exempt via its README, `plans/` reachable via `plans/README.md`, so no exemption needed).
-- Whether the PR gate lands in Phase 2 or waits one cycle behind the report, so the first
-  baseline exists before anything can block.
+- ~~Whether the PR gate lags the report~~ — it did not need to: the gate compares a change with
+  its base, so no baseline is involved and inherited findings cannot block (Phase 2).
 
 ## Done when
 

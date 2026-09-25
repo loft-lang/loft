@@ -938,7 +938,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: perf-portal perf-portal-render perf-libs plan-move doc-fix work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
+.PHONY: perf-portal perf-portal-render perf-libs plan-move doc-fix docs-lint docs-lint-baseline docs-lint-gate work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -2342,6 +2342,19 @@ doc-check:
 
 doc-check-quiet:
 	@scripts/check_doc_drift.sh -q
+
+# The documentation lint (doc/claude/DOC_CONTRACT.md): every checkable rule over the whole
+# tree, the delta against the committed baseline, and the worklist a reviewer takes the next
+# doc from.  A REPORT; `docs-lint-baseline` re-pins it.
+docs-lint:
+	@python3 scripts/doc_lint.py --all --baseline doc/claude/releases/docs-lint.baseline
+
+docs-lint-baseline:
+	@python3 scripts/doc_lint.py --all --write-baseline doc/claude/releases/docs-lint.baseline
+
+# The PR gate, run locally: findings this branch ADDS since it left origin/main.
+docs-lint-gate:
+	@python3 scripts/doc_lint.py --gate --since "$$(git merge-base origin/main HEAD)" --changed
 
 # Move a file or directory and rewrite every link the move would break:
 # links into it from anywhere, links out of it from its new depth, and

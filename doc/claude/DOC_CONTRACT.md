@@ -7,7 +7,10 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 Every standing rule for writing documentation in this repo, one line each, with the doc that
 owns the detail.  If a line and its owner differ, the owner wins: fix the line.  `Gate` means a
-test in the suite fails; `report` means a tool prints and never fails.
+check fails a PR; `report` means a tool prints and never fails.  `scripts/doc_lint.py` checks
+what a script can: as an edit hook on the file just written (`make hooks` installs it), as the
+PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 1000 lines
+(`make docs-lint-gate`), and as the report with the reviewer's worklist (`make docs-lint`).
 
 ## Every surface
 

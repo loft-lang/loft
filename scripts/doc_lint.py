@@ -377,26 +377,42 @@ def main(argv):
     return 0
 
 
-def baseline_lines(findings):
-    return sorted({f"{p}\t{r}\t{' '.join(t.split())}" for p, _, r, _, t in findings})
+def counts(findings):
+    """Findings per (file, rule) — what the baseline pins.  The report needs the delta and
+    the worklist, and both are per file, so the baseline carries no line text."""
+    return collections.Counter((p, r) for p, _, r, _, _ in findings)
+
+
+def read_baseline(path):
+    out = collections.Counter()
+    for line in open(os.path.join(ROOT, path), encoding="utf-8"):
+        parts = line.rstrip("\n").split("\t")
+        if len(parts) == 3 and parts[2].isdigit():
+            out[(parts[0], parts[1])] = int(parts[2])
+    return out
 
 
 def report(findings, baseline, write):
-    lines = baseline_lines(findings)
+    now = counts(findings)
     if write:
         with open(os.path.join(ROOT, write), "w", encoding="utf-8") as f:
-            f.write("\n".join(lines) + "\n")
-        print(f"doc_lint: {len(lines)} findings pinned in {write}")
+            f.write("# path\trule\tcount — pinned by `make docs-lint-baseline`; read by `make docs-lint`\n")
+            for (p, r), c in sorted(now.items()):
+                f.write(f"{p}\t{r}\t{c}\n")
+        print(f"doc_lint: {sum(now.values())} findings in {len(now)} (file, rule) rows pinned in {write}")
         return 0
     by_rule = collections.Counter(r for _, _, r, _, _ in findings)
     print(f"== docs-lint: {len(findings)} findings ==")
     for r, c in sorted(by_rule.items()):
         print(f"   {r:<10} {c}")
     if baseline and os.path.exists(os.path.join(ROOT, baseline)):
-        old = set(open(os.path.join(ROOT, baseline), encoding="utf-8").read().split("\n")) - {""}
-        now = set(lines)
-        print(f"\n   since the baseline: {len(now - old)} new, {len(old - now)} fixed "
-              f"({len(old)} → {len(now)})")
+        old = read_baseline(baseline)
+        grew = {k: now[k] - old.get(k, 0) for k in now if now[k] > old.get(k, 0)}
+        fell = sum(max(0, c - now.get(k, 0)) for k, c in old.items())
+        print(f"\n   since the baseline: {sum(grew.values())} new, {fell} fixed "
+              f"({sum(old.values())} → {sum(now.values())})")
+        for (p, r), d in sorted(grew.items(), key=lambda kv: -kv[1])[:10]:
+            print(f"      +{d:<4} {r:<10} {p}")
     print("\n== worklist: files by rule, largest first ==")
     per = collections.Counter((r, p) for p, _, r, _, _ in findings)
     sizes = {p: n for p, n, r, _, _ in findings if r == "size"}
