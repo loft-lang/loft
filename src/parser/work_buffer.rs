@@ -705,6 +705,19 @@ impl Walk<'_> {
                 {
                     return Err("an element place not read or written as a scalar");
                 }
+                // Copied into a record's field: the element-first build (`@FR-R-ElemFirst`)
+                // builds such a local inside the record, which saves the copy a work
+                // buffer keeps, and a promoted local would decline it.
+                if copied_from_at_1(name)
+                    && args.get(1).is_some_and(
+                        |a| matches!(a.unspan(), Value::Var(x) if self.tracked.contains(x)),
+                    )
+                    && args.first().is_some_and(
+                        |a| matches!(a.unspan(), Value::Call(g, _) if *g == self.ops.get_field),
+                    )
+                {
+                    return Err("copied into a record's field");
+                }
                 for (i, a) in args.iter().enumerate() {
                     self.node(a, Pos::Arg { name, d: *d, i })?;
                 }
