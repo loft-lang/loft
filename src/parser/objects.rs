@@ -3916,12 +3916,12 @@ impl Parser {
                 in_type.clone(),
                 I32.clone(),
             );
-            // loft#1525 — an INCLUSIVE range stops on the value it just yielded, BEFORE the
-            // step, so it never has to represent `till + 1`.  The overshoot test below cannot
-            // do that job when `till` is the type's maximum: the step overflows to the null
-            // sentinel (`i64::MIN` for `integer`), and `till < null` is false under the plain
-            // order — so the loop either restarts (the null-init form reads the sentinel as
-            // "not started yet") or runs on with `i = null` forever.
+            // `@FR-I-RangeIncl` (loft#1525) — an INCLUSIVE range stops on the value it just
+            // yielded, BEFORE the step, so it never has to represent `till + 1`.  The overshoot
+            // test below cannot do that job when `till` is the type's maximum: the step
+            // overflows to the null sentinel (`i64::MIN` for `integer`), and `till < null` is
+            // false under the plain order — so the loop either restarts (the null-init form
+            // reads the sentinel as "not started yet") or runs on with `i = null` forever.
             //
             // Both spellings of the counter take this test unchanged.  In the plain-counter
             // form `i` starts at `lo - 1`, so `i == till` on entry is exactly the empty range
