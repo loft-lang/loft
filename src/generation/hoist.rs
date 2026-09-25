@@ -278,6 +278,57 @@ pub struct HoistTiers {
     pub rebound_movers: bool,
 }
 
+/// For the decline trace: descend `op`'s statement lists to the innermost statement that
+/// `blocks_header_hoist` refuses, and the `Line` marker before it.
+fn innermost_blocking<'a>(
+    op: &'a Value,
+    data: &Data,
+    stores: Option<&Stores>,
+    cache: &mut HashMap<u32, bool>,
+    vars: Option<&crate::variables::Function>,
+    tiers: HoistTiers,
+    owned: Option<&HoistOwned>,
+) -> (u32, &'a Value) {
+    let mut cur = op;
+    let mut line = 0;
+    loop {
+        let ops = match cur.unspan() {
+            Value::Block(bl) | Value::Loop(bl) => &bl.operators,
+            Value::Insert(ls) => ls,
+            _ => return (line, cur),
+        };
+        let mut next: Option<&'a Value> = None;
+        let mut inner_line = line;
+        for o in ops {
+            if let Value::Line(n) = o.unspan() {
+                inner_line = *n;
+                continue;
+            }
+            if blocks_header_hoist(
+                o,
+                data,
+                stores,
+                cache,
+                &mut HashSet::new(),
+                vars,
+                tiers,
+                &mut HashSet::new(),
+                owned,
+            ) {
+                next = Some(o);
+                break;
+            }
+        }
+        match next {
+            Some(o) => {
+                cur = o;
+                line = inner_line;
+            }
+            None => return (line, cur),
+        }
+    }
+}
+
 /// Does anything in `body` invalidate a hoisted header?  The ONE gate both the vector
 /// headers and the scalar hoist (@PLN157 P4c) stand behind: a scalar hoist is admitted only
 /// in a loop whose store writes are all in place, so the two cannot disagree about which
@@ -307,14 +358,24 @@ fn body_blocks_hoist(
             owned,
         );
         if blocks && trace {
-            // The FIRST statement of the body the admission declines — the one to read
-            // when a loop that should hoist does not.
-            let shown = format!("{op:?}");
+            // The INNERMOST statement the admission declines, with the source line before
+            // it — the one to read when a loop that should hoist does not.  A loop body is
+            // one statement to this walk, and naming the body names nothing.
+            let (line, culprit) = innermost_blocking(
+                op,
+                data,
+                stores,
+                cache,
+                Some(data.def(def_nr).variables()),
+                tiers,
+                owned,
+            );
+            let shown = format!("{culprit:?}");
             eprintln!(
-                "hoist: {} loop {} declined by {}",
+                "hoist: {} loop {} declined at line {line} by {}",
                 data.def(def_nr).name(),
                 body.scope,
-                &shown[..shown.len().min(200)]
+                &shown[..shown.len().min(400)]
             );
         }
         blocks
@@ -1002,11 +1063,14 @@ fn plain_record_type(data: &Data, tp: &Type) -> Option<u16> {
 }
 
 /// Does local `r` OWN the store it names — so no other variable of this frame can name
-/// that store (@PLN157 § V-q)?  Enforces `@FR-R-Alias`'s exclusivity test.  Not a parameter (the caller's store), not a `&` link, an
-/// empty dep list (`@FR-O-Proxy`), and not captured by a closure.
+/// that store (@PLN157 § V-q)?  Enforces `@FR-R-Alias`'s exclusivity test.  Not a parameter
+/// (the caller's store) — unless it is the callee's WORK BUFFER (`@FR-R-WorkBuffer`), a
+/// store the caller hands to this parameter alone and never reads, which is exclusive
+/// exactly as a local's own — not a `&` link, an empty dep list (`@FR-O-Proxy`), and not
+/// captured by a closure.
 fn owned_local(vars: &crate::variables::Function, r: u16) -> bool {
     // `.base()`: the shape question sees through a `τ?` slot (`@FR-N-Shape`).
-    !vars.is_argument(r)
+    (!vars.is_argument(r) || vars.is_work_buffer(r))
         && !matches!(vars.tp(r).base(), Type::RefVar(_))
         && !vars.is_captured(r)
         // A local vector's dep list names its OWN hidden store witness (`__vdb_N`), which

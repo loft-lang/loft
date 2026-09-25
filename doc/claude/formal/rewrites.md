@@ -2068,13 +2068,29 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  the callee a buffer and a null is never a wrong answer.  The mention
                  test IS the escape proof: with a scalar element every admitted operand
                  position yields a scalar or nothing, so no view, copy or link of the
-                 store can leave the frame.  Declines, keeping the mint: a mention as an
-                 argument of a loft-bodied call, in a return or a tail, in a literal, a
-                 tuple, a link or a capture, a second assignment, a copy into a local
-                 that is then not so used; an element type that is a record or a text;
-                 a body that suspends or forks; `main`; a generic, a synthetic, a
-                 lambda, a function whose address is taken; a local numbered before an
-                 existing argument.
+                 store can leave the frame.  A loft-bodied callee may take the local BY
+                 VALUE where its answer cannot hold it — the return type, through every
+                 nested type, carries no dep naming that parameter and is no function
+                 value — because a by-value heap parameter is a view for the call's
+                 duration (F-ParamHeap) that no store of the callee's retains by
+                 identity: a bind or a field store copies (B-Copy), a link cannot be
+                 stored, and a rebind (F-ParamRebind) is the callee's own store,
+                 released at its exit.  Declines, keeping the mint: a hand-off to a `&`
+                 parameter (a rebind through it repoints the caller's variable), to a
+                 callee answering a view or a function value, to a native or a parallel
+                 builtin, or through a function value; a copy into an ELEMENT'S FIELD
+                 (`out += [Rec { pts: v }]`), which the native emitter builds inside the
+                 appended element with no store at all (R-ElemFirst) and a buffer would
+                 turn into a copy; a declaration that is not `[]` — a copy (`v = p`), which
+                 the borrow elision removes outright, or a literal with elements, which the
+                 literal hoist builds once per activation — and a local declared INSIDE a
+                 loop, whose store the native emitter already keeps across the passes with
+                 a length reset (R-LoopBuffer) cheaper than a clear; a local the dead-store
+                 lint counts no read for; a mention in a return or a tail,
+                 in a literal, a tuple, a link or a capture, a second assignment, a copy
+                 into a local that is then not so used; an element type that is a
+                 record or a text; a body that suspends or forks; `main`; a generic, a
+                 synthetic, a lambda, a function whose address is taken; a `par` worker.
 ```
 
 **In words.**  The overview's largest language-side bucket is a value Rust keeps on the
@@ -2094,8 +2110,8 @@ attribute as THE return buffer, and a second one would have been pushed as a res
 refused.  Measured on the probe (`fn f(salt) { v: vector<integer> = []; …; len(v) }`,
 2 M calls, `--native-release`): 81 → 33–34 ns a call.  Census of the library corpus
 (2026-09-25): 371 vector locals declared `[]`, 77 with no escaping mention by the crude
-test, 194 results (another rule's), 90 handed to a call (the next widening: a by-value
-parameter of a callee whose return carries no dep on it).
+test, 194 results (another rule's), 90 handed to a call — the by-value clause above admits
+those whose callee answers no view of the parameter.
 
 **BUILT** (2026-09-25, `src/parser/work_buffer.rs`, run from `after_pass2` beside the
 targeted `__tret` promotion; `LOFT_NO_WORK_BUFFER`, `LOFT_TRACE_WORK_BUFFER`; guard
@@ -2110,8 +2126,34 @@ hidden vector attribute and free it after.  A `par(…)` worker is declined by n
 builtin's `func` operand: its scalar route builds the frame from the element alone.  The
 probe on the release tier, 2 M calls: **78–91 → 29–36 ns a call**, the hand-written
 caller-buffer form 26.  Census of the walk over six libraries (2026-09-25): 98 locals
-promoted (hex_body 15, hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29), the
-decline that counts being *handed to a call* (41).  A buffer lives as long as its caller's
+promoted (hex_body 15, hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29); over
+eight libraries, library code alone, 82 promoted once the by-value clause admitted the
+hand-offs whose callee answers no view (28 hand-offs still decline: a native, a `&`
+parameter, a callee answering a view) and the element-field clause kept 37 for the emitter.
+Two things the first measurement taught, both on the drawing bench (2026-09-25/26): the
+promoted parameter must carry `Variable::work_buffer` (serialised, cache format 13), which
+the native emitter's `hoist::owned_local` reads as ownership — without it the emitter took
+the parameter for a possibly aliased view and declined its push window, and `render_marks`
+and `resize` ran 1.5× SLOWER; and a local the emitter already builds inside an appended
+element (`fronds`' `fd_wid`) must stay a local, or the buffer costs a copy and the loop
+its hoists (`fronds` 1.95× → 4.3×).  A lazy mint for a callee's buffer lands in the arm
+that makes the call, not before the whole value `if` (`scopes::place_in_if`) — cbor's
+`encode` minted its map arm's four buffers on every call.  A promotion is only a gain
+where the emitter still sees an owner and the form it replaces was a store at all.  The
+rows, re-measured clean on the final build (2026-09-26, committed → now): hex_body
+`rig_world_frame3` **9.57× → 5.26×** (its twelve scratch vectors), cbor `encode`
+**18.1× → 11.5×** and `encode_bytes` **43.3× → 27.1×** (the map encoder's key tables),
+graphics `fill_rect` 4.08× → 3.10×, `draw_line` 2.70× → 2.00×, `blend_pixel` 2.11× →
+1.29×, `fill_triangle` 3.15× → 2.95×, drawing `composite` 1.58× → 1.28×; `fronds`,
+`render_marks` and `resize` within noise of their committed rows once the two lessons
+above were applied; hex_body `bone_shape_has` 4.84× → 5.76× is the one row still worse,
+and its cause is the rule's own shape: a thin wrapper called once per element that calls
+`rig_world_seg` (three buffers) mints those buffers per call one level up exactly as the
+callee did, and pays the callee's clear and witness for nothing.  The cure is the
+TRANSITIVE form — the wrapper's own `__ref_N` work-refs are locals that never leave its
+frame and are candidates in their turn, so the buffers climb to the outermost frame that
+loops — Phase A and B run to a fixpoint over the call graph; not built.  A buffer lives as
+long as its caller's
 activation, so a promoted call site in `main` keeps its buffer for the run exactly as a
 return buffer does; `LOFT_STORES=warn`'s high-water heuristic (more than 30 live stores)
 reads such a `main` as a possible leak, and it is a working set.

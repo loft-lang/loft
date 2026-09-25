@@ -446,6 +446,11 @@ fn prepare_native_test(entry: &Path) -> std::io::Result<NativeJob> {
                         let wname = format!("_w_{user_name}_{i}");
                         writeln!(buf, "    let mut {wname} = String::new();")?;
                         work_args.push(format!("&mut {wname}"));
+                    } else if attr.work_buffer {
+                        // `@FR-R-WorkBuffer` — the callee's scratch: the null sentinel sends
+                        // it down its null road (a store of its own, released at its exit),
+                        // exactly as the product's test-mode entry hands it.
+                        work_args.push("DbRef::NULL".to_string());
                     } else if attr.name.starts_with("__ref_") {
                         let wname = format!("_r_{user_name}_{i}");
                         writeln!(buf, "    let mut {wname} = stores.null_named(\"{wname}\");")?;

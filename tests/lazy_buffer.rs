@@ -28,7 +28,7 @@ const REWRITTEN: [(&str, usize); 13] = [
     ("n_a2", 1),
     ("n_a3", 2),
     ("n_f4", 2),
-    ("n_a5", 4),
+    ("n_a5", 5), // +1 since `@FR-R-WorkBuffer`: `add1`'s scratch vector is a buffer of this frame
     ("n_a6", 1),
     ("n_a8", 2),
     ("n_a9", 1),

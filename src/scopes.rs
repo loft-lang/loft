@@ -5836,23 +5836,27 @@ fn insert_before_uses(ops: &mut Vec<Value>, av: u16, guard: &Value, frees: &[u32
                 insert_before_uses(ls, av, guard, frees);
                 false
             }
-            Value::If(cond, a, b) => {
-                if names_outside_free(cond, av, frees) {
-                    true
-                } else {
-                    let mut bare = false;
-                    for arm in [a, b] {
-                        match arm.unspan_mut() {
-                            Value::Block(bl) => {
-                                insert_before_uses(&mut bl.operators, av, guard, frees)
-                            }
-                            Value::Insert(ls) => insert_before_uses(ls, av, guard, frees),
-                            other => bare |= names_outside_free(other, av, frees),
-                        }
-                    }
-                    bare
+            Value::If(cond, a, b) => place_in_if(cond, a, b, av, guard, frees),
+            // A value-position `if` — a `match` lowered as the value of a bind or a return
+            // — descends the same way: the guard lands in the arm that makes the call, so a
+            // buffer for one arm's callee is not minted on every path through the function
+            // (measured: cbor's `encode` minted its map arm's four buffers on every call).
+            Value::Set(x, inner) if *x != av => match inner.unspan_mut() {
+                Value::If(cond, a, b) => place_in_if(cond, a, b, av, guard, frees),
+                Value::Block(bl) => {
+                    insert_before_uses(&mut bl.operators, av, guard, frees);
+                    false
                 }
-            }
+                other => names_outside_free(other, av, frees),
+            },
+            Value::Return(inner) => match inner.unspan_mut() {
+                Value::If(cond, a, b) => place_in_if(cond, a, b, av, guard, frees),
+                Value::Block(bl) => {
+                    insert_before_uses(&mut bl.operators, av, guard, frees);
+                    false
+                }
+                other => names_outside_free(other, av, frees),
+            },
             other => names_outside_free(other, av, frees),
         };
         if before {
@@ -5861,6 +5865,34 @@ fn insert_before_uses(ops: &mut Vec<Value>, av: u16, guard: &Value, frees: &[u32
         }
         i += 1;
     }
+}
+
+/// The `if` half of [`insert_before_uses`]: a condition that uses `av` takes the guard in
+/// front of the whole `if`; otherwise each arm that is a statement list takes it inside,
+/// and a bare-expression arm that uses `av` reports the `if` as a use.
+fn place_in_if(
+    cond: &mut Value,
+    then_arm: &mut Value,
+    else_arm: &mut Value,
+    av: u16,
+    guard: &Value,
+    frees: &[u32],
+) -> bool {
+    if names_outside_free(cond, av, frees) {
+        return true;
+    }
+    let mut bare = false;
+    for arm in [then_arm, else_arm] {
+        match arm.unspan_mut() {
+            Value::Block(bl) => insert_before_uses(&mut bl.operators, av, guard, frees),
+            Value::Insert(ls) => insert_before_uses(ls, av, guard, frees),
+            Value::If(inner_cond, inner_then, inner_else) => {
+                bare |= place_in_if(inner_cond, inner_then, inner_else, av, guard, frees);
+            }
+            other => bare |= names_outside_free(other, av, frees),
+        }
+    }
+    bare
 }
 
 /// Is `av` the buffer of a call a `for` loop ITERATES (`for f in make(…) { … }`)?  Such a

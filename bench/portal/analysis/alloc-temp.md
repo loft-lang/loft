@@ -93,6 +93,20 @@ do escape — still show it.  Neither is a rewrite of anybody's loft code: the s
 the structural lever above, for a vector local with a scalar element whose every mention is
 an in-place vector operator.  The probe measured here went 78–91 → 29–36 ns a call on the
 release tier (the hand-written caller-buffer form 26), and the walk's trace over six
-libraries promoted 98 locals.  The shave was not built; the temporaries that still mint are
-the 41 *handed to a call* (the next widening, by the callee's return deps), the record and
-text elements, and the results, which are another rule's.
+libraries promoted 98 locals; the by-value clause built the same day admits a hand-off to a
+loft-bodied callee whose answer carries no dep on the parameter (82 promoted over eight
+libraries' own code, 28 hand-offs still declined, 37 locals kept for the emitter's
+element-first build).  The shave was not built; the temporaries that still
+mint are the record and text elements (252 in that census), and the results, which are
+another rule's.  One lesson cost a re-measure: the native emitter's ownership test read the
+promoted parameter as a possibly aliased view and declined the push window it had for the
+local, which made push-heavy rows 1.5× SLOWER; `Variable::work_buffer` now tells
+`hoist::owned_local` the parameter is exclusive.
+
+Measured clean on the final build (2026-09-26): `rig_world_frame3` 9.57× → 5.26×, cbor
+`encode` 18.1× → 11.5× and `encode_bytes` 43.3× → 27.1×, `fill_rect` 4.08× → 3.10×,
+`draw_line` 2.70× → 2.00×, `blend_pixel` 2.11× → 1.29×, `composite` 1.58× → 1.28×.  The one
+row that lost, `bone_shape_has` 4.84× → 5.76×, names the next step: a wrapper called per
+element mints its callee's buffers per call one level up and pays the clear and witness for
+nothing — the TRANSITIVE form promotes the wrapper's own work-refs onward, so a buffer
+climbs to the outermost looping frame (Phase A and B to a fixpoint over the call graph).

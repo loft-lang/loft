@@ -299,7 +299,16 @@ activation and cleared by the callee (`formal/rewrites.md` § *A local that neve
 frame is the caller's buffer*).  The probe (2 M calls of `fn f(salt) { v: vector<integer> =
 []; …; len(v) }`, `--native-release`): 78–91 → 29–36 ns a call, the hand-written form 26.
 Reach, by the walk's own trace over six libraries: 98 locals promoted (hex_body 15,
-hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29); 41 more are *handed to a
-call* — a by-value parameter of a loft-bodied callee — which is the next widening (admit it
-where the callee's return carries no dep on that parameter).
+hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29) before the by-value clause,
+which admits a hand-off to a loft-bodied callee whose answer carries no dep on that parameter
+(82 promoted over eight libraries' own code with it, 28 hand-offs still declined, 37 kept for
+the emitter's element-first build); what still mints is a record or text element and a result
+(another rule's).  Lessons, measured the same day: the emitter must be told the parameter is
+exclusive (`Variable::work_buffer` → `hoist::owned_local`), or the push window it lost cost
+`render_marks` and `resize` 1.5×; a local the emitter builds inside an appended element must
+stay one (`fronds` 1.95× → 4.3× promoted); and a callee's lazy buffer mint must land in the
+arm that calls, not before the whole match (cbor `encode` 18× → 25×).  Clean re-measure on
+the final build: `rig_world_frame3` 9.57× → 5.26×, `encode` 18.1× → 11.5×, `encode_bytes`
+43.3× → 27.1×, `fill_rect` 4.08× → 3.10×, `draw_line` 2.70× → 2.00×, `blend_pixel` 2.11× →
+1.29×, `composite` 1.58× → 1.28×; `bone_shape_has` 4.84× → 5.76× is the one row still worse.
 

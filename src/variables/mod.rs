@@ -143,6 +143,11 @@ pub(crate) struct VarSnapshot<'a> {
     pub view_elided: bool,
     /// A hidden return buffer minted at its first use (`@FR-O-LazyBuffer`); read by both emitters.
     pub lazy_buffer: bool,
+    /// `@FR-R-WorkBuffer` — this parameter is the callee's WORK BUFFER: the caller hands its
+    /// per-site store to this parameter alone and never reads it, so the native emitter may
+    /// treat it as a store the frame owns (`hoist::owned_local`).  Read at generation, so it
+    /// must survive the cache like `lazy_buffer`.
+    pub work_buffer: bool,
     /// The one bind after an `if`'s pre-init is a first bind (`@FR-O-Move`); read by both emitters.
     pub deferred_first_bind: bool,
     /// A `&` names this narrow local, which holds its field encoding (@PLN167 decision 1).
@@ -168,6 +173,11 @@ pub(crate) struct RestoredVar {
     pub caller_hidden_buf: bool,
     pub view_elided: bool,
     pub lazy_buffer: bool,
+    /// `@FR-R-WorkBuffer` — this parameter is the callee's WORK BUFFER: the caller hands its
+    /// per-site store to this parameter alone and never reads it, so the native emitter may
+    /// treat it as a store the frame owns (`hoist::owned_local`).  Read at generation, so it
+    /// must survive the cache like `lazy_buffer`.
+    pub work_buffer: bool,
     pub deferred_first_bind: bool,
     pub linked_narrow: bool,
     pub store_text_link: bool,
@@ -210,6 +220,7 @@ pub struct Variable {
     /// `OpDatabase`, which the native hoist gate reads this to admit.  Set by
     /// `scopes::lazy_buffer_mints` and `scopes::reuse_record_buffers`.
     lazy_buffer: bool,
+    work_buffer: bool,
     /// @PLN164 B1 behind a null-init (`@FR-O-Move`) — a local first bound inside an `if`
     /// gets a null pre-init in front of it (`scopes::scan_if`), which turns its bind into a
     /// REBIND on both backends; when that bind is its only one and adopts the callee's
@@ -768,6 +779,7 @@ impl Function {
             caller_hidden_buf: v.caller_hidden_buf,
             view_elided: v.view_elided,
             lazy_buffer: v.lazy_buffer,
+            work_buffer: v.work_buffer,
             deferred_first_bind: v.deferred_first_bind,
             linked_narrow: v.linked_narrow,
             store_text_link: v.store_text_link,
@@ -831,6 +843,7 @@ impl Function {
                 caller_hidden_buf: r.caller_hidden_buf,
                 view_elided: r.view_elided,
                 lazy_buffer: r.lazy_buffer,
+                work_buffer: r.work_buffer,
                 deferred_first_bind: r.deferred_first_bind,
                 linked_narrow: r.linked_narrow,
                 store_text_link: r.store_text_link,
@@ -2553,6 +2566,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             lazy_buffer: false,
+            work_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
@@ -2607,6 +2621,7 @@ impl Function {
             value_const: self.variables[var as usize].value_const,
             view_elided: false,
             lazy_buffer: false,
+            work_buffer: false,
             deferred_first_bind: false,
             amp_link: self.variables[var as usize].amp_link,
             linked_narrow: self.variables[var as usize].linked_narrow,
@@ -2648,6 +2663,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             lazy_buffer: false,
+            work_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
@@ -2688,6 +2704,7 @@ impl Function {
             value_const: false,
             view_elided: false,
             lazy_buffer: false,
+            work_buffer: false,
             deferred_first_bind: false,
             amp_link: false,
             linked_narrow: false,
@@ -3517,6 +3534,16 @@ impl Function {
     #[must_use]
     pub fn is_lazy_buffer(&self, var_nr: u16) -> bool {
         (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].lazy_buffer
+    }
+
+    /// `@FR-R-WorkBuffer` — `var_nr` is the callee's work-buffer parameter.
+    pub fn mark_work_buffer(&mut self, var_nr: u16) {
+        self.variables[var_nr as usize].work_buffer = true;
+    }
+
+    #[must_use]
+    pub fn is_work_buffer(&self, var_nr: u16) -> bool {
+        (var_nr as usize) < self.variables.len() && self.variables[var_nr as usize].work_buffer
     }
 
     /// Whether `var_nr`'s copy from its borrowing call is elided — see

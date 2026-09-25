@@ -4795,11 +4795,13 @@ impl Definition {
         if crate::portable_path::is_stdlib_source(&self.position.file) {
             return false;
         }
-        // Only the AUTHOR's parameters count: `text_return` / `ref_return` add hidden buffers.
+        // Only the AUTHOR's parameters count: `text_return` / `ref_return` add hidden buffers,
+        // and `(R-WorkBuffer)` a hidden parameter named after the local it promoted — so
+        // `hidden` is the fact, and the two buffer name prefixes the older spelling of it.
         if self
             .attributes
             .iter()
-            .any(|a| !a.name.starts_with("__work_") && !a.name.starts_with("__ref_"))
+            .any(|a| !a.hidden && !a.name.starts_with("__work_") && !a.name.starts_with("__ref_"))
         {
             return false;
         }
