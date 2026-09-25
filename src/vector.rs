@@ -79,11 +79,14 @@ pub fn insert_vector(db: &DbRef, size: u32, index: i64, stores: &mut [Store]) ->
         index
     };
     if real < 0 || real > i64::from(len) {
-        return DbRef {
-            store_nr: db.store_nr,
-            rec: 0,
-            pos: 0,
-        };
+        // An index outside `0..=len` inserts nothing, so the answer names no element — and a
+        // reference naming no record leaves as `DbRef::NULL` and nothing else (@FR-L-Null),
+        // which every store accessor already ignores.  It answered `{store, rec 0}` instead:
+        // a real store with no record, so the caller's element write (an in-place literal's
+        // field sets) landed in the store's reserved record — 'Freed record 1 (size=0)
+        // accessed at fld 8' under debug assertions (1670-…'s o1/o2), silent in release, on
+        // both backends.
+        return DbRef::NULL;
     }
     let real = real as i32;
     let store = keys::mut_store(db, stores);
