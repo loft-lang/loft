@@ -5,18 +5,22 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # @PLN42 — TRACKER_INDEX — `@P-id` / `@PLAN-id` indexer + viewer integration
 
-**Status:** ⏸ **PARKED** (updated 2026-07-07; opened 2026-05-13) — the core shipped 2026-05-13→18
-and is in **daily use** (scanner, CLI, auto-refresh, broken-validator, viewer routes + per-doc
-sidebar, backlinks, Claude integration, language-harvest; `./scripts/idx` + `make index` live,
-`index/tags.json` auto-refreshed). Three phases remain, all deferred/gated:
-- **06 closeout** — waits on the viewer plan (`@PLN50` eagleviewer) + phase 08.
-- **07a WebSocket push** — gated on `lib/fs_watch/` ([`lib_plans/68-fs-watch/`](../../lib_plans/68-fs-watch)),
-  which has low current value (its only consumer is this daemon, already served by the phase-02
-  git-hook + phase-04 mtime-poll).
-- **08 multi-project deploy** — open, appetite-driven ("generalise to any AI project").
-
-Trigger to re-activate: a real event-driven consumer needing sub-commit latency (unblocks 07a via
-fs_watch), the viewer plan closing out (unblocks 06), or appetite for the multi-project stack (08).
+**Status: FINISHED (closed 2026-09-25; opened 2026-05-13).**  The index is part of the daily
+workflow: the scanner, `make index`, `./scripts/idx`, the pre-commit refresh, the broken-tag and
+broken-link validators (`tests/index_hygiene.rs`), backlinks, the viewer's `/tag/<bare>`, per-page
+sidebar, `/welcome` and `/tags` pages, the loft-native scanner, and phase 10's language harvest.
+The rest went to the plans that own it:
+- **07 (daemon, CLI client, standalone binary) and 07a (WebSocket push)** → **@PLN68**
+  (fs-watch).  Without file events the daemon would have to poll, and the pre-commit hook plus
+  the viewer's mtime poll already serve its only consumer, so it starts when fs-watch has a
+  second consumer.
+- **08 (multi-project deploy)** → **@PLN50** (eagleviewer), which already generalises the
+  viewer beyond loft and is where per-project tag families belong.
+- **06 closeout:** the migration shipped (1500+ refs).  The planned regression test ("fewer than
+  50 legacy refs") is retired, not deferred.  The bare `P<n>` series is the CLOSED archive
+  (open work is GitHub issues and `@PLN` plans, [ISSUE_TRACKING.md](../../ISSUE_TRACKING.md)),
+  so new work mints no bare ids.  The ~5100 remaining `legacy:` refs are archive names in
+  tests, `src/` comments and finished plans, and rewriting them buys nothing.
 
 A small, self-rebuilding index of tracker references (P-issues
 + plan/phase IDs) across the loft repo, plus a CLI for
