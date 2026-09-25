@@ -25,6 +25,18 @@
 //   valgrind --leak-check=full --errors-for-leak-kinds=definite \
 //     --suppressions=scripts/valgrind.supp target/release/loft --interpret <this file>
 //
+// @falsified-at: hand-measured (2026-09-25, control 57f0ddc13) — definitely lost 48 bytes in 6
+//   blocks -> 0 bytes in 0 blocks, under valgrind memcheck, both sides DEBUG builds.
+//   CHANNEL: valgrind, and valgrind alone.  `make falsify` reports this file INERT
+//   (`0|0|none|none|0` on both trees and both backends), which is correct of it and useless
+//   here: its leak column reads the STORE report, as `tests/wrap.rs` and the interpreter's own
+//   leak line do, and this is a Rust `String`.
+//   ARMED: the five `a` cells each stage and discard a text work ref; the three `c` cells are
+//   the neighbours that never leaked, so a cure that switched the road off would show here.
+//   WITNESS: on the control, `8 bytes in 1 blocks are definitely lost` in
+//   `loft::fill::append_text` via `<alloc::raw_vec::RawVecInner>::finish_grow`.
+// HOLDS: every value cell passes on BOTH trees and both backends — nothing but valgrind moved.
+//
 // Hand-scored 2026-09-25 (`make falsify` cannot: its leak column reads the STORE report, so it
 // records this guard INERT however loudly it leaks — falsify.sh says so in its own header, and
 // it did record exactly that, `0|0|none|none|0` on both trees and both backends):
