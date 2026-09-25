@@ -13,6 +13,8 @@ One implementation, three callers:
                                                          gated finding
     python3 scripts/doc_lint.py --all [--baseline F]     the report behind `make docs-lint`
     python3 scripts/doc_lint.py --all --write-baseline F re-pin that report's baseline
+    python3 scripts/doc_lint.py --hook                   the PostToolUse hook: a tool call on
+                                                         stdin, findings the edit added out
 
 Output is one line per finding, `path:line: rule: message`, and nothing when a file is clean.
 The exit status is 0 unless `--gate` is given and a gated finding is new.
@@ -308,7 +310,35 @@ def changed(rev):
             and os.path.exists(os.path.join(ROOT, p))]
 
 
+def hook() -> int:
+    """The edit hook: read the tool call Claude Code sends on stdin, lint the file it
+    wrote against HEAD, and hand back only what the edit added.  Silent when clean,
+    and never blocks: a finding is context for the writer, not a refusal."""
+    import json
+    try:
+        call = json.load(sys.stdin)
+    except ValueError:
+        return 0
+    inp = call.get("tool_input") or {}
+    path = inp.get("file_path") or inp.get("notebook_path") or ""
+    if not path:
+        return 0
+    rel = os.path.relpath(os.path.abspath(path), ROOT)
+    if rel.startswith("..") or not lintable(rel) or not os.path.exists(os.path.join(ROOT, rel)):
+        return 0
+    found = new_findings(rel, "HEAD")
+    if not found:
+        return 0
+    lines = [f"{rel}:{n}: {rule}: {msg}" for n, rule, msg, _ in found]
+    note = ("doc_lint (doc/claude/DOC_CONTRACT.md) — this edit added:\n" + "\n".join(lines))
+    print(json.dumps({"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                             "additionalContext": note}}))
+    return 0
+
+
 def main(argv):
+    if argv == ["--hook"]:
+        return hook()
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="*")
     ap.add_argument("--since", metavar="REV", help="report only findings REV's version lacks")

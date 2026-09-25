@@ -859,6 +859,7 @@ index-install-hook:
 hooks:
 	@git config core.hooksPath .githooks
 	@echo "core.hooksPath = .githooks">&2
+	@python3 scripts/install_claude_hooks.py
 
 # ── @I81 · @PLN92 feature catalogue sync (strand 3) — sync tooling ──
 # The `loft-lang/features` issues are the canonical, self-contained docs; these
