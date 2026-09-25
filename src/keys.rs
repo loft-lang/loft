@@ -1429,6 +1429,21 @@ pub fn trace_compact() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_COMPACT"))
 }
 
+/// `LOFT_NO_FORMAT_APPEND=1` — a format string appended to a text keeps its work buffer
+/// (`@FR-R-FormatAppend` off): the first bisect step for a wrong, missing or doubled part of
+/// a text built by `out += "…{e}…"`.
+pub fn format_append_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FORMAT_APPEND"))
+}
+
+/// `LOFT_TRACE_FORMAT_APPEND=1` — name each format append written into its destination and
+/// each that keeps its buffer, with the reason.
+pub fn trace_format_append() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_FORMAT_APPEND"))
+}
+
 /// The two API-design advices (`api-copies-collection`, `api-redoes-per-field`): a `pub`
 /// function whose CONTRACT forces per-call work no rewrite can share across the calls a
 /// consumer makes — a copy of a parameter's collection answered per call, or a heap-owning

@@ -3001,6 +3001,132 @@ impl Parser {
         }
     }
 
+    /// `@FR-R-FormatAppend` — a format string appended to a text is written INTO it.
+    ///
+    /// `out += "{c}"` lowers as a `Formatted string` block — the work text set to the
+    /// literal prefix, every part appended to it, the work text handed to the append — so
+    /// each character an escape loop emits cost a `String` cleared and grown, then copied:
+    /// 13 ns a character on native against 3.4 for the push itself (the html `escape_html`
+    /// row, 10×; zttext `materialise`, 24×; markdown `html_escape`, 8.6×).  The value is the
+    /// same when every part is appended to the destination directly, PROVIDED no part reads
+    /// the destination — `out += "{out}!"` must see the text as it stood before the
+    /// statement, which only the buffer gives it — and every part is one of the format
+    /// family's writes on the work text, so that renaming the target is the whole rewrite.
+    /// A `for` hole (a loop, not a write), a part naming the work text anywhere but as its
+    /// target, and a statement whose destination is not a text variable keep the buffer.
+    /// A `&text` destination (`stack`) takes each write's STACK twin
+    /// (`generation::ops::refvar_text_stack_variant`, the one home), as every other write
+    /// the parser emits on such a target does — the store-text instance of the function
+    /// (`store_text.rs`) recognises the stack spellings and turns them into store writes,
+    /// so a plain op there would write the link's slot as a `String`.  A wrong decline is
+    /// the buffer the program already paid; a wrong admission would be a part reading a
+    /// half-written text, which the read test excludes.
+    ///
+    /// `LOFT_NO_FORMAT_APPEND=1` keeps every buffer; `LOFT_TRACE_FORMAT_APPEND=1` names
+    /// each append written through and each kept, with the reason.
+    pub(crate) fn format_append_in_place(
+        &mut self,
+        var_nr: u16,
+        code: &mut Value,
+        stack: bool,
+    ) -> bool {
+        const WRITES: [&str; 7] = [
+            "OpAppendText",
+            "OpAppendCharacter",
+            "OpFormatText",
+            "OpFormatInt",
+            "OpFormatFloat",
+            "OpFormatSingle",
+            "OpFormatDatabase",
+        ];
+        if var_nr == u16::MAX || !crate::keys::format_append_enabled() {
+            return false;
+        }
+        let Value::Block(b) = code.unspan() else {
+            return false;
+        };
+        if b.name != "Formatted string" {
+            return false;
+        }
+        let ops = &b.operators;
+        let n = ops.len();
+        let (work, prefix) = match ops.first().map(Value::unspan) {
+            Some(Value::Set(work, prefix)) => match prefix.as_ref() {
+                Value::Text(prefix) => (*work, prefix.clone()),
+                _ => return false,
+            },
+            _ => return false,
+        };
+        if n < 2 || !matches!(ops[n - 1].unspan(), Value::Var(v) if *v == work) {
+            return false;
+        }
+        let mut parts = Vec::with_capacity(n);
+        let mut kept: Option<&'static str> = None;
+        for s in &ops[1..n - 1] {
+            let Value::Call(d, args) = s.unspan() else {
+                kept = Some("a part that is not a write (a `for` hole)");
+                break;
+            };
+            let name = self.data.def(*d).name();
+            if !WRITES.contains(&name) {
+                kept = Some("a part outside the format family");
+                break;
+            }
+            if !matches!(args.first().map(Value::unspan), Some(Value::Var(v)) if *v == work) {
+                kept = Some("a write whose target is not the work text");
+                break;
+            }
+            if args[1..].iter().any(|a| a.reads_var(var_nr)) {
+                kept = Some("a part that reads the destination");
+                break;
+            }
+            if args[1..].iter().any(|a| a.reads_var(work)) {
+                kept = Some("a part that reads the work text");
+                break;
+            }
+            let mut a = args.clone();
+            a[0] = Value::Var(var_nr);
+            let op = if stack {
+                let twin = crate::generation::ops::refvar_text_stack_variant(name)
+                    .expect("every write of the format family has a stack twin");
+                self.data.def_nr(twin)
+            } else {
+                *d
+            };
+            parts.push(Value::Call(op, a));
+        }
+        let traced = crate::keys::trace_format_append();
+        if let Some(why) = kept {
+            if traced {
+                eprintln!(
+                    "[format-append] {}: `{}` keeps its buffer: {why}",
+                    self.data.def(self.context).name(),
+                    self.vars.name(var_nr)
+                );
+            }
+            return false;
+        }
+        if !prefix.is_empty() {
+            let append = if stack {
+                "OpAppendStackText"
+            } else {
+                "OpAppendText"
+            };
+            let lit = self.cl(append, &[Value::Var(var_nr), Value::Text(prefix)]);
+            parts.insert(0, lit);
+        }
+        if traced {
+            eprintln!(
+                "[format-append] {}: {} part(s) written into `{}`",
+                self.data.def(self.context).name(),
+                parts.len(),
+                self.vars.name(var_nr)
+            );
+        }
+        *code = Value::Insert(parts);
+        true
+    }
+
     /// @PLN124 — mint the accumulator a format string builds into, and emit its
     /// construction: an empty record of the target type, every field defaulted.
     ///

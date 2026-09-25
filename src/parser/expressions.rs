@@ -7942,6 +7942,9 @@ use a separate collection or add after the loop"
             } else {
                 *code = v_set(var_nr, code.clone());
             }
+        } else if self.format_append_in_place(var_nr, code, true) {
+            // `@FR-R-FormatAppend` — the format's parts are written into the destination
+            // through their stack twins, this being a `&text` target.
         } else if s_type == &Type::Character {
             *code = self.cl(
                 "OpAppendStackCharacter",

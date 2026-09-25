@@ -252,3 +252,23 @@ consumer's side first: zttext's edit API costs a consumer the same ~1.2 ms per e
 an 11 k-character document whether the library is a cdylib or compiled in, and whether the
 rebind rewrite is on or off — the cost is `insert_text`'s own manual copy (the identity
 form), not the boundary; that is why the edit-answered-as-copy shape is NOT an advice.
+
+**`(R-FormatAppend)` BUILT (2026-09-25, `LOFT_NO_FORMAT_APPEND`).**  A format string appended
+to a text is written INTO it: `out += "{c}"` used to set a work text to the literal prefix,
+append every part to it and append the work text to `out` — a `String` cleared, grown and
+copied per character of an escape loop, 13 ns a character on native against 3.4 for the push
+itself.  Now every literal and hole is appended to `out` directly, in order, where no hole
+reads `out` (`r += "{r}!"` keeps the buffer) and `out` is a text variable (a field keeps its
+road).  Hand-priced first on the escape probe's emitted Rust (1600 → 410 ns per 120-character
+call), then built as one parser method at the two text-append sites, the plain op family kept
+because both backends dispatch a plain text write on a `&text` target to its stack twin.
+Re-measured, same box: html `escape_html` **10.3× → 2.64×**, `escape_html_blob` 11.6× → 2.30×;
+markdown `html_escape` 8.6× → 1.71×, `extract_headings` 6.4× → 1.65×, `render` 4.1× → 2.44×,
+`slugify` 4.3× → 2.42×, `render_inline` 6.7× → 5.95× (its per-character text is BUILT, not
+appended — the next shape); zttext `materialise` **23.8× → 6.87×**, `flow_layout_full`
+**107× → 14.8×** (the per-run text of every token was such an append), `seg` 6.4× → 3.49×,
+`patch` 7.9× → 4.24×; the zttext rows the rewrite does not reach (`insert_text`, `invert`,
+`delete_range`, `locate`) unmoved.  Ten rows moved, five of them to under 3×.  The stdlib's
+own `char_slice` takes it as well.  What `materialise` still pays is the per-piece `buf[j]?`
+read through a `?`-discharge on a `vector<character>` and the character walk around it.
+

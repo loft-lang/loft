@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-FormatAppend` — a format string appended to a text is written INTO it.
+//
+// `out += "{c}"` used to build a work text per statement (set to the literal prefix, every
+// part appended, the work text appended to `out`), so an escape loop paid a `String` cleared,
+// grown and copied per character.  Now every part is appended to `out` directly, PROVIDED no
+// part reads `out` — `r += "{r}!"` must see the text as it stood before the statement — and
+// the destination is a text variable (a field keeps its road).  The value never changes: every
+// cell below answers the same with `LOFT_NO_FORMAT_APPEND=1`, and that A/B is the falsifier
+// together with the emission pin (`tests/format_append.rs`).  Values from the unrewritten
+// build, hand-checked: `{n:5}` right-aligns 42 in five columns, `{f:8.2}` gives `    1.50`,
+// `{n:x}` is `2a`; a null character appends nothing while a null integer or text prints
+// `null`.
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-09-25): with the "a part that reads the destination" decline struck in
+//   `Parser::format_append_in_place`, fa5 fails on the interpreter — `r += "<{r}>"` reads
+//   `r` after its own `<` was written and answers `abab!<abab!<>` for `abab!<abab!>` — and
+//   the native build is REFUSED by rustc (E0502: `var_r` borrowed mutably for the append
+//   while the part borrows it), so on native the sabotage cannot even produce a value.
+//   LOFT_NO_FORMAT_APPEND=1 is the A/B: every cell answers the same.
+//   CHANNEL: the VALUE channel (an assertion) on the interpreter; the build on native.
+//   WITNESS: `abab!<abab!<>` on the interpreter under the sabotage.
+//   HOLDS: leak, panic and free-refusal are equal on both trees and clean here; the rewrite
+//   mints nothing and frees nothing, so a patch that moves them reintroduces a neighbour.
+
+struct O { s: text }
+
+fn add(t: &text, c: character) { t += "{c}"; }
+
+fn esc(s: text) -> text {
+  out = "";
+  for c in s { if c == '<' { out += "&lt;"; } else { out += "{c}"; } }
+  out
+}
+
+// a character hole into a local, in a loop with literal appends beside it
+fn fa1() {
+  out = "";
+  for c in "ab<c" { if c == '<' { out += "&lt;"; } else { out += "{c}"; } }
+  assert(out == "ab&lt;c", "fa1 got {out}");
+}
+
+// a text hole, a hole between literals, a float, and the format specs
+fn fa2() {
+  t = "xy"; n = 42; f = 1.5;
+  o2 = "-"; o2 += "{t}"; o2 += "[{n}]"; o2 += "{f}"; o2 += "{n:5}|{f:8.2}|{n:x}";
+  assert(o2 == "-xy[42]1.5   42|    1.50|2a", "fa2 got {o2}");
+}
+
+// a `&text` parameter as the destination
+fn fa3() {
+  p = "p"; add(p, 'q'); add(p, 'r');
+  assert(p == "pqr", "fa3 got {p}");
+}
+
+// the destination promoted to a function's return buffer
+fn fa4() {
+  e = esc("a<b>c");
+  assert(e == "a&lt;b>c", "fa4 got {e}");
+}
+
+// a part that READS the destination keeps the buffer: the text as it stood before
+fn fa5() {
+  r = "ab"; r += "{r}!"; r += "<{r}>";
+  assert(r == "abab!<abab!>", "fa5 got {r}");
+}
+
+// a null character appends nothing, on its own and beside a literal
+fn fa6() {
+  cn: character? = null; cs = "s"; cs += "{cn}"; cs += "{cn}z";
+  assert(cs == "sz", "fa6 got {cs}");
+}
+
+// a FIELD destination keeps its road
+fn fa7() {
+  n = 42; t = "xy";
+  o = O { s: "o" }; o.s += "{n}"; o.s += "{t}";
+  assert(o.s == "o42xy", "fa7 got {o.s}");
+}
+
+// two holes and a literal tail per statement
+fn fa8() {
+  m = ""; for c in "xy" { m += "{c}{c}-"; }
+  assert(m == "xx-yy-", "fa8 got {m}");
+}
+
+// an expression hole
+fn fa9() {
+  e = ""; for i in 0..3 { e += "{i * 2},"; }
+  assert(e == "0,2,4,", "fa9 got {e}");
+}
+
+// a call in the hole that reads the destination keeps the buffer
+fn fa10() {
+  q = "abc"; q += "{len(q)}"; q += "{q.len()}";
+  assert(q == "abc34", "fa10 got {q}");
+}
+
+// a null integer and a null text print `null`
+fn fa11() {
+  nn: integer? = null; ns = ""; ns += "{nn}"; ns += "[{nn}]";
+  assert(ns == "null[null]", "fa11 got {ns}");
+  tn: text? = null; ts = "t"; ts += "{tn}"; ts += "<{tn}>";
+  assert(ts == "tnull<null>", "fa11 got {ts}");
+}
+
+// a boolean hole, and two appends of the same character per pass
+fn fa12() {
+  b = true; bs = ""; bs += "{b}|{!b}";
+  assert(bs == "true|false", "fa12 got {bs}");
+  w = "w"; for c in "AB" { w += "{c}"; w += "{c}"; }
+  assert(w == "wAABB", "fa12 got {w}");
+}
+
+// past every growth step: 5000 characters, the escaped ones counted
+fn fa13() {
+  src = "";
+  for i in 0..1000 { src += "ab<de"; }
+  e = esc(src);
+  assert(len(e) == 8000, "fa13 length {len(e)}");
+  assert(e.starts_with("ab&lt;deab&lt;de"), "fa13 head {e.char_slice(0, 16)}");
+}
+
+fn main() {
+  fa1(); fa2(); fa3(); fa4(); fa5(); fa6(); fa7(); fa8(); fa9(); fa10(); fa11(); fa12(); fa13();
+  println("done");
+}

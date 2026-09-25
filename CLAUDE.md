@@ -901,6 +901,13 @@ beside the fast arm and panics when they disagree, and asserts the hoisted null 
 inside the loop; `LOFT_TRACE_CHAR_WALK=1` names each walk and whether its null test moved.
 A call or literal source keeps the written step (the lowering evaluates such a source per
 iteration).
+**`LOFT_NO_FORMAT_APPEND=1`** (`@FR-R-FormatAppend`, default-ON, parse time, BOTH backends)
+makes `out += "…{e}…"` build its work text again — with it off, every literal and hole of
+the format is appended to `out` directly, in order, where no hole reads `out` and `out` is
+a text variable (a field keeps the work text; html `escape_html` 10.3× → 2.6× of Rust,
+zttext `materialise` 24× → 6.9×, `flow_layout_full` 107× → 15×) — and is the first bisect step for a wrong, missing or doubled part of
+a text built by appending format strings.  `LOFT_TRACE_FORMAT_APPEND=1` names each append
+written through and each kept, with the reason.
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
 with it off, a loop that grows no store (no push and no mint, whether or not the mint

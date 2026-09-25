@@ -1736,6 +1736,38 @@ disagree, and keeps the per-iteration null test as an assertion.  Sites:
 `hoist::char_walks`, `hoist::text_written` (shared with the lazy split's borrow), the bind
 in `Output::output_set`, the guard in the `Loop` arm of `Output::output_code_inner`.
 
+### A format appended to a text is written into it
+
+```
+  (R-FormatAppend) `x += "…{e₁}…{eₙ}…"` where x is a text VARIABLE (a local, a `&text`
+                 parameter, a promoted return buffer) — lowered as a work text set to
+                 the literal prefix, every literal and every hole appended to it, and
+                 the work text appended to x — is the same appends made to x directly,
+                 in order, PROVIDED no hole reads x (`x += "{x}!"` reads the text as it
+                 stood before the statement, which only the work text gives it) and
+                 every part is a write of the format family on the work text (an
+                 append of a text or a character, a formatted number, text or record).
+                 A `for` hole, a part naming the work text anywhere but as its
+                 target, and a FIELD or element destination keep the work text.  A
+                 `&text` destination takes each write's STACK twin, the spelling
+                 every write on such a target carries (the store-text instance of
+                 the function reads it to write a linked field or element).
+```
+
+**In words.**  The work text existed to make the format a VALUE; appended and never read
+again, it is a `String` cleared, grown and copied per statement — 13 ns a character in an
+escape loop on native, against 3.4 for the push itself.  The value is unchanged by
+construction (the same parts, in the same order, onto the same text) except where a part
+reads the destination, which is the one decline the rule needs.
+
+**BUILT** (2026-09-25, `Parser::format_append_in_place`, `LOFT_NO_FORMAT_APPEND`; the
+guard `tests/scripts/a-format-appended-to-a-text-is-written-into-it.loft` and the pin
+`tests/format_append.rs`).  The probe (a 120-character escape loop, `--native-release`):
+1660 → 410–560 ns per call; the library rows, re-measured on the same box: html
+`escape_html` 10.3× → 2.64×, markdown `html_escape` 8.6× → 1.71×, zttext `materialise`
+23.8× → 6.87× and `flow_layout_full` 107× → 14.8× (bench/portal/analysis/libraries-wide.md).
+The stdlib's own `char_slice` takes it too.
+
 ### A lookup by one integer key takes the typed entry
 
 ```
