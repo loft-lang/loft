@@ -420,6 +420,12 @@ pub struct Function {
     /// view means (loft#1665).  Carried like `tuphold_origin`: the scope pass reads it after
     /// parsing.
     pub text_payload_views: std::collections::HashSet<u16>,
+    /// A payload binding onto a VECTOR member of a linked group whose writes the parser spells
+    /// against the ORIGIN FIELD (`Parser::resolved_group_write`, `(Col-Group)`), with the
+    /// collection type the binding's own spelling passes.  The field spelling does not name the
+    /// binding, so where `(B-View)` materialises it the scope pass rewrites those writes back to
+    /// the binding and this type (loft#1664).  Carried like `text_payload_views`.
+    pub group_write_views: HashMap<u16, u16>,
     /// The backing work-ref of each HEAP LEAF of a tuple variable, in the same pre-order
     /// `scopes::tuple_leaf_at` walks — `u16::MAX` for a leaf whose backing this table cannot
     /// name.
@@ -681,6 +687,7 @@ impl Function {
             mv_field_origin: HashMap::new(),
             tuphold_origin: HashMap::new(),
             text_payload_views: std::collections::HashSet::new(),
+            group_write_views: HashMap::new(),
             tuple_backings: HashMap::new(),
             tuple_backings_seen: std::collections::HashSet::new(),
             loop_ord: 0,
@@ -871,6 +878,7 @@ impl Function {
         self.tuphold_origin.clone_from(&other.tuphold_origin);
         self.text_payload_views
             .clone_from(&other.text_payload_views);
+        self.group_write_views.clone_from(&other.group_write_views);
         // CARRIED for the same reason, and read by the same pass.
         self.tuple_backings.clear();
         self.tuple_backings.clone_from(&other.tuple_backings);
@@ -959,6 +967,7 @@ impl Function {
             // off the copy it works on, long after parsing.
             tuphold_origin: other.tuphold_origin.clone(),
             text_payload_views: other.text_payload_views.clone(),
+            group_write_views: other.group_write_views.clone(),
             tuple_backings: other.tuple_backings.clone(),
             tuple_backings_seen: std::collections::HashSet::new(),
             // loft#1145 — the ordinal RESTARTS per pass (it is what makes the key stable),
