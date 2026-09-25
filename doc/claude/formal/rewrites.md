@@ -2048,6 +2048,55 @@ declines — which is how the condition is falsified rather than asserted.  Swit
 `LOFT_NO_RETBUF_REUSE`, `LOFT_NO_JOIN_BUFFER_WITNESS`.  Sites:
 `scopes::reuse_record_buffers`, `scopes::tail_calls`.
 
+### A local that never leaves the frame is the caller's buffer
+
+```
+  (R-WorkBuffer) a vector local of a callee — `v: vector<τ> = []`, τ a scalar — whose
+                 every mention, its own and its aliases' (`for x in v` binds one), is an
+                 operand of a vector operator that reads or writes the vector IN PLACE
+                 (a push, an append in either role, a reservation, the length, a clear,
+                 a removal, an element read or written through a scalar getter or
+                 setter) is STORAGE OF THE CALLER: a hidden `vector<τ>` parameter,
+                 named as the local and marked a work buffer, that every call site
+                 supplies as the per-site work-ref a hidden return buffer already takes
+                 (O-LazyBuffer: minted once per activation, on a path that makes the
+                 call, freed at the caller's exit), and that the callee CLEARS where the
+                 declaration stood.  A callee handed the null sentinel — an entry the
+                 runtime enters, a host's call — takes the rebound-parameter road at
+                 that same site: a store of its own, minted there and released at exit
+                 against the entry witness (O-Buffer's callee half), so no route owes
+                 the callee a buffer and a null is never a wrong answer.  The mention
+                 test IS the escape proof: with a scalar element every admitted operand
+                 position yields a scalar or nothing, so no view, copy or link of the
+                 store can leave the frame.  Declines, keeping the mint: a mention as an
+                 argument of a loft-bodied call, in a return or a tail, in a literal, a
+                 tuple, a link or a capture, a second assignment, a copy into a local
+                 that is then not so used; an element type that is a record or a text;
+                 a body that suspends or forks; `main`; a generic, a synthetic, a
+                 lambda, a function whose address is taken; a local numbered before an
+                 existing argument.
+```
+
+**In words.**  The overview's largest language-side bucket is a value Rust keeps on the
+stack and loft mints as a STORE: a vector made fresh per call and freed at its end, 67 ns on
+the smallest such function against ~20 ns for a `Vec` created and dropped, and the whole cbor
+bench binary spending ~45 % of its time in that bookkeeping.  What removes the mint is not a
+cheaper mint but no mint: the store lives across calls, in the caller's frame, exactly as the
+text work buffer and the hidden return buffer already do — the rule is those two read once
+more for a LOCAL.  Decided after pass 2 on the settled IR (`Parser::promote_work_buffers`,
+beside the targeted `__tret` promotion, whose caller-patching it shares), so a forward- or
+backward-referenced caller is patched alike; the callee's shape is the one the parser already
+emits for `if c { v = [] } else { v.clear() }` on a by-value vector parameter (entry witness,
+guarded frees), with `OpRefIsNull(v)` as the condition.  The attribute carries an explicit
+`work_buffer` mark because every route that builds a frame by hand — the argv entry, the par
+worker, the shared-cdylib bridge, the engine host, placement — reads the hidden compound
+attribute as THE return buffer, and a second one would have been pushed as a result or
+refused.  Measured on the probe (`fn f(salt) { v: vector<integer> = []; …; len(v) }`,
+2 M calls, `--native-release`): 81 → 33–34 ns a call.  Census of the library corpus
+(2026-09-25): 371 vector locals declared `[]`, 77 with no escaping mention by the crude
+test, 194 results (another rule's), 90 handed to a call (the next widening: a by-value
+parameter of a callee whose return carries no dep on it).
+
 ### A leaf carries no frame
 
 ```
