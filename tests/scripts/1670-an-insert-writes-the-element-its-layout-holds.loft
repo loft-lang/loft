@@ -1,0 +1,123 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `insert(v, i, e)` writes the element the vector's LAYOUT holds, and a record inserted into a
+// linked group's vector member is in every member (loft#1670, `formal/collections.md`
+// @FR-Col-Group; the stride half is `1670-a-vector-operation-walks-the-stride-its-layout-has`).
+//
+// A `vector<T>` is LINKED — each slot a 4-byte record id, each element a record of its own — as
+// soon as any keyed collection over `T` exists in the program, which the author never spells at
+// the call site.  With the stride right, the slot opened at the right index, but `insert` then
+// wrote the element's FIELDS over the 4-byte id: `[1,2,3]` + `insert(1, …)` read back
+// `1,4294967298,null,3,`.  The slot is now given a record of its own, claimed the way an append
+// claims one (`Stores::insert_vector_element`, one body for both backends), and the fields are
+// written into that record.  An append reaches the group's keyed siblings at `OpFinishRecord`;
+// an insert reached no such point, so `w.els.insert(1, …)` left the key unfindable — it is now
+// linked after its fields are written, as an element write through the group is.
+//
+// Every cell runs at both layouts where the layout is the axis (`Ri` is inline, `Rl` linked).
+//
+// @falsified-at: ea45d5fdf — interpret exit 1 -> 0, interpret 9 assertion failures -> 0, native exit 1 -> 0, native 18 assertion failures -> 0
+// @falsified-by: tests/falsified/1670-an-insert-writes-the-element-its-layout-holds.patch — interpret exit 1 -> 0, interpret 9 assertion failures -> 0, native exit 1 -> 0, native 18 assertion failures -> 0
+//   CHANNEL: the value — the elements and keys read back after the insert.
+//   WITNESS (measured on the control's build, the stride half already in): a linked
+//   `[1,2,3]` + `insert(1, …)` reads `1,4294967298,null,3,`; the group insert reads the vector
+//   `10,0,null,` with the keyed member at 2 and key 15 unfindable.
+//   HOLDS: leak and free-refusal are clean on both trees, and the inline-layout and
+//   out-of-range cells pass on both — the inline slot is still its element.
+
+struct Ri1670 { k: integer }
+struct Rl1670 { k: integer, w: integer = 0 }
+struct Box1670 { els: vector<Rl1670>, by_k: hash<Rl1670[k]> }
+struct Tl1670 { k: integer, nm: text }
+struct Th1670 { ts: vector<Tl1670>, tby: hash<Tl1670[k]> }
+
+fn di1670(v: vector<Ri1670>) -> text { s = ""; for x in v { s += "{x.k},"; } s }
+fn dl1670(v: vector<Rl1670>) -> text { s = ""; for x in v { s += "{x.k},"; } s }
+fn dt1670(v: vector<Tl1670>) -> text { s = ""; for x in v { s += "{x.k}{x.nm},"; } s }
+
+fn test_p1_an_index_inside_both_layouts() {
+  a = [Ri1670 { k: 1 }, Ri1670 { k: 2 }, Ri1670 { k: 3 }];
+  a.insert(1, Ri1670 { k: 9 });
+  b = [Rl1670 { k: 1 }, Rl1670 { k: 2 }, Rl1670 { k: 3 }];
+  b.insert(1, Rl1670 { k: 9 });
+  assert(di1670(a) == "1,9,2,3,", "inline: got {di1670(a)}");
+  assert(dl1670(b) == "1,9,2,3," && len(b) == 4, "linked: got {dl1670(b)} len {len(b)}");
+}
+
+fn test_p2_the_front_and_the_end() {
+  d = [Rl1670 { k: 1 }, Rl1670 { k: 2 }];
+  d.insert(0, Rl1670 { k: 9 });
+  f = [Rl1670 { k: 1 }, Rl1670 { k: 2 }];
+  f.insert(2, Rl1670 { k: 9 });
+  assert(dl1670(d) == "9,1,2,", "insert(0): got {dl1670(d)}");
+  assert(dl1670(f) == "1,2,9,", "insert(len): got {dl1670(f)}");
+}
+
+fn test_n1_negative_indices() {
+  h = [Rl1670 { k: 1 }, Rl1670 { k: 2 }, Rl1670 { k: 3 }];
+  h.insert(-1, Rl1670 { k: 9 });
+  j = [Rl1670 { k: 1 }, Rl1670 { k: 2 }, Rl1670 { k: 3 }];
+  j.insert(-3, Rl1670 { k: 9 });
+  assert(dl1670(h) == "1,2,9,3,", "insert(-1): got {dl1670(h)}");
+  assert(dl1670(j) == "9,1,2,3,", "insert(-3): got {dl1670(j)}");
+}
+
+fn test_o1_out_of_range_inserts_nothing() {
+  n = [Rl1670 { k: 1 }, Rl1670 { k: 2 }];
+  n.insert(-3, Rl1670 { k: 9 });
+  assert(dl1670(n) == "1,2," && len(n) == 2, "got {dl1670(n)} len {len(n)}");
+}
+
+fn test_o2_an_index_naming_no_element_claims_nothing() {
+  n = [Rl1670 { k: 1 }, Rl1670 { k: 2 }, Rl1670 { k: 3 }];
+  n.insert(4, Rl1670 { k: 9 });
+  n.insert(-4, Rl1670 { k: 9 });
+  assert(dl1670(n) == "1,2,3," && len(n) == 3, "got {dl1670(n)} len {len(n)}");
+}
+
+fn test_x1_an_element_that_owns_text() {
+  t = [Tl1670 { k: 1, nm: "a" }, Tl1670 { k: 2, nm: "b" }];
+  t.insert(1, Tl1670 { k: 9, nm: "zz" });
+  assert(dt1670(t) == "1a,9zz,2b,", "got {dt1670(t)}");
+}
+
+fn test_x2_an_inserted_variable_is_a_copy() {
+  src = Rl1670 { k: 7 };
+  u = [Rl1670 { k: 1 }, Rl1670 { k: 2 }];
+  u.insert(0, src);
+  src.w = 70;
+  assert(dl1670(u) == "7,1,2,", "got {dl1670(u)}");
+  assert(u[0].w == 0, "the copy is independent (@FR-B-Copy): got {u[0].w}");
+}
+
+fn test_x3_an_insert_then_a_remove() {
+  u = [Rl1670 { k: 7 }, Rl1670 { k: 1 }, Rl1670 { k: 2 }];
+  u.insert(2, Rl1670 { k: 5 });
+  u.remove(0);
+  assert(dl1670(u) == "1,5,2," && len(u) == 3, "got {dl1670(u)} len {len(u)}");
+}
+
+fn test_k1_an_insert_through_a_group_reaches_the_keyed_member() {
+  w = Box1670 { els: [Rl1670 { k: 10 }, Rl1670 { k: 20 }], by_k: [] };
+  w.els.insert(1, Rl1670 { k: 15 });
+  assert(dl1670(w.els) == "10,15,20,", "the vector: got {dl1670(w.els)}");
+  assert(len(w.by_k) == 3, "the keyed member: got {len(w.by_k)}");
+  assert(w.by_k[15] != null, "the inserted key is findable");
+}
+
+fn test_k2_an_insert_then_a_remove_through_a_group() {
+  w = Box1670 { els: [Rl1670 { k: 10 }, Rl1670 { k: 20 }], by_k: [] };
+  w.els.insert(1, Rl1670 { k: 15 });
+  w.els.remove(0);
+  assert(dl1670(w.els) == "15,20,", "the vector: got {dl1670(w.els)}");
+  assert(len(w.by_k) == 2, "the keyed member: got {len(w.by_k)}");
+  assert(w.by_k[10] == null && w.by_k[15] != null, "10 left the group, 15 is in it");
+}
+
+fn test_k3_a_group_element_that_owns_text() {
+  w = Th1670 { ts: [Tl1670 { k: 1, nm: "a" }], tby: [] };
+  w.ts.insert(0, Tl1670 { k: 2, nm: "bb" });
+  assert(dt1670(w.ts) == "2bb,1a,", "the vector: got {dt1670(w.ts)}");
+  assert((w.tby[2] ?? Tl1670 { k: -1, nm: "-" }).nm == "bb", "the keyed member reads the text");
+}

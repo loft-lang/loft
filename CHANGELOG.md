@@ -37,6 +37,13 @@ release freed the captured value, and later reads of it answered garbage without
 The result is now a copy in that case, so the captured value is left alone.  A write through the
 result (`s.v = 42.0`) no longer changes the captured value either.
 
+**`insert` and `reverse` work on every vector of structs.** Once any `hash`, `sorted` or other
+keyed collection over a struct exists anywhere in a program, loft stores vectors of that struct
+differently, and `insert` and `reverse` on those vectors corrupted them: `[1,2,3]` with an
+element inserted at 1 read back `1,2,0,null`, and reversed read back `null,null,3`. Both now
+give the right answer, and an element inserted into a vector that shares its records with a
+keyed collection is found there too.
+
 **A test run no longer fails at random when a library is being installed at the same time.**
 loft reads each source file twice while compiling it. If another process was still unpacking a
 library into the shared package folder, or an editor saved a file, between those two reads, the

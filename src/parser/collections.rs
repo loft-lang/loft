@@ -1135,7 +1135,15 @@ impl Parser {
         ) {
             return None;
         }
-        let coll = args.first()?.unspan().clone();
+        self.vector_group_site(args.first()?.unspan())
+    }
+
+    /// The linked-group facts of a VECTOR member named as a collection — `w.es` as the
+    /// `OpGetField(base, off)` it resolved to.  The one derivation both an element write
+    /// ([`Self::vector_group_elem_site`]) and a whole-vector `insert` ask.  `None` when the
+    /// vector is not a group member.
+    fn vector_group_site(&self, coll: &Value) -> Option<GroupElemSite> {
+        let coll = coll.clone();
         let (struct_tp, byte_off) = self.keyed_field_site(&coll)?;
         let members = self.database.keyed_group_members(struct_tp, byte_off);
         if members.len() < 2 {
@@ -7004,6 +7012,24 @@ use #count instead"
         };
         steps.push(v_set(tmp, insert_call));
         steps.push(set_val);
+        // `@FR-Col-Group` — a record entering through any member is in every member, by any
+        // write route.  An append reaches the keyed siblings at `OpFinishRecord`; an insert
+        // reaches no such point, so the new element is handed to them here, once its fields
+        // (and so its key) are written — the relink an element write through the group does
+        // (`group_elem_write`, loft#1670).
+        if let Some(site) = self.vector_group_site(list[0].unspan())
+            && let Some(fld) = self.database.field_index_at(site.struct_tp, site.byte_off)
+        {
+            steps.push(self.cl(
+                "OpLinkRecord",
+                &[
+                    site.base.clone(),
+                    Value::Var(tmp),
+                    Value::Int(i32::from(site.struct_tp)),
+                    Value::Int(i32::from(fld)),
+                ],
+            ));
+        }
         *val = v_block(steps, Type::Void, "insert");
         Type::Void
     }
