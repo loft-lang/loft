@@ -69,9 +69,9 @@ point to the entry, and returns the frame as an `iterator<T>` value. Nothing the
 that lent the reference has returned. Nothing is lost by the refusal: a struct or vector
 argument is already shared with the caller (calls.md F-Param*), so a scanner that must leave its
 position behind takes a cursor record and advances its field (`fn tokens(c: Cursor)`, writing
-`c.pos`) — and that record lives in a store, where it cannot dangle.  Decided 2026-09-25
-(loft#1680) with no program in the corpus, the libraries or the consumers using the pattern; a
-real case can lift the refusal later, which breaks nothing.
+`c.pos`) — and that record lives in a store, where it cannot dangle.  No program in the
+corpus, the libraries or the consumers uses the pattern (loft#1680); a real case can lift the
+refusal later, which breaks nothing.
 
 ### `next` / a `for` advance runs one slice, up to the next `yield`
 

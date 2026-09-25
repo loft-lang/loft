@@ -2506,7 +2506,7 @@ impl Parser {
             && matches!(result.base(), Type::Iterator(_, _))
             && let Some(a) = arguments
                 .iter()
-                .find(|a| matches!(a.typedef, Type::RefVar(_)))
+                .find(|a| matches!(a.typedef.base(), Type::RefVar(_)))
         {
             diagnostic!(
                 self.lexer,
