@@ -92,7 +92,47 @@ def manifest_version(pkg: str) -> str | None:
     return None
 
 
+def branch_verdict(name, tip, ahead, age, merged, limit, default_branch="main"):
+    """One branch's verdict: `merged` (delete the ref), `orphan` (red) or `moving`.
+
+    `merged` is a set of (branch name, head commit) pairs of merged PRs.  A branch is merged
+    when nothing is ahead of the default branch, or when its TIP is a head a PR merged — a
+    squash-merge leaves the branch "ahead" while its work landed.  A merged PR vouches for
+    that commit only: new commits on the same name are unmerged work.
+    """
+    if ahead == 0 or (name, tip) in merged:
+        return "merged", f"branch `{name}` is merged or behind — delete the ref"
+    if age is not None and age > limit:
+        return "orphan", (
+            f"branch `{name}` — {ahead} commit(s) ahead of {default_branch}, no open PR, "
+            f"last touched {age:.0f}d ago.  Open a PR for it, or delete it."
+        )
+    return "moving", f"branch `{name}` — {ahead} ahead, no PR yet, still moving"
+
+
+def _self_test() -> int:
+    merged = {("sq", "aaa"), ("reused", "old")}
+    cases = [
+        (("sq", "aaa", 1, 40, merged, 14), "merged", "a squash-merged branch at the merged tip"),
+        (("reused", "new", 3, 1, merged, 14), "moving", "a merged name with new commits is not merged"),
+        (("reused", "new", 3, 30, merged, 14), "orphan", "…and goes red once it stops moving"),
+        (("behind", "x", 0, 90, merged, 14), "merged", "nothing ahead of the default branch"),
+        (("fresh", "y", 2, 3, merged, 14), "moving", "recent unmerged work is still moving"),
+    ]
+    bad = 0
+    for args, want, what in cases:
+        got = branch_verdict(*args)[0]
+        ok = got == want
+        bad += not ok
+        print(f"  {'ok  ' if ok else 'FAIL'}  {what} ({got})")
+    print("self-test: every branch rule acts on an input that needs it" if not bad
+          else f"self-test FAILED: {bad} rule(s) did not hold")
+    return 1 if bad else 0
+
+
 def main() -> int:
+    if "--self-test" in sys.argv[1:]:
+        return _self_test()
     ap = argparse.ArgumentParser()
     ap.add_argument("--repo", required=True, help="owner/name")
     ap.add_argument("--packages", default="[]", help="JSON array of package dirs")
@@ -118,7 +158,7 @@ def main() -> int:
          "--json", "number,title,headRefName,updatedAt,isDraft"], None)
     merged_heads = gh_json(
         ["pr", "list", "-R", repo, "--state", "merged", "--limit", "300",
-         "--json", "headRefName"], None)
+         "--json", "headRefName,headRefOid"], None)
     branches = gh_json(["api", f"repos/{repo}/branches?per_page=100"], None)
 
     if open_prs is None or merged_heads is None or branches is None:
@@ -126,7 +166,12 @@ def main() -> int:
         open_prs, merged_heads, branches = open_prs or [], merged_heads or [], branches or []
 
     open_heads = {p["headRefName"] for p in open_prs}
-    merged = {p["headRefName"] for p in merged_heads}
+    # A merged PR vouches for the COMMIT it merged, not for the branch name: a branch that
+    # was merged once and then received new commits (`157-native-4x` after #1524,
+    # `tuxedo-165-generics` after #1667) carries work no PR has landed.  Keyed on the name
+    # alone, both read "merged or behind — delete the ref", and one was deleted with a
+    # commit on it that existed nowhere else (2026-09-25; a re-push restored it).
+    merged = {(p["headRefName"], p.get("headRefOid")) for p in merged_heads}
     # The whole repo object, not `--jq .default_branch`: gh would print the value
     # unquoted, which is not JSON, so every read would silently take the fallback.
     repo_info = gh_json(["api", f"repos/{repo}"], None) or {}
@@ -147,15 +192,9 @@ def main() -> int:
         # A squash-merged branch reads as "ahead" — its commits are not on the default
         # branch individually — while its work DID land.  The merged PR is what tells
         # the two apart, so ask that before calling anything orphaned.
-        if ahead == 0 or name in merged:
-            notes.append(f"branch `{name}` is merged or behind — delete the ref")
-        elif age is not None and age > limit:
-            red.append(
-                f"branch `{name}` — {ahead} commit(s) ahead of {default_branch}, no open PR, "
-                f"last touched {age:.0f}d ago.  Open a PR for it, or delete it."
-            )
-        else:
-            notes.append(f"branch `{name}` — {ahead} ahead, no PR yet, still moving")
+        tip = (b.get("commit") or {}).get("sha")
+        kind, msg = branch_verdict(name, tip, ahead, age, merged, limit, default_branch)
+        (red if kind == "orphan" else notes).append(msg)
 
     for p in open_prs:
         age = days_since(p.get("updatedAt"))
