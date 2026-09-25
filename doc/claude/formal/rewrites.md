@@ -48,6 +48,16 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  script corpus and the consumer suites run with the switch off and
                  on, and any output difference is a defect.  Such a rewrite lands
                  only with that A/B green (`.github/workflows/switch-ab.yml`).
+                 CENSUS CLAUSE: a rewrite counts each site it ADMITS
+                 (`rewrite_census::fired("R-…", n)`, never at a decline), and the
+                 counts over the benches are a committed baseline
+                 (`bench/portal/rewrite_census.tsv`): a later fix that tightens a
+                 condition shows as a DROP, named by rule and bench, in `make
+                 rewrite-census` and on the PR — a loss no timing resolves.  A
+                 deliberate decline lands with `make rewrite-census-bless` in its
+                 own commit.  Counted today: every plan `start_fn` builds, the loop
+                 hoist frames, the push windows, the record pointers, the work
+                 buffer and its onward clause.
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's

@@ -139,6 +139,7 @@ impl Parser {
                         });
                     }
                     promoted += 1;
+                    crate::rewrite_census::fired("R-WorkBuffer/onward", 1);
                     if trace {
                         eprintln!(
                             "[work-buffer] fn={} ref={name} PROMOTED onward",
@@ -310,6 +311,7 @@ impl Parser {
                         continue;
                     };
                     self.promote_one(&mut code, v, db, &ops);
+                    crate::rewrite_census::fired("R-WorkBuffer", 1);
                     promoted += 1;
                     if trace {
                         eprintln!(

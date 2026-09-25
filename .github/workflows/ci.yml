@@ -606,6 +606,13 @@ jobs:
       - name: Build (release loft binary + lib for integration tests)
         run: cargo build --release --lib --bin loft
 
+      # A rewrite that stopped firing where it used to (a condition tightened by a fix) fails
+      # here, naming the rule and the bench: the count of admissions over the benches is a
+      # pure function of the compiler (`scripts/rewrite_census.py`).  Seconds; once per run.
+      - name: Rewrite census
+        if: ${{ runner.os == 'Linux' && (matrix.shard == 'corpus' || matrix.shard == '' || matrix.shard == null) }}
+        run: python3 scripts/rewrite_census.py
+
       # @P229 G3 reliability fix: pre-build every native lib package
       # SEQUENTIALLY here, before the parallel nextest run.  Root cause: tests
       # that run `loft --native`/`--check` call `auto_build_native`, which runs

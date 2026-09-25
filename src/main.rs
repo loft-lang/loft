@@ -10877,6 +10877,7 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 eprintln!("loft: native code generation failed: {e}");
                 std::process::exit(1);
             }
+            loft::rewrite_census::write();
             // For test-only files (no fn main()), generate a main() that calls
             // all zero-parameter user functions as test entry points.
             //

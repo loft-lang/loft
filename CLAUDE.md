@@ -93,6 +93,11 @@ make speed-gate                          # the one speed GATE: a test 3x and +5 
                                          #   main (median speed divided out) that is STILL that slow
                                          #   rerun alone.  Runs in `make ci` and on every Linux PR leg;
                                          #   contention never repeats alone — scripts/test_speed_gate.py
+make rewrite-census                      # which REWRITES still fire where they did: per bench,
+                                         #   the admissions of each R- rule against a committed
+                                         #   baseline — a DROP (a fix tightened a condition) fails,
+                                         #   named by rule and bench; seconds, exact, in `make ci`
+                                         #   and on the PR.  `-bless` records a deliberate decline
 make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
                                          #   every bench lane here and renders ONE page,
                                          #   doc/claude/PERF_PORTAL.md — a median per mechanism

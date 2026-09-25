@@ -553,6 +553,7 @@ impl LibArg {
 /// reachable from `entry` + their deps) for `data`.  Both cdylib generators
 /// append their export wrappers to this.
 fn emit_program(data: &Data, stores: &Stores, entry: &[u32]) -> String {
+    let _census = crate::rewrite_census::Pause::new();
     let mut buf: Vec<u8> = Vec::new();
     {
         let mut out = Output::new(data, stores);
