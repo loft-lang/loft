@@ -26,6 +26,16 @@ on both backends and whatever the members are: `p = (p.1, p.0)` swaps the caller
 `q = p` is a copy, so changing `q` leaves the caller alone.  A tuple with a `text` member could
 not be assigned whole either; it can now.
 
+**A comprehension builds the vector its destination declares.**  `v: vector<integer> = [for i
+in 0..n { i % 7 }]` was refused ("cannot change type from `vector<integer>` to
+`vector<integer(-6, 6)>`"), and the same comprehension in a struct field — `Grid { cells: [for
+i in 0..w*h { (i * seed) % 7 }] }` — compiled and answered garbage: the elements were stored at
+the one-byte width the remainder's range implies and read back at the field's eight, so a 4×4
+grid read `[435735401677195014, …]` and a larger one crashed.  An integer body in a
+`vector<float>` field read back the same way.  Now the body converts into the declared element
+type, as a literal's elements always have, and a struct literal refuses a vector of another
+element width with the same message the assignment gives.
+
 **A `&text` parameter can be handed a text field or element, and the function writes it.**
 `fn shout(t: &text) { t += "!" }` could only ever reach a text *variable*.  Called as
 `shout(o.name)` or `shout(names[2])`, it first copied the text, and the function's write was

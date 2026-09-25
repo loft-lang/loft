@@ -2998,6 +2998,15 @@ impl Type {
                 a.byte_width(!a.not_null) == b.byte_width(!b.not_null) && (a.min < 0) == (b.min < 0)
             }
             (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
+            // A tuple element stores its members INLINE at their own widths (`(u8, u8)` is
+            // two bytes, `(integer, integer)` sixteen), so two tuples are one layout only
+            // when every member is.
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| x.same_element_storage(y))
+            }
             _ => true,
         }
     }

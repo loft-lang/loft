@@ -6233,6 +6233,15 @@ impl Parser {
             // uninitialised.
             if let Type::Vector(ref content, _) = td_base {
                 if !self.first_pass && !matches!(value, Value::Insert(_) | Value::Null) {
+                    // loft#1072 — the literal and the assignment accept the same values, so
+                    // they refuse the same ones.  The bulk copy below strides by the FIELD's
+                    // element, so a vector whose element storage differs — a range-typed
+                    // comprehension's `vector<integer(-6, 6)>`, an integer vector into a
+                    // `vector<float>` field — was copied at the wrong width and read back as
+                    // garbage here, where `g.c = v` refuses it.
+                    if self.field_store_mismatch("=", u16::MAX, &td, exp_tp) {
+                        self.field_store_refusal(exp_tp, &td);
+                    }
                     let pos = self
                         .database
                         .position(self.data.def(td_nr).known_type(), field);

@@ -2312,7 +2312,7 @@ use a separate collection or add after the loop"
     /// Compound assignments are excluded — `h.v += x` appends an ELEMENT, so the
     /// source is legitimately not the field's type, and the operator's own attribute
     /// list types it.
-    fn field_store_mismatch(
+    pub(crate) fn field_store_mismatch(
         &mut self,
         op: &str,
         var_nr: u16,
@@ -2366,6 +2366,31 @@ use a separate collection or add after the loop"
         let accepted = self.convert_admitting(&mut Value::Null, s_type, f_type);
         self.conv_owned_result = saved_owned;
         !accepted
+    }
+
+    /// The refusal a wrong-typed FIELD store reports, with a cure the reader can follow: a
+    /// scalar has the explicit cast; a COLLECTION has none (there is no `as vector<integer>`),
+    /// so its cure is to give the value the field's type where the value is built.  One home
+    /// for the assignment and the struct literal, which accept the same values (loft#1072)
+    /// and so refuse the same ones in the same words.
+    pub(crate) fn field_store_refusal(&mut self, s_type: &Type, f_type: &Type) {
+        let got = s_type.source_name(&self.data);
+        let want = f_type.source_name(&self.data);
+        if matches!(f_type.base(), Type::Vector(..)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot assign {got} to a field of type {want} — build the value at the \
+                 field's type (declare it `: {want}` where it is made)"
+            );
+        } else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot assign {got} to a field of type {want} — use 'as {want}' to cast \
+                 explicitly"
+            );
+        }
     }
 
     /// The `(struct type, byte offset)` of `to` when it is an
@@ -4909,14 +4934,7 @@ use a separate collection or add after the loop"
                     f_type.source_name(&self.data),
                 );
             } else {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot assign {} to a field of type {} — use 'as {}' to cast explicitly",
-                    s_type.source_name(&self.data),
-                    f_type.source_name(&self.data),
-                    f_type.source_name(&self.data),
-                );
+                self.field_store_refusal(&s_type, f_type);
             }
         }
         // loft#1034 — a TUPLE target reaches `convert` too.
