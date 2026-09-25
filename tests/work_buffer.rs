@@ -28,6 +28,7 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ("n_c12", &["out"]),     // the par caller's own collector
     ("n_c13", &["v"]),       // an early return
     ("n_c15", &["acc"]),     // a buffer-holding caller
+    ("n_c16", &["v"]),       // beside a parse-time return buffer of its own
 ];
 
 fn loft() -> Command {

@@ -104,6 +104,10 @@ impl Parser {
             &mut self.data.definitions[d as usize].variables,
         );
         self.context = d;
+        // A re-entry into a parsed function: the pooled counters were reset when its table
+        // was stored, so the witness minted below would otherwise REUSE (and retype) a
+        // `__ref_N` the parse already gave to something live (`sync_work_counters`).
+        self.vars.sync_work_counters();
         let mut code = std::mem::replace(&mut self.data.definitions[d as usize].code, Value::Null);
         let mut promoted = 0;
         let trace = crate::keys::trace_work_buffer();
@@ -206,6 +210,14 @@ impl Parser {
         let last = self.vars.count() - 1;
         if last == v || self.vars.is_argument(last) {
             return None;
+        }
+        if crate::keys::trace_work_buffer() {
+            eprintln!(
+                "[work-buffer] fn={} local={} ({v}) takes the number of `{}` ({last})",
+                self.data.def(self.context).name(),
+                self.vars.name(v),
+                self.vars.name(last)
+            );
         }
         let tmp = self.vars.count();
         Self::renumber_frame_var(code, last, tmp);

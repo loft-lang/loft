@@ -881,7 +881,11 @@ impl State {
                 // parser accepts the read, emits `TupleGet`, and this panics — a clean refusal
                 // traded for an ICE.
                 let Type::Tuple(ref elems) = *tuple_tp.base() else {
-                    panic!("TupleGet on non-tuple variable");
+                    panic!(
+                        "TupleGet on non-tuple variable `{}` ({var_nr}) of type {}",
+                        stack.function.name(var_nr),
+                        tuple_tp.name(stack.data)
+                    );
                 };
                 let idx = elem_idx as usize;
                 let elem_tp = elems[idx].clone();

@@ -169,6 +169,18 @@ fn c15(n: integer) -> integer {
   s
 }
 
+// c16 — the callee itself calls a record-returning function, so its table already holds a
+// `__ref_1` (that call's return buffer) when the entry witness is minted: the witness must be
+// a fresh `__ref_N`, never that one retyped (measured: an internal compiler error, "TupleGet
+// on non-tuple variable", on hex_body's rig walk).  c16(3) = 3 + (2 + 4) = 9.
+struct P { a: integer, b: integer }
+fn mkp(i: integer) -> P { P { a: i, b: i * 2 } }
+fn c16(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { p = mkp(i); v += [p.a + p.b]; }
+  len(v) + (v[n - 1] ?? 0)
+}
+
 fn main() {
   s1 = 0;
   for r in 0..2000 { s1 += c1(r % 5); }
@@ -192,5 +204,6 @@ fn main() {
   assert(c12() == 20, "c12 {c12()}");
   assert(c13(2) == 2 && c13(7) == 30, "c13 {c13(2)} {c13(7)}");
   assert(c15(5) == 10, "c15 {c15(5)}");
+  assert(c16(3) == 9, "c16 {c16(3)}");
   println("done");
 }
