@@ -3322,8 +3322,7 @@ impl Output<'_> {
         let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
         let lo = match f.next_var {
             Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
-            None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
-            None => format!("ops::op_add_int(({idx}), (1_i64))"),
+            None => self.counter_step(&idx),
         };
         let vec = self.expr_string(f.vector)?;
         let base = match f.base {
@@ -3369,20 +3368,35 @@ impl Output<'_> {
         let variables = self.data.def(self.def_nr).variables();
         let idx = format!("var_{}", sanitize(variables.name(index_var)));
         let hi = self.expr_string(hi)?;
+        // `@FR-I-RangeIncl` — an inclusive range never has to represent `hi + 1`, and at
+        // `hi = i64::MAX` a plain `+` is the overflow panic of the semantics build.  The step
+        // past `last` is therefore the LOOP's own step, which is what the loop would have left
+        // (the null sentinel there).  An exclusive `hi - 1` needs no such care: this arm runs
+        // only when the fill took the range, which proved `lo <= hi - 1`.
         let last = if inclusive {
             format!("({hi})")
         } else {
             format!("(({hi}) - 1_i64)")
         };
+        let past = self.counter_step(&last);
         match next_var {
             Some(nx) => {
                 let next = format!("var_{}", sanitize(variables.name(nx)));
-                writeln!(
-                    w,
-                    "\n}} else {{ {idx} = {last}; {next} = {last} + 1_i64; }}"
-                )
+                writeln!(w, "\n}} else {{ {idx} = {last}; {next} = {past}; }}")
             }
-            None => writeln!(w, "\n}} else {{ {idx} = {last} + 1_i64; }}"),
+            None => writeln!(w, "\n}} else {{ {idx} = {past}; }}"),
+        }
+    }
+
+    /// The counted loop's step, `e + 1`, spelled as the loop spells it: the checked
+    /// `op_add_int` (the null sentinel on overflow), or the processor's wrapping add under
+    /// `LOFT_RELEASE_PASS_PROBE`.  ONE home for every counter the emitter advances itself —
+    /// a trip count's start, a fill's start, and the counter a fast path leaves behind.
+    fn counter_step(&self, e: &str) -> String {
+        if self.release_pass_probe {
+            format!("(({e}).wrapping_add(1_i64))")
+        } else {
+            format!("ops::op_add_int(({e}), (1_i64))")
         }
     }
 
@@ -3406,8 +3420,7 @@ impl Output<'_> {
         let idx = format!("var_{}", sanitize(variables.name(index_var)));
         let lo = match next_var {
             Some(nx) => format!("var_{}", sanitize(variables.name(nx))),
-            None if self.release_pass_probe => format!("(({idx}).wrapping_add(1_i64))"),
-            None => format!("ops::op_add_int(({idx}), (1_i64))"),
+            None => self.counter_step(&idx),
         };
         let hi = self.expr_string(hi)?;
         let incl = if inclusive { "1_i64" } else { "0_i64" };
