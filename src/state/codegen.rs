@@ -4884,6 +4884,19 @@ impl State {
 
     #[allow(clippy::too_many_lines)]
     pub(super) fn generate_var(&mut self, stack: &mut Stack, variable: u16) -> Type {
+        // loft#1673, @FR-B-Ref-Uniform with `(T-Ref-Rep)` — a whole-value read of a STACK-backed
+        // `&(…)` is the tuple of its element reads through the link, the reads a `p.i` already
+        // is.  The link-read ladder below reads one SLOT and has no arm for a tuple, so as an
+        // argument, a return or a bind it was an ICE.  A RECORD-backed `&(…)` is a
+        // `RefVar(Reference(__tuple<…>))` and never reaches this arm; it is passed as the record.
+        if let Type::RefVar(inner) = stack.function.tp(variable)
+            && let Type::Tuple(elems) = inner.base()
+        {
+            let reads = (0..elems.len())
+                .map(|i| Value::TupleGet(variable, i as u16))
+                .collect();
+            return self.generate(&Value::Tuple(reads), stack, false);
+        }
         if stack.function.stack(variable) > stack.position
             && std::env::var("LOFT_VAR_PANIC_IR").is_ok()
         {

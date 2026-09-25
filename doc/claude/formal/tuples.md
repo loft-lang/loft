@@ -227,27 +227,29 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 1.**  D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
+**OPEN: 0.**  D-tup-16 opened and closed 2026-09-25 (below); D-tup-15 opened and closed
+2026-09-22 ([history](tuples-history.md)).
 
-- **D-tup-16** *(OPEN 2026-09-25, loft#1673)* — `(T-Ref-El)` says of a `&(…)` binding
+- **D-tup-16** *(CLOSED 2026-09-25, loft#1673)* — `(T-Ref-El)` says of a `&(…)` binding
   *"Never a runtime fault and never an ICE"*, and a whole-value READ or WRITE of the
-  STACK-backed form is an ICE on both backends: `take(p)`, `return p` and `q = p` panic in the
-  codegen link-read ladder, `p = (…)` in its write twin.  The RECORD-backed twin answers all
-  four correctly, which is what makes this a deviation rather than an undecided edge — the two
-  representations `(T-Ref-Rep)` gives are meant to differ only in where the tuple lives, and
-  `@FR-B-Ref-Uniform` says no operation on a `&τ` is special-cased.
+  STACK-backed form was an ICE on both backends: `take(p)`, `return p` and `q = p` panicked in
+  the codegen link-read ladder, `p = (…)` in its write twin.  The RECORD-backed twin read whole
+  correctly and REFUSED the whole write with a type error — so the two representations
+  `(T-Ref-Rep)` gives differed in what a program could do, which `@FR-B-Ref-Uniform` rules out.
 
-  Two smaller faces of the same "the representation is observable" defect travel with it:
-  `print("{p}")` refuses on the stack-backed form and prints the compiler's own
-  `{_0:…,_1:…}` field spelling on the record-backed one, and both `==` diagnostics name
-  `&__tuple<text,text>`, a type no author writes (`Type::source_name` is the home for that).
-
-  The DESTRUCTURE half of the same walk is closed (2026-09-25): `(a, b) = p` answers on both
-  representations and from both sources, guarded by
-  `tests/scripts/a-destructure-unpacks-a-reference-tuple.loft`.  What remains open is the
-  whole-value position, whose cure must leave the record-backed form passing the record — at
-  those positions it already works, and materialising it would turn a reference into a deep
-  copy of its heap members.
+  ✅ **Closed at the rules' own answer, on both representations.**  A whole READ is the tuple of
+  the element reads through the link (the interpreter's `generate_var`; native derefs a local
+  link's `*mut (…)`, as it already did a parameter's `&mut`), so a bind `q = p` is a COPY
+  (`(B-Copy)`) and the caller's tuple is untouched.  A whole WRITE is written THROUGH, element
+  by element, exactly as `p.0 = a; p.1 = b` is — the right-hand side evaluated into a temp
+  first, so `p = (p.1, p.0)` swaps — and the record-backed form writes its fields in place, so
+  its heap members are never deep-copied.  The local link bind `q = &t` stays the bind it is.
+  The two smaller faces went with it: a record-backed link refuses `"{p}"` exactly as its
+  value tuple does, and a diagnostic names it `&(text, text)` rather than the `__tuple<…>`
+  record.  Guard: `tests/scripts/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft`
+  (argument, return, bind-is-a-copy, write, swap, a write in a loop, a local link), both
+  representations per cell.  The DESTRUCTURE half — `(a, b) = p` on both representations and
+  from both sources — is guarded by `tests/scripts/a-destructure-unpacks-a-reference-tuple.loft`.
 
 - **D-tup-10** *(CLOSED 2026-09-16, loft#1423 / loft#1451)* — `(T-Absent)` said no
   `Optional(Tuple)` exists while the code minted one wherever absence is synthesised:

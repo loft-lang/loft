@@ -439,6 +439,12 @@ impl Output<'_> {
                         );
                     }
                     return write!(w, "unsafe {{ {deref} }}");
+                } else if crate::generation::is_raw_tuple_link(variables, var) {
+                    // loft#1673 — a stack-backed `&(…)` LOCAL link read WHOLE (an argument, a
+                    // return, a bind) is the tuple behind its `*mut (…)`: every member is a
+                    // scalar (`(T-Ref-Rep)`), so the deref is a copy, as the `&(…)` parameter
+                    // arm above reads `*var_p`.  Its source is a frame local, never absent.
+                    return write!(w, "unsafe {{ *var_{var_name} }}");
                 } else if let Type::RefVar(inner) = variables.tp(var)
                     && matches!(inner.base(), Type::Reference(..))
                     && self.local_record_link.contains(&var)

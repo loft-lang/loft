@@ -1,0 +1,188 @@
+diff --git b/src/data.rs a/src/data.rs
+index 700424502..53bbc5e37 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -3108,18 +3108,6 @@ impl Type {
+                     .collect();
+                 format!("{}<{}>", data.def(d.instance_of).name, args.join(", "))
+             }
+-            // A `__tuple<…>` RECORD is how `(T-Ref-Rep)` stores the tuple a record-backed `&(…)`
+-            // names; the author wrote the TUPLE, so a message shows `(integer, text)` and not the
+-            // compiler's record (loft#1673).  The key keeps the def name.
+-            Type::Reference(t, _) if source && data.def(*t).name.starts_with("__tuple<") => {
+-                let members: Vec<String> = data
+-                    .def(*t)
+-                    .attributes
+-                    .iter()
+-                    .map(|a| a.typedef.render(data, true))
+-                    .collect();
+-                format!("({})", members.join(", "))
+-            }
+             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
+             Type::Text(_) => "text".to_string(),
+             Type::Vector(tp, _) if matches!(tp as &Type, Type::Unknown(_)) => "vector".to_string(),
+diff --git b/src/generation/emit.rs a/src/generation/emit.rs
+index 6ebccb5c2..212505169 100644
+--- b/src/generation/emit.rs
++++ a/src/generation/emit.rs
+@@ -439,12 +439,6 @@ impl Output<'_> {
+                         );
+                     }
+                     return write!(w, "unsafe {{ {deref} }}");
+-                } else if crate::generation::is_raw_tuple_link(variables, var) {
+-                    // loft#1673 — a stack-backed `&(…)` LOCAL link read WHOLE (an argument, a
+-                    // return, a bind) is the tuple behind its `*mut (…)`: every member is a
+-                    // scalar (`(T-Ref-Rep)`), so the deref is a copy, as the `&(…)` parameter
+-                    // arm above reads `*var_p`.  Its source is a frame local, never absent.
+-                    return write!(w, "unsafe {{ *var_{var_name} }}");
+                 } else if let Type::RefVar(inner) = variables.tp(var)
+                     && matches!(inner.base(), Type::Reference(..))
+                     && self.local_record_link.contains(&var)
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 5aa6844e0..b80e98e1c 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3019,20 +3019,6 @@ use #count instead"
+             Type::Iterator(vtp, _) => {
+                 self.append_iter(list, append, append_value, vtp.as_ref(), format, state);
+             }
+-            // A record-backed `&(…)` names a `__tuple<…>` RECORD (`(T-Ref-Rep)`), and
+-            // `@FR-B-Ref-Uniform` makes it formatted exactly as the tuple it stands for — which
+-            // a format refuses.  Formatted as a record it printed the compiler's own `_0`/`_1`
+-            // fields where the stack-backed twin refused (loft#1673).
+-            Type::Reference(d_nr, _) if self.data.def(d_nr).name().starts_with("__tuple<") => {
+-                if !self.first_pass {
+-                    diagnostic!(
+-                        self.lexer,
+-                        Level::Error,
+-                        "Cannot format type {}",
+-                        Type::Reference(d_nr, crate::data::Deps::none()).source_name(&self.data)
+-                    );
+-                }
+-            }
+             Type::Reference(d_nr, _) => {
+                 // P242 fix: when `d_nr` is the current generic
+                 // function's type variable AND the bound supplies
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 9d47c05b5..defb91863 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3040,57 +3040,6 @@ use a separate collection or add after the loop"
+     }
+ 
+     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
+-    /// `p = (a, b)` where `p` is a `&(…)` link: `@FR-B-Ref-Uniform` makes a `&τ` written exactly
+-    /// as a `τ` is, so the whole value is written THROUGH the link — each element into the
+-    /// caller's tuple, as `p.0 = a; p.1 = b` writes it (loft#1673).  The right-hand side is
+-    /// evaluated into a temporary first, so `p = (p.1, p.0)` swaps.  Both representations
+-    /// `(T-Ref-Rep)` gives the link write the same way: a STACK-backed tuple through `TuplePut`,
+-    /// a `__tuple<…>` RECORD through its fields (`set_field`, what `p.i = v` lowers to there).
+-    /// `None` for every other assignment.
+-    fn ref_tuple_whole_write(
+-        &mut self,
+-        op: &str,
+-        to: &Value,
+-        rhs: &Value,
+-        rhs_tp: &Type,
+-    ) -> Option<Value> {
+-        if op != "=" {
+-            return None;
+-        }
+-        let Value::Var(p) = to.unspan() else {
+-            return None;
+-        };
+-        let p = *p;
+-        if !self.vars.exists(p) || !matches!(rhs_tp.base(), Type::Tuple(_)) {
+-            return None;
+-        }
+-        // The link BIND `q = &t` (the `&` below lowers it to `OpCreateStack(t)`) makes the
+-        // link; it does not write through one.
+-        if self.amp_pending {
+-            return None;
+-        }
+-        let Type::RefVar(inner) = self.vars.tp(p).base() else {
+-            return None;
+-        };
+-        let (record, n) = match inner.base() {
+-            Type::Tuple(elems) => (None, elems.len()),
+-            Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => {
+-                (Some(*d), self.data.def(*d).attributes.len())
+-            }
+-            _ => return None,
+-        };
+-        let tmp = self.create_unique("wtuple", &rhs_tp.without_deps());
+-        let mut steps = vec![v_set(tmp, rhs.clone())];
+-        for i in 0..n {
+-            let val = Value::TupleGet(tmp, i as u16);
+-            steps.push(match record {
+-                None => Value::TuplePut(p, i as u16, Box::new(val)),
+-                Some(d) => self.set_field(d, i, 0, Value::Var(p), val),
+-            });
+-        }
+-        Some(v_block(steps, Type::Void, "ref_tuple_write"))
+-    }
+-
+     pub(crate) fn parse_assign_op(
+         &mut self,
+         code: &mut Value,
+@@ -3694,10 +3643,6 @@ use a separate collection or add after the loop"
+         let snapshot_len = std::mem::replace(&mut self.build_snapshot_len, prev_snapshot_len);
+         self.amp_head = AmpHead::No;
+         self.expected = prev_read_target;
+-        if let Some(steps) = self.ref_tuple_whole_write(op, to, code, &s_type) {
+-            *code = steps;
+-            return Type::Void;
+-        }
+         // A `& vector` bind (`d = &v` / `d = &self.data`): the source is a vector lvalue
+         // and the `&` opts INTO aliasing (B-Ref-Write — the write-through "north star" —
+         // for a vector, which plain `d = v` deliberately does NOT give: it COPIES,
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 1364a970b..78fb3ef50 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -19801,17 +19801,10 @@ impl Parser {
+                     a.ref_pos
+                 };
+                 self.lexer.to(src);
+-                // T1.6: a `&` TUPLE parameter — downgrade to warning (DIAGNOSTICS.md
+-                // `needless-reference-parameter`); other RefVar types are an error (the & serves
+-                // no purpose and misleads).  Both spellings `(T-Ref-Rep)` gives a `&(…)`: the
+-                // stack-backed `Tuple` and the `__tuple<…>` record (loft#1673) — asked of the
+-                // first alone, a tuple with a heap member got the error its all-scalar twin
+-                // did not.
+-                let tuple_param = matches!(a.typedef, Type::RefVar(ref inner)
+-                    if matches!(**inner, Type::Tuple(_))
+-                        || matches!(**inner, Type::Reference(d, _)
+-                            if self.data.def(d).name().starts_with("__tuple<")));
+-                if tuple_param {
++                // T1.6: RefVar(Tuple) — downgrade to warning since elements are stack values;
++                // other RefVar types are an error (the & serves no purpose and misleads).
++                if matches!(a.typedef, Type::RefVar(ref inner) if matches!(**inner, Type::Tuple(_)))
++                {
+                     diagnostic!(
+                         self.lexer,
+                         Level::Warning,
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 5a1b73579..486ddeecc 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -4884,19 +4884,6 @@ impl State {
+ 
+     #[allow(clippy::too_many_lines)]
+     pub(super) fn generate_var(&mut self, stack: &mut Stack, variable: u16) -> Type {
+-        // loft#1673, @FR-B-Ref-Uniform with `(T-Ref-Rep)` — a whole-value read of a STACK-backed
+-        // `&(…)` is the tuple of its element reads through the link, the reads a `p.i` already
+-        // is.  The link-read ladder below reads one SLOT and has no arm for a tuple, so as an
+-        // argument, a return or a bind it was an ICE.  A RECORD-backed `&(…)` is a
+-        // `RefVar(Reference(__tuple<…>))` and never reaches this arm; it is passed as the record.
+-        if let Type::RefVar(inner) = stack.function.tp(variable)
+-            && let Type::Tuple(elems) = inner.base()
+-        {
+-            let reads = (0..elems.len())
+-                .map(|i| Value::TupleGet(variable, i as u16))
+-                .collect();
+-            return self.generate(&Value::Tuple(reads), stack, false);
+-        }
+         if stack.function.stack(variable) > stack.position
+             && std::env::var("LOFT_VAR_PANIC_IR").is_ok()
+         {

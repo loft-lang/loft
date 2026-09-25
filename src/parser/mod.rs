@@ -19818,10 +19818,17 @@ impl Parser {
                     a.ref_pos
                 };
                 self.lexer.to(src);
-                // T1.6: RefVar(Tuple) — downgrade to warning since elements are stack values;
-                // other RefVar types are an error (the & serves no purpose and misleads).
-                if matches!(a.typedef, Type::RefVar(ref inner) if matches!(**inner, Type::Tuple(_)))
-                {
+                // T1.6: a `&` TUPLE parameter — downgrade to warning (DIAGNOSTICS.md
+                // `needless-reference-parameter`); other RefVar types are an error (the & serves
+                // no purpose and misleads).  Both spellings `(T-Ref-Rep)` gives a `&(…)`: the
+                // stack-backed `Tuple` and the `__tuple<…>` record (loft#1673) — asked of the
+                // first alone, a tuple with a heap member got the error its all-scalar twin
+                // did not.
+                let tuple_param = matches!(a.typedef, Type::RefVar(ref inner)
+                    if matches!(**inner, Type::Tuple(_))
+                        || matches!(**inner, Type::Reference(d, _)
+                            if self.data.def(d).name().starts_with("__tuple<")));
+                if tuple_param {
                     diagnostic!(
                         self.lexer,
                         Level::Warning,

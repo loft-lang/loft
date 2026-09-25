@@ -3108,6 +3108,18 @@ impl Type {
                     .collect();
                 format!("{}<{}>", data.def(d.instance_of).name, args.join(", "))
             }
+            // A `__tuple<…>` RECORD is how `(T-Ref-Rep)` stores the tuple a record-backed `&(…)`
+            // names; the author wrote the TUPLE, so a message shows `(integer, text)` and not the
+            // compiler's record (loft#1673).  The key keeps the def name.
+            Type::Reference(t, _) if source && data.def(*t).name.starts_with("__tuple<") => {
+                let members: Vec<String> = data
+                    .def(*t)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.render(data, true))
+                    .collect();
+                format!("({})", members.join(", "))
+            }
             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
             Type::Text(_) => "text".to_string(),
             Type::Vector(tp, _) if matches!(tp as &Type, Type::Unknown(_)) => "vector".to_string(),

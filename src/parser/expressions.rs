@@ -3045,6 +3045,57 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// `p = (a, b)` where `p` is a `&(…)` link: `@FR-B-Ref-Uniform` makes a `&τ` written exactly
+    /// as a `τ` is, so the whole value is written THROUGH the link — each element into the
+    /// caller's tuple, as `p.0 = a; p.1 = b` writes it (loft#1673).  The right-hand side is
+    /// evaluated into a temporary first, so `p = (p.1, p.0)` swaps.  Both representations
+    /// `(T-Ref-Rep)` gives the link write the same way: a STACK-backed tuple through `TuplePut`,
+    /// a `__tuple<…>` RECORD through its fields (`set_field`, what `p.i = v` lowers to there).
+    /// `None` for every other assignment.
+    fn ref_tuple_whole_write(
+        &mut self,
+        op: &str,
+        to: &Value,
+        rhs: &Value,
+        rhs_tp: &Type,
+    ) -> Option<Value> {
+        if op != "=" {
+            return None;
+        }
+        let Value::Var(p) = to.unspan() else {
+            return None;
+        };
+        let p = *p;
+        if !self.vars.exists(p) || !matches!(rhs_tp.base(), Type::Tuple(_)) {
+            return None;
+        }
+        // The link BIND `q = &t` (the `&` below lowers it to `OpCreateStack(t)`) makes the
+        // link; it does not write through one.
+        if self.amp_pending {
+            return None;
+        }
+        let Type::RefVar(inner) = self.vars.tp(p).base() else {
+            return None;
+        };
+        let (record, n) = match inner.base() {
+            Type::Tuple(elems) => (None, elems.len()),
+            Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => {
+                (Some(*d), self.data.def(*d).attributes.len())
+            }
+            _ => return None,
+        };
+        let tmp = self.create_unique("wtuple", &rhs_tp.without_deps());
+        let mut steps = vec![v_set(tmp, rhs.clone())];
+        for i in 0..n {
+            let val = Value::TupleGet(tmp, i as u16);
+            steps.push(match record {
+                None => Value::TuplePut(p, i as u16, Box::new(val)),
+                Some(d) => self.set_field(d, i, 0, Value::Var(p), val),
+            });
+        }
+        Some(v_block(steps, Type::Void, "ref_tuple_write"))
+    }
+
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     pub(crate) fn parse_assign_op(
         &mut self,
@@ -3649,6 +3700,10 @@ use a separate collection or add after the loop"
         let snapshot_len = std::mem::replace(&mut self.build_snapshot_len, prev_snapshot_len);
         self.amp_head = AmpHead::No;
         self.expected = prev_read_target;
+        if let Some(steps) = self.ref_tuple_whole_write(op, to, code, &s_type) {
+            *code = steps;
+            return Type::Void;
+        }
         // A `& vector` bind (`d = &v` / `d = &self.data`): the source is a vector lvalue
         // and the `&` opts INTO aliasing (B-Ref-Write — the write-through "north star" —
         // for a vector, which plain `d = v` deliberately does NOT give: it COPIES,

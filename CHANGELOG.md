@@ -14,6 +14,13 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A `&(…)` tuple parameter can be used whole.**  `fn f(p: &(integer, integer))` could read
+and write `p.0` and `p.1`, but passing `p` on, returning it, copying it (`q = p`) or assigning
+it a new tuple (`p = (8, 9)`) stopped the compiler with an internal error.  All four work now,
+on both backends and whatever the members are: `p = (p.1, p.0)` swaps the caller's pair, and
+`q = p` is a copy, so changing `q` leaves the caller alone.  A tuple with a `text` member could
+not be assigned whole either; it can now.
+
 **A `&text` parameter can be handed a text field or element, and the function writes it.**
 `fn shout(t: &text) { t += "!" }` could only ever reach a text *variable*.  Called as
 `shout(o.name)` or `shout(names[2])`, it first copied the text, and the function's write was
