@@ -138,7 +138,7 @@ impl Parser {
                     let Some((v, db)) = self.move_after_arguments(&mut code, v, db) else {
                         if trace {
                             eprintln!(
-                                "[work-buffer] fn={} local={} keeps its store: numbered before an argument that is the table's last variable",
+                                "[work-buffer] fn={} local={} keeps its store: numbered before an argument, and the swap cannot be made",
                                 self.data.def(d).name(),
                                 self.vars.name(v)
                             );
@@ -232,6 +232,13 @@ impl Parser {
         }
         let last = self.vars.count() - 1;
         if last == v || self.vars.is_argument(last) {
+            return None;
+        }
+        // The return type is declared in ATTRIBUTE space, and a text-returning function's
+        // body block carries it (`text[0]`: the promoted return buffer).  The swap renumbers
+        // frame numbers, and here those are not the attribute's — the buffer is attribute 0
+        // and a frame number after the locals — so it would rewrite the attribute list.
+        if !self.data.def(self.context).returned.depend().is_empty() {
             return None;
         }
         if crate::keys::trace_work_buffer() {

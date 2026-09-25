@@ -18,10 +18,10 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ("n_c3", &["xs", "ks"]), // two buffers
     ("n_c4", &[]),           // declared inside a loop: @FR-R-LoopBuffer / @FR-R-LitHoist keep it
     ("n_c5", &["v"]),        // every in-place use, the walk's alias included
-    ("n_c6", &["t"]),        // beside a return buffer
-    ("n_c7", &[]),           // handed to a loft-bodied call
-    ("n_c8", &[]),           // a text element
-    ("n_c9", &[]),           // assigned a second time
+    ("n_c6", &[]), // beside a return buffer: the swap would renumber attr-space return deps
+    ("n_c7", &[]), // handed to a loft-bodied call
+    ("n_c8", &[]), // a text element
+    ("n_c9", &[]), // assigned a second time
     ("n_c10", &[]), // v copied whole into the return buffer (@FR-R-RetAdopt), w a copy-bind
     ("t_3Acc_bump", &["v"]), // a method
     ("n_c12w", &[]), // a par worker
