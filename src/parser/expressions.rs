@@ -6991,7 +6991,19 @@ use a separate collection or add after the loop"
                 );
             }
             let mut rhs = Value::Null;
-            let rhs_type = self.expression(&mut rhs);
+            let mut rhs_type = self.expression(&mut rhs);
+            // `@FR-B-Ref-Uniform` / `(T-Ref)` — a `&(…)` binding denotes the bound tuple
+            // itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
+            // shape test below asks the type for `Type::Tuple`, which answers NO for a `&`
+            // spelling whichever representation `(T-Ref-Rep)` gave the binding, so the
+            // destructure was refused with *"Cannot destructure a non-tuple value"* — a
+            // message about a value that IS a tuple — and left every name undefined, one
+            // further error each.  `ref_tuple_subject` is the one home for reading such a
+            // binding AS a tuple; the tuple pattern (loft#1530) is its other caller.
+            if let Some((reads, elems)) = self.ref_tuple_subject(&rhs, &rhs_type) {
+                rhs = reads;
+                rhs_type = Type::Tuple(elems);
+            }
             // A7.1: accept both `Type::Tuple([…])` and the synthetic
             // `Reference(__tuple<…>)` shape that A7.1's parse_function
             // gate widen produces for tuple returns wider than 8B.

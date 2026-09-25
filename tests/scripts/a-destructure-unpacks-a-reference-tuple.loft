@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// A `&(τ₁, …, τₙ)` binding "denotes the bound tuple itself" (formal/tuples.md `(T-Ref)`,
+// `@FR-B-Ref-Uniform`), so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  Both
+// representations `(T-Ref-Rep)` gives the binding take the destructure: an all-scalar tuple is
+// STACK-backed, one with a heap member is a `__tuple<…>` RECORD.  Neither did.  The shape test
+// at the destructure asked the type for `Type::Tuple`, which answers NO for a `&` spelling
+// whichever representation it has, so the statement was refused with *"Cannot destructure a
+// non-tuple value"* — about a value that IS a tuple — and every name on the left was left
+// undefined, one further *"Unknown variable"* each.  `Parser::ref_tuple_subject`, installed for
+// the tuple PATTERN (loft#1530), is the one home for reading such a binding as a tuple; this is
+// its second caller.
+//
+// Axes this file MOVES:  the representation (all-scalar vs. a heap member), the binding's
+//                        SOURCE (`(T-Ref-Src)`: a parameter and a local), the member kind
+//                        (integer / text / vector / struct-enum), and position (straight-line
+//                        and a loop body).
+// Axes it HOLDS FIXED:   arity 2 throughout.  Arity is decided before the shape test and was
+//                        never the question — a mismatch is refused identically on both
+//                        backends whatever the source, which `102b-pass1-expected-errors.loft`
+//                        is the home for.
+//
+// @falsified-at: PENDING
+//   CHANNEL: exit — on the control the program never runs: every destructuring cell is refused
+//   at parse (*"Cannot destructure a non-tuple value"*), so no value is computed and no leak is
+//   reachable.  Here every cell passes.  Not assert and not leak.
+//   ARMED: no instrument — a plain run on either backend reads it.  `LOFT_POISON=1
+//   LOFT_STRICT_STORES=1` is what reads the record-backed half's ownership (a heap member read
+//   out of the caller's record is a view of it, not a value this frame owns), and both are
+//   clean.
+//   WITNESS: `scalar_pair(p)` where `p = (4, 5)`: a refusal there, `4 5` here.
+//   HOLDS: the by-value twin `plain_pair` destructures on both trees, and so does the
+//   element-by-element spelling `a = p.0; b = p.1` — the two controls that say the refusal was
+//   about the `&`, not about destructuring or about the tuple.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum Shape { Ring { rn: integer }, Bar { rn: integer } }
+
+// STACK-backed: every member a scalar.
+fn scalar_pair(p: &(integer, integer)) -> text {
+  (a, b) = p;
+  p.0 = 9;
+  "{a} {b}"
+}
+
+// RECORD-backed: a `text` member makes the binding a `__tuple<…>`.
+fn text_pair(p: &(integer, text)) -> text {
+  p.0 = 5;
+  (n, s) = p;
+  "{n} {s}"
+}
+
+// The destructure reads the tuple AT THE STATEMENT, not at entry: a write through the
+// reference before it must be visible in the names.
+fn after_write(p: &(integer, text)) -> text {
+  p.0 = 42;
+  (n, s) = p;
+  "{n} {s}"
+}
+
+// A struct-enum member, the axis the tuple-pattern guard moves too.
+fn shape_pair(p: &(integer, Shape)) -> text {
+  p.0 = p.0 + 1;
+  (k, sh) = p;
+  "{k} {sh.rn}"
+}
+
+// A loop body, with VECTOR members: the destructure runs once per pass while the reference's
+// own member grows under it, so a name bound to a member must answer that pass's length.
+fn grow_and_unpack(p: &(vector<text>, vector<text>)) -> text {
+  out = "";
+  for i in 0..3 {
+    p.0 += ["a{i}"];
+    (x, y) = p;
+    out = "{out}[{len(x)}:{len(y)}]";
+  }
+  out
+}
+
+// CONTROL: the by-value twin. Says the refusal was about the `&`, not about destructuring.
+fn plain_pair(p: (integer, integer)) -> text {
+  (a, b) = p;
+  "{a} {b}"
+}
+
+// CONTROL: the element-by-element spelling, which is the workaround the refusal left.
+fn element_pair(p: &(integer, integer)) -> text {
+  a = p.0;
+  b = p.1;
+  p.0 = 9;
+  "{a} {b}"
+}
+
+fn test_a_stack_backed_reference_tuple_parameter() {
+  p = (4, 5);
+  r = scalar_pair(p);
+  assert(r == "4 5", "a stack-backed parameter unpacks: got {r}");
+  assert(p.0 == 9 && p.1 == 5, "and it is still a reference: {p.0} {p.1}");
+}
+
+fn test_a_record_backed_reference_tuple_parameter() {
+  p = (1, "b");
+  r = text_pair(p);
+  assert(r == "5 b", "a record-backed parameter unpacks: got {r}");
+  assert(p.0 == 5 && p.1 == "b", "and it is still a reference: {p.0} {p.1}");
+}
+
+fn test_the_destructure_reads_the_tuple_at_the_statement() {
+  p = (0, "z");
+  r = after_write(p);
+  assert(r == "42 z", "a write through the reference is visible in the names: got {r}");
+}
+
+fn test_a_reference_tuple_local() {
+  // `(T-Ref-Src)`: the source of a `&(…)` local is a tuple VARIABLE, and the local means the
+  // same thing the parameter does.
+  a = (4, 5);
+  b: &(integer, integer) = a;
+  (x, y) = b;
+  assert(x == 4 && y == 5, "a local unpacks: got {x} {y}");
+  b.0 = 9;
+  assert(a.0 == 9, "and the local is still a reference: {a.0}");
+}
+
+fn test_a_struct_enum_member() {
+  ring: Shape = Ring { rn: 6 };
+  w = (1, ring);
+  r = shape_pair(w);
+  assert(r == "2 6", "a struct-enum member unpacks: got {r}");
+}
+
+fn test_a_loop_body_over_growing_vector_members() {
+  t: (vector<text>, vector<text>) = (["s"], ["u", "v"]);
+  r = grow_and_unpack(t);
+  assert(r == "[2:2][3:2][4:2]", "each pass unpacks that pass's lengths: got {r}");
+  assert(len(t.0) == 4 && len(t.1) == 2, "and the growth reached the caller: {len(t.0)} {len(t.1)}");
+}
+
+fn test_the_two_controls_are_unaffected() {
+  p = (4, 5);
+  assert(plain_pair(p) == "4 5", "the by-value twin still destructures");
+  q = (4, 5);
+  assert(element_pair(q) == "4 5", "the element-by-element spelling still reads");
+  assert(q.0 == 9, "and its write still reaches the caller: {q.0}");
+}
+
+fn main() {
+  test_a_stack_backed_reference_tuple_parameter();
+  test_a_record_backed_reference_tuple_parameter();
+  test_the_destructure_reads_the_tuple_at_the_statement();
+  test_a_reference_tuple_local();
+  test_a_struct_enum_member();
+  test_a_loop_body_over_growing_vector_members();
+  test_the_two_controls_are_unaffected();
+}
