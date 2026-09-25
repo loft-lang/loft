@@ -1,0 +1,115 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// An operation that MOVES elements walks the stride the container actually has.
+//
+// @FR-H-Stride — *"the distance between consecutive elements … is fixed by the declared TYPE"*.
+// A `vector<T>` holds its elements INLINE until any keyed collection over `T` exists anywhere
+// in the program, at which point every `vector<T>` becomes a vector of 4-byte record ids.  So
+// the distance between consecutive elements is FOUR at that layout, whatever the element's own
+// record measures — and the layout is a schema property no reader of the call site can see.
+//
+// `Parser::element_store_size` is the one home for that number and never asked
+// `Stores::is_linked` (loft#1670).  `reverse` therefore swapped 8-byte spans across 4-byte
+// slots and answered `null,null,3,` for `3,2,1,`, silently and on both backends — the same
+// defect loft#903 closed for `remove`, arriving at an operation that one did not reach.
+//
+// Axes this file MOVES:  the LAYOUT (inline / linked / a linked member of a group), the element
+//                        COUNT (odd and even, so the middle element of a reversal is both the
+//                        one that stays put and one that moves), and what the element owns
+//                        (a scalar / a text and a nested vector).
+// Axes it HOLDS FIXED:   the operation is `reverse`.  `insert` is the other caller that moves
+//                        bytes by this number and is still wrong at the linked layout for a
+//                        SECOND reason — its element write is inline-shaped — so loft#1670
+//                        stays open for it and its cells land with that fix, not here.  The
+//                        three callers that only reserve or address (`reserve`, the literal
+//                        pre-allocation, a slice PATTERN) were measured right at both layouts
+//                        before and after, and the two reserving ones now claim the bytes they
+//                        need rather than twice them.
+
+struct Si { k: integer }
+struct Sl { k: integer }
+struct Own { k: integer, label: text, tags: vector<integer> }
+
+struct Grp { els: vector<Sl>, by_k: hash<Sl[k]> }
+struct OwnGrp { owns: vector<Own>, by_own: hash<Own[k]> }
+
+fn di(v: vector<Si>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
+fn dl(v: vector<Sl>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
+fn do_(v: vector<Own>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
+
+// 1 — the INLINE layout, which was always right.  The control that says the cells below
+// measure the layout and not the operation.
+fn test_reverse_at_the_inline_layout() {
+  a: vector<Si> = [Si { k: 1 }, Si { k: 2 }, Si { k: 3 }];
+  a.reverse();
+  assert(len(a) == 3, "inline odd: len {len(a)}, want 3");
+  assert(di(a) == "3,2,1,", "inline odd: {di(a)}, want 3,2,1,");
+
+  b: vector<Si> = [Si { k: 1 }, Si { k: 2 }, Si { k: 3 }, Si { k: 4 }];
+  b.reverse();
+  assert(di(b) == "4,3,2,1,", "inline even: {di(b)}, want 4,3,2,1,");
+}
+
+// 2 — the LINKED layout: the same two counts, the same two answers.  This is loft#1670.
+fn test_reverse_at_the_linked_layout() {
+  a: vector<Sl> = [Sl { k: 1 }, Sl { k: 2 }, Sl { k: 3 }];
+  a.reverse();
+  assert(len(a) == 3, "linked odd: len {len(a)}, want 3");
+  assert(dl(a) == "3,2,1,", "linked odd: {dl(a)}, want 3,2,1,");
+
+  b: vector<Sl> = [Sl { k: 1 }, Sl { k: 2 }, Sl { k: 3 }, Sl { k: 4 }];
+  b.reverse();
+  assert(len(b) == 4, "linked even: len {len(b)}, want 4");
+  assert(dl(b) == "4,3,2,1,", "linked even: {dl(b)}, want 4,3,2,1,");
+}
+
+// 3 — the degenerate counts, where a stride that is wrong by a factor still has nothing to
+// slide past: they must stay right, and they are what says a cell above failing is the span
+// and not the call.
+fn test_reverse_of_a_short_linked_vector() {
+  e: vector<Sl> = [];
+  e.reverse();
+  assert(len(e) == 0, "linked empty: len {len(e)}, want 0");
+
+  o: vector<Sl> = [Sl { k: 7 }];
+  o.reverse();
+  assert(dl(o) == "7,", "linked one: {dl(o)}, want 7,");
+
+  t: vector<Sl> = [Sl { k: 7 }, Sl { k: 8 }];
+  t.reverse();
+  assert(dl(t) == "8,7,", "linked two: {dl(t)}, want 8,7,");
+}
+
+// 4 — the linked vector reached through the GROUP it belongs to: reversing renumbers the
+// positions and touches no key, so every element stays findable under its own.
+fn test_reverse_through_a_group_leaves_every_key_findable() {
+  w = Grp { els: [Sl { k: 10 }, Sl { k: 20 }, Sl { k: 30 }], by_k: [] };
+  w.els.reverse();
+  assert(dl(w.els) == "30,20,10,", "group: {dl(w.els)}, want 30,20,10,");
+  assert(len(w.by_k) == 3, "group: keyed len {len(w.by_k)}, want 3");
+  assert(w.by_k[10] != null, "group: key 10 stopped being findable");
+  assert(w.by_k[20] != null, "group: key 20 stopped being findable");
+  assert(w.by_k[30] != null, "group: key 30 stopped being findable");
+}
+
+// 5 — what the elements OWN survives the reversal, in a function of its own so no earlier
+// assert can leave the release unscored: a span slid the wrong distance writes handles into
+// the middle of other records, which is a leak or a double free rather than a wrong number.
+fn test_reverse_keeps_what_the_linked_elements_own() {
+  g = OwnGrp { owns: [], by_own: [] };
+  for i in 0..12 {
+    g.owns += [Own { k: i, label: "own-{i}", tags: [i, i + 1, i + 2] }];
+  }
+  g.owns.reverse();
+  assert(len(g.owns) == 12, "own: len {len(g.owns)}, want 12");
+  assert(do_(g.owns) == "11,10,9,8,7,6,5,4,3,2,1,0,", "own: {do_(g.owns)}");
+  last = g.owns[11] ?? Own { k: -1, label: "x", tags: [] };
+  assert(last.label == "own-0", "own last label {last.label}, want own-0");
+  assert(len(last.tags) == 3, "own last tags len {len(last.tags)}, want 3");
+  assert((last.tags[2] ?? -1) == 2, "own last tags[2] {last.tags[2] ?? -1}, want 2");
+  first = g.owns[0] ?? Own { k: -1, label: "x", tags: [] };
+  assert(first.label == "own-11", "own first label {first.label}, want own-11");
+  assert((first.tags[0] ?? -1) == 11, "own first tags[0] {first.tags[0] ?? -1}, want 11");
+  assert(len(g.by_own) == 12, "own: keyed len {len(g.by_own)}, want 12");
+}
