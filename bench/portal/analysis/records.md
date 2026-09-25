@@ -219,3 +219,58 @@ GROUP outside a held header (the parser reserves only for a local vector), a tex
 element's append (the text set grows a store), and `(R-Alias)` for a parameter root beside
 another vector (a type-based alias rule would admit `sc.ops += […]` beside `src[i]`).
 
+
+## Next (2026-09-25) — R8: a nested record rides the tuple
+
+Priced, designed, NOT built.  The value-record family (`(R-ValueRecord)`, `(R-ValueLocal)`)
+stops at a record whose fields are scalars: `hoist::type_layout` declines any field that is
+itself a record, so mesh3d's `Vertex { pos: Vec3, normal: Vec3, uv: Vec2 }` — eight floats
+two structs deep — keeps its return buffer while `Vec3` rides the tuple.  A census of the 42
+library packages finds **23 structs whose fields are scalars and inline sub-records of
+scalars** against 9 flat records wider than the six-field cap: the nesting is the wider
+gap.  The rows it stands behind: `sphere` 14.5×, `mesh_to_floats` 21×, `save_glb` 9.6×,
+stage `draw_list` 4.8× (`DrawRect { UiRect }`), tween `value` 5.4×, game_protocol `msg_ping`
+11× (a nested record pair returned by value).
+
+**Hand-priced** (`--native-release`, this box) on a probe of the `sphere` shape — per vertex
+`p = vec3(…); n = vec3(…); add_vertex(m, vertex(p, n, u, v))`, 200 000 vertices:
+**200 → 60–100 ns per vertex**, hash unchanged, with `n_vertex` returning the eight floats as
+a tuple and `n_add_vertex` taking the tuple and writing its eight fields into the appended
+slot.  What remains is the general record append — `OpNewRecord` (prefill), the eight
+`set_float`s through `store_mut`, `OpFinishRecord` — which the push-window form of
+`(R-PushRec)` would take to a handful of nanoseconds: that is the clause after this one.
+Probe and patch: the session scratch `next/nv.loft`, `nvr.rs` → `nvr_v1.rs`
+(`bench/portal/hand_price.sh`).
+
+**The shapes, as the IR spells them** (from `loft introspect` of the probe):
+
+* the callee's literal — `Vertex { pos: p, normal: n, uv: Vec2 { u: u, v: v } }` with `p`,
+  `n` tuple parameters: `OpCopyRecord(p, OpGetField(__retbuf, 0, Vec3), Vec3)`,
+  `OpCopyRecord(n, OpGetField(__retbuf, 24, Vec3), Vec3)`, and the nested literal already
+  lowered in place (`(R-InPlaceLiteral)` C6): `OpSetFloat(OpGetField(__retbuf, 48, Vec2), 0, u)`,
+  `OpSetFloat(OpGetField(__retbuf, 48, Vec2), 8, v)`;
+* a site's nested read — `v.pos.x` is `OpGetFloat(OpGetField(v, 0, Vec3), 0)`;
+* the parameter side — `add_vertex(m, av: Vertex)` appends `av` whole
+  (`OpNewRecord` / `OpCopyRecord(av, elm)` / `OpFinishRecord`).
+
+**The one invariant**, and the sites that re-assert it: *a tuple of a record is its scalar
+fields in declaration order, an inline sub-record contributing its own fields at the
+SUMMED offset* — one home, `type_layout`, which already serves a result, a local and a
+parameter by construction.  Then: (1) `type_layout` recurses into an inline sub-record
+field (`Reference(S)` where S lays out itself; the cap counts scalars, six → eight or
+more — the comment on `VALUE_RECORD_MAX_FIELDS` says a wider tuple is spilled by the ABI,
+which is still nothing beside a store record); (2) the site walk's read arm folds an
+`OpGetField` chain with constant offsets into the summed key `(tp, P + X)` before it
+looks the index up; (3) the callee's Object-block tuple build takes a sub-record COPY from
+a tuple local as that local's elements, and a nested in-place field write at its summed
+offset; (4) the parameter side reads `av.pos.x` through the same fold and hands a
+tuple-carried record to an append by materialising it into the appended slot (the general
+append first, the push window later); (5) the live-reload arm mints a record per tuple
+parameter — its nested writes go at the summed offsets.  Falsifiers: the interpreter is
+the values oracle; `LOFT_NO_VALUE_LOCAL` / the value-record switch are the A/B; the
+existing cells `a-small-record-parameter-is-carried-as-a-tuple.loft` and the
+value-record pins extend with a nested cell each; `LOFT_TRACE_VALUEREC=1` names the
+admission.  Matrix axes to hold: nesting depth (1, 2), a nested field written after the
+literal, a sub-record handed to another tuple parameter, a nested record with a narrow or
+boolean member, an enum member (declines), a site that copies the whole sub-record
+(`q = v.pos`).
