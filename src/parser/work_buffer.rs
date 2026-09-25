@@ -118,6 +118,21 @@ impl Parser {
             let Some(db) = self.work_buffer_candidate(v) else {
                 continue;
             };
+            // A local written and never read is a dead store the post-scope lint reports;
+            // promoted, it would be an argument the lint skips, and the lost write would
+            // go unreported.  Nothing reads it, so the buffer would gain nothing either.
+            let (reads, writes) =
+                crate::use_analysis::dead_store_accesses(&code, &self.vars, &self.data)[v as usize];
+            if reads == 0 && writes > 0 {
+                if trace {
+                    eprintln!(
+                        "[work-buffer] fn={} local={} keeps its store: a dead store (written, never read)",
+                        self.data.def(d).name(),
+                        self.vars.name(v)
+                    );
+                }
+                continue;
+            }
             match admit(&code, &self.vars, &self.data, &ops, v, db) {
                 Ok(()) => {
                     let Some((v, db)) = self.move_after_arguments(&mut code, v, db) else {

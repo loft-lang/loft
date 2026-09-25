@@ -285,7 +285,9 @@ fn the_store_census_drops() {
     // block (a read after the block that first binds it is refused), r26 is cheaper for it
     // (10 → 6 on the interpreter, measured against the build before the rule on the same
     // text).  r28's author-written null takes the pool pairing the compiler's pre-init took
-    // (loft#1643: 3 mints fewer on each backend, back to the one it had).
+    // (loft#1643: 3 mints fewer on each backend, back to the one it had).  `@FR-R-WorkBuffer`
+    // takes 3 from every arm (a vector local that never leaves its frame is its caller's
+    // buffer; `LOFT_NO_WORK_BUFFER=1` gives back 194/303/170/269), so the pool's drop is unchanged.
     let (i_on, i_off) = (
         store_mints("--interpret", &[]),
         store_mints("--interpret", OFF),
@@ -298,7 +300,7 @@ fn the_store_census_drops() {
     assert!(n_on < n_off, "native: {n_on} mints pooled, {n_off} without");
     assert_eq!(
         (i_on, i_off, n_on, n_off),
-        (194, 303, 170, 269),
+        (191, 300, 167, 266),
         "mints (interpret on, off, native on, off)"
     );
 }
