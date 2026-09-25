@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-P-Rep` — the rule(s) this file is the guard for; the chapter's banner
+// named them verified via `tests/scripts/35*.loft` without any file citing one back,
+// so `rule_tags.py coverage` read them as unguarded (corrected 2026-09-25).
 // @PLN35 Phase 6.2 (L3.4, P-Rep separator): a repetition with a separator
 // `[ ( [name:] V )*(Sep) [, ..rest] ]` / `…+(Sep)`.  The run is `V (Sep V)*` — `Sep` is one
 // variant CONSUMED between elements but NEVER captured; `name` collects only the V's (a

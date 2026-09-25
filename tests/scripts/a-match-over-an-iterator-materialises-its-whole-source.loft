@@ -1,0 +1,81 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-P-IterBound` / `@FR-P-Rep` — a repetition over an ITERATOR subject.
+//
+// The shipped design materialises the whole iterator into a vector and runs the vector
+// machinery over it (`Parser::collect_iterator_subject`), which is correct at any FINITE size
+// and is what this file pins: the element count, the values, and a source long enough that a
+// per-element mistake shows.
+//
+// ⚠ What it deliberately does NOT contain is the case the rule is about.  `(P-IterBound)` says
+// a repetition over an iterator is *"bounded by `max_lookahead`; exceeding it is a DEFINED
+// runtime error (never a hang) — preserving termination"*, and measured 2026-09-25 there is no
+// bound: an ENDLESS source reaches 696 MB in 13 s on `--interpret` and 2.13 GB in 18 s on
+// `--native`, ended only by `LOFT_TIMEOUT` and an external `ulimit -v` respectively.  That cell
+// cannot live in the corpus — it would hang the suite and threaten the box, and a time bound
+// does not bound memory.  It is `D-match-6` / loft#1678, with the repro in the issue.
+//
+// So this file is the CONTROL half, and it is the half that says what the cure must not break:
+// when a ceiling lands, every count below must still answer exactly as it does now.
+//
+// Axes it MOVES:  the repetition's shape (whole-source `( V )*`, and a fixed head before the
+//                 run) and source length (empty, one, and four thousand).
+// Axes it HOLDS FIXED: the source is always a generator with no side effects, because a
+//                 side-effecting pull is UB-by-contract for matching (CAVEATS.md) and is a
+//                 different question from the bound.
+// Axis MEASURED and not writable here: the ELEMENT TYPE.  A repetition demands a struct-enum
+//                 element — `[(xs: integer)*]` over an `iterator<integer>` is refused with
+//                 *"a repetition `( … )*` slice element needs a struct-enum element type, not
+//                 `integer`"* — so the scalar coroutine channel cannot be crossed with a
+//                 repetition at all.  Written as a cell first, and it did not compile.
+//
+// @falsified-at: not applicable — this file guards behaviour that is CORRECT today and is not
+//   the fix for any open defect.  It is the control that a future `max_lookahead` must leave
+//   alone, so there is no build on which it is expected to fail.  Scored by construction
+//   instead: each count is hand-computed from the generator's own loop bound, and
+//   `test_a_four_thousand_element_source_keeps_every_element` fails if the materialisation
+//   drops or duplicates even one.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+enum ItTok { V { n: integer }, W { m: integer } }
+
+fn tok_run(k: integer) -> iterator<ItTok> {
+  for i in 0..k { yield V { n: i }; }
+}
+
+fn head_then_run(k: integer) -> iterator<ItTok> {
+  yield W { m: 7 };
+  for i in 0..k { yield V { n: i }; }
+}
+
+
+fn test_an_empty_iterator_matches_an_empty_repetition() {
+  r = match tok_run(0) { [(xs: V)*] => len(xs), _ => -1 };
+  assert(r == 0, "an empty source gives an empty run: {r}");
+}
+
+fn test_a_one_element_iterator_matches() {
+  r = match tok_run(1) { [(xs: V)*] => len(xs), _ => -1 };
+  assert(r == 1, "one element: {r}");
+}
+
+fn test_a_four_thousand_element_source_keeps_every_element() {
+  // Long enough that a per-element drop, duplicate or off-by-one shows in the count, and that
+  // the materialisation does real work — this is the row a ceiling would touch first.
+  r = match tok_run(4000) { [(xs: V)*] => len(xs), _ => -1 };
+  assert(r == 4000, "every element survives materialisation: {r}");
+}
+
+fn test_a_fixed_head_before_the_run_is_consumed() {
+  r = match head_then_run(10) { [W { m }, (xs: V)*] => m * 1000 + len(xs), _ => -1 };
+  assert(r == 7010, "the head binds and the run takes the rest: {r}");
+}
+
+
+fn main() {
+  test_an_empty_iterator_matches_an_empty_repetition();
+  test_a_one_element_iterator_matches();
+  test_a_four_thousand_element_source_keeps_every_element();
+  test_a_fixed_head_before_the_run_is_consumed();
+}

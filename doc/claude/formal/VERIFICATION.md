@@ -216,7 +216,8 @@ oracle — which is the argument for this section existing.
 
 ## matching.md — PEG patterns (@PLN35, SHIPPED)
 
-Rules SHIPPED ([matching.md § Rules — PEG patterns](matching.md)) — phases 1–7 + PC1–PC5 landed
+Rules SHIPPED **except `P-Anchor` / `P-Revert` / `P-IterBound`** (see the ✗ row below)
+([matching.md § Rules — PEG patterns](matching.md)) — phases 1–7 + PC1–PC5 landed
 (350e660c #554, 3fda4e1e #558, 50cc4c18 #561, a37917ff #562) and pass on both backends via
 `tests/scripts/35*.loft` (in the full suite). Each row below tracks the stricter @PLN89
 DIFFERENTIAL-oracle pin (both-backends + leak + driver-agreement); ☐ = shipped + both-backends but
@@ -238,8 +239,17 @@ not yet graduated to that oracle. Design + phase↔rule map:
 - ☐ **P-Opt** — present ⟹ bound, absent ⟹ null capture, cursor intact. *Pin: P5.*
 - ☐ **P-Rep** — `(a)*` collects a `vector<τ>` (count + values + length + leak); `+` needs ≥1; a
   separator is consumed, not captured. *Pin: P6.*
-- ☐ **P-Anchor / P-Revert / P-IterBound** — an iterator match backtracks via the memo buffer; bounded
-  by `max_lookahead` (no hang); native parity via a custom `OpEmitter`. *Pin: P7.*
+- ✗ **P-Anchor / P-Revert / P-IterBound** — **NOT SHIPPED** (measured 2026-09-25, `D-match-6`,
+  loft#1678). The row read `☐` — which this section's legend defines as *shipped + both-backends,
+  not yet graduated to the oracle* — over three rules whose machinery does not exist:
+  `OpMatchAnchor` and `OpMatchRevert` appear nowhere in `src/`, and `max_lookahead` only in one
+  doc comment. An iterator subject is MATERIALISED into a vector instead
+  (`Parser::collect_iterator_subject`), so there is no memo, no backtracking over the stream and
+  no bound: an endless source reaches 696 MB in 13 s on `--interpret` and 2.13 GB in 18 s on
+  `--native`, where `(P-IterBound)` promises a defined runtime error and never a hang. A finite
+  200 000-element source is correct on both backends in 0.45 s, so the defect is the absent
+  ceiling and not the materialisation. *No pin — P7 covers `35p-iterator-match.loft`, which tests
+  the materialising design these three rules do not describe.*
 - ☐ **Capture typing (types.md § Pattern captures)** — alternation-unify (`⊔`), optional / absent
   (`τ?`), repetition / rest (`vector<τ>`) — NO new type former. *Pin: P4–P6 typecheck cases.*
 

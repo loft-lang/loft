@@ -104,12 +104,18 @@ spelled as an `if` was quiet (loft#1343).  The last arm is the fallback now, as 
 
 ## Rules — PEG patterns (@PLN35, SHIPPED)
 
-> **@PLN35 · SHIPPED.** Like everything above, the rules in THIS section are shipped semantics,
-> pinned by the oracle: phases 1–7 + PC1–PC5 of the PEG match-pattern extension in
-> [../plans/35-match-peg/](../plans/35-match-peg/) landed (350e660c #554, 3fda4e1e #558, 50cc4c18
-> #561, a37917ff #562) and every named rule below — `P-Seq`, `P-Alt`, `P-Opt`, `P-Rep`, `P-Cap`,
-> `P-Rest`, `P-Multi`, `P-Atomic` — is verified passing on both backends via
+> **@PLN35 · SHIPPED, with one exception named below.** Phases 1–7 + PC1–PC5 of the PEG
+> match-pattern extension in [../plans/35-match-peg/](../plans/35-match-peg/) landed (350e660c
+> #554, 3fda4e1e #558, 50cc4c18 #561, a37917ff #562), and `P-Seq`, `P-Alt`, `P-Opt`, `P-Rep`,
+> `P-Cap`, `P-Rest`, `P-Multi`, `P-Atomic` are verified passing on both backends via
 > `tests/scripts/35*.loft` (worklist: [VERIFICATION.md § matching.md — PEG patterns](VERIFICATION.md)).
+>
+> ⚠ **`P-Anchor`, `P-Revert` and `P-IterBound` are NOT among them, and are not shipped** —
+> they describe a memoising cursor that was never built, and the ops they name exist nowhere in
+> `src/`.  The shipped design materialises an iterator subject into a vector instead, which
+> leaves `(P-IterBound)`'s bound absent and an endless source unbounded: **D-match-6**,
+> loft#1678.  The banner said SHIPPED over all fourteen rules until 2026-09-25; a section
+> banner covers the rules a reader then reads under it, so it has to name its exceptions.
 > Overview + phase↔rule map: [../plans/35-match-peg/FORMAL-DESIGN.md](../plans/35-match-peg/FORMAL-DESIGN.md).
 
 PEG patterns generalise a *point* pattern (unit/struct variant, `_`) to a **sequence** that may
@@ -257,8 +263,27 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **0** — a *rules* doc: it shrinks operational.md's D-op-1 and carries no open
-deviation of its own.  `D-match-5` closed 2026-09-14; `D-match-4` closed 2026-09-12.
+OPEN: **1**.  `D-match-5` closed 2026-09-14; `D-match-4` closed 2026-09-12.
+
+- **D-match-6** *(OPEN 2026-09-25, loft#1678)* — `(P-IterBound)` says a repetition over an
+  iterator is *"bounded by `max_lookahead`; exceeding it is a DEFINED runtime error (never a
+  hang) — preserving termination."*  There is no bound.  An endless source fills memory on
+  both backends: 696 MB in 13 s on `--interpret` (hard-killed by `LOFT_TIMEOUT`) and 2.13 GB
+  in 18 s on `--native`, which stopped only against an externally imposed `ulimit -v`.
+  `LOFT_MEMORY_LIMIT` does not apply — ordinary runs are never capped — so nothing in the
+  language ends this run.
+
+  `(P-Anchor)` and `(P-Revert)` are the same entry: `OpMatchAnchor` and `OpMatchRevert` do not
+  exist in `src/`, and neither does `max_lookahead` outside one doc comment.  The shipped
+  design MATERIALISES an iterator subject into a vector and runs the vector machinery over it
+  (`Parser::collect_iterator_subject`), which is why a finite source of any size is correct and
+  an infinite one is unbounded.  The three rules describe a memoising cursor that was never
+  built, under a banner reading "@PLN35 · SHIPPED".
+
+  Not closed here because the cure needs two decisions: what the defined runtime error IS
+  (loft has no IR-level raise, and the nearest mechanism, `store_budget`, is a whole-run store
+  ceiling armed only for test runs), and the value of `max_lookahead`.  A generous constant
+  changes no program that terminates today, so this is not a compatibility question.
 
 - **D-match-1 — OPENED AND CLOSED 2026-09-04 (loft#1343).** `(M-Bool)` did not exist, and the
   edge it names was answered wrong: a boolean match spelling both arms was lowered with the

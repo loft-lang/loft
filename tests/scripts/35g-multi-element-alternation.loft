@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-P-Alt` / `@FR-P-Whole` — the rule(s) this file is the guard for; the chapter's banner
+// named them verified via `tests/scripts/35*.loft` without any file citing one back,
+// so `rule_tags.py coverage` read them as unguarded (corrected 2026-09-25).
 // @PLN35 Phase 4.3 (steps 1-4): a WHOLE-SLICE multi-element alternation
 // `[ (A B | C) ]` — a branch is a SEQUENCE of variant sub-patterns of varying
 // width.  Dispatch is PREDICTIVE on the leading tags (ordered if/else over pure
