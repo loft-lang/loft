@@ -58,6 +58,21 @@ body. It allocates a suspended frame ([heap.md](heap.md)), binds the arguments, 
 point to the entry, and returns the frame as an `iterator<T>` value. Nothing the body would do
 (a side effect, a `yield`) has happened yet; the first slice runs on the first advance.
 
+```
+  (G-NoRefParam)  a generator declares no `&` parameter: refused at its definition, on both
+                  backends.  Its body runs after the call has returned (G-Call), so a `&` —
+                  which writes through to the caller's place (calls.md F-ParamRef) — could name
+                  a place whose frame is gone.
+```
+
+**In words.** A generator cannot take a `&` parameter, because it keeps running after the call
+that lent the reference has returned. Nothing is lost by the refusal: a struct or vector
+argument is already shared with the caller (calls.md F-Param*), so a scanner that must leave its
+position behind takes a cursor record and advances its field (`fn tokens(c: Cursor)`, writing
+`c.pos`) — and that record lives in a store, where it cannot dangle.  Decided 2026-09-25
+(loft#1680) with no program in the corpus, the libraries or the consumers using the pattern; a
+real case can lift the refusal later, which breaks nothing.
+
 ### `next` / a `for` advance runs one slice, up to the next `yield`
 
 ```

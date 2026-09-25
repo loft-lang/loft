@@ -14,6 +14,12 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A generator can no longer take a `&` parameter.**  `fn gen(p: &vector<integer>) ->
+iterator<…>` is now a clear compile error. It ran on the interpreter with a hidden risk (the
+generator can outlive the variable the `&` names) and did not compile with `--native`. Pass a
+struct or vector instead: the generator shares it with the caller, so it can still leave a
+position or a count behind in one of its fields.
+
 **A `match` over an endless iterator stops with an error instead of filling memory.**  The
 values a `match` pulls from an iterator are now limited to one million (`LOFT_MAX_LOOKAHEAD` to
 change it, `0` for no limit). Past the limit the program stops with a message naming the
