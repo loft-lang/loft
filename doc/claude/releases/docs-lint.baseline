@@ -1,7 +1,6 @@
 # path	rule	count — pinned by `make docs-lint-baseline`; read by `make docs-lint`
 .claude/skills/loft-write/SKILL.md	size	1
-CLAUDE.md	size	1
-CLAUDE.md	timeline	62
+CLAUDE.md	timeline	15
 README.md	hedge	2
 default/01_code.loft	narration	4
 default/01_code.loft	stamp	18
@@ -14,6 +13,7 @@ doc/DEVELOPERS.md	timeline	1
 doc/PROMPTS.md	hedge	3
 doc/PROMPTS.md	history	1
 doc/claude/API_SURFACE.md	timeline	2
+doc/claude/BOTH_BACKEND_SWITCHES.md	timeline	13
 doc/claude/BRITTLE.md	timeline	11
 doc/claude/BROADENING.md	timeline	5
 doc/claude/BROWSER_INTEROP.md	timeline	3
@@ -53,7 +53,7 @@ doc/claude/DEVELOPMENT.md	history	1
 doc/claude/DEVELOPMENT.md	size	1
 doc/claude/DEVELOPMENT.md	timeline	22
 doc/claude/DIAGNOSTICS.md	history	1
-doc/claude/DIAGNOSTICS.md	timeline	17
+doc/claude/DIAGNOSTICS.md	timeline	28
 doc/claude/DOC_QUALITY.md	history	2
 doc/claude/DOC_QUALITY.md	timeline	12
 doc/claude/DRAWING.md	timeline	1
@@ -90,6 +90,7 @@ doc/claude/NATIVE.md	history	3
 doc/claude/NATIVE.md	size	1
 doc/claude/NATIVE.md	timeline	45
 doc/claude/NATIVE.md	two-h1	2
+doc/claude/NATIVE_SWITCHES.md	timeline	19
 doc/claude/OWNERSHIP_MODEL.md	timeline	29
 doc/claude/PACKAGES.md	history	1
 doc/claude/PACKAGES.md	size	1
@@ -104,6 +105,7 @@ doc/claude/PKG_REGISTRY.md	timeline	37
 doc/claude/PLANNING.md	size	1
 doc/claude/PLANNING.md	timeline	30
 doc/claude/PROBLEMS.md	size	1
+doc/claude/PROFILING.md	timeline	4
 doc/claude/QUALITY.md	size	1
 doc/claude/REFERENCE_REVIEW.md	history	3
 doc/claude/REFERENCE_REVIEW.md	timeline	80
