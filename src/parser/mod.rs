@@ -1507,6 +1507,9 @@ pub enum ParseResult {
 impl Parser {
     #[must_use]
     pub fn new() -> Self {
+        // A new parser is a new compilation: the copy manifest's records are keyed by
+        // definition and variable number, so the previous program's would name this one's.
+        crate::copy_manifest::begin_compilation();
         let mut data = Data::new();
         // Register internal-only functions (i_ prefix) that are never visible to user code.
         // These are resolved by the compiler via data.def_nr("i_...") and mapped to native
