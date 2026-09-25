@@ -26,6 +26,23 @@
 //                        pre-allocation, a slice PATTERN) were measured right at both layouts
 //                        before and after, and the two reserving ones now claim the bytes they
 //                        need rather than twice them.
+//
+// @falsified-at: 8409d4b01 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+// @falsified-by: tests/falsified/1670-a-vector-operation-walks-the-stride-its-layout-has.patch — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+//   CHANNEL: assert (values).  Four cells fail on the control interpreted and eight natively:
+//   both linked counts, the short-vector pair (a two-element reversal has one swap and an
+//   8-byte span still walks off it), the group, the owning elements and the `sorted` trigger.
+//   The counts differ because each function stops at its own first failed assert.
+//   ARMED: no instrument — every cell reads the vector back by iteration and by index, and the
+//   owning cell reads a text and a nested vector out of the element that moved furthest.
+//   WITNESS: on the control, `linked odd: null,null,3,` where `3,2,1,` is right.
+// HOLDS: panic, free-refusal and exit-beyond-the-assert are clean on both trees and both
+//   backends, measured by `make falsify`, which prints only the channels that MOVE.
+//   ⚠ LEAK IS NOT SCORED HERE and reads `none` on both trees whatever the guard leaks:
+//   `falsify.sh` reads that column off a `main`-ful `--interpret` run and a corpus guard has no
+//   `main`, so `--tests` leak-checks nothing (the tool says so in its own header).  Cell 5 is a
+//   real release cell — `tests/wrap.rs` leak-checks the corpus — it is simply not what
+//   falsified this file.
 
 struct Si { k: integer }
 struct Sl { k: integer }

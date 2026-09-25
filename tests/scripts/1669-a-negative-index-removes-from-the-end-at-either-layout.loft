@@ -29,13 +29,15 @@
 // The cells live in separate functions because they score different CHANNELS: a failed assert
 // ends the run, so a value cell that fails would leave the release cell unscored.
 //
-// @falsified-at: a6aa169f2 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
-// @falsified-by: tests/falsified/1669-a-negative-index-removes-from-the-end-at-either-layout.patch — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
-//   CHANNEL: assert (values).  Four cells fail on the control interpreted and eight natively —
-//   the two linked-layout value cells, the group unlink, and the survivors read through a
-//   vector that still holds three elements.  The counts differ because each function stops at
-//   its own first failed assert and the two backends order the report differently; what
-//   matters is that both move, on the same cells.
+// @falsified-at: a6aa169f2 — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0, native 10 assertion failures -> 0
+// @falsified-by: tests/falsified/1669-a-negative-index-removes-from-the-end-at-either-layout.patch — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0, native 10 assertion failures -> 0
+//   CHANNEL: assert (values).  Five cells fail on the control interpreted and ten natively —
+//   the two linked-layout value cells, the group unlink, the survivors read through a vector
+//   that still holds three elements, and the `sorted`-triggered layout.  The counts differ
+//   because each function stops at its own first failed assert and the two backends order the
+//   report differently; what matters is that both move, on the same cells.  Re-scored when cell
+//   7 was added: the earlier receipt read 4 and 8, and a cell added to a guard silently ages
+//   its receipt.
 //   ARMED: no instrument — every cell reads the container back by length, by iteration and by
 //   lookup, so the failure is a value and not an absence of output.
 // HOLDS: panic, free-refusal and exit-beyond-the-assert are clean on both trees and both
