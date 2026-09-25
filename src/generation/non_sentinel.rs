@@ -119,16 +119,31 @@ pub fn non_sentinel(data: &Data, vars: &HashMap<u16, bool>, v: &Value) -> bool {
     }
 }
 
+thread_local! {
+    /// [`callee_returns_non_sentinel`]'s answers, per definition NUMBER — so they are facts
+    /// about ONE program, and [`begin_generation`] clears them when the next generation run
+    /// starts.  Kept across runs, a number meant another program's function: the test
+    /// harness generates the whole corpus in one thread, a script's `fn n_int() -> integer?
+    /// { return null; }` was answered from an earlier script whose definition of the same
+    /// number never returned null, and `n_int() ?? 99` was emitted as `if true` — the
+    /// null test folded away, the program reading null where it asked for 99, silently.  A
+    /// single `loft --native` run generates one program and never showed it.
+    static RETURNS: std::cell::RefCell<HashMap<u32, bool>> = std::cell::RefCell::new(HashMap::new());
+}
+
+/// Forget every per-definition answer: a new generation run is about a new program.
+/// Called by [`crate::generation::Output::new`].
+pub(crate) fn begin_generation() {
+    RETURNS.with(|m| m.borrow_mut().clear());
+}
+
 /// Does the user function `d_nr` answer a non-sentinel value on EVERY exit?  Its body's
 /// tail and every `return` are judged under the callee's own var facts (its parameters
 /// trusted for nothing), so `fn get_pixel(…) { …; data[i] ?? 0 }` answers true through the
 /// discharge and a body that can return a parameter or an arithmetic result answers false.
-/// Memoised per definition for the generation run; a cycle answers false at the re-entry,
+/// Memoised per definition for the generation run (see [`RETURNS`]); a cycle answers false at the re-entry,
 /// which only declines.  A native (no body) answers false.
 fn callee_returns_non_sentinel(data: &Data, d_nr: u32) -> bool {
-    thread_local! {
-        static RETURNS: std::cell::RefCell<HashMap<u32, bool>> = std::cell::RefCell::new(HashMap::new());
-    }
     if let Some(known) = RETURNS.with(|m| m.borrow().get(&d_nr).copied()) {
         return known;
     }

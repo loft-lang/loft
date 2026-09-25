@@ -2142,6 +2142,9 @@ impl<'a> Output<'a> {
     /// (`wasm_browser`) on the returned value.
     #[must_use]
     pub fn new(data: &'a Data, stores: &'a Stores) -> Self {
+        // A generation run is about ONE program; per-definition facts from the previous
+        // run name other functions by the same numbers.
+        non_sentinel::begin_generation();
         Output {
             data,
             stores,
