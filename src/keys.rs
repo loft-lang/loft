@@ -1413,6 +1413,22 @@ pub fn trace_const() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_CONST"))
 }
 
+/// `@FR-R-Compact` — a vector rebuilt from a contiguous run of its own elements
+/// (`t = []; for i in a..b { t += [v[i]?] }; v = t`) is compacted IN PLACE behind an
+/// in-range guard, the written-out loop kept as the fallback arm.  `LOFT_NO_COMPACT=1` keeps
+/// every rebuild; the interpreter and native share the rewrite, so the switch A/B is its
+/// falsifier.
+pub fn compact_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_COMPACT"))
+}
+
+/// `LOFT_TRACE_COMPACT=1` — name each rebuild compacted and each declined with the reason.
+pub fn trace_compact() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_COMPACT"))
+}
+
 /// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
 /// its host and destination count, or the decline with the reason.
 pub fn trace_place() -> bool {

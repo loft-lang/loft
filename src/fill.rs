@@ -246,6 +246,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     vector_ref_nullable,
     cast_vector_from_text,
     remove_vector,
+    keep_vector_range,
     insert_vector,
     new_record,
     finish_record,
@@ -2302,6 +2303,14 @@ fn remove_vector(s: &mut State) {
     let v_r = s.get_stack::<DbRef>();
     let new_value = s.database.remove_vector_at(&v_r, v_tp, v_index);
     s.put_stack(new_value);
+}
+
+fn keep_vector_range(s: &mut State) {
+    let v_tp = s.code::<u16>();
+    let v_hi = s.get_stack::<i64>();
+    let v_lo = s.get_stack::<i64>();
+    let v_r = s.get_stack::<DbRef>();
+    s.database.keep_vector_range(&v_r, v_tp, v_lo, v_hi)
 }
 
 fn insert_vector(s: &mut State) {

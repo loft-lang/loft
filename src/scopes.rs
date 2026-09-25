@@ -854,7 +854,7 @@ fn lift_view_deps(arg: &Value, data: &Data) -> Option<Vec<u16>> {
 fn reshaped_containers(code: &Value, data: &Data, function: &Function) -> HashSet<(u16, u32)> {
     let mut out = places_named_by(code, data, &|name| match name {
         "OpRemove" => Some(1),
-        "OpRemoveVector" => Some(0),
+        "OpRemoveVector" | "OpKeepVectorRange" => Some(0),
         _ => None,
     });
     // @FR-Col-RemoveDense — a KEYED removal reaches all five keyed kinds through ONE op, and
@@ -1181,7 +1181,7 @@ fn removed_ref_params(data: &Data, d_nr: u32) -> HashSet<u16> {
     def.code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let arg = match data.def(*d).name() {
-            "OpRemoveVector" => args.first(),
+            "OpRemoveVector" | "OpKeepVectorRange" => args.first(),
             "OpRemove" => args.get(1),
             _ => return,
         };
@@ -9204,6 +9204,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-Const` — a call of a literal-bodied function whose result is only read
         // answers a view of the pre-built constant: decided on the same settled IR.
         crate::const_fn::rewrite(data, d_nr);
+        // `@FR-R-Compact` — a vector rebuilt from a contiguous run of its own elements is
+        // compacted in place behind an in-range guard: decided on the same settled IR.
+        crate::compact::rewrite(data, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {
