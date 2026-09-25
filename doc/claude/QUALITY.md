@@ -9283,6 +9283,56 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Does a variable with no uses hold a store?" — the premise was written down, and it was false for one type (2026-09-25)
+
+A peer's nightly valgrind went red with **8 bytes definitely lost** and they measured the first
+leaking commit (`a6b6afbe4`, loft#1657's append staging) before I had finished inferring one
+from the guard's authorship — worth recording in that order, because my inference named a
+different commit and was wrong. A measurement beat a reading, again.
+
+The cause was not in that commit. `Vars::unregister_work_ref` retires a substituted-out work ref
+by marking it never-free, and its doc comment states the premise it rests on:
+
+> `substitute_work_ref` lists every `Value` variant explicitly (no wildcard arm), so the rewrite
+> is TOTAL — a surviving use of `var_nr` is not possible, **and a variable with no uses holds no
+> store.**
+
+That last clause is true of a reference, whose dead `= null` is a dead store. It is false of a
+`text`: the work-ref PREAMBLE null-initialises every work reference so the slot allocator sees a
+`first_def`, and on a text `= null` lowers to `OpConvTextFromNull` plus an `OpAppendText` that
+ALLOCATES. So the retirement orphaned a buffer, and the frame slot — shared with the next text
+variable, legally, since the retired one is dead — was re-initialised over it.
+
+**The bytecode named it and the prose could not.** Four lines of `loft introspect`:
+
+```
+  6: InitText(var[24]) var=__ref_1[24]:text
+ 10: AppendText(var[24], …)                       <- the RawVec grow valgrind reports
+ 13: InitText(var[24]) var=__work_3[24]:text      <- same slot, re-init, buffer orphaned
+```
+
+`__work_1` is at 72 and `__work_2` at 48; three `FreeText` at exit cover 72, 48 and 24, and the
+one for 24 is `__work_3`'s.
+
+The cure is the other decoder of the same question, already right: `Scopes::pre_inits` asks the
+type and gives a text the empty string. The work-ref preamble did not. One `let init = …`.
+
+**Three instruments were green on the leaking tree, and each for its own reason.** This is the
+part worth carrying, because it is what a leak of this class costs to find:
+
+- `make ci` — the corpus leak gate (`tests/wrap.rs`) counts STORES, and a Rust `String` is not
+  one;
+- `--interpret`'s own leak report — same counter;
+- `make falsify` — recorded the guard **INERT**, `0|0|none|none|0` on both trees and both
+  backends, because its leak column reads that same store report. Its header says so; the
+  receipt in the guard now says so too, and the guard is HAND-SCORED instead.
+
+⚠ And the hand scoring had its own trap: the falsify control cache builds `dev`, so the first
+A/B compared a debug control against a release binary here — two profiles, not two trees. Redone
+matched: control 48 bytes in 6 blocks, fixed tree 0. Six blocks for five leaking cells is the
+arithmetic agreeing with the mechanism rather than a loose end — the preamble runs once per
+ACTIVATION, which the loop cell establishes, and the two-member cell stages two temps.
+
 ### "Which element does this index name?" — two decoders, and only one read the sign (2026-09-25)
 
 `@FR-H-Index` is a rule about what an INDEX MEANS: *"an index is end-relative when it is
@@ -9322,6 +9372,33 @@ Guard `tests/scripts/1669-a-negative-index-removes-from-the-end-at-either-layout
 functions rather than one because they score different channels — value, the keyed member
 unlink, the over-reach no-ops, and the release of what a removed element owned, which a failed
 assert in an earlier cell would have left unscored.
+
+**And then the RELATED cases found the bigger one.**  With the removal closed, the walk asked
+the rest of `@FR-H-Index`'s neighbourhood at both layouts — slice bounds, `insert`, `reverse`,
+`reserve`, the literal pre-allocation, a slice PATTERN — every cell written expecting a PASS.
+Two failed, and not at the edge the walk was about: `insert` corrupts a linked vector at EVERY
+index (`1,2,3` + `insert(1, 9)` reads back `1,2,0,null,`) and `reverse` answers `null,null,3,`
+for `3,2,1,` (loft#1670, `sev:high`, both backends, no diagnostic).
+
+That is a different rule one step over — `@FR-H-Stride`, *"the distance between consecutive
+elements"* — and the same shape of defect as the one just closed.
+`Parser::element_store_size` is the ONE home for the element width, made so by loft#1420 after
+the number had been re-derived wrongly six times, and it never asked `Stores::is_linked`: for a
+linked element it answers the STRUCT's size where the slot is a 4-byte record id.  Of its five
+callers, the two that MOVE bytes by the number slid a span twice as wide, which is
+word-for-word what loft#903 closed for `remove` — its doc comment says so — arriving at the two
+operations that fix did not reach.  The other three only reserve or address, and survived; the
+two reserving ones were quietly claiming twice the bytes they needed.
+
+The chokepoint fix is three lines in `element_store_size`, and it cures `reverse` whole.
+`insert` needs a second half — its element write is inline-shaped, so with the stride right the
+slot lands in the right place and takes the record id as an integer — which is a lowering
+change rather than a width one, and is `loft3-ca`'s on their own branch stacked on this commit.
+The halves are ORDERED, which is the part worth saying out loud when handing one over: fixing
+the element write against the old stride would have been measured on a container whose slots
+were still being addressed at the wrong distance.  Guard
+`tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft` for the half that
+landed; the `insert` cells land with their own fix rather than here.
 
 ### "Did the author write `&` here?" — four spellings, and the refusal knew two (2026-09-24)
 

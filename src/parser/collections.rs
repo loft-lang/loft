@@ -6723,6 +6723,21 @@ use #count instead"
         if let Some((_, _, n)) = crate::data::Data::narrow_vector_element(elm) {
             return i32::from(n);
         }
+        // @FR-H-Stride — the distance between consecutive elements, which at the LINKED
+        // layout is the FOUR-byte record id the slot holds and not the element's own record.
+        // A `vector<T>` becomes linked as soon as any keyed collection over `T` exists
+        // anywhere in the program, so this is not a property of the declaration in front of
+        // the reader.  Asked nowhere, the two callers that MOVE bytes by this number slid a
+        // span several slots long: `insert` lost the element and destroyed its neighbours at
+        // every index and `reverse` answered `null,null,3` for `3,2,1`, silently and on both
+        // backends (loft#1670).  It is the same defect loft#903 closed for `remove`, whose own
+        // comment records it, arriving at the two operations that one did not reach.
+        //
+        // Read off the def already resolved above rather than through `get_type`: a lookup
+        // that MINTS a type here would renumber every id after it (loft#739).
+        if elm_td != u32::MAX && self.database.is_linked(self.data.def(elm_td).known_type()) {
+            return 4;
+        }
         // B5 (2026-04-13): for a mixed struct-enum element type
         // (`Type::Enum(_, true, _)`), the parent enum's `known_type` is
         // a byte-sized enumerate (size 1) — wrong for vector storage,
