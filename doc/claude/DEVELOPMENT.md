@@ -759,6 +759,23 @@ docs: {ID} — update CHANGELOG, PLANNING
 
 Review every file in `doc/claude/` for references to the feature and update as needed.
 
+### Moving a doc, and repairing links
+
+**Move a file or directory with `make plan-move FROM=<path> TO=<path>`, never a bare
+`git mv`.**  The rename decides every link it breaks, so the command rewrites them as it moves:
+links into the moved path from anywhere in the tree, links out of it from its new depth, and
+repo-rooted spellings of the old path in code, tests and scripts (a test that reads a fixture
+out of a plan directory is one).  It then rebuilds the index and runs the drift checker.
+`python3 tools/indexer/rewrite_links.py FROM TO` is the dry run, one line per rewrite.
+
+**`make doc-fix` repairs links that are already broken.**  A link is repaired only when
+exactly one tracked path ends in every segment the link names, so that the link names the
+thing and only its position is wrong.  Anything else is printed as a `flag` for a person: a
+target that has left the tree (a library now in a `loft-libs-*` repo wants that repo's URL)
+or a name several files share.  `tests/index_hygiene.rs::every_markdown_link_resolves` fails
+on either kind, so a broken link cannot land.  Not links: fenced blocks, inline code spans,
+`<placeholder>` targets, a line marked `<!--noindex-->`, and `tests/fixtures/`.
+
 ---
 
 ## Splitting High-Effort Items
@@ -923,7 +940,7 @@ issues; that's expected and right.
 Items too big to inline as a single sub-step (L effort,
 full design pass needed) get a `lib_plans/future/` slot
 created AND a tracking row in the active plan's sub-step
-list that says "track via [lib_plans/future/<NN>/](path)
+list that says "track via `[lib_plans/future/<NN>/](path)`
 — close this sub-step when that plan ships its first
 phase."  Design lives elsewhere; schedule lives in the
 active plan.

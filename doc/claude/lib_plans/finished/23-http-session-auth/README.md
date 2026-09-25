@@ -35,7 +35,7 @@ only.
 ## Deferred follow-ups (not part of this plan)
 
 - **TLS / JA3 impersonation (E1)** — conditional; only if Garmin's WAF later blocks the plain-TLS credential POST.  Untested today; "don't build yet."
-- **`exec()` subprocess primitive** — superseded by this workstream for the native-Garmin use case; covered by [`../15-process/`](../15-process) for other consumers.
+- **`exec()` subprocess primitive** — superseded by this workstream for the native-Garmin use case; covered by [`../15-process/`](../../67-process) for other consumers.
 - **`HttpSession.close()`** — login is short-lived (a few requests, one process), so process-lifetime jars suffice.  Add only if a leak shows up.
 - **WASM target** — out of scope: native login runs natively (browser can't call Garmin directly via CORS).
 

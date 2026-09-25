@@ -374,7 +374,7 @@ Pattern P is more specific than Q when P is a substitution instance of Q and not
   fewer and the other more, or either saying neither, leaves the pair unranked
   ([sets-refused/r10](probes/sets-refused/): `vector<T>` against `<U: Named>` at a Named
   `vector<C>`).  Cells [patterns/](probes/patterns/) q01–q05 (q05 re-decided per instance;
-  a two-variable tuple pattern waits for C2 in [arc-c/](probes/arc-c/)) green on both
+  a two-variable tuple pattern waits for C2 in [two-vars/](probes/two-vars/)) green on both
   backends under `LOFT_STRICT_STORES` + `LOFT_POISON`; b6 answers `vec|any`.  Corpus: only
   the new guard differs from B5 (refused there).
 

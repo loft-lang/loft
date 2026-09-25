@@ -186,7 +186,7 @@ Examples of what would qualify:
 Items too big to inline as a sub-step (L effort, full
 design pass needed) get a `lib_plans/future/` slot
 created in the canonical-home routing AND get a row in
-this table that says "track via [lib_plans/future/<NN>/](path)
+this table that says "track via `[lib_plans/future/<NN>/](path)`
 — close this sub-step when that plan ships its first
 phase".  The schedule ALWAYS lives in the active plan;
 the design lives wherever it makes sense.

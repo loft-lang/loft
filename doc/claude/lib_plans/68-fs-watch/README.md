@@ -89,7 +89,7 @@ asynchronously.
 
 - [@PLAN37 phase 07a](../../plans/42-tracker-index/07a-websocket-protocol.md)
   — the design that depends on this lib.
-- [`lib/server/`](../../../lib/server/src/server.loft)
+- [`lib/server/`](https://github.com/loft-lang/loft-libs-net/blob/main/server/src/server.loft)
   — pattern for a long-running loft program with a Rust host
   bridge.
 - [STDLIB.md § Open work](../../STDLIB.md#open-work)

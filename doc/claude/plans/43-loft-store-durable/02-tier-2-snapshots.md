@@ -217,5 +217,5 @@ other is always the previous good generation.
 
 - [Phase 01 — Tier 1 IntegrityOnly](01-tier-1-integrity.md) — same DurabilityMode enum
 - [Phase 03 — Tier 3 WAL](03-tier-3-wal.md) — next tier up
-- [`lib/server/loft.toml`](../../../lib/server/loft.toml) — package layout precedent
+- [`lib/server/loft.toml`](https://github.com/loft-lang/loft-libs-net/blob/main/server/loft.toml) — package layout precedent
 - [Plan-32 TTT v5](../39-tic-tac-toe) — first Tier 2 consumer

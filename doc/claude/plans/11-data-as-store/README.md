@@ -1526,7 +1526,7 @@ the dominant cost and is deliberately the most finely sliced.
   IR walk (as arc B's skeleton) and `compare_data` (as its oracle), both interim
   (§ Standalone upside decision).  serde is forbidden project-wide (CODE.md) —
   this plan uses the store format, consistent with that.
-- **[@PLN43 loft-store-durable](../38-loft-store-durable)** — shares the
+- **[@PLN43 loft-store-durable](../43-loft-store-durable)** — shares the
   `Store::open_durable` / persistence surface; coordinate the on-disk
   store format so the IR store and durable user stores stay compatible.
 - **NATIVE.md / `src/generation/`** — source of the struct-enum

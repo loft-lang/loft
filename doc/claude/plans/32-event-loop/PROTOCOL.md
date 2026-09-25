@@ -316,10 +316,10 @@ extension fits cleanly.
   open issues, alternatives considered, design history.
 - [TIC_TAC_TOE.md](../39-tic-tac-toe/README.md) — v1 application using this
   protocol; smallest validating game.
-- [lib/server/native/src/lib.rs](../lib/server/native/src/lib.rs)
+- [lib/server/native/src/lib.rs](https://github.com/loft-lang/loft-libs-net/blob/main/server/native/src/lib.rs)
   — server-side text-mode implementation
   (`n_tcp_*` and `n_ws_*` C-ABI exports).
-- [lib/web/native/src/ws_client.rs](../lib/web/native/src/ws_client.rs)
+- [lib/web/native/src/ws_client.rs](https://github.com/loft-lang/loft-libs-net/blob/main/web/native/src/ws_client.rs)
   — client-side text-mode implementation including handshake and
   auto-reconnect with backoff.
 - [PROBLEMS.md § 213](../../PROBLEMS.md#213-typefunction-storage-layout-limit--full-design-for-the-proper-fix)

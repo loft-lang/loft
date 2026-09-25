@@ -7,7 +7,33 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Open — opened 2026-05-18.**  Driver: PR-212 cycle.  Every move
+**FINISHED (closed 2026-09-25).**  What shipped:
+- **Phase 0, `make plan-move FROM=… TO=…`** (`tools/indexer/rewrite_links.py`): it computes every
+  rewrite from the rename, including incoming links, outgoing links at the new depth, and
+  repo-rooted spellings in code, tests and scripts.  Checked on three moves in a scratch
+  worktree: a plan into `finished/` (57 rewrites), a plan across trees (68, including the
+  `tests/*.rs` fixture paths into it), and a single doc into a new subdirectory (100).  After
+  each, the index validator and the drift checker read clean; a bare `git mv` as the control
+  broke three links, and both reported them.
+- **Phase 1, `make doc-fix`** (`tools/indexer/fix_broken_links.py`, rewritten): a link is
+  repaired only when exactly one tracked path ends in every segment it names; anything else is
+  flagged for a person.  Its first run found 37 broken links the drift checker never looked
+  at (it checks plan links only) and the index's bucket had missed.  Six were repaired and 31
+  fixed by hand: libraries that left the tree now point at their `loft-libs-*` repo, renumbered
+  plans at their new numbers, and prose placeholders are now code spans.  One more (the
+  `02_images.loft` link) had a wrong `../` depth, which the fixer then repaired itself.
+- **Phase 5 changed form:** a gate replaces the opt-in auto-fix mode.
+  `tests/index_hygiene.rs::every_markdown_link_resolves` fails on any repairable or flagged
+  link and names `make doc-fix` as the cure; it was falsified with a planted gone target and a
+  planted misplaced one.  A test that mutates the tree was never the right shape (ground rule 1).
+- **Phase 6:** [DEVELOPMENT.md § Moving a doc, and repairing links](../../DEVELOPMENT.md#moving-a-doc-and-repairing-links).
+- **Phases 2–4 retired.**  They were fixers for drift classes the checker reports clean.  Two
+  of them (3, the ROADMAP fixer, and 4, the closure annotator) assumed that closing a plan
+  moves its directory into `finished/`; a plan now closes as an issue and its directory stays
+  where it is.  Phase 2's class is warn-only, and choosing an effort letter for "two weeks" is
+  a judgement, not a rewrite.
+
+The design below is the record.  Opened 2026-05-18.  Driver: PR-212 cycle.  Every move
 of a doc / plan directory (e.g. `lib_plans/57-regex/` →
 `lib_plans/57-regex/`) triggers a cascade of broken-link fixes
 across the tree that take 3-5 grep + sed iterations to fully

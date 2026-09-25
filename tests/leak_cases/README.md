@@ -45,7 +45,7 @@ cargo test --release --test leak_cases -- --ignored
 
 The interpreter half runs in the default `cargo test` path.
 
-[@P297]: ../claude/PROBLEMS.md
-[@P298]: ../claude/PROBLEMS.md
+[@P297]: ../../doc/claude/PROBLEMS.md
+[@P298]: ../../doc/claude/PROBLEMS.md
 [#490]: https://github.com/loft-lang/loft/issues/490
 [#491]: https://github.com/loft-lang/loft/issues/491

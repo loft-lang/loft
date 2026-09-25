@@ -191,9 +191,9 @@ existing viewer, the cleaner the extraction.
   tracker indexer the viewer reads.  Indexer also gets
   config-parameterised in phase 3 so other consumers can
   run their own.
-- [`lib/markdown/`](../../../lib/markdown) — already
+- [`lib/markdown/`](https://github.com/loft-lang/loft-libs-docs/tree/main/markdown) — already
   generic; viewer pulls it as-is.
-- [`lib/server/`](../../../lib/server/src/server.loft) —
+- [`lib/server/`](https://github.com/loft-lang/loft-libs-net/blob/main/server/src/server.loft) —
   already generic; viewer pulls it as-is.
 - [`STDLIB.md § Open work`](../../STDLIB.md#open-work) —
   several stdlib gaps surfaced during viewer development;

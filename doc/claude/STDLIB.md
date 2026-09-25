@@ -1546,7 +1546,7 @@ every time.
 ## Time
 
 Two clocks, answering two different questions. Both return loft's 64-bit `integer`, which a
-millisecond epoch stamp needs. See [tests/docs/22-time.loft](../22-time.loft) for the
+millisecond epoch stamp needs. See [tests/docs/22-time.loft](../../tests/docs/22-time.loft) for the
 chapter and `tests/scripts/the-reference-clock-units-are-the-ones-it-names.loft` for the
 guard that pins the units against each other.
 

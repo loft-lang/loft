@@ -937,7 +937,7 @@ examples-preflight:  ## Would a PR report anything on worked-example tags? (REPO
 # REPO defaults to this repo; point it at a library checkout to drive that repo's
 # rollout: make examples-progress REPO=../loft-libs-graphics
 REPO ?= .
-.PHONY: perf-portal perf-portal-render perf-libs work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
+.PHONY: perf-portal perf-portal-render perf-libs plan-move doc-fix work test-fast examples-index examples-preflight examples-progress features-review libraries-review bug-review campaign-review licence-census free-licences nullable-road release-checklist release-gate file-sizes reference-review skills-review clippy-review
 examples-progress:  ## Worked-example rollout REPORT: which packages still owe a verdict (never a gate)
 	@EXAMPLES_REPO_ROOT=$(REPO) bash scripts/check_doc_drift.sh examples-progress
 
@@ -2340,6 +2340,27 @@ doc-check:
 	@scripts/check_doc_drift.sh
 
 doc-check-quiet:
+	@scripts/check_doc_drift.sh -q
+
+# Move a file or directory and rewrite every link the move would break:
+# links into it from anywhere, links out of it from its new depth, and
+# repo-rooted spellings of the old path in code and scripts.  Dry run with
+# `python3 tools/indexer/rewrite_links.py FROM TO`.
+plan-move:
+	@if [ -z "$(FROM)" ] || [ -z "$(TO)" ]; then \
+	    echo "usage: make plan-move FROM=<path> TO=<path>"; exit 2; \
+	fi
+	@python3 tools/indexer/rewrite_links.py "$(FROM)" "$(TO)" --apply
+	@$(MAKE) --no-print-directory index
+	@python3 tools/indexer/fix_broken_links.py | tail -1
+	@scripts/check_doc_drift.sh -q
+
+# Repair every broken relative link whose target is unique, name the rest,
+# then run the drift checker.  Exit 0 only when nothing is left to a person.
+doc-fix:
+	@python3 tools/indexer/fix_broken_links.py --apply
+	@python3 tools/indexer/fix_broken_links.py > /dev/null || \
+	    { python3 tools/indexer/fix_broken_links.py | grep '  flag'; exit 1; }
 	@scripts/check_doc_drift.sh -q
 
 # Regenerate the agent-facing installable-library catalogue from the LIVE

@@ -145,6 +145,29 @@ fn check_index_matches_git() {
     }
 }
 
+/// Every relative link in the tracked markdown resolves.  Wider than the
+/// index's `broken_links` bucket, which resolves only the links its scanner
+/// recognises: this reads each file the way a markdown renderer does (fences
+/// and inline code spans are not links) and exempts what `scripts/linkcheck.sh`
+/// exempts.  It reads no index, so it cannot race `make index`.
+#[test]
+fn every_markdown_link_resolves() {
+    let out = Command::new("python3")
+        .arg("tools/indexer/fix_broken_links.py")
+        .output()
+        .expect("failed to spawn tools/indexer/fix_broken_links.py");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success() && !stdout.contains("  fix "),
+        "broken markdown links:\n{stdout}{}\n\
+         `make doc-fix` writes each `fix` line; a `flag` line needs a person \
+         (point it at the thing's new home, or mark an intentional placeholder \
+         with `<!--noindex-->` or a code span).  A directory move is \
+         `make plan-move FROM=… TO=…`, which rewrites the links as it moves.",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
 #[test]
 fn index_hygiene_clean() {
     // 1. Refresh the index.  `make index` must exit 0.
@@ -252,9 +275,9 @@ fn index_hygiene_clean() {
          (b) point at the correct doc\n  \
          (c) add `<!--noindex-->` to the line if the link is\n      \
              an intentional placeholder example\n  \
-         (d) try `tools/indexer/fix_broken_links.py --apply` for\n      \
-             the common off-by-one cases\n\
-         See: doc/claude/plans/37-tracker-index/09-backlinks.md"
+         (d) `make doc-fix` repairs every link whose target is\n      \
+             unique, and names the rest\n\
+         See: doc/claude/plans/42-tracker-index/09-backlinks.md"
     );
 
     // 4. Cross-OS portability sanity (@PLAN37 phase 07 pre-flight P2)

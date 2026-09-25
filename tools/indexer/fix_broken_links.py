@@ -48,20 +48,21 @@ SKIP_TARGETS = {"FOO.md"}
 REF_DEF_M = re.compile(REF_DEF.pattern, re.MULTILINE)
 
 
-def code_spans(line: str) -> list[tuple[int, int]]:
-    """[start, end) of each inline code span (`…`, ``…``) on the line."""
-    spans, i = [], 0
-    while True:
-        a = line.find("`", i)
-        if a < 0:
-            return spans
-        run = len(line[a:]) - len(line[a:].lstrip("`"))
-        ticks = line[a:a + run]
-        b = line.find(ticks, a + run)
-        if b < 0:
-            return spans
-        spans.append((a, b + run))
-        i = b + run
+def code_spans(text: str) -> list[tuple[int, int]]:
+    """[start, end) of each inline code span, CommonMark's way: a run of
+    n backticks opens one and the next run of EXACTLY n closes it."""
+    runs = [(m.start(), m.end()) for m in re.finditer(r"`+", text)]
+    spans, k = [], 0
+    while k < len(runs):
+        a, b = runs[k]
+        for m in range(k + 1, len(runs)):
+            if runs[m][1] - runs[m][0] == b - a:
+                spans.append((a, runs[m][1]))
+                k = m + 1
+                break
+        else:
+            k += 1
+    return spans
 
 
 def all_paths(files: list[str]) -> set[str]:
