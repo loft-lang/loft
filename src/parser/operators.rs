@@ -17,6 +17,59 @@ fn int_literal(n: i64) -> Value {
 }
 
 impl Parser {
+    /// `(H-Elide)` / @PLN163 P6 — a READ THROUGH a member of a call result as a VIEW: when `proj`
+    /// projects a member (of type `d_nr`, owning a droppable) straight out of a user function's
+    /// fresh record, bind that record to a work-ref that adopts it and read the member where it
+    /// lives, answering the view block and its type.  The record is released once, whole, at the
+    /// work-ref's scope end.  Copying the member out instead made a second structure nobody wrote,
+    /// whose release had to be handed from the record to the copy.  `None` for any other shape,
+    /// which keeps whatever lowering it had.  Asked for a projection a chain reads on
+    /// (`mk_s(130).h.id`) and for one handed to a call as an argument (`take(mk().h)`) — an
+    /// argument binds without copying (`(F-ParamHeap)`); never for one BOUND to a name, which is a
+    /// written copy the rules refuse or lease.
+    pub(crate) fn call_member_view(&mut self, proj: &Value, d_nr: u32) -> Option<(Value, Type)> {
+        if self.first_pass || !self.data.owns_droppable(d_nr) {
+            return None;
+        }
+        let Value::Call(pd, pargs) = proj.unspan() else {
+            return None;
+        };
+        if !matches!(
+            self.data.def(*pd).name(),
+            "OpGetField" | "OpGetVector" | "OpVectorRef"
+        ) {
+            return None;
+        }
+        let Some(Value::Call(fd, _)) = pargs.first().map(Value::unspan) else {
+            return None;
+        };
+        let call_tp = self.data.def(*fd).returned().clone();
+        // A NULLABLE record (`-> S?`) keeps the copy: that lowering tests for absence before it
+        // reads the member, and a view would project out of a record that may not exist.
+        if matches!(call_tp, Type::Optional(_)) {
+            return None;
+        }
+        if self.data.def(*fd).name().starts_with("Op")
+            || !matches!(call_tp.base(), Type::Reference(_, rd) if rd.is_empty())
+        {
+            return None;
+        }
+        let pd = *pd;
+        let mut pargs = pargs.clone();
+        let holder = self.vars.work_refs(&call_tp, &mut self.lexer);
+        self.vars.mark_inline_ref(holder);
+        let call = std::mem::replace(&mut pargs[0], Value::Var(holder));
+        let tp = Type::Reference(d_nr, crate::data::Deps::frame1(holder));
+        Some((
+            v_block(
+                vec![v_set(holder, call), Value::Call(pd, pargs)],
+                tp.clone(),
+                "inline ref view",
+            ),
+            tp,
+        ))
+    }
+
     /// Whether a DIRECT write (`nr = …` / `nr += …`) with operator `op` to binding
     /// `nr` must be rejected.
     ///
@@ -1929,81 +1982,102 @@ impl Parser {
                                     "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"))))
                 {
                     let d_nr = *d_nr;
-                    let w = self.vars.work_refs(&t.clone(), &mut self.lexer);
-                    // Mark as inline-ref temp so parse_code inserts its
-                    // null-init after the first user statement, ensuring
-                    // it appears after user-scope vars in var_order and is
-                    // therefore freed before them (LIFO).
-                    self.vars.mark_inline_ref(w);
-                    let orig = code.clone();
-                    // @PLN85 (the chained field-of-call class) — a PROJECTION
-                    // of the value must COPY into `w`, not alias: argument
-                    // lifting later splits the inner call into a `__lift_N`
-                    // whose scope-exit free runs INSIDE this block, so an
-                    // aliasing `Set(w, GetField(call, ..))` left `w` (and
-                    // every further projection) dangling into the freed
-                    // store — chain depth ≥ 2 read stale data at ANY
-                    // consumption site (bind / argument / return / loop) on
-                    // BOTH backends; the depth-1 `materialized_view_return`
-                    // path was already copy-then-free and is the spec this
-                    // mirrors (the C86 escape rule: a view outliving its
-                    // dying temporary materialises).  A direct CALL result
-                    // (not a projection) still binds raw — `w` genuinely
-                    // adopts that fresh store.
-                    let is_projection = matches!(orig.unspan(), Value::Call(pd, _)
+                    // `(H-Elide)` / @PLN163 P6 — a READ THROUGH a member of a call result
+                    // (`mk_s(130).h.id`) is a VIEW: the CALL's record is bound to a work-ref that
+                    // adopts its fresh store, and the chain reads the member where it lives.  The
+                    // record is released once, whole, at the work-ref's scope end.  Copying the
+                    // member out instead made a second structure the author never wrote, and a
+                    // droppable member then needed its release handed from the call's record to
+                    // the copy.  Only for a member that owns a droppable, where the copy was
+                    // observable; any other member keeps the copy below.
+                    let view = if !self.lexer.peek_token(".") && !self.lexer.peek_token("[") {
+                        None
+                    } else {
+                        self.call_member_view(code, d_nr)
+                    };
+                    if let Some((viewed, view_tp)) = view {
+                        *code = viewed;
+                        t = view_tp;
+                    } else {
+                        let w = self.vars.work_refs(&t.clone(), &mut self.lexer);
+                        // Mark as inline-ref temp so parse_code inserts its
+                        // null-init after the first user statement, ensuring
+                        // it appears after user-scope vars in var_order and is
+                        // therefore freed before them (LIFO).
+                        self.vars.mark_inline_ref(w);
+                        let orig = code.clone();
+                        // @PLN85 (the chained field-of-call class) — a PROJECTION
+                        // of the value must COPY into `w`, not alias: argument
+                        // lifting later splits the inner call into a `__lift_N`
+                        // whose scope-exit free runs INSIDE this block, so an
+                        // aliasing `Set(w, GetField(call, ..))` left `w` (and
+                        // every further projection) dangling into the freed
+                        // store — chain depth ≥ 2 read stale data at ANY
+                        // consumption site (bind / argument / return / loop) on
+                        // BOTH backends; the depth-1 `materialized_view_return`
+                        // path was already copy-then-free and is the spec this
+                        // mirrors (the C86 escape rule: a view outliving its
+                        // dying temporary materialises).  A direct CALL result
+                        // (not a projection) still binds raw — `w` genuinely
+                        // adopts that fresh store.
+                        let is_projection = matches!(orig.unspan(), Value::Call(pd, _)
                         if matches!(self.data.def(*pd).name(),
                             "OpGetField" | "OpGetVector" | "OpVectorRef" | "OpGetDbRef"));
-                    let kt = self.data.def(d_nr).known_type();
-                    // A TERMINAL wrap (no further chaining — the D-heap-3 arm of the
-                    // condition above) delivers the copy the way a struct LITERAL's block
-                    // does: typed WITHOUT deps, so the consuming site ADOPTS the record as
-                    // its owner and the existing construction hand-off + buffer pairing
-                    // release it exactly once.  A mid-chain wrap keeps the frame dep — the
-                    // rest of the chain reads through `w`, which must stay the owner.
-                    let terminal = !(self.lexer.peek_token(".") || self.lexer.peek_token("["));
-                    let block_deps = if terminal {
-                        crate::data::Deps::none()
-                    } else {
-                        crate::data::Deps::frame1(w)
-                    };
-                    if is_projection && kt != u16::MAX {
-                        let copy_d = self.data.def_nr("OpCopyRecord");
-                        *code = v_block(
-                            vec![
-                                v_set(w, Value::Null),
-                                self.cl("OpDatabase", &[Value::Var(w), Value::Int(i32::from(kt))]),
-                                Value::Call(
-                                    copy_d,
-                                    vec![orig, Value::Var(w), Value::Int(i32::from(kt))],
-                                ),
-                                Value::Var(w),
-                            ],
-                            Type::Reference(d_nr, block_deps.clone()),
-                            "inline ref copy",
-                        );
-                        // @PLN130 — parser-emitted materialisation of a projection into a
-                        // store `w` owns; see `ParserMaterialise`.
-                        crate::copy_manifest::record(
-                            self.context,
-                            w,
-                            kt,
-                            crate::copy_manifest::Origin::ParserMaterialise,
-                        );
-                    } else {
-                        *code = v_block(
-                            vec![v_set(w, orig), Value::Var(w)],
-                            Type::Reference(d_nr, crate::data::Deps::frame1(w)),
-                            "inline ref",
-                        );
-                    }
-                    t = Type::Reference(
-                        d_nr,
-                        if is_projection && kt != u16::MAX {
-                            block_deps
+                        let kt = self.data.def(d_nr).known_type();
+                        // A TERMINAL wrap (no further chaining — the D-heap-3 arm of the
+                        // condition above) delivers the copy the way a struct LITERAL's block
+                        // does: typed WITHOUT deps, so the consuming site ADOPTS the record as
+                        // its owner and the existing construction hand-off + buffer pairing
+                        // release it exactly once.  A mid-chain wrap keeps the frame dep — the
+                        // rest of the chain reads through `w`, which must stay the owner.
+                        let terminal = !(self.lexer.peek_token(".") || self.lexer.peek_token("["));
+                        let block_deps = if terminal {
+                            crate::data::Deps::none()
                         } else {
                             crate::data::Deps::frame1(w)
-                        },
-                    );
+                        };
+                        if is_projection && kt != u16::MAX {
+                            let copy_d = self.data.def_nr("OpCopyRecord");
+                            *code = v_block(
+                                vec![
+                                    v_set(w, Value::Null),
+                                    self.cl(
+                                        "OpDatabase",
+                                        &[Value::Var(w), Value::Int(i32::from(kt))],
+                                    ),
+                                    Value::Call(
+                                        copy_d,
+                                        vec![orig, Value::Var(w), Value::Int(i32::from(kt))],
+                                    ),
+                                    Value::Var(w),
+                                ],
+                                Type::Reference(d_nr, block_deps.clone()),
+                                "inline ref copy",
+                            );
+                            // @PLN130 — parser-emitted materialisation of a projection into a
+                            // store `w` owns; see `ParserMaterialise`.
+                            crate::copy_manifest::record(
+                                self.context,
+                                w,
+                                kt,
+                                crate::copy_manifest::Origin::ParserMaterialise,
+                            );
+                        } else {
+                            *code = v_block(
+                                vec![v_set(w, orig), Value::Var(w)],
+                                Type::Reference(d_nr, crate::data::Deps::frame1(w)),
+                                "inline ref",
+                            );
+                        }
+                        t = Type::Reference(
+                            d_nr,
+                            if is_projection && kt != u16::MAX {
+                                block_deps
+                            } else {
+                                crate::data::Deps::frame1(w)
+                            },
+                        );
+                    }
                 }
             } else if self.lexer.has_token("[") {
                 wrap_chain = true;

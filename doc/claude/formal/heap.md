@@ -200,6 +200,17 @@ only that local's own store (see `H-Copy`) — the exact fact [capabilities.md](
                is unaffected and keeps aliasing (@PLN130 F2/F4/F8).  This is the plain-bind
                answer; an explicit `&` is DECLINED at compile time instead (B-Ref-Reshape),
                because a copy is not what it asked for.
+  (H-CopySelf)  ⟨write(p, read(p)), σ⟩ → ⟨(), σ⟩    a whole value delivered onto the PLACE that
+               already holds it — a record copied onto itself, a vector delivered into the slot
+               whose handle it is — is a no-op: the heap is unchanged, nothing is released and
+               nothing is claimed.  The runtime decides it by IDENTITY at the delivery
+               (`Stores::vector_replace`: same store and same record → return; the record copy's
+               in-place arm the same), never by the type or by a compile-time bet, so a rewrite
+               that hands a value's own home as its destination (rewrites.md R-Rebind, R-Place's
+               "the buffer IS the place") writes exactly what a fresh copy would have left and
+               pays for none of it.  The no-op holds ONLY for the whole place: a delivery whose
+               source is a DIFFERENT place in the same store clears the destination first and
+               copies (`vector_add` snapshots a same-store source), which is H-Copy.
 ```
 
 **In words.** Whether a bind copies or aliases depends on **what is bound** — and the two backends
@@ -495,8 +506,10 @@ installed, which the frame does own.
              move it.
   (H-Copy-Lease) a copy of a type that declares `fn OpCopy(self: τ)` copies the bytes and
              then runs `OpCopy` on the NEW structure, which takes its own lease there.  A
-             struct holding such a member gets a synthesized copy cascade, the mirror of the
-             drop cascade: its own `OpCopy` first, then its members'.
+             struct, an enum variant or a collection holding such a member gets a synthesized
+             copy cascade, the mirror of the drop cascade: its own `OpCopy` first, then its
+             members'.  The copy is then a structure the function OWNS — a local it fills is
+             not the caller's record, and placing or returning it is a move.
   (H-Copy-Refuse) a COPY of a type that owns a droppable without `OpCopy` — the type itself,
              or a member at any depth — is a COMPILE-TIME ERROR on the line that writes it,
              whatever the program does after that line.  A copy places a value the function
@@ -571,12 +584,17 @@ use cases in `plans/163-copy-leases.md` (DESIGN_DECISIONS.md C121).
 **Conformance.** `tests/scripts/139-drop-cascade.loft` (the cascade),
 `a-whole-value-copy-of-a-droppable-releases-once.loft` (a whole-value copy), and
 `1362-a-rebind-releases-the-droppable-it-displaces.loft` (the reassignment), each measured
-identical on both backends.  The copy rules have no conformance yet: `(H-Copy-Refuse)` is
-`D-heap-8`, `(H-Copy-Lease)` is `D-heap-9`, and `(H-View-Drop)` is `D-heap-11`.
+identical on both backends.  The copy rules conform since 2026-09-24: `(H-Copy-Refuse)` and
+`(H-Spent)` are compile-time errors (`D-heap-8`, closed), `(H-Copy-Lease)` runs `OpCopy` on every
+copy a leasing type makes (`D-heap-9`, closed), and `(H-View-Drop)` closed as `D-heap-11`.
 `tests/ownership_drop_gate.rs` classifies every generated cell under these rules and ties each
-cell that disagrees to its deviation.  Sites: the deaths are `scopes::displaced_drop` and
-`scopes::scope_end_drop`; `scopes::copy_moves_drop_from` and `scopes::copy_hands_off` move the
-release across copies these rules refuse, until `D-heap-8` closes.
+cell that disagrees to its deviation; `tests/copy_lease.rs` holds the leasing cells.  Sites: the
+deaths are `scopes::displaced_drop` and `scopes::scope_end_drop`; a release moves across a copy
+only where `(H-Move)` moves the value — `scopes::copy_moves_drop_from` and `copy_hands_off` for a
+source the function owns, per path through the hand-off flags.  The reverse hand-off for a copy
+of what the caller holds and the field hand-off (`OpDropAllExcept`) were removed by @PLN163 P5 and
+P6: a copy the rules accept either leases or does not exist, and a read through a member of a call
+result is a view of the call's record.
 
 ### The soundness bridge — a well-typed program never faults a free
 
@@ -696,6 +714,30 @@ freed without its hook) opened and CLOSED 2026-09-10, below.  `D-heap-12` (a ref
 buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17, below.  `D-heap-17` (a self-append's claims walk
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
+
+### D-heap-43 — OPENED AND CLOSED (2026-09-24, loft#1666): clearing a vector FIELD of a multi-field record released nothing of its elements
+
+- **Violates:** (H-ClearRelease) — *clearing a vector that outlives the clear releases what its
+  elements own*.  The rule names no root shape; the code answered for one.
+- **Where:** `Stores::clear_vector_release` derived the element type only when the store's ROOT
+  was the one-field `main_vector<T>` wrapper (`field_type(kt, 0)`); any other root — a user
+  record with a vector field, `h.entries` on a two-field `Timeline` — answered `u16::MAX`, and
+  the per-element walk never ran.  The rebind `h.entries = kept` therefore reset the length and
+  left every old element's owned heap (each entry's two inner vectors) claimed inside the store.
+- **Effect:** an intra-store leak, invisible to `LOFT_NATIVE_LEAK_CHECK` and `LOFT_STRICT_STORES`
+  (the store is freed whole at scope exit): dryopea's `History`, rebuilt on every push past the
+  50th, held 19 340 claims / 1.6 MB after one op of the portal's `truncate_to` row where 98
+  claims / 1 118 words were live — unbounded over a session.  Both backends identical (the
+  function is shared).  Seen by nothing in the suite; found by the `(R-Compact)` hand-price's
+  store-usage instrument.
+- **Closed at:** the type is read off the ROOT's field whose position is `db.pos` less the
+  8-byte record header, on any struct root; the one-field wrapper keeps its store-reset fast
+  path (H-RootExtent), a multi-field root takes the element walk.  A vector field of a NESTED
+  record (not record 1) still keeps the plain reset — a record that is not the root carries no
+  type word — and is the remaining edge of this rule.  The `LOFT_TRACE_CLEAR` line now prints
+  the type the release acts on (one derivation serves the trace and the release), and the
+  rebind pays the release it used to skip (+50 % on that row, until `(R-Compact)` removes the
+  rebind).  Guard `tests/clear_release_field.rs`, both backends, pinned on that trace line.
 
 ### D-heap-42 — OPENED AND CLOSED (2026-09-23, loft#1628): a returned witnessed local released the record it handed out, and a rebind released what it displaced in the wrong place
 
@@ -1558,6 +1600,19 @@ CLOSED 2026-09-17, below.
   check; `tests/copy_lease.rs`.
 - **Status:** CLOSED 2026-09-24.  @PLN163 P5 — removing the release-moving machinery the lease
   replaces — is a removal measured against these cells, not part of this entry.
+- **Three follow-ups, found and fixed the same day** (the first by loft2-d9 reading the four
+  return-delivery arms side by side; the other two by the lambda cells built to test its note):
+  - a struct-ENUM `return p` / `return s.e` was refused — `parse_return`'s `Type::Enum` arm never
+    asked `return_copies_a_leasing_value`, which the `Type::Reference` arm and the tail path do;
+  - a local copy of a PARAMETER (`x = c; x`) kept the caller-record mark
+    (`scopes::caller_record_locals`), so the census judged the return a second copy: the hook ran
+    twice and the copy's own structure was never released — a leasing type's local never holds
+    the caller's record;
+  - a LAMBDA returning a local copy of its capture released it twice: the copy is built in a
+    work-ref the local views, the lambda's reserved `__retbuf` was not a delivery buffer to
+    `copy_record_handoff`, and the hand-off named the view instead of the work-ref its release
+    is emitted on.
+  Each pinned in `tests/copy_lease.rs::an_enum_or_lambda_return_leases_like_a_record`.
 
 ### D-heap-13 — CLOSED (2026-09-20): a collection returned from a call and bound to a local never releases its elements
 

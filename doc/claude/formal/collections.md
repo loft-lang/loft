@@ -500,6 +500,17 @@ so it reaches the group exactly as the direct spelling does (loft#1160, and loft
 the one route still outside it, and not by omission — it picks its origin from the runtime tag,
 so there is no one field to resolve it to.
 
+⚠ **The resolution is scoped to a GROUP MEMBER, and that scoping is what the rule buys.**
+Resolving a write back to the field replaces the destination and so erases the BINDING from the
+statement — and `(B-Disturb)`'s fourth event then hands that binding a copy
+([binding.md](binding.md) `(B-View)`), after which nothing downstream can redirect a write that
+no longer names it: reads and write landed in two places, in silence (loft#1662).  A field with
+no `other_indexes` has no sibling to reach, so the binding spelling answers exactly what the
+field spelling answers AND keeps answering it after the materialise; the resolution is
+therefore applied where the siblings are and nowhere else
+(`Parser::origin_is_group_member`).  That leaves a payload binding onto a member itself —
+`D-col-6` below, which is the SAME gap the `&` link route has.
+
 **The element-level writes through the vector member were the routes that reached no
 chokepoint** (2026-09-05, the `@FR-Col-Group` walk).  Every route that ADDS a record reaches
 `record_finish`; a keyed removal and `e#remove` emit the unlinks (loft#900, loft#903).  But
@@ -564,7 +575,38 @@ tests/scripts/901-linked-group-fill.loft.
 
 ## 3. Deviations / decided edges
 
-**OPEN: 0.**
+**OPEN: 1.**
+
+- **`D-col-6`** — OPEN, opened 2026-09-24 (loft#1664): **a write through a payload BINDING to a
+  group member stops reaching the other members once `(B-View)` has materialised it.**  The
+  binding keeps the field spelling — which is the one thing that reaches the siblings — so after
+  the materialise the write goes to the subject while the reads come from the copy, which is
+  loft#1662's split surviving exactly where the resolution must stay.  The `&` LINK spelling of
+  the same defect was answered the same day (below), and against `(Col-Group)`'s *"by any write
+  route"*.  `d = &p.p_data; d += [r]` left `p_look` empty, and so did a `match` / `is`
+  payload binding onto a member once [binding.md](binding.md) `(B-View)` had materialised it.
+  ONE cause: `OpNewRecord` / `OpFinishRecord` take the OWNING RECORD and the FIELD, and
+  `Stores::record_finish` walks `other_indexes` off that pair, so a destination that is a link
+  has nothing to walk from.
+  **The `&` spelling is settled** by registering the link's origin field in the table the payload
+  binding already uses, which is sound for a link and not for a plain bind: `D-bind-60` makes a
+  collection link reach `(B-Ref-Reshape)`, so it can never be downgraded to a copy and the field
+  it named at the bind is the field it still names at every write.  Three things had to move
+  together, and each was a site answering one question differently: the record a write adds is
+  built at THREE places — `build_vector_list`, the keyed `+= <elem>` fast path and the keyed
+  `+= [ … ]` list path — of which only the first asked, so the link to a KEYED member reached
+  one member while the same link to the VECTOR member reached both; and the membership test
+  itself was one-directional (`keyed_field_is_linked` answers of the field that LISTS its views,
+  so it says `false` of the view, which is half of every vector-plus-keyed group —
+  `Stores::field_is_group_member` asks both directions).  `Parser::resolved_group_write` is the
+  one home the three sites now share.
+  **What remains is the head of this entry.**  Resolving it means
+  making *"which record owns this collection, at which field"* answerable from the DESTINATION
+  — carried on the binding, or tested at run time against the owner the parser also knows — which
+  is a design call and not a narrowing.  Measured in
+  `tests/scripts/1160-a-variant-binding-write-means-the-field-write.loft` (all four link
+  directions, both declaration orders) and
+  `tests/scripts/1662-a-payload-bindings-write-follows-the-binding.loft` (cell `g1`).
 
 `D-col-5` (loft#1576) was opened 2026-09-21 and CLOSED 2026-09-22: a repeated key displaced the
 older record from the one MEMBER of a linked group it collided in, not from the group, and a group

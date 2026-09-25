@@ -1054,7 +1054,15 @@ fn for_each_cell<T: Send>(
     workers: usize,
     run: impl Fn(&Path, &Cell) -> T + Sync,
 ) -> Vec<T> {
-    let dir = std::env::temp_dir().join(format!("loft_drop_gate_{tag}_{}", std::process::id()));
+    // Unique per CALL, not just per process: the native leg's chunks run as parallel threads of
+    // one process under `cargo test`, and a directory shared between them was removed by the
+    // first chunk to finish while the others were still writing into it.
+    static NEXT_DIR: AtomicUsize = AtomicUsize::new(0);
+    let dir = std::env::temp_dir().join(format!(
+        "loft_drop_gate_{tag}_{}_{}",
+        std::process::id(),
+        NEXT_DIR.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::create_dir_all(&dir).expect("create the gate's scratch directory");
     let next = AtomicUsize::new(0);
     let results: Mutex<Vec<Option<T>>> = Mutex::new(cells.iter().map(|_| None).collect());
@@ -1141,9 +1149,20 @@ fn check_baseline(verdicts: &[Verdict], path: &str, backend: &str) {
     };
     let want = parse_baseline(&pinned);
     let got = parse_baseline(&rendered);
+    report_baseline_diff(verdicts, &want, &got, path, backend);
+}
+
+/// The comparison half of the baseline checks: every NEW and GONE line, and the verdict.
+fn report_baseline_diff(
+    verdicts: &[Verdict],
+    want: &BTreeMap<String, String>,
+    got: &BTreeMap<String, String>,
+    path: &str,
+    backend: &str,
+) {
     let by_name: HashMap<&str, &Verdict> = verdicts.iter().map(|v| (v.name.as_str(), v)).collect();
     let mut report = String::new();
-    for (name, kinds) in &got {
+    for (name, kinds) in got {
         if want.get(name) != Some(kinds) {
             let was = want.get(name).map_or("clean", String::as_str);
             let _ = writeln!(report, "  NEW   {name}: {was} -> {kinds}");
@@ -1152,7 +1171,7 @@ fn check_baseline(verdicts: &[Verdict], path: &str, backend: &str) {
             }
         }
     }
-    for (name, kinds) in &want {
+    for (name, kinds) in want {
         if !got.contains_key(name) {
             let _ = writeln!(
                 report,
@@ -1186,10 +1205,17 @@ fn every_cell_releases_each_resource_once_on_the_interpreter() {
 
 /// The same cells on `--native`, against a baseline of their own: the backends disagree on three
 /// cells today, and each disagreement is a finding rather than noise, so it is printed on every
-/// run.  One `rustc` per cell measured 36 s for the whole family on a warm target.
-#[test]
-fn every_cell_releases_each_resource_once_on_native() {
-    let cells = all_cells();
+/// run.  One `rustc` per cell, so the leg is CHUNKED — `…_on_native_0` … `_3`, each taking every
+/// [`NATIVE_GATE_CHUNKS`]-th cell from its own offset — because the whole family took 386-690 s
+/// on the Windows runner and the duration gate allows a test half its 600 s limit.  Each chunk
+/// checks and blesses only its own cells' lines of the one baseline file.
+fn native_gate_chunk(chunk: usize) {
+    let cells: Vec<Cell> = all_cells()
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % NATIVE_GATE_CHUNKS == chunk)
+        .map(|(_, c)| c)
+        .collect();
     let native = run_all(&cells, "--native", "300", workers(6));
     let interp = run_all(&cells, "--interpret", "60", workers(16));
     for (n, i) in native.iter().zip(&interp) {
@@ -1200,7 +1226,76 @@ fn every_cell_releases_each_resource_once_on_native() {
             );
         }
     }
-    check_baseline(&native, NATIVE_BASELINE, "native");
+    let names: HashSet<String> = cells.iter().map(|c| c.name.clone()).collect();
+    check_baseline_chunk(&native, &names, NATIVE_BASELINE, "native");
+}
+
+/// How many tests the native leg is split across — see [`native_gate_chunk`].
+const NATIVE_GATE_CHUNKS: usize = 4;
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_0() {
+    native_gate_chunk(0);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_1() {
+    native_gate_chunk(1);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_2() {
+    native_gate_chunk(2);
+}
+
+#[test]
+fn every_cell_releases_each_resource_once_on_native_3() {
+    native_gate_chunk(3);
+}
+
+/// [`check_baseline`] for one chunk: only the lines naming `names` are this chunk's to compare —
+/// and, under `BLESS`, to rewrite.  The chunks run as separate processes writing ONE file, so a
+/// bless is a read-modify-write under a lock file, never a whole-file overwrite.
+fn check_baseline_chunk(verdicts: &[Verdict], names: &HashSet<String>, path: &str, backend: &str) {
+    let rendered = render(verdicts, backend);
+    let got = parse_baseline(&rendered);
+    if std::env::var_os(BLESS).is_some() {
+        let lock = format!("{path}.lock");
+        let mut waited = 0;
+        while std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&lock)
+            .is_err()
+        {
+            waited += 1;
+            assert!(
+                waited < 6000,
+                "{lock} held for 10 minutes — remove it if no bless is running"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(100));
+        }
+        let pinned = std::fs::read_to_string(path).unwrap_or_default();
+        let mut merged = parse_baseline(&pinned);
+        merged.retain(|name, _| !names.contains(name));
+        merged.extend(got);
+        let mut out = render(&[], backend);
+        for (name, kinds) in &merged {
+            let _ = writeln!(out, "{name} {kinds}");
+        }
+        std::fs::write(path, &out).unwrap_or_else(|e| panic!("write {path}: {e}"));
+        let _ = std::fs::remove_file(&lock);
+        eprintln!("ownership_drop_gate: blessed this chunk's lines of {path}");
+        return;
+    }
+    let Ok(pinned) = std::fs::read_to_string(path) else {
+        panic!("{path} is missing — measure it with {BLESS}=1 and READ it before committing");
+    };
+    let want: BTreeMap<String, String> = parse_baseline(&pinned)
+        .into_iter()
+        .filter(|(name, _)| names.contains(name))
+        .collect();
+    report_baseline_diff(verdicts, &want, &got, path, backend);
 }
 
 /// Every cell has its own name, and every generated cell mints through one of the prelude's
@@ -1538,7 +1633,9 @@ fn liveness_verdict(name: &str) -> Option<Lease> {
     ];
     const REFUSED_PILOTS: &[&str] = &[
         "p_k7", "p_o1", "p_o3", "p_o4", "p_o5", "p_l1", "p_l2", "p_h2", "p_h3", "p_h4", "p_h5",
-        "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4", "p_t1",
+        "p_h6", "p_h7", "p_e1", "p_e2", "p_g1", "p_g3", "p_g4", "p_g5", "p_s4",
+        // `p_t1` (`mk_s(130).h.id`) left 2026-09-24 (@PLN163 P6): a read through a member of a
+        // call result is a VIEW of the call's record now, so no copy exists for either reading.
         // The collection binds, under the superseded reading too: `p_v2` grows `v` after the copy,
         // so the source is used again (`refuse:later`), and `p_v3` copies a member `b` still
         // holds (`refuse:container`).  `p_v1` is deliberately absent — its `v` is dead after the

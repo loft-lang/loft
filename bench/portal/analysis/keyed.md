@@ -137,6 +137,7 @@ resolved once per DESCENT and inlined into it, as `fast_key` is for the probe lo
 | L5 | the probe loop: maximum load 0.75 → ~0.55 (a writer's policy, no format break: 40 KB instead of 27 KB at 5,000 entries), the compare inlined per key kind, `%` replaced by a per-table multiplier | S–M | misses ≈ −40 %, hits ≈ −15 % (est.) |
 | L6 | `--native` lowers a lookup or an append on a statically known `hash<T[integer]>` to a typed entry point: no `Content` slice, no `Stores::find` dispatch, no type-table walk per element | M | the remaining ~250 instr of a lookup, ~900 of an insert |
 | L7 | removal: carry the home bucket instead of re-hashing the cluster | S | `hash_remove` ≈ −10 % (est.) |
+| L8 | `for e in hash` sorts its walk DECORATED: one key read per record into `(key, index)` pairs, sorted; the comparator form resolved two stores and dispatched on the kind per comparison | XS | `hash_walk` 540 → 257 µs/op, 5.93× → 2.83× (measured) |
 
 L1–L4 are the clear cases — each shows in the statistics and has one visible reason.
 Estimated together they take lookups from ~6× to ~3.5× and the fills to ~4×; reaching 2×
@@ -290,6 +291,27 @@ under it.  Two more sabotages: a removal that never recognises its entry fails s
 (`test_158_hash_remove_reinsert` "len 30", and every displacement — it unlinks through
 the same walk); a typed lookup hashing the wrong value fails the native run, panics under
 the verify naming both answers, and passes under `LOFT_NO_TYPED_KEYED=1`.
+
+## What L8 bought (2026-09-24)
+
+The walk row did not exist before this pass: `for e in hash` visits in KEY order (`Col-Order`),
+an order built per pass by `hash::records_sorted` — a bucket sweep, then `sort_by(keys::compare)`.
+Profiled on the row alone (`perf`, the walk 600 times over 5,000 records): `keys::compare` 54 %,
+the sort's own machinery 15 %, the bucket sweep 5 %, the walk itself 21 %.  The comparator
+per pair was two `store()` lookups, a `match` on the key's kind and two typed reads — for a
+key that is one word.  Decorated (`keys::sort_records`): the key is read once per record
+through `fast_key_of` into `(i64, u32)` or `(&str, u32)` pairs, `sort_unstable` orders them,
+and the index is the tie-break, so equal keys keep the bucket order the stable sort kept (a
+hash has none; the tie-break is what makes the two forms one order).  `hash_walk` 540 → 257
+µs/op, 5.93× → 2.83×; the probe alone −54 %.  The switch is the family's
+(`LOFT_NO_FAST_ORDER`), the falsifier the family's (`LOFT_KEYED_VERIFY` asserts the decorated
+order against `keys::compare` pair by pair; the 188 corpus cells that walk a hash run clean
+under it, and `a-hash-walk-orders-every-key-width` pins the four widths).  A float, a
+compound or a 1-byte key keeps the comparator.
+
+What remains of the row is the walk: 22 ns per element through `OpStep` → `step_ordered` →
+`arena::slot` and two field reads, against the twin's 6 ns `HashMap` lookup — the
+record-backed element read, § What is left's territory, not the sort.
 
 ## What is left
 

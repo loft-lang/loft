@@ -243,6 +243,9 @@ fn probe_sequential_rebind_latency() {
 
 const ROLE: &str = "LOFT_WINPROBE_ROLE";
 const ROLE_PORT: &str = "LOFT_WINPROBE_PORT";
+/// Where the grandchild writes its PID, when set.  Inherited through the child, so the
+/// driver can name the grandchild even after the child that knows it has been killed.
+const ROLE_PIDFILE: &str = "LOFT_WINPROBE_PIDFILE";
 
 /// Re-invoke this test binary as `role`, running only the helper cell.
 fn spawn_role(role: &str, port: u16) -> std::process::Child {
@@ -277,6 +280,9 @@ fn winprobe_role_helper() {
         }
         // The real server: hold the port until killed.
         "grandchild" => {
+            if let Ok(pidfile) = std::env::var(ROLE_PIDFILE) {
+                std::fs::write(pidfile, std::process::id().to_string()).expect("pid file");
+            }
             let listener = std::net::TcpListener::bind(("127.0.0.1", port)).expect("bind");
             let deadline = Instant::now() + Duration::from_secs(120);
             while Instant::now() < deadline {
@@ -298,7 +304,13 @@ fn winprobe_role_helper() {
 #[test]
 fn probe_child_kill_reaches_the_grandchild() {
     let port = 18203u16;
+    let pidfile = std::env::temp_dir().join(format!("loft_winprobe_4a_{}.pid", std::process::id()));
+    let _ = std::fs::remove_file(&pidfile);
+    // SAFETY: set before the child is spawned, and no other thread of this test reads or
+    // writes the environment; the child and grandchild inherit it.
+    unsafe { std::env::set_var(ROLE_PIDFILE, &pidfile) };
     let mut child = spawn_role("child", port);
+    unsafe { std::env::remove_var(ROLE_PIDFILE) };
     assert!(
         await_port(port, true, Duration::from_secs(30)),
         "the grandchild never took port {port} — the probe measured nothing"
@@ -311,14 +323,28 @@ fn probe_child_kill_reaches_the_grandchild() {
         if reaped { "RELEASED" } else { "STILL HELD" },
         if reaped { "reaped" } else { "ORPHANED" }
     );
-    // Leave nothing behind whichever way it went: an orphan holding a port would
-    // fail the next probe on a warm runner.
+    // Leave nothing behind whichever way it went: an orphan holding a port would fail the
+    // next probe on a warm runner, and one holding the handles this process inherited from
+    // the test runner is reported as a LEAK.  It is killed by its OWN pid: `taskkill /T` on
+    // the child reaches nothing here, because the child is already dead and the tree walk
+    // goes by parent link (probe 4b is that ordering, the right way round).
     if !reaped {
+        let pid = std::fs::read_to_string(&pidfile).unwrap_or_default();
+        let pid = pid.trim();
+        assert!(
+            !pid.is_empty(),
+            "the grandchild wrote no pid to {} — it cannot be cleaned up",
+            pidfile.display()
+        );
         let _ = std::process::Command::new("taskkill")
-            .args(["/T", "/F", "/PID", &child.id().to_string()])
+            .args(["/F", "/PID", pid])
             .output();
-        let _ = await_port(port, false, Duration::from_secs(5));
+        assert!(
+            await_port(port, false, Duration::from_secs(10)),
+            "the orphaned grandchild (pid {pid}) still holds port {port} after taskkill"
+        );
     }
+    let _ = std::fs::remove_file(&pidfile);
 }
 
 /// Probe 4b — the sequence `Repl::stop_game` runs on Windows, in its exact order:

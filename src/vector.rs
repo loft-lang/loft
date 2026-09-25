@@ -751,6 +751,28 @@ impl HoistScalar for f64 {
 
 /// A value enum, and a struct-enum's tag: one byte, its null 255 — the calls `OpSetEnum`'s
 /// template and `append_byte` make with `min` 0, so the off-fast-path write is the same.
+impl HoistScalar for i32 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_i32_raw(rec, fld, val);
+    }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_i32(db, val);
+    }
+}
+
+impl HoistScalar for u32 {
+    #[inline]
+    fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
+        store.set_u32_raw(rec, fld, val);
+    }
+    #[inline]
+    fn append_in(stores: &mut crate::database::Stores, db: &DbRef, val: Self) {
+        stores.append_u32(db, val);
+    }
+}
+
 impl HoistScalar for u8 {
     #[inline]
     fn set_in(store: &mut crate::store::Store, rec: u32, fld: u32, val: Self) {
@@ -1357,6 +1379,7 @@ pub unsafe fn text_at(ptr: *const u8, size: u32, rec: u32) -> &'static str {
 /// a null vector.  Every text element of the vector is a record in that store, so a loop
 /// reading text elements slices them off the span with no store resolution per element.
 #[must_use]
+#[inline]
 pub fn text_span_of(h: &VecHeader, stores: &[Store]) -> (*const u8, u32) {
     stores
         .get(h.store_nr as usize)

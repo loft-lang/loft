@@ -1,6 +1,17 @@
 # ownership_drop_gate — the interpreter cells that are NOT clean, measured on the tree that
 # committed this file.  Each line is an open (H-Drop) defect: `cell KIND,KIND`.
 # Regenerate only after reading the diff: LOFT_BLESS_DROP_GATE=1 cargo test --release --test ownership_drop_gate
+c_callproj_annot DOUBLE,EARLY
+c_callproj_arm DOUBLE,EARLY
+c_callproj_enum DOUBLE,EARLY
+c_callproj_field DOUBLE,EARLY
+c_callproj_local DOUBLE,EARLY
+c_callproj_nullable DOUBLE,EARLY
+c_callproj_push DOUBLE,EARLY
+c_callproj_reassign DOUBLE,EARLY
+c_callproj_ret DOUBLE,EARLY
+c_callproj_tuplem DOUBLE,EARLY
+c_callproj_veclit DOUBLE,EARLY
 c_elem_enum DOUBLE
 c_elem_field DOUBLE
 c_elem_push DOUBLE
@@ -9,10 +20,16 @@ c_elem_veclit DOUBLE
 c_field_enum DOUBLE
 c_field_field DOUBLE
 c_field_push DOUBLE
+c_field_ret DOUBLE,EARLY
 c_field_veclit DOUBLE
+c_param_annot DOUBLE,EARLY
+c_param_arm DOUBLE,EARLY
 c_param_enum DOUBLE,EARLY
 c_param_field DOUBLE,EARLY
+c_param_local DOUBLE,EARLY
+c_param_nullable DOUBLE,EARLY
 c_param_push DOUBLE,EARLY
+c_param_reassign DOUBLE,EARLY
 c_param_ret DOUBLE,EARLY
 c_param_veclit DOUBLE,EARLY
 c_pfield_enum DOUBLE,EARLY
@@ -28,6 +45,14 @@ c_tuple_tuplem DOUBLE
 c_tuple_veclit DOUBLE
 p_e1 DOUBLE
 p_e2 DOUBLE
+p_g1 DOUBLE,EARLY
+p_g3 DOUBLE,EARLY
+p_g4 DOUBLE,EARLY
+p_g5 DOUBLE,EARLY
+p_h2 DOUBLE,EARLY
+p_h5 DOUBLE,EARLY
+p_h7 DOUBLE,EARLY
+p_k7 DOUBLE,EARLY
 p_o1 DOUBLE
 p_o3 DOUBLE,EARLY
 p_o4 DOUBLE,EARLY
@@ -46,12 +71,18 @@ q_present_field_literal_ret DOUBLE,EARLY
 q_present_field_var_field DOUBLE
 q_present_field_var_push DOUBLE
 q_present_field_var_ret DOUBLE,EARLY
+q_present_param_call_arm DOUBLE
 q_present_param_call_field DOUBLE
+q_present_param_call_local DOUBLE
 q_present_param_call_push DOUBLE
 q_present_param_call_ret DOUBLE
+q_present_param_literal_arm DOUBLE
 q_present_param_literal_field DOUBLE
+q_present_param_literal_local DOUBLE
 q_present_param_literal_push DOUBLE
 q_present_param_literal_ret DOUBLE
+q_present_param_var_arm DOUBLE
 q_present_param_var_field DOUBLE
+q_present_param_var_local DOUBLE
 q_present_param_var_push DOUBLE
 q_present_param_var_ret DOUBLE

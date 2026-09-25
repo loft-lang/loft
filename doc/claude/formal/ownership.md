@@ -511,7 +511,10 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-49` (an explicit `return` of an ELEMENT published a signature with no
+**OPEN: 0.**  `D-own-50` (a record returned by a fn-ref call whose target is UNRESOLVED had no
+decided owner: bound, it was adopted even when it was the caller's capture; inline, it was held
+to frame exit — loft#1659) opened and CLOSED 2026-09-24, below.
+`D-own-49` (an explicit `return` of an ELEMENT published a signature with no
 borrow, so the caller freed the container — loft#1625, and the third container kind of one
 missing record after loft#677 and loft#1140) opened and CLOSED 2026-09-23, below.
 `D-own-48` (a returned vector local rebound by a call inside a loop or a branch
@@ -630,6 +633,49 @@ shares), so it keeps its own store and is copied into the buffer once at the ret
 delivery a join at the tail already takes.  A literal, a copy and `[]` refill the buffer in place
 and keep the rename, as does a call rebind on the straight line.  Guard
 `tests/scripts/1599-a-returned-vector-rebound-by-a-call-in-a-loop-frees-its-stores.loft`.
+
+### D-own-50 — OPENED AND CLOSED (2026-09-24): a record returned through an unresolved fn-ref had no decided owner
+
+`@FR-O-Unknown` says the oracle may derive nothing, and that the READER must then decide.  A
+`CallRef` whose target is unresolved — a fn-typed parameter, a slot two lambdas were assigned
+to — is that case, and for a record result both readers had decided without deciding:
+
+```loft
+fn build(f: fn(integer) -> S, n: integer) -> float {
+  t = 0.0;
+  for i in 0..n { t += height(f(i)); }     // inline: held to frame exit
+  for i in 0..n { s = f(i); t += height(s); }  // bound: adopted, then freed
+  t
+}
+```
+
+* **Bound** (`s = f(i)`): the heap first-bind dispatch had no arm for an unresolved target, so
+  the bind was the plain adopt and `s` the store's owner.  Where the closure the caller passed
+  hands back its CAPTURE on some calls (`if c { cap } else { S {…} }`, an early `return cap;`,
+  `capn ?? S {…}`), `s`'s free released the caller's capture — every later read answered another
+  record's bytes, on both backends, with nothing said.  A closure returning ONLY its capture was
+  unaffected, because its return is copied into the call site's buffer.
+* **Inline** (`height(f(i))`): `Scopes::callref_owned_return` declined the lift for an unresolved
+  target, so the result had no binding at all and the frame's fn-ref hand-up list held it until
+  the frame ended — one store per call, the store table exhausted at 65 535 calls on both
+  backends.  `--native` also handed such stores UP through every frame returning a heap value,
+  and its duplicate check scanned the growing list on every call (quadratic).
+
+**Closed** by reading the one fact that exists: the call's own return compares the store it
+hands back against the allocation counter as the call found it (`State::release_fnref_bufs`,
+`codegen_runtime::cr_fnref_minted`), and @PLN150 already carried that verdict one hop to a
+record COPY.  `OpBindFnRefResult` (interpreter) and `cr_fnref_adopt` (`--native`) carry it to
+the BIND: a store that predates the call is copied into a fresh store and left alone
+(`@FR-B-Copy`); any other is adopted and taken OFF the hand-up list, so the binding is its one
+owner (`@FR-O-Owner`).  `use_analysis::opaque_callref_bind` is the one predicate both backends
+and the scope pass read; the inline spelling lifts into an owning temp and takes the same bind,
+at the first bind and at the reassignment a lift temp reaches.  A binding whose deps name an
+argument the call may hand back (`@FR-O-Opaque`) keeps its borrow.  Measured: 1 000 inline
+calls peaked at 1 000 live stores and now at 1–3; no copy on the mint arm.
+
+Guard: `tests/scripts/1659-an-opaque-fn-ref-record-result-is-owned-once.loft` — 14 cells, ten of
+which fail on the build before (the 70 000-call cells on the store ceiling, the capture cells on
+the value; both backends).
 
 ### D-own-47 — OPENED AND CLOSED (2026-09-21): a local a `match` statement's arms first assign died at the match's block, and was read after it
 

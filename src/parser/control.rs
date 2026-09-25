@@ -6779,6 +6779,8 @@ impl Parser {
         let read = field_read.unspan().clone();
         self.text_payload_views
             .insert((self.context, bind_nr), read);
+        // The scope pass needs the same fact after the parser's registry is gone (loft#1665).
+        self.vars.text_payload_views.insert(bind_nr);
     }
 
     /// #673 / @PLN35 Phase 3 — point a multi-pattern branch's cloned body at the
@@ -13834,6 +13836,14 @@ impl Parser {
         if self.tail_is_closure_read(body.last()) {
             return true;
         }
+        // A dep on the closure RECORD itself: an `if` whose arm reads a capture carries
+        // `__closure` in the value's own deps, with no local in between to ask.
+        if ls
+            .iter()
+            .any(|&d| d < self.vars.count() && self.vars.name(d) == "__closure")
+        {
+            return true;
+        }
         ls.iter().any(|&v| self.var_views_a_capture(v, body))
             || body
                 .last()
@@ -17028,7 +17038,20 @@ impl Parser {
                     other => other.clone(),
                 };
                 if let Type::Reference(td, ls) = &t {
-                    if self.return_projects_into_local(&v) || self.return_copies_a_leasing_value(&v)
+                    // ⚠ THREE disjuncts, and two of them arrived from different branches on
+                    // the same line.  @PLN163 P4 added the leasing-copy leg and loft#1659 the
+                    // capture leg, each as `projects_into_local || <its own>`; taking either
+                    // side of that merge whole would have silently dropped the other's fix,
+                    // which is the join-only defect neither branch's gate could see.  They are
+                    // independent reasons a mid-body `return` cannot hand its value back as it
+                    // stands, so the condition is their union.
+                    //
+                    // loft#1659, `@FR-F-Ret` — a CAPTURE handed back by an explicit `return`
+                    // is the closure's, not a fresh value: the tail selector's loft#1485 leg,
+                    // which no mid-body exit reached.
+                    if self.return_projects_into_local(&v)
+                        || self.return_copies_a_leasing_value(&v)
+                        || self.return_views_a_capture(ls, std::slice::from_ref(&v))
                     {
                         // The returned expression points INTO something this
                         // function frees — a field of an inline call's temporary
@@ -17082,7 +17105,13 @@ impl Parser {
                     {
                         let w = self.materialize_view_return(rtd, &mut v);
                         self.ref_return(&[w], std::slice::from_mut(&mut v), RetSite::MidReturn);
-                    } else if self.return_projects_into_local(&v) {
+                    } else if self.return_projects_into_local(&v)
+                        || self.return_copies_a_leasing_value(&v)
+                    {
+                        // `(H-Copy-Lease)` — a parameter, a member or a view of one returned as a
+                        // struct-enum of a type that declares `OpCopy` is a copy, materialised here
+                        // exactly as the Reference arm above does, so it takes its lease.
+                        //
                         // #425 sibling — `return mk().field` where `field` is a
                         // struct-enum (heap record): the inline-call base is freed
                         // at scope exit, so copy the field's record into an owned
@@ -17753,7 +17782,20 @@ impl Parser {
             // (in `process_call_args`) points the caret at the argument, not at
             // the cursor drifted to `)` / `,`.
             arg_pos.push(self.lexer.peek_pos().clone());
-            let t = self.expression(&mut p);
+            let mut t = self.expression(&mut p);
+            // A member of a call result handed on as an argument is read where it lives
+            // (`call_member_view`): the argument binds without copying, so the copy the terminal
+            // projection made would be a structure nobody wrote.
+            if let Value::Block(bl) = p.unspan()
+                && bl.name == "inline ref copy"
+                && let Some(Value::Call(_, cargs)) = bl.operators.get(2).map(Value::unspan)
+                && let Some(src) = cargs.first().cloned()
+                && let Type::Reference(d_nr, _) = *t.base()
+                && let Some((viewed, view_tp)) = self.call_member_view(&src, d_nr)
+            {
+                p = viewed;
+                t = view_tp;
+            }
             self.expected = Type::Unknown(0);
             types.push(t);
             list.push(p);

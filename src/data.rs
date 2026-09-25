@@ -5279,6 +5279,13 @@ impl Definition {
         Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::FreeOverload)
     }
 
+    /// Is this a METHOD — keyed `t_<LEN><receiver>_<name>` (`D-Key`)?  Asked of the key's shape:
+    /// a declared method, never an instance (those are `i_`).
+    #[must_use]
+    pub fn is_method(&self) -> bool {
+        Data::split_key(&self.name).is_some_and(|k| k.kind == KeyKind::Method)
+    }
+
     /// Is this an INSTANCE of a generic — keyed `i_<LEN><types>_<template>` (`D-Key`)?  Asked
     /// of the key's shape, not of its prefix: the runtime's own `i_parse_*` helpers share the
     /// letter and are no instance.

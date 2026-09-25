@@ -1376,6 +1376,48 @@ impl Output<'_> {
             );
             return Ok(());
         }
+        // loft#1659 — the interpreter's `OpBindFnRefResult`: a closure call whose target is
+        // unresolved.  The call's return left the minted-or-borrowed verdict; adopt the mint
+        // (and take it off the hand-up list), copy a store that predates the call.  The copy
+        // takes NO source-free bit: its source is a capture or an argument, owned further up.
+        if let Some(rec) = crate::use_analysis::opaque_callref_bind(
+            self.data,
+            self.def_nr,
+            variables.tp(var),
+            to_unspanned,
+        ) {
+            let tp_nr = self.data.def(rec).known_type();
+            let first_bind = !self.declared.contains(&var);
+            if first_bind {
+                self.declared.insert(var);
+                let tp_str = self.local_rust_type(var, variables.tp(var));
+                // The null sentinel, not a `null_named` placeholder: the adopt arm — every
+                // minting call — would only free it as displaced, and `OpDatabase` on the
+                // copy arm turns the sentinel into a fresh store.
+                writeln!(w, "let mut var_{name}: {tp_str} = DbRef::NULL;")?;
+                self.indent(w)?;
+            }
+            write!(w, "{{ let _dst = var_{name}; let _src = ")?;
+            self.output_code_inner(w, to)?;
+            let disp = displaced_free(&format!(
+                "if _dst.store_nr != u16::MAX && _dst.store_nr != _src.store_nr \
+                 {{ OpFreeRef(cell, _dst, \"{name}(displaced)\"); }} "
+            ));
+            let target = copy_target("_dst", first_bind);
+            write!(
+                w,
+                "; if codegen_runtime::cr_fnref_adopt(_src) {{ {disp}var_{name} = _src; }} \
+                 else {{ var_{name} = OpDatabase(cell, {target}, {tp_nr}_i32); \
+                 OpCopyRecord(cell,_src, var_{name}, {tp_nr}_i32); }} }}"
+            )?;
+            crate::copy_manifest::record(
+                self.def_nr,
+                var,
+                tp_nr,
+                crate::copy_manifest::Origin::NativeCallReturn,
+            );
+            return Ok(());
+        }
         // @PLN130 F1/F2 — MATERIALISE an element/field read into a store `var` owns.
         //
         // Sibling of the interpreter's `gen_set_first_ref_elem_copy`.  `c = v[i]` normally

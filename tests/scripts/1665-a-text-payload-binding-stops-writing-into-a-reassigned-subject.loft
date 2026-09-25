@@ -1,0 +1,89 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `text` payload binding is a VIEW of its subject's field, and `(B-View)` ends it where the
+// subject is DISTURBED while the binding is still used (loft#1665, `formal/binding.md`
+// @FR-B-View, @FR-B-Disturb).
+//
+// A `text` binding holds a COPY of the characters, so #673 makes a write through it mean the
+// field write by MIRRORING the binding back into the field after each write.  The mirror was
+// unconditional: `match e { Ei { v } => { e = Ei { v: "zz" }; v += "x" } }` wrote "abx" into
+// the NEW `e`, on both backends and with nothing said, where a record payload binding in the
+// same program materialises and says so.  The binding now joins the disturbance walk as a view,
+// and a condemned one keeps its copy and loses its mirror — which is what materialising a text
+// view means — with the same advice line.
+//
+// The walk decides per binding, loops included, which is why a parser-side "has the subject
+// been reassigned since the bind" flag was not the cure: in m5 the body's own reassignment
+// reaches the NEXT turn's write only through the back edge.
+//
+// Controls: m2 (no disturbance: the #673 write lands), m3 (the disturbance follows the last
+// use), m4 (a binding re-made every turn), m6 (overwriting the subject's PLACE is not a
+// disturbance, so the view survives and its write lands in the new record).
+//
+// @falsified-at: a75a4d1ed — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+// @falsified-by: tests/falsified/1665-a-text-payload-binding-stops-writing-into-a-reassigned-subject.patch — interpret exit 1 -> 0, interpret 3 assertion failures -> 0, native exit 1 -> 0, native 6 assertion failures -> 0
+//   CHANNEL: the value — the reassigned subject's field.
+//   WITNESS (measured on the control's build): m1's and m7's subject read "abx" where "zz" is
+//   right, and m5's turns read "abx abxx" where "ab zz" is right — the second turn's mirror
+//   writes the binding's own accumulating copy into the reassigned subject.
+//   HOLDS: leak, panic and free-refusal are clean on both trees, and the four controls (m2, m3,
+//   m4, m6) pass on both — they are the shapes the mirror must keep.
+
+enum E1665 { En, Ei { v: text } }
+struct O1665 { s: E1665 }
+
+fn ev1665(e: E1665) -> text { match e { Ei { v } => v, _ => "-" } }
+
+fn test_m1_a_write_after_the_reassignment_stays_in_the_binding() {
+  e = Ei { v: "ab" };
+  got = "";
+  match e { Ei { v } => { e = Ei { v: "zz" }; v += "x"; got = v; }, _ => {} };
+  assert(got == "abx", "the binding: got {got}");
+  assert(ev1665(e) == "zz", "the reassigned subject: got {ev1665(e)}");
+}
+
+fn test_m2_an_undisturbed_write_lands() {
+  e = Ei { v: "ab" };
+  match e { Ei { v } => { v += "x"; }, _ => {} };
+  assert(ev1665(e) == "abx", "the #673 write-through: got {ev1665(e)}");
+}
+
+fn test_m3_a_disturbance_after_the_last_use_keeps_the_write() {
+  e = Ei { v: "ab" };
+  before = "";
+  match e { Ei { v } => { v += "x"; before = ev1665(e); e = Ei { v: "zz" }; }, _ => {} };
+  assert(before == "abx", "before the reassignment: got {before}");
+  assert(ev1665(e) == "zz", "after: got {ev1665(e)}");
+}
+
+fn test_m4_a_binding_made_every_turn_writes_every_turn() {
+  e = Ei { v: "ab" };
+  seen = "";
+  for i in 0..2 {
+    match e { Ei { v } => { v += "x"; seen += "{ev1665(e)} "; e = Ei { v: "zz" }; }, _ => {} }
+  }
+  assert(seen == "abx zzx ", "each turn's write: got {seen}");
+}
+
+fn test_m5_a_reassignment_reached_through_the_back_edge_materialises() {
+  e = Ei { v: "ab" };
+  seen = "";
+  match e {
+    Ei { v } => { for i in 0..2 { v += "x"; seen += "{ev1665(e)} "; e = Ei { v: "zz" }; } },
+    _ => {}
+  };
+  assert(seen == "ab zz ", "no write reaches the subject: got {seen}");
+}
+
+fn test_m6_overwriting_the_place_is_not_a_disturbance() {
+  o = O1665 { s: Ei { v: "ab" } };
+  match o.s { Ei { v } => { o.s = Ei { v: "zz" }; v += "x"; }, _ => {} };
+  assert(ev1665(o.s) == "abx", "the write lands in the new record: got {ev1665(o.s)}");
+}
+
+fn test_m7_the_is_spelling() {
+  e = Ei { v: "ab" };
+  if e is Ei { v } { e = Ei { v: "zz" }; v += "x"; }
+  assert(ev1665(e) == "zz", "the reassigned subject: got {ev1665(e)}");
+}

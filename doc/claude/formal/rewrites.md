@@ -1025,7 +1025,13 @@ push's own is refreshed at the site, the record's length included (R-Refresh).  
 before each fast-path store).  Sites: `hoist::FUSABLE_PUSHES`, `hoist::fused_push`,
 `hoist::pre_alloc_path`, `Output::begin_vector_hoist`, the registry's `HoistedPushEmitter`
 and `PreAllocEmitter`, `Stores::push_hoisted`.  Shipped: the consumer's `lock_curved` 5.64× → 3.84×, `lock`
-4.39× → 3.51× of Rust, hashes unchanged.
+4.39× → 3.51× of Rust, hashes unchanged.  The fusable kinds are `i64`, `f32`, `f64`, the
+`i32` (`OpPushInt4`, the integer null kept as `i32::MIN`), the CHARACTER (`OpPushCharacter`,
+the code point as `u32`) and the BYTE (`vector<u8>` / `vector<i8>`, `OpPushByte`), whose element is the encoded byte
+`Store::byte_raw(min, val)` — the one encoding `OpSetByte` writes, so the header's raw store,
+its growth step and the unfused path agree; `hoist::push_operands` is where every site reads a
+push's value, so none can take the unencoded one.  A byte loop's one-value slice fill is not
+admitted (it would write the value unencoded); its reserve and window are.
 
 ### A minted element is a record no holder can name
 
@@ -2362,6 +2368,200 @@ costs the rewrite and never a value.  The declines written into the rules above 
 ones a MEASUREMENT bought (@PLN164's README § C1, § C2 *The restrictions, re-derived*).
 The rules are written BEFORE the phases so that a question met while building one is
 answered here rather than decided in the code.
+
+### A value already home is not copied to a second one
+
+```
+  (R-Rebind)     `x = f(x, …)` — a whole-value bind to a plain OWNED local x (O-Owner:
+                 never a parameter, a view, a `&` link or a witnessed local, nor a `τ?`
+                 that may be absent) from a call that receives x BY VALUE as an
+                 argument, where no OTHER argument reaches x's store (R-Place's alias
+                 condition) and no view of x is live across the call (B-Disturb: the
+                 CALL, not the bind, is now where x's store changes, so a view the
+                 rebind would have materialised is materialised before the call) —
+                 hands the callee x's OWN record as its return buffer.  The parameter
+                 already IS that record (a by-value record parameter writes through,
+                 B-Ref-Uniform), so the callee's reads and writes of it during the call
+                 land where they always did; only its EXITS change.  An exit literal is
+                 staged (R-InPlaceLiteral: every field expression evaluated before the
+                 first write) and then written field by field into x's record: a field
+                 whose staged value is a view of that same field (`Doc { buf: d.buf,
+                 … }`) is H-CopySelf and costs nothing; a field whose value is an OWNED
+                 DEAD local built in a store of its own (`pieces: np`) is delivered as
+                 R-MoveLast delivers it — a relocation where the stores are one, the
+                 deep copy where they are not — after the old field's owned heap is
+                 released (H-ClearRelease); an exit `return d` answers the buffer
+                 itself and moves nothing.  The call site binds nothing and frees
+                 nothing: x's store stays x's, freed at x's scope exit as before, and
+                 the call's own hidden buffer is never minted (O-LazyBuffer);
+                 O-Buffer's destination clause is what makes this buffer no store of
+                 the callee's to release.  Every write to the buffer must FOLLOW the
+                 callee's last read of the parameter on that path — an exit literal
+                 does; a local promoted onto the buffer and filled BEFORE the parameter
+                 is read (`mat4_mul` builds its result at entry and reads `mb` after)
+                 declines, because the fill would overwrite the argument it is about
+                 to read.  Declines also, keeping the call's own buffer and the copy: a
+                 callee that on some exit answers a store other than the buffer
+                 (R-Place); a callee that MINTS into its buffer (a returned vector
+                 literal); a callee that stores or returns a view of a field of d into
+                 a place that outlives the call while an exit overwrites that field; a
+                 recursive call; a `?`/`??` discharge on the result; and the field form
+                 `o.f = f(o.f, …)` exactly as R-Place admits or declines the place.
+  (R-Compact)    `V = t` — a whole-value bind of a plain vector place V (a local, a
+                 field, an element) from a local t that was declared `[]`, filled ONLY
+                 by appends of V's OWN elements taken in NON-DECREASING index order
+                 (`for i in a..b { t += [V[i]] }`, `for e in V { if p { t += [e] } }`,
+                 `t += V[a..b]`), interleaved with at most values that do not reach V,
+                 such that at every append the count of elements already in t is at
+                 most the index being read (no slot is written before its old value is
+                 read), V neither written nor viewed between t's declaration and the
+                 bind, and t dead after it — is performed IN V's OWN record: each kept
+                 element is relocated to its new slot (H-CopySelf where the slot is its
+                 own, a block move where it is lower), the length is set, and every
+                 element not kept is released where it stands (H-ClearRelease, per
+                 element, its owned heap included).  t is never allocated.  The IDENTITY
+                 form — every element kept on its own slot, then more appended — is
+                 `V += more`.  The PREPEND form `t += g; t += V; V = t` (g not reaching
+                 V) is the same rule read backwards: V's elements move UP by len(g) as
+                 one block, back to front, and g's are written in front.  Declines: an
+                 append order the walk cannot prove monotone; an element of V appended
+                 twice; V read after the bind through a view taken before it; an
+                 element type that owns a droppable (H-Drop: a release here is a
+                 resource release, which keeps the written order of frees).
+  (R-Const)      a function whose body is ONE literal over literals — `fn codes() ->
+                 vector<integer> { [ … ] }`, or a record literal of such — reading no
+                 parameter, is a CONSTANT: its value is built ONCE, in the const store
+                 (read-only, H-WriteLocked), and every call answers a VIEW of it
+                 (O-Borrow: deps → the constant), never a fresh store.  A plain bind of
+                 that view (`c = codes()`) is a view too (skip-free) where c is only
+                 READ in its frame — indexed, iterated, handed to a `const` parameter or
+                 to a callee that does not write its parameter (the callee's own fact,
+                 one call deep, as R-Callee reads it) — and is B-Copy's copy the moment
+                 c is written, rebound to a non-constant, returned, stored into a field
+                 or element, captured, or handed to a parameter the callee writes: the
+                 copy is placed at the bind, and the program cannot tell the two forms
+                 apart (R-Escape).  A top-level `const` vector already lives in that
+                 store; this rule gives a literal-bodied function the same home.
+  (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
+                 no-heap record of at most six scalar fields — carries the record's
+                 fields as its TUPLE in the binding frame too, where every use of the
+                 local is a field read, a hand-off as a by-value or `const` argument to
+                 another admitted function (the fields cross the call as scalars), or a
+                 rebind from such a call (`p = mat4_transform(m, p)`); and an exit that
+                 answers a VIEW of such a record (`for c in self.cells { if … { return
+                 c } }`, `return self.inner`) answers the tuple by one load per field —
+                 no store minted, no copy at the caller.  The record is materialised at
+                 the one place a representation is owed — a store into a field or an
+                 element, a return from a function R-ValueRecord declines, a library's
+                 exported API (R-Escape) — and nowhere else.  Declines: a `&` link to
+                 the local; the local handed to a fn-ref; a nullable binding.
+```
+
+**In words.**  The rules above this section build NEW bytes where they will live:
+`(R-Place)` hands a call the place its result is going, `(R-ElemFirst)` builds a vector
+inside the element that consumes it, `(R-InPlaceLiteral)` writes a literal into its slot,
+`(R-RetAdopt)` builds a result in the buffer it is returned through, `(R-MoveAppend)`
+relocates a dying temporary.  The wide pass (2026-09-24, `bench/portal/analysis/
+libraries-wide.md`) measured a second class those cannot reach, and it holds the rows
+furthest from Rust: bytes that ALREADY EXIST in a store the program still owns, copied
+whole into a second store because the language's plain bind copies (`(B-Copy)`).  The
+four rules here each name one shape in which the value's home is already there, so the
+copy has no work to do — C125's direction, *remove the temporary*, applied to a temporary
+that is a copy rather than a mint.  Their common floor is `(H-CopySelf)`: a whole value
+delivered onto the place that holds it is a no-op the runtime decides by identity, which
+is what lets a rule hand a value's own home as its destination without a second answer
+to bisect to.
+
+- **`(R-Rebind)`** — the immutable-update idiom, `doc = delete_range(doc, a, b)` with the
+  callee ending in `Doc { buf: d.buf, pieces: np }`: zttext `delete_range` **138×**,
+  `set_style`, and `invert`'s `cur = apply_op(cur, op)` (118× with `(R-Compact)`); the
+  `buf` field (100 000 characters) is copied per edit today — TWICE: the exit mints a fresh
+  `Doc` and `vector_add`s `buf` into it, and the call site deep-copies that result into `doc`
+  again — and is H-CopySelf under the rule, so an edit costs O(pieces) as the Rust twin's
+  does.  **Hand-priced 2026-09-24** on the bench row's emitted Rust (the exit's mint and
+  `buf` copy struck, `pieces` delivered into `d`'s own record, `return d`; the call site
+  unchanged — its identity test already accepts a result that is its argument): **61–64 ms →
+  4.2–4.6 ms per op (−93 %)**, hash `cb409877` unchanged, native leak check clean; against
+  the twin's 0.68 ms the row goes 138× → ~6.5×, the remainder being the per-edit rebuild of
+  5 000 pieces, which the twin pays too.  `mat4_mul` (37×) DECLINES —
+  it fills its result before reading `mb` — and stays where it is: its cost is the mint
+  of a 16-float vector per call, which no copy rule removes.
+- **`(R-Compact)`** — a vector rebuilt from its own elements, `te_new += [h.entries[i]]
+  … h.entries = te_new`: dryopea `truncate_to` / `drop_oldest` **178×** (a prefix, a
+  suffix; every entry owns two vectors, copied per push today, untouched in place),
+  zttext `invert`'s prepend (118×) and `insert_text`'s identity copy (95×; its other
+  half, a `character` push holding no push header on native, is closed — `OpPushCharacter`
+  and `OpPushInt4` joined `hoist::FUSABLE_PUSHES` on 2026-09-24).  **Hand-priced
+  2026-09-24** on `truncate_to`'s emitted Rust: the rebuild — a store for `te_new`, a copy of
+  every kept entry into it, a SECOND hidden store for the rebind, the entries copied again,
+  the old field cleared, copied back, both stores freed: three deep copies of every kept
+  element, each claiming its two inner vectors — replaced by one in-place compaction
+  (release each dropped element where it stands, one block move of the kept run, the
+  length set): **3.2–3.8 ms → 414–435 µs per op (−87 %)**, hash `31aefae` unchanged, clean
+  under the leak check, `LOFT_POISON` and `LOFT_STRICT_STORES`; against the twin's 13.8 µs
+  the row goes 207× → ~30×, and what remains is the per-push `Stroke` construction —
+  `(R-MoveAppend)` / `(R-Place)`'s class, not this rule's.  The runtime lacks the primitive
+  (a range compaction: `remove_vector` shifts one element and releases nothing,
+  `clear_vector_release` releases all) and its parts all exist; the 22-line composition is
+  what the build adds.  Found on the way: `clear_vector_release` derives the element type
+  only under a one-field `main_vector<T>` root, so a rebind of a vector FIELD of a
+  multi-field record released nothing and stranded every old element's owned heap in the
+  store — fixed beside this price (see heap.md's register).
+- **`(R-Const)`** — text2d `write_text` **86×**: `face_codes()` / `face_rows()` return
+  vector literals of 56 and 392 elements, rebuilt for every glyph drawn and read only;
+  moros `panel_build` (19×) copies a constant `vector<text>` into a list box per frame,
+  which is a STORE into a field and keeps its copy under the rule — the rule removes the
+  rebuild, not the author's choice to store it.  **Hand-priced 2026-09-24** on the row's
+  emitted Rust: the two tables built once per process (a `OnceLock` holding the first
+  build's `DbRef`, minted with a null buffer so the store is its own) **117 → 7.0 ms per
+  op**, and the callers' hidden buffer struck as well (`(O-LazyBuffer)`'s mint before the
+  call and free at every exit, ~74 ns a pair over 38 000 calls) **→ 4.3 ms (−96 %)**; hash
+  `53aaaae5` unchanged, the leak check naming exactly the two resident tables and nothing
+  else; against the twin's 1.31 ms the row goes 86× → ~3.3×.  The caller's bind had NOT
+  copied — the emission binds the callee's buffer directly — so the second half of this
+  rule strikes a BUFFER, never a copy, and its landing note must say so.  What remains is
+  the per-pixel `set_pixel` (the call class) and one emitter waste found on the way: the
+  fused element write derives `text_span_of` on every call for an INTEGER element and
+  never uses it (9–13 % of the row).
+- **`(R-ValueLocal)`** — `(R-ValueRecord)` returns a small record in registers only where
+  EVERY call site reads fields off it; a site that binds the whole record to a local, or
+  rebinds its own argument, declined it and paid a store per call: mesh3d
+  `mat4_transform` **22×** (`p = mat4_transform(m, p)`) and `sphere` (23×: `vec3`,
+  `normalize3`, `vec2`, `vertex` per vertex), moros `resolve_move` (7.5×: `vec3`, a `Hex`
+  answered as a VIEW of an element, a `HexAddress` from `world_to_hex`) and
+  `emit_to_material` (14×), hex_body `bone_shape_has` (69×, three records per query).
+  **Hand-priced 2026-09-24** on `mat4_transform`'s emitted Rust: `p` carried as three `f64`
+  locals across the 500 000-call loop, the callee answering its tuple into them and `tv`
+  crossing as scalars, **45 → 3.1–4.0 ms per op (−92 %)**, hash `1871b40b` unchanged, the
+  leak check silent; against the twin's 1.85 ms the row goes 22× → ~1.7–2.2×.  The decline
+  `(R-ValueRecord)` makes today is its SITE gate — *a site consumes its record*: the local is
+  handed on as an argument — and what the site pays is not a deep copy but a store MINTED
+  and the previous one FREED per call (the buffer handed in is the null sentinel every
+  iteration), the same class.  What remains is twelve loop-invariant element reads of the
+  unwritten matrix per call: an instrument that hoists them reads ~1.2–1.5×, so the rule
+  that would own it — a loop-invariant ELEMENT read of a held, unwritten vector, where
+  `(R-Invariant)` covers integer chains only — is the next one to write for this class.
+
+**Landing (R-Switch).**  `(R-Rebind)`, `(R-Compact)` and `(R-Const)` are parse- or
+scope-pass rewrites the interpreter shares, so their falsifier is the switch A/B over
+the corpus and the consumer suites — `LOFT_NO_REBIND_PLACE`, `LOFT_NO_COMPACT`,
+`LOFT_NO_CONST_VIEW` — with `LOFT_POISON` / `LOFT_STRICT_STORES` / the native leak check
+armed on every cell, since three of the four move a RELEASE (the old field's heap, the
+dropped elements, the copy that is no longer made).  `(R-ValueLocal)` is generation-time
+(`LOFT_NO_VALUE_LOCAL`), and the interpreter is its oracle.  Each rule carries a cell
+that only its gate can fail, built before the rule: for `(R-Rebind)` a callee that reads
+its parameter AFTER filling the buffer (admitting it answers the fill, not the argument),
+and a view of x live across the call; for `(R-Compact)` an append order that is not
+monotone (an every-second filter read backwards, whose in-place form overwrites an
+element before it is read); for `(R-Const)` a write through the bound local, which must
+copy — and H-WriteLocked is the runtime backstop, a fault rather than a silent write into
+the constant; for `(R-ValueLocal)` a local whose address escapes.  Hand-price each on the
+emitted Rust of its headline row before any emitter code: `delete_range` with `var_d`
+handed as the buffer and the `buf` copy struck, `truncate_to` as a length set plus the
+per-element release, `write_text` with the two tables hoisted to statics,
+`mat4_transform` with `p` carried as three floats — the price the twin sets is the
+ceiling each is measured against.  **NOT BUILT** (2026-09-24): written from the wide
+pass's measurements, ahead of the code, so that the code changes to match them.
 
 ## Validating the emitted routines against their assumptions
 

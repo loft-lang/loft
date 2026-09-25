@@ -1,0 +1,192 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A write through a `match` / `is` payload binding lands where the BINDING points, on both
+// sides of `(B-View)`'s materialise (loft#1662).
+//
+// A payload binding is a reference TO its container, exactly as a `&` link is, so a write
+// through it means the field write — `(Col-Group)`, loft#1160.  The resolution that gives it
+// that meaning replaces the destination with the field access, which erases the binding from
+// the statement: after `(B-Disturb)`'s fourth event (the subject REASSIGNED) `(B-View)` hands
+// the binding a copy and *"writes through it stop reaching the container"*, and nothing
+// downstream could redirect a write that no longer names it.  The binding's reads and its
+// write ended up in two different places, on both backends, with an `advice` line stating the
+// opposite of what happened.
+//
+// The `&` LINK is the in-file oracle, and what it answers is the whole argument: the same
+// relation spelled with the token, never resolved back, and right on the UNDISTURBED side —
+// while on the disturbed side it is not materialised at all but REFUSED, because
+// `(B-Ref-Reshape)` says a `&` may not be quietly downgraded to a copy (`D-bind-60`).  That is
+// the asymmetry the cure rests on: a link can keep its field spelling because it can never
+// become a copy, and a plain binding cannot, because `(B-View)` gives it one.  So the
+// resolution is kept exactly where it buys something the binding cannot — a LINKED-GROUP
+// member, where `record_finish` needs the owning record and the field to reach the siblings —
+// and a `=` is a REBIND, as it already is for `v = <other>` and `v = []` and as it is for the
+// struct-view sibling `c = o.i; c = In { … }`.
+//
+// Twenty cells.
+//
+// Axes this file MOVES:  the write route (`+=`, `v[i] =`, `.remove`, `= <literal>`), the write
+//                        ORDER against the disturbance (before and after), the binding
+//                        spelling (`match` arm and `is` capture), the subject kind (a local, a
+//                        parameter, a struct FIELD), the payload type (integer vector, records,
+//                        a keyed collection, a nullable vector), the evaluation count (once and
+//                        in a LOOP, whose back edge puts the body's own disturbance ahead of
+//                        the next turn), and the variant the subject is given (same, different).
+// Axes it HOLDS FIXED:   one binding per arm; the subject is never disturbed by a callee.
+//
+// The two CONTROLS are the boundary and must not move: a DIRECT `e.v += [x]` in the same arm
+// means the SUBJECT, which is now the new value (c1); and a subject reached as a struct FIELD
+// is OVERWRITTEN rather than reassigned, which `(B-Disturb)` says is not a disturbance at all,
+// so the binding survives and reads the new payload (c2).
+//
+// ⚠ RESIDUAL, loft#1664 / `D-col-6`: a binding onto a LINKED-GROUP member keeps the field
+// spelling, so the split survives there — the write needs the owning record, which the binding
+// does not carry.  The `&` spelling of that gap is answered (`D-bind-60`, and the link's origin
+// registered in the same table); this one is not, because only a plain binding can become a
+// copy.  Cell g1 pins the half that does work — the sibling IS reached — so the narrowing
+// cannot silently undo it.
+//
+// @falsified-at: 3eed749fb — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1662-a-payload-bindings-write-follows-the-binding.patch — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+//   CHANNEL: assert (values).  The count is 1 because a failed assert stops the run and d1 is
+//   the first cell the control fails; on that tree d4's append was LOST entirely, d5 wrote into
+//   a record whose tag had just been set to another variant, and r1/r4 read `[]` while the
+//   field was APPENDED to rather than replaced.
+//   ARMED: no instrument — every cell is a value read back through the two spellings.
+//   WITNESS: `d1 append after the reassign: [1,2,3] / [9,9,9,7]` — the binding's contents
+//   against the subject's, which on the control are the two halves of one statement.
+// HOLDS: leak, panic, free-refusal and exit-beyond-the-assert are clean on both trees and both
+//   backends, measured by `make falsify`, which prints only the channels that MOVE.
+struct Vb { vb_k: integer, vb_nm: text }
+enum E { En, Ei { v: vector<integer> } }
+enum G { Gn, Gd { g_data: vector<Vb>, g_look: sorted<Vb[vb_k]> } }
+enum K { Kn, Kh { h: hash<Vb[vb_k]> } }
+enum N { Nn, Ni { v: vector<integer>? } }
+enum N2 { N2n, N2i { v: vector<integer?> } }
+struct H { e: E }
+
+fn subject(e: const E) -> text {
+  match e { Ei { v } => "{v}", _ => "n" }
+}
+
+fn as_a_parameter(e: E) -> text {
+  match e { Ei { v } => { e = Ei { v: [40, 41] }; v += [42]; return "{v}|{subject(e)}"; }, _ => {} };
+  return "n";
+}
+
+fn main() {
+  // ---- the ORACLE: a `&` link is the same relation, and answers both sides -------------
+  o1 = Ei { v: [1] };
+  match o1 { Ei { v } => { v += [2]; assert("{v}" == "[1,2]" && subject(o1) == "[1,2]",
+    "o1 undisturbed writes through: {v} / {subject(o1)}"); }, _ => {} };
+
+  // ---- the write follows the binding once the subject is REASSIGNED --------------------
+  d1 = Ei { v: [1, 2, 3] };
+  match d1 { Ei { v } => { d1 = Ei { v: [9, 9, 9] }; v += [7];
+    assert("{v}" == "[1,2,3,7]" && subject(d1) == "[9,9,9]",
+      "d1 append after the reassign: {v} / {subject(d1)}"); }, _ => {} };
+
+  d2 = Ei { v: [1, 2, 3] };
+  match d2 { Ei { v } => { d2 = Ei { v: [9, 9, 9] }; v[0] = 7;
+    assert("{v}" == "[7,2,3]" && subject(d2) == "[9,9,9]",
+      "d2 element write after the reassign: {v} / {subject(d2)}"); }, _ => {} };
+
+  d3 = Ei { v: [1, 2, 3] };
+  match d3 { Ei { v } => { d3 = Ei { v: [9, 9, 9] }; v.remove(0);
+    assert("{v}" == "[2,3]" && subject(d3) == "[9,9,9]",
+      "d3 removal after the reassign: {v} / {subject(d3)}"); }, _ => {} };
+
+  // The copy is taken AT THE BIND, so a write written BEFORE the disturbance lands in it too.
+  d4 = Ei { v: [1, 2, 3] };
+  match d4 { Ei { v } => { v += [7]; d4 = Ei { v: [9, 9, 9] };
+    assert("{v}" == "[1,2,3,7]" && subject(d4) == "[9,9,9]",
+      "d4 append before the reassign: {v} / {subject(d4)}"); }, _ => {} };
+
+  // The subject is given ANOTHER variant, so the payload the write was resolved to is gone.
+  d5: E = Ei { v: [1, 2, 3] };
+  match d5 { Ei { v } => { d5 = E.En; v += [7];
+    assert("{v}" == "[1,2,3,7]" && d5 is En, "d5 append after another variant: {v}"); }, _ => {} };
+
+  // The `is` capture is the same binding under another spelling.
+  d6 = Ei { v: [1, 2, 3] };
+  if d6 is Ei { v } { d6 = Ei { v: [9, 9, 9] }; v += [7];
+    assert("{v}" == "[1,2,3,7]" && subject(d6) == "[9,9,9]",
+      "d6 is-capture after the reassign: {v} / {subject(d6)}"); }
+
+  assert(as_a_parameter(Ei { v: [1, 2, 3] }) == "[1,2,3,42]|[40,41]",
+    "d7 a parameter subject: {as_a_parameter(Ei { v: [1, 2, 3] })}");
+
+  // ---- a `=` is a REBIND, whatever the right-hand side is ------------------------------
+  r1 = Ei { v: [1, 2, 3] };
+  match r1 { Ei { v } => { v = [7, 7];
+    assert("{v}" == "[7,7]" && subject(r1) == "[1,2,3]",
+      "r1 literal rebind: {v} / {subject(r1)}"); }, _ => {} };
+
+  r2 = Ei { v: [1, 2, 3] };
+  match r2 { Ei { v } => { other = [8, 8]; v = other;
+    assert("{v}" == "[8,8]" && subject(r2) == "[1,2,3]",
+      "r2 variable rebind: {v} / {subject(r2)}"); }, _ => {} };
+
+  r3 = Ei { v: [1, 2, 3] };
+  match r3 { Ei { v } => { v = [];
+    assert("{v}" == "[]" && subject(r3) == "[1,2,3]",
+      "r3 empty rebind: {v} / {subject(r3)}"); }, _ => {} };
+
+  r4 = Ei { v: [1, 2, 3] };
+  match r4 { Ei { v } => { r4 = Ei { v: [9, 9, 9] }; v = [7, 7];
+    assert("{v}" == "[7,7]" && subject(r4) == "[9,9,9]",
+      "r4 literal rebind after the reassign: {v} / {subject(r4)}"); }, _ => {} };
+
+  // ---- CONTROL: the DIRECT field write means the SUBJECT, which is now the new value ----
+  c1 = Ei { v: [1, 2, 3] };
+  match c1 { Ei { v } => { c1 = Ei { v: [9, 9, 9] }; c1.v += [7];
+    assert("{v}" == "[1,2,3]" && subject(c1) == "[9,9,9,7]",
+      "c1 the direct field write is not redirected: {v} / {subject(c1)}"); }, _ => {} };
+
+  // ---- CONTROL: OVERWRITING a place is not disturbing it, so the binding survives -------
+  c2 = H { e: Ei { v: [1, 2, 3] } };
+  match c2.e { Ei { v } => { c2.e = Ei { v: [9, 9, 9] }; v += [7];
+    assert("{v}" == "[9,9,9,7]" && subject(c2.e) == "[9,9,9,7]",
+      "c2 a field overwrite leaves the binding naming the place: {v} / {subject(c2.e)}"); }, _ => {} };
+
+  // ---- a LOOP: the back edge puts the body's own disturbance ahead of the next turn ----
+  p1 = Ei { v: [1] };
+  match p1 { Ei { v } => { for i in 0..3 { v += [i + 10]; }
+    assert("{v}" == "[1,10,11,12]" && subject(p1) == "[1,10,11,12]",
+      "p1 a loop of appends writes through: {v} / {subject(p1)}"); }, _ => {} };
+
+  // The per-turn `len(v)` is the cell's second channel: a write that went elsewhere would
+  // leave the length behind, and the sum says so on the turn it happened rather than at the end.
+  p2 = Ei { v: [1] };
+  match p2 { Ei { v } => { sum = 0;
+      for i in 0..2 { v += [i + 10]; p2 = Ei { v: [9, 9] }; sum = sum + len(v); }
+    assert("{v}" == "[1,10,11]" && sum == 5 && subject(p2) == "[9,9]",
+      "p2 a loop that reassigns its own subject: {v} sum={sum} / {subject(p2)}"); }, _ => {} };
+
+  // ---- a KEYED payload with no sibling keeps its own add route -------------------------
+  k1: K = Kh { h: [] };
+  match k1 { Kh { h } => { h += [Vb { vb_k: 7, vb_nm: "seven" }]; }, _ => {} };
+  k1_l = match k1 { Kh { h } => len(h), _ => -1, };
+  assert(k1_l == 1, "k1 a lone keyed payload member: {k1_l}");
+
+  // ---- a NULLABLE payload is the same binding --------------------------------------------
+  n1: N = Ni { v: [1] };
+  match n1 { Ni { v } => { v += [2]; }, _ => {} };
+  n1_s = match n1 { Ni { v } => "{v}", _ => "n", };
+  assert(n1_s == "[1,2]", "n1 a nullable payload writes through: {n1_s}");
+
+  n2: N2 = N2i { v: [1, null] };
+  match n2 { N2i { v } => { v += [2]; }, _ => {} };
+  n2_s = match n2 { N2i { v } => "{v}", _ => "n", };
+  assert(n2_s == "[1,null,2]", "n2 a nullable ELEMENT writes through: {n2_s}");
+
+  // ---- the resolution is KEPT where it reaches a linked group's siblings ----------------
+  g1: G = Gd { g_data: [], g_look: [] };
+  match g1 { Gd { g_data } => { g_data += [Vb { vb_k: 7, vb_nm: "seven" }]; }, _ => {} };
+  g1_d = match g1 { Gd { g_data } => len(g_data), _ => -1, };
+  g1_l = match g1 { Gd { g_look } => len(g_look), _ => -1, };
+  assert(g1_d == 1 && g1_l == 1, "g1 the group member reaches its sibling: {g1_d} / {g1_l}");
+
+  println("payload binding write ok");
+}

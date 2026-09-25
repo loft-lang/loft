@@ -108,14 +108,14 @@ fn a_whole_value_write_to_the_field_keeps_the_link() -> text {
 
 // ── the control that must NOT move: reassigning the base ─────────────────────────────
 // `(B-Disturb)`'s fourth event. The slot the link names is inside `cv`'s record, and giving
-// `cv` a new value leaves nothing to re-read — so this one still materialises, and a cure that
-// spared all four causes would read `5 3` here.
-fn a_reassignment_of_the_base_still_materialises() -> text {
-  cv = Cv { w: 0, data: [1, 2] };
-  d = &cv.data;
-  cv = Cv { w: 9, data: [5, 6, 7] };
-  "{(d[0] ?? -1)} {len(d)}"
-}
+// `cv` a new value leaves nothing to re-read — so a cure that spared all four causes would
+// read `5 3` there.  It is NOT spared, and since 2026-09-24 it is REFUSED rather than
+// materialised: `(B-Ref-Reshape)` says a `&` may not be quietly downgraded to a copy, and the
+// COLLECTION link was the one spelling of `&` the refusal walk could not see
+// (`is_amp_container_link`, beside `is_amp_link` and `is_place_link`).  Same move the
+// reference-INTO cell below made, and for the same reason — a cell that refuses takes the whole
+// file with it, so its home is a refusal case:
+// `parse_errors::b_ref_reshape_reassignment_of_a_container_link_base_is_error`.
 
 // ── the controls for a reference INTO the container ──────────────────────────────────
 // A `&` link INTO a field-held container across a growth — `d = &pv.items[0]; pv.items +=
@@ -179,8 +179,6 @@ fn main() {
   assert(a_whole_value_write_to_the_field_keeps_the_link() == "9 3",
          "an overwrite is not a disturbance: {a_whole_value_write_to_the_field_keeps_the_link()}");
 
-  assert(a_reassignment_of_the_base_still_materialises() == "1 2",
-         "a reassigned base still materialises: {a_reassignment_of_the_base_still_materialises()}");
   assert(an_element_view_is_unchanged() == 1,
          "an element view keeps today's answer: {an_element_view_is_unchanged()}");
   assert(a_plain_bind_off_a_loop_variable_still_materialises() == 2,

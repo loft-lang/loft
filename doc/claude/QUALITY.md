@@ -117,8 +117,10 @@ The catch-all backlog is no longer blocked on ranking — `reach` says 125 of it
 code production runs (B6b), so it is a read-one-at-a-time queue rather than something a filter
 will shrink.  **A SECOND queue now runs beside it (B6g), and it is the sharper one:** the
 catch-all list asks who forgot a variant, while `spellings` asks who can only see one of a
-notion's two IR spellings — **93** functions resolve a projection by OP NAME and **15** of them
-handle `TupleGet` (18 · 2 when B6g wrote this; the SCREEN was widened in B6i, not the family).
+notion's two IR spellings — **92** functions resolve a projection by OP NAME and **15** of them
+handle `TupleGet`, leaving **77** that see only the call spelling (18 · 2 when B6g wrote this; the
+SCREEN was widened in B6i, not the family; `93 · 15` at the fifth join of 2026-09-24 and
+`92 · 15 · 77` re-measured at the sixth).
 
 ⚠ **Those two numbers had ROTTED, and the only reason anyone noticed is that a peer happened
 to mention moving one of them.**  This row read `38 · 5` until 2026-09-24, when the audit on
@@ -128,7 +130,23 @@ the OPTIONAL row alone, so this one drifted silently while the row beside it was
 by four branches in a single day.  The lesson is not "re-measure more often" — it is that an
 UNGATED derived row cannot be told apart from a measured one by reading it, so a reader who
 trusts it is being misled by the page rather than by any person.  Either gate a row or date
-it; this one is now dated, and the measuring command is named beside it.  Following it produced three defects in one pass, two fixed here and one
+it; this one is now dated, and the measuring command is named beside it.
+
+⚠ **It moved again at the very next join — by ONE — and the first attempt to record that wrote a
+WRONG number here, which is the more useful half of the story.**  `93 · 15` on 2026-09-24's fifth
+join re-measured as `92 · 15 · 77` on the sixth.  The audit prints THREE figures and this sentence
+uses the first two; a re-measurement that filtered the audit through a grep lost the
+`functions resolving a projection by OP NAME : 92` line — it says "projection", not "spelling" —
+and the two lines that survived read like a complete answer.  `77`, the call-only figure, went in
+as the total, turning a fall of ONE into a fabricated fall of sixteen, with a plausible cause
+attached (@PLN163 P6b deletes 296 lines of `scopes.rs`).
+
+So the hazard here is not only staleness.  An ungated row invites a careless re-measurement, and a
+WRONG re-measurement is harder to catch than a stale figure: it arrives with a date and a mechanism
+and looks freshly earned, where a stale number at least stays still.  The protection is to paste
+all three of the audit's figures instead of a filtered pair — `92 · 15 · 77` cannot be mistaken for
+`93 · 15` the way a bare `77` can.  Caught by a peer noticing their own re-measurement printed
+three numbers where this note carried two.  Following it produced three defects in one pass, two fixed here and one
 filed as a design question (**loft#1102**: a tuple literal ALIASES a heap local while a struct
 literal and a vector literal copy it).  Reading the queue a second time produced a fourth
 (**loft#1104**, B6h): a tuple-element ARGUMENT cannot witness the @P290 bracket, so a
@@ -1699,6 +1717,14 @@ The census this came from — how many functions resolve a projection by op name
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
 LIST rather than a total, and the list is what tells you where to work.
 
+(2026-09-24, after @PLN163 P6 on `tuxedo-165-generics`, measured: **90 · 15 · 75**, against **91 · 15 · 76**
+at `d055b78af` — the site LISTS diffed, not inferred: P6b deleted two call-only sites (`scan_args`'
+field-hand-off recogniser, `return_copy_out`) and P6's `call_member_view` added one, which views a
+member of a call result read by op name and not in its `TupleGet` spelling — a tuple member of a
+call result keeps the copy lowering, safe but a gap this list is for.  That half of the row is
+UNGATED, so a fall reddens nothing: re-run `ir_walker_audit.py spellings` at a join, and diff the
+LIST, since a total can move for reasons that cancel.)
+
 (2026-09-24, loft#1569 on `tuxedo-165-generics`, measured: **91 · 15 · 76** — `return_copies_a_leasing_value`
 reads a returned projection in both spellings, so the ratchet rose by one.)
 
@@ -2786,18 +2812,66 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **312** |
+| **310** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
 
+(2026-09-24, the EIGHTH join — `../loft2` @ `d2aa3bf79` (#1662, #1664), `157-native-4x` @
+`185e8fd54` (@PLN158 wave 3, #1666) and `../loft3` @ `b42007993` (the valgrind sweep, a warm
+stdlib start, #1665) onto `tuxedo-165-generics` — RE-MEASURED on the merged tree: **983 · 669 · 4
+· 310**, shape tests **2518**, opaque **1295**.  `--check-ratchet` reported `fell  opaque_tests:
+1299 -> 1295` and the pin moved with it; the conflict on the pin read `310 / 1299` here and
+`314 / 1301` on `157-native-4x`, and the merged tree is neither.  The spellings row moved to
+`94 · 15 · 79`: four call-only sites arrived with the joined work — `store_text_link_of` /
+`store_text_link_place` (a builder and its own recogniser), `field_read_parent_type` (declining a
+non-local base costs the group walk, never correctness) and `text_payload_place` (a base it cannot
+place keeps the pre-#1665 mirror).  The last was the one worth a probe: a tuple-element and a
+field subject both keep the write in the new value, which `(B-Disturb)` specifies — overwriting a
+PLACE is not a disturbance, the guard's cell m6 — so all four fallbacks are boundaries, not gaps.)
+
+(2026-09-24, the SEVENTH join — `../loft3`'s catalogue tag, `../loft`'s @PLN163 double_move
+hardening + spellings re-measure + CI sharding, and `157-native-4x`'s @PLN158 wave 2 and fused byte
+push — RE-MEASURED on the merged tree: **983 · 669 · 4 · 310**, shape tests **2519**, opaque
+**1299**.  `--check-ratchet` reports **at baseline**, so no re-pin is owed.
+
+This time the union's figure equals THIS side's pre-merge figure and not the other side's: the
+merge conflicted on the row with `310` against `314`, and 310 is what the merged tree measures.
+That is the same rule as the joins below, not an exception to it — the point was never that the
+union is always lower, only that it is its own tree's, and "re-measure" is the instruction whether
+the answer moves or not.  The spellings row is unmoved at `92 · 15 · 77`.)
+
+(2026-09-24, the SIXTH join — `origin/main` @ c6d71f75b (the #1661 squash) plus
+`tuxedo-165-generics`'s @PLN163 P6b and the #1569 enum-return follow-ups — RE-MEASURED on the
+merged tree: functions discriminating on a `Type` variant **983**, see through the wrapper
+**669**, keystone **4**, opaque **310**; shape tests **2519**, opaque **1299**.
+`--check-ratchet` reported `fell  opaque_functions: 311 -> 310` and asked for the re-pin, which
+is the legitimate use of `--write-ratchet`.
+
+**Neither side's number was this tree's, and this time the conflict said so out loud.** The merge
+conflicted on exactly this row and on its pin — mine read 311 / 1299, `tuxedo-165-generics` read
+313 / 1301 — and the union measures **310**, below both. A conflict on a derived row is the one
+case where git asks the question the convention already answers: re-derive it, because picking
+either side is picking a measurement of a tree that no longer exists.)
+
+(2026-09-24, @PLN163 P6 on `tuxedo-165-generics`, measured: **972 · 655 · 4 · 313**, opaque tests
+**1301**, `--write-ratchet` re-pinned.  P6's new `call_member_view` briefly added one opaque
+function and two tests; it now names the nullable record it declines and peels the rest, and
+the argument site's peel took one existing function off the list.)
+
 (2026-09-24, loft#1568 rebased onto `main` @ c2eec30c6 — RE-MEASURED on that tree: **971 · 653 ·
 4 · 314**, opaque tests **1301**, `--write-ratchet` re-pinned there.  The `if` reconcile's
 statement test (loft#1645) asks the arm's block type through `base()`, which takes `scan_if` off
 the opaque list; `main` read 315 / 1303 and the branch 313 / 1303 before the rebase, both on trees
 that did not contain the other.)
+
+(2026-09-24, the FIFTH join — `#1659`, @PLN163 P5's two removals, and seven commits of the
+native line — RE-MEASURED: functions discriminating on a `Type` variant **984**, opaque
+**311**; shape tests **2518**, opaque **1299**.  `--check-ratchet` reported `fell` on both and
+asked for the re-pin, which is the legitimate use of `--write-ratchet` and the opposite of the
+override recorded below.  The spellings row is unmoved at 93 · 15.)
 
 (2026-09-24, the FOURTH join — `origin/main` @ c2eec30c6 plus THREE sources merged one at a
 time: `157-native-4x`, `tuxedo-1562-layout-gate` (C2/C3 and the seven `&`-link peels) and
@@ -9209,6 +9283,145 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Which place does a write through a payload binding reach?" — three decoders, and a lint that stated the opposite (2026-09-24)
+
+`match e { Ei { v } => { e = Ei { v: [9,9,9] }; v += [7] } }` appended to the REASSIGNED
+subject while every read of `v` came from the copy `(B-View)` had just given it — and printed
+an `advice` line saying *"writes through `_mv_v_1` no longer reach `e`"* on the way. Filed as
+loft#1662 with *"under either reading of the binding this is wrong"*; the rules had already
+decided it, which is the first thing worth keeping.
+
+**The rules settle it, and the settling is a two-rule conjunction neither site was holding.**
+`(B-Disturb)`'s fourth event is the container REASSIGNED; `(B-View)` then materialises the
+binding *"so writes through it stop reaching the container"*. Separately, `collections.md`
+`(Col-Group)` says a write through a payload binding is resolved back to the field it projects,
+so a record reaches the whole group. Each site implemented its own rule faithfully. The
+resolution replaces the destination and therefore ERASES the binding from the statement, so
+after the materialise there is nothing left downstream to redirect — the binding's reads and
+its write end in two places, and no site is wrong on its own.
+
+**The in-file oracle decided which half to move.** The `&` LINK is the same relation spelled
+with the token — `p = &o.v; o = S { v: [9,9,9] }; p += [7]` answers `p=[1,2,3,7] o=[9,9,9]`,
+correctly, on both backends — and the only structural difference is that a link is never
+resolved back. So the resolution is the half that is wrong, and it is now kept exactly where it
+buys something the binding cannot carry: a LINKED-GROUP member, where `record_finish` needs the
+owning record and the field to reach the siblings.
+
+| site | question it answers | what it had |
+|---|---|---|
+| `parser/vectors.rs::build_vector_list` | where does this write go? | the FIELD, always — committed before the materialise is decided |
+| `parser/expressions.rs` `text_payload_views` (#673) | the same, for a `text` payload | the binding, MIRRORED to the field by an extra statement |
+| `scopes.rs` `shake` / `names_container_itself` | does the binding still name its place? | the authority, and the only one of the three that knows |
+
+**The probe found more faces than the issue, and one of them needed no disturbance at all.**
+`v = [7, 7]` through a payload binding was preparing the binding's own fresh backing *while*
+sending the elements to the field: the binding read back EMPTY and the field was APPENDED to
+rather than replaced — an answer no reading of the language gives, with nothing disturbed
+anywhere, in a shape a reader would write. It had been sitting under the same substitution and
+no cell had ever spelled it, because every existing payload-binding cell writes with `+=`. Two
+more: a write written BEFORE the reassignment was LOST entirely, and a subject given ANOTHER
+variant took the write into a record whose tag had just stopped saying so.
+
+**A `=` is a REBIND here**, which is what the three other right-hand sides were already doing
+(`v = <other>`, `v = []`, `v = 7`) and what the struct-view sibling does (`c = o.i;
+c = In { n: 9 }` leaves `o` at 1). The broken literal form was the outlier, not the rule.
+
+**What was NOT merged, and why it is one residual with two faces.**
+`OpNewRecord` / `OpFinishRecord` take the owning RECORD and the FIELD, so a destination that is
+a LINK has nothing for `other_indexes` to be walked from. That leaves a payload binding onto a
+group member still resolved back — and therefore still split once it materialises — and it is
+the same gap `p = &s.data; p += [r]`, which reaches `data` and never `look`, has had all along
+(**loft#1664**). Making the question answerable from the DESTINATION rather than from the
+syntax that produced it is a design call, not a narrowing. The `text` mirror is **loft#1665**:
+the mirror IS the write-through there, so it has no alternative spelling and needs the scope
+pass to drop it — and a parser-linear *"already reassigned?"* flag must not be built for it,
+because a loop's back edge puts the body's own reassignment ahead of the next turn's write.
+
+**The lint was the sharpest evidence and I nearly read past it.** The `advice` line fires on the
+materialise and states the promise `(B-View)` makes; the program then did the opposite. A
+diagnostic that describes a rule is a second implementation of it, and where it disagrees with
+what the program does, one of the two is a defect — reading the sentence against the output was
+cheaper than any of the probes that followed it.
+
+**Blast radius measured rather than argued:** emitted IR A/B'd against a pristine `HEAD`
+worktree over all **1715** corpus files — **5** moved, every diff the same
+`OpPush*(OpGetField(subject, f), …)` becoming `OpPush*(_mv_binding, …)`. That is the number
+that says a narrowing is a narrowing.
+
+### "Can this mid-body `return` hand its value back?" — four sites, two short of legs (2026-09-24)
+
+Found from a JOIN CONFLICT, which is the part worth keeping: `parser/control.rs`'s
+`Type::Reference` delivery arm reads `if self.return_projects_into_local(&v) || <…>`, and two
+branches had each added a DIFFERENT second disjunct — @PLN163 P4 the leasing-copy leg, loft#1659
+the capture leg.  Neither branch's gate could see the other's, so the merge presented them as
+alternatives and taking either side whole would have dropped the other's fix.  They are
+independent reasons the value cannot go back as it stands, so the condition is their union.
+
+The question that conflict raises is the one neither branch was in a position to ask: **that arm
+is not the only site answering this.**  Four are, and they do not carry the same legs.
+
+| site | arm | projection | leasing copy | capture | views_local |
+|---|---|---|---|---|---|
+| `control.rs` ~17050 | `Type::Reference` | yes | yes | yes | yes |
+| `control.rs` ~17106 | `Type::Enum(_, true, ls)` payload enum | yes | **no** | not needed | yes |
+| `control.rs` ~17274 | vector delivery | yes | n/a | n/a (covered) | — |
+| `control.rs` ~2981+ | tail / `"return from block"` | yes | yes | yes | yes |
+
+Both absent legs SELF-GUARD, so the table alone does not say which is a defect.  Measured, they
+split:
+
+**The LEASING leg at the payload-enum arm IS a defect**, and it bites in the DEFAULT build as a
+refusal of a valid program.  With `H` declaring both hooks, `fn s_mid(p: SL) -> SL { return p; }`
+compiles and is correct (`OpCopy` runs on the new structure, each structure releases once), while
+the same body over `enum EL { EL1 { h: H }, EL0 }` is refused `copy-of-droppable`.  One cause for
+both halves: the Reference arm asks `return_copies_a_leasing_value` and therefore MATERIALISES the
+value, which makes the leaf a compiler temp whose type leases, and `lease.rs`'s `leases_whole`
+escape answers `Lease::Move`; the enum arm never asks, so nothing materialises, the leaf stays the
+user parameter, and `written_leaf` refuses it.  Under `LOFT_NO_LEASE_REFUSE=1` the same cause shows
+as the copy taking NO lease — no `OpCopy` at all where the struct spelling runs it.  The predicate
+was already live for an enum (`heap_def_nr` answers `Type::Enum(d, true, _)`, and
+`lease::reach_def` recurses into `EnumValue` children), so `leases_whole(EL)` is TRUE: two
+decoders, one question, opposite answers.  `(H-Copy-Refuse)` scopes itself to a droppable
+*without* `OpCopy` "at ANY DEPTH" and its own position list names "enum payload", so the rules had
+already decided this — it is a deviation, not a design call.  `(H-Copy-Lease)`'s wording ("a
+STRUCT holding such a member") is narrower than `reach_def` implements and is the half that wants
+widening to *a struct, or an enum variant*.
+
+**The CAPTURE leg at that arm is NOT a defect** — probed at 70 000 calls on both spellings,
+values and leaks clean.  The route is that the arm's `else` branch delivers by BIND into the
+return buffer (`ref_return` with an empty dep list), which is a COPY, and that is the same
+ownership outcome `materialize_view_return` reaches at the Reference arm: the caller is handed a
+copy either way, so it frees its own store rather than the closure's.
+
+⚠ **A first reading of this said the enum arm binds where the struct arm RENAMES, and that is
+wrong** — kept here because the wrong version is the tempting one.  `LOFT_TRACE_RETPROMO=1` on
+the two spellings shows BOTH classify `Bind { substitute: true }`, with `plain=false`, because
+`plain` is `is_plain_fn` and both subjects are LAMBDAS.  `classify_ret_promotion`'s
+`lambda_binds_reserved_buffer` suppresses `Rename` for any lambda whose return base is
+`Reference | Enum(_, true, _) | Vector`, so the struct/enum axis is not the mechanism and a
+capture-returning lambda renames at NONE of these arms.
+
+That leaves a real open question, untested at BOTH arms: the suppression also requires the
+`__retbuf` placeholder to still EXIST (`vars.var("__retbuf") != u16::MAX`), and loft#1651's
+`retire_argument` RETIRES that placeholder when the buffer role moves to a user local.  On that
+path `Rename` is re-enabled for a lambda — which is the shape where a capture leg would matter,
+and no probe here reached it.  Anyone extending this family should build that cell before
+concluding the capture question is closed.
+
+The vector arm at ~17274 is covered for a different and simpler reason: a capture-viewing vector
+is caught by its argument-dep leg, because `__closure` is `become_argument`.
+
+The generalisable half: a join conflict between two added disjuncts is a SIGNAL that the
+predicate has siblings, and the sibling set is what neither branch measured.  Adding a leg to one
+arm of a type-dispatch chain should be followed by naming the other arms and saying which legs
+each carries and why — the same discipline the rule-tag thread above asks of a rule's sites.
+
+☐ **ACTION** — owned by the @PLN163 line (agreed 2026-09-24, landing after P6 step B): add
+`return_copies_a_leasing_value` to the payload-enum arm, graduate an enum-return matrix
+(statement / tail / join × payload member / whole value, both backends) into `tests/copy_lease.rs`,
+and widen `(H-Copy-Lease)`'s wording.  P4's own matrix covered an enum BIND and never an enum
+RETURN, which is how the leg reached one arm only.
+
 ### "Does this closure record leave the frame?" — three sites, one of them documented (2026-09-08)
 
 `(L-CapOwn)` turns on ONE question: does the record outlive the frame that minted it?  Three
@@ -9240,9 +9453,13 @@ in hand, and collapsing them is the early-abstraction failure the thread above w
 cheap half is the naming: `in_ret` should say `leaves_frame`, so the next route out reads as
 something the name already covers rather than as an exception to it.
 
-☐ **ACTION** — rename the two `in_ret` locals to `leaves_frame` and cite `@FR-L-CapOwn` at all
-three sites, so `scripts/rule_tags.py sites @FR-L-CapOwn` answers "which sites enforce this?"
-with three rather than with one.
+✅ **DONE (2026-09-24)** — the two `in_ret` locals are `leaves_frame`, so all three spellings now
+say the QUESTION rather than the answer one route gives, and the `scope_debug` line that prints
+the verdict says `leaves_frame=` with them.  The citation half had already closed on its own:
+`scripts/rule_tags.py sites @FR-L-CapOwn` answers **29**, not one — which is the second half of
+the lesson.  A queue row that names a COUNT as its finish condition can be met by unrelated work
+and then reads as open for weeks; the row that was actually left was the naming, and only
+re-running the tool said so.
 
 ### The heap-record family — one declared home, four sites that drifted off it (2026-08-30)
 

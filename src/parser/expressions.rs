@@ -2985,6 +2985,43 @@ use a separate collection or add after the loop"
     /// [`Self::parse_assign_op_inner`], and this wraps it with the linked-group
     /// maintenance a whole-vector field write skips (loft#1152 — see
     /// [`Self::group_reindex_after_vector_write`]).
+    /// Is the place `to` a slot declared NON-null, reached through a vector element?  Two
+    /// shapes: the element itself (`parent` is the vector, its content says whether the slot
+    /// is `τ` or `τ?`), and a field of an element (`parent` is the element record, `S?` because
+    /// the element READ may be absent; the field's own declaration answers, found by the
+    /// offset the getter reads).  Anything else answers `false` and keeps its type.
+    fn element_slot_is_non_null(&self, to: &Value, parent: &Type) -> bool {
+        // The parent's SHAPE: a `&vector<τ>` parameter's place is the vector it points at,
+        // and the `?` an element read puts on a record parent is the read's, not the slot's.
+        let shape = parent.peel_link();
+        match shape {
+            Type::Vector(elem, _) => !matches!(elem.as_ref(), Type::Optional(_)),
+            Type::Reference(d_nr, _) => {
+                let Value::Call(get, args) = to.unspan() else {
+                    return false;
+                };
+                let (true, Some(Value::Int(off))) = (
+                    self.data.def(*get).name().starts_with("OpGet"),
+                    args.get(1).map(Value::unspan),
+                ) else {
+                    return false;
+                };
+                let known = self.data.def(*d_nr).known_type;
+                if known == u16::MAX {
+                    return false;
+                }
+                let attrs = self.data.def(*d_nr).attributes();
+                attrs.iter().enumerate().any(|(a, attr)| {
+                    !attr.hidden
+                        && i32::from(self.database.position(known, &attr.name)) == *off
+                        && !self.data.attr_nullable(*d_nr, a)
+                        && !matches!(self.data.attr_type(*d_nr, a), Type::Optional(_))
+                })
+            }
+            _ => false,
+        }
+    }
+
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     pub(crate) fn parse_assign_op(
         &mut self,
@@ -3022,6 +3059,18 @@ use a separate collection or add after the loop"
             Value::Call(d_nr, _)
                 if self.data.def(*d_nr).name() == "OpGetRecord"
                     && matches!(f_type, Type::Optional(_)) =>
+            {
+                Some(f_type.base().clone())
+            }
+            // The same for a VECTOR element place and for a field reached through one: the `?`
+            // an untrusted index puts on the READ (`@FR-N-Domain`, C80 — an overrun reads null)
+            // says nothing about the SLOT, whose type is what the collection or the record
+            // declares.  Carried into the place it made the target `τ?`, so `@FR-N-Store` was
+            // never asked: `v[i] = x as integer?` stored the null with no warning, and a narrow
+            // `v[i] = 300 as u8?` stored the default `0` where `v[0] = …` is refused — the
+            // check hung on how the index was SPELLED.
+            _ if matches!(f_type, Type::Optional(_))
+                && self.element_slot_is_non_null(to, &parent_tp) =>
             {
                 Some(f_type.base().clone())
             }
@@ -3309,17 +3358,19 @@ use a separate collection or add after the loop"
                     // `OpGetDbRef` itself, and `record_new`'s kind dispatch reads the
                     // COLLECTION type when the field is `u16::MAX` — the same two
                     // substitutions the `dbref_append_target` routes below make.
+                    // loft#1664 — `resolved_group_write` is the one home for *"spell this
+                    // write against its origin field instead"*, and this LIST spelling of the
+                    // keyed append is the third site that builds an appended record.  A
+                    // capture is excluded for the reason above: it has no owning struct to
+                    // resolve to.
                     let steps = if captured_keyed {
                         self.new_record(&mut to.clone(), f_type, elm, u16::MAX, &[item], &elm_tp)
                     } else {
-                        self.new_record(
-                            &mut Value::Var(var_nr),
-                            f_type,
-                            elm,
-                            var_nr,
-                            &[item],
-                            &elm_tp,
-                        )
+                        let (mut dest, parent) = match self.resolved_group_write(var_nr) {
+                            Some((origin, parent)) => (origin, parent),
+                            None => (Value::Var(var_nr), f_type.clone()),
+                        };
+                        self.new_record(&mut dest, &parent, elm, var_nr, &[item], &elm_tp)
                     };
                     all_steps.extend(steps);
                 }
@@ -3387,14 +3438,16 @@ use a separate collection or add after the loop"
             }
             let mut steps: Vec<Value> = Vec::new();
             if !self.first_pass {
-                steps = self.new_record(
-                    &mut Value::Var(var_nr),
-                    f_type,
-                    elm,
-                    var_nr,
-                    &[item],
-                    &elm_tp,
-                );
+                // loft#1664 — the second site that builds an appended record, and it asked
+                // nothing: a `&` link or a payload binding onto a KEYED group member added
+                // through the link alone, so the vector beside it never saw the record while
+                // the same link to the VECTOR member reached both.  `resolved_group_write` is
+                // the one home for *"spell this write against its origin field instead"*.
+                let (mut dest, parent) = match self.resolved_group_write(var_nr) {
+                    Some((origin, parent)) => (origin, parent),
+                    None => (Value::Var(var_nr), f_type.clone()),
+                };
+                steps = self.new_record(&mut dest, &parent, elm, var_nr, &[item], &elm_tp);
             }
             *code = Value::Insert(steps);
             return Type::Void;
@@ -3619,6 +3672,26 @@ use a separate collection or add after the loop"
         // silent downgrade the rules say to refuse — is that separate question, left open.
         if amp_collection_bind && var_nr != u16::MAX {
             self.vars.set_amp_container_link(var_nr);
+            // @FR-Col-Group, loft#1664 — and this is the OTHER half of the question left open
+            // above.  `(Col-Group)` says a record entering through one member of a linked group
+            // is in every member, BY ANY WRITE ROUTE, and a `&` link is a write route:
+            // `d = &p.p_data; d += [r]` reached `p_data` and never `p_look`, because
+            // `record_finish` walks `other_indexes` off an (owning record, field) pair and a
+            // link carries neither.  The payload binding already resolves back to its field for
+            // exactly this (loft#1160); registering the link's origin in the same table gives it
+            // the same route.
+            //
+            // It is sound here for the reason the clause above now establishes: a collection
+            // link reaches `(B-Ref-Reshape)`, so it can never be quietly downgraded to a copy,
+            // and the field it named at the bind is the field it still names at every write.
+            // That is exactly what loft#1662 showed a MATERIALISED binding cannot promise — the
+            // write, spelled against the field, could not follow the copy — so the two halves
+            // had to land together or not at all.
+            if let Some(parent) = self.field_read_parent_type(code) {
+                self.vars
+                    .mv_field_origin
+                    .insert(var_nr, (code.clone(), parent));
+            }
         }
         // loft#1371 — the share aliases element writes and appends, but a WHOLE-VALUE write
         // (`pe = [2, 2]`) would mint a fresh store and re-point `pe` at it, leaving the
@@ -7586,9 +7659,16 @@ use a separate collection or add after the loop"
                     && let Some(read) = self.text_payload_views.get(&(self.context, *v)).cloned()
                     && let Value::Call(_, read_args) = &read
                 {
-                    let write = self.cl(
-                        "OpSetText",
-                        &[read_args[0].clone(), read_args[1].clone(), Value::Var(*v)],
+                    // Marked, so the scope pass can drop it where `(B-View)` materialises the
+                    // binding — the subject disturbed while the binding is still used — and
+                    // tell it from an author's own `e.v = v`, which is the same op (loft#1665).
+                    let write = v_block(
+                        vec![self.cl(
+                            "OpSetText",
+                            &[read_args[0].clone(), read_args[1].clone(), Value::Var(*v)],
+                        )],
+                        Type::Void,
+                        "text_mirror",
                     );
                     let assign = std::mem::replace(code, Value::Null);
                     *code = Value::Insert(vec![assign, write]);
@@ -8459,10 +8539,12 @@ use a separate collection or add after the loop"
         op: &str,
         var_nr: u16,
     ) -> bool {
-        let Type::RefVar(t) = f_type else {
+        let Type::RefVar(t) = f_type.base() else {
             return false;
         };
-        if !matches!(**t, Type::Text(_)) {
+        // A `&text?` parameter is the same text slot, nullable: `s += x` appends, and on a
+        // null `s` it stays null (the local `text?`'s rule).  `base` peels the pointee's `?`.
+        if !matches!(t.base(), Type::Text(_)) {
             return false;
         }
         self.append_to_text(code, op, var_nr, s_type);

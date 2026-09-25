@@ -177,6 +177,8 @@ jobs:
             # a person's time per run.
             if [ "${{ inputs.os }}" = "ubuntu-latest" ]; then
               echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
+            elif [ "${{ inputs.os }}" = "windows-latest" ]; then
+              echo 'legs=[{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
             else
               echo 'legs=[{"os":"${{ inputs.os }}"}]' >> "$GITHUB_OUTPUT"
             fi
@@ -186,7 +188,14 @@ jobs:
             # measured it), so the serial groups and the corpus overlap instead of queueing.
             echo 'legs=[{"os":"ubuntu-latest","shard":"heavy"},{"os":"ubuntu-latest","shard":"corpus"},{"os":"ubuntu-latest","shard":"rest-a"},{"os":"ubuntu-latest","shard":"rest-b"},{"os":"ubuntu-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           else
-            echo 'legs=[{"os":"ubuntu-latest"},{"os":"macos-latest"},{"os":"windows-latest"}]' >> "$GITHUB_OUTPUT"
+            # Windows is SHARDED here too: unsharded it ran every test green in 63-65 min and was
+            # then cancelled saving its cache at the 90-min job limit (runs 35972977751,
+            # 35983668588) — 4 cores against a suite whose serial chain alone is ~30 min cold.
+            # The limit is not the lever (the owner, 2026-09-24: never raise it); the legs are.
+            # Each leg pays the ~17 min build, and the tests divide.  Branch protection's
+            # `Test (windows-latest)` is the PR-path placeholder job, unaffected by the names
+            # these legs carry.
+            echo 'legs=[{"os":"ubuntu-latest"},{"os":"macos-latest"},{"os":"windows-latest","shard":"heavy"},{"os":"windows-latest","shard":"corpus"},{"os":"windows-latest","shard":"rest-a"},{"os":"windows-latest","shard":"rest-b"},{"os":"windows-latest","shard":"rest-c"}]' >> "$GITHUB_OUTPUT"
           fi
       - id: diff
         shell: bash
@@ -701,6 +710,7 @@ jobs:
         run: rm -rf "$LOFT_SKIP_LEDGER" "$LOFT_TIMING_LEDGER"
 
       - name: Test
+        id: test
         # `index_hygiene` and `viewer_markdown` are extracted to their own advisory
         # ubuntu jobs (and the nightly): both are platform-independent — a whole-repo
         # doc-link check, and the markdown renderer's HTML output — so there is no
@@ -755,6 +765,17 @@ jobs:
           esac
           echo "nextest filter: $FILTER${FAILFAST:+ (}${FAILFAST}${FAILFAST:+)}${PART:+ }$PART"
           cargo nextest run --profile ci $FAILFAST $PART -E "$FILTER"
+
+      # Every test finishes inside HALF its per-test limit (the `ci` profile's slow-timeout).
+      # The limit is a hang guard, and a healthy test that reaches half of it is one noisy
+      # runner from a false kill — so the cure is to make it cheaper (split, parallelise,
+      # cache), never to raise the limit.  A GATE, not a report: a report of these numbers
+      # is read by nobody.  It reads the JUnit report of the step above, which the later
+      # nextest steps overwrite, so it must stay directly after it.
+      - name: Test duration gate
+        if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
+        shell: bash
+        run: python3 scripts/test_duration_gate.py target/nextest/ci/junit.xml
 
       # Browser-render cross-check (Chrome + SwiftShader): the GPU/headless-browser
       # tests demoted off the per-PR path just above.  Runs on the DAILY schedule +
@@ -1009,8 +1030,11 @@ jobs:
             ~/.loft/build-cache
             ${{ runner.os == 'Windows' && 'target/loft-native-cache' || 'target' }}
           key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}-${{ github.run_id }}
+      # Not on Windows: nothing there restores it (the restore step above is non-Windows), and
+      # uploading ~1300 compiled script binaries took 26 of the Windows corpus shard's 61 min
+      # (run 36001391398) for a cache no later run reads.
       - name: Save the native-corpus binary cache
-        if: "!cancelled() && matrix.shard == 'corpus'"
+        if: "!cancelled() && matrix.shard == 'corpus' && runner.os != 'Windows'"
         uses: actions/cache/save@v4
         with:
           path: target/loft-native-cache
@@ -1384,9 +1408,10 @@ jobs:
       # install for `cargo` in the repo dir — and `-Zsanitizer` is nightly-only,
       # so a bare `cargo` here runs stable and errors "the option `Z` is only
       # accepted on the nightly compiler".
-      # `--profile sanitizer`, not `ci`: `loft_suite` runs every `tests/scripts` program
-      # inside one test process, and under `-Zsanitizer=address` it is the leg's whole
-      # clock — it grows with the corpus, not with any hang.  `ci`'s 600 s ceiling was
+      # `--profile sanitizer`: `ci`'s settings for the sanitizer build.  It once carried a
+      # longer ceiling for `loft_suite`, which ran every `tests/scripts` program inside one test
+      # process and under `-Zsanitizer=address` was the leg's whole clock; the corpus runner is
+      # chunked now (`loft_suite_00..07`) and the profile adds no per-test raise.  `ci`'s 600 s ceiling was
       # 587 s on the previous green run and killed at 600 s on the next commit that added
       # one script (run 34980517571: 2022 passed, 0 failed, 1 timed out).  The `sanitizer`
       # profile in `.config/nextest.toml` is `ci` with that one test's ceiling raised, made

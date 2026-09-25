@@ -420,6 +420,47 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-60** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1664)* — `(B-Ref-Reshape)` for a
+  `&` link to a whole COLLECTION.  `p = &o.v; o = S { … }; p += [7]` was MATERIALISED with an
+  advice, where the record spelling (`p = &o.r`) and the scalar one (`p = &o.r.n`, D-bind-56 the
+  day before) of the same program are refused — and this rule is explicit that the copy is the
+  one answer a `&` may not be given: *"loft will not quietly downgrade the reference to a
+  copy"*.  **Where (measured).**  A FOURTH spelling of *"did the author write `&`?"*.  The
+  refusal gate asked `is_amp_link` (the struct projection the parser leaves unlowered) and
+  `is_place_link` (the `RefVar` local a scalar or text place lowers to); a collection link is
+  neither and carries `is_amp_container_link`, which the MATERIALISE walk already read — to
+  spare the link from its own container's growth — while the REFUSAL walk beside it did not.
+  The parser's own note beside `amp_container_link` had written the question down as open and
+  named this rule's answer to it.  **Closed** by the third disjunct at the refusal gate.  A
+  PLAIN collection bind off a borrowed base is deliberately NOT in the set: `(B-View)` says that
+  one materialises, which is what the marker exists to distinguish.  Radius, measured: ONE
+  corpus cell — a control that pinned the materialise, moved to
+  `parse_errors::b_ref_reshape_reassignment_of_a_container_link_base_is_error` exactly as the
+  reference-INTO cell in the same file was — and ZERO published libraries (42/42 against a
+  current index).  The three events that do NOT disturb a reference TO a container are
+  unchanged.  It is also what makes [collections.md](collections.md)'s `D-col-6` answerable for
+  this spelling: a link that can never become a copy still names its origin field at every
+  write.
+* **D-bind-59** *(opened 2026-09-24, CLOSED 2026-09-24; loft#1665)* — `(B-View)` for a `text`
+  PAYLOAD binding.  A `text` binding holds a copy of the characters, and #673 makes a write
+  through it mean the field write by MIRRORING the copy back into the subject after each write.
+  The mirror was unconditional, so `match e { Ei { v } => { e = Ei { v: "zz" }; v += "x" } }`
+  wrote `"abx"` into the NEW `e`, on both backends and with no advice line, where a record
+  payload binding in the same program materialises and says so.  **Where (measured).**  The
+  disturbance walk opened a view only for a binding typed `Reference | Enum | Vector` (or a
+  place link), and the mirror was a parse-time statement the scope pass could not tell from an
+  author's own `e.v = v`.  **Closed** at the walk, which is the home of the question: a mirrored
+  binding is recorded on the `Function` (`text_payload_views`), the walk opens it as a view of
+  the place its `OpGetText` read names (`scopes::text_payload_place`), and the mirror is emitted
+  inside a `text_mirror` block, which the scan drops for a binding the walk condemned.  The
+  binding keeps the copy taken at the bind, which is what materialising a text view means, and
+  the advice is the record view's.  A per-binding verdict, loops included — a parser-linear
+  *"reassigned since the bind"* flag would have answered wrongly through a back edge (the m5
+  cell).  The same change makes every materialise advice name a payload binding as the author
+  wrote it (`v`, not `_mv_v_1`), through one helper, `variables::author_spelling`.  Guard
+  `tests/scripts/1665-a-text-payload-binding-stops-writing-into-a-reassigned-subject.loft`, 7
+  cells, falsified at `a75a4d1ed` on both backends.
+
 * **D-bind-56** *(opened 2026-09-24, CLOSED 2026-09-24; @PLN167 C2)* — `(B-Ref-Reshape)` for a
   `&` link to a SCALAR or TEXT place.  `c = &v[1]; v += [x]; c = 99` compiled and lost the write
   (`v[1]` stayed 22), `t = &v[1].s` read `null` after a growth, and `c = &v[1].n` crashed

@@ -171,6 +171,47 @@ The branch is merged to main via a single PR when all items pass CI.
   true before you started; the closing line says so, so a red never sends you looking for a
   regression you did not cause.
 
+  ⚠ **FIRST refresh `../loft-registry`, because the script reads a CLONE of the index and a
+  stale one measures versions that have been superseded.** `revalidate_matrix.py` picks each
+  package's latest non-yanked version out of `$siblings/loft-registry/index.json` — a checkout
+  someone pulled at some point, not the registry. Measured 2026-09-24: that clone was **5
+  commits behind**, so the run picked `graphics` 0.9.1 and `imaging` 0.3.2 and reported both as
+  COMPILE-BREAKs against `origin/main`, while `revalidate-libs.yml` on that exact commit was
+  green — CI reads the CURRENT index and gets 0.9.3 and 0.3.3, and `imaging` 0.3.3 had been
+  published that very day to cure the break. Two agents on the same box reproduced each other's
+  two phantom breaks, which is what a shared stale clone looks like from the inside — agreement
+  between siblings is not independent evidence when the input is shared, and the CI run on the
+  same commit was the independent one. The run prints
+  `registry index: <sha> publish: <pkg>-<ver> (<date>)` as its first line: read that date before
+  reading the verdict, and `git -C ../loft-registry fetch` if it is not today's. A break that CI
+  does not also see is a local artefact until proven otherwise.
+
+  **A SKIP is the same stale-input failure wearing the other face**: a package whose release TAG
+  the local clone lacks is reported "tag absent" rather than run, so a registry that has moved
+  silently SHRINKS the gate. The script does say so — it PRE-FLIGHTS the skips above the table
+  under *"these will SKIP, and a SKIP is not a pass"* — and the failure mode is therefore the
+  reader, who sees `N pass, 0 COMPILE-BREAK` at the bottom and stops. Fetch the library clones
+  along with the index; in a scratch layout `git clone --bare` copies are enough, because the
+  script only ever runs `git archive` against them.
+
+  ⚠ And the scratch-index recipe below DEFEATS that first line: a directory holding only an
+  `index.json` prints `registry index: not a git checkout (unknown date)`. There the freshness
+  evidence is the **VERSION COLUMN** — every row names the version it picked, so check those
+  against the registry's latest rather than trusting a header you have just disabled.
+
+  ⚠ **Then: a COMPILE-BREAK is still not automatically yours, and an A/B is what says which are.**
+  Build `origin/main` in a worktree of its own and run the gate there for the NAMED packages —
+  with the same index both times, or the comparison measures the index instead of the change.
+  Symlink `../loft-registry` and `../loft-libs-*` NEXT TO that worktree (`$siblings` is `dirname`
+  of the script's root, and a missing clone reports the SKIP that reads as green); pointing the
+  symlink at a directory holding only a fresh `index.json` is enough, since the index is all the
+  script reads from there. Settle the residue on ONE tree: `git archive <pkg>-v<ver>` into a
+  scratch directory once and run BOTH binaries against it with `loft --interpret --tests tests`,
+  which also rules out the two gate runs extracting differently. On the same 2026-09-24 branch
+  that answered main 0 / branch 1 — `assets` 0.2.1, refused by loft#1660, which the issue body
+  and the commit's `Contract: strained … (owner-ruled)` trailer had already named as its blast
+  radius. Read those two before reporting a break as news.
+
   ⚠ **Red on warnings EXISTING, not on the set growing.** "Can it ship" is a question about
   the absolute state; a delta answers a different one. On the CI side this is the
   `Release-ready` STEP inside each library's own matrix leg in `revalidate-libs.yml` — one

@@ -197,14 +197,32 @@ jobs:
           echo "$detail" | sed 's/^/    /'
           exit 1
 
-      # Native adds codegen/divergence coverage but needs each lib's own system deps
-      # (e.g. graphics → ALSA), which a generic runner lacks — so it is BEST-EFFORT
-      # here and hard-gated in each lib's own library-ci.yml (where its deps are set
-      # up).  A red here is a signal to look, not an automatic freeze-gate failure.
-      - name: Native — ${{ matrix.name }}  (best-effort)
-        continue-on-error: true
+      # Native is the backend a user gets by default, so a native-only break in a shipped
+      # library GATES like the interpreter's (loft#1653).  The one honest excuse is the
+      # runner: a library whose native crate needs system packages (graphics → GL, ALSA)
+      # can fail here for want of a package, which says nothing about the language.  The
+      # manifest names those in `[native] build-deps`, and `revalidate_matrix.py
+      # --native-policy` turns that into the verdict — the same home the local script
+      # asks, so the two cannot disagree.  Declared build-deps → best-effort with a
+      # warning naming them (that library's own library-ci.yml installs them and gates);
+      # none declared → a native failure is red.
+      - name: Native — ${{ matrix.name }}
         working-directory: lib/${{ matrix.sub }}
-        run: LOFT_TIMEOUT=240 loft --native --tests tests
+        run: |
+          set -uo pipefail
+          policy="$(python3 "$GITHUB_WORKSPACE/loft-src/scripts/revalidate_matrix.py" --native-policy loft.toml)"
+          if LOFT_TIMEOUT=240 loft --native --tests tests; then
+            echo "✅ ${{ matrix.name }} — native suite green against this loft ($policy)"
+            exit 0
+          fi
+          case "$policy" in
+            gate)
+              echo "::error title=${{ matrix.name }} native break::the native suite failed and the manifest declares no [native] build-deps — a native-only break in a shipped library"
+              exit 1 ;;
+            *)
+              echo "::warning title=${{ matrix.name }} native (best-effort)::the native suite failed; the manifest declares build-deps (${policy#best-effort?}) this runner may lack — gated in the library's own CI"
+              exit 0 ;;
+          esac
 
       # RELEASE-READY — one pass, and it is RED when that pass warned.
       #
@@ -313,6 +331,6 @@ jobs:
             # annotation then read "is RED.  = a language change retro-broke …" —
             # the verdict lost the two names it exists to tell apart, which is the
             # one thing a reader needs from it.
-            echo "::error::a published library leg is RED. \`Test against this loft\` = a language change retro-broke a shipped lib (fix the lib, or reconsider the change — the stdlib may only grow additively). \`Release-ready\` = warning debt: the library cannot be released as it stands, which is the ecosystem's state and not this PR's fault. Open the red leg; the step name says which."
+            echo "::error::a published library leg is RED. \`Test against this loft\` = a language change retro-broke a shipped lib (fix the lib, or reconsider the change — the stdlib may only grow additively). \`Native\` = a native-only break in a library that declares no system build-deps (loft#1653). \`Release-ready\` = warning debt: the library cannot be released as it stands, which is the ecosystem's state and not this PR's fault. Open the red leg; the step name says which."
             exit 1
           fi

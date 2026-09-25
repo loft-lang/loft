@@ -272,7 +272,9 @@ impl State {
                                 .store_mut(&file)
                                 .set_byte(file.rec, file.pos + 32, 0, 1);
                         }
-                        self.database.files.push(Some(f));
+                        self.database
+                            .files
+                            .push(Some(crate::database::loft_file::LoftFile::new(f)));
                         f_nr
                     }
                     Err(e) => {
@@ -468,7 +470,9 @@ impl State {
                             let _ = f.seek(SeekFrom::Start(next_pos as u64));
                         }
                         store.set_i32_raw(file.rec, file.pos + 28, f_nr);
-                        self.database.files.push(Some(f));
+                        self.database
+                            .files
+                            .push(Some(crate::database::loft_file::LoftFile::new(f)));
                         file_ref = f_nr;
                     }
                     Err(e) => {
@@ -1938,6 +1942,42 @@ impl State {
             // OWNED arm (or null) — adopt the store directly.
             *self.mut_var::<DbRef>(pos) = src;
         }
+    }
+
+    /// `OpBindFnRefResult` — bind the record a fn-ref call with an UNRESOLVED target handed
+    /// back into the owned slot `pos` (`@FR-O-Owner`, `@FR-B-Copy`, `@FR-O-Unknown`).
+    ///
+    /// No static fact says whose store that is: the target is chosen at run time, and a fn
+    /// type records nothing about what its function's return borrows (`@FR-O-Opaque`).
+    /// `release_fnref_bufs` has just answered it for this one call, by the `alloc_serial`
+    /// stamp against the snapshot taken when the call began:
+    ///
+    /// - a store that PREDATES the call is a capture or an argument, owned further up — copy
+    ///   it into a fresh store at `pos`, and leave the source alone;
+    /// - anything else was minted by the call (its own mint, or the buffer this call site
+    ///   allocated) — adopt it, and take it OFF this frame's hand-up list, so the local is its
+    ///   one owner and its free at scope exit is the release.  Left on the list as well, the
+    ///   store had two owners, and the list held one entry per call until the frame ended.
+    ///
+    /// A null `src` is adopted as the null it is.
+    pub fn bind_fn_ref_result(&mut self) {
+        let pos = self.code::<u16>();
+        let tp = self.code::<u16>();
+        let code_pos = self.code_pos;
+        let src = self.get_stack::<DbRef>();
+        let borrowed = self
+            .take_fnref_borrowed_return()
+            .is_some_and(|b| b.store_nr == src.store_nr);
+        if borrowed && src.rec != 0 {
+            self.alloc_record_at(pos, tp, code_pos);
+            let new_dst = self.get_var::<DbRef>(pos);
+            self.do_copy_record(src, new_dst, tp);
+            return;
+        }
+        if src.store_nr != u16::MAX {
+            self.disown_fnref_buf(src.store_nr);
+        }
+        *self.mut_var::<DbRef>(pos) = src;
     }
 
     /// @P295 — deep-copy a keyed collection (`sorted`/`hash`/`index`) into a

@@ -90,7 +90,9 @@
 - **Candidate OPEN (verify):** the per-query scratch-vector allocation for spatial slices (CAVEATS.md notes
   it as the next efficiency lever) — a performance note, likely NOT a formal deviation.
 
-OPEN: **0** — the chapter's own count, `collections.md` § Deviations, is the live one.  `D-col-5`
+OPEN: **1** — the chapter's own count, `collections.md` § Deviations, is the live one, and it
+carries `D-col-6` (loft#1664, opened 2026-09-24: a write through a LINK to a group member
+reaches only that member).  `D-col-5`
 opened 2026-09-21 and CLOSED 2026-09-22 (loft#1576, above).  `D-col-4` opened and CLOSED 2026-09-21 (loft#1572,
 above); `D-col-lookup` opened 2026-09-07 and CLOSED 2026-09-08 (loft#1450, below);
 `D-col-null` was opened and CLOSED the same day (2026-08-28, below).

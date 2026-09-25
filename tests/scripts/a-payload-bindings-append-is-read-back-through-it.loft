@@ -1,0 +1,47 @@
+// A `match` payload binding that is appended to reads its own growth back.
+//
+// `match e { V { items } => { items += [x]; len(items) } }` writes through: the append lands in
+// `e`'s payload, and the binding names that payload's field SLOT, so it reads the grown vector.
+// When the append is the fused one-op push (`OpPush<Kind>`), the scope pass saw the payload's
+// container grow while the binding was live and materialised the binding, so every read of
+// `items` came from a copy the append never reached: `len(items)` answered 1 after
+// `items += [121]`, on both backends.  A payload binding is now a reference TO its container,
+// as a `&` link is, so its own container's growth does not end it.  Cells: a byte vector with
+// two appends (p1), an integer vector appended in a loop (p2), text (p3), records (p4), and a
+// removal before the append (p5); each also reads the subject back.  loft#1662 is the
+// reassignment case, which this does not change.
+//
+// @falsified-at: hand-measured (2026-09-24, the build before the fix) — p1 read `1` for `3`
+//   and p2 `1` for `4` on both backends (the fused push); the unfused path
+//   (LOFT_NO_FUSED_APPEND=1) passed, because its field number could not be placed on the
+//   enum's type and the growth went uncollected.
+//   CHANNEL: assert (values).
+//   ARMED: nothing.
+//   WITNESS: `p1: 1 b[1,2,3]` — the binding's length against the subject's contents.
+//   HOLDS: every cell passes under LOFT_NO_FUSED_APPEND=1 on both trees.
+struct R { k: integer }
+enum E { En, Eb { b: vector<u8> }, Ei { v: vector<integer> }, Et { t: vector<text> }, Er { r: vector<R> } }
+
+fn show(e: const E) -> text {
+  match e {
+    Eb { b } => "b{b}",
+    Ei { v } => "i{v}",
+    Et { t } => "t{t}",
+    Er { r } => { o = "r"; for x in r { o += "{x.k},"; } o },
+    _ => "n"
+  }
+}
+
+fn main() {
+  e1 = Eb { b: [1 as u8] };
+  match e1 { Eb { b } => { b += [2 as u8]; b += [3 as u8]; assert(len(b) == 3 && show(e1) == "b[1,2,3]", "p1: {len(b)} {show(e1)}"); }, _ => {} };
+  e2 = Ei { v: [1] };
+  match e2 { Ei { v } => { for i in 0..3 { v += [i + 10]; } assert(len(v) == 4 && "{v}" == "[1,10,11,12]" && show(e2) == "i[1,10,11,12]", "p2: {len(v)} {show(e2)}"); }, _ => {} };
+  e3 = Et { t: ["a"] };
+  match e3 { Et { t } => { t += ["b"]; assert(len(t) == 2 && show(e3) == "t[\"a\",\"b\"]", "p3: {len(t)} {show(e3)}"); }, _ => {} };
+  e4 = Er { r: [R { k: 1 }] };
+  match e4 { Er { r } => { r += [R { k: 2 }]; assert(len(r) == 2 && show(e4) == "r1,2,", "p4: {len(r)} {show(e4)}"); }, _ => {} };
+  e5 = Ei { v: [5, 6, 7] };
+  match e5 { Ei { v } => { v.remove(0); v += [8]; assert(len(v) == 3 && "{v}" == "[6,7,8]" && show(e5) == "i[6,7,8]", "p5: {len(v)} {show(e5)}"); }, _ => {} };
+  println("payload binding append ok");
+}

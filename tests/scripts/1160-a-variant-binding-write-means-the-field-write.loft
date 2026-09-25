@@ -16,10 +16,11 @@
 // emission was handed no field, so `Stores::record_finish` had no `other_indexes` to walk and
 // a `match` arm's append reached the member the binding named and no sibling (loft#1160).
 //
-// Axes this file MOVES:  the binding spelling (`match` arm and `is` capture), where the read
-//                        is taken (through the BINDING inside the block, and through the
-//                        SUBJECT after it), which member is declared first, and the write
-//                        route (element-wise `+=` and a whole vector value).
+// Axes this file MOVES:  the write route (a `match` arm binding, an `is` capture, a `&` LINK,
+//                        and the field spelled directly), where the read is taken (through the
+//                        BINDING inside the block, and through the SUBJECT after it), which
+//                        member is declared first, and element-wise `+=` against a whole
+//                        vector value.
 // Axes it HOLDS FIXED:   the binding names ONE variant.  A capture spanning alternatives
 //                        picks its origin from the runtime tag, so it has no one field to be
 //                        resolved to and is deliberately not covered.
@@ -66,6 +67,8 @@ enum VbEnum { VbKeyedFirst { vk_look: sorted<Vb[vb_k]>, vk_data: vector<Vb> },
 
 // The oracle: the same two members on a plain struct, written through the field.
 struct VbPlain { vp_data: vector<Vb>, vp_look: sorted<Vb[vb_k]> }
+// The same group with the KEYED member declared first — the order axis for the link route.
+struct VbLinkKf { kf_look: sorted<Vb[vb_k]>, kf_data: vector<Vb> }
 
 fn vb_rows() -> vector<Vb> { [Vb { vb_k: 7, vb_nm: "seven" }, Vb { vb_k: 8, vb_nm: "eight" }] }
 
@@ -138,6 +141,35 @@ fn main() {
   match m3 { VbKeyedFirst { vk_data } => { for r in vb_rows() { vk_data += [r]; } }, _ => { } }
   m3_nm = match m3 { VbKeyedFirst { vk_look } => vk_look[8].vb_nm, _ => "", };
   assert(m3_nm == "eight", "the sibling view is a lookup route: {m3_nm}");
+
+  // ---- the `&` LINK is a write route too, and it reached one member only ------------------
+  // `(Col-Group)` says BY ANY WRITE ROUTE, and `d = &p.p_data; d += [r]` left `p_look` empty
+  // until 2026-09-24 (loft#1664) — `record_finish` walks `other_indexes` off an (owning record,
+  // field) pair and a link carries neither.  The link's origin is registered in the same table
+  // the payload binding uses, which is sound for the link and not for a plain bind: a `&` link
+  // reaches `(B-Ref-Reshape)` and so can never be downgraded to a copy, where `(B-View)` gives
+  // a plain binding one and the write must then follow the COPY (loft#1662).
+  lp = VbPlain { };
+  d = &lp.vp_data;
+  for r in vb_rows() { d += [r]; }
+  assert(len(lp.vp_data) == 2 && len(lp.vp_look) == 2 && len(d) == 2,
+    "the `&` link reaches the group: data={len(lp.vp_data)} look={len(lp.vp_look)} link={len(d)}");
+  assert(lp.vp_look[8].vb_nm == "eight",
+    "the `&` link's sibling is a lookup route: {lp.vp_look[8].vb_nm}");
+
+  // The keyed member is a write route in its own right, linked the other way round.
+  lk = VbPlain { };
+  dk = &lk.vp_look;
+  for r in vb_rows() { dk += [r]; }
+  assert(len(lk.vp_data) == 2 && len(lk.vp_look) == 2,
+    "the `&` link to the KEYED member reaches the vector: data={len(lk.vp_data)} look={len(lk.vp_look)}");
+
+  // Declaration ORDER is not the axis — measured, all four link directions reach both members.
+  lf = VbLinkKf { };
+  df = &lf.kf_look;
+  for r in vb_rows() { df += [r]; }
+  assert(len(lf.kf_data) == 2 && len(lf.kf_look) == 2,
+    "the `&` link to a keyed member declared FIRST: data={len(lf.kf_data)} look={len(lf.kf_look)}");
 
   // ---- a plain local in ANOTHER function is not a binding ---------------------------------
   assert(vb_plain_after_a_binding() == 2,

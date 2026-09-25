@@ -563,7 +563,9 @@ pub fn drop_copy_census_enabled() -> bool {
 /// many times each refused shape releases, which is what @PLN163 P5 removes the old release
 /// machinery against, and a cell that does not compile measures nothing.  It is also the first
 /// bisect step for a program that stopped compiling with `copy-of-droppable` or
-/// `read-after-move`.
+/// `read-after-move` — and only that: with the machinery that moved a release across a copy
+/// removed, a refused copy compiled under it is two structures that each release the resource.
+/// The switch shows WHICH line the rules refuse; the program it compiles is not a working one.
 #[must_use]
 pub fn lease_refuse_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
@@ -2047,17 +2049,6 @@ pub fn buffer_veto_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_BUFFER_VETO"))
 }
 
-/// D-heap-3 (loft#1506) — the field-grained copy-out hand-off: a projection copied out of a
-/// lifted call result moves that field's release to the copy, and the lift's scope-end drop
-/// runs the `…OpDropAllExcept` cascade.  `LOFT_NO_FIELD_HANDOFF=1` keeps the full cascade —
-/// the pre-transfer double release — and is the first bisect step for a wrong drop count or
-/// a missing hook around a `f().field` shape.
-#[must_use]
-pub fn field_handoff_enabled() -> bool {
-    static ON: OnceLock<bool> = OnceLock::new();
-    *ON.get_or_init(|| !env_set("LOFT_NO_FIELD_HANDOFF"))
-}
-
 /// #497 — the reassignment-path adopt-vs-copy fix: a Reference local
 /// REASSIGNED from a `!return_adopts_fresh_store()` call deep-copies
 /// (parity with the first-Set path) instead of adopting a possibly
@@ -2920,6 +2911,83 @@ impl FastOrder<'_> {
             verify: self.verify,
         })
     }
+}
+
+/// Order `recs` as `sort_by(`[`compare`]`)` would — DECORATED: with one key of a width
+/// [`fast_key_of`] reads, each record's key is read ONCE into a `(key, index)` pair and the
+/// pairs are sorted, where the comparator form resolved both records' stores and dispatched
+/// on the key's kind per comparison — 54 % of a `for e in hash` walk, whose order is built
+/// per pass (`bench/portal/analysis/keyed.md` L8).  The index is the tie-break, so equal keys
+/// keep their input order exactly as the stable sort kept it (a hash has none: its keys are
+/// unique).  A compound key, a float key, a partial or a 1-byte key take the comparator.
+///
+/// `LOFT_NO_FAST_ORDER=1` takes the comparator for every key; `LOFT_KEYED_VERIFY=1` checks
+/// the decorated order against [`compare`] pair by pair.
+///
+/// # Panics
+/// Under `LOFT_KEYED_VERIFY=1`, when the decorated order disagrees with [`compare`] — the
+/// falsifier, naming both records.
+pub fn sort_records(recs: &mut Vec<DbRef>, stores: &[Store], keys: &[Key]) {
+    if fast_order_enabled()
+        && let [k] = keys
+        && let Some(order) = decorated_order(recs, stores, k)
+    {
+        let sorted: Vec<DbRef> = order.iter().map(|&i| recs[i as usize]).collect();
+        if keyed_verify() {
+            for w in sorted.windows(2) {
+                assert_ne!(
+                    compare(&w[0], &w[1], stores, keys),
+                    Ordering::Greater,
+                    "LOFT_KEYED_VERIFY: the decorated sort put {:?} before {:?}, which keys::compare orders after it",
+                    w[0],
+                    w[1]
+                );
+            }
+        }
+        *recs = sorted;
+        return;
+    }
+    recs.sort_by(|a, b| compare(a, b, stores, keys));
+}
+
+/// The order of `recs` under the one key `k`, as indices into `recs`, or `None` for a key
+/// width [`fast_key_of`] does not read.
+fn decorated_order(recs: &[DbRef], stores: &[Store], k: &Key) -> Option<Vec<u32>> {
+    let keys = std::slice::from_ref(k);
+    let descending = k.type_nr < 0;
+    if k.type_nr.abs() == 6 {
+        let mut pairs: Vec<(&str, u32)> = Vec::with_capacity(recs.len());
+        for (i, r) in recs.iter().enumerate() {
+            let Some(FastKey::Str(_, v)) = fast_key_of(r, stores, keys) else {
+                return None;
+            };
+            pairs.push((v, i as u32));
+        }
+        if descending {
+            pairs.sort_unstable_by(|a, b| b.0.cmp(a.0).then(a.1.cmp(&b.1)));
+        } else {
+            pairs.sort_unstable();
+        }
+        return Some(pairs.into_iter().map(|(_, i)| i).collect());
+    }
+    let mut pairs: Vec<(i64, u32)> = Vec::with_capacity(recs.len());
+    for (i, r) in recs.iter().enumerate() {
+        let v = match fast_key_of(r, stores, keys)? {
+            FastKey::Int(_, v)
+            | FastKey::Long(_, v)
+            | FastKey::I32(_, v)
+            | FastKey::U32(_, v)
+            | FastKey::ShortRaw(_, _, v) => v,
+            FastKey::Str(..) => return None,
+        };
+        pairs.push((v, i as u32));
+    }
+    if descending {
+        pairs.sort_unstable_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(&b.1)));
+    } else {
+        pairs.sort_unstable();
+    }
+    Some(pairs.into_iter().map(|(_, i)| i).collect())
 }
 
 /// How lookup `key` orders against `record`: through `fast` where the search resolved one,

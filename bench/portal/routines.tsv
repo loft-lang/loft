@@ -48,6 +48,7 @@
 15_stdlib_keyed	hash_update	keyed	stdlib	a lookup followed by a field write
 15_stdlib_keyed	hash_remove	keyed	stdlib	fill, remove every second key, count
 15_stdlib_keyed	hash_text_keys	keyed	stdlib	find-or-insert and lookup on 2,000 text keys
+15_stdlib_keyed	hash_walk	keyed	stdlib	`for e in hash`: 5k records walked in key order, the order built per walk
 15_stdlib_keyed	sorted_fill_walk	keyed	stdlib	`sorted<ES[id]>` (inline elements) filled out of order, walked in order
 15_stdlib_keyed	index_fill_find	keyed	stdlib	`index<EI[id]>` filled out of order, then found in
 15_stdlib_keyed	grouped_fill_find	keyed	stdlib	a `vector` + `hash` group over one record set: filled through the vector, found through the hash
@@ -109,3 +110,105 @@ fixstep	approach	float-kernel	library:fixstep	one exp per eased value per frame
 web	pack_u8	native-boundary	library:web	one cdylib crossing per byte packed: the calibration constant
 web	byte_at	native-boundary	library:web	one cdylib crossing per byte read
 ssh	byte_at	native-boundary	library:ssh	one cdylib crossing per received byte; the callee is one load
+crypto	sha256_small	native-boundary	library:crypto	sha256 of a 64-byte text: the crossing around ~1 µs of work
+crypto	sha256_1m	native-boundary	library:crypto	sha256 of 1 MiB: the boundary amortised
+crypto	base64_to_bytes	native-boundary	library:crypto	a crossing that ALLOCATES a store-owned `vector<u8>`
+cbor	encode	record-field	library:cbor	canonical map order: since 0.1.5 each key is encoded ONCE into a flat buffer and ranked by an O(n^2) `key_lt` 
+cbor	encode_bytes	vector-build	library:cbor	a text payload appended ONE byte at a time (`buf += [value.byte_at(i) as u8]`)
+cbor	decode	record-build	library:cbor	one record appended per item, a fresh `Decoded` returned per node, recursion per element
+arguments	parse	text-scan	library:arguments	a linear scan of the options with a text compare per entry, per argv token
+zttext	seg	text-scan	library:zttext	the choke point of six entry points: it MATERIALISES the whole document, explodes it to characters, then class
+zttext	insert_text	vector-build	library:zttext	every keystroke copies the WHOLE append-only buffer element by element (`for c0 in d.buf { nb += [c0] }`): typ
+zttext	flow_layout_full	alloc-temp	library:zttext	per line, per token a fresh `vector<Run>` with a freshly built text per run, discarded at once — and built twi
+zttext	materialise	text-build	library:zttext	every piece span concatenated ONE character at a time (`out += "{ch}"`)
+zttext	delete_range	record-build	library:zttext	a fresh `vector<Piece>` per edit, and the piece count only grows
+zttext	locate	record-field	library:zttext	a linear scan reading `.count` off a record fetched through a vector, once per insert
+zttext	invert	record-build	library:zttext	undo REBUILDS the whole accumulated op vector on every op: quadratic in the op count
+zttext	patch	record-build	library:zttext	the "incremental" path scans every old box and rebuilds every tail box per keystroke
+graphics	fill_polygon	record-field	library:graphics	per scanline a walk of `vector<Coord>` reading `.px/.py`, a FRESH crossings vector and an insertion sort
+graphics	fill_rect	vector-write	library:graphics	the commonest primitive: `y*width+x` and a bounds test per pixel
+graphics	canvas	vector-write	library:graphics	every frame, atlas and layer allocates one through the doubling fill
+graphics	clear	vector-write	library:graphics	the per-frame wipe: one indexed store per pixel
+graphics	blend_pixel	vector-read	library:graphics	read-modify-write plus a `blend` call: 4 unpacks, 3 multiply-adds, a repack
+graphics	fill_triangle	int-loop	library:graphics	two multiply-before-divide edge interpolations per scanline
+graphics	draw_line	call	library:graphics	Bresenham calling the METHOD `set_pixel` once per step
+graphics	draw_bezier	alloc-temp	library:graphics	two slice-copies of the whole explicit stack per subdivision
+stage	render_stage	call	library:stage	THE per-frame software path: `get_pixel` + 3x `over` + `set_pixel` — five calls per pixel per node
+stage	compose	record-field	library:stage	per node a cos/sin, an affine compose, and 12+ separate `self.st_nodes[i].field = …` writes
+stage	pack_instances	vector-build	library:stage	16 separate one-element appends per visible node
+stage	blur_region	vector-read	library:stage	`(2r+1)^2` clamped reads per pixel out of a copied source
+stage	draw_list	record-build	library:stage	a `vector<DrawRect>` of NESTED records, one `+=` at a time
+stage	composite_light	float-kernel	library:stage	`sqrt` + `pow` per light per pixel
+shapes	proxies_overlap	call	library:shapes	16 x 16 nested predicate calls, each reading 8 fields off two records
+server	header	text-scan	library:server	EVERY request header lowercased per lookup, the value rejoined piece by piece
+game_protocol	msg_ping	alloc-temp	library:game_protocol	a nested record pair built and returned by value, nothing else
+pluginabi	check_request	alloc-temp	library:pluginabi	the mandatory front door decodes the frame TWICE before six text compares
+pluginabi	req_state_b64	alloc-temp	library:pluginabi	a whole CBOR tree decoded and discarded for ONE field; a host reading three fields decodes three times
+pluginabi	request	record-build	library:pluginabi	three nested enum records built, two native base64 crossings, then a canonical encode
+mesh3d	mesh_to_floats	record-field	library:mesh3d	per triangle an index, a null test and six fields two structs deep
+mesh3d	sphere	record-build	library:mesh3d	every vertex built from three nested records through `add_vertex`
+mesh3d	mat4_transform	alloc-temp	library:mesh3d	12 float operations and a FRESH `Vec3` record returned per call
+mesh3d	mat4_mul	float-kernel	library:mesh3d	64 multiply-adds indexing a `vector<float>` INSIDE a record
+glb	save_glb	record-field	library:glb	four walks of `vector<Vertex>` reading NESTED `.pos.x / .normal.y / .uv.x`
+glb	save_scene_glb	text-build	library:glb	170 lines of `result += "…{x:.6}…"` per node, material and light
+assets	keys_near	keyed	library:assets	an `index` walk plus THREE hash lookups per surviving instance, then an O(n^2) linear dedup
+assets	cell_proxy	vector-read	library:assets	two banded texel passes per sprite: a bounds-checked `vector<u8>` read, then up to four reads-plus-writes into
+assets	anim_of	keyed	library:assets	every lookup FORMATS its composite text key (`"{def}/{action}/{facing}"`) before it can hash it
+assets	blob_put	keyed	library:assets	a record carrying a `vector<u8>` inserted under a text key
+assets	opaque_texels	vector-read	library:assets	the alpha-count pass: a nested loop calling `texel_alpha` per texel
+hex_grid	hex_neighbor	call	library:hex_grid	a branchy parity table returning a TUPLE: the innermost callee of every 6-direction sweep in the family
+hex_grid	px_to_hex	float-kernel	library:hex_grid	two divides then a round with three `round`, three `abs` and a three-way branch
+hex_way	track_distance	float-kernel	library:hex_way	the innermost float primitive of hex_way AND hex_roof: a sqrt per straight, atan2 + wrap per arc
+hex_edge	passable	call	library:hex_edge	the movement loop's innermost query: four calls and a 6-iteration search to read one slot
+hex_edge	edges_cut	call	library:hex_edge	every boundary edge pays a 6-deep helper chain
+hex_field	edgeset_count	call	library:hex_field	a triple loop through `edge_mat` -> `eg_index` -> `eg_dir_from`, which linear-scans six neighbours
+hex_field	trace	vector-read	library:hex_field	the loop stitcher rescans ALL edges to find each next one: O(n^2) reads over five parallel vectors
+hex_world	get_cell	keyed	library:hex_world	a linear scan of the chunk list comparing two fields, then a record returned BY VALUE
+hex_terrain	terrain_fbm	float-kernel	library:hex_terrain	per octave four integer hashes and a smoothstep lerp: the densest per-op kernel in the tree
+17_consumer_moros_dryopea	resolve_move	call	consumer:moros	per-frame physics: a chain of small functions passing small records by value
+17_consumer_moros_dryopea	panel_build	record-build	consumer:moros	one frame's panel: records with nested fields and texts, a hit test answering a struct-enum
+17_consumer_moros_dryopea	slope_path_with_undo	record-build	consumer:moros	per step a record read out of a nested container and appended by value into an undo stack
+17_consumer_moros_dryopea	emit_to_material	text-build	consumer:moros	per hex an integer formatted to text and a mesh list scanned comparing a text field
+17_consumer_moros_dryopea	map_json	text-build	consumer:moros	a whole map serialised with {m:j} and parsed back with Map.parse
+17_consumer_moros_dryopea	reload_and_record	keyed	consumer:dryopea	a two-way hash diff with u8 fields: walk A probing B, walk B probing A
+17_consumer_moros_dryopea	mapfile_to_painted	text-scan	consumer:dryopea	per entry a linear palette scan comparing a text field, then a composite-key insert
+17_consumer_moros_dryopea	truncate_to	vector-build	consumer:dryopea	a timeline of records with inner vectors rebuilt element by element to drop a prefix
+18_consumer_crawler	build_walls	keyed	consumer:crawler	a text key formatted per wall face probing a hash, a record appended on a miss
+18_consumer_crawler	build_vis	vector-build	consumer:crawler	per frame a 101x101 push loop, two indexed reads and a small call per pixel
+18_consumer_crawler	hydro_pitfill	vector-write	consumer:crawler	a priority flood on a min-heap of two parallel integer vectors
+18_consumer_crawler	talus_relax	vector-write	consumer:crawler	a 4-neighbour relaxation over const and & float vectors, 120 sweeps
+18_consumer_crawler	slice_shrink	text-build	consumer:crawler	a text shrunk one character at a time by slicing, and substrings sliced per line
+18_consumer_crawler	char_roundtrip	text-build	consumer:crawler	per character a code changed and formatted back as a character
+18_consumer_crawler	quadratic_out	text-build	consumer:crawler	a 2 MB text grown by out = out + "{v:.9}"
+18_consumer_crawler	binary_read	vector-build	consumer:crawler	a binary file read one i16 at a time (f#read(2) as i16)
+18_consumer_crawler	sort_floats	vector-write	consumer:crawler	a selection sort into a fresh vector per scanline
+18_consumer_crawler	format_specs	text-build	consumer:crawler	per-frame format widths and precisions, {x:4.1} {n:3} {m:X}
+19_stdlib_par	par_map_float	parallel	stdlib	a float kernel per element of a large vector, results gathered
+19_stdlib_par	par_records	parallel	stdlib	a vector of records read per worker, integer results gathered
+19_stdlib_par	par_reduce	parallel	stdlib	per-element integer work gathered, then summed
+19_stdlib_par	par_text	parallel	stdlib	per-element text formatting, texts gathered
+19_stdlib_par	par_small	parallel	stdlib	many small par regions: the fixed cost of one region
+hex_body	rig_world_frame3	float-kernel	library:hex_body	TWELVE parallel float vectors allocated per call to carry a Rodrigues + 3x3 matmul chain
+hex_body	bone_shape_has	call	library:hex_body	the whole chain re-walked on EVERY point query
+hex_body	rig_read	text-scan	library:hex_body	every word helper re-splits the line: a 12-field bone line is split ~15 times
+hex_draw	surface_fitted_spread	alloc-temp	library:hex_draw	FOUR full window sweeps, each returning a fresh five-vector run, for a result that needs one
+hex_fit	draft_fit_p	alloc-temp	library:hex_fit	each of up to 24 trials allocates a fresh edge set, element by element into two vectors
+hex_form	form_write	text-build	library:hex_form	interpolation and `+=` per side, called once per proposal in the recovery enumeration
+hex_form	form_read	text-scan	library:hex_form	every word helper re-splits the line: a 12-field line is split a dozen times
+hex_form	side_edges	record-build	library:hex_form	a window sweep appending into FIVE parallel vectors, re-run by every surface routine
+hex_form	boundary_loops	vector-read	library:hex_form	label propagation rescans all ORDERED pairs of boundary edges to a fixpoint
+hex_place	combine_cut	call	library:hex_place	a fresh set allocated and swept, then four reads and a write per boundary edge
+hex_place	field_union	vector-build	library:hex_place	a set allocated by a push loop, then written one cell at a time through an accessor
+hex_recover	forms_upto	call	library:hex_recover	six nested loops x a deep predicate chain x `form_write` x a LINEAR text dedup; the source itself calls it "th
+hex_recover	index_build	keyed	library:hex_recover	a hash probe + insert per candidate, keyed on a freshly built text
+hex_recover	field_digest	vector-write	library:hex_recover	twelve insertion sorts writing a growing vector in place
+hex_roof	roof_match	float-kernel	library:hex_roof	up to four fits; the ridge climb drives thousands of full-footprint sqrt sweeps
+hex_roof	roof_cone	float-kernel	library:hex_roof	one sqrt plus two accessor calls per cell: the cleanest one-op-per-cell float lane
+hex_shape	wall_chain_walk	vector-read	library:hex_shape	triple-nested rescans of the endpoint table, two O(n) helpers inside
+hex_terrain	terrain_surface_at	float-kernel	library:hex_terrain	per sample a weight vector ALLOCATED, a 3x4 kernel-tap loop, and hundreds of hashed-noise evaluations
+hex_terrain	terrain_hydrology	vector-read	library:hex_terrain	a SELECTION-scan priority flood, O(n^2) by its own comment, over seven parallel vectors
+hex_terrain	terrain_relief_pass	record-field	library:hex_terrain	the second pass reads a type through a NULLABLE record per cell
+hex_way	way_stamp	float-kernel	library:hex_way	two full window sweeps of sqrt / atan2 per point per segment
+hex_edge	sweep_path_from	float-kernel	library:hex_edge	up to 256 lattice steps, each solving 6 bisector intersections in doubles
+hex_field	stencil_rotate	record-field	library:hex_field	two full passes through four accessor families, then a halo pass of three calls per slot
+hex_field	doc_read	native-boundary	library:hex_field	one file-read builtin crossing PER CELL per section

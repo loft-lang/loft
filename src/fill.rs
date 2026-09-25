@@ -257,6 +257,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     push_boolean,
     push_enum,
     push_character,
+    push_byte,
     replace_vector,
     claim_child_rec,
     ref_from_child_rec,
@@ -341,6 +342,7 @@ pub const OPERATORS: &[fn(&mut State)] = &[
     const_ref,
     const_store_text,
     call_ref_store,
+    bind_fn_ref_result,
 ];
 
 fn goto(s: &mut State) {
@@ -2370,6 +2372,13 @@ fn push_character(s: &mut State) {
     s.database.append_u32(&v_r, v_val as u32);
 }
 
+fn push_byte(s: &mut State) {
+    let v_min = s.code::<i32>();
+    let v_val = s.get_stack::<i64>();
+    let v_r = s.get_stack::<DbRef>();
+    s.database.append_byte_min(&v_r, v_min, v_val as i32);
+}
+
 fn replace_vector(s: &mut State) {
     let v_tp = s.code::<u16>();
     let v_other = s.get_stack::<DbRef>();
@@ -2852,4 +2861,8 @@ fn call_ref_store(s: &mut State) {
     let v_arg_size = s.code::<u16>();
     let v_mask = s.code::<i64>();
     s.fn_call_ref_store(v_fn_var, v_arg_size, v_mask as u64);
+}
+
+fn bind_fn_ref_result(s: &mut State) {
+    s.bind_fn_ref_result();
 }

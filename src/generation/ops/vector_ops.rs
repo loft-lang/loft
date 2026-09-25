@@ -540,7 +540,39 @@ impl OpEmitter for HoistedPushEmitter {
             .active_push_window(&fused.path)
             .map(str::to_owned);
         write!(ctx.w, "{{ let __pv = (")?;
-        ctx.emit(fused.val)?;
+        // The element each kind stores, spelled as its `#rust` template spells it, so the
+        // header's raw store and the growth step's append agree with the unfused op: an
+        // `i32` keeps the integer null as `i32::MIN` (`OpPushInt4`), a character is its
+        // code point as `u32` (`OpPushCharacter`), a byte is its encoded bias (below).
+        match fused.rust_type {
+            "i32" => {
+                write!(ctx.w, "{{ let __v: i64 = (")?;
+                ctx.emit(fused.val)?;
+                write!(
+                    ctx.w,
+                    "); if __v == i64::MIN {{ i32::MIN }} else {{ __v as i32 }} }}"
+                )?;
+            }
+            "u32" => {
+                write!(ctx.w, "(")?;
+                ctx.emit(fused.val)?;
+                write!(ctx.w, ") as u32")?;
+            }
+            _ => {}
+        }
+        if matches!(fused.rust_type, "i32" | "u32") {
+        } else if let Some(min) = fused.bias {
+            // The byte kind: the element is the ENCODED byte, the same `Store::byte_raw`
+            // `OpSetByte` writes, so the header's raw store and its growth step
+            // (`append_byte`, bias 0 on an already-encoded byte) agree with it.
+            write!(ctx.w, "loft::store::Store::byte_raw((")?;
+            ctx.emit(min)?;
+            write!(ctx.w, ") as i32, (")?;
+            ctx.emit(fused.val)?;
+            write!(ctx.w, ") as i32)")?;
+        } else {
+            ctx.emit(fused.val)?;
+        }
         if let Some(win) = window {
             write!(
                 ctx.w,

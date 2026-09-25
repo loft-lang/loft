@@ -33,15 +33,21 @@
 # there lands in another agent's uncommitted work, and `loft test` INSIDE a package
 # rebuilds `native-auto/` and writes `.loft/` caches (CLAUDE.md § Dogfood loop).
 #
-# Usage:  scripts/revalidate_libs_local.sh [--self-test] [package ...]
+# Usage:  scripts/revalidate_libs_local.sh [--self-test] [--native] [package ...]
 #
+#   --native      also run each package's suite with `--native`, and fail on a native
+#                 break exactly where the workflow does: a package whose manifest declares
+#                 no `[native] build-deps` gates, one that declares them is reported
+#                 best-effort (`revalidate_matrix.py --native-policy`, the workflow's own
+#                 reader — loft#1653).  Off by default: it roughly doubles the sweep.
 #   --self-test   inject a compile break and a runtime break into one package and
 #                 assert the two are reported DIFFERENTLY.  A sweep that reports
 #                 "all green" is worth nothing until its harness is shown able to
 #                 go red, and to distinguish the two classes it claims to.
 #
-# Exit status is 1 if any package COMPILE-BREAKS; a runtime/env failure is reported
-# and does not fail the run (the workflow makes the same call, for the same reason).
+# Exit status is 1 if any package COMPILE-BREAKS (or, under --native, NATIVE-BREAKS); a
+# runtime/env failure is reported and does not fail the run (the workflow makes the same
+# call, for the same reason).
 set -uo pipefail
 
 root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -52,10 +58,12 @@ work="${TMPDIR:-/tmp}/loft-revalidate-$$"
 here="$root/scripts"
 warn="$work/warn"
 self_test=0
+native=0
 want=()
 for a in "$@"; do
   case "$a" in
     --self-test) self_test=1 ;;
+    --native) native=1 ;;
     -h|--help) sed -n '5,45p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'; exit 0 ;;
     *) want+=("$a") ;;
   esac
@@ -205,7 +213,7 @@ if [ -n "$missing_clone" ] || [ -n "$missing_tag" ]; then
 fi
 
 printf '%-18s %-9s %s\n' PACKAGE VERSION VERDICT
-breaks=0 passed=0 skipped=0 envfail=0
+breaks=0 passed=0 skipped=0 envfail=0 nbreaks=0 nbest=0
 while IFS=$'\t' read -r n v repo tag sub; do
   if [ ${#want[@]} -gt 0 ]; then
     printf '%s\n' "${want[@]}" | grep -qxF "$n" || continue
@@ -235,6 +243,20 @@ while IFS=$'\t' read -r n v repo tag sub; do
     breaks=$((breaks + 1))
     tail -12 "$log" | sed 's/^/    /'
   fi
+  if [ "$native" -eq 1 ]; then
+    policy="$(python3 "$here/revalidate_matrix.py" --native-policy "$p/loft.toml" 2>/dev/null || echo gate)"
+    nlog="$work/$n.native.log"
+    if (cd "$p" && LOFT_TIMEOUT=240 "$loft" --native --tests tests) >"$nlog" 2>&1; then
+      printf '%-18s %-9s %s\n' "" "" "  native PASS"
+    elif [ "$policy" = gate ]; then
+      printf '%-18s %-9s %s\n' "" "" "  *** NATIVE-BREAK *** (no [native] build-deps declared)"
+      nbreaks=$((nbreaks + 1))
+      tail -12 "$nlog" | sed 's/^/    /'
+    else
+      printf '%-18s %-9s %s\n' "" "" "  native fail, best-effort (build-deps: ${policy#best-effort?})"
+      nbest=$((nbest + 1))
+    fi
+  fi
 done < "$matrix"
 
 # The RELEASE-READINESS half, separate from the compile/test verdict above ON PURPOSE:
@@ -256,6 +278,8 @@ fi
 
 echo
 echo "$passed pass, $envfail runtime/env, $skipped skipped, $breaks COMPILE-BREAK"
+[ "$native" -eq 1 ] && echo "native: $nbreaks NATIVE-BREAK, $nbest best-effort failure(s)"
+[ "$nbreaks" -eq 0 ] || echo "a published library's native suite fails against this loft and it declares no system build-deps — a native-only break"
 [ "$skipped" -gt 0 ] && echo "a SKIP is not a pass — clone the missing repo beside this one, or fetch its tags"
 [ "$breaks" -eq 0 ] || echo "a published library no longer compiles against this loft — the freeze forbids that"
 # You NAMED these packages, so a skip is a non-answer about the thing you asked for — the
@@ -269,4 +293,4 @@ fi
 # fault.  `release_rc` is a fact about the libraries as they stand; the exit code carries it
 # so a script can read it, and the line above says which of the two went wrong.
 [ "$release_rc" -eq 0 ] || echo "…and one or more libraries cannot be released as they stand (above) — the ecosystem's state, not this change's"
-exit $(( (breaks > 0) || release_rc != 0 ))
+exit $(( (breaks > 0) || (nbreaks > 0) || release_rc != 0 ))

@@ -571,8 +571,11 @@ mod tests {
         // record, dispatched on its `d_nr`) and `OpFnRefDetachSharedEmitter` (a rebind's
         // displaced closure half, nulled where the new value shares it).  loft#1636 adds one,
         // `OpFnRefClosureEmitter` (a fn-ref's closure half, for the holder identity tests).
+        // `@FR-R-Push`'s byte kind adds one, `HoistedPushEmitter` for `OpPushByte`: a byte
+        // push in a loop that holds a push header writes the encoded byte through it; its
+        // `i32` and character kinds add two more (`OpPushInt4`, `OpPushCharacter`).
         assert!(
-            count <= 126,
+            count <= 129,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

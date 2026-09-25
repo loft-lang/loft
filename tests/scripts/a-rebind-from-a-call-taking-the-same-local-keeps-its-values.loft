@@ -1,0 +1,105 @@
+// `x = f(x, …)` — the value a whole-value rebind from a call taking the same local answers,
+// pinned on the unrewritten form.
+//
+// `(R-Rebind)` (formal/rewrites.md § A value already home is not copied to a second one) is
+// written and priced but NOT built: it will hand `x`'s own record to the callee as its
+// return buffer, so the callee's exit literal writes the field that views the same field
+// onto itself (`(H-CopySelf)`) and copies nothing.  These cells are the values the rewrite
+// must keep, taken from the form that copies today, and they are the oracle its switch A/B
+// compares against.  Cells: the plain rebind (c1), the early exit that answers the parameter
+// (c2), an exit literal naming the fields in the other order (c3), a swap THROUGH the result
+// (c4, c4b, c4c — the fields read the place they overwrite), a view of `x` live across the
+// call, which reads what it viewed (c5), the same local handed twice (c6), recursion (c7), a
+// callee that fills its result BEFORE reading its parameter (c8, the `mat4_mul` shape), a
+// nullable `x` (c9), the bench's loop (c11), a plain caller whose argument stays live (c12),
+// a chain exit (c13) and a vector FIELD rebound from a call taking it (c14).  Every value is
+// hand-computed; the file runs under LOFT_STRICT_STORES / LOFT_POISON / the native leak
+// check on both backends.
+//
+// @falsified-at: none — these cells pin the unrewritten form's values (they pass on the build
+//   they were written on, 2026-09-24); the receipt belongs to the rewrite that will have to
+//   keep them, whose switch A/B is what scores this file.
+struct Piece { start: integer, count: integer }
+struct Doc { buf: vector<integer>, pieces: vector<Piece> }
+struct S { a: integer, b: integer }
+struct Keep { k: vector<integer> }
+
+fn sum_p(d: const Doc) -> integer { t = 0; for p in d.pieces { t = t * 7 + p.start * 3 + p.count; } t }
+fn del(d: Doc, a: integer, b: integer) -> Doc {
+  if b <= a { return d; }
+  np: vector<Piece> = [];
+  cum = 0;
+  for i in 0..len(d.pieces) {
+    p = d.pieces[i]?;
+    ps = cum; pe = cum + p.count;
+    lend = if a < pe { a } else { pe };
+    if lend > ps { np += [Piece { start: p.start, count: lend - ps }]; }
+    rstart = if b > ps { b } else { ps };
+    if pe > rstart { np += [Piece { start: p.start + (rstart - ps), count: pe - rstart }]; }
+    cum = pe;
+  }
+  return Doc { buf: d.buf, pieces: np };
+}
+fn del_swapped(d: Doc, a: integer, b: integer) -> Doc {
+  if b <= a { return d; }
+  np: vector<Piece> = [Piece { start: a, count: b - a }];
+  return Doc { pieces: np, buf: d.buf };
+}
+fn sw(s: S) -> S { return S { a: s.b, b: s.a }; }
+fn sw_cond(s: S, c: boolean) -> S { if c { return s; } return S { a: s.b, b: s.a }; }
+fn fill_first(s: S, k: integer) -> S { r = S { a: k, b: 0 }; r.b = s.a + s.b; return r; }
+fn two(x: Doc, y: Doc) -> Doc { return Doc { buf: x.buf, pieces: y.pieces }; }
+fn rec_del(d: Doc, n: integer) -> Doc { if n == 0 { return d; } d2 = rec_del(d, n - 1); return Doc { buf: d2.buf, pieces: [] }; }
+fn chain(d: Doc, a: integer, b: integer) -> Doc { return del(d, a, b); }
+fn mk() -> Doc { return Doc { buf: [10, 20, 30, 40, 50, 60], pieces: [Piece { start: 0, count: 3 }, Piece { start: 3, count: 3 }] }; }
+
+fn main() {
+  // c1 — the basic rebind: delete [1,4) of a 6-char doc of two 3-pieces -> [0,1) [4,6)
+  d1 = mk(); d1 = del(d1, 1, 4);
+  assert(len(d1.pieces) == 2 && (d1.pieces[0]?.count) == 1 && (d1.pieces[1]?.start) == 4 && len(d1.buf) == 6 && (d1.buf[5] ?? 0) == 60, "c1 {sum_p(d1)} {len(d1.buf)}");
+  // c2 — the early exit taken (b <= a): unchanged
+  d2 = mk(); d2 = del(d2, 3, 3);
+  assert(len(d2.pieces) == 2 && sum_p(d2) == (0*3+3)*7 + 3*3+3 && len(d2.buf) == 6, "c2 {sum_p(d2)}");
+  // c3 — the exit literal names buf AFTER pieces
+  d3 = mk(); d3 = del_swapped(d3, 2, 5);
+  assert(len(d3.pieces) == 1 && (d3.pieces[0]?.start) == 2 && (d3.pieces[0]?.count) == 3 && len(d3.buf) == 6 && (d3.buf[0] ?? 0) == 10, "c3");
+  // c4 — a swap THROUGH the result: fields read the place they overwrite
+  s4 = S { a: 1, b: 2 }; s4 = sw(s4);
+  assert(s4.a == 2 && s4.b == 1, "c4 {s4.a} {s4.b}");
+  s4 = sw(s4); assert(s4.a == 1 && s4.b == 2, "c4b {s4.a} {s4.b}");
+  // c4c — the conditional swap, both arms, in a loop: 5 swaps of (1,2) -> (2,1)
+  s5 = S { a: 1, b: 2 };
+  for i in 0..5 { s5 = sw_cond(s5, i == 2); }   // swapped on i=0,1,3,4 (four times) -> (1,2)
+  assert(s5.a == 1 && s5.b == 2, "c4c {s5.a} {s5.b}");
+  // c5 — a view of x live across the call keeps what it viewed
+  d5 = mk(); p5 = d5.pieces[1]?; d5 = del(d5, 0, 6); pc = p5.count;
+  assert(pc == 3 && len(d5.pieces) == 0, "c5 {pc} {len(d5.pieces)}");
+  // c6 — x reaches the callee twice
+  d6 = mk(); d6 = two(d6, d6);
+  assert(len(d6.buf) == 6 && len(d6.pieces) == 2, "c6");
+  // c7 — recursion through x
+  d7 = mk(); d7 = rec_del(d7, 3);
+  assert(len(d7.buf) == 6 && len(d7.pieces) == 0, "c7");
+  // c8 — the callee fills its result BEFORE reading the parameter
+  s8 = S { a: 3, b: 4 }; s8 = fill_first(s8, 9);
+  assert(s8.a == 9 && s8.b == 7, "c8 {s8.a} {s8.b}");
+  // c9 — a nullable x
+  d9: Doc? = mk(); d9 = del(d9 ?? mk(), 0, 1);
+  assert(len((d9 ?? mk()).pieces) == 2 && ((d9 ?? mk()).pieces[0]?.start) == 1, "c9");
+  // c11 — the bench's loop shape: 20 deletes of 0 chars keep the doc; then real ones
+  d11 = mk();
+  for k in 0..20 { d11 = del(d11, k & 1, k & 1); }
+  for k in 0..3 { d11 = del(d11, 0, 1); }
+  assert(len(d11.pieces) == 1 && (d11.pieces[0]?.start) == 3 && (d11.pieces[0]?.count) == 3, "c11 {sum_p(d11)}");
+  // c12 — a plain caller: the argument is still live after the call
+  d12 = mk(); e12 = del(d12, 0, 3);
+  assert(len(d12.pieces) == 2 && len(e12.pieces) == 1 && (e12.pieces[0]?.start) == 3, "c12");
+  // c13 — a chain exit
+  d13 = mk(); d13 = chain(d13, 5, 6);
+  assert(len(d13.pieces) == 2 && (d13.pieces[1]?.count) == 2, "c13");
+  // c14 — a field place: o.k rebound from a call taking o.k
+  k14 = Keep { k: [1, 2, 3] }; k14.k = grow(k14.k);
+  assert(len(k14.k) == 4 && (k14.k[3] ?? 0) == 7, "c14");
+  println("rebind cells ok");
+}
+fn grow(v: vector<integer>) -> vector<integer> { w = v; w += [7]; return w; }
