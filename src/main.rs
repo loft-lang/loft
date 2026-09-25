@@ -4216,6 +4216,287 @@ fn generate_native_stubs(pkg_path: &std::path::Path) {
     }
 }
 
+/// `LOFT_NATIVE_NO_CACHE=1` — the P254 hard kill switch for every native cache layer: the
+/// generated-Rust-keyed binary cache and the source-keyed fast path in front of it (@PLN166
+/// B3).  One home, so the two layers cannot read the switch differently.
+fn native_cache_bypassed() -> bool {
+    std::env::var("LOFT_NATIVE_NO_CACHE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// @PLN166 B3 — every input, beyond the parsed sources, that decides which native binary a
+/// run produces: the flags codegen and the rustc invocation read, the linked runtime's
+/// identity (the rlib's mtime, as the generated-Rust cache key folds it), the C-ABI mode and
+/// `RUSTFLAGS`.  The sources themselves are the program manifest's question, and the
+/// `LOFT_*` environment is [`native_fast_path_env_ok`]'s — a switch there changes the Rust,
+/// and the fast path declines rather than fingerprints it.
+// Four independent flags, each a fact of the invocation; a struct of four bools would only
+// rename them (the same call `cache::cache_decision` makes).
+#[allow(clippy::fn_params_excessive_bools)]
+fn native_source_key_fingerprint(
+    native_release: bool,
+    native_debug: bool,
+    lean: bool,
+    html_names: bool,
+    debug_name: Option<&str>,
+) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    native_release.hash(&mut h);
+    native_debug.hash(&mut h);
+    lean.hash(&mut h);
+    html_names.hash(&mut h);
+    debug_name.hash(&mut h);
+    native_utils::native_cabi_enabled().hash(&mut h);
+    platform::native_strip_symbols().hash(&mut h);
+    loft::cache::rustflags_fingerprint().hash(&mut h);
+    if let Some(lib_dir) = loft_lib_dir()
+        && let Ok(meta) = std::fs::metadata(lib_dir.join("libloft.rlib"))
+    {
+        meta.modified().ok().hash(&mut h);
+    }
+    h.finish()
+}
+
+/// @PLN166 B3 — whether the environment lets a source-keyed native hit stand in for a
+/// parse.  An ALLOW-list, because the `LOFT_*` surface is large and scattered (every
+/// `--native` rewrite has a `LOFT_NO_*` switch, every tracer a `LOFT_TRACE_*`, and each is
+/// read where it acts): a switch that reaches codegen changes the Rust, and an instrument
+/// that reaches the parser expects a parse to run — neither can be served a binary built
+/// without it.  The names here are the ones verified to touch neither: watchdog and memory
+/// bounds, timing, the cache's own knobs, the diagnostic renderer, the scratch dir and the
+/// source anchor the binary reads at run time.  Anything else declines the path, which costs
+/// only the parse the generated-Rust cache then skips rustc for.
+fn native_fast_path_env_ok() -> bool {
+    const INERT: &[&str] = &[
+        "LOFT_TIMING",
+        "LOFT_TIMING_LEDGER",
+        "LOFT_TIMEOUT",
+        "LOFT_TIMEOUT_GRACE",
+        "LOFT_MEMORY_LIMIT",
+        "LOFT_PROGRAM_CACHE",
+        "LOFT_CACHE_MAX_MB",
+        "LOFT_CACHE_TTL_HOURS",
+        "LOFT_ERRORS",
+        "LOFT_TMPDIR",
+        "LOFT_TMPFS_MIN_FREE_MB",
+        "LOFT_SOURCE_DIR",
+    ];
+    std::env::vars_os().all(|(k, _)| {
+        let k = k.to_string_lossy();
+        !k.starts_with("LOFT_") || INERT.contains(&k.as_ref())
+    })
+}
+
+/// Report what the front end said — warnings to stderr unless `--no-warnings`, errors
+/// always — through the mode `--errors` / `LOFT_ERRORS` selects, and exit non-zero on an
+/// error.  One home for both the run that parsed and the one that did not: a source-keyed
+/// native hit (@PLN166 B3) replays the cold parse's diagnostics through this same path, so a
+/// cached run says exactly what an uncached one says.
+fn report_parse_diagnostics(
+    diags: &loft::diagnostics::Diagnostics,
+    no_warnings: bool,
+    error_mode_arg: Option<&str>,
+) {
+    if !diags.is_empty() {
+        // @P282 fix: when `--no-warnings` is set, suppress
+        // Warning-level diagnostics entirely so the program's
+        // stdout stays free of warning preambles for piped
+        // consumers (the loft-native scanner, viewer state
+        // emission, anything machine-readable).  Errors still
+        // print and still exit non-zero.
+        let print_warnings = !no_warnings;
+        let has_errors = diags.level() >= Level::Error;
+        if print_warnings || has_errors {
+            let mode = loft::diagnostic_render::ErrorMode::from_cli_and_env(error_mode_arg);
+            match mode {
+                loft::diagnostic_render::ErrorMode::Pretty => {
+                    // @P282 — diagnostics (warnings + errors) go to STDERR,
+                    // matching the rustc / clang convention.  This keeps the
+                    // program's STDOUT free for piped consumers (the loft
+                    // scanner, viewer state, any machine-readable output).
+                    let loader = loft::diagnostic_render::FileSourceLoader::new();
+                    if print_warnings {
+                        let out = loft::diagnostic_render::render_pretty_all(
+                            diags,
+                            &loader,
+                            loft::diagnostic_render::ColorMode::Auto,
+                        );
+                        eprint!("{out}");
+                    } else {
+                        // Errors-only: re-render entry-by-entry so we
+                        // can skip Warning levels.  Mirrors render_pretty_all's
+                        // shape minus the warning-cascade dedup (which is
+                        // moot when no warnings are emitted).
+                        for entry in diags.entries() {
+                            if entry.level >= Level::Error {
+                                let s = loft::diagnostic_render::render_entry_pretty(
+                                    entry,
+                                    &loader,
+                                    loft::diagnostic_render::ColorMode::Auto,
+                                );
+                                eprint!("{s}");
+                                eprintln!();
+                            }
+                        }
+                    }
+                }
+                loft::diagnostic_render::ErrorMode::Compact => {
+                    for entry in diags.entries() {
+                        if entry.level == Level::Debug {
+                            continue;
+                        }
+                        if !print_warnings && matches!(entry.level, Level::Warning | Level::Advice)
+                        {
+                            continue;
+                        }
+                        eprintln!("{}", entry.to_string_compact());
+                    }
+                }
+            }
+        }
+        if diags.level() >= Level::Error {
+            std::process::exit(1);
+        }
+    }
+}
+
+/// Run the native `binary` the way the driver always has — cwd, the live-dispatch
+/// environment, the parent-death backstop — and propagate its exit status.  `cached_binary`
+/// is the content-addressed cache entry: a `binary` that is not it is a per-run temp, deleted
+/// after the run.  `data` is the parsed program when there was a parse (Windows DLL
+/// staging and the startup-failure explanation read it); the source-keyed fast path
+/// (@PLN166 B3) runs without one, and serves only programs with no native package, so it
+/// passes `None`.  Returns on success; a failed program exits with its own code.
+#[allow(clippy::too_many_arguments)]
+fn exec_native_binary(
+    binary: &std::path::Path,
+    cached_binary: &std::path::Path,
+    program_relative: bool,
+    abs_file: &str,
+    default_str: &str,
+    lib_dirs: &[String],
+    user_args: &[String],
+    data: Option<&data::Data>,
+) {
+    // @PLN26 phase 4 — Windows has no RPATH, so a C-ABI-linked native-package
+    // DLL must sit beside the binary that loads it; stage it there before the
+    // spawn (no-op off Windows / on the rlib path).
+    if let (Some(dir), Some(data)) = (binary.parent(), data) {
+        native_utils::stage_native_dlls(dir, data);
+    }
+    // loft#865 — the loft-level profiler cannot follow the program here, and this
+    // is the LAST point at which that is still certain: everything before it may
+    // still `break 'native` and interpret after all, where the sampler does arm.
+    //
+    // Said out loud because the default backend is native, so this is the run a
+    // user reaches for a profiler WITH — and an accepted-then-ignored variable
+    // ends in a clean exit and an empty terminal, which is indistinguishable from
+    // "the profiler ran and your program is not the problem". loft#860 fixed the
+    // same hole for test runs; this is the branch next to it.
+    announce_profiler_cannot_follow_native();
+    // @PLN18 08-S2 — live-dispatch handoff: the spawned binary's bootstrap
+    // re-parses the same sources, so hand it the resolved paths the driver
+    // already knows.  Inert unless the binary runs under LOFT_LIVE_FLIP=1;
+    // explicit user-set values win.
+    let mut cmd = std::process::Command::new(binary);
+    cmd.args(user_args);
+    // The compiled program dies with this driver.  A `loft prog.loft` run IS its
+    // program: when the driver is killed outright — a test harness reaping its
+    // `loft` child, a terminal closing, an OOM kill — the program must not
+    // outlive it holding a port or a terminal, which is exactly what left a
+    // listening engine host behind per test run (they were reparented to the
+    // session's `systemd --user` and so read as live to a `ppid == 1` orphan
+    // test).  The same backstop a placed library's worker arms for itself
+    // (`lib_placement::wire::serve`); SIGTERM rather than SIGKILL so a program
+    // with a handler (the profiler's report) gets to run it.
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::process::CommandExt as _;
+        // SAFETY: the closure runs in the forked child before `exec` and calls
+        // only async-signal-safe `prctl`/`getppid`; it touches no allocator or lock.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
+                // The driver may have died in the window before `prctl` armed; a
+                // child whose parent is already gone must not start.
+                if libc::getppid() == 1 {
+                    libc::_exit(0);
+                }
+                Ok(())
+            });
+        }
+    }
+    // @PLN26 follow-up — run the native binary with cwd = source_dir so its
+    // raw `std::fs` anchors where its loft `file()` does (the binary bakes
+    // `program_relative` + reads source_dir from LOFT_SOURCE_DIR).  Mirrors
+    // the interpreter chdir above; gated on the same `program_relative`.
+    if program_relative && let Some(dir) = std::path::Path::new(&abs_file).parent() {
+        cmd.current_dir(dir);
+    }
+    // The artifact anchors relative paths at its OWN dir (the
+    // standalone-bundle rule) — in driver mode that is the cache/tmp
+    // dir, not the program's.  Hand the source anchor down so file I/O
+    // matches the interpreter; an explicit user value wins.
+    if std::env::var("LOFT_SOURCE_DIR").is_err()
+        && let Some(dir) = std::path::Path::new(&abs_file).parent()
+    {
+        cmd.env("LOFT_SOURCE_DIR", dir);
+    }
+    if std::env::var("LOFT_LIVE_SRC").is_err() {
+        cmd.env("LOFT_LIVE_SRC", abs_file);
+    }
+    if std::env::var("LOFT_LIVE_STDLIB").is_err() {
+        cmd.env("LOFT_LIVE_STDLIB", default_str);
+    }
+    if std::env::var("LOFT_LIVE_LIBS").is_err() && !lib_dirs.is_empty() {
+        cmd.env("LOFT_LIVE_LIBS", lib_dirs.join(":"));
+    }
+    // @PLN18 08-S4 — the background rebuild re-invokes THIS driver.
+    if std::env::var("LOFT_LIVE_DRIVER").is_err()
+        && let Ok(me) = std::env::current_exe()
+    {
+        cmd.env("LOFT_LIVE_DRIVER", me);
+    }
+    // A crate with no `main` was compile-CHECKED rather than linked, so no binary
+    // exists to run.  Say what happened; reporting a missing file here would describe
+    // the symptom of a decision made two steps earlier (loft#1171).
+    if !binary.exists() && !cached_binary.exists() {
+        eprintln!(
+            "loft: `{abs_file}` defines no `main`, so there is nothing to run — it compiled cleanly."
+        );
+        std::process::exit(0);
+    }
+    let run_status = cmd.status().unwrap_or_else(|e| {
+        eprintln!("loft: failed to run native binary: {e}");
+        std::process::exit(1);
+    });
+    // Clean up temp binary (not the cached copy).
+    //
+    // ⚠ And its DEBUG-SYMBOL companion.  The MSVC linker writes `<binary>.pdb` beside the
+    // executable, so removing only the binary leaves the .pdb behind — and the sweep
+    // cannot reclaim it either, because `runtime_scratch_pid` requires everything after
+    // `loft_native_bin_` to be all digits and `1644.pdb` is not, so the name falls to the
+    // age rule and survives the hour.  Invisible on unix, which emits no such file:
+    // `pdb` appeared NOWHERE in `src/` before this.  Measured on the Windows daily —
+    // `native_scratch_hygiene` failed with `a run that ends normally leaves no artefact
+    // of its own, found ["loft_native_bin_1644.pdb"]`.
+    //
+    // Written as "remove the companion whatever it is called" rather than `#[cfg(windows)]`
+    // so a toolchain that emits one on another host is covered by the same line.
+    if binary != cached_binary {
+        let _ = std::fs::remove_file(binary);
+        let _ = std::fs::remove_file(binary.with_extension("pdb"));
+    }
+    if !run_status.success() {
+        if let Some(data) = data {
+            native_utils::explain_windows_startup_failure(run_status, binary, data);
+        }
+        std::process::exit(run_status.code().unwrap_or(1));
+    }
+}
+
 /// loft#865 — say that a profiling variable was read and cannot be honoured, when the
 /// program is about to run as a compiled binary.
 ///
@@ -8851,6 +9132,77 @@ fn main() {
     {
         p.set_sandbox_config(loft::sandbox::parse_sandbox_config(&content));
     }
+    // @PLN166 B3 — the source-keyed native fast path.  The binary cache is keyed by the
+    // GENERATED Rust, which only a parse and a codegen can produce, so on its own it makes
+    // every native run of an unchanged program pay the whole front end first.  The
+    // program's drift manifest is the second key, from the sources alone: when it validates,
+    // the parse would produce the same `Data`, and the binary is a function of that `Data`
+    // plus the inputs `native_fingerprint` hashes — so the sidecar's binary IS what the slow
+    // path would arrive at, and it is exec'd here without parsing.  Everything that could make
+    // that untrue declines the path: a mode that does not run the binary, a sandbox policy
+    // (loaded above, never from the cache), a `LOFT_*` switch outside the inert list (a
+    // codegen switch changes the Rust; an instrument expects the parse to run), Windows
+    // (DLL staging reads the parse), and anything the manifest registers beyond loft
+    // sources (`startup_cache::native_fast_path`).  A decline costs nothing new: the slow
+    // path still hits the generated-Rust cache and skips rustc as before.
+    let native_fingerprint = native_source_key_fingerprint(
+        native_release,
+        native_debug,
+        lean,
+        html_names,
+        debug_name.as_deref(),
+    );
+    let native_fast_path_wanted = native_mode
+        && native_emit.is_none()
+        && html_out.is_none()
+        && native_wasm.is_none()
+        && native_android.is_none()
+        && !check_only
+        && !dump_only
+        && !introspect_mode
+        && !sandbox_check_mode
+        && native_lib_paths.is_empty()
+        && program_cache_on
+        && !p.sandbox_is_active()
+        && !cfg!(windows)
+        && !native_cache_bypassed()
+        && native_fast_path_env_ok();
+    if native_fast_path_wanted {
+        let t_key = std::time::Instant::now();
+        let hit = loft::startup_cache::native_fast_path(
+            &abs_file,
+            &p.lib_dirs,
+            &default_str,
+            native_fingerprint,
+        )
+        .filter(|hit| native_utils::cache_safe_to_execute(&hit.binary));
+        if platform::timing_enabled() {
+            eprintln!(
+                "LOFT_TIMING native_source_key={} check={:.2}ms",
+                if hit.is_some() { "hit" } else { "miss" },
+                t_key.elapsed().as_secs_f64() * 1000.0
+            );
+        }
+        if let Some(hit) = hit {
+            for e in hit.diagnostics {
+                p.diagnostics.restore_from_cache(e);
+            }
+            report_parse_diagnostics(&p.diagnostics, no_warnings, error_mode_arg.as_deref());
+            exec_native_binary(
+                &hit.binary,
+                &hit.binary,
+                hit.program_relative,
+                &abs_file,
+                &default_str,
+                &p.lib_dirs,
+                &user_args,
+                None,
+            );
+            return;
+        }
+    } else if platform::timing_enabled() && native_mode && native_emit.is_none() {
+        eprintln!("LOFT_TIMING native_source_key=off");
+    }
     let mut warm_store: Option<(loft::database::Stores, loft::keys::DbRef)> = None;
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
@@ -8982,68 +9334,7 @@ fn main() {
     // @PLN102 build step 2/3 — report-only link oracles (no-op unless LOFT_DUMP_LINK_SAFE/OBS).
     loft::use_analysis::dump_link_safety(&p.data);
     loft::use_analysis::dump_link_observability(&p.data);
-    if !p.diagnostics.is_empty() {
-        // @P282 fix: when `--no-warnings` is set, suppress
-        // Warning-level diagnostics entirely so the program's
-        // stdout stays free of warning preambles for piped
-        // consumers (the loft-native scanner, viewer state
-        // emission, anything machine-readable).  Errors still
-        // print and still exit non-zero.
-        let print_warnings = !no_warnings;
-        let has_errors = p.diagnostics.level() >= Level::Error;
-        if print_warnings || has_errors {
-            let mode =
-                loft::diagnostic_render::ErrorMode::from_cli_and_env(error_mode_arg.as_deref());
-            match mode {
-                loft::diagnostic_render::ErrorMode::Pretty => {
-                    // @P282 — diagnostics (warnings + errors) go to STDERR,
-                    // matching the rustc / clang convention.  This keeps the
-                    // program's STDOUT free for piped consumers (the loft
-                    // scanner, viewer state, any machine-readable output).
-                    let loader = loft::diagnostic_render::FileSourceLoader::new();
-                    if print_warnings {
-                        let out = loft::diagnostic_render::render_pretty_all(
-                            &p.diagnostics,
-                            &loader,
-                            loft::diagnostic_render::ColorMode::Auto,
-                        );
-                        eprint!("{out}");
-                    } else {
-                        // Errors-only: re-render entry-by-entry so we
-                        // can skip Warning levels.  Mirrors render_pretty_all's
-                        // shape minus the warning-cascade dedup (which is
-                        // moot when no warnings are emitted).
-                        for entry in p.diagnostics.entries() {
-                            if entry.level >= Level::Error {
-                                let s = loft::diagnostic_render::render_entry_pretty(
-                                    entry,
-                                    &loader,
-                                    loft::diagnostic_render::ColorMode::Auto,
-                                );
-                                eprint!("{s}");
-                                eprintln!();
-                            }
-                        }
-                    }
-                }
-                loft::diagnostic_render::ErrorMode::Compact => {
-                    for entry in p.diagnostics.entries() {
-                        if entry.level == Level::Debug {
-                            continue;
-                        }
-                        if !print_warnings && matches!(entry.level, Level::Warning | Level::Advice)
-                        {
-                            continue;
-                        }
-                        eprintln!("{}", entry.to_string_compact());
-                    }
-                }
-            }
-        }
-        if p.diagnostics.level() >= Level::Error {
-            std::process::exit(1);
-        }
-    }
+    report_parse_diagnostics(&p.diagnostics, no_warnings, error_mode_arg.as_deref());
     // @PLN86 F12 — `sandbox-check`: report the admission verdict and STOP, never
     // executing.  The whole point is a no-run "will this be allowed?" surface, so this
     // returns before any codegen/run path below.
@@ -11025,12 +11316,16 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
         // recompile (rather than refusing to run) so a poisoned cache
         // doesn't deny the user service; it just costs them a
         // recompile.
-        let no_cache = std::env::var("LOFT_NATIVE_NO_CACHE")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
+        let no_cache = native_cache_bypassed();
         let cache_usable = !no_cache
             && cached_binary.exists()
             && native_utils::cache_safe_to_execute(&cached_binary);
+        if platform::timing_enabled() {
+            eprintln!(
+                "LOFT_TIMING native_binary_cache={}",
+                if cache_usable { "hit" } else { "miss" }
+            );
+        }
         if !no_cache && cached_binary.exists() && !cache_usable {
             eprintln!(
                 "loft: rejecting suspicious cached binary at {} (P254 — wrong owner, world-writable, symlink, or SUID); recompiling",
@@ -11498,6 +11793,24 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
                 emit_path.display()
             );
         }
+        // @PLN166 B3 — name this binary for the source-keyed fast path: the next run of
+        // this program under the same inputs execs it without parsing.  Beside the program
+        // manifest, which is what validates the sources then; only the content-addressed
+        // cache entry qualifies (a temp binary is gone after this run), and only where the
+        // manifest is written at all (the auto-native and dev-interpret paths skip it).
+        if !no_cache
+            && program_cache_on
+            && !has_auto_native
+            && !any_dev_interpret
+            && cached_binary.is_file()
+        {
+            loft::startup_cache::save_native_sidecar(
+                &abs_file,
+                &p.lib_dirs,
+                native_fingerprint,
+                &cached_binary,
+            );
+        }
 
         if check_only {
             // --check --native: compile succeeded, report ok and exit.
@@ -11525,121 +11838,16 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
             }
             return;
         }
-        // @PLN26 phase 4 — Windows has no RPATH, so a C-ABI-linked native-package
-        // DLL must sit beside the binary that loads it; stage it there before the
-        // spawn (no-op off Windows / on the rlib path).
-        if let Some(dir) = binary.parent() {
-            native_utils::stage_native_dlls(dir, &p.data);
-        }
-        // loft#865 — the loft-level profiler cannot follow the program here, and this
-        // is the LAST point at which that is still certain: everything before it may
-        // still `break 'native` and interpret after all, where the sampler does arm.
-        //
-        // Said out loud because the default backend is native, so this is the run a
-        // user reaches for a profiler WITH — and an accepted-then-ignored variable
-        // ends in a clean exit and an empty terminal, which is indistinguishable from
-        // "the profiler ran and your program is not the problem". loft#860 fixed the
-        // same hole for test runs; this is the branch next to it.
-        announce_profiler_cannot_follow_native();
-        // @PLN18 08-S2 — live-dispatch handoff: the spawned binary's bootstrap
-        // re-parses the same sources, so hand it the resolved paths the driver
-        // already knows.  Inert unless the binary runs under LOFT_LIVE_FLIP=1;
-        // explicit user-set values win.
-        let mut cmd = std::process::Command::new(&binary);
-        cmd.args(&user_args);
-        // The compiled program dies with this driver.  A `loft prog.loft` run IS its
-        // program: when the driver is killed outright — a test harness reaping its
-        // `loft` child, a terminal closing, an OOM kill — the program must not
-        // outlive it holding a port or a terminal, which is exactly what left a
-        // listening engine host behind per test run (they were reparented to the
-        // session's `systemd --user` and so read as live to a `ppid == 1` orphan
-        // test).  The same backstop a placed library's worker arms for itself
-        // (`lib_placement::wire::serve`); SIGTERM rather than SIGKILL so a program
-        // with a handler (the profiler's report) gets to run it.
-        #[cfg(target_os = "linux")]
-        {
-            use std::os::unix::process::CommandExt as _;
-            // SAFETY: the closure runs in the forked child before `exec` and calls
-            // only async-signal-safe `prctl`/`getppid`; it touches no allocator or lock.
-            unsafe {
-                cmd.pre_exec(|| {
-                    libc::prctl(libc::PR_SET_PDEATHSIG, libc::SIGTERM);
-                    // The driver may have died in the window before `prctl` armed; a
-                    // child whose parent is already gone must not start.
-                    if libc::getppid() == 1 {
-                        libc::_exit(0);
-                    }
-                    Ok(())
-                });
-            }
-        }
-        // @PLN26 follow-up — run the native binary with cwd = source_dir so its
-        // raw `std::fs` anchors where its loft `file()` does (the binary bakes
-        // `program_relative` + reads source_dir from LOFT_SOURCE_DIR).  Mirrors
-        // the interpreter chdir above; gated on the same `program_relative`.
-        if state.database.program_relative
-            && let Some(dir) = std::path::Path::new(&abs_file).parent()
-        {
-            cmd.current_dir(dir);
-        }
-        // The artifact anchors relative paths at its OWN dir (the
-        // standalone-bundle rule) — in driver mode that is the cache/tmp
-        // dir, not the program's.  Hand the source anchor down so file I/O
-        // matches the interpreter; an explicit user value wins.
-        if std::env::var("LOFT_SOURCE_DIR").is_err()
-            && let Some(dir) = std::path::Path::new(&abs_file).parent()
-        {
-            cmd.env("LOFT_SOURCE_DIR", dir);
-        }
-        if std::env::var("LOFT_LIVE_SRC").is_err() {
-            cmd.env("LOFT_LIVE_SRC", &abs_file);
-        }
-        if std::env::var("LOFT_LIVE_STDLIB").is_err() {
-            cmd.env("LOFT_LIVE_STDLIB", &default_str);
-        }
-        if std::env::var("LOFT_LIVE_LIBS").is_err() && !p.lib_dirs.is_empty() {
-            cmd.env("LOFT_LIVE_LIBS", p.lib_dirs.join(":"));
-        }
-        // @PLN18 08-S4 — the background rebuild re-invokes THIS driver.
-        if std::env::var("LOFT_LIVE_DRIVER").is_err()
-            && let Ok(me) = std::env::current_exe()
-        {
-            cmd.env("LOFT_LIVE_DRIVER", me);
-        }
-        // A crate with no `main` was compile-CHECKED rather than linked, so no binary
-        // exists to run.  Say what happened; reporting a missing file here would describe
-        // the symptom of a decision made two steps earlier (loft#1171).
-        if !binary.exists() && !cached_binary.exists() {
-            eprintln!(
-                "loft: `{abs_file}` defines no `main`, so there is nothing to run — it compiled cleanly."
-            );
-            std::process::exit(0);
-        }
-        let run_status = cmd.status().unwrap_or_else(|e| {
-            eprintln!("loft: failed to run native binary: {e}");
-            std::process::exit(1);
-        });
-        // Clean up temp binary (not the cached copy).
-        //
-        // ⚠ And its DEBUG-SYMBOL companion.  The MSVC linker writes `<binary>.pdb` beside the
-        // executable, so removing only the binary leaves the .pdb behind — and the sweep
-        // cannot reclaim it either, because `runtime_scratch_pid` requires everything after
-        // `loft_native_bin_` to be all digits and `1644.pdb` is not, so the name falls to the
-        // age rule and survives the hour.  Invisible on unix, which emits no such file:
-        // `pdb` appeared NOWHERE in `src/` before this.  Measured on the Windows daily —
-        // `native_scratch_hygiene` failed with `a run that ends normally leaves no artefact
-        // of its own, found ["loft_native_bin_1644.pdb"]`.
-        //
-        // Written as "remove the companion whatever it is called" rather than `#[cfg(windows)]`
-        // so a toolchain that emits one on another host is covered by the same line.
-        if binary != cached_binary {
-            let _ = std::fs::remove_file(&binary);
-            let _ = std::fs::remove_file(binary.with_extension("pdb"));
-        }
-        if !run_status.success() {
-            native_utils::explain_windows_startup_failure(run_status, &binary, &p.data);
-            std::process::exit(run_status.code().unwrap_or(1));
-        }
+        exec_native_binary(
+            &binary,
+            &cached_binary,
+            state.database.program_relative,
+            &abs_file,
+            &default_str,
+            &p.lib_dirs,
+            &user_args,
+            Some(&p.data),
+        );
         return;
     }
 

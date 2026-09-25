@@ -14,6 +14,12 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**Running an unchanged program natively starts at once.**  Every native run used to re-read
+and re-translate the program before finding it already had the compiled result.  It now
+recognises the program from its source files and starts the compiled copy directly, in about
+a twentieth of the work; any change to the program, its libraries or the standard library still
+rebuilds it.
+
 **Running a program again after editing it is faster.**  loft keeps a compiled copy of each
 program, and when you change the program it used to read the whole standard library again as
 well.  It now reuses the standard library it already read, so a small program starts in about

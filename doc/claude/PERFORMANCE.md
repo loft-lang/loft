@@ -138,7 +138,13 @@ named `n_<yours>`. To profile the front end alone — parse, IR, codegen — use
 `--engine -- --interpret --check p.loft`: **`--check` on its own is not front-end-only**,
 because the default backend is the compiler, so `check_only` still falls through the native
 pipeline and rustc builds a binary it then does not run (the rustc-share guard says so, and
-names the missing flag).
+names the missing flag).  The report has two tables: self time by SYMBOL, and the same
+samples by MODULE — every symbol folded onto the loft module it belongs to, the runtime
+below loft onto `allocator` / `mem` / `hashing` / `vec/string`.  Read a compile off the
+second: its top symbol is 5–8 % and ties with the allocator's, so the symbol table names
+a coin toss, while a module's share is the sum over all of its symbols and holds run to
+run (a compile of the front-end corpus: `data` 32–34 %, the allocator 20–21 %).  The
+oracle row for it is `frontend_large` in [PROFILE_ORACLE.md](PROFILE_ORACLE.md) § Engine.
 
 **For an interpreted program it is the wrong instrument, structurally.** A loft call
 creates no machine frame, so perf's stack walk yields the interpreter's own path —
@@ -2406,10 +2412,10 @@ N5 right after for `integer`) so the analysis lives in one place.
 > (vs the ~26 ms below), so the ~18 ms tax is gone. The implementation is *better* than
 > the original design (which moved the probe into the cache-miss branch) — it removed
 > the probe entirely, letting the compile attempt itself be the rustc-presence check.
-> **Residual (separate, not done):** the ~6.6 ms parse+codegen+emit+hash still runs on
-> every warm invocation (the cache is keyed on the *generated Rust*, not the `.loft`
-> source) — see the Ceiling note below; the source-keyed cache to reach the ~1 ms floor
-> is the open follow-up.
+> **Residual — closed by @PLN166 B3:** the parse+codegen+emit+hash that still ran
+> on every warm invocation (the binary cache is keyed on the *generated Rust*, so nothing
+> could name the binary without generating it) now runs only when the SOURCE-keyed layer in
+> front of it misses — see the Ceiling note below.
 
 **Affected workload:** Native **startup latency** of any short-lived
 program — a CLI tool, a test harness, a script invoked repeatedly.
@@ -2492,18 +2498,47 @@ falls back to the interpreter with the existing warning, and a cache
 hit with rustc absent now succeeds (it previously failed the probe and
 fell back even though it never needed rustc).
 
-### Ceiling — what this does NOT remove
+### Ceiling — what this does NOT remove, and the layer that does (@PLN166 B3)
 
-The cache is keyed on the **generated Rust source**
-(`main.rs:5022`, `source_bytes = read(emit_path)`), so parse + codegen +
-emit + hash still run on every invocation — the residual ~6.6 ms.
-Reaching the ~1 ms floor (bare cached-binary cost) needs a **second,
-larger** change: key the cache on the `.loft` source + stdlib/rlib
-identity so a hit short-circuits parse+codegen and jumps straight to
-exec.  The source-level cache machinery already exists
-(`src/startup_cache.rs`); wiring the native-run path to it is the
-follow-up.  Ship N6 first (the cheap, safe ~18 ms win), then the
-source-keyed cache as its own change.
+The binary cache is keyed on the **generated Rust source** (`source_bytes =
+read(emit_path)` in `main.rs`), so parse + codegen + emit + hash ran on every invocation —
+the residual ~6.6 ms of the original measurement, ~113 M instructions on a warm `hello`
+as measured for B3.  The floor is the bare cached-binary cost, and reaching it needed a
+second key that can name the binary WITHOUT generating it.
+
+That key now exists: the program's own drift manifest (`startup_cache::native_fast_path`).
+When the manifest validates — every parsed source's content hash and the stdlib key, the
+same oracle the interpreter trusts to skip parsing — the parse would produce the same
+`Data`, and the binary is a function of that `Data` plus a fingerprint over the remaining
+inputs (`--native-release` / `--native-debug` / `--lean` / `--names` / `--debug`, the C-ABI
+mode, `RUSTFLAGS`, the runtime rlib's mtime).  A sidecar beside the manifest
+(`program-<key>.native`: build signature, fingerprint, binary path) names the binary, and a
+run whose sidecar and manifest are both current execs it before any parse.  Measured on the
+release build, warm `hello`: **113 M → 4.8 M instructions (23×)**, wall 20–40 ms → under 5 ms;
+the check itself is 0.6–0.9 ms (the manifest's hash walk over the stdlib).
+
+**What declines the fast path, and why** — each is an input the key cannot see, and a
+decline costs only what every warm run paid before (the slow path still hits the
+generated-Rust cache):
+
+- a `LOFT_*` variable outside a short inert list (`main.rs::native_fast_path_env_ok`):
+  every `--native` rewrite has a `LOFT_NO_*` switch that changes the Rust, and every
+  instrument expects the parse to run — an allow-list, because that surface is read where
+  it acts, not in one place;
+- a manifest registering anything beyond loft sources — a `[native] crate`, `[library]
+  native`, placement or `[wasm.bridge]` entry — because those are what a warm load
+  RE-RESOLVES (a cdylib's freshness, a worker to start) and the fast path runs no code that
+  could;
+- a mode that does not simply run the binary (`--check`, `--dump`, `introspect`, `--html`,
+  `--native-wasm`, `--native-android`, `--native-emit`), a sandbox policy (read fresh from
+  `loft.toml`, never from a cache), Windows (DLL staging reads the parse), and
+  `LOFT_NATIVE_NO_CACHE` (the P254 kill switch, now one home for both layers).
+
+The falsifier is `tests/native_source_key.rs`: a codegen-changing edit, a stdlib edit, a
+`--lib` edit, a flag change, an environment switch, and a deleted, garbage, truncated or
+foreign-fingerprint sidecar each miss and answer correctly; a diagnostics-producing program
+renders on a hit exactly what it rendered cold.  Sabotage receipt: with the manifest check
+removed, the edit cell answers `sum=30` for a program that says `sum=100`.
 
 ---
 

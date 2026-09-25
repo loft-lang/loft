@@ -159,6 +159,23 @@ struct ManifestState {
     wasm_bridge_host_js: Vec<String>,
 }
 
+#[cfg(feature = "mmap")]
+impl ManifestState {
+    /// Whether the parse registered nothing beyond loft sources — no `[native] crate`,
+    /// `[library] native`, placement or `[wasm.bridge]` entry.  What the source-keyed
+    /// native fast path (@PLN166 B3) requires: each of those is something a warm load
+    /// RE-RESOLVES (a cdylib's freshness, a worker to start), and a path that runs no
+    /// parse-time code cannot.
+    fn registers_only_loft_sources(&self) -> bool {
+        self.native_lib_regs.is_empty()
+            && self.native_crate_regs.is_empty()
+            && self.placed_libs.is_empty()
+            && self.wasm_bridge_routes.is_empty()
+            && self.wasm_bridge_packages.is_empty()
+            && self.wasm_bridge_host_js.is_empty()
+    }
+}
+
 /// On a valid match, returns the parse-time [`ManifestState`] persisted in the
 /// manifest.  `None` on a miss: absent manifest, stale build signature, or any
 /// source drifted since the bundle was written.
@@ -513,6 +530,123 @@ pub fn save_program(
     crate::cache::prune_program_cache();
 }
 
+/// @PLN166 B3 — what a native run needs to exec a cached binary WITHOUT parsing: the
+/// binary, and the two parse-time facts the driver would otherwise take from the parse.
+pub struct NativeHit {
+    /// The cached binary the sidecar names; the caller still runs the P254 safety check.
+    pub binary: std::path::PathBuf,
+    /// The `#cwd` directive's resolved effect (the binary is run with cwd = source dir
+    /// under it, exactly as after a parse).
+    pub program_relative: bool,
+    /// What the cold parse said, replayed so this run says it too.
+    pub diagnostics: Vec<crate::diagnostics::DiagEntry>,
+}
+
+/// @PLN166 B3 — the source-keyed native fast path.  `Some` when the binary built from
+/// THIS program, under THIS build and `fingerprint`, is provably the one a parse + codegen +
+/// rustc would produce again: the program's drift manifest validates (every parsed source's
+/// content hash and the stdlib key — the same oracle the interpreter trusts to skip parsing),
+/// the sidecar's build signature and fingerprint match, and the manifest registers nothing
+/// a warm load would have to re-resolve.  `None` is a miss; the caller then takes the path
+/// that parses, generates and checks the binary cache by the generated Rust as before.
+///
+/// **Only a pure-loft program is served** — no `[native] crate`, `[library] native`,
+/// placement or `[wasm.bridge]` registration.  Those are the inputs a warm load re-resolves
+/// (a cdylib's freshness, a worker to start), and the fast path runs no code that could;
+/// refusing them keeps every such program on the path that computes, at the cost of the
+/// ~10 ms this path saves.  `fingerprint` is the caller's hash over every remaining codegen
+/// and rustc input (flags, rlib identity, rustflags); the env policy is the caller's too.
+#[cfg(feature = "mmap")]
+#[must_use]
+pub fn native_fast_path(
+    script_abspath: &str,
+    lib_dirs: &[String],
+    default_dir: &str,
+    fingerprint: u64,
+) -> Option<NativeHit> {
+    let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, lib_dirs);
+    let sidecar = crate::cache::native_sidecar_path(&manifest);
+    // The sidecar first: three cheap lines before the manifest's hash walk.
+    let text = std::fs::read_to_string(&sidecar).ok()?;
+    let mut lines = text.lines();
+    match lines.next().and_then(|l| l.strip_prefix("sig ")) {
+        Some(sig) if sig == crate::cache::build_signature() => {}
+        _ => return None,
+    }
+    match lines.next().and_then(|l| l.strip_prefix("fp ")) {
+        Some(fp) if fp == format!("{fingerprint:016x}") => {}
+        _ => return None,
+    }
+    let binary = std::path::PathBuf::from(lines.next()?.strip_prefix("bin ")?);
+    // A line this build does not know is a sidecar this build did not write.
+    if lines.next().is_some() {
+        return None;
+    }
+    if !binary.is_file() {
+        return None;
+    }
+    let state = manifest_state(&manifest, &stdlib_key_hex(default_dir)?)?;
+    if !state.registers_only_loft_sources() {
+        return None;
+    }
+    // A hit is a use: keep the bundle the sidecar depends on out of the idle-TTL sweep.
+    crate::cache::touch_now(&bundle);
+    Some(NativeHit {
+        binary,
+        program_relative: state.program_relative,
+        diagnostics: state.diagnostics,
+    })
+}
+
+/// @PLN166 B3 — record that `binary` is the native binary of the program whose manifest
+/// is current, under `fingerprint`.  Written only beside an EXISTING manifest, because the
+/// manifest is what validates the sources on the next run; atomically, through a tmp name
+/// of this process's own, for the same reason the manifest is (loft#1129).
+#[cfg(feature = "mmap")]
+pub fn save_native_sidecar(
+    script_abspath: &str,
+    lib_dirs: &[String],
+    fingerprint: u64,
+    binary: &std::path::Path,
+) {
+    let (_, manifest) = crate::cache::program_cache_paths(script_abspath, lib_dirs);
+    if !manifest.is_file() {
+        return;
+    }
+    let Some(binary) = binary.to_str() else {
+        return;
+    };
+    let sidecar = crate::cache::native_sidecar_path(&manifest);
+    let body = format!(
+        "sig {}\nfp {fingerprint:016x}\nbin {binary}\n",
+        crate::cache::build_signature()
+    );
+    let tmp = sidecar.with_extension(format!("native.{}.tmp", std::process::id()));
+    if std::fs::write(&tmp, body.as_bytes()).is_ok() {
+        let _ = std::fs::rename(&tmp, &sidecar);
+    }
+    let _ = std::fs::remove_file(&tmp);
+}
+
+#[cfg(not(feature = "mmap"))]
+#[must_use]
+pub fn native_fast_path(
+    _script_abspath: &str,
+    _lib_dirs: &[String],
+    _default_dir: &str,
+    _fingerprint: u64,
+) -> Option<NativeHit> {
+    None
+}
+#[cfg(not(feature = "mmap"))]
+pub fn save_native_sidecar(
+    _script_abspath: &str,
+    _lib_dirs: &[String],
+    _fingerprint: u64,
+    _binary: &std::path::Path,
+) {
+}
+
 /// Non-`mmap` builds: the whole-program cache is unavailable.
 #[cfg(not(feature = "mmap"))]
 #[must_use]
@@ -569,6 +703,48 @@ mod ncrate_manifest_tests {
             vec![("loft_foo".to_string(), "/pkgs/foo".to_string())],
             "the sibling nlib header still parses beside ncrate"
         );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// @PLN166 B3 — the source-keyed native fast path serves only a program whose manifest
+    /// registers nothing beyond loft sources.  One registration of any kind — here an
+    /// `ncrate`, the case that P269'd a warm `--native` build once — is enough to refuse.
+    #[test]
+    fn the_native_fast_path_refuses_a_manifest_with_a_registration() {
+        let dir = std::env::temp_dir().join(format!("loft_nsk_pure_{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let src = dir.join("s.loft");
+        std::fs::write(&src, "fn main() {}\n").unwrap();
+        let src_str = src.to_string_lossy().to_string();
+        let source_line = format!(
+            "{} {}",
+            hex32(&crate::cache::file_hash(&src_str).unwrap()),
+            src_str
+        );
+        let manifest = dir.join("m.manifest");
+        let sig = crate::cache::build_signature();
+        for (header, pure) in [
+            ("", true),
+            ("ncrate loft-foo /pkgs/foo\n", false),
+            ("nlib loft_foo /pkgs/foo\n", false),
+            ("plib foo worker /pkgs/foo\n", false),
+            ("wbroute n_x foo bridge_x\n", false),
+            ("wbpkg foo /pkgs/foo\n", false),
+            ("wbhostjs /pkgs/foo/host.js\n", false),
+        ] {
+            std::fs::write(
+                &manifest,
+                format!("sig {sig}\nstdk k\n{header}{source_line}\n"),
+            )
+            .unwrap();
+            let state = manifest_state(&manifest, "k")
+                .unwrap_or_else(|| panic!("the manifest with {header:?} must validate"));
+            assert_eq!(
+                state.registers_only_loft_sources(),
+                pure,
+                "a manifest carrying {header:?}"
+            );
+        }
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

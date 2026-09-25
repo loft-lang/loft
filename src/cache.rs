@@ -860,6 +860,15 @@ pub fn program_cache_paths(
     )
 }
 
+/// @PLN166 B3 — the sidecar beside a program's manifest that names the NATIVE binary
+/// built from the program the manifest validates (`program-<key>.native`).  It lives
+/// with the manifest because its validity is the manifest's: a native run that finds
+/// both current execs the binary without parsing, and one evicts with the other.
+#[must_use]
+pub fn native_sidecar_path(manifest: &std::path::Path) -> std::path::PathBuf {
+    manifest.with_extension("native")
+}
+
 /// @PLN11 G2 / track 1 — default budget (MiB) for the program-cache directory
 /// before eviction kicks in.  ~512 MiB ≈ 70 bundles at the measured ~7 MiB each;
 /// overridable via `LOFT_CACHE_MAX_MB`.
@@ -904,14 +913,14 @@ pub fn touch_now(path: &std::path::Path) {
 /// (~7 MiB) and nothing removes them.  Eviction is **idle-TTL primary**
 /// ([`cache_ttl`]) — drop any bundle not used within the TTL — with the size-cap
 /// ([`program_cache_budget_bytes`]) as a runaway backstop.  Whole (`.store` +
-/// `.manifest`) pairs are removed.  Best-effort.
+/// `.manifest` + `.native`) sets go together.  Best-effort.
 pub fn prune_program_cache() {
     prune_dir(&cache_base_dir(), program_cache_budget_bytes(), cache_ttl());
 }
 
 /// The eviction core, factored out of [`prune_program_cache`] so it is testable
 /// against a temp dir with an explicit budget + TTL (no env, no global cache dir).
-/// Only `program-*.store` files (and their sibling `.manifest`) are considered;
+/// Only `program-*.store` files (and their sibling `.manifest` / `.native`) are considered;
 /// any other cache file (e.g. the stdlib bundle) is left untouched.  Phase 1 drops
 /// every bundle idle longer than `ttl` (the primary policy); phase 2 is the
 /// oldest-first size-cap backstop on what remains.
@@ -947,7 +956,9 @@ fn prune_dir(base: &std::path::Path, budget_bytes: u64, ttl: std::time::Duration
     let now = std::time::SystemTime::now();
     let remove_pair = |store: &std::path::Path| {
         let _ = std::fs::remove_file(store);
-        let _ = std::fs::remove_file(store.with_extension("manifest"));
+        let manifest = store.with_extension("manifest");
+        let _ = std::fs::remove_file(native_sidecar_path(&manifest));
+        let _ = std::fs::remove_file(manifest);
     };
     // Phase 1 — idle-TTL: drop any bundle not used within `ttl`.
     bundles.retain(|b| {
