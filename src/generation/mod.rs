@@ -7237,81 +7237,12 @@ extern crate loft;"
         let type_id_to_dnr: HashMap<u16, u32> =
             type_defs.iter().map(|&(tid, dnr)| (tid, dnr)).collect();
 
-        // For each struct / enum-value / enum, collect the known_type ids that
-        // its emission will *reference* as `t{N}` let-bindings — so the
-        // topological walk emits them first.  Previously these were raw u16
-        // literals and forward references worked; with the Category D let-
-        // binding scheme, every referenced id must already be in scope.
-        //
-        // Struct / EnumValue: content-type of each sorted / hash / index /
-        // vector field is a dep.  Enum: each typed variant (EnumValue with
-        // attributes) is a dep, since `db.value(enum, variant_name, t{N})`
-        // must find the variant's `t{N}` binding in scope.
-        let mut deps: HashMap<u16, Vec<u16>> = HashMap::new();
-        for &(type_id, dnr) in &type_defs {
-            let def = self.data.def(dnr);
-            let is_container = matches!(def.def_type(), DefType::Struct)
-                || (def.def_type() == DefType::EnumValue && !def.attributes().is_empty());
-            let is_enum = def.def_type() == DefType::Enum;
-            if !is_container && !is_enum {
-                continue;
-            }
-            let mut d: Vec<u16> = Vec::new();
-            if is_container && !self.data.is_open_instance(dnr) {
-                for a in &def.attributes().to_vec() {
-                    let c_nr = match &a.typedef {
-                        Type::Sorted(c_nr, _, _)
-                        | Type::Hash(c_nr, _, _)
-                        | Type::Index(c_nr, _, _) => {
-                            // Guard matches the Vector convention: skip unresolved (u32::MAX) content types.
-                            (*c_nr != u32::MAX).then_some(*c_nr)
-                        }
-                        Type::Vector(c_type, _) => {
-                            let n = self.data.type_def_nr(c_type);
-                            (n != u32::MAX).then_some(n)
-                        }
-                        _ => None,
-                    };
-                    if let Some(c_nr) = c_nr {
-                        let c_tp = self.data.def(c_nr).known_type();
-                        if c_tp != u16::MAX && type_id_to_dnr.contains_key(&c_tp) {
-                            d.push(c_tp);
-                        }
-                    }
-                }
-            } else {
-                // is_enum: typed variants referenced by `db.value(enum, name, t{N})`.
-                for a in &def.attributes().to_vec() {
-                    if matches!(a.typedef, Type::Enum(_, true, _)) {
-                        // Resolve the EnumValue def_nr whose parent matches.
-                        let v_dnr = (0..self.data.definitions()).find(|&v| {
-                            let vd = self.data.def(v);
-                            vd.def_type == DefType::EnumValue
-                                && vd.parent == dnr
-                                && vd.name == a.name
-                        });
-                        if let Some(v_dnr) = v_dnr {
-                            let v_tp = self.data.def(v_dnr).known_type();
-                            if v_tp != u16::MAX && type_id_to_dnr.contains_key(&v_tp) {
-                                d.push(v_tp);
-                            }
-                        }
-                    }
-                }
-            }
-            if !d.is_empty() {
-                deps.insert(type_id, d);
-            }
-        }
-
         // Two-phase emission: (1) create all types in known_type order so every
         // cross-reference in phase 2 is a backward reference to an already-bound
         // `t{N}`; (2) populate struct / enum-value fields and enum values once
         // every type id is in scope.  This resolves mutual-recursion cycles
         // (e.g. JsonValue enum with JArray variant holding vector<JsonValue>)
         // that broke the previous single-pass topological approach.
-        let _ = deps; // no longer used; kept only for future re-introduction
-        let _ = type_id_to_dnr;
 
         // Single-pass emission in strict known_type order.
         //
@@ -7324,10 +7255,14 @@ extern crate loft;"
         // move to Phase 2 so that mutual-recursion cycles (enum →
         // typed variant → enum) break cleanly.
         //
-        // `deps` / `type_id_to_dnr` are retired — known_type order is
-        // sufficient because parse-time `fill_database` guarantees each
-        // type's content dependencies already have a `known_type` by
-        // the time the type itself is registered.
+        // A pre-built dependency MAP is not needed here: parse-time `fill_database`
+        // guarantees each type's content dependencies already have a `known_type` by the
+        // time the type itself is registered, so `known_type` order plus the per-field
+        // recursion below is sufficient.  The one place a content type is named is
+        // `emit_def_create_recurse_fields`, which reads it off the field's own type — a
+        // second list of the keyed formers here would be a second answer to that question,
+        // and the one that stood here was stale on two counts the live site had already
+        // been fixed for (loft#797's `?` peel, loft#1222's `trie` / `spatial`).
         // Track which type_ids have been fully emitted (creation +
         // fields) so the recursive walk below breaks cycles.  A type's
         // `db.structure` / `db.enumerate` call is emitted BEFORE
@@ -7352,7 +7287,6 @@ extern crate loft;"
                 w,
                 type_id,
                 dnr,
-                &deps,
                 &type_id_to_dnr_local,
                 &mut emitted,
                 &bare_io,
@@ -7593,16 +7527,6 @@ extern crate loft;"
         Ok(())
     }
 
-    /// Recursive single-pass emission: create the type's `t{N}`
-    /// binding first so any subsequent inline collection-field emission
-    /// referencing it as `t{N}` finds the binding in scope.  Then
-    /// recurse into content-type dependencies (from `deps`) to satisfy
-    /// forward references like `JObject { fields: vector<JsonField> }`
-    /// where `JsonField` has a higher `known_type` than `JObject`.
-    /// Finally, emit fields in source order — inline collection creates
-    /// dedup on name and land at the correct runtime id.
-    /// Resolve a struct's field name by field_nr — needed for
-    /// Sorted/Hash/Index key-string emission at bare-type level.
     /// The NAME of key field number `k` on collection content `c`, as the bare-stream
     /// `db.sorted` / `db.hash` / `db.spatial` / `db.trie` / `db.index` call spells it.
     ///
@@ -7733,13 +7657,19 @@ extern crate loft;"
         Ok(())
     }
 
+    /// Recursive single-pass emission: create the type's `t{N}` binding first, so any
+    /// subsequent inline collection-field emission referencing it as `t{N}` finds the binding
+    /// in scope.  Then recurse into the content type of each collection field — read off the
+    /// field's own type just below — to satisfy forward references like
+    /// `JObject { fields: vector<JsonField> }` where `JsonField` has a higher `known_type`
+    /// than `JObject`.  Finally, emit fields in source order: inline collection creates dedup
+    /// on name and land at the correct runtime id.
     #[allow(clippy::only_used_in_recursion, clippy::too_many_arguments)]
     fn emit_def_create_recurse_fields(
         &mut self,
         w: &mut dyn Write,
         type_id: u16,
         dnr: u32,
-        deps: &HashMap<u16, Vec<u16>>,
         type_id_to_dnr: &HashMap<u16, u32>,
         emitted: &mut HashSet<u16>,
         bare_io: &[(u16, BareIo)],
@@ -7875,7 +7805,6 @@ extern crate loft;"
                         w,
                         dep_tp,
                         dep_dnr,
-                        deps,
                         type_id_to_dnr,
                         emitted,
                         bare_io,
