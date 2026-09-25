@@ -861,6 +861,7 @@ fn emit_drop_stores(
     data: &crate::data::Data,
     def_nr: u32,
     owns_snapshots: bool,
+    owns_fnrefs: bool,
 ) -> std::io::Result<()> {
     let vars = data.def(def_nr).variables();
     let owned: Vec<String> = persistent
@@ -882,10 +883,23 @@ fn emit_drop_stores(
         })
         .map(|(v, _)| fields[v].clone())
         .collect();
-    if owned.is_empty() && !owns_snapshots {
+    if owned.is_empty() && !owns_snapshots && !owns_fnrefs {
         return Ok(());
     }
     writeln!(w, "    fn drop_stores(&mut self, stores: &mut Stores) {{")?;
+    if owns_fnrefs {
+        // loft#1676 — an eager fn-ref generator abandoned before the consumer took every
+        // value still holds the closure records it built for the rest; each one is its own
+        // store (the yield handed it over), released with the captures it adopted.
+        writeln!(
+            w,
+            "        while self.__idx + 2 <= self.__values.len() {{ \
+             let (a, b) = (self.__values[self.__idx], self.__values[self.__idx + 1]); \
+             self.__idx += 2; \
+             let db = DbRef {{ store_nr: ((a as u64) >> 32) as u16, rec: b as u32, pos: ((b as u64) >> 32) as u32 }}; \
+             if db.rec != 0 {{ loft::codegen_runtime::coroutine_drop_local(stores, db, \"__values\"); }} }}"
+        )?;
+    }
     if owns_snapshots {
         // An eager handle generator abandoned before exhaustion (a `break`)
         // still holds its snapshot store.
@@ -1539,6 +1553,11 @@ impl Output<'_> {
                             w,
                             "                dest[1] = (_f.1.rec as i64) | ((_f.1.pos as i64) << 32);"
                         )?;
+                        // loft#1676, `(G-Own)`: the closure record and the capture copies it
+                        // adopted are the consumer's now, so the generator forgets them.
+                        for field in self.handed_yield_fields(val) {
+                            writeln!(w, "                self.var_{field} = DbRef::NULL;")?;
+                        }
                         writeln!(w, "                return true;")?;
                     } else {
                         let yield_code = self.generate_expr_buf(val)?;
@@ -1794,6 +1813,37 @@ impl Output<'_> {
         writeln!(w, "    }}")
     }
 
+    /// The statement an eager factory pushes a yielded FN-REF with (loft#1676): its two slot
+    /// images — the packing the lazy `next_into` arm writes, which the consumer's channel-2
+    /// rebuild reads — then the closure record and its backing temps are forgotten, since they
+    /// are the consumer's from here (`yield_handed_temps`).  A temp declared inside the yielded
+    /// value (a capture copy) ended with it: out of scope here and outside the frame's release.
+    pub(super) fn eager_fnref_push(&self, val: &Value, val_code: &str) -> String {
+        use std::fmt::Write as _;
+        let bare = matches!(val.unspan(), Value::Int(_) | Value::Long(_));
+        let mut out = if bare {
+            format!("{{ let _f: (u32, DbRef) = (({val_code}) as u32, loft::keys::DbRef::NULL); ")
+        } else {
+            format!("{{ let _f: (u32, DbRef) = ({val_code}); ")
+        };
+        out += "__values.push((_f.0 as i64) | (((_f.1.store_nr as u64) as i64) << 32)); \
+                __values.push((_f.1.rec as i64) | ((_f.1.pos as i64) << 32)); ";
+        let mut inner_scopes = std::collections::HashSet::new();
+        val.walk(&mut |n| {
+            if let Value::Block(b) = n {
+                inner_scopes.insert(b.scope);
+            }
+        });
+        let vars = self.data.def(self.def_nr).variables();
+        for t in crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val) {
+            if !inner_scopes.contains(&vars.scope(t)) {
+                let _ = write!(out, "{} = DbRef::NULL; ", self.handed_place(t));
+            }
+        }
+        out += "}";
+        out
+    }
+
     /// The statement an eager factory pushes a handle yield with: a snapshot of the value in
     /// the generator's one snapshot store (`coroutine_snapshot`).  Where the yield is handed
     /// over (`(G-Own)`) the value is FRESH — the parser copied anything else — so the snapshot
@@ -1807,9 +1857,18 @@ impl Output<'_> {
             _ => Type::Void,
         };
         if !crate::coroutine_layout::yield_handed_over(&yield_tp) {
-            return format!(
-                "__values.push(loft::codegen_runtime::coroutine_snapshot(cell, &mut __snap, ({val_code}), {tp}))"
+            let mut out = format!(
+                "{{ __values.push(loft::codegen_runtime::coroutine_snapshot(cell, &mut __snap, ({val_code}), {tp}));"
             );
+            // loft#1676 — a yielded lambda is not a record the snapshot moves, but its closure
+            // record and capture copies are still the consumer's (`yield_handed_temps`).
+            if matches!(yield_tp.base(), Type::Function(..)) {
+                for t in crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val) {
+                    let _ = write!(out, " {} = DbRef::NULL;", self.handed_place(t));
+                }
+            }
+            out += " }";
+            return out;
         }
         let mut out = format!(
             "{{ let __yv = ({val_code}); __values.push(loft::codegen_runtime::coroutine_snapshot_moved(cell, &mut __snap, __yv, {tp}));"
@@ -1825,7 +1884,7 @@ impl Output<'_> {
         let vars = self.data.def(self.def_nr).variables();
         for t in crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val) {
             if !inner_scopes.contains(&vars.scope(t)) {
-                let _ = write!(out, " {} = DbRef::NULL;", self.var_place(t));
+                let _ = write!(out, " {} = DbRef::NULL;", self.handed_place(t));
             }
         }
         out += " }";
@@ -1837,10 +1896,32 @@ impl Output<'_> {
     /// interpreter's answer too, that live across states.  A temp local to one state ends with
     /// the `return` that yields it, so nothing releases it and it needs no forgetting.
     fn handed_yield_fields(&self, val: &Value) -> Vec<String> {
+        let vars = self.data.def(self.def_nr).variables();
         crate::coroutine_layout::yield_handed_temps(self.data, self.def_nr, val)
             .into_iter()
-            .filter_map(|v| self.coroutine_persistent_fields.get(&v).cloned())
+            .filter_map(|v| {
+                let f = self.coroutine_persistent_fields.get(&v).cloned()?;
+                Some(if matches!(vars.tp(v).base(), Type::Function(..)) {
+                    format!("{f}.1")
+                } else {
+                    f
+                })
+            })
             .collect()
+    }
+
+    /// Where a handed-over temp's HANDLE lives: the variable itself, or for a fn-ref
+    /// `(u32, DbRef)` its closure half — the null is written there (loft#1676).
+    fn handed_place(&self, t: u16) -> String {
+        let place = self.var_place(t);
+        if matches!(
+            self.data.def(self.def_nr).variables().tp(t).base(),
+            Type::Function(..)
+        ) {
+            format!("{place}.1")
+        } else {
+            place
+        }
     }
 
     /// Emit a loft generator function as a Rust state-machine struct.
@@ -2044,7 +2125,16 @@ impl Output<'_> {
         )?;
         self.emit_next_i64(w, &attrs, &segments, &tail, has_yf, &yield_tp)?;
         let owns_snapshots = crate::data::is_dbref(&yield_tp) && is_eager(&segments);
-        emit_drop_stores(w, &persistent, &fields, self.data, def_nr, owns_snapshots)?;
+        let owns_fnrefs = matches!(yield_tp.base(), Type::Function(..)) && is_eager(&segments);
+        emit_drop_stores(
+            w,
+            &persistent,
+            &fields,
+            self.data,
+            def_nr,
+            owns_snapshots,
+            owns_fnrefs,
+        )?;
         writeln!(w, "}}\n")?;
         self.in_coroutine_body = prev_in_coroutine;
         self.coroutine_persistent_fields = prev_persistent;
@@ -2218,6 +2308,7 @@ impl Output<'_> {
         self.yield_collect_dbref = is_dbref;
         self.yield_collect_snapshot_tp = snapshot_tp;
         self.yield_collect_kinds.clone_from(&eager_kinds);
+        self.yield_collect_fnref = matches!(yield_tp.base(), Type::Function(..));
         self.yield_collect_refuse.clone_from(&refuse);
         for seg in segments {
             match seg {
@@ -2261,7 +2352,10 @@ impl Output<'_> {
                         writeln!(w, "    {stmt_code};")?;
                     }
                     let val_code = self.generate_expr_buf(val)?;
-                    if let Some(tp) = snapshot_tp {
+                    if self.yield_collect_fnref {
+                        let push = self.eager_fnref_push(val, &val_code);
+                        writeln!(w, "    {push};")?;
+                    } else if let Some(tp) = snapshot_tp {
                         // A straight-line handle yield is snapshotted too: the record
                         // may be rewritten between this yield and the next, and the
                         // buffer is read only after the whole factory has run.
@@ -2283,6 +2377,18 @@ impl Output<'_> {
                     let factory = self.gen_inner_factory(init)?;
                     writeln!(w, "    {{")?;
                     writeln!(w, "        let mut __sub = {factory};")?;
+                    if self.yield_collect_fnref {
+                        // A delegated fn-ref arrives on the fn-ref channel, already packed as
+                        // the buffer holds it, and handed over (`(G-Own)`): the buffer owns the
+                        // closure record until the consumer takes it (loft#1676).
+                        writeln!(w, "        let mut __b: [i64; 2] = [0; 2];")?;
+                        writeln!(
+                            w,
+                            "        while __sub.next_into(stores, &mut __b) {{ __values.push(__b[0]); __values.push(__b[1]); }}"
+                        )?;
+                        writeln!(w, "    }}")?;
+                        continue;
+                    }
                     writeln!(w, "        loop {{")?;
                     writeln!(w, "            let v = __sub.{sub_advance}(stores);")?;
                     writeln!(w, "            if v == {sub_exhaust} {{ break; }}")?;
@@ -2319,6 +2425,7 @@ impl Output<'_> {
         self.yield_collect_dbref = false;
         self.yield_collect_snapshot_tp = None;
         self.yield_collect_kinds = None;
+        self.yield_collect_fnref = false;
         self.yield_collect_refuse = None;
         // The TAIL — everything after the last yield.  The state machine runs it on the
         // exhausting `next()`; this factory has already run the whole body, so it runs

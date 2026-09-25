@@ -1105,6 +1105,11 @@ pub struct Parser {
     // outer variable numbers captured by the most recently parsed lambda.
     // Consumed by try_fn_ref_call to mark them as read at call-injection time.
     pub(crate) last_closure_captured_vars: Vec<u16>,
+    /// loft#1676 — per (function, local): how many closure builds captured it, and how many of
+    /// those were yielded and took a copy (`yield_owned_closure`).  Equal counts mean the local
+    /// is the generator's own again.
+    pub(crate) closure_capture_builds: std::collections::HashMap<(u32, u16), u32>,
+    pub(crate) yield_copied_captures: std::collections::HashMap<(u32, u16), u32>,
     /// #314: capturing lambdas synthesized during each function body in
     /// pass 1, keyed by the enclosing context's def_nr.  Consumed by
     /// `reject_shared_mutable_scalar_captures` at the parent's body end
@@ -1685,6 +1690,8 @@ impl Parser {
             last_closure_work_var: u16::MAX,
             last_closure_alloc: None,
             last_closure_captured_vars: vec![],
+            closure_capture_builds: std::collections::HashMap::new(),
+            yield_copied_captures: std::collections::HashMap::new(),
             init_field_tracking: false,
             init_field_deps: Vec::new(),
             init_reads_record: false,

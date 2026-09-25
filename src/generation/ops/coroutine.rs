@@ -123,9 +123,14 @@ impl OpEmitter for OpCoroutineNextEmitter {
                 // slots; the consumer unpacks to rebuild the tuple:
                 //   slot[0]: low 32 bits = d_nr; bits 32..48 = closure.store_nr
                 //   slot[1]: low 32 = closure.rec; high 32 = closure.pos
+                // An exhausted advance writes nothing, so the buffer's INITIAL value is what
+                // the consumer reads then: `store_nr` 0xFFFF makes that the null closure
+                // handle, as the interpreter's exhausted fn-ref is (loft#1676).  Zeroed, it
+                // decoded as store #0, and the drained loop's break arm freed that store — the
+                // generator's own local, on a `yield from` of a lambda.
                 write!(
                     ctx.w,
-                    "{{ let mut _loft_yield_buf: [i64; 2] = [0; 2]; \
+                    "{{ let mut _loft_yield_buf: [i64; 2] = [0xFFFF_i64 << 32, 0]; \
                      loft::codegen_runtime::coroutine_next_into({gen_code}, stores, &mut _loft_yield_buf); \
                      ((_loft_yield_buf[0] as u32), DbRef {{ \
                        store_nr: ((_loft_yield_buf[0] >> 32) & 0xFFFF) as u16, \

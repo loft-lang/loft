@@ -1309,12 +1309,17 @@ impl Parser {
                     let item_var = self.create_unique("__yf_item", &item_tp);
                     self.vars.defined(item_var);
                     let op = self.data.def_nr("OpCoroutineNext");
-                    let value_size =
-                        crate::variables::size(&elem_tp, &crate::data::Context::Argument);
-                    let next_call = Value::Call(
-                        op,
-                        vec![Value::Var(sub_var), Value::Int(i32::from(value_size))],
-                    );
+                    // The advance's operands from the ONE home both consumers of a generator
+                    // ask — the channel tag and a tuple's slot kinds, beside the byte size
+                    // (`coroutine_layout::next_operands`, what a `for` over a generator
+                    // emits).  The bare byte size lost the channel, so a delegated fn-ref was
+                    // read down the scalar path on `--native` (`coroutine_next_i64(…) as i32`
+                    // for a `(u32, DbRef)`, rustc E0308, loft#1676), and the interpreter's
+                    // exhausted advance pushed zero bytes for it rather than the fn-ref null.
+                    let (value_size, kinds) = crate::coroutine_layout::next_operands(&elem_tp);
+                    let mut next_args = vec![Value::Var(sub_var), Value::Int(value_size)];
+                    next_args.extend(kinds.into_iter().map(Value::Int));
+                    let next_call = Value::Call(op, next_args);
                     let test = self.cl("OpCoroutineExhausted", &[Value::Var(sub_var)]);
                     let lp = vec![
                         crate::data::v_set(item_var, next_call),
@@ -1395,6 +1400,7 @@ impl Parser {
                         }
                     }
                 }
+                self.yield_owned_closure(&mut v);
                 self.yield_owned_value(&mut v, &v_tp);
                 *val = Value::Yield(Box::new(v));
                 Type::Void
