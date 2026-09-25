@@ -231,6 +231,13 @@ jobs:
               if [ -d "$dir/tests" ]; then
                 legs=""
                 for mode in --interpret --native; do
+                  # Each backend starts from a clean tests/actual/, as the consumer's own
+                  # runner does (dryopea's scripts/test.sh).  The interpreter pass leaves its
+                  # outputs there, and a test that asserts a cold start with no save file
+                  # (dryopea's test_smoke_full_cycle) then failed on native only — the
+                  # previous pass's file, reported as a native-only break.  `git clean`
+                  # removes only what git does not track, so a tracked golden file stays.
+                  ( cd "$dir" && git clean -fdxq -- tests/actual 2>/dev/null; mkdir -p tests/actual )
                   if ( cd "$dir" && LOFT_TIMEOUT=600 xvfb-run -a loft test $mode > "/tmp/$name$mode.log" 2>&1 ); then
                     legs="$legs ok |"
                   else
