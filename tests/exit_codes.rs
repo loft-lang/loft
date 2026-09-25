@@ -64,6 +64,42 @@ fn parse_error_exits_nonzero() {
     );
 }
 
+/// `loft test` on a file with a compile ERROR reports that error, as a plain run does.  The runner
+/// used to run the scope pass regardless, and a test holding `break` outside a loop panicked
+/// inside it (`index out of bounds`), so the file read *"scope check panic"* and the author never
+/// saw *"Cannot break outside a loop"*.  The program path has always stopped at an error.
+#[test]
+fn loft_test_reports_a_compile_error_instead_of_a_scope_panic() {
+    let dir = std::env::temp_dir().join(format!("loft_test_break_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let path = dir.join("break_outside.loft");
+    std::fs::write(&path, "fn test_wrong_break() {\n  break;\n}\n").expect("write temp file");
+    let out = Command::new(loft_bin())
+        .arg("test")
+        .arg(&path)
+        .current_dir(workspace_root())
+        .output()
+        .expect("failed to invoke loft binary");
+    let _ = std::fs::remove_dir_all(&dir);
+    let all = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(
+        !out.status.success(),
+        "a refused file must fail the run: {all}"
+    );
+    assert!(
+        all.contains("Cannot break outside a loop"),
+        "the error must reach the reader: {all}"
+    );
+    assert!(
+        !all.contains("panic"),
+        "no internal panic may stand in for it: {all}"
+    );
+}
+
 /// An unresolvable `#native` symbol (no cdylib provides it) must surface a LOUD
 /// diagnostic at LOAD time — naming the symbol and how to rebuild — not stay
 /// silent until a generic panic at first call.  The warning is non-fatal: a

@@ -1711,7 +1711,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **16** |
+| **17** |
 
 The census this came from — how many functions resolve a projection by op name, and which ones
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
