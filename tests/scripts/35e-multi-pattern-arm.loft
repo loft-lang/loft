@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-P-Multi` — the rule(s) this file is the guard for; the chapter's banner
+// named them verified via `tests/scripts/35*.loft` without any file citing one back,
+// so `rule_tags.py coverage` read them as unguarded (corrected 2026-09-25).
 // @PLN35 Phase 3 (L3.7, P-Multi): comma-separated multi-pattern arms.
 // `Circle { r }, Square { r } => body` binds the SAME capture from whichever
 // variant matches, from that variant's OWN field offset, into a shared slot the

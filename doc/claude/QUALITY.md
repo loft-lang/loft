@@ -9304,6 +9304,47 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Is this rule shipped?" — a banner that covered fourteen rules and was true of eleven (2026-09-25)
+
+`matching.md`'s PEG section opens **"@PLN35 · SHIPPED"** and its register reads `OPEN: 0`.
+Three of the fourteen rules under that banner describe machinery that does not exist:
+`(P-Anchor)` and `(P-Revert)` name `OpMatchAnchor` / `OpMatchRevert`, which appear nowhere in
+`src/`, and `(P-IterBound)`'s `max_lookahead` appears only inside one doc comment.
+
+**The observable cost is a memory runaway.**  `(P-IterBound)` promises *"a DEFINED runtime
+error (never a hang) — preserving termination"*.  Measured on a repetition over an endless
+generator: **696 MB in 13 s** on `--interpret`, hard-killed by `LOFT_TIMEOUT`, and **2.13 GB in
+18 s** on `--native`, which stopped only against an externally imposed `ulimit -v`.  Nothing in
+the language ends either run — `LOFT_MEMORY_LIMIT` is a test-run ceiling and ordinary runs are
+never capped, and a time bound does not bound memory.  This is the loft#796 class, where the
+global OOM killer took two unrelated agent sessions with it.  **D-match-6 / loft#1678**;
+`matching.md` goes `OPEN: 0` → 1.
+
+**The control is what says the defect is the ceiling and not the design.**  A FINITE source of
+200 000 elements matches correctly on both backends in 0.45 s and 36 MB.  The shipped design
+MATERIALISES an iterator subject into a vector and runs the vector machinery over it, and
+`tests/scripts/35p-iterator-match.loft` says so in its own header — so the three rules describe
+a memoising cursor that was never built, while the thing that WAS built is fine at any finite
+size.
+
+⚠ **`VERIFICATION.md` marked all three `☐`, which its own legend defines as *shipped +
+both-backends*.**  That is the second time in two days that the chapter and the ledger
+disagreed about a rule — and the opposite way round from the first: at `(G-YieldDepth)` the
+ledger was right and the conformance line was wrong, here the chapter's banner and the ledger
+are wrong together.  Neither direction is catchable by `rule_tags.py`, which checks that
+citations RESOLVE and that counts AGREE, never that a sentence was ever run.
+
+⚠ **A section banner is read as covering the rules underneath it**, so it has to name its
+exceptions; "SHIPPED" over a list is a claim about every member.  Corrected in both homes.
+
+**And the chapter's own coverage number was wrong in the other direction.**  Twelve of the
+fourteen `@FR-P-*` rules read as having no guard, which is what made this chapter the next one
+to read — but `tests/scripts/35*.loft` is twenty-three files that DO exercise them.  The banner
+named them verified "via `tests/scripts/35*.loft`" and not one of those files cited a rule
+back, so the measurement said zero.  Twelve files now carry the citation for the rule each is
+the guard for: guard coverage 180 → **187 of 388**.  A collective pointer from prose to a glob
+is not a citation, and only the citation is measurable.
+
 ### "Where does an advance resume?" — a construct declared out of scope, and the four defects under its `OPEN: 0` (2026-09-25)
 
 `@FR-G-Next` says an advance runs ONE slice, from the resume point.  On `--native` the

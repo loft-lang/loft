@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-P-Rep` — the rule(s) this file is the guard for; the chapter's banner
+// named them verified via `tests/scripts/35*.loft` without any file citing one back,
+// so `rule_tags.py coverage` read them as unguarded (corrected 2026-09-25).
 // @PLN35 PC — repetition `( [name:] V )* / +` inside a CURSOR match PREFIX-consumes: the run
 // starts at the cursor's `pos` (not index 0), matches the MAXIMAL V run, LEAVES any following
 // non-V token, and ADVANCES `cursor.pos` to the run end (a plain vector must instead consume to

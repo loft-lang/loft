@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-P-Rep` / `@FR-P-Cap` — the rule(s) this file is the guard for; the chapter's banner
+// named them verified via `tests/scripts/35*.loft` without any file citing one back,
+// so `rule_tags.py coverage` read them as unguarded (corrected 2026-09-25).
 // @PLN35 slice 2 (L3.4) — per-iteration FIELD projection `( V { field, … } )*`: each named
 // scalar/text field of the run's variant collects into its own fresh `vector<field_type>` (a
 // projection), vs a `name:` prefix which collects whole elements.  Works with `+`, a trailing

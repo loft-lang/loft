@@ -1,5 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-P-Rest` / `@FR-P-Cap` — the rule(s) this file is the guard for; the chapter's banner
+// named them verified via `tests/scripts/35*.loft` without any file citing one back,
+// so `rule_tags.py coverage` read them as unguarded (corrected 2026-09-25).
 // @PLN35 Phase 2 (L3.1): `..rest` named tail-slice capture (P-Rest / P-Cap-Fresh).
 //
 // `[ head…, ..rest ]` binds `rest` to a FRESH, independent `vector<T>` holding the tail
