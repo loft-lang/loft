@@ -9304,6 +9304,88 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Is this member a heap value?" — an accessor used as a proxy, and a rule that held for three of four kinds (2026-09-25)
+
+`@FR-T-Cons` says a heap element is COPIED into a tuple.  Measured, a COLLECTION-typed member
+read as a PROJECTION was not — it stored the source's handle, so the member and the field were
+two names for one store, on both backends with no diagnostic (loft#1674, `silent-wrong`).
+
+**The statement that needs no rule reference.**  One program, two tuple-literal members, same
+member type, same ownership:
+
+```loft
+s = Hb { p: ["a"], q: ["b", "c"] };   vs = (s.q, s.p);   s.p += ["added"];
+t: (vector<text>, vector<text>) = (["a"], ["b", "c"]);   vt = (t.1, t.0);   t.0 += ["added"];
+```
+
+`len(vs.1)` answered **2** and `len(vt.1)` answered **1** — a member read off a struct FIELD
+viewed, one read off a tuple MEMBER copied.  Whatever the rule says, one of those was wrong.
+
+**The cause is an accessor standing in for a question it cannot answer.**
+`tuple_member_owned_copy` reaches its keyed and vector branches only through the arm for a
+projection source, and that arm guarded on `Type::heap_def_nr()`, which answers `Some` for a
+`Reference` and a struct-enum and **nothing else**.  So a `vector` or `hash` member failed
+`is_some_and` and fell to `_ => return None`.  The guard's real question is the one its own
+comment states — *would copying double-release a droppable* — and
+`Data::type_owns_droppable_anywhere` is the twin built for exactly this case, its doc saying
+"for a container that has no def of its own (a `vector<S>`)".  One `match` in place of the
+`is_some_and`, and the other two arms untouched.
+
+**Three faces, one cause — and the third is why I had published the wrong reading.**  The
+struct-field member copied (it has a def), the tuple-member source copied (it takes the
+`TupleGet` arm), and a swap through a `&(…)` link — `v = (p.1, p.0); p.0 = v.0; p.1 = v.1` —
+LOST an element, because a member read through a link lowers as a projection too and failed the
+same guard.  I had that third one recorded as `(B-View-Base)` working correctly with only a
+diagnostic missing, and told a peer so; the fix cures it without touching anything about `&`,
+which falsified my reading.  ⚠ The lesson is the boundary between two rules: a tuple LITERAL's
+member is `(T-Cons)`'s question and NOT `(B-Copy)`'s bind boundary.  `(B-View-Base)` governs
+`af = bx.v`; it says nothing about a literal's member.  Read as one question, the collection
+row looks like a decided edge and the struct row looks like a second anomaly — read as two, both
+are one rule with one defect.
+
+**Nothing else moved, and that is measured three ways, because each instrument caught what the
+one before it could not.**  Emitted Rust over `tests/scripts` plus `doc/` — **1 of 1567 files
+differs, and it is this fix's own guard.**  The forty cells of the `(T-Destr)` walk above answer
+byte-identically, and so do the controls the cure could have widened past: integer, `text` and
+struct members, an element read, and the local swaps at every member kind.  Clean under
+`LOFT_POISON=1 LOFT_STRICT_STORES=1`.
+
+⚠ **The first cure over-reached, and a DIAGNOSTIC comparison is what said so** — no value cell
+did.  `(q.items, q.nm)` off a BY-VALUE parameter needs no copy: the callee's own copy of the
+struct already makes the member independent, which is `(T-Cons)`'s own parameter clause ("a
+property of the parameter rather than of the construction") and the carve-out the `Value::Var`
+arm already had.  Copying there is a copy of a copy, and it cost
+`1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft` a `__vdb` backing per exit and took its
+three `advice[avoidable-copy]` lines from `38:47 / 40:51 / 59:51` to `38:0 / 0:0 / 0:0` with
+synthetic lambda names.  An advice that cannot name its site is not advice.  The discriminator is
+the root's TYPE and not whether it is an argument: a `&` link's root is an argument too and MUST
+copy, because what it names is the caller's place.
+
+⚠ **Then the narrowing over-reached the OTHER way, and only the EMIT comparison saw it.**  Asked
+of the whole arm, the parameter carve-out also removed a copy the record branch had been making
+since before this issue: two files the wide form left byte-identical began to move
+(`1367-a-tagged-projection-bound-to-a-local-is-the-pointer`,
+`147-view-producer-invalidator-boundary`), both still passing.  The carve-out belongs to the
+newly-admitted `None` branch alone.  A fix narrowed by reading rather than by re-measuring would
+have shipped that.
+
+⚠ **And the first radius read "all 1567 files differ", which was the harness.**  The pre-fix
+binary ran with `--path <worktree>` and the emitted Rust bakes the stdlib location into its
+`// loft:` comments, so every file differed on a path string.  An instrument that reports
+EVERYTHING changed is as broken as one reporting nothing, and it reads as a catastrophic radius
+rather than as a bug in the sweep — normalising the path gave 2, and then 1.
+
+⚠ **The droppable edge is a REFUSAL, not the alias I wrote into the guard first.**  A
+`vector<Droppable>` member is stopped by `copy-of-droppable` — *"`s` still owns that member and
+releases it when it goes"* — pre-existing, identical on the tree before the cure, from a
+different site.  So the cure's conservatism is unobservable from a passing program: the copy is
+never reached.  The cell I wrote to score it could not run, which is the useful kind of failure
+— it turned an assumption into a measurement.
+
+Guard: `tests/scripts/1674-a-tuple-literal-copies-every-heap-member.loft`, six functions,
+carrying the plain-bind-beside-the-member cell as the one that states the defect without
+reference to any rule.
+
 ### "Is this value a tuple?" — one home, and the two sites that never asked it (2026-09-25)
 
 `@FR-T-Destr` had **zero code citations and zero guards**, and `tuple` is the only mechanism class
@@ -9322,7 +9404,9 @@ and exit 1.  ⚠ Do not re-run this; the axes it HELD fixed are nested destructu
 never compiled — not measured, and not claimed).
 
 **And `(T-Destr)` is `(T-Proj)` n times, including the copy/view boundary, which the rule does not
-say.**  `(a, b) = t` binds each name exactly as `a = t.0` does: a RECORD member VIEWS (a write
+say.**  (Scope, added 2026-09-25: this is the DESTRUCTURE of a tuple value.  A tuple LITERAL's
+member is a different rule — `(T-Cons)`, which copies every heap member from every source — and
+the entry above it carries the defect that cost.)  `(a, b) = t` binds each name exactly as `a = t.0` does: a RECORD member VIEWS (a write
 through the name reaches the tuple), a COLLECTION member COPIES, a scalar and a `text` copy —
 measured side by side in one program, both backends agreeing, which is `@FR-B-Copy` /
 `@FR-B-View-Base`'s table for a one-level projection off an owned base and not a second rule.  The

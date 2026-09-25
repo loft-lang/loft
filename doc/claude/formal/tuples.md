@@ -34,7 +34,15 @@ compile-time index).
              dead after the construction — which is the same last-use elision the STRUCT
              constructor already applies (`LOFT_NO_MOVE_ELIDE` restores the copy).  A
              PARAMETER handed to a tuple keeps aliasing its caller: that is `B-Ref-Alias`, and
-             it is a property of the parameter rather than of the construction.
+             it is a property of the parameter rather than of the construction.  "A HEAP element"
+             is every heap kind and every SOURCE: a local, a member of another tuple, a field or
+             element PROJECTION, and a member read through a `&(…)` link.  It is decided by the
+             member's TYPE and not by the base it is read off, so `(B-View-Base)` — which makes a
+             plain bind off a BORROWED base a view — does not reach a literal's member; reading
+             the two as one question is what left a COLLECTION member aliasing while its struct
+             and tuple-member siblings copied (loft#1674).  `Parser::tuple_member_owned_copy` is
+             the one home, and the question it asks of the member type is whether a copy would
+             double-release a droppable, which `copy-of-droppable` refuses outright.
   (T-Paren)  a single parenthesised expression `(e)` is NOT a tuple — it is just grouping.  A
              tuple needs ≥ 2 comma-separated elements.
 ```
