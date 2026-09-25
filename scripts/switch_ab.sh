@@ -39,7 +39,13 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 LOFT="${LOFT:-$ROOT/target/release/loft}"
 [ -x "$LOFT" ] || { echo "no loft binary at $LOFT — cargo build --release --bin loft" >&2; exit 2; }
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 4)}"
-WORK="$(mktemp -d "${XDG_CACHE_HOME:-$HOME/.cache}/loft-switch-ab.XXXXXX")"
+# The scratch parent is created first: a fresh CI runner has no `~/.cache`, `mktemp -d` then
+# fails, `WORK` is empty, and every run wrote to `/on/<file>.out` — which the comparison below
+# read as 1706 "noisy" programs, a failed harness reported as a finding on every leg.  A
+# harness that cannot write its outputs has measured nothing, so it stops.
+scratch="${XDG_CACHE_HOME:-$HOME/.cache}"
+mkdir -p "$scratch" && WORK="$(mktemp -d "$scratch/loft-switch-ab.XXXXXX")" && [ -n "$WORK" ] \
+  || { echo "cannot create a scratch directory under $scratch" >&2; exit 2; }
 trap 'rm -rf "$WORK"' EXIT
 
 # One program, one mode: output to $WORK/<mode>/<file>.out.  The `@ARGS:` annotation is the
@@ -62,7 +68,7 @@ LOFT_ARGS="${LOFT_ARGS:-}"
 AB_TIMEOUT="${AB_TIMEOUT:-300}"
 export SWITCH LOFT WORK LOFT_ARGS AB_TIMEOUT
 
-mkdir -p "$WORK/on" "$WORK/on2" "$WORK/off"
+mkdir -p "$WORK/on" "$WORK/on2" "$WORK/off" || { echo "cannot create $WORK/{on,on2,off}" >&2; exit 2; }
 cd "$ROOT"
 files=(tests/scripts/${ONLY:-*}.loft)
 for mode in on off; do
