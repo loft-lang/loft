@@ -220,7 +220,14 @@ def main(argv):
     ap.add_argument("--counts", action="store_true",
                     help="also count instructions (perf stat): steady under load, where wall time is not")
     ap.add_argument("--self-test", action="store_true")
+    ap.add_argument("--emit", metavar="SIZE",
+                    help="print the corpus of one size and exit (the C1 allocation gate reads it)")
     a = ap.parse_args(argv)
+    if a.emit:
+        if a.emit not in SIZES:
+            ap.error(f"unknown size {a.emit}; one of {', '.join(SIZES)}")
+        sys.stdout.write(corpus(a.emit))
+        return 0
     a.sizes = [s for s in a.sizes.split(",") if s]
     a.backends = [b for b in a.backends.split(",") if b]
     a.modes = [m for m in a.modes.split(",") if m]
