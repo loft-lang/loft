@@ -4592,6 +4592,15 @@ pub struct Definition {
     pub def_type: DefType,
     /// Parent definition for `EnumValue` or `StructPart`. Initial `u32::MAX`.
     pub parent: u32,
+    /// The index behind [`Data::children_of`]: this definition's first child, and the next
+    /// child of its own parent, as definition numbers (`u32::MAX` = none), kept in ascending
+    /// order.  DERIVED from `parent` and written only by [`Data::set_parent`] and the index
+    /// rebuild, so a variant lookup walks the enum's variants and not every definition in
+    /// the program (@PLN166 B4: `enums_with_variant` scanned the whole table once per enum
+    /// per call, 3.5 % of a compile).  Two links inside the record rather than a list per
+    /// definition, so the index allocates nothing the front-end allocation ratchet could see.
+    pub(crate) first_child: u32,
+    pub(crate) next_sibling: u32,
     /// The source file position where this is defined, only allow redefinitions within the same file.
     /// This might eventually also limit access to protected internals.
     pub position: Position,
@@ -5718,7 +5727,7 @@ pub struct Data {
     /// fault reads the same `Data` through a shared pointer.
     lazy_drivers: LazyDriverCache,
     /// Index on definitions on name
-    def_names: HashMap<(String, u16), u32>,
+    def_names: crate::fxhash::FxHashMap<(String, u16), u32>,
     use_names: HashMap<String, u16>,
     /// loft#925 — libraries already parsed into this `Data` before the program
     /// parse begins, re-seeded into `use_names` by every [`reset`](Self::reset).
@@ -6531,7 +6540,7 @@ impl Data {
         Data {
             definitions: Vec::new(),
             lazy_drivers: LazyDriverCache::default(),
-            def_names: HashMap::new(),
+            def_names: crate::fxhash::FxHashMap::default(),
             use_names: HashMap::new(),
             preloaded_uses: HashMap::new(),
             applied: Vec::new(),
@@ -6681,6 +6690,7 @@ impl Data {
     /// `(name, own_source)` but never the `(name, importing_source)` alias an import
     /// creates.  Without the replay a rollback drops every `use`d name.
     pub(crate) fn rebuild_indices(&mut self) {
+        self.rebuild_children();
         // A rollback can REMOVE definitions as well as add them, so the count alone
         // could in principle land back on its old value over a different table.  This
         // is the one place that happens, and dropping the cache here costs one rebuild.
@@ -7097,6 +7107,8 @@ impl Data {
             position: position.clone(),
             def_type,
             parent: u32::MAX,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             attributes: Vec::default(),
             attr_names: HashMap::default(),
             code: Value::Null,
@@ -9486,7 +9498,8 @@ impl Data {
         if self.def_nr(&fld) == u32::MAX {
             let d = self.add_def(&fld, lexer.pos(), DefType::Vector);
             self.definitions[d as usize].returned = fld_tp;
-            self.definitions[d as usize].parent = self.type_def_nr(tp);
+            let owner = self.type_def_nr(tp);
+            self.set_parent(d, owner);
         }
         let name = format!("main_vector<{}>", tp.name(self));
         let d_nr = self.def_nr(&name);
@@ -9701,7 +9714,7 @@ impl Data {
             let vname = self.definitions[v as usize].name.clone();
             let vd = self.add_def(&vname, &position, DefType::EnumValue);
             self.definitions[vd as usize].source = STD_SOURCE;
-            self.definitions[vd as usize].parent = d;
+            self.set_parent(vd, d);
             // As its template variant says: a payload variant is `Enum(_, true)`, and a unit
             // variant of a mixed enum takes its parent's form (`parse_enum_values`).
             let variant_mixed = matches!(
@@ -10102,7 +10115,7 @@ impl Data {
         // `enum` attribute of its own (matches `parse_enum_values`); its
         // discriminant rides the `Some` variant's offset-0 slot.
         let nv = self.add_def("Null", &pos, DefType::EnumValue);
-        self.definitions[nv as usize].parent = e;
+        self.set_parent(nv, e);
         self.set_returned(nv, Type::Enum(e, true, Deps::none()));
         let null_attr = self.add_attribute(lexer, e, "Null", Type::Enum(e, true, Deps::none()));
         self.definitions[e as usize].attributes[null_attr].constant = true;
@@ -10110,7 +10123,7 @@ impl Data {
 
         // Variant 1 — `Some` carrying struct_d's fields.  nr = 1 ⇒ discriminant 2.
         let sv = self.add_def("Some", &pos, DefType::EnumValue);
-        self.definitions[sv as usize].parent = e;
+        self.set_parent(sv, e);
         self.set_returned(sv, Type::Enum(e, true, Deps::none()));
         let some_attr = self.add_attribute(lexer, e, "Some", Type::Enum(e, true, Deps::none()));
         self.definitions[e as usize].attributes[some_attr].constant = true;
@@ -10230,7 +10243,7 @@ impl Data {
         let mut v_nr = self.def_nr(&vec_name);
         if v_nr == u32::MAX {
             v_nr = self.add_def(&vec_name, pos, DefType::Vector);
-            self.definitions[v_nr as usize].parent = d_nr;
+            self.set_parent(v_nr, d_nr);
         }
         self.definitions[v_nr as usize].known_type = vec_tp;
         v_nr
@@ -11156,10 +11169,14 @@ impl Data {
     /// no definition — letting the parser explain "it's private" instead of a
     /// baffling `Expect token ;` at the `{`.
     pub fn has_private_type(&self, name: &str) -> bool {
-        self.def_names.iter().any(|((n, _), &d)| {
-            n == name
-                && !self.definitions[d as usize].pub_visible
-                && matches!(self.def_type(d), DefType::Struct | DefType::Enum)
+        // Over the definitions, cheapest test first: the kind and the visibility are a byte
+        // each, and only a private type's name is ever compared.  Asked once per unresolved
+        // struct literal, and a walk over the name index compared every name in the program
+        // first (1.9 % of a compile of the front-end corpus, @PLN166 B4).
+        self.definitions.iter().any(|d| {
+            matches!(d.def_type, DefType::Struct | DefType::Enum)
+                && !d.pub_visible
+                && d.name == name
         })
     }
 
@@ -11868,11 +11885,75 @@ impl Data {
     /// Return the `def_nr`s of all definitions whose `parent` field equals `parent_nr`.
     /// Used by the interface satisfaction checker (I6) to enumerate an interface's method stubs.
     pub fn children_of(&self, parent_nr: u32) -> impl Iterator<Item = u32> + '_ {
-        self.definitions
-            .iter()
-            .enumerate()
-            .filter(move |(_, d)| d.parent == parent_nr)
-            .map(|(i, _)| i as u32)
+        let first = self
+            .definitions
+            .get(parent_nr as usize)
+            .map_or(u32::MAX, |d| d.first_child);
+        std::iter::successors((first != u32::MAX).then_some(first), move |&c| {
+            let next = self.definitions[c as usize].next_sibling;
+            (next != u32::MAX).then_some(next)
+        })
+    }
+
+    /// Make `parent` the parent of `child` — the ONE writer of `Definition::parent`, so the
+    /// child links cannot disagree with the field they derive from.  A child takes its place
+    /// in ascending order, which is the order the table scan this replaced produced.
+    pub fn set_parent(&mut self, child: u32, parent: u32) {
+        let old = self.definitions[child as usize].parent;
+        if old == parent {
+            return;
+        }
+        if (old as usize) < self.definitions.len() {
+            let next = self.definitions[child as usize].next_sibling;
+            if self.definitions[old as usize].first_child == child {
+                self.definitions[old as usize].first_child = next;
+            } else {
+                let mut c = self.definitions[old as usize].first_child;
+                while c != u32::MAX && self.definitions[c as usize].next_sibling != child {
+                    c = self.definitions[c as usize].next_sibling;
+                }
+                if c != u32::MAX {
+                    self.definitions[c as usize].next_sibling = next;
+                }
+            }
+        }
+        self.definitions[child as usize].parent = parent;
+        self.definitions[child as usize].next_sibling = u32::MAX;
+        if (parent as usize) < self.definitions.len() {
+            let first = self.definitions[parent as usize].first_child;
+            if first == u32::MAX || first > child {
+                self.definitions[child as usize].next_sibling = first;
+                self.definitions[parent as usize].first_child = child;
+            } else {
+                let mut c = first;
+                loop {
+                    let next = self.definitions[c as usize].next_sibling;
+                    if next == u32::MAX || next > child {
+                        self.definitions[child as usize].next_sibling = next;
+                        self.definitions[c as usize].next_sibling = child;
+                        break;
+                    }
+                    c = next;
+                }
+            }
+        }
+    }
+
+    /// Derive the child links from every definition's `parent` — after a load or a rollback,
+    /// where the table was not built through `add_def` + `set_parent`.  Walked in reverse
+    /// and pushed at the head, so each list comes out ascending with no scratch space.
+    fn rebuild_children(&mut self) {
+        for d in &mut self.definitions {
+            d.first_child = u32::MAX;
+            d.next_sibling = u32::MAX;
+        }
+        for i in (0..self.definitions.len()).rev() {
+            let p = self.definitions[i].parent as usize;
+            if p < self.definitions.len() {
+                self.definitions[i].next_sibling = self.definitions[p].first_child;
+                self.definitions[p].first_child = i as u32;
+            }
+        }
     }
 
     /// @PLN22 Phase 1 — resolve a variant by name within ONE enum's members
@@ -13189,5 +13270,66 @@ mod key_decoder_tests {
     #[should_panic(expected = "may not begin with a digit")]
     fn a_spelling_that_begins_with_a_digit_is_refused_at_the_encoder() {
         let _ = Data::mangle_method("9lives", "x");
+    }
+}
+
+#[cfg(test)]
+mod children_index_tests {
+    use super::*;
+
+    fn data_with(n: u32) -> Data {
+        let mut data = Data::new();
+        let pos = Position {
+            file: "t.loft".to_string(),
+            line: 1,
+            pos: 1,
+        };
+        for i in 0..n {
+            data.add_def(&format!("d{i}"), &pos, DefType::EnumValue);
+        }
+        data
+    }
+
+    fn scan(data: &Data, parent: u32) -> Vec<u32> {
+        (0..data.definitions.len() as u32)
+            .filter(|&i| data.def(i).parent == parent)
+            .collect()
+    }
+
+    /// The child links answer exactly what the table scan they replaced answered — in
+    /// ascending order, whatever order the parents were set in, after a re-parenting, and
+    /// after a rebuild from the `parent` fields alone.
+    #[test]
+    fn children_of_matches_the_scan_in_every_order() {
+        let mut data = data_with(12);
+        for (child, parent) in [(7, 0), (3, 0), (11, 0), (5, 1), (4, 1), (9, 0), (2, 1)] {
+            data.set_parent(child, parent);
+        }
+        for p in [0, 1, 2] {
+            assert_eq!(
+                data.children_of(p).collect::<Vec<_>>(),
+                scan(&data, p),
+                "parent {p}"
+            );
+        }
+        assert_eq!(data.children_of(0).collect::<Vec<_>>(), vec![3, 7, 9, 11]);
+        // Re-parent a middle child, then the first, then to nowhere.
+        data.set_parent(7, 1);
+        data.set_parent(3, 1);
+        data.set_parent(2, u32::MAX);
+        for p in [0, 1] {
+            assert_eq!(
+                data.children_of(p).collect::<Vec<_>>(),
+                scan(&data, p),
+                "parent {p}"
+            );
+        }
+        assert_eq!(data.children_of(1).collect::<Vec<_>>(), vec![3, 4, 5, 7]);
+        // The rebuild derives the same lists from the fields alone.
+        let before: Vec<Vec<u32>> = (0..12).map(|p| data.children_of(p).collect()).collect();
+        data.rebuild_children();
+        let after: Vec<Vec<u32>> = (0..12).map(|p| data.children_of(p).collect()).collect();
+        assert_eq!(before, after);
+        assert!(data.children_of(u32::MAX).next().is_none());
     }
 }

@@ -849,8 +849,7 @@ impl Parser {
                 // distinguish `fn(args)` (lambda) from `fn name(args)`.
                 let lexer_link = self.lexer.link();
                 self.lexer.token("fn");
-                let is_named_fn =
-                    self.lexer.peek().has != crate::lexer::LexItem::Token("(".to_string());
+                let is_named_fn = !matches!(self.lexer.peek().has, crate::lexer::LexItem::Token(ref t) if t == "(");
                 self.lexer.revert(lexer_link);
                 if is_named_fn { Some("fn") } else { None }
             } else {
@@ -1369,7 +1368,8 @@ impl Parser {
         if !self.first_pass
             && context == "return from block"
             && matches!(result.base(), Type::Text(_) | Type::Tuple(_))
-            && let Ok(path) = std::env::var("LOFT_TRA_DUMP")
+            && let Some(path) =
+                crate::env_once!(@value Option<String>, std::env::var("LOFT_TRA_DUMP").ok())
             && let Some(tail) = l.last()
         {
             let verdict = self.classify_text_return(tail, &l);
@@ -1381,7 +1381,7 @@ impl Parser {
             if let Ok(mut f) = std::fs::OpenOptions::new()
                 .create(true)
                 .append(true)
-                .open(&path)
+                .open(path)
             {
                 let _ = writeln!(f, "TRA {fname} => {}", verdict.label());
             }
@@ -1534,7 +1534,7 @@ impl Parser {
         // term of the gate above.  It is what located loft#1099: the two lines for one
         // function differ in `optOk` alone, which is how a non-pass-stable term shows
         // itself.  Read them in PAIRS; a single line says nothing about stability.
-        if std::env::var_os("LOFT_DBG_ACC").is_some()
+        if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some())
             && matches!(result.base(), Type::Text(_))
             && context == "return from block"
         {
@@ -2250,7 +2250,9 @@ impl Parser {
                 && (result.ret_promo_peels()
                     || !self.tail_if_has_null_arm(&l[last])
                     || self.tail_nonnull_arm_count(&l[last]) >= 2);
-            if std::env::var_os("LOFT_DBG_VMC").is_some() && matches!(result, Type::Vector(_, _)) {
+            if crate::env_once!(std::env::var_os("LOFT_DBG_VMC").is_some())
+                && matches!(result, Type::Vector(_, _))
+            {
                 eprintln!(
                     "[vmc] fn={} !tup={} !ifu={} !p1={} ctx={context:?} resV={} tOk={} \
                      branch={} !null={} peels={} nonnull={} => {vec_match_candidate}",
@@ -7178,7 +7180,8 @@ impl Parser {
                                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                             ) && let Some(src) = self.match_borrow_source(subject_val)
                             {
-                                if std::env::var_os("LOFT_MV_DEP_TRACE").is_some() {
+                                if crate::env_once!(std::env::var_os("LOFT_MV_DEP_TRACE").is_some())
+                                {
                                     eprintln!(
                                         "[mv-dep] fn={} pass{} binding={}({}) src={}({})",
                                         self.data.def(self.context).name(),
@@ -12164,9 +12167,9 @@ impl Parser {
     /// is content-keyed and ignores env flags). See
     /// `doc/claude/plans/104-tret-promotion/targeted-promotion-design.md`.
     pub(crate) fn report_tret_promotions(&mut self) {
-        let report = std::env::var_os("LOFT_TRET_REPORT").is_some();
+        let report = crate::env_once!(std::env::var_os("LOFT_TRET_REPORT").is_some());
         // The #568 leak fix is on by default; LOFT_NO_TRET_FIX is a debug escape hatch.
-        let fix = std::env::var_os("LOFT_NO_TRET_FIX").is_none();
+        let fix = crate::env_once!(std::env::var_os("LOFT_NO_TRET_FIX").is_none());
         if !report && !fix {
             return;
         }
@@ -12927,7 +12930,7 @@ impl Parser {
                 .any(|op| self.early_text_return_orphans(op, l));
             // `LOFT_DBG_ACC=1` — the monomorph twin of `parse_block`'s gate line: every term
             // of the decision, one line per monomorph.
-            if std::env::var_os("LOFT_DBG_ACC").is_some() {
+            if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                 eprintln!(
                     "[acc-mono] fn={} pass1={} tail_promotable={tail_promotable}                      early_promotable={early_promotable} if_acc={} tail={:?}",
                     self.data.def(d_nr).name(),
@@ -13120,7 +13123,7 @@ impl Parser {
             })
             .collect();
         let deferred = self.force_tret.len() - promote.len();
-        if deferred > 0 && std::env::var_os("LOFT_TRET_TRACE").is_some() {
+        if deferred > 0 && crate::env_once!(std::env::var_os("LOFT_TRET_TRACE").is_some()) {
             eprintln!(
                 "[tret-v2] promoting {}/{} force_tret defs ({deferred} deferred: view/join/address-taken)",
                 promote.len(),
@@ -16594,7 +16597,7 @@ impl Parser {
         let ret = self.data.definitions[self.context as usize]
             .returned
             .clone();
-        if std::env::var("LOFT_TRACE_RR").is_ok() {
+        if crate::env_once!(std::env::var("LOFT_TRACE_RR").is_ok()) {
             let fn_name = self.data.def(self.context).name();
             let ls_named: Vec<String> = ls
                 .iter()
@@ -16769,7 +16772,7 @@ impl Parser {
             // @PLN85 D-own-1 slice 3 — the per-var verdict sentinel (trace only):
             // one line per promotion verdict so the corpus's coverage of every
             // ladder rung is PROVEN before the classify_ret_promotion cut.
-            let rr = std::env::var("LOFT_TRACE_RR").is_ok();
+            let rr = crate::env_once!(std::env::var("LOFT_TRACE_RR").is_ok());
             // @PLN85 D-own-1 slice 3 — classify ONCE per var (the pure
             // selector), then apply the one mechanism per verdict.  The rule
             // rationale lives on the `RetPromotion` variants; the arms carry

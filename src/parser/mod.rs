@@ -3361,7 +3361,9 @@ impl Parser {
         // F2 a heavily-read plain field is non-null → never accrues, so the hint would only ever
         // fire on a `?` field.)
         if crate::keys::pln25_dn1_enabled()
-            || std::env::var("LOFT_NO_HINT_NOT_NULL").is_ok_and(|v| v == "1" || v == "true")
+            || crate::env_once!(
+                std::env::var("LOFT_NO_HINT_NOT_NULL").is_ok_and(|v| v == "1" || v == "true")
+            )
         {
             self.field_read_counts.clear();
             self.defended_field_reads.clear();
@@ -5366,7 +5368,7 @@ impl Parser {
             && !self.in_explicit_cast
             && matches!(is_type, Type::Null)
         {
-            if std::env::var_os("LOFT_TRACE_UNWRAP").is_some() {
+            if crate::env_once!(std::env::var_os("LOFT_TRACE_UNWRAP").is_some()) {
                 let (what, _, _) = self.store_slot();
                 eprintln!(
                     "[null] -> {} what={} at {}",
@@ -5498,7 +5500,7 @@ impl Parser {
             // one-time census instrument stays: `LOFT_TRACE_UNWRAP=1` names every peel's
             // caller, face and slot.
             if !self.first_pass && !matches!(should, Type::Optional(_)) {
-                if std::env::var_os("LOFT_TRACE_UNWRAP").is_some() {
+                if crate::env_once!(std::env::var_os("LOFT_TRACE_UNWRAP").is_some()) {
                     let (what, _, _) = self.store_slot();
                     eprintln!(
                         "[unwrap] {} -> {} admit={} what={} at {}",
@@ -8073,7 +8075,7 @@ impl Parser {
         } else {
             self.method_shaped_instance_key(g_nr, name, &concrete, type_nr)
         };
-        if std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some() {
+        if crate::env_once!(std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some()) {
             let spelling: Vec<String> = var_bindings
                 .iter()
                 .map(|(_, b)| self.data.identity_spelling(b))
@@ -8087,7 +8089,7 @@ impl Parser {
         // Return existing instantiation if already created.
         let existing = self.data.def_nr(&mangled);
         if existing != u32::MAX {
-            if std::env::var_os("LOFT_DBG_ACC").is_some() {
+            if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                 eprintln!(
                     "[acc-mono] existing {mangled} pass1={} buffers={}",
                     self.first_pass,
@@ -8982,7 +8984,7 @@ impl Parser {
                 // re-derived body is what the program runs.  Only where the first pass
                 // promoted nothing — a second hidden buffer would move the ABI (loft#1357).
                 if self.data.def(d_nr).text_work_buffers() == 0 {
-                    if std::env::var_os("LOFT_DBG_ACC").is_some() {
+                    if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                         eprintln!(
                             "[acc-mono] re-derived stale monomorph {}",
                             self.data.def(d_nr).name()
@@ -10395,7 +10397,7 @@ impl Parser {
                 }
             }
         });
-        if std::env::var_os("LOFT_DBG_ACC").is_some() {
+        if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
             let names: Vec<String> = remap
                 .iter()
                 .map(|(a, b)| format!("{}->{}", self.data.def(*a).name(), self.data.def(*b).name()))
@@ -19827,11 +19829,11 @@ impl Parser {
     /// written to — the `const` has no effect when the parameter is not modified.
     fn check_ref_mutations(&mut self, arguments: &[Argument]) {
         let code = self.data.def(self.context).code().clone();
-        let mut written: HashSet<u16> = HashSet::new();
+        let mut written = crate::fxhash::FxHashSet::default();
         // interprocedural param-write cache, local to this check.
         // Re-created per function-body check; small cost, avoids
         // persisting state across passes or across unrelated checks.
-        let mut callee_cache: HashMap<u32, Vec<bool>> = HashMap::new();
+        let mut callee_cache = crate::fxhash::FxHashMap::default();
         find_written_vars(&code, &self.data, &mut written, &mut callee_cache);
         // Enhancement: when a for-loop variable is FIELD-WRITTEN (OpSet*
         // through the loop var, not just loop-advance Set), also mark the
@@ -19840,7 +19842,7 @@ impl Parser {
         // Only propagate for vars that have a field-level write (OpSet*,
         // OpCopyRecord, OpNewRecord etc.) — not plain Set (which is just
         // the loop-iterator advance).
-        let mut field_written: HashSet<u16> = HashSet::new();
+        let mut field_written = crate::fxhash::FxHashSet::default();
         find_field_written_vars(&code, &self.data, &mut field_written);
         let mut propagated: HashSet<u16> = HashSet::new();
         for &w in &field_written {
@@ -20419,7 +20421,7 @@ fn field_id(key: &[(String, bool)], name: &mut String) {
 }
 
 /// Collect all `Value::Var` indices reachable anywhere in `val`.
-fn collect_vars_in(val: &Value, result: &mut HashSet<u16>) {
+fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
     match val {
         Value::Var(v) => {
             result.insert(*v);
@@ -20558,8 +20560,8 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
 pub(crate) fn find_written_vars(
     code: &Value,
     data: &Data,
-    written: &mut HashSet<u16>,
-    callee_cache: &mut HashMap<u32, Vec<bool>>,
+    written: &mut crate::fxhash::FxHashSet<u16>,
+    callee_cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
 ) {
     match code {
         Value::Set(v, body) => {
@@ -20708,7 +20710,11 @@ fn lambda_mutated_captures(code: &Value, data: &Data, names: &mut HashSet<String
 /// analysis so cycles are broken.  Caller should iterate to fixpoint
 /// if precise transitive effects across recursion chains are needed;
 /// for linear forwarding (the common case) one pass suffices.
-fn callee_param_writes(fn_nr: u32, data: &Data, cache: &mut HashMap<u32, Vec<bool>>) -> Vec<bool> {
+fn callee_param_writes(
+    fn_nr: u32,
+    data: &Data,
+    cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
+) -> Vec<bool> {
     if let Some(v) = cache.get(&fn_nr) {
         return v.clone();
     }
@@ -20720,7 +20726,7 @@ fn callee_param_writes(fn_nr: u32, data: &Data, cache: &mut HashMap<u32, Vec<boo
         return vec![false; n];
     }
     let body = def.code().clone();
-    let mut written: HashSet<u16> = HashSet::new();
+    let mut written = crate::fxhash::FxHashSet::default();
     find_written_vars(&body, data, &mut written, cache);
     let result: Vec<bool> = (0..n).map(|i| written.contains(&(i as u16))).collect();
     // Monotone merge with any prior placeholder entry.
@@ -20887,7 +20893,11 @@ fn collect_param_rebinds_owned(
 /// writes should propagate back to the iterated `&` collection, and by the
 /// @PLN101 value-struct copy-elision pass (`scopes::value_struct_copy`) to prove
 /// a read-only view's base is never mutated under it.
-pub(crate) fn find_field_written_vars(code: &Value, data: &Data, written: &mut HashSet<u16>) {
+pub(crate) fn find_field_written_vars(
+    code: &Value,
+    data: &Data,
+    written: &mut crate::fxhash::FxHashSet<u16>,
+) {
     match code {
         Value::Call(fn_nr, args) => {
             let def = data.def(*fn_nr);

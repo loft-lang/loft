@@ -3826,7 +3826,7 @@ impl Parser {
         // `LOFT_NO_NEXT_COUNTER=1` emits the null-encoded form on both backends
         // (`@FR-R-Switch`): the before-half of an A/B, and the first bisect step for a
         // wrong value out of a counted loop whose start is not a literal.
-        let next_counter = std::env::var_os("LOFT_NO_NEXT_COUNTER").is_none();
+        let next_counter = crate::env_once!(std::env::var_os("LOFT_NO_NEXT_COUNTER").is_none());
         let mut next_init: Option<Value> = None;
         if want_reverse {
             if incl && next_counter {

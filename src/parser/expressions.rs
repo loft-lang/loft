@@ -800,7 +800,7 @@ impl Parser {
                 );
             }
             for r in self.vars.work_references() {
-                if std::env::var("LOFT_TRACE_PREAMBLE").is_ok() {
+                if crate::env_once!(std::env::var("LOFT_TRACE_PREAMBLE").is_ok()) {
                     eprintln!(
                         "[preamble] pass1={} r={r} name={} arg={} inline={} deps={:?} chb={}",
                         self.first_pass,

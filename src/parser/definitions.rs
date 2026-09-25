@@ -691,7 +691,7 @@ impl Parser {
                     self.data
                         .add_def(&value_name, self.lexer.pos(), DefType::EnumValue)
                 };
-                self.data.definitions[v as usize].parent = d_nr;
+                self.data.set_parent(v, d_nr);
                 v
             } else {
                 // @PLN22 Phase 1 — the second-pass re-resolve goes through the
@@ -5762,7 +5762,7 @@ impl Parser {
                             .add_def(&assoc_def, self.lexer.pos(), DefType::Struct);
                         self.data
                             .set_returned(a_nr, Type::Reference(a_nr, crate::data::Deps::none()));
-                        self.data.definitions[a_nr as usize].parent = d_nr;
+                        self.data.set_parent(a_nr, d_nr);
                     }
                     if a_nr != u32::MAX {
                         // The declared bounds ride on the placeholder's own `bounds`, the
@@ -5896,7 +5896,7 @@ impl Parser {
                         self.data.definitions[stub_nr as usize].attributes[a_nr].value_const =
                             a.constant;
                     }
-                    self.data.definitions[stub_nr as usize].parent = d_nr;
+                    self.data.set_parent(stub_nr, d_nr);
                     // loft#734 — a method with NO `->` returns Void, and the stub
                     // has to say so. Leaving it unset kept the definition's
                     // default `Unknown`, which the native generator renders as

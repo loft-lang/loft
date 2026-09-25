@@ -7,8 +7,8 @@
 //! when the parser has to try a certain path and might dismiss this later.
 
 use crate::diagnostics::{Diagnostics, Fix, FixKind, Level, diagnostic_format};
+use crate::fxhash::FxHashSet as HashSet;
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Result as IoResult;
 use std::iter::Peekable;
@@ -77,7 +77,7 @@ impl Position {
 /// Run it over both passes and diff them: the pass that records a token at the
 /// wrong line names the seek that preceded it.
 pub(crate) fn lex_trace(args: std::fmt::Arguments<'_>) {
-    if std::env::var_os("LOFT_TRACE_LEX").is_some() {
+    if crate::env_once!(std::env::var_os("LOFT_TRACE_LEX").is_some()) {
         eprintln!("[lex] {args}");
     }
 }
@@ -370,7 +370,7 @@ impl LexConfig {
         tokens.insert(comment.to_string());
         LexConfig {
             tokens,
-            keywords: HashSet::new(),
+            keywords: HashSet::default(),
             comment: comment.to_string(),
             interpolate_strings: false,
             json_strings: false,
@@ -396,7 +396,7 @@ impl LexConfig {
             .collect();
         LexConfig {
             tokens,
-            keywords: HashSet::new(),
+            keywords: HashSet::default(),
             comment: String::new(),
             interpolate_strings: false,
             json_strings: true,
@@ -1867,7 +1867,7 @@ impl Lexer {
         // access), the current number is a tuple/struct field index —
         // never a float.  `n.v.0.0` must lex as `n`, `.`, `v`, `.`,
         // `0`, `.`, `0` instead of `n`, `.`, `v`, `.`, `0.0`.
-        let prev_was_field_dot = self.peek.has == LexItem::Token(".".to_string());
+        let prev_was_field_dot = matches!(&self.peek.has, LexItem::Token(t) if t == ".");
         if let Some('.') = self.iter.peek() {
             self.next_char();
             if let Some('.') = self.iter.peek() {
@@ -2344,7 +2344,10 @@ impl Lexer {
     }
 
     pub fn peek_token(&self, token: &str) -> bool {
-        self.peek.has == LexItem::Token(token.to_string())
+        // Compared in place: an operator parse asks this six to eight times per operator,
+        // and building a `String` to compare against was 684 206 allocations on a compile
+        // of the 12 826-line front-end corpus (@PLN166 B4).
+        matches!(&self.peek.has, LexItem::Token(t) if t == token)
     }
 
     fn end(&mut self) {
@@ -2372,7 +2375,7 @@ impl Lexer {
             return;
         };
         let mut res = n;
-        while res.has == LexItem::Token(self.comment.clone()) {
+        while matches!(&res.has, LexItem::Token(t) if *t == self.comment) {
             while self.iter.peek().is_some() {
                 self.iter.next();
             }

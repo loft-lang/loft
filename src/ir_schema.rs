@@ -1352,6 +1352,8 @@ fn definition_from_parsed(p: &Parsed) -> Result<Definition, TypeDecodeError> {
         source: as_u16(field(p, "source")?)?,
         def_type: def_type_from_str(&as_str(field(p, "def_type")?)?)?,
         parent: as_u32(field(p, "parent")?)?,
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
         attributes,
         code: value_from_parsed(field(p, "code")?)?,
         returned: type_from_parsed(field(p, "returned")?)?,
@@ -2265,6 +2267,8 @@ mod tests {
             source: 1,
             def_type: DefType::Struct,
             parent: u32::MAX,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             position: Position {
                 file: "geo.loft".to_string(),
                 line: 4,
@@ -2386,6 +2390,8 @@ mod tests {
             source: 0,
             def_type: DefType::Type,
             parent: u32::MAX,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             position: Position {
                 file: String::new(),
                 line: 0,

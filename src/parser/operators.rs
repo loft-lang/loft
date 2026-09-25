@@ -5348,7 +5348,9 @@ impl Parser {
         if self.default {
             return;
         }
-        if std::env::var("LOFT_NO_WARN_RUNTIME").is_ok_and(|v| v == "1" || v == "true") {
+        if crate::env_once!(
+            std::env::var("LOFT_NO_WARN_RUNTIME").is_ok_and(|v| v == "1" || v == "true")
+        ) {
             return;
         }
         let mut ctx = WarnCtx::default();
@@ -5384,7 +5386,9 @@ impl Parser {
         // RefVar access), so users need to see it.  Silenceable with the runtime-warning
         // family switch when a `&` is kept deliberately (e.g. a codegen regression test
         // that exercises the RefVar path).
-        if std::env::var("LOFT_NO_WARN_RUNTIME").is_ok_and(|v| v == "1" || v == "true") {
+        if crate::env_once!(
+            std::env::var("LOFT_NO_WARN_RUNTIME").is_ok_and(|v| v == "1" || v == "true")
+        ) {
             return;
         }
         let attrs = self.data.def(self.context).attributes().to_vec();

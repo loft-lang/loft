@@ -26,7 +26,9 @@
 use crate::data::{Data, DefType, Type, Value};
 use crate::lexer::Position;
 use crate::variables::Function;
-use std::collections::{HashMap, HashSet};
+// The Fx tables (`crate::fxhash`): this pass hashes definition and variable numbers on
+// every node it visits, and SipHash was a quarter of its cost (@PLN166 B4).
+use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 /// The materialization decision for one binding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -93,7 +95,7 @@ pub struct VerdictRow {
 }
 
 fn def_nrs(data: &Data, names: &[&str]) -> HashSet<u32> {
-    let mut s = HashSet::new();
+    let mut s = HashSet::default();
     for name in names {
         let nr = data.def_nr(name);
         if nr != u32::MAX {
@@ -255,9 +257,9 @@ impl OpSets {
     /// Build every set. The two prefix-matched sets share ONE pass over the
     /// definition table — they scanned it separately before.
     pub(crate) fn build(data: &Data) -> Self {
-        let mut write_first_arg = HashSet::new();
-        let mut lengths = HashSet::new();
-        let mut drop_functions = HashSet::new();
+        let mut write_first_arg = HashSet::default();
+        let mut lengths = HashSet::default();
+        let mut drop_functions = HashSet::default();
         for d in 0..data.definitions() {
             let n = data.def(d).name();
             if is_first_arg_write_name(n) {
@@ -962,25 +964,25 @@ fn collect_uses(code: &Value, data: &Data, survival_on: bool) -> Uses {
         projections: std::sync::Arc::clone(&ops.projections),
         value_readers: std::sync::Arc::clone(&ops.value_readers),
         write_first_arg: std::sync::Arc::clone(&ops.write_first_arg),
-        ineligible: HashSet::new(),
-        def_count: HashMap::new(),
-        database_vars: HashSet::new(),
-        def_vdb: HashMap::new(),
-        append_src: HashMap::new(),
-        append_expr: HashMap::new(),
+        ineligible: HashSet::default(),
+        def_count: HashMap::default(),
+        database_vars: HashSet::default(),
+        def_vdb: HashMap::default(),
+        append_src: HashMap::default(),
+        append_expr: HashMap::default(),
         pos: 0,
         loop_depth: 0,
         in_yield: false,
         track_pos: survival_on,
         cur_pos: None,
-        mut_max_pos: HashMap::new(),
-        first_def_pos: HashMap::new(),
+        mut_max_pos: HashMap::default(),
+        first_def_pos: HashMap::default(),
         loop_entry: Vec::new(),
-        other_max_pos: HashMap::new(),
-        copyfill_pos: HashMap::new(),
-        copyfill_in_loop: HashSet::new(),
-        last_use_pos: HashMap::new(),
-        last_use_loc: HashMap::new(),
+        other_max_pos: HashMap::default(),
+        copyfill_pos: HashMap::default(),
+        copyfill_in_loop: HashSet::default(),
+        last_use_pos: HashMap::default(),
+        last_use_loc: HashMap::default(),
         construct_copy: Vec::new(),
         record_copy: Vec::new(),
     };
@@ -1199,7 +1201,7 @@ fn analyze_fn_survival(
     // (the raw dev dump), the user-facing `--report-copies`, or `force_survival` (the
     // default-on notice). Read once so the walk (`track_pos`) and the classification agree.
     let survival_on = force_survival
-        || std::env::var_os("LOFT_COPY_SURVIVAL").is_some()
+        || crate::env_once!(std::env::var_os("LOFT_COPY_SURVIVAL").is_some())
         || crate::keys::report_copies_enabled()
         || crate::keys::warn_copies_enabled();
     let u = collect_uses(code, data, survival_on);
@@ -1211,8 +1213,8 @@ fn analyze_fn_survival(
     // defining `Set`, so every bound local is "written"; `v`'s read-only-ness needs
     // the copy-idiom-aware walk above, which excludes `v`'s def and copy-fill.)
     let written = {
-        let mut w = HashSet::new();
-        crate::parser::find_written_vars(code, data, &mut w, &mut HashMap::new());
+        let mut w = HashSet::default();
+        crate::parser::find_written_vars(code, data, &mut w, &mut HashMap::default());
         w
     };
 
@@ -1707,7 +1709,7 @@ pub fn env_tier() -> u8 {
     // Additive flags — each enabled tier raises the ceiling. Later tiers attach
     // their own flag here (e.g. `LOFT_ELIDE_T2` -> `tier = tier.max(2)`).
     let mut tier = 0;
-    if std::env::var_os("LOFT_ELIDE_T1").is_some() {
+    if crate::env_once!(std::env::var_os("LOFT_ELIDE_T1").is_some()) {
         tier = tier.max(1);
     }
     tier
@@ -2207,9 +2209,9 @@ impl<'a> Ownership<'a> {
             op_new_record: data.def_nr("OpNewRecord"),
             op_copy_record: data.def_nr("OpCopyRecord"),
             projections: std::sync::Arc::clone(&data.op_sets().projections),
-            ret_memo: HashMap::new(),
-            visiting: HashSet::new(),
-            visiting_vars: HashSet::new(),
+            ret_memo: HashMap::default(),
+            visiting: HashSet::default(),
+            visiting_vars: HashSet::default(),
         }
     }
 
@@ -3853,7 +3855,7 @@ pub(crate) fn read_only_uses(
         through,
         ok: vec![true; n_vars],
         sets: vec![0; n_vars],
-        calls: HashSet::new(),
+        calls: HashSet::default(),
         bound: Vec::new(),
         aliases: Vec::new(),
     };
@@ -4812,7 +4814,7 @@ pub fn render_own(own: Own, func: &Function, v: u16) -> String {
 /// Print every function's verdicts when `LOFT_MATERIALIZE_DUMP` is set. Called from
 /// `scopes::check`; a no-op otherwise. Behaviour-neutral — diagnostics only.
 pub fn dump_all(data: &Data) {
-    if std::env::var_os("LOFT_MATERIALIZE_DUMP").is_none() {
+    if crate::env_once!(std::env::var_os("LOFT_MATERIALIZE_DUMP").is_none()) {
         return;
     }
     let mut own = Ownership::new(data);
@@ -5114,7 +5116,7 @@ fn raise_copy_refusals(
     } else {
         def.position.file.as_str()
     };
-    let mut seen = std::collections::HashSet::new();
+    let mut seen = HashSet::default();
     for (pos, line, refusal, tp) in std::mem::take(&mut cx.refusals) {
         // `Later` is the superseded liveness reading.  P2r settled that liveness decides an
         // ELISION and never validity, so it must not fail a build — and `written_verdict` cannot
@@ -5943,7 +5945,7 @@ pub fn warn_variant_overwritten(
                 function: &def.variables,
                 place,
                 tag,
-                bound: HashSet::new(),
+                bound: HashSet::default(),
                 stale: false,
                 at: def.position.clone(),
                 hits: Vec::new(),
@@ -6503,7 +6505,7 @@ impl DoubleMove<'_> {
                     // container copied, so a pending projection over it retires — silent is the
                     // sound answer for a tier that gates.
                     self.retire_written_roots(arm);
-                    self.scan(arm, &mut Handoffs::new());
+                    self.scan(arm, &mut Handoffs::default());
                 }
             }
             // A loop body is certain relative to ITSELF (two hand-offs inside one iteration
@@ -6598,7 +6600,7 @@ impl DoubleMove<'_> {
     /// Recurse into every child, each with its OWN pending set — the shape a branch, a loop
     /// body and a parallel arm share: certain within itself, not with what surrounds it.
     fn scan_children_isolated(&mut self, node: &Value) {
-        node.for_each_child(&mut |c| self.scan(c, &mut Handoffs::new()));
+        node.for_each_child(&mut |c| self.scan(c, &mut Handoffs::default()));
     }
 
     /// A copy that touches a pending projection's ROOT.  A copy INTO a place rooted at the root
@@ -6687,7 +6689,7 @@ impl DoubleMove<'_> {
             return;
         }
         let (data, copy_d) = (self.data, self.copy_d);
-        let mut written = HashSet::new();
+        let mut written = HashSet::default();
         node.walk(&mut |n| {
             written_roots(n, copy_d, data, &mut written);
             if let Value::Set(v, _) = n.unspan() {
@@ -6702,7 +6704,7 @@ impl DoubleMove<'_> {
         if self.proj.is_empty() {
             return;
         }
-        let mut written = HashSet::new();
+        let mut written = HashSet::default();
         written_roots(node, self.copy_d, self.data, &mut written);
         self.proj.retain(|r, _| !written.contains(r));
     }
@@ -6801,7 +6803,7 @@ pub(crate) fn projection_root(node: &Value, data: &Data) -> Option<u16> {
 /// call's target (`t_1S_OpDropAll(s)`, `t_1H_OpDrop(tt.0)`).  The lint runs after the scope pass
 /// has placed every drop, so it reads that decision here instead of deciding it again.
 fn drop_targets(data: &Data, code: &Value) -> HashSet<u16> {
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     code.walk(&mut |n| {
         if let Value::Call(d, args) = n
             && data.is_drop_function(*d)
@@ -6950,7 +6952,7 @@ pub fn warn_double_move(
             copy_d,
             cur: None,
             found: Vec::new(),
-            proj: HashMap::new(),
+            proj: HashMap::default(),
             proj_found: Vec::new(),
             ret_found: Vec::new(),
             released: drop_targets(data, &def.code),
@@ -6969,7 +6971,7 @@ pub fn warn_double_move(
                 })
                 .collect(),
         };
-        cx.scan(&def.code, &mut Handoffs::new());
+        cx.scan(&def.code, &mut Handoffs::default());
         // Whatever is still pending at the end of the body is released by its root's scope exit.
         cx.report_all_projections();
         for (src, first, at) in std::mem::take(&mut cx.found) {
@@ -7330,7 +7332,7 @@ pub fn c_binding_call_unsupported(
 /// (`__retbuf` and friends) is how a return VALUE is delivered, not a caller's variable.
 fn write_through_params(data: &Data, callee: u32) -> HashSet<u16> {
     let def = data.def(callee);
-    let mut written = HashSet::new();
+    let mut written = HashSet::default();
     crate::parser::find_field_written_vars(&def.code, data, &mut written);
     let func = &def.variables;
     written.retain(|&v| {
@@ -7389,7 +7391,7 @@ fn lifted_call_results(
 ) -> HashMap<u16, (Value, Option<Position>)> {
     // `Value::walk` is pre-order and passes through `Span`s, so a statement line reaches the
     // visitor as the `Value::Line` just before the statement it marks.
-    let mut bound: HashMap<u16, Vec<(Value, Option<u32>)>> = HashMap::new();
+    let mut bound: HashMap<u16, Vec<(Value, Option<u32>)>> = HashMap::default();
     let mut line: Option<u32> = None;
     code.walk(&mut |n| {
         if let Value::Line(l) = n {
@@ -7455,7 +7457,7 @@ pub fn warn_lost_temp_writes(
     if !crate::keys::lost_temp_writes_enabled() {
         return;
     }
-    let mut params: HashMap<u32, HashSet<u16>> = HashMap::new();
+    let mut params: HashMap<u32, HashSet<u16>> = HashMap::default();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
         if !matches!(def.def_type, DefType::Function) {
@@ -8014,7 +8016,7 @@ pub fn free_before_dependent_read(data: &Data, d_nr: u32) -> Vec<(u16, u16)> {
             break;
         }
     }
-    let mut dependents: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut dependents: HashMap<u16, Vec<u16>> = HashMap::default();
     for b in 0..n {
         for &s in &reaches[b as usize] {
             dependents.entry(s).or_default().push(b);
@@ -8024,7 +8026,7 @@ pub fn free_before_dependent_read(data: &Data, d_nr: u32) -> Vec<(u16, u16)> {
         return Vec::new();
     }
     let mut out: Vec<(u16, u16)> = Vec::new();
-    let mut freed: HashSet<u16> = HashSet::new();
+    let mut freed: HashSet<u16> = HashSet::default();
     scan_uaf(
         &def.code,
         &mut freed,
@@ -8150,9 +8152,8 @@ mod uaf_overlay_tests {
     //! Injected-fault controls for the free-before-dependent-read walk (`scan_uaf`),
     //! parser-free so the positive control does not depend on the compiler still
     //! EMITTING the bug (the materialisation fix removed the only real-code trigger).
-    use super::{check_reads, scan_uaf};
+    use super::{HashMap, HashSet, check_reads, scan_uaf};
     use crate::data::{Type, Value, v_block};
-    use std::collections::{HashMap, HashSet};
 
     // Arbitrary op-numbers for the walk; the walk only compares against these.
     const FREE_REF: u32 = 100;
@@ -8160,12 +8161,12 @@ mod uaf_overlay_tests {
     const GETTER: u32 = 200; // stands in for OpGetVector / OpGetField / OpGetText
 
     fn deps(store: u16, view: u16) -> HashMap<u16, Vec<u16>> {
-        let mut d = HashMap::new();
+        let mut d = HashMap::default();
         d.insert(store, vec![view]);
         d
     }
     fn run(code: &Value, dependents: &HashMap<u16, Vec<u16>>) -> Vec<(u16, u16)> {
-        let mut freed = HashSet::new();
+        let mut freed = HashSet::default();
         let mut out = Vec::new();
         scan_uaf(code, &mut freed, dependents, FREE_REF, OP_DB, &mut out);
         out.sort_unstable();
@@ -8237,7 +8238,7 @@ mod uaf_overlay_tests {
     /// The `check_reads` leaf helper agrees with the walk on a lone deref.
     #[test]
     fn check_reads_matches_walk() {
-        let mut freed = HashSet::new();
+        let mut freed = HashSet::default();
         freed.insert(10);
         let mut out = Vec::new();
         check_reads(&deref(3), &freed, &deps(10, 3), &mut out);
@@ -8265,7 +8266,7 @@ pub fn return_source_freed(data: &Data, d_nr: u32) -> Vec<u16> {
         db: data.def_nr("OpDatabase"),
     };
     let mut out: Vec<u16> = Vec::new();
-    let mut freed: HashSet<u16> = HashSet::new();
+    let mut freed: HashSet<u16> = HashSet::default();
     scan_rsf(&def.code, &def.code, &ops, &mut freed, &mut out);
     out.sort_unstable();
     out.dedup();
@@ -8304,7 +8305,7 @@ pub fn ref_param_publish_freed(data: &Data, d_nr: u32) -> Vec<u16> {
         db: data.def_nr("OpDatabase"),
     };
     let mut out: Vec<u16> = Vec::new();
-    let mut published: HashSet<u16> = HashSet::new();
+    let mut published: HashSet<u16> = HashSet::default();
     scan_rpf(&def.code, def.variables(), &ops, &mut published, &mut out);
     out.sort_unstable();
     out.dedup();
@@ -8445,8 +8446,8 @@ fn scan_rsf(
             }
         }
         Value::Return(r) | Value::Drop(r) => {
-            let mut sources: HashSet<u16> = HashSet::new();
-            let mut seen: HashSet<u16> = HashSet::new();
+            let mut sources: HashSet<u16> = HashSet::default();
+            let mut seen: HashSet<u16> = HashSet::default();
             ret_alias_sources(r, code, ops, &mut seen, &mut sources);
             for &s in &sources {
                 if freed.contains(&s) {
@@ -8570,9 +8571,8 @@ mod return_source_tests {
     //! Injected-fault controls for the path-sensitive return-source-free walk (`scan_rsf`),
     //! parser-free — the compiler no longer emits the bug, so the positive control must be
     //! synthetic. Op-numbers are arbitrary; the walk only compares against them.
-    use super::{FreeOps, scan_rsf};
+    use super::{FreeOps, HashSet, scan_rsf};
     use crate::data::{Type, Value, v_block, v_if, v_set};
-    use std::collections::HashSet;
 
     const FR: u32 = 100;
     const FT: u32 = 101;
@@ -8580,15 +8580,15 @@ mod return_source_tests {
     const DB: u32 = 103;
     fn ops() -> FreeOps {
         FreeOps {
-            fr: std::sync::Arc::new(HashSet::from([FR])),
+            fr: std::sync::Arc::new(HashSet::from_iter([FR])),
             ft: FT,
-            fif: std::sync::Arc::new(HashSet::from([FIF])),
+            fif: std::sync::Arc::new(HashSet::from_iter([FIF])),
             db: DB,
         }
     }
     fn run(code: &Value) -> Vec<u16> {
         let mut out = Vec::new();
-        let mut freed = HashSet::new();
+        let mut freed = HashSet::default();
         scan_rsf(code, code, &ops(), &mut freed, &mut out);
         out.sort_unstable();
         out.dedup();
@@ -8690,9 +8690,9 @@ mod ref_param_publish_tests {
 
     fn ops() -> FreeOps {
         FreeOps {
-            fr: std::sync::Arc::new(HashSet::from([FR])),
+            fr: std::sync::Arc::new(HashSet::from_iter([FR])),
             ft: FT,
-            fif: std::sync::Arc::new(HashSet::from([FIF])),
+            fif: std::sync::Arc::new(HashSet::from_iter([FIF])),
             db: DB,
         }
     }
@@ -8710,7 +8710,7 @@ mod ref_param_publish_tests {
 
     fn run(code: &Value) -> Vec<u16> {
         let mut out = Vec::new();
-        let mut published = HashSet::new();
+        let mut published = HashSet::default();
         scan_rpf(code, &vars(), &ops(), &mut published, &mut out);
         out.sort_unstable();
         out.dedup();

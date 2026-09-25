@@ -38,6 +38,7 @@ by the release checklist's `M-perf-pass`.
 - [Design: N4 — Suppress cr_call_push on `#pure` leaf functions](#design-n4--suppress-cr_call_push-on-pure-leaf-functions)
 - [Design: N5 — Inline `integer` arithmetic when operands are provably non-null](#design-n5--inline-integer-arithmetic-when-operands-are-provably-non-null)
 - [Design: N6 — Skip the rustc toolchain probe on a native cache hit](#design-n6--skip-the-rustc-toolchain-probe-on-a-native-cache-hit)
+- [Design: F1 — the front end's own hot spots, attributed and cut](#design-f1--the-front-ends-own-hot-spots-attributed-and-cut)
 - [Design: W1 — wasm string representation](#design-w1--wasm-string-representation)
 - [Improvement priority order](#improvement-priority-order)
 - [See also](#see-also)
@@ -2541,6 +2542,38 @@ renders on a hit exactly what it rendered cold.  Sabotage receipt: with the mani
 removed, the edit cell answers `sum=30` for a program that says `sum=100`.
 
 ---
+
+## Design: F1 — the front end's own hot spots, attributed and cut
+
+> **DELIVERED (@PLN166 B4).**  What `--engine`'s by-module table and callgrind attributed
+> over a compile of `bench/frontend`'s large corpus (12 826 lines, `--interpret --check`,
+> `LOFT_NO_CACHE=1`), and what each cut measured.  Instruction counts are callgrind's, exact
+> and load-independent; the allocation counts are `tests/frontend_counts.rs`'s pins.
+
+| Step | What burned | Cut | Ir after (large) |
+|---|---|---:|---:|
+| baseline (release build) | — | — | 5 984 M |
+| **a** `env_once!` | 178 732 `getenv` calls: every `LOFT_*` switch read inline, per token or per node | −3.4 % | 5 783 M |
+| **b** `def_names` on `crate::fxhash` | 3.0 M definition lookups through SipHash, 13 % of the compile | −11.8 % | 5 098 M |
+| **c** `Data::set_parent` + child links | `children_of` scanned every definition per call; `enums_with_variant` did so once per enum per call (216 M Ir over 851 calls), `type_owns_droppable` likewise | −7.0 % | 4 743 M |
+| **d** `scopes` / `use_analysis` / lexer sets on Fx; `peek_token` compares in place | 1.5 M `u16`, 1.0 M `u32` and 0.9 M `String` SipHashes; a `String` built per operator comparison (684 206 per compile) | −17.9 % | 3 895 M |
+| **e** `has_private_type` scans definitions cheapest-field-first | 1 676 calls × a walk over every name | −0.6 % | 3 870 M |
+
+**Total: −35.3 % instructions on the large compile**; the front-end allocation ratchet
+re-pinned tiny **705 011 → 491 038** (−30.4 %) and medium **2 551 492 → 1 723 159** (−32.5 %).
+Each step's falsifier was the same: `--interpret --dump` of every file under `tests/scripts`
+and `tests/docs` (1 860) byte-identical against the pre-change binary, the ratchet never
+growing, and the unit tests of the index (`children_index_tests`) and the hasher.
+
+**Not a phase, the next lead — recorded with its numbers.**  After these five the profile
+is allocation churn (the allocator is ~24 % of what remains, 5.3 M allocations on the large
+compile) and it has one dominant source: `Position { file: String, .. }` is CLONED per
+token and per operator — `LexResult::clone` 480 040 times, `Lexer::cont` 202 816,
+`parse_operators`' three position captures 684 206 — each a `String` for a file name that
+never changes within a file.  An `Arc<str>` (or an interned file id) in `Position` turns
+every one into a refcount bump; 72 `Position {` literals and 40 `file: String` fields is the
+size of that change.  Behind it: `Value::clone` in `parse_function` / `scopes::check`
+(20 028 + 18 670 whole-body clones) and `def_nr`'s two-probe miss path (3.0 M calls, 7 %).
 
 ## Design: W1 — wasm string representation
 

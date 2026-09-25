@@ -14,6 +14,11 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**Compiling does a third less work.**  Reading a program in — parsing, checking names and
+scopes — now takes about 35 % fewer instructions and 30 % fewer memory allocations than
+before, measured on a 12 800-line program; the answers it produces are byte-for-byte the
+same.  Every program benefits, and the edit loop most.
+
 **Running an unchanged program natively starts at once.**  Every native run used to re-read
 and re-translate the program before finding it already had the compiled result.  It now
 recognises the program from its source files and starts the compiled copy directly, in about

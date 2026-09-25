@@ -3987,7 +3987,7 @@ impl Function {
     /// (`reads == 0 && write_targets > 0` is the future S2 dead-store signal — see
     /// `doc/claude/plans/107-dead-code-lint/`).
     pub fn debug_dead_store_dump(&self, fn_name: &str, body: &Value, data: &Data) {
-        if std::env::var_os("LOFT_DUMP_READS").is_none() {
+        if crate::env_once!(std::env::var_os("LOFT_DUMP_READS").is_none()) {
             return;
         }
         let acc = crate::use_analysis::dead_store_accesses(body, self, data);
@@ -4313,7 +4313,7 @@ impl Function {
     /// that one variable was both.
     #[track_caller]
     fn trace_work_ref(&self, v: u16, tp: &Type) {
-        if std::env::var_os("LOFT_TRACE_WORKREF").is_none() {
+        if crate::env_once!(std::env::var_os("LOFT_TRACE_WORKREF").is_none()) {
             return;
         }
         // `arg=` is the half that decides whether a reuse is harmless or a collision, and
@@ -4815,8 +4815,9 @@ impl Function {
     }
 
     pub fn set_skip_free(&mut self, v: u16) {
-        if let Ok(want) = std::env::var("LOFT_SKIPFREE_TRACE")
-            && (want == "*" || self.variables[v as usize].name == want)
+        if let Some(want) =
+            crate::env_once!(@value Option<String>, std::env::var("LOFT_SKIPFREE_TRACE").ok())
+            && (want == "*" || self.variables[v as usize].name == *want)
         {
             eprintln!(
                 "[skip_free] {} (var={v}) in {} @ {}",
@@ -4976,7 +4977,7 @@ impl Function {
             if v.pre_assigned_pos != u16::MAX
                 && v.pre_assigned_pos != pos
                 && !v.argument
-                && std::env::var("LOFT_SLOT_LOG").is_ok()
+                && crate::env_once!(std::env::var("LOFT_SLOT_LOG").is_ok())
             {
                 eprintln!(
                     "[set_stack_pos] '{}' scope={}: assign_slots placed at {} but \
@@ -5022,7 +5023,7 @@ impl Function {
         // often a shared helper (`change_var_type`'s adopt-deps branch rewrites a dep list
         // on behalf of whoever assigned), and the question is always which PARSE site is
         // behind it.
-        if std::env::var_os("LOFT_TIMELINE_BT").is_some() {
+        if crate::env_once!(std::env::var_os("LOFT_TIMELINE_BT").is_some()) {
             eprintln!("{}", std::backtrace::Backtrace::force_capture());
         }
     }
@@ -5333,5 +5334,7 @@ pub fn owns_literal_backing_store(name: &str) -> bool {
 /// one.  Read once per process.
 fn link_all_narrow() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| {
+        crate::env_once!(std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))
+    })
 }

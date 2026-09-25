@@ -12,6 +12,7 @@ Rules for all Rust and loft code in this project.
 - [Test Suite (`tests/docs/`, `tests/scripts/`)](#test-suite-testsdocs)
 - [Clippy and Formatting](#clippy-and-formatting)
 - [Null Sentinels](#null-sentinels)
+- [Hot-path conventions](#hot-path-conventions)
 
 ---
 
@@ -98,6 +99,29 @@ correctly on the same file.
   been no panic at all, only writes landing in the wrong place.
 
 ---
+
+## Hot-path conventions
+
+Two rules for code the front end runs per token or per node, each with the measurement that
+made it a rule (@PLN166 B4, callgrind over a compile of the 12 826-line front-end corpus):
+
+- **Read a `LOFT_*` switch through `env_once!`, never `std::env::var*` inline.**  Every
+  inline read is a `getenv`, a `strncmp` walk over the whole environment; the front end made
+  178 732 of them per compile, 3 % of all instructions, and a `var` (not `var_os`) allocates
+  the value as well.  `crate::env_once!(std::env::var_os("LOFT_X").is_some())` caches the
+  answer once per process; `env_once!(@value T, expr)` caches a non-`bool`.  The one thing
+  it must not wrap is a variable the process itself `set_var`s mid-run.
+- **Key the compiler's own tables with `crate::fxhash`** (`FxHashMap` / `FxHashSet`), not
+  `std`'s SipHash tables.  A table fed by the program being compiled — definition names,
+  variable and definition numbers — needs no collision resistance, and SipHash's per-key
+  setup was 19 % of a compile (the definition index alone 13 %).  A table fed by anything an
+  outside party controls keeps the store's own hashing.  `HashMap::new()` becomes
+  `HashMap::default()`, and `HashSet::from([x])` becomes `HashSet::from_iter([x])`.
+
+And one shape to recognise: a scan over `definitions` or `def_names` inside a lookup
+(`children_of` walked every definition per call, `has_private_type` every name) is a
+quadratic waiting for a large program.  Derive an index and keep it at the ONE writer of
+the field it derives from (`Data::set_parent`), or scan the cheapest field first.
 
 ## Dependencies
 

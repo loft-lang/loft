@@ -231,6 +231,28 @@ unsafe extern "C" {
 ///
 /// Hosted targets — native, `wasm32-wasip2`, and the `wasm` feature's own bridge — keep
 /// `eprintln!` exactly, so nothing about their output moves.
+/// Read an environment switch ONCE per process.  `env_once!(expr)` evaluates `expr` (a
+/// `bool` over `std::env::var*`) on first use and answers the cached value after — the same
+/// `OnceLock` every hand-written `*_enabled()` helper carries, as one spelling.
+///
+/// The front end read its `LOFT_*` switches on every token and every node: over a compile
+/// of the 12 826-line front-end corpus `getenv` ran 178 732 times, each a `strncmp` walk over
+/// the whole environment, for 3 % of all instructions (callgrind, @PLN166 B4).  A switch is
+/// a fact of the invocation, so a process-wide read is the same answer every time; the one
+/// thing this must not wrap is a variable the process itself SETS mid-run (`set_var`), and
+/// none of the front end's switches is.  `env_once!(@value T, expr)` caches a non-`bool`.
+#[macro_export]
+macro_rules! env_once {
+    (@value $t:ty, $e:expr) => {{
+        static ONCE: ::std::sync::OnceLock<$t> = ::std::sync::OnceLock::new();
+        ONCE.get_or_init(|| $e)
+    }};
+    ($e:expr) => {{
+        static ONCE: ::std::sync::OnceLock<bool> = ::std::sync::OnceLock::new();
+        *ONCE.get_or_init(|| $e)
+    }};
+}
+
 #[macro_export]
 macro_rules! loft_eprintln {
     ($($arg:tt)*) => {{
@@ -270,6 +292,7 @@ pub mod debugger;
 pub mod diagnostic_render;
 pub mod ffi_deliver;
 pub mod fix_apply;
+pub mod fxhash;
 pub mod hash;
 pub mod ir_node;
 pub mod ir_read;
