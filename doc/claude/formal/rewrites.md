@@ -2078,14 +2078,16 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  released at its exit.  Declines, keeping the mint: a hand-off to a `&`
                  parameter (a rebind through it repoints the caller's variable), to a
                  callee answering a view or a function value, to a native or a parallel
-                 builtin, or through a function value; a copy OUT of the frame — into a
-                 record's field (`out += [Rec { pts: v }]`, which the native emitter
-                 builds inside the appended element with no store at all, R-ElemFirst;
-                 `a.items = v`, which the move elision builds straight into the field),
-                 or into a parameter such as the return buffer, which adopts the local
-                 (R-RetAdopt) — where a buffer would turn a saved copy into a paid one; a
-                 declaration filled by a copy of another vector (`v = s.v`), which the
-                 borrow elision removes outright; a local declared INSIDE a loop, whose
+                 builtin, or through a function value; a local copied WHOLE into any
+                 other place — a record's field (`out += [Rec { pts: v }]`, which the
+                 native emitter builds inside the appended element with no store at all,
+                 R-ElemFirst; `a.items = v`, which the move elision builds straight into
+                 the field through its staging local), the return buffer, which adopts
+                 the local (R-RetAdopt), or another local — and a local bound PURELY as
+                 a copy of another vector (`v = s.v`: one copy in, no push or insert),
+                 which the copy elision's borrow tiers and the transparent link remove
+                 outright — every one of those rewrites asks for a local, and a buffer
+                 would turn a saved copy into a paid one; a local declared INSIDE a loop, whose
                  store the native emitter already keeps across the passes with a length
                  reset (R-LoopBuffer) cheaper than a clear, and whose invariant literal the
                  literal hoist builds once (R-LitHoist); a local written and never read, the
@@ -2145,13 +2147,13 @@ buffer costs a copy and the loop its hoists (`fronds` 1.95× → 4.3×).  A lazy
 that makes the call, not before the whole value `if` (`scopes::place_in_if`) — cbor's
 `encode` minted its map arm's four buffers on every call.  A promotion is only a gain
 where the emitter still sees an owner and the form it replaces was a store at all.  The
-rows, re-measured clean on the final build (2026-09-26, committed → now): hex_body
-`rig_world_frame3` **9.57× → 5.26×** (its twelve scratch vectors), cbor `encode`
-**18.1× → 11.5×** and `encode_bytes` **43.3× → 27.1×** (the map encoder's key tables),
-graphics `fill_rect` 4.08× → 3.10×, `draw_line` 2.70× → 2.00×, `blend_pixel` 2.11× →
-1.29×, `fill_triangle` 3.15× → 2.95×, drawing `composite` 1.58× → 1.28×; `fronds`,
-`render_marks` and `resize` within noise of their committed rows once the two lessons
-above were applied; hex_body `bone_shape_has` 4.84× → 5.76× is the one row still worse,
+rows, re-measured clean on the converged tree (2026-09-25, the committed row without
+the rule → now): hex_body `rig_world_frame3` **9.54× → 5.25×** (its twelve scratch
+vectors), cbor `encode` **18.0× → 11.3×** and `encode_bytes` **43.1× → 26.4×** (the map
+encoder's key tables), graphics `fill_rect` 4.05× → 3.06×, `draw_line` 2.70× → 2.06×,
+`blend_pixel` 2.11× → 1.30×, `fill_triangle` 3.13× → 2.89×, drawing `composite` 1.56× →
+1.27×; `fronds`, `render_marks` and `resize` within noise of their committed rows once
+the two lessons above were applied; hex_body `bone_shape_has` 4.84× → 5.29× is the one row still worse,
 and its cause is the rule's own shape: a thin wrapper called once per element that calls
 `rig_world_seg` (three buffers) mints those buffers per call one level up exactly as the
 callee did, and pays the callee's clear and witness for nothing.  The cure is the

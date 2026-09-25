@@ -103,10 +103,11 @@ promoted parameter as a possibly aliased view and declined the push window it ha
 local, which made push-heavy rows 1.5× SLOWER; `hoist::work_buffer_arg` now admits the
 parameter as exclusive at the push and mint windows.
 
-Measured clean on the final build (2026-09-26): `rig_world_frame3` 9.57× → 5.26×, cbor
-`encode` 18.1× → 11.5× and `encode_bytes` 43.3× → 27.1×, `fill_rect` 4.08× → 3.10×,
-`draw_line` 2.70× → 2.00×, `blend_pixel` 2.11× → 1.29×, `composite` 1.58× → 1.28×.  The one
-row that lost, `bone_shape_has` 4.84× → 5.76×, names the next step: a wrapper called per
+Measured clean on the converged tree (2026-09-25, the committed row without the rule →
+now): `rig_world_frame3` 9.54× → 5.25×, cbor `encode` 18.0× → 11.3× and `encode_bytes`
+43.1× → 26.4×, `fill_rect` 4.05× → 3.06×, `draw_line` 2.70× → 2.06×, `blend_pixel` 2.11× →
+1.30×, `composite` 1.56× → 1.27×.  The one
+row that lost, `bone_shape_has` 4.84× → 5.29×, names the next step: a wrapper called per
 element mints its callee's buffers per call one level up and pays the clear and witness for
 nothing — the TRANSITIVE form promotes the wrapper's own work-refs onward, so a buffer
 climbs to the outermost looping frame (Phase A and B to a fixpoint over the call graph).

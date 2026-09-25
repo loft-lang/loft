@@ -230,9 +230,10 @@ leaked vector inside a function that declares one, or for a frame-shape fault at
 entry.  `LOFT_TRACE_WORK_BUFFER=1` names each local promoted and each candidate declined with
 the reason; `LOFT_WORK_BUFFER_NULL=1` is the positive control for the null road (every
 caller-side buffer left null, both backends).  A hand-off to a `&` parameter or to a callee
-answering a view, a copy out of the frame (into a record's field, where the emitter builds
-the local in place, or into a parameter such as the return buffer, which adopts it), a
-declaration filled by a copy of another vector (the borrow elision's), a local declared
+answering a view, a local copied whole into any other place (a record's field, where the
+emitter builds it in place or the move elision builds it straight into the field; the
+return buffer, which adopts it; another local) or bound purely as a copy of another vector
+(one copy in and no push, the borrow elision's), a local declared
 inside a loop (`@FR-R-LoopBuffer`'s length reset is cheaper than a clear), a local written
 and never read (the dead-store lint's), a mention in a return, a literal, a link or a
 capture, a record or text element, a body that suspends or forks, an entry point, a generic,
