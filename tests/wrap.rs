@@ -1769,14 +1769,41 @@ fn run_test_inner(
     }
     // Scope check and bytecode generation can panic on compiler bugs.
     // When the file has @EXPECT_FAIL annotations, tolerate the panic.
+    //
+    // @PLN163 P3 — the lease errors (`copy-of-droppable`, `read-after-move`) are raised between
+    // the scope pass and code generation, where the CLI and `loft test` raise them
+    // (`post_scope_lints`).  NOT after `byte_code`: that call reports and DRAINS the copy
+    // manifest (`copy_manifest::report`), including the ELIDED copies the census judges — a
+    // bind the borrow elision deleted is still a copy the line wrote — so a census run after it
+    // could not see them.  It ran after, and the suite passed a guard whose CONTROL cell the CLI
+    // refuses (`a-copy-off-a-tuple-parameter-member-leaves-the-caller-owning.loft`'s `f_vec`).
+    // A refused file stops here, as any refused file does: its `@EXPECT_ERROR` lines are
+    // checked and nothing runs.
     let compile_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         scopes::check(&mut p.data, &mut p.database);
+        if diagnostics.level() < loft::diagnostics::Level::Error {
+            loft::use_analysis::drop_copy_census(&p.data, &mut diagnostics, &path);
+        }
+        if diagnostics.level() >= loft::diagnostics::Level::Error {
+            return None;
+        }
         let mut state = State::new(p.database);
         byte_code(&mut state, &mut p.data);
-        (state, p.data)
+        Some((state, p.data))
     }));
     let (mut state, mut p_data) = match compile_result {
-        Ok(pair) => {
+        Ok(None) => {
+            for l in diagnostics.lines() {
+                println!("{l}");
+            }
+            collected.extend(diagnostics.lines());
+            if depth == 0 {
+                check_diagnostics(collected, &expected, &exp_errors, &exp_ann_warns, true)?;
+            }
+            println!("  ok (errors consumed)");
+            return Ok(());
+        }
+        Ok(Some(pair)) => {
             if file_level_fail {
                 println!("  FIXED {path} (was @EXPECT_FAIL, now compiles)");
             }
@@ -1798,24 +1825,6 @@ fn run_test_inner(
         }
     };
 
-    // @PLN163 P3 — the lease errors (`copy-of-droppable`, `read-after-move`) are raised after
-    // the scope pass, where the CLI and `loft test` raise them (`post_scope_lints`), so this is
-    // the one window they can be read in.  A refused file stops here, as any refused file does:
-    // its `@EXPECT_ERROR` lines are checked and nothing runs.
-    if diagnostics.level() < loft::diagnostics::Level::Error {
-        loft::use_analysis::drop_copy_census(&p_data, &mut diagnostics, &path);
-        if diagnostics.level() >= loft::diagnostics::Level::Error {
-            for l in diagnostics.lines() {
-                println!("{l}");
-            }
-            collected.extend(diagnostics.lines());
-            if depth == 0 {
-                check_diagnostics(collected, &expected, &exp_errors, &exp_ann_warns, true)?;
-            }
-            println!("  ok (errors consumed)");
-            return Ok(());
-        }
-    }
     for l in diagnostics.lines() {
         println!("{l}");
     }

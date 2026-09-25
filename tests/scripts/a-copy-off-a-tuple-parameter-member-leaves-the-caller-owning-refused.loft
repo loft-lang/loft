@@ -9,13 +9,13 @@
 // (`tests/ownership_drop_gate.rs`, under `LOFT_NO_LEASE_REFUSE=1`), which @PLN163 P5 is
 // verified against.  Here each cell pins the refusal instead, with the words it must say.
 //
-// @falsified-at: 301ed70c9 — interpret exit 1 -> 0, interpret expectations FAIL/9 -> 9/9 (the
-//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/9 ->
-//   9/9 (the suite's verdict, not a count of matches)
+// @falsified-at: 301ed70c9 — interpret exit 1 -> 0, interpret expectations FAIL/10 -> 10/10 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/10 ->
+//   10/10 (the suite's verdict, not a count of matches)
 // @falsified-by:
 //   tests/falsified/a-copy-off-a-tuple-parameter-member-leaves-the-caller-owning-refused.patch —
-//   interpret exit 1 -> 0, interpret expectations FAIL/9 -> 9/9 (the suite's verdict, not a count
-//   of matches), native exit 1 -> 0, native expectations FAIL/9 -> 9/9 (the suite's verdict, not
+//   interpret exit 1 -> 0, interpret expectations FAIL/10 -> 10/10 (the suite's verdict, not a count
+//   of matches), native exit 1 -> 0, native expectations FAIL/10 -> 10/10 (the suite's verdict, not
 //   a count of matches)
 // CHANNEL: the expectations and the exit code, identically on both backends — on the control
 //   the refused cells compile, so every `@EXPECT_ERROR` goes unmatched.
@@ -72,6 +72,11 @@ fn f_lit(p: (PmS, integer)) { u = p; note("a{u.0.h.id}"); }
 // The callee called TWICE from one caller — one resource, one release.
 // @EXPECT_ERROR: cannot copy `p` here
 fn f_call(p: (PmS, integer)) { u = p; note("a{u.0.h.id}"); }
+
+// A VECTOR parameter copied — the other parameter spelling, refused by the same rule.  It stood
+// in the twin file as a control until the suite judged copies before code generation.
+// @EXPECT_ERROR: cannot copy `p` here
+fn f_vec(p: vector<PmS>) { u = p; note("a{len(u)}"); }
 
 // The parameter passed ON to another function that copies it: the chain of arguments does not
 // change who owns.
