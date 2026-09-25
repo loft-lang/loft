@@ -1305,6 +1305,20 @@ program's copy must be its own — and is the first bisect step for a wrong elem
 `LOFT_TRACE_CONST=1` names each function made a constant (and each that is not, with its
 body's shape) and each call admitted or declined; the interpreter and native share the
 rewrite, so the switch A/B and the cells' hand-computed values are the falsifier.
+**`LOFT_NO_COMPACT=1`** (`@FR-R-Compact`, default-ON since 2026-09-25, scope pass, BOTH
+backends) makes a vector rebuilt from a contiguous run of its own elements copy again —
+with it off, `t: vector<S> = []; for i in a..b { t += [V[i]?]; } V = t;` (a history
+truncated to its cursor, its oldest entries dropped) is ONE guarded op: `if 0 <= lo &&
+lo <= hi && hi <= len(V) { OpKeepVectorRange(V, tp, lo, hi) } else { the statements as
+written }`, the op releasing every element outside the run where it stands, moving the
+run to the front as one block and setting the length, and the fallback arm answering
+exactly what the copy answered for any range the guard refuses (a negative start, an end
+past the length that pads with default records, a null bound).  RECORD elements read
+through `?` only — a scalar in range can hold the null its `??` replaces — and `t` named
+nowhere else; the filter, prepend and identity forms of the rule keep their rebuild
+(dryopea `truncate_to` 259× → 14×).  It is the first bisect step for a wrong, missing or
+stale element after a vector is rebuilt from its own elements; `LOFT_TRACE_COMPACT=1`
+names each rebuild admitted and each declined with the reason.
 **`LOFT_NO_ELEMENT_IN_PLACE=1`** (@PLN164 C1, `@FR-R-InPlaceLiteral`, parse time, BOTH
 backends) makes `v[i] = S { … }` build its record in a temp store and deep-copy it into the
 slot again — with it off, the literal writes the slot's fields, as the FIELD destination

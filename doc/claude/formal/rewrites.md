@@ -2546,6 +2546,39 @@ to bisect to.
   only under a one-field `main_vector<T>` root, so a rebind of a vector FIELD of a
   multi-field record released nothing and stranded every old element's owned heap in the
   store — fixed beside this price (see heap.md's register).
+  **BUILT 2026-09-25, the CONTIGUOUS-RANGE form** (`LOFT_NO_COMPACT`, `LOFT_TRACE_COMPACT`;
+  scope pass, BOTH backends): `t: vector<S> = []; for i in a..b { t += [V[i]?]; } V = t;`
+  becomes ONE guarded op — `if 0 <= lo && lo <= hi && hi <= len(V) { OpKeepVectorRange(V,
+  tp, lo, hi) } else { the statements as written }` — where the op (`Stores::keep_vector_range`,
+  one home for both backends through its `#rust` template, beside `remove_vector_at`)
+  releases every element outside `[lo, hi)` where it stands, moves the run to the front as one
+  block and sets the length.  The fallback arm is the program as the parser lowered it, so a
+  range the guard refuses — a negative start, an end past the length (whose `?`-discharged
+  reads pad with default records), an end below the start, a null bound — answers exactly
+  what it always answered; the guard reads the range, not the walk, so the rule's "at every
+  append the count already in t is at most the index being read" is a fact of the range
+  itself here.  `src/compact.rs` matches, on the settled IR, the declaration `t = []` (a
+  mint, the field read, the length word), a counted `for` over `a..b` in either range
+  prelude (a literal or a variable end), a body appending exactly the `?`-discharged RECORD
+  element `V[i]` of the loop variable, and the rebind `V = t` in its field form (snapshot,
+  clear, copy back; the snapshot's free beside it or deferred to the block's end, in which
+  case it joins the fallback arm) or its local form — with `t` named nowhere else in the
+  function and the bounds a literal, a variable the loop does not write, or `len(V)`.
+  A SCALAR element keeps the rebuild: an in-range scalar can hold the null its `??`
+  replaces, where an in-range record element is never absent — the one difference between
+  the two forms the guard cannot see.  Not yet built: the FILTER form (`for e in V { if p {
+  t += [e] } }`, a loop rewrite with a write index), the PREPEND form (`invert`) and the
+  IDENTITY form (`insert_text`), which the rule states and this unit's recogniser does not
+  reach.  Measured on the portal's consumer lane, same box: `truncate_to` **3.62 ms →
+  195 µs per op, 259× → 14.0×** of Rust (−95 %: the row's 250 drop-oldest rebuilds per op
+  and its 30 truncates are all compacted; the hand-price replaced the truncate alone).
+  Cells: `tests/scripts/a-vector-rebuilt-from-a-run-of-its-own-elements-is-compacted-in-place.loft`
+  (c1–c18, hand-computed, both backends under `LOFT_STRICT_STORES` / `LOFT_POISON` /
+  `LOFT_POISON_CLAIM` / the native leak check, the switch A/B answering the same); the
+  admission is pinned on the emitted Rust in `tests/compact.rs`.  Sabotage receipts: the
+  guard's `hi <= len(V)` test struck, the beyond-length cell (c7) keeps the vector whole
+  instead of padding, on both backends; the "t named nowhere else" test struck, the pin sees
+  c14 compacted.
 - **`(R-Const)`** — text2d `write_text` **86×**: `face_codes()` / `face_rows()` return
   vector literals of 56 and 392 elements, rebuilt for every glyph drawn and read only;
   moros `panel_build` (19×) copies a constant `vector<text>` into a list box per frame,
@@ -2695,8 +2728,8 @@ per-element release, `write_text` with the two tables hoisted to statics,
 `mat4_transform` with `p` carried as three floats — the price the twin sets is the
 ceiling each is measured against.  Written 2026-09-24 from the wide pass's measurements,
 ahead of the code, so that the code changes to match them; `(R-Rebind)` was built the same
-day, `(R-ValueLocal)` and `(R-Const)` the day after (their entries above); `(R-Compact)` is
-NOT BUILT.
+day, `(R-ValueLocal)`, `(R-Const)` and `(R-Compact)`'s contiguous-range form the day after
+(their entries above); `(R-Compact)`'s filter, prepend and identity forms are NOT BUILT.
 
 ## Validating the emitted routines against their assumptions
 

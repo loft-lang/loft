@@ -216,3 +216,16 @@ accessors per row — against a twin that ORs two `bool` arrays, which rustc vec
 ~0.15 ns per cell.  The call class, measured against a SIMD floor: the lever is inlining the
 accessors' bodies into the loop (a callee whose body is a field read or an index of its
 by-value record parameter), not the bridge.
+
+**`(R-Compact)` BUILT, the contiguous-range form (2026-09-25, `LOFT_NO_COMPACT`).**  A vector
+rebuilt from a run of its own elements — `t = []; for i in a..b { t += [V[i]?]; } V = t` —
+is one guarded in-place keep (`OpKeepVectorRange`): the elements outside `[lo, hi)` are
+released where they stand, the run moves to the front as one block, and every range the
+guard refuses runs the statements as written.  The consumer lane, same box: `truncate_to`
+**3.62 ms → 195 µs per op, 259× → 14.0×** of Rust — the row's 250 `drop_oldest` rebuilds
+and 30 truncates per op all compacted (the hand-price, which replaced the truncate alone,
+said ~30×).  What the row still pays is the 300 `history_push` appends of a `Stroke` with
+its two inner vectors — `(R-MoveAppend)` / `(R-Place)`'s class.  Left for the rule's other
+forms: zttext `invert` (the prepend, 99×) and `insert_text` (the identity copy, 62×), and
+any filter (`for e in V { if p { t += [e] } }`), which needs a loop rewrite with a write
+index rather than a range.

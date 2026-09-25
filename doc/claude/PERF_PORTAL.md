@@ -18,7 +18,7 @@ interleaved samples; both lanes printed the same result hash or the row would no
 
 ## laptop · x86_64-linux · 2026-09-25
 
-Commit `ef3a63918` (uncommitted changes in the tree), rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7 samples of ~400 ms, pinned to the fastest core.
+Commit `c56f2fc5c`, rustc 1.97.0 (2d8144b78 2026-07-07), reference `rustc -O`, 7 samples of ~400 ms, pinned to the fastest core.
 
 ### Where we stand
 
@@ -38,7 +38,7 @@ class points at one part of the compiler or runtime rather than at one program.
 
 | class | what bounds it | rows | median | best | worst | within 2× | over 3× |
 |---|---|---:|---:|---:|---|---:|---:|
-| **vector-build** | making a scalar vector: push, comprehension, copy, a vector of vectors | 13 | **11.82×** | 0.53× | 259.06× `truncate_to` | 3 | 8 |
+| **vector-build** | making a scalar vector: push, comprehension, copy, a vector of vectors | 13 | **11.82×** | 0.53× | 172.86× `field_union` | 3 | 8 |
 | **alloc-temp** | short-lived records and vectors handed between helper calls | 11 | **11.48×** | 1.42× | 107.08× `flow_layout_full` | 1 | 8 |
 | **record-field** | reading and writing fields of records reached through a vector | 16 | **5.62×** | 1.38× | 24.69× `fill_polygon` | 3 | 9 |
 | **record-build** | appending records to a vector, and returning built records | 16 | **5.61×** | 1.02× | 99.42× `invert` | 3 | 12 |
@@ -49,7 +49,7 @@ class points at one part of the compiler or runtime rather than at one program.
 | **vector-read** | indexed reads of scalar vectors, and reductions over them | 16 | **2.25×** | 1.15× | 13.02× `draw_quads` | 6 | 5 |
 | **parallel** | `par`: work split over threads and its results gathered | 6 | **2.17×** | 0.66× | 5.15× `par` | 3 | 1 |
 | **float-kernel** | float arithmetic in loops: the operators, libm calls, the null (NaN) handling | 18 | **2.13×** | 0.94× | 31.94× `mat4_mul` | 7 | 7 |
-| **text-scan** | reading text: byte and character walks, find, contains, a line loop | 11 | **2.06×** | 1.08× | 9.26× `mapfile_to_painted` | 5 | 4 |
+| **text-scan** | reading text: byte and character walks, find, contains, a line loop | 11 | **2.06×** | 1.08× | 9.00× `mapfile_to_painted` | 5 | 4 |
 | **int-loop** | scalar integer arithmetic in loops: the checked operators and the loop counter | 8 | **1.88×** | 1.03× | 3.34× `get` | 5 | 3 |
 | **vector-write** | element writes and fills of scalar vectors, in place | 20 | **1.54×** | 0.62× | 9.89× `canvas` | 12 | 4 |
 | **text-parse** | numbers parsed out of text | 1 | **0.93×** | 0.93× | 0.93× `parse_num` | 1 | 0 |
@@ -62,12 +62,12 @@ Why it is slow, priced, and what to build: [analysis/vector-build.md](../../benc
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `truncate_to` | 17_consumer_moros_dryopea | consumer:dryopea | **259.06** | 257.18–263.27 | 3.62 ms | 14.0 µs | **over 3x** | a timeline of records with inner vectors rebuilt element by element to drop a prefix |
 | `field_union` | hex_place | library:hex_place | **172.86** | 172.46–173.17 †d2caad423 | 4.32 ms | 25.0 µs | **over 3x** | a set allocated by a push loop, then written one cell at a time through an accessor |
 | `encode_bytes` | cbor | library:cbor | **94.73** | 77.84–96.34 (noisy) †2a5a9cc7d | 7.13 ms | 75.2 µs | **over 3x** | a text payload appended ONE byte at a time (`buf += [value.byte_at(i) as u8]`) |
 | `insert_text` | zttext | library:zttext | **62.49** | 59.82–62.70 †185e8fd54 | 53.32 ms | 853.3 µs | **over 3x** | every keystroke copies the WHOLE append-only buffer element by element (`for c0 in d.buf { nb += [c0] }`): typ |
 | `binary_read` | 18_consumer_crawler | consumer:crawler | **32.95** | 32.74–33.76 †d2caad423 | 6.57 ms | 199.4 µs | **over 3x** | a binary file read one i16 at a time (f#read(2) as i16) |
 | `pack_instances` | stage | library:stage | **25.07** | 24.95–25.30 †10c8a49a7 | 1.37 ms | 54.6 µs | **over 3x** | 16 separate one-element appends per visible node |
+| `truncate_to` | 17_consumer_moros_dryopea | consumer:dryopea | **14.01** | 13.79–14.16 | 194.9 µs | 13.9 µs | **over 3x** | a timeline of records with inner vectors rebuilt element by element to drop a prefix |
 | `build_vis` | 18_consumer_crawler | consumer:crawler | **11.82** | 11.79–11.89 †d2caad423 | 2.98 ms | 252.3 µs | **over 3x** | per frame a 101x101 push loop, two indexed reads and a small call per pixel |
 | `emit_segment` | gridmesh | library:gridmesh | **7.19** | 6.92–7.19 †2a5a9cc7d | 69.58 ms | 9.68 ms | **over 3x** | nine parallel narrow-vector appends per segment |
 | `grid` | 14_stdlib_vector | stdlib | **2.75** | 2.74–2.76 †14d99b7c6 | 23.4 µs | 8.5 µs | over 2x | a 128x128 vector of vectors by nested comprehension |
@@ -123,9 +123,9 @@ Why it is slow, priced, and what to build: [analysis/records.md](../../bench/por
 |---|---|---|---:|---|---:|---:|---|---|
 | `invert` | zttext | library:zttext | **99.42** | 97.86–99.99 †185e8fd54 | 123.52 ms | 1.24 ms | **over 3x** | undo REBUILDS the whole accumulated op vector on every op: quadratic in the op count |
 | `decode` | cbor | library:cbor | **26.89** | 25.22–26.95 (noisy) †2a5a9cc7d | 52.74 ms | 1.96 ms | **over 3x** | one record appended per item, a fresh `Decoded` returned per node, recursion per element |
-| `slope_path_with_undo` | 17_consumer_moros_dryopea | consumer:moros | **20.77** | 20.64–20.90 | 927.6 µs | 44.7 µs | **over 3x** | per step a record read out of a nested container and appended by value into an undo stack |
+| `slope_path_with_undo` | 17_consumer_moros_dryopea | consumer:moros | **18.84** | 18.61–21.04 (noisy) | 939.3 µs | 49.9 µs | **over 3x** | per step a record read out of a nested container and appended by value into an undo stack |
+| `panel_build` | 17_consumer_moros_dryopea | consumer:moros | **14.55** | 14.52–14.58 | 10.90 ms | 749.5 µs | **over 3x** | one frame's panel: records with nested fields and texts, a hit test answering a struct-enum |
 | `sphere` | mesh3d | library:mesh3d | **14.51** | 14.49–14.52 †8a513e42b | 3.83 ms | 264.1 µs | **over 3x** | every vertex built from three nested records through `add_vertex` |
-| `panel_build` | 17_consumer_moros_dryopea | consumer:moros | **14.43** | 14.40–14.46 | 10.81 ms | 749.2 µs | **over 3x** | one frame's panel: records with nested fields and texts, a hit test answering a struct-enum |
 | `delete_range` | zttext | library:zttext | **9.58** | 9.11–9.64 (noisy) †185e8fd54 | 4.07 ms | 424.5 µs | **over 3x** | a fresh `vector<Piece>` per edit, and the piece count only grows |
 | `patch` | zttext | library:zttext | **7.92** | 7.90–7.96 †185e8fd54 | 8.03 ms | 1.01 ms | **over 3x** | the "incremental" path scans every old box and rebuilds every tail box per keystroke |
 | `extract_headings` | markdown | library:markdown | **6.37** | 6.35–6.43 †5cf8a0e8c | 2.29 ms | 359.7 µs | **over 3x** | a 3-field record with two built texts appended per heading |
@@ -144,7 +144,7 @@ Why it is slow, priced, and what to build: [analysis/records.md](../../bench/por
 |---|---|---|---:|---|---:|---:|---|---|
 | `edgeset_count` | hex_field | library:hex_field | **39.88** | 39.86–39.97 †d2caad423 | 25.84 ms | 647.9 µs | **over 3x** | a triple loop through `edge_mat` -> `eg_index` -> `eg_dir_from`, which linear-scans six neighbours |
 | `forms_upto` | hex_recover | library:hex_recover | **12.25** | 12.23–12.31 †d2caad423 | 1.90 ms | 154.8 µs | **over 3x** | six nested loops x a deep predicate chain x `form_write` x a LINEAR text dedup; the source itself calls it "th |
-| `resolve_move` | 17_consumer_moros_dryopea | consumer:moros | **10.26** | 10.23–10.29 | 10.64 ms | 1.04 ms | **over 3x** | per-frame physics: a chain of small functions passing small records by value |
+| `resolve_move` | 17_consumer_moros_dryopea | consumer:moros | **10.37** | 10.36–10.41 | 10.75 ms | 1.04 ms | **over 3x** | per-frame physics: a chain of small functions passing small records by value |
 | `combine_cut` | hex_place | library:hex_place | **8.70** | 8.69–8.71 †d2caad423 | 5.76 ms | 661.5 µs | **over 3x** | a fresh set allocated and swept, then four reads and a write per boundary edge |
 | `edges_cut` | hex_edge | library:hex_edge | **7.06** | 7.04–7.08 †d2caad423 | 11.90 ms | 1.68 ms | **over 3x** | every boundary edge pays a 6-deep helper chain |
 | `value` | tween | library:tween | **5.36** | 5.33–5.37 †5cf8a0e8c | 28.22 ms | 5.26 ms | **over 3x** | progress, ease and lerp: three calls and a record read per number |
@@ -166,7 +166,7 @@ Why it is slow, priced, and what to build: [analysis/keyed.md](../../bench/porta
 |---|---|---|---:|---|---:|---:|---|---|
 | `build_index` | gridmesh | library:gridmesh | **15.44** | 15.42–15.47 †2a5a9cc7d | 36.16 ms | 2.34 ms | **over 3x** | 100,000 dedup-inserts of a record into a hash |
 | `get_cell` | hex_world | library:hex_world | **13.20** | 13.20–13.21 †10c8a49a7 | 133.18 ms | 10.09 ms | **over 3x** | a linear scan of the chunk list comparing two fields, then a record returned BY VALUE |
-| `reload_and_record` | 17_consumer_moros_dryopea | consumer:dryopea | **10.84** | 10.69–10.89 | 2.27 ms | 209.8 µs | **over 3x** | a two-way hash diff with u8 fields: walk A probing B, walk B probing A |
+| `reload_and_record` | 17_consumer_moros_dryopea | consumer:dryopea | **10.45** | 10.39–10.76 | 2.27 ms | 216.9 µs | **over 3x** | a two-way hash diff with u8 fields: walk A probing B, walk B probing A |
 | `field_add_cell` | gridmesh | library:gridmesh | **9.65** | 9.60–9.67 †2a5a9cc7d | 29.04 ms | 3.01 ms | **over 3x** | a paint: an insert, a bucket probe and append, border dedup-inserts |
 | `build_walls` | 18_consumer_crawler | consumer:crawler | **7.05** | 7.04–7.09 †d2caad423 | 8.84 ms | 1.25 ms | **over 3x** | a text key formatted per wall face probing a hash, a record appended on a miss |
 | `sorted_fill_walk` | 15_stdlib_keyed | stdlib | **5.23** | 5.22–5.25 †32272ae58 | 1.64 ms | 313.9 µs | **over 3x** | `sorted<ES[id]>` (inline elements) filled out of order, walked in order |
@@ -206,10 +206,10 @@ Why it is slow, priced, and what to build: [analysis/keyed.md](../../bench/porta
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
 | `materialise` | zttext | library:zttext | **23.83** | 23.70–23.90 †185e8fd54 | 2.17 ms | 91.1 µs | **over 3x** | every piece span concatenated ONE character at a time (`out += "{ch}"`) |
-| `map_json` | 17_consumer_moros_dryopea | consumer:moros | **16.67** | 16.63–16.75 | 25.84 ms | 1.55 ms | **over 3x** | a whole map serialised with {m:j} and parsed back with Map.parse |
+| `map_json` | 17_consumer_moros_dryopea | consumer:moros | **16.85** | 16.81–16.96 | 26.02 ms | 1.54 ms | **over 3x** | a whole map serialised with {m:j} and parsed back with Map.parse |
 | `escape_html_blob` | html | library:html | **11.60** | 11.53–11.63 †5cf8a0e8c | 13.59 ms | 1.17 ms | **over 3x** | the same loop over a 64 KiB blob |
 | `escape_html` | html | library:html | **10.28** | 10.26–10.30 †5cf8a0e8c | 18.62 ms | 1.81 ms | **over 3x** | one per-character append loop over a 120-byte text |
-| `emit_to_material` | 17_consumer_moros_dryopea | consumer:moros | **10.09** | 10.06–10.16 | 2.47 ms | 244.5 µs | **over 3x** | per hex an integer formatted to text and a mesh list scanned comparing a text field |
+| `emit_to_material` | 17_consumer_moros_dryopea | consumer:moros | **9.91** | 9.88–10.46 (noisy) | 2.57 ms | 259.4 µs | **over 3x** | per hex an integer formatted to text and a mesh list scanned comparing a text field |
 | `html_escape` | markdown | library:markdown | **8.58** | 8.57–8.60 †5cf8a0e8c | 28.41 ms | 3.31 ms | **over 3x** | a character walk appending an entity or the character |
 | `render_inline` | markdown | library:markdown | **6.66** | 6.63–6.69 †5cf8a0e8c | 10.95 ms | 1.64 ms | **over 3x** | a 1-character text built and appended per character, recursing per span |
 | `char_roundtrip` | 18_consumer_crawler | consumer:crawler | **4.16** | 4.14–4.17 †d2caad423 | 6.15 ms | 1.48 ms | **over 3x** | per character a code changed and formatted back as a character |
@@ -287,7 +287,7 @@ Why it is slow, priced, and what to build: [analysis/keyed.md](../../bench/porta
 
 | routine | lane | population | × Rust | range | native | Rust | | what it stands for |
 |---|---|---|---:|---|---:|---:|---|---|
-| `mapfile_to_painted` | 17_consumer_moros_dryopea | consumer:dryopea | **9.26** | 9.23–9.27 | 2.36 ms | 254.8 µs | **over 3x** | per entry a linear palette scan comparing a text field, then a composite-key insert |
+| `mapfile_to_painted` | 17_consumer_moros_dryopea | consumer:dryopea | **9.00** | 8.96–9.19 | 2.35 ms | 260.8 µs | **over 3x** | per entry a linear palette scan comparing a text field, then a composite-key insert |
 | `header` | server | library:server | **7.11** | 7.10–7.16 †10c8a49a7 | 5.65 ms | 795.6 µs | **over 3x** | EVERY request header lowercased per lookup, the value rejoined piece by piece |
 | `parse` | arguments | library:arguments | **6.95** | 6.91–6.98 †10c8a49a7 | 24.00 ms | 3.45 ms | **over 3x** | a linear scan of the options with a text compare per entry, per argv token |
 | `seg` | zttext | library:zttext | **6.36** | 6.33–6.37 †185e8fd54 | 3.43 ms | 539.7 µs | **over 3x** | the choke point of six entry points: it MATERIALISES the whole document, explodes it to characters, then class |
@@ -343,7 +343,7 @@ Why it is slow, priced, and what to build: [analysis/keyed.md](../../bench/porta
 |---|---|---|---:|---|---:|---:|---|---|
 | `parse_num` | 13_stdlib_text | stdlib | **0.93** | 0.93–0.94 †14d99b7c6 | 39.1 µs | 42.0 µs | ok | `as float?` over 2,000 tokens |
 
-† measured at an earlier commit than `ef3a63918` (a partial run re-measures only what it names); the commit follows the mark.
+† measured at an earlier commit than `c56f2fc5c` (a partial run re-measures only what it names); the commit follows the mark.
 
 ## Coverage — what is measured, and what is waiting
 
