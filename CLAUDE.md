@@ -21,7 +21,13 @@ exercises a real consumer; when a slice surfaces a gap, fix on the spot if XS/S,
 canonical home ([DEVELOPMENT.md § Inserting Discovered Enhancements](doc/claude/DEVELOPMENT.md#inserting-discovered-enhancements-into-the-active-plan)).
 **Two-agent split:** this stream BUILDS + FIXES the language and documents the contract; the
 consumer's own agent USES + adversarially BREAKS it and reports gaps.
-**Edit ONLY this repo** — the symmetric half of the consumer's "the engine is read-only" rule.
+**Library work is in scope HERE (owner, 2026-09-25)** — the `loft-libs-*` repos (the published
+libraries: fix, test, republish via the **loft-ship skill**) are this stream's to edit, never
+delegated to a dogfood project's agent — a consumer reports the gap, this stream builds it and
+tests it on the library's TESTBED (its own CI run locally, declared dependencies only, no consumer
+in the loop): [LIBRARY_AUTHORING.md § The testbed](doc/claude/LIBRARY_AUTHORING.md).  The
+consumer APPLICATIONS below stay read-only.
+**Edit ONLY this repo and the libraries** — the symmetric half of the consumer's "the engine is read-only" rule.
 Read their tree freely (source, docs, `git log`, their `LOFT_HANDOFF.md`); never write to it. They
 are often working in it concurrently, so a staged test file or a `git checkout` lands in someone
 else's uncommitted work. Verify a consumer-reported bug from a **scratchpad** package that points at
@@ -616,7 +622,16 @@ can still REACH (read off the return type's deps) — the second is what keeps
 symbol is marked — see [COMPATIBILITY.md § Folding](doc/claude/COMPATIBILITY.md)) ·
 `LOFT_NO_PARAM_COUNT` (≥8 REQUIRED parameters — defaulted and compiler-hidden ones
 excluded; separate from complexity because a caller's burden and a reader's burden have
-different fixes: a struct vs an extracted function) · `LOFT_NO_DEFAULT_HINT` (≥2 trailing
+different fixes: a struct vs an extracted function) · `LOFT_NO_API_ADVICE` (the two API-design advices, `@FR-R-Escape`: `api-copies-collection`,
+a `pub` function answering a copy of its parameter's collection, and `api-redoes-per-field`,
+a `pub` function building a heap-owning intermediate from its parameter and answering ONE
+value of it — per-call work the CONTRACT forces on every caller and no rewrite can share
+across the calls a consumer makes; measured 11–55× on the pluginabi accessors.  `advice`,
+reaching the library's author only; a rewrite-reachable shape such as an edit answered as
+a fresh record is NOT flagged — a construction merely outside what the rewrites reach is
+not a design fault.  Census 2026-09-25: 13 sites in 42 library packages, every one an
+accessor that decodes or derives per call) ·
+`LOFT_NO_DEFAULT_HINT` (≥2 trailing
 booleans with no default — advertises default parameters, which are under-used and free to
 adopt: adding a default is additive, so existing callers keep working) ·
 `LOFT_NO_NARROW_FALLBACK` (C127 `narrow-fallback` ADVICE: a compound step into a
@@ -886,6 +901,13 @@ beside the fast arm and panics when they disagree, and asserts the hoisted null 
 inside the loop; `LOFT_TRACE_CHAR_WALK=1` names each walk and whether its null test moved.
 A call or literal source keeps the written step (the lowering evaluates such a source per
 iteration).
+**`LOFT_NO_FORMAT_APPEND=1`** (`@FR-R-FormatAppend`, default-ON, parse time, BOTH backends)
+makes `out += "…{e}…"` build its work text again — with it off, every literal and hole of
+the format is appended to `out` directly, in order, where no hole reads `out` and `out` is
+a text variable (a field keeps the work text; html `escape_html` 10.3× → 2.6× of Rust,
+zttext `materialise` 24× → 6.9×, `flow_layout_full` 107× → 15×) — and is the first bisect step for a wrong, missing or doubled part of
+a text built by appending format strings.  `LOFT_TRACE_FORMAT_APPEND=1` names each append
+written through and each kept, with the reason.
 **`LOFT_NO_VECTOR_BASE=1`** (@PLN157 § V-ak, `@FR-R-Base`, default-ON) makes a
 growth-free loop's fused element reads and writes resolve the store per element again —
 with it off, a loop that grows no store (no push and no mint, whether or not the mint
@@ -1282,6 +1304,37 @@ field, a leak or a double free out of a local rebound from a call that takes it.
 at ANOTHER field of the parameter, a literal-list vector field, a chain exit, a promoted
 buffer, the local handed in twice, a view or witnessed local each decline); the falsifiers
 are `LOFT_STRICT_STORES` / `LOFT_POISON` / the native leak check on the cells.
+**`LOFT_NO_CONST_VIEW=1`** (`@FR-R-Const`, default-ON since 2026-09-25, parse time + scope
+pass, BOTH backends) makes a literal-bodied function build its vector on every call again —
+with it off, a zero-parameter function whose whole body is ONE vector literal over literals
+(`fn face_rows() -> vector<integer> { [0, 0, 0, 4, …] }`, the idiom the `const` diagnostics
+themselves prescribe for what the constant store cannot paste) is given a synthetic constant
+twin, pre-built ONCE in `CONST_STORE` like a top-level `NAMES = [ … ]`, and a call whose
+result only lands in READ positions — the single bind of a local that is only indexed,
+measured, iterated or copied into another such local, or the call itself under an index,
+a `len` or an iteration — answers `OpConstRef`, the node a top-level constant's use site
+emits; the call's lazy buffer is never minted.  Every other position keeps the call (a
+write or append through the local, a hand-off to ANY user call, a store into a field or
+element, a return, a `&` link), because the constant store is write-locked and the
+program's copy must be its own — and is the first bisect step for a wrong element, a
+"write to read-only store" panic or a stale table out of a call of such a function.
+`LOFT_TRACE_CONST=1` names each function made a constant (and each that is not, with its
+body's shape) and each call admitted or declined; the interpreter and native share the
+rewrite, so the switch A/B and the cells' hand-computed values are the falsifier.
+**`LOFT_NO_COMPACT=1`** (`@FR-R-Compact`, default-ON since 2026-09-25, scope pass, BOTH
+backends) makes a vector rebuilt from a contiguous run of its own elements copy again —
+with it off, `t: vector<S> = []; for i in a..b { t += [V[i]?]; } V = t;` (a history
+truncated to its cursor, its oldest entries dropped) is ONE guarded op: `if 0 <= lo &&
+lo <= hi && hi <= len(V) { OpKeepVectorRange(V, tp, lo, hi) } else { the statements as
+written }`, the op releasing every element outside the run where it stands, moving the
+run to the front as one block and setting the length, and the fallback arm answering
+exactly what the copy answered for any range the guard refuses (a negative start, an end
+past the length that pads with default records, a null bound).  RECORD elements read
+through `?` only — a scalar in range can hold the null its `??` replaces — and `t` named
+nowhere else; the filter, prepend and identity forms of the rule keep their rebuild
+(dryopea `truncate_to` 259× → 14×).  It is the first bisect step for a wrong, missing or
+stale element after a vector is rebuilt from its own elements; `LOFT_TRACE_COMPACT=1`
+names each rebuild admitted and each declined with the reason.
 **`LOFT_NO_ELEMENT_IN_PLACE=1`** (@PLN164 C1, `@FR-R-InPlaceLiteral`, parse time, BOTH
 backends) makes `v[i] = S { … }` build its record in a temp store and deep-copy it into the
 slot again — with it off, the literal writes the slot's fields, as the FIELD destination

@@ -397,7 +397,7 @@ phase 02 (Tier 2 snapshots) starts.
   multiplayer; Tier 2 consumer.
 - [`plans/6-audience-generative-art/`](../6-audience-generative-art)
   — audience demo; Tier 3 consumer.
-- [`lib/server/src/server.loft`](../../../lib/server/src/server.loft)
+- [`lib/server/src/server.loft`](https://github.com/loft-lang/loft-libs-net/blob/main/server/src/server.loft)
   — the server pattern these durability tiers complement.
 - [DATABASE.md](../../DATABASE.md) — Stores schema + DbRef
   semantics; durable stores live within this layer.

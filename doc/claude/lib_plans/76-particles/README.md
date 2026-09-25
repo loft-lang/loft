@@ -148,5 +148,5 @@ pub fn burst_geometry(self: Burst, now_ms: integer) -> PointCloud
   consumer for explosions + exhaust.
 - [@PLAN50 bumper-airplanes](../../plans/51-bumper-airplanes/README.md)
   — consumer for smoke trails + score confetti.
-- [`lib/graphics`](../../../../lib/graphics) — the renderer the
+- [`lib/graphics`](https://github.com/loft-lang/loft-libs-graphics/tree/main/graphics) — the renderer the
   consumer draws the generated geometry with.

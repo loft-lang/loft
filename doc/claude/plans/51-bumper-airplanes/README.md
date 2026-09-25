@@ -793,6 +793,6 @@ cadence is the same flat-2D-MVP-first sequence that worked for
 - [`hex_world/MAPFILE.md`](https://github.com/loft-lang/loft-libs-world/blob/main/hex_world/MAPFILE.md) —
   cross-project MapFile schema; sub-arc 2 consumes via
   `hex_world::load_mapfile()`.
-- [`lib/graphics`](../../../../lib/graphics) — projector renderer
+- [`lib/graphics`](https://github.com/loft-lang/loft-libs-graphics/tree/main/graphics) — projector renderer
   base.
-- [`lib/server`](../../../../lib/server) — multi-client WS hub.
+- [`lib/server`](https://github.com/loft-lang/loft-libs-net/tree/main/server) — multi-client WS hub.

@@ -280,7 +280,7 @@ $ kill %1
 
 ## Cross-references
 
-- [`lib/server/src/server.loft`](../../../../lib/server/src/server.loft)
-- [`default/02_images.loft`](../../../../default/02_images.loft) — File / files() API
+- [`lib/server/src/server.loft`](https://github.com/loft-lang/loft-libs-net/blob/main/server/src/server.loft)
+- [`default/02_files.loft`](../../../../../default/02_files.loft) — File / files() API
 - [Phase 02 — code-file rendering](02-code-files.md) — next: render `<pre>` + line numbers
 - [Phase 03 — markdown subset](03-markdown-minimal.md) — render `.md` to HTML

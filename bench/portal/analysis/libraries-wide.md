@@ -185,4 +185,90 @@ now, so a nested call argument is served.  mesh3d, same binary, the twin 1.99 ms
 row read 22× before `(R-Rebind)` took the forward), `sphere` 6.5 → 4.05 ms (13×),
 `mesh_to_floats` 12.7 → 8.4 ms, `mat4_mul` 51 → 44 ms.  Left in the row: `sphere`'s
 `add_vertex` (an 8-scalar `Vertex`, past the tuple width) and `mat4_mul`'s 16-float mint.
-Cells: `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
+Cells: `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.  The portal's
+pinned rows at `8a513e42b` (2026-09-25): `mat4_transform` **1.42×**, `sphere` 14.5×,
+`mesh_to_floats` 21.3× (noisy), `mat4_mul` 31.9×.
+
+**`(R-Const)` BUILT (2026-09-25, `LOFT_NO_CONST_VIEW`).**  A literal-bodied function is a
+CONSTANT: the parser gives `fn face_rows() -> vector<integer> { [0, 0, 0, 4, …] }` a
+synthetic constant twin, pre-built once in the constant store exactly as a top-level
+`NAMES = [ … ]` is, and the scope pass answers each call whose result only lands in read
+positions — bound and indexed, measured, iterated, or read straight under an index — with
+the constant's `OpConstRef`; a call whose result is written, appended, handed to a user
+call, stored, returned or linked keeps the call and its own store.  text2d, same box:
+`write_text` **165.3 → 4.23 ms per op, 125× → 3.23×** of Rust — the hand-price to the number;
+the library's two face tables were rebuilt per glyph and are now read from one store —
+the other four text2d rows unmoved.  Reach beyond text2d, by census of the library
+checkouts and the consumers: the shape is rare in the LIBRARIES (182 tables are top-level
+`const`s already; text2d's two are the only literal-bodied vector functions) and present in
+the crawler (five name tables in `items.loft` / `bundles.loft`, four terrain tables in
+`ortlerdata.loft`); ~30 zero-parameter functions return a RECORD literal (`no_mark()`,
+`scan_fail()`, a default `Rig {}`), which this rule leaves alone — their callers write the
+result.  Found on the way, to be filed (this box could not authenticate to GitHub for writes; the text waits in `doc/claude/plans/157-native-4x-drawing/to-file-const-bind-panic.md`): a plain local bound from a TOP-LEVEL constant
+and then written panics on both backends ("Write to read-only store") — the bind has no copy
+road; the same for a constant handed to a callee that writes its parameter.
+
+**`field_union` 173× attributed (2026-09-25).**  Not the library crossing: the hex_place bench
+built with `LOFT_NO_NATIVE_LIBS=1` (hex_field compiled into the program) reads the same
+27 ns per cell as the cdylib form (4.44 vs 4.50 ms per op).  The row is six accessor CALLS
+per cell — `hexset_get` twice, `hexset_set`, each through `hs_index`, plus the loop bounds'
+accessors per row — against a twin that ORs two `bool` arrays, which rustc vectorises to
+~0.15 ns per cell.  The call class, measured against a SIMD floor: the lever is inlining the
+accessors' bodies into the loop (a callee whose body is a field read or an index of its
+by-value record parameter), not the bridge.
+
+**`(R-Compact)` BUILT, the contiguous-range form (2026-09-25, `LOFT_NO_COMPACT`).**  A vector
+rebuilt from a run of its own elements — `t = []; for i in a..b { t += [V[i]?]; } V = t` —
+is one guarded in-place keep (`OpKeepVectorRange`): the elements outside `[lo, hi)` are
+released where they stand, the run moves to the front as one block, and every range the
+guard refuses runs the statements as written.  The consumer lane, same box: `truncate_to`
+**3.62 ms → 195 µs per op, 259× → 14.0×** of Rust — the row's 250 `drop_oldest` rebuilds
+and 30 truncates per op all compacted (the hand-price, which replaced the truncate alone,
+said ~30×).  What the row still pays is the 300 `history_push` appends of a `Stroke` with
+its two inner vectors — `(R-MoveAppend)` / `(R-Place)`'s class.  Left for the rule's other
+forms: zttext `invert` (the prepend, 99×) and `insert_text` (the identity copy, 62×), and
+any filter (`for e in V { if p { t += [e] } }`), which needs a loop rewrite with a write
+index rather than a range.
+
+**The API-design advices (2026-09-25, `LOFT_NO_API_ADVICE`).**  The owner's question: the
+rows a rewrite can never reach because the LIBRARY'S CONTRACT forces the work on every
+caller — can the language say so at the site, since 20× and more "feels broken"?  Two shapes
+qualify, and the criterion that keeps them apart from everything else is *inherently
+problematic*, never *merely not yet optimised*: `api-copies-collection` (a `pub` function
+answers a copy of its parameter's collection; a caller cannot borrow across an API) and
+`api-redoes-per-field` (a `pub` function builds a heap-owning intermediate from its parameter
+and answers one value of it; three values cost three decodes).  Not flagged, on purpose: an
+edit answered as a fresh record (`(R-Rebind)`'s and, for a caller that keeps both, a needed
+copy), a no-heap intermediate (registers), a stdlib producer, an answered intermediate, a
+private function.  The cure both name is the builder form — make the record, then read or
+fill it through its methods.  Census over the 42 library packages, from inside each so its
+source is owned: **14 sites** — `Stage.order` (a getter), pluginabi's seven frame accessors
+(`req_op`, `req_state_b64`, `req_arg_b64`, `reply_is_ok`, `reply_out_b64`, `reply_err_code`,
+`check_request`: the portal's 55× and 11.5× rows, each decoding the whole frame per field),
+hex_form's `boundary_ends` / `boundary_branches` (the same boundary vector rebuilt per
+accessor) and `form_canon_text`, hex_fit's `draft_canon_text`, hex_recover's
+`field_exact_text` / `field_norm_text` (a derivation rendered per call).  Measured on the
+consumer's side first: zttext's edit API costs a consumer the same ~1.2 ms per edit pair on
+an 11 k-character document whether the library is a cdylib or compiled in, and whether the
+rebind rewrite is on or off — the cost is `insert_text`'s own manual copy (the identity
+form), not the boundary; that is why the edit-answered-as-copy shape is NOT an advice.
+
+**`(R-FormatAppend)` BUILT (2026-09-25, `LOFT_NO_FORMAT_APPEND`).**  A format string appended
+to a text is written INTO it: `out += "{c}"` used to set a work text to the literal prefix,
+append every part to it and append the work text to `out` — a `String` cleared, grown and
+copied per character of an escape loop, 13 ns a character on native against 3.4 for the push
+itself.  Now every literal and hole is appended to `out` directly, in order, where no hole
+reads `out` (`r += "{r}!"` keeps the buffer) and `out` is a text variable (a field keeps its
+road).  Hand-priced first on the escape probe's emitted Rust (1600 → 410 ns per 120-character
+call), then built as one parser method at the two text-append sites, the plain op family kept
+because both backends dispatch a plain text write on a `&text` target to its stack twin.
+Re-measured, same box: html `escape_html` **10.3× → 2.64×**, `escape_html_blob` 11.6× → 2.30×;
+markdown `html_escape` 8.6× → 1.71×, `extract_headings` 6.4× → 1.65×, `render` 4.1× → 2.44×,
+`slugify` 4.3× → 2.42×, `render_inline` 6.7× → 5.95× (its per-character text is BUILT, not
+appended — the next shape); zttext `materialise` **23.8× → 6.87×**, `flow_layout_full`
+**107× → 14.8×** (the per-run text of every token was such an append), `seg` 6.4× → 3.49×,
+`patch` 7.9× → 4.24×; the zttext rows the rewrite does not reach (`insert_text`, `invert`,
+`delete_range`, `locate`) unmoved.  Ten rows moved, five of them to under 3×.  The stdlib's
+own `char_slice` takes it as well.  What `materialise` still pays is the per-piece `buf[j]?`
+read through a `?`-discharge on a `vector<character>` and the character walk around it.
+

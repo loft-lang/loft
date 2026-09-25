@@ -1261,6 +1261,12 @@ impl Parser {
                 }
                 return Type::Void;
             }
+            // `@FR-G-Yield` — a `yield` whose enclosing return type is not `iterator<T>` is a
+            // STATIC error: there is no type for it to produce into.  This reaches a plain
+            // helper called from a generator too, which is what `@FR-G-YieldDepth` means when
+            // it says "stackful" is a property of the saved FRAME and not a licence to write
+            // `yield` at any depth: the realised surface for a deeper yield is `yield from`
+            // (`@FR-G-Delegate`), where the deeper frame is a generator of its own.
             let r_type = self.data.def(self.context).returned().clone();
             if !matches!(r_type, Type::Iterator(_, _)) && !self.first_pass {
                 diagnostic!(
@@ -2306,7 +2312,7 @@ use a separate collection or add after the loop"
     /// Compound assignments are excluded — `h.v += x` appends an ELEMENT, so the
     /// source is legitimately not the field's type, and the operator's own attribute
     /// list types it.
-    fn field_store_mismatch(
+    pub(crate) fn field_store_mismatch(
         &mut self,
         op: &str,
         var_nr: u16,
@@ -2360,6 +2366,31 @@ use a separate collection or add after the loop"
         let accepted = self.convert_admitting(&mut Value::Null, s_type, f_type);
         self.conv_owned_result = saved_owned;
         !accepted
+    }
+
+    /// The refusal a wrong-typed FIELD store reports, with a cure the reader can follow: a
+    /// scalar has the explicit cast; a COLLECTION has none (there is no `as vector<integer>`),
+    /// so its cure is to give the value the field's type where the value is built.  One home
+    /// for the assignment and the struct literal, which accept the same values (loft#1072)
+    /// and so refuse the same ones in the same words.
+    pub(crate) fn field_store_refusal(&mut self, s_type: &Type, f_type: &Type) {
+        let got = s_type.source_name(&self.data);
+        let want = f_type.source_name(&self.data);
+        if matches!(f_type.base(), Type::Vector(..)) {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot assign {got} to a field of type {want} — build the value at the \
+                 field's type (declare it `: {want}` where it is made)"
+            );
+        } else {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "Cannot assign {got} to a field of type {want} — use 'as {want}' to cast \
+                 explicitly"
+            );
+        }
     }
 
     /// The `(struct type, byte offset)` of `to` when it is an
@@ -3039,6 +3070,107 @@ use a separate collection or add after the loop"
         }
     }
 
+    /// The tuple a `&(…)` link `to` names, as the type a whole write's right-hand side is
+    /// parsed against: its members for a stack-backed link, the `__tuple<…>` record's member
+    /// types for a record-backed one.  `None` for any other target, and for the link BIND
+    /// `q = &t`, which makes the link rather than writing through it.
+    fn ref_tuple_expected(&self, op: &str, to: &Value) -> Option<Type> {
+        if op != "=" || self.amp_pending {
+            return None;
+        }
+        let Value::Var(p) = to.unspan() else {
+            return None;
+        };
+        if !self.vars.exists(*p) {
+            return None;
+        }
+        let Type::RefVar(inner) = self.vars.tp(*p).base() else {
+            return None;
+        };
+        match inner.base() {
+            Type::Tuple(_) => Some(inner.base().clone()),
+            Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => {
+                Some(Type::Tuple(
+                    self.data
+                        .def(*d)
+                        .attributes
+                        .iter()
+                        .map(|a| a.typedef.clone())
+                        .collect(),
+                ))
+            }
+            _ => None,
+        }
+    }
+
+    /// `p = (a, b)` where `p` is a `&(…)` link: `@FR-B-Ref-Uniform` makes a `&τ` written exactly
+    /// as a `τ` is, so the whole value is written THROUGH the link — each element into the
+    /// caller's tuple, as `p.0 = a; p.1 = b` writes it (loft#1673).  The right-hand side is
+    /// evaluated into a temporary first, so `p = (p.1, p.0)` swaps.  Both representations
+    /// `(T-Ref-Rep)` gives the link write the same way: a STACK-backed tuple through `TuplePut`,
+    /// a `__tuple<…>` RECORD through its fields (`set_field`, what `p.i = v` lowers to there).
+    /// `None` for every other assignment.
+    fn ref_tuple_whole_write(
+        &mut self,
+        op: &str,
+        to: &Value,
+        rhs: &Value,
+        rhs_tp: &Type,
+    ) -> Option<Value> {
+        if op != "=" {
+            return None;
+        }
+        let Value::Var(p) = to.unspan() else {
+            return None;
+        };
+        let p = *p;
+        if !self.vars.exists(p) || !matches!(rhs_tp.base(), Type::Tuple(_)) {
+            return None;
+        }
+        // The link BIND `q = &t` (the `&` below lowers it to `OpCreateStack(t)`) makes the
+        // link; it does not write through one.
+        if self.amp_pending {
+            return None;
+        }
+        let Type::RefVar(inner) = self.vars.tp(p).base() else {
+            return None;
+        };
+        let (record, n) = match inner.base() {
+            Type::Tuple(elems) => (None, elems.len()),
+            Type::Reference(d, _) if self.data.def(*d).name().starts_with("__tuple<") => {
+                (Some(*d), self.data.def(*d).attributes.len())
+            }
+            _ => return None,
+        };
+        // RECORD-backed: the right-hand side is built as a record of the link's OWN
+        // `__tuple<…>` type — the builder a record-backed tuple local's `t = (…)` uses, which
+        // converts each member into the member type (a list literal into a `hash` member) and
+        // gives every heap member storage of its own, so `p = (p.1, p.0)` reads nothing this
+        // write clears — and then copied over the linked record whole, which replaces what
+        // each member held.  Written member by member instead, `set_field` (a FRESH record's
+        // initialiser) appended to a live vector member (`["old"]` became `["old", "new"]`)
+        // and filled a `hash` member with nothing.
+        if let Some(d) = record {
+            let rec = Type::Reference(d, Deps::none());
+            let w = self.vars.work_refs(&rec, &mut self.lexer);
+            let kt = self.data.def(d).known_type();
+            let mut built = rhs.clone();
+            self.rewrite_tail_tuple_with_work_ref(d, kt, w, &mut built);
+            let copy = self.copy_ref(&Value::Var(p), &Value::Var(w), &rec);
+            return Some(v_block(vec![built, copy], Type::Void, "ref_tuple_write"));
+        }
+        let tmp = self.create_unique("wtuple", &rhs_tp.without_deps());
+        let mut steps = vec![v_set(tmp, rhs.clone())];
+        for i in 0..n {
+            steps.push(Value::TuplePut(
+                p,
+                i as u16,
+                Box::new(Value::TupleGet(tmp, i as u16)),
+            ));
+        }
+        Some(v_block(steps, Type::Void, "ref_tuple_write"))
+    }
+
     #[allow(clippy::too_many_arguments)] // the inner fn's parameter list, forwarded
     pub(crate) fn parse_assign_op(
         &mut self,
@@ -3526,7 +3658,13 @@ use a separate collection or add after the loop"
         let prev_target = std::mem::replace(&mut self.assign_target, var_nr);
         let prev_replaces = std::mem::replace(&mut self.assign_replaces, op == "=");
         let prev_snapshot_len = std::mem::take(&mut self.build_snapshot_len);
-        let mut s_type = self.parse_operators(f_type, code, &mut parent_tp, 0);
+        // A whole write through a `&(…)` link (`p = (…)`, loft#1673) expects the TUPLE the link
+        // names, member by member, so a list literal for a `hash` member is built as that hash
+        // exactly as it is for a tuple local declared with the same type.  Expected as the link
+        // itself, the literal had no member types to steer it.
+        let link_tuple = self.ref_tuple_expected(op, to);
+        let expect = link_tuple.as_ref().unwrap_or(f_type);
+        let mut s_type = self.parse_operators(expect, code, &mut parent_tp, 0);
         // `@FR-L-Null-Which` — a LOCAL spells `S?` as the POINTER (`Optional(Reference(S))`,
         // `nullref` for absence); the tagged `__nullable<S>` is a SLOT's spelling — an embedded
         // field, a vector element, a tuple member.  A projection of such a slot bound to a
@@ -3643,6 +3781,10 @@ use a separate collection or add after the loop"
         let snapshot_len = std::mem::replace(&mut self.build_snapshot_len, prev_snapshot_len);
         self.amp_head = AmpHead::No;
         self.expected = prev_read_target;
+        if let Some(steps) = self.ref_tuple_whole_write(op, to, code, &s_type) {
+            *code = steps;
+            return Type::Void;
+        }
         // A `& vector` bind (`d = &v` / `d = &self.data`): the source is a vector lvalue
         // and the `&` opts INTO aliasing (B-Ref-Write — the write-through "north star" —
         // for a vector, which plain `d = v` deliberately does NOT give: it COPIES,
@@ -4792,14 +4934,7 @@ use a separate collection or add after the loop"
                     f_type.source_name(&self.data),
                 );
             } else {
-                diagnostic!(
-                    self.lexer,
-                    Level::Error,
-                    "Cannot assign {} to a field of type {} — use 'as {}' to cast explicitly",
-                    s_type.source_name(&self.data),
-                    f_type.source_name(&self.data),
-                    f_type.source_name(&self.data),
-                );
+                self.field_store_refusal(&s_type, f_type);
             }
         }
         // loft#1034 — a TUPLE target reaches `convert` too.
@@ -6991,7 +7126,19 @@ use a separate collection or add after the loop"
                 );
             }
             let mut rhs = Value::Null;
-            let rhs_type = self.expression(&mut rhs);
+            let mut rhs_type = self.expression(&mut rhs);
+            // `@FR-T-Destr` / `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the
+            // bound tuple itself, so `(a, b) = p` unpacks it exactly as `a = p.0; b = p.1` does.  The
+            // shape test below asks the type for `Type::Tuple`, which answers NO for a `&`
+            // spelling whichever representation `(T-Ref-Rep)` gave the binding, so the
+            // destructure was refused with *"Cannot destructure a non-tuple value"* — a
+            // message about a value that IS a tuple — and left every name undefined, one
+            // further error each.  `ref_tuple_subject` is the one home for reading such a
+            // binding AS a tuple; the tuple pattern (loft#1530) is its other caller.
+            if let Some((reads, elems)) = self.ref_tuple_subject(&rhs, &rhs_type) {
+                rhs = reads;
+                rhs_type = Type::Tuple(elems);
+            }
             // A7.1: accept both `Type::Tuple([…])` and the synthetic
             // `Reference(__tuple<…>)` shape that A7.1's parse_function
             // gate widen produces for tuple returns wider than 8B.
@@ -7795,6 +7942,9 @@ use a separate collection or add after the loop"
             } else {
                 *code = v_set(var_nr, code.clone());
             }
+        } else if self.format_append_in_place(var_nr, code, true) {
+            // `@FR-R-FormatAppend` — the format's parts are written into the destination
+            // through their stack twins, this being a `&text` target.
         } else if s_type == &Type::Character {
             *code = self.cl(
                 "OpAppendStackCharacter",

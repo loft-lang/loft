@@ -5,10 +5,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Phase 06 — Retroactive tagging
 
-**Status:** Migration shipped 2026-05-14 — closeout DEFERRED
-(**@PLN42's own** phases 07 + 08 still open — "plan-37" was this
-plan's OLD local number `@PLAN37`, now `@PLN42` /
-`42-tracker-index/`; the closeout runs after phase 08).
+**Status:** Migration shipped 2026-05-14; the plan closed 2026-09-25.  The threshold test
+below was retired rather than built: the bare `P<n>` series is the closed archive, so no new
+bare ids are minted — see [README.md § Status](README.md).
 
 ## What shipped
 

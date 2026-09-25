@@ -309,6 +309,8 @@ pub mod lib_placement;
 // spelled by not compiling the module at all, and the difference is not academic:
 // `paged_reader` names `crate::net` unconditionally, so a build that has the paged
 // loaders but no transport could not compile rather than simply refusing a URL.
+pub mod compact;
+pub mod const_fn;
 pub(crate) mod net;
 pub mod ownership_cfg;
 #[cfg(paged_store)]

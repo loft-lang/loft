@@ -14,6 +14,28 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A tuple returned with a list in a `hash` member keeps the list's records.**
+`fn f() -> (hash<K[k]>, integer) { v = [K { … }]; return (v, 2); }` compiled, and the caller
+read an empty hash. A `sorted` member answered the wrong record for a key, and an `index` kept
+only one. Each record is now inserted by its key, as it already was for a struct field.
+
+**A `&(…)` tuple parameter can be used whole.**  `fn f(p: &(integer, integer))` could read
+and write `p.0` and `p.1`, but passing `p` on, returning it, copying it (`q = p`) or assigning
+it a new tuple (`p = (8, 9)`) stopped the compiler with an internal error.  All four work now,
+on both backends and whatever the members are: `p = (p.1, p.0)` swaps the caller's pair, and
+`q = p` is a copy, so changing `q` leaves the caller alone.  A tuple with a `text` member could
+not be assigned whole either; it can now.
+
+**A comprehension builds the vector its destination declares.**  `v: vector<integer> = [for i
+in 0..n { i % 7 }]` was refused ("cannot change type from `vector<integer>` to
+`vector<integer(-6, 6)>`"), and the same comprehension in a struct field — `Grid { cells: [for
+i in 0..w*h { (i * seed) % 7 }] }` — compiled and answered garbage: the elements were stored at
+the one-byte width the remainder's range implies and read back at the field's eight, so a 4×4
+grid read `[435735401677195014, …]` and a larger one crashed.  An integer body in a
+`vector<float>` field read back the same way.  Now the body converts into the declared element
+type, as a literal's elements always have, and a struct literal refuses a vector of another
+element width with the same message the assignment gives.
+
 **A `&text` parameter can be handed a text field or element, and the function writes it.**
 `fn shout(t: &text) { t += "!" }` could only ever reach a text *variable*.  Called as
 `shout(o.name)` or `shout(names[2])`, it first copied the text, and the function's write was
@@ -26,6 +48,11 @@ too.
 It works through a **function value** as well (`g = shout; g(o.name)`), which before also lost
 the write in silence. A function value with a `&text` parameter also compiles with `--native`
 now, whatever you pass it; before, it did not build even for a plain text variable.
+
+One `&` link reaches one kind of text place: a text variable, or a text field or element.
+Binding the same link to both (`t = &name; t = &o.name`) is refused, and that error now carries
+the code `text-link-kind`, so it can be looked up and `--explain` names the fix: a second link
+for the other place.
 
 **A struct returned through a function parameter is released once, and never takes what the
 function captured.**  With `fn build(f: fn(integer) -> S, …)`, a loop calling

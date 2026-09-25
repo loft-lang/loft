@@ -102,6 +102,11 @@ def measure(argv):
         sys.exit(code)
     meta, rows = read_run(fresh)
     os.remove(fresh)
+    if not rows:
+        # A run that measured nothing (a `--help` passed through, an `--only` that matched
+        # no bench) has no header of its own: merging it would blank the machine's.
+        print(f"nothing measured — {os.path.relpath(out, ROOT)} left as it was")
+        return
     kept = []
     if os.path.exists(out):
         _, old = read_run(out)

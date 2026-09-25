@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-G-Delegate` / `@FR-G-Next` — a `yield from` beside a loop, in either order.  This file is the
+// EXIT-channel half of the delegation walk; the value half, where the statements before a
+// delegation must run once per activation, is
+// `a-delegations-prefix-runs-once-per-activation.loft`.  They are apart because a generator
+// that does not compile ends the run before any assertion is reached, so one file would
+// leave the other half's cells unscored against the very tree they were written to catch.
+//
+// `--native` lowers a generator to a state machine, one state per segment, and the field
+// holding a delegation's sub-generator was named by TWO different indices:
+//   * DECLARED and INITIALISED by SEGMENT index (`emit_struct_def`, `emit_factory_fn`);
+//   * USED by STATE index (the emission arm).
+// Those read the same number only while every earlier segment takes exactly one state.  A
+// lazily-lowered loop (loft#836) takes two — three when a statement follows its `yield` —
+// so from the first such loop onward the arm named a field nobody declared:
+// rustc `error[E0609]: no field sub_2 on type NGGen`, with rustc itself naming the cure
+// ("a field with a similar name exists: sub_1").  The field is per SEGMENT, so the segment
+// index names it everywhere now.
+//
+// The second face is one decoder further out.  The struct declared that field for every
+// `yield from` segment WITHOUT asking whether this generator took the EAGER lowering, whose
+// factory runs the whole body up front and drives the sub-generator through a local `__sub`,
+// initialising no field: rustc `error[E0063]: missing field sub_1 in initializer`.  "Is this
+// generator eager?" was spelled `segments.iter().any(|s| matches!(s, ForLoopBody))` at six
+// sites and named at none, and the struct definition — the seventh place that needed it —
+// did not ask at all.  It is `is_eager` now.
+//
+// Axes this file MOVES:  the ORDER of the delegation and the loop (after, before, both), and
+//                        the loop's own lowering (lazy, lazy-with-a-resume-slice, eager).
+// Axes it HOLDS FIXED:   the delegate is a plain two-yield generator — its shape was never
+//                        the question, and the value half measures its prologue.
+//
+// @falsified-at: 2026-09-25 by hand, against the tree before the cure (e40409f5f):
+//   `--native` exit 0 -> 1.  `--interpret` exit 0 on BOTH trees with every value equal —
+//   the interpreter never had this, which is why only a cross-backend file catches it.
+//   Per shape, each one ISOLATED in a program of its own (see below):
+//     after a lazy loop                     rustc E0609   fixed: 0,1,1,2
+//     after a lazy loop with a resume slice  rustc E0609   fixed: 0,1,1,2
+//     after an EAGER loop                    rustc E0063   fixed: 0,0,1,1,1,2
+//     two delegations around a loop          rustc E0609   fixed: 1,2,0,1,1,2
+//     [control] delegation BEFORE the loop   compiles      1,2,0,1
+//     [control] no loop in the generator     compiles      1,2,3
+//   ⚠ The per-shape column had to be taken from SEPARATE programs, and reading it off this
+//   file with `main` cut down to one cell would have been wrong: `--native` compiles every
+//   generator in the file, so a sibling's E0609 reaches a cell that has nothing wrong with
+//   it — scored that way, BOTH controls "failed" on the control tree and would have read as
+//   evidence the cure moved something it did not.  A compile channel cannot be attributed
+//   from inside a shared file.
+//   CHANNEL: exit — the native build does not compile, so no assertion in this file can
+//   speak on the control tree.  That is why the value cells are not here.
+//   ARMED: no instrument; a plain `--native` run reads it.
+//   WITNESS: `test_a_delegation_after_a_lazy_loop_runs` — the smallest of the four, one
+//   lazily-lowered loop and one delegation after it.
+//   HOLDS: `test_the_orders_that_already_compiled` — a delegation BEFORE the loop, and one
+//   with no loop in the generator at all, both compiled and answered before the cure and
+//   must keep doing so.  They are what says the field's key was corrected and not moved.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+fn dl_two() -> iterator<integer> { yield 1; yield 2; }
+
+fn after_a_lazy_loop() -> iterator<integer> {
+  for i in 0..2 { yield i; }
+  yield from dl_two();
+}
+
+fn after_a_lazy_loop_with_a_resume_slice() -> iterator<integer> {
+  t = 0;
+  for i in 0..2 { yield i + t; t = t + 0; }
+  yield from dl_two();
+}
+
+fn after_an_eager_loop() -> iterator<integer> {
+  for i in 0..2 { yield i; yield i; }
+  yield from dl_two();
+}
+
+fn two_delegations_around_a_loop() -> iterator<integer> {
+  yield from dl_two();
+  for i in 0..2 { yield i; }
+  yield from dl_two();
+}
+
+// --- controls: the orders that already compiled ---
+
+fn before_a_lazy_loop() -> iterator<integer> {
+  yield from dl_two();
+  for i in 0..2 { yield i; }
+}
+
+fn with_no_loop_at_all() -> iterator<integer> {
+  yield from dl_two();
+  yield 3;
+}
+
+fn test_a_delegation_after_a_lazy_loop_runs() {
+  t = 0;
+  n = 0;
+  for x in after_a_lazy_loop() { t = t * 10 + x; n = n + 1; }
+  assert(n == 4, "0,1,1,2 is four values: {n}");
+  assert(t == 112, "folded: {t}");
+}
+
+fn test_a_delegation_after_a_lazy_loop_with_a_resume_slice_runs() {
+  t = 0;
+  n = 0;
+  for x in after_a_lazy_loop_with_a_resume_slice() { t = t * 10 + x; n = n + 1; }
+  assert(n == 4, "0,1,1,2 is four values: {n}");
+  assert(t == 112, "folded: {t}");
+}
+
+fn test_a_delegation_after_an_eager_loop_runs() {
+  t = 0;
+  n = 0;
+  for x in after_an_eager_loop() { t = t + x; n = n + 1; }
+  assert(n == 6, "0,0,1,1,1,2 is six values: {n}");
+  assert(t == 5, "and they sum to 5: {t}");
+}
+
+fn test_two_delegations_around_a_loop_run() {
+  t = 0;
+  n = 0;
+  for x in two_delegations_around_a_loop() { t = t + x; n = n + 1; }
+  assert(n == 6, "1,2,0,1,1,2 is six values: {n}");
+  assert(t == 7, "and they sum to 7: {t}");
+}
+
+fn test_the_orders_that_already_compiled() {
+  ta = 0;
+  na = 0;
+  for x in before_a_lazy_loop() { ta = ta + x; na = na + 1; }
+  assert(na == 4, "delegation then a lazy loop is four values: {na}");
+  assert(ta == 4, "1,2,0,1 sums to 4: {ta}");
+
+  tb = 0;
+  for x in with_no_loop_at_all() { tb = tb + x; }
+  assert(tb == 6, "1,2,3 sums to 6: {tb}");
+}
+
+fn main() {
+  test_a_delegation_after_a_lazy_loop_runs();
+  test_a_delegation_after_a_lazy_loop_with_a_resume_slice_runs();
+  test_a_delegation_after_an_eager_loop_runs();
+  test_two_delegations_around_a_loop_run();
+  test_the_orders_that_already_compiled();
+}

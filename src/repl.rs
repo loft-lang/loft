@@ -3758,9 +3758,13 @@ impl ReplSession {
             // (`:vars`, snapshot validation).
             if debug && !self.breakpoints.is_empty() {
                 self.apply_breakpoints(&mut state);
-                if self.stepping {
-                    state.enable_stepping();
-                }
+            }
+            // Stepping installs the debugger even with no breakpoint set: a run with none
+            // can still be PAUSED from outside (a DAP `pause`, `debugger::INTERRUPT`), and
+            // only a run under the debugger checks for one.  One branch per op, in a debug
+            // session only.
+            if debug && self.stepping {
+                state.enable_stepping();
             }
             self.trace_output.clear();
             state.execute_argv(&name, &self.parser.data, &[]);

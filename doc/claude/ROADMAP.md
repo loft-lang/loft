@@ -489,7 +489,7 @@ For per-phase status (what's shipped, what's in flight, what's blocked) **read t
 | [`plans/35-match-peg/`](plans/35-match-peg) | MH | — | L3 PEG-style match patterns (cooperates with regex lib) |
 | [`plans/38-sorted-slice/`](plans/38-sorted-slice) | M | **✅ CLOSED 2026-07-09 (delivered)** | A8 — slicing / open-ended ranges / partial-key match on sorted/index; shipped + per-sub-feature tests |
 | [`plans/40-const-fields/`](plans/40-const-fields) | M | **✅ CLOSED 2026-07-16 (delivered)** | `const` struct fields (write-once-at-construction) — closes INCONSISTENCIES.md § 33; shipped all 8 steps + boundary matrix + hex_world dogfood |
-| [`plans/163-copy-leases.md`](plans/163-copy-leases.md) (`@PLN163`) | H | the post-scope lint stage (`976680b3b`); `copy_manifest.rs` | A type with `OpDrop` decides what a copy means: `OpCopy` makes a second lease, or the copy is refused at compile time (the default — a connection or a writable file cannot be duplicated). Every structure dropped once; retires `(H-Drop)`'s copy clause |
+| [`plans/163-copy-leases.md`](plans/163-copy-leases.md) (`@PLN163`) | H | the post-scope lint stage (`976680b3b`); `copy_manifest.rs` | **✅ FINISHED 2026-09-25** (P0–P6). A type with `OpDrop` decides what a copy means: `OpCopy` makes a second lease, or the copy is refused at compile time (the default — a connection or a writable file cannot be duplicated). Every structure dropped once; retires `(H-Drop)`'s copy clause |
 
 ### Q — Internal quality
 

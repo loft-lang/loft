@@ -187,7 +187,12 @@ impl Stores {
         elem_tp: u16,
     ) -> DbRef {
         let slot = vector::insert_vector(data, size, index, &mut self.allocations);
-        if slot.rec == 0 || !self.is_linked(elem_tp) {
+        // An index outside `0..=len` inserts nothing and answers `DbRef::NULL`: nothing
+        // to default, nothing to link.
+        if slot.is_null() || slot.rec == 0 {
+            return slot;
+        }
+        if !self.is_linked(elem_tp) {
             self.set_default_value(elem_tp, &slot);
             return slot;
         }

@@ -1507,6 +1507,9 @@ pub enum ParseResult {
 impl Parser {
     #[must_use]
     pub fn new() -> Self {
+        // A new parser is a new compilation: the copy manifest's records are keyed by
+        // definition and variable number, so the previous program's would name this one's.
+        crate::copy_manifest::begin_compilation();
         let mut data = Data::new();
         // Register internal-only functions (i_ prefix) that are never visible to user code.
         // These are resolved by the compiler via data.def_nr("i_...") and mapped to native
@@ -13214,6 +13217,62 @@ impl Parser {
         Some(self.emit_nullable_slot_write(syn, &slot, value.clone()))
     }
 
+    /// Whether `value` is a plain `vector<…>` — the source a keyed member must FILL from rather
+    /// than copy from (loft#1675).  Read off the node that carries the type: a variable, a
+    /// tuple member, a call's return, a block's result.  Any other node answers `false`, which
+    /// keeps the keyed copy: that is the behaviour before this question was asked, so a shape
+    /// this cannot type loses the fix and never gains a wrong fill.
+    fn value_is_plain_vector(&self, value: &Value) -> bool {
+        let tp = match value.unspan() {
+            Value::Var(v) if *v < self.vars.count() => self.vars.tp(*v).clone(),
+            Value::TupleGet(t, i) if *t < self.vars.count() => match self.vars.tp(*t).base() {
+                Type::Tuple(elems) => elems.get(*i as usize).cloned().unwrap_or(Type::Unknown(0)),
+                _ => return false,
+            },
+            Value::Call(d, _) => self.data.def(*d).returned.clone(),
+            Value::Block(bl) => bl.result.clone(),
+            _ => return false,
+        };
+        matches!(tp.base(), Type::Vector(..))
+    }
+
+    /// Write a whole VALUE into a keyed collection member of a record (a struct field, a
+    /// tuple member), replacing what it held.  A keyed source is copied with `OpReplaceKeyed`.
+    /// A plain VECTOR source is inserted record by record with `OpFillKeyed`, after the
+    /// member is cleared — the pair loft#1159 gave the keyed struct-field ASSIGNMENT, and
+    /// what `(T-Cons)` and `(F-Ret)` owe a tuple member: `OpReplaceKeyed` walks its source
+    /// under the destination's type, so a vector read as a `hash` answered empty, an `index`
+    /// kept one record and a `sorted` searched unsorted storage (loft#1675).  The member is
+    /// the collection the fill names (`field_nr == u16::MAX`): a tuple member belongs to no
+    /// linked group, and a struct field that does is written by the group-aware assignment
+    /// in `collections.rs`, not here.
+    fn keyed_member_write(
+        &mut self,
+        field_ref: Value,
+        value: Value,
+        kt: u16,
+        tp_val: i32,
+    ) -> Value {
+        if !self.value_is_plain_vector(&value) {
+            return self.cl("OpReplaceKeyed", &[value, field_ref, Value::Int(tp_val)]);
+        }
+        let clear = self.cl(
+            "OpClearKeyed",
+            &[field_ref.clone(), Value::Int(i32::from(kt))],
+        );
+        let fill = self.cl(
+            "OpFillKeyed",
+            &[
+                field_ref,
+                value,
+                Value::Int(tp_val),
+                Value::Int(i32::from(kt)),
+                Value::Int(i32::from(u16::MAX)),
+            ],
+        );
+        Value::Insert(vec![clear, fill])
+    }
+
     /// Emit the OpSet* (or recursive flatten) for a single tuple
     /// element at a fixed byte offset within the host record.
     /// Returns a vec because nested-tuple elements expand to multiple
@@ -13333,7 +13392,7 @@ impl Parser {
                         "OpGetField",
                         &[ref_code.clone(), pos_v, Value::Int(i32::from(kt))],
                     );
-                    self.cl("OpReplaceKeyed", &[value, field_ref, Value::Int(tp_val)])
+                    self.keyed_member_write(field_ref, value, kt, tp_val)
                 }
             }
             // Plan-06 phase 4d: nested tuple element — recurse into
@@ -13972,7 +14031,7 @@ impl Parser {
                     "OpGetField",
                     &[ref_code, pos_val, Value::Int(i32::from(kt))],
                 );
-                self.cl("OpReplaceKeyed", &[val_code, field_ref, Value::Int(tp_val)])
+                self.keyed_member_write(field_ref, val_code, kt, tp_val)
             }
             Type::Vector(_, _)
             | Type::Hash(_, _, _)
@@ -19456,6 +19515,7 @@ impl Parser {
                 diagnostic!(
                     self.lexer,
                     Level::Error,
+                    code = "text-link-kind",
                     "`{name}` links a {}, so it cannot also link a {} — a text field or element \
                      and a text variable are different places to a link. Use a second link \
                      for the other one",
@@ -19470,6 +19530,19 @@ impl Parser {
                         "text variable"
                     }
                 );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title: "bind a second `&` link for the other place".to_string(),
+                    condition: Some(
+                        "both places are wanted: a link keeps the kind of place it was first \
+                         bound to (a text variable, or a text field or element), so one link \
+                         cannot serve both"
+                            .to_string(),
+                    ),
+                    edit: None,
+                    concept: "references",
+                    concept_ref: "@F21",
+                });
             }
             _ => {}
         }
@@ -19801,10 +19874,17 @@ impl Parser {
                     a.ref_pos
                 };
                 self.lexer.to(src);
-                // T1.6: RefVar(Tuple) — downgrade to warning since elements are stack values;
-                // other RefVar types are an error (the & serves no purpose and misleads).
-                if matches!(a.typedef, Type::RefVar(ref inner) if matches!(**inner, Type::Tuple(_)))
-                {
+                // T1.6: a `&` TUPLE parameter — downgrade to warning (DIAGNOSTICS.md
+                // `needless-reference-parameter`); other RefVar types are an error (the & serves
+                // no purpose and misleads).  Both spellings `(T-Ref-Rep)` gives a `&(…)`: the
+                // stack-backed `Tuple` and the `__tuple<…>` record (loft#1673) — asked of the
+                // first alone, a tuple with a heap member got the error its all-scalar twin
+                // did not.
+                let tuple_param = matches!(a.typedef.base(), Type::RefVar(inner)
+                    if matches!(inner.base(), Type::Tuple(_))
+                        || matches!(inner.base(), Type::Reference(d, _)
+                            if self.data.def(*d).name().starts_with("__tuple<")));
+                if tuple_param {
                     diagnostic!(
                         self.lexer,
                         Level::Warning,

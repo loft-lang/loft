@@ -737,6 +737,43 @@ converted.  An author's `&text` and a buffer promoted from a non-null `text` kee
 Pass 2 now follows pass 1 for an author's local, loft#1099's rule.  Guard
 `tests/scripts/1616-a-text-local-promoted-to-the-return-buffer-keeps-its-question-mark.loft`.
 
+`D-Comp-Decl` opened and closed 2026-09-25 (found by a perf probe and fixed in the session;
+no issue, this box could not authenticate to GitHub): a comprehension REPLACED its declared
+element type with its body's, against `(N-Decl)` — a declared slot is a commitment the value
+converts into.  `v: vector<integer> = [for i in 0..n { i % 7 }]` became a
+`vector<integer(-6, 6)>`, the range `(N-Arith)` gives a remainder by a constant, so a typed
+local, a parameter and a return were refused (*"cannot change type from vector<integer> to
+vector<integer(-6, 6)>"*) and a struct FIELD accepted it: the elements were written one byte
+wide, as the narrow type stores them, and read back eight wide through the field's type —
+`[435735401677195014, 506105249678297095, 4294967202, 0, …]` for `[0, 1, 2, 3, …]`, on both
+backends, and a 200×200 grid built that way reached a corrupt reference.  An integer body into
+a `vector<float>` field read back the same way.  Beside it, the struct literal's vector field
+never asked the question the assignment asks (loft#893): `v = [for … { i % 7 }]; G { c: v }`
+bulk-copied the narrow vector at the field's stride where `g.c = v` refuses it.  Closed by
+keeping the declared element type in `parse_vector_for` and converting the body into it
+through the store face `(N-Store)` reads (pass 2 only; the nullable-hint arm builds its element
+by construction and is untouched), and by asking `field_store_mismatch` at the literal's vector
+field — one predicate and one refusal wording (`field_store_refusal`), whose cure for a
+collection is the declared type on the source, since `as vector<integer>` does not exist.
+NOT done, and measured: handing the declared element type to the body as its expected type
+(a literal element's rule, @PLAN58 III-a) would let a nested comprehension into a
+`vector<vector<integer>>` resolve — today it is refused — but it also types the `[]` arm of
+`w.ns[i] ?? []` in a body building into a FIELD, and that arm's fresh vector inside the
+buffer route reads after its free (`1195-a-comprehension-reads-its-destination-field`);
+that route owes the fix first.  Found on the way: `Type::same_element_storage`, loft#751's one home for *"do two element
+types occupy the same bytes?"*, answered *yes* for any two tuples, so a `(integer,
+integer(-6, 6))` body into a `vector<(integer, integer)>` read as one layout — it now asks
+each member.  Not changed: an INFERRED comprehension of a narrowed body still types `vector<integer(-6, 6)>`,
+as an inferred scalar does under `(N-Arith)`, and the slots that refuse it keep refusing it.
+Guards `tests/scripts/a-comprehension-takes-its-declared-element-type.loft` (both backends,
+every value hand-computed, the grid past its initial allocation) and
+`tests/scripts/a-struct-literal-refuses-a-vector-of-another-element-width.loft`.  Three
+findings beside it wait to be filed in
+[plans/157-native-4x-drawing/to-file-comprehension-follow-ups.md](../plans/157-native-4x-drawing/to-file-comprehension-follow-ups.md):
+a typed local `v: vector<P?> = [for … { P { … } }]` refused since the 2026.8.0 release (the
+field and `+=` forms work), the nested-comprehension refusal above, and the use-after-free that
+blocks its cure.
+
 `D-Narrow-Limit` opened and closed 2026-09-22 (loft#1593): a user-written `limit(a, b)` was
 outside all three narrowing rules, keyed out by the alias's `forced_size`; one predicate now
 asks the two full-integer templates instead, and the runtime default is reachable only on the

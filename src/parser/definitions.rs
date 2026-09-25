@@ -1157,6 +1157,425 @@ impl Parser {
                 Some(Value::Var(v)) if seen.contains(v))
     }
 
+    /// `@FR-R-Const` — a zero-parameter function whose whole body is ONE vector literal over
+    /// literals is a CONSTANT: give it a synthetic `DefType::Constant` twin holding the
+    /// literal, pre-built once in `CONST_STORE` like a top-level `NAMES = [ … ]`, and link
+    /// the function to it (`Definition::literal_const`) for `const_fn::rewrite`, which
+    /// answers a call whose result is only read with a view of it.
+    ///
+    /// The twin is added on pass 1 and its literal RE-STORED on pass 2, as `parse_constant`
+    /// does, because pass 2's literal carries the settled types and field offsets.  A body
+    /// pass 2 no longer reads as one literal unlinks the function (the twin then stays
+    /// unused).  Declined, keeping every call: a parameter that is not the hidden return
+    /// buffer, a method, a generic instance, a synthetic function, a result that is not a
+    /// plain vector, an element type the constant store cannot hold
+    /// ([`Self::const_elem_unsupported`]) and a literal it cannot pre-build
+    /// (`compile::const_vector_blocker` — an element known only at run time).
+    fn literal_body_constant(&mut self) {
+        if !crate::keys::const_view_enabled() || self.context == u32::MAX {
+            return;
+        }
+        let d_nr = self.context;
+        let linked = self.data.def(d_nr).literal_const;
+        let admitted = {
+            let def = self.data.def(d_nr);
+            def.def_type() == DefType::Function
+                && def.instance_of == u32::MAX
+                && def.synthetic.is_none()
+                && def.attributes().iter().all(|a| a.hidden)
+                && def.hidden_return_buffer_attr().is_some()
+        };
+        let tp = self.data.def(d_nr).returned().clone();
+        // A nullable result (`-> vector<T>?`) is not the constant's shape: its use sites
+        // discharge a null the constant never is.
+        let (base, nullable) = tp.peel_optional();
+        let mut blocked: Option<String> = None;
+        let literal = if admitted
+            && !nullable
+            && let Type::Vector(elem, _) = base
+            && self.const_elem_unsupported(elem).is_none()
+        {
+            Self::sole_vector_literal(self.data.def(d_nr).code(), &self.data).filter(|lit| {
+                blocked = crate::compile::const_vector_blocker(lit, &self.data);
+                blocked.is_none()
+            })
+        } else {
+            None
+        };
+        let Some(literal) = literal else {
+            // Pass 1 linked a twin that pass 2 cannot fill: unlink, so no call is rewritten.
+            if linked != u32::MAX {
+                self.data.definitions[d_nr as usize].literal_const = u32::MAX;
+            }
+            if crate::keys::trace_const() && !self.first_pass && admitted {
+                let def = self.data.def(d_nr);
+                if let Some(why) = &blocked {
+                    eprintln!(
+                        "[const] fn={} is NOT a constant: its literal is built from {why}",
+                        def.name()
+                    );
+                } else {
+                    let kind = |v: &Value| -> String {
+                        let s = format!("{:?}", v.unspan());
+                        s.chars().take(120).collect()
+                    };
+                    let shape: Vec<String> = match def.code().unspan() {
+                        Value::Block(bl) => bl
+                            .operators
+                            .iter()
+                            .map(|op| match op.unspan() {
+                                Value::Set(v, rhs) => format!("Set({v}, {})", kind(rhs)),
+                                Value::Return(inner) => format!("Return({})", kind(inner)),
+                                Value::Block(b) => format!("Block#{}", b.name),
+                                other => kind(other),
+                            })
+                            .collect(),
+                        other => vec![kind(other)],
+                    };
+                    eprintln!(
+                        "[const] fn={} is NOT a constant: returned {}, body [{}]",
+                        def.name(),
+                        tp.source_name(&self.data),
+                        shape.join(", ")
+                    );
+                }
+            }
+            return;
+        };
+        if self.first_pass {
+            if linked != u32::MAX {
+                return;
+            }
+            let name = format!("__const_{}", self.data.def(d_nr).name());
+            let pos = self.data.def(d_nr).position().clone();
+            let c_nr = self.data.add_def(&name, &pos, DefType::Constant);
+            self.data.set_returned(c_nr, tp);
+            self.data.definitions[c_nr as usize].code = literal;
+            self.data.definitions[c_nr as usize].synthetic = Some("literal_const");
+            self.data.definitions[d_nr as usize].literal_const = c_nr;
+        } else if linked != u32::MAX {
+            // Written straight into the slot: `set_returned` is set-once and pass 1's
+            // answer is still there — this is the replacement pass 2 owes.
+            self.data.definitions[linked as usize].returned = tp;
+            self.data.definitions[linked as usize].code = literal;
+            if crate::keys::trace_const() {
+                eprintln!(
+                    "[const] fn={} is a constant: its body is one vector literal",
+                    self.data.def(d_nr).name()
+                );
+            }
+        }
+    }
+
+    /// `@FR-R-Escape` — the two API designs whose per-call work the compiler can never share,
+    /// because the contract crosses a library boundary and every call a consumer makes pays it
+    /// again.  Both are `advice` (a copy is never a wrong result) and reach only the
+    /// library's author, since the cure is theirs.
+    ///
+    /// * `api-copies-collection`: a `pub` function taking a record by value answers a
+    ///   collection of it (`pub fn pieces(d: Doc) -> vector<Piece> { d.pieces }`).  A caller
+    ///   cannot borrow across an API, so each call copies every element, and a caller that
+    ///   reads it per element copies it per element.
+    /// * `api-redoes-per-field`: a `pub` function builds a heap-owning intermediate from its
+    ///   parameter with a library call and answers ONE scalar or text of it (`return
+    ///   pa_text(pa_decode(frame), "op")`): a caller that needs three values decodes three
+    ///   times — measured 11–55× against the twin on the pluginabi accessors.
+    ///
+    /// Not flagged, on purpose: an edit answered as a fresh record (`-> Doc { buf: d.buf, … }`)
+    /// is the functional-update idiom `(R-Rebind)` serves for the `x = f(x, …)` caller and a
+    /// needed copy for the caller that keeps both; a no-heap intermediate is carried in
+    /// registers `(R-ValueRecord)`; a stdlib producer (`split`) is idiomatic and cheap; a
+    /// function that is not `pub` has no unseen callers.  The fallback is silence: a shape
+    /// the two walks below do not name is one whose cost a rewrite may still reach.
+    fn warn_api_per_call_work(&mut self) {
+        if !crate::keys::api_advice_enabled() || self.context == u32::MAX {
+            return;
+        }
+        let d_nr = self.context;
+        {
+            let def = self.data.def(d_nr);
+            if !def.pub_visible
+                || def.def_type() != DefType::Function
+                || def.synthetic.is_some()
+                || def.instance_of != u32::MAX
+            {
+                return;
+            }
+        }
+        // By-value heap-owning parameters, by slot: the ones a caller's data reaches through.
+        let params: Vec<(u16, String)> = self
+            .data
+            .def(d_nr)
+            .attributes()
+            .iter()
+            .enumerate()
+            .filter(|(_, a)| {
+                !a.hidden
+                    && !matches!(a.typedef.base(), Type::RefVar(_))
+                    && self.type_owns_heap(&a.typedef)
+            })
+            .map(|(i, a)| (i as u16, a.name.clone()))
+            .collect();
+        if params.is_empty() {
+            return;
+        }
+        let returned = self.data.def(d_nr).returned().clone();
+        let code = self.data.def(d_nr).code().clone();
+        let pos = self.data.def(d_nr).position().clone();
+        // The name as a reader writes it: `Doc.buffer` for the method, `pieces` for the global.
+        let shown = crate::api_surface::classify(&self.data, d_nr)
+            .map_or_else(|| self.data.def(d_nr).name().to_string(), |(_, name)| name);
+        if crate::parser::vectors::is_collection(returned.base()) {
+            let Some(retbuf) = self.data.def(d_nr).hidden_return_buffer_attr() else {
+                return;
+            };
+            if let Some((p, field)) =
+                Self::answered_copy_of_collection(&code, retbuf as u16, &params, &self.data)
+            {
+                let field = self
+                    .field_name_at(&self.data.def(d_nr).attributes()[p as usize].typedef, field);
+                diagnostic_at!(
+                    self.lexer,
+                    &pos,
+                    Level::Advice,
+                    code = "api-copies-collection",
+                    "`{shown}` answers a COPY of `{}.{field}` at every call — a caller cannot \
+                     borrow across an API, so each call copies every element, and a caller \
+                     that reads it per element copies it per element",
+                    params
+                        .iter()
+                        .find(|(i, _)| *i == p)
+                        .map_or("?", |(_, n)| n.as_str()),
+                );
+                self.lexer.fix_last(crate::diagnostics::Fix {
+                    kind: crate::diagnostics::FixKind::Conditional,
+                    title:
+                        "expose the field, or answer an index and read the elements where they live"
+                            .to_string(),
+                    condition: Some("callers only READ what is answered".to_string()),
+                    edit: None,
+                    concept: "copy",
+                    concept_ref: "@F106",
+                });
+            }
+            return;
+        }
+        if self.type_owns_heap(&returned) && !matches!(returned.base(), Type::Text(_)) {
+            return;
+        }
+        if let Some((g, p)) = self.intermediate_rebuilt_per_call(&code, &params) {
+            let g_shown = crate::api_surface::classify(&self.data, g)
+                .map_or_else(|| self.data.def(g).name().to_string(), |(_, name)| name);
+            let built = self.data.def(g).returned().base().source_name(&self.data);
+            diagnostic_at!(
+                self.lexer,
+                &pos,
+                Level::Advice,
+                code = "api-redoes-per-field",
+                "`{shown}` builds a `{built}` from `{}` with `{g_shown}` and answers one value \
+                 of it — a caller that needs three values builds it three times",
+                params
+                    .iter()
+                    .find(|(i, _)| *i == p)
+                    .map_or("?", |(_, n)| n.as_str()),
+            );
+            self.lexer.fix_last(crate::diagnostics::Fix {
+                kind: crate::diagnostics::FixKind::Conditional,
+                title: "answer the built record once, and let the caller read its fields where it needs them".to_string(),
+                condition: Some("the record is what a caller keeps between reads".to_string()),
+                edit: None,
+                concept: "copy",
+                concept_ref: "@F106",
+            });
+        }
+    }
+
+    /// Does a value of this type own heap — a collection, or a record with a collection or
+    /// text inside?  A text alone is a value the ABI carries, not a store.
+    fn type_owns_heap(&self, tp: &Type) -> bool {
+        let base = tp.base();
+        if crate::parser::vectors::is_collection(base) {
+            return true;
+        }
+        match base.heap_def_nr() {
+            Some(d) => {
+                let kt = self.data.def(d).known_type();
+                kt != u16::MAX && self.database.owns_heap(kt)
+            }
+            None => false,
+        }
+    }
+
+    /// The name of the field of record type `tp` at byte offset `off`, or the offset spelled.
+    fn field_name_at(&self, tp: &Type, off: i32) -> String {
+        if let Some(d) = tp.base().heap_def_nr() {
+            let kt = self.data.def(d).known_type();
+            if kt != u16::MAX {
+                for (i, a) in self.data.def(d).attributes().iter().enumerate() {
+                    if i32::from(self.database.field_position(kt, i as u16)) == off {
+                        return a.name.clone();
+                    }
+                }
+            }
+        }
+        format!("+{off}")
+    }
+
+    /// `api-copies-collection`'s shape on the lowered body: the hidden return buffer filled
+    /// from a projection of a by-value parameter — `OpAppendVector(retbuf, OpGetField(p, off, _))`
+    /// or its replace form.  Answers `(parameter slot, field offset)`.
+    fn answered_copy_of_collection(
+        code: &Value,
+        retbuf: u16,
+        params: &[(u16, String)],
+        data: &crate::data::Data,
+    ) -> Option<(u16, i32)> {
+        let append = data.def_nr("OpAppendVector");
+        let replace = data.def_nr("OpReplaceVector");
+        let get_field = data.def_nr("OpGetField");
+        fn names_retbuf(v: &Value, retbuf: u16, get_field: u32) -> bool {
+            match v.unspan() {
+                Value::Var(x) => *x == retbuf,
+                Value::Call(d, args) if *d == get_field => args
+                    .first()
+                    .is_some_and(|a| names_retbuf(a, retbuf, get_field)),
+                _ => false,
+            }
+        }
+        let mut found: Option<(u16, i32)> = None;
+        code.walk(&mut |n| {
+            if found.is_some() {
+                return;
+            }
+            if let Value::Call(d, args) = n
+                && (*d == append || *d == replace)
+                && args.len() >= 2
+                && names_retbuf(&args[0], retbuf, get_field)
+                && let Value::Call(g, src) = args[1].unspan()
+                && *g == get_field
+                && src.len() == 3
+                && let Value::Var(p) = src[0].unspan()
+                && let Value::Int(off) = src[1].unspan()
+                && params.iter().any(|(i, _)| i == p)
+            {
+                found = Some((*p, *off));
+            }
+        });
+        found
+    }
+
+    /// `api-redoes-per-field`'s shape: a call `g(… p …)` of a LIBRARY function answering a
+    /// heap-owning value, whose result is consumed by one reader — a projection, a scalar
+    /// getter, or one argument of a call answering a scalar or text — and never bound,
+    /// stored or answered.  Answers `(g, parameter slot)`.
+    fn intermediate_rebuilt_per_call(
+        &self,
+        code: &Value,
+        params: &[(u16, String)],
+    ) -> Option<(u32, u16)> {
+        let data = &self.data;
+        let mentions_param = |v: &Value| -> Option<u16> {
+            let mut hit: Option<u16> = None;
+            v.walk(&mut |n| {
+                if let Value::Var(x) = n
+                    && hit.is_none()
+                    && params.iter().any(|(i, _)| i == x)
+                {
+                    hit = Some(*x);
+                }
+            });
+            hit
+        };
+        let library_producer = |g: u32| -> bool {
+            let def = data.def(g);
+            let name = def.name();
+            (name.starts_with("n_") || name.starts_with("t_"))
+                && def.is_loft_defined()
+                && def.rust().is_empty()
+                && !def.position().file.contains("default/")
+                && self.type_owns_heap(def.returned())
+        };
+        let scalar_or_text =
+            |tp: &Type| -> bool { !self.type_owns_heap(tp) && !matches!(tp.base(), Type::Void) };
+        let mut found: Option<(u32, u16)> = None;
+        code.walk(&mut |n| {
+            if found.is_some() {
+                return;
+            }
+            let Value::Call(op, args) = n else { return };
+            let name = data.def(*op).name();
+            // A reader of the intermediate: the intermediate sits at arg 0 of a getter or a
+            // projection, or is any argument of a library call answering a scalar or text.
+            let projection =
+                name.starts_with("OpGet") || name == "OpLengthVector" || name == "t_6vector_len";
+            let scalar_call = (name.starts_with("n_") || name.starts_with("t_"))
+                && data.def(*op).is_loft_defined()
+                && scalar_or_text(data.def(*op).returned());
+            for (i, a) in args.iter().enumerate() {
+                if !((projection && i == 0) || scalar_call) {
+                    continue;
+                }
+                if let Value::Call(g, g_args) = a.unspan()
+                    && library_producer(*g)
+                    && let Some(p) = g_args.iter().find_map(&mentions_param)
+                {
+                    found = Some((*g, p));
+                    return;
+                }
+            }
+        });
+        found
+    }
+
+    /// The one vector literal a body consists of, or `None`: every other statement of the
+    /// body is entry bookkeeping — a work-ref or work-text null init, the return buffer's
+    /// clear, its witness alias, in a list of their own or not — and the one remaining
+    /// statement is the literal block (`v_block(…, "Vector")`), bare or under `return`.  A
+    /// body with any other statement is a function that DOES something, and stays one: a
+    /// call of anything that is not an `Op…` over variables and literals, or an `Op…` given
+    /// an expression, is such a statement.
+    fn sole_vector_literal(body: &Value, data: &crate::data::Data) -> Option<Value> {
+        fn plain_operand(v: &Value) -> bool {
+            matches!(
+                v.unspan(),
+                Value::Var(_) | Value::Int(_) | Value::Null | Value::Text(_)
+            )
+        }
+        fn op_call(v: &Value, data: &crate::data::Data) -> bool {
+            matches!(v.unspan(), Value::Call(d, args)
+                if data.def(*d).name().starts_with("Op") && args.iter().all(plain_operand))
+        }
+        fn bookkeeping(v: &Value, data: &crate::data::Data) -> bool {
+            match v.unspan() {
+                Value::Set(_, rhs) => plain_operand(rhs) || op_call(rhs, data),
+                Value::Insert(ls) => ls.iter().all(|op| bookkeeping(op, data)),
+                Value::Line(_) | Value::Null => true,
+                other => op_call(other, data),
+            }
+        }
+        let Value::Block(bl) = body.unspan() else {
+            return None;
+        };
+        let mut found: Option<Value> = None;
+        for op in &bl.operators {
+            let candidate = match op.unspan() {
+                Value::Return(inner) => inner.unspan(),
+                other => other,
+            };
+            if let Value::Block(inner) = candidate
+                && inner.name == "Vector"
+            {
+                if found.is_some() {
+                    return None;
+                }
+                found = Some(candidate.clone());
+            } else if !bookkeeping(op, data) {
+                return None;
+            }
+        }
+        found
+    }
+
     /// loft#702 — what about this vector-constant ELEMENT type the constant store cannot
     /// pre-build, or `None` when the element is flat enough to hold.
     ///
@@ -2419,6 +2838,7 @@ impl Parser {
                 }
             }
             self.parse_code();
+            self.literal_body_constant();
             // #314 — pass-1 sibling of the pass-2 flip above: now that
             // the whole body is parsed, `scalars_to_box` is final;
             // reject any mutated scalar that more than one closure
@@ -2439,6 +2859,7 @@ impl Parser {
             self.last_closure_work_var = u16::MAX;
             if !self.first_pass {
                 self.check_ref_mutations(&arguments);
+                self.warn_api_per_call_work();
                 // Plan-06 PRIORITY.md spine step 5 — analyse each
                 // `let r = parallel_for(...)` site for materialising
                 // uses of r and emit a deprecation warning pointing

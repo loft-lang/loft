@@ -9,6 +9,14 @@ Tracker: [loft-lang/plans#165](https://github.com/loft-lang/plans/issues/165) (@
 
 ## Status
 
+**FINISHED (2026-09-25).**  Every arc is on `main` (the generics line merged through #1667 and
+#1672), and the dependency the table below names is met: C110 was revised by C126 (owner,
+2026-09-21).  Verified at closing, on `main` + the branch's CI-only commits: the goal program
+(`tests/scripts/the-goal-program-of-flexible-generics.loft`) 5/5 on both backends, and all 60
+`@PLN165` corpus guards green on the interpreter (the native corpus that carries them is green on
+`main`'s CI).  The 314 files in [`probes/`](probes/) record what each gave BEFORE the build —
+most of them refusals — and are the design's evidence, not a gate.
+
 **Phase 0 DONE (loft#1536–#1539, on `main`).  Arcs A and B BUILT on branch
 `tuxedo-165-generics` (2026-09-21): A0–A7, B1–B7 and the added B3b, each measured against the
 previous step's binary over the corpus; `G-Select` is in `formal/interfaces.md`.  Arc C

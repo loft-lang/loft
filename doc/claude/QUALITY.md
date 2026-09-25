@@ -1711,7 +1711,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **16** |
+| **17** |
 
 The census this came from — how many functions resolve a projection by op name, and which ones
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
@@ -2812,12 +2812,26 @@ and who does not.
 
 | opaque to a wrapped shape — must not grow |
 |---:|
-| **310** |
+| **308** |
 
 The census behind it — how many functions discriminate on a `Type` variant, how many see through
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-25, the `@FR-B-Ref-Uniform` walk on `tuxedo-quality-2026-09-24`, RE-MEASURED after the
+rebase onto `main` @ `989d30214` (the #1672 squash): **989 · 676 · 4 · 309**, shape tests **2518**,
+opaque **1293**; the spellings row is unmoved at `98 · 16 · 82`.  `--check-ratchet` reported `fell
+opaque_functions: 310 -> 309` and `fell  opaque_tests: 1295 -> 1293` before the rebase and reads
+AT BASELINE after it — the pin is this tree's, and the first two figures are NOT (pre-rebase they
+read `983 · 670`: main brought six more functions discriminating on a `Type` variant and all six
+see through the wrapper, so quoting the pre-rebase pair here would have described a tree that no
+longer exists).  **The drop is
+ATTRIBUTABLE and that is the interesting part**: `output_init` left the opaque list, and the code
+that put it there was a `deps` map the emitter built and never read — the audit had been naming a
+dead decoder as an opaque one the whole time, which is exactly how such a decoder reads to a
+human as well.  Deleting it moved a derived row, so a derived row can be a gauge of dead code
+and not only of live drift.)
 
 (2026-09-25, the NINTH join — `../loft2` @ `8e741579f` (#1668–#1671), `../loft3` @ `d7577c30b`
 (#1664's binding half, #1648) and `157-native-4x`'s two new commits, cherry-picked, onto `main` @
@@ -9289,6 +9303,293 @@ The **5 remaining sites spell the BARE five** — `scopes.rs`'s return-type chec
 behaviour change per site and needs its own probe.  They stay on the checklist rather than being
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
+
+### "Where does an advance resume?" — a construct declared out of scope, and the four defects under its `OPEN: 0` (2026-09-25)
+
+`@FR-G-Next` says an advance runs ONE slice, from the resume point.  On `--native` the
+statements before a `yield from` ran again on **every advance the delegation served**: a
+prologue counted three times for one increment, a `v += [7]` landing three elements in a
+vector the program reads afterwards.  The produced SEQUENCE is identical under either
+lowering, so no value of the generator itself said so — silent, no diagnostic, both
+backends running.
+
+**The rule was picked for what it was MISSING.**  Of `coroutines.md`'s nine rules, four
+carried zero code citations and zero guards — `(G-For)`, `(G-Next)`, `(G-Yield)`,
+`(G-YieldDepth)` — while `Yield` is the second most-omitted IR variant across partial
+walkers (78.9 %) with 37 bugs behind it, and `par/coroutine` rose 3.9 % → 6.2 % in
+`make bug-review`'s newest band.  NOT a re-plough of CL-9: `836`/`1586` already pin the
+eager-loop boundary, and this is a different construct.
+
+**What made the rules disagree with each other is what found it.**  `(G-YieldDepth)` says
+*"`yield` is valid at ANY call depth … a `yield` inside a helper `h()` called from g"*,
+while `(G-Yield)` says a `yield` whose return type is not `iterator<T>` is a static error.
+Both cannot hold.  Measured: the helper spelling is REFUSED identically on both backends,
+so `(G-YieldDepth)` promised a shape the language rejects — and the chapter's own
+Conformance section asserted it *verified on both backends*.  ⚠ **`VERIFICATION.md` had
+said the opposite in three places** (*"deferred G-YieldDepth — a `yield` INSIDE a helper
+(true stackful) needs `yield from`"*).  Two records, one rule, opposite answers, and the
+one a reader of the rules meets was the wrong one.  A conformance line is a MEASUREMENT,
+not a restatement of the rule above it.
+
+**And the construct that did ship had no rule at all, because the chapter declared it out
+of scope.**  The scope line read *"`yield from` (delegation) is deferred to 1.1+ and is not
+specified here"* long after `yield from` shipped, was guarded (loft#1277) and was named in
+`1589`'s own conformance list.  Nothing in the register covered it, so `OPEN: 0` was green
+over **four** defects in it at once — one silent, three that do not compile.  ⚠ The lesson generalises past this chapter: an
+`OPEN: n` is only as strong as its oracle, and a SCOPE line silently shrinks that oracle to
+nothing.  **Six** places called it deferred — the scope line, three rows in
+`VERIFICATION.md`, `coroutines-history.md` and COROUTINE.md's status banner — and all six are
+corrected; the construct has a rule now, `(G-Delegate)`.
+
+**One segment, and every question about it answered in more than one place.**  The cure is
+not a peel — each face is two sites giving one question two answers:
+
+* `sub_N`, the field holding the sub-generator, is DECLARED and INITIALISED by SEGMENT index
+  and was USED by STATE index.  Those read the same number only while every earlier segment
+  took one state — a lazily-lowered loop takes two, three with a resume slice — so a
+  `yield from` after one named a field nobody declared (rustc **E0609**).
+* the struct declared that field for every `yield from` segment without asking whether the
+  generator took the EAGER lowering, whose factory drives the sub-generator through a LOCAL
+  and initialises no field (rustc **E0063**).  *"Is this generator eager?"* was spelled
+  `segments.iter().any(|s| matches!(s, ForLoopBody))` at **six** sites and named at none; it
+  is `is_eager` now, and the struct definition is the seventh caller — the one that never
+  asked.
+* the silent face is *"where does this segment put a statement that must run once?"*:
+  `YieldFrom` took ONE state and had to stay in it to keep pulling, so re-entry ran the top
+  of its arm — where `pre` sits.  `ForLoopLazy` answers the
+  identical question next door with a dedicated once-only setup state, and the `yield from`
+  arm already had a once-only mechanism for the sub-generator (`if self.sub_N.is_none()`)
+  and none for its prefix.  The cure is the neighbour's answer, not a new one.
+* and the fourth, found later by opening the matrix column below: *"what shape does an
+  advance of the sub-generator have?"*  The `next_into` channel (a yielded tuple or fn-ref)
+  answers a BOOL and writes into the consumer's buffer where every other channel answers the
+  value.  The `Simple` yield arm has had per-shape branches for it since @PLAN16; this arm
+  emitted the value-channel call, `next_into(stores)` for a two-argument method — rustc
+  **E0061** on every delegated tuple or closure.
+
+**Three instruments, and the values half was the weakest.**  The value matrix is 20 cells on
+both backends, every expectation hand-computed first (a wrong one — `0,1,1,2` folded as
+`t*10+x` is 112, not 12 — is what proved the harness can fail).  ⚠ **Three cells read
+"agree" having measured nothing**: a `never-read` warning printed ahead of the program's own
+answer, and the harness was scoring the head of the combined stream.  Scoring stdout and
+stderr APART inverted all three — one of them, `E1`, is the container face that states the
+whole defect.  [[a-report-can-lose-to-a-panic]] is the same shape one channel over.
+⚠ And the cell that hid it for everyone else is `H1`: a prefix of `s = "a"; s += "b"` reads
+identically however many times it runs, because a REBIND is idempotent — which is what most
+prefixes are, and why this survived in a guarded construct.
+
+**The instrument that should have caught all of it had the construct's whole column switched
+off.**  `tests/coroutine_matrix.rs` crosses yielded TYPE against consuming CONTEXT, and its
+X5 column — `yield from`, nine cells, every type — read `CLOSED:CO1.4-deferred` for its whole
+life, on the strength of the same stale sentence.  ⚠ **A closed cell is a claim about the
+language, and nothing pointed it back at the sentence it depended on.**  Opening it took seven
+of the nine green on both backends immediately and is what found the FOURTH face above — no
+corpus program delegates a tuple, so nothing else could have, and the emitted-Rust sweep
+confirms it: the radius is the same with and without that branch.  Fixed here; delegate and
+delegator share a yield type, so the sub-generator's write already lands in the layout this
+one owes its consumer and there is nothing to re-encode.  The ninth cell,
+a delegated **fn-ref**, is a different site and filed as **loft#1676** — `BUG (#306)` twice on
+the interpreter and, on native, the loop-body collector's refusal about a program containing no
+loop, with two rustc errors leaking past it.  Its row now reads `CLOSED:measured-loft#1676`, so
+it reopens with the fix rather than with a rewritten status line.
+
+⚠ **And one cell's NAME claimed the coverage the false conformance line was resting on.**
+`y1_x1_int_generator_with_helper_yield`, comment *"generator whose body calls a HELPER that
+yields.  Stackful semantics"*, actually consumes a generator with a `for` — no helper, no yield
+at depth.  A reader asking "is stackful yield tested?" found a green cell with exactly the right
+name.  Renamed to `y1_x1_int_consumes_another_generator`, which is what it does.
+
+⚠ **A guard can also withhold its own coverage by citing a CLOSED issue.**
+`a-generator-exhausts-only-past-its-own-end.loft` limited its delegation cells to the
+argument-free form because *"`yield from sub(arg)` does not compile on --native (loft#1277)"* —
+loft#1277 being the fix that closed exactly that.  Measured the same day, `yield from sub(5)`
+answers identically on both backends.
+
+**Radius, measured rather than reasoned**: emitted Rust for **2 782** corpus programs
+(`tests/scripts` plus `doc/`) under a pristine build of the tree before the cure — **5 files
+differ, and every one contains a `yield from`**: this fix's two new guards, loft#1277's guard,
+`51-coroutines` and `a-generator-exhausts-only-past-its-own-end`.  ⚠ The sweep's first form was
+dead: a control binary run without `--path` loads no stdlib, errors before parsing and scores
+zero on everything — caught only because a cell that MUST reproduce the defect did not.
+[[a-trustworthy-thing-beside-an-unchecked-claim]].
+
+**`matrix_axes.py` on the FINISHED guard named the axis the rule's own wording depends on.**
+Every cell activated the generator exactly once, so "runs once" and "runs once per
+ACTIVATION" — the words the rule is written in — were indistinguishable.  Activating the same
+generator twice answers `2` here and **`6`** on the control tree, so that cell falsifies on
+its own; it is in the file now.  ⚠ Two cells the analyser also asked for turned out to BOUND
+the defect instead: a delegation under an `if` arm, and one inside a loop body, both answer
+correctly on the control tree — a block, loop or `if` containing a yield sends the whole
+generator to the EAGER collector, so the state machine this defect lives in is never reached.
+The defect is exactly a `yield from` at the generator's TOP LEVEL, and the cells written
+expecting a PASS are what established that.  [[the-over-reach-cell-finds-neighbours]],
+[[matrix-axes-finds-bugs-not-just-gaps]].
+
+Guards: `tests/scripts/a-delegations-prefix-runs-once-per-activation.loft`, eleven cells,
+carrying the four controls that say the once-only state was added to the delegation and
+nowhere else: a prefix before a plain `yield`, a prefix before a lazily-lowered loop, a
+delegation with no prefix, and two adjacent delegations.  The delegate's own prologue is a
+cell too — it already ran exactly once, so the frame was never re-minted, and the cure must
+not be read as having fixed that.  The two COMPILE faces are a SEPARATE file,
+`a-delegation-beside-a-loop-compiles.loft`: a generator that does not compile ends the run
+before any assertion is reached, so one file would have left the five value cells unscored
+against the very tree they were written to catch.  ⚠ Attributing that file's column needed
+each shape in a program of its OWN — `--native` compiles every generator in a file, so with
+`main` cut down to one cell a sibling's E0609 reached both CONTROLS and they read as failures
+the cure had caused.
+
+### "Is this member a heap value?" — an accessor used as a proxy, and a rule that held for three of four kinds (2026-09-25)
+
+`@FR-T-Cons` says a heap element is COPIED into a tuple.  Measured, a COLLECTION-typed member
+read as a PROJECTION was not — it stored the source's handle, so the member and the field were
+two names for one store, on both backends with no diagnostic (loft#1674, `silent-wrong`).
+
+**The statement that needs no rule reference.**  One program, two tuple-literal members, same
+member type, same ownership:
+
+```loft
+s = Hb { p: ["a"], q: ["b", "c"] };   vs = (s.q, s.p);   s.p += ["added"];
+t: (vector<text>, vector<text>) = (["a"], ["b", "c"]);   vt = (t.1, t.0);   t.0 += ["added"];
+```
+
+`len(vs.1)` answered **2** and `len(vt.1)` answered **1** — a member read off a struct FIELD
+viewed, one read off a tuple MEMBER copied.  Whatever the rule says, one of those was wrong.
+
+**The cause is an accessor standing in for a question it cannot answer.**
+`tuple_member_owned_copy` reaches its keyed and vector branches only through the arm for a
+projection source, and that arm guarded on `Type::heap_def_nr()`, which answers `Some` for a
+`Reference` and a struct-enum and **nothing else**.  So a `vector` or `hash` member failed
+`is_some_and` and fell to `_ => return None`.  The guard's real question is the one its own
+comment states — *would copying double-release a droppable* — and
+`Data::type_owns_droppable_anywhere` is the twin built for exactly this case, its doc saying
+"for a container that has no def of its own (a `vector<S>`)".  One `match` in place of the
+`is_some_and`, and the other two arms untouched.
+
+**Three faces, one cause — and the third is why I had published the wrong reading.**  The
+struct-field member copied (it has a def), the tuple-member source copied (it takes the
+`TupleGet` arm), and a swap through a `&(…)` link — `v = (p.1, p.0); p.0 = v.0; p.1 = v.1` —
+LOST an element, because a member read through a link lowers as a projection too and failed the
+same guard.  I had that third one recorded as `(B-View-Base)` working correctly with only a
+diagnostic missing, and told a peer so; the fix cures it without touching anything about `&`,
+which falsified my reading.  ⚠ The lesson is the boundary between two rules: a tuple LITERAL's
+member is `(T-Cons)`'s question and NOT `(B-Copy)`'s bind boundary.  `(B-View-Base)` governs
+`af = bx.v`; it says nothing about a literal's member.  Read as one question, the collection
+row looks like a decided edge and the struct row looks like a second anomaly — read as two, both
+are one rule with one defect.
+
+**Nothing else moved, and that is measured three ways, because each instrument caught what the
+one before it could not.**  Emitted Rust over `tests/scripts` plus `doc/` — **1 of 1567 files
+differs, and it is this fix's own guard.**  The forty cells of the `(T-Destr)` walk above answer
+byte-identically, and so do the controls the cure could have widened past: integer, `text` and
+struct members, an element read, and the local swaps at every member kind.  Clean under
+`LOFT_POISON=1 LOFT_STRICT_STORES=1`.
+
+⚠ **The first cure over-reached, and a DIAGNOSTIC comparison is what said so** — no value cell
+did.  `(q.items, q.nm)` off a BY-VALUE parameter needs no copy: the callee's own copy of the
+struct already makes the member independent, which is `(T-Cons)`'s own parameter clause ("a
+property of the parameter rather than of the construction") and the carve-out the `Value::Var`
+arm already had.  Copying there is a copy of a copy, and it cost
+`1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft` a `__vdb` backing per exit and took its
+three `advice[avoidable-copy]` lines from `38:47 / 40:51 / 59:51` to `38:0 / 0:0 / 0:0` with
+synthetic lambda names.  An advice that cannot name its site is not advice.  The discriminator is
+the root's TYPE and not whether it is an argument: a `&` link's root is an argument too and MUST
+copy, because what it names is the caller's place.
+
+⚠ **Then the narrowing over-reached the OTHER way, and only the EMIT comparison saw it.**  Asked
+of the whole arm, the parameter carve-out also removed a copy the record branch had been making
+since before this issue: two files the wide form left byte-identical began to move
+(`1367-a-tagged-projection-bound-to-a-local-is-the-pointer`,
+`147-view-producer-invalidator-boundary`), both still passing.  The carve-out belongs to the
+newly-admitted `None` branch alone.  A fix narrowed by reading rather than by re-measuring would
+have shipped that.
+
+⚠ **And the first radius read "all 1567 files differ", which was the harness.**  The pre-fix
+binary ran with `--path <worktree>` and the emitted Rust bakes the stdlib location into its
+`// loft:` comments, so every file differed on a path string.  An instrument that reports
+EVERYTHING changed is as broken as one reporting nothing, and it reads as a catastrophic radius
+rather than as a bug in the sweep — normalising the path gave 2, and then 1.
+
+⚠ **The droppable edge is a REFUSAL, not the alias I wrote into the guard first.**  A
+`vector<Droppable>` member is stopped by `copy-of-droppable` — *"`s` still owns that member and
+releases it when it goes"* — pre-existing, identical on the tree before the cure, from a
+different site.  So the cure's conservatism is unobservable from a passing program: the copy is
+never reached.  The cell I wrote to score it could not run, which is the useful kind of failure
+— it turned an assumption into a measurement.
+
+Guard: `tests/scripts/1674-a-tuple-literal-copies-every-heap-member.loft`, six functions,
+carrying the plain-bind-beside-the-member cell as the one that states the defect without
+reference to any rule.
+
+### "Is this value a tuple?" — one home, and the two sites that never asked it (2026-09-25)
+
+`@FR-T-Destr` had **zero code citations and zero guards**, and `tuple` is the only mechanism class
+`make bug-review` still reports as RISING (+1.5pp, 25 of the newest band's 275 bugs; the `Tuple` IR
+variant is 78.2 % omitted across partial walkers with 59 bugs behind it).  So the rule was picked
+for what it is missing rather than for how scattered it is.
+
+**Forty cells of `(T-Destr)` are clean, and that is the first product.**  Source shape (literal,
+variable, call, vector element at a constant AND a variable index, struct field, generator, plain
+tuple parameter) × member kind (all-integer, `text` second, `text` FIRST, `float`, `u8`, a vector,
+a struct, a struct-enum, a nullable member present and absent) × position (straight-line, loop
+body, branch arm) × arity (2 and 3), on both backends, every expected value hand-computed first.
+Five arity-mismatch cells are refused identically on both backends with the count in the message
+and exit 1.  ⚠ Do not re-run this; the axes it HELD fixed are nested destructuring (refused, by
+`(T-Destr)`'s own "n names"), and `par` (the block spelling is not what I wrote and the cells
+never compiled — not measured, and not claimed).
+
+**And `(T-Destr)` is `(T-Proj)` n times, including the copy/view boundary, which the rule does not
+say.**  (Scope, added 2026-09-25: this is the DESTRUCTURE of a tuple value.  A tuple LITERAL's
+member is a different rule — `(T-Cons)`, which copies every heap member from every source — and
+the entry above it carries the defect that cost.)  `(a, b) = t` binds each name exactly as `a = t.0` does: a RECORD member VIEWS (a write
+through the name reaches the tuple), a COLLECTION member COPIES, a scalar and a `text` copy —
+measured side by side in one program, both backends agreeing, which is `@FR-B-Copy` /
+`@FR-B-View-Base`'s table for a one-level projection off an owned base and not a second rule.  The
+rule text says only "bind each xᵢ to the i-th element", and a reader who needs to know whether a
+write through `b` reaches `t` cannot get it from there.  That is the shape of omission this doc
+already priced once, at `B-Copy`: three correct behaviours filed as bugs in one week.
+
+**The defect was in the one axis the rules make a promise about and the oracle never crossed: the
+`&` spelling.**  `(a, b) = p` over a `&(…)` binding was refused on both backends, in both
+representations `(T-Ref-Rep)` gives it, from both sources `(T-Ref-Src)` allows — *"Cannot
+destructure a non-tuple value"*, about a value that IS a tuple, followed by one *"Unknown
+variable"* per name because the refusal left them undefined.  The sibling arm one screen up
+already knew that second trap and types its targets anyway "so the refusal is the ONLY report"
+(loft#1423).
+
+The cause is the class `Type::peel_link`'s own doc comment describes — "a bare `matches!` against
+the un-peeled type silently answers no for every `&` spelling" — and the cure was not a peel.
+**`Parser::ref_tuple_subject` was already the one home for reading such a binding AS a tuple**,
+built for the tuple PATTERN (loft#1530) and answering both representations with the right
+ownership: `TupleGet` through the reference for the stack-backed form, `unbox_tuple_from_dbref` for
+the record, whose heap members are typed as BORROWING the binding. It had one caller. The
+destructure is its second, and its doc now asks "the tuple as a VALUE" rather than "the match
+subject" so the third asker finds it.  Emitted Rust is byte-identical on all 1561 `tests/scripts`
+files that emit — no corpus program destructures a `&(…)`, which is why this survived.
+
+**Then the same enumeration found a crash, and the record-backed twin is what proved it a
+deviation.**  loft#1673: a whole-value READ or WRITE of a **stack-backed** `&(τ, τ)` — `take(p)`,
+`return p`, `q = p`, `p = (…)` — is an ICE on both backends (`codegen.rs:5043` and `:5544`), while
+all four answer correctly on the record-backed twin.  `(T-Ref-El)` states *"Never a runtime fault
+and never an ICE"* in the rule, so this is D-tup-16 and not an undecided edge.  Two smaller faces
+travel with it: `print("{p}")` refuses on one representation and prints the compiler's own
+`{_0:…,_1:…}` spelling on the other, and both `==` diagnostics name `&__tuple<text,text>`.
+
+⚠ **The record-backed column read as "also refused" on the first pass, and it was the harness.**
+A read-only `&` parameter trips *"has & but is never modified"*, which fires BEFORE codegen and
+masks every cell behind it; adding one write through the reference turned four refusals into four
+correct answers and inverted the conclusion.  A diagnostic that fires early is a blind instrument,
+and the cell that exposed it was the one I expected to agree with its neighbour.
+
+⚠ **One more measured asymmetry, unfiled because it is a lint and not a value**: the same
+never-written `&(…)` parameter is a WARNING (`needless-reference-parameter`) when its members are
+scalars and an ERROR (*"has & but is never modified"*) when one is heap. Two decoders for one
+question, chosen by representation.
+
+⚠ **A generator yielding a tuple with a `text` member runs on `--interpret` and is REFUSED on
+`--native`** — which cost a probe before I found it recorded, because it is written down in
+`coroutines.md` (D-cor-2, closed) and nowhere in `tuples.md`, whose `(T-Ret)` says a tuple is a
+first-class value you can return and pass.  A decided edge a reader of the tuple chapter cannot
+reach is, for that reader, an undecided one.
 
 ### "Does a variable with no uses hold a store?" — the premise was written down, and it was false for one type (2026-09-25)
 

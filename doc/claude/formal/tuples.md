@@ -34,7 +34,15 @@ compile-time index).
              dead after the construction — which is the same last-use elision the STRUCT
              constructor already applies (`LOFT_NO_MOVE_ELIDE` restores the copy).  A
              PARAMETER handed to a tuple keeps aliasing its caller: that is `B-Ref-Alias`, and
-             it is a property of the parameter rather than of the construction.
+             it is a property of the parameter rather than of the construction.  "A HEAP element"
+             is every heap kind and every SOURCE: a local, a member of another tuple, a field or
+             element PROJECTION, and a member read through a `&(…)` link.  It is decided by the
+             member's TYPE and not by the base it is read off, so `(B-View-Base)` — which makes a
+             plain bind off a BORROWED base a view — does not reach a literal's member; reading
+             the two as one question is what left a COLLECTION member aliasing while its struct
+             and tuple-member siblings copied (loft#1674).  `Parser::tuple_member_owned_copy` is
+             the one home, and the question it asks of the member type is whether a copy would
+             double-release a droppable, which `copy-of-droppable` refuses outright.
   (T-Paren)  a single parenthesised expression `(e)` is NOT a tuple — it is just grouping.  A
              tuple needs ≥ 2 comma-separated elements.
 ```
@@ -78,6 +86,14 @@ tuple-returning call: `(x, y) = pair()` unpacks the returned tuple directly (ver
 **In words.** A tuple is a first-class value — you can return one (`fn pair() -> (integer,
 integer)`), pass one, and unpack it at the caller. Returning a tuple is the idiomatic
 "return two things," and the result is independent like any return (calls.md).
+
+⚠ **A tuple YIELDED by a generator is the one position with a decided edge, and it lives in
+another chapter.** `--native` refuses a `yield` whose tuple has a `text` member or a nested one,
+naming the type and the cure (wrap it in a struct), where `--interpret` runs it —
+[coroutines-history.md](coroutines-history.md) D-cor-2, closed 2026-08-28 with the channel ladder
+that decided it. It is written down there and was not written here, so a reader of this chapter
+met it as an ICE-shaped surprise (measured 2026-09-25, during the `(T-Destr)` walk). A decided
+edge a reader cannot reach from the rule it bounds is, for that reader, undecided.
 
 **A tuple type takes no `?`.** `(N-Opt)` licenses `τ?` for every τ and a tuple is the one former
 with no representation for absence: it is its members' bytes, so `(L-Null)`'s sentinel has no
@@ -146,9 +162,12 @@ the same two cures. The gap between the rule and the model is
               element's own offset — the same `(ref, offset)` pair an ordinary struct FIELD
               uses (binding.md B-Ref).  For a parameter the tuple is the CALLER's; for a local
               it is the source variable's, so the two positions are one mechanism and not two.
-              A tuple PATTERN over the binding is a projection of every element at once, so a
-              `match` reads each element through the reference exactly as `p.i` does, and a
-              heap member read that way borrows the tuple rather than owning a copy.
+              A tuple PATTERN over the binding, and a DESTRUCTURE of it (`(a, b) = p`), are
+              each a projection of every element at once, so both read each element through the
+              reference exactly as `p.i` does, and a heap member read that way borrows the tuple
+              rather than owning a copy.  Reading the binding as a tuple has ONE home,
+              `Parser::ref_tuple_subject`; a site that tests the type for `Type::Tuple` instead
+              answers no for both representations and refuses what this rule admits.
   (T-Ref-Rep) the tuple a `&(…)` names is STACK-backed when every τᵢ is a scalar, and a
               `__tuple<τ₁, …, τₙ>` RECORD otherwise — the same record a heap-tuple RETURN and
               the loop variable over a `vector<(…)>` already are.  A tuple LOCAL that is the
@@ -208,7 +227,43 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 0.**  D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
+**OPEN: 0.**  D-tup-16 opened and closed 2026-09-25 (below); D-tup-15 opened and closed
+2026-09-22 ([history](tuples-history.md)).
+
+- **D-tup-16** *(CLOSED 2026-09-25, loft#1673)* — `(T-Ref-El)` says of a `&(…)` binding
+  *"Never a runtime fault and never an ICE"*, and a whole-value READ or WRITE of the
+  STACK-backed form was an ICE on both backends: `take(p)`, `return p` and `q = p` panicked in
+  the codegen link-read ladder, `p = (…)` in its write twin.  The RECORD-backed twin read whole
+  correctly and REFUSED the whole write with a type error — so the two representations
+  `(T-Ref-Rep)` gives differed in what a program could do, which `@FR-B-Ref-Uniform` rules out.
+
+  ✅ **Closed at the rules' own answer, on both representations.**  A whole READ is the tuple of
+  the element reads through the link (the interpreter's `generate_var`; native derefs a local
+  link's `*mut (…)`, as it already did a parameter's `&mut`), so a bind `q = p` is a COPY
+  (`(B-Copy)`) and the caller's tuple is untouched.  A whole WRITE writes THROUGH the link and
+  REPLACES every member, the same as `p.0 = a; p.1 = b`.  The right-hand side is parsed
+  against the tuple the link names, so a list literal becomes a `hash` member as it would for
+  a tuple local of that type.  A stack-backed tuple is written element by element from a temp.
+  A record-backed tuple is built as a record of the link's own `__tuple<…>` type and then
+  copied over the linked record whole.  Each heap member gets its own storage before
+  anything is overwritten, so `p = (p.1, p.0)` swaps.  The link bind `q = &t` stays a bind.
+  ⚠ The fix's first version wrote a record-backed member with `set_field`, which only
+  initialises a FRESH record. It appended to a live vector member (`["old"]` became
+  `["old", "new", "pair"]`) and left a `hash` member empty. Nothing reported either: the guard's
+  write cells started from an EMPTY member, where appending and replacing give the same
+  result. A peer's cells found it (loft2-d9, 2026-09-25). The c-cells now start from a
+  non-empty member and check element 0 as well as the length.
+  The two smaller faces went with it: a record-backed link refuses `"{p}"` exactly as its
+  value tuple does, and a diagnostic names it `&(text, text)` rather than the `__tuple<…>`
+  record.  Guard: `tests/scripts/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.loft`
+  (argument, return, bind-is-a-copy, write, swap, a write in a loop, a local link), both
+  representations per cell.  The bind is a copy on BOTH representations, so they agree. The
+  record-backed one already copied before this fix, and deeply: `q = p` over
+  `&(vector<text>, integer)` copies the vector, so `q.0 += […]` leaves `p` alone. That is
+  `(B-Copy)`'s whole-value row. It also means a record-backed `q = p` ALLOCATES, so it is not
+  free, and a caller who wants to share the tuple should write `q = &p`.  The DESTRUCTURE half —
+  `(a, b) = p` on both representations and from both sources — is guarded by
+  `tests/scripts/a-destructure-unpacks-a-reference-tuple.loft`.
 
 - **D-tup-10** *(CLOSED 2026-09-16, loft#1423 / loft#1451)* — `(T-Absent)` said no
   `Optional(Tuple)` exists while the code minted one wherever absence is synthesised:

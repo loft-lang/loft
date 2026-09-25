@@ -441,8 +441,12 @@ fn report(session: &mut ReplSession, step_reason: &str, paused: bool, out: &mut 
     }
     if paused {
         let watch = session.take_watch_hit();
+        let interrupted =
+            crate::debugger::STOPPED_BY_INTERRUPT.swap(false, std::sync::atomic::Ordering::Relaxed);
         let reason = if watch.is_some() {
             "watch"
+        } else if interrupted {
+            "pause"
         } else {
             step_reason
         };

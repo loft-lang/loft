@@ -138,7 +138,7 @@ repos.
 
 ### Tracker-ref federation (cross-repo)
 
-A Java repo's docs might say "see [loft#P259](...)" referring
+A Java repo's docs might say "see `[loft#P259](...)`" referring
 to a P-issue in the loft monorepo.  eagleviewer's config
 declares external references:
 

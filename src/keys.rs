@@ -1397,6 +1397,63 @@ pub fn trace_rebind() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_REBIND"))
 }
 
+/// `@FR-R-Const` — a literal-bodied function is a constant: a call whose result is only
+/// READ answers a view of the one pre-built vector instead of building it again.
+/// `LOFT_NO_CONST_VIEW=1` keeps every call (the switch, read by the parser and the scope
+/// pass); the interpreter and native share the rewrite, so the switch A/B is its falsifier.
+pub fn const_view_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_CONST_VIEW"))
+}
+
+/// `LOFT_TRACE_CONST=1` — name each literal-bodied function made a constant, and each call
+/// of one admitted or declined with the reason.
+pub fn trace_const() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_CONST"))
+}
+
+/// `@FR-R-Compact` — a vector rebuilt from a contiguous run of its own elements
+/// (`t = []; for i in a..b { t += [v[i]?] }; v = t`) is compacted IN PLACE behind an
+/// in-range guard, the written-out loop kept as the fallback arm.  `LOFT_NO_COMPACT=1` keeps
+/// every rebuild; the interpreter and native share the rewrite, so the switch A/B is its
+/// falsifier.
+pub fn compact_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_COMPACT"))
+}
+
+/// `LOFT_TRACE_COMPACT=1` — name each rebuild compacted and each declined with the reason.
+pub fn trace_compact() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_COMPACT"))
+}
+
+/// `LOFT_NO_FORMAT_APPEND=1` — a format string appended to a text keeps its work buffer
+/// (`@FR-R-FormatAppend` off): the first bisect step for a wrong, missing or doubled part of
+/// a text built by `out += "…{e}…"`.
+pub fn format_append_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_FORMAT_APPEND"))
+}
+
+/// `LOFT_TRACE_FORMAT_APPEND=1` — name each format append written into its destination and
+/// each that keeps its buffer, with the reason.
+pub fn trace_format_append() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_FORMAT_APPEND"))
+}
+
+/// The two API-design advices (`api-copies-collection`, `api-redoes-per-field`): a `pub`
+/// function whose CONTRACT forces per-call work no rewrite can share across the calls a
+/// consumer makes — a copy of a parameter's collection answered per call, or a heap-owning
+/// intermediate built from the parameter and discarded after one value.  `advice`, never a
+/// gate; `LOFT_NO_API_ADVICE=1` opts out of both.
+pub fn api_advice_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_API_ADVICE"))
+}
+
 /// `LOFT_TRACE_PLACE=1` — one line per bind `place_result` examined: the admission with
 /// its host and destination count, or the decline with the reason.
 pub fn trace_place() -> bool {

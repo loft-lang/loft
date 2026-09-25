@@ -2218,7 +2218,7 @@ steady-state runtime.
 ### See also
 
 - [`plans/finished/35-branch-review-viewer/README.md`](plans/finished/35-branch-review-viewer/README.md) — the full design + per-phase build log
-- [`lib/markdown/loft.toml`](../../lib/markdown/loft.toml) — the rendering library
+- [`lib/markdown/loft.toml`](https://github.com/loft-lang/loft-libs-docs/blob/main/markdown/loft.toml) — the rendering library
 
 ---
 

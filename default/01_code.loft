@@ -1256,6 +1256,15 @@ fn OpCastVectorFromText(val: text, db_tp: const u16) -> vector;
 fn OpRemoveVector(r: vector, tp: const u16, index: integer) -> boolean;
 #rust"s.database.remove_vector_at(&@r, @tp, @index)"
 #impure(parent_write)
+// `@FR-R-Compact` — the vector becomes the elements it held at [lo, hi), in place: every
+// other element is released where it stands, the kept run moves to the front as one block,
+// the length is set.  Only for 0 <= lo <= hi <= len: the rewrite that emits it guards the
+// range and keeps the written-out loop as the fallback arm, so an out-of-range walk keeps the
+// answer it always had (a `?`-discharged read past the end pads with the type's default).
+// `tp` is the ELEMENT type, as for OpRemoveVector: `keep_vector_range` decides the layout.
+fn OpKeepVectorRange(r: vector, tp: const u16, lo: integer, hi: integer);
+#rust"s.database.keep_vector_range(&@r, @tp, @lo, @hi)"
+#impure(parent_write)
 // Insert space into a vector, no data written
 fn OpInsertVector(r: vector, size: const u16, index: integer, db_tp: const u16) -> reference[r];
 #impure(parent_write)

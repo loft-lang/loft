@@ -136,10 +136,15 @@ fn gen_struct_name(fn_name: &str) -> String {
 enum YieldSegment {
     /// Top-level `yield expr` with preceding statements.
     Simple { pre: Vec<Value>, val: Value },
-    /// `yield from sub_gen()` block.
-    /// - `pre`: statements before the block (in the outer context)
+    /// `yield from sub_gen()` block — `@FR-G-Delegate`.
+    ///
+    /// Takes TWO states, for the reason `ForLoopLazy` does: a delegation SUSPENDS, so by
+    /// `@FR-G-Next` an advance that resumes it resumes INSIDE it.  The first state runs
+    /// `pre` once and hands over; the second is the pull, and is the one every later
+    /// advance re-enters.  Driven from one state, re-entry ran `pre` again each time.
+    ///
+    /// - `pre`: statements before the block (in the outer context), run ONCE per activation
     /// - `init`: expression that creates the sub-generator (e.g. `n_inner(stores)`)
-    /// - `state_idx`: the state number for this segment (used to name the struct field)
     YieldFrom { pre: Vec<Value>, init: Value },
     /// A for-loop body containing yields.  The factory function runs the loop
     /// eagerly and collects all yielded values into a `Vec<i64>` buffer; `next_i64`
@@ -171,6 +176,25 @@ enum YieldSegment {
         resume: Vec<Value>,
         post: Vec<Value>,
     },
+}
+
+/// `@FR-G-Delegate` — does this generator take the EAGER lowering, where the factory runs
+/// the whole body and collects every value and `next` pops from that buffer?
+///
+/// Asked of the WHOLE generator rather than of one loop: an eager segment makes the factory
+/// collect every yield up front, which a lazy segment's own states would then run a second
+/// time, so one loop that has to stay eager pulls the rest back with it
+/// (`collect_segments`, and the late demotion in `emit_coroutine`).
+///
+/// Named because six sites spelled this `matches!` out for themselves and a seventh —
+/// `emit_struct_def` — did not ask it at all: it declared a `sub_N` field for every
+/// `yield from` segment, while an eager generator's factory drives the sub-generator
+/// through a LOCAL and never sets that field.  The two answers met as rustc E0063,
+/// "missing field `sub_1` in initializer", on any `yield from` beside an eager loop.
+fn is_eager(segments: &[YieldSegment]) -> bool {
+    segments
+        .iter()
+        .any(|s| matches!(s, YieldSegment::ForLoopBody { .. }))
 }
 
 /// Does this statement END in a `yield`, looking through trailing blocks?
@@ -633,10 +657,7 @@ fn collect_segments(ops: &[Value], data: &crate::data::Data) -> (Vec<YieldSegmen
     // factory collect EVERY yield up front and `next()` collapse to a pop-from-buffer arm
     // (P225), which a lazy segment's own states would then run a second time.  So one loop
     // that has to stay eager pulls the rest back with it.
-    if segments
-        .iter()
-        .any(|s| matches!(s, YieldSegment::ForLoopBody { .. }))
-    {
+    if is_eager(&segments) {
         for seg in &mut segments {
             if let YieldSegment::ForLoopLazy { pre, whole, .. } = seg {
                 *seg = YieldSegment::ForLoopBody {
@@ -932,11 +953,15 @@ fn emit_struct_def(
         };
         writeln!(w, "    var_{n}: {field_tp},")?;
     }
-    // N8b.3: one inline sub-generator field per yield-from segment.
+    // N8b.3: one inline sub-generator field per yield-from segment, and ONLY where the
+    // state machine drives that sub-generator — an eager generator's factory runs the whole
+    // body up front through a local `__sub` (`emit_for_body_factory`) and initialises no
+    // such field, so declaring one there is the E0063 `is_eager` documents.
     // Stored as `Option<Box<dyn LoftCoroutine>>` to avoid `RefCell` double-borrow
     // when advancing the sub-generator from inside the outer generator's `next_i64`.
+    let state_machine_drives_the_sub = !is_eager(segments);
     for (idx, seg) in segments.iter().enumerate() {
-        if matches!(seg, YieldSegment::YieldFrom { .. }) {
+        if matches!(seg, YieldSegment::YieldFrom { .. }) && state_machine_drives_the_sub {
             writeln!(
                 w,
                 "    sub_{idx}: Option<Box<dyn loft::codegen_runtime::LoftCoroutine>>,"
@@ -944,10 +969,7 @@ fn emit_struct_def(
         }
     }
     // ForLoopBody: add a value buffer + index for the eager-collect approach.
-    if segments
-        .iter()
-        .any(|s| matches!(s, YieldSegment::ForLoopBody { .. }))
-    {
+    if is_eager(segments) {
         // @P326 — a DbRef-yielding generator buffers `DbRef`s.  Every DbRef-carried type,
         // not the three obvious ones (@FR-Col-Store — one home, `data::is_dbref`): a short
         // list here disagreed with `emit_for_body_factory`'s `vec_ty`, which already asked
@@ -981,10 +1003,7 @@ fn emit_factory_fn(
     fields: &std::collections::HashMap<u16, String>,
 ) -> std::io::Result<()> {
     // ForLoopBody: the entire factory is emitted by Output::emit_for_body_factory.
-    if segments
-        .iter()
-        .any(|s| matches!(s, YieldSegment::ForLoopBody { .. }))
-    {
+    if is_eager(segments) {
         return Ok(());
     }
     write!(w, "fn {fn_name}(cell: &std::cell::UnsafeCell<Stores>")?;
@@ -1131,9 +1150,7 @@ impl Output<'_> {
         // duplicates (the original P225 symptom: first Simple yield
         // appeared twice on native, once from state 0's explicit `return`
         // and once from state 1's `__values[0]` pop).
-        let has_for_body = segments
-            .iter()
-            .any(|s| matches!(s, YieldSegment::ForLoopBody { .. }));
+        let has_for_body = is_eager(segments);
         // The eager buffer holds elements FLAT — one `i64` per slot — for a tuple whose
         // every element is carried by value.  A tuple carrying a store handle is refused
         // instead, for the reason the struct/vector loop-body refusal already names.
@@ -1444,7 +1461,7 @@ impl Output<'_> {
             state_of.push(next_state);
             next_state += match segment {
                 YieldSegment::ForLoopLazy { resume, .. } if !resume.is_empty() => 3,
-                YieldSegment::ForLoopLazy { .. } => 2,
+                YieldSegment::ForLoopLazy { .. } | YieldSegment::YieldFrom { .. } => 2,
                 _ => 1,
             };
         }
@@ -1550,33 +1567,80 @@ impl Output<'_> {
                     }
                 }
                 YieldSegment::YieldFrom { pre, init } => {
+                    // The field is per SEGMENT, so `seg_idx` names it — the declaration and
+                    // the initialiser both key off that.  Using the STATE index here read the
+                    // same number only while every earlier segment took exactly one state: a
+                    // lazily-lowered loop takes two (three with a resume slice), and from the
+                    // first one onward this named a field nobody declared (E0609).
+                    let sub = seg_idx;
+                    // State 1 of 2 — the statements before the delegation, run ONCE.  This
+                    // state is left immediately and never returned to; the pull state below
+                    // is the one an advance re-enters.
+                    //
+                    // The two states are the whole of `(G-Next)` here: an advance runs one
+                    // slice FROM THE RESUME POINT, and the resume point of a suspended
+                    // delegation is inside it, not at the top of the statements that led to
+                    // it.  Driven from one state, re-entry ran `pre` again on every advance
+                    // the delegation served — a prologue counted three times, a `v += [x]`
+                    // landing three elements — with the produced sequence unchanged, so no
+                    // value of the generator itself said so.  `ForLoopLazy` answers the
+                    // identical question with a once-only setup state; this is that answer.
                     for stmt in pre {
                         let stmt_code = self.generate_expr_buf(stmt)?;
                         writeln!(w, "                {stmt_code};")?;
                     }
-                    writeln!(w, "                if self.sub_{state_idx}.is_none() {{")?;
+                    writeln!(w, "                self.state = {};", state_idx + 1)?;
+                    writeln!(w, "                continue;")?;
+                    writeln!(w, "            }}")?;
+                    // State 2 of 2 — pull one value per advance, staying in this state until
+                    // the sub-generator is exhausted.
+                    writeln!(w, "            {} => {{", state_idx + 1)?;
+                    write_param_shadows(w, attrs, "                ")?;
+                    writeln!(w, "                if self.sub_{sub}.is_none() {{")?;
                     let factory = self.gen_inner_factory(init)?;
-                    writeln!(
-                        w,
-                        "                    self.sub_{state_idx} = Some({factory});"
-                    )?;
+                    writeln!(w, "                    self.sub_{sub} = Some({factory});")?;
                     writeln!(w, "                }}")?;
-                    writeln!(
-                        w,
-                        "                let val = self.sub_{state_idx}.as_mut().unwrap().{advance}(stores);"
-                    )?;
-                    writeln!(w, "                if val == {exhaust} {{")?;
-                    // Release the sub-generator's own heap locals on the way out, the same
-                    // cleanup a handle's scope-exit free performs (loft#835) — this path owns
-                    // the sub-generator directly, so nothing else would.
-                    writeln!(
-                        w,
-                        "                    if let Some(mut _s) = self.sub_{state_idx}.take() {{ _s.drop_stores(stores); }}"
-                    )?;
-                    writeln!(w, "                    self.state = {};", state_idx + 1)?;
-                    writeln!(w, "                    continue;")?;
-                    writeln!(w, "                }}")?;
-                    writeln!(w, "                return val;")?;
+                    // The `next_into` channel (a yielded tuple or fn-ref) answers a BOOL and
+                    // writes the value's words into the consumer's `dest`, where every other
+                    // channel answers the value itself.  Delegate and delegator share a yield
+                    // type, so the sub-generator's write lands in the layout this one owes its
+                    // consumer and there is nothing to re-encode — but the call takes `dest`
+                    // and its result is not comparable to a sentinel.  Emitted the
+                    // value-channel way, it was `next_into(stores)`: rustc E0061, "this method
+                    // takes 2 arguments but 1 argument was supplied", on every `yield from` of
+                    // a tuple or a closure.  The `Simple` arm has had its own per-shape
+                    // branches for this channel since @PLAN16; this arm never grew one.
+                    if uses_next_into {
+                        writeln!(
+                            w,
+                            "                if self.sub_{sub}.as_mut().unwrap().next_into(stores, dest) {{"
+                        )?;
+                        writeln!(w, "                    return true;")?;
+                        writeln!(w, "                }}")?;
+                        writeln!(
+                            w,
+                            "                if let Some(mut _s) = self.sub_{sub}.take() {{ _s.drop_stores(stores); }}"
+                        )?;
+                        writeln!(w, "                self.state = {};", state_idx + 2)?;
+                        writeln!(w, "                continue;")?;
+                    } else {
+                        writeln!(
+                            w,
+                            "                let val = self.sub_{sub}.as_mut().unwrap().{advance}(stores);"
+                        )?;
+                        writeln!(w, "                if val == {exhaust} {{")?;
+                        // Release the sub-generator's own heap locals on the way out, the same
+                        // cleanup a handle's scope-exit free performs (loft#835) — this path
+                        // owns the sub-generator directly, so nothing else would.
+                        writeln!(
+                            w,
+                            "                    if let Some(mut _s) = self.sub_{sub}.take() {{ _s.drop_stores(stores); }}"
+                        )?;
+                        writeln!(w, "                    self.state = {};", state_idx + 2)?;
+                        writeln!(w, "                    continue;")?;
+                        writeln!(w, "                }}")?;
+                        writeln!(w, "                return val;")?;
+                    }
                 }
                 YieldSegment::ForLoopLazy {
                     pre,
@@ -1979,10 +2043,7 @@ impl Output<'_> {
             "impl loft::codegen_runtime::LoftCoroutine for {struct_name} {{"
         )?;
         self.emit_next_i64(w, &attrs, &segments, &tail, has_yf, &yield_tp)?;
-        let owns_snapshots = crate::data::is_dbref(&yield_tp)
-            && segments
-                .iter()
-                .any(|s| matches!(s, YieldSegment::ForLoopBody { .. }));
+        let owns_snapshots = crate::data::is_dbref(&yield_tp) && is_eager(&segments);
         emit_drop_stores(w, &persistent, &fields, self.data, def_nr, owns_snapshots)?;
         writeln!(w, "}}\n")?;
         self.in_coroutine_body = prev_in_coroutine;
@@ -1995,9 +2056,7 @@ impl Output<'_> {
         // ── 3. Factory function ──────────────────────────────────────────────
         let def = self.data.def(def_nr);
         let attrs: Vec<_> = def.attributes().to_vec();
-        let has_for_body = segments
-            .iter()
-            .any(|s| matches!(s, YieldSegment::ForLoopBody { .. }));
+        let has_for_body = is_eager(&segments);
         emit_factory_fn(
             w,
             &fn_name,

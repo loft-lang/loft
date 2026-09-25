@@ -216,8 +216,13 @@ fn a_generator_takes_every_parameter_kind() {
 
 // --- Delegation -----------------------------------------------------------------------------
 //
-// Only the argument-free sub-generator is pinned here: `yield from sub(arg)` does not compile
-// on --native (loft#1277), and the manual forward the chapter shows is what covers that case.
+// Only the argument-free sub-generator is pinned here, because the ARGUMENT case has a guard of
+// its own: `tests/scripts/1277-yield-from-passes-arguments-and-ends-on-exhaustion.loft`.
+// ⚠ This note read "`yield from sub(arg)` does not compile on --native (loft#1277)" until
+// 2026-09-25, quoting the issue as the reason for the gap when loft#1277 is the fix that closed
+// it — measured that day, `yield from sub(5)` answers identically on both backends.  A guard
+// that limits its own coverage by citing a CLOSED issue keeps the gap after the reason is
+// gone; cite the guard that covers the case instead.
 
 fn lvl3() -> iterator<integer> {
   yield 3;

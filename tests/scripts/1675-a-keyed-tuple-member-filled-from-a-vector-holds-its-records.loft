@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A keyed tuple member given a VECTOR value holds that vector's records, inserted by key —
+// exactly as a keyed STRUCT field does (loft#1159) — and the write REPLACES what the member held
+// (loft#1675, `formal/tuples.md` `(T-Cons)`, `formal/calls.md` `(F-Ret)`).
+//
+// `return (v, 2)` with a `vector<K>` for a `hash<K[k]>` member compiled and answered an EMPTY
+// hash on both backends: the member was written with `OpReplaceKeyed`, which walks its source
+// under the DESTINATION's type, so a vector read as a `hash` found nothing, an `index` kept one
+// record, and a `sorted` searched unsorted storage and answered another key's record.  A keyed
+// SOURCE was always right; only a vector value was lost.
+//
+// Every cell reads a record by key as well as the length: a length alone passed for `sorted`,
+// whose storage IS a vector, while its lookup answered the wrong record.
+//
+// @falsified-at: d5776bb68 — interpret exit 1 -> 0, interpret 5 assertion failures -> 0, native exit 1 -> 0, native 10 assertion failures -> 0
+// @falsified-by: tests/falsified/1675-a-keyed-tuple-member-filled-from-a-vector-holds-its-records.patch — the same channels.
+//   CHANNEL: the assertion channel — every cell compiles and runs on the control and answers
+//     a wrong value: h1/h3/h4 an empty or one-record member, h2 another key's record, h6 an
+//     empty hash beside the struct field's two.
+//   WITNESS: on d5776bb68 `ret_hash()` answers `len 0` and `ret_sorted()` answers `nine` for key 3.
+//   HOLDS: h5 (a keyed source) passes on both trees; leak and panic are equal.
+
+struct K1675 { k: integer, s: text }
+struct St1675 { t: (hash<K1675[k]>, integer) }
+struct H1675 { h: hash<K1675[k]> }
+
+fn ret_hash() -> (hash<K1675[k]>, integer) {
+  v = [K1675 { k: 5, s: "five" }, K1675 { k: 6, s: "six" }];
+  return (v, 2);
+}
+fn ret_sorted() -> (sorted<K1675[k]>, integer) {
+  v = [K1675 { k: 9, s: "nine" }, K1675 { k: 3, s: "three" }];
+  return (v, 2);
+}
+fn ret_index() -> (index<K1675[k]>, integer) {
+  v = [K1675 { k: 9, s: "nine" }, K1675 { k: 3, s: "three" }];
+  return (v, 2);
+}
+fn ret_keyed() -> (hash<K1675[k]>, integer) {
+  h: hash<K1675[k]> = [K1675 { k: 5, s: "five" }];
+  return (h, 2);
+}
+fn ret_dupes() -> (hash<K1675[k]>, integer) {
+  v = [K1675 { k: 5, s: "a" }, K1675 { k: 5, s: "b" }, K1675 { k: 6, s: "c" }];
+  return (v, 2);
+}
+
+fn test_h1_a_hash_member_from_a_vector() {
+  a = ret_hash();
+  assert(len(a.0) == 2 && a.0[6].s == "six" && a.0[5].s == "five" && a.1 == 2,
+    "got {len(a.0)} {a.1}");
+}
+
+fn test_h2_a_sorted_member_is_searched_in_order() {
+  b = ret_sorted();
+  assert(len(b.0) == 2 && b.0[3].s == "three" && b.0[9].s == "nine", "got {len(b.0)} {b.0[3].s}");
+}
+
+fn test_h3_an_index_member_holds_every_record() {
+  c = ret_index();
+  assert(len(c.0) == 2 && c.0[9].s == "nine" && c.0[3].s == "three", "got {len(c.0)}");
+}
+
+fn test_h4_a_struct_field_tuple_member_is_replaced() {
+  v = [K1675 { k: 5, s: "five" }];
+  s = St1675 { t: ([K1675 { k: 1, s: "x" }], 0) };
+  s.t = (v, 4);
+  assert(len(s.t.0) == 1 && s.t.0[5].s == "five" && s.t.0[1] == null && s.t.1 == 4,
+    "got {len(s.t.0)} {s.t.1}");
+}
+
+fn test_h5_a_keyed_source_still_copies() {
+  e = ret_keyed();
+  assert(len(e.0) == 1 && e.0[5].s == "five", "got {len(e.0)}");
+}
+
+fn test_h6_duplicate_keys_agree_with_the_struct_field() {
+  g = ret_dupes();
+  v = [K1675 { k: 5, s: "a" }, K1675 { k: 5, s: "b" }, K1675 { k: 6, s: "c" }];
+  st = H1675 { h: v };
+  assert(len(g.0) == len(st.h) && g.0[5].s == st.h[5].s && g.0[6].s == "c",
+    "tuple {len(g.0)} {g.0[5].s}, struct {len(st.h)} {st.h[5].s}");
+}

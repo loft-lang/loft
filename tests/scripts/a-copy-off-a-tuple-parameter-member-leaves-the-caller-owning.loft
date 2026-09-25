@@ -90,9 +90,10 @@ fn pm_mk(id: integer) -> PmS { return PmS { h: PmH { id: id } }; }
 // CONTROL — the parameter member READ, not copied: nothing to hand off.
 fn f_read(p: (PmS, integer)) { note("a{p.0.h.id}"); }
 fn c_read_only() { s = pm_mk(101); t = (s, 5); f_read(t); }
-// CONTROL — a vector parameter copy, the other parameter spelling.
-fn f_vec(p: vector<PmS>) { u = p; note("a{len(u)}"); }
-fn c_vector_param() { v: vector<PmS> = [pm_mk(111)]; f_vec(v); }
+// The vector-parameter copy that stood here as a control is refused by the same rule
+// (`(H-Copy-Refuse)`, a copy of a droppable the callee does not own); it is pinned in the
+// `-refused` twin.  The suite ran it for as long as its harness judged copies AFTER code
+// generation, which drains the elided-copy record this refusal is read from.
 // CONTROL — the callee copies a member of its OWN local tuple.  That wants the member PAIRING
 // and this wants the argument rule, so the cure must not swallow it.
 fn f_own() { s = pm_mk(121); t = (s, 5); u = t; note("a{u.0.h.id}"); }
@@ -120,9 +121,6 @@ fn main() {
 
   c_read_only(); got = drain();
   assert(got == "a101,101", "CONTROL the member read, not copied: {got}");
-
-  c_vector_param(); got = drain();
-  assert(got == "a1,111", "CONTROL a vector parameter copy: {got}");
 
   c_own_local(); got = drain();
   assert(got == "a121,121", "CONTROL a member of the callee's OWN local tuple: {got}");

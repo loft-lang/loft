@@ -980,6 +980,75 @@ impl Stores {
     /// stayed a live view of the removed element, so releasing its children emptied a value
     /// the program was still reading (`445-generic-tree-walk` is the cell that showed it).
     /// Now such a binding materialises, and the release is safe.
+    /// `@FR-R-Compact` — keep the elements at `[lo, hi)`, in place: the others are released
+    /// where they stand (their owned heap, and for a linked element type its record), the
+    /// kept run is moved to the front as one block, and the length is set to `hi - lo`.
+    ///
+    /// The range must already be in bounds — `0 <= lo <= hi <= len` — because the rewrite
+    /// that emits this guards it and runs the written-out loop for any other range (a
+    /// `?`-discharged read past the end pads with defaults, which this never does); a call
+    /// outside those bounds does nothing, so a wrong guard leaves the vector as it was rather
+    /// than a shape the program never had.
+    pub fn keep_vector_range(&mut self, data: &DbRef, elem_tp: u16, lo: i64, hi: i64) {
+        if data.is_null() || lo < 0 || hi < lo {
+            return;
+        }
+        let vec_rec = self.store(data).get_u32_raw(data.rec, data.pos);
+        if vec_rec == 0 {
+            return;
+        }
+        let len = self.store(data).get_u32_raw(vec_rec, 4);
+        let (Ok(lo), Ok(hi)) = (u32::try_from(lo), u32::try_from(hi)) else {
+            return;
+        };
+        if hi > len {
+            return;
+        }
+        let linked = self.is_linked(elem_tp);
+        let slot = if linked {
+            4
+        } else {
+            u32::from(self.size(elem_tp))
+        };
+        // Release what the dropped elements own, front and back, before anything moves.
+        let owns = linked || self.owns_heap(elem_tp);
+        if owns {
+            for i in (0..lo).chain(hi..len) {
+                if linked {
+                    let rec = self.store(data).get_u32_raw(vec_rec, 8 + i * 4);
+                    if rec != 0 {
+                        let elem = DbRef {
+                            store_nr: data.store_nr,
+                            rec,
+                            pos: RECORD_PAYLOAD,
+                        };
+                        self.remove_claims(&elem, elem_tp);
+                        self.store_mut(data).delete(rec);
+                    }
+                } else {
+                    let elem = DbRef {
+                        store_nr: data.store_nr,
+                        rec: vec_rec,
+                        pos: 8 + i * slot,
+                    };
+                    self.remove_claims(&elem, elem_tp);
+                }
+            }
+        }
+        let kept = hi - lo;
+        let store = self.store_mut(data);
+        if lo > 0 && kept > 0 {
+            store.copy_block(
+                vec_rec,
+                (8 + lo * slot) as isize,
+                vec_rec,
+                8,
+                (kept * slot) as isize,
+            );
+        }
+        store.set_u32_raw(vec_rec, 4, kept);
+    }
+
     pub fn remove_vector_at(&mut self, data: &DbRef, elem_tp: u16, index: i64) -> bool {
         if !self.is_linked(elem_tp) {
             let size = u32::from(self.size(elem_tp));

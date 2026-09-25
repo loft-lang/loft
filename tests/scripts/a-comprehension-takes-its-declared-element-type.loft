@@ -1,0 +1,120 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A comprehension takes its DECLARED element type (@FR-N-Decl, @FR-N-Store).
+//
+// `[for i in 0..n { i % 7 }]` has a body typed `integer(-6, 6)` — (N-Arith) narrows a
+// remainder by a constant — and the comprehension used to give its vector the BODY's
+// type whatever the destination declared.  A typed local, a parameter and a return then
+// refused the program ("cannot change type from vector<integer> to vector<integer(-6,
+// 6)>"), and a struct FIELD accepted it: the elements were written one byte wide, as the
+// narrow type stores them, and read back eight wide through the field's declared type —
+// `[435735401677195014, 506105249678297095, 4294967202, 0, …]` for `[0, 1, 2, 3, …]` on
+// both backends, and a 200×200 grid built that way reached a corrupt reference.  An
+// integer body into a `vector<float>` field read back the same way.  A literal's elements
+// have always converted to the declared type (`parse_item`); the comprehension is the same
+// slot with one element per pass.
+//
+// Every expected value is hand-computed: `(i * 3) % 7` over 0..16 is
+// 0,3,6,2,5,1,4,0,3,6,2,5,1,4,0,3 (sum 45); `i % 7` over 0..16 sums to 43; `i & 7` over
+// 0..16 to 56; `(299 * 7) & 255` is 45; the grid's `a | b` per cell cycles 0,7,7,3,7,5,6
+// with the cell index mod 7 (35 per seven cells), so 1600 cells sum to 7997 and 40000
+// to 199997.
+// @falsified-at: cc67bbe71 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-comprehension-takes-its-declared-element-type.patch — the
+//   same channels as the control above; score it with `scripts/falsify.sh <this file> --patch
+//   <that patch>`.
+//   CHANNEL: exit (the VALUE channel) — the control refuses the typed-local cell at compile
+//   time ("cannot change type from vector<integer> to vector<integer(-6, 6)>"), which is the
+//   first defect in file order; with that cell alone removed it reaches the field cells and
+//   reads the one-byte elements eight wide (the assertions, then the grid's corrupt reference).
+//   WITNESS: `vector<integer(-6, 6)>` in the control's refusal, and `[435735401677195014, …]`
+//   for `[0, 1, 2, 3, …]` when the field cells are reached.
+//   HOLDS: leak, panic and free-refusal are equal on both trees on both backends, and
+//   `falsify` requires HERE to be clean, so all three are clean here; the control never runs
+//   far enough to leak.  A patch that moves the leak channel reintroduces a neighbour, not this.
+
+struct G { c: vector<integer> }
+struct F { c: vector<float> }
+struct B { c: vector<u8> }
+struct P { x: integer, y: integer }
+struct Grid { w: integer, h: integer, cells: vector<integer> }
+
+fn total_of(v: vector<integer>) -> integer {
+  s = 0;
+  for x in v { s += x; }
+  s
+}
+
+fn masked() -> vector<integer> { [for i in 0..16 { i & 7 }] }
+
+fn cell_get(g: Grid, x: integer, y: integer) -> integer { g.cells[y * g.w + x] ?? 0 }
+fn cell_set(g: Grid, x: integer, y: integer, v: integer) { g.cells[y * g.w + x] = v; }
+
+fn mk_grid(w: integer, h: integer, seed: integer) -> Grid {
+  g = Grid { w: w, h: h, cells: [for i in 0..w*h { (i * seed) % 7 }] };
+  g
+}
+
+fn union(a: Grid, b: Grid, out: Grid) {
+  for y in 0..a.h { for x in 0..a.w {
+    cell_set(out, x, y, cell_get(a, x, y) | cell_get(b, x, y));
+  } }
+}
+
+fn grid_check(n: integer, want: integer) {
+  a = mk_grid(n, n, 3);
+  b = mk_grid(n, n, 5);
+  o = mk_grid(n, n, 0);
+  assert(a.cells[1] == 3 && a.cells[2] == 6 && b.cells[1] == 5, "grid {n} seeds: {a.cells[1]} {a.cells[2]} {b.cells[1]}");
+  union(a, b, o);
+  chk = 0;
+  for v in o.cells { chk += v; }
+  assert(chk == want, "grid {n} union sum: {chk}");
+  assert(len(o.cells) == n * n, "grid {n} length: {len(o.cells)}");
+}
+
+fn main() {
+  // a typed local
+  v1: vector<integer> = [for i in 0..16 { i % 7 }];
+  assert(len(v1) == 16 && v1[6] == 6 && v1[7] == 0 && v1[15] == 1, "typed local: {v1}");
+  assert(total_of(v1) == 43, "typed local sum: {total_of(v1)}");
+  // a struct field
+  g = G { c: [for i in 0..16 { (i * 3) % 7 }] };
+  assert(g.c[1] == 3 && g.c[3] == 2 && g.c[15] == 3 && len(g.c) == 16, "field: {g.c}");
+  assert(total_of(g.c) == 45, "field sum: {total_of(g.c)}");
+  // a parameter and a return
+  assert(total_of([for i in 0..16 { i % 7 }]) == 43, "parameter: {total_of([for i in 0..16 { i % 7 }])}");
+  m = masked();
+  assert(len(m) == 16 && m[15] == 7 && total_of(m) == 56, "return: {m}");
+  // appended from a comprehension
+  w: vector<integer> = [];
+  w += [for i in 0..4 { i % 7 }];
+  assert(len(w) == 4 && w[3] == 3, "append: {w}");
+  // the filter form
+  f: vector<integer> = [for i in 0..20 if i % 3 == 0 { i % 7 }];
+  assert(len(f) == 7 && f[3] == 2 && total_of(f) == 21, "filter: {f}");
+  // over a vector
+  xs = [10, 20, 33];
+  gx = G { c: [for x in xs { x % 7 }] };
+  assert(gx.c[0] == 3 && gx.c[1] == 6 && gx.c[2] == 5, "over a vector: {gx.c}");
+  // an integer body into a float field
+  fl = F { c: [for i in 0..4 { i * 2 }] };
+  assert(fl.c[3] == 6.0 && fl.c[0] == 0.0 && len(fl.c) == 4, "float field: {fl.c}");
+  // a masked body into a u8 field, past the initial allocation
+  by = B { c: [for i in 0..300 { (i * 7) & 255 }] };
+  assert(by.c[0] == 0 as u8 && by.c[1] == 7 as u8 && by.c[299] == 45 as u8 && len(by.c) == 300, "u8 field: {by.c[299]}");
+  // a record element whose field takes the narrow body
+  ps: vector<P> = [for i in 0..3 { P { x: i, y: i % 7 } }];
+  assert(ps[2].x == 2 && ps[2].y == 2 && len(ps) == 3, "record element: {ps[2].y}");
+  // a tuple element with a narrow member
+  ts: vector<(integer, integer)> = [for i in 0..3 { (i, (i * 4) % 7) }];
+  assert(ts[2].0 == 2 && ts[2].1 == 1, "tuple element: {ts[2].1}");
+  // a nullable element
+  ns: vector<integer?> = [for i in 0..3 { i }];
+  assert((ns[1] ?? -1) == 1 && len(ns) == 3, "nullable element: {ns}");
+  // the grid that reached a corrupt reference: through accessors, past the allocation
+  grid_check(40, 7997);
+  grid_check(200, 199997);
+  println("done");
+}

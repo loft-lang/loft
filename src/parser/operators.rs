@@ -242,6 +242,8 @@ impl Parser {
             } else {
                 *code = v_set(var_nr, code.clone());
             }
+        } else if self.format_append_in_place(var_nr, code, false) {
+            // `@FR-R-FormatAppend` — the format's parts are written into the destination.
         } else if *tp == Type::Character {
             *code = self.cl("OpAppendCharacter", &[Value::Var(var_nr), code.clone()]);
         } else {

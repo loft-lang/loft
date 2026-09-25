@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A struct literal refuses a vector whose element STORAGE is not the field's — the
+// refusal `g.c = v` has always given (loft#893), now at the literal too.  The literal's
+// vector field is a bulk copy at the FIELD's stride, so `vector<integer(-6, 6)>` (a
+// range-typed comprehension bound without a declared type: one byte an element) into a
+// `vector<integer>` field was copied one byte wide and read back eight wide —
+// `[151521030, 0, 4294967202, 0]` for `[0, 1, 2, 3]`, silently, on both backends.
+// The cure the message names is the declared type on the source's binding.
+// @EXPECT_ERROR: Cannot assign vector<integer(-6, 6)> to a field of type vector<integer>
+// @falsified-at: cc67bbe71 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/a-struct-literal-refuses-a-vector-of-another-element-width.patch
+//   — the same channels as the control above; score it with `scripts/falsify.sh <this file>
+//   --patch <that patch>`.
+//   CHANNEL: expectations — the control COMPILES the literal (no refusal to match, so the
+//   `@EXPECT_ERROR` is unmet and the suite's verdict is FAIL) and answers garbage; here the
+//   refusal is reported and matched.
+//   WITNESS: `[151521030, 0, 4294967202, 0]` printed for `[0, 1, 2, 3]` on the control.
+//   HOLDS: leak, panic and free-refusal are equal on both trees, and `falsify` requires
+//   HERE to be clean, so all three are clean here; a program that never compiles here
+//   cannot leak.  A patch that moves the value channel with a refusal still matched
+//   reintroduces a neighbour, not this.
+
+struct G { c: vector<integer> }
+
+fn main() {
+  v = [for i in 0..4 { i % 7 }];
+  g = G { c: v };
+  println("{g.c}");
+}

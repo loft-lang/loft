@@ -65,16 +65,69 @@ fn main() {
     };
 
     let mut adapter = Adapter::default();
-    let mut stdin = io::stdin().lock();
     let stdout = io::stdout();
-    while let Some(body) = read_message(&mut stdin) {
-        let Ok(msg) = json::parse(&body) else {
-            continue; // a malformed frame is dropped — DAP has no error reply for it
-        };
+    // Requests are READ on their own thread, because a `pause` has to reach a program that is
+    // running: while `continue` runs, the main loop is inside `driver.drive` and reads nothing.
+    // The reader raises `debugger::INTERRUPT` and answers the `pause` at once — DAP sends the
+    // response BEFORE the `stopped` event the interrupted run then reports — and forwards it
+    // like every other request, so the main loop clears an interrupt nothing consumed (a pause
+    // that arrived while the program was already stopped, or after it ended).
+    let (tx, rx) = std::sync::mpsc::channel::<Parsed>();
+    std::thread::spawn(move || {
+        let mut stdin = io::stdin().lock();
+        let stdout = io::stdout();
+        while let Some(body) = read_message(&mut stdin) {
+            let Ok(msg) = json::parse(&body) else {
+                continue; // a malformed frame is dropped — DAP has no error reply for it
+            };
+            if field_str(&msg, "command").as_deref() == Some("pause") {
+                loft::debugger::INTERRUPT.store(true, std::sync::atomic::Ordering::Relaxed);
+                let request_seq = field_i64(&msg, "seq").unwrap_or(0);
+                send_response(&stdout, request_seq, "pause", true, None, None);
+            }
+            if tx.send(msg).is_err() {
+                break;
+            }
+        }
+    });
+    for msg in rx {
         if adapter.dispatch(&msg, &mut driver, &stdout) {
             break; // disconnect / terminate
         }
     }
+}
+
+/// The outgoing `seq` counter, shared by the main loop and the request reader (which answers a
+/// `pause` itself) — DAP requires every message to carry a distinct, increasing one.
+static SEQ: std::sync::atomic::AtomicI64 = std::sync::atomic::AtomicI64::new(0);
+
+fn next_seq() -> i64 {
+    SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1
+}
+
+/// A DAP response, from either thread.
+fn send_response(
+    out: &io::Stdout,
+    request_seq: i64,
+    command: &str,
+    success: bool,
+    body: Option<Parsed>,
+    message: Option<&str>,
+) {
+    let mut entries = vec![
+        ("seq", Parsed::Int(next_seq())),
+        ("type", Parsed::Str("response".into())),
+        ("request_seq", Parsed::Int(request_seq)),
+        ("success", Parsed::Bool(success)),
+        ("command", Parsed::Str(command.to_string())),
+    ];
+    if let Some(m) = message {
+        entries.push(("message", Parsed::Str(m.to_string())));
+    }
+    if let Some(b) = body {
+        entries.push(("body", b));
+    }
+    send(out, &obj(entries));
 }
 
 /// The DAP translation state: the outgoing `seq` counter, the launched program, and the
@@ -82,10 +135,6 @@ fn main() {
 /// from the engine's flat frame).
 #[derive(Default)]
 struct Adapter {
-    /// Monotonic outgoing `seq` (responses + spontaneous events share it) — DAP requires
-    /// every message to carry one.  Distinct from a request's `seq`, which is echoed as
-    /// `request_seq` and forwarded to the engine as the RPC `id`.
-    seq: i64,
     /// The launched program's path (from `launch`), used as the `stackTrace` source.
     program: String,
     /// `stopOnEntry` from `launch`; consumed at `configurationDone`.
@@ -490,16 +539,12 @@ impl Adapter {
             // ── boundaries — an honest capability bit or a clean error, never a wrong
             //    picture (§ Refusals) ───────────────────────────────────────────────
             "pause" => {
-                // v1 has no async interrupt; `supportsTerminateRequest` is advertised
-                // instead — a stop request maps to terminate/disconnect.
-                self.respond(
-                    out,
-                    request_seq,
-                    &command,
-                    false,
-                    None,
-                    Some("pause is not supported (no async interrupt); use terminate"),
-                );
+                // Already answered by the request reader, which also raised
+                // `debugger::INTERRUPT` while the program ran.  By the time the main loop gets
+                // here the run that could consume it has returned, so a pending interrupt is
+                // one nothing took — the program was stopped or had ended — and it must not
+                // stop the NEXT run.
+                loft::debugger::INTERRUPT.store(false, std::sync::atomic::Ordering::Relaxed);
             }
             "disconnect" | "terminate" => {
                 let _ = driver.drive(&format!("{{\"id\":{request_seq},\"req\":\"disconnect\"}}"));
@@ -757,8 +802,7 @@ impl Adapter {
     }
 
     fn next_seq(&mut self) -> i64 {
-        self.seq += 1;
-        self.seq
+        next_seq()
     }
 
     /// Send a DAP response for `request_seq`'s `command`.

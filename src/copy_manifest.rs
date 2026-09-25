@@ -283,11 +283,30 @@ pub fn sites() -> Vec<CopySite> {
     SITES.with(|s| s.borrow().clone())
 }
 
-/// Drop the manifest (between compilations in one process — the test harness, the REPL).
+/// Drop the emitted-copy manifest — between the two generators of one compilation
+/// ([`report`] calls it after each), so a generator is judged on the copies IT minted.  The
+/// census's verdicts stay: the second generator's copies are judged against them.
 pub fn clear() {
     SITES.with(|s| s.borrow_mut().clear());
     SELF_BINDS.with(|s| s.borrow_mut().clear());
     ELIDED_COPIES.with(|s| s.borrow_mut().clear());
+}
+
+/// Forget EVERYTHING this module holds: a new compilation is about a new program.  Called by
+/// `Parser::new`.
+///
+/// Every record here is keyed by definition and variable NUMBER, so one kept across
+/// compilations in one process names another program's function: the corpus runner, the LSP
+/// and `loft test` compile many programs in one thread.  [`clear`] was documented as the reset
+/// "between compilations" but is the between-GENERATORS one, and nothing reset between
+/// programs, so the elided copies and self-binds the lease refusal judges accumulated across
+/// every program a process compiled: a program was refused for a copy another program wrote
+/// (`lease_refuse::a_compilation_is_judged_on_its_own_lease_records`) — the same defect as
+/// `non_sentinel`'s uncleared memo (2026-09-25).
+pub fn begin_compilation() {
+    clear();
+    MATERIALISED.with(|s| s.borrow_mut().clear());
+    clear_lease();
 }
 
 /// Whether the copy-lease rules read the erased and elided records below: the census reports

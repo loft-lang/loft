@@ -649,6 +649,7 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         code_position: 0,
         code_length: 0,
         const_ref: None,
+        literal_const: u32::MAX,
         source: r.field_int(stores, ds::DEF_SOURCE) as u16,
         def_type: def_type_from_code(r.field_int(stores, ds::DEF_DEF_TYPE)),
         parent: r.field_int(stores, ds::DEF_PARENT) as u32,

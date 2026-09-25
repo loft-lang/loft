@@ -3019,6 +3019,20 @@ use #count instead"
             Type::Iterator(vtp, _) => {
                 self.append_iter(list, append, append_value, vtp.as_ref(), format, state);
             }
+            // A record-backed `&(…)` names a `__tuple<…>` RECORD (`(T-Ref-Rep)`), and
+            // `@FR-B-Ref-Uniform` makes it formatted exactly as the tuple it stands for — which
+            // a format refuses.  Formatted as a record it printed the compiler's own `_0`/`_1`
+            // fields where the stack-backed twin refused (loft#1673).
+            Type::Reference(d_nr, _) if self.data.def(d_nr).name().starts_with("__tuple<") => {
+                if !self.first_pass {
+                    diagnostic!(
+                        self.lexer,
+                        Level::Error,
+                        "Cannot format type {}",
+                        Type::Reference(d_nr, crate::data::Deps::none()).source_name(&self.data)
+                    );
+                }
+            }
             Type::Reference(d_nr, _) => {
                 // P242 fix: when `d_nr` is the current generic
                 // function's type variable AND the bound supplies

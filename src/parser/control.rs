@@ -6830,26 +6830,23 @@ impl Parser {
         (arm, exhaustive)
     }
 
-    /// #429: the frame var a match-arm field binding BORROWS from — the
-    /// subject's backing variable.  A heap match binding (`CMap { entries }`)
-    /// is a DbRef into the subject's record, so its type must carry a borrow
-    /// dep on this var (see the call site).
+    /// The element reads a tuple VALUE read takes over a `&(…)` binding, with the element
+    /// types, when `value` is such a binding — `None` for every other value.
     ///
-    /// A bare `Var` subject is the common `match m { … }` / `match self.f { … }`-
-    /// into-a-temp case.  A subject reached through GETTERS (`Wrap { inner: Holder
-    /// { items } }` binds from `OpGetField(w, …)`, and so does `match w.inner`)
-    /// still borrows from one variable — the root the chain starts at.  Reporting
-    /// `None` there left the binding dep-free, which reads as "owns its store", so
-    /// an append allocated a FRESH backing and repointed the local: the write
-    /// vanished, silently, on both backends (loft#664's shape).  A chain rooted in
-    /// a CALL has no backing variable and still yields `None`.
-    /// The element reads a tuple pattern takes over a `&(…)` binding, with the element types,
-    /// when `subject` is such a binding — `None` for every other subject.  `(T-Ref-Rep)` gives
+    /// `@FR-T-Ref` / `@FR-B-Ref-Uniform` — a `&(…)` binding denotes the bound tuple itself, so
+    /// every site that wants the tuple AS A VALUE asks here rather than testing the type's
+    /// shape for `Type::Tuple`: a bare test answers no for the `&` spelling, and the two
+    /// callers this has are the two the question has — a tuple PATTERN over the binding
+    /// (loft#1530) and a DESTRUCTURE of it.  `@FR-T-Ref-Rep` gives
     /// the binding two representations and the reads follow each: a STACK-backed tuple (all
     /// scalar members) is projected through the reference with `TupleGet`, which the
     /// generators already read that way; a `__tuple<…>` RECORD is unboxed the way a record
     /// tuple return is, its element types being the record's own fields.
-    fn ref_tuple_subject(&mut self, subject: &Value, tp: &Type) -> Option<(Value, Vec<Type>)> {
+    pub(crate) fn ref_tuple_subject(
+        &mut self,
+        subject: &Value,
+        tp: &Type,
+    ) -> Option<(Value, Vec<Type>)> {
         let Value::Var(v) = subject.unspan() else {
             return None;
         };
@@ -6894,6 +6891,19 @@ impl Parser {
         }
     }
 
+    /// #429: the frame var a match-arm field binding BORROWS from — the
+    /// subject's backing variable.  A heap match binding (`CMap { entries }`)
+    /// is a DbRef into the subject's record, so its type must carry a borrow
+    /// dep on this var (see the call site).
+    ///
+    /// A bare `Var` subject is the common `match m { … }` / `match self.f { … }`-
+    /// into-a-temp case.  A subject reached through GETTERS (`Wrap { inner: Holder
+    /// { items } }` binds from `OpGetField(w, …)`, and so does `match w.inner`)
+    /// still borrows from one variable — the root the chain starts at.  Reporting
+    /// `None` there left the binding dep-free, which reads as "owns its store", so
+    /// an append allocated a FRESH backing and repointed the local: the write
+    /// vanished, silently, on both backends (loft#664's shape).  A chain rooted in
+    /// a CALL has no backing variable and still yields `None`.
     fn match_borrow_source(&self, subject_val: &Value) -> Option<u16> {
         match subject_val.unspan() {
             Value::Var(v) => Some(*v),

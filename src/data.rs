@@ -2998,6 +2998,15 @@ impl Type {
                 a.byte_width(!a.not_null) == b.byte_width(!b.not_null) && (a.min < 0) == (b.min < 0)
             }
             (Type::Vector(a, _), Type::Vector(b, _)) => a.same_element_storage(b),
+            // A tuple element stores its members INLINE at their own widths (`(u8, u8)` is
+            // two bytes, `(integer, integer)` sixteen), so two tuples are one layout only
+            // when every member is.
+            (Type::Tuple(a), Type::Tuple(b)) => {
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|(x, y)| x.same_element_storage(y))
+            }
             _ => true,
         }
     }
@@ -3107,6 +3116,18 @@ impl Type {
                     .map(|a| a.render(data, true))
                     .collect();
                 format!("{}<{}>", data.def(d.instance_of).name, args.join(", "))
+            }
+            // A `__tuple<…>` RECORD is how `(T-Ref-Rep)` stores the tuple a record-backed `&(…)`
+            // names; the author wrote the TUPLE, so a message shows `(integer, text)` and not the
+            // compiler's record (loft#1673).  The key keeps the def name.
+            Type::Reference(t, _) if source && data.def(*t).name.starts_with("__tuple<") => {
+                let members: Vec<String> = data
+                    .def(*t)
+                    .attributes
+                    .iter()
+                    .map(|a| a.typedef.render(data, true))
+                    .collect();
+                format!("({})", members.join(", "))
             }
             Type::Enum(t, _, _) | Type::Reference(t, _) => data.def(*t).name.clone(),
             Type::Text(_) => "text".to_string(),
@@ -4635,6 +4656,14 @@ pub struct Definition {
     /// DbRef into CONST_STORE for pre-built vector constants.
     /// `None` for non-constant definitions or constants that couldn't be pre-built.
     pub const_ref: Option<crate::keys::DbRef>,
+    /// `@FR-R-Const` — the CONSTANT definition a literal-bodied function stands for, or
+    /// `u32::MAX`.  A zero-parameter function whose whole body is one vector literal over
+    /// literals (`fn codes() -> vector<integer> { [32, 33, …] }`) is given a synthetic
+    /// `DefType::Constant` twin holding that literal, pre-built once in `CONST_STORE` like
+    /// a top-level constant; `const_fn::rewrite` answers a call that only READS the result
+    /// with a view of it (`OpConstRef`) instead of the call.  Parse-time only: the scope
+    /// pass consumes it before the bundle is written, so the codec omits it.
+    pub literal_const: u32,
     /// Post-2c: explicit `size(N)` annotation on an integer subtype
     /// (e.g. `pub type i32 = integer size(4);`).  `None` means use the
     /// limit()-based heuristic; `Some(n)` forces the stored-width to n
@@ -7027,6 +7056,7 @@ impl Data {
             instance_args: Vec::new(),
             builtin: false,
             const_ref: None,
+            literal_const: u32::MAX,
             forced_size: None,
             purity: Purity::Unknown,
             field_groups: Vec::new(),

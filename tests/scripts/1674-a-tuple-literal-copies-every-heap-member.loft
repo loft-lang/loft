@@ -1,0 +1,175 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+// `@FR-T-Cons` — a heap element is COPIED into the tuple, from every source and off every base.  That is the rule for a tuple
+// LITERAL's member, and it is not `@FR-B-Copy`'s bind boundary: `(B-View-Base)` governs a
+// plain bind (`af = bx.v`) and says a projection off a BORROWED base views, while a literal's
+// member is copied from every source and off every base.  Reading the two as one question is
+// what made this look like a decided edge.
+//
+// A COLLECTION-typed member read as a PROJECTION did not copy.  `tuple_member_owned_copy`
+// reaches its keyed and vector branches only through the arm for a projection source, and that
+// arm guarded on `Type::heap_def_nr()`, which answers `Some` for a `Reference` and a
+// struct-enum and NOTHING else — so a `vector` or `hash` field read failed it and fell to
+// `_ => return None`: no copy, the source's handle stored, the member a second name for the
+// field's store (loft#1674).  A struct field read copied because it has a def; a member read
+// off a tuple LOCAL copied because it takes the `TupleGet` arm.  The cure asks the droppable
+// question of the member's TYPE (`Data::type_owns_droppable_anywhere`, built "for a container
+// that has no def of its own"), which a collection can answer.
+//
+// ⚠ The DROPPABLE edge is not a cell here, and the reason is a measurement: a
+// `vector<Droppable>` field read as a tuple-literal member is REFUSED, on both trees and both
+// backends — *"Error[copy-of-droppable]: cannot copy a member of `s` here — `s` still owns that
+// member and releases it when it goes, so the copy releases it a second time"*.  That gate is
+// pre-existing (identical on 61d1e2f4e, before the cure) and belongs to a different site, so
+// the shape cannot be written as a passing cell in this file.  It is what makes the cure's
+// conservatism unobservable from here rather than untested: the copy is never reached.
+//
+// Axes this file MOVES:  the member's SOURCE (a struct field, a tuple member, a tuple member
+//                        through a `&(…)` link, a field of a BY-VALUE parameter), the member TYPE (integer / text / struct /
+//                        vector / hash / a vector of droppables), and the observation (a later
+//                        write to the source, and the swap idiom).
+// Axes it HOLDS FIXED:   arity 2 throughout — the member count was never the question.
+//
+// @falsified-at: 61d1e2f4e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0,
+//   native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1674-a-tuple-literal-copies-every-heap-member.patch —
+//   interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0,
+//   native 1 assertion failures -> 0
+//   CHANNEL: assert — every cell computes a value on both trees; the control's answers are the
+//   aliased ones.  Not exit, not leak: nothing crashes and nothing leaks either way, which is
+//   what made this survive.
+//   ARMED: no instrument — a plain run on either backend reads it.  `LOFT_POISON=1
+//   LOFT_STRICT_STORES=1` is clean on both trees; the copy the fix adds owns its own backing.
+//   WITNESS: `test_a_collection_field_read_copies_like_its_neighbours`, the cell that reads the
+//   plain bind and the tuple member of the SAME field in one program: `1 / 2` on the control,
+//   `1 / 1` here.
+//   HOLDS: every control cell below answers identically on both trees — the integer, text and
+//   struct members, the element read, and the local swaps.  They are what says the fix did not
+//   widen past the collection case.
+//
+// Cross-backend; `main` runs every cell so the leak gate reads the file.
+
+struct Hp1674 { p: vector<text>, q: vector<text> }
+struct Ks1674 { k: integer }
+struct Hk1674 { p: hash<Ks1674[k]>, q: vector<text> }
+struct In1674 { n: integer }
+struct Hi1674 { p: In1674, q: In1674 }
+struct Ht1674 { p: text, q: text }
+struct Hn1674 { a: integer, b: integer }
+struct Bg1674 { items: vector<integer>, nm: text }
+
+// `@FR-T-Cons`: "a PARAMETER handed to a tuple keeps aliasing its caller ... a property of the
+// parameter rather than of the construction".  A projection off a BY-VALUE heap parameter
+// inherits that — the callee's own copy already makes `q.items` independent — so the cure must
+// not copy there.  A `&` link is the opposite: its root is an argument too, but what it names is
+// the caller's place, so `test_the_swap_idiom_completes_through_a_link` must keep its copy.  The
+// pair is what says the carve-out is the root's TYPE and not "is it an argument".
+fn pair_off_a_value_parameter(q: Bg1674) -> (vector<integer>, text) { return (q.items, q.nm); }
+
+fn swap_through_link(p: &(vector<text>, vector<text>)) {
+  v = (p.1, p.0);
+  p.0 = v.0;
+  p.1 = v.1;
+}
+
+fn test_a_collection_field_read_copies_like_its_neighbours() {
+  // The plain bind and the tuple-literal member, of the SAME field, in one program.  On the
+  // control they disagree — which is the whole defect, statable without a rule reference.
+  s = Hp1674 { p: ["a"], q: ["b", "c"] };
+  plain = s.p;
+  v = (s.q, s.p);
+  s.p += ["added"];
+  assert(len(plain) == 1, "the plain bind copies: {len(plain)}");
+  assert(len(v.1) == 1, "and so does the tuple-literal member: {len(v.1)}");
+  assert(len(s.p) == 2, "the source itself grew: {len(s.p)}");
+}
+
+fn test_a_keyed_field_read_copies() {
+  s = Hk1674 { p: [Ks1674 { k: 1 }], q: ["b"] };
+  v = (s.q, s.p);
+  s.p[2] = Ks1674 { k: 2 };
+  assert(len(v.1) == 1, "a hash member is a copy: {len(v.1)}");
+  assert(len(s.p) == 2, "the source itself grew: {len(s.p)}");
+}
+
+fn test_the_two_bases_agree() {
+  // A member read off a STRUCT FIELD and one read off a TUPLE MEMBER, same type, same
+  // ownership.  The control answers 2 and 1 — one of the two had to be wrong.
+  s = Hp1674 { p: ["a"], q: ["b", "c"] };
+  vs = (s.q, s.p);
+  s.p += ["added"];
+  t: (vector<text>, vector<text>) = (["a"], ["b", "c"]);
+  vt = (t.1, t.0);
+  t.0 += ["added"];
+  assert(len(vs.1) == 1, "off a struct field: {len(vs.1)}");
+  assert(len(vt.1) == 1, "off a tuple member: {len(vt.1)}");
+}
+
+fn test_the_swap_idiom_completes_through_a_link() {
+  // The same defect wearing a `&(…)`: the member reads through a link lower as projections
+  // too, so they failed the same guard.  Aliased, both members ended as the FIRST one's value.
+  t: (vector<text>, vector<text>) = (["a1", "a2"], ["b1"]);
+  swap_through_link(t);
+  assert(len(t.0) == 1 && t.0[0] == "b1", "member 0 took member 1: {len(t.0)}");
+  assert(len(t.1) == 2, "and member 1 took member 0: {len(t.1)}");
+}
+
+fn test_a_projection_off_a_value_parameter_needs_no_copy_of_its_own() {
+  // Observable only as independence from the CALLER, which the parameter already gives: the
+  // cell exists so a later widening past the carve-out has something to fail.  Widening it
+  // cost `1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft` a `__vdb` backing per exit
+  // and took its three `advice[avoidable-copy]` lines from a real `line:col` to `0:0`.
+  b = Bg1674 { items: [11, 12], nm: "n11" };
+  t = pair_off_a_value_parameter(b);
+  b.items[0] = 99;
+  assert(t.0[0] == 11 && t.1 == "n11", "the tuple is independent of the caller: {t.0[0]} {t.1}");
+  assert(b.items[0] == 99, "and the caller's own write landed: {b.items[0]}");
+}
+
+fn test_the_member_kinds_that_already_copied() {
+  // Controls.  Each of these took a different arm of the same helper and was already right;
+  // they are here to say the cure did not widen past the collection case.
+  si = Hn1674 { a: 1, b: 2 };
+  vi = (si.b, si.a);
+  si.a = 99;
+  assert(vi.0 == 2 && vi.1 == 1, "integer fields copy: {vi.0} {vi.1}");
+
+  st = Ht1674 { p: "one", q: "two" };
+  vt = (st.q, st.p);
+  st.p = "changed";
+  assert(vt.0 == "two" && vt.1 == "one", "text fields copy: {vt.0} {vt.1}");
+
+  ss = Hi1674 { p: In1674 { n: 1 }, q: In1674 { n: 2 } };
+  vs = (ss.q, ss.p);
+  ss.p.n = 99;
+  assert(vs.0.n == 2 && vs.1.n == 1, "struct fields copy: {vs.0.n} {vs.1.n}");
+
+  w: vector<In1674> = [In1674 { n: 1 }, In1674 { n: 2 }];
+  ve = (w[1]?.n, w[0]?.n);
+  w[0] = In1674 { n: 99 };
+  assert(ve.0 == 2 && ve.1 == 1, "element reads copy: {ve.0} {ve.1}");
+}
+
+fn test_the_local_swaps_that_already_worked() {
+  p = (4, 5);
+  v = (p.1, p.0);
+  p.0 = v.0;
+  p.1 = v.1;
+  assert(p.0 == 5 && p.1 == 4, "scalar members swap: {p.0} {p.1}");
+
+  q: (vector<text>, vector<text>) = (["a"], ["b", "c"]);
+  vq = (q.1, q.0);
+  q.0 = vq.0;
+  q.1 = vq.1;
+  assert(len(q.0) == 2 && len(q.1) == 1, "vector members swap: {len(q.0)} {len(q.1)}");
+}
+
+fn main() {
+  test_a_collection_field_read_copies_like_its_neighbours();
+  test_a_keyed_field_read_copies();
+  test_the_two_bases_agree();
+  test_the_swap_idiom_completes_through_a_link();
+  test_a_projection_off_a_value_parameter_needs_no_copy_of_its_own();
+  test_the_member_kinds_that_already_copied();
+  test_the_local_swaps_that_already_worked();
+}

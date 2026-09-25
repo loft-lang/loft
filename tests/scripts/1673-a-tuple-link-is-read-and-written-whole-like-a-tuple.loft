@@ -1,0 +1,156 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A `&(…)` link is read and written WHOLE exactly as the tuple it names — in both of the
+// representations `(T-Ref-Rep)` gives it (loft#1673, `formal/binding.md` @FR-B-Ref-Uniform,
+// `formal/tuples.md` `(T-Ref-El)`: "never a runtime fault and never an ICE").
+//
+// A STACK-backed link (every member a scalar) was an internal compiler error on both backends
+// when read whole — passed as a `(τ, τ)` argument, returned, bound to a local — and when
+// written whole (`p = (8, 9)`), while its `p.i` reads and writes worked.  The generators' link
+// read had no arm for a tuple; a whole read is now the tuple of its element reads through the
+// link.  A whole WRITE is written through, element by element, as `p.0 = a; p.1 = b` is — the
+// right-hand side evaluated first, so a swap swaps — and the RECORD-backed twin (a heap
+// member), which refused the write with a type error, now writes through the same way, since
+// `@FR-B-Ref-Uniform` makes a `&τ` written exactly as a `τ` is.
+//
+// Every cell runs at both representations where that is the axis: `(integer, integer)` is
+// stack-backed, `(integer, text)` is a `__tuple<…>` record.
+//
+// @falsified-at: 989d30214 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1673-a-tuple-link-is-read-and-written-whole-like-a-tuple.patch — the same channels.
+//   CHANNEL: the exit code — on the control the file does not compile on either backend: the
+//     stack-backed whole reads and writes are an internal compiler error, the record-backed
+//     write a type error.
+//   WITNESS: on 989d30214 the run stops at compile time before any cell runs.
+//   HOLDS: leak and panic are equal on both trees.
+//   The c-cells (a collection member REPLACED) have a second control: bb120030f, this fix's
+//   first version, which appended to a live vector member and left a `hash` member empty —
+//   there they fail on the assertion channel (5 on interpret, 10 on native), exit 1 -> 0.
+
+fn take1673(q: (integer, integer)) -> integer { q.0 + q.1 }
+fn takes1673(q: (integer, text)) -> text { "{q.0}{q.1}" }
+
+fn arg_s(p: &(integer, integer)) -> integer { p.0 = p.0 + 0; take1673(p) }
+fn arg_r(p: &(integer, text)) -> text { p.0 = p.0 + 0; takes1673(p) }
+fn ret_s(p: &(integer, integer)) -> (integer, integer) { p.0 = p.0 + 0; return p; }
+fn ret_r(p: &(integer, text)) -> (integer, text) { p.0 = p.0 + 0; return p; }
+fn bind_s(p: &(integer, integer)) -> integer { p.0 = p.0 + 0; q = p; q.0 = 99; q.0 + q.1 + p.0 }
+fn bind_r(p: &(integer, text)) -> text { p.0 = p.0 + 0; q = p; q.0 = 99; "{q.0}{q.1}{p.0}" }
+fn write_s(p: &(integer, integer)) { p = (8, 9); }
+fn write_r(p: &(integer, text)) { p = (8, "y"); }
+fn swap_s(p: &(integer, integer)) { p = (p.1, p.0); }
+fn swap_r(p: &(text, text)) { p = (p.1, p.0); }
+
+fn test_r1_a_whole_read_as_an_argument() {
+  t = (4, 5);
+  u = (4, "x");
+  assert(arg_s(t) == 9, "stack-backed: got {arg_s(t)}");
+  assert(arg_r(u) == "4x", "record-backed: got {arg_r(u)}");
+}
+
+fn test_r2_a_whole_read_as_a_return() {
+  t = (4, 5);
+  r = ret_s(t);
+  u = (4, "x");
+  s = ret_r(u);
+  assert(r.0 == 4 && r.1 == 5, "stack-backed: got {r.0},{r.1}");
+  assert(s.0 == 4 && s.1 == "x", "record-backed: got {s.0},{s.1}");
+}
+
+fn test_r3_a_whole_read_bound_to_a_local_is_a_copy() {
+  t = (4, 5);
+  u = (4, "x");
+  assert(bind_s(t) == 108, "stack-backed: got {bind_s(t)}");
+  assert(t.0 == 4, "the caller's tuple is untouched by the copy: got {t.0}");
+  assert(bind_r(u) == "99x4", "record-backed: got {bind_r(u)}");
+  assert(u.0 == 4, "the caller's tuple is untouched by the copy: got {u.0}");
+}
+
+fn test_w1_a_whole_write_reaches_the_caller() {
+  t = (4, 5);
+  write_s(t);
+  u = (4, "x");
+  write_r(u);
+  assert(t.0 == 8 && t.1 == 9, "stack-backed: got {t.0},{t.1}");
+  assert(u.0 == 8 && u.1 == "y", "record-backed: got {u.0},{u.1}");
+}
+
+fn test_w2_a_whole_write_that_reads_itself_swaps() {
+  t = (4, 5);
+  swap_s(t);
+  u = ("a", "b");
+  swap_r(u);
+  assert(t.0 == 5 && t.1 == 4, "stack-backed: got {t.0},{t.1}");
+  assert(u.0 == "b" && u.1 == "a", "record-backed: got {u.0},{u.1}");
+}
+
+fn test_w3_a_whole_write_in_a_loop() {
+  u = (0, "");
+  for i in 0..1000 { write_r(u); u.0 = i; }
+  assert(u.0 == 999 && u.1 == "y", "got {u.0},{u.1}");
+}
+
+fn test_l1_a_local_link_read_and_written_whole() {
+  t = (4, 5);
+  q = &t;
+  s = take1673(q);
+  q = (6, 7);
+  assert(s == 9, "the read through the local link: got {s}");
+  assert(t.0 == 6 && t.1 == 7, "the write through the local link: got {t.0},{t.1}");
+}
+
+// A whole write REPLACES a collection member; it does not append to it.  Every cell starts
+// from a NON-EMPTY member and reads element 0 as well as the length, because append and
+// replace agree on an empty member — the cells above could not tell them apart, and the
+// first version of this fix appended (`["old"]` became `["old", "new", "pair"]`).
+struct S1673 { v: vector<text>, n: integer }
+struct K1673 { k: integer, s: text }
+fn put_v(p: &(vector<text>, integer), i: integer) { p = (["v{i}", "w{i}"], i); }
+fn swap_v(p: &(vector<text>, vector<text>)) { p = (p.1, p.0); }
+fn put_st(p: &(S1673, integer)) { p = (S1673 { v: ["s1", "s2"], n: 5 }, 6); }
+fn put_h(p: &(hash<K1673[k]>, integer)) { p = ([K1673 { k: 5, s: "five" }], 1); }
+fn put_nv(p: &(vector<vector<integer>>, integer)) { p = ([[1, 2], [3]], 9); }
+
+fn test_c1_a_vector_member_is_replaced() {
+  t: (vector<text>, integer) = (["old"], 0);
+  put_v(t, 1);
+  assert(len(t.0) == 2 && t.0[0] == "v1" && t.0[1] == "w1" && t.1 == 1,
+    "got {len(t.0)} {t.0[0]} {t.1}");
+}
+
+fn test_c2_repeated_writes_do_not_accumulate() {
+  t: (vector<text>, integer) = (["old"], 0);
+  for i in 0..4 { put_v(t, i); }
+  assert(len(t.0) == 2 && t.0[0] == "v3" && t.1 == 3, "got {len(t.0)} {t.0[0]} {t.1}");
+}
+
+fn test_c3_two_vector_members_swap() {
+  u: (vector<text>, vector<text>) = (["a1", "a2"], ["b1"]);
+  swap_v(u);
+  assert(len(u.0) == 1 && u.0[0] == "b1", "member 0: got {len(u.0)} {u.0[0]}");
+  assert(len(u.1) == 2 && u.1[0] == "a1" && u.1[1] == "a2", "member 1: got {len(u.1)} {u.1[0]}");
+  for _ in 0..3 { swap_v(u); }
+  assert(len(u.0) == 2 && u.0[0] == "a1" && len(u.1) == 1, "after 4 swaps, the original order: got {len(u.0)} {u.0[0]}");
+}
+
+fn test_c4_a_struct_member_is_replaced() {
+  x: (S1673, integer) = (S1673 { v: ["o1", "o2", "o3"], n: 1 }, 0);
+  put_st(x);
+  assert(len(x.0.v) == 2 && x.0.v[0] == "s1" && x.0.n == 5 && x.1 == 6,
+    "got {len(x.0.v)} {x.0.v[0]} {x.0.n} {x.1}");
+}
+
+fn test_c5_a_hash_member_is_replaced() {
+  t: (hash<K1673[k]>, integer) = ([K1673 { k: 1, s: "one" }, K1673 { k: 2, s: "two" }], 0);
+  put_h(t);
+  assert(len(t.0) == 1 && t.0[5].s == "five" && t.0[1] == null && t.1 == 1,
+    "got {len(t.0)} {t.1}");
+}
+
+fn test_c6_a_nested_vector_member_is_replaced() {
+  y: (vector<vector<integer>>, integer) = ([[7, 7, 7], [8], [9]], 0);
+  put_nv(y);
+  assert(len(y.0) == 2 && len(y.0[0]) == 2 && y.0[0][1] == 2 && y.0[1][0] == 3 && y.1 == 9,
+    "got {len(y.0)} {len(y.0[0])}");
+}

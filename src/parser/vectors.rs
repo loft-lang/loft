@@ -3029,6 +3029,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         block: bool,
         parent_tp: &Type,
     ) -> Type {
+        // The same question `parse_vector` asks of this type before handing it over: is the
+        // element type the destination's (a typed local, a field, a parameter, a return) or
+        // still to be inferred from the body?
+        let declared = declared_element(in_t);
         let Some(src_id) = self.lexer.has_identifier() else {
             diagnostic!(self.lexer, Level::Error, "Expect variable after for");
             return Type::Null;
@@ -3118,16 +3122,24 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // bare `S` that then mismatches the rewritten vector type.  Other element
         // types keep `Unknown` — no behaviour change for non-nullable
         // comprehensions.
-        let body_expected = if matches!(&*in_t, Type::Enum(e, true, _)
-            if self.data.def(*e).name.starts_with("__nullable<"))
-        {
+        let nullable_hint = matches!(&*in_t, Type::Enum(e, true, _)
+            if self.data.def(*e).name.starts_with("__nullable<"));
+        let body_expected = if nullable_hint {
             in_t.clone()
         } else {
+            // NOT the declared element type, although LOFT.md's rule (*the expected type
+            // wherever there is one*) would have it be — seeded, a nested comprehension into
+            // a `vector<vector<integer>>` resolves (today it is refused), but the hint also
+            // types the `[]` arm of `w.ns[i] ?? []` in a body building into a FIELD, and that
+            // arm's fresh vector inside the buffer route is a use-after-free
+            // (`1195-a-comprehension-reads-its-destination-field`, measured).  That route
+            // owes the fix before the hint can be handed down.
             // @PLN25 storage-vs-access-nullability — INFERRED comprehensions stay DENSE
             // (the struct-literal PEEK is retired). A nullable element comes only from a
             // DECLARED `vector<?S>` (the first arm above).
             Type::Unknown(0)
         };
+        let body_pos = self.lexer.peek_pos().clone();
         let mut body = Value::Null;
         let body_type = self.parse_block("for", &mut body, &body_expected);
         // #319 — a struct-literal body returns `Rewritten(Reference(...))`.
@@ -3135,7 +3147,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // leaking it into the vector's element type broke every later
         // `qs[i] ?? …` on the comprehension result (the ncc temp lost its
         // dep chain and stack slot — "Incorrect var __ncc_N[65535]").
-        *in_t = if let Type::Rewritten(t) = body_type {
+        let mut elem_type = if let Type::Rewritten(t) = body_type {
             *t
         } else {
             body_type
@@ -3145,7 +3157,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // downstream lifetime/codegen reads as an Unknown definition
         // (`control.rs` block_result, `data.rs::def`) and panics.  Report it
         // cleanly and recover with a dense element type so later passes don't crash.
-        if matches!(*in_t, Type::Void) {
+        if matches!(elem_type, Type::Void) {
             if !self.first_pass {
                 diagnostic!(
                     self.lexer,
@@ -3154,7 +3166,58 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                      `for … in …` cannot be empty"
                 );
             }
-            *in_t = crate::data::I64.clone();
+            elem_type = crate::data::I64.clone();
+        }
+        // @FR-N-Decl, @FR-N-Store — a DECLARED element type is the slot's commitment, and the
+        // body's value is stored INTO it: it converts (a range-typed `i % 7` widens to the
+        // `integer` the slot holds, an integer body becomes the `float` of a `vector<float>`)
+        // and the vector keeps the type its destination declared.  A literal's elements have
+        // always taken this road (`parse_item`); the comprehension is the same slot with one
+        // element per pass, and it used to REPLACE the declared type with the body's own —
+        // which a typed local, a parameter and a return then refused ("cannot change type
+        // from vector<integer> to vector<integer(-6, 6)>"), while a struct FIELD built the
+        // vector one byte an element and read it back eight wide, silently.
+        //
+        // Storage is the test, not kind: `is_equal` reads two integers as one type whatever
+        // their ranges, and in a vector the range IS the stride (loft#751), so a body of
+        // `integer(-6, 6)` into `integer` is a conversion here even though the register
+        // value is the same.  A body that already IS the declared type takes the road it
+        // always took — the element type is the body's, whose DEPS name what the element
+        // views (the buffer route reads them; typed by the destination's deps, a struct
+        // element became a view of the field it was replacing).  Pass 1 keeps the declared
+        // type and converts nothing — a body's type there can still be a placeholder (a
+        // call to a function declared below), and both passes must agree on the vector's
+        // type; pass 2 converts.  The nullable-hint arm above is outside all of this: its
+        // body is built AS the declared element (the `Some` variant), so the type the block
+        // answers is what the vector holds.
+        let body_resolved = !crate::data::Data::type_has_unresolved(&elem_type);
+        let same_kind = body_resolved && elem_type.is_equal(in_t);
+        let same = same_kind && elem_type.same_element_storage(in_t);
+        if nullable_hint || !declared || same || crate::data::Data::type_has_unresolved(in_t) {
+            *in_t = elem_type;
+        } else if same_kind {
+            // The same kind at another width — `integer(-6, 6)` for `integer`, a tuple with
+            // such a member: the value in the register is the same, so nothing converts and
+            // the declared type decides the width the element is written at.
+        } else if !self.first_pass && body_resolved {
+            let want = in_t.clone();
+            if !self.convert_store_lenient(
+                &mut body,
+                &elem_type,
+                &want,
+                "the comprehension element",
+                Some(&body_pos),
+            ) {
+                diagnostic!(
+                    self.lexer,
+                    Level::Error,
+                    "cannot store {} elements in a vector<{}> (would lose precision); \
+                     cast the body explicitly with 'as {}'",
+                    elem_type.source_name(&self.data),
+                    want.source_name(&self.data),
+                    want.source_name(&self.data)
+                );
+            }
         }
         self.in_loop = in_loop;
         self.vars.finish_loop(loop_nr);
@@ -3727,8 +3790,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // pass 2 refuse its own resolved literal: "cannot store (integer, Q) elements in a
         // vector<(integer, unknown)>".  `is_unknown()` alone sees only the bare and
         // vector-wrapped forms.
-        let declared =
-            !assign_tp.is_unknown() && !crate::data::Data::type_has_unresolved(&assign_tp);
+        let declared = declared_element(&assign_tp);
         let is_field = self.is_field(val);
         let is_var = matches!(val, Value::Var(_));
         // Empty `[]`.  A new variable / struct field keeps the lightweight
@@ -6371,6 +6433,35 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         self.data.def(vec_def).known_type()
     }
 
+    /// Does a PROJECTION member need a copy of its own, or does its root already give one?
+    ///
+    /// The `Value::Var` arm of [`Self::tuple_member_owned_copy`] skips a by-value heap ARGUMENT
+    /// because `@FR-T-Cons` says so out loud — "a PARAMETER handed to a tuple keeps aliasing its
+    /// caller: that is `B-Ref-Alias`, and it is a property of the parameter rather than of the
+    /// construction".  A projection off such a parameter inherits that: the callee's own copy of
+    /// the struct already makes `q.items` independent of the caller's, so copying again is a
+    /// copy of a copy.  Measured: without this,
+    /// `1350-a-lifetime-tuple-result-joins-a-tuple-literal.loft` gained a `__vdb` backing per
+    /// exit and its three `advice[avoidable-copy]` lines lost their `line:col`, reporting `0:0`
+    /// and a synthetic lambda name instead of the site the author can act on.
+    ///
+    /// A `&` link is the opposite case and must copy: there the root IS an argument, and what it
+    /// names is the CALLER's place, so a member read through it aliases across the frame
+    /// boundary (loft#1674's third face — a swap through a `&(…)` lost an element).  So the
+    /// question is the root's TYPE, not whether it is an argument.
+    fn projection_root_needs_copy(&self, val: &Value) -> bool {
+        let Some(root) = val.base_var() else {
+            return true;
+        };
+        if root >= self.vars.count() || !self.vars.is_argument(root) {
+            return true;
+        }
+        // `@FR-N-Shape` — through `base()`, the spelling the five other "is this a link?" sites
+        // use: asked bare, an `Optional` wrapper hides the link from its own test and the
+        // `ir_walker_audit.py optional` ratchet counts this as a new opaque shape test.
+        matches!(self.vars.tp(root).base(), Type::RefVar(_))
+    }
+
     /// loft#1102 — rewrite a tuple member that names a heap LOCAL into an owned copy of it,
     /// answering the copy's type.
     ///
@@ -6431,11 +6522,47 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             // already carry in `tests/ownership_drop_gate.baseline` (`c_field_field`,
             // `c_elem_push`, …).  Until that hand-off exists such a member keeps its alias, which
             // releases once.
+            //
+            // ⚠ `@FR-T-Cons` — the droppable question is asked of the member's TYPE, not through
+            // `heap_def_nr()`.  That accessor answers `Some` for a `Reference` and a
+            // struct-enum and NOTHING else, so a COLLECTION-typed projection —
+            // `(s.q, s.p)` over a `vector` or `hash` field — failed the guard and fell to
+            // `_ => return None`: no copy, the source's handle stored, the member a second
+            // name for the field's store (loft#1674).  Measured in one program on both
+            // backends: `vs = (s.q, s.p)` viewed its `vector<text>` field while
+            // `vt = (t.1, t.0)` copied the same type off a tuple local, because those take
+            // the `TupleGet` arm above.  `Data::type_owns_droppable_anywhere` is the twin
+            // built for the container case — its own doc says "for a container that has no
+            // def of its own (a `vector<S>`)" — and it forwards a collection to its element,
+            // which is the same hazard stated for the right shape.
+            //
+            // A collection whose ELEMENT owns a droppable answers `false` here and takes no
+            // copy — and that is not the alias it looks like: the shape is REFUSED further on,
+            // by `copy-of-droppable` ("`s` still owns that member and releases it when it
+            // goes"), pre-existing and on both backends.  So this arm's `false` keeps a
+            // program that is refused anyway, which is why the record case's `leases_whole`
+            // escape has no twin here: a collection has no def to lease, and admitting one
+            // would need the element-level question plus a measurement of what the refusal
+            // then has left to say.
             Value::Call(d, _)
                 if crate::use_analysis::is_projection_op(&self.data, *d)
-                    && tp.heap_def_nr().is_some_and(|r| {
-                        !self.data.owns_droppable(r) || crate::lease::leases_whole(&self.data, r)
-                    }) =>
+                    && match tp.heap_def_nr() {
+                        Some(r) => {
+                            !self.data.owns_droppable(r)
+                                || crate::lease::leases_whole(&self.data, r)
+                        }
+                        // The parameter carve-out belongs to THIS branch alone — the record
+                        // branch above copied a projection off a by-value parameter before
+                        // loft#1674 and must keep doing so.  Asked of both, it REMOVED that
+                        // copy: two corpus files that the wide form left byte-identical moved
+                        // (`1367-a-tagged-projection-bound-to-a-local-is-the-pointer`,
+                        // `147-view-producer-invalidator-boundary`), which is a change in the
+                        // opposite direction to the cure and one no value cell would have shown.
+                        None => {
+                            !self.data.type_owns_droppable_anywhere(tp)
+                                && self.projection_root_needs_copy(val)
+                        }
+                    } =>
             {
                 val.unspan().clone()
             }
@@ -7229,6 +7356,15 @@ impl Parser {
         );
         true
     }
+}
+
+/// Is a collection literal's element type DECLARED — the destination's own (`v: vector<τ>`, a
+/// field, a parameter, a return), which the elements convert into — or still to be inferred
+/// from the elements themselves?  `Unknown` says the latter; so does a type carrying an
+/// unresolved member (loft#944), which is the parser's placeholder for a name declared below
+/// and not a commitment the author wrote.
+pub(crate) fn declared_element(tp: &Type) -> bool {
+    !tp.is_unknown() && !crate::data::Data::type_has_unresolved(tp)
 }
 
 pub(crate) fn is_keyed(tp: &Type) -> bool {

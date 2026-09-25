@@ -117,6 +117,9 @@ fn route(req: server::Request) {
     } else if p.starts_with("/file/") {
         rel = p[6..len(p)];
         respond_file(req, rel);
+    } else if p == "/tags" {
+        body = page_tags();
+        req.respond_html(body);
     } else if p.starts_with("/tag/") {
         tag = p[5..len(p)];
         body = page_tag(tag);
@@ -322,11 +325,8 @@ fn page_landing() -> text {
     body += "</ul></section>";
     // ── Tracker tags ───────────────────────────────────────
     body += "<section><h2>Tracker tags</h2>";
-    body += "<p>Lookup form: <code>/tag/&lt;bare-name&gt;</code>.  Examples:";
-    body += " <a href=\"/tag/P259\">/tag/P259</a>,";
-    body += " <a href=\"/tag/P262\">/tag/P262</a>,";
-    body += " <a href=\"/tag/PLAN35\">/tag/PLAN35</a>,";
-    body += " <a href=\"/tag/PLAN37\">/tag/PLAN37</a>.</p>";
+    body += "<p>Lookup form: <code>/tag/&lt;bare-name&gt;</code>.  The";
+    body += " <a href=\"/tags\">tags index</a> lists every tag with its reference count.</p>";
     body += "</section>";
     page("loft-view", body)
 }
@@ -746,6 +746,55 @@ fn render_code(src: text) -> text {
 // render the same everywhere.  Escaping first is safe — no entity contains a tab.
 fn escape_with_tabs(s: text) -> text {
     s.escape_html().replace("\t", "    ")
+}
+
+// ── /tags — every tracker tag in the index ──
+//
+// Lists each canonical `@`-tag in index/tags.json with its reference
+// count, grouped by family (the letters after `@`: `P`, `PLN`, `FR`,
+// …), each linking to its /tag/<bare> page.  The legacy bare-name
+// buckets and the meta keys are left out; /tag/<bare> shows both
+// forms of one tag together.
+
+fn tag_family(key: text) -> text {
+    fam = "";
+    for c in key[1..] {
+        if c < 'A' || c > 'Z' { break; }
+        fam += c;
+    }
+    fam
+}
+
+fn page_tags() -> text {
+    f = file("index/tags.json");
+    if f.format == Format.NotExists {
+        body = "<h1>Tracker tags</h1>";
+        body += "<p class=\"warn\">No index found at <code>index/tags.json</code>.";
+        body += " Run <code>make index</code> from the repo root to build it.</p>";
+        return page("tags", body);
+    }
+    root = json_parse(f.content() ?? "");
+    list = "";
+    fam = "";
+    count = 0;
+    for key in root.keys() {
+        if !key.starts_with("@") { continue; }
+        refs = root.field(key);
+        if refs.kind() != "JArray" { continue; }
+        k_fam = tag_family(key);
+        if count == 0 || k_fam != fam {
+            if count > 0 { list += "</ul></section>"; }
+            fam = k_fam;
+            list += "<section><h2><code>@{fam.escape_html()}</code></h2><ul class=\"tag-list\">";
+        }
+        bare = key[1..];
+        list += "<li><a href=\"/tag/{bare.escape_html()}\"><code>{key.escape_html()}</code></a> <span class=\"ct\">{refs.len()}</span></li>";
+        count = count + 1;
+    }
+    if count > 0 { list += "</ul></section>"; }
+    body = "<h1>Tracker tags <small>{count}</small></h1>";
+    body += list;
+    page("tags", body)
 }
 
 // ── /tag/<bare_name> — phase 04a: tracker-tag references ──
@@ -1460,7 +1509,8 @@ fn page(title: text, body: text) -> text {
     out += "<a href=\"/\">dashboard</a>";
     out += "<a href=\"/tree/\">tree</a>";
     out += "<a href=\"/tree/doc/claude\">docs</a>";
-    out += "<a href=\"/tag/PLAN37\">tags</a>";
+    out += "<a href=\"/welcome\">welcome</a>";
+    out += "<a href=\"/tags\">tags</a>";
     out += "</nav>";
     out += "</div></header>";
     out += "<main>";

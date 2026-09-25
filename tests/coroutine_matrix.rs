@@ -32,15 +32,30 @@
 //!
 //! | | X1 — for-loop | X2 — manual `next()` | X3 — higher-order | X4 — comprehension | X5 — yield from |
 //! |---|---|---|---|---|---|
-//! | **Y1** scalar    | FIX:01 | FIX:01 | FIX:01 | FIX:01 | CLOSED:CO1.4-deferred |
-//! | **Y2** text      | FIX:02 | FIX:02 | FIX:02 | FIX:02 | CLOSED:CO1.4-deferred |
-//! | **Y3** Reference | FIX:03 | FIX:03 | FIX:03 | FIX:03 | CLOSED:CO1.4-deferred |
-//! | **Y4** tuple     | FIX:04 | FIX:04 (gated on T1.8a) | FIX:04 | FIX:04 | CLOSED:CO1.4-deferred |
-//! | **Y5** closure   | FIX:05 (depends on @PLAN15) | FIX:05 | FIX:05 | FIX:05 | CLOSED:CO1.4-deferred |
-//! | **Y6** vector    | CLOSED:non-goal | CLOSED:non-goal | CLOSED:non-goal | CLOSED:non-goal | CLOSED:CO1.4-deferred |
-//! | **Y7** float     | PASS:y7_x1 | PASS:y7_x2 | ok¹ | ok¹ | CLOSED:CO1.4-deferred |
-//! | **Y8** single    | PASS:y8_x1 | PASS:y8_x2 | ok¹ | ok¹ | CLOSED:CO1.4-deferred |
-//! | **Y9** enum      | PASS:y9_x1 | PASS:y9_x2 | ok¹ | ok¹ | CLOSED:CO1.4-deferred |
+//! | **Y1** scalar    | FIX:01 | FIX:01 | FIX:01 | FIX:01 | PASS:y1_x5 |
+//! | **Y2** text      | FIX:02 | FIX:02 | FIX:02 | FIX:02 | PASS:y2_x5 |
+//! | **Y3** Reference | FIX:03 | FIX:03 | FIX:03 | FIX:03 | PASS:y3_x5 |
+//! | **Y4** tuple     | FIX:04 | FIX:04 (gated on T1.8a) | FIX:04 | FIX:04 | PASS:y4_x5 |
+//! | **Y5** closure   | FIX:05 (depends on @PLAN15) | FIX:05 | FIX:05 | FIX:05 | CLOSED:measured-loft#1676 |
+//! | **Y6** vector    | CLOSED:non-goal | CLOSED:non-goal | CLOSED:non-goal | CLOSED:non-goal | CLOSED:non-goal |
+//! | **Y7** float     | PASS:y7_x1 | PASS:y7_x2 | ok¹ | ok¹ | PASS:y7_x5 |
+//! | **Y8** single    | PASS:y8_x1 | PASS:y8_x2 | ok¹ | ok¹ | PASS:y8_x5 |
+//! | **Y9** enum      | PASS:y9_x1 | PASS:y9_x2 | ok¹ | ok¹ | PASS:y9_x5 |
+//!
+//! ⚠ **The whole X5 column read `CLOSED:CO1.4-deferred` until 2026-09-25**, on the strength of
+//! a COROUTINE.md status line that said `yield from` was deferred to 1.1+ — long after it
+//! shipped and was guarded (loft#1277).  Nine cells closed by a stale sentence, over a
+//! construct carrying three live defects: on `--native` the statements before a `yield from`
+//! re-ran on every advance the delegation served (silent — the produced sequence is
+//! unchanged), and a `yield from` beside a loop in either lowering did not compile at all.
+//! A closed cell is a claim about the LANGUAGE, so it has to be re-read whenever the thing it
+//! names moves; nothing here pointed back at the sentence it depended on.
+//! Y6×X5 stays closed for Y6's own reason (a yielded vector is a non-goal), which is the only
+//! one of the nine that was ever about the row.  Y5×X5 is closed on a MEASUREMENT rather than a
+//! deferral: a delegated fn-ref raises `BUG (#306)` twice on the interpreter (and still answers
+//! 36) and is refused on native with two rustc errors leaking past the refusal — loft#1676, a
+//! different site with its own matrix owed.  Opening this column is what found it; the other
+//! seven cells pass on both backends.
 //!
 //! ¹ float/single/enum × X3 (higher-order) and X4 (comprehension) verified on
 //!   both backends via the full type×context grid (2026-06-18, #401); no
@@ -106,10 +121,20 @@ cross_mode!(
     "#
 );
 
-// Y1×X1 — generator whose body calls a HELPER that yields.  Stackful
-// semantics: the suspended frame must capture the helper's local state.
+// Y1×X1 — a generator that CONSUMES another generator with a `for`, between two yields of
+// its own.  Two frames are live at once and the outer one's resume point sits inside the
+// inner loop.
+//
+// ⚠ Until 2026-09-25 this cell was called `..._generator_with_helper_yield` and its comment
+// read *"generator whose body calls a HELPER that yields.  Stackful semantics: the suspended
+// frame must capture the helper's local state"* — which is not what it does: `inner` is a
+// generator consumed by a `for`, no yield happens at any depth, and no helper is called.  A
+// `yield` in a helper that is not itself a generator is REFUSED (`@FR-G-Yield`), so the shape
+// the name promised cannot be written at all — and a green cell with that name is exactly why
+// `formal/coroutines.md`'s conformance line could claim stackful yield verified on both
+// backends for months.  The cell is good; only its name claimed more than it measures.
 cross_mode!(
-    y1_x1_int_generator_with_helper_yield,
+    y1_x1_int_consumes_another_generator,
     r#"
     fn inner() -> iterator<integer> {
         yield 10;
@@ -547,6 +572,147 @@ cross_mode!(
         print("{count}\n");
         assert(count == 2, "y9_x1 enum for-loop count");
         assert(last == Color.Blue, "y9_x1 enum for-loop last value");
+    }
+    "#
+);
+
+// ── X5 — `yield from` (delegation) ──────────────────────────────────────────
+//
+// `@FR-G-Delegate`.  One column per yielded type, all of them consuming a delegating
+// generator to exhaustion, because the channel a delegated value rides is the SAME one a
+// direct yield rides (`coroutine_layout::channel_tag`) and a column that only ever passed
+// integers would say nothing about the tagged float / single / enum channels #401 added.
+//
+// Each cell puts a STATEMENT before the `yield from` and checks its effect is counted once.
+// That is the part `--native` got wrong: the delegation took a single state and had to stay
+// in it to keep pulling, so re-entering it re-ran everything above it in the segment.  The
+// value cells and the compile cells live in `tests/scripts/a-delegation*.loft`; these are the
+// per-TYPE crossing those two files deliberately hold fixed.
+
+cross_mode!(
+    y1_x5_int_yield_from,
+    r#"
+    fn inner() -> iterator<integer> { yield 10; yield 20; }
+    fn outer(lg: reference<Lg>) -> iterator<integer> {
+        lg.n = lg.n + 1;
+        yield from inner();
+        yield 30;
+    }
+    struct Lg { n: integer }
+    fn test() {
+        lg = Lg { n: 0 };
+        sum = 0;
+        for v in outer(lg) { sum = sum + v; }
+        print("{sum}\n");
+        assert(sum == 60, "y1_x5 delegated integer sum: {sum}");
+        assert(lg.n == 1, "y1_x5 the prefix runs once per activation: {lg.n}");
+    }
+    "#
+);
+
+cross_mode!(
+    y2_x5_text_yield_from,
+    r#"
+    fn inner() -> iterator<text> { yield "a"; yield "b"; }
+    fn outer() -> iterator<text> {
+        s = "c";
+        yield from inner();
+        yield s;
+    }
+    fn test() {
+        out = "";
+        for v in outer() { out += v; }
+        print("{out}\n");
+        assert(out == "abc", "y2_x5 delegated text: {out}");
+    }
+    "#
+);
+
+cross_mode!(
+    y3_x5_ref_yield_from,
+    r#"
+    struct Pt { x: integer }
+    fn inner() -> iterator<Pt> { yield Pt { x: 1 }; yield Pt { x: 2 }; }
+    fn outer() -> iterator<Pt> {
+        yield from inner();
+        yield Pt { x: 3 };
+    }
+    fn test() {
+        sum = 0;
+        for p in outer() { sum = sum + p.x; }
+        print("{sum}\n");
+        assert(sum == 6, "y3_x5 delegated record sum: {sum}");
+    }
+    "#
+);
+
+cross_mode!(
+    y4_x5_tuple_yield_from,
+    r#"
+    fn inner() -> iterator<(integer, integer)> { yield (1, 2); yield (3, 4); }
+    fn outer() -> iterator<(integer, integer)> {
+        yield from inner();
+        yield (5, 6);
+    }
+    fn test() {
+        sum = 0;
+        for t in outer() { sum = sum + t.0 * 10 + t.1; }
+        print("{sum}\n");
+        assert(sum == 102, "y4_x5 delegated tuple sum: {sum}");
+    }
+    "#
+);
+
+cross_mode!(
+    y7_x5_float_yield_from,
+    r#"
+    fn inner() -> iterator<float> { yield 1.5; yield 2.5; }
+    fn outer() -> iterator<float> {
+        yield from inner();
+        yield 3.0;
+    }
+    fn test() {
+        sum = 0.0;
+        for v in outer() { sum = sum + v; }
+        print("{sum}\n");
+        assert(sum == 7.0, "y7_x5 delegated float sum: {sum}");
+    }
+    "#
+);
+
+cross_mode!(
+    y8_x5_single_yield_from,
+    r#"
+    fn inner() -> iterator<single> { yield 1.5 as single; yield 2.5 as single; }
+    fn outer() -> iterator<single> {
+        yield from inner();
+        yield 4.0 as single;
+    }
+    fn test() {
+        sum = 0.0 as single;
+        for v in outer() { sum = sum + v; }
+        print("{sum}\n");
+        assert(sum == (8.0 as single), "y8_x5 delegated single sum");
+    }
+    "#
+);
+
+cross_mode!(
+    y9_x5_enum_yield_from,
+    r#"
+    enum Shade { Dark, Mid, Light }
+    fn inner() -> iterator<Shade> { yield Shade.Dark; yield Shade.Mid; }
+    fn outer() -> iterator<Shade> {
+        yield from inner();
+        yield Shade.Light;
+    }
+    fn test() {
+        count = 0;
+        last = Shade.Dark;
+        for v in outer() { count = count + 1; last = v; }
+        print("{count}\n");
+        assert(count == 3, "y9_x5 delegated enum count: {count}");
+        assert(last == Shade.Light, "y9_x5 delegated enum last value");
     }
     "#
 );

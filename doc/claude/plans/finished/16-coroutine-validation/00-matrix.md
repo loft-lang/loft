@@ -37,7 +37,7 @@ in named phase).
 |---|---|
 | `y1_x1_int_for_loop_smoke` | PASS |
 | `y1_x1_int_for_yield_in_generator` | PASS |
-| `y1_x1_int_generator_with_helper_yield` | PASS |
+| `y1_x1_int_consumes_another_generator` | PASS | (renamed 2026-09-25 — it never tested a helper yield, which `@FR-G-Yield` refuses) |
 | `y1_x2_int_manual_next` | PASS (after fixing test's exhausted() semantics — needs an extra `next()` past the last yield) |
 | `y1_x3_int_closure_reduce` | PASS (integer accumulator — no store mutation) |
 | `y1_x3_int_closure_map` (vector accumulate) | **BLOCKED:@P324** — interp-only; `out += [f(v)]` inside `for v in gen()` fires the CO1.9/S28 stale-DbRef guard even though the generator holds no DbRefs.  Native works. |

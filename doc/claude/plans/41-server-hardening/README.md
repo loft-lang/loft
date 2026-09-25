@@ -264,7 +264,7 @@ wild.
   — the const-fields gap.  Tangentially relevant: tightening
   `Cell` / `Player` field immutability would catch tick-loop
   mistakes early in @PLN6.
-- [lib/game_protocol/examples/v5_t3_n_clients_server.loft](../../../../lib/game_protocol/examples/v5_t3_n_clients_server.loft) —
+- [lib/game_protocol/examples/v5_t3_n_clients_server.loft](https://github.com/loft-lang/loft-libs-net/blob/main/game_protocol/examples/v5_t3_n_clients_server.loft) —
   current multi-client routing pattern; (a)+(b)+(e) extend it.
-- [lib/server/native/src/lib.rs](../../../../lib/server/native/src/lib.rs) —
+- [lib/server/native/src/lib.rs](https://github.com/loft-lang/loft-libs-net/blob/main/server/native/src/lib.rs) —
   fix sites for items (a), (b), (e).

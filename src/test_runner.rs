@@ -982,8 +982,17 @@ pub(crate) fn run_tests(
             // post-scope lints report through the same channel and the collection is what
             // puts a diagnostic in front of the reader. It used to sit after the test
             // discovery further down, which is why nothing it produced could ever be seen.
+            // A file with an ERROR stops here, as the program path does (`main.rs`, loft#883's
+            // gate): the scope pass lowers a finished program, and the IR a refused construct
+            // leaves behind is not one.  Run anyway, a test function holding `break` outside a
+            // loop panicked inside the pass (`index out of bounds`) and the file reported
+            // "scope check panic" in place of *"Cannot break outside a loop"*, so the author
+            // never saw the error.  The diagnostics collected below report it.
+            let has_errors = p.diagnostics.level() >= loft::diagnostics::Level::Error;
             let scopes_ok = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                scopes::check(&mut p.data, &mut p.database);
+                if !has_errors {
+                    scopes::check(&mut p.data, &mut p.database);
+                }
             }));
             if let Err(payload) = scopes_ok {
                 let msg = panic_message(&*payload);
@@ -998,7 +1007,9 @@ pub(crate) fn run_tests(
             // library's CI — which IS a test run — could not see a lost write, or a
             // `#superseded` steer pointing at nothing, which is a hard ERROR everywhere
             // else.
-            loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+            if !has_errors {
+                loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
+            }
 
             // Collect diagnostics.
             let mut file_result = FileResult {

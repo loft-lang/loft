@@ -108,6 +108,9 @@ holding a bug fix (same rule as `lint_comments.sh` — advisory, never fails CI)
 ### Goal E — Predictable memory — `[review]` (+ `[auto]` guard where applicable)
 - [ ] No store-lifetime surprises: heap values freed at scope end, no hidden retention. `[auto]` via `LOFT_STORE_GUARD` for store-managing libs; `[review]` that the API doesn't leak ownership the caller can't reason about.
 
+### Goal G — Performance — `[review]` (see [GOALS.md § Goal G](GOALS.md))
+- [ ] **Performance lane** — the library carries a `bench/` with a Rust reference twin per judged routine that produces the same hash, and a recorded native-vs-reference ratio table (`python3 bench/stats.py --tsv`). Every judged row is under the 4× bar, and any row over it is named with its reason. `drawing` is the first entry.
+
 ### Goal C — Capability via dogfood — `[review]`
 - [ ] At least one **real consumer or example** exercises the public API (a genuine use, not a toy).
 - [ ] Tests cover the public surface — each `pub fn` / `pub struct` has a test or example path.

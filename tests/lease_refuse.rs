@@ -366,3 +366,54 @@ fn no_message_names_a_compiler_temp() {
         );
     }
 }
+
+/// A compilation's lease records are about ONE program.
+///
+/// `copy_manifest`'s records — the elided copies and self-binds the refusal judges — are keyed by
+/// definition and variable NUMBER, and the `clear()` written for "between compilations in one
+/// process" was called from nowhere.  So in one process (the corpus runner, the LSP, `loft test`)
+/// a program was judged on the previous program's records: here `keep`'s `u = p` in the first
+/// program is an elided copy the refusal names, and the second program — whose `keep`, `u` and
+/// `p` carry the same numbers, but whose `u` is a fresh vector — was refused for a copy of `p` it
+/// never wrote.  In-process on purpose: a subprocess per program, as the cells above use, is
+/// exactly the isolation that hid this.
+#[test]
+fn a_compilation_is_judged_on_its_own_lease_records() {
+    use loft::parser::Parser;
+    let dir = std::env::temp_dir().join(format!("loft_lease_records_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let refusals = |name: &str, body: &str| -> Vec<String> {
+        let src = dir.join(name);
+        std::fs::write(&src, program(body)).unwrap();
+        let mut p = Parser::new();
+        p.parse_dir("default", true, false).unwrap();
+        p.parse(src.to_str().unwrap(), false);
+        loft::scopes::check(&mut p.data, &mut p.database);
+        let file = src.to_string_lossy().to_string();
+        loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &file);
+        p.diagnostics
+            .lines()
+            .into_iter()
+            .filter(|l| l.contains("copy-of-droppable"))
+            .collect()
+    };
+    let first = refusals(
+        "first.loft",
+        "fn keep(p: vector<H>) { u = p; print(\"R{len(u)}\"); }\n\
+         fn main() { v: vector<H> = [mk(1)]; keep(v); }",
+    );
+    assert!(
+        !first.is_empty(),
+        "calibration: the first program's `u = p` is the refused copy — without it this cell tests nothing"
+    );
+    let second = refusals(
+        "second.loft",
+        "fn keep(p: vector<H>) { u: vector<H> = [mk(5)]; print(\"R{len(u)}{len(p)}\"); }\n\
+         fn main() { v: vector<H> = [mk(1)]; keep(v); }",
+    );
+    assert!(
+        second.is_empty(),
+        "the second program writes no copy, and was refused on the first program's record: {second:?}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}

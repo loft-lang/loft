@@ -5,6 +5,13 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Language Server + Debug Adapter — design
 
+**Status: FINISHED (closed 2026-09-25).**  loft-lsp and loft-dap are built through every
+LSP.1–LSP.3 step and every DAP advanced tool; the last one, `pause`, is gated by
+`tests/dap_transport.rs::pause_stops_a_running_program_and_continue_resumes_it`.  The
+follow-ups named below as "Remaining" (the strict-index codeAction, extract-function, the rename
+tail, per-worker `par` threads, the dedicated marketplace plugins) moved to **@PLN171**; the
+browser-hosted server belongs to **@PLN62**.
+
 Loft's editor-integration story is built around two protocol-agnostic
 servers that any modern IDE knows how to consume:
 
@@ -562,7 +569,7 @@ is a translation over the `--rpc` engine's one dispatch chokepoint.
 | `scopes` | A `Locals` scope for the requested frame; the top frame's is VE-expandable, a caller frame's locals are leaves (eval is top-frame-scoped). |
 | `variables` | The frame's locals from the last stop (a stale reference → empty), **with structured expansion** ([DAP_ADVANCED.md](DAP_ADVANCED.md) VE, built): a struct/vector value drills into its children; a scalar is a leaf. |
 | `next` / `stepIn` / `stepOut` | RPC `stepOver`/`stepIn`/`stepOut` → `stopped{reason:"step"}`. |
-| `continue` | RPC `continue` → the next stop or `terminated`. `pause` is refused (no async interrupt). |
+| `continue` | RPC `continue` → the next stop or `terminated`. A `pause` during it stops the run where it is (`stopped{reason:"pause"}`). |
 | `dataBreakpointInfo` / `setDataBreakpoints` | **Data breakpoints** ([DAP_ADVANCED.md](DAP_ADVANCED.md) DB, built): watch a scalar local (or a nested field/element) via the engine's watchpoints; a change stops with `reason:"data breakpoint"`. Set at a stop only. |
 | `stepBack` / `reverseContinue` | **Reverse execution** ([DAP_ADVANCED.md](DAP_ADVANCED.md) RX, built): a bounded snapshot ring restores the prior state byte-identically. Interpreter-only; I/O not reversed; depth `LOFT_REVERSE_DEPTH` (default 200). |
 | `evaluate {expression, frameId, context}` | RPC `eval` in the frame's scope (identifier / field-access / call). |
@@ -572,8 +579,8 @@ is a translation over the `--rpc` engine's one dispatch chokepoint.
 **Advanced tools** ([DAP_ADVANCED.md](DAP_ADVANCED.md), each a small-step spine grounded in
 probe findings) — **all built**: structured **v**ariable **e**xpansion (VE), multi-**f**rame
 **s**tack (SF), **d**ata **b**reakpoints via watchpoints (DB), and **r**everse e**x**ecution
-(RX, a bounded snapshot ring). Only `pause` (async interrupt) and multi-worker `par` threads
-remain honest refusals.
+(RX, a bounded snapshot ring), and `pause` (an async interrupt, 2026-09-25).  Multi-worker `par`
+threads remain an honest refusal — one synthetic thread.
 
 ### What is already built — loft-dap is a TRANSLATION, not a new debugger
 
@@ -642,8 +649,7 @@ the `loft` rlib — the loft-lsp shape.
   threads→stackTrace→scopes→variables and assert the locals-panel content.
 - **D5 — stepping + continue.** `next`/`stepIn`/`stepOut` → RPC
   `stepOver`/`stepIn`/`stepOut` → `stopped{reason:"step"}`; `continue` → RPC `continue`.
-  (`pause`: the RPC v1 has no async interrupt — advertise `supportsTerminateRequest`
-  instead and honour the `--max-steps` budget.) *Gate:* step over/in/out and assert each
+  (`pause`: BUILT 2026-09-25 — see DAP.md § pause.) *Gate:* step over/in/out and assert each
   stop lands on the expected line.
 - **D6 — evaluate + setVariable.** `evaluate {expression, frameId, context}` → RPC
   `eval` → `{result, type}` (identifier / field-access / call, per the RPC); `setVariable`

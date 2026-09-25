@@ -6,10 +6,13 @@
 // `LOFT_OWN_INJECT_DROP_FREE=__ref_1` the buffer's free is dropped — a genuine leak the runtime
 // leak-check also flags — and the promoted scan MUST go RED on `__ref_1` in `n_use_adopted`. The
 // un-injected run frees it and MUST stay clean. Mirrors the OpDatabase positive control (07).
-fn make() -> vector<integer> { [10, 20, 30] }
+// `make` takes its first element as a PARAMETER: a zero-parameter function whose body is one
+// literal is a constant since `(R-Const)` (2026-09-25), and a call that only reads it answers a
+// view of the constant store — no buffer, nothing to leak, and this control would be vacuous.
+fn make(first: integer) -> vector<integer> { [first, 20, 30] }
 
 fn use_adopted() {
-    adopted: vector<integer> = make();
+    adopted: vector<integer> = make(10);
     print("{adopted[1] ?? -1}\n");
 }
 

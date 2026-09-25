@@ -290,7 +290,7 @@ the viewer expects.
 - [Phase 08 — multi-project + mmap index](08-multi-project-deploy.md)
   — generalises the daemon to one-per-project; per-project
   config lists the daemon port the viewer connects to.
-- [`lib/server/src/server.loft`](../../../lib/server/src/server.loft)
+- [`lib/server/src/server.loft`](https://github.com/loft-lang/loft-libs-net/blob/main/server/src/server.loft)
   — the WebSocket plumbing this protocol reuses (`run`,
   `send_to`, `broadcast`, `WsEvent`).
 - [`tools/viewer/src/main.loft`](../../../../tools/viewer/src/main.loft)

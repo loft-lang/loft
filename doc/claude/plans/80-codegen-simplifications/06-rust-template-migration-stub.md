@@ -1,7 +1,7 @@
 # Phase 06 — `#rust"..."` template migration
 
 **Status:** RELOCATED — see
-[`deferred/13-rust-template-migration/`](../deferred/deferred/13-rust-template-migration).
+[`81-rust-template-migration/`](../81-rust-template-migration).
 
 The phase 06 stub originally lived inside @PLN80 to mark the
 boundary "this work belongs to a future plan, not under
