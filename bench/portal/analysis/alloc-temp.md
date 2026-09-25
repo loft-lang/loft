@@ -111,3 +111,5 @@ row that lost, `bone_shape_has` 4.84× → 5.44×, names the next step: a wrappe
 element mints its callee's buffers per call one level up and pays the clear and witness for
 nothing — the TRANSITIVE form promotes the wrapper's own work-refs onward, so a buffer
 climbs to the outermost looping frame (Phase A and B to a fixpoint over the call graph).
+Built (2026-09-26): `bone_shape_has` 5.44× → **2.68×**, same hash — below the 4.84× the
+rule started from, since the wrapper's three mints were ~200 ns of a ~375 ns query.

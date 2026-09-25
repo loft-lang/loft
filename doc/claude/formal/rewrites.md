@@ -2100,6 +2100,17 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  into a local that is then not so used; an element type that is a
                  record or a text; a body that suspends or forks; `main`; a generic, a
                  synthetic, a lambda, a function whose address is taken; a `par` worker.
+                 TRANSITIVELY: a caller's work-ref minted for such a buffer, whose only
+                 mentions are its entry null-init and work-buffer argument positions, is
+                 itself a local that never leaves the frame and becomes a hidden
+                 work-buffer parameter of the caller — no mint, no free there; the
+                 buffer climbs round by round to the outermost frame that is not so
+                 promoted, and a null handed down reaches the innermost callee's null
+                 road unchanged.  Declined where the callee reaches back to the caller
+                 through direct calls: a recursion wants a buffer per activation, which
+                 the ref already is, and each round would only mint the next.  A call
+                 through a function value needs no such edge — its target's address is
+                 taken, so that frame mints its own buffers and the chain stops there.
 ```
 
 **In words.**  The overview's largest language-side bucket is a value Rust keeps on the
@@ -2156,13 +2167,21 @@ vectors), cbor `encode` **18.0× → 11.4×** and `encode_bytes` **43.1× → 24
 encoder's key tables), graphics `fill_rect` 4.05× → 3.05×, `draw_line` 2.70× → 2.06×,
 `blend_pixel` 2.11× → 1.30×, `fill_triangle` 3.13× → 2.87×, drawing `composite` 1.56× →
 1.27×; `fronds`, `render_marks` and `resize` within noise of their committed rows once
-the two lessons above were applied; hex_body `bone_shape_has` 4.84× → 5.44× is the one row still worse,
+the two lessons above were applied; hex_body `bone_shape_has` 4.84× → 5.44× was the one row worse,
 and its cause is the rule's own shape: a thin wrapper called once per element that calls
 `rig_world_seg` (three buffers) mints those buffers per call one level up exactly as the
 callee did, and pays the callee's clear and witness for nothing.  The cure is the
-TRANSITIVE form — the wrapper's own `__ref_N` work-refs are locals that never leave its
-frame and are candidates in their turn, so the buffers climb to the outermost frame that
-loops — Phase A and B run to a fixpoint over the call graph; not built.  A buffer lives as
+TRANSITIVE clause above — the wrapper's own `__ref_N` work-refs are locals that never leave
+its frame and are candidates in their turn, so the buffers climb to the outermost frame
+that loops — Phase A once, then promotion of the work-refs and Phase B alternating until a
+round promotes nothing (capped at sixteen rounds; stopping after any Phase B leaves every
+buffer minted by its caller).  Without the cycle decline the fixpoint does not end rather
+than answer wrong: each round hands the recursive callee one more parameter, so every
+depth still has a buffer of its own (the pin's falsifier: `c2` grows seventeen).
+Measured clean (2026-09-26, the row above → with the clause): `bone_shape_has` **5.44× →
+2.68×**, same hash, 11.2 → 5.5 ms against Rust's 2.07 — the three per-query mints at
+~67 ns each were half the query, not the sixth the hand-price guessed from an assumed 1 µs
+row; every other row of the five libraries within noise.  A buffer lives as
 long as its caller's
 activation, so a promoted call site in `main` keeps its buffer for the run exactly as a
 return buffer does; `LOFT_STORES=warn`'s high-water heuristic (more than 30 live stores)

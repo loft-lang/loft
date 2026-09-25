@@ -238,7 +238,10 @@ function whose return type carries deps (the swap would renumber them), a local 
 inside a loop (`@FR-R-LoopBuffer`'s length reset is cheaper than a clear), a local written
 and never read (the dead-store lint's), a mention in a return, a literal, a link or a
 capture, a record or text element, a body that suspends or forks, an entry point, a generic,
-a lambda, a function whose address is taken and a `par` worker keep the mint.
+a lambda, a function whose address is taken and a `par` worker keep the mint.  A caller that
+only hands such a buffer down is promoted in its turn (the trace's `ref=… PROMOTED onward`),
+so the buffer is minted by the outermost frame that is not; a callee that reaches back to its
+caller declines that (`stays a local`), and the same switch turns both halves off.
 
 ## Lowering: `??` chains and nested literals
 

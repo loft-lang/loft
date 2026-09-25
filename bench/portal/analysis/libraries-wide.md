@@ -311,5 +311,6 @@ arm that calls, not before the whole match (cbor `encode` 18× → 25×).  Clean
 the converged tree (2026-09-25, the committed row without the rule → now): `rig_world_frame3`
 9.54× → 5.20×, `encode` 18.0× → 11.4×, `encode_bytes` 43.1× → 24.9×, `fill_rect` 4.05× →
 3.06×, `draw_line` 2.70× → 2.06×, `blend_pixel` 2.11× → 1.30×, `composite` 1.56× → 1.25×;
-`bone_shape_has` 4.84× → 5.44× is the one row still worse.
+`bone_shape_has` 4.84× → 5.44× was the one row worse, and the transitive clause (a wrapper's
+work-ref promoted onward, 2026-09-26) took it to 2.68×.
 
