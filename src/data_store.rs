@@ -227,7 +227,7 @@ pub(crate) const BLOCK_SCOPE: u32 = 0;
 pub(crate) const BLOCK_VAR_SIZE: u32 = 8;
 
 /// `Attribute` record (element of `vector<Attribute>`).
-pub(crate) const ATTRIBUTE_STRIDE: u32 = 48; // @PLN86 F8b +4 links; @PLN40 +1 const_field bool; C124 +1 value_const bool
+pub(crate) const ATTRIBUTE_STRIDE: u32 = 49; // @PLN86 F8b +4 links; @PLN40 +1 const_field bool; C124 +1 value_const bool; +1 work_buffer bool
 pub(crate) const ATTR_NAME: u32 = 16;
 pub(crate) const ATTR_TYPEDEF: u32 = 20; // vector<TypeT> (box-of-one)
 pub(crate) const ATTR_VALUE: u32 = 24; // vector<Node> (box-of-one)

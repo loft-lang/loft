@@ -165,6 +165,7 @@ struct Attribute {
   hidden: boolean,
   const_field: boolean, // @PLN40 — write-once struct field; last bool keeps prior offsets stable
   value_const: boolean, // C124 — a value-const field, or a `const` parameter read at every call
+  work_buffer: boolean, // @FR-R-WorkBuffer — a hidden parameter that is a work buffer
   value: vector<Node>,
   check: vector<Node>,
   check_message: vector<Node>,

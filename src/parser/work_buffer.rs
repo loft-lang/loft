@@ -75,8 +75,10 @@ impl Parser {
         if def.synthetic().is_some() {
             return Some("a synthetic definition");
         }
-        if def.name() == "n_main" {
-            return Some("the entry");
+        // An entry point is called by a harness (`main`, the test runners, the native test
+        // `main`) that hands it no buffer, so it has no caller to take one from.
+        if def.name() == "n_main" || def.is_corpus_entry_point() {
+            return Some("an entry point");
         }
         if def.name().starts_with("n___lambda_") {
             return Some("a lambda");
