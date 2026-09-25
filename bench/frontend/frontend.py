@@ -23,6 +23,8 @@ cache by design (src/cache.rs `running_a_dev_build`) and would otherwise measure
 under a warm name.  An `edit` run appends a comment unique to that run, and the harness
 refuses to report an edit run whose input hash repeats: a repeated input is a cache hit.
 
+The modes are measured INTERLEAVED, run by run, so load drifting on a shared machine hits
+all of them alike; `--counts` adds each run's instruction count, which load barely moves.
 Times are wall clock, the median of `--runs`; the phase split comes from LOFT_TIMING and is
 reported for the interpreter, whose front end is the whole of its compile.  It is a REPORT:
 wall time varies with the machine and its load, so nothing here gates.  The count-based
@@ -82,7 +84,7 @@ def corpus(size: str) -> str:
 
 # ── one run ──────────────────────────────────────────────────────────────────
 
-def run_once(loft, path, backend, mode, extra_env=None):
+def run_once(loft, path, backend, mode, extra_env=None, counts=False):
     env = dict(os.environ)
     env.pop("LOFT_NO_CACHE", None)
     env.pop("LOFT_PROGRAM_CACHE", None)
@@ -94,12 +96,18 @@ def run_once(loft, path, backend, mode, extra_env=None):
         env["LOFT_PROGRAM_CACHE"] = "1"
     env.update(extra_env or {})
     args = [loft, "--interpret" if backend == "interpret" else "--native", path]
+    if counts:
+        args = ["perf", "stat", "-x,", "-e", "instructions:u", "--"] + args
     t = time.perf_counter()
     out = subprocess.run(args, env=env, capture_output=True, text=True)
     ms = (time.perf_counter() - t) * 1000.0
     if out.returncode != 0:
         sys.exit(f"frontend: {' '.join(args)} failed:\n{out.stderr[-2000:]}")
     phases = {}
+    if counts:
+        m = re.search(r"^(\d+),[^,]*,instructions", out.stderr, re.M)
+        if m:
+            phases["Minstr"] = int(m.group(1)) / 1e6
     for name in PHASES:
         m = re.search(rf"\b{name}=([0-9.]+)ms", out.stderr)
         if m:
@@ -111,33 +119,44 @@ def digest(path):
     return hashlib.sha256(open(path, "rb").read()).hexdigest()[:12]
 
 
-def measure(loft, size, backend, mode, runs, extra_env=None, show=True):
+def measure(loft, size, backend, modes, runs, extra_env=None, show=True, counts=False):
+    """Every mode of one (size, backend), INTERLEAVED run by run: load on a shared machine
+    drifts over minutes, and measuring the modes one after another turned that drift into a
+    2x 'difference' between them that the instruction count did not have."""
+    src = corpus(size)
+    state = {}
     with tempfile.TemporaryDirectory(prefix="loft-frontend-") as d:
-        path = os.path.join(d, f"bench_{size}.loft")
-        src = corpus(size)
-        with open(path, "w", encoding="utf-8") as f:
-            f.write(src)
+        for mode in modes:
+            path = os.path.join(d, f"{mode}_{size}.loft")
+            with open(path, "w", encoding="utf-8") as f:
+                f.write(src)
+            if mode in ("warm", "edit"):
+                run_once(loft, path, backend, mode, extra_env)      # prime the caches
+            state[mode] = {"path": path, "walls": [], "phases": [], "hashes": []}
         nonce = os.urandom(4).hex()
-        if mode in ("warm", "edit"):
-            run_once(loft, path, backend, mode, extra_env)          # prime the caches
-        walls, phases, hashes = [], [], []
         for r in range(runs):
-            if mode == "edit":
-                with open(path, "w", encoding="utf-8") as f:
-                    f.write(src + f"// edit {nonce} {r}\n")
-            hashes.append(digest(path))
-            w, p = run_once(loft, path, backend, mode, extra_env)
-            walls.append(w)
-            phases.append(p)
-        if mode == "edit" and len(set(hashes)) != len(hashes):
+            for mode in modes:
+                st = state[mode]
+                if mode == "edit":
+                    with open(st["path"], "w", encoding="utf-8") as f:
+                        f.write(src + f"// edit {nonce} {r}\n")
+                st["hashes"].append(digest(st["path"]))
+                w, p = run_once(loft, st["path"], backend, mode, extra_env, counts)
+                st["walls"].append(w)
+                st["phases"].append(p)
+    out = {}
+    for mode in modes:
+        st = state[mode]
+        if mode == "edit" and len(set(st["hashes"])) != len(st["hashes"]):
             sys.exit("frontend: an edit run repeated its input hash — it measured a cache hit")
-        if mode == "warm" and len(set(hashes)) != 1:
+        if mode == "warm" and len(set(st["hashes"])) != 1:
             sys.exit("frontend: a warm run's input changed between runs")
         if show:
-            print(f"   inputs {size}/{backend}/{mode}: {' '.join(hashes)}")
-    med = {k: statistics.median(p[k] for p in phases if k in p)
-           for k in PHASES if any(k in p for p in phases)}
-    return statistics.median(walls), min(walls), med
+            print(f"   inputs {size}/{backend}/{mode}: {' '.join(st['hashes'])}")
+        keys = [k for k in ("Minstr",) + PHASES if any(k in p for p in st["phases"])]
+        med = {k: statistics.median(p[k] for p in st["phases"] if k in p) for k in keys}
+        out[mode] = (statistics.median(st["walls"]), min(st["walls"]), med)
+    return out
 
 
 # ── the report ───────────────────────────────────────────────────────────────
@@ -146,24 +165,31 @@ def report(a):
     lines = {s: corpus(s).count("\n") for s in SIZES}
     print(f"== frontend bench (corpus v{CORPUS_VERSION}; {a.runs} runs, median) — {a.loft}")
     print(f"   sizes: " + ", ".join(f"{s} = {lines[s]} lines" for s in a.sizes))
+    load = os.getloadavg()[0]
+    if load > (os.cpu_count() or 1) / 2:
+        print(f"   ⚠ load average {load:.1f} on {os.cpu_count()} CPUs: wall times are unreliable "
+              f"under load — compare --counts instead")
     rows = []
     for size in a.sizes:
         for backend in a.backends:
+            if backend == "native" and size == "large":
+                continue   # rustc dominates it and the front end is measured on the interpreter
+            got = measure(a.loft, size, backend, a.modes, a.runs, counts=a.counts)
             for mode in a.modes:
-                if backend == "native" and size == "large":
-                    continue   # rustc dominates it and the front end is measured on the interpreter
-                med, lo, ph = measure(a.loft, size, backend, mode, a.runs)
+                med, lo, ph = got[mode]
                 rows.append((size, backend, mode, med, lo, ph))
     print(f"\n{'size':<8}{'backend':<11}{'mode':<6}{'median':>9}{'min':>9}   phases (median ms)")
     for size, backend, mode, med, lo, ph in rows:
-        split = "  ".join(f"{k}={v:.1f}" for k, v in ph.items()) if backend == "interpret" else ""
+        split = "  ".join(f"{k}={v:.1f}" for k, v in ph.items()
+                          if backend == "interpret" or k == "Minstr")
         print(f"{size:<8}{backend:<11}{mode:<6}{med:>8.1f}ms{lo:>7.1f}ms   {split}")
     if a.tsv:
         with open(a.tsv, "w", encoding="utf-8") as f:
-            f.write("corpus\tsize\tbackend\tmode\tmedian_ms\tmin_ms\t" + "\t".join(PHASES) + "\n")
+            cols = ("Minstr",) + PHASES
+            f.write("corpus\tsize\tbackend\tmode\tmedian_ms\tmin_ms\t" + "\t".join(cols) + "\n")
             for size, backend, mode, med, lo, ph in rows:
                 f.write(f"v{CORPUS_VERSION}\t{size}\t{backend}\t{mode}\t{med:.2f}\t{lo:.2f}\t"
-                        + "\t".join(f"{ph[k]:.2f}" if k in ph else "" for k in PHASES) + "\n")
+                        + "\t".join(f"{ph[k]:.2f}" if k in ph else "" for k in cols) + "\n")
         print(f"\nwrote {a.tsv}")
     return 0
 
@@ -172,9 +198,9 @@ def self_test(a):
     """The harness must report a slowdown it was handed: LOFT_TIMING_INJECT_MS sleeps inside
     the timed scope pass, so both the wall time and the `scopes` phase must rise by it."""
     inject = 60
-    base_med, _, base_ph = measure(a.loft, "tiny", "interpret", "cold", a.runs, show=False)
-    slow_med, _, slow_ph = measure(a.loft, "tiny", "interpret", "cold", a.runs,
-                                   {"LOFT_TIMING_INJECT_MS": str(inject)}, show=False)
+    base_med, _, base_ph = measure(a.loft, "tiny", "interpret", ["cold"], a.runs, show=False)["cold"]
+    slow_med, _, slow_ph = measure(a.loft, "tiny", "interpret", ["cold"], a.runs,
+                                   {"LOFT_TIMING_INJECT_MS": str(inject)}, show=False)["cold"]
     d_wall = slow_med - base_med
     d_scopes = slow_ph.get("scopes", 0) - base_ph.get("scopes", 0)
     ok = d_wall >= 0.8 * inject and d_scopes >= 0.8 * inject
@@ -191,6 +217,8 @@ def main(argv):
     ap.add_argument("--backends", default="interpret,native")
     ap.add_argument("--modes", default="cold,warm,edit")
     ap.add_argument("--tsv")
+    ap.add_argument("--counts", action="store_true",
+                    help="also count instructions (perf stat): steady under load, where wall time is not")
     ap.add_argument("--self-test", action="store_true")
     a = ap.parse_args(argv)
     a.sizes = [s for s in a.sizes.split(",") if s]
