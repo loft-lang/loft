@@ -3,7 +3,7 @@
 //
 // A format spec tunes what the value RENDERS as, whatever type it is.
 //
-// @FR-F-Spec tunes ⟦v⟧, and @FR-F-Render says what ⟦v⟧ is per type, so the two compose:
+// @FR-F-Spec tunes ⟦v⟧ (`@FR-F-Spec-Fill` is its fill token, the `*>5` cell), and @FR-F-Render says what ⟦v⟧ is per type, so the two compose:
 // there is no type whose rendering a width cannot pad.  Two families dropped the
 // field-shaping half in silence — a `character` lost the whole spec (loft#1165), and a
 // vector, struct or record-enum kept only the two flags `OpFormatDatabase` has room for

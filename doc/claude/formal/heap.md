@@ -3322,10 +3322,19 @@ The rules are checkable directly, and every check is a program both backends mus
   `c = o.i; c.v = 9` ⇒ `o.i.v == 9`; `s = v[0]; s.v = 9` ⇒ `v[0].v == 9` (a struct element of a
   vector). capabilities.md's raw-write rule encodes this: a plain-copied vector is owned, a
   `&`-aliased or parameter-rooted vector is host (D-cap-3 follows the dep chain), a struct is a
-  possible host view.
+  possible host view.  The guard: `tests/scripts/201-bind-copies-projection-views.loft`, which
+  reads every SOURCE back after the write (an unread source cannot tell a copy from an elided
+  one), on both backends.
+- **A disturbed view materialises (`H-Materialise`)** — a removal, a re-key, a reassignment and
+  a GROWTH of the container while the view is live take the copy step, in this frame
+  (`tests/scripts/1373-growing-a-container-ends-the-places-inside-it.loft`) and one frame
+  down (`tests/scripts/164-callee-disturb.loft`, every cell paired with its inline twin).
 - **Null/OOB continue (`H-ReadNull` / `H-Index`)** — reading a field of `nullref`, or `v[i]`
   with `i ≥ len(v)`, is **null** and the program continues; it never halts (operational.md
-  C80, extended to the heap).
+  C80, extended to the heap).  The negative half of `H-Index` — an index counts from the END
+  at EITHER layout — is `tests/scripts/1669-a-negative-index-removes-from-the-end-at-either-layout.loft`;
+  no guard is dedicated to the read's null answer itself, which every `??` cell in the corpus
+  exercises without naming it.
 - **Null/OOB write is a no-op (`H-WriteNull` / `H-WriteOOB`)** — `v[9] = x`, `v[i] = x` with
   `i < -len` or `i` the integer null, `v[9].f = x`, `e = v[9]; e.f = x` and a keyed miss
   `h[7].f = x` change nothing (value, length, neighbours), a literal written there is

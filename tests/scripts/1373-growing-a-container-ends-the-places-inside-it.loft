@@ -1,7 +1,7 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// loft#1373 — GROWING a container is a place-ending event.  `(B-Disturb)` in
+// loft#1373 (`@FR-B-Disturb`, `@FR-H-Materialise`) — GROWING a container is a place-ending event.  `(B-Disturb)` in
 // `formal/binding.md` listed three (REMOVE, RE-KEY, REASSIGN); an append is a fourth, because
 // a vector that outgrows its allocation is copied into a larger record and every element
 // moves, so a view bound before the growth names an address the elements have left.  The

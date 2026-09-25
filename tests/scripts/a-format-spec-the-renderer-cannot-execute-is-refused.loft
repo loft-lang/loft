@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
 // @FR-F-Spec — a spec the value's renderer cannot execute is REFUSED, not run.
+// (`@FR-F-Spec-Exec`: a part the hole's renderer cannot execute is a static error naming it, never
+// dropped; `@FR-F-Spec-Fill`: a DIGIT is never a fill token, so `{n:0>5}` is the comparison, refused.)
 //
 // Two shapes, both of which reached the back end before anyone could say the spec was wrong.
 //

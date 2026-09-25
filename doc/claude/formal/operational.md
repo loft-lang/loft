@@ -246,7 +246,10 @@ order** — NaN cannot occur (it is represented as null, D-op-null-1), so exactl
                      `a == (a / b) * b + a % b` holds for every non-zero `b`:
                        -7 / 2  == -3      7 / 2  == 3       -7 / -2 == 3
                        -7 % 2  == -1      7 % -2 == 1       -7 % -2 == -1
-                     (E-Uncomp still governs `b = 0`: both `/` and `%` yield null.)
+                     (E-Uncomp still governs `b = 0`: both `/` and `%` yield null — and
+                     `MIN / -1`, whose quotient does not fit, AND `MIN % -1`, whose
+                     remainder would be 0: the pair is one operation whose quotient
+                     overflows, so both halves are null, on both backends.)
 ```
 
 **In words.** Integer `/` drops the fractional part toward zero rather than flooring toward

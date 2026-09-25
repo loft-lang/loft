@@ -3,7 +3,8 @@
 //
 // A keyed tuple member given a VECTOR value holds that vector's records, inserted by key —
 // exactly as a keyed STRUCT field does (loft#1159) — and the write REPLACES what the member held
-// (loft#1675, `formal/tuples.md` `(T-Cons)`, `formal/calls.md` `(F-Ret)`).
+// (loft#1675, `@FR-T-Cons` and `@FR-T-Ret` in `formal/tuples.md`, `@FR-F-Ret` in `formal/calls.md`:
+// the returned tuple is an INDEPENDENT value holding what its members were given).
 //
 // `return (v, 2)` with a `vector<K>` for a `hash<K[k]>` member compiled and answered an EMPTY
 // hash on both backends: the member was written with `OpReplaceKeyed`, which walks its source

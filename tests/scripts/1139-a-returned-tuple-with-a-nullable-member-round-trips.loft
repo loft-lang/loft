@@ -9,6 +9,7 @@
 // spellings of one type. `unboxes_stored_tuple` compared members with `is_equal` alone, and the
 // two spellings of a nullable member (`Optional(Reference(S))` as written,
 // `Enum(__nullable<S>)` as stored — `@FR-L-Null-Tag`) are not equal.
+// (`@FR-T-Ret`: the returned tuple is an independent value, unpacked at the call site.)
 //
 // ⚠ Accepting the pair is only half of it, and the other half is why this file exists rather
 // than a one-line predicate change. Three sites DERIVE the synthetic `__tuple<…>` def back from
