@@ -15,7 +15,8 @@
 // values; the controls at the end are the spellings that never failed (concrete arm first, a
 // `return` per arm, the scalar `null` arm).
 //
-// @falsified-at: <derived after the fix is committed>
+// @falsified-at: 4056a71ef — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.patch — interpret exit 1 -> 0, native exit 1 -> 0
 // CHANNEL: the exit code and the compile error — on the control tree every refused cell is a
 //   compile error, so the file does not run at all there; the exhaustive-match cell is a
 //   rustc error on --native there (`expected (i64, i64), found ()`).
@@ -38,6 +39,15 @@ fn payload_match(e: E) -> (integer?, integer) { match e { A { n } => (null, n), 
 // stack tuple did not compile on --native at all — its parser fallback arm is `null`, and the
 // emitter rendered a tuple's null as `()` (rustc E0308) — on every tree, no null member needed
 fn exhaustive_concrete(e: E) -> (integer, integer) { match e { A { n } => (n, 1), B { n } => (n, 5) } }
+// the neighbours the axes report named: a heap member (text, struct — the tuple is then a
+// record on native), a float and a narrow member beside the null, and the join in a loop
+struct S { n: integer }
+fn text_member(z: boolean) -> (integer?, text) { if z { (null, "a") } else { (4, "b") } }
+fn null_text_member(z: boolean) -> (text?, integer) { if z { (null, 3) } else { ("b", 4) } }
+fn struct_member(z: boolean) -> (integer?, S) { if z { (null, S { n: 1 }) } else { (4, S { n: 2 }) } }
+fn float_member(z: boolean) -> (float?, float) { if z { (null, 2.5) } else { (4.5, 1.5) } }
+fn narrow_member(z: boolean) -> (u8?, u8) { if z { (null, 7) } else { (4, 5) } }
+fn match_text_member(z: integer) -> (integer?, text) { match z { 1 => (null, "a"), _ => (4, "b") } }
 // controls
 fn concrete_first(z: boolean) -> (integer?, integer) { if z { (4, 5) } else { (null, 3) } }
 fn per_arm_return(z: boolean) -> (integer?, integer) { if z { return (null, 3); } (4, 5) }
@@ -83,6 +93,27 @@ fn main() {
   x: (integer?, integer) = if z { (null, 3) } else { (4, 5) };
   y = if !z { (null, 3) } else { (4, 5) };
   assert(!x.0 && x.1 == 3 && (y.0 ?? 0) == 4 && y.1 == 5, "typed local and no annotation: {x.0} {x.1} {y.0} {y.1}");
+  t1 = text_member(true);
+  t2 = text_member(false);
+  assert(!t1.0 && t1.1 == "a" && (t2.0 ?? 0) == 4 && t2.1 == "b", "text member: {t1.0} {t1.1} {t2.0} {t2.1}");
+  u1 = null_text_member(true);
+  u2 = null_text_member(false);
+  assert(!u1.0 && u1.1 == 3 && (u2.0 ?? "-") == "b" && u2.1 == 4, "null text member: {u1.0} {u1.1} {u2.0} {u2.1}");
+  s1 = struct_member(true);
+  s2 = struct_member(false);
+  assert(!s1.0 && s1.1.n == 1 && (s2.0 ?? 0) == 4 && s2.1.n == 2, "struct member: {s1.0} {s1.1.n} {s2.0} {s2.1.n}");
+  f1 = float_member(true);
+  f2 = float_member(false);
+  assert(!f1.0 && f1.1 == 2.5 && (f2.0 ?? 0.0) == 4.5 && f2.1 == 1.5, "float member: {f1.0} {f1.1} {f2.0} {f2.1}");
+  w1 = narrow_member(true);
+  w2 = narrow_member(false);
+  assert(!w1.0 && w1.1 == 7 && (w2.0 ?? 0) == 4 && w2.1 == 5, "narrow member: {w1.0} {w1.1} {w2.0} {w2.1}");
+  v1 = match_text_member(1);
+  v2 = match_text_member(2);
+  assert(!v1.0 && v1.1 == "a" && (v2.0 ?? 0) == 4 && v2.1 == "b", "match, text member: {v1.0} {v1.1} {v2.0} {v2.1}");
+  acc = 0;
+  for pass in 0..3 { lt = if pass == 0 { (null, pass) } else { (pass, 5) }; acc += (lt.0 ?? 100) + lt.1; }
+  assert(acc == 113, "the join in a loop: {acc}");
   // controls
   p = concrete_first(false);
   q = per_arm_return(true);
