@@ -9283,6 +9283,56 @@ behaviour change per site and needs its own probe.  They stay on the checklist r
 swept, because "these lists are equal today" is not the same claim as "these are one rule" — and
 a merge that couples two rules which must stay free to differ is worse than the duplication.
 
+### "Does a variable with no uses hold a store?" — the premise was written down, and it was false for one type (2026-09-25)
+
+A peer's nightly valgrind went red with **8 bytes definitely lost** and they measured the first
+leaking commit (`a6b6afbe4`, loft#1657's append staging) before I had finished inferring one
+from the guard's authorship — worth recording in that order, because my inference named a
+different commit and was wrong. A measurement beat a reading, again.
+
+The cause was not in that commit. `Vars::unregister_work_ref` retires a substituted-out work ref
+by marking it never-free, and its doc comment states the premise it rests on:
+
+> `substitute_work_ref` lists every `Value` variant explicitly (no wildcard arm), so the rewrite
+> is TOTAL — a surviving use of `var_nr` is not possible, **and a variable with no uses holds no
+> store.**
+
+That last clause is true of a reference, whose dead `= null` is a dead store. It is false of a
+`text`: the work-ref PREAMBLE null-initialises every work reference so the slot allocator sees a
+`first_def`, and on a text `= null` lowers to `OpConvTextFromNull` plus an `OpAppendText` that
+ALLOCATES. So the retirement orphaned a buffer, and the frame slot — shared with the next text
+variable, legally, since the retired one is dead — was re-initialised over it.
+
+**The bytecode named it and the prose could not.** Four lines of `loft introspect`:
+
+```
+  6: InitText(var[24]) var=__ref_1[24]:text
+ 10: AppendText(var[24], …)                       <- the RawVec grow valgrind reports
+ 13: InitText(var[24]) var=__work_3[24]:text      <- same slot, re-init, buffer orphaned
+```
+
+`__work_1` is at 72 and `__work_2` at 48; three `FreeText` at exit cover 72, 48 and 24, and the
+one for 24 is `__work_3`'s.
+
+The cure is the other decoder of the same question, already right: `Scopes::pre_inits` asks the
+type and gives a text the empty string. The work-ref preamble did not. One `let init = …`.
+
+**Three instruments were green on the leaking tree, and each for its own reason.** This is the
+part worth carrying, because it is what a leak of this class costs to find:
+
+- `make ci` — the corpus leak gate (`tests/wrap.rs`) counts STORES, and a Rust `String` is not
+  one;
+- `--interpret`'s own leak report — same counter;
+- `make falsify` — recorded the guard **INERT**, `0|0|none|none|0` on both trees and both
+  backends, because its leak column reads that same store report. Its header says so; the
+  receipt in the guard now says so too, and the guard is HAND-SCORED instead.
+
+⚠ And the hand scoring had its own trap: the falsify control cache builds `dev`, so the first
+A/B compared a debug control against a release binary here — two profiles, not two trees. Redone
+matched: control 48 bytes in 6 blocks, fixed tree 0. Six blocks for five leaking cells is the
+arithmetic agreeing with the mechanism rather than a loose end — the preamble runs once per
+ACTIVATION, which the loop cell establishes, and the two-member cell stages two temps.
+
 ### "Which element does this index name?" — two decoders, and only one read the sign (2026-09-25)
 
 `@FR-H-Index` is a rule about what an INDEX MEANS: *"an index is end-relative when it is
