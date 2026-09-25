@@ -1711,7 +1711,7 @@ already found by hand, which is what makes the other sixteen worth reading.
 
 | functions ALSO handling the `TupleGet` spelling — must not shrink |
 |---:|
-| **15** |
+| **16** |
 
 The census this came from — how many functions resolve a projection by op name, and which ones
 see only the call spelling — is `python3 scripts/ir_walker_audit.py spellings`, which prints the
@@ -2818,6 +2818,13 @@ The census behind it — how many functions discriminate on a `Type` variant, ho
 the wrapper, how many descend via the keystone — and the opaque QUEUE itself, function by
 function: `python3 scripts/ir_walker_audit.py optional`, with `--check-ratchet` for the
 comparison this row gates.
+
+(2026-09-25, the NINTH join — `../loft2` @ `8e741579f` (#1668–#1671), `../loft3` @ `d7577c30b`
+(#1664's binding half, #1648) and `157-native-4x`'s two new commits, cherry-picked, onto `main` @
+`dd36c8311` — RE-MEASURED on the merged tree: optional **310 / 1295**, `--check-ratchet` at
+baseline; spellings **98 · 16 · 82** (functions resolving a projection by OP NAME · also handling
+`TupleGet` · call spelling only).  The gated middle figure ROSE, 15 → 16, and the row moved with
+it; `doc_hygiene::quality_spellings_table_matches_the_audit` is what asked.)
 
 (2026-09-24, the EIGHTH join — `../loft2` @ `d2aa3bf79` (#1662, #1664), `157-native-4x` @
 `185e8fd54` (@PLN158 wave 3, #1666) and `../loft3` @ `b42007993` (the valgrind sweep, a warm
