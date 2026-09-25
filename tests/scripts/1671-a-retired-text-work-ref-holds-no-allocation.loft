@@ -1,0 +1,119 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A work ref the parser substitutes out holds no allocation — `text` included.
+//
+// The work-ref PREAMBLE (`Parser::work_ref_takes_preamble`) null-initialises every work
+// reference so the slot allocator sees a `first_def`.  For a reference `= null` costs nothing;
+// for a `text` it lowers to `OpConvTextFromNull` plus an `OpAppendText` that ALLOCATES.  And
+// `Vars::unregister_work_ref` retires a substituted-out ref as never-free on the stated premise
+// that *"a variable with no uses holds no store"* — true of a reference, false of a text.  The
+// allocation was orphaned and the frame slot, shared with the next text variable, was
+// re-initialised over it: 8 bytes definitely lost (loft#1671).
+//
+// The shape that reaches it is narrow, and every cell below is one of its parts: a reassignment
+// of a local, an INTERPOLATION in the new literal, and a read of a TEXT ELEMENT of the
+// collection member being rebuilt.  loft#1657's append staging mints the temp; loft#1574's
+// second parse of the literal discards it.
+//
+// ⚠ **THE LEAK CHANNEL OF THIS FILE IS VALGRIND, AND NOTHING ELSE SEES IT.**  `tests/wrap.rs`
+// counts STORES and this is a Rust `String`; `make ci` is green on the tree that leaks, and so
+// is `--interpret`'s own leak report.  So the cells below assert the VALUES — which were right
+// throughout and are the control that says the cure changed no answer — and the leak is scored
+// by the nightly valgrind sweep, which runs every file in this directory, and by hand:
+//
+//   valgrind --leak-check=full --errors-for-leak-kinds=definite \
+//     --suppressions=scripts/valgrind.supp target/release/loft --interpret <this file>
+//
+// Hand-scored 2026-09-25 (`make falsify` cannot: its leak column reads the STORE report, so it
+// records this guard INERT however loudly it leaks — falsify.sh says so in its own header, and
+// it did record exactly that, `0|0|none|none|0` on both trees and both backends):
+//   control 57f0ddc13 — definitely lost: 48 bytes in 6 blocks (8 in 1 + 40 in 5)
+//   here               — definitely lost: 0 bytes in 0 blocks
+// Both runs are DEBUG builds, which is the half that is easy to get wrong: the cached falsify
+// control is built `dev`, so scoring it against a `release` binary here would have compared two
+// profiles rather than two trees.
+//
+// Six blocks for five cells is the arithmetic working out: a1, a2 and a3 stage ONE temp each,
+// a4 one (the preamble runs once per activation, not once per iteration — its loop is what says
+// so) and a5 TWO, for its two members.
+// Every value cell passes on BOTH trees, which is the point: nothing but valgrind moved.
+
+struct Bt { ts: vector<text>, n: integer }
+struct Bs { t: text, n: integer }
+
+fn ok(nm: text, got: text, want: text) {
+  assert(got == want, "{nm}: {got}, want {want}");
+}
+
+/// a1 — the minimal leaker: a reassignment whose literal interpolates a text element of the
+/// member it is rebuilding.
+fn a1() -> text {
+  s = Bt { ts: ["a"], n: 5 };
+  s = Bt { ts: ["{s.ts[0]}"], n: 2 };
+  "{s.ts[0]},{s.n}"
+}
+
+/// a2 — the same with text around the hole, so the append is not the whole buffer.
+fn a2() -> text {
+  s = Bt { ts: ["a"], n: 5 };
+  s = Bt { ts: ["-{s.ts[0]}-"], n: 2 };
+  "{s.ts[0]},{s.n}"
+}
+
+/// a3 — two holes, one scalar and one element, which is the shape the nightly met.
+fn a3() -> text {
+  s = Bt { ts: ["a"], n: 5 };
+  s = Bt { ts: ["{s.n}-{s.ts[0]}"], n: 2 };
+  "{s.ts[0]},{s.n}"
+}
+
+/// a4 — the rebuild inside a LOOP, where the leak is per iteration rather than per program.
+fn a4() -> text {
+  s = Bt { ts: ["a"], n: 0 };
+  for _ in 0..8 {
+    s = Bt { ts: ["{s.ts[0]}x"], n: s.n + 1 };
+  }
+  "{len(s.ts[0] ?? "")},{s.n}"
+}
+
+/// a5 — two members read, so more than one staged temp is minted and discarded.
+fn a5() -> text {
+  s = Bt { ts: ["a", "b"], n: 5 };
+  s = Bt { ts: ["{s.ts[0]}", "{s.ts[1]}{s.n}"], n: 3 };
+  "{s.ts[0]},{s.ts[1]},{s.n}"
+}
+
+/// c1 — control: a SCALAR text member rebuilt the same way.  It takes a different road and was
+/// clean before, so it says the cure did not simply switch the road off.
+fn c1() -> text {
+  s = Bs { t: "a", n: 5 };
+  s = Bs { t: "{s.t}-{s.n}", n: 2 };
+  "{s.t},{s.n}"
+}
+
+/// c2 — control: the same literal bound to a DIFFERENT local, which never leaked.
+fn c2() -> text {
+  s = Bt { ts: ["a"], n: 5 };
+  t = Bt { ts: ["{s.n}-{s.ts[0]}"], n: 2 };
+  "{t.ts[0]},{t.n}"
+}
+
+/// c3 — control: the element read without an interpolation, which never leaked.
+fn c3() -> text {
+  s = Bt { ts: ["a"], n: 5 };
+  s = Bt { ts: [s.ts[0]], n: 2 };
+  "{s.ts[0]},{s.n}"
+}
+
+fn main() {
+  ok("a1 one hole           ", a1(), "a,2");
+  ok("a2 text around it     ", a2(), "-a-,2");
+  ok("a3 scalar and element ", a3(), "5-a,2");
+  ok("a4 in a loop          ", a4(), "9,8");
+  ok("a5 two members        ", a5(), "a,b5,3");
+  ok("c1 scalar member      ", c1(), "a-5,2");
+  ok("c2 a different local  ", c2(), "5-a,2");
+  ok("c3 no interpolation   ", c3(), "a,2");
+  println("a retired text work ref holds no allocation: every value holds");
+}

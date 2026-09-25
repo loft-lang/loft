@@ -812,7 +812,24 @@ impl Parser {
                     );
                 }
                 if self.work_ref_takes_preamble(r) {
-                    ls.insert(0, v_set(r, Value::Null));
+                    // A TEXT work ref takes the EMPTY text, not `null`.  The preamble exists so
+                    // the slot allocator sees a `first_def` and codegen does not panic, and for
+                    // a reference `= null` costs nothing.  For a `text` it is not free: it
+                    // lowers to `OpConvTextFromNull` plus an `OpAppendText` that ALLOCATES, and
+                    // a work ref the parser later substitutes out is retired by
+                    // `Vars::unregister_work_ref` as never-free — on the stated premise that
+                    // *"a variable with no uses holds no store"*, which is true of a reference
+                    // and false of a text.  The allocation is then orphaned, and the frame slot
+                    // it shares with the next text variable is re-initialised over it: 8 bytes
+                    // definitely lost, visible to valgrind alone, since the corpus leak gate
+                    // counts STORES (loft#1671).  `Scopes::pre_inits` already makes exactly
+                    // this choice for the same question, so the two decoders now agree.
+                    let init = if matches!(self.vars.tp(r).base(), Type::Text(_)) {
+                        Value::Text(String::new())
+                    } else {
+                        Value::Null
+                    };
+                    ls.insert(0, v_set(r, init));
                 }
             }
             // Inline-ref temporaries (parse_part work-refs for chained ref calls):
