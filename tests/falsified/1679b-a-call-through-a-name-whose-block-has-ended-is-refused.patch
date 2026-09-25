@@ -1,0 +1,122 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 9394d90c8..173dbabc8 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -17759,11 +17759,6 @@ impl Parser {
+                 if let Type::Function(param_types, ret_type, ..) = slot_tp.clone()
+                     && param_types.is_empty()
+                 {
+-                    // `@FR-B-Scope` is asked HERE because this site resolves the name itself
+-                    // rather than through the bare-name read that asks it (loft#1679).
+-                    if !self.first_pass {
+-                        self.check_block_scope(v_nr, name, name_pos);
+-                    }
+                     // @PLN85 L1 — callee-attr-space deps must not leak into the
+                     // caller (see `fnref_result_type`), and an index naming no visible
+                     // argument names the closure this slot carries (loft#1180).
+@@ -18415,7 +18410,7 @@ impl Parser {
+                 val, source, name, &args, &tps, named_args, arg_pos, name_pos,
+             );
+         }
+-        if let Some(tp) = self.try_fn_ref_call(val, name, list, types, name_pos) {
++        if let Some(tp) = self.try_fn_ref_call(val, name, list, types) {
+             return tp;
+         }
+         self.call(
+@@ -18456,7 +18451,6 @@ impl Parser {
+         name: &str,
+         list: &[Value],
+         types: &[Type],
+-        name_pos: &Position,
+     ) -> Option<Type> {
+         // P215: name lookup for outer-scope fn-ref captures.
+         //
+@@ -18498,12 +18492,6 @@ impl Parser {
+         let Type::Function(param_types, ret_type, _, param_consts) = slot_tp.clone() else {
+             return None;
+         };
+-        // `@FR-B-Scope`, asked only once the name is known to BE a fn-ref slot: a name that is
+-        // no local's falls through to the ordinary call below, where the function's own
+-        // spelling decides.  The zero-argument twin asks the same question at its own site.
+-        if !self.first_pass {
+-            self.check_block_scope(v_nr, name, name_pos);
+-        }
+         // @PLN85 L1 — callee-attr-space deps must not leak into the caller
+         // (see `fnref_result_type`): map visible-param deps through the actual
+         // argument types; an index naming no visible argument names the closure this slot
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index c58304830..406547886 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -264,13 +264,7 @@ impl Parser {
+     /// asked of the VARIABLE's name, not the spelling: a text parameter written in a block
+     /// is promoted to a `__tp_<name>` copy the spelling then resolves to, and that copy is
+     /// still the parameter.
+-    ///
+-    /// The ONE home for the question, asked from every site that RESOLVES a name to a local.
+-    /// The bare-name read below is one; the two indirect-call sites are the others, because
+-    /// `f(1)` on a fn-ref local resolves `f` itself instead of going through that read
+-    /// (loft#1679: a fn-ref loop variable called after the loop was the one spelling the
+-    /// refusal missed, and it answered the exhausted sentinel as `null` instead).
+-    pub(crate) fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
++    fn check_block_scope(&mut self, var: u16, name: &str, name_pos: &Position) {
+         let own = self.vars.name(var);
+         if self.vars.is_argument(var) || own.starts_with("__") {
+             return;
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 8aab70485..b35253da9 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -11602,19 +11602,7 @@ impl Scopes<'_> {
+             }
+             Value::CallRef(v_nr, args) => {
+                 let (preamble, ls, _postamble) = self.scan_args(args, function, data, u32::MAX);
+-                // The CALLEE slot is a READ of the variable, so it is remapped like every
+-                // other var-carrying node (`Var`, `TupleGet`, `FnRefDnr`, … below).  @PLAN53
+-                // cluster 2 extended that list once and stopped one member short of it: a
+-                // `Set` to a name whose block has ended starts a NEW binding
+-                // (`@FR-B-Scope`), which `scan_set` gives its own slot through
+-                // `copy_variable`, and a call through the name then still named the ENDED
+-                // binding's slot — `for f in fs { … } f = two; f(1)` called `one` where the
+-                // earlier binding was live and answered `null` where the loop had left the
+-                // exhausted sentinel, on `--interpret` only (loft#1679).  `--native` names
+-                // its locals `var_<name>`, so both bindings are one Rust local there and the
+-                // rebind shadows it — right for the wrong reason, which is why one backend
+-                // ran and the other did not.
+-                let call = Value::CallRef(*self.var_mapping.get(v_nr).unwrap_or(v_nr), ls);
++                let call = Value::CallRef(*v_nr, ls);
+                 if preamble.is_empty() {
+                     call
+                 } else {
+@@ -11747,30 +11735,7 @@ impl Scopes<'_> {
+                     Value::with_span(b.0.clone(), scanned)
+                 }
+             }
+-            _ => {
+-                // EVERY node that carries a variable index needs an arm above, because a
+-                // split binding (`scan_set`'s `copy_variable`) gives the second binding its
+-                // own slot and the index this walk copies through is the FIRST one's.  The
+-                // enumeration is what keeps failing — `FnRefDnr`/`FnRef` were added one
+-                // release after `Var`/`TupleGet`, `CallRef` one after those (loft#1679) —
+-                // so name the set here: dropping an arm is then a failed assertion rather
+-                // than a wrong slot read on one backend.
+-                debug_assert!(
+-                    !matches!(
+-                        val,
+-                        Value::Var(_)
+-                            | Value::Set(..)
+-                            | Value::CallRef(..)
+-                            | Value::TupleGet(..)
+-                            | Value::TuplePut(..)
+-                            | Value::FnRef(..)
+-                            | Value::FnRefDnr(_)
+-                            | Value::Iter(..)
+-                    ),
+-                    "scan: a var-carrying node reached the pass-through arm, so its variable                      index escapes `var_mapping`"
+-                );
+-                val.clone()
+-            }
++            _ => val.clone(),
+         }
+     }
+ 
