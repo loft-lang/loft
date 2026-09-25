@@ -163,7 +163,7 @@ then edit `index.json`:
 +      "yanked": [],
 +      "versions": {
 +        "0.1.0": {
-+          "url": "https://github.com/<owner>/<repo>/releases/download/v0.1.0/my-lib-0.1.0.tar.gz",
++          "url": "https://github.com/<owner>/<repo>/releases/download/my-lib-v0.1.0/my-lib-0.1.0.tar.gz",
 +          "sha256": "<hex from step 2>",
 +          "size": <N from step 2>,
 +          "loft": ">=0.8",
@@ -247,6 +247,13 @@ is trusted.  The **`submissions/` path** fixes both (@PLN102 C96): you add a sma
 staging file that *never touches `index.json`*, and the maintainer's `loft ship` run
 puts it through the full validation gate before folding it in.
 
+> ⚠ **Reconciled on the registry side on branch `tuxedo-submitting-guide` of
+> `loft-lang/registry`, not yet merged**: its `SUBMITTING.md` documents this route, and
+> its reproducible-build gate clones the tag the release `url` names (on `main` it
+> still assumes a bare `v<version>` for a one-package repo; every published library
+> is a chunk-repo member, where the two agree).  Until that merges, the text below
+> describes the registry's `main`.
+>
 > ⚠ **Only the maintainer half of this is wired, and the registry repo says
 > otherwise.**  `scripts/registry_maintain.sh` drains `submissions/` (vet → fold →
 > re-sign → `git rm`, one atomic commit) and treats an absent directory as an empty
@@ -271,13 +278,13 @@ else:
   "name": "my-lib",
   "version": "0.1.0",
   "repo": "<owner>/<repo>",
-  "tag": "v0.1.0",
+  "tag": "my-lib-v0.1.0",
   "subpath": "my-lib",
   "description": "One sentence on what the library does.",
   "homepage": "https://github.com/<owner>/<repo>",
   "categories": ["text"],
   "entry": {
-    "url": "https://github.com/<owner>/<repo>/releases/download/v0.1.0/my-lib-0.1.0.tar.gz",
+    "url": "https://github.com/<owner>/<repo>/releases/download/my-lib-v0.1.0/my-lib-0.1.0.tar.gz",
     "sha256": "<hex from step 2>",
     "size": <N from step 2>,
     "loft": ">=0.8",
@@ -294,7 +301,7 @@ Fields:
 | `name` | ✓ | the package name (matches its `loft.toml`) |
 | `version` | ✓ | the version being submitted (matches `loft.toml`) |
 | `repo` | ✓ | `<owner>/<repo>` GitHub source — the vetter clones it |
-| `tag` | ✓ | the **release tag** from step 1 (`v0.1.0`, or `<name>-v<version>` in a multi-package repo) |
+| `tag` | ✓ | the **release tag** from step 1, `<name>-v<version>` |
 | `subpath` | ✓ for a multi-package repo | the package **dir** inside the repo (e.g. `crypto`); defaults to `name` |
 | `entry` | ✓ | the index entry — exactly what `loft package` prints (step 2), so `url` / `sha256` / `size` / `loft`; `deps` etc. as needed. **Omit `published`** — the fold stamps it. |
 | `description`, `homepage` | optional for an existing package | seed a brand-new package's index metadata (ignored if the package already exists) |
@@ -328,7 +335,7 @@ Four gates:
 |---|---|---|
 | Schema lint | Required fields, correct types, `schema_version` unchanged | Typo in field name, wrong type (`size` as string instead of int), forgot `published` |
 | Tarball verify | Download `url`, hash it, compare to PR's `sha256` | Re-uploaded the GitHub release asset after opening the PR; pasted wrong sha256 |
-| Reproducible-build re-check | Clone `<homepage>` at `v<version>`, run `loft package`, compare sha256 | Source repo's tag points at different bytes than the uploaded tarball; build environment leaked content (e.g. uncommitted files) into the tarball |
+| Reproducible-build re-check | Clone the repo at the tag the release `url` names, run `loft package`, compare sha256 | Source repo's tag points at different bytes than the uploaded tarball; build environment leaked content (e.g. uncommitted files) into the tarball |
 | Trigger uniqueness | Every Tier-1 `method:receiver` trigger is owned by at most one package across the whole registry | Your `[triggers]`-enabled package declares a `pub fn` method-on-type (`matches:text`, …) that another package already claims |
 
 If a gate fails, CI surfaces the error as a PR comment.  Fix
@@ -499,9 +506,10 @@ Published releases are immutable, so v2026.7.2 and earlier can never gain one.
 
 ## Yanking a broken release
 
-A yanked version stays listed in the index (lockfile pins
-still resolve) but new `loft install` calls skip it unless
-the user passes `--allow-yanked`.
+A yanked version stays listed in the index: a range or `*`
+never picks it, so nothing new installs it by accident, while
+an exact pin — a `loft.lock` entry, or `"0.1.2"` in a
+manifest — still resolves it.
 
 To yank `v0.1.2`:
 
@@ -585,7 +593,7 @@ PR (or after running `loft package`).  Options:
 
 ### "Reproducible-build sha256 mismatch"
 
-CI cloned `<homepage>` at `v<version>` and ran `loft
+CI cloned the repo at the tag your release `url` names and ran `loft
 package`, but the resulting sha256 doesn't match.  Causes:
 
 - The tag was force-pushed AFTER you generated the original
