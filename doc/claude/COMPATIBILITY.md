@@ -363,6 +363,12 @@ The field is **computed automatically by the gate on import** — derived from t
 never author-declared — so it stays honest (the registry produces the verdict; an author cannot
 *claim* compatibility) and always current (set on every version imported, no manual upkeep).
 
+What ships today is the author-side half: a library DECLARES three levels (`loft`,
+`api_compatible_with`, `data_compatible_with`) and `loft compat check` verifies the claim
+against every published release before the tag, so a declaration that is wrong is refused
+rather than trusted ([LIBRARY_AUTHORING.md § 3](LIBRARY_AUTHORING.md)).  The computed verdict
+above is the registry-side half, not built.
+
 ### The cures consumers have needed before contract 1 — recorded here, never in their trees
 
 Before the freeze a refusal may still be added (the error surface is one-directional only

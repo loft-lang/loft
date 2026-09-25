@@ -514,14 +514,16 @@ third-party scripts, and how each part is verified on instruments the repo alrea
 printable with `make pdf-doc` ·
 [lib_plans/README.md](doc/claude/lib_plans/README.md) (legacy) · [STACKTRACE.md](doc/claude/STACKTRACE.md) · [SANDBOX.md](doc/claude/SANDBOX.md).
 
-**Libraries / registry / packages:** `LIBRARIES.md` (generated on demand — `make libcatalogue`, not
-committed) state of the loft distribution — core (version + binary sha) + libraries + applications built with loft ·
-[LIBRARY_BRANCHES.md](doc/claude/LIBRARY_BRANCHES.md) in-flight (unmerged) lib branches ·
-[PACKAGES.md](doc/claude/PACKAGES.md) format/targets · [PKG_REGISTRY.md](doc/claude/PKG_REGISTRY.md) registry MVP ·
-[LIBRARY_AUTHORING.md](doc/claude/LIBRARY_AUTHORING.md) / [LIBRARY_CHECKLIST.md](doc/claude/LIBRARY_CHECKLIST.md) ·
-[REGISTRY_SUBMIT.md](doc/claude/REGISTRY_SUBMIT.md) / [REGISTRY_BOOTSTRAP.md](doc/claude/REGISTRY_BOOTSTRAP.md) /
-[REGISTRY_RECOVERY.md](doc/claude/REGISTRY_RECOVERY.md) · [API_SURFACE.md](doc/claude/API_SURFACE.md) ·
-publishing is the **loft-ship skill** (touch-gated signing). REPL: [REPL.md](doc/claude/REPL.md).
+**Libraries / registry / packages:** **any library work: read
+[LIBRARY_AUTHORING.md § The library contract](doc/claude/LIBRARY_AUTHORING.md) first** (the
+standing rules, one line each, each pointing at its home); the rest of LIBRARY_AUTHORING is the
+how (testbed → develop → publish → maintain), [LIBRARY_CHECKLIST.md](doc/claude/LIBRARY_CHECKLIST.md)
+what a registry review checks, and publishing is the **loft-ship skill**.  A library's API:
+`LIBRARIES.md` (generated on demand — `make libcatalogue`, not committed) · in-flight branches:
+[LIBRARY_BRANCHES.md](doc/claude/LIBRARY_BRANCHES.md) · reference: [PACKAGES.md](doc/claude/PACKAGES.md)
+format/targets · [API_SURFACE.md](doc/claude/API_SURFACE.md) · [REGISTRY_SUBMIT.md](doc/claude/REGISTRY_SUBMIT.md) /
+[REGISTRY_BOOTSTRAP.md](doc/claude/REGISTRY_BOOTSTRAP.md) / [REGISTRY_RECOVERY.md](doc/claude/REGISTRY_RECOVERY.md) ·
+[PKG_REGISTRY.md](doc/claude/PKG_REGISTRY.md) the registry's design record. REPL: [REPL.md](doc/claude/REPL.md).
 
 **Process / issues / release:** [DEVELOPMENT.md](doc/claude/DEVELOPMENT.md) workflow ·
 [ISSUE_TRACKING.md](doc/claude/ISSUE_TRACKING.md) (open→Issues, closed→[PROBLEMS.md](doc/claude/PROBLEMS.md)) ·

@@ -12,7 +12,7 @@
 #     pull_request:
 #       paths: ['native/**', 'loft.toml']   # only when the native crate changes
 #     push:
-#       tags: ['v*']
+#       tags: ['*-v*']   # the `<name>-v<version>` release tag
 #   jobs:
 #     prebuild:
 #       uses: loft-lang/loft/.github/workflows/prebuild-native.yml@main

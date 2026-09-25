@@ -61,16 +61,15 @@ You do NOT need:
 
 ### 1. Tag the release in your source repo
 
-The tag scheme depends on the repo layout.  The loft-lang libraries ship as
-**domain monorepos** (`loft-libs-core`, `loft-libs-net`, `loft-libs-graphics`,
-`loft-libs-game`, `loft-libs-world`, `loft-libs-assets`) — several packages per
-repo — so the tag is **`<pkg>-v<version>`** to disambiguate.  A
-one-repo-per-package layout uses a bare `v<version>`.
+The tag is **`<pkg>-v<version>`** whatever the repo layout: the loft-lang
+libraries ship as **domain monorepos** (`loft-libs-core`, `loft-libs-net`,
+`loft-libs-graphics`, `loft-libs-game`, `loft-libs-world`, `loft-libs-assets`),
+several packages per repo, and `loft package` names the release it expects that
+way for a one-package repo too.
 
 ```sh
-cd loft-libs-core/                 # the monorepo
-git tag crypto-v0.2.1              # MONOREPO:  <pkg>-v<version>
-# git tag v0.2.1                   # one-repo-per-package: bare v<version>
+cd loft-libs-core/
+git tag crypto-v0.2.1              # <pkg>-v<version>
 git push --tags
 ```
 
@@ -549,16 +548,21 @@ the tarball" is yours.  Common mistakes:
 
 ## Etiquette
 
-- **Semantic versioning.**  `MAJOR.MINOR.PATCH`.  Breaking
-  changes bump major; new features bump minor; bugfixes bump
-  patch.  Pre-1.0 minor counts as major for the purpose of
-  breakage (you can break in `0.2.0` → `0.3.0`).
+- **Compatibility is declared, not implied by the version
+  number.**  `MAJOR.MINOR.PATCH` is only an identity; what
+  says a release is safe to take is its three declared levels
+  (`loft`, `api_compatible_with`, `data_compatible_with`), and
+  raising a floor is how a break is declared.  `loft compat
+  check --full` verifies the claim before you tag
+  ([LIBRARY_AUTHORING.md § 3](LIBRARY_AUTHORING.md)).
 - **`loft = ">=X.Y"`** in your version entry should match the
   oldest loft you actually tested against.  Don't claim
   `>=0.8` if you used a 0.8.4-only feature.
-- **Deprecation** has no first-class registry support yet.
-  Convention: mark deprecated versions yanked with a reason
-  pointing at the new package or branch.
+- **Deprecation is a signal, never a removal**: point at the
+  successor in the docs and keep the old version working
+  ([COMPATIBILITY.md](COMPATIBILITY.md)).  Yank only a version
+  that is broken or vulnerable, never one that is merely
+  superseded.
 - **Multiple maintainers**: file an issue against
   `loft-lang/registry` requesting co-maintainer status.  The
   registry maintainers will add a co-author to the package's

@@ -2218,6 +2218,8 @@ Codegen consistency genuinely needs consolidation — in which case the correct 
 REVERSE (fold the ~5 hand-written emitters INTO `#rust`, making `#rust` the single source of
 truth), a fresh plan, NOT @PLN81's "everything → emitters, delete the template path."
 
+**Later (2026-09-25):** "recommended" is for BRIDGING a capability loft lacks. `#rust` is not a speed-up for a routine loft can express — that is `(Perf-Cure)` in [formal/performance.md](formal/performance.md): a slow routine is cured in the engine or in its loft algorithm.
+
 ## C88 — the scope-exit free gate stays dep-derived; simplify it (if ever) by promoting @PLN94's ownership oracle to authority, NOT by @PLN79's "drop the gate half + rely on idempotent free" (@PLN79 closed)
 
 ### Question
@@ -2514,6 +2516,7 @@ The maintainer's only irreducibly-human steps become **policy**: admit a namespa
 - The **V1–V6 validation gate** ([library-ship-validation.md](plans/102-stability-contract/library-ship-validation.md)) runs before signing; the signature attests validation.
 - **Rejected:** the trust-root in CI (a leak breaks every install); a fully-automatic push→signed-release (can't be kept safe); a mutable single-signed index blob (the re-sign foot-gun — it broke installs once already). A scoped delegated CI key is a fancier key-absent tier, deferred until unattended CI publishing is a real need; the submission-PR defer is the MVP.
 - Owner ruling 2026-07-15 (`tuxedo` default = local key). Proven in part: `scripts/registry_maintain.sh` + the local file key shipped shapes 0.3.0 + time 0.2.1. Freeze-gate companion: `.github/workflows/revalidate-libs.yml`.
+- **Later (2026-09-25), as `scripts/registry-sign.sh` stands:** the card signs when a PKCS#11 module is present; otherwise the local key file signs after a typed `yes`, or with no prompt under `--expect <pkg>@<ver>`, whose scope check refuses anything else in the diff. That supersedes "no prompt" above; the tier boundary (key present signs, key absent defers) is unchanged.
 
 ## C97 — A library's public symbols live under its module, not the global namespace (so the stdlib can grow without breaking a shipped lib)
 

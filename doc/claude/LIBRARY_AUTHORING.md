@@ -67,9 +67,10 @@ the detail, and that place wins if the two ever differ — fix this line, not th
 12. **Declare the sandbox side** (trusted engine or admissible loft) while writing the API.
     [§ 2d](#2d-declare-which-side-of-the-sandbox-boundary-the-library-is-on)
 13. **A clean surface** — no duplicates or confusable names, no footguns or hidden setup
-    ([API_SURFACE.md](API_SURFACE.md) S1–S7); public names are module-scoped and never
-    redefine the stdlib (DESIGN_DECISIONS.md C95, C97, C101); a parameter or field that is
-    never written is `const` (loft-write skill).
+    ([API_SURFACE.md](API_SURFACE.md) S1–S7); public names live under the library's module,
+    so the stdlib can grow beside them, and a free function a same-named method would
+    silently shadow is refused (DESIGN_DECISIONS.md C95, C97, C101; `warning[shadowed-by-method]`);
+    a parameter or field that is never written is `const` (loft-write skill).
 14. **Only a browser-declared library knows JavaScript**; a platform-blind one carries bytes,
     and a blocking-looking primitive yields.  [BROWSER_INTEROP.md](BROWSER_INTEROP.md)
 
@@ -115,8 +116,10 @@ the detail, and that place wins if the two ever differ — fix this line, not th
     `<name>-v<version>`.  [§ 3](#3-pre-release-checklist), [§ 4](#4-publish)
 26. **A registry dependency must be in the live signed index** before anything that builds
     it is pushed.  [§ 3](#3-pre-release-checklist)
-27. **Our libraries publish through `registry_maintain.sh`, signed by the maintainer** (a key
-    touch); an external author signs nothing.  [§ 4](#4-publish), loft-ship skill
+27. **Our libraries publish through `registry_maintain.sh`, signed by the maintainer**: the
+    hardware key when present, else the key file after a typed `yes` or under a checked
+    `--expect <pkg>@<ver>`.  An external author signs nothing.  [§ 4](#4-publish),
+    loft-ship skill (`references/publish.md`)
 28. **Healthy means** no open branches, `main` green against the current loft, zero warnings.
     [§ 5](#5-maintain)
 
@@ -740,10 +743,9 @@ Before you ship a version:
 
       `loft test` runs the **installed** loft; `registry_maintain.sh` runs the
       loft built in the **checkout it is invoked from**, and the two can
-      disagree while both report the same version — a local shadowing a stdlib
-      function name (`now = …`) passed every `loft test` and blocked the
-      publish of `imaging` 0.2.2 with *"Cannot redefine function 'now' as a
-      variable"*. The gate is the right authority: a published library must
+      disagree while both report the same version, so a source the installed
+      loft accepts can be refused by the loft the publish runs. The gate is the
+      right authority: a published library must
       parse under whatever loft its **consumers** hold, not just the one on the
       publishing machine. Run it before tagging, not after.
 - [ ] `loft.toml` has the new version under `[package] version`.
@@ -848,10 +850,12 @@ in gzip + tar headers).  The sha256 is stable across
 machines; the registry's gate-3 re-runs `loft package` from
 the tagged source to verify byte-for-byte equality.
 
-**Prebuilt cdylibs build automatically (@PLN21).**  A *native*
-library's own CI calls the reusable producer workflow so a
-consumer can `use` it with **no Rust toolchain** — and so a
-broken host build is caught before merge:
+**Prebuilt cdylibs (@PLN21) — the producer is shipped, and no library calls it
+yet.**  The distribution half (workflow artefacts into `index.json`
+`binaries[<triple>]`) is open ([PACKAGES.md](PACKAGES.md) § PKG.PREBUILT), so
+today a consumer builds a native library from source on first use.  A *native*
+library adopts it by calling the reusable producer workflow, so a consumer can
+`use` it with **no Rust toolchain** and a broken host build is caught before merge:
 
 ```yaml
 # .github/workflows/prebuild.yml
@@ -859,7 +863,7 @@ on:
   pull_request:
     paths: ['native/**', 'loft.toml']   # PR → validate it builds on every host
   push:
-    tags: ['v*']                        # tag → build + attach to the release
+    tags: ['*-v*']                      # a `<name>-v<version>` tag → build + attach
 jobs:
   prebuild:
     uses: loft-lang/loft/.github/workflows/prebuild-native.yml@main
@@ -910,8 +914,16 @@ Flags:
 
 ### 4d. Open the registry PR
 
-Manually clone `loft-lang/registry`, paste the emitted block
-into `index.json`, and open a PR:
+This is the route for an author who does not hold the signing key; our own
+libraries publish through `registry_maintain.sh` (§ 4).  The recommended form
+is a `submissions/<name>-<version>.json` staging file that never touches
+`index.json` ([REGISTRY_SUBMIT.md § 4](REGISTRY_SUBMIT.md)); the direct edit
+below is what the registry repo's own `SUBMITTING.md` still documents.  Either
+way you sign nothing: a maintainer re-signs the index when folding it in, and
+an `index.json` merged unsigned breaks every `loft install`.
+
+To edit `index.json` directly, clone `loft-lang/registry`, paste the emitted
+block into `index.json`, and open a PR:
 
 ```
 $ git clone git@github.com:loft-lang/registry.git
@@ -1045,8 +1057,9 @@ test-suite exercises through a pinned source mirror under
 [`loft-lang/loft`](https://github.com/loft-lang/loft)'s
 `tests/fixtures/libs/<pkg>/` — the dogfood libraries (`arguments`,
 `graphics`, `gridmesh`, `shapes`, `imaging`, `game_protocol`, `web`,
-`hex_world`, `time`).  A pure registry-only library has no fixture; skip
-to step 5c's registry PR and you're done.
+`hex_world`, `time`, `assets`) — the list `scripts/sync-fixtures.sh`'s
+`PINNED_REFS` owns.  A pure registry-only library has no fixture; skip to
+§ 4d's registry PR and you're done.
 
 The fixture is a **deliberate snapshot, not auto-latest** — so a
 library change that affects the compiler tests is a reviewable commit in
@@ -1092,16 +1105,18 @@ repo, **out of the loft tree**, so no stale artifacts accrue in loft:
    [ISSUE_TRACKING.md § Convention](ISSUE_TRACKING.md) — so `Fixes #N` is
    same-repo and the `fixed-pending-merge` lifecycle works.  (A bug mis-filed in
    `loft-lang/loft` whose fix is library code gets re-homed there.)
-2. **Checkout — out of tree.** Clone the chunk repo to a dedicated dev dir
-   *outside* the loft working tree (e.g. `~/loft-dev/<chunk>`), never into
-   `loft/lib/<pkg>/`.  The pre-extraction `lib/<pkg>/` layout is being removed;
+2. **Checkout — out of tree, on the testbed** ([§ The testbed](#the-testbed--a-library-tested-with-minimal-dependencies)):
+   a worktree of the chunk repo's `origin/main` in a scratch directory *outside* the
+   loft working tree, never the sibling checkout itself (another agent may be working
+   there) and never `loft/lib/<pkg>/`.  The pre-extraction `lib/<pkg>/` layout is being removed;
    any leftover skeleton there (build cruft, no source, no `.git`) is **stale and
    should be deleted** — it only pollutes loft's `git status` and creates "is the
    source here?" ambiguity (the trap that hid `graphics/native/src/text.rs`
    during the @P340 / `@GH252` follow-up — the real source was in the fixture +
    chunk repo, never in `lib/graphics/`).
-3. **Fix + test.** Edit the package source in the checkout; run the library's own
-   suite there, or test it against loft with `--lib ~/loft-dev/<chunk>`.  The
+3. **Fix + test.** Edit the package source in the worktree and run the testbed's
+   steps there: this tree's loft, the declared dependencies only, both backends with
+   warnings denied.  The
    checkout shadows nothing in loft's tree and builds in its **own** `target/`.
 4. **Tag + push.** Commit with `Fixes #N` (chunk-repo issue), tag
    `<pkg>-vX.Y.Z`, push.  The chunk repo's own apply/strip workflows label then
@@ -1110,7 +1125,7 @@ repo, **out of the loft tree**, so no stale artifacts accrue in loft:
    `sync-fixtures.sh`, and commit the `tests/fixtures/libs/<pkg>/` diff in loft as
    **one reviewable commit** — separate from the issue close.  loft now tracks the
    fixed snapshot.
-6. **Teardown.** `rm -rf ~/loft-dev/<chunk>`, then `loft cache prune` — it drops the
+6. **Teardown.** `git worktree remove` the scratch worktree, then `loft cache prune` — it drops the
    generations this loft can no longer select and leaves the live one, so the next
    build does not start cold (`loft cache status` first if you want the figure).
    The loft tree is pristine; no stale artifacts remain.
@@ -1172,7 +1187,8 @@ Common causes:
 resolution chain via `loft list-installed` + the closest
 `loft.lock`.  Sidecar `<script>.loft.lock` takes precedence
 over walk-up `loft.lock`.  `LOFT_OFFLINE=1` blocks
-auto-install.
+auto-install.  That chain picks the VERSION; where the compiler looks for a
+`use` at all, and which location wins, is [PACKAGES.md § Resolution order](PACKAGES.md#resolution-order).
 
 **Native crate fails to build from `~/.loft/registry/.../native/`**
 — the cargo build redirects to `~/.loft/build-cache/<pkg>-<ver>/`
