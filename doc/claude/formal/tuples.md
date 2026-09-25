@@ -227,8 +227,19 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 0.**  D-tup-16 opened and closed 2026-09-25 (below); D-tup-15 opened and closed
-2026-09-22 ([history](tuples-history.md)).
+**OPEN: 0.**  D-tup-17 opened and closed 2026-09-26 (below); D-tup-16 opened and closed
+2026-09-25 (below); D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
+
+- **D-tup-17** *(CLOSED 2026-09-26, found with loft#1682)* — `(T-Absent)`'s ruling that an absent
+  tuple is the present tuple of null members had no `--native` spelling for a STACK tuple: the
+  emitter's typed null (`write_typed_null_in`) rendered a `Type::Tuple` as `()`, so an
+  EXHAUSTIVE enum `match` answering `(integer, integer)` — whose parser fallback arm is `null` —
+  did not compile natively at all (rustc E0308, *"expected (i64, i64), found ()"*), with no
+  null member anywhere in the program; a `_ =>` arm hid it, and the interpreter answered.  On
+  every tree since tuples were stack values (the sibling checkout's binary of two days before
+  fails the same way).  **Fix.**  A stack tuple's null is the tuple of its members' nulls; a
+  tuple with a heap or text member is a `__tuple<…>` record and was already `DbRef::NULL`.
+  Cell `exhaustive enum match into a stack tuple` of loft#1682's guard.
 
 - **D-tup-16** *(CLOSED 2026-09-25, loft#1673)* — `(T-Ref-El)` says of a `&(…)` binding
   *"Never a runtime fault and never an ICE"*, and a whole-value READ or WRITE of the

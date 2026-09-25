@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1682 (`@FR-T-Chk`, `@FR-I-Join`, `@FR-M-Expr`) — A NULL MEMBER IN THE FIRST TUPLE ARM
+// DOES NOT PIN THE JOIN.  A tuple literal with a `null` element synthesises `(null, integer)`,
+// and that type was handed to the sibling arm as the type to answer in; nothing converts a
+// concrete member to `null`, so `if z { (null, 3) } else { (4, 5) }` was refused — "expected
+// (null, integer), got (integer, integer) on else" — whatever the declared destination, in an
+// `if` and in a `match`, while the SAME program with the concrete arm first compiled and ran.
+// A bare scalar `null` arm has always taken the carve-out that lets the sibling decide; the
+// tuple with a `null` member now takes the same one, and the arms join ELEMENT-WISE:
+// `null ⊔ τ = τ?`, two sibling variants join to their enum, both tails converted to the join.
+//
+// Every cell is the refused spelling beside the order that always worked, with hand-computed
+// values; the controls at the end are the spellings that never failed (concrete arm first, a
+// `return` per arm, the scalar `null` arm).
+//
+// @falsified-at: <derived after the fix is committed>
+// CHANNEL: the exit code and the compile error — on the control tree every refused cell is a
+//   compile error, so the file does not run at all there; the exhaustive-match cell is a
+//   rustc error on --native there (`expected (i64, i64), found ()`).
+// WITNESS: "expected (null, integer), got (integer, integer) on else".
+// HOLDS: the controls compile and answer on both trees.
+
+enum E { A { n: integer }, B { n: integer } }
+
+fn nested_first(z: boolean) -> (vector<vector<integer>>?, integer) { if z { (null, 3) } else { ([[4]], 5) } }
+fn scalar_first(z: boolean) -> (integer?, integer) { if z { (null, 3) } else { (4, 5) } }
+fn second_member(z: boolean) -> (integer, integer?) { if z { (3, null) } else { (4, 5) } }
+fn different_members(z: boolean) -> (integer?, integer?) { if z { (null, 3) } else { (4, null) } }
+fn enum_member(z: boolean) -> (E, integer?) { if z { (A { n: 1 }, null) } else { (B { n: 2 }, 5) } }
+fn via_match(z: integer) -> (integer?, integer) { match z { 1 => (null, 3), _ => (4, 5) } }
+fn match_three_arms(z: integer) -> (integer?, text?) { match z { 1 => (null, "a"), 2 => (4, null), _ => (5, "c") } }
+fn chain(z: integer) -> (integer?, integer) { if z == 1 { (null, 3) } else if z == 2 { (4, 5) } else { (6, 7) } }
+fn tag(e: E) -> text { match e { A { n } => "A{n}", B { n } => "B{n}" } }
+fn payload_match(e: E) -> (integer?, integer) { match e { A { n } => (null, n), B { n } => (n, 5) } }
+// the neighbour the payload cell uncovered: an EXHAUSTIVE enum match (no wildcard) answering a
+// stack tuple did not compile on --native at all — its parser fallback arm is `null`, and the
+// emitter rendered a tuple's null as `()` (rustc E0308) — on every tree, no null member needed
+fn exhaustive_concrete(e: E) -> (integer, integer) { match e { A { n } => (n, 1), B { n } => (n, 5) } }
+// controls
+fn concrete_first(z: boolean) -> (integer?, integer) { if z { (4, 5) } else { (null, 3) } }
+fn per_arm_return(z: boolean) -> (integer?, integer) { if z { return (null, 3); } (4, 5) }
+fn scalar_null_arm(z: boolean) -> vector<integer>? { if z { null } else { [4] } }
+
+fn main() {
+  a = nested_first(true);
+  b = nested_first(false);
+  assert("{a.0 ?? [[0]]}" == "[[0]]" && a.1 == 3 && "{b.0 ?? [[0]]}" == "[[4]]" && b.1 == 5,
+    "nested member, null arm first: {a.0 ?? [[0]]} {a.1} {b.0 ?? [[0]]} {b.1}");
+  c = scalar_first(true);
+  d = scalar_first(false);
+  assert(!c.0 && c.1 == 3 && (d.0 ?? 0) == 4 && d.1 == 5, "scalar member, null arm first: {c.0} {c.1} {d.0} {d.1}");
+  e = second_member(true);
+  f = second_member(false);
+  assert(e.0 == 3 && !e.1 && f.0 == 4 && (f.1 ?? 0) == 5, "null in the second member: {e.0} {e.1} {f.0} {f.1}");
+  g = different_members(true);
+  h = different_members(false);
+  assert(!g.0 && (g.1 ?? 0) == 3 && (h.0 ?? 0) == 4 && !h.1, "nulls in different members: {g.0} {g.1} {h.0} {h.1}");
+  i = enum_member(true);
+  j = enum_member(false);
+  assert(tag(i.0) == "A1" && !i.1 && tag(j.0) == "B2" && (j.1 ?? 0) == 5, "sibling variants beside a null: {tag(i.0)} {i.1} {tag(j.0)} {j.1}");
+  k = via_match(1);
+  l = via_match(2);
+  assert(!k.0 && k.1 == 3 && (l.0 ?? 0) == 4 && l.1 == 5, "match, null arm first: {k.0} {k.1} {l.0} {l.1}");
+  m1 = match_three_arms(1);
+  m2 = match_three_arms(2);
+  m3 = match_three_arms(3);
+  assert(!m1.0 && (m1.1 ?? "-") == "a" && (m2.0 ?? 0) == 4 && !m2.1 && (m3.0 ?? 0) == 5 && (m3.1 ?? "-") == "c",
+    "match, three arms: {m1.0} {m1.1} {m2.0} {m2.1} {m3.0} {m3.1}");
+  n1 = chain(1);
+  n2 = chain(2);
+  n3 = chain(3);
+  assert(!n1.0 && n1.1 == 3 && (n2.0 ?? 0) == 4 && n2.1 == 5 && (n3.0 ?? 0) == 6 && n3.1 == 7,
+    "else-if chain: {n1.0} {n1.1} {n2.0} {n2.1} {n3.0} {n3.1}");
+  o1 = payload_match(A { n: 3 });
+  o2 = payload_match(B { n: 4 });
+  assert(!o1.0 && o1.1 == 3 && (o2.0 ?? 0) == 4 && o2.1 == 5, "payload-binding match, null arm first: {o1.0} {o1.1} {o2.0} {o2.1}");
+  x1 = exhaustive_concrete(A { n: 3 });
+  x2 = exhaustive_concrete(B { n: 4 });
+  assert(x1.0 == 3 && x1.1 == 1 && x2.0 == 4 && x2.1 == 5, "exhaustive enum match into a stack tuple: {x1.0} {x1.1} {x2.0} {x2.1}");
+  z = true;
+  x: (integer?, integer) = if z { (null, 3) } else { (4, 5) };
+  y = if !z { (null, 3) } else { (4, 5) };
+  assert(!x.0 && x.1 == 3 && (y.0 ?? 0) == 4 && y.1 == 5, "typed local and no annotation: {x.0} {x.1} {y.0} {y.1}");
+  // controls
+  p = concrete_first(false);
+  q = per_arm_return(true);
+  r = scalar_null_arm(true);
+  assert(!p.0 && p.1 == 3 && !q.0 && q.1 == 3 && "{r ?? [0]}" == "[0]", "controls: {p.0} {p.1} {q.0} {q.1} {r ?? [0]}");
+  println("a null member in the first tuple arm does not pin the join: every cell holds");
+}

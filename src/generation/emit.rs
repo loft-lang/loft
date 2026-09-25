@@ -1886,6 +1886,25 @@ impl Output<'_> {
                 // (Cluster D / H6).
                 write!(w, "DbRef::NULL")
             }
+            // loft#1682's neighbour — a STACK tuple (every member a scalar; one with a heap
+            // or text member is a `__tuple<…>` record and took the arm above) is null as
+            // the tuple of its members' nulls.  Rendered `()` before, an exhaustive enum
+            // `match` answering a tuple — whose parser fallback arm is `null` — failed to
+            // compile on `--native` (rustc E0308, `expected (i64, i64), found ()`), on
+            // every tree since tuples were stack values.
+            Type::Tuple(elems) => {
+                write!(w, "(")?;
+                for (i, e) in elems.iter().enumerate() {
+                    if i > 0 {
+                        write!(w, ", ")?;
+                    }
+                    Self::write_typed_null_in(w, e, storage)?;
+                }
+                if elems.len() == 1 {
+                    write!(w, ",")?;
+                }
+                write!(w, ")")
+            }
             _ => write!(w, "()"),
         }
     }
