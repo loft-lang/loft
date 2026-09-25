@@ -13,12 +13,16 @@ name: Release gate
 # required) — so a change can be green on every PR and red on the legs that only run
 # after the merge.  A release needs the other answer: THIS commit, EVERY leg, NOW.
 #
-# What it runs: five nightlies, called as reusable workflows, so this file cannot
+# What it runs: six nightlies, called as reusable workflows, so this file cannot
 # drift from what the nightly actually tests.  Each takes the path its own
 # `workflow_dispatch` takes — every OS, the round-trip pair and the oracle in
 # `ci.yml`; every sanitizer and invariant gate in `miri.yml`; every shipped library
-# against this tree (`revalidate-libs.yml`); the threaded browser leg
-# (`browser-threads.yml`); the reproducible-build check (`repro-build.yml`).  A red
+# against this tree, on both backends (`revalidate-libs.yml`); the threaded browser leg
+# (`browser-threads.yml`); the reproducible-build check (`repro-build.yml`); and the
+# APPLICATIONS built with loft — every package of moros, dryopea, crawler and the
+# economy model, on both backends (`consumer-main-health.yml`, loft#1653).  The apps
+# are the consumers the dogfood loop makes the instrument, and until this leg they were
+# read only at the TAG (`release.yml`), after the candidate was already chosen.  A red
 # ANYWHERE is a red verdict, and that includes the jobs a PR shows as advisory:
 # informational on a diff, blocking on a release.
 #
@@ -101,6 +105,14 @@ jobs:
     uses: ./.github/workflows/repro-build.yml
     secrets: inherit
 
+  # A consumer's red is either loft moving under it or the consumer's own tip; which one
+  # is read from its job, and a red that is the consumer's own is waived on the record
+  # (`--waive consumer-main-health.yml --note '<why>'`), never ignored.
+  consumers:
+    name: consumer-main-health.yml
+    uses: ./.github/workflows/consumer-main-health.yml
+    secrets: inherit
+
   # The one line the release reads.  A called workflow's result is `success` only when
   # every job in it succeeded, so a red advisory job inside `ci.yml` is a red `ci` here
   # without any list of job names to keep in step.  Anything that is not `success`
@@ -108,7 +120,7 @@ jobs:
   # and treating it as green is how a gate stops gating without ever going red.
   verdict:
     name: verdict
-    needs: [ci, miri, libs, browser, repro]
+    needs: [ci, miri, libs, browser, repro, consumers]
     if: always()
     runs-on: ubuntu-latest
     steps:

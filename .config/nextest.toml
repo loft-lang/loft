@@ -136,7 +136,7 @@ filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use
 test-group = 'heavy-serial'
 
 [[profile.default.overrides]]
-filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
+filter = 'binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)'
 test-group = 'heavy-serial'
 
 [[profile.ci.overrides]]
@@ -147,36 +147,17 @@ test-group = 'html-wasm-serial'
 filter = 'binary(native) + binary(n2_cdylib) + binary(n3_parity) + binary(n3_use_native) + binary(multiplayer_v2) + binary(multiplayer_v3) + binary(wasm_debug_relay)'
 test-group = 'heavy-serial'
 
-# `loft_suite` runs every `tests/scripts` program serially in one test, so its clock grows with
-# the corpus, and the Windows runner is the slowest `ci` host.  Measured on the daily
-# `Test (windows-latest)` job: 414.9 s, 430.2 s and 432.6 s at 4762 tests (09-11..09-13, green),
-# then KILLED at 600 s and 509.2 s on its retry at 4807 (09-14, reported FLAKY) — 72-85 % of the
-# ceiling, one slow runner from red.  The same shape as the sanitizer legs below, cured the same
-# way: this one test on this one platform gets a longer ceiling, and `ci`'s 600 s stays the hang
-# guard everywhere else (a hung script inside the suite is also caught by the per-program
-# watchdog, which the ceiling here does not replace).
-[[profile.ci.overrides]]
-platform = 'cfg(windows)'
-filter = 'binary(wrap) & test(loft_suite)'
-slow-timeout = { period = "1200s", terminate-after = 1 }
+# No per-test raise for the corpus runners: `loft_suite` and `native_scripts` are CHUNKED
+# (`loft_suite_00..07`, `native_scripts_00..11`), each a fixed slice of `tests/scripts`, because a
+# test that grows with the corpus meets any ceiling eventually.  `scripts/test_duration_gate.py`
+# holds every test to HALF its limit; the owner rules out raising limits (2026-09-24).
 
-# The two native matrices — `native_scripts` (a rustc compile per `tests/scripts` program) and
-# the drop gate's native leg (one per generated cell) — grow with what they cover, and both
-# already compile in parallel inside the test.  Measured on the daily `Test (*)` jobs, 09-19..09-23:
-# `native_scripts` 463-571 s on ubuntu and 247-566 s on macOS, KILLED at 600 s on the first try
-# on macOS twice and on Windows every night; the drop gate 195-200 s → 374-392 s once its
-# `bound_`/`handover_` matrices landed, and KILLED at 600 s twice on Windows on 09-23.  The drop
-# gate also ran OUTSIDE `heavy-serial`, so its rustc pool contended with `native_scripts`' own —
-# the over-subscription the group exists to prevent, and why a killed first try passed its retry
-# in half the time.  Both get the longer ceiling on every platform; each program inside still
-# has its own per-run watchdog, which is the hang guard that matters for a matrix.
+# The drop gate's native leg compiles one binary per cell, so it runs in `heavy-serial`: its rustc
+# pool contended with `native_scripts`' own when it ran outside the group.  It is CHUNKED
+# (`…_on_native_0..3`) and needs no raised ceiling.
 [[profile.ci.overrides]]
-filter = 'binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)'
+filter = 'binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)'
 test-group = 'heavy-serial'
-
-[[profile.ci.overrides]]
-filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native))'
-slow-timeout = { period = "1200s", terminate-after = 1 }
 
 # The serial critical path starts FIRST.  nextest otherwise runs binaries in listing order, and on
 # the Windows `ci` host (4 cores) the long tests queued behind ~5000 short ones: measured on run
@@ -192,7 +173,7 @@ slow-timeout = { period = "1200s", terminate-after = 1 }
 # at 600 s (its retry: 57 s), `changed_selects_subjects_by_path` killed twice — and the test phase
 # stayed at 63 min.  Those overlap the bulk better in listing order.
 [[profile.ci.overrides]]
-filter = '(binary(native) & test(=native_scripts)) | (binary(ownership_drop_gate) & test(every_cell_releases_each_resource_once_on_native)) | (binary(wrap) & test(=loft_suite))'
+filter = '(binary(native) & test(/^native_scripts_[0-9]+$/)) | (binary(ownership_drop_gate) & test(/^every_cell_releases_each_resource_once_on_native_[0-9]+$/)) | (binary(wrap) & test(/^loft_suite_[0-9]+$/))'
 priority = 100
 
 
@@ -200,14 +181,11 @@ priority = 100
 # and `ci.yml`'s per-PR ASan sweep since 2026-09-15 (that one sat at 587 s of `ci`'s 600 s
 # and was killed at 600 s by the next commit that added a corpus script — run 34980517571).
 #
-# It is `ci` with ONE difference: `loft_suite`, which runs every `tests/scripts` program
-# serially inside one test process, gets a longer ceiling.  Under `-Zsanitizer=address` that
-# one test is the whole leg's clock, and it grows with the corpus rather than with any hang:
-# measured on GitHub's ubuntu runner, 577.5 s of a 600 s ceiling at 1356 scripts (green,
-# 5cd4785c9) and killed at 600 s at 1371 (loft#1527), while the uninstrumented `ci` run of
-# the same test takes a fraction of that.  So the ceiling is raised HERE, for the build that
-# is slow by construction, and not in `ci`, where 600 s still catches a hung script.  Every
-# other test keeps `ci`'s 600 s.
+# It is `ci` with no per-test raise.  It used to give `loft_suite` 1800 s: under
+# `-Zsanitizer=address` that one test ran every corpus program and was the whole leg's clock —
+# 577.5 s of 600 s at 1356 scripts, killed at 1371 (loft#1527).  The corpus is chunked now
+# (`loft_suite_00..07`), so each chunk is an eighth of that and the ceiling is the hang guard
+# again, not a budget the corpus grows into.
 [profile.sanitizer]
 retries          = 1
 failure-output   = "immediate-final"
@@ -218,10 +196,6 @@ slow-timeout     = { period = "600s", terminate-after = 1 }
 
 [profile.sanitizer.junit]
 path = "junit.xml"
-
-[[profile.sanitizer.overrides]]
-filter = 'binary(wrap) & test(loft_suite)'
-slow-timeout = { period = "1800s", terminate-after = 1 }
 
 [[profile.sanitizer.overrides]]
 filter = 'binary(html_wasm)'

@@ -2991,17 +2991,12 @@ use a separate collection or add after the loop"
     /// the element READ may be absent; the field's own declaration answers, found by the
     /// offset the getter reads).  Anything else answers `false` and keeps its type.
     fn element_slot_is_non_null(&self, to: &Value, parent: &Type) -> bool {
-        // A `&vector<τ>` parameter's place is the vector it points at.
-        let parent = match parent {
-            Type::RefVar(pointee) => pointee.as_ref(),
-            other => other,
-        };
-        match parent {
+        // The parent's SHAPE: a `&vector<τ>` parameter's place is the vector it points at,
+        // and the `?` an element read puts on a record parent is the read's, not the slot's.
+        let shape = parent.peel_link();
+        match shape {
             Type::Vector(elem, _) => !matches!(elem.as_ref(), Type::Optional(_)),
-            Type::Optional(inner) => {
-                let Type::Reference(d_nr, _) = inner.as_ref() else {
-                    return false;
-                };
+            Type::Reference(d_nr, _) => {
                 let Value::Call(get, args) = to.unspan() else {
                     return false;
                 };
@@ -7664,9 +7659,16 @@ use a separate collection or add after the loop"
                     && let Some(read) = self.text_payload_views.get(&(self.context, *v)).cloned()
                     && let Value::Call(_, read_args) = &read
                 {
-                    let write = self.cl(
-                        "OpSetText",
-                        &[read_args[0].clone(), read_args[1].clone(), Value::Var(*v)],
+                    // Marked, so the scope pass can drop it where `(B-View)` materialises the
+                    // binding — the subject disturbed while the binding is still used — and
+                    // tell it from an author's own `e.v = v`, which is the same op (loft#1665).
+                    let write = v_block(
+                        vec![self.cl(
+                            "OpSetText",
+                            &[read_args[0].clone(), read_args[1].clone(), Value::Var(*v)],
+                        )],
+                        Type::Void,
+                        "text_mirror",
                     );
                     let assign = std::mem::replace(code, Value::Null);
                     *code = Value::Insert(vec![assign, write]);
@@ -8537,16 +8539,12 @@ use a separate collection or add after the loop"
         op: &str,
         var_nr: u16,
     ) -> bool {
-        let Type::RefVar(t) = f_type else {
+        let Type::RefVar(t) = f_type.base() else {
             return false;
         };
         // A `&text?` parameter is the same text slot, nullable: `s += x` appends, and on a
-        // null `s` it stays null (the local `text?`'s rule).
-        let pointee = match t.as_ref() {
-            Type::Optional(inner) => inner.as_ref(),
-            other => other,
-        };
-        if !matches!(pointee, Type::Text(_)) {
+        // null `s` it stays null (the local `text?`'s rule).  `base` peels the pointee's `?`.
+        if !matches!(t.base(), Type::Text(_)) {
             return false;
         }
         self.append_to_text(code, op, var_nr, s_type);

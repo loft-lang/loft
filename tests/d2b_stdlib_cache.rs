@@ -86,6 +86,36 @@ fn stdlib_cache_off_cold_warm_match() {
     let _ = std::fs::remove_dir_all(&cache_dir);
 }
 
+/// A stdlib GENERIC instantiated from a warm bundle runs as it does cold.
+///
+/// The program above instantiates no generic, so it could not see this: a function
+/// reconstructed from the bundle is marked as already scoped, a generic template included,
+/// and an instance used to inherit that mark — so the scope pass skipped every instance of a
+/// stdlib generic on a warm start, and `tree_walk<Crate>` in `tests/docs/25-generics.loft`
+/// was an internal compiler error (`var_pos underflow … '__ref_1'`) where a cold start ran it.
+#[test]
+fn a_stdlib_generic_instance_runs_the_same_warm() {
+    let pid = std::process::id();
+    let script = workspace_root().join("tests/docs/25-generics.loft");
+    let cache_dir = std::env::temp_dir().join(format!("loft_d2b_generic_{pid}"));
+    let _ = std::fs::remove_dir_all(&cache_dir);
+    let (ok_off, out_off) = run(&script, None);
+    assert!(ok_off, "cache-off run failed: {out_off}");
+    let (ok_cold, out_cold) = run(&script, Some(&cache_dir));
+    assert!(ok_cold, "cold cache run failed: {out_cold}");
+    let (ok_warm, out_warm) = run(&script, Some(&cache_dir));
+    assert!(ok_warm, "warm cache run failed: {out_warm}");
+    assert_eq!(
+        out_off, out_cold,
+        "cold-cache output differs from cache-off"
+    );
+    assert_eq!(
+        out_off, out_warm,
+        "warm-cache output differs from cache-off"
+    );
+    let _ = std::fs::remove_dir_all(&cache_dir);
+}
+
 /// @PLN11 arc E — a corrupt / non-store bundle at the cache path must be a
 /// clean cache miss (graceful reparse), never a crash.
 #[test]

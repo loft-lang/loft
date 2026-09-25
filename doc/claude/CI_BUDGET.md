@@ -19,6 +19,15 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 > the same commit red or green — and the cancel threw away the leg's output, the one thing that
 > would have said why it ran long.
 >
+> **The same rule holds for a NIGHTLY job that outgrows its limit: the limit stays, and the job
+> does less repeated work** (owner's direction, 2026-09-24).  The valgrind sweep was cancelled at
+> its 120 minutes on every run.  The cure was measured, not assumed: a per-file timing column
+> showed the stdlib being re-parsed under memcheck in every one of 1 753 runs and a handful of
+> store-ceiling guards running into the per-run limit.  Parsing once (a warm bundle) and planning
+> the runs from a plain pre-pass took the work from 20 046 s to 11 913 s — TESTING.md § Recipe
+> (valgrind).  Profiling the slow files also found four defects, a quadratic interpreter path
+> among them, which a longer limit would have kept hidden.
+>
 > ⚠ Two gates on this box roughly double each other's wall time, so a sibling checkout running
 > its own gate is the one case where `CI_BUDGET_SECS=... make ci` is the right answer for a
 > single run. That is a fact about the box, not about the diff.

@@ -1,0 +1,59 @@
+// `for e in hash` visits in KEY order (`Col-Order`), an order built per walk.  Since
+// 2026-09-24 that sort is DECORATED (`keys::sort_records`, bench/portal/analysis/keyed.md
+// L8): one key read per record into `(key, index)` pairs, where the comparator form resolved
+// two stores per pair.  These cells walk a hash under each key width the decorated path
+// reads — `integer`, `text`, a `size(4)` alias, a two-byte `limit` alias — and assert the
+// order directly, plus the empty and the one-element walk that sort nothing.  The
+// comparator path (`LOFT_NO_FAST_ORDER=1`) answers the same, and `LOFT_KEYED_VERIFY=1`
+// asserts the decorated order against `keys::compare` pair by pair inside the runtime.
+//
+// @falsified-at: none — a lever with no earlier build to catch; the cells assert the walk's
+//   order themselves, so a missing or wrong sort fails them, and LOFT_KEYED_VERIFY is the
+//   runtime falsifier they were run under on both backends (2026-09-24).
+struct I { id: integer, v: integer }
+struct T { name: text, v: integer }
+type Four = integer limit(-2000000000, 2000000000) size(4);
+struct N { id: Four, v: integer }
+struct S { id: integer limit(0, 60000), v: integer }
+struct ByI { rows: hash<I[id]> }
+struct ByT { rows: hash<T[name]> }
+struct ByN { rows: hash<N[id]> }
+struct ByS { rows: hash<S[id]> }
+fn main() {
+  a = ByI { rows: [] };
+  for i in 0..40 { a.rows += [I { id: (i * 37) % 41 - 20, v: i }]; }
+  ids: vector<integer> = [];
+  for e in a.rows { ids += [e.id]; }
+  assert(len(ids) == 40, "int walk length {len(ids)}");
+  assert(ids[0]? == -20 && ids[39]? == 20, "int walk ends {ids[0]} {ids[39]}");
+  for i in 1..40 { assert(ids[i]? > ids[i - 1]?, "int order at {i}"); }
+
+  t = ByT { rows: [] };
+  t.rows += [T { name: "pear", v: 1 }, T { name: "Apple", v: 2 }, T { name: "fig", v: 3 }, T { name: "apple", v: 4 }, T { name: "", v: 5 }, T { name: "zeta", v: 6 }];
+  names = "";
+  for e in t.rows { names += e.name + "|"; }
+  assert(names == "|Apple|apple|fig|pear|zeta|", "text walk {names}");
+
+  n = ByN { rows: [] };
+  for i in 0..30 { n.rows += [N { id: ((i * 23) % 31 - 15) ?? 0, v: i }]; }
+  nids: vector<integer> = [];
+  for e in n.rows { nids += [e.id]; }
+  assert(len(nids) == 30 && nids[0]? == -15 && nids[29]? == 15, "i32 walk {nids}");
+  for i in 1..30 { assert(nids[i]? > nids[i - 1]?, "i32 order at {i}"); }
+
+  s = ByS { rows: [] };
+  for i in 0..30 { s.rows += [S { id: ((i * 4111) % 59999) ?? 0, v: i }]; }
+  sids: vector<integer> = [];
+  for e in s.rows { sids += [e.id]; }
+  assert(len(sids) == 30 && sids[0]? == 0, "short walk {sids}");
+  for i in 1..30 { assert(sids[i]? > sids[i - 1]?, "short order at {i}"); }
+
+  // an empty hash and a one-element hash walk without a sort
+  z = ByI { rows: [] };
+  c = 0;
+  for e in z.rows { c += 1; }
+  z.rows += [I { id: 7, v: 1 }];
+  for e in z.rows { c += e.id; }
+  assert(c == 7, "empty/one {c}");
+  println("walks ok");
+}

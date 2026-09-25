@@ -10,6 +10,8 @@ mod format;
 mod io;
 pub mod journal;
 pub mod lazy;
+#[cfg(not(feature = "wasm"))]
+pub mod loft_file;
 mod search;
 pub mod snapshot;
 /// @PLN126 step 1 — does ordered insertion leave a finished record contiguous?
@@ -424,7 +426,7 @@ pub struct Stores {
     /// the containment frees instead of the teardown it could not run.
     pub(crate) lazy_driver_allocs: Option<Vec<u16>>,
     #[cfg(not(feature = "wasm"))]
-    pub files: Vec<Option<std::fs::File>>,
+    pub files: Vec<Option<loft_file::LoftFile>>,
     #[cfg(feature = "wasm")]
     pub files: Vec<()>,
     pub max: u16,
@@ -2547,58 +2549,38 @@ impl Stores {
             static F: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
             *F.get_or_init(|| std::env::var("LOFT_TRACE_CLEAR").is_ok())
         }
-        if trace_enabled() {
-            let kt = if (db.store_nr as usize) < self.allocations.len() {
-                self.allocations[db.store_nr as usize].known_type
-            } else {
-                u16::MAX
-            };
-            let one = kt != u16::MAX
-                && (kt as usize) < self.types.len()
-                && matches!(&self.types[kt as usize].parts,
-                    crate::database::Parts::Struct(f) if f.len() == 1);
-            let vec_tp = if one {
-                self.field_type(kt, 0)
-            } else {
-                u16::MAX
-            };
-            let elem = if vec_tp != u16::MAX
-                && (vec_tp as usize) < self.types.len()
-                && matches!(
-                    self.types[vec_tp as usize].parts,
-                    crate::database::Parts::Vector(_)
-                ) {
-                self.content(vec_tp)
-            } else {
-                u16::MAX
-            };
-            eprintln!(
-                "[clear] store={} rec={} pos={} kt={} elem={} owns_heap={}",
-                db.store_nr,
-                db.rec,
-                db.pos,
-                kt,
-                elem,
-                elem != u16::MAX && self.owns_heap(elem)
-            );
-        }
-        if !db.is_null() && db.rec == 1 && (db.store_nr as usize) < self.allocations.len() {
-            // The shape, not a byte offset: the store's root record is a
-            // `main_vector<T>` WRAPPER — one field, and that field is the vector — which
-            // is exactly what `OpDatabase` mints for a vector local or a return buffer,
-            // and the only shape that outlives a call.  Asking the SHAPE keeps the two
-            // backends together: the wrapper's field sits at `pos` 8 on `--native` and
-            // 12 on the interpreter, and a hardcoded offset silently released on one
-            // backend only (measured: the interpreter kept leaking).  Any other root —
-            // a user struct with collection fields, a placed § V-j buffer (never record
-            // 1) — keeps the plain reset.
+        // The vector's element type, derived ONCE here for the trace and the release alike —
+        // so what the trace prints is what the release acts on.  Only a ROOT record (rec 1)
+        // of a live store can be placed: a record that is not the root carries no type word.
+        let root = !db.is_null() && db.rec == 1 && (db.store_nr as usize) < self.allocations.len();
+        let (kt, one_field_vector, elem) = if root {
             let kt = self.allocations[db.store_nr as usize].known_type;
             let one_field_vector = kt != u16::MAX
                 && (kt as usize) < self.types.len()
                 && matches!(&self.types[kt as usize].parts,
-                    crate::database::Parts::Struct(f) if f.len() == 1);
+                        crate::database::Parts::Struct(f) if f.len() == 1);
+            // The vector's type: the wrapper's one field, or — on any other struct ROOT —
+            // the field whose position `db` names.  A vector FIELD of a user record
+            // (`h.entries` on a two-field `Timeline`) used to answer no type here, so its
+            // clear released nothing and every rebind stranded the old elements' owned heap
+            // inside the store (measured: 1.6 MB claimed after one op where 48 KB was
+            // live), which no store-granular leak check can see.  A record that is not the
+            // root carries no type word, so a vector field of a NESTED record still keeps
+            // the plain reset.
             let vec_tp = if one_field_vector {
                 self.field_type(kt, 0)
+            } else if kt != u16::MAX
+                && (kt as usize) < self.types.len()
+                && let crate::database::Parts::Struct(fields) = &self.types[kt as usize].parts
+                && let Ok(pos) = u16::try_from(db.pos)
+            {
+                // A field's position is relative to the record's data, which begins after
+                // the 8-byte record header (the type word at offset 4) — the same `8` the
+                // element walk below adds to reach a vector's first element.
+                (0..fields.len())
+                    .map(|i| i as u16)
+                    .find(|&i| self.field_position(kt, i).checked_add(8) == Some(pos))
+                    .map_or(u16::MAX, |i| self.field_type(kt, i))
             } else {
                 u16::MAX
             };
@@ -2613,7 +2595,47 @@ impl Stores {
             } else {
                 u16::MAX
             };
-            if elem != u16::MAX && self.owns_heap(elem) && crate::keys::store_reset_clear_enabled()
+            (kt, one_field_vector, elem)
+        } else {
+            (u16::MAX, false, u16::MAX)
+        };
+        if trace_enabled() {
+            // On a multi-field root the positions the schema gives its fields, beside
+            // `db.pos`, so a field the clear cannot place is visible as such.
+            let fields: Vec<(u16, u16)> = match kt {
+                u16::MAX => Vec::new(),
+                _ => match &self.types[kt as usize].parts {
+                    crate::database::Parts::Struct(f) if f.len() > 1 => (0..f.len() as u16)
+                        .map(|i| (self.field_position(kt, i), self.field_type(kt, i)))
+                        .collect(),
+                    _ => Vec::new(),
+                },
+            };
+            eprintln!(
+                "[clear] store={} rec={} pos={} kt={} elem={} owns_heap={} fields(pos,tp)={fields:?}",
+                db.store_nr,
+                db.rec,
+                db.pos,
+                kt,
+                elem,
+                elem != u16::MAX && self.owns_heap(elem)
+            );
+        }
+        if root {
+            // The shape, not a byte offset: the store's root record is a
+            // `main_vector<T>` WRAPPER — one field, and that field is the vector — which
+            // is exactly what `OpDatabase` mints for a vector local or a return buffer,
+            // and the only shape that outlives a call.  Asking the SHAPE keeps the two
+            // backends together: the wrapper's field sits at `pos` 8 on `--native` and
+            // 12 on the interpreter, and a hardcoded offset silently released on one
+            // backend only (measured: the interpreter kept leaking).  Any other root —
+            // a user struct with collection fields, a placed § V-j buffer (never record
+            // 1) — keeps the plain reset.
+
+            if one_field_vector
+                && elem != u16::MAX
+                && self.owns_heap(elem)
+                && crate::keys::store_reset_clear_enabled()
             {
                 // @PLN157 § V-ag — the vector is this store's ROOT, so everything in the
                 // store was claimed inside it (`@FR-H-RootExtent`) and the whole extent is

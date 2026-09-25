@@ -1251,3 +1251,115 @@ fn a_partially_exporting_cdylib_marks_only_what_resolves() {
 
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// loft#1663 — a library function served by its auto-built cdylib and called THROUGH A
+/// FN-REF answers the record it built, whatever its body's shape.
+///
+/// A fn-ref call hands the callee a return buffer that is a real store with no record in
+/// it (`stores.null()`, `pos` 8).  The shared bridge treated only `rec == 0 && pos == 0`
+/// as "no destination", so that buffer passed as a destination: the bridge wrote the
+/// result into record 0 and the caller read `null`.  It showed only where the callee
+/// WROTE into the handed buffer — `return <call>;` forwarding a scalar record (the
+/// value-record tuple is written into the buffer) — and not where the callee minted its
+/// own store, which is why the expression body and a record holding text were right.
+///
+/// The cells cross the destination kinds the bridge tests (record, struct-enum, vector
+/// — the last keeps the pair, since a store with `rec == 0` there is a valid empty
+/// vector) with the two ways a fn-ref reaches the call (a local, a parameter), and a
+/// loop that forwards per iteration.  Every expected value is written out by hand.
+// @speed 1.2
+#[test]
+fn a_fn_ref_call_into_a_native_library_answers_the_record_it_built() {
+    if Command::new("rustc").arg("--version").output().is_err() {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let tmp = std::env::temp_dir().join(format!("loft_n3_1663_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let pkg = tmp.join("lib/fwd1663");
+    std::fs::create_dir_all(pkg.join("src")).unwrap();
+    std::fs::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"fwd1663\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n\
+         [library]\nentry = \"src/fwd1663.loft\"\ncompile = \"native\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("src/fwd1663.loft"),
+        "pub struct St { size: float }\n\
+         pub fn default_st() -> St { return St { size: 1.0 }; }\n\
+         pub fn unit(_id: integer) -> St { return default_st(); }\n\
+         pub fn mk(k: integer) -> St { return St { size: k as float }; }\n\
+         pub fn fwd(k: integer) -> St { return mk(k); }\n\
+         pub enum Sh { Circle { r: float }, Box { w: float } }\n\
+         pub fn mk_sh() -> Sh { return Box { w: 2.5 }; }\n\
+         pub fn sh(_id: integer) -> Sh { return mk_sh(); }\n\
+         pub fn mkv() -> vector<integer> { return [7, 8, 9]; }\n\
+         pub fn vs(_id: integer) -> vector<integer> { return mkv(); }\n",
+    )
+    .unwrap();
+    let prog = tmp.join("main.loft");
+    std::fs::write(
+        &prog,
+        "use fwd1663;\n\
+         fn call_it(f: fn(integer) -> fwd1663::St) -> float { b = f(0); b.size }\n\
+         fn main() {\n\
+         \x20 a = unit(0);\n\
+         \x20 r = unit;\n\
+         \x20 b = r(0);\n\
+         \x20 println(\"direct={a.size} via_ref={b.size} via_param={call_it(unit)}\");\n\
+         \x20 f = fwd;\n\
+         \x20 s = 0.0;\n\
+         \x20 for i in 0..6 { c = f(i); s += c.size; }\n\
+         \x20 println(\"sum={s}\");\n\
+         \x20 g = sh;\n\
+         \x20 match g(0) { fwd1663::Box { w } => println(\"box={w}\"), fwd1663::Circle { r } => println(\"circle={r}\") }\n\
+         \x20 h = vs;\n\
+         \x20 v = h(0);\n\
+         \x20 println(\"len={len(v)} last={v[2]}\");\n\
+         }\n",
+    )
+    .unwrap();
+    let run = || {
+        Command::new(env!("CARGO_BIN_EXE_loft"))
+            .args(["--interpret", "--lib"])
+            .arg(tmp.join("lib"))
+            .arg(&prog)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_STORES", "warn")
+            .output()
+            .expect("run the loft binary")
+    };
+    // The first run interprets the library while it builds the cdylib; the SECOND is the
+    // one that dispatches into it, and the one the defect lived in.
+    let _ = run();
+    let out = run();
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "loft exited non-zero.\nstdout:\n{stdout}\nstderr:\n{stderr}"
+    );
+    let built = std::fs::read_dir(pkg.join("native-auto")).is_ok_and(|rd| {
+        rd.flatten().any(|e| {
+            let n = e.file_name();
+            let n = n.to_string_lossy();
+            n.contains("loft_auto_fwd1663")
+                && (n.ends_with(".so") || n.ends_with(".dll") || n.ends_with(".dylib"))
+        })
+    });
+    assert!(
+        built,
+        "the library's cdylib was not built — the native path was not taken"
+    );
+    // 0+1+2+3+4+5 = 15; `Box { w: 2.5 }`; `[7, 8, 9]`.
+    assert_eq!(
+        stdout, "direct=1 via_ref=1 via_param=1\nsum=15\nbox=2.5\nlen=3 last=9\n",
+        "a fn-ref call into the native library answered the wrong value\nstderr:\n{stderr}"
+    );
+    assert!(
+        !stderr.contains("leak"),
+        "the fn-ref calls leaked a store:\n{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&tmp);
+}

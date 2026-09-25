@@ -83,6 +83,24 @@ fn k_text_keys(words: &[String], salt: i64) -> i64 {
     acc
 }
 
+// The walk in key order: a `HashMap` has none, so the keys are collected and sorted first,
+// which is the work loft's `for e in h` does per pass.
+fn k_hash_walk(db: &HashMap<i64, E>, salt: i64) -> i64 {
+    let mut keys: Vec<i64> = db.keys().copied().collect();
+    keys.sort_unstable();
+    let mut acc = 0i64;
+    let mut prev = -1i64;
+    for id in keys {
+        if id < prev {
+            return -1;
+        }
+        prev = id;
+        let e = &db[&id];
+        acc = ((acc ^ e.val) + (id & 7) + salt) & 16777215;
+    }
+    acc
+}
+
 fn k_sorted(count: i64, salt: i64) -> i64 {
     let mut db: BTreeMap<i64, E> = BTreeMap::new();
     for i in 0..count {
@@ -187,6 +205,9 @@ fn main() {
     let (us, s) = timed(n, |r| k_text_keys(black_box(&words), r & 1));
     sink = sink.wrapping_add(s);
     row("hash_text_keys", n, us, 2000, k_text_keys(&words, 0));
+    let (us, s) = timed(n, |r| k_hash_walk(black_box(&standing), r & 1));
+    sink = sink.wrapping_add(s);
+    row("hash_walk", n, us, count, k_hash_walk(&standing, 0));
     let (us, s) = timed(n, |r| k_sorted(black_box(count), r & 1));
     sink = sink.wrapping_add(s);
     row("sorted_fill_walk", n, us, count, k_sorted(count, 0));

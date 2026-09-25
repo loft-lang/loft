@@ -5856,10 +5856,7 @@ pub fn warn_variant_overwritten(
         for (binding, base, line, col) in hits {
             let function = &def.variables;
             let name = function.name(binding).to_string();
-            let field = name
-                .trim_start_matches("_mv_")
-                .rsplit_once('_')
-                .map_or_else(|| name.clone(), |(n, _)| n.to_string());
+            let field = crate::variables::author_spelling(&name);
             let subject = function.name(base).to_string();
             let msg = format!(
                 "`{field}` names the payload of the variant this arm matched, and `{subject}` \

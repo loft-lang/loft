@@ -1,0 +1,251 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 7020627fa..253e17772 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -6778,8 +6778,6 @@ impl Parser {
+         let read = field_read.unspan().clone();
+         self.text_payload_views
+             .insert((self.context, bind_nr), read);
+-        // The scope pass needs the same fact after the parser's registry is gone (loft#1665).
+-        self.vars.text_payload_views.insert(bind_nr);
+     }
+ 
+     /// #673 / @PLN35 Phase 3 — point a multi-pattern branch's cloned body at the
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index c5b21ae7e..335dfa882 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -7570,16 +7570,9 @@ use a separate collection or add after the loop"
+                     && let Some(read) = self.text_payload_views.get(&(self.context, *v)).cloned()
+                     && let Value::Call(_, read_args) = &read
+                 {
+-                    // Marked, so the scope pass can drop it where `(B-View)` materialises the
+-                    // binding — the subject disturbed while the binding is still used — and
+-                    // tell it from an author's own `e.v = v`, which is the same op (loft#1665).
+-                    let write = v_block(
+-                        vec![self.cl(
+-                            "OpSetText",
+-                            &[read_args[0].clone(), read_args[1].clone(), Value::Var(*v)],
+-                        )],
+-                        Type::Void,
+-                        "text_mirror",
++                    let write = self.cl(
++                        "OpSetText",
++                        &[read_args[0].clone(), read_args[1].clone(), Value::Var(*v)],
+                     );
+                     let assign = std::mem::replace(code, Value::Null);
+                     *code = Value::Insert(vec![assign, write]);
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 23d29dc56..e302d943c 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -253,9 +253,6 @@ struct Scopes<'s> {
+     /// @PLN130 F2/F8 — view bindings live across a disturbance of their container, and which
+     /// disturbance it was.  See [`collect_views_to_materialise`].
+     views_to_materialise: HashMap<u16, Disturbance>,
+-    /// The `text` payload views whose mirrors were dropped and already reported, so a binding
+-    /// written several times says so once (loft#1665).
+-    text_views_reported: HashSet<u16>,
+     /// loft#721 — fn-ref variable -> the definition it was assigned, or
+     /// `u32::MAX` when more than one definition reaches it.  A `CallRef`'s callee
+     /// is a runtime value, so this local fact is what lets the lift ask the
+@@ -612,43 +609,6 @@ fn view_place_in<'a>(
+ 
+ /// The place a value block's TAIL views, with the block's own `Set`s added to `env` so a tail
+ /// that names one of them resolves to the value it was bound to.
+-/// The place a `text` PAYLOAD binding views: its bind reads `OpGetText(base, offset)`, the
+-/// field of the subject `base` at `offset` (loft#1665).
+-///
+-/// Kept apart from [`value_view_places`] on purpose.  `OpGetText` answers an owned COPY of the
+-/// characters, so it is no projection for the deps proxy or the ownership readers, and adding
+-/// it to the shared projection list would change what every one of them answers.  Only a
+-/// binding whose writes the parser MIRRORS into that field is a view of it, and only the
+-/// disturbance walk asks.  A subject that is itself a projection names the place IT views; a
+-/// base that is neither answers nothing, which costs the materialise and keeps today's mirror.
+-fn text_payload_place(value: &Value, data: &Data, function: &Function) -> Option<(u16, u32)> {
+-    let Value::Call(d_nr, args) = value.unspan() else {
+-        return None;
+-    };
+-    if data.def(*d_nr).name() != "OpGetText" || args.len() != 2 {
+-        return None;
+-    }
+-    match (args[0].unspan(), args[1].unspan()) {
+-        (Value::Var(x), Value::Int(off)) if !function.is_compiler_generated(*x) => {
+-            Some((*x, u32::try_from(*off).ok()?))
+-        }
+-        (base, _) => crate::use_analysis::view_source_place(data, base)
+-            .filter(|(c, _)| !function.is_compiler_generated(*c)),
+-    }
+-}
+-
+-/// The binding a `text_mirror` block writes back: its one statement is
+-/// `OpSetText(subject, offset, Var(binding))`.
+-fn mirrored_binding(b: &Block) -> Option<u16> {
+-    let [Value::Call(_, args)] = b.operators.as_slice() else {
+-        return None;
+-    };
+-    match args.get(2).map(Value::unspan) {
+-        Some(Value::Var(v)) => Some(*v),
+-        _ => None,
+-    }
+-}
+-
+ fn block_tail_place<'a>(
+     ops: &'a [Value],
+     data: &Data,
+@@ -692,9 +652,6 @@ fn report_materialised_view(
+     fname: &str,
+     via: Option<&str>,
+ ) {
+-    // The advice is the author's to read, so a payload binding is named as they wrote it.
+-    let vname = crate::variables::author_spelling(vname);
+-    let vname = vname.as_str();
+     match cause {
+         ViewCause::Reshaped => {
+             crate::copy_manifest::note_materialised_view(vname, cname, fname, via);
+@@ -2200,15 +2157,11 @@ impl ViewWalk<'_> {
+             // a LOCAL (`c = &x`) names no container — `value_view_places` answers nothing for
+             // `OpCreateStack` — so it opens nothing.  The materialise side never meets one:
+             // an `&` link is refused at the disturbance rather than copied.
+-            // A `text` PAYLOAD binding whose writes are mirrored into its subject's field
+-            // (#673) is a view of that field on the same terms: the mirror is its write-through,
+-            // and `(B-View)` ends it where the subject is disturbed (loft#1665).
+             if !self.function.is_iteration_source(*v)
+                 && (matches!(
+                     self.function.tp(*v).base(),
+                     Type::Reference(_, _) | Type::Enum(_, true, _) | Type::Vector(_, _)
+-                ) || is_place_link(self.function, *v)
+-                    || self.function.text_payload_views.contains(v))
++                ) || is_place_link(self.function, *v))
+             {
+                 // The view belongs to the frame that owns its VARIABLE. Re-binding an outer
+                 // local inside a nested block gives a view that outlives the block, and
+@@ -2263,11 +2216,7 @@ impl ViewWalk<'_> {
+                 {
+                     self.whole_container.insert(*v, place);
+                 }
+-                let mut places = value_view_places(rhs, self.data, self.function);
+-                if places.is_empty() && self.function.text_payload_views.contains(v) {
+-                    places.extend(text_payload_place(rhs, self.data, self.function));
+-                }
+-                for (container, field) in places {
++                for (container, field) in value_view_places(rhs, self.data, self.function) {
+                     let (container, field) = self.resolve_view_root(container, field);
+                     if !self.open[idx].contains(&(*v, container, field)) {
+                         self.open[idx].push((*v, container, field));
+@@ -6046,7 +5995,6 @@ fn run_scan_phase(
+         owner_witness: HashMap::new(),
+         displaced_owned,
+         views_to_materialise,
+-        text_views_reported: HashSet::new(),
+         fnref_target: collect_fnref_targets(orig_code, orig_vars),
+         // Empty, and filled in SCAN ORDER (`Scopes::convert` arms each statement's hand-offs
+         // after that statement is scanned).  A hand-off belongs to the assignment it follows
+@@ -11157,25 +11105,6 @@ impl Scopes<'_> {
+     #[allow(clippy::too_many_lines)]
+     fn scan_inner(&mut self, val: &Value, function: &mut Function, data: &Data) -> Value {
+         match val {
+-            // @FR-B-View — a `text` payload view MATERIALISES where its subject is disturbed
+-            // while it is still used: its value is the copy taken at the bind already, so what
+-            // ends is the write-through, which is the #673 mirror.  Dropped for that binding, at
+-            // every write, and reported as a record view's materialise is (loft#1665).
+-            Value::Block(b)
+-                if b.name == "text_mirror"
+-                    && let Some(v) = mirrored_binding(b)
+-                    && function.text_payload_views.contains(&v)
+-                    && let Some(cause) = self.views_to_materialise.get(&v).copied() =>
+-            {
+-                if self.text_views_reported.insert(v) {
+-                    let vname = function.name(v).to_string();
+-                    let cname = function.name(cause.container).to_string();
+-                    let fname = data.def(self.d_nr).original_name();
+-                    let via = disturbance_via(data, &cause);
+-                    report_materialised_view(cause.cause, &vname, &cname, &fname, via.as_deref());
+-                }
+-                Value::Null
+-            }
+             Value::Var(ov) => Value::Var(*self.var_mapping.get(ov).unwrap_or(ov)),
+             Value::Set(ov, value) => self.scan_set(*ov, value, function, data),
+             Value::Loop(lp) => {
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index affb42bcc..fdf243f7f 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -5677,7 +5677,10 @@ pub fn warn_variant_overwritten(
+         for (binding, base, line, col) in hits {
+             let function = &def.variables;
+             let name = function.name(binding).to_string();
+-            let field = crate::variables::author_spelling(&name);
++            let field = name
++                .trim_start_matches("_mv_")
++                .rsplit_once('_')
++                .map_or_else(|| name.clone(), |(n, _)| n.to_string());
+             let subject = function.name(base).to_string();
+             let msg = format!(
+                 "`{field}` names the payload of the variant this arm matched, and `{subject}` \
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index 4c353a884..632edbd28 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -334,20 +334,6 @@ pub struct Variable {
+     pub caller_hidden_buf: bool,
+ }
+ 
+-/// The name an author WROTE for a compiler-renamed binding, for a message the author reads.
+-///
+-/// A `match`/`is` payload binding is lowered to `_mv_<field>_<n>`; the author wrote `<field>`.
+-/// Every other name is answered as it is.
+-#[must_use]
+-pub fn author_spelling(name: &str) -> String {
+-    match name.strip_prefix("_mv_") {
+-        Some(rest) => rest
+-            .rsplit_once('_')
+-            .map_or_else(|| rest.to_string(), |(n, _)| n.to_string()),
+-        None => name.to_string(),
+-    }
+-}
+-
+ #[derive(Debug, Clone)]
+ pub struct Function {
+     /// loft#1466 — the locals whose borrow list pass 2 has already rebuilt.
+@@ -411,15 +397,6 @@ pub struct Function {
+     /// function, the same reason `mv_field_origin` above does; regenerated by the hold site
+     /// on every pass, like `unique`.
+     pub tuphold_origin: HashMap<u16, (u16, Option<u16>)>,
+-    /// The `match`/`is` payload bindings of a `text` field whose writes the parser MIRRORS
+-    /// back into the subject's field (#673): each write to one is followed by an
+-    /// `OpSetText(subject, offset, binding)` wrapped in a `text_mirror` block.  Such a binding
+-    /// is a VIEW of that field for `(B-View)` — the mirror is its write-through — so the
+-    /// disturbance walk opens it like a record view, and where the subject is disturbed while
+-    /// it is still used the scope pass drops its mirrors, which is what materialising a text
+-    /// view means (loft#1665).  Carried like `tuphold_origin`: the scope pass reads it after
+-    /// parsing.
+-    pub text_payload_views: std::collections::HashSet<u16>,
+     /// The backing work-ref of each HEAP LEAF of a tuple variable, in the same pre-order
+     /// `scopes::tuple_leaf_at` walks — `u16::MAX` for a leaf whose backing this table cannot
+     /// name.
+@@ -680,7 +657,6 @@ impl Function {
+             loop_binds: HashMap::new(),
+             mv_field_origin: HashMap::new(),
+             tuphold_origin: HashMap::new(),
+-            text_payload_views: std::collections::HashSet::new(),
+             tuple_backings: HashMap::new(),
+             tuple_backings_seen: std::collections::HashSet::new(),
+             loop_ord: 0,
+@@ -869,8 +845,6 @@ impl Function {
+         // so pass 2 re-inserts what pass 1 put there.
+         self.tuphold_origin.clear();
+         self.tuphold_origin.clone_from(&other.tuphold_origin);
+-        self.text_payload_views
+-            .clone_from(&other.text_payload_views);
+         // CARRIED for the same reason, and read by the same pass.
+         self.tuple_backings.clear();
+         self.tuple_backings.clone_from(&other.tuple_backings);
+@@ -958,7 +932,6 @@ impl Function {
+             // Carried for the same reason `append` carries it: the scope pass reads this map
+             // off the copy it works on, long after parsing.
+             tuphold_origin: other.tuphold_origin.clone(),
+-            text_payload_views: other.text_payload_views.clone(),
+             tuple_backings: other.tuple_backings.clone(),
+             tuple_backings_seen: std::collections::HashSet::new(),
+             // loft#1145 — the ordinal RESTARTS per pass (it is what makes the key stable),

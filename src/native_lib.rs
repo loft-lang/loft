@@ -768,7 +768,19 @@ fn shared_bridge_wrapper(
                     "    let mut {var}: DbRef = if {slot} < n {{ a[{slot}].dbref }} else {{ DbRef {{ store_nr: 0, rec: 0, pos: 0 }} }};"
                 );
                 let _ = writeln!(body, "    let mut {var}_fresh = false;");
-                let _ = writeln!(body, "    if {var}.rec == 0 && {var}.pos == 0 {{");
+                // "No usable record arrived" is a different test per destination kind.  A
+                // RECORD destination names a record or nothing: `rec == 0` is absence
+                // whatever `pos` says (@FR-L-Null).  A fn-ref call hands the callee a store
+                // with no record in it — `stores.null()`, `pos` 8 — and testing `pos == 0`
+                // as well let that through: the result was written into record 0 and the
+                // caller read null (loft#1663).  A VECTOR destination keeps the pair,
+                // because a real store with `rec == 0` there is a valid empty vector.
+                let absent = if matches!(a.typedef.base(), Type::Vector(_, _)) {
+                    format!("{var}.rec == 0 && {var}.pos == 0")
+                } else {
+                    format!("{var}.rec == 0")
+                };
+                let _ = writeln!(body, "    if {absent} {{");
                 let _ = writeln!(
                     body,
                     "        let _tid{slot} = unsafe {{ (&*cell.get()) }}.name({tname:?});"

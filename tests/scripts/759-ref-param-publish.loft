@@ -112,7 +112,7 @@ fn main() {
   // same file five ways while `wrap::loft_suite` sweeps it too, and cargo runs those
   // binaries in parallel — on one fixed name they raced over `delete`/read-back and the
   // read reported a null first record.  Unset (a bare run, and loft_suite's) is "".
-  p = "test_loft_759_ref_param{env_variable("LOFT_759_SUFFIX")}.bin";
+  p = "test_loft_759_ref_param{env_variable("LOFT_759_SUFFIX") ?? ""}.bin";
   delete(p);
   w = file(p);
   w#format = LittleEndian;

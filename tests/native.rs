@@ -959,9 +959,13 @@ fn native_features() -> std::io::Result<()> {
 /// FAILS if `rustc` is not in PATH: a file that could not be built lands in `compile_fail`,
 /// and a suite that reported a pass for tests it never compiled would be worse than a red
 /// one.  A cache HIT is not that case — it runs the binary it already has.
-// @speed 6.1
-#[test]
-fn native_scripts() -> std::io::Result<()> {
+///
+/// CHUNKED: `native_scripts_00` … take every [`NATIVE_SCRIPT_CHUNKS`]-th script of the sorted
+/// corpus from their own offset, so each script is in exactly one chunk and each chunk grows
+/// with 1/N of the corpus.  One test over the whole corpus took 1879 s cold on the Windows
+/// runner, where the duration gate allows a test HALF its 600 s limit; each script is its own
+/// binary, so no cross-script coverage is lost by splitting.
+fn native_scripts_chunk(chunk: usize) -> std::io::Result<()> {
     let _guard = native_suite_lock()
         .lock()
         .unwrap_or_else(|p| p.into_inner());
@@ -973,6 +977,12 @@ fn native_scripts() -> std::io::Result<()> {
         })
         .collect();
     files.sort();
+    let files: Vec<PathBuf> = files
+        .into_iter()
+        .enumerate()
+        .filter(|(i, _)| i % NATIVE_SCRIPT_CHUNKS == chunk)
+        .map(|(_, p)| p)
+        .collect();
     let rlib_info = find_loft_rlib();
     let mut jobs = Vec::new();
     for entry in files {
@@ -1013,6 +1023,64 @@ fn native_scripts() -> std::io::Result<()> {
         }
     }
     run_native_jobs(jobs, rlib_info)
+}
+
+/// How many tests the native script corpus is split across — see [`native_scripts_chunk`].
+const NATIVE_SCRIPT_CHUNKS: usize = 12;
+
+macro_rules! native_script_chunks {
+    ($($name:ident = $k:expr),* $(,)?) => {
+        $(
+            #[test]
+            fn $name() -> std::io::Result<()> {
+                native_scripts_chunk($k)
+            }
+        )*
+    };
+}
+
+native_script_chunks!(
+    native_scripts_00 = 0,
+    native_scripts_01 = 1,
+    native_scripts_02 = 2,
+    native_scripts_03 = 3,
+    native_scripts_04 = 4,
+    native_scripts_05 = 5,
+    native_scripts_06 = 6,
+    native_scripts_07 = 7,
+    native_scripts_08 = 8,
+    native_scripts_09 = 9,
+    native_scripts_10 = 10,
+    native_scripts_11 = 11,
+);
+
+/// Every chunk index has its test: a chunk count raised without a matching test would drop that
+/// slice of the corpus from every run, silently.
+#[test]
+fn native_script_chunks_cover_the_corpus() {
+    let names = [
+        "native_scripts_00",
+        "native_scripts_01",
+        "native_scripts_02",
+        "native_scripts_03",
+        "native_scripts_04",
+        "native_scripts_05",
+        "native_scripts_06",
+        "native_scripts_07",
+        "native_scripts_08",
+        "native_scripts_09",
+        "native_scripts_10",
+        "native_scripts_11",
+    ];
+    assert_eq!(
+        names.len(),
+        NATIVE_SCRIPT_CHUNKS,
+        "one generated test per chunk"
+    );
+    let src = std::fs::read_to_string(file!()).expect("read tests/native.rs");
+    for n in names {
+        assert!(src.contains(&format!("{n} = ")), "{n} is generated");
+    }
 }
 
 /// N8a: native code generation for tuple types.

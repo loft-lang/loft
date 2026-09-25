@@ -37,6 +37,25 @@ release freed the captured value, and later reads of it answered garbage without
 The result is now a copy in that case, so the captured value is left alone.  A write through the
 result (`s.v = 42.0`) no longer changes the captured value either.
 
+**A `text` taken out of an enum in a `match` stops writing into it once the value is replaced.**
+In `match e { Ei { v } => { e = Ei { v: "zz" }; v += "x" } }`, the write to `v` still landed in
+the field of the NEW `e`, so `e` read `"abx"` instead of `"zz"`. A struct taken out the same way
+already stopped there. The `text` now does too, and loft prints the same note: `v` was copied
+out of `e` because `e` is reassigned while `v` is in use. That note now names the variable you
+wrote (`v`), where it used to show an internal name.
+
+**A loop that calls a function value is fast again when interpreted.** Each call through a
+function value got slower the more calls the same function had already made, so such a loop
+took time growing with the square of its length: one test file took 107 seconds and now takes
+1.6.
+
+**The standard library's generic functions work with the start-up cache on.** With
+`LOFT_STDLIB_CACHE=1` (which the language server always uses), calling a generic function from
+the standard library, such as `tree_walk`, stopped the program with an internal compiler error.
+
+**A generic function that returns a `text` from a `match` no longer leaks.** Interpreted, it lost
+a few bytes on every call.
+
 **A built-in function kept in a variable now runs when you call it.** `g = env_variable;
 g("HOME")` answered an empty text when the program was interpreted. It answered the variable
 under `--native`. The built-in was never called, and nothing said so. The same happened to any

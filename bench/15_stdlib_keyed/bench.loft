@@ -91,6 +91,19 @@ fn k_text_keys(words: const vector<text>, salt: integer) -> integer {
   acc
 }
 
+// a hash WALKED: `for e in h` visits in KEY order (Col-Order), an order the walk builds
+// per pass — a bucket sweep and an O(n log n) key sort before the first element.
+fn k_hash_walk(db: const ByHash, salt: integer) -> integer {
+  acc = 0;
+  prev = -1;
+  for e in db.rows {
+    if e.id < prev { return -1 }
+    prev = e.id;
+    acc = ((acc ^ e.val) + (e.id & 7) + salt) & 16777215;
+  }
+  acc
+}
+
 // a SORTED collection filled out of order and walked in key order.
 fn k_sorted(count: integer, salt: integer) -> integer {
   db = BySorted { rows: [] };
@@ -179,6 +192,10 @@ fn main() {
   t0 = ticks();
   for r in 0..n { sink += k_text_keys(words, r & 1); }
   row("hash_text_keys", n, ticks() - t0, 2000, k_text_keys(words, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += k_hash_walk(standing, r & 1); }
+  row("hash_walk", n, ticks() - t0, count, k_hash_walk(standing, 0));
 
   t0 = ticks();
   for r in 0..n { sink += k_sorted(count, r & 1); }

@@ -33,6 +33,10 @@ the run measured.
 
 Usage:  revalidate_matrix.py <index.json> [--format tsv|github]
         revalidate_matrix.py --self-test
+        revalidate_matrix.py --native-policy <loft.toml>
+
+  --native-policy  `gate` or `best-effort<TAB><build-deps>` for one library: does a failing
+                   `--native` suite fail the gate?  See `native_policy`.
 
   tsv     (default) one leg per line: name, version, repo, tag, subpath — for the shell.
   github  `matrix=<json>` + `count=<n>` on stdout for `$GITHUB_OUTPUT`.
@@ -45,6 +49,7 @@ import json
 import re
 import subprocess
 import sys
+import tomllib
 
 # A published lib a language change ALREADY retro-broke (pre-freeze migration debt), skipped
 # so the gate reflects NEW breaks and future reds are real signals.  Every entry MUST cite a
@@ -103,6 +108,30 @@ def legs(index_path: str, note) -> list[dict]:
             }
         )
     return out
+
+
+def native_policy(manifest_text: str) -> tuple[str, str]:
+    """Does a failing `--native` suite fail the gate for this library?  (loft#1653)
+
+    Native is the backend a user gets by default, so a native-only break in a shipped
+    library is a retro-break like any other.  The one honest reason not to gate on it is
+    the RUNNER: a library whose native crate needs system packages (`graphics` → GL and
+    ALSA) can fail there for want of a package, which says nothing about the language.  The
+    manifest names those packages in `[native] build-deps`, so that field decides:
+
+    * no `build-deps` (pure loft, or a crate with only crate dependencies) → `gate`;
+    * `build-deps` declared → `best-effort`, carrying the list so the report can say why.
+
+    One home for the answer, read by `revalidate-libs.yml` and by
+    `revalidate_libs_local.sh --native`, so the two cannot drift the way the matrix policy
+    did (loft#1315).
+    """
+    cfg = tomllib.loads(manifest_text)
+    deps = (cfg.get("native") or {}).get("build-deps", "")
+    if isinstance(deps, list):
+        deps = ", ".join(str(d) for d in deps)
+    deps = str(deps).strip()
+    return ("best-effort", deps) if deps else ("gate", "")
 
 
 def _self_test() -> int:
@@ -175,6 +204,23 @@ def _self_test() -> int:
     rows, _ = run({"weird": {"versions": {"1.0.0": {"url": "https://elsewhere/x.zip"}}}})
     check("weird" not in rows, "a package with no checkout-able URL is not a leg")
 
+    # The native policy: only a DECLARED system dependency excuses a native failure.
+    check(native_policy('[package]\nname = "p"\n') == ("gate", ""), "pure loft gates on native")
+    check(
+        native_policy('[native]\ncrate = "c"\n') == ("gate", ""),
+        "a native crate with no build-deps gates on native",
+    )
+    check(
+        native_policy('[native]\ncrate = "c"\nbuild-deps = "libgl-dev, libasound2-dev"\n')
+        == ("best-effort", "libgl-dev, libasound2-dev"),
+        "declared build-deps make native best-effort, and say which",
+    )
+    check(native_policy('[native]\nbuild-deps = "  "\n') == ("gate", ""), "an empty build-deps is none")
+    check(
+        native_policy('[native]\nbuild-deps = ["a-dev", "b-dev"]\n') == ("best-effort", "a-dev, b-dev"),
+        "a build-deps list reads like the string form",
+    )
+
     if failures:
         print(f"self-test FAILED: {len(failures)} of the policy's rules did not hold")
         return 1
@@ -185,6 +231,12 @@ def _self_test() -> int:
 def main(argv: list[str]) -> int:
     if "--self-test" in argv[1:]:
         return _self_test()
+    if "--native-policy" in argv[1:]:
+        path = argv[argv.index("--native-policy") + 1]
+        with open(path, encoding="utf-8") as fh:
+            verdict, deps = native_policy(fh.read())
+        print(verdict if verdict == "gate" else f"{verdict}\t{deps}")
+        return 0
     if "--not-a-library" in argv[1:]:
         # The exclusion set as DATA, for a consumer that builds its own matrix and needs the
         # policy rather than the rows — `registry-validation.yml` installs from the registry

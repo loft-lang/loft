@@ -1,0 +1,745 @@
+// Benchmark 18: the crawler roguelike's hot loops, one row each
+//
+// Each routine models a loop read out of crawler (github loft-lang crawler, `src/`) — the data
+// layout, the loop and the sizes crawler uses — so the portal measures what that consumer
+// leans on.  bench/portal/census.tsv (`consumer:crawler`) and bench/portal/gaps.tsv name the
+// rows.  Where a row models a routine:
+//
+//   build_walls     src/wallgeo.loft `build_walls` phase A + `get_or_add` / `add_edge` /
+//                   `corner_key`, with hex_grid 0.1.0's `hex_neighbor` / `hex_corner_px` /
+//                   `hex_edge_corners` and src/sim.loft's `tile_at` / `is_wall` /
+//                   `edge_wall_raw`: every wall face FORMATS a text key "{kx}_{ky}" and probes
+//                   a `hash<CornerRef[ck]>`, appending a corner record on a miss.  101x101 hexes.
+//                   The Rust twin keys a `HashMap<(i64, i64), u32>` on the two integers, as the
+//                   census row states: the loft side pays a format the twin does not.
+//   build_vis       src/view.loft `build_vis_texture` + src/sim.loft `sim_hex_state`: one
+//                   push per hex of a 101x101 level, per frame.  crawler's `graphics::rgba` is
+//                   a one-expression library call and is modelled as the same loft function
+//                   here; the `gl_upload_canvas` upload is left out.  16 frames per op.
+//   hydro_pitfill   src/realworld/hydro.loft `hydro_pitfill` + `heap_swap` / `heap_sift_up` /
+//                   `heap_sift_down`: a priority flood on a min-heap held in TWO parallel
+//                   integer vectors, over an 80x80 region.
+//   talus_relax     src/talus.loft `talus_relax` + `shed`: a 4-neighbour sandpile over a 40x40
+//                   grid, bedrock `const` and rubble `&`, capped at 120 sweeps.
+//   slice_shrink    src/view.loft `fit_text` (`out = out[..(len(out) - 1)]` until it fits) and
+//                   src/genbundles.loft `gen_spell_defs` (`ln[10..par]` after `find("(")`).
+//                   `gl_measure_text` is modelled as a loft glyph-width sum.
+//   char_roundtrip  src/realworld/region_io.loft `region_write_loft`: `for ch in nm`,
+//                   `ch as integer`, upper-cased, `"{(code as character)}"` appended.
+//   quadratic_out   src/realworld/region_io.loft `lit_float_body`: `out = out + "{v:.9}"`
+//                   over 160,000 floats — a 2.2 MB text built by reassignment (crawler: 1.28 MB).
+//   binary_read     src/realworld/region_io.loft `read_i16_vec` / `read_one_i16`:
+//                   `bf#read(2) as i16` one element at a time, 150,000 per load, from a file
+//                   written once into the system temp directory before timing.
+//   sort_floats     src/sprite_draw.loft `sort_floats` + `row_crossings`: the selection sort
+//                   into a FRESH vector, fed each scanline's polygon crossings.
+//   format_specs    a per-frame HUD line: moros's `"{altitude:4.1}  FPS{fps:3}"` beside
+//                   crawler's `"0x{magic:X}"` (region_io.loft), 20,000 frames per op.
+//
+// Inputs differ by the repetition's salt in VALUE only; the `hash` column is one canonical
+// op's result, which the Rust twin must print the same.
+
+const SQRT3 = 1.7320508075688772;
+const HEX_SIZE = 1.0;
+const TALUS_ITERS = 120;
+const DETAIL_CELL_M = 1.46484375;
+const REPOSE_TAN = 0.7002;
+const TREELINE = 2150.0;
+const HMASK = 1099511627775;
+
+struct Sim {
+  qmin: integer, rmin: integer, lw: integer, lh: integer,
+  tiles: vector<integer>, walls: vector<integer>,
+  vis: vector<integer>, seen: vector<integer>,
+}
+
+struct WCorner { x: float, y: float, deg: integer, n1: integer, n2: integer, anc: integer }
+struct WEdge { a: integer, b: integer }
+struct CornerRef { ck: text, idx: integer }
+struct WallGraph {
+  corners: vector<WCorner>,
+  edges:   vector<WEdge>,
+  lookup:  hash<CornerRef[ck]>,
+}
+
+struct Region { rgn_cols: integer, rgn_rows: integer, hex_h: vector<integer> }
+
+// ── the level both crawler rows read ─────────────────────────────────────────────────────
+// Rooms 12x10 walled by lines with door gaps, plus scattered pillars; a sparse set of edge
+// walls.  The salt moves the level one column (`qmin`) and shifts which hexes are lit.
+fn make_sim(salt: integer) -> Sim {
+  w = 101;
+  h = 101;
+  s = Sim { qmin: salt, rmin: 0, lw: w, lh: h, tiles: [], walls: [], vis: [], seen: [] };
+  for gr in 0..h {
+    for gq in 0..w {
+      wall = (gq % 12 == 0 && gr % 10 != 5) || (gr % 10 == 0 && gq % 12 != 6)
+             || (gq * 7 + gr * 13) % 29 == 0;
+      s.tiles += [if wall { 1 } else { 0 }];
+      for e in 0..3 { s.walls += [if (gq * 5 + gr * 3 + e) % 47 == 0 { 1 } else { 0 }]; }
+      dq = gq - 50 - salt * 3;
+      dr = gr - 50;
+      s.vis += [if dq * dq + dr * dr < 400 { 1 } else { 0 }];
+      s.seen += [if (gq + gr * 3 + salt) % 5 != 0 { 1 } else { 0 }];
+    }
+  }
+  s
+}
+
+fn tile_at(s: Sim, q: integer, r: integer) -> integer {
+  if q < s.qmin || r < s.rmin || q >= s.qmin + s.lw || r >= s.rmin + s.lh {
+    return 1;
+  }
+  tiles = s.tiles;
+  ti = (r - s.rmin) * s.lw + (q - s.qmin);
+  if ti < len(tiles) { tiles[ti]? } else { 1 }
+}
+
+fn is_wall(s: Sim, q: integer, r: integer) -> boolean {
+  t = tile_at(s, q, r);
+  t == 1 || t == 4 || t == 5
+}
+
+fn edge_wall_raw(s: Sim, q: integer, r: integer, edge: integer) -> integer {
+  if q < s.qmin || r < s.rmin || q >= s.qmin + s.lw || r >= s.rmin + s.lh {
+    return 0;
+  }
+  ws = s.walls;
+  ei = ((r - s.rmin) * s.lw + (q - s.qmin)) * 3 + edge;
+  if ei < len(ws) { ws[ei]? } else { 0 }
+}
+
+// ── hex_grid 0.1.0 ───────────────────────────────────────────────────────────────────────
+fn hex_to_px(q: integer, r: integer) -> (float, float) {
+  par = r & 1;
+  hx = HEX_SIZE * (SQRT3 * (q as float) + SQRT3 / 2.0 * (par as float));
+  hy = HEX_SIZE * (1.5 * (r as float));
+  (hx, hy)
+}
+
+fn hex_neighbor(q: integer, r: integer, dir: integer) -> (integer, integer) {
+  if (r & 1) == 0 {
+    if dir == 0 { return (q + 1, r); }
+    if dir == 1 { return (q, r - 1); }
+    if dir == 2 { return (q - 1, r - 1); }
+    if dir == 3 { return (q - 1, r); }
+    if dir == 4 { return (q - 1, r + 1); }
+    return (q, r + 1);
+  }
+  if dir == 0 { return (q + 1, r); }
+  if dir == 1 { return (q + 1, r - 1); }
+  if dir == 2 { return (q, r - 1); }
+  if dir == 3 { return (q - 1, r); }
+  if dir == 4 { return (q, r + 1); }
+  (q + 1, r + 1)
+}
+
+fn hex_corner_offset(i: integer) -> (float, float) {
+  hw = SQRT3 / 2.0;
+  if i == 0 { return (0.0, 1.0); }
+  if i == 1 { return (0.0 - hw, 0.5); }
+  if i == 2 { return (0.0 - hw, 0.0 - 0.5); }
+  if i == 3 { return (0.0, 0.0 - 1.0); }
+  if i == 4 { return (hw, 0.0 - 0.5); }
+  (hw, 0.5)
+}
+
+fn hex_corner_px(q: integer, r: integer, i: integer) -> (float, float) {
+  (ccx, ccy) = hex_to_px(q, r);
+  (cox, coy) = hex_corner_offset(i);
+  (ccx + cox * HEX_SIZE, ccy + coy * HEX_SIZE)
+}
+
+fn hex_edge_corners(dir: integer) -> (integer, integer) {
+  if dir == 0 { return (4, 5); }
+  if dir == 1 { return (3, 4); }
+  if dir == 2 { return (2, 3); }
+  if dir == 3 { return (1, 2); }
+  if dir == 4 { return (0, 1); }
+  (5, 0)
+}
+
+// ── crawler `build_walls` phase A: a text key per corner, probed and appended ────────────
+fn corner_key(x: float, y: float) -> text {
+  kx = round(x * 1000.0) as integer;
+  ky = round(y * 1000.0) as integer;
+  "{kx}_{ky}"
+}
+
+fn get_or_add(g: &WallGraph, x: float, y: float) -> integer {
+  k = corner_key(x, y);
+  found = g.lookup[k];
+  if found != null { return found.idx; }
+  idx = len(g.corners);
+  g.corners += [WCorner { x: x, y: y, deg: 0, n1: -1, n2: -1, anc: 0 }];
+  g.lookup += [CornerRef { ck: k, idx: idx }];
+  idx
+}
+
+fn add_edge(g: &WallGraph, q: integer, r: integer, dir: integer) {
+  (ca, cb) = hex_edge_corners(dir);
+  (ax, ay) = hex_corner_px(q, r, ca);
+  (bx, by) = hex_corner_px(q, r, cb);
+  ia = get_or_add(g, ax, ay);
+  ib = get_or_add(g, bx, by);
+  g.edges += [WEdge { a: ia, b: ib }];
+}
+
+fn c_build_walls(s: Sim) -> integer {
+  g = WallGraph { corners: [], edges: [], lookup: [] };
+  for gr in 0..s.lh {
+    for gq in 0..s.lw {
+      q = s.qmin + gq;
+      r = s.rmin + gr;
+      if !is_wall(s, q, r) {
+        for d in 0..6 {
+          (nq, nr) = hex_neighbor(q, r, d);
+          if is_wall(s, nq, nr) { add_edge(g, q, r, d); }
+        }
+      }
+      for e in 0..3 {
+        if edge_wall_raw(s, q, r, e) != 0 { add_edge(g, q, r, e); }
+      }
+    }
+  }
+  acc = len(g.corners) * 100003 + len(g.edges);
+  for ed in g.edges { acc += ed.a * 7 + ed.b * 13; }
+  for c in g.corners { acc += round(c.x * 8.0) as integer + round(c.y * 8.0) as integer * 3; }
+  acc
+}
+
+// ── crawler `build_vis_texture`: one push per hex, per frame ────────────────────────────
+fn rgba(cr: integer, cg: integer, cb: integer, ca: integer) -> integer {
+  ((ca & 255) << 24) | ((cr & 255) << 16) | ((cg & 255) << 8) | (cb & 255)
+}
+
+fn sim_hex_state(s: Sim, q: integer, r: integer) -> integer {
+  gq = q - s.qmin;
+  gr = r - s.rmin;
+  if gq < 0 || gq >= s.lw || gr < 0 || gr >= s.lh { return 0; }
+  idx = gr * s.lw + gq;
+  vis = s.vis;
+  v = vis[idx] ?? 0;
+  if v != 0 { return 2; }
+  seen = s.seen;
+  sn = seen[idx] ?? 0;
+  if sn != 0 { return 1; }
+  0
+}
+
+fn build_vis_texture(s: Sim) -> vector<integer> {
+  pix: vector<integer> = [];
+  for gr in 0..s.lh {
+    for gq in 0..s.lw {
+      st = sim_hex_state(s, s.qmin + gq, s.rmin + gr);
+      b = 0;
+      if st == 2 { b = 255; } else if st == 1 { b = 115; }
+      pix += [rgba(b, 0, 0, 255)];
+    }
+  }
+  pix
+}
+
+fn c_vis(s: Sim) -> integer {
+  acc = 0;
+  for f in 0..16 {
+    pix = build_vis_texture(s);
+    acc += len(pix) + (pix[f * 631]? >> 16) + (pix[len(pix) - 1 - f * 97]? >> 16);
+  }
+  acc
+}
+
+// ── crawler `hydro_pitfill`: a priority flood on a parallel-vector min-heap ─────────────
+fn make_region(salt: integer) -> Region {
+  cols = 80;
+  rows = 80;
+  hh: vector<integer> = [];
+  for r in 0..rows {
+    for c in 0..cols {
+      bowl = (c - 40) * (c - 40) + (r - 40) * (r - 40);
+      hh += [1200 + bowl / 4 + ((c * 7919 + r * 104729 + salt * 31) * 2654435761 & 1023) / 8];
+    }
+  }
+  Region { rgn_cols: cols, rgn_rows: rows, hex_h: hh }
+}
+
+fn heap_swap(hk: vector<integer>, hv: vector<integer>, a: integer, b: integer) {
+  ak = hk[a] ?? 0;
+  av = hv[a] ?? 0;
+  hk[a] = hk[b] ?? 0;
+  hv[a] = hv[b] ?? 0;
+  hk[b] = ak;
+  hv[b] = av;
+}
+
+fn heap_sift_up(hk: vector<integer>, hv: vector<integer>, start: integer) {
+  i = start;
+  done = false;
+  while !done {
+    if i <= 0 {
+      done = true;
+    } else {
+      p = (i - 1) / 2;
+      if (hk[p] ?? 0) <= (hk[i] ?? 0) {
+        done = true;
+      } else {
+        heap_swap(hk, hv, p, i);
+        i = p;
+      }
+    }
+  }
+}
+
+fn heap_sift_down(hk: vector<integer>, hv: vector<integer>, size: integer) {
+  i = 0;
+  done = false;
+  while !done {
+    l = 2 * i + 1;
+    r = 2 * i + 2;
+    smallest = i;
+    if l < size && (hk[l] ?? 0) < (hk[smallest] ?? 0) { smallest = l; }
+    if r < size && (hk[r] ?? 0) < (hk[smallest] ?? 0) { smallest = r; }
+    if smallest == i {
+      done = true;
+    } else {
+      heap_swap(hk, hv, i, smallest);
+      i = smallest;
+    }
+  }
+}
+
+fn hydro_pitfill(rgn: const Region) -> vector<integer> {
+  cols = rgn.rgn_cols;
+  rows = rgn.rgn_rows;
+  n = cols * rows;
+  filled: vector<integer> = [for _ in 0..n { 0 }];
+  seen:   vector<integer> = [for _ in 0..n { 0 }];
+  for i in 0..n {
+    filled[i] = rgn.hex_h[i] ?? 0;
+    seen[i] = 0;
+  }
+  hk: vector<integer> = [for _ in 0..n { 0 }];
+  hv: vector<integer> = [for _ in 0..n { 0 }];
+  size = 0;
+  for c in 0..cols {
+    for r in 0..rows {
+      if c == 0 || c == cols - 1 || r == 0 || r == rows - 1 {
+        i = r * cols + c;
+        hk[size] = filled[i] ?? 0;
+        hv[size] = i;
+        seen[i] = 1;
+        heap_sift_up(hk, hv, size);
+        size = size + 1;
+      }
+    }
+  }
+  while size > 0 {
+    lvl = hk[0] ?? 0;
+    idx = hv[0] ?? 0;
+    size = size - 1;
+    if size > 0 {
+      hk[0] = hk[size] ?? 0;
+      hv[0] = hv[size] ?? 0;
+      heap_sift_down(hk, hv, size);
+    }
+    cr = idx / cols ?? 0;
+    cc = idx - cr * cols;
+    for d in 0..6 {
+      (nc, nr) = hex_neighbor(cc, cr, d);
+      if nc >= 0 && nc < cols && nr >= 0 && nr < rows {
+        ni = nr * cols + nc;
+        if (seen[ni] ?? 0) == 0 {
+          new_f = rgn.hex_h[ni] ?? 0;
+          if new_f < lvl + 1 { new_f = lvl + 1; }
+          filled[ni] = new_f;
+          seen[ni] = 1;
+          hk[size] = new_f;
+          hv[size] = ni;
+          heap_sift_up(hk, hv, size);
+          size = size + 1;
+        }
+      }
+    }
+  }
+  filled
+}
+
+fn c_pitfill(rgn: const Region) -> integer {
+  filled = hydro_pitfill(rgn);
+  acc = 0;
+  for f in filled { acc += f * ((f#index & 7) + 1); }
+  acc
+}
+
+// ── crawler `talus_relax`: a capped sandpile, bedrock `const`, rubble `&` ───────────────
+fn make_bed(salt: integer) -> vector<float> {
+  g = 40;
+  bed: vector<float> = [];
+  for gz in 0..g {
+    for gx in 0..g {
+      dx = (gx - 20) as float;
+      dz = (gz - 18) as float;
+      bed += [2600.0 - sqrt(dx * dx + dz * dz) * 14.0 + ((gx * 7 + gz * 13 + salt * 5) % 11) as float * 0.75];
+    }
+  }
+  bed
+}
+
+fn weather_rub(h: float) -> float {
+  t = (h - TREELINE) / 300.0;
+  if t < 0.0 { t = 0.0; }
+  if t > 1.0 { t = 1.0; }
+  0.5 + 4.0 * t
+}
+
+fn shed(bed: const vector<float>, rub: &vector<float>, ri: integer, nj: integer, sr: float) -> float {
+  d = ((bed[ri] ?? 0.0) + (rub[ri] ?? 0.0)) - ((bed[nj] ?? 0.0) + (rub[nj] ?? 0.0));
+  if d <= sr { return 0.0; }
+  m = (d - sr) / 2.0;
+  cur = rub[ri] ?? 0.0;
+  if m > cur { m = cur; }
+  if ri < rub.len() { rub[ri] = cur - m; }
+  if nj < rub.len() { rub[nj] = (rub[nj] ?? 0.0) + m; }
+  m
+}
+
+fn talus_relax(bed: vector<float>, rub: &vector<float>, g: integer) -> integer {
+  sr = REPOSE_TAN * DETAIL_CELL_M;
+  it = 0;
+  sweeps = 0;
+  while it < TALUS_ITERS {
+    moved = 0.0;
+    for r in 0..g {
+      for c in 0..g {
+        ri = r * g + c;
+        if (rub[ri] ?? 0.0) > 0.0 {
+          if c + 1 < g { moved = moved + shed(bed, rub, ri, ri + 1, sr); }
+          if c > 0 { moved = moved + shed(bed, rub, ri, ri - 1, sr); }
+          if r + 1 < g { moved = moved + shed(bed, rub, ri, ri + g, sr); }
+          if r > 0 { moved = moved + shed(bed, rub, ri, ri - g, sr); }
+        }
+      }
+    }
+    sweeps += 1;
+    if moved < 0.001 { it = TALUS_ITERS; } else { it = it + 1; }
+  }
+  sweeps
+}
+
+fn c_talus(bed: vector<float>) -> integer {
+  rub: vector<float> = [];
+  for h in bed { rub += [weather_rub(h)]; }
+  sweeps = talus_relax(bed, rub, 40);
+  acc = sweeps * 1000003;
+  for v in rub { acc += round(v * 1000.0) as integer * ((v#index % 13) + 1); }
+  acc
+}
+
+// ── crawler `fit_text` + `gen_spell_defs`: text shrunk and sliced ──────────────────────
+fn glyph_w(ch: character) -> float {
+  if ch == 'i' || ch == 'l' || ch == '.' || ch == ' ' { 3.0 }
+  else if ch == 'm' || ch == 'w' || ch == 'M' || ch == 'W' { 11.0 }
+  else if ch >= 'A' && ch <= 'Z' { 9.0 }
+  else { 7.0 }
+}
+
+fn measure_text(str: text) -> float {
+  w = 0.0;
+  for ch in str { w += glyph_w(ch); }
+  w
+}
+
+fn fit_text(str: text, max_w: float) -> text {
+  if measure_text(str) <= max_w { return str; }
+  out = str;
+  while len(out) > 1 && measure_text("{out}…") > max_w {
+    out = out[..(len(out) - 1)];
+  }
+  "{out}…"
+}
+
+fn make_names() -> vector<text> {
+  words = ["Potion", "Cure", "Light", "Wounds", "Scroll", "Magic", "Mapping", "Ring", "Protection",
+           "Wand", "Stinking", "Cloud", "Amulet", "Slow", "Digestion", "Resist"];
+  out: vector<text> = [];
+  for i in 0..3000 {
+    w1 = words[i % 16]?;
+    w2 = words[(i * 7 + 3) % 16]?;
+    w3 = words[(i * 11 + 5) % 16]?;
+    out += ["{w1} of {w2} {w3} #{i}"];
+  }
+  out
+}
+
+fn make_source_lines() -> vector<text> {
+  out: vector<text> = [];
+  for i in 0..20000 {
+    k = i % 4;
+    if k == 0 { out += ["  pub fn fx_bolt_{i}(s: Sim, caster: integer, tgt: integer) {{"]; }
+    else if k == 1 { out += ["    dmg = roll(s, {i % 9 + 1}, 6);"]; }
+    else if k == 2 { out += ["pub fn fx_(s: Sim)"]; }
+    else { out += ["fn helper_{i}(s: Sim) -> integer {{ {i} }}"]; }
+  }
+  out
+}
+
+fn c_slice_shrink(names: const vector<text>, lines: const vector<text>, salt: integer) -> integer {
+  acc = 0;
+  nn = len(names);
+  for k in 0..nn {
+    nm = names[((k + salt) % nn)?]?;
+    fitted = fit_text(nm, 120.0);
+    acc = (acc * 31 + len(fitted) + fitted.byte_at(size(fitted) - 4)) & HMASK;
+  }
+  fx_id: vector<text> = [];
+  nl = len(lines);
+  for k in 0..nl {
+    ln = trim(lines[((k + salt) % nl)?]?);
+    if ln.starts_with_at(0, "pub fn fx_") {
+      par = ln.find("(");
+      if par != null && par > 10 {
+        fx_id += [ln[10..par]];
+      }
+    }
+  }
+  for id in fx_id { acc = (acc * 31 + size(id) + id.byte_at(size(id) - 1)) & HMASK; }
+  acc
+}
+
+// ── crawler `region_write_loft`: a character round trip through its code ──────────────
+fn make_region_names() -> vector<text> {
+  parts = ["ortler", "wales", "cairngorm", "dolomiti", "vercors", "tatra", "snowdon", "jotunheimen"];
+  out: vector<text> = [];
+  for i in 0..20000 { out += ["{parts[i % 8]?}_{parts[(i * 5 + 1) % 8]?}_{i}"]; }
+  out
+}
+
+fn c_char_roundtrip(names: const vector<text>, salt: integer) -> integer {
+  acc = 0;
+  nn = len(names);
+  for k in 0..nn {
+    nm = names[((k + salt) % nn)?]?;
+    big: text = "";
+    for ch in nm {
+      code = ch as integer;
+      if code >= 97 && code <= 122 { code = code - 32; }
+      big = big + "{(code as character)}";
+    }
+    acc = (acc * 31 + size(big) + big.byte_at(0) + big.byte_at(size(big) - 1) * 3) & HMASK;
+  }
+  acc
+}
+
+// ── crawler `lit_float_body`: a file-sized text built by `out = out + …` ────────────────
+fn make_floats(salt: integer) -> vector<float> {
+  [for i in 0..160000 { 100.0 + ((i * 7919) % 1000) as float * 0.1 + salt as float * 0.25 + (i % 97) as float * 0.0078125 }]
+}
+
+fn lit_float_body(vs: const vector<float>) -> text {
+  out = "";
+  n = len(vs);
+  for i in 0..n {
+    if i > 0 { out = out + ","; }
+    out = out + "{vs[i] ?? 0.0:.9}";
+  }
+  out
+}
+
+fn c_quadratic_out(vs: const vector<float>) -> integer {
+  out = lit_float_body(vs);
+  sz = size(out);
+  acc = sz;
+  p = 0;
+  while p < sz { acc = (acc * 31 + out.byte_at(p)) & HMASK; p += 997; }
+  acc
+}
+
+// ── crawler `read_i16_vec`: `bf#read(2) as i16`, one element at a time ─────────────────
+fn write_region_bin(path: text, salt: integer, n: integer) {
+  f = file(path);
+  f.set_file_size(0);
+  f#format = LittleEndian;
+  for i in 0..n {
+    v = ((i * 7919 + salt * 131) & 65535) - 32768;
+    f += (v as i16?) ?? (0 as i16);
+  }
+}
+
+fn read_one_i16(bf: File) -> integer { bf#read(2) as i16 as integer }
+
+fn read_i16_vec(bf: File, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  i = 0;
+  while i < n { out += [read_one_i16(bf)]; i = i + 1; }
+  out
+}
+
+fn c_binary_read(path: text, n: integer) -> integer {
+  f = file(path);
+  f#format = LittleEndian;
+  vals = read_i16_vec(f, n);
+  acc = len(vals);
+  for v in vals { acc = (acc * 31 + v + 32768) & HMASK; }
+  acc
+}
+
+// ── crawler `sort_floats`: a selection sort into a fresh vector, per scanline ──────────
+fn sort_floats(v: vector<float>) -> vector<float> {
+  n = len(v);
+  out: vector<float> = [];
+  used: vector<boolean> = [];
+  for _i in 0..n { used += [false]; }
+  for _k in 0..n {
+    best = -1;
+    bestv = 0.0;
+    for i in 0..n {
+      if (used[i] ?? true) == false {
+        vi = v[i] ?? 0.0;
+        if best < 0 or vi < bestv { best = i; bestv = vi; }
+      }
+    }
+    if best >= 0 and best < len(used) {
+      out += [bestv];
+      used[best] = true;
+    }
+  }
+  out
+}
+
+fn row_crossings(xs: vector<float>, ys: vector<float>, yc: float) -> vector<float> {
+  n = len(xs);
+  xcs: vector<float> = [];
+  j = n - 1;
+  for i in 0..n {
+    ax = xs[i] ?? 0.0; ay = ys[i] ?? 0.0;
+    bx = xs[j] ?? 0.0; by = ys[j] ?? 0.0;
+    if (ay <= yc and by > yc) or (by <= yc and ay > yc) {
+      t = ((yc - ay) / (by - ay)) ?? 0.0;
+      xcs += [ax + t * (bx - ax)];
+    }
+    j = i;
+  }
+  sort_floats(xcs)
+}
+
+// A 64-spike star, radius 200 / 60, centred at (220 + salt, 220): up to 64 crossings a row.
+fn star_xs(salt: integer) -> vector<float> {
+  [for k in 0..128 { 220.0 + salt as float + (if k % 2 == 0 { 200.0 } else { 60.0 }) * cos(k as float * PI / 64.0) }]
+}
+
+fn star_ys() -> vector<float> {
+  [for k in 0..128 { 220.0 + (if k % 2 == 0 { 200.0 } else { 60.0 }) * sin(k as float * PI / 64.0) }]
+}
+
+fn c_sort_floats(xs: vector<float>, ys: vector<float>) -> integer {
+  acc = 0;
+  for py in 20..420 {
+    sorted = row_crossings(xs, ys, (py as float) + 0.5);
+    for x in sorted { acc = (acc * 31 + round(x * 16.0) as integer * (x#index + 1)) & HMASK; }
+  }
+  acc
+}
+
+// ── moros / crawler HUD: width and precision specs, per frame ──────────────────────────
+fn c_format_specs(salt: integer) -> integer {
+  acc = 0;
+  for f in 0..20000 {
+    altitude = 100.0 + (f % 400) as float * 0.37 + salt as float * 0.25;
+    fps = 30 + f % 90;
+    magic = 0x314E4752 + f * 17 + salt;
+    s = "{altitude:4.1}  FPS{fps:3}";
+    m = "0x{magic:X}";
+    acc = (acc * 31 + size(s) + s.byte_at(2) + s.byte_at(4) * 3 + s.byte_at(size(s) - 1) * 5
+           + size(m) + m.byte_at(size(m) - 1) * 7) & HMASK;
+  }
+  acc
+}
+
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+}
+
+fn main() {
+  n = arg_n(20);
+  s0 = make_sim(0);
+  s1 = make_sim(1);
+  rg0 = make_region(0);
+  rg1 = make_region(1);
+  bed0 = make_bed(0);
+  bed1 = make_bed(1);
+  names = make_names();
+  lines = make_source_lines();
+  rnames = make_region_names();
+  fl0 = make_floats(0);
+  fl1 = make_floats(1);
+  nbin = 150000;
+  tmp = temp_dir() ?? "/tmp";
+  bin0 = "{tmp}/loft_bench18_region0.bin";
+  bin1 = "{tmp}/loft_bench18_region1.bin";
+  write_region_bin(bin0, 0, nbin);
+  write_region_bin(bin1, 1, nbin);
+  xs0 = star_xs(0);
+  xs1 = star_xs(1);
+  ys = star_ys();
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  sink = 0;
+
+  t0 = ticks();
+  for r in 0..n { if (r & 1) == 0 { sink += c_build_walls(s0); } else { sink += c_build_walls(s1); } }
+  row("build_walls", n, ticks() - t0, 10201, c_build_walls(s0));
+
+  t0 = ticks();
+  for r in 0..n { if (r & 1) == 0 { sink += c_vis(s0); } else { sink += c_vis(s1); } }
+  row("build_vis", n, ticks() - t0, 16 * 10201, c_vis(s0));
+
+  t0 = ticks();
+  for r in 0..n { if (r & 1) == 0 { sink += c_pitfill(rg0); } else { sink += c_pitfill(rg1); } }
+  row("hydro_pitfill", n, ticks() - t0, 6400, c_pitfill(rg0));
+
+  t0 = ticks();
+  for r in 0..n { if (r & 1) == 0 { sink += c_talus(bed0); } else { sink += c_talus(bed1); } }
+  row("talus_relax", n, ticks() - t0, 1600, c_talus(bed0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_slice_shrink(names, lines, r & 1); }
+  row("slice_shrink", n, ticks() - t0, 3000, c_slice_shrink(names, lines, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_char_roundtrip(rnames, r & 1); }
+  row("char_roundtrip", n, ticks() - t0, 20000, c_char_roundtrip(rnames, 0));
+
+  t0 = ticks();
+  for r in 0..n { if (r & 1) == 0 { sink += c_quadratic_out(fl0); } else { sink += c_quadratic_out(fl1); } }
+  row("quadratic_out", n, ticks() - t0, 160000, c_quadratic_out(fl0));
+
+  t0 = ticks();
+  for r in 0..n { if (r & 1) == 0 { sink += c_binary_read(bin0, nbin); } else { sink += c_binary_read(bin1, nbin); } }
+  row("binary_read", n, ticks() - t0, nbin, c_binary_read(bin0, nbin));
+
+  t0 = ticks();
+  for r in 0..n { if (r & 1) == 0 { sink += c_sort_floats(xs0, ys); } else { sink += c_sort_floats(xs1, ys); } }
+  row("sort_floats", n, ticks() - t0, 400, c_sort_floats(xs0, ys));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_format_specs(r & 1); }
+  row("format_specs", n, ticks() - t0, 20000, c_format_specs(0));
+
+  println("time: 0ms sink={sink}");
+}

@@ -1,0 +1,168 @@
+// Benchmark 19: the standard library's `par` as a program calls it, one row each
+//
+// bench/11_par is the one engine row of the PARALLEL class: a fixed Newton kernel over a
+// vector of records.  This lane measures the shapes a program writes around `par(...)`:
+//
+//   par_map_float  a float kernel per element of a large `vector<float>`, results gathered
+//                  into a new vector (the map shape: `for x in xs par(y = k(x, s), 4)`).
+//   par_records    a `vector<Body>`, a per-record computation reading five fields, the
+//                  integer results gathered.
+//   par_reduce     an integer mixing kernel per element of a RANGE (the range is
+//                  materialised by `par`), the results reduced by a `total += r` body.
+//   par_text       a number formatted into a `text` per element, the texts gathered.
+//   par_small      256 SMALL par regions per op, 64 trivial elements each — the fixed
+//                  cost of entering, dispatching and joining a par region.
+//
+// Every row uses 4 threads, the count bench/11_par uses.  loft gives thread t the
+// contiguous range [t*n/4, (t+1)*n/4) (doc/claude/THREADING.md, `parallel_workers`) on a
+// persistent rayon pool; the Rust twin splits the same way over `std::thread::scope`.
+// The salt reaches each worker as a SCALAR context argument, the only kind `par` forwards.
+// Inputs differ by the repetition's salt in VALUE only; the `hash` column is one canonical
+// op's result, computed from the gathered RESULTS in source order, which the twin must
+// print the same.
+
+struct Body { px: float, py: float, vx: float, vy: float, mass: float, id: integer }
+
+// ── par_map_float ────────────────────────────────────────────────────────────────────
+fn fkern(x: float, salt: integer) -> float {
+  t = x + salt as float * 0.5;
+  acc = 0.0;
+  for _ in 0..24 {
+    t = t * 0.5 + sqrt(t + 1.0)?;
+    acc += t;
+  }
+  acc
+}
+
+fn c_map_float(xs: const vector<float>, salt: integer) -> integer {
+  out: vector<float> = [];
+  for x in xs par(y = fkern(x, salt), 4) { out += [y]; }
+  acc = 0;
+  for v in out { acc += round(v * 16.0) as integer * ((v#index & 3) + 1); }
+  acc
+}
+
+// ── par_records ──────────────────────────────────────────────────────────────────────
+fn body_score(b: const Body, salt: integer) -> integer {
+  x = b.px;
+  y = b.py;
+  e = 0.0;
+  for _ in 0..16 {
+    x += b.vx * 0.01;
+    y += b.vy * 0.01;
+    e += b.mass * sqrt(x * x + y * y + 1.0)?;
+  }
+  round(e) as integer + b.id * 3 + salt
+}
+
+fn c_records(bodies: const vector<Body>, salt: integer) -> integer {
+  scores: vector<integer> = [];
+  for b in bodies par(s = body_score(b, salt), 4) { scores += [s]; }
+  acc = 0;
+  for s in scores { acc += s * ((s#index & 3) + 1); }
+  acc
+}
+
+// ── par_reduce ───────────────────────────────────────────────────────────────────────
+fn mix(i: integer, salt: integer) -> integer {
+  h = (i * 2654435761 + salt) & 2147483647;
+  for _ in 0..48 {
+    h = (h * 1103515245 + 12345) & 2147483647;
+    h = h ^ (h >> 13);
+  }
+  h & 1023
+}
+
+fn c_reduce(count: integer, salt: integer) -> integer {
+  total = 0;
+  for i in 0..count par(r = mix(i, salt), 4) { total += r; }
+  total
+}
+
+// ── par_text ─────────────────────────────────────────────────────────────────────────
+fn fmt_num(i: integer, salt: integer) -> text {
+  v = i * 37 + salt;
+  f = v as float / 7.0;
+  "n{v}:{f:.2}/{v:x}"
+}
+
+fn c_text(count: integer, salt: integer) -> integer {
+  out: vector<text> = [];
+  for i in 0..count par(s = fmt_num(i, salt), 4) { out += [s]; }
+  acc = 0;
+  for s in out { acc += size(s) * ((s#index & 3) + 1) + s.byte_at(size(s) - 2); }
+  acc
+}
+
+// ── par_small ────────────────────────────────────────────────────────────────────────
+fn tiny(x: integer, salt: integer) -> integer { x * 3 + salt }
+
+fn c_small(vals: const vector<integer>, salt: integer) -> integer {
+  acc = 0;
+  for call in 0..256 {
+    sc = salt + call;
+    part = 0;
+    for x in vals par(y = tiny(x, sc), 4) { part += y; }
+    acc += part * (call + 1);
+  }
+  acc
+}
+
+fn arg_n(dflt: integer) -> integer {
+  an_args = arguments();
+  an_n = dflt;
+  an_i = 0;
+  while an_i < len(an_args) {
+    if an_args[an_i]? == "--n" && an_i + 1 < len(an_args) {
+      an_n = (an_args[an_i + 1]? as integer?)?;
+      an_i += 1;
+    }
+    an_i += 1;
+  }
+  if an_n < 2 { an_n = 2; }
+  an_n
+}
+
+fn row(name: text, iters: integer, us: integer, items: integer, result: integer) {
+  rw_ns = ((us * 1000) / iters) ?? 0;
+  rw_it = (((us * 1000) as float) / ((iters * items) as float)) ?? 0.0;
+  println("{name}\t{iters}\t{us}\t{rw_ns}\t{items}\t{rw_it:.3}\t{result:x}");
+}
+
+fn main() {
+  n = arg_n(20);
+  xs = [for i in 0..200000 { (i % 1000) as float * 0.125 }];
+  bodies: vector<Body> = [];
+  for i in 0..100000 {
+    bodies += [Body { px: (i % 97) as float * 1.5, py: (i % 89) as float * 0.75,
+                      vx: ((i * 7) % 13 - 6) as float, vy: ((i * 11) % 17 - 8) as float,
+                      mass: 1.0 + (i % 5) as float, id: i }];
+  }
+  vals = [for i in 0..64 { i * 5 + 1 }];
+  println("routine\titers\tus\tns_op\tpx\tns_px\thash");
+  sink = 0;
+  // A warm-up region, so pool start-up is not charged to the first row.
+  sink += c_small(vals, 0);
+
+  t0 = ticks();
+  for r in 0..n { sink += c_map_float(xs, r & 1); }
+  row("par_map_float", n, ticks() - t0, 200000, c_map_float(xs, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_records(bodies, r & 1); }
+  row("par_records", n, ticks() - t0, 100000, c_records(bodies, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_reduce(200000, r & 1); }
+  row("par_reduce", n, ticks() - t0, 200000, c_reduce(200000, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_text(100000, r & 1); }
+  row("par_text", n, ticks() - t0, 100000, c_text(100000, 0));
+
+  t0 = ticks();
+  for r in 0..n { sink += c_small(vals, r & 1); }
+  row("par_small", n, ticks() - t0, 256, c_small(vals, 0));
+
+  println("time: 0ms sink={sink}");
+}
