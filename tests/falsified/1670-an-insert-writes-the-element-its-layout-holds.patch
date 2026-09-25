@@ -1,0 +1,121 @@
+diff --git b/src/codegen_runtime.rs a/src/codegen_runtime.rs
+index 312fdc587..a8aaf94aa 100644
+--- b/src/codegen_runtime.rs
++++ a/src/codegen_runtime.rs
+@@ -1278,7 +1278,9 @@ pub fn OpInsertVector(
+     db_tp: i32,
+ ) -> DbRef {
+     let stores: &mut Stores = unsafe { &mut *cell.get() };
+-    stores.insert_vector_element(&data, size as u32, index, db_tp as u16)
++    let new_value = vector::insert_vector(&data, size as u32, index, &mut stores.allocations);
++    stores.set_default_value(db_tp as u16, &new_value);
++    new_value
+ }
+ 
+ /// P213: read element [0] of a vector field as a `DbRef`, or null
+diff --git b/src/database/structures.rs a/src/database/structures.rs
+index 39dd1545a..d6c4134e7 100644
+--- b/src/database/structures.rs
++++ a/src/database/structures.rs
+@@ -172,38 +172,6 @@ impl Stores {
+     /// # Panics
+     /// Panics on an unsupported `parent_tp`/`field` parts kind (an internal invariant
+     /// violation — the parser only emits `OpNewRecord` for collection/struct field types).
+-    /// `insert(v, index, …)`: make room at `index` and answer the element the caller then
+-    /// writes — the one body both backends' `OpInsertVector` run.
+-    ///
+-    /// An INLINE vector holds its elements in its slots, so the reserved slot IS the element.
+-    /// A LINKED vector's slot holds a 4-byte record id (`Parts::Array`), and the element is a
+-    /// record of its own — so the reserved slot is given one, claimed the way
+-    /// [`Self::record_new`] claims a linked element (its owner at offset 4), with the id
+-    /// written into the slot, and the RECORD is what is answered.  Answered as the slot, the
+-    /// caller wrote the element's fields over the 4-byte id: `[1,2,3]` + `insert(1, …)` read
+-    /// back `1,4294967298,null,3,` (loft#1670).  `size` is the slot width
+-    /// (`Parser::element_store_size`, 4 for a linked element).  An out-of-range index answers
+-    /// the absent element, and nothing is claimed.
+-    pub fn insert_vector_element(
+-        &mut self,
+-        data: &DbRef,
+-        size: u32,
+-        index: i64,
+-        elem_tp: u16,
+-    ) -> DbRef {
+-        let slot = vector::insert_vector(data, size, index, &mut self.allocations);
+-        if slot.rec == 0 || !self.is_linked(elem_tp) {
+-            self.set_default_value(elem_tp, &slot);
+-            return slot;
+-        }
+-        let rec = self.claim(&slot, 1 + ((u32::from(self.size(elem_tp)) + 7) >> 3));
+-        self.store_mut(&rec).set_u32_raw(rec.rec, 4, data.rec);
+-        self.store_mut(&slot)
+-            .set_u32_raw(slot.rec, slot.pos, rec.rec);
+-        self.set_default_value(elem_tp, &rec);
+-        rec
+-    }
+-
+     pub fn record_new(&mut self, data: &DbRef, parent_tp: u16, field: u16) -> DbRef {
+         // @PLN101 Slice 0 — count every heap record allocation (the cost value structs remove).
+         self.records_created += 1;
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index b80e98e1c..54469064e 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -1135,15 +1135,7 @@ impl Parser {
+         ) {
+             return None;
+         }
+-        self.vector_group_site(args.first()?.unspan())
+-    }
+-
+-    /// The linked-group facts of a VECTOR member named as a collection — `w.es` as the
+-    /// `OpGetField(base, off)` it resolved to.  The one derivation both an element write
+-    /// ([`Self::vector_group_elem_site`]) and a whole-vector `insert` ask.  `None` when the
+-    /// vector is not a group member.
+-    fn vector_group_site(&self, coll: &Value) -> Option<GroupElemSite> {
+-        let coll = coll.clone();
++        let coll = args.first()?.unspan().clone();
+         let (struct_tp, byte_off) = self.keyed_field_site(&coll)?;
+         let members = self.database.keyed_group_members(struct_tp, byte_off);
+         if members.len() < 2 {
+@@ -7012,24 +7004,6 @@ use #count instead"
+         };
+         steps.push(v_set(tmp, insert_call));
+         steps.push(set_val);
+-        // `@FR-Col-Group` — a record entering through any member is in every member, by any
+-        // write route.  An append reaches the keyed siblings at `OpFinishRecord`; an insert
+-        // reaches no such point, so the new element is handed to them here, once its fields
+-        // (and so its key) are written — the relink an element write through the group does
+-        // (`group_elem_write`, loft#1670).
+-        if let Some(site) = self.vector_group_site(list[0].unspan())
+-            && let Some(fld) = self.database.field_index_at(site.struct_tp, site.byte_off)
+-        {
+-            steps.push(self.cl(
+-                "OpLinkRecord",
+-                &[
+-                    site.base.clone(),
+-                    Value::Var(tmp),
+-                    Value::Int(i32::from(site.struct_tp)),
+-                    Value::Int(i32::from(fld)),
+-                ],
+-            ));
+-        }
+         *val = v_block(steps, Type::Void, "insert");
+         Type::Void
+     }
+diff --git b/src/state/io.rs a/src/state/io.rs
+index 252e9b4d9..3eecee45e 100644
+--- b/src/state/io.rs
++++ a/src/state/io.rs
+@@ -2192,9 +2192,9 @@ impl State {
+         let db_tp = self.code::<u16>();
+         let index = self.get_stack::<i64>();
+         let r = self.get_stack::<DbRef>();
+-        let new_value = self
+-            .database
+-            .insert_vector_element(&r, u32::from(size), index, db_tp);
++        let new_value =
++            vector::insert_vector(&r, u32::from(size), index, &mut self.database.allocations);
++        self.database.set_default_value(db_tp, &new_value);
+         self.put_stack(new_value);
+     }
+ }

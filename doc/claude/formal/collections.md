@@ -577,6 +577,25 @@ tests/scripts/901-linked-group-fill.loft.
 
 **OPEN: 0.**
 
+- **`D-col-7`** — opened and CLOSED 2026-09-25 (loft#1670): **`insert` and `reverse` did not act
+  on a LINKED vector's layout.**  A `vector<T>` is linked — each slot a 4-byte record id, each
+  element a record of its own — as soon as any keyed collection over `T` exists, which the author
+  never spells at the call site, so neither may change what these operations do.  Two defects:
+  `Parser::element_store_size`, the `@FR-H-Stride` home, answered the STRUCT's size for a linked
+  element, so both operations slid the wrong span (`reverse` of `1,2,3` read `null,null,3,`); and
+  with the stride right, `insert` still wrote the element's FIELDS over the slot's record id
+  (`1,4294967298,null,3,`), and a group insert reached no keyed sibling.  **Closed** at the
+  stride home (it answers 4 for a linked element), and at one runtime body both backends' ops run,
+  `Stores::insert_vector_element`: a linked slot is given a record claimed the way an append claims
+  one, its id written into the slot, and the RECORD answered for the fields to be written into.
+  `parse_insert` then hands the element to a group's keyed siblings (`OpLinkRecord`), since an
+  insert, unlike an append, reaches no `OpFinishRecord`; the group site is the one
+  `vector_group_site` derivation an element write through the group already reads.  Guards
+  `tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft` (reverse, both
+  layouts) and `tests/scripts/1670-an-insert-writes-the-element-its-layout-holds.loft` (10 cells:
+  every index, negative and out-of-range, a text-owning element, a copied variable, an insert
+  then a remove, and three through a group), falsified at `ea45d5fdf` on both backends.
+
 - **`D-col-6`** — opened and CLOSED 2026-09-24 (loft#1664): **a write through a payload BINDING
   to a group member kept the field spelling after `(B-View)` had materialised the binding**, so
   the write went to the reassigned subject while the reads came from the copy

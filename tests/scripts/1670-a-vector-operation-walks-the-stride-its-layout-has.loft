@@ -26,17 +26,37 @@
 //                        pre-allocation, a slice PATTERN) were measured right at both layouts
 //                        before and after, and the two reserving ones now claim the bytes they
 //                        need rather than twice them.
+//
+// @falsified-at: 8409d4b01 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+// @falsified-by: tests/falsified/1670-a-vector-operation-walks-the-stride-its-layout-has.patch — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, native exit 1 -> 0, native 8 assertion failures -> 0
+//   CHANNEL: assert (values).  Four cells fail on the control interpreted and eight natively:
+//   both linked counts, the short-vector pair (a two-element reversal has one swap and an
+//   8-byte span still walks off it), the group, the owning elements and the `sorted` trigger.
+//   The counts differ because each function stops at its own first failed assert.
+//   ARMED: no instrument — every cell reads the vector back by iteration and by index, and the
+//   owning cell reads a text and a nested vector out of the element that moved furthest.
+//   WITNESS: on the control, `linked odd: null,null,3,` where `3,2,1,` is right.
+// HOLDS: panic, free-refusal and exit-beyond-the-assert are clean on both trees and both
+//   backends, measured by `make falsify`, which prints only the channels that MOVE.
+//   ⚠ LEAK IS NOT SCORED HERE and reads `none` on both trees whatever the guard leaks:
+//   `falsify.sh` reads that column off a `main`-ful `--interpret` run and a corpus guard has no
+//   `main`, so `--tests` leak-checks nothing (the tool says so in its own header).  Cell 5 is a
+//   real release cell — `tests/wrap.rs` leak-checks the corpus — it is simply not what
+//   falsified this file.
 
 struct Si { k: integer }
 struct Sl { k: integer }
 struct Own { k: integer, label: text, tags: vector<integer> }
 
 struct Grp { els: vector<Sl>, by_k: hash<Sl[k]> }
+struct Ss { k: integer }
+struct SortedGrp { els: vector<Ss>, by_k: sorted<Ss[k]> }
 struct OwnGrp { owns: vector<Own>, by_own: hash<Own[k]> }
 
 fn di(v: vector<Si>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
 fn dl(v: vector<Sl>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
 fn do_(v: vector<Own>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
+fn ds(v: vector<Ss>) -> text { s = ""; for x in v { s += "{x.k},"; } return s; }
 
 // 1 — the INLINE layout, which was always right.  The control that says the cells below
 // measure the layout and not the operation.
@@ -112,4 +132,23 @@ fn test_reverse_keeps_what_the_linked_elements_own() {
   assert(first.label == "own-11", "own first label {first.label}, want own-11");
   assert((first.tags[0] ?? -1) == 11, "own first tags[0] {first.tags[0] ?? -1}, want 11");
   assert(len(g.by_own) == 12, "own: keyed len {len(g.by_own)}, want 12");
+}
+
+// 6 — the layout is triggered by ANY keyed kind over the element type, not by a `hash`: a
+// `sorted` links the vector the same way, and a guard that only ever spells `hash` is pinning
+// the trigger rather than the rule.
+fn test_the_layout_a_sorted_triggers_reverses_the_same() {
+  a: vector<Ss> = [Ss { k: 1 }, Ss { k: 2 }, Ss { k: 3 }];
+  a.reverse();
+  assert(ds(a) == "3,2,1,", "sorted-linked odd: {ds(a)}, want 3,2,1,");
+
+  b: vector<Ss> = [Ss { k: 1 }, Ss { k: 2 }, Ss { k: 3 }, Ss { k: 4 }];
+  b.reverse();
+  assert(ds(b) == "4,3,2,1,", "sorted-linked even: {ds(b)}, want 4,3,2,1,");
+
+  w = SortedGrp { els: [Ss { k: 10 }, Ss { k: 20 }, Ss { k: 30 }], by_k: [] };
+  w.els.reverse();
+  assert(ds(w.els) == "30,20,10,", "sorted group: {ds(w.els)}, want 30,20,10,");
+  assert(len(w.by_k) == 3, "sorted group: keyed len {len(w.by_k)}, want 3");
+  assert(w.by_k[20] != null, "sorted group: key 20 stopped being findable");
 }

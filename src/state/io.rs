@@ -2192,9 +2192,9 @@ impl State {
         let db_tp = self.code::<u16>();
         let index = self.get_stack::<i64>();
         let r = self.get_stack::<DbRef>();
-        let new_value =
-            vector::insert_vector(&r, u32::from(size), index, &mut self.database.allocations);
-        self.database.set_default_value(db_tp, &new_value);
+        let new_value = self
+            .database
+            .insert_vector_element(&r, u32::from(size), index, db_tp);
         self.put_stack(new_value);
     }
 }
