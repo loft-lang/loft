@@ -19880,10 +19880,10 @@ impl Parser {
                 // stack-backed `Tuple` and the `__tuple<…>` record (loft#1673) — asked of the
                 // first alone, a tuple with a heap member got the error its all-scalar twin
                 // did not.
-                let tuple_param = matches!(a.typedef, Type::RefVar(ref inner)
-                    if matches!(**inner, Type::Tuple(_))
-                        || matches!(**inner, Type::Reference(d, _)
-                            if self.data.def(d).name().starts_with("__tuple<")));
+                let tuple_param = matches!(a.typedef.base(), Type::RefVar(inner)
+                    if matches!(inner.base(), Type::Tuple(_))
+                        || matches!(inner.base(), Type::Reference(d, _)
+                            if self.data.def(*d).name().starts_with("__tuple<")));
                 if tuple_param {
                     diagnostic!(
                         self.lexer,

@@ -4889,7 +4889,7 @@ impl State {
         // is.  The link-read ladder below reads one SLOT and has no arm for a tuple, so as an
         // argument, a return or a bind it was an ICE.  A RECORD-backed `&(…)` is a
         // `RefVar(Reference(__tuple<…>))` and never reaches this arm; it is passed as the record.
-        if let Type::RefVar(inner) = stack.function.tp(variable)
+        if let Type::RefVar(inner) = stack.function.tp(variable).base()
             && let Type::Tuple(elems) = inner.base()
         {
             let reads = (0..elems.len())

@@ -1311,7 +1311,7 @@ impl Parser {
             .enumerate()
             .filter(|(_, a)| {
                 !a.hidden
-                    && !matches!(a.typedef, Type::RefVar(_))
+                    && !matches!(a.typedef.base(), Type::RefVar(_))
                     && self.type_owns_heap(&a.typedef)
             })
             .map(|(i, a)| (i as u16, a.name.clone()))
