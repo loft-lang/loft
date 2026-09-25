@@ -9323,6 +9323,33 @@ functions rather than one because they score different channels — value, the k
 unlink, the over-reach no-ops, and the release of what a removed element owned, which a failed
 assert in an earlier cell would have left unscored.
 
+**And then the RELATED cases found the bigger one.**  With the removal closed, the walk asked
+the rest of `@FR-H-Index`'s neighbourhood at both layouts — slice bounds, `insert`, `reverse`,
+`reserve`, the literal pre-allocation, a slice PATTERN — every cell written expecting a PASS.
+Two failed, and not at the edge the walk was about: `insert` corrupts a linked vector at EVERY
+index (`1,2,3` + `insert(1, 9)` reads back `1,2,0,null,`) and `reverse` answers `null,null,3,`
+for `3,2,1,` (loft#1670, `sev:high`, both backends, no diagnostic).
+
+That is a different rule one step over — `@FR-H-Stride`, *"the distance between consecutive
+elements"* — and the same shape of defect as the one just closed.
+`Parser::element_store_size` is the ONE home for the element width, made so by loft#1420 after
+the number had been re-derived wrongly six times, and it never asked `Stores::is_linked`: for a
+linked element it answers the STRUCT's size where the slot is a 4-byte record id.  Of its five
+callers, the two that MOVE bytes by the number slid a span twice as wide, which is
+word-for-word what loft#903 closed for `remove` — its doc comment says so — arriving at the two
+operations that fix did not reach.  The other three only reserve or address, and survived; the
+two reserving ones were quietly claiming twice the bytes they needed.
+
+The chokepoint fix is three lines in `element_store_size`, and it cures `reverse` whole.
+`insert` needs a second half — its element write is inline-shaped, so with the stride right the
+slot lands in the right place and takes the record id as an integer — which is a lowering
+change rather than a width one, and is `loft3-ca`'s on their own branch stacked on this commit.
+The halves are ORDERED, which is the part worth saying out loud when handing one over: fixing
+the element write against the old stride would have been measured on a container whose slots
+were still being addressed at the wrong distance.  Guard
+`tests/scripts/1670-a-vector-operation-walks-the-stride-its-layout-has.loft` for the half that
+landed; the `insert` cells land with their own fix rather than here.
+
 ### "Did the author write `&` here?" — four spellings, and the refusal knew two (2026-09-24)
 
 Came out of loft#1664 (*a write through a LINK to a linked-group member reaches only that
