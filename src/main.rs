@@ -8958,6 +8958,15 @@ fn main() {
     if p.diagnostics.level() < Level::Error {
         let t = std::time::Instant::now();
         scopes::check(&mut p.data, &mut p.database);
+        // The front-end bench's falsifier (bench/frontend): a harness that cannot see a
+        // slowdown it was handed measures nothing.  Read only under LOFT_TIMING.
+        if std::env::var_os("LOFT_TIMING").is_some()
+            && let Some(ms) = std::env::var("LOFT_TIMING_INJECT_MS")
+                .ok()
+                .and_then(|v| v.parse::<u64>().ok())
+        {
+            std::thread::sleep(std::time::Duration::from_millis(ms));
+        }
         scopes_ms = t.elapsed().as_secs_f64() * 1000.0;
         let t = std::time::Instant::now();
         loft::use_analysis::post_scope_lints(&p.data, &mut p.diagnostics, &abs_file);
