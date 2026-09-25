@@ -251,14 +251,6 @@ impl Parser {
                 self.vars.name(last)
             );
         }
-        if crate::keys::trace_work_buffer() {
-            eprintln!(
-                "[work-buffer] fn={} local={} ({v}) takes the number of `{}` ({last})",
-                self.data.def(self.context).name(),
-                self.vars.name(v),
-                self.vars.name(last)
-            );
-        }
         let tmp = self.vars.count();
         Self::renumber_frame_var(code, last, tmp);
         Self::renumber_frame_var(code, v, last);

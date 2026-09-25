@@ -19,9 +19,9 @@ const EXPECTED: &[(&str, &[&str])] = &[
     ("n_c4", &[]),           // declared inside a loop: @FR-R-LoopBuffer / @FR-R-LitHoist keep it
     ("n_c5", &["v"]),        // every in-place use, the walk's alias included
     ("n_c6", &[]), // beside a return buffer: the swap would renumber attr-space return deps
-    ("n_c7", &["v"]),        // handed by value to a callee answering a scalar
-    ("n_c7b", &["v"]),       // the callee answers its parameter — as a copy through its buffer
-    ("n_c7c", &[]),          // handed to a `&` parameter
+    ("n_c7", &["v"]), // handed by value to a callee answering a scalar
+    ("n_c7b", &["v"]), // the callee answers its parameter — as a copy through its buffer
+    ("n_c7c", &[]), // handed to a `&` parameter
     ("n_c8", &[]), // a text element
     ("n_c9", &[]), // assigned a second time
     ("n_c10", &[]), // v copied whole into the return buffer (@FR-R-RetAdopt), w a copy-bind

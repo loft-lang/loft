@@ -2092,7 +2092,10 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  reset (R-LoopBuffer) cheaper than a clear, and whose invariant literal the
                  literal hoist builds once (R-LitHoist); a local written and never read, the
                  dead-store lint's subject; an ENTRY POINT, which no caller hands a buffer;
-                 a mention in a return or a tail,
+                 a local numbered before an argument in a function whose RETURN TYPE
+                 carries deps — the swap that puts it after the arguments renumbers frame
+                 numbers, and those deps are attribute-space (the debug-assertions gate
+                 caught the swap rewriting `text[0]` to `text[3]`); a mention in a return or a tail,
                  in a literal, a tuple, a link or a capture, a second assignment, a copy
                  into a local that is then not so used; an element type that is a
                  record or a text; a body that suspends or forks; `main`; a generic, a
@@ -2148,12 +2151,12 @@ that makes the call, not before the whole value `if` (`scopes::place_in_if`) —
 `encode` minted its map arm's four buffers on every call.  A promotion is only a gain
 where the emitter still sees an owner and the form it replaces was a store at all.  The
 rows, re-measured clean on the converged tree (2026-09-25, the committed row without
-the rule → now): hex_body `rig_world_frame3` **9.54× → 5.25×** (its twelve scratch
-vectors), cbor `encode` **18.0× → 11.3×** and `encode_bytes` **43.1× → 26.4×** (the map
-encoder's key tables), graphics `fill_rect` 4.05× → 3.06×, `draw_line` 2.70× → 2.06×,
-`blend_pixel` 2.11× → 1.30×, `fill_triangle` 3.13× → 2.89×, drawing `composite` 1.56× →
+the rule → now): hex_body `rig_world_frame3` **9.54× → 5.20×** (its twelve scratch
+vectors), cbor `encode` **18.0× → 11.4×** and `encode_bytes` **43.1× → 24.9×** (the map
+encoder's key tables), graphics `fill_rect` 4.05× → 3.05×, `draw_line` 2.70× → 2.06×,
+`blend_pixel` 2.11× → 1.30×, `fill_triangle` 3.13× → 2.87×, drawing `composite` 1.56× →
 1.27×; `fronds`, `render_marks` and `resize` within noise of their committed rows once
-the two lessons above were applied; hex_body `bone_shape_has` 4.84× → 5.29× is the one row still worse,
+the two lessons above were applied; hex_body `bone_shape_has` 4.84× → 5.44× is the one row still worse,
 and its cause is the rule's own shape: a thin wrapper called once per element that calls
 `rig_world_seg` (three buffers) mints those buffers per call one level up exactly as the
 callee did, and pays the callee's clear and witness for nothing.  The cure is the

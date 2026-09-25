@@ -309,7 +309,7 @@ exclusive (`hoist::work_buffer_arg` at the push and mint windows), or the push w
 stay one (`fronds` 1.95× → 4.3× promoted); and a callee's lazy buffer mint must land in the
 arm that calls, not before the whole match (cbor `encode` 18× → 25×).  Clean re-measure on
 the converged tree (2026-09-25, the committed row without the rule → now): `rig_world_frame3`
-9.54× → 5.25×, `encode` 18.0× → 11.3×, `encode_bytes` 43.1× → 26.4×, `fill_rect` 4.05× →
-3.06×, `draw_line` 2.70× → 2.06×, `blend_pixel` 2.11× → 1.30×, `composite` 1.56× → 1.27×;
-`bone_shape_has` 4.84× → 5.29× is the one row still worse.
+9.54× → 5.20×, `encode` 18.0× → 11.4×, `encode_bytes` 43.1× → 24.9×, `fill_rect` 4.05× →
+3.06×, `draw_line` 2.70× → 2.06×, `blend_pixel` 2.11× → 1.30×, `composite` 1.56× → 1.25×;
+`bone_shape_has` 4.84× → 5.44× is the one row still worse.
 

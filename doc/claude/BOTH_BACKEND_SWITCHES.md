@@ -233,7 +233,8 @@ caller-side buffer left null, both backends).  A hand-off to a `&` parameter or 
 answering a view, a local copied whole into any other place (a record's field, where the
 emitter builds it in place or the move elision builds it straight into the field; the
 return buffer, which adopts it; another local) or bound purely as a copy of another vector
-(one copy in and no push, the borrow elision's), a local declared
+(one copy in and no push, the borrow elision's), a local numbered before an argument in a
+function whose return type carries deps (the swap would renumber them), a local declared
 inside a loop (`@FR-R-LoopBuffer`'s length reset is cheaper than a clear), a local written
 and never read (the dead-store lint's), a mention in a return, a literal, a link or a
 capture, a record or text element, a body that suspends or forks, an entry point, a generic,
