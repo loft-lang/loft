@@ -185,4 +185,6 @@ now, so a nested call argument is served.  mesh3d, same binary, the twin 1.99 ms
 row read 22× before `(R-Rebind)` took the forward), `sphere` 6.5 → 4.05 ms (13×),
 `mesh_to_floats` 12.7 → 8.4 ms, `mat4_mul` 51 → 44 ms.  Left in the row: `sphere`'s
 `add_vertex` (an 8-scalar `Vertex`, past the tuple width) and `mat4_mul`'s 16-float mint.
-Cells: `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.
+Cells: `tests/scripts/a-small-record-parameter-is-carried-as-a-tuple.loft`.  The portal's
+pinned rows at `8a513e42b` (2026-09-25): `mat4_transform` **1.42×**, `sphere` 14.5×,
+`mesh_to_floats` 21.3× (noisy), `mat4_mul` 31.9×.
