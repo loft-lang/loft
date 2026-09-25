@@ -86,3 +86,13 @@ The structural lever first: it is the one that changes the shape of the rows, an
 no touch on the allocator.  The shave after it, if the remaining temporaries — the ones that
 do escape — still show it.  Neither is a rewrite of anybody's loft code: the spelling
 `v: vector<integer> = []` inside a function is the natural one, and it stays.
+
+## Built
+
+`(R-WorkBuffer)` landed on 2026-09-25 (`src/parser/work_buffer.rs`, `LOFT_NO_WORK_BUFFER`):
+the structural lever above, for a vector local with a scalar element whose every mention is
+an in-place vector operator.  The probe measured here went 78–91 → 29–36 ns a call on the
+release tier (the hand-written caller-buffer form 26), and the walk's trace over six
+libraries promoted 98 locals.  The shave was not built; the temporaries that still mint are
+the 41 *handed to a call* (the next widening, by the callee's return deps), the record and
+text elements, and the results, which are another rule's.

@@ -562,6 +562,10 @@ pub struct Function {
     work_texts: BTreeSet<u16>,
     // Work variables for stores
     work_refs: BTreeSet<u16>,
+    /// `@FR-R-WorkBuffer` — the subset of `work_refs` a caller mints for a callee's WORK
+    /// BUFFER parameter rather than its result.  Parse-time only, read by the scope pass's
+    /// null control; nothing at codegen tells the two apart, because nothing needs to.
+    work_buffer_refs: BTreeSet<u16>,
     /// Vars the return-delivery materializer CONSUMED inside a branch arm
     /// (free-after-append on every path, incl. cross-arm frees).  Gates
     /// `insert_free`'s reads-filter: a pre-return free is dropped ONLY when
@@ -707,6 +711,7 @@ impl Function {
             annotated: HashSet::new(),
             work_texts: BTreeSet::new(),
             work_refs: BTreeSet::new(),
+            work_buffer_refs: BTreeSet::new(),
             arm_consumed: BTreeSet::new(),
             inline_ref_vars: BTreeSet::new(),
             borrow_arm_vars: BTreeSet::new(),
@@ -1005,6 +1010,7 @@ impl Function {
             work_fmt: Self::highest_minted(other, "__fmt_"),
             work_texts: BTreeSet::new(),
             work_refs: BTreeSet::new(),
+            work_buffer_refs: other.work_buffer_refs.clone(),
             inline_ref_vars: other.inline_ref_vars.clone(),
             borrow_arm_vars: other.borrow_arm_vars.clone(),
             caller_record_vars: other.caller_record_vars.clone(),
@@ -3338,6 +3344,7 @@ impl Function {
         self.names.insert(nb, b);
         swap_in_bset(&mut self.work_texts, a, b);
         swap_in_bset(&mut self.work_refs, a, b);
+        swap_in_bset(&mut self.work_buffer_refs, a, b);
         swap_in_bset(&mut self.arm_consumed, a, b);
         swap_in_bset(&mut self.inline_ref_vars, a, b);
         swap_in_hset(&mut self.annotated, a, b);
@@ -4924,6 +4931,20 @@ impl Function {
 
     pub fn inline_ref_references(&self) -> Vec<u16> {
         self.inline_ref_vars.iter().copied().collect()
+    }
+
+    /// Every `__ref_N` work-ref this table holds, in number order.
+    pub fn work_ref_vars(&self) -> Vec<u16> {
+        self.work_refs.iter().copied().collect()
+    }
+
+    /// `@FR-R-WorkBuffer` — `v` is a work-ref this caller mints for a callee's work buffer.
+    pub fn mark_work_buffer_ref(&mut self, v: u16) {
+        self.work_buffer_refs.insert(v);
+    }
+
+    pub fn is_work_buffer_ref(&self, v: u16) -> bool {
+        self.work_buffer_refs.contains(&v)
     }
 
     pub fn work_texts(&self) -> Vec<u16> {

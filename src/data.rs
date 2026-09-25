@@ -4285,6 +4285,13 @@ pub struct Attribute {
     /// Hidden return-mechanism parameter added by `text_return` or `ref_return`.
     /// Not a user-declared parameter — should be excluded from dep propagation.
     pub hidden: bool,
+    /// `@FR-R-WorkBuffer` — this hidden parameter is a WORK BUFFER: a vector local of the
+    /// body that never leaves its frame, promoted to storage the caller supplies.  Hidden
+    /// and compound like a return buffer, but not one: it carries no result, so every
+    /// route that builds a frame by hand (the argv entry, a par worker, the shared-cdylib
+    /// bridge, the engine host, placement) reads this mark to hand it a scratch store or
+    /// the null sentinel — never the caller's offered result record.
+    pub work_buffer: bool,
     /// The initial value of this attribute if it is not given.
     pub value: Value,
     /// A constraint expression checked on every field write.
@@ -4928,6 +4935,7 @@ impl Definition {
     pub fn hidden_return_buffer_attr(&self) -> Option<usize> {
         self.attributes.iter().position(|a| {
             a.hidden
+                && !a.work_buffer
                 && matches!(
                     &a.typedef,
                     Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
@@ -7035,6 +7043,7 @@ impl Data {
             nullable: true,
             primary: false,
             hidden: false,
+            work_buffer: false,
             value: Value::Null,
             check: Value::Null,
             check_message: Value::Null,

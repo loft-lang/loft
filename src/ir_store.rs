@@ -243,6 +243,7 @@ fn write_attribute(stores: &mut Stores, r: &Record, a: &Attribute) {
     r.set_field_bool(stores, ds::ATTR_HIDDEN, a.hidden);
     r.set_field_bool(stores, ds::ATTR_CONST_FIELD, a.const_field);
     r.set_field_bool(stores, ds::ATTR_VALUE_CONST, a.value_const);
+    r.set_field_bool(stores, ds::ATTR_WORK_BUFFER, a.work_buffer);
     node_child(stores, r, ds::ATTR_VALUE, &a.value);
     node_child(stores, r, ds::ATTR_CHECK, &a.check);
     node_child(stores, r, ds::ATTR_CHECK_MESSAGE, &a.check_message);
@@ -1547,6 +1548,7 @@ mod tests {
             nullable: true,
             primary: false,
             hidden: false,
+            work_buffer: false,
             value: Value::Int(7),
             check: Value::Null,
             check_message: Value::Text("bad".into()),

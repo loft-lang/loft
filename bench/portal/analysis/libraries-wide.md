@@ -291,3 +291,15 @@ bulk routine already existed and the rewrite makes the code as written fast, whi
 order the owner set — the compiler takes the natural spelling first, a tool names the spot
 later.
 
+**`(R-WorkBuffer)` BUILT (2026-09-25, `LOFT_NO_WORK_BUFFER`).**  The overview's largest
+language-side bucket — a vector minted as a STORE per call and freed at its end, 67 ns of
+bookkeeping around a value Rust keeps on the stack — is gone for every vector local that never
+leaves its frame: the local is a hidden work-buffer parameter, minted once per caller
+activation and cleared by the callee (`formal/rewrites.md` § *A local that never leaves the
+frame is the caller's buffer*).  The probe (2 M calls of `fn f(salt) { v: vector<integer> =
+[]; …; len(v) }`, `--native-release`): 78–91 → 29–36 ns a call, the hand-written form 26.
+Reach, by the walk's own trace over six libraries: 98 locals promoted (hex_body 15,
+hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29); 41 more are *handed to a
+call* — a by-value parameter of a loft-bodied callee — which is the next widening (admit it
+where the callee's return carries no dep on that parameter).
+

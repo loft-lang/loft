@@ -732,6 +732,9 @@ fn shared_bridge_wrapper(
     // — one leaked store per call.  Freed after the call when the return differs.
     let mut value_dest: Option<String> = None;
     let mut fresh_dests: Vec<String> = Vec::new();
+    // `@FR-R-WorkBuffer` — hidden WORK buffers the bridge allocated: never a result, so a
+    // fresh one is released after the call without asking what the callee returned.
+    let mut work_bufs: Vec<String> = Vec::new();
     let ret_text = matches!(def.returned().base(), Type::Text(_));
     for (i, a) in def.attributes().iter().enumerate() {
         let var = format!("p{i}");
@@ -801,9 +804,13 @@ fn shared_bridge_wrapper(
                 );
                 let _ = writeln!(body, "        {var}_fresh = true;");
                 let _ = writeln!(body, "    }}");
-                fresh_dests.push(var.clone());
+                if a.work_buffer {
+                    work_bufs.push(var.clone());
+                } else {
+                    fresh_dests.push(var.clone());
+                }
                 slot += 1;
-                if value_fields.is_none() {
+                if a.work_buffer || value_fields.is_none() {
                     let _ = write!(fwd, ", {var}");
                 } else {
                     value_dest = Some(var.clone());
@@ -875,6 +882,12 @@ fn shared_bridge_wrapper(
     // free it so it does not leak (one store per call across the interp↔cdylib
     // boundary; native whole-program has no bridge and is unaffected).
     let mut free_orphans = String::new();
+    for var in &work_bufs {
+        let _ = write!(
+            free_orphans,
+            "    if {var}_fresh {{ unsafe {{ (&mut *cell.get()).free_named(&{var}, \"__shared_work_buffer\"); }} }}\n",
+        );
+    }
     for var in &fresh_dests {
         let _ = write!(
             free_orphans,

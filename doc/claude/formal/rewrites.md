@@ -2097,6 +2097,25 @@ refused.  Measured on the probe (`fn f(salt) { v: vector<integer> = []; …; len
 test, 194 results (another rule's), 90 handed to a call (the next widening: a by-value
 parameter of a callee whose return carries no dep on it).
 
+**BUILT** (2026-09-25, `src/parser/work_buffer.rs`, run from `after_pass2` beside the
+targeted `__tret` promotion; `LOFT_NO_WORK_BUFFER`, `LOFT_TRACE_WORK_BUFFER`; guard
+`tests/scripts/a-non-escaping-vector-local-is-a-caller-buffer.loft`, pin
+`tests/work_buffer.rs`, and `LOFT_WORK_BUFFER_NULL` the positive control that runs every
+promoted callee down its null road on both backends).  The attribute mark is
+`Attribute::work_buffer` (serialised; cache format 13), read by the engine host (a null
+where it offered its result record), placement (a function with one runs in-process) and
+the shared-cdylib bridge (a fresh scratch, released after the call whatever was returned);
+the argv entry, the native `main` and the par worker's queue already allocate one store per
+hidden vector attribute and free it after.  A `par(…)` worker is declined by name of the
+builtin's `func` operand: its scalar route builds the frame from the element alone.  The
+probe on the release tier, 2 M calls: **78–91 → 29–36 ns a call**, the hand-written
+caller-buffer form 26.  Census of the walk over six libraries (2026-09-25): 98 locals
+promoted (hex_body 15, hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29), the
+decline that counts being *handed to a call* (41).  A buffer lives as long as its caller's
+activation, so a promoted call site in `main` keeps its buffer for the run exactly as a
+return buffer does; `LOFT_STORES=warn`'s high-water heuristic (more than 30 live stores)
+reads such a `main` as a possible leak, and it is a working set.
+
 ### A leaf carries no frame
 
 ```

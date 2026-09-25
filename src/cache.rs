@@ -73,7 +73,13 @@ use sha2::{Digest, Sha256};
 ///
 /// 12 — `Variable` carries `linked_narrow` and `store_text_link` (@PLN167): a warm load
 /// without `linked_narrow` read a linked narrow local's field encoding as its value.
-const CACHE_FORMAT_VERSION: u8 = 13;
+///
+/// 13 — `Attribute` carries `work_buffer` (`@FR-R-WorkBuffer`): a warm load without it
+/// reads a promoted local's hidden parameter as the function's return buffer.
+///
+/// 14 — `Data` carries `type_var_bounds` (@PLN166 B1): a parse continuing a loaded stdlib
+/// without them mints a second placeholder for a `<T>` the stdlib already has.
+const CACHE_FORMAT_VERSION: u8 = 14;
 
 /// Loft crate version — a release bump invalidates every cache.
 const LOFT_VERSION: &str = env!("CARGO_PKG_VERSION");

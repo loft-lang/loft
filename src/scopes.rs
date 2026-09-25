@@ -5940,6 +5940,11 @@ fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
             continue;
         }
         function.mark_lazy_buffer(av);
+        // `@FR-R-WorkBuffer`'s positive control: a work buffer left at the sentinel makes
+        // the callee take its null road, on both backends.
+        if crate::keys::work_buffer_null_control() && function.is_work_buffer_ref(av) {
+            continue;
+        }
         let guard = v_if(
             Value::Call(is_null, vec![Value::Var(av)]),
             Value::Insert(vec![v_set(av, Value::Null)]),
