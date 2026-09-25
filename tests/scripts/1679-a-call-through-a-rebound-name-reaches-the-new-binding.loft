@@ -31,10 +31,21 @@
 // SECOND of two, and the reverse order (the loop first, a bind after it) is the rebind these
 // cells measure.
 //
-// @falsified-at: PENDING
+// @falsified-at: 87b57a29e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native
+//   INERT (expected for a backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1679-a-call-through-a-rebound-name-reaches-the-new-binding.patch
+//   — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
 //   CHANNEL: assert — every cell computes a value on both trees, and the control's answers are
 //   the ended binding's.  Not exit (nothing crashes: a fn-ref whose d_nr is the sentinel is
 //   CALLED and answers the type's null, which is why this was silent), and not leak.
+//   ARMED: no instrument — a plain run on either backend reads it, because the two backends
+//   DISAGREE (the interpreter answers the ended binding, `--native` the new one).
+//   `LOFT_STRICT_STORES=1 LOFT_POISON=1` is clean on both trees: the split costs no store, so
+//   the closure-record cell has nothing to leak either way.
+//   HOLDS: the three reads that were never wrong — through a copy, handed to a function that
+//   calls it, and a `text` local through the same split — answer identically on both trees, and
+//   the shadow refusal still refuses a loop header that rebinds an enclosing block's name.
 //   WITNESS: `test_an_if_arm_binding_is_not_what_the_call_reaches`, the cell whose control
 //   answer is 101 — `one` called where the program spells `two`.
 //

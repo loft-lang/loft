@@ -24,9 +24,14 @@
 // @EXPECT_ERROR: `s1f` was bound inside a block that has ended
 // @EXPECT_ERROR: `s2g` was bound inside a block that has ended
 // @EXPECT_ERROR: `s3h` was bound inside a block that has ended
-// @falsified-at: PENDING
+// @falsified-at: 87b57a29e — interpret exit 1 -> 0, interpret expectations FAIL/3 -> 0/3 (the
+//   suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/3 ->
+//   0/3 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1679b-a-call-through-a-name-whose-block-has-ended-is-refused.patch
+//   — the same channels.
 //   CHANNEL: the EXPECTATION channel — on the control every refused cell compiles, so none of
 //   the three refusals fires and the suite scores the file FAIL.
+//   ARMED: no instrument — the refusal is a compile-time diagnostic on both backends.
 //   WITNESS: on the control `s1` compiles and `s1f(1)` answers `null` after its loop.
 //   HOLDS: leak and panic are equal on both trees; the running cells o1–o4 answer the same.
 
