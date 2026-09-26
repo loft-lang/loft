@@ -1,0 +1,76 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1692 (`@FR-N-Reserve`, `@FR-L-Narrow-Enc`, `@FR-I-Next`) — A LOOP VARIABLE READS A NULLABLE
+// NARROW ELEMENT AS NULL.  `for x in v` over a vector of `u8?`, `i16?`, `u16?` read each element
+// without its declared nullability — `get_val(vtp, false, …)` — so a null element came back as
+// its stored code: `255` for `u8?`, `-32768` for `i16?`, `2` for `u16?`.  `x ?? d` never
+// discharged and `!x` never fired, while `v[i]`, a copy and a struct field decoded the same
+// element as null.  The loop now passes the element's declared nullability, as the indexed read
+// does.
+//
+// The cells cross the widths the reserve applies to (`u8?`, `i8?`, `u16?`, `i16?`, `u32?`) with
+// the loop forms that build the element read (a plain loop, `rev`, a vector field, a loop that
+// uses `#index`) and the uses (`??`, `!x`, a copy, a format), and pin `(N-Reserve)`'s edge: a
+// `255` written into a `u8?` slot IS its null.  Controls: a non-null narrow vector, an `integer?`
+// vector, and the indexed read.  Every value is worked out by hand in the cell.
+//
+// @falsified-at: <derived after the fix is committed>
+// CHANNEL: the asserts — the control tree answers every nullable-narrow loop cell with the
+//   stored code.
+// WITNESS: `u8?: 259 0` (a null read as 255, no null seen).
+// HOLDS: the controls, on both trees.
+
+struct H { v: vector<u8?> }
+
+fn main() {
+  a: vector<u8?> = [1, null, 3];
+  s1 = 0;
+  n1 = 0;
+  for x in a { s1 += x ?? 7; if !x { n1 += 1; } }
+  assert(s1 == 11 && n1 == 1, "u8?: {s1} {n1}");
+  b: vector<i8?> = [-1, null, 3];
+  s2 = 0;
+  for x in b { s2 += x ?? 7; }
+  c: vector<u16?> = [1, null, 3];
+  s3 = 0;
+  for x in c { s3 += x ?? 7; }
+  d: vector<i16?> = [1, null, -3];
+  s4 = 0;
+  for x in d { s4 += x ?? 7; }
+  e: vector<u32?> = [1, null, 3];
+  s5 = 0;
+  for x in e { s5 += x ?? 7; }
+  assert(s2 == 9 && s3 == 11 && s4 == 5 && s5 == 11, "i8? u16? i16? u32?: {s2} {s3} {s4} {s5}");
+  // reversed: 3, null, 1 — the first null seen at #index 1
+  r6 = "";
+  for x in rev(a) { r6 += "{x} "; }
+  assert(r6 == "3 null 1 ", "rev: {r6}");
+  h = H { v: [null, 2] };
+  s7 = 0;
+  for x in h.v { s7 += x ?? 40; }
+  assert(s7 == 42, "a vector field: {s7}");
+  at = -1;
+  for x in a { if !x { at = x#index; } }
+  assert(at == 1, "the null found by index: {at}");
+  // a copy of the loop variable keeps the null
+  copies: vector<u8?> = [];
+  for x in a { y: u8? = x; copies += [y]; }
+  assert(!copies[1] && (copies[2] ?? 0) == 3, "a copy of the loop variable: {copies}");
+  // (N-Reserve): 255 is the null of a u8?, so a 255 written into the slot reads null
+  w: vector<u8?> = [255, 254];
+  n8 = 0;
+  for x in w { if !x { n8 += 1; } }
+  assert(n8 == 1 && (w[1] ?? 0) == 254, "the reserved code is the null: {n8}");
+  // controls: non-null narrow, integer?, indexed
+  p: vector<u8> = [1, 255, 3];
+  s9 = 0;
+  for x in p { s9 += x; }
+  q: vector<integer?> = [1, null, 3];
+  s10 = 0;
+  for x in q { s10 += x ?? 7; }
+  s11 = 0;
+  for i in 0..3 { s11 += a[i] ?? 7; }
+  assert(s9 == 259 && s10 == 11 && s11 == 11, "controls: {s9} {s10} {s11}");
+  println("a loop variable reads a nullable narrow element as null: every cell holds");
+}
