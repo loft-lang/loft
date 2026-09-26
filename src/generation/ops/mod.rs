@@ -170,6 +170,7 @@ fn registry() -> &'static std::collections::HashMap<&'static str, Box<dyn OpEmit
     R.get_or_init(build_registry)
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter>> {
     let mut r: std::collections::HashMap<&'static str, Box<dyn OpEmitter>> =
         std::collections::HashMap::new();

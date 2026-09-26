@@ -2146,6 +2146,7 @@ impl<'a> Output<'a> {
     /// addition (pass-3 dedupe).  Callers flip the rare non-default flag
     /// (`wasm_browser`) on the returned value.
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn new(data: &'a Data, stores: &'a Stores) -> Self {
         // A generation run is about ONE program; per-definition facts from the previous
         // run name other functions by the same numbers.
@@ -2520,6 +2521,7 @@ impl Output<'_> {
     }
 
     /// Use this to reset the emission state when starting a new function.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
         self.indent = 0;
@@ -2758,6 +2760,7 @@ impl Output<'_> {
     /// value of every intermediate fits, so the plain operator answers exactly what the
     /// checked template would; the checked loop is the fallback for every case the guard
     /// declines.  Emits `@FR-R-BoundedNest`.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn nest_fast_path(
         &mut self,
         w: &mut dyn Write,
@@ -2955,6 +2958,7 @@ impl Output<'_> {
     /// `(R-BoundedNest)`'s method for any counted loop's index arithmetic — the six operators
     /// of `composite_layer`'s pixel loop (`j * lw + i`, `x0 + i`, `y0 + j`) whose unproven
     /// record-scalar operands no static proof can bound.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn chain_fast_path(
         &mut self,
         w: &mut dyn Write,
@@ -3781,6 +3785,7 @@ impl Output<'_> {
         self.range_tail(w, p.index_var, p.next_var, p.hi, p.inclusive)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn begin_vector_hoist(
         &mut self,
         w: &mut dyn Write,
@@ -4452,6 +4457,7 @@ impl Output<'_> {
     /// for it.  Answers whether a frame was pushed; `output_block` pops what it pushed before
     /// the block closes.  A value-record local (`@FR-R-ValueRecord`) is a tuple, not a place,
     /// and is never bound.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn bind_record_ptr(
         &mut self,
         w: &mut dyn Write,
@@ -5710,6 +5716,7 @@ macro_rules! loft_ckpt_t {{
     /// the same question in both.  Every row carries its execution count because the tick
     /// column is a sum of quantised samples (§ [`CkptMode`]) — with few executions the
     /// ticks are noise, and the count is how a reader sees that.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_ckpt_table(&self, w: &mut dyn Write) -> std::io::Result<()> {
         if !self.checkpoints.armed() {
             return Ok(());
@@ -5875,6 +5882,7 @@ fn loft_ckpt_report() {{
         w.write_all(buf)?;
         write!(w, "}})")
     }
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_file_header(
         w: &mut dyn Write,
         data: &Data,
@@ -7087,6 +7095,7 @@ extern crate loft;"
     /// Use this to emit only the `init` body that registers all types.
     /// Sorting by `known_type` ensures the runtime recreates type IDs in the same order
     /// as the compile-time database, keeping field indices consistent.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_init(&mut self, w: &mut dyn Write, from: u32, till: u32) -> std::io::Result<()> {
         // Base types are pre-registered by `Stores::new()` with fixed indices
         // 0..=6 (integer, long, single, float, boolean, text, character — see
@@ -7471,6 +7480,7 @@ extern crate loft;"
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_const_vectors(&self, w: &mut dyn Write, till: u32) -> std::io::Result<()> {
         // Short-circuit if nothing references const_refs (avoids
         // emitting an unused `db.const_refs.resize(...)` that'd
@@ -7741,6 +7751,7 @@ extern crate loft;"
     /// than `JObject`.  Finally, emit fields in source order: inline collection creates dedup
     /// on name and land at the correct runtime id.
     #[allow(clippy::only_used_in_recursion, clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_def_create_recurse_fields(
         &mut self,
         w: &mut dyn Write,
@@ -8242,6 +8253,7 @@ extern crate loft;"
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_field_inner(
         &self,
         w: &mut dyn Write,
@@ -8731,6 +8743,7 @@ extern crate loft;"
 
     /// Use this to emit one loft function as a Rust function.
     /// Every loft function receives `stores: &mut Stores` as its first implicit argument.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_function(
         &mut self,
         w: &mut dyn Write,
@@ -9723,6 +9736,7 @@ extern crate loft;"
     /// declared at the C width, so rustc truncates at the ABI boundary and the
     /// `as i64` below extends correctly. -1 from an `int` stays -1 rather than
     /// becoming 4294967295.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_c_direct_call(&self, w: &mut dyn Write, d_nr: u32) -> std::io::Result<()> {
         let def = self.data.def(d_nr);
         let target = crate::c_signature::CTarget::host();
@@ -9930,6 +9944,7 @@ extern crate loft;"
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_native_direct_call(
         &self,
         w: &mut dyn Write,

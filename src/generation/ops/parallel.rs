@@ -320,6 +320,7 @@ fn is_by_value_scalar(t: &Type) -> bool {
 pub struct ParallelForEmitter;
 
 impl OpEmitter for ParallelForEmitter {
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         // Guard: the special case requires at least 5 args with vals[4]
         // a non-negative i32 (the worker fn's def_nr).  When violated,
@@ -495,6 +496,7 @@ impl OpEmitter for ParallelForEmitter {
 pub struct ParallelQueueEmitter;
 
 impl OpEmitter for ParallelQueueEmitter {
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         // Guard: same as for-par — at least 5 args with vals[4] a
         // non-negative i32 (worker fn's def_nr).  Otherwise fall through.

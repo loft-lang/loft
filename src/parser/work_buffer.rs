@@ -976,6 +976,7 @@ impl Walk<'_> {
         })
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn node(&mut self, node: &Value, pos: Pos<'_>) -> Result<(), &'static str> {
         match node.unspan() {
             Value::Var(x) if self.tracked.contains(x) => match pos {

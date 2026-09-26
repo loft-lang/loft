@@ -1519,6 +1519,7 @@ pub enum ParseResult {
 
 impl Parser {
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn new() -> Self {
         // A new parser is a new compilation: the copy manifest's records are keyed by
         // definition and variable number, so the previous program's would name this one's.
@@ -4198,6 +4199,7 @@ impl Parser {
     ///
     /// `@FR-N-Shape` — "is this parameter a `&` link" is a shape question, and a `&τ?` parameter
     /// links exactly as its dense twin does, so it is asked through `base()`.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn report_const_argument(
         &mut self,
         actual: &Value,
@@ -5292,6 +5294,7 @@ impl Parser {
     }
 
     #[track_caller]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn convert(&mut self, code: &mut Value, is_type: &Type, should: &Type) -> bool {
         // @PLN167 C3 (loft#1656) — a text field or element reaching a `&text` parameter HERE
         // comes through a FUNCTION VALUE: a direct call lowers it to the place before any
@@ -6566,6 +6569,7 @@ impl Parser {
 
     /// Search for definitions with the given name and call that with the given parameters.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn call(
         &mut self,
         code: &mut Value,
@@ -7999,6 +8003,7 @@ impl Parser {
             .is_some_and(|a| self.data.mentions_type_var(&a.typedef))
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn instantiate_template(&mut self, g_nr: u32, name: &str, types: &[Type]) -> u32 {
         if types.is_empty() || (self.first_param_binds(g_nr) && types[0].is_unknown()) {
             // First-pass argument types may be incomplete; defer the diagnostic
@@ -9904,6 +9909,7 @@ impl Parser {
     /// `__typevar_T`, whose width is zero: a divide by zero at `integer` and a slide of the
     /// wrong width at `text` (loft#1536).  And a type BUILT over the variable (`vector<T>`)
     /// was registered with a row of its own at template parse, which is just as stale.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn retarget_parametric_type_rows(
         &mut self,
         d_nr: u32,
@@ -10242,6 +10248,7 @@ impl Parser {
     /// Called after `add_def` has registered THIS monomorph, so a self-recursive generic
     /// (`fn f<T>(t: T) { f(t) }`) finds itself in the `existing` check and stops, rather
     /// than instantiating forever.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn instantiate_nested_generics(&mut self, d_nr: u32, bindings: &[(u32, Type)]) {
         let concrete = &bindings
             .first()
@@ -10514,6 +10521,7 @@ impl Parser {
     /// Walks a generic-template's IR and substitutes the type variable
     /// `tv_nr` with the concrete `concrete` type, both in variable types
     /// and in IR-shape decisions that depend on T's resolved shape.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn substitute_type_in_value(
         val: Value,
         tv_nr: u32,
@@ -11010,6 +11018,7 @@ impl Parser {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn rewrite_generic_type_defaults(&mut self, val: Value) -> Value {
         match val {
             Value::Block(bl) if bl.name == Self::TV_TUPLE_READ && bl.operators.len() == 1 => {
@@ -13871,6 +13880,7 @@ impl Parser {
     // `emit_check` and `elm_override` are the two independent switches over that. Bundling them
     // would name a struct after this one call site.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn set_field_check(
         &mut self,
         d_nr: u32,
@@ -14628,6 +14638,7 @@ impl Parser {
     /// unbounded `<T>` reported *"operator '<=' requires a concrete type"*.  `spelled` is
     /// carried for the DIAGNOSTIC only; every resolution decision still reads `op`, so the two
     /// cannot drift into disagreeing about what is being resolved.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn call_op_as(
         &mut self,
         code: &mut Value,
@@ -14951,6 +14962,7 @@ impl Parser {
 
     /// Call a specific definition
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn call_nr(
         &mut self,
         code: &mut Value,
@@ -15191,6 +15203,7 @@ impl Parser {
     }
 
     /// Convert and validate each positional argument for a call.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn process_call_args(
         &mut self,
         d_nr: u32,
@@ -15961,6 +15974,7 @@ impl Parser {
         Vec::from_iter(dp)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn add_defaults(&mut self, d_nr: u32, actual: &mut Vec<Value>, all_types: &mut Vec<Type>) {
         // @PLAN59 phase 2: the `__rref_N` recursive-self counter dance is
         // gone.  It existed to keep `__ref_N` numbering pass-stable so
@@ -16275,7 +16289,7 @@ impl Parser {
     // ********************
 
     /// Parse data from the current lexer.
-    #[allow(clippy::too_many_lines)] // two-pass parser dispatch — splitting would lose context
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_file(&mut self) {
         let start_def = self.data.definitions();
         // #255 / @PLN9: file-level `#cwd` directive — opt this program out of the
@@ -18805,6 +18819,7 @@ impl Parser {
     /// This is the entry point used by Phase A of the package-mode driver
     /// , which needs to enumerate files + package edges without
     /// spilling symbol-table side-effects before pass-1 parsing begins.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn lib_path_manifest_resolve(&mut self, dir: &str, id: &str) -> Option<ResolvedPkg> {
         // @P296-sibling (Windows) — build the package paths with
         // `Path::join` rather than `format!("{dir}/{id}")`.  When `dir` is
@@ -19025,6 +19040,7 @@ impl Parser {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn apply_manifest_side_effects(&mut self, dir: &str, pkg_dir: &str, m: &manifest::Manifest) {
         // register native shared library path for loading after byte_code().
         // Pre-built location first, then auto-build from source (one home:
@@ -19894,6 +19910,7 @@ impl Parser {
     /// mutated somewhere in the body. If not, emit a compile error suggesting to drop the `&`.
     /// Also check for redundant `const` annotations on primitive parameters that are never
     /// written to — the `const` has no effect when the parameter is not modified.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn check_ref_mutations(&mut self, arguments: &[Argument]) {
         let code = self.data.def(self.context).code().clone();
         let mut written = crate::fxhash::FxHashSet::default();
@@ -20281,6 +20298,7 @@ fn find_capturing_fn_ref(data: &Data, v: &Value) -> Option<(i32, u16)> {
 /// - Non-inline source (`Var` / `Call` returning a fn-ref) or unrecognised
 ///   shape: emit a placeholder `OpSetInt4(0)` write and a parse-time
 ///   diagnostic so the user sees the limitation in the second pass.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn emit_fn_ref_field_write(
     p: &mut Parser,
     d_nr: u32,
@@ -22448,6 +22466,7 @@ mod plan86_admission_tests {
     /// vacuously rejecting everything — a sandbox that admits nothing is useless.
     /// "No unknown holes" is unprovable, so this is how confidence is earned.
     #[test]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn admission_escape_suite_rejects_every_breakout() {
         // Parse + admit; ASSERT the probe parsed (a parse error would make the
         // admission check vacuous — a silent pass), then return the errors.
@@ -22732,6 +22751,7 @@ mod plan86_admission_tests {
     /// reject (non-vacuity, the escape-suite discipline).  Plus standalone REDs
     /// (read-only-by-default) and GREENs (construction is unrestricted, reads are free).
     #[test]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn access_corpus_red_green() {
         // parse + assert the probe parsed (else admission is vacuous) → errors.
         fn adm(sel: &[&str], libs: &[&str], caps: &[&str], src: &str) -> Vec<String> {

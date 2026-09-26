@@ -855,6 +855,7 @@ impl State {
 
     /// `fn_call_ref`, calling `target` in place of the function the slot holds when given —
     /// the slot's closure and everything else about the frame are the slot's.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn fn_call_ref_to(&mut self, fn_var: u16, arg_size: u16, target: Option<usize>) {
         // fn-ref slot is 20B ([d_nr:i64][closure:DbRef]); fn_var must be ≥ 20.
         assert!(
@@ -1113,6 +1114,7 @@ impl State {
         self.put_stack(closure);
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn static_call(&mut self) {
         let call = self.code::<u16>();
         // Fix #87: resolve n_stack_trace index lazily, then only snapshot for that call.
@@ -1954,7 +1956,10 @@ impl State {
     /// CO1.2: Advance a coroutine — restore stack, resume execution.
     /// # Panics
     /// Panics on re-entrant advance (coroutine already running).
-    #[allow(clippy::too_many_lines)] // borrow-checker constraints prevent splitting this function
+    #[expect(
+        clippy::too_many_lines,
+        reason = "borrow-checker constraints prevent splitting this function"
+    )]
     pub fn coroutine_next(&mut self, packed_size: u32) {
         // `packed_size` is `OpCoroutineNext`'s operand: the byte size in the low byte and the
         // channel tag above it (`coroutine_layout::next_operands`).  Only the null a finished
@@ -2764,6 +2769,7 @@ impl State {
     When the stack has no values left
     */
     #[must_use]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn get_stack<T: 'static + Copy>(&mut self) -> T {
         assert!(
             (size_of::<T>() as u32) < self.stack_pos,
@@ -3847,6 +3853,7 @@ impl State {
     /// arg `DbRef`s, runs to completion, and restores the watermark.  Returns the
     /// rendered value (`json` = RFC-8259 vs own-format), or `None` for an
     /// unsupported return type.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn eval_frame_reenter(
         &mut self,
         data: &mut crate::data::Data,
@@ -4345,6 +4352,7 @@ impl State {
     /// the store, and reconstructing one in the *live* store from a literal needs a
     /// literal→store materialiser (`Stores::clone` empties `allocations`, so a value
     /// built in the REPL's store cannot be aliased across) — the remaining work.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn set_frame_literal(
         &mut self,
         name: &str,
@@ -5515,6 +5523,7 @@ impl State {
         Self::narrow_bits(self.database.store(&self.stack_cur), rec, at, width)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn render_frame_local(
         &self,
         frame_base: u32,
@@ -6096,6 +6105,7 @@ impl State {
     ///
     /// # Panics
     /// Panics if the program executes more than 10 000 000 operations (infinite-loop guard).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn execute_argv(&mut self, name: &str, data: &Data, argv: &[String]) {
         // @PLAN49 T1 — runtime phase breadcrumb.  One call per
         // program; runtime cost is irrelevant.

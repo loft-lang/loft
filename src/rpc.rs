@@ -146,6 +146,7 @@ pub fn run_rpc<R: BufRead, W: Write>(
 
 /// Handle one request line; returns the NDJSON messages to emit (response first, then
 /// any events) and whether the client asked to disconnect.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn handle(session: &mut ReplSession, line: &str) -> (Vec<String>, bool) {
     let parsed = match crate::json::parse(line) {
         Ok(p) => p,

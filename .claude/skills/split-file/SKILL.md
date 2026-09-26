@@ -15,9 +15,9 @@ user-invocable: true
 
 # Split a file
 
-The rules are the code-shape rows of CODE.md § Functions and DEVELOPMENT.md's gate table
-(plan @PLN173, `doc/claude/plans/173-code-shape.md`).  This skill is the judgment part:
-where the seams are.
+The rules are CODE.md § Functions (function length) and RELEASE.md § File split per
+release (the beat, the pick, the payoff check).  This skill is the judgment part: where
+the seams are.
 
 ## Start from the pick
 
@@ -25,9 +25,6 @@ where the seams are.
 make file-sizes ARGS="--pick 2"        # this release's files, with the seams the script can see
 make file-sizes ARGS="--all"           # every file over the bar
 ```
-
-`--pick` and the `M-file-split` row arrive with @PLN173 phases 2 and 4; until then take
-the file from `--all` (or the owner's choice).
 
 Take the top pick (the owner may name another).  **One file per PR.**
 

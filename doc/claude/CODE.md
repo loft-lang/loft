@@ -39,7 +39,18 @@ correctly on the same file.
 
 - One algorithm per function. Extract helpers to avoid duplication.
 - Group fields that always travel together into a struct.
-- No functions longer than ~50 lines; split if the cognitive complexity warning fires.
+- A function stays under the `clippy::too_many_lines` bar.  The lint is on for every
+  function; no crate root allows it.
+- A function that cannot reasonably be split carries
+  `#[expect(clippy::too_many_lines, reason = "…")]` with a reason a reader can check
+  against the code (*"one arm per opcode; splitting would hide the table"*, never *"large
+  function"*).  The exemption is per function, never per file.  It is `expect`, not
+  `allow`: once the function shrinks under the bar the expectation goes unfulfilled and
+  clippy fails, so a stale exemption is removed by the gate.
+- `reason = "inherited"` marks a function that was over the bar before the rule was
+  enforced.  New code never gets one.  A function whose body you change loses it: split
+  the function, or write the real reason.  The release file split does the same for every
+  function it moves.  `make clippy-review ARGS=--lengths` counts what is left.
 
 ## Doc Comments
 

@@ -1108,7 +1108,6 @@ impl Parser {
     }
 
     // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
-    #[allow(clippy::too_many_lines)]
     /// @PLN86 step 0.1 — depth-guarded entry to expression parsing.  For trusted
     /// code (`!in_sandbox`) this is a single bool check then a tail call — zero
     /// cost.  Inside a sandboxed def it bounds the nesting depth so hostile
@@ -1146,6 +1145,7 @@ impl Parser {
         result
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn expression_inner(&mut self, val: &mut Value) -> Type {
         // Start of the expression — an "Unknown variable" caret on a bare-Var
         // expression (e.g. a single call argument) must point here, not at the
@@ -1768,7 +1768,7 @@ use a separate collection or add after the loop"
     /// branch — the rule rationale lives on the `VecBind` variants, and the branch applies
     /// mechanics only.  Runs on BOTH passes: `change_var` re-types per pass, and emission
     /// is pass-2, so a pass-1 answer that differs is a re-type, not a disagreement.
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments)]
     fn classify_vec_bind(
         &self,
         code: &Value,
@@ -3363,6 +3363,7 @@ use a separate collection or add after the loop"
     }
 
     #[allow(clippy::too_many_arguments)] // the wrapper's list, unchanged from before the split
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_assign_op_inner(
         &mut self,
         code: &mut Value,
@@ -6742,7 +6743,6 @@ use a separate collection or add after the loop"
     }
 
     // <assign> ::= <operators> [ '=' | '+=' | '-=' | '*=' | '%=' | '/=' <operators> ]
-    #[allow(clippy::too_many_lines)]
     /// @PLN102 F2 — does this IR contain a call to a non-builtin (a user fn `n_*`
     /// or method `t_*`) — i.e. a potentially side-effecting / non-idempotent
     /// sub-expression?  Builtin `Op*` accessors/arithmetic are pure given stable
@@ -6948,6 +6948,7 @@ use a separate collection or add after the loop"
         tp
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_assign_inner(&mut self, code: &mut Value) -> Type {
         let mut parent_tp = Type::Null;
         // @PLN87 D-bind-7 — does THIS statement begin with a prefix `&`?  No valid
@@ -9244,6 +9245,7 @@ use a separate collection or add after the loop"
     /// ⚠ Construction does NOT come through here (@FR-Const-ConstructExempt): a literal
     /// lowers via `Value::Insert`, so a const field is SET at construction rather than
     /// CHECKED there, and `T{ v: 1 }` is always admitted however `v` is qualified.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn validate_write(&mut self, to: &Value, parent_tp: &Type, op: &str) {
         // @PLN40 step 3 — value-const base-resolution.  `validate_write` fires only for
         // a COMPONENT write (`p.x = …`, `p[i] = …`, `p.a.b = …`; the whole-var case has

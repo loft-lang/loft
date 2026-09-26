@@ -17,7 +17,6 @@
     clippy::let_underscore_untyped,
     clippy::must_use_candidate,
     clippy::manual_let_else,
-    clippy::too_many_lines,
     clippy::type_complexity,
     // Re-emerges in src/fill.rs every time regen_fill_rs runs; the
     // template format is easier to keep stable than a generator fix.

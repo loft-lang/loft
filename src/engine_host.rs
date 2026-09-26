@@ -2278,7 +2278,6 @@ fn swap_start_impl(artifact: &str) -> bool {
 /// (mechanics only — pump runs, meaning waits), 2 = handed over (run
 /// returns; this process retires).  All failure paths roll back to 0.
 #[cfg(not(target_arch = "wasm32"))]
-#[allow(clippy::too_many_lines)]
 fn swap_step_impl(stores: &mut Stores) -> i64 {
     SWAP.with(|sw| {
         let mut sw = sw.borrow_mut();

@@ -824,11 +824,7 @@ pub fn opcode_by_name(data: &Data, name: &str) -> u16 {
 ///
 /// # Errors
 /// On write failures.
-#[allow(
-    clippy::too_many_lines,
-    clippy::manual_strip,
-    clippy::format_push_string
-)]
+#[allow(clippy::manual_strip, clippy::format_push_string)]
 pub fn disassemble(
     writer: &mut dyn Write,
     bytecode: &[u8],

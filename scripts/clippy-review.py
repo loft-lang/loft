@@ -27,6 +27,13 @@
 #   make clippy-review                       # the three CI legs, ~1 min warm
 #   make clippy-review ARGS="--legs all"     # + debug-assertions + wasm32
 #   make clippy-review ARGS="--json out.json --keep"
+#   make clippy-review ARGS=--lengths        # only the function-length exemptions, no clippy run
+#
+# Function-length exemptions are `#[expect(clippy::too_many_lines, reason = …)]`, not
+# allows (CODE.md § Functions): clippy itself fails an expectation that stopped
+# firing, so none can be dead, and the one open question is the reason.  A reason of
+# `inherited` is debt from before the rule — unexplained by definition — and the count
+# of those is the function side's scoreboard.
 #
 # Exit status is 0 whenever the report was produced; a leg that fails to
 # compile stops the run with that leg's stderr tail.
@@ -259,6 +266,43 @@ def scan(root):
     return recs, in_strings
 
 
+LENGTH_EXPECT = re.compile(
+    r'#\[expect\(\s*clippy::too_many_lines,\s*reason\s*=\s*"((?:[^"\\]|\\.)*)"\s*,?\s*\)\]')
+
+
+def length_exemptions(root):
+    """(file, line, reason) for every function-length exemption under src/."""
+    out = []
+    for p in sorted((root / "src").rglob("*.rs")):
+        text = p.read_text()
+        for m in LENGTH_EXPECT.finditer(text):
+            out.append((str(p.relative_to(root)), text.count("\n", 0, m.start()) + 1, m.group(1)))
+    return out
+
+
+def length_report(root):
+    ex = length_exemptions(root)
+    inherited = [e for e in ex if e[2] == "inherited"]
+    reasoned = [e for e in ex if e[2] != "inherited"]
+    out = ["## Function-length exemptions", ""]
+    out.append(f"`#[expect(clippy::too_many_lines)]`: **{len(ex)}** — `inherited` (debt, unexplained) "
+               f"**{len(inherited)}** · with a reason **{len(reasoned)}**.  Clippy fails any that stopped "
+               f"firing, so none is dead; the reasons below are for a reader to check against the code.")
+    out.append("")
+    if inherited:
+        per = collections.Counter(f for f, _, _ in inherited)
+        out.append("Inherited, by file: " + ", ".join(f"`{f}` {n}" for f, n in per.most_common(12))
+                   + (", …" if len(per) > 12 else ""))
+        out.append("")
+    if reasoned:
+        out.append("| where | reason |")
+        out.append("|---|---|")
+        for f, ln, why in reasoned:
+            out.append(f"| `{f}:{ln}` | {why} |")
+        out.append("")
+    return "\n".join(out) + "\n"
+
+
 def rewrite(tree, recs):
     """allow( -> expect(clippy::allow_attributes, …) on each recorded attribute."""
     by_file = collections.defaultdict(list)
@@ -399,6 +443,7 @@ def report(recs, in_strings, legs_run, latent, latent_sites, root):
         return (f"| `{r['file']}:{r['line']}` | {', '.join(l.replace('clippy::', '') for l in lints)} | "
                 f"{r['kind']} `{r['name']}`{cfg} | {just} | {r['date']} |")
 
+    out.append(length_report(root))
     w("## Dead suppressions")
     w("")
     w("The lint no longer fires here in any leg that compiles the item; removing the attribute leaves clippy silent.")
@@ -465,8 +510,13 @@ def main():
     ap.add_argument("--legs", choices=["ci", "all"], default="ci")
     ap.add_argument("--json", help="write the per-attribute records here")
     ap.add_argument("--keep", action="store_true", help="leave the worktree in place")
+    ap.add_argument("--lengths", action="store_true",
+                    help="only the function-length exemptions (a scan, no clippy run)")
     a = ap.parse_args()
     root = pathlib.Path(sh(["git", "rev-parse", "--show-toplevel"]).strip())
+    if a.lengths:
+        sys.stdout.write(length_report(root))
+        return
     target_dir = pathlib.Path(os.environ.get("CARGO_TARGET_DIR", root / "target")) / "clippy-review"
     tree = target_dir / "tree"
     recs, in_strings = scan(root)

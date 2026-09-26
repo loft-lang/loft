@@ -9,7 +9,7 @@ use super::{
 // Field access, indexing, and iterator operations.
 
 impl Parser {
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn field(&mut self, code: &mut Value, tp: Type) -> Type {
         // @PLN102 — a field access can't be MORE non-null than its receiver: if the
         // receiver is nullable (`s: S? = null`, `w.inner` where `inner: Inner?`),
@@ -1375,6 +1375,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         true
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_index(&mut self, code: &mut Value, tp: &Type) -> Type {
         let mut t = tp.clone();
         let mut p = Value::Null;
@@ -2036,6 +2037,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_vector_index(
         &mut self,
         code: &mut Value,
@@ -2944,7 +2946,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
     /// Nothing is lost by waiting: pass 2 re-parses the whole file and re-runs each
     /// check with the full type picture, so a genuinely wrong key is still rejected —
     /// just once, and pointing at a real mismatch.
-    #[allow(clippy::too_many_lines)]
     /// Expand a TUPLE key value into one value per element, so a lookup supplies exactly the
     /// key contents the collection's descriptors expect.
     ///
@@ -3109,6 +3110,7 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         w
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_key(&mut self, code: &mut Value, typedef: &Type, key_types: &[Type]) {
         // A keyed kind with NO key only arrives after its declaration was refused
         // (`sorted<integer>` is "Expect token [" — `(Col-Sorted)` keys on a field), so the

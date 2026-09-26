@@ -1630,6 +1630,7 @@ where
 /// representative on all bits below the child's bit, which strictly exceeds this
 /// node's.
 #[cfg(test)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn rtree_validate<K: KeyOracle + Copy>(store: &Store, tree: u32, spec: K) {
     struct Walk<'a, K: KeyOracle> {
         store: &'a Store,

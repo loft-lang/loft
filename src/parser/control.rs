@@ -651,7 +651,6 @@ impl Parser {
     }
 
     // <block> ::= '}' | <expression> {';' <expression} '}'
-    #[allow(clippy::too_many_lines)]
     /// Does the definition being parsed take its return type FROM ITS BODY?
     ///
     /// True for a lambda, and only for a lambda. A lambda declares no return type, so its
@@ -748,6 +747,7 @@ impl Parser {
         cc_ret
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_block_inner(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
         if let Value::Var(v) = val
             && let Type::Reference(r, _) = self.vars.tp(*v).clone()
@@ -1941,6 +1941,7 @@ impl Parser {
         arm_params(tail, &self.vars, &mut params) && params.len() > 1
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn block_result(
         &mut self,
         context: &str,
@@ -4003,6 +4004,7 @@ impl Parser {
     /// Set/Var pair is left in place — the codegen treats a same-store
     /// `OpCopyRecord` as a no-op, so the IR shape stays uniform with the
     /// direct-return path.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn nrvo_collapse_tail_set(&mut self, l: &mut [Value], ls: &[u16]) {
         if self.first_pass || l.is_empty() || ls.is_empty() {
             return;
@@ -4416,6 +4418,7 @@ impl Parser {
         self.rewrite_tail_tuple_with_work_ref(synthetic_d_nr, known_type, w, tail);
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn rewrite_tail_tuple_with_work_ref(
         &mut self,
         synthetic_d_nr: u32,
@@ -5141,6 +5144,7 @@ impl Parser {
     /// `Unknown` for an `if` that names its own type — every one an author opens — and the
     /// enclosing then arm's type for an `else if` CHAIN, whose arms are else arms and convert
     /// at their tails exactly as a plain `else` block does (@FR-N-Decl, loft#1380).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_if_expecting(&mut self, code: &mut Value, expected: &Type) -> Type {
         let mut test = Value::Null;
         // loft#986 — the `{` after this condition opens a BLOCK; an empty `{ }` must not
@@ -5549,7 +5553,6 @@ impl Parser {
 
     // <match> ::= 'match' <expression> '{' { <pattern> '=>' <expression> } '}'
     // <pattern> ::= '_' | <variant> [ '{' <field> { ',' <field> } '}' ]
-    #[allow(clippy::too_many_lines)]
     // @F29 — pattern matching (enum/scalar/tuple, guards, or-patterns, exhaustiveness)
     pub(crate) fn parse_match(&mut self, code: &mut Value) -> Type {
         // loft#1382 / loft#1386 — statement position comes from the caller (`parse_block`'s
@@ -5582,6 +5585,7 @@ impl Parser {
         r
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_match_inner(&mut self, code: &mut Value) -> Type {
         // One charge for the whole construct — arm count is not complexity (a 12-arm flat
         // dispatch reads straight down); its arms deepen via `parse_block("match_arm")`.
@@ -8083,6 +8087,7 @@ impl Parser {
     /// `*` = zero-or-more (`head_len <= end`); `+` requires a non-empty run (`head_len < end`).
     /// Assumes the lexer is at `name`; consumes through `]`.  A `..rest` or non-literal tail after
     /// the run, and a `Type` that is not the element type, are rejected.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_scalar_slice_repetition(
         &mut self,
         v: u16,
@@ -8228,6 +8233,7 @@ impl Parser {
     /// consumes through `]`.  Per-iteration field capture inside the body, and non-literal tail
     /// elements, are deferred (rejected here).
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_slice_repetition(
         &mut self,
         e_nr: u32,
@@ -8846,6 +8852,7 @@ impl Parser {
     /// `cond` + `bindings` and consumes through `]`.  `..rest` from the runtime cursor is
     /// Phase 4.3 step 5 (deferred here with a diagnostic).
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_multi_element_alternation(
         &mut self,
         e_nr: u32,
@@ -9097,6 +9104,7 @@ impl Parser {
     /// (partial overlap → `option<T>` is Phase 4.2; a varying-width MULTI-element
     /// alternative needs the slice cursor, Phase 4.3).  `elem` is the element value
     /// at this position; it is cloned for each tag test and field read.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_slice_alternation_element(
         &mut self,
         e_nr: u32,
@@ -9390,6 +9398,7 @@ impl Parser {
     /// `arm_stmts` / `field_conditions` / `name_aliases` (the recursive pattern path).
     /// Handles: enum variant names (plain AND struct-enum, nested), scalar literals, ranges,
     /// `_` (wildcard).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_field_sub_pattern(
         &mut self,
         field_val: Value,
@@ -9558,6 +9567,7 @@ impl Parser {
 
     /// Parse a match pattern literal (integer, float, text, boolean) and optionally
     /// a range suffix `..` or `..=`. Returns the pattern Value and its type.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_match_pattern(&mut self, subject_type: &Type, subject_var: u16) -> (Value, Type) {
         // INC#31: reject open-start ranges (`..hi =>`) in match arms with a
         // useful diagnostic.  The range-pattern codegen further down assumes
@@ -9696,7 +9706,7 @@ impl Parser {
 
     /// Parse a match expression over a scalar (integer, text, boolean, etc.).
     /// Builds an if/else chain: `if subject == lit1 { arm1 } else if subject == lit2 { arm2 } else { wildcard }`
-    #[allow(clippy::too_many_lines)] // match-arm dispatch with pattern/guard/binding logic
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_scalar_match(
         &mut self,
         subject: Value,
@@ -9912,7 +9922,6 @@ impl Parser {
     /// Parse a match expression over a vector subject.
     /// Slice patterns: `[a, b] =>`, `[first, ..] =>`, `[.., last] =>`, `_ =>`.
     /// Each arm generates a length check and element bindings.
-    #[allow(clippy::too_many_lines)] // slice pattern parsing with head/tail/rest dispatch
     /// @PLN35 PC1 — is `subject_type` a CURSOR-shaped struct: a `vector<T>` source field + an
     /// integer field named `pos`?  Returns `(struct_def, source_field_idx, pos_field_idx, T)`.
     /// Matching such a subject prefix-consumes; any other struct falls through to the struct handler.
@@ -10280,6 +10289,7 @@ impl Parser {
         color.insert(node, 2); // black = fully explored
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_vector_match(
         &mut self,
         subject: Value,
@@ -11015,7 +11025,7 @@ impl Parser {
     /// Arm syntax: `_ => expr` (wildcard) or `(pat0, pat1, ...) => expr` (element patterns).
     /// Element patterns: `_` (wildcard), `identifier` (binding), or a literal value.
     /// Arms are separated by `,` or `;` (optional after the last arm).
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_tuple_match(&mut self, subject: Value, subject_type: &Type, code: &mut Value) -> Type {
         let Type::Tuple(elem_types) = subject_type else {
             unreachable!("parse_tuple_match called with non-tuple subject")
@@ -11504,6 +11514,7 @@ impl Parser {
     /// For plain enums: `OpConvIntFromEnum(expr) == disc`.
     /// For struct-enums: `OpConvIntFromEnum(OpGetEnum(expr, 0)) == disc`.
     // @F30 — is variant check (+ field capture)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_is_variant(
         &mut self,
         code: &mut Value,
@@ -12687,6 +12698,7 @@ impl Parser {
     /// A body with no leaf answers no, and so does any leaf this cannot read — the gate is a
     /// POSITIVE proof and an under-approximation, because answering yes wrongly makes a caller
     /// copy where the value was owned and orphan the store it was handed.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn every_return_leaf_views_var(
         data: &crate::data::Data,
         ops: &[Value],
@@ -15633,6 +15645,7 @@ impl Parser {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn materialize_vector_arms_collect(
         &mut self,
         elm: &Type,
@@ -16365,6 +16378,7 @@ impl Parser {
         verdict
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn classify_ret_promotion_inner(
         &self,
         v: u16,
@@ -16763,6 +16777,7 @@ impl Parser {
         (params.len() == ls.len() && !params.is_empty()).then_some(params)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn ref_return(&mut self, ls: &[u16], body: &mut [Value], site: RetSite) {
         // loft#938 — an ENTRY line, not just a verdict line.  `LOFT_TRACE_RETPROMO`
         // documented "no line for a function means a gate UPSTREAM of the classifier",
@@ -17284,6 +17299,7 @@ impl Parser {
     }
 
     // <return> ::= [ <expression> ]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_return(&mut self, val: &mut Value) {
         // validate if there is a defined return value
         let mut v = Value::Null;
@@ -17974,7 +17990,7 @@ impl Parser {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // pre-existing length; A5.6b.2 added ~9 lines
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_call(
         &mut self,
         val: &mut Value,
@@ -18314,6 +18330,7 @@ impl Parser {
     /// Dispatch a parsed call to the appropriate handler: diagnostics, special
     /// forms (`map/filter/reduce/sort/parallel_for`), fn-ref calls, or normal calls.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn dispatch_call(
         &mut self,
         val: &mut Value,
@@ -18689,6 +18706,7 @@ impl Parser {
 
     /// Try to dispatch as a call through a function-reference variable.
     /// Returns `Some(return_type)` if `name` is a fn-ref variable, `None` otherwise.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn try_fn_ref_call(
         &mut self,
         val: &mut Value,
@@ -19011,6 +19029,7 @@ impl Parser {
         )
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_reduce(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
         if self.first_pass {
             // On first pass, return the accumulator type (second arg) if available.
@@ -19620,6 +19639,7 @@ impl Parser {
     /// attribute slot's routine — an expected collection or interpolation type, a named
     /// argument's parameter.  `select` names the definition the call REACHES, asked once the
     /// argument types exist ([`Self::select_method_def`]).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_method_selecting(
         &mut self,
         val: &mut Value,

@@ -158,16 +158,12 @@ def main(path: str) -> int:
     out.append("//! The store schema for the compiler IR (@PLN11 arc A): registers every")
     out.append("//! IR struct/enum as `Stores` type records so the IR can live in a store and")
     out.append("//! the schema-driven inspection layer (`Stores::show_json`) can walk it.")
-    # Generated code trips several pedantic lints by nature (long fn, reused
-    # `vec_*` local names, redundant lets); blanket-allow them at the file head.
+    # Generated code trips several pedantic lints by nature (reused `vec_*` local
+    # names, redundant lets); blanket-allow them at the file head.  Length is the
+    # exception: `too_many_lines` is exempted on the one long function, never per file.
     # Emit in the fmt-canonical multi-line shape so `cargo fmt` is a no-op and a
     # fresh regen stays byte-identical to the committed file.
-    out.append("#![allow(")
-    out.append("    clippy::too_many_lines,")
-    out.append("    unused_variables,")
-    out.append("    clippy::let_and_return,")
-    out.append("    clippy::similar_names")
-    out.append(")]")
+    out.append("#![allow(unused_variables, clippy::let_and_return, clippy::similar_names)]")
     out.append("")
     out.append("use crate::database::Stores;")
     out.append("")
@@ -186,6 +182,10 @@ def main(path: str) -> int:
     out.append("/// Register the full compiler-IR store schema into `db`.")
     out.append("/// Generated verbatim from the `--native` layout; register once per `Stores`.")
     out.append("#[must_use]")
+    out.append("#[expect(")
+    out.append("    clippy::too_many_lines,")
+    out.append('    reason = "generated: one statement per IR type and field"')
+    out.append(")]")
     out.append("pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {")
     for t in range(7):
         out.append(f"    let t{t}: u16 = {t};")

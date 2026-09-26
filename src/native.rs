@@ -1944,7 +1944,7 @@ enum QueueStitch {
 /// dispatchers diverge structurally.  A8.b targets a different
 /// layer (interp-bridge native fns) where the divergence IS
 /// boilerplate.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn parallel_queue_dispatch(stores: &mut Stores, stack: &mut DbRef, stitch: QueueStitch) {
     let fn_label = match stitch {
         QueueStitch::Int => "parallel_queue",
@@ -2901,6 +2901,7 @@ pub fn reflect_field_path_into(stores: &mut Stores, value: &DbRef, path: &DbRef,
 /// scalar reading rather than a copy of it: every kind's null sentinel is
 /// spelled once here, and a second account of them is exactly the drift
 /// reflection exists to prevent.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn reflect_field_at(
     stores: &mut Stores,
     value: &DbRef,
@@ -3166,7 +3167,10 @@ fn reflect_keys(it: &crate::database::Iterated) -> Vec<(u16, bool)> {
 }
 
 /// Fill a `TypeInfo` record for `kt` and return it.
-#[allow(clippy::too_many_lines)] // one schema-driven writer; splitting it hides the field map
+#[expect(
+    clippy::too_many_lines,
+    reason = "one schema-driven writer; splitting it hides the field map"
+)]
 /// # Panics
 /// When `default/07_reflect.loft` has drifted from the field names read here —
 /// deliberately loud, because the alternative is a silent write to byte 65535.
@@ -3387,6 +3391,7 @@ pub fn reflect_type_into(stores: &mut Stores, kt: u16) -> DbRef {
 /// offset 0 (0 = null, 1 = first variant, ...).  Variant data lives at
 /// offsets resolved via `stores.position(<variant_type>, <field>)`.
 #[allow(clippy::similar_names)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn populate_frame_variables(
     stores: &mut Stores,
     sf_vec: &DbRef,
@@ -3913,6 +3918,7 @@ fn n_json_parse(stores: &mut Stores, stack: &mut DbRef) {
 /// going through the bytecode VM's `(stores, stack)` calling
 /// convention.  Returns the allocated `JsonValue` `DbRef`; updates
 /// `stores.last_json_errors` exactly as the interp path does.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn json_parse_into_stores(stores: &mut Stores, raw: &str) -> DbRef {
     let parsed = crate::json::parse(raw);
     let result = jv_alloc(stores);
@@ -4356,6 +4362,7 @@ fn n_struct_from_jsonvalue(stores: &mut Stores, stack: &mut DbRef) {
 /// name in `src` (which must be a `JObject` for any field lookup to
 /// succeed — wrong-kind sources leave every field at zero-init), and
 /// dispatches on the field's declared type.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn populate_struct_from_jsonvalue(
     stores: &mut Stores,
     dest: &DbRef,
@@ -5307,6 +5314,7 @@ fn write_json_string(out: &mut String, raw: &str) {
     out.push('"');
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn json_to_text_at(stores: &Stores, v: &DbRef, pretty: bool, depth: usize) -> String {
     let discr = stores.store(v).get_byte(v.rec, v.pos, 0);
     match discr {

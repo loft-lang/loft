@@ -190,6 +190,7 @@ impl ManifestState {
 /// manifest.  `None` on a miss: absent manifest, stale build signature, or any
 /// source drifted since the bundle was written.
 #[cfg(feature = "mmap")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<ManifestState> {
     let Ok(text) = std::fs::read_to_string(manifest) else {
         return manifest_miss(&format!("no manifest at {}", manifest.display()));

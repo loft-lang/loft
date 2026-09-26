@@ -9,6 +9,14 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### Function length is enforced; files split on the release beat (@PLN173, 2026-09-26)
+
+`clippy::too_many_lines` is no longer allowed crate-wide.  Every function over the bar carries
+`#[expect(clippy::too_many_lines, reason = …)]`, so one that shrinks fails clippy until the
+exemption goes; `reason = "inherited"` marks the debt, counted by `make clippy-review
+ARGS=--lengths`.  `scripts/file-sizes.py` reads an `impl` block as its items and gains
+`--pick N`, ranked by the lines a split can move; the release checklist gains `M-file-split`.
+
 ### The edit loop reuses the stdlib cache; the program manifest pins its stdlib (@PLN166 B1, 2026-09-25)
 
 A program-cache miss — every run after an edit — used to parse `default/` fresh, so that each

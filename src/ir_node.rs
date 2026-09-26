@@ -929,6 +929,7 @@ mod tests {
     /// store backings agree on `kind()` and every implemented accessor.  This is
     /// the per-step oracle every M3.1+ conversion relies on.
     #[test]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn cross_backing_accessors_agree() {
         let samples = vec![
             Value::Null,

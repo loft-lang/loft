@@ -3352,6 +3352,7 @@ impl Type {
     /// schema key.  Here the recursion carries `source` with it, so a type is spelled one
     /// way all the way down and a constructor cannot be forgotten — the arm either recurses
     /// or it is a leaf, and a leaf reads the same under both jobs.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn render(&self, data: &Data, source: bool) -> String {
         /// `-` marks a descending field; `parse_fields` stores ascending as `true`.
         fn ordered(keys: &[(String, bool)]) -> String {
@@ -8699,6 +8700,7 @@ impl Data {
     # Panics
     When the return type cannot be parsed.
     */
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn add_fn(&mut self, lexer: &mut Lexer, fn_name: &str, arguments: &[Argument]) -> u32 {
         let is_self = !arguments.is_empty() && arguments[0].name == "self";
         let is_both = !arguments.is_empty() && arguments[0].name == "both";
@@ -12469,7 +12471,7 @@ impl Data {
     # Errors
     When the file cannot be written.
     */
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn show_code(
         &self,
         write: &mut dyn Write,

@@ -576,6 +576,7 @@ fn read_value(lex: &mut Lexer) -> MValue {
 
 /// Apply one `key = value` to `m` under `section` — the dispatch table for every
 /// manifest field.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn apply_kv(m: &mut Manifest, section: &str, key: &str, value: &MValue) {
     // @PLN100 Slice 3/4 — the current `[[build.asset]]` / `[[test]]` element.
     if section == "[[build.asset]]" {

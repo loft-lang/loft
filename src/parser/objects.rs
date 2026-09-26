@@ -253,7 +253,6 @@ impl Parser {
         crate::parser::vectors::is_collection(tp)
     }
 
-    #[allow(clippy::too_many_lines)]
     /// `@FR-B-Scope` — a local bound by a statement inside a block ends at that block's `}`,
     /// as in Rust: a read of it from outside the block is refused.  The block path of the
     /// statement that last bound it is recorded at every binding position; a bind from outside
@@ -323,6 +322,7 @@ impl Parser {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_var(
         &mut self,
         code: &mut Value,
@@ -1395,6 +1395,7 @@ impl Parser {
         self.is_file_var_type(self.vars.tp(var_nr))
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn file_op(&mut self, code: &mut Value, t: &mut Type, var_nr: u16) {
         self.vars.in_use(var_nr, true);
         if self.lexer.has_keyword("format") {
@@ -2076,6 +2077,7 @@ impl Parser {
         sentinel
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_constant_value(
         &mut self,
         code: &mut Value,
@@ -2762,6 +2764,7 @@ impl Parser {
     // handed to the type instead of being erased into one buffer: literals reach
     // `lit`, values reach `hole_<kind>`. That erasure is the only reason a value
     // can become syntax, so not erasing it is the whole feature.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_string(&mut self, code: &mut Value, string: &str, target: u32) -> Type {
         let mut append_value = u16::MAX;
         *code = Value::str(string);
@@ -3628,7 +3631,7 @@ impl Parser {
     }
 
     // range ::= rev(<expr> '..' ['='] <expr>) | <expr> [ '..' ['='] <expr> ]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_in_range_body(
         &mut self,
         expr: &mut Value,
@@ -4364,6 +4367,7 @@ impl Parser {
         ))
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_object_field(
         &mut self,
         td_nr: u32,
@@ -4795,6 +4799,7 @@ impl Parser {
     /// whole, and while [`Parser::discovering`] a lambda defines nothing: the long form
     /// answers the type its header spells, and a short one — whose parameter types come from
     /// the very type this read is after — answers nothing, and its field binds nothing.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn literal_instance(
         &mut self,
         fields_of: u32,
@@ -5158,6 +5163,7 @@ impl Parser {
             && matches!(self.vars.tp(v_nr).base(), Type::Enum(d, true, _) if *d == self.data.def(td_nr).parent)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_object(&mut self, td_nr: u32, code: &mut Value) -> Type {
         // @PLN25 single-payload: a `__nullable<S>::Some` variant's body uses S's field names,
         // which live in the inline `payload` field — not `Some`'s direct fields {enum, payload}.
@@ -6255,6 +6261,7 @@ impl Parser {
     // once and unpacked once and name nothing that these parameters do not — the same trade
     // `tree::range_cursors` records for its own list.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn handle_field(
         &mut self,
         td_nr: u32,

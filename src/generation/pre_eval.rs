@@ -242,6 +242,7 @@ impl Output<'_> {
     /// This method detects the pattern in a slice of block operators and returns a patched
     /// copy where `Return(Null)` is replaced by `Return(expr)` and `expr` is removed from
     /// its earlier position.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn patch_hoisted_returns<'a>(
         &self,
         ops: &'a [Value],
@@ -604,6 +605,7 @@ impl Output<'_> {
     /// Use this as the recursive worker for `collect_pre_evals`.
     /// Splitting from the wrapper keeps the result allocated once, and the pre-eval
     ///  counter is globally unique within a block.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn collect_pre_evals_inner(
         &mut self,
         v: &Value,

@@ -44,6 +44,7 @@ impl OpEmitter for OpGetTextSubEmitter {
 pub struct OpDatabaseEmitter;
 
 impl OpEmitter for OpDatabaseEmitter {
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let [var_val, tp_val] = args {
             // @PLN157 § V-u (`@FR-R-RetAdopt`) — the adopted result local's witness store

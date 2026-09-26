@@ -1314,6 +1314,7 @@ pub fn wire_shared_native_fns(_state: &mut crate::state::State, _data: &crate::d
 /// caller's `*mut Stores` directly (zero-marshalling shared store), calls the
 /// bridge, and writes the return back onto the stack.
 #[cfg(feature = "native-extensions")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn shared_store_dispatch(stores: &mut crate::database::Stores, stack: &mut crate::keys::DbRef) {
     use crate::keys::DbRef;
     use crate::native_lib::LibArg;
@@ -2194,6 +2195,7 @@ fn relocatable_dylib_flags(lib_name: &str) -> String {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     use std::path::PathBuf;
     // P244-windows fix #2 (2026-05-12): use PathBuf::join, not

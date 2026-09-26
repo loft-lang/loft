@@ -1204,6 +1204,7 @@ mod tests {
     /// The hard-coded layout must mirror the registered loft schema exactly —
     /// a guard so a schema change can't silently desync the baked consts.
     #[test]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn baked_layout_mirrors_loft_schema() {
         use crate::database::Parts;
         let mut stores = Stores::new();

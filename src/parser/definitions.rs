@@ -327,6 +327,7 @@ impl Parser {
     }
 
     // @F20 — variant-based dynamic dispatch (synthesised enum dispatcher)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn create_enum_dispatch_fn(&mut self, e_nr: u32, nrs: &[usize]) {
         let from_nr = nrs[0] as u32;
         let name = self.data.def(from_nr).original_name().clone();
@@ -652,6 +653,7 @@ impl Parser {
 
     /// Parse the `{ Value { fields }, Value, ... }` body of an enum definition.
     /// Returns false if a fatal parse error occurred and parsing should stop.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_enum_values(&mut self, d_nr: u32) -> bool {
         let mut nr: u8 = 0;
         loop {
@@ -1648,6 +1650,7 @@ impl Parser {
     // Accepts either `NAME = expr;` or `NAME: type = expr;`. The optional
     // type annotation is parsed (so the parser doesn't reject the form)
     // but the inferred type from the initialiser is the source of truth.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_constant(&mut self) -> bool {
         // P246 — accept the optional `const` keyword at file scope as
         // a synonym for the bare-name form (`const PI = 3.14;` ===
@@ -2205,7 +2208,7 @@ impl Parser {
         Self::type_var_bounds_key(&names)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F16 — functions & declarations (pub, parameters, return)
     pub(crate) fn parse_function(&mut self) -> bool {
         if !self.lexer.has_token("fn") {
@@ -3049,6 +3052,7 @@ impl Parser {
 
     // <rust> ::= { '#rust' <string> | '#iterator' <string> <string> }
     // <native> ::= '#native' <string>   (any file)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_rust(&mut self) {
         loop {
             if !self.lexer.peek_token("#") {
@@ -3282,6 +3286,7 @@ impl Parser {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_arguments(&mut self, fn_name: &str, arguments: &mut Vec<Argument>) -> bool {
         // @PLN86 §7.2 (F7) — collect this list's `…#default` parameter locks fresh; the
         // caller (`parse_function`) records them once the function's def_nr exists.
@@ -3757,6 +3762,7 @@ impl Parser {
     // `pub(crate)` so the `as`-cast (operators.rs) can parse the target type
     // WITHOUT the postfix-`?` consumer — the cast detects the `?` itself to tell
     // `as τ` (fit-checked) from `as τ?` (checked cast); see DN4.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_type_inner(
         &mut self,
         on_d: u32,
@@ -4140,6 +4146,7 @@ impl Parser {
         Some(tp)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn sub_type_inner(&mut self, on_d: u32, type_name: &str, link: Link) -> Option<Type> {
         // Plan-06 phase 4d.A — accept tuple as the inner type of
         // `vector<(T1, T2, ...)>` (and reserve the same shape for
@@ -4914,6 +4921,7 @@ impl Parser {
     }
 
     // @F12 — struct records (fields, `= default`, `computed`, `limit`/`not null`/`assert`)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_struct(&mut self) -> bool {
         // `D-Scope` — the previous function's header does not reach this declaration.
         self.cur_type_vars.clear();
@@ -5630,7 +5638,7 @@ impl Parser {
     /// resolved against the current scope.  Whether a type SATISFIES the interface is a
     /// separate question asked at the use site, never here — see
     /// `Parser::check_satisfaction` (@FR-G-Sat).
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F26 — interfaces & bounded generics (<T: A + B>, operator interfaces)
     pub(crate) fn parse_interface(&mut self) -> bool {
         // `D-Scope` — the previous function's header does not reach this declaration.
@@ -5998,7 +6006,7 @@ impl Parser {
     }
 
     // <field> ::= { <field_limit> | 'not' 'null' | <field_default> | 'check' '(' <expr> ')' | <type-id> [ '[' ['-'] <field> { ',' ['-'] <field> } ']' ] } }
-    #[allow(clippy::too_many_lines)] // pre-existing length; T1.11a added one branch
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_field(&mut self, d_nr: u32, a_name: &String) {
         let mut a_type: Type = Type::Unknown(0);
         let mut defined = false;

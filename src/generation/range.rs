@@ -496,6 +496,7 @@ fn seed_counters(
 /// anywhere else, or `n` handed out by reference declines, and `n` stays unranged.
 /// Measured on the stdlib text bench's `char_walk` (`n += 1` / `n += 2` under `for c in
 /// src`): 12.5 → 10.5 µs (−17 %) with the two adds plain.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn seed_accumulators(
     data: &Data,
     code: &Value,

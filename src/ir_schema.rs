@@ -119,6 +119,7 @@ pub fn type_to_json(ty: &Type) -> String {
     out
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn write_type(out: &mut String, ty: &Type) {
     match ty {
         // @PLN25 — `Optional(τ)` shares its base's LAYOUT but carries the nullability that
@@ -465,6 +466,7 @@ pub fn value_to_json(v: &Value) -> String {
     out
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn write_value(out: &mut String, v: &Value) {
     match v {
         Value::Null => out.push_str("{\"k\":\"Null\"}"),

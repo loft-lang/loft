@@ -629,7 +629,10 @@ impl Lexer {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // large lexer dispatch — splitting would obscure control flow
+    #[expect(
+        clippy::too_many_lines,
+        reason = "the lexer's one dispatch on the next character"
+    )]
     fn next(&mut self) -> Option<LexResult> {
         if self.link < self.memory.len() {
             let n = self.memory[self.link].clone();
@@ -1858,6 +1861,7 @@ impl Lexer {
     }
 
     /// Parse a number for the lexer.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn number(&mut self) -> LexResult {
         let pos = self.position.clone();
         let (mut val, int_groups) = self.get_number();

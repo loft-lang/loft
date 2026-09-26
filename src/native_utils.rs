@@ -328,6 +328,7 @@ impl WasmRuntimeShape {
 /// and loft is rebuilt, which is exactly when the wasm runtime rlib — compiled
 /// from the same source — must be rebuilt.  Content-based, so it survives the
 /// mtime resets a CI `target/` cache restore causes.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn ensure_loft_runtime_rlib(shape: WasmRuntimeShape) -> Option<std::path::PathBuf> {
     let triple = shape.triple();
     let Some(tree) = loft_source_tree() else {
@@ -1773,6 +1774,7 @@ pub(crate) fn add_c_library_flags(cmd: &mut std::process::Command, data: &crate:
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn add_native_extern_flags(
     cmd: &mut std::process::Command,
     data: &crate::data::Data,

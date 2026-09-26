@@ -416,7 +416,6 @@ impl Parser {
         )]
     }
 
-    #[allow(clippy::too_many_lines)] // sorted/index/spatial iterator setup — splitting would lose context
     /// The ONE home for a vector's per-element ITERATION stride — the byte
     /// step `vector::get_vector(size, idx)` walks per element.  Both the
     /// direct for-loop emission (the `Type::Vector` arm below) and the
@@ -518,6 +517,7 @@ impl Parser {
         true
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn iterator(
         &mut self,
         code: &mut Value,
@@ -1362,6 +1362,7 @@ impl Parser {
         out
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn towards_set(
         &mut self,
         to: &Value,
@@ -2175,7 +2176,7 @@ impl Parser {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // iterator operation dispatch — splitting would lose context
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn iter_op(&mut self, code: &mut Value, name: &str, t: &mut Type, index_var: u16) {
         // File variables handle their own # operations before iterator operations.
         if self.is_file_var(index_var) {
@@ -2605,7 +2606,6 @@ use #count instead"
         ));
     }
 
-    #[allow(clippy::too_many_lines)]
     /// P242: when `d_nr` is the type variable of the current
     /// generic-function context AND that variable's bound
     /// supplies a `to_text(self: Self) -> text` method, return a
@@ -2806,6 +2806,7 @@ use #count instead"
         walk(&self.data, tp, &mut Vec::new(), true)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn append_data(
         &mut self,
         tp: Type,
@@ -3338,6 +3339,7 @@ use #count instead"
     }
 
     // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_for(&mut self, code: &mut Value) {
         // P235: tuple destructure — `for (a, b, ...) in items { ... }`.
         // Parse the parenthesised name list now; later (after the iter
@@ -4432,6 +4434,7 @@ use #count instead"
     /// Returns the wrapper's d_nr (or u32::MAX on error), the
     /// return type, and empty extras (no context args — they're
     /// baked into the wrapper body).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_destructure_par_worker(
         &mut self,
         tuple_tp: &Type,
@@ -4597,6 +4600,7 @@ use #count instead"
     /// `elem_var` is the name this loop BINDS, `src_elem_var` the name the program wrote
     /// — they differ from the second loop over a name onward (loft#915).
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_parallel_for_loop(
         &mut self,
         code: &mut Value,
@@ -4831,7 +4835,6 @@ use #count instead"
 
     // parallel_for IR builder; threads unrelated IR params alongside &mut self — no sensible grouping
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_lines)]
     /// The `return_size` a par route is built from: the worker's return width, with two
     /// sentinels — `0` for text (workers collect Strings and the main thread stores refs)
     /// and `-1` for a heap value (the worker builds it in its own store and the main
@@ -4993,7 +4996,7 @@ use #count instead"
 
     // parallel_for IR builder; threads unrelated IR params alongside &mut self — no sensible grouping
     #[allow(clippy::too_many_arguments)]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn build_parallel_for_ir(
         &mut self,
         code: &mut Value,
@@ -5943,7 +5946,7 @@ use #count instead"
 
     /// Compiler special-case for `map(v: vector<T>, f: fn(T) -> U) -> vector<U>`.
     /// Generates inline bytecode equivalent to `[for elm in v { f(elm) }]`.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F24 — higher-order functions (map / filter / reduce)
     pub(crate) fn parse_map(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
         let placeholder = Type::Vector(Box::new(Type::Unknown(0)), crate::data::Deps::none());

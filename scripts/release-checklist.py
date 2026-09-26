@@ -1501,9 +1501,22 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "change history is holding two subjects, and the second belongs in an "
             "`-history.md` companion — the formal docs are where this concentrates, and a "
             "companion EXISTING does not mean the history moved into it, so read the share "
-            "and not the `yes`.  Split what a reader cannot navigate",
+            "and not the `yes`.  Split what a reader cannot navigate.  PAYOFF: did last "
+            "release's `M-file-split` land, and did the file it came from stay down?  Parts "
+            "that regrew mean the seam was wrong — re-open it, do not add a third part",
             cadence="mid pre",
             report=True,
+        ),
+        Item(
+            "M-file-split",
+            "File split — this release's pick is split and merged, one file per PR",
+            'make file-sizes ARGS="--pick 2"   # then the split-file skill on the first',
+            "tick with the split PR's link and the pick's commit.  A pure move: no "
+            "signature, behaviour or comment change, `git diff -M --color-moved` reads as "
+            "moves.  Two picks when last release's split landed clean, one otherwise.  "
+            "A gate because the report alone let `src/` reach 18 files over 6 000 lines "
+            "(RELEASE.md § File split per release)",
+            cadence="mid pre",
         ),
         Item(
             "M-liveness",

@@ -1291,6 +1291,7 @@ impl Parser {
     }
 
     // @F37 — operator set (arithmetic/comparison/logical/bitwise/unary, precedence, **)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_operators(
         &mut self,
         var_tp: &Type,
@@ -1679,7 +1680,7 @@ impl Parser {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_part(
         &mut self,
         var_tp: &Type,
@@ -2978,6 +2979,7 @@ impl Parser {
     /// deferred, the way loft#1016 / #1020 / #1028 each do.
     /// Enforces the test half of @FR-N-Coal — `e ?? d` discharges `τ?` to `τ`, and this is
     /// the per-representation `is null` that decides whether `d` is taken.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn coalesce_not_null(&mut self, src: &Value, tp: &Type) -> Value {
         if self.is_type_var_operand(tp) {
             // Deferred, NOT decided.  The placeholder is an attribute-less struct, so
@@ -3347,6 +3349,7 @@ impl Parser {
     }
 
     #[allow(clippy::too_many_arguments)] // the wrapper's list, unchanged from before the split
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn build_null_coalesce_default_inner(
         &mut self,
         var_tp: &Type,
@@ -4345,6 +4348,7 @@ impl Parser {
     }
 
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn handle_operator(
         &mut self,
         var_tp: &Type,
@@ -5490,6 +5494,7 @@ impl Parser {
 
     /// The fault-site walk reads the definitions and writes only diagnostics, so it takes
     /// those two and not the parser: its caller borrows the body out of `data` in place.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn walk_for_warnings(
         data: &Data,
         lexer: &mut crate::lexer::Lexer,

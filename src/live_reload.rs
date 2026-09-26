@@ -82,6 +82,7 @@ pub fn active() -> bool {
 /// the ordinary program pipeline and parity-checks its def space against
 /// the running program's; on any mismatch reload is disabled with a
 /// warning — never an error (the program itself is unaffected).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crate::data::Data) {
     let Ok(content) = std::fs::read_to_string(path) else {
         eprintln!("live-reload: cannot read {path}; reload disabled");

@@ -703,6 +703,7 @@ fn export_wrapper(data: &Data, dups: &HashSet<String>, d_nr: u32) -> String {
 ///   caller would — so the caller-side dispatcher only ever passes the public args.
 ///
 /// Finally it forwards to the inner `--native` fn and writes the return.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn shared_bridge_wrapper(
     data: &Data,
     stores: &Stores,
@@ -1416,6 +1417,7 @@ fn native_pkg_cabi_link_args(crate_name: &str, pkg_dir: &str) -> Vec<String> {
 /// Returns a message if the rlib can't be found, the source can't be written,
 /// `rustc` can't be launched, or compilation fails (the message includes the
 /// `rustc` stderr tail and the kept `lib.rs` path for inspection).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn build_shared_cdylib(
     data: &Data,
     stores: &Stores,

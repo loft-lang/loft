@@ -2737,6 +2737,7 @@ impl Function {
         self.nullable_text_buffers.contains(&var_nr)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn change_var_type(
         &mut self,
         var_nr: u16,

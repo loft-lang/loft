@@ -289,7 +289,7 @@ impl Stores {
     When this path cannot be detected correctly.
     */
     #[must_use]
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn path(&self, db: &DbRef, tp: u16) -> String {
         if db.rec == 1 {
             return "/".to_string();
@@ -1131,6 +1131,7 @@ impl ShowDb<'_> {
     # Panics
     When the database is not correct.
     */
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn write(&self, s: &mut String, indent: u16) {
         if self.dump {
             // Trace form (`#store.rec` references + truncation) — its own emission rules.
@@ -1804,6 +1805,7 @@ impl ShowDb<'_> {
     /// inside a struct round-trips identically whether it was
     /// rendered standalone via `json_value.to_json()` or as part of
     /// the parent struct via `parent.to_json()`.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn write_jsonvalue(&self, s: &mut String, indent: u16) {
         const JV_NULL: i32 = 1;
         const JV_BOOL: i32 = 2;
@@ -2138,6 +2140,7 @@ impl ShowDb<'_> {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn write_dump_typed(&self, s: &mut String, indent: u16) {
         match &self.stores.types[self.known_type as usize].parts.clone() {
             Parts::Enum(vals) => {

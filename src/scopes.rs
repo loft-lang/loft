@@ -2763,6 +2763,7 @@ fn is_place_link(function: &Function, v: u16) -> bool {
     !function.is_argument(v) && matches!(function.tp(v).base(), Type::RefVar(_))
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn def_reshape_refusals(
     data: &Data,
     d_nr: u32,
@@ -3981,6 +3982,7 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
 /// reused — minting another loses what the parse decided about it, which for an owned call
 /// result is the release of its store.  A chain with an operand the parse left without a temp
 /// and that this cannot give one keeps its form.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data: &Data) {
     let present = data.def_nr("OpConvBoolFromRef");
     if present == u32::MAX {
@@ -4208,6 +4210,7 @@ fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data: 
     walk(code, &mut |n| rewrite(n, function, &mut counter));
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn write_out_joined_copies(code: &mut Value, function: &Function, data: &Data) {
     let copy_d = data.def_nr("OpCopyRecord");
     if copy_d == u32::MAX {
@@ -5592,6 +5595,7 @@ fn tail_calls(v: &Value) -> Vec<&Value> {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn reuse_record_buffers(
     code: &mut Value,
     function: &mut Function,
@@ -6065,6 +6069,7 @@ fn rewrite_written_out(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn run_scan_phase(
     data: &mut Data,
     database: &mut crate::database::Stores,
@@ -6801,6 +6806,7 @@ struct MoveOps {
 /// the reorder-free field-append case; fresh construction (`a = Bag { items: base }`, container
 /// built after the source) still needs a build-order reorder and stays a copy. Design:
 /// `doc/claude/plans/90-copy-diagnostics/phase-b-design.md`.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn move_elide(data: &mut Data) {
     if !crate::keys::move_elide_enabled() {
         return;
@@ -9055,6 +9061,7 @@ fn vs_copy_walk(
 /// Under the `LASTUSE_RECLAIM` gate only (a Plan-57 testing build), panics if the
 /// reclaim pass left a store the model says is dead un-freed past a later
 /// allocation (the Phase-4 Goal-E watermark guard).  Never panics in normal builds.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // `(H-Spent)` — the reads of a moved name, found while every body is still the parser's:
     // the scan below adds reads of its own (releases, hooks, snapshots) that are not the author's.
@@ -11237,7 +11244,6 @@ impl Scopes<'_> {
         result
     }
 
-    #[allow(clippy::too_many_lines)]
     /// The binding spelling of a group write resolved to its origin field, where that binding
     /// is materialised (loft#1664): `OpNewRecord(owner, T, f)` bound to an element of the
     /// binding becomes `OpNewRecord(binding, V, u16::MAX)`, and `OpFinishRecord(owner, elm, T,
@@ -11283,6 +11289,7 @@ impl Scopes<'_> {
         Some(Value::Call(*d, out))
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan_inner(&mut self, val: &Value, function: &mut Function, data: &Data) -> Value {
         match val {
             // @FR-B-View — a `text` payload view MATERIALISES where its subject is disturbed
@@ -11838,6 +11845,7 @@ impl Scopes<'_> {
         self.var_scope.insert(v, scope);
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan_set(&mut self, ov: u16, value: &Value, function: &mut Function, data: &Data) -> Value {
         assert_ne!(
             ov,
@@ -14760,6 +14768,7 @@ impl Scopes<'_> {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan_if(
         &mut self,
         test: &Value,
@@ -15128,6 +15137,7 @@ impl Scopes<'_> {
     /// Convert the content of loops and blocks.
     /// `is_return` should be true for the function body block of a non-void
     /// function — frees must happen before the tail expression returns.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn convert(
         &mut self,
         bl: &Block,
@@ -15732,6 +15742,7 @@ impl Scopes<'_> {
             && !matches!(evidence, crate::use_analysis::OwnEvidence::Fallback)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn free_vars(
         &mut self,
         is_return: bool,
@@ -16910,7 +16921,7 @@ impl Scopes<'_> {
     /// ⚠ Ownership is read here from a carried fact, but "empty deps" is only a PROXY for
     /// it (loft#723) — see [`crate::variables::Function::is_skip_free`], the second fact
     /// that vetoes the proxy for a borrow whose dep list was never populated.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn get_free_vars(
         &mut self,
         function: &mut Function,
@@ -18036,6 +18047,7 @@ impl Scopes<'_> {
     /// Returns `(preamble, scanned_args)`.  The caller wraps the result as
     /// `Insert([preamble..., Call/CallRef(...)])` when the preamble is non-empty;
     /// `convert` flattens this so the preamble executes before any args are pushed.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan_args(
         &mut self,
         args: &[Value],
@@ -18844,6 +18856,7 @@ impl Scopes<'_> {
     /// declines that shape — the analyses before it read the value form, so the written-out
     /// projection would lack the view facts its own assignment gets — and the rewrite ahead of a
     /// rescan accepts it (`rewrite_written_out`), because there those analyses run afterwards.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn sink_set_into_arms(
         v: u16,
         ov: u16,
@@ -19315,6 +19328,7 @@ impl Scopes<'_> {
     /// every VARIABLE arm that was copied into a temp, `viewed` every `??` hoist temp an arm
     /// hands back as it is.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn lift_arm_tails_into(
         &mut self,
         node: &mut Value,
@@ -20332,6 +20346,7 @@ impl Scopes<'_> {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn inline_struct_return(
         &self,
         val: &Value,
@@ -21516,6 +21531,7 @@ impl ClosureKeep {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -> ClosureKeep {
     if crate::env_once!(std::env::var_os("LOFT_NO_CLOSURE_KEEP").is_some()) {
         return ClosureKeep::default();
@@ -22369,6 +22385,7 @@ fn scope_free_op_var(op: &Value, data: &Data) -> Option<u16> {
 }
 
 impl Scopes<'_> {
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn insert_free(
         &mut self,
         block: &Block,
@@ -24005,6 +24022,7 @@ mod text_return_path_tests {
 /// Only compiled in debug builds; the check panics rather than emitting a
 /// diagnostic so that the failure is visible immediately during development.
 #[cfg(debug_assertions)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn check_ref_leaks(
     ir: &Value,
     function: &Function,
@@ -25794,6 +25812,7 @@ fn store_dead_after_block(code: &Value, local: u16) -> bool {
 /// REPORTING mode and prints the verdict — CONFINED to a block, or REJECTED with the
 /// exact gate — so a leak can be attributed to a precise decision (e.g. the ambiguous
 /// dep-backer gate that blocks the escaping-field `..rest` shape). Diagnostic only.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn rest_store_oracle(code: &Value, vars: &Function, free_ref_nr: u32, db_nr: u32, fn_name: &str) {
     let mut any = false;
     for vdb in 0..vars.count() {
@@ -26693,6 +26712,7 @@ fn store_site_id(v: u16, ids: &mut HashMap<u16, u16>, counter: &mut u16) -> u16 
 /// `OpDatabase(vdb, …)`, and replace `OpFreeRef(vdb)` with `OpFreeRefTag(vdb, id)`.
 /// Normal builds (no env) never run this, so the bytecode stays byte-identical.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn tag_stores(
     code: &mut Value,
     db_nr: u32,

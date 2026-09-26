@@ -918,6 +918,7 @@ impl Stores {
     /// records another member may still hold — and it is answered, so the caller can settle it
     /// across the whole group ([`Self::settle_displaced`]).  Without `secondary` the displaced
     /// record is released here and `None` is answered.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn insert_record(
         &mut self,
         data: &DbRef,
@@ -1389,6 +1390,7 @@ impl Stores {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn vector_add(&mut self, db: &DbRef, o_db: &DbRef, known: u16) {
         // `LOFT_TRACE_VADD=1` prints one line per vector concat/append-copy
         // with the resolved stride — the instrument that settled the nested
@@ -1670,6 +1672,7 @@ impl Stores {
     /// crate; the legacy hand-rolled scanner was removed when
     /// every Parts arm gained walker coverage.
     #[allow(clippy::ptr_arg, clippy::too_many_arguments)] // path push/pop; arg-count is intrinsic to the dispatch
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn walk_parsed_into(
         &mut self,
         parsed: &crate::json::Parsed,
@@ -2387,6 +2390,7 @@ impl Stores {
     ///
     /// # Panics
     /// On inconsistent database definitions.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn set_default_value_nullable(
         &mut self,
         tp: u16,

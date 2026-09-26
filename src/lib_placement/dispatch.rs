@@ -511,6 +511,7 @@ fn same_record(a: &DbRef, b: &DbRef) -> bool {
 
 /// The interpreter's entry into a placed call: read the frame off the stack,
 /// cross, write the answer back.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn placed_dispatch(stores: &mut Stores, stack: &mut DbRef) {
     let lib_idx = crate::extensions::current_lib_idx();
     let mut guard = PLACEMENT

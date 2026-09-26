@@ -6,12 +6,7 @@
 //! The store schema for the compiler IR (@PLN11 arc A): registers every
 //! IR struct/enum as `Stores` type records so the IR can live in a store and
 //! the schema-driven inspection layer (`Stores::show_json`) can walk it.
-#![allow(
-    clippy::too_many_lines,
-    unused_variables,
-    clippy::let_and_return,
-    clippy::similar_names
-)]
+#![allow(unused_variables, clippy::let_and_return, clippy::similar_names)]
 
 use crate::database::Stores;
 
@@ -236,6 +231,10 @@ pub struct IrSchemaIds {
 /// Register the full compiler-IR store schema into `db`.
 /// Generated verbatim from the `--native` layout; register once per `Stores`.
 #[must_use]
+#[expect(
+    clippy::too_many_lines,
+    reason = "generated: one statement per IR type and field"
+)]
 pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     let t0: u16 = 0;
     let t1: u16 = 1;

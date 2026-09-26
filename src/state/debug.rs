@@ -689,6 +689,7 @@ impl State {
     /// Mirrors `dump_stack`'s per-type matching but reads at `abs_pos` instead
     /// of popping from TOS.  When `is_arg` is true, text variables are read as
     /// `Str` (16 bytes); otherwise as `String` (24 bytes).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn read_variable_value(
         &self,
         tp: &Type,
@@ -1227,6 +1228,7 @@ impl State {
     }
 
     /// Inner execution loop used by [`execute_log_impl`].
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn execute_log_steps(
         &mut self,
         log: &mut dyn Write,
@@ -1455,7 +1457,7 @@ impl State {
     ///   currently executing (`u32::MAX` if unknown) and
     ///   `runtime_stack_pos − compile_stack_pos` at the current function entry.
     /// - `config` — logging configuration.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn log_step(
         &mut self,
         log: &mut dyn Write,

@@ -343,6 +343,7 @@ impl Stores {
     /// spine a view drops is the same `container_rec`/`extra_recs` the owning walk
     /// already names, so a layout change cannot move one and miss the other.  The
     /// only difference is that a view yields no children.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn owned_walk(&self, rec: &DbRef, tp: u16, borrowed: bool) -> OwnedWalk {
         let mut children = Vec::new();
         let mut container_rec = None;
@@ -674,6 +675,7 @@ impl Stores {
     /// Try to allocate a new named store.
     /// # Panics
     /// When a store already in use is allocated again.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn database_named(&mut self, size: u32, name: &str) -> DbRef {
         // S29: find the lowest free slot using the free_bits bitmap.
         // If a freed slot exists below max, reuse it; otherwise grow max.
@@ -970,6 +972,7 @@ impl Stores {
     Like [`free`], but includes the loft variable name in `LOFT_STORE_LOG` output.
     Generated native code calls this variant via `OpFreeRef(stores, var, "var_name")`.
     */
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn free_named(&mut self, db: &DbRef, name: &str) {
         // @FR-H-FreeNull — `free(nullref)` is a no-op.  u16::MAX is the null sentinel
         // `OpNullRefSentinel` gives an inline-ref temporary that was never assigned a real
@@ -2317,6 +2320,7 @@ impl Stores {
     /// interior edges of `rec`'s claim graph: a text offset or vector record
     /// id outside its store's buffer, a freed/out-of-range store, or an
     /// insane vector length.  Diagnostic only; never dereferences unchecked.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn validate_claims(&self, rec: &DbRef, tp: u16, path: &str, problems: &mut u32) {
         if *problems > 8 {
             return;
@@ -3306,6 +3310,7 @@ impl Stores {
         self.walk_copy_cmp(src, dst, tp, label.to_string(), &mut seen);
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn walk_copy_cmp(
         &self,
         src: &DbRef,

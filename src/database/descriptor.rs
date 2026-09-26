@@ -708,6 +708,7 @@ impl Stores {
     /// # Errors
     /// If a node type is not in the serializable subset, or the type-id is absent
     /// from the descriptor.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn read_via_descriptor(
         &self,
         desc: &LayoutDesc,

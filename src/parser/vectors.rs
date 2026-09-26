@@ -502,7 +502,7 @@ impl Parser {
     //              <identifier:var> |
     //              <number> | <float> | <cstring> |
     //              'true' | 'false' | 'null'
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_single(
         &mut self,
         var_tp: &Type,
@@ -1373,6 +1373,7 @@ or build a local and use that."
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_lambda(&mut self, code: &mut Value) -> Type {
         if self.discovering > 0 {
             return self.lambda_signature();
@@ -1668,7 +1669,10 @@ or build a local and use that."
     // false when `||` was consumed (zero params, no closing `|`).
     // Types are inferred from `lambda_hint` (set by the call-site parser) when omitted.
     // Produces Type::Function; runtime representation is d_nr as i32, same as fn-ref.
-    #[allow(clippy::too_many_lines)] // single context save/restore spans the whole body; splitting would need unsafe borrowing
+    #[expect(
+        clippy::too_many_lines,
+        reason = "one context save/restore spans the whole body; a split would need unsafe borrowing"
+    )]
     pub(crate) fn parse_lambda_short(&mut self, code: &mut Value, expect_close: bool) -> Type {
         if self.discovering > 0 {
             self.skip_short_lambda(expect_close);
@@ -1998,6 +2002,7 @@ or build a local and use that."
     /// the `__clos` variable an instance inherited from its template, re-emitted for the
     /// instance's own record ([`Parser::instantiate_template_lambda`]).
     #[allow(clippy::similar_names)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn emit_lambda_code_in(
         &mut self,
         code: &mut Value,
@@ -3021,7 +3026,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
 
     // <for-vector> ::= 'for' <id> 'in' <range> ['if' <cond>] '{' <expr> '}'
     // Implements [for n in range { body }] vector comprehensions.
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_vector_for(
         &mut self,
         vec: u16,
@@ -3431,6 +3437,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// Build the second-pass bytecode for a `[for ... { body }]` vector comprehension.
     // parser helper threading IR-construction params alongside &mut self; no sensible grouping reduces the count
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn build_comprehension_code(
         &mut self,
         vec: u16,
@@ -4641,6 +4648,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     // node, var/field flags), the element type, the parts, and which lowering is asking —
     // a struct would name the bundle once for two callers.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn snapshot_read_destination(
         &mut self,
         vec: u16,
@@ -5172,6 +5180,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     }
 
     // <item> ::== ['for' | <expr> ]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_item(
         &mut self,
         elm: u16,
@@ -5766,6 +5775,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn new_record(
         &mut self,
         val: &mut Value,
@@ -6485,6 +6495,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// Only a NAMED non-argument local is copied.  A vector ARGUMENT aliases the caller by design
     /// (`@FR-B-Ref-Alias` — a parameter reaches the source), so copying it here would change what
     /// the caller sees; and a member that is already a fresh value has no source to diverge from.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn tuple_member_owned_copy(&mut self, val: &mut Value, tp: &Type) -> Option<Type> {
         if self.first_pass {
             return None;
