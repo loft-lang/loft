@@ -1,0 +1,131 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A name rebound through a `??` after its earlier binding's scope ended is a NEW binding
+// (`formal/binding.md` `(B-Scope)`, loft#1691), declared where the `??` binds it.  The bind
+// is written into the `??`'s arms, which open no scope of their own, so the scope pass has to
+// split the name at the `if` and declare it there — as it already did for a name never bound
+// before.  It split inside the first arm instead, and `--native` declared the new binding in
+// that arm and failed with rustc E0425 in the other arm and at every later read.  The
+// interpreter ran it.  Every cell rebinds a name an EARLIER block bound, and each varies one
+// axis: the element type, the enclosing block, which arm runs, what follows the bind.
+//
+// @falsified-at: pending
+
+fn mk1691(k: integer) -> vector<vector<integer>> { [[k, k + 1], [k + 2]] }
+
+struct P1691 { a: integer, b: integer }
+fn mkp1691(k: integer) -> P1691 { P1691 { a: k, b: k * 10 } }
+fn mkt1691(k: integer) -> text { "t{k}" }
+
+fn test_m1_two_loops_rebind_a_vector() {
+  s = 0;
+  for i in 0..2 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][0] ?? 0; }
+  for i in 0..2 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][1] ?? 0; }
+  // 0 + 1, then 1 + 2
+  assert(s == 4, "m1 got {s}");
+}
+
+fn test_m2_two_loops_rebind_a_record() {
+  s = 0;
+  for i in 0..2 { x: P1691? = null; p = x ?? mkp1691(i); s += p.a; }
+  for i in 0..2 { x: P1691? = null; p = x ?? mkp1691(i); s += p.b; }
+  // 0 + 1, then 0 + 10
+  assert(s == 11, "m2 got {s}");
+}
+
+fn test_m3_two_loops_rebind_a_text() {
+  s = 0;
+  for i in 0..2 { x: text? = null; t = x ?? mkt1691(i); s += len(t); }
+  for i in 0..2 { x: text? = null; t = x ?? mkt1691(i + 10); s += len(t); }
+  // "t0" "t1", then "t10" "t11"
+  assert(s == 10, "m3 got {s}");
+}
+
+fn test_m4_two_loops_rebind_an_integer() {
+  s = 0;
+  for i in 0..3 { x: integer? = null; n = x ?? i * 2; s += n; }
+  for i in 0..3 { x: integer? = null; n = x ?? i * 3 + 100; s += n; }
+  // 0 + 2 + 4, then 100 + 103 + 106
+  assert(s == 315, "m4 got {s}");
+}
+
+fn test_m5_two_blocks_rebind_a_vector() {
+  s = 0;
+  { x: vector<vector<integer>>? = null; v = x ?? mk1691(1); s += v[0][0] ?? 0; }
+  { x: vector<vector<integer>>? = null; v = x ?? mk1691(2); s += v[0][1] ?? 0; }
+  // mk(1)[0][0], then mk(2)[0][1]
+  assert(s == 4, "m5 got {s}");
+}
+
+fn test_m6_sibling_arms_each_bind_their_own() {
+  s = 0;
+  for i in 0..2 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][0] ?? 0; }
+  for i in 0..3 {
+    if i == 0 { v = mk1691(i); s += v[0][0] ?? 0; }
+    else if i == 1 { v = mk1691(i + 5); s += v[1][0] ?? 0; }
+    else { s += 1000; }
+  }
+  // 1, then 0 + mk(6)[1][0] + 1000
+  assert(s == 1009, "m6 got {s}");
+}
+
+fn test_m7_a_straight_line_bind_then_a_coalesce() {
+  s = 0;
+  for i in 0..2 { v = mk1691(i); s += v[0][0] ?? 0; }
+  for i in 0..2 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][1] ?? 0; }
+  assert(s == 4, "m7 got {s}");
+}
+
+fn test_m8_the_rebind_is_overwritten_before_any_read() {
+  s = 0;
+  for i in 0..2 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][0] ?? 0; }
+  for i in 0..2 {
+    x: vector<vector<integer>>? = null;
+    v = x ?? mk1691(i);
+    v = mk1691(i + 1);
+    s += v[0][0] ?? 0;
+  }
+  // 1, then mk(1)[0][0] + mk(2)[0][0]
+  assert(s == 4, "m8 got {s}");
+}
+
+fn test_m9_the_present_arm_runs_in_the_second_loop() {
+  s = 0;
+  for i in 0..2 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][0] ?? 0; }
+  for i in 0..2 { x: vector<vector<integer>>? = [[7, 8]]; v = x ?? mk1691(i); s += v[0][1] ?? 0; }
+  // 1, then 8 + 8
+  assert(s == 17, "m9 got {s}");
+}
+
+fn test_m10_the_present_arm_runs_in_both_loops() {
+  s = 0;
+  for i in 0..2 { x: vector<vector<integer>>? = [[i, 5]]; v = x ?? mk1691(i); s += v[0][0] ?? 0; }
+  for i in 0..2 { x: vector<vector<integer>>? = [[i, 6]]; v = x ?? mk1691(i); s += v[0][1] ?? 0; }
+  // 0 + 1, then 6 + 6
+  assert(s == 13, "m10 got {s}");
+}
+
+fn test_m11_the_coalesce_sits_in_an_outer_arm() {
+  s = 0;
+  for i in 0..2 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][0] ?? 0; }
+  for i in 0..2 {
+    if i >= 0 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][1] ?? 0; }
+  }
+  assert(s == 4, "m11 got {s}");
+}
+
+fn test_m12_the_rebound_value_is_its_own_copy() {
+  s = 0;
+  keep: vector<vector<integer>> = [[40]];
+  for i in 0..2 { x: vector<vector<integer>>? = null; v = x ?? mk1691(i); s += v[0][0] ?? 0; }
+  for i in 0..2 {
+    x: vector<vector<integer>>? = keep;
+    v = x ?? mk1691(i);
+    v[0] += [i];
+    s += len(v[0]);
+  }
+  // 1, then [40, 0] and [40, 1] are two elements each, and `keep` is untouched
+  assert(s == 5, "m12 got {s}");
+  assert(len(keep[0]) == 1, "m12 keep grew to {len(keep[0])}");
+}
