@@ -314,3 +314,23 @@ the converged tree (2026-09-25, the committed row without the rule → now): `ri
 `bone_shape_has` 4.84× → 5.44× was the one row worse, and the transitive clause (a wrapper's
 work-ref promoted onward, 2026-09-26) took it to 2.68×.
 
+
+**`field_union` re-attributed, and the boolean push joined the fused kinds (2026-09-26).**  The
+2026-09-25 note put the row on the six accessor calls per cell; a profile of the row alone on
+today's tree says otherwise: the accessors already run as `__inv` twins with their record
+reads hoisted, and the leading symbols were `append_byte_min`, `vector_append` and
+`pre_alloc_vector` — hex_field's `hexset_chunk` builds every set's cells with
+`for _ in 0..n { cells += [false]; }`, and `OpPushBoolean` was not in
+`hoist::FUSABLE_PUSHES`, so each of the 4 096 appends per chunk re-entered the runtime and the
+loop took no reservation.  Boolean and enum pushes are the byte kind at bias 0, so they join
+unbiased and their one-value fill is admitted (`formal/rewrites.md` `(R-Push)`).  Hand-priced
+on the emitted Rust at 2.25 ms per op; built, 3.76 → **2.18 ms** (−42 %, hash unchanged) —
+~87× of the twin's 25 µs, down from 150×.  The rewrite census rose on every hex_* library
+and the crawler (R-Push +6 to +10 each), no drops.  What the row still pays is the per-cell
+`hexset_get` / `hexset_set` pair (the call class; the twin ORs two arrays, which rustc
+vectorises) and the whole-vector copy of `cells` into the record field at the literal.
+Also measured on the way, not built: cbor `encode_bytes` with `encode`'s `buf` adopting the
+return buffer (`(R-RetAdopt)` declines it — the arms that chain `head(…)` hand the buffer to a
+callee, and `buf` is bound from a call, not a witness) prices at −12 %, −37 % with the three
+unused witness stores also dropped (19.3 → 12.1 µs per encode of 64 texts); the rest is the
+per-item `buf += encode(item)` copy the twin's `encode_into` never makes.

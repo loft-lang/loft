@@ -3745,8 +3745,12 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val})); //@PLN157 § V-am push fill",
-            lp.scope, p.rust_type, p.size
+            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val}){}); //@PLN157 § V-am push fill",
+            lp.scope,
+            p.rust_type,
+            p.size,
+            // The fill runs only unbiased (`push_loop` declines a biased one).
+            hoist::push_value_cast(p.rust_type, false)
         )?;
         Ok(true)
     }

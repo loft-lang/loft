@@ -1,0 +1,88 @@
+// A `vector<boolean>` or `vector<Enum>` append in a loop goes through the loop's push header
+// on native, and a loop that pushes ONE invariant boolean or enum is one fill of the tail.
+//
+// `OpPushBoolean` and `OpPushEnum` had no native push header (`hoist::FUSABLE_PUSHES` named
+// the byte, `i32`, character, `i64`, `f32` and `f64`), so every such push in a loop re-entered
+// the runtime per element and blocked the loop's reservation — hex_field's `hexset_chunk`
+// builds its cell set as `for _ in 0..n { cells += [false]; }`, 4 096 appends per chunk.
+// Both are the byte kind at bias 0: the element a header stores is the value itself, the enum
+// null (255) included.  The interpreter runs no generator rewrite and is the oracle.  Cells:
+// a literal fill (c1), an invariant variable onto a non-empty vector (c2), a computed value
+// (c3), a record field (c4), two pushes per iteration (c5), an enum literal fill (c6), a
+// computed enum (c7), an invariant enum variable (c8), empty and negative ranges (c9), an
+// inclusive range (c10), an enum null pushed in a loop (c11) — the one cell whose ENCODING
+// can fail — and 100 000 computed booleans through growth (c12).
+//
+// @falsified-at: hand-measured (2026-09-26, a sabotage) — `Stores::push_fill` bumping the
+//   length of a one-byte element vector without writing the elements: c2 reads 0 true
+//   cells where this file says 1000, on --native; --interpret and LOFT_NO_PUSH_FILL=1 pass.
+//   (c1 fills `false`, which a fresh claim's zero bytes already read as, so c2 is the
+//   first cell that can see it.)
+//   CHANNEL: assert (values).
+//   ARMED: nothing; LOFT_HOIST_VERIFY=1 re-derives the header and agrees.
+//   WITNESS: `c2: 1002 0` on --native under the sabotage.
+//   HOLDS: identical output under LOFT_NO_PUSH_HOIST, LOFT_NO_PUSH_WINDOW and
+//   LOFT_NO_PUSH_FILL on both backends.
+enum Color { Red, Green, Blue }
+struct Cells { cells: vector<boolean>, n: integer }
+fn trues(v: const vector<boolean>) -> integer { t = 0; for b in v { if b { t += 1; } } t }
+fn greens(v: const vector<Color>) -> integer { t = 0; for c in v { if c == Green { t += 1; } } t }
+fn pick(i: integer) -> Color { if i == 2 { null } else { Blue } }
+fn main() {
+  // c1: 4096 `false`, then one set: 1 true.
+  a: vector<boolean> = [];
+  for _ in 0..4096 { a += [false]; }
+  a[5] = true;
+  assert(len(a) == 4096 && trues(a) == 1 && !(a[4095] ?? true), "c1: {len(a)} {trues(a)}");
+  // c2: 1000 `true` after two `false`: 1002 long, 1000 true, [1] false, [2] true.
+  b = true;
+  v: vector<boolean> = [false, false];
+  for _ in 0..1000 { v += [b]; }
+  assert(len(v) == 1002 && trues(v) == 1000 && !(v[1] ?? true) && (v[2] ?? false), "c2: {len(v)} {trues(v)}");
+  // c3: i % 3 == 0 over 0..100: 0, 3, …, 99 is 34 values; [99] true, [98] false.
+  w: vector<boolean> = [];
+  for i in 0..100 { w += [i % 3 == 0]; }
+  assert(len(w) == 100 && trues(w) == 34 && (w[99] ?? false) && !(w[98] ?? true), "c3: {len(w)} {trues(w)}");
+  // c4: a record field, 300 `true`.
+  h = Cells { cells: [], n: 0 };
+  for _ in 0..300 { h.cells += [true]; }
+  assert(len(h.cells) == 300 && trues(h.cells) == 300, "c4: {len(h.cells)} {trues(h.cells)}");
+  // c5: `true, i > 24` over 0..50: 100 long, 50 + 25 = 75 true; [1] is i=0 (false), [99] i=49.
+  m: vector<boolean> = [];
+  for i in 0..50 { m += [true, i > 24]; }
+  assert(len(m) == 100 && trues(m) == 75 && !(m[1] ?? true) && (m[99] ?? false), "c5: {len(m)} {trues(m)}");
+  // c6: 500 `Green`.
+  e: vector<Color> = [];
+  for _ in 0..500 { e += [Green]; }
+  assert(len(e) == 500 && greens(e) == 500, "c6: {len(e)} {greens(e)}");
+  // c7: Red, Green, Blue repeating over 0..9: [0] Red, [4] Green, [8] Blue, 3 Green.
+  f: vector<Color> = [];
+  for i in 0..9 { f += [if i % 3 == 0 { Color.Red } else if i % 3 == 1 { Color.Green } else { Color.Blue }]; }
+  assert("{f[0]} {f[4]} {f[8]}" == "Red Green Blue" && greens(f) == 3, "c7: {f[0]} {f[4]} {f[8]} {greens(f)}");
+  // c8: an invariant enum variable, 7 `Blue`.
+  c = Color.Blue;
+  g: vector<Color> = [];
+  for _ in 0..7 { g += [c]; }
+  assert(len(g) == 7 && "{g[0]} {g[6]}" == "Blue Blue" && greens(g) == 0, "c8: {len(g)} {g[0]} {g[6]}");
+  // c9: `0..0`, `0..-3` and `2..2` push nothing onto [true].
+  z: vector<boolean> = [true];
+  n = 0;
+  for _ in 0..n { z += [false]; }
+  k = -3;
+  for _ in 0..k { z += [false]; }
+  for _ in 2..2 { z += [false]; }
+  assert(len(z) == 1 && trues(z) == 1, "c9: {len(z)} {trues(z)}");
+  // c10: `0..=9` is 10 pushes.
+  r: vector<boolean> = [];
+  for _ in 0..=9 { r += [true]; }
+  assert(len(r) == 10 && trues(r) == 10, "c10: {len(r)} {trues(r)}");
+  // c11: Blue, Blue, null, Blue — the null reads back null, not a colour.
+  u: vector<Color> = [];
+  for i in 0..4 { u += [pick(i)]; }
+  assert(len(u) == 4 && "{u[2]}" == "null" && "{u[3]}" == "Blue" && "{u[2] ?? Red}" == "Red", "c11: {u[0]} {u[2]} {u[3]}");
+  // c12: i % 7 == 0 over 0..100000: 0, 7, …, 99995 is 14286 values.
+  big: vector<boolean> = [];
+  for i in 0..100000 { big += [i % 7 == 0]; }
+  assert(len(big) == 100000 && trues(big) == 14286, "c12: {len(big)} {trues(big)}");
+  println("ok");
+}

@@ -1041,7 +1041,17 @@ the code point as `u32`) and the BYTE (`vector<u8>` / `vector<i8>`, `OpPushByte`
 `Store::byte_raw(min, val)` — the one encoding `OpSetByte` writes, so the header's raw store,
 its growth step and the unfused path agree; `hoist::push_operands` is where every site reads a
 push's value, so none can take the unencoded one.  A byte loop's one-value slice fill is not
-admitted (it would write the value unencoded); its reserve and window are.
+admitted (it would write the value unencoded); its reserve and window are.  The BOOLEAN and
+ENUM pushes (`OpPushBoolean`, `OpPushEnum`) are the byte kind at bias 0 — their templates are
+`append_byte_min(r, 0, v)` — and `Store::byte_raw(0, v)` is `v` for every value a native `u8`
+holds, the enum null 255 included, so their element is the value itself, spelled `as u8`
+because a boolean's native value is a `bool` (`hoist::push_value_cast`); being unbiased, their
+one-value slice fill IS admitted, and a `true`, `false` or enum literal is a simple invariant
+for it.  Before they joined, every boolean or enum push in a loop re-entered the runtime per
+element and blocked the loop's reservation: hex_field's `hexset_chunk`
+(`for _ in 0..n { cells += [false]; }`) is the whole cell set of every `HexSet`, and hex_place
+`field_union` went 3.76 → 2.18 ms per op with it (−42 %, hash unchanged; hand-priced at
+2.25).  Cells: `tests/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
 
 ### A minted element is a record no holder can name
 
