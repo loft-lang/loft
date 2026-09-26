@@ -9,9 +9,9 @@
 // local of that name was refused naming the internal `_mv_rs_1`.  The arm's end now restores
 // every name its pattern bound.
 //
-// The tuple cells also cover a value typed as one VARIANT (`w = Vn { rs: 4 }`): its tuple
-// position names its enum's variants, as a top-level subject of that type does.  Every value is
-// hand-computed; the enum arm is the control that was right before.
+// Every value is hand-computed; the enum arm is the control that was right before.  A tuple
+// element typed as one VARIANT is `a-variant-typed-tuple-element-takes-variant-patterns.loft`,
+// apart, because the control tree refuses it and a refusal would hide these asserts.
 //
 // @falsified-at: <derived after the fix is committed>
 // CHANNEL: the asserts — on the control tree the outer name reads the capture.
@@ -41,11 +41,6 @@ fn main() {
   wt: W = Vn { rs: 8 };
   d = match (wt, 1) { (Vn { rs }, k) => rs + k, _ => -1 };
   assert(d == 9 && rs == 100, "tuple element: {d} {rs}");
-  wv = Vn { rs: 10 };
-  e = match (wv, 2) { (Vn { rs }, k) => rs + k, _ => -1 };
-  assert(e == 12 && rs == 100, "a variant-typed tuple element: {e} {rs}");
-  f = match (wv, 2) { (Pb { p }, k) => p + k, _ => -1 };
-  assert(f == -1, "another variant of a variant-typed element: {f}");
   assert(later_local() == "3 text now", "a later local: {later_local()}");
   // control: a top-level enum arm was right before
   z = 50;
