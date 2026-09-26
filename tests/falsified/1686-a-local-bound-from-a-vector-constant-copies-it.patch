@@ -1,0 +1,101 @@
+diff --git b/src/compile.rs a/src/compile.rs
+index 809fe2ede..1676f7a8b 100644
+--- b/src/compile.rs
++++ a/src/compile.rs
+@@ -241,7 +241,7 @@ fn build_const_vectors(
+             }
+             state.database.record_finish(&vec_ref, &rec, vec_tp, 0);
+         }
+-        state.database.allocations[db.store_nr as usize].lock_constant();
++        state.database.allocations[db.store_nr as usize].lock();
+         // Plan-57 Phase C: pin the const store so `free_named` never frees it
+         // (it lives for the whole program).  Replaces the `ref_count = u32::MAX/2`
+         // sentinel as the ref-count is removed.
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index eb176b89b..774143580 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -7531,10 +7531,7 @@ extern crate loft;"
+                 writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
+                 writeln!(w, "        }}")?;
+             }
+-            writeln!(
+-                w,
+-                "        db.allocations[cv.store_nr as usize].lock_constant();"
+-            )?;
++            writeln!(w, "        db.allocations[cv.store_nr as usize].lock();")?;
+             // Plan-57 Phase C: pin the const store (never freed) — see compile.rs.
+             writeln!(
+                 w,
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 11aaf3c23..04500f2cb 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -1807,17 +1807,7 @@ use a separate collection or add after the loop"
+         // selector has been the narrow part while its lowering was already right — P261,
+         // loft#917, loft#1279 and loft#1326 are the others, and `reads_a_capture_whole` is
+         // where the shape now lives so a sixth reader does not re-spell it.
+-        // loft#1686 — a top-level VECTOR constant's use site answers `OpConstRef(k)`, a
+-        // view of the write-locked constant store, and bound to a local it is a whole-value
+-        // read exactly like a bare variable: the bind COPIES (C86, `@FR-B-Copy`).  Left an
+-        // alias, the first write through the local reached the lock — "Write to read-only
+-        // store … locked by: Store::lock" on both backends, in every spelling (`v = NAMES`,
+-        // a `??` or `if` arm, a typed local, a parameter the callee appends to).  The view a
+-        // read-only bind could keep is `(R-Const)`'s elision, decided post-parse from the
+-        // local's uses, never this verdict's; a literal-bodied function stays the road to it.
+-        let is_bare_var = matches!(code, Value::Var(_))
+-            || self.reads_a_capture_whole(code)
+-            || matches!(code.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpConstRef"));
++        let is_bare_var = matches!(code, Value::Var(_)) || self.reads_a_capture_whole(code);
+         // @FR-O-Proxy asks copy — the verdict is a `VecBind` (`CopyVar` / `CopyOwnedField` /
+         // `SelfAssign`), and every arm of it copies or does nothing.  A wrong answer picks the
+         // wrong lowering, not a release.
+diff --git b/src/runtime_error.rs a/src/runtime_error.rs
+index 6dcb15746..460fb94f9 100644
+--- b/src/runtime_error.rs
++++ a/src/runtime_error.rs
+@@ -427,16 +427,9 @@ impl RuntimeError {
+         // (`store_nr=2` interpreted, `store_nr=0` native), so putting it here would make
+         // the two render different text for one event — the property `report_and_exit`
+         // exists to hold.  It is a debugging fact, and `LOFT_LOG=locks` is where it lives.
+-        // …except that the CONSTANT store's origin picks the advice (never printed): a
+-        // constant cannot be unlocked, and the cure is a bind, which copies (loft#1686).
++        let _ = origin;
+         let kind = RuntimeErrorKind::WriteToLockedStore { rec, fld };
+-        let detail = if origin == crate::store::Store::CONST_STORE_ORIGIN {
+-            "write to a constant — a constant is read-only; bind it to a local first \
+-             (`v = NAMES`), which copies, and write through the local"
+-                .to_string()
+-        } else {
+-            kind.describe()
+-        };
++        let detail = kind.describe();
+         Self {
+             kind,
+             position: None,
+diff --git b/src/store.rs a/src/store.rs
+index b000fa853..c94e1f292 100644
+--- b/src/store.rs
++++ a/src/store.rs
+@@ -2139,21 +2139,6 @@ impl Store {
+         self.lock_with_origin("Store::lock");
+     }
+ 
+-    /// The lock origin of the CONSTANT store, read back by the write refusal.
+-    pub const CONST_STORE_ORIGIN: &'static str = "the constant store";
+-
+-    /// Lock the constant store — the program-lifetime store every top-level vector constant
+-    /// is pre-built into, on both backends.  `@FR-H-WriteLocked`: a write that reaches it is
+-    /// the program's own fault (a constant handed to a parameter the callee writes through,
+-    /// loft#1686), so it is refused as a USER lock is — a defined runtime error naming a
+-    /// constant — and never as the internal "Write to read-only store" assert, which is for
+-    /// a lock the compiler took and then wrote through itself.  A bind of a constant never
+-    /// reaches here: it copies (`Parser::classify_vec_bind`).
+-    pub fn lock_constant(&mut self) {
+-        self.lock_with_origin(Self::CONST_STORE_ORIGIN);
+-        self.user_locked = true;
+-    }
+-
+     /// Lock this store + record an identifier of the lock-origin call site.
+     /// The origin string surfaces in panic messages from `addr_mut` / `claim`
+     /// / `delete` so a "Write to read-only store" failure points directly at the

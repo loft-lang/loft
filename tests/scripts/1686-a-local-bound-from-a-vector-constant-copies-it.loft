@@ -17,7 +17,8 @@
 // copy there would be a silent lost write.  Every value is worked out by hand; every cell reads
 // the constant back after the write, which is what tells a copy from a surviving alias.
 //
-// @falsified-at: <derived after the fix is committed>
+// @falsified-at: a8beb82f1 — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0, native panicked -> clean
+// @falsified-by: tests/falsified/1686-a-local-bound-from-a-vector-constant-copies-it.patch — the same channels.
 // CHANNEL: the exit code and the panic — on the control tree the first cell panics inside the
 //   store and nothing after it runs.
 // WITNESS: `panicked at src/store.rs … Write to read-only store at rec=5 fld=16 (locked by:
