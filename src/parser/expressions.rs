@@ -3760,7 +3760,7 @@ use a separate collection or add after the loop"
             && !self.amp_pending
             && matches!(to, Value::Var(_))
             && matches!(code.unspan(), Value::Tuple(_))
-            && let Type::Tuple(elems) = s_type.clone()
+            && let Type::Tuple(elems) = s_type.base().clone()
             && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
         {
             // loft#1689 — the same bind with a tuple-typed FIELD or ELEMENT as its source:
@@ -3786,7 +3786,12 @@ use a separate collection or add after the loop"
                 }
             }
             *code = Value::Tuple(members);
-            s_type = Type::Tuple(types);
+            // `@FR-N-Shape`: the shape was read through `?`, so a `?` it carried is kept.
+            s_type = if s_type.peel_optional().1 {
+                Type::optional(Type::Tuple(types))
+            } else {
+                Type::Tuple(types)
+            };
         }
         // tuples.md T-Ref — a tuple LITERAL bound to a local that is the SOURCE OF A `&` LINK
         // (recorded in pass 1 at the link or the call) and carries a heap element is built as
