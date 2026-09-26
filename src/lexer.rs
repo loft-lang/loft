@@ -2778,7 +2778,7 @@ mod test {
 
     fn array(lexer: &mut Lexer) -> Vec<LexItem> {
         let mut rest = Vec::new();
-        rest.push(lexer.peek().has);
+        rest.push(lexer.peek().has.clone());
         while let Some(res) = lexer.next() {
             rest.push(res.has);
         }
@@ -2822,7 +2822,7 @@ mod test {
     #[cfg(test)]
     fn json_str(s: &str) -> String {
         let l = Lexer::from_str_with(s, "json", LexConfig::json());
-        match l.peek().has {
+        match l.peek().has.clone() {
             LexItem::CString(c) => c,
             other => panic!("expected CString, got {other:?}"),
         }
@@ -2832,7 +2832,7 @@ mod test {
     #[cfg(test)]
     fn loft_str(s: &str) -> String {
         let l = Lexer::from_str(s, "loft");
-        match l.peek().has {
+        match l.peek().has.clone() {
             LexItem::CString(c) => c,
             other => panic!("expected CString, got {other:?}"),
         }
@@ -2844,6 +2844,7 @@ mod test {
         Lexer::from_str_with(s, "json", LexConfig::json())
             .peek()
             .has
+            .clone()
     }
 
     /// @PLN109 Phase 1c — loft's lexer already distinguishes integer-shaped from
@@ -2971,7 +2972,7 @@ mod test {
     fn cont_array(lexer: &mut Lexer) -> Vec<LexItem> {
         let mut rest = Vec::new();
         while !matches!(lexer.peek().has, LexItem::None) {
-            rest.push(lexer.peek().has);
+            rest.push(lexer.peek().has.clone());
             lexer.cont();
         }
         rest
