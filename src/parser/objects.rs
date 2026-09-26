@@ -4692,6 +4692,32 @@ impl Parser {
                 if !self.first_pass {
                     self.change_var_type(tmp, &exp_tp);
                 }
+                // loft#1683 — what is staged here is a READ of a place, and where the read is
+                // a struct-typed PROJECTION (`b: o.b`, a `ref(Inner)["o"]` that names the
+                // parameter's own record — `(B-View)`) the temp is a VIEW: it owns nothing
+                // (`@FR-O-Derived`) and takes no scope-exit free.  Left a plain work-ref, the
+                // exit freed it against the literal's destination and released the CALLER's
+                // store on every call — in a loop the caller's pooled buffer, read back on the
+                // next pass (46 strict-store violations on both backends).  The staged
+                // expression is the fact, not the temp's deps: a staged WHOLE variable
+                // (`Inner { a: a }` stages `a` itself) is a copy that owns its store while its
+                // type carries the source's deps (measured: keying on the deps leaked
+                // `1184-…` and `880-…`), and a pass-2 tuple buffer carries deps the same way
+                // (measured: exempting every borrowing work-ref at the exit leaked one), which
+                // is why the mark lives here and not in the scope pass.
+                // The fact is the staged EXPRESSION and its type alone — a struct projection
+                // mints no store whatever its base, so the temp's deps are not consulted
+                // (`@FR-O-Proxy` is not asked here).
+                let staged_view = !self.first_pass
+                    && matches!(value.unspan(), Value::Call(d, _)
+                        if crate::use_analysis::is_projection_op(&self.data, *d))
+                    && matches!(
+                        self.vars.tp(tmp).base(),
+                        Type::Reference(_, _) | Type::Enum(_, true, _)
+                    );
+                if staged_view {
+                    self.vars.set_skip_free(tmp);
+                }
                 let prev = std::mem::replace(&mut value, Value::Var(tmp));
                 sinks.hoists.push(v_set(tmp, prev));
             }
