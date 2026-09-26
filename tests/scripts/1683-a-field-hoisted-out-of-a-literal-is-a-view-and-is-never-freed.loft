@@ -20,12 +20,16 @@
 // show there, not here.  The controls are the shapes that were already clean — the literal
 // returned directly, two calls in straight line, a literal argument.
 //
-// @falsified-at: <derived after the fix is committed>
-// CHANNEL: the strict-store sweep (`LOFT_STRICT_STORES=1`) — the values are right on both trees.
-// ARMED: by the nightly store-guard sweep and by hand; the plain run answers 30 on both trees.
-// WITNESS: `[strict-store] USE AFTER FREE (read) store #N type=Outer … killed by the free of
-//   <anon>` (native: `var___ref_1`), 46 of them.
-// HOLDS: every value below on both trees; the strict sweep clean here.
+// @falsified-at: 09b02f83b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.patch — the same channels.
+// CHANNEL: the asserts — on the control tree the cell that keeps the argument alive past the
+//   call reads a record the callee freed (the reporter's minimal shape answered right there by
+//   luck; this cell does not) — and the strict-store sweep (`LOFT_STRICT_STORES=1`), 46 reads
+//   after free on the reporter's shape alone.
+// ARMED: the asserts on every run; the sweep by the nightly store-guard leg and by hand.
+// WITNESS: `assertion failed: the argument outlives the call`, and `[strict-store] USE AFTER
+//   FREE (read) store #N type=Outer … killed by the free of <anon>` (native: `var___ref_1`).
+// HOLDS: every other cell on both trees; the strict sweep clean here.
 
 struct Inner { v: vector<integer> }
 struct Outer { b: Inner }
