@@ -860,7 +860,7 @@ fn is_element_place(name: &str) -> bool {
 }
 
 /// A getter or setter of a scalar at a place: the place is consumed, never kept.
-fn is_scalar_accessor(name: &str) -> bool {
+pub(crate) fn is_scalar_accessor(name: &str) -> bool {
     matches!(
         name,
         "OpGetInt"

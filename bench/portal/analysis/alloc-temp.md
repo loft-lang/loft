@@ -73,7 +73,8 @@ same walk `(R-Escape)` reads; the per-site allocation and the witness are
 `reuse_record_buffers`' own; the lazy mint is `Variable::lazy_buffer`.  What is new is only
 the promotion of a LOCAL (today the promotions are of a result) and the clear at entry.
 
-What it moves, from the overview: `fill_polygon` 25× (a crossings vector per scanline),
+What it moves, from the overview: `fill_polygon` 25× (a crossings vector per scanline — measured
+later, the cost was two record COPIES per crossing, which `(R-CopyView)` removed: 22.6× → 9.9×),
 `flow_layout_full` 15× (a `vector<Run>` per token), `mat4_mul` 32× (a 16-float vector
 inside a record per call), `rig_world_frame3` 9.5× (twelve vectors per call),
 `delete_range` 9×, `sort_floats` 4×, `terrain_surface_at` 3.2×, `draft_fit_p` 12×,

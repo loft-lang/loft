@@ -231,6 +231,7 @@ drawing	9781cd628	R-Base	108
 drawing	9781cd628	R-BoundedNest	4
 drawing	9781cd628	R-CharWalk	10
 drawing	9781cd628	R-CompleteWrite	114
+drawing	9781cd628	R-CopyView	2
 drawing	9781cd628	R-ElemFirst	9
 drawing	9781cd628	R-Header	170
 drawing	9781cd628	R-Invariant	85
@@ -292,6 +293,7 @@ graphics	9781cd628	R-Base	56
 graphics	9781cd628	R-BoundedNest	4
 graphics	9781cd628	R-CharWalk	10
 graphics	9781cd628	R-CompleteWrite	43
+graphics	9781cd628	R-CopyView	2
 graphics	9781cd628	R-Header	65
 graphics	9781cd628	R-Invariant	53
 graphics	9781cd628	R-LoopBuffer	9
@@ -610,6 +612,7 @@ stage	9781cd628	R-Base	66
 stage	9781cd628	R-BoundedNest	4
 stage	9781cd628	R-CharWalk	12
 stage	9781cd628	R-CompleteWrite	58
+stage	9781cd628	R-CopyView	2
 stage	9781cd628	R-Header	84
 stage	9781cd628	R-Invariant	75
 stage	9781cd628	R-LoopBuffer	11
@@ -628,6 +631,7 @@ text2d	9781cd628	R-Base	54
 text2d	9781cd628	R-BoundedNest	4
 text2d	9781cd628	R-CharWalk	18
 text2d	9781cd628	R-CompleteWrite	44
+text2d	9781cd628	R-CopyView	2
 text2d	9781cd628	R-Header	65
 text2d	9781cd628	R-Invariant	62
 text2d	9781cd628	R-LoopBuffer	9

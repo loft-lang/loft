@@ -1406,6 +1406,21 @@ pub fn const_view_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CONST_VIEW"))
 }
 
+/// `@FR-R-CopyView` — a read-only copy of a record nothing can disturb is a view of it.
+/// `LOFT_NO_COPY_VIEW=1` keeps every copy (the first bisect step for a record local that reads
+/// a value its source took later, or a store freed under it).
+pub fn copy_view_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_COPY_VIEW"))
+}
+
+/// `LOFT_TRACE_COPY_VIEW=1` — name each record local made a view, and each candidate declined
+/// with the reason.
+pub fn trace_copy_view() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_COPY_VIEW"))
+}
+
 /// `LOFT_TRACE_CONST=1` — name each literal-bodied function made a constant, and each call
 /// of one admitted or declined with the reason.
 pub fn trace_const() -> bool {

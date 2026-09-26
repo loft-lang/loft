@@ -136,7 +136,7 @@ fn is_guard_of(v: &Value, b: u16, is_null: u32) -> bool {
 }
 
 /// The ops that release a buffer, by def number: a mention inside one is not a use.
-fn free_ops(data: &Data) -> Vec<u32> {
+pub(crate) fn free_ops(data: &Data) -> Vec<u32> {
     [
         "OpFreeRef",
         "OpFreeRefIfDistinct",

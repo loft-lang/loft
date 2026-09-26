@@ -1449,7 +1449,7 @@ pub(super) mod objects;
 pub(super) mod operators;
 pub(super) mod store_text;
 pub(super) mod vectors;
-pub(super) mod work_buffer;
+pub(crate) mod work_buffer;
 
 impl Default for Parser {
     fn default() -> Self {

@@ -85,6 +85,19 @@ program's copy must be its own — and is the first bisect step for a wrong elem
 `LOFT_TRACE_CONST=1` names each function made a constant (and each that is not, with its
 body's shape) and each call admitted or declined; the interpreter and native share the
 rewrite, so the switch A/B and the cells' hand-computed values are the falsifier.
+**`LOFT_NO_COPY_VIEW=1`** (`@FR-R-CopyView`, default-ON since 2026-09-26, scope pass, BOTH
+backends) makes a read-only record copy copy again — with it off, `t = a` of a record, and a
+join `t = if c { a } else { b }`, where t is only READ (a field read), every source is a VIEW
+into a parameter's records (not the parameter itself, which `@FR-R-ValueRecord` may carry as
+a tuple), and no operation in t's live range can write a record of that type (asked of the
+operands' TYPES: a push into a `vector<integer>` cannot reach a record), binds t as a view —
+`t = OpGetField(a, 0)`, or the join's arms answering their sources — so no store is minted,
+copied or freed.  It is the first bisect step for a record local that reads a value its
+source took after the bind, or a store released under it.  `LOFT_TRACE_COPY_VIEW=1` names
+each local made a view and each candidate declined with the reason; both backends share the
+rewrite, so the switch A/B and the cells' hand-computed values
+(`tests/scripts/a-read-only-record-copy-is-a-view.loft`, pinned by `tests/copy_view.rs`) are
+the falsifier.
 **`LOFT_NO_COMPACT=1`** (`@FR-R-Compact`, default-ON since 2026-09-25, scope pass, BOTH
 backends) makes a vector rebuilt from a contiguous run of its own elements copy again —
 with it off, `t: vector<S> = []; for i in a..b { t += [V[i]?]; } V = t;` (a history

@@ -57,7 +57,7 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  deliberate decline lands with `make rewrite-census-bless` in its
                  own commit.  Counted today: every plan `start_fn` builds, the loop
                  hoist frames, the push windows, the record pointers, the work
-                 buffer and its onward clause.
+                 buffer and its onward clause, and R-CopyView.
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's
@@ -2652,6 +2652,30 @@ answered here rather than decided in the code.
                  copy is placed at the bind, and the program cannot tell the two forms
                  apart (R-Escape).  A top-level `const` vector already lives in that
                  store; this rule gives a literal-bodied function the same home.
+  (R-CopyView)   a record local t bound ONCE by B-Copy's copy of a record VIEW — `t = a`,
+                 or a join `t = if c { a } else { b }` whose every arm is such a view — is
+                 a VIEW of the chosen record (O-Borrow: t's deps name its sources; no
+                 store minted, none freed) where no program can tell the two apart:
+                 (1) t is only READ in its frame, in R-Const's sense (a field read, a
+                 `const` argument, a copy into another such local) — never written,
+                 rebound, returned, stored, captured or handed to a writing parameter;
+                 (2) every source's view closes over PARAMETERS only, so the record
+                 outlives the frame; and (3) nothing in t's live range — the statements
+                 from the bind to t's last mention — can change the record's bytes, move
+                 it or free it: every operation there whose heap operand's TYPE can
+                 reach the source's record type (through fields and elements) only
+                 reads, and every call to a loft-bodied function handed such an operand
+                 hands it to a `const` parameter.  An operation reaches only the records
+                 its operands' types can hold, so a push into a `vector<integer>` in
+                 range cannot disturb a `Coord`, whatever store it lives in — which is
+                 why (3) is asked of types and not of stores (`store_viewers` is an upper
+                 bound on stores, and a parameter may share the caller's return buffer's
+                 store).  Declines, keeping the copy: a nullable t or source; a `&`
+                 source (C-Ref's copy is its own question); a source that is an owned
+                 local (its free is scoped, the frame's is not); a source that IS a
+                 parameter — R-ValueRecord may carry a small record parameter as a
+                 tuple, where its copy already costs nothing and a view would need the
+                 store the tuple removed; a struct-enum.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
                  no-heap record of at most six scalar fields — carries the record's
                  fields as its TUPLE in the binding frame too, where every use of the
@@ -2846,6 +2870,22 @@ to bisect to.
   constant store, which keep their call), since the values pass on either form.  Sabotage
   receipts: every argument position read as a pure read fails c7 on the interpreter with the
   write-locked panic; the one-literal test struck answers 5 for 7 in c16 on both backends.
+- **`(R-CopyView)`** — graphics `fill_polygon` **22.6×**: `polygon_crossings` picks each
+  crossing edge's top and bottom vertex with `pc_ty = if pc_a.py < pc_b.py { pc_a } else
+  { pc_b }`, and each of the two binds minted a store, copied a `Coord` into it and freed it,
+  per crossing per scanline — not the crossings vector the overview first blamed, which the
+  return buffer already reuses.  Hand-priced (the four arm copies struck, the arms answering
+  their sources): 6.62 → 2.86 ms per op, hash `91eac327` unchanged.  **BUILT 2026-09-26**
+  (`src/copy_view.rs`, after `(R-Const)` on the settled IR; `LOFT_NO_COPY_VIEW`,
+  `LOFT_TRACE_COPY_VIEW`): measured clean **22.62× → 9.94×** (6.65 → 2.92 ms), same hash,
+  the other graphics and drawing rows within noise.  Over the benches it admits exactly
+  those two locals: the 303 record copies there are mostly a PARAMETER copied (declined —
+  `(R-ValueRecord)`'s tuple already makes that copy free, and the rewrite census caught the
+  first cut taking eight of `server`'s tuple parameters away, R-ValueLocal 15 → 7) or a
+  source the frame owns.  Cells: `tests/scripts/a-read-only-record-copy-is-a-view.loft`
+  (k1–k11, hand-computed, both backends, switch A/B, `LOFT_POISON` + `LOFT_STRICT_STORES`),
+  the admission pinned by `tests/copy_view.rs`.  Sabotage receipt: condition (3) struck, k4
+  reads 99 for 1 and k5 1003 for 3 on both backends.
 - **`(R-ValueLocal)`** — `(R-ValueRecord)` returns a small record in registers only where
   EVERY call site reads fields off it; a site that binds the whole record to a local, or
   rebinds its own argument, declined it and paid a store per call: mesh3d
