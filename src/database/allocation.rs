@@ -4191,9 +4191,11 @@ impl Stores {
     /// default-fill keys on, derived from `parts` once and cached on the row
     /// (`Type::facts`):
     ///
-    /// - **owns_heap** — can the value own a heap record?  Text and reference
-    ///   are the owning primitives; a collection, a child record, and a struct
-    ///   or enum variant holding any of those own one too.  A record that owns
+    /// - **owns_heap** — can the value own a heap record?  Text (base type 5) is
+    ///   the one owning primitive — base type 6 is `character`, an inline 4-byte
+    ///   codepoint, and a reference is `Parts::DbRef`, which owns nothing it points
+    ///   at; a collection, a child record, and a struct or enum variant holding
+    ///   any of those own one too.  A record that owns
     ///   none has nothing for `copy_claims` or `remove_claims` to walk, which
     ///   is the difference between visiting 5 000 records and 5 600 000 of
     ///   them on a real store (loft#730), and between a per-field descent and
@@ -4228,9 +4230,9 @@ impl Stores {
         }
         seen.push(tp);
         let facts = match &row.parts {
-            // text and reference are the two heap-owning primitives; text is
-            // also the one base type whose default is not zero.
-            Parts::Base => (matches!(tp, 5 | 6), tp <= 6 && tp != 5),
+            // text is the one heap-owning primitive and the one base type whose
+            // default is not zero; 6 is `character`, stored inline like the numerics.
+            Parts::Base => (tp == 5, tp <= 6 && tp != 5),
             Parts::Byte(_, null)
             | Parts::Short(_, null)
             | Parts::Int(_, null)
@@ -5292,16 +5294,16 @@ impl Stores {
 
     /// True when a field's type stores its value INLINE (a fixed-width scalar),
     /// so a working-set copy can move it as raw bytes with no pointer to
-    /// relocate. Text (type 5) and Reference (type 6) are POINTERS; vectors /
+    /// relocate. Text (type 5) is a POINTER; vectors /
     /// nested structs / keyed collections are heap-owned — all need the
     /// relocating graph-copy (3b.2+), so they are NOT inline.
     #[cfg(paged_store)]
     fn is_inline_scalar(&self, tp: u16) -> bool {
         match self.types[tp as usize].parts {
             Parts::Int(..) | Parts::Byte(..) | Parts::Short(..) | Parts::ShortRaw(..) => true,
-            // Base covers the numeric primitives AND text(5) / Reference(6);
-            // only the numerics are inline.
-            Parts::Base => !matches!(tp, 5 | 6),
+            // Base covers the numeric primitives, character(6) and text(5); all
+            // but text are inline.
+            Parts::Base => tp != 5,
             _ => false,
         }
     }
