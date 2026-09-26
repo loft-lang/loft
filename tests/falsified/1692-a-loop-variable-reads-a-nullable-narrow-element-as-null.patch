@@ -1,0 +1,24 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index 98c77e1fa..5aa6844e0 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -715,18 +715,7 @@ impl Parser {
+                         // which looked up `def(integer).returned` and lost
+                         // the forced_size → emitted `OpGetInt` (8 bytes)
+                         // into a 2-byte slot, producing off-bytes reads.
+-                        // loft#1692 — and with the element's DECLARED nullability, as the
+-                        // indexed read passes it (`fields.rs`): hard-coded `false`, a
+-                        // `vector<u8?>` element was read with `OpGetByte`, so the loop
+-                        // variable read a null as its stored code (`255`, `-32768` for
+-                        // `i16?`) and `x ?? d` / `!x` never saw it.
+-                        ref_expr = self.get_val(
+-                            vtp,
+-                            matches!(**vtp, Type::Optional(_)),
+-                            0,
+-                            ref_expr,
+-                            u32::MAX,
+-                        );
++                        ref_expr = self.get_val(vtp, false, 0, ref_expr, u32::MAX);
+                     }
+                     let mut tp = *vtp.clone();
+                     if matches!(tp, Type::Tuple(_)) {
