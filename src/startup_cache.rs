@@ -864,9 +864,16 @@ mod ncrate_manifest_tests {
             ("wbpkg foo /pkgs/foo\n", false),
             ("wbhostjs /pkgs/foo/host.js\n", false),
         ] {
+            // `actx` (required, loft#1684) sits between the registration headers that
+            // precede it and the `wb*` ones that follow.
+            let (before, after) = if header.starts_with("wb") {
+                ("", header)
+            } else {
+                (header, "")
+            };
             std::fs::write(
                 &manifest,
-                format!("sig {sig}\nstdk k\n{header}{source_line}\n"),
+                format!("sig {sig}\nstdk k\n{before}actx c\n{after}{source_line}\n"),
             )
             .unwrap();
             let state = manifest_state(&manifest, "k")
