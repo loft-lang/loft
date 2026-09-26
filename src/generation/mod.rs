@@ -999,6 +999,9 @@ pub struct Output<'a> {
     /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
     /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
     pub push_fill_disabled: bool,
+    /// `LOFT_NO_INLINE_HINT` (generation time): loft functions carry no `#[inline]`
+    /// ([`crate::keys::inline_hint_enabled`]).
+    pub inline_hint: bool,
     /// `LOFT_NO_PUSH_WINDOW` (generation time): a reserved counted push loop pushes through
     /// its push header again, the length written back per push (`@FR-R-PushFill`'s window
     /// clause).
@@ -2247,6 +2250,7 @@ impl<'a> Output<'a> {
             loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
+            inline_hint: crate::keys::inline_hint_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),
             join_read_disabled: !crate::keys::join_read_enabled(),
             push_windows: Vec::new(),
@@ -2317,14 +2321,26 @@ impl<'a> Output<'a> {
         }
     }
 
-    /// loft#954 — the attribute line that precedes a generated loft function
-    /// definition, so `--names` keeps it out of line and a trap's frame can name it.
-    /// Empty (not a blank line) in every ordinary build, which keeps the emitted
-    /// Rust byte-identical to what it was.
+    /// The attribute line that precedes a generated loft function definition.  loft#954:
+    /// `--names` keeps every one out of line so a trap's frame can name it.  Otherwise a
+    /// LOOP-FREE function carries an `#[inline]` hint ([`crate::keys::inline_hint_enabled`]):
+    /// the hint raises LLVM's threshold for it and decides nothing else, so a small helper
+    /// made long by its checked arithmetic folds into its caller as a plain-Rust twin's
+    /// does.  A function that runs a loop gets none: pulled into a caller that loops
+    /// itself, its loop-carried values spill across the caller's live range (measured:
+    /// `newton_sqrt` inlined through `roots` into `main` kept `guess` on the stack across
+    /// its divide chain, +16 %), and the loop-free helpers are where the gain is.  Empty
+    /// (not a blank line) under `LOFT_NO_INLINE_HINT`.
     #[must_use]
-    fn fn_inline_attr(&self) -> &'static str {
+    fn fn_inline_attr(&self, def: &crate::data::Definition) -> &'static str {
         if self.keep_fn_names {
             "#[inline(never)]\n"
+        } else if self.inline_hint
+            && !def
+                .code()
+                .any_node(&mut |n| matches!(n, Value::Loop(_) | Value::Parallel(_)))
+        {
+            "#[inline]\n"
         } else {
             ""
         }
@@ -8841,7 +8857,7 @@ extern crate loft;"
         write!(
             w,
             "{}fn {}{}(cell: &std::cell::UnsafeCell<Stores>",
-            self.fn_inline_attr(),
+            self.fn_inline_attr(def),
             self.fn_ident(def),
             if twin.is_some() { "__inv" } else { "" }
         )?;
