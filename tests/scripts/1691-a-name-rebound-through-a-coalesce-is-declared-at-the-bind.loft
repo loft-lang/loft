@@ -10,7 +10,9 @@
 // interpreter ran it.  Every cell rebinds a name an EARLIER block bound, and each varies one
 // axis: the element type, the enclosing block, which arm runs, what follows the bind.
 //
-// @falsified-at: pending
+// @falsified-at: d79a9810d — native exit 1 -> 0; interpret INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/1691-a-name-rebound-through-a-coalesce-is-declared-at-the-bind.patch — native exit 1 -> 0; interpret INERT
 
 fn mk1691(k: integer) -> vector<vector<integer>> { [[k, k + 1], [k + 2]] }
 
