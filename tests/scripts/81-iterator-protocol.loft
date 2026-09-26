@@ -30,7 +30,7 @@ fn main() {
   // Empty iterator: limit = 0
   c2 = new_counter(0);
   count = 0;
-  for x in c2 { count = count + 1; }
+  for _ in c2 { count = count + 1; }
   assert(count == 0, "empty counter iterations={count}");
 
   // Single element

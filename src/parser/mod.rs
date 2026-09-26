@@ -798,6 +798,12 @@ pub struct Parser {
     /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
     /// which both passes agree on; two loops over one root both copy, which is conservative.
     loop_sources_replaced: std::collections::HashSet<(u32, String)>,
+    /// `@FR-B-Scope` — the names a pattern has pointed at its own bindings since the last
+    /// `=>`, each with the variable it named before (`Parser::pattern_binding`).  The arrow
+    /// seals them into a frame of `pattern_bind_frames`; the end of the arm's body restores
+    /// that frame, so an arm's names end with the arm.
+    pattern_binds_pending: Vec<(String, Option<u16>)>,
+    pattern_bind_frames: Vec<Vec<(String, Option<u16>)>>,
     /// @PLN167 C1 — the kind of each `&text` link bound so far on pass 2, keyed by
     /// `(function, variable)`: `true` for a text field or element (the store kind), `false` for
     /// a text variable (the stack kind).  A second bind of the other kind is refused.
@@ -1621,6 +1627,8 @@ impl Parser {
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
             loop_sources_replaced: std::collections::HashSet::new(),
+            pattern_binds_pending: Vec::new(),
+            pattern_bind_frames: Vec::new(),
             text_link_kinds: std::collections::HashMap::new(),
             amp_vector_locals: std::collections::HashSet::new(),
             amp_vector_link_partners: std::collections::HashMap::new(),
