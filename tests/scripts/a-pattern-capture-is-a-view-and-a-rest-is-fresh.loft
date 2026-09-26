@@ -13,7 +13,10 @@
 // whole also reuses capture names across `match`es, which `(B-Scope)` admits and which the
 // tree before D-bind-65 refused.  Every value is hand-computed.
 //
-// @falsified-at: <derived after the fix is committed>
+// @falsified-at: bc84ee2a4 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-pattern-capture-is-a-view-and-a-rest-is-fresh.patch — the same channels.
+// CHANNEL: the refusal — the control tree refuses the reused capture names.
+// HOLDS: every view and fresh cell, measured one per program on both trees before this guard.
 
 struct Pt { x: integer, y: integer }
 enum Tok { Num { n: integer }, Op { o: integer }, Bx { rs: vector<Pt> } }
