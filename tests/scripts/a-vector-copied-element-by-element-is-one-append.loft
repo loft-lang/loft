@@ -1,0 +1,265 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-VecCopy` — a vector copied into another one element at a time is ONE append.
+//
+// `nb = []; for c in d.buf { nb += [c]; }` — a copy of a buffer before more is added to it —
+// paid an element read, a length re-read and a push per element.  Where the body is the one
+// push of the loop value, the element a kind whose read and push are exact inverses on the
+// stored bytes, the source a vector place, and the destination EXCLUSIVE (a local minted in
+// the frame, or the frame's hidden return or work buffer), the walk is `t += V`.  A `&`
+// parameter can be handed the source itself (`cp(v, v)`), where the walk grows what it walks
+// and the append would not, so it keeps the loop; so does every other shape below.  The
+// value never changes: every cell answers the same with `LOFT_NO_VEC_COPY=1`, and that A/B
+// is the falsifier together with the pin (`tests/vec_copy.rs`).  Values hand-computed in each
+// cell's comment.
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-09-26), two in one build: (a) every parameter destination read as exclusive — the
+//   pin fails on `n_tail` (1 append for 0), the one cell whose destination is refused on
+//   exclusivity alone; (b) the append naming the 1-byte `boolean` element type — v1 fails on
+//   both backends, `['a',null,null,null,null,null,'x','y']`.  A first form of (b) naming the
+//   8-byte `integer` type passed every cell: a wider stride over-copies into the slack and
+//   the first `len * 4` bytes stay right, so a WIDER element type is not what these cells see.
+//   CHANNEL: the pin (IR) for (a); the VALUE channel (an assertion) on both backends for (b).
+//   WITNESS: (a) `n_tail: bulk appends — the cell's admission moved`; (b) the v1 line above.
+//   HOLDS: leak (`LOFT_NATIVE_LEAK_CHECK=1`), panic and free-refusal equal and clean on both
+//   switch positions.
+
+enum Col { Red, Green }
+
+struct Doc { buf: vector<character>, n: integer }
+
+struct Pt { x: integer, y: integer }
+
+// the editor's spelling: the old buffer, then the new characters, into a returned record
+fn grow(d: Doc, s: text) -> Doc {
+  nb: vector<character> = [];
+  for c in d.buf { nb += [c]; }
+  for c in s { nb += [c]; }
+  Doc { buf: nb, n: d.n + 1 }
+}
+
+// a plain vector result: the destination is the hidden return buffer
+fn cp(v: vector<character>) -> vector<character> {
+  nb: vector<character> = [];
+  for c in v { nb += [c]; }
+  nb
+}
+
+// a `&` destination may be the source itself — keeps its loop (the break ends the walk)
+fn onto(v: vector<character>, t: &vector<character>) {
+  for c in v { t += [c]; if len(t) > 20 { return; } }
+}
+
+// the one-statement form into a `&` destination: the same walk, still not exclusive
+fn into(v: vector<character>, t: &vector<character>) {
+  for c in v { t += [c]; }
+}
+
+// a by-value parameter as the destination: a caller's vector, not exclusive
+fn tail(v: vector<character>, t: vector<character>) -> integer {
+  for c in v { t += [c]; }
+  len(t)
+}
+
+fn mk() -> vector<integer> { [4, 5, 6] }
+
+// "aé" then "xy" three times: a é x y x y x y, n 3
+fn v1() {
+  d = Doc { buf: ['a', 'é'], n: 0 };
+  for _k in 0..3 { d = grow(d, "xy"); }
+  assert(len(d.buf) == 8 && d.n == 3, "v1 len {len(d.buf)} n {d.n}");
+  assert(d.buf[1] == 'é' && d.buf[2] == 'x' && d.buf[7] == 'y', "v1 got {d.buf}");
+}
+
+// the return buffer, and a rebind of the source through it
+fn v2() {
+  v: vector<character> = ['q', 'r', 's'];
+  w = cp(v);
+  v = cp(v);
+  assert(len(w) == 3 && w[2] == 's' && len(v) == 3 && v[0] == 'q', "v2 got {w} {v}");
+}
+
+// integers with a null in the middle: 5 + 7 = 12, one null → 121
+fn v3() {
+  v: vector<integer?> = [5, null, 7];
+  t: vector<integer?> = [];
+  for e in v { t += [e]; }
+  s = 0; nulls = 0;
+  for e in t { if e == null { nulls += 1; } else { s += e; } }
+  assert(len(t) == 3 && s * 10 + nulls == 121, "v3 got {t}");
+}
+
+// floats with a null: 1.5 + -2.25 = -0.75
+fn v4() {
+  v: vector<float?> = [1.5, null, -2.25];
+  t: vector<float?> = [];
+  for e in v { t += [e]; }
+  assert(len(t) == 3 && t[1] == null && t[0] + t[2] == -0.75, "v4 got {t}");
+}
+
+// singles: 0.5 + 2.0 = 2.5
+fn v5() {
+  v: vector<single> = [0.5f, 2.0f];
+  t: vector<single> = [];
+  for e in v { t += [e]; }
+  assert(len(t) == 2 && t[0] + t[1] == 2.5f, "v5 got {t}");
+}
+
+// booleans: true, false, true
+fn v6() {
+  v: vector<boolean> = [true, false, true];
+  t: vector<boolean> = [];
+  for e in v { t += [e]; }
+  assert(len(t) == 3 && t[0] && !t[1] && t[2], "v6 got {t}");
+}
+
+// an enum
+fn v7() {
+  v: vector<Col> = [Col.Green, Col.Red, Col.Green];
+  t: vector<Col> = [];
+  for e in v { t += [e]; }
+  assert(len(t) == 3 && t[1] == Col.Red && t[2] == Col.Green, "v7 got {t}");
+}
+
+// raw bytes: 0 + 200 + 255 = 455; biased bytes: -128 + 0 + 127 = -1
+fn v8() {
+  v: vector<u8> = [0 as u8, 200 as u8, 255 as u8];
+  t: vector<u8> = [];
+  for e in v { t += [e]; }
+  s = 0;
+  for e in t { s += e as integer; }
+  w: vector<i8> = [-128 as i8, 0 as i8, 127 as i8];
+  u: vector<i8> = [];
+  for e in w { u += [e]; }
+  z = 0;
+  for e in u { z += e as integer; }
+  assert(len(t) == 3 && s == 455 && len(u) == 3 && z == -1, "v8 got {t} {u}");
+}
+
+// 4-byte integers: -5 + 70000 = 69995
+fn v9() {
+  v: vector<i32> = [-5 as i32, 70000 as i32];
+  t: vector<i32> = [];
+  for e in v { t += [e]; }
+  assert(len(t) == 2 && (t[0] as integer) + (t[1] as integer) == 69995, "v9 got {t}");
+}
+
+// onto a filled local: 9, then 1 2
+fn v10() {
+  v: vector<integer> = [1, 2];
+  t: vector<integer> = [9];
+  for e in v { t += [e]; }
+  assert(len(t) == 3 && t[0] == 9 && t[2] == 2, "v10 got {t}");
+}
+
+// a `&` destination: distinct → x y a b c; the source itself → a b c seven times, 21
+fn v11() {
+  v: vector<character> = ['a', 'b', 'c'];
+  w: vector<character> = ['x', 'y'];
+  onto(v, w);
+  assert(len(w) == 5 && w[2] == 'a' && w[4] == 'c', "v11 distinct {w}");
+  onto(v, v);
+  assert(len(v) == 21 && v[3] == 'a' && v[20] == 'c', "v11 alias {len(v)}");
+}
+
+// a source that is a call keeps its loop: 4 5 6
+fn v12() {
+  t: vector<integer> = [];
+  for e in mk() { t += [e]; }
+  assert(len(t) == 3 && t[0] == 4 && t[2] == 6, "v12 got {t}");
+}
+
+// a second statement keeps the loop: 3 elements, n 3
+fn v13() {
+  v: vector<integer> = [7, 8, 9];
+  t: vector<integer> = []; n = 0;
+  for e in v { t += [e]; n += 1; }
+  assert(len(t) == 3 && n == 3 && t[1] == 8, "v13 got {t}");
+}
+
+// a transformed value keeps the loop: 8 9 10
+fn v14() {
+  v: vector<integer> = [7, 8, 9];
+  t: vector<integer> = [];
+  for e in v { t += [e + 1]; }
+  assert(len(t) == 3 && t[0] == 8 && t[2] == 10, "v14 got {t}");
+}
+
+// text and record elements keep the loop
+fn v15() {
+  v: vector<text> = ["ab", "cde"];
+  t: vector<text> = [];
+  for e in v { t += [e]; }
+  p: vector<Pt> = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  q: vector<Pt> = [];
+  for e in p { q += [e]; }
+  assert(len(t) == 2 && t[1] == "cde" && len(q) == 2 && q[1].y == 4, "v15 got {t} {len(q)}");
+}
+
+// an empty source leaves the destination empty, not absent
+fn v16() {
+  v: vector<integer> = [];
+  t: vector<integer> = [];
+  for e in v { t += [e]; }
+  assert(len(t) == 0 && t != null, "v16 got {t}");
+}
+
+// the copy re-run in an outer loop: 3 * 3 + 10 + 20 + 30 = 69
+fn v17() {
+  v: vector<integer> = [10, 20, 30];
+  total = 0;
+  for k in 0..3 {
+    t: vector<integer> = [];
+    for e in v { t += [e]; }
+    total += len(t) + t[k];
+  }
+  assert(total == 69, "v17 got {total}");
+}
+
+// a slice source keeps its own walk: 20 30
+fn v18() {
+  v: vector<integer> = [10, 20, 30, 40];
+  t: vector<integer> = [];
+  for e in v[1..3] { t += [e]; }
+  assert(len(t) == 2 && t[0] == 20 && t[1] == 30, "v18 got {t}");
+}
+
+// a source through a field of a field: 3 1
+struct Wrap { d: Doc }
+fn v20() {
+  w = Wrap { d: Doc { buf: ['m', 'n', 'o'], n: 1 } };
+  t: vector<character> = [];
+  for c in w.d.buf { t += [c]; }
+  assert(len(t) == 3 && t[2] == 'o', "v20 got {t}");
+}
+
+// a `&` destination with the body alone: distinct vectors → k l m n
+fn v21() {
+  v: vector<character> = ['m', 'n'];
+  w: vector<character> = ['k', 'l'];
+  into(v, w);
+  assert(len(w) == 4 && w[0] == 'k' && w[3] == 'n', "v21 got {w}");
+}
+
+// a narrower source into a wider destination keeps the loop: 3 4
+fn v22() {
+  v: vector<i32> = [3 as i32, 4 as i32];
+  t: vector<integer> = [];
+  for e in v { t += [e as integer]; }
+  assert(len(t) == 2 && t[0] + t[1] == 7, "v22 got {t}");
+}
+
+// a by-value parameter destination: 2 + 3 = 5
+fn v23() {
+  v: vector<character> = ['p', 'q', 'r'];
+  w: vector<character> = ['o', 'o'];
+  assert(tail(v, w) == 5, "v23 got {tail(v, w)}");
+}
+
+fn main() {
+  v1(); v2(); v3(); v4(); v5(); v6(); v7(); v8(); v9(); v10();
+  v11(); v12(); v13(); v14(); v15(); v16(); v17(); v18(); v20(); v21(); v22(); v23();
+  println("done");
+}

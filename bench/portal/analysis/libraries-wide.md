@@ -349,3 +349,22 @@ losses: geomean −2.3 %, `edgeset_count` −56 %, `join` −19 %, `replace` −
 between two BUILDS carries that layout noise on every row; pin alignment
 (`-C llvm-args=-align-all-functions=6 -C llvm-args=-align-loops=64`) before reading a few
 percent either way as a cause.
+
+**`insert_text` re-attributed: a `character` owns no heap, and `(R-VecCopy)` (2026-09-26).**
+The row's note blamed the identity copy `for c0 in d.buf { nb += [c0] }`; hand-priced as one
+append on the emitted Rust it bought only 54 → 49 ms per op.  A profile put 35 % in
+`copy_claims`, 11 % in `vector_add` and 8 % in `owned_walk`, every one of them entered per
+CHARACTER: `derive_facts` answered owns-heap for base types 5 and 6 as "text and
+reference", but 6 is `character` — so every copy and free of a `vector<character>` (here the
+buffer's move into the returned `Doc` and the caller's copy of it into `io_d`), and of any
+record with a `character` field, walked each element to find nothing, and the native
+generator kept such records off every rewrite gated on a record of scalars.  With the fact
+corrected (`70f575d59`, no value can differ — the walk did nothing on a character): 55.2 →
+25.4 ms.  The copy loop's price was hidden behind that walk; built as `(R-VecCopy)` (a local
+or hidden-buffer destination only — a parameter can be handed the source): 25.4 → **5.95 ms**,
+hash unchanged, ~7× of the twin's 0.85 ms (was 63.7×).  What the row still pays: the
+per-insert rebuild of `np` (~250 k `Piece` record copies per op through `OpCopyRecord`,
+where the twin's `np.push(*p)` is a 24-byte move) and the copies of `nb` and `np` into the
+returned `Doc` and again into `io_d` — `io_d` is `insert_op`'s own NRVO return buffer, which
+`(R-Rebind)` declines as "a parameter", and admitting it priced SLOWER (+25 %) while the
+character walk was still in place; re-price it on the current runtime before building.

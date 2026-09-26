@@ -9255,6 +9255,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-ByteCopy` — a text copied into a byte vector one byte at a time is one
         // append behind an in-range guard: decided on the same settled IR.
         crate::byte_copy::rewrite(data, d_nr);
+        // `@FR-R-VecCopy` — a vector copied into an exclusive one element at a time is one
+        // append: decided on the same settled IR.
+        crate::vec_copy::rewrite(data, database, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {
