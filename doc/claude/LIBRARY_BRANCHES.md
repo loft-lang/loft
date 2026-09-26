@@ -9,37 +9,36 @@ the branch-level view of what is still IN FLIGHT. A branch with an **open PR** i
 that is **unmerged with no open PR** is an *orphan* — stranded work to land or delete.
 Source: `scripts/lib-branch-audit.sh` (@PLN112 / @PLN20 lib-health).
 
-**12 unmerged branch(es) across 7 repo(s); 9 orphan(s) (unmerged, no open PR).**
+**11 unmerged branch(es) across 7 repo(s); 8 orphan(s) (unmerged, no open PR).**
 
 ## loft-libs-assets
 
-- `doc-types-2026-09` — PR no-PR · (1 files) — Document the public types the 2026-09 review f  ⚠ orphan
+- `laptop-perf-bench` — PR no-PR · (10 files) — assets test: discharge the u8 stores loft now   ⚠ orphan
 - `tuxedo-assets-w6` — PR #11 open · (4 files) — A sprite reaches a page without becoming a fil
 
 ## loft-libs-core
 
-- `doc-types-2026-09` — PR no-PR · (2 files) — Document the public types the 2026-09 review f  ⚠ orphan
+- `laptop-perf-bench` — PR no-PR · (15 files) — bench: crypto, cbor, arguments and zttext agai  ⚠ orphan
 
 ## loft-libs-docs
 
-- `doc-types-2026-09` — PR no-PR · (1 files) — Document the public types the 2026-09 review f  ⚠ orphan
+- `laptop-perf-bench` — PR no-PR · (5 files) — bench: markdown and html — render, render_in  ⚠ orphan
 
 ## loft-libs-game
 
+- `laptop-perf-bench` — PR no-PR · (6 files) — bench: time and fixstep — every census routi  ⚠ orphan
 - `tuxedo-audio-bus` — PR #12 open · (8 files) — audio_bus 0.1.0 — one slider, many sounds
 
 ## loft-libs-graphics
 
-- `doc-types-2026-09` — PR no-PR · (5 files) — Document the public types the 2026-09 review f  ⚠ orphan
 - `drawing-lock` — PR no-PR · (12 files) — drawing bench: the four scene rows get their R  ⚠ orphan
-- `imaging-narrowing-cure` — PR no-PR · (3 files) — imaging 0.3.3: the channel constructions say w  ⚠ orphan
-- `tuxedo-android-gl-port` — PR no-PR · (48 files) — The Android backend compiles, and it feeds the  ⚠ orphan
+- `laptop-perf-bench` — PR no-PR · (30 files) — bench: graphics, stage and shapes against plai  ⚠ orphan
 - `tuxedo-drawing-w4` — PR #46 open · (14 files) — graphics builds and runs under wasm, canvas an
 
 ## loft-libs-net
 
-- `doc-types-2026-09` — PR no-PR · (2 files) — Document the public types the 2026-09 review f  ⚠ orphan
+- `laptop-perf-bench` — PR no-PR · (11 files) — bench: server and game_protocol against plain-  ⚠ orphan
 
 ## loft-libs-world
 
-- `doc-types-2026-09` — PR no-PR · (10 files) — Document the public types the 2026-09 review f  ⚠ orphan
+- `laptop-perf-bench` — PR no-PR · (42 files) — bench: hex_body and hex_form twins follow the   ⚠ orphan
