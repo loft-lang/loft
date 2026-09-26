@@ -731,6 +731,21 @@ buffer stranding what its previous occupant owned) opened and CLOSED 2026-09-17,
 read the source record through a number captured before the growth relocated it) opened and
 CLOSED 2026-09-17, below.
 
+### D-heap-44 — OPENED AND CLOSED (2026-09-26, loft#1693): a disturbed struct-enum view was not materialised on the interpreter
+
+`(H-Materialise)` makes a view whose container is disturbed while it is live take the copy step at
+the bind, and says the author is told.  For a struct-ENUM element the interpreter kept the interior
+pointer: `c = v[0]; v.remove(0)` read the NEXT element, a growth read `null`, a reassigned
+container its new first element — while `--native` copied, and the advice ("`c` was copied out of
+`v`") described a copy the interpreter never made.  A struct element materialised on both.
+**Where.**  The interpreter's materialise arm (`state/codegen.rs`, first bind and its reassignment
+twin) matched `Type::Reference(d_nr, _)`; native's (`generation/dispatch.rs`) asks
+`heap_def_nr().is_some()`, which is `Reference` or a struct-`Enum`.  One question — is this a
+heap record the bind can copy — asked two ways.  **Fix.**  The interpreter asks `heap_def_nr()`.
+Guard `tests/scripts/1693-a-disturbed-struct-enum-view-is-materialised-on-both-backends.loft`
+(removal, growth, a heap payload, a reassigned container, a vector field, a rebind per pass, and
+the two `(B-Disturb)` controls that stay views).
+
 ### D-heap-43 — OPENED AND CLOSED (2026-09-24, loft#1666): clearing a vector FIELD of a multi-field record released nothing of its elements
 
 - **Violates:** (H-ClearRelease) — *clearing a vector that outlives the clear releases what its
