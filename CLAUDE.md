@@ -134,6 +134,13 @@ make view                                # branch-aware doc/code viewer; binds L
                                          #   ssh -N -L 8765:127.0.0.1:8765 <host>
 ```
 
+**Never wait on a process by NAME** — `until ! pgrep -f "make ci"` never exits, because the waiting
+shell's own command line contains the text it searches for (and `pkill -f` by name has killed a
+sibling checkout's run).  Wait on the recorded PID (`scripts/ci-run.sh status`, the pid
+`find_problems.sh --bg` prints) or on the output FILE (`[ -s <out> ]`, its mtime); a `[m]ake`
+bracket or `pgrep -x` only moves the failure.  Agents repeated this mistake many times after it was
+documented: [CODE.md § shell](doc/claude/CODE.md) has the measurements.
+
 **Bound ad-hoc runs** (loft is unbounded by default; tests already arm a 300s watchdog). Especially
 for `--native` (rustc can hang): `LOFT_TIMEOUT=60 loft --native p.loft` or `loft --timeout 60 p.loft`
 (0 = off). Hard-kills at `timeout+grace` (grace 2s, `LOFT_TIMEOUT_GRACE`). Ref: DEBUG.md, TESTING.md.
