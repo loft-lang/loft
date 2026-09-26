@@ -84,7 +84,7 @@ This administrates variables and scopes for a specific function.
 - Variables might exist in multiple scopes but not with different types.
 - We allow for variables to move to a higher scope.
 */
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
 // Iterator details on each for loop inside the current function
@@ -616,7 +616,10 @@ pub struct Function {
     /// original store is never freed by the callee and a fresh rebind store is.
     /// Parse-time only: on a snapshot load `scopes::check` is skipped (the frees
     /// are already in `code`), so this map is not part of the snapshot.
-    rebind_orig: HashMap<u16, u16>,
+    /// Ordered, because `rebind_params` is iterated to EMIT the scope-exit releases of every
+    /// rebound parameter, and a `std` hash map handed them out in a different order on every
+    /// run — the same program dumped to different IR and bytecode run to run (loft#1685).
+    rebind_orig: BTreeMap<u16, u16>,
     /// A heap-record LOCAL whose assignments MIX ownership — one hands it a store of its
     /// own, another a view — maps to its OWNER WITNESS `__own_<name>`: a hidden reference
     /// that names the store the local minted for as long as the local still holds it, and
@@ -657,7 +660,10 @@ fn swap_in_hset(s: &mut HashSet<u16>, a: u16, b: u16) {
 }
 
 /// Swap `a`/`b` in BOTH the keys and the values of a var→var map.
-fn swap_map_indices(m: &mut HashMap<u16, u16>, a: u16, b: u16) {
+fn swap_map_indices<M>(m: &mut M, a: u16, b: u16)
+where
+    M: Default + IntoIterator<Item = (u16, u16)> + FromIterator<(u16, u16)>,
+{
     let swap1 = |x: u16| {
         if x == a {
             b
@@ -667,7 +673,10 @@ fn swap_map_indices(m: &mut HashMap<u16, u16>, a: u16, b: u16) {
             x
         }
     };
-    *m = m.iter().map(|(&k, &v)| (swap1(k), swap1(v))).collect();
+    *m = std::mem::take(m)
+        .into_iter()
+        .map(|(k, v)| (swap1(k), swap1(v)))
+        .collect();
 }
 
 impl Display for Function {
@@ -724,7 +733,7 @@ impl Function {
             logging: false,
             done: false,
             closure_var_map: HashMap::new(),
-            rebind_orig: HashMap::new(),
+            rebind_orig: BTreeMap::new(),
             owner_witness: HashMap::new(),
         }
     }
