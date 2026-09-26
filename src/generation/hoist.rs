@@ -2580,7 +2580,11 @@ pub const FUSABLE_PUSHES: [(&str, &str, u32); 8] = [
 /// encoded by `Store::byte_raw`, the `i32`/`u32` kinds convert in the push emitter).
 #[must_use]
 pub fn push_value_cast(rust_type: &str, bias: bool) -> &'static str {
-    if rust_type == "u8" && !bias { " as u8" } else { "" }
+    if rust_type == "u8" && !bias {
+        " as u8"
+    } else {
+        ""
+    }
 }
 
 /// The operands of a fused push: the vector, the byte kind's `min` bias, the value.  Every
