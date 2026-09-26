@@ -6838,6 +6838,9 @@ impl Parser {
                             ) {
                                 field_conditions.push(cond);
                             }
+                            // The names a sub-pattern bound belong to this arm; its end
+                            // restores them.
+                            self.pattern_binds_pending.append(&mut name_aliases);
                         } else {
                             let v = self.pattern_binding(&field_name, &field_type);
                             self.vars.defined(v);
@@ -7395,6 +7398,15 @@ impl Parser {
     fn pattern_variant_enum(&self, tp: &Type) -> Option<(u32, bool)> {
         // Through a `&` too: a tuple element taken from a `&T` binding is that `T`'s value,
         // and a variant pattern asks its enum exactly as a direct subject does (loft#1526).
+        // A value typed as one VARIANT (`w = Vn { rs: 7 }` infers `Vn`) is still a record of
+        // its enum, tag and all, so its patterns name the enum's variants — the mapping the
+        // top-level subject dispatch in `parse_match_inner` makes.  Asked of `Enum` alone, a
+        // tuple element of variant type refused `(Vn { rs }, k)` as "Vn, which has no variants".
+        if let Type::Reference(d_nr, _) = tp.peel_link()
+            && self.data.def_type(*d_nr) == DefType::EnumValue
+        {
+            return Some((self.data.def(*d_nr).parent(), true));
+        }
         let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
             return None;
         };
@@ -8522,6 +8534,8 @@ impl Parser {
                     tail_conds.push(tag);
                 }
                 tail_conds.append(&mut te_conds);
+                // The names a sub-pattern bound belong to this arm; its end restores them.
+                self.pattern_binds_pending.append(&mut aliases);
                 bindings.append(&mut te_binds);
             } else if let Some(name) = self.lexer.has_identifier() {
                 let bind_var = self.pattern_binding(&name, elm_tp);
@@ -10577,6 +10591,8 @@ impl Parser {
                             elem_conds.push(c);
                         }
                         elem_conds.append(&mut sub_conds);
+                        // The names a sub-pattern bound belong to this arm; its end restores them.
+                        self.pattern_binds_pending.append(&mut aliases);
                         head.push("_".to_string());
                     } else if self.peek_is_variant_subpattern(&elm_tp) {
                         // Read v[pos] and tag-test + bind via parse_field_sub_pattern; a "_"
@@ -10602,6 +10618,8 @@ impl Parser {
                             elem_conds.push(c);
                         }
                         elem_conds.append(&mut sub_conds);
+                        // The names a sub-pattern bound belong to this arm; its end restores them.
+                        self.pattern_binds_pending.append(&mut aliases);
                         if has_rest {
                             tail.push("_".to_string());
                         } else {
@@ -11224,6 +11242,8 @@ impl Parser {
                             elem_conds.push(c);
                         }
                         elem_conds.append(&mut sub_conds);
+                        // The names a sub-pattern bound belong to this arm; its end restores them.
+                        self.pattern_binds_pending.append(&mut aliases);
                     } else if let Some(id) = self.lexer.has_identifier() {
                         if id == "_" {
                             // element wildcard — no condition, no binding
