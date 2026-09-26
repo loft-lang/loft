@@ -1678,7 +1678,7 @@ use a separate collection or add after the loop"
     fn check_loop_source_write(&mut self, to: &Value, op: &str, f_type: &Type) {
         // An append to a collection a loop walks is refused outright (`check_iter_safety`);
         // only a REPLACING write is this notice's.
-        if op != "=" && matches!(f_type, Type::Vector(..)) {
+        if op != "=" && matches!(f_type.peel_link(), Type::Vector(..)) {
             return;
         }
         let Some(place) = self.vars.loop_source_written(to) else {
