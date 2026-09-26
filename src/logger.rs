@@ -379,7 +379,7 @@ impl Logger {
         let detail = kind.describe();
         let msg = format!("[{label}] {detail}");
         let (file, line) =
-            position.map_or_else(|| (String::new(), 0), |p| (p.file.clone(), p.line));
+            position.map_or_else(|| (String::new(), 0), |p| (p.file.to_string(), p.line));
         self.log(severity, &file, line, &msg);
     }
 

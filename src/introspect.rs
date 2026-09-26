@@ -600,7 +600,7 @@ fn per_iteration_frees(data: &Data, def: &crate::data::Definition) -> Vec<(Strin
         node: &Value,
         depth: u32,
         data: &Data,
-        free_nrs: &std::collections::HashSet<u32>,
+        free_nrs: &crate::fxhash::FxHashSet<u32>,
         db_nr: u32,
         vars: &crate::variables::Function,
         alloc: &mut HashMap<u16, u32>,

@@ -25,61 +25,292 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::{Result, Write};
 use std::num::NonZeroU8;
 
-/// A `(name, source)` key for [`Data`]'s definition index that can be BORROWED.
+/// [`Data`]'s definition index: a NAME → every definition bound under it, one per source.
 ///
-/// The index is keyed by `(String, u16)`, and a lookup with that key type has to allocate a
-/// `String` for every name it asks about — the front end asks hundreds of thousands of times
-/// per compile.  Both the owned tuple and `(&str, u16)` implement this trait, and the owned
-/// key borrows as it, so `def_names.get(&(name, source) as &dyn NameKey)` finds the same
-/// entry with no allocation.  The hash is the tuple's own (the name, then the source), which
-/// is what makes the two spellings land in the same bucket.
-trait NameKey {
-    fn name(&self) -> &str;
-    fn source(&self) -> u16;
+/// Keyed by the name alone, so a lookup hashes once and reads the bound sources off a
+/// short inline list.  `def_nr` asks for the current source and falls back to the stdlib,
+/// and under a `(name, source)` key that fallback was a second hash and probe for every
+/// stdlib name a program uses — 1.7 M lookups per compile of the large front-end corpus,
+/// 8 % of its instructions (@PLN166 B6).  Most names are bound in exactly one source;
+/// `rest` allocates only for a name an import aliases into a second one.
+pub(crate) struct DefIndex {
+    by_name: crate::fxhash::FxHashMap<String, DefSources>,
+    /// Bumped by every mutation; a remembered answer is valid only under the generation
+    /// it was read in, which invalidates the whole memo in O(1).
+    generation: u32,
+    /// The answers `get_or_std` gave last, direct-mapped by the asked name's ADDRESS.
+    /// The passes after the parse ask for the same literal names once per node they
+    /// visit (`data.def_nr("OpCopyRecord")` — 163 distinct literals over 795 sites, 1.2 M
+    /// of the 1.7 M lookups per compile), and by then the index does not change again, so an
+    /// address-keyed memo answers without hashing or probing.  A slot keeps the name's
+    /// bytes and compares them on a hit, so a heap buffer freed and reused at the same
+    /// address with other contents cannot be mistaken for the name it held.
+    remembered: Box<[Slot]>,
 }
 
-impl NameKey for (String, u16) {
-    fn name(&self) -> &str {
-        &self.0
-    }
-    fn source(&self) -> u16 {
-        self.1
-    }
-}
-
-impl NameKey for (&str, u16) {
-    fn name(&self) -> &str {
-        self.0
-    }
-    fn source(&self) -> u16 {
-        self.1
-    }
-}
-
-impl<'a> std::borrow::Borrow<dyn NameKey + 'a> for (String, u16) {
-    fn borrow(&self) -> &(dyn NameKey + 'a) {
-        self
+impl Clone for DefIndex {
+    /// A clone starts with a cold memo: the slots are per-index scratch, never state.
+    fn clone(&self) -> Self {
+        DefIndex {
+            by_name: self.by_name.clone(),
+            generation: self.generation,
+            remembered: Self::empty_memo(),
+        }
     }
 }
 
-impl std::hash::Hash for dyn NameKey + '_ {
-    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        self.name().hash(state);
-        self.source().hash(state);
+/// One remembered answer of [`DefIndex::get_or_std`]; `nr` is `u32::MAX` for "unbound".
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct Remembered {
+    generation: u32,
+    nr: u32,
+    source: u16,
+    len: u8,
+    name: [u64; REMEMBERED_WORDS],
+}
+
+/// A memo slot any thread may read or write without a lock — a `Data` is shared read-only
+/// across threads (`fuzz_oracle`'s parsed stdlib), so the memo cannot be a `Cell`.  Word 0 is
+/// a sequence, odd while a write is in progress; words 1–6 are the payload.  A reader that
+/// sees the sequence odd, or moved between its two reads, has read a torn slot and treats
+/// it as a miss; a writer that finds another write in progress skips its own.
+struct Slot([std::sync::atomic::AtomicU64; 1 + 2 + REMEMBERED_WORDS]);
+
+/// The longest name a slot remembers, in `u64` words; a longer one is looked up every time.
+const REMEMBERED_WORDS: usize = 4;
+const REMEMBERED_NAME: usize = REMEMBERED_WORDS * 8;
+/// Slots in the memo — a power of two, so the slot of an address is a mask.
+const REMEMBERED_SLOTS: usize = 1024;
+
+impl Slot {
+    fn empty() -> Self {
+        // Generation `u32::MAX` is never current (`mutated` skips it), so an empty slot
+        // cannot hit.
+        Slot(std::array::from_fn(|i| {
+            std::sync::atomic::AtomicU64::new(if i == 1 { u64::from(u32::MAX) << 32 } else { 0 })
+        }))
+    }
+
+    fn read(&self) -> Option<Remembered> {
+        use std::sync::atomic::Ordering::{Acquire, Relaxed};
+        let sequence = self.0[0].load(Acquire);
+        if sequence & 1 == 1 {
+            return None;
+        }
+        let w1 = self.0[1].load(Relaxed);
+        let w2 = self.0[2].load(Relaxed);
+        let name = std::array::from_fn(|i| self.0[3 + i].load(Relaxed));
+        std::sync::atomic::fence(Acquire);
+        if self.0[0].load(Relaxed) != sequence {
+            return None;
+        }
+        Some(Remembered {
+            generation: (w1 >> 32) as u32,
+            nr: w1 as u32,
+            source: (w2 >> 32) as u16,
+            len: w2 as u8,
+            name,
+        })
+    }
+
+    fn write(&self, r: Remembered) {
+        use std::sync::atomic::Ordering::{Acquire, Relaxed, Release};
+        let sequence = self.0[0].load(Relaxed);
+        if sequence & 1 == 1
+            || self.0[0]
+                .compare_exchange(sequence, sequence + 1, Acquire, Relaxed)
+                .is_err()
+        {
+            return;
+        }
+        self.0[1].store((u64::from(r.generation) << 32) | u64::from(r.nr), Relaxed);
+        self.0[2].store((u64::from(r.source) << 32) | u64::from(r.len), Relaxed);
+        for (i, w) in r.name.iter().enumerate() {
+            self.0[3 + i].store(*w, Relaxed);
+        }
+        self.0[0].store(sequence + 2, Release);
     }
 }
 
-impl PartialEq for dyn NameKey + '_ {
-    fn eq(&self, other: &Self) -> bool {
-        self.source() == other.source() && self.name() == other.name()
+/// The sources one name is bound in, each with its definition number.
+#[derive(Clone)]
+struct DefSources {
+    first: (u16, u32),
+    rest: Vec<(u16, u32)>,
+}
+
+impl DefSources {
+    fn get(&self, source: u16) -> Option<u32> {
+        if self.first.0 == source {
+            return Some(self.first.1);
+        }
+        self.rest
+            .iter()
+            .find(|(s, _)| *s == source)
+            .map(|&(_, nr)| nr)
+    }
+
+    fn slot(&mut self, source: u16) -> Option<&mut u32> {
+        if self.first.0 == source {
+            return Some(&mut self.first.1);
+        }
+        self.rest
+            .iter_mut()
+            .find(|(s, _)| *s == source)
+            .map(|(_, nr)| nr)
+    }
+
+    fn iter(&self) -> impl Iterator<Item = (u16, u32)> + '_ {
+        std::iter::once(self.first).chain(self.rest.iter().copied())
     }
 }
 
-impl Eq for dyn NameKey + '_ {}
+impl Default for DefIndex {
+    fn default() -> Self {
+        DefIndex {
+            by_name: crate::fxhash::FxHashMap::default(),
+            generation: 0,
+            remembered: Self::empty_memo(),
+        }
+    }
+}
 
-/// The borrowed form of a definition-index key: see [`NameKey`].
-fn name_key(name: &str, source: u16) -> (&str, u16) {
-    (name, source)
+impl DefIndex {
+    fn empty_memo() -> Box<[Slot]> {
+        (0..REMEMBERED_SLOTS).map(|_| Slot::empty()).collect()
+    }
+
+    /// Every remembered answer is stale from here on.
+    fn mutated(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+        if self.generation == u32::MAX {
+            // The wrap-around would let a slot written 4 billion mutations ago read as
+            // current again; a fresh memo costs nothing at that rate.
+            self.remembered = Self::empty_memo();
+            self.generation = 0;
+        }
+    }
+
+    /// The definition `name` is bound to in `source`, exactly that source.
+    pub(crate) fn get(&self, name: &str, source: u16) -> Option<u32> {
+        self.by_name.get(name)?.get(source)
+    }
+
+    /// `source` first, then the stdlib — one hash of the name for both, and none at all
+    /// for a name asked again from the same address since the index last changed.
+    pub(crate) fn get_or_std(&self, name: &str, source: u16) -> Option<u32> {
+        let bytes = name.as_bytes();
+        if bytes.len() > REMEMBERED_NAME {
+            return self.lookup_or_std(name, source);
+        }
+        let slot = &self.remembered[Self::slot_of(bytes.as_ptr(), source)];
+        let mut copy = [0u8; REMEMBERED_NAME];
+        copy[..bytes.len()].copy_from_slice(bytes);
+        let asked = std::array::from_fn(|i| {
+            u64::from_ne_bytes(copy[i * 8..i * 8 + 8].try_into().expect("eight bytes"))
+        });
+        if let Some(seen) = slot.read()
+            && seen.generation == self.generation
+            && seen.source == source
+            && seen.len as usize == bytes.len()
+            && seen.name == asked
+        {
+            return (seen.nr != u32::MAX).then_some(seen.nr);
+        }
+        let nr = self.lookup_or_std(name, source);
+        slot.write(Remembered {
+            generation: self.generation,
+            nr: nr.unwrap_or(u32::MAX),
+            source,
+            len: bytes.len() as u8,
+            name: asked,
+        });
+        nr
+    }
+
+    fn slot_of(at: *const u8, source: u16) -> usize {
+        // A literal's address is 8- or 16-byte aligned more often than not, so the low
+        // bits carry nothing; the multiply spreads the rest over the slots.
+        let mixed = ((at as usize) >> 3).wrapping_mul(0x9E37_79B9) ^ (source as usize);
+        mixed & (REMEMBERED_SLOTS - 1)
+    }
+
+    fn lookup_or_std(&self, name: &str, source: u16) -> Option<u32> {
+        let bound = self.by_name.get(name)?;
+        bound.get(source).or_else(|| {
+            if source == STD_SOURCE {
+                None
+            } else {
+                bound.get(STD_SOURCE)
+            }
+        })
+    }
+
+    pub(crate) fn contains(&self, name: &str, source: u16) -> bool {
+        self.get(name, source).is_some()
+    }
+
+    /// Bound in ANY source.
+    pub(crate) fn contains_name(&self, name: &str) -> bool {
+        self.by_name.contains_key(name)
+    }
+
+    /// Bind `name` in `source`, replacing an existing binding; answers what it replaced.
+    pub(crate) fn insert(&mut self, name: &str, source: u16, nr: u32) -> Option<u32> {
+        self.mutated();
+        if let Some(bound) = self.by_name.get_mut(name) {
+            if let Some(slot) = bound.slot(source) {
+                return Some(std::mem::replace(slot, nr));
+            }
+            bound.rest.push((source, nr));
+        } else {
+            self.by_name.insert(
+                name.to_string(),
+                DefSources {
+                    first: (source, nr),
+                    rest: Vec::new(),
+                },
+            );
+        }
+        None
+    }
+
+    /// Bind `name` in `source` unless it already is: an existing binding stays.
+    pub(crate) fn insert_if_absent(&mut self, name: &str, source: u16, nr: u32) {
+        if !self.contains(name, source) {
+            self.insert(name, source, nr);
+        }
+    }
+
+    pub(crate) fn remove(&mut self, name: &str, source: u16) -> Option<u32> {
+        self.mutated();
+        let bound = self.by_name.get_mut(name)?;
+        let removed = if bound.first.0 == source {
+            let nr = bound.first.1;
+            if bound.rest.is_empty() {
+                self.by_name.remove(name);
+                return Some(nr);
+            }
+            bound.first = bound.rest.remove(0);
+            nr
+        } else {
+            let at = bound.rest.iter().position(|(s, _)| *s == source)?;
+            bound.rest.remove(at).1
+        };
+        Some(removed)
+    }
+
+    pub(crate) fn clear(&mut self) {
+        self.mutated();
+        self.by_name.clear();
+    }
+
+    /// Every binding as `(name, source, def_nr)`, in no particular order.
+    pub(crate) fn iter(&self) -> impl Iterator<Item = (&str, u16, u32)> + '_ {
+        self.by_name
+            .iter()
+            .flat_map(|(name, bound)| bound.iter().map(move |(s, nr)| (name.as_str(), s, nr)))
+    }
 }
 
 static OPERATORS: &[&str] = &[
@@ -4592,6 +4823,15 @@ pub struct Definition {
     pub def_type: DefType,
     /// Parent definition for `EnumValue` or `StructPart`. Initial `u32::MAX`.
     pub parent: u32,
+    /// The index behind [`Data::children_of`]: this definition's first child, and the next
+    /// child of its own parent, as definition numbers (`u32::MAX` = none), kept in ascending
+    /// order.  DERIVED from `parent` and written only by [`Data::set_parent`] and the index
+    /// rebuild, so a variant lookup walks the enum's variants and not every definition in
+    /// the program (@PLN166 B4: `enums_with_variant` scanned the whole table once per enum
+    /// per call, 3.5 % of a compile).  Two links inside the record rather than a list per
+    /// definition, so the index allocates nothing the front-end allocation ratchet could see.
+    pub(crate) first_child: u32,
+    pub(crate) next_sibling: u32,
     /// The source file position where this is defined, only allow redefinitions within the same file.
     /// This might eventually also limit access to protected internals.
     pub position: Position,
@@ -5718,7 +5958,7 @@ pub struct Data {
     /// fault reads the same `Data` through a shared pointer.
     lazy_drivers: LazyDriverCache,
     /// Index on definitions on name
-    def_names: HashMap<(String, u16), u32>,
+    def_names: DefIndex,
     use_names: HashMap<String, u16>,
     /// loft#925 — libraries already parsed into this `Data` before the program
     /// parse begins, re-seeded into `use_names` by every [`reset`](Self::reset).
@@ -6531,7 +6771,7 @@ impl Data {
         Data {
             definitions: Vec::new(),
             lazy_drivers: LazyDriverCache::default(),
-            def_names: HashMap::new(),
+            def_names: DefIndex::default(),
             use_names: HashMap::new(),
             preloaded_uses: HashMap::new(),
             applied: Vec::new(),
@@ -6621,14 +6861,14 @@ impl Data {
             } else {
                 self.def_names
                     .iter()
-                    .filter(|((_, src), nr)| {
-                        **nr < keep
+                    .filter(|&(_, src, nr)| {
+                        nr < keep
                             && self
                                 .definitions
-                                .get(**nr as usize)
-                                .is_some_and(|d| d.source != *src)
+                                .get(nr as usize)
+                                .is_some_and(|d| d.source != src)
                     })
-                    .map(|((n, s), &nr)| (n.clone(), *s, nr))
+                    .map(|(n, s, nr)| (n.to_string(), s, nr))
                     .collect()
             };
             self.definitions.truncate(keep as usize);
@@ -6644,9 +6884,7 @@ impl Data {
             self.rebuild_indices();
             for (name, src, nr) in expected {
                 assert_eq!(
-                    self.def_names
-                        .get(&name_key(&name, src) as &dyn NameKey)
-                        .copied(),
+                    self.def_names.get(&name, src),
                     Some(nr),
                     "a rollback dropped the import alias `{name}` visible from source                      {src} (definition #{nr}).  `rebuild_indices` reconstructs                      `def_names` from `definitions`, which know only their own source,                      so any cross-source binding has to be replayed — see                      `Data::replay_imports`.  A dropped alias makes every `use`d name                      unresolvable for the rest of the session."
                 );
@@ -6681,6 +6919,7 @@ impl Data {
     /// `(name, own_source)` but never the `(name, importing_source)` alias an import
     /// creates.  Without the replay a rollback drops every `use`d name.
     pub(crate) fn rebuild_indices(&mut self) {
+        self.rebuild_children();
         // A rollback can REMOVE definitions as well as add them, so the count alone
         // could in principle land back on its old value over a different table.  This
         // is the one place that happens, and dropping the cache here costs one rebuild.
@@ -6699,11 +6938,9 @@ impl Data {
             // flat key (reachable as a type/constructor); a later same-key variant
             // does not overwrite it.  Every other def kind is unique per source.
             if def.def_type == DefType::EnumValue {
-                self.def_names
-                    .entry((def.name.clone(), def.source))
-                    .or_insert(d_nr);
+                self.def_names.insert_if_absent(&def.name, def.source, d_nr);
             } else {
-                self.def_names.insert((def.name.clone(), def.source), d_nr);
+                self.def_names.insert(&def.name, def.source, d_nr);
             }
             if def.is_operator() {
                 if def.op_code != u16::MAX {
@@ -6746,27 +6983,22 @@ impl Data {
                 .map_or("<oob>", |x| x.name.as_str())
                 .to_string()
         };
-        for (k, v) in &self.def_names {
-            match other.def_names.get(k) {
+        for (name, src, v) in self.def_names.iter() {
+            match other.def_names.get(name, src) {
                 None => out.push(format!(
-                    "def_names: (\"{}\", src {}) -> #{} '{}' present in FRESH, MISSING in loaded",
-                    k.0,
-                    k.1,
-                    v,
-                    name_of(self, *v)
+                    "def_names: (\"{name}\", src {src}) -> #{v} '{}' present in FRESH, MISSING in loaded",
+                    name_of(self, v)
                 )),
                 Some(ov) if ov != v => out.push(format!(
-                    "def_names: (\"{}\", src {}) fresh=#{} loaded=#{}",
-                    k.0, k.1, v, ov
+                    "def_names: (\"{name}\", src {src}) fresh=#{v} loaded=#{ov}"
                 )),
                 _ => {}
             }
         }
-        for (k, v) in &other.def_names {
-            if !self.def_names.contains_key(k) {
+        for (name, src, v) in other.def_names.iter() {
+            if !self.def_names.contains(name, src) {
                 out.push(format!(
-                    "def_names: (\"{}\", src {}) -> #{} EXTRA in loaded (not in fresh)",
-                    k.0, k.1, v
+                    "def_names: (\"{name}\", src {src}) -> #{v} EXTRA in loaded (not in fresh)"
                 ));
             }
         }
@@ -7078,17 +7310,13 @@ impl Data {
         // variant name can never silently break an existing bare assignment.
         // Every OTHER def kind keeps the flat key + the hard dual-definition guard.
         if def_type == DefType::EnumValue {
-            self.def_names
-                .entry((name.to_string(), self.source))
-                .or_insert(rec);
+            self.def_names.insert_if_absent(name, self.source, rec);
         } else {
             assert!(
-                !self
-                    .def_names
-                    .contains_key(&name_key(name, self.source) as &dyn NameKey),
+                !self.def_names.contains(name, self.source),
                 "Dual definition of {name} at {position}"
             );
-            self.def_names.insert((name.to_string(), self.source), rec);
+            self.def_names.insert(name, self.source, rec);
         }
         let new_def = Definition {
             bound_holder: false,
@@ -7097,6 +7325,8 @@ impl Data {
             position: position.clone(),
             def_type,
             parent: u32::MAX,
+            first_child: u32::MAX,
+            next_sibling: u32::MAX,
             attributes: Vec::default(),
             attr_names: HashMap::default(),
             code: Value::Null,
@@ -7760,8 +7990,7 @@ impl Data {
     pub fn store_text_instance(&self, d: u32, mask: u64) -> u32 {
         let def = self.def(d);
         self.def_names
-            .get(&(format!("{}@st{mask}", def.name), def.source))
-            .copied()
+            .get(&format!("{}@st{mask}", def.name), def.source)
             .unwrap_or(u32::MAX)
     }
 
@@ -8003,8 +8232,8 @@ impl Data {
             let old = self.def(incumbent).name.clone();
             let src = self.def(incumbent).source;
             let new = Self::mangle_free_overload(&full, fn_name);
-            self.def_names.remove(&(old, src));
-            self.def_names.insert((new.clone(), src), incumbent);
+            self.def_names.remove(&old, src);
+            self.def_names.insert(&new, src, incumbent);
             self.definitions[incumbent as usize].name = new;
             full
         };
@@ -8357,7 +8586,7 @@ impl Data {
     /// free registered the same structure twice and aborted the compiler.
     #[must_use]
     pub fn name_taken_anywhere(&self, name: &str) -> bool {
-        self.def_names.keys().any(|(n, _)| n == name)
+        self.def_names.contains_name(name)
     }
 
     /// The placeholder a header spelling `<T>` (or `<T: Ordered>`) already names, read off the
@@ -9486,16 +9715,15 @@ impl Data {
         if self.def_nr(&fld) == u32::MAX {
             let d = self.add_def(&fld, lexer.pos(), DefType::Vector);
             self.definitions[d as usize].returned = fld_tp;
-            self.definitions[d as usize].parent = self.type_def_nr(tp);
+            let owner = self.type_def_nr(tp);
+            self.set_parent(d, owner);
         }
         let name = format!("main_vector<{}>", tp.name(self));
         let d_nr = self.def_nr(&name);
         if d_nr == u32::MAX {
             let vd = self.add_def(&name, lexer.pos(), DefType::Struct);
             // Also register globally (source=0) so other files can find it.
-            self.def_names
-                .entry((name.clone(), STD_SOURCE))
-                .or_insert(vd);
+            self.def_names.insert_if_absent(&name, STD_SOURCE, vd);
             // This synthetic wrapper is global, not owned by the file that
             // happened to first request it.  Stamp `source = 0` so a cache
             // reload's `rebuild_indices` (which keys `def_names` on each def's
@@ -9518,7 +9746,7 @@ impl Data {
             // reached it — @PLN119 arc F's `engine_host::turn() -> Turn` — and
             // it took down a live-reload session on the first bad edit.
             if requested_from != STD_SOURCE {
-                self.def_names.remove(&(name.clone(), requested_from));
+                self.def_names.remove(&name, requested_from);
             }
             self.add_attribute(
                 lexer,
@@ -9619,10 +9847,7 @@ impl Data {
             self.definitions[template as usize].name,
             spelled.join(",")
         );
-        if let Some(&nr) = self
-            .def_names
-            .get(&name_key(&name, STD_SOURCE) as &dyn NameKey)
-        {
+        if let Some(nr) = self.def_names.get(&name, STD_SOURCE) {
             return nr;
         }
         // Termination (@PLN165 D7): a template mentioning itself IRREGULARLY
@@ -9643,7 +9868,7 @@ impl Data {
             DefType::Struct
         };
         let d = self.add_def(&name, &position, kind);
-        self.def_names.entry((name, STD_SOURCE)).or_insert(d);
+        self.def_names.insert_if_absent(&name, STD_SOURCE, d);
         self.definitions[d as usize].source = STD_SOURCE;
         self.definitions[d as usize].returned = match enum_mixed {
             Some(mixed) => Type::Enum(d, mixed, Deps::none()),
@@ -9701,7 +9926,7 @@ impl Data {
             let vname = self.definitions[v as usize].name.clone();
             let vd = self.add_def(&vname, &position, DefType::EnumValue);
             self.definitions[vd as usize].source = STD_SOURCE;
-            self.definitions[vd as usize].parent = d;
+            self.set_parent(vd, d);
             // As its template variant says: a payload variant is `Enum(_, true)`, and a unit
             // variant of a mixed enum takes its parent's form (`parse_enum_values`).
             let variant_mixed = matches!(
@@ -9864,16 +10089,10 @@ impl Data {
         }
         let inner_names: Vec<String> = types.iter().map(|t| t.name(self)).collect();
         let name = format!("__tuple<{}>", inner_names.join(","));
-        if let Some(&nr) = self
-            .def_names
-            .get(&name_key(&name, STD_SOURCE) as &dyn NameKey)
-        {
+        if let Some(nr) = self.def_names.get(&name, STD_SOURCE) {
             return nr;
         }
-        if let Some(&nr) = self
-            .def_names
-            .get(&name_key(&name, self.source) as &dyn NameKey)
-        {
+        if let Some(nr) = self.def_names.get(&name, self.source) {
             return nr;
         }
         let d = self.add_def(&name, lexer.pos(), DefType::Struct);
@@ -9881,9 +10100,7 @@ impl Data {
         // same tuple shape resolve to the same def.  Stamp `source = 0` too so
         // a cache reload's `rebuild_indices` reproduces the global binding (see
         // `vector_def`).
-        self.def_names
-            .entry((name.clone(), STD_SOURCE))
-            .or_insert(d);
+        self.def_names.insert_if_absent(&name, STD_SOURCE, d);
         self.definitions[d as usize].source = STD_SOURCE;
         self.definitions[d as usize].returned = Type::Reference(d, Deps::none());
         let mut indices: Vec<u16> = Vec::with_capacity(types.len());
@@ -9988,9 +10205,7 @@ impl Data {
             Type::Enum(syn, true, _) => {
                 let def = self.definitions.get(*syn as usize)?;
                 let inner = def.name.strip_prefix("__nullable<")?.strip_suffix('>')?;
-                self.def_names
-                    .get(&name_key(inner, def.source) as &dyn NameKey)
-                    .copied()
+                self.def_names.get(inner, def.source)
             }
             _ => None,
         }
@@ -10075,10 +10290,7 @@ impl Data {
         // struct (a different `self.source`) resolves to the same synth via the struct's source,
         // because deps parse before dependents.
         let struct_source = self.definitions[struct_d as usize].source;
-        if let Some(&nr) = self
-            .def_names
-            .get(&name_key(&name, struct_source) as &dyn NameKey)
-        {
+        if let Some(nr) = self.def_names.get(&name, struct_source) {
             return nr;
         }
         let pos = lexer.pos().clone();
@@ -10102,7 +10314,7 @@ impl Data {
         // `enum` attribute of its own (matches `parse_enum_values`); its
         // discriminant rides the `Some` variant's offset-0 slot.
         let nv = self.add_def("Null", &pos, DefType::EnumValue);
-        self.definitions[nv as usize].parent = e;
+        self.set_parent(nv, e);
         self.set_returned(nv, Type::Enum(e, true, Deps::none()));
         let null_attr = self.add_attribute(lexer, e, "Null", Type::Enum(e, true, Deps::none()));
         self.definitions[e as usize].attributes[null_attr].constant = true;
@@ -10110,7 +10322,7 @@ impl Data {
 
         // Variant 1 — `Some` carrying struct_d's fields.  nr = 1 ⇒ discriminant 2.
         let sv = self.add_def("Some", &pos, DefType::EnumValue);
-        self.definitions[sv as usize].parent = e;
+        self.set_parent(sv, e);
         self.set_returned(sv, Type::Enum(e, true, Deps::none()));
         let some_attr = self.add_attribute(lexer, e, "Some", Type::Enum(e, true, Deps::none()));
         self.definitions[e as usize].attributes[some_attr].constant = true;
@@ -10169,16 +10381,10 @@ impl Data {
     /// across every `Type::Function(...)` value in the program.
     pub fn fn_ref_def(&mut self, lexer: &mut Lexer) -> u32 {
         let name = "__fn_ref".to_string();
-        if let Some(&nr) = self
-            .def_names
-            .get(&name_key(&name, STD_SOURCE) as &dyn NameKey)
-        {
+        if let Some(nr) = self.def_names.get(&name, STD_SOURCE) {
             return nr;
         }
-        if let Some(&nr) = self
-            .def_names
-            .get(&name_key(&name, self.source) as &dyn NameKey)
-        {
+        if let Some(nr) = self.def_names.get(&name, self.source) {
             return nr;
         }
         let d = self.add_def(&name, lexer.pos(), DefType::Struct);
@@ -10186,9 +10392,7 @@ impl Data {
         // `Type::Function` across all source files resolves to the
         // same synthetic struct.  Stamp `source = 0` too so a cache reload's
         // `rebuild_indices` reproduces the global binding (see `vector_def`).
-        self.def_names
-            .entry((name.clone(), STD_SOURCE))
-            .or_insert(d);
+        self.def_names.insert_if_absent(&name, STD_SOURCE, d);
         self.definitions[d as usize].source = STD_SOURCE;
         self.definitions[d as usize].returned = Type::Reference(d, Deps::none());
         // `_d_nr`: 4-byte signed integer holding the function's
@@ -10230,7 +10434,7 @@ impl Data {
         let mut v_nr = self.def_nr(&vec_name);
         if v_nr == u32::MAX {
             v_nr = self.add_def(&vec_name, pos, DefType::Vector);
-            self.definitions[v_nr as usize].parent = d_nr;
+            self.set_parent(v_nr, d_nr);
         }
         self.definitions[v_nr as usize].known_type = vec_tp;
         v_nr
@@ -10440,7 +10644,7 @@ impl Data {
     /// after this restores the placeholder's key; the declaration that took it is rolled
     /// back with it, which is the state they were both in before.
     pub(crate) fn release_def_name(&mut self, name: &str, source: u16) {
-        let _ = self.def_names.remove(&(name.to_string(), source));
+        let _ = self.def_names.remove(name, source);
     }
 
     /// A generic type-variable placeholder: the attribute-less, self-referential
@@ -10479,19 +10683,9 @@ impl Data {
     /// This will test both the own source file or the standard library data.
     #[must_use]
     pub fn def_nr(&self, name: &str) -> u32 {
-        if let Some(nr) = self
-            .def_names
-            .get(&name_key(name, self.source) as &dyn NameKey)
-        {
-            *nr
-        } else if let Some(nr) = self
-            .def_names
-            .get(&name_key(name, STD_SOURCE) as &dyn NameKey)
-        {
-            *nr
-        } else {
-            u32::MAX
-        }
+        self.def_names
+            .get_or_std(name, self.source)
+            .unwrap_or(u32::MAX)
     }
 
     /// @PLN125 arc B — the scope-end hook declared for a type, or `u32::MAX` when it has
@@ -11113,10 +11307,7 @@ impl Data {
         if source == u16::MAX {
             return self.def_nr(name);
         }
-        let Some(nr) = self.def_names.get(&name_key(name, source) as &dyn NameKey) else {
-            return u32::MAX;
-        };
-        *nr
+        self.def_names.get(name, source).unwrap_or(u32::MAX)
     }
 
     /** Get the definition by name
@@ -11125,13 +11316,8 @@ impl Data {
     */
     #[must_use]
     pub fn name_type(&self, name: &str, source: u16) -> u16 {
-        let nr = if let Some(nr) = self.def_names.get(&name_key(name, source) as &dyn NameKey) {
-            *nr
-        } else if let Some(nr) = self
-            .def_names
-            .get(&name_key(name, STD_SOURCE) as &dyn NameKey)
-        {
-            *nr
+        let nr = if let Some(nr) = self.def_names.get_or_std(name, source) {
+            nr
         } else {
             return u16::MAX;
         };
@@ -11144,10 +11330,10 @@ impl Data {
     */
     #[must_use]
     pub fn source_name(&self, source: u16, name: &str) -> &Definition {
-        let Some(nr) = self.def_names.get(&name_key(name, source) as &dyn NameKey) else {
+        let Some(nr) = self.def_names.get(name, source) else {
             panic!("Unknown definition {name}");
         };
-        &self.definitions[*nr as usize]
+        &self.definitions[nr as usize]
     }
 
     /// #271: true if some source defines `name` as a NON-`pub` struct/enum type.
@@ -11156,10 +11342,14 @@ impl Data {
     /// no definition — letting the parser explain "it's private" instead of a
     /// baffling `Expect token ;` at the `{`.
     pub fn has_private_type(&self, name: &str) -> bool {
-        self.def_names.iter().any(|((n, _), &d)| {
-            n == name
-                && !self.definitions[d as usize].pub_visible
-                && matches!(self.def_type(d), DefType::Struct | DefType::Enum)
+        // Over the definitions, cheapest test first: the kind and the visibility are a byte
+        // each, and only a private type's name is ever compared.  Asked once per unresolved
+        // struct literal, and a walk over the name index compared every name in the program
+        // first (1.9 % of a compile of the front-end corpus, @PLN166 B4).
+        self.definitions.iter().any(|d| {
+            matches!(d.def_type, DefType::Struct | DefType::Enum)
+                && !d.pub_visible
+                && d.name == name
         })
     }
 
@@ -11185,20 +11375,20 @@ impl Data {
             *defined.entry(d.source).or_default() += 1;
             let f = &d.position.file;
             if !f.is_empty() {
-                file_of.entry(d.source).or_insert_with(|| f.clone());
+                file_of.entry(d.source).or_insert_with(|| f.to_string());
             }
         }
         let mut aliases = Vec::new();
-        for ((name, src), &def_nr) in &self.def_names {
-            *visible.entry(*src).or_default() += 1;
+        for (name, src, def_nr) in self.def_names.iter() {
+            *visible.entry(src).or_default() += 1;
             let own = self
                 .definitions
                 .get(def_nr as usize)
-                .map_or(*src, |d| d.source);
-            if own != *src {
+                .map_or(src, |d| d.source);
+            if own != src {
                 aliases.push(AliasView {
-                    name: name.clone(),
-                    into_source: *src,
+                    name: name.to_string(),
+                    into_source: src,
                     from_source: own,
                     def_nr,
                 });
@@ -11247,24 +11437,21 @@ impl Data {
         let keys = [name.to_string(), format!("n_{name}")];
         let mut def_nr = None;
         let mut reachable: Vec<(u16, bool)> = Vec::new();
-        for ((n, src), &nr) in &self.def_names {
-            if !keys.iter().any(|k| k == n) {
-                continue;
+        for k in &keys {
+            for (_, src, nr) in self.def_names.iter().filter(|(n, _, _)| n == k) {
+                let own = self.definitions.get(nr as usize).map_or(src, |d| d.source);
+                if own == src && def_nr.is_none() {
+                    def_nr = Some((nr, own));
+                }
+                reachable.push((src, own == src));
             }
-            let own = self.definitions.get(nr as usize).map_or(*src, |d| d.source);
-            if own == *src {
-                def_nr = Some((nr, own));
-            }
-            reachable.push((*src, own == *src));
         }
         reachable.sort_unstable();
         let (nr, own) = def_nr.or_else(|| {
             // Visible only as an alias (its own source is not in the table) — still
             // report it, using the first alias's target.
             reachable.first().map(|&(src, _)| {
-                let nr = self.def_names.iter().find_map(|((n, s), &nr)| {
-                    (keys.iter().any(|k| k == n) && *s == src).then_some(nr)
-                });
+                let nr = keys.iter().find_map(|k| self.def_names.get(k, src));
                 (nr.unwrap_or(u32::MAX), src)
             })
         })?;
@@ -11312,14 +11499,14 @@ impl Data {
         let names: Vec<(String, u32)> = self
             .def_names
             .iter()
-            .filter(|((_, src), def_nr)| {
-                *src == lib_source && self.definitions[**def_nr as usize].pub_visible
+            .filter(|&(_, src, def_nr)| {
+                src == lib_source && self.definitions[def_nr as usize].pub_visible
             })
-            .map(|((name, _), &def_nr)| (name.clone(), def_nr))
+            .map(|(name, _, def_nr)| (name.to_string(), def_nr))
             .collect();
         for (name, def_nr) in names {
             self.note_ambiguity(&name, into_source, def_nr);
-            self.def_names.entry((name, into_source)).or_insert(def_nr);
+            self.def_names.insert_if_absent(&name, into_source, def_nr);
         }
     }
 
@@ -11331,10 +11518,7 @@ impl Data {
     /// re-exporting another's, or the same `use` seen twice — is not a
     /// question at all.
     fn note_ambiguity(&mut self, name: &str, into_source: u16, def_nr: u32) {
-        let Some(&sitting) = self
-            .def_names
-            .get(&name_key(name, into_source) as &dyn NameKey)
-        else {
+        let Some(sitting) = self.def_names.get(name, into_source) else {
             return; // nothing there yet: this import wins outright
         };
         if sitting == def_nr || self.definitions[sitting as usize].source == into_source {
@@ -11357,7 +11541,7 @@ impl Data {
     #[must_use]
     pub fn ambiguous_with(&self, name: &str) -> &[u32] {
         self.ambiguous
-            .get(&name_key(name, self.source) as &dyn NameKey)
+            .get(&(name.to_string(), self.source))
             .map_or(&[][..], Vec::as_slice)
     }
 
@@ -11402,9 +11586,7 @@ impl Data {
             .iter()
             .filter(|imp| imp.lib_source == me && imp.into_source != me)
             .find_map(|imp| {
-                let d_nr = *self
-                    .def_names
-                    .get(&name_key(name, imp.into_source) as &dyn NameKey)?;
+                let d_nr = self.def_names.get(name, imp.into_source)?;
                 let def = &self.definitions[d_nr as usize];
                 if matches!(def.def_type(), DefType::Unknown) {
                     return None;
@@ -11442,13 +11624,11 @@ impl Data {
         let bind_fn_key = format!("n_{bind}");
         let found_plain = self
             .def_names
-            .get(&name_key(name, lib_source) as &dyn NameKey)
-            .copied()
+            .get(name, lib_source)
             .filter(|&d| self.definitions[d as usize].pub_visible);
         let found_fn = self
             .def_names
-            .get(&(fn_key, lib_source))
-            .copied()
+            .get(&fn_key, lib_source)
             .filter(|&d| self.definitions[d as usize].pub_visible);
         // C123 — a `self` method is filed under its receiver's key, `t_<LEN><Type>_<name>`,
         // and has no bare-name definition for an import list to find.  Import every public
@@ -11459,12 +11639,12 @@ impl Data {
         let methods: Vec<(String, u32)> = if bind == name {
             self.def_names
                 .iter()
-                .filter(|((key, src), d)| {
-                    *src == lib_source
-                        && self.definitions[**d as usize].pub_visible
+                .filter(|&(key, src, d)| {
+                    src == lib_source
+                        && self.definitions[d as usize].pub_visible
                         && Self::method_name_of_key(key) == Some(name)
                 })
-                .map(|((key, _), &d)| (key.clone(), d))
+                .map(|(key, _, d)| (key.to_string(), d))
                 .collect()
         } else {
             Vec::new()
@@ -11474,19 +11654,16 @@ impl Data {
         }
         for (key, def_nr) in methods {
             self.note_ambiguity(&key, into_source, def_nr);
-            self.def_names.entry((key, into_source)).or_insert(def_nr);
+            self.def_names.insert_if_absent(&key, into_source, def_nr);
         }
         if let Some(def_nr) = found_plain {
             self.note_ambiguity(bind, into_source, def_nr);
-            self.def_names
-                .entry((bind.to_string(), into_source))
-                .or_insert(def_nr);
+            self.def_names.insert_if_absent(bind, into_source, def_nr);
         }
         if let Some(def_nr) = found_fn {
             self.note_ambiguity(&bind_fn_key, into_source, def_nr);
             self.def_names
-                .entry((bind_fn_key, into_source))
-                .or_insert(def_nr);
+                .insert_if_absent(&bind_fn_key, into_source, def_nr);
         }
         true
     }
@@ -11512,13 +11689,13 @@ impl Data {
         let names: Vec<(String, u32)> = self
             .def_names
             .iter()
-            .filter(|((_, src), def_nr)| {
-                *src == lib_source && self.definitions[**def_nr as usize].pub_visible
+            .filter(|&(_, src, def_nr)| {
+                src == lib_source && self.definitions[def_nr as usize].pub_visible
             })
-            .map(|((name, _), &def_nr)| (name.clone(), def_nr))
+            .map(|(name, _, def_nr)| (name.to_string(), def_nr))
             .collect();
         for (name, def_nr) in names {
-            self.insert_or_replace_stub((name, into_source), def_nr);
+            self.insert_or_replace_stub(&name, into_source, def_nr);
         }
     }
 
@@ -11536,22 +11713,20 @@ impl Data {
         let bind_fn_key = format!("n_{bind}");
         let found_plain = self
             .def_names
-            .get(&name_key(name, lib_source) as &dyn NameKey)
-            .copied()
+            .get(name, lib_source)
             .filter(|&d| self.definitions[d as usize].pub_visible);
         let found_fn = self
             .def_names
-            .get(&(fn_key, lib_source))
-            .copied()
+            .get(&fn_key, lib_source)
             .filter(|&d| self.definitions[d as usize].pub_visible);
         if found_plain.is_none() && found_fn.is_none() {
             return false;
         }
         if let Some(def_nr) = found_plain {
-            self.insert_or_replace_stub((bind.to_string(), into_source), def_nr);
+            self.insert_or_replace_stub(bind, into_source, def_nr);
         }
         if let Some(def_nr) = found_fn {
-            self.insert_or_replace_stub((bind_fn_key, into_source), def_nr);
+            self.insert_or_replace_stub(&bind_fn_key, into_source, def_nr);
         }
         true
     }
@@ -11559,18 +11734,18 @@ impl Data {
     /// Insert `def_nr` at `key`, or replace an existing binding when the
     /// existing binding points to a `DefType::Unknown` stub.  Real local
     /// bindings are preserved (local wins over imports).
-    fn insert_or_replace_stub(&mut self, key: (String, u16), def_nr: u32) {
-        match self.def_names.get(&key) {
-            Some(&existing)
+    fn insert_or_replace_stub(&mut self, name: &str, source: u16, def_nr: u32) {
+        match self.def_names.get(name, source) {
+            Some(existing)
                 if matches!(
                     self.definitions[existing as usize].def_type,
                     DefType::Unknown
                 ) =>
             {
-                self.def_names.insert(key, def_nr);
+                self.def_names.insert(name, source, def_nr);
             }
             None => {
-                self.def_names.insert(key, def_nr);
+                self.def_names.insert(name, source, def_nr);
             }
             _ => {}
         }
@@ -11868,11 +12043,75 @@ impl Data {
     /// Return the `def_nr`s of all definitions whose `parent` field equals `parent_nr`.
     /// Used by the interface satisfaction checker (I6) to enumerate an interface's method stubs.
     pub fn children_of(&self, parent_nr: u32) -> impl Iterator<Item = u32> + '_ {
-        self.definitions
-            .iter()
-            .enumerate()
-            .filter(move |(_, d)| d.parent == parent_nr)
-            .map(|(i, _)| i as u32)
+        let first = self
+            .definitions
+            .get(parent_nr as usize)
+            .map_or(u32::MAX, |d| d.first_child);
+        std::iter::successors((first != u32::MAX).then_some(first), move |&c| {
+            let next = self.definitions[c as usize].next_sibling;
+            (next != u32::MAX).then_some(next)
+        })
+    }
+
+    /// Make `parent` the parent of `child` — the ONE writer of `Definition::parent`, so the
+    /// child links cannot disagree with the field they derive from.  A child takes its place
+    /// in ascending order, which is the order the table scan this replaced produced.
+    pub fn set_parent(&mut self, child: u32, parent: u32) {
+        let old = self.definitions[child as usize].parent;
+        if old == parent {
+            return;
+        }
+        if (old as usize) < self.definitions.len() {
+            let next = self.definitions[child as usize].next_sibling;
+            if self.definitions[old as usize].first_child == child {
+                self.definitions[old as usize].first_child = next;
+            } else {
+                let mut c = self.definitions[old as usize].first_child;
+                while c != u32::MAX && self.definitions[c as usize].next_sibling != child {
+                    c = self.definitions[c as usize].next_sibling;
+                }
+                if c != u32::MAX {
+                    self.definitions[c as usize].next_sibling = next;
+                }
+            }
+        }
+        self.definitions[child as usize].parent = parent;
+        self.definitions[child as usize].next_sibling = u32::MAX;
+        if (parent as usize) < self.definitions.len() {
+            let first = self.definitions[parent as usize].first_child;
+            if first == u32::MAX || first > child {
+                self.definitions[child as usize].next_sibling = first;
+                self.definitions[parent as usize].first_child = child;
+            } else {
+                let mut c = first;
+                loop {
+                    let next = self.definitions[c as usize].next_sibling;
+                    if next == u32::MAX || next > child {
+                        self.definitions[child as usize].next_sibling = next;
+                        self.definitions[c as usize].next_sibling = child;
+                        break;
+                    }
+                    c = next;
+                }
+            }
+        }
+    }
+
+    /// Derive the child links from every definition's `parent` — after a load or a rollback,
+    /// where the table was not built through `add_def` + `set_parent`.  Walked in reverse
+    /// and pushed at the head, so each list comes out ascending with no scratch space.
+    fn rebuild_children(&mut self) {
+        for d in &mut self.definitions {
+            d.first_child = u32::MAX;
+            d.next_sibling = u32::MAX;
+        }
+        for i in (0..self.definitions.len()).rev() {
+            let p = self.definitions[i].parent as usize;
+            if p < self.definitions.len() {
+                self.definitions[i].next_sibling = self.definitions[p].first_child;
+                self.definitions[p].first_child = i as u32;
+            }
+        }
     }
 
     /// @PLN22 Phase 1 — resolve a variant by name within ONE enum's members
@@ -12463,7 +12702,7 @@ fn span_clone_and_eq_roundtrip() {
     // debug-format it, assert round-trip equality.  Span is a transparent
     // wrapper, so the cloned tree must compare equal to the original.
     let pos = Position {
-        file: "x.loft".to_string(),
+        file: "x.loft".into(),
         line: 17,
         pos: 4,
     };
@@ -12482,7 +12721,7 @@ fn span_unspan_strips_wrapper() {
     // Plan-07 phase 1, step 1.B.0 acceptance: `unspan()` returns the
     // inner non-Span node, recursing through any number of wraps.
     let pos = Position {
-        file: "y.loft".to_string(),
+        file: "y.loft".into(),
         line: 3,
         pos: 7,
     };
@@ -12517,7 +12756,7 @@ mod caller_graph_tests {
     fn build_test_data() -> Data {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12591,7 +12830,7 @@ mod caller_graph_tests {
     #[test]
     fn callers_of_finds_a_call_under_a_wrapper() {
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12617,7 +12856,7 @@ mod caller_graph_tests {
     fn callers_of_walks_block_and_call_args_recursively() {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12646,7 +12885,7 @@ mod caller_graph_tests {
     fn synthetic_vector_wrapper_is_global_source_zero() {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12686,7 +12925,7 @@ mod caller_graph_tests {
     #[test]
     fn vector_wrapper_is_per_element_def_not_per_spelling() {
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12760,7 +12999,7 @@ mod caller_graph_tests {
     #[test]
     fn type_var_diagnostic_spelling_is_unchanged() {
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12787,7 +13026,7 @@ mod type_name_user_facing_tests {
     fn make_data() -> Data {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -13140,7 +13379,7 @@ mod key_decoder_tests {
     fn def_named(key: &str) -> String {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -13189,5 +13428,172 @@ mod key_decoder_tests {
     #[should_panic(expected = "may not begin with a digit")]
     fn a_spelling_that_begins_with_a_digit_is_refused_at_the_encoder() {
         let _ = Data::mangle_method("9lives", "x");
+    }
+}
+
+#[cfg(test)]
+mod def_index_tests {
+    use super::{DefIndex, STD_SOURCE};
+
+    /// The current source wins over the stdlib, the stdlib answers a name the source does
+    /// not bind, a stdlib-source ask never falls back, and an unbound name is `None`.
+    #[test]
+    fn a_lookup_prefers_the_source_and_falls_back_to_the_stdlib() {
+        let mut index = DefIndex::default();
+        index.insert("only_std", STD_SOURCE, 1);
+        index.insert("both", STD_SOURCE, 2);
+        index.insert("both", 3, 4);
+        index.insert("only_own", 3, 5);
+        assert_eq!(index.get_or_std("both", 3), Some(4));
+        assert_eq!(index.get_or_std("both", STD_SOURCE), Some(2));
+        assert_eq!(index.get_or_std("only_std", 3), Some(1));
+        assert_eq!(index.get_or_std("only_own", 3), Some(5));
+        assert_eq!(index.get_or_std("only_own", STD_SOURCE), None);
+        assert_eq!(index.get_or_std("only_own", 7), None);
+        assert_eq!(index.get_or_std("unbound", 3), None);
+        assert_eq!(index.get("both", 3), Some(4));
+        assert_eq!(index.get("only_std", 3), None);
+        assert!(index.contains_name("only_std"));
+        assert!(!index.contains_name("unbound"));
+    }
+
+    /// `insert` replaces and answers what it replaced; `insert_if_absent` keeps the sitting
+    /// binding; `remove` takes one source's binding and the name itself goes with the last.
+    #[test]
+    fn insert_replace_and_remove_follow_the_map_they_replaced() {
+        let mut index = DefIndex::default();
+        assert_eq!(index.insert("n", 1, 10), None);
+        assert_eq!(index.insert("n", 2, 20), None);
+        assert_eq!(index.insert("n", 1, 11), Some(10));
+        index.insert_if_absent("n", 2, 99);
+        assert_eq!(index.get("n", 2), Some(20));
+        let mut all: Vec<(String, u16, u32)> = index
+            .iter()
+            .map(|(n, s, d)| (n.to_string(), s, d))
+            .collect();
+        all.sort();
+        assert_eq!(
+            all,
+            vec![("n".to_string(), 1, 11), ("n".to_string(), 2, 20)]
+        );
+        assert_eq!(index.remove("n", 1), Some(11));
+        assert_eq!(
+            index.get("n", 2),
+            Some(20),
+            "the other source's binding stays"
+        );
+        assert_eq!(index.remove("n", 1), None);
+        assert_eq!(index.remove("n", 2), Some(20));
+        assert!(
+            !index.contains_name("n"),
+            "the name leaves with its last binding"
+        );
+        assert_eq!(index.remove("n", 2), None);
+    }
+
+    /// The memo is keyed by the asked name's address, so the two ways it could answer
+    /// stale are: the index changed under it, and the memory at that address now holds
+    /// another name.  Both must miss.
+    #[test]
+    fn a_remembered_answer_never_outlives_the_index_or_the_bytes_it_was_read_from() {
+        let mut index = DefIndex::default();
+        index.insert("alpha", STD_SOURCE, 1);
+        let name: &'static str = "alpha";
+        assert_eq!(index.get_or_std(name, 5), Some(1));
+        assert_eq!(
+            index.get_or_std(name, 5),
+            Some(1),
+            "the memo answers the repeat"
+        );
+        index.insert("alpha", 5, 2);
+        assert_eq!(
+            index.get_or_std(name, 5),
+            Some(2),
+            "an insert invalidates the memo"
+        );
+        index.remove("alpha", 5);
+        assert_eq!(index.get_or_std(name, 5), Some(1));
+        index.clear();
+        assert_eq!(
+            index.get_or_std(name, 5),
+            None,
+            "a clear invalidates the memo"
+        );
+
+        // The same heap buffer, rewritten in place: the address and length repeat, the
+        // name does not.
+        index.insert("aaaa", STD_SOURCE, 7);
+        index.insert("bbbb", STD_SOURCE, 8);
+        let mut buffer = String::from("aaaa");
+        assert_eq!(index.get_or_std(&buffer, 5), Some(7));
+        buffer.clear();
+        buffer.push_str("bbbb");
+        assert_eq!(index.get_or_std(&buffer, 5), Some(8));
+        // A longer name than a slot holds is looked up every time and still answers.
+        let long = "x".repeat(super::REMEMBERED_NAME + 1);
+        index.insert(&long, STD_SOURCE, 9);
+        assert_eq!(index.get_or_std(&long, 5), Some(9));
+        assert_eq!(index.get_or_std(&long, 5), Some(9));
+    }
+}
+
+#[cfg(test)]
+mod children_index_tests {
+    use super::*;
+
+    fn data_with(n: u32) -> Data {
+        let mut data = Data::new();
+        let pos = Position {
+            file: "t.loft".into(),
+            line: 1,
+            pos: 1,
+        };
+        for i in 0..n {
+            data.add_def(&format!("d{i}"), &pos, DefType::EnumValue);
+        }
+        data
+    }
+
+    fn scan(data: &Data, parent: u32) -> Vec<u32> {
+        (0..data.definitions.len() as u32)
+            .filter(|&i| data.def(i).parent == parent)
+            .collect()
+    }
+
+    /// The child links answer exactly what the table scan they replaced answered — in
+    /// ascending order, whatever order the parents were set in, after a re-parenting, and
+    /// after a rebuild from the `parent` fields alone.
+    #[test]
+    fn children_of_matches_the_scan_in_every_order() {
+        let mut data = data_with(12);
+        for (child, parent) in [(7, 0), (3, 0), (11, 0), (5, 1), (4, 1), (9, 0), (2, 1)] {
+            data.set_parent(child, parent);
+        }
+        for p in [0, 1, 2] {
+            assert_eq!(
+                data.children_of(p).collect::<Vec<_>>(),
+                scan(&data, p),
+                "parent {p}"
+            );
+        }
+        assert_eq!(data.children_of(0).collect::<Vec<_>>(), vec![3, 7, 9, 11]);
+        // Re-parent a middle child, then the first, then to nowhere.
+        data.set_parent(7, 1);
+        data.set_parent(3, 1);
+        data.set_parent(2, u32::MAX);
+        for p in [0, 1] {
+            assert_eq!(
+                data.children_of(p).collect::<Vec<_>>(),
+                scan(&data, p),
+                "parent {p}"
+            );
+        }
+        assert_eq!(data.children_of(1).collect::<Vec<_>>(), vec![3, 4, 5, 7]);
+        // The rebuild derives the same lists from the fields alone.
+        let before: Vec<Vec<u32>> = (0..12).map(|p| data.children_of(p).collect()).collect();
+        data.rebuild_children();
+        let after: Vec<Vec<u32>> = (0..12).map(|p| data.children_of(p).collect()).collect();
+        assert_eq!(before, after);
+        assert!(data.children_of(u32::MAX).next().is_none());
     }
 }

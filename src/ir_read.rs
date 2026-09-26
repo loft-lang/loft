@@ -126,7 +126,7 @@ pub fn read_value(stores: &Stores, slot: Node) -> Value {
         // ── inlined sub-structs ───────────────────────────────────────────────
         ValueType::Span => {
             let position = Position {
-                file: slot.field_str(stores, ds::SPAN_POS_FILE).to_string(),
+                file: slot.field_str(stores, ds::SPAN_POS_FILE).into(),
                 line: slot.field_int(stores, ds::SPAN_POS_LINE) as u32,
                 pos: slot.field_int(stores, ds::SPAN_POS_POS) as u32,
             };
@@ -634,9 +634,7 @@ pub fn open_bundle_into(path: &str, database: &mut Stores) -> std::io::Result<Da
 pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
     let name = r.field_str(stores, ds::DEF_NAME).to_string();
     let position = Position {
-        file: r
-            .field_str(stores, ds::DEF_POSITION + ds::POS_FILE)
-            .to_string(),
+        file: r.field_str(stores, ds::DEF_POSITION + ds::POS_FILE).into(),
         line: r.field_int(stores, ds::DEF_POSITION + ds::POS_LINE) as u32,
         pos: r.field_int(stores, ds::DEF_POSITION + ds::POS_POS) as u32,
     };
@@ -661,6 +659,8 @@ pub fn read_definition(stores: &Stores, r: Record, bodies: bool) -> Definition {
         source: r.field_int(stores, ds::DEF_SOURCE) as u16,
         def_type: def_type_from_code(r.field_int(stores, ds::DEF_DEF_TYPE)),
         parent: r.field_int(stores, ds::DEF_PARENT) as u32,
+        first_child: u32::MAX,
+        next_sibling: u32::MAX,
         // @PLN11 G2/M6 — `bodies=false` leaves the body in the store
         // (`Value::Null` marker); warm-cache store-backed codegen reads it via
         // `def_body_node` instead of reconstructing it here.

@@ -1213,7 +1213,7 @@ pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
     // names only the colliding type, while the fault is one def being filled
     // twice (a rolled-back parse re-creating it), which shows up here as the same
     // `d_nr` registering a bare name and then a `src0::`-qualified one (#618).
-    if std::env::var_os("LOFT_TRACE_SCHEMA").is_some() {
+    if crate::env_once!(std::env::var_os("LOFT_TRACE_SCHEMA").is_some()) {
         eprintln!(
             "[schema] fill d_nr={d_nr} src={} name={:?} -> reg={reg_name:?}",
             data.def(d_nr).source,

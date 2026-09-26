@@ -1,0 +1,97 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1683 (`@FR-O-Derived`, `@FR-B-View`) — A FIELD HOISTED OUT OF A LITERAL IS A VIEW AND IS
+// NEVER FREED.  `r = Outer { b: o.b }; r` stages the parameter's nested field in a work-ref
+// typed `ref(Inner)["o"]` before the literal is built in place (the literal's own re-init may
+// clear what a field expression reads), and the scope exit freed that work-ref like any other —
+// `OpFreeRefIfDistinct(__ref_1, r)`, `r` never being `o`'s store — so every call released the
+// CALLER's record.  In a loop the caller's pooled buffer was read back on the next pass:
+// 46 strict-store violations on both backends, the value right by luck, and a hard panic in a
+// larger program.  A staged projection owns nothing (`(O-Derived)`: free a local iff it owns
+// its store); the hoist now marks a staged struct-typed projection a borrow at its mint, and
+// the exit owes it no free.  Keyed on the staged expression, not on the temp's deps: a staged
+// WHOLE variable is a copy that owns its store while its type carries the source's deps, and a
+// pass-2 tuple buffer carries deps the same way — each wider spelling leaked a file under the
+// corpus's leak gate before this one held.
+//
+// Every cell is the reporter's shape or a neighbour, each hand-computed, and the file runs
+// under the corpus's leak gate: an exemption that reached a work-ref that DID own a store would
+// show there, not here.  The controls are the shapes that were already clean — the literal
+// returned directly, two calls in straight line, a literal argument.
+//
+// @falsified-at: 09b02f83b — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.patch — the same channels.
+// CHANNEL: the asserts — on the control tree the "one of two rebuilt" cell (`r = Two { a:
+//   Inner { v: o.a.v }, b: o.b }; r`, the reporter's own 72-violation row) reads the freed
+//   record as 0 for 33, on both backends (measured with falsify's control build and its own
+//   tree; the reporter's minimal shape answers right there by luck) — and the strict-store
+//   sweep (`LOFT_STRICT_STORES=1`), 46 reads after free on the reporter's shape alone.
+// ARMED: the asserts on every run; the sweep by the nightly store-guard leg and by hand.
+// WITNESS: `assertion failed: one of two rebuilt: 0`, and `[strict-store] USE AFTER FREE
+//   (read) store #N type=Outer … killed by the free of <anon>` (native: `var___ref_1`).
+// HOLDS: every other cell on both trees; the strict sweep clean here.
+
+struct Inner { v: vector<integer> }
+struct Outer { b: Inner }
+struct Two { a: Inner, b: Inner }
+struct Flat { v: vector<integer> }
+struct ScalarInner { n: integer }
+struct ScalarOuter { b: ScalarInner }
+
+fn make(s: integer) -> Outer { Outer { b: Inner { v: [s * 10] } } }
+fn make2(s: integer) -> Two { Two { a: Inner { v: [s] }, b: Inner { v: [s * 10] } } }
+fn make_flat(s: integer) -> Flat { Flat { v: [s * 10] } }
+fn make_scalar(s: integer) -> ScalarOuter { ScalarOuter { b: ScalarInner { n: s * 10 } } }
+
+fn rebuild(o: Outer) -> Outer { r = Outer { b: o.b }; r }
+fn rebuild_return(o: Outer) -> Outer { r = Outer { b: o.b }; return r; }
+fn rebuild_mutate(o: Outer) -> Outer { r = Outer { b: o.b }; r.b.v += [1]; r }
+fn rebuild_two(o: Two) -> Two { r = Two { a: o.a, b: o.b }; r }
+fn rebuild_one_of_two(o: Two) -> Two { r = Two { a: Inner { v: o.a.v }, b: o.b }; r }
+fn rebuild_flat(o: Flat) -> Flat { r = Flat { v: o.v }; r }
+fn rebuild_scalar(o: ScalarOuter) -> ScalarOuter { r = ScalarOuter { b: o.b }; r }
+// controls
+fn rebuild_direct(o: Outer) -> Outer { Outer { b: o.b } }
+
+fn main() {
+  x = 0;
+  for s in 0..3 { o = make(s); r = rebuild(o); x = x + (r.b.v[0] ?? 0); }
+  assert(x == 30, "the reporter's shape: {x}");
+  x1 = 0;
+  for s in 0..3 { o = make(s); r = rebuild_return(o); x1 = x1 + (r.b.v[0] ?? 0); }
+  assert(x1 == 30, "explicit return: {x1}");
+  x2 = 0;
+  for s in 0..3 { o = make(s); r = rebuild_mutate(o); x2 = x2 + (r.b.v[0] ?? 0) + len(r.b.v); }
+  assert(x2 == 36, "mutated before the return: {x2}");
+  x3 = 0;
+  for s in 0..3 { o = make2(s); r = rebuild_two(o); x3 = x3 + (r.a.v[0] ?? 0) + (r.b.v[0] ?? 0); }
+  assert(x3 == 33, "two nested fields: {x3}");
+  x4 = 0;
+  for s in 0..3 { o = make2(s); r = rebuild_one_of_two(o); x4 = x4 + (r.a.v[0] ?? 0) + (r.b.v[0] ?? 0); }
+  assert(x4 == 33, "one of two rebuilt: {x4}");
+  x5 = 0;
+  for s in 0..3 { o = make_flat(s); r = rebuild_flat(o); x5 = x5 + (r.v[0] ?? 0); }
+  assert(x5 == 30, "a vector field directly: {x5}");
+  x6 = 0;
+  for s in 0..3 { o = make_scalar(s); r = rebuild_scalar(o); x6 = x6 + r.b.n; }
+  assert(x6 == 30, "a scalar inner: {x6}");
+  // the caller keeps the argument alive past the call
+  x7 = 0;
+  os: vector<Outer> = [];
+  for s in 0..3 { o = make(s); r = rebuild(o); os += [o]; x7 = x7 + (r.b.v[0] ?? 0); }
+  assert(x7 == 30 && len(os) == 3 && (os[2].b.v[0] ?? 0) == 20, "the argument outlives the call: {x7} {len(os)}");
+  // the argument is a literal, not a call's buffer
+  x8 = 0;
+  for s in 0..3 { o = Outer { b: Inner { v: [s * 10] } }; r = rebuild(o); x8 = x8 + (r.b.v[0] ?? 0); }
+  assert(x8 == 30, "a literal argument: {x8}");
+  // controls
+  c1 = 0;
+  for s in 0..3 { o = make(s); r = rebuild_direct(o); c1 = c1 + (r.b.v[0] ?? 0); }
+  o1 = make(1);
+  r1 = rebuild(o1);
+  o2 = make(2);
+  r2 = rebuild(o2);
+  assert(c1 == 30 && (r1.b.v[0] ?? 0) + (r2.b.v[0] ?? 0) == 30, "controls: {c1} {r1.b.v[0] ?? 0} {r2.b.v[0] ?? 0}");
+  println("a field hoisted out of a literal is a view and is never freed: every cell holds");
+}

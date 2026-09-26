@@ -154,7 +154,7 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
     // id the running program's `parse` did.
     let entry_source = (0..shadow.definitions())
         .map(|d| shadow.def(d))
-        .find(|def| def.position.file == path)
+        .find(|def| &*def.position.file == path)
         .map_or(crate::data::STD_SOURCE, |def| def.source);
     let mut files: Vec<WatchedFile> = vec![WatchedFile {
         path: path.to_string(),
@@ -164,21 +164,21 @@ pub fn install(path: &str, stdlib_dir: &str, lib_dirs: &[String], running: &crat
     for d in 0..shadow.definitions() {
         let def = shadow.def(d);
         let f = &def.position.file;
-        if f.is_empty() || f.starts_with('<') || f == path {
+        if f.is_empty() || f.starts_with('<') || &**f == path {
             continue;
         }
         let canon = crate::portable_path::plain_canonical_str(f);
         if canon.starts_with(&stdlib_prefix) {
             continue;
         }
-        if files.iter().any(|w| w.path == *f) {
+        if files.iter().any(|w| *w.path == **f) {
             continue;
         }
-        let Ok(c) = std::fs::read_to_string(f) else {
+        let Ok(c) = std::fs::read_to_string(&**f) else {
             continue; // unreadable (virtual / moved) — not watchable
         };
         files.push(WatchedFile {
-            path: f.clone(),
+            path: f.to_string(),
             last_content: c,
             source: def.source,
         });

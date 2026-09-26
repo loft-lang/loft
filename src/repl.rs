@@ -4812,7 +4812,7 @@ impl ReplSession {
             if def.def_type != DefType::Function
                 || !def.name.starts_with("n_")
                 || def.name.starts_with("n_repl")
-                || def.position.file != "<repl>"
+                || &*def.position.file != "<repl>"
             {
                 continue;
             }

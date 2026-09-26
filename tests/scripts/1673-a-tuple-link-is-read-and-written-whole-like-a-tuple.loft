@@ -3,7 +3,7 @@
 //
 // A `&(…)` link is read and written WHOLE exactly as the tuple it names — in both of the
 // representations `(T-Ref-Rep)` gives it (loft#1673, `formal/binding.md` @FR-B-Ref-Uniform,
-// `formal/tuples.md` `(T-Ref-El)`: "never a runtime fault and never an ICE").
+// `formal/tuples.md` `@FR-T-Ref-El`: "never a runtime fault and never an ICE").
 //
 // A STACK-backed link (every member a scalar) was an internal compiler error on both backends
 // when read whole — passed as a `(τ, τ)` argument, returned, bound to a local — and when

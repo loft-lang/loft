@@ -1406,6 +1406,21 @@ pub fn const_view_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_CONST_VIEW"))
 }
 
+/// `@FR-R-CopyView` — a read-only copy of a record nothing can disturb is a view of it.
+/// `LOFT_NO_COPY_VIEW=1` keeps every copy (the first bisect step for a record local that reads
+/// a value its source took later, or a store freed under it).
+pub fn copy_view_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_COPY_VIEW"))
+}
+
+/// `LOFT_TRACE_COPY_VIEW=1` — name each record local made a view, and each candidate declined
+/// with the reason.
+pub fn trace_copy_view() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_COPY_VIEW"))
+}
+
 /// `LOFT_TRACE_CONST=1` — name each literal-bodied function made a constant, and each call
 /// of one admitted or declined with the reason.
 pub fn trace_const() -> bool {
@@ -1565,6 +1580,19 @@ pub fn vector_base_enabled() -> bool {
 pub fn loop_buffer_reuse_enabled() -> bool {
     static ON: OnceLock<bool> = OnceLock::new();
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_REUSE"))
+}
+
+/// Every LOOP-FREE loft function the native generator emits carries `#[inline]` —
+/// **DEFAULT ON** (`Output::fn_inline_attr` says why a looping one does not).
+/// The hint only raises LLVM's inlining threshold for that function, so a small helper whose
+/// checked arithmetic puts it just past the default budget (hex_field's `nb_q`, `eg_dir_from`,
+/// `eg_index` under `edgeset_count`) is folded into its caller the way rustc folds a plain-Rust
+/// twin's; a large function still stays a call.  Opt OUT with `LOFT_NO_INLINE_HINT` (read at
+/// GENERATION time): no attribute, the emission of before.  `--names` pins every loft function
+/// `#[inline(never)]` regardless, because a backtrace needs the frames.
+pub fn inline_hint_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_INLINE_HINT"))
 }
 
 /// @PLN157 § V-am (`@FR-R-PushFill`): a counted loop whose body pushes k scalars to one

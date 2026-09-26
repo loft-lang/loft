@@ -925,22 +925,35 @@ fn native_emit_includes_loft_source_map() {
     // path lacks the UNC prefix.
     let canonical = std::fs::canonicalize(&script_path).unwrap_or_else(|_| script_path.clone());
     let path_str = canonical.display().to_string();
-    // Function-header comment maps to the .loft source line.
-    // Use ends_with-style match (`// loft:{stem-suffix}:1\nfn n_add(`)
-    // when the full path comparison fails — robust to canonical
-    // path variations across platforms.
-    let header_n_add = format!("// loft:{path_str}:1\nfn n_add(");
-    let header_n_main = format!("// loft:{path_str}:2\nfn n_main(");
-    let stem_n_add = "loft_source_map_demo.loft:1\nfn n_add(".to_string();
-    let stem_n_main = "loft_source_map_demo.loft:2\nfn n_main(".to_string();
-    assert!(
-        stdout.contains(&header_n_add) || stdout.contains(&stem_n_add),
-        "expected source-map header above n_add (canonical or stem match); got {stdout}"
-    );
-    assert!(
-        stdout.contains(&header_n_main) || stdout.contains(&stem_n_main),
-        "expected source-map header above n_main (canonical or stem match); got {stdout}"
-    );
+    // Function-header comment maps to the .loft source line.  It heads the item, so it
+    // sits above the function's attributes (`#[inline]`, `#[inline(never)]`), not between
+    // them and the `fn`.  The path is matched canonical or by its stem suffix, which is
+    // robust to canonical path variations across platforms.
+    let header_of = |fn_head: &str| -> Option<String> {
+        let lines: Vec<&str> = stdout.lines().collect();
+        let at = lines
+            .iter()
+            .position(|l| l.trim_start().starts_with(fn_head))?;
+        lines[..at]
+            .iter()
+            .rev()
+            .map(|l| l.trim())
+            .find(|l| !l.starts_with("#["))
+            .map(str::to_string)
+    };
+    for (fn_head, line) in [("fn n_add(", 1), ("fn n_main(", 2)] {
+        let header = header_of(fn_head);
+        let canonical_hit =
+            header.as_deref() == Some(format!("// loft:{path_str}:{line}").as_str());
+        let stem_hit = header.as_deref().is_some_and(|h| {
+            h.starts_with("// loft:") && h.ends_with(&format!("loft_source_map_demo.loft:{line}"))
+        });
+        assert!(
+            canonical_hit || stem_hit,
+            "expected source-map header `// loft:…:{line}` above {fn_head} (past its attributes); \
+             found {header:?} in {stdout}"
+        );
+    }
 }
 
 /// P196: tuple struct field whose element is a fn-ref must project
@@ -1568,5 +1581,57 @@ fn a_compile_error_still_exits_nonzero_through_a_closed_pipe() {
         Some(1),
         "a program that does not compile still fails, whatever the reader did; got {status:?}"
     );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// loft#1686 — a callee writing through a PARAMETER handed a top-level vector constant is
+/// the one route to the constant store that is not a bind (a bind copies, `(B-Copy)`): a
+/// parameter aliases its argument, so the write reaches the write-locked constant store.
+/// `(H-WriteLocked)` asks for a defined runtime fault there, never a silent write and never
+/// the internal "Write to read-only store" assert — both backends exit 1 with a message
+/// that names a constant and the cure.
+#[test]
+fn a_write_through_a_parameter_to_a_constant_is_a_defined_fault() {
+    let dir = std::env::temp_dir().join(format!("loft_constparam_{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("temp dir");
+    let p = dir.join("constparam.loft");
+    std::fs::write(
+        &p,
+        "NUMS: vector<integer> = [1, 2];\n\
+         fn grow(v: vector<integer>) -> integer { v += [3]; len(v) }\n\
+         fn main() { n = grow(NUMS); print(\"grew {n}\\n\"); }\n",
+    )
+    .expect("write");
+    for mode in ["--interpret", "--native"] {
+        let out = Command::new(loft_bin())
+            .arg(mode)
+            .arg(&p)
+            .env("LOFT_TIMEOUT", "60")
+            .current_dir(workspace_root())
+            .output()
+            .expect("failed to invoke loft binary");
+        let all = format!(
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert_eq!(
+            out.status.code(),
+            Some(1),
+            "{mode}: exit code — output:\n{all}"
+        );
+        assert!(
+            all.contains("write to a constant"),
+            "{mode}: the fault must name a constant — output:\n{all}"
+        );
+        assert!(
+            !all.contains("panicked") && !all.contains("read-only store"),
+            "{mode}: the internal assert must not be the face of it — output:\n{all}"
+        );
+        assert!(
+            !all.contains("grew"),
+            "{mode}: the write must not land — output:\n{all}"
+        );
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }

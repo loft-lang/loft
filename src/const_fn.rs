@@ -76,7 +76,7 @@ struct Cx<'a> {
     data: &'a Data,
     d_nr: u32,
     /// The admitted call nodes, by address (`read_only_uses`).
-    admitted: &'a HashSet<usize>,
+    admitted: &'a crate::fxhash::FxHashSet<usize>,
     const_ref: u32,
     is_null: u32,
     /// The hidden buffer variables the substituted calls were handed.
@@ -136,7 +136,7 @@ fn is_guard_of(v: &Value, b: u16, is_null: u32) -> bool {
 }
 
 /// The ops that release a buffer, by def number: a mention inside one is not a use.
-fn free_ops(data: &Data) -> Vec<u32> {
+pub(crate) fn free_ops(data: &Data) -> Vec<u32> {
     [
         "OpFreeRef",
         "OpFreeRefIfDistinct",

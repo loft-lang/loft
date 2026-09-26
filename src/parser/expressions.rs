@@ -800,7 +800,7 @@ impl Parser {
                 );
             }
             for r in self.vars.work_references() {
-                if std::env::var("LOFT_TRACE_PREAMBLE").is_ok() {
+                if crate::env_once!(std::env::var("LOFT_TRACE_PREAMBLE").is_ok()) {
                     eprintln!(
                         "[preamble] pass1={} r={r} name={} arg={} inline={} deps={:?} chb={}",
                         self.first_pass,
@@ -1807,7 +1807,17 @@ use a separate collection or add after the loop"
         // selector has been the narrow part while its lowering was already right — P261,
         // loft#917, loft#1279 and loft#1326 are the others, and `reads_a_capture_whole` is
         // where the shape now lives so a sixth reader does not re-spell it.
-        let is_bare_var = matches!(code, Value::Var(_)) || self.reads_a_capture_whole(code);
+        // loft#1686 — a top-level VECTOR constant's use site answers `OpConstRef(k)`, a
+        // view of the write-locked constant store, and bound to a local it is a whole-value
+        // read exactly like a bare variable: the bind COPIES (C86, `@FR-B-Copy`).  Left an
+        // alias, the first write through the local reached the lock — "Write to read-only
+        // store … locked by: Store::lock" on both backends, in every spelling (`v = NAMES`,
+        // a `??` or `if` arm, a typed local, a parameter the callee appends to).  The view a
+        // read-only bind could keep is `(R-Const)`'s elision, decided post-parse from the
+        // local's uses, never this verdict's; a literal-bodied function stays the road to it.
+        let is_bare_var = matches!(code, Value::Var(_))
+            || self.reads_a_capture_whole(code)
+            || matches!(code.unspan(), Value::Call(d, _) if *d == self.data.def_nr("OpConstRef"));
         // @FR-O-Proxy asks copy — the verdict is a `VecBind` (`CopyVar` / `CopyOwnedField` /
         // `SelfAssign`), and every arm of it copies or does nothing.  A wrong answer picks the
         // wrong lowering, not a release.
@@ -6527,7 +6537,7 @@ use a separate collection or add after the loop"
                         vec![
                             bound,
                             msg,
-                            Value::Text(pos.file.clone()),
+                            Value::Text(pos.file.to_string()),
                             Value::Int(pos.line as i32),
                         ],
                     );

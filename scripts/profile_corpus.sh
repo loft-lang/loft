@@ -37,6 +37,13 @@ done
 ORACLE=bench/profile_oracle.tsv
 [ -f "$ORACLE" ] || { echo "profile_corpus.sh: $ORACLE is missing" >&2; exit 1; }
 
+# An `engine` row samples loft ITSELF with perf (`scripts/profile.sh --engine`), which a box
+# without perf, or with `perf_event_paranoid` above 2, cannot run.  Such a row is neither
+# proved nor disproved there: it is announced as SKIPPED, never counted as held.
+ENGINE_OK=1
+command -v perf >/dev/null 2>&1 || ENGINE_OK=0
+[ "$(cat /proc/sys/kernel/perf_event_paranoid 2>/dev/null || echo 4)" -le 2 ] 2>/dev/null || ENGINE_OK=0
+
 echo "── building (release) ──" >&2
 cargo build --release --bin loft >&2 || exit 1
 BIN=target/release/loft
@@ -53,11 +60,31 @@ printf '%-16s %-4s %-24s %8s  %s\n' PROGRAM WHAT "TOP ROW" SHARE VERDICT
 while IFS=$'\t' read -r prog what expect min_share want_line; do
   case "$prog" in ''|'#'*) continue;; esac
   if [ -n "$ONLY" ] && [ "${prog#"$ONLY"}" = "$prog" ]; then continue; fi
-  src="bench/$prog/bench.loft"
-  [ -f "$src" ] || { echo "  $prog: no $src — skipped" >&2; continue; }
+  if [ "$what" = engine ]; then
+    # A compile's input is the front-end corpus, generated (never committed) at the size
+    # the row names: `frontend_<size>` → `bench/frontend/frontend.py --emit <size>`.
+    if [ "$ENGINE_OK" != 1 ]; then
+      printf '%-16s %-4s %-24s %8s  %s\n' "$prog" "$what" "-" "-" "SKIPPED — perf unavailable or perf_event_paranoid > 2 (scripts/profile.sh says how)"
+      continue
+    fi
+    src="$OUT/$prog.loft"
+    python3 bench/frontend/frontend.py --emit "${prog#frontend_}" > "$src" ||
+      { echo "  $prog: bench/frontend/frontend.py --emit ${prog#frontend_} failed — skipped" >&2; continue; }
+  else
+    src="bench/$prog/bench.loft"
+    [ -f "$src" ] || { echo "  $prog: no $src — skipped" >&2; continue; }
+  fi
   checked=$((checked + 1))
 
-  if [ "$what" = cpu ]; then
+  if [ "$what" = engine ]; then
+    # `--check` under `--interpret` is the front end alone; `--no-cache` so the parse runs
+    # rather than the loader; 9999 Hz because a compile is short and a module share over a
+    # few hundred samples is a coin toss.  The row is read off the BY-MODULE table — over a
+    # compile the top symbol ties with the allocator's and moves run to run (@PLN166 A3).
+    raw=$(LOFT_PROFILE_FREQ=9999 LOFT_TIMEOUT=300 scripts/profile.sh --engine --no-cache -- --interpret --check "$src" 2>&1)
+    top=$(printf '%s\n' "$raw" | awk '/^════ by module/{f=1;next} f&&/^ +[0-9]/{print;exit}')
+    topline="$top"
+  elif [ "$what" = cpu ]; then
     raw=$(LOFT_PROFILE=1 LOFT_TIMEOUT=300 "$BIN" --interpret "$src" 2>&1)
     # The row under "by function" is the instrument's answer to "what is hot".
     top=$(printf '%s\n' "$raw" | awk '/^── by function/{f=1;next} f&&/^  /{print;exit}')
@@ -73,9 +100,11 @@ while IFS=$'\t' read -r prog what expect min_share want_line; do
     fails=$((fails + 1)); continue
   fi
 
-  # Share: a percentage for cpu; for mem, this site's bytes over the captured peak.
+  # Share: a percentage for cpu and engine; for mem, this site's bytes over the captured peak.
   if [ "$what" = cpu ]; then
     share=$(printf '%s\n' "$top" | sed -n 's/^[[:space:]]*\([0-9.]*\) %.*/\1/p')
+  elif [ "$what" = engine ]; then
+    share=$(printf '%s\n' "$top" | sed -n 's/^[[:space:]]*\([0-9.]*\)%.*/\1/p')
   else
     share=$(printf '%s\n' "$raw" | awk '
       /^════ allocation hot spots/ {
@@ -102,7 +131,11 @@ while IFS=$'\t' read -r prog what expect min_share want_line; do
   fi
   [ "$verdict" = ok ] || fails=$((fails + 1))
 
-  label=$(printf '%s' "$top" | sed 's/^ *//' | cut -c1-24)
+  if [ "$what" = engine ]; then
+    label=$(printf '%s' "$top" | awk '{ print "module " $2 }')
+  else
+    label=$(printf '%s' "$top" | sed 's/^ *//' | cut -c1-24)
+  fi
   printf '%-16s %-4s %-24s %7s%%  %s\n' "$prog" "$what" "$label" "${share:-?}" "$verdict"
   printf '%s\t%s\t%s\t%s\n' "$prog" "$what" "$label" "${share:-0}" >> "$CUR"
 

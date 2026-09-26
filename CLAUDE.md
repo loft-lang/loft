@@ -89,6 +89,15 @@ make falsify GUARD=<guard.loft> REF=<commit>   # does this guard FAIL on the bui
                                          #   Every new tests/scripts file records its answer
                                          #   (`@falsified-at:`, gated) — TESTING.md
 make speed                               # what got slower/faster — a REPORT, never a gate
+make speed-gate                          # the one speed GATE: a test 3x and +5 s slower than on
+                                         #   main (median speed divided out) that is STILL that slow
+                                         #   rerun alone.  Runs in `make ci` and on every Linux PR leg;
+                                         #   contention never repeats alone — scripts/test_speed_gate.py
+make rewrite-census                      # which REWRITES still fire where they did: per bench,
+                                         #   the admissions of each R- rule against a committed
+                                         #   baseline — a DROP (a fix tightened a condition) fails,
+                                         #   named by rule and bench; seconds, exact, in `make ci`
+                                         #   and on the PR.  `-bless` records a deliberate decline
 make perf-portal                         # WHERE NATIVE STANDS AGAINST RUST, BY CLASS: measures
                                          #   every bench lane here and renders ONE page,
                                          #   doc/claude/PERF_PORTAL.md — a median per mechanism
@@ -133,6 +142,13 @@ make view                                # branch-aware doc/code viewer; binds L
                                          #   LOFT_VIEW_PORT (default 8765).  Remote:
                                          #   ssh -N -L 8765:127.0.0.1:8765 <host>
 ```
+
+**Never wait on a process by NAME** — `until ! pgrep -f "make ci"` never exits, because the waiting
+shell's own command line contains the text it searches for (and `pkill -f` by name has killed a
+sibling checkout's run).  Wait on the recorded PID (`scripts/ci-run.sh status`, the pid
+`find_problems.sh --bg` prints) or on the output FILE (`[ -s <out> ]`, its mtime); a `[m]ake`
+bracket or `pgrep -x` only moves the failure.  Agents repeated this mistake many times after it was
+documented: [CODE.md § shell](doc/claude/CODE.md) has the measurements.
 
 **Bound ad-hoc runs** (loft is unbounded by default; tests already arm a 300s watchdog). Especially
 for `--native` (rustc can hang): `LOFT_TIMEOUT=60 loft --native p.loft` or `loft --timeout 60 p.loft`

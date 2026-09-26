@@ -999,6 +999,9 @@ pub struct Output<'a> {
     /// `LOFT_NO_PUSH_FILL` (generation time): a counted push loop reserves nothing and
     /// fills nothing — the per-push ladder and the per-element loop again (§ V-am).
     pub push_fill_disabled: bool,
+    /// `LOFT_NO_INLINE_HINT` (generation time): loft functions carry no `#[inline]`
+    /// ([`crate::keys::inline_hint_enabled`]).
+    pub inline_hint: bool,
     /// `LOFT_NO_PUSH_WINDOW` (generation time): a reserved counted push loop pushes through
     /// its push header again, the length written back per push (`@FR-R-PushFill`'s window
     /// clause).
@@ -2247,6 +2250,7 @@ impl<'a> Output<'a> {
             loop_record_disabled: std::env::var("LOFT_NO_LOOP_RECORD").is_ok_and(|v| v != "0")
                 || !crate::keys::loop_buffer_reuse_enabled(),
             push_fill_disabled: !crate::keys::push_fill_enabled(),
+            inline_hint: crate::keys::inline_hint_enabled(),
             push_window_disabled: !crate::keys::push_window_enabled(),
             join_read_disabled: !crate::keys::join_read_enabled(),
             push_windows: Vec::new(),
@@ -2317,14 +2321,26 @@ impl<'a> Output<'a> {
         }
     }
 
-    /// loft#954 — the attribute line that precedes a generated loft function
-    /// definition, so `--names` keeps it out of line and a trap's frame can name it.
-    /// Empty (not a blank line) in every ordinary build, which keeps the emitted
-    /// Rust byte-identical to what it was.
+    /// The attribute line that precedes a generated loft function definition.  loft#954:
+    /// `--names` keeps every one out of line so a trap's frame can name it.  Otherwise a
+    /// LOOP-FREE function carries an `#[inline]` hint ([`crate::keys::inline_hint_enabled`]):
+    /// the hint raises LLVM's threshold for it and decides nothing else, so a small helper
+    /// made long by its checked arithmetic folds into its caller as a plain-Rust twin's
+    /// does.  A function that runs a loop gets none: pulled into a caller that loops
+    /// itself, its loop-carried values spill across the caller's live range (measured:
+    /// `newton_sqrt` inlined through `roots` into `main` kept `guess` on the stack across
+    /// its divide chain, +16 %), and the loop-free helpers are where the gain is.  Empty
+    /// (not a blank line) under `LOFT_NO_INLINE_HINT`.
     #[must_use]
-    fn fn_inline_attr(&self) -> &'static str {
+    fn fn_inline_attr(&self, def: &crate::data::Definition) -> &'static str {
         if self.keep_fn_names {
             "#[inline(never)]\n"
+        } else if self.inline_hint
+            && !def
+                .code()
+                .any_node(&mut |n| matches!(n, Value::Loop(_) | Value::Parallel(_)))
+        {
+            "#[inline]\n"
         } else {
             ""
         }
@@ -2680,6 +2696,30 @@ impl Output<'_> {
         self.mint_push_headers.clear();
         self.push_windows.clear();
         self.hoist_counter = 0;
+    }
+
+    /// The rewrites `start_fn` admitted for the function whose body is being emitted, into
+    /// the census (`crate::rewrite_census`): one count per site each plan will rewrite.
+    fn census_plans(&self) {
+        use crate::rewrite_census::fired;
+        fired(
+            "R-LitHoist",
+            self.invariant_lits.wrapped.len() + self.invariant_lits.flat.len(),
+        );
+        fired("R-ValueLocal", self.value_record_locals.len());
+        fired("R-ElemFirst", self.elem_first.pairs.len());
+        fired(
+            "R-CompleteWrite",
+            self.complete_writes.db_vars.len() + self.complete_writes.mint_tps.len(),
+        );
+        fired("R-MoveAppend", self.move_pairs.len());
+        fired("R-LazySplit", self.lazy_splits.len());
+        fired("R-SplitTable", self.split_tables.len());
+        fired("R-TextBorrow", self.borrowed_text_locals.len());
+        fired("R-CharWalk", self.char_walks.len());
+        fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
+        fired("R-LoopRecord", self.loop_records.len());
+        fired("R-LoopBuffer", self.loop_buffers.len());
     }
 
     /// loft#885 — open a loop with the headers of the vectors it only reads, and
@@ -3499,6 +3539,7 @@ impl Output<'_> {
             p.size
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
+        crate::rewrite_census::fired("R-PushFill", 1);
         Ok(Some((win, hdr, vec)))
     }
 
@@ -3576,6 +3617,7 @@ impl Output<'_> {
             m.size
         )?;
         self.push_windows.push((m.path.clone(), win.clone()));
+        crate::rewrite_census::fired("R-PushFill/record", 1);
         Ok(Some((win, hdr, vec)))
     }
 
@@ -3719,8 +3761,12 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val})); //@PLN157 § V-am push fill",
-            lp.scope, p.rust_type, p.size
+            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val}){}); //@PLN157 § V-am push fill",
+            lp.scope,
+            p.rust_type,
+            p.size,
+            // The fill runs only unbiased (`push_loop` declines a biased one).
+            hoist::push_value_cast(p.rust_type, false)
         )?;
         Ok(true)
     }
@@ -4004,6 +4050,16 @@ impl Output<'_> {
                 writeln!(w, "{line}")?;
             }
             self.indent(w)?;
+        }
+        {
+            use crate::rewrite_census::fired;
+            fired("R-Header", frame.len());
+            fired("R-Base", base_frame.len());
+            fired("R-BoundedNest", bound_frame.len());
+            fired("R-Scalar", scalar_frame.len());
+            fired("R-Invariant", invariant_frame.len());
+            fired("R-Push", push_frame.len());
+            fired("R-PushRec", mint_frame.len());
         }
         self.vec_headers.push(frame);
         self.vec_bases.push(base_frame);
@@ -4538,6 +4594,7 @@ impl Output<'_> {
             );
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
+        crate::rewrite_census::fired("R-RecPtr", 1);
         if let (Some(finish), Some(block)) = (window, block) {
             // A window's frame is closed at its finish, not with the block: the caller
             // must not count it among the frames it pops.
@@ -6930,7 +6987,7 @@ extern crate loft;"
             if d == u32::MAX {
                 String::new()
             } else {
-                self.data.def(d).position().file.clone()
+                self.data.def(d).position().file.to_string()
             }
         };
         writeln!(w, "static LOFT_MAIN_FILE: &str = {main_file:?};")?;
@@ -7531,7 +7588,10 @@ extern crate loft;"
                 writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
                 writeln!(w, "        }}")?;
             }
-            writeln!(w, "        db.allocations[cv.store_nr as usize].lock();")?;
+            writeln!(
+                w,
+                "        db.allocations[cv.store_nr as usize].lock_constant();"
+            )?;
             // Plan-57 Phase C: pin the const store (never freed) — see compile.rs.
             writeln!(
                 w,
@@ -8049,6 +8109,7 @@ extern crate loft;"
         if !self.value_records_done {
             self.value_records_done = true;
             self.value_records = hoist::value_records(self.data, self.stores);
+            crate::rewrite_census::fired("R-ValueRecord", self.value_records.fns.len());
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
             // from the same table, so a twin never asks for a tuple parameter's fields.
             self.input_cache.params = self.value_records.params.clone();
@@ -8682,6 +8743,9 @@ extern crate loft;"
         if def.name().starts_with("Op") && *def.code() == Value::Null {
             return Ok(());
         }
+        // Here and not in `start_fn`, which the type registration also runs for every
+        // definition: a body emitted is the unit a rewrite's admission is counted in.
+        self.census_plans();
         // Skip functions implemented in codegen_runtime — emitting a stub
         // would shadow the real implementation.  Plan 09 phase 01
         // consolidated the hardcoded list into the registry in
@@ -8796,7 +8860,7 @@ extern crate loft;"
         write!(
             w,
             "{}fn {}{}(cell: &std::cell::UnsafeCell<Stores>",
-            self.fn_inline_attr(),
+            self.fn_inline_attr(def),
             self.fn_ident(def),
             if twin.is_some() { "__inv" } else { "" }
         )?;

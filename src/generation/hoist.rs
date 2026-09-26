@@ -278,6 +278,57 @@ pub struct HoistTiers {
     pub rebound_movers: bool,
 }
 
+/// For the decline trace: descend `op`'s statement lists to the innermost statement that
+/// `blocks_header_hoist` refuses, and the `Line` marker before it.
+fn innermost_blocking<'a>(
+    op: &'a Value,
+    data: &Data,
+    stores: Option<&Stores>,
+    cache: &mut HashMap<u32, bool>,
+    vars: Option<&crate::variables::Function>,
+    tiers: HoistTiers,
+    owned: Option<&HoistOwned>,
+) -> (u32, &'a Value) {
+    let mut cur = op;
+    let mut line = 0;
+    loop {
+        let ops = match cur.unspan() {
+            Value::Block(bl) | Value::Loop(bl) => &bl.operators,
+            Value::Insert(ls) => ls,
+            _ => return (line, cur),
+        };
+        let mut next: Option<&'a Value> = None;
+        let mut inner_line = line;
+        for o in ops {
+            if let Value::Line(n) = o.unspan() {
+                inner_line = *n;
+                continue;
+            }
+            if blocks_header_hoist(
+                o,
+                data,
+                stores,
+                cache,
+                &mut HashSet::new(),
+                vars,
+                tiers,
+                &mut HashSet::new(),
+                owned,
+            ) {
+                next = Some(o);
+                break;
+            }
+        }
+        match next {
+            Some(o) => {
+                cur = o;
+                line = inner_line;
+            }
+            None => return (line, cur),
+        }
+    }
+}
+
 /// Does anything in `body` invalidate a hoisted header?  The ONE gate both the vector
 /// headers and the scalar hoist (@PLN157 P4c) stand behind: a scalar hoist is admitted only
 /// in a loop whose store writes are all in place, so the two cannot disagree about which
@@ -307,14 +358,24 @@ fn body_blocks_hoist(
             owned,
         );
         if blocks && trace {
-            // The FIRST statement of the body the admission declines — the one to read
-            // when a loop that should hoist does not.
-            let shown = format!("{op:?}");
+            // The INNERMOST statement the admission declines, with the source line before
+            // it — the one to read when a loop that should hoist does not.  A loop body is
+            // one statement to this walk, and naming the body names nothing.
+            let (line, culprit) = innermost_blocking(
+                op,
+                data,
+                stores,
+                cache,
+                Some(data.def(def_nr).variables()),
+                tiers,
+                owned,
+            );
+            let shown = format!("{culprit:?}");
             eprintln!(
-                "hoist: {} loop {} declined by {}",
+                "hoist: {} loop {} declined at line {line} by {}",
                 data.def(def_nr).name(),
                 body.scope,
-                &shown[..shown.len().min(200)]
+                &shown[..shown.len().min(400)]
             );
         }
         blocks
@@ -2490,19 +2551,41 @@ pub fn fused_join_read<'a>(data: &Data, getter: &str, args: &'a [Value]) -> Opti
 /// reasons: a setter that re-bases (`OpSetByte`/`OpSetShort`), masks or translates
 /// keeps the unfused emission.
 /// The scalar pushes a loop may hoist a header for (@PLN157 § V-q, `@FR-R-Push`): the op,
-/// the Rust type of the value, and the element width.  The three [`HoistScalar`] kinds;
-/// a push of another kind keeps its template AND blocks the loop, as every growth does,
+/// the Rust type of the value, and the element width, one [`HoistScalar`] kind each; a
+/// push of another kind keeps its template AND blocks the loop, as every growth does,
 /// because only a push emitted through the refreshing helper leaves the header current.
 ///
+/// `OpPushBoolean` and `OpPushEnum` are the byte kind at bias 0 — their templates are
+/// `append_byte(r, v)`, which is `append_byte_min(r, 0, v)` — and `Store::byte_raw(0, v)`
+/// is `v` for every value a native `u8` holds (`byte_fits(0, v)` spans 0..=255, the enum
+/// null 255 included), so the element is the value itself and no bias rides along
+/// ([`push_operands`] answers none).  Their native value may be a `bool`, so every site
+/// that spells the pushed value casts it to the kind's type ([`push_value_cast`]).
+///
 /// [`HoistScalar`]: crate::vector::HoistScalar
-pub const FUSABLE_PUSHES: [(&str, &str, u32); 6] = [
+pub const FUSABLE_PUSHES: [(&str, &str, u32); 8] = [
     ("OpPushByte", "u8", 1),
+    ("OpPushBoolean", "u8", 1),
+    ("OpPushEnum", "u8", 1),
     ("OpPushInt4", "i32", 4),
     ("OpPushCharacter", "u32", 4),
     ("OpPushInt", "i64", 8),
     ("OpPushSingle", "f32", 4),
     ("OpPushFloat", "f64", 8),
 ];
+
+/// The cast a fused push's VALUE takes to become its element type: an unbiased `u8` kind
+/// (`OpPushBoolean`, `OpPushEnum`) is spelled `as u8`, because a boolean's native value is a
+/// `bool`; every other kind's value already has its element type (the byte kind's is
+/// encoded by `Store::byte_raw`, the `i32`/`u32` kinds convert in the push emitter).
+#[must_use]
+pub fn push_value_cast(rust_type: &str, bias: bool) -> &'static str {
+    if rust_type == "u8" && !bias {
+        " as u8"
+    } else {
+        ""
+    }
+}
 
 /// The operands of a fused push: the vector, the byte kind's `min` bias, the value.  Every
 /// kind is `(vector, value)` except `OpPushByte(vector, min, value)`, whose element is the
@@ -2566,7 +2649,7 @@ pub struct FillLoop<'a> {
 fn simple_invariant(v: &Value, data: &Data, banned: &[u16]) -> bool {
     match v.unspan() {
         Value::Var(x) => !banned.contains(x),
-        Value::Int(_) | Value::Float(_) => true,
+        Value::Int(_) | Value::Float(_) | Value::Boolean(_) | Value::Enum(_, _) => true,
         Value::Call(d, args) if (*d as usize) < data.definitions.len() => {
             let name = data.def(*d).name();
             if matches!(

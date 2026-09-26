@@ -662,6 +662,10 @@ pub struct Parser {
     /// always resolving the newest release.  `None` until first looked up.
     #[cfg(feature = "registry")]
     root_dep_pins: Option<std::collections::HashMap<String, String>>,
+    /// loft#1687 — per package a declared scope could not satisfy from the cache: the
+    /// constraint and the versions the cache holds, so "library not found" can say which
+    /// declaration was unmet instead of implying nothing is there.
+    cache_unmet: std::collections::HashMap<String, String>,
     /// Tier-1 text-method trigger map: `method name -> providing package`,
     /// derived once per top-level parse from the current package's (and its
     /// trigger-enabled dependencies') declared triggers.  `None` until built.
@@ -714,10 +718,10 @@ pub struct Parser {
     /// for `__tret` retbuf promotion (a frame-local text return with no buffer). Read
     /// by `do_tret_bind`'s gate on the THIRD pass so the promotion is forward-ref-safe:
     /// the attr is decided before the pass, so every caller re-lowers with the buffer.
-    force_tret: std::collections::HashSet<u32>,
+    force_tret: crate::fxhash::FxHashSet<u32>,
     /// `@FR-R-WorkBuffer` — every definition given a work-buffer parameter, kept across
     /// `after_pass2` runs so a caller built later (a rebuilt specialisation) is patched too.
-    pub(crate) work_buffer_promoted: std::collections::HashSet<u32>,
+    pub(crate) work_buffer_promoted: crate::fxhash::FxHashSet<u32>,
     /// @PLN167 C3 — some call handed a text field or element to a `&text` parameter, so
     /// `after_pass2` owes the store instances (`store_text.rs`).
     store_text_args: bool,
@@ -1449,7 +1453,7 @@ pub(super) mod objects;
 pub(super) mod operators;
 pub(super) mod store_text;
 pub(super) mod vectors;
-pub(super) mod work_buffer;
+pub(crate) mod work_buffer;
 
 impl Default for Parser {
     fn default() -> Self {
@@ -1524,7 +1528,7 @@ impl Parser {
         // These are resolved by the compiler via data.def_nr("i_...") and mapped to native
         // Rust implementations in native.rs.
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -1600,8 +1604,8 @@ impl Parser {
             first_pass: true,
             limit_refused: false,
             ambiguity_reported: std::collections::HashSet::new(),
-            force_tret: std::collections::HashSet::new(),
-            work_buffer_promoted: std::collections::HashSet::new(),
+            force_tret: crate::fxhash::FxHashSet::default(),
+            work_buffer_promoted: crate::fxhash::FxHashSet::default(),
             store_text_args: false,
             par_worker_defs: std::collections::HashSet::new(),
             par_deferred: Vec::new(),
@@ -1651,6 +1655,7 @@ impl Parser {
             module_clash_reported: std::collections::HashSet::new(),
             #[cfg(feature = "registry")]
             root_dep_pins: None,
+            cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
@@ -3361,7 +3366,9 @@ impl Parser {
         // F2 a heavily-read plain field is non-null → never accrues, so the hint would only ever
         // fire on a `?` field.)
         if crate::keys::pln25_dn1_enabled()
-            || std::env::var("LOFT_NO_HINT_NOT_NULL").is_ok_and(|v| v == "1" || v == "true")
+            || crate::env_once!(
+                std::env::var("LOFT_NO_HINT_NOT_NULL").is_ok_and(|v| v == "1" || v == "true")
+            )
         {
             self.field_read_counts.clear();
             self.defended_field_reads.clear();
@@ -5366,7 +5373,7 @@ impl Parser {
             && !self.in_explicit_cast
             && matches!(is_type, Type::Null)
         {
-            if std::env::var_os("LOFT_TRACE_UNWRAP").is_some() {
+            if crate::env_once!(std::env::var_os("LOFT_TRACE_UNWRAP").is_some()) {
                 let (what, _, _) = self.store_slot();
                 eprintln!(
                     "[null] -> {} what={} at {}",
@@ -5498,7 +5505,7 @@ impl Parser {
             // one-time census instrument stays: `LOFT_TRACE_UNWRAP=1` names every peel's
             // caller, face and slot.
             if !self.first_pass && !matches!(should, Type::Optional(_)) {
-                if std::env::var_os("LOFT_TRACE_UNWRAP").is_some() {
+                if crate::env_once!(std::env::var_os("LOFT_TRACE_UNWRAP").is_some()) {
                     let (what, _, _) = self.store_slot();
                     eprintln!(
                         "[unwrap] {} -> {} admit={} what={} at {}",
@@ -8073,7 +8080,7 @@ impl Parser {
         } else {
             self.method_shaped_instance_key(g_nr, name, &concrete, type_nr)
         };
-        if std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some() {
+        if crate::env_once!(std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some()) {
             let spelling: Vec<String> = var_bindings
                 .iter()
                 .map(|(_, b)| self.data.identity_spelling(b))
@@ -8087,7 +8094,7 @@ impl Parser {
         // Return existing instantiation if already created.
         let existing = self.data.def_nr(&mangled);
         if existing != u32::MAX {
-            if std::env::var_os("LOFT_DBG_ACC").is_some() {
+            if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                 eprintln!(
                     "[acc-mono] existing {mangled} pass1={} buffers={}",
                     self.first_pass,
@@ -8982,7 +8989,7 @@ impl Parser {
                 // re-derived body is what the program runs.  Only where the first pass
                 // promoted nothing — a second hidden buffer would move the ABI (loft#1357).
                 if self.data.def(d_nr).text_work_buffers() == 0 {
-                    if std::env::var_os("LOFT_DBG_ACC").is_some() {
+                    if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                         eprintln!(
                             "[acc-mono] re-derived stale monomorph {}",
                             self.data.def(d_nr).name()
@@ -10383,7 +10390,7 @@ impl Parser {
         // That is the "Too few parameters on t_6Sqlite_dump (got 4, need 5)" ICE, and a
         // lookup-retargeted call reaches it without ever having been in `remap`. So the
         // set is every call this body makes that is short of its target's arity.
-        let mut short_calls: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut short_calls: crate::fxhash::FxHashSet<u32> = crate::fxhash::FxHashSet::default();
         self.data.def(d_nr).code.walk(&mut |v| {
             if let Value::Call(d, args) = v {
                 let target = remap.get(d).copied().unwrap_or(*d);
@@ -10395,7 +10402,7 @@ impl Parser {
                 }
             }
         });
-        if std::env::var_os("LOFT_DBG_ACC").is_some() {
+        if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
             let names: Vec<String> = remap
                 .iter()
                 .map(|(a, b)| format!("{}->{}", self.data.def(*a).name(), self.data.def(*b).name()))
@@ -11360,7 +11367,10 @@ impl Parser {
             bl.operators.get(2).map(Value::unspan),
         ) {
             (Some(Value::Text(f)), Some(Value::Int(l))) => (f.clone(), *l),
-            _ => (self.lexer.pos().file.clone(), self.lexer.pos().line as i32),
+            _ => (
+                self.lexer.pos().file.to_string(),
+                self.lexer.pos().line as i32,
+            ),
         };
         let mut given: Vec<(String, Value, Type)> = Vec::new();
         for op in &bl.operators[3..] {
@@ -14310,7 +14320,7 @@ impl Parser {
             vec![
                 bound,
                 msg,
-                Value::Text(pos.file.clone()),
+                Value::Text(pos.file.to_string()),
                 Value::Int(pos.line as i32),
             ],
         );
@@ -16432,7 +16442,7 @@ impl Parser {
                     };
                     if f_exists {
                         let cur = &self.lexer.pos().file;
-                        self.todo_files.push((cur.clone(), self.data.source));
+                        self.todo_files.push((cur.to_string(), self.data.source));
                         self.data.use_add(&id);
                         self.record_use_path(&id, &f);
                         // @PLN22 Phase 3 — register the library alias now that the lib's
@@ -16446,11 +16456,19 @@ impl Parser {
                         self.switch_to_dep(&f);
                     } else {
                         if !refused {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "Library '{id}' not found — searched lib/, lib_dirs, and sibling packages"
-                            );
+                            if let Some(unmet) = self.cache_unmet.get(&id).cloned() {
+                                diagnostic!(
+                                    self.lexer,
+                                    Level::Error,
+                                    "Library '{id}' not found — {unmet}"
+                                );
+                            } else {
+                                diagnostic!(
+                                    self.lexer,
+                                    Level::Error,
+                                    "Library '{id}' not found — searched lib/, lib_dirs, and sibling packages"
+                                );
+                            }
                         }
                         self.lexer.has_token(";");
                     }
@@ -16477,7 +16495,7 @@ impl Parser {
             if let Some(pos) = self
                 .pending_pkg_deps
                 .iter()
-                .position(|(dep_id, _, from)| *from == here && !self.data.use_exists(dep_id))
+                .position(|(dep_id, _, from)| **from == *here && !self.data.use_exists(dep_id))
             {
                 let (dep_id, parent_dir, _) = self.pending_pkg_deps.remove(pos);
                 // First try the sibling package directory (same parent as the
@@ -16489,7 +16507,7 @@ impl Parser {
                 };
                 if std::path::Path::new(&f).exists() {
                     let cur = &self.lexer.pos().file;
-                    self.todo_files.push((cur.clone(), self.data.source));
+                    self.todo_files.push((cur.to_string(), self.data.source));
                     self.data.use_add(&dep_id);
                     self.record_use_path(&dep_id, &f);
                     self.switch_to_dep(&f);
@@ -16498,7 +16516,7 @@ impl Parser {
                 // Nothing left for THIS file — drop its entries (already loaded,
                 // or unresolvable) so the fixpoint can exit.  Entries queued from
                 // other files stay: their own file drains them when it resumes.
-                self.pending_pkg_deps.retain(|(_, _, from)| *from != here);
+                self.pending_pkg_deps.retain(|(_, _, from)| **from != *here);
             }
             // Fixpoint exit: the cursor rests on a use-free file and this file has
             // no manifest dependency still queued.  `peek_token` (not `has_token`)
@@ -16506,7 +16524,7 @@ impl Parser {
             let mine_pending = self
                 .pending_pkg_deps
                 .iter()
-                .any(|(_, _, from)| *from == self.lexer.pos().file);
+                .any(|(_, _, from)| **from == *self.lexer.pos().file);
             if !self.lexer.peek_token("use") && !mine_pending {
                 break;
             }
@@ -16524,8 +16542,9 @@ impl Parser {
         // `!had_use`: explicit-mode files (any `use`, and the stdlib) are skipped
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
-        if !had_use && self.lexer.pos().file == auto_use_scan_file {
-            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&auto_use_scan_file) {
+        if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
+            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&*auto_use_scan_file)
+            {
                 c.clone()
             } else {
                 let src = self
@@ -16537,7 +16556,7 @@ impl Parser {
                     crate::libscan::scan_method_calls(&src),
                 );
                 self.auto_use_scan_cache
-                    .insert(auto_use_scan_file.clone(), pair.clone());
+                    .insert(auto_use_scan_file.to_string(), pair.clone());
                 pair
             };
             // Tier-0: `lib::x` — the library is named directly.
@@ -16606,7 +16625,7 @@ impl Parser {
                 if self.data.use_exists(&name) {
                     continue;
                 }
-                let cur = self.lexer.pos().file.clone();
+                let cur = self.lexer.pos().file.to_string();
                 self.todo_files.push((cur, self.data.source));
                 self.data.use_add(&name);
                 self.record_use_path(&name, &f);
@@ -16971,7 +16990,7 @@ impl Parser {
             named_by_the_project = true;
         }
         self.probe_auto_install(id, &mut f, &cur_script, &scope);
-        self.probe_cache_newest(id, &mut f, &scope);
+        self.probe_cache_newest(id, &mut f, &cur_script, &scope);
         if !named_by_the_project && std::path::Path::new(&f).exists() {
             self.undeclared_registry_dep(id, &cur_script);
         }
@@ -17266,7 +17285,7 @@ impl Parser {
             }
             return;
         }
-        let cur = self.lexer.pos().file.clone();
+        let cur = self.lexer.pos().file.to_string();
         self.todo_files.push((cur, self.data.source));
         self.data.use_add(&key);
         self.record_use_path(&key, f);
@@ -18482,20 +18501,27 @@ impl Parser {
         );
     }
 
-    /// @PLN143 arc C1 — a bare script falls back to the newest version already in the
-    /// cache.
+    /// A script falls back to the newest version already in the cache
+    /// that the declaration governing it allows.
     ///
     /// The failure path this exists for: offline (or a registry that cannot be reached),
-    /// a bare script, and the package sitting right there under `~/.loft/registry/`.
-    /// That answered *"Library 'x' not found — searched lib/, lib_dirs, and sibling
-    /// packages"* in a directory holding five extracted copies of it, which is the least
-    /// true message available.
+    /// and the package sitting right there under `~/.loft/registry/`.  That answered
+    /// *"Library 'x' not found — searched lib/, lib_dirs, and sibling packages"* in a
+    /// directory holding five extracted copies of it, which is the least true message
+    /// available.
     ///
-    /// **`Bare` scope only, and that is the whole rule**: a fallback picks the newest
-    /// cached version, and only where nothing is declared is there no constraint it could
-    /// be violating. A package's manifest may say `^0.1`, and a pinned script names an
-    /// exact version — honouring the declaration is the point of having one, so a scope
-    /// that HAS one fails instead, and says what it could not satisfy.
+    /// **The fallback never answers past a declaration.**  A `Bare` scope declares nothing,
+    /// so it takes the newest loadable copy.  A declared scope — a package, a pinned script,
+    /// and every library parsed out of the cache, whose own manifest governs its `use`s —
+    /// takes the newest loadable copy that satisfies the SAME constraint the online path
+    /// resolves under (the governing lock's pin against the root project's range,
+    /// [`crate::install::constraint_for`]) AND the range the declaring package itself names
+    /// for `id` (PKG_REGISTRY.md § failure path 5: a transitive dep is resolved by the
+    /// library's own manifest constraint).  Until loft#1687 a declared scope did not fall
+    /// back at all, so `use graphics;` failed offline on `use mesh3d;` inside graphics with
+    /// `mesh3d 0.1.1` cached and graphics asking `>=0.1.1`.  Where the cache holds copies and
+    /// none satisfies, the constraint and the copies are recorded for the "not found"
+    /// message, which then names what was unmet.
     ///
     /// Runs after `probe_auto_install`, so an online run still resolves the newest
     /// RELEASE; the cache only answers when the registry could not.
@@ -18504,18 +18530,59 @@ impl Parser {
         &mut self,
         id: &str,
         f: &mut String,
+        cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
         if std::path::Path::new(f).exists() {
             return;
         }
-        if *scope != crate::resolution_scope::ResolutionScope::Bare {
+        let constraints: Vec<String> = if *scope == crate::resolution_scope::ResolutionScope::Bare {
+            Vec::new()
+        } else {
+            let root = self.root_dep_constraint(id);
+            let root = root
+                .as_deref()
+                .and_then(crate::manifest::extract_version_req);
+            let mut cs: Vec<String> =
+                crate::install::constraint_for(scope.pinned_version(id).as_deref(), root)
+                    .into_iter()
+                    .collect();
+            if let Some(own) = Self::declaring_range(cur_script, id)
+                && !cs.contains(&own)
+            {
+                cs.push(own);
+            }
+            cs
+        };
+        if let Some((version, _)) =
+            crate::registry_index::newest_cached_loadable_satisfying(id, &constraints)
+        {
+            self.resolve_registry_installed(id, &version, f);
             return;
         }
-        let Some((version, _)) = crate::registry_index::newest_cached_loadable(id) else {
-            return;
-        };
-        self.resolve_registry_installed(id, &version, f);
+        let cached = crate::registry_index::cached_versions(id);
+        if !constraints.is_empty() && !cached.is_empty() {
+            self.cache_unmet.insert(
+                id.to_string(),
+                format!(
+                    "the registry could not be asked, and no cached copy satisfies `{}` \
+                     (cached: {})",
+                    constraints.join("`, `"),
+                    cached.join(", ")
+                ),
+            );
+        }
+    }
+
+    /// The version range the package declaring `cur_script` names for `id` in its own
+    /// `[dependencies]` — `None` when there is no such package, no such entry, or the entry
+    /// is a pure path dependency (resolved by path, never from the registry cache).
+    #[cfg(feature = "registry")]
+    fn declaring_range(cur_script: &str, id: &str) -> Option<String> {
+        let root = crate::resolution_scope::project_root(cur_script)?;
+        let m = crate::manifest::read_manifest(&root.join("loft.toml").to_string_lossy())?;
+        let (_, value) = m.dependencies.iter().find(|(n, _)| n == id)?;
+        crate::manifest::extract_version_req(value).map(str::to_string)
     }
 
     /// No-op when the registry feature is off — there is no registry cache to fall back
@@ -18526,6 +18593,7 @@ impl Parser {
         &mut self,
         _id: &str,
         _f: &mut String,
+        _cur_script: &str,
         _scope: &crate::resolution_scope::ResolutionScope,
     ) {
     }
@@ -19131,7 +19199,7 @@ impl Parser {
                 self.lib_dirs.push(resolved_parent.clone());
             }
             if !self.data.use_exists(dep_name) {
-                let from = self.lexer.pos().file.clone();
+                let from = self.lexer.pos().file.to_string();
                 self.pending_pkg_deps
                     .push((dep_name.clone(), resolved_parent, from));
             }
@@ -19327,9 +19395,10 @@ impl Parser {
         let d_nr = self.data.declared_by_importer(storage_name)?;
         let bare = storage_name.strip_prefix("n_").unwrap_or(storage_name);
         let pos = self.data.def(d_nr).position();
-        let file = std::path::Path::new(&pos.file)
-            .file_name()
-            .map_or_else(|| pos.file.clone(), |f| f.to_string_lossy().into_owned());
+        let file = std::path::Path::new(&*pos.file).file_name().map_or_else(
+            || pos.file.to_string(),
+            |f| f.to_string_lossy().into_owned(),
+        );
         Some(format!(
             "`{bare}` is declared in {file}:{}, which `use`s this file — a `use` \
              imports the used file's names into the file that used it, never the \
@@ -19827,11 +19896,11 @@ impl Parser {
     /// written to — the `const` has no effect when the parameter is not modified.
     fn check_ref_mutations(&mut self, arguments: &[Argument]) {
         let code = self.data.def(self.context).code().clone();
-        let mut written: HashSet<u16> = HashSet::new();
+        let mut written = crate::fxhash::FxHashSet::default();
         // interprocedural param-write cache, local to this check.
         // Re-created per function-body check; small cost, avoids
         // persisting state across passes or across unrelated checks.
-        let mut callee_cache: HashMap<u32, Vec<bool>> = HashMap::new();
+        let mut callee_cache = crate::fxhash::FxHashMap::default();
         find_written_vars(&code, &self.data, &mut written, &mut callee_cache);
         // Enhancement: when a for-loop variable is FIELD-WRITTEN (OpSet*
         // through the loop var, not just loop-advance Set), also mark the
@@ -19840,7 +19909,7 @@ impl Parser {
         // Only propagate for vars that have a field-level write (OpSet*,
         // OpCopyRecord, OpNewRecord etc.) — not plain Set (which is just
         // the loop-iterator advance).
-        let mut field_written: HashSet<u16> = HashSet::new();
+        let mut field_written = crate::fxhash::FxHashSet::default();
         find_field_written_vars(&code, &self.data, &mut field_written);
         let mut propagated: HashSet<u16> = HashSet::new();
         for &w in &field_written {
@@ -20419,7 +20488,7 @@ fn field_id(key: &[(String, bool)], name: &mut String) {
 }
 
 /// Collect all `Value::Var` indices reachable anywhere in `val`.
-fn collect_vars_in(val: &Value, result: &mut HashSet<u16>) {
+fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
     match val {
         Value::Var(v) => {
             result.insert(*v);
@@ -20558,8 +20627,8 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
 pub(crate) fn find_written_vars(
     code: &Value,
     data: &Data,
-    written: &mut HashSet<u16>,
-    callee_cache: &mut HashMap<u32, Vec<bool>>,
+    written: &mut crate::fxhash::FxHashSet<u16>,
+    callee_cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
 ) {
     match code {
         Value::Set(v, body) => {
@@ -20708,7 +20777,11 @@ fn lambda_mutated_captures(code: &Value, data: &Data, names: &mut HashSet<String
 /// analysis so cycles are broken.  Caller should iterate to fixpoint
 /// if precise transitive effects across recursion chains are needed;
 /// for linear forwarding (the common case) one pass suffices.
-fn callee_param_writes(fn_nr: u32, data: &Data, cache: &mut HashMap<u32, Vec<bool>>) -> Vec<bool> {
+fn callee_param_writes(
+    fn_nr: u32,
+    data: &Data,
+    cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
+) -> Vec<bool> {
     if let Some(v) = cache.get(&fn_nr) {
         return v.clone();
     }
@@ -20720,7 +20793,7 @@ fn callee_param_writes(fn_nr: u32, data: &Data, cache: &mut HashMap<u32, Vec<boo
         return vec![false; n];
     }
     let body = def.code().clone();
-    let mut written: HashSet<u16> = HashSet::new();
+    let mut written = crate::fxhash::FxHashSet::default();
     find_written_vars(&body, data, &mut written, cache);
     let result: Vec<bool> = (0..n).map(|i| written.contains(&(i as u16))).collect();
     // Monotone merge with any prior placeholder entry.
@@ -20887,7 +20960,11 @@ fn collect_param_rebinds_owned(
 /// writes should propagate back to the iterated `&` collection, and by the
 /// @PLN101 value-struct copy-elision pass (`scopes::value_struct_copy`) to prove
 /// a read-only view's base is never mutated under it.
-pub(crate) fn find_field_written_vars(code: &Value, data: &Data, written: &mut HashSet<u16>) {
+pub(crate) fn find_field_written_vars(
+    code: &Value,
+    data: &Data,
+    written: &mut crate::fxhash::FxHashSet<u16>,
+) {
     match code {
         Value::Call(fn_nr, args) => {
             let def = data.def(*fn_nr);

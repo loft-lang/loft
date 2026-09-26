@@ -12,6 +12,7 @@ Rules for all Rust and loft code in this project.
 - [Test Suite (`tests/docs/`, `tests/scripts/`)](#test-suite-testsdocs)
 - [Clippy and Formatting](#clippy-and-formatting)
 - [Null Sentinels](#null-sentinels)
+- [Hot-path conventions](#hot-path-conventions)
 
 ---
 
@@ -98,6 +99,46 @@ correctly on the same file.
   been no panic at all, only writes landing in the wrong place.
 
 ---
+
+## Hot-path conventions
+
+Two rules for code the front end runs per token or per node, each with the measurement that
+made it a rule (@PLN166 B4, callgrind over a compile of the 12 826-line front-end corpus):
+
+- **Read a `LOFT_*` switch through `env_once!`, never `std::env::var*` inline.**  Every
+  inline read is a `getenv`, a `strncmp` walk over the whole environment; the front end made
+  178 732 of them per compile, 3 % of all instructions, and a `var` (not `var_os`) allocates
+  the value as well.  `crate::env_once!(std::env::var_os("LOFT_X").is_some())` caches the
+  answer once per process; `env_once!(@value T, expr)` caches a non-`bool`.  The one thing
+  it must not wrap is a variable the process itself `set_var`s mid-run.
+- **Key the compiler's own tables with `crate::fxhash`** (`FxHashMap` / `FxHashSet`), not
+  `std`'s SipHash tables.  A table fed by the program being compiled — definition names,
+  variable and definition numbers — needs no collision resistance, and SipHash's per-key
+  setup was 19 % of a compile (the definition index alone 13 %).  A table fed by anything an
+  outside party controls keeps the store's own hashing.  `HashMap::new()` becomes
+  `HashMap::default()`, and `HashSet::from([x])` becomes `HashSet::from_iter([x])`.
+- **A per-token value shares a name it does not change; it never owns a copy.**
+  `Position { file: String }` was cloned 1.4 M times per compile of the 12 826-line corpus
+  for a file name that is the same on every token of a file — 12 % of the compile's
+  instructions and a third of its allocations (B5).  It is `Arc<str>` now (`Arc`, not `Rc`:
+  a position travels with the IR into worker threads), and a position with no file takes
+  `crate::lexer::no_file()`, whose `Arc::<str>::default()` is backed by a static and
+  allocates nothing — a `LazyLock` would, once, and the allocation ratchet's two-runs-agree
+  check reads that one allocation as a count that varies.
+- **A lookup the passes make per node with a LITERAL name is answered by address, not by
+  hash.**  Once the parse is done the definition index does not change again, and the analysis passes ask
+  `data.def_nr("OpCopyRecord")` once per node they visit — 795 such sites, 1.2 M of the 1.7 M
+  lookups per compile of the corpus (B6).  `DefIndex::get_or_std` keeps a direct-mapped memo
+  keyed by the asked `&str`'s address and invalidated by a generation the index bumps on every
+  mutation; a slot also keeps the name's bytes and compares them, so a heap buffer reused at
+  the same address with another name misses rather than answers for the old one.  Reach for
+  the same shape — memo by address, invalidate by generation, verify the bytes — before a
+  cache keyed by the string, which pays the hash the memo exists to skip.
+
+And one shape to recognise: a scan over `definitions` or `def_names` inside a lookup
+(`children_of` walked every definition per call, `has_private_type` every name) is a
+quadratic waiting for a large program.  Derive an index and keep it at the ONE writer of
+the field it derives from (`Data::set_parent`), or scan the cheapest field first.
 
 ## Dependencies
 

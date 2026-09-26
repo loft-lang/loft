@@ -15,6 +15,9 @@ different CPU, a change somewhere else in the suite.  Making a build red on
 those teaches everyone to widen the band until it means nothing, and the one
 real regression arrives inside a band nobody trusts.  So this prints, and exits
 0 whatever it finds.  Correctness is what fails a build; speed is what you read.
+(A HARD drop — 3x, confirmed by rerunning the test alone — is the one speed question that
+does fail a build: `test_speed_gate.py`, which answers noise with a second measurement
+instead of a wider band.)
 
 Timeouts still have a job — they bound things we do not control (a socket, a
 process spawn, `rustc`).  They are a liveness bound, not a speed measurement,

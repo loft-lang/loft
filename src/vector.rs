@@ -1055,7 +1055,9 @@ pub unsafe fn rec_get<T: Copy + PartialEq + std::fmt::Debug>(
 }
 
 /// `@FR-R-RecPtr` — one in-place scalar field write through a record address: nothing for
-/// the null record (the setter's own `rec != 0` test), else one unaligned store.
+/// the null record (the setter's own `rec != 0` test, `@FR-H-WriteNull` — a view bound to an
+/// absent element, `e = r[9]; e.x = 5`, holds the null address and the write lands nowhere),
+/// else one unaligned store.
 ///
 /// # Safety
 ///

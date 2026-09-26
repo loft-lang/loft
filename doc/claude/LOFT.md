@@ -654,7 +654,11 @@ loft warns when a constant's initialiser calls a user function or a stdlib
 function marked `#impure`. Set `LOFT_NO_CONST_EFFECT` to silence it.
 
 A **vector** constant is different: it is pre-built once into the constant store and
-referenced, not re-run. Its elements are built from their fields, so they must be
+referenced, not re-run.  Binding it to a local **copies** it, like any whole-value bind
+(`v = NAMES; v += ["c"]` leaves `NAMES` as declared), while an index, a `len` or a `for`
+over the constant reads it in place.  A function that writes through a parameter handed the
+constant (`grow(NAMES)`) is refused at run time — a parameter aliases its argument, and a
+constant cannot be written; bind it first. Its elements are built from their fields, so they must be
 **flat** — scalars and text, and structs of those (`ITEMS = [It { a: 3, b: 4 }]`).
 A field value may be computed from things already known at compile time, and is folded
 before the element is built: `[BASE + 1, BASE * 2]`, `[-5]`, `["a" + "b"]` all work.

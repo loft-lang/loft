@@ -551,3 +551,19 @@ callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry a
 guard in `--native-release`, since there the frame is only a depth count (parse row −12–14 %).
 **`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
 the named tiers never elide a non-leaf.
+
+## Inlining hints
+
+**Every loop-free loft function carries `#[inline]` (default-ON, generation time, both native
+tiers).**  The hint only raises LLVM's inlining threshold for that function; a small helper
+whose checked arithmetic pushed it just past the default budget now folds into its caller the
+way rustc folds a plain-Rust twin's.  A function that runs a loop gets no hint: pulled into a
+caller that loops itself, its loop-carried values spill across the caller's live range
+(`newton_sqrt` inlined through `roots` into `main` kept `guess` on the stack across its divide
+chain, +16 %).  Measured over the suite and three library benches (87 routines, hashes
+identical): geomean −2.3 %, hex_field `edgeset_count` 23.1 → 10.1 ms (35.6× → ~15.6×),
+`join` −19 %, `replace` −18 %, `dot_product` −14 %; the largest loss, `char_roundtrip` +5 %,
+is function layout — both arms read the same once `-align-all-functions=6 -align-loops=64`
+pins it.  **`LOFT_NO_INLINE_HINT=1`** emits no attribute (the emission of before) and is the
+A/B for a row that moved after a rebuild.  `--names` pins every loft function
+`#[inline(never)]` regardless.  One home: `Output::fn_inline_attr`.

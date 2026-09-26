@@ -569,7 +569,13 @@ impl OpEmitter for HoistedPushEmitter {
             ctx.emit(fused.val)?;
             write!(ctx.w, ") as i32)")?;
         } else {
+            write!(ctx.w, "(")?;
             ctx.emit(fused.val)?;
+            write!(
+                ctx.w,
+                "){}",
+                crate::generation::hoist::push_value_cast(ty, false)
+            )?;
         }
         if let Some(win) = window {
             write!(

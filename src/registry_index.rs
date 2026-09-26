@@ -977,10 +977,25 @@ pub fn installed_packages() -> Vec<(String, String, PathBuf)> {
 /// Returns `(version, entry_dir)`.
 #[must_use]
 pub fn newest_cached_loadable(pkg: &str) -> Option<(String, PathBuf)> {
+    newest_cached_loadable_satisfying(pkg, &[])
+}
+
+/// [`newest_cached_loadable`] under declared constraints (loft#1687): the newest cached copy
+/// this loft can load whose version [`satisfies`] every one of `constraints` — the range a
+/// manifest declares, or a lock's exact pin.  A declared scope falls back to the cache only
+/// through this, so the fallback can never answer past the declaration that governs it.
+#[must_use]
+pub fn newest_cached_loadable_satisfying(
+    pkg: &str,
+    constraints: &[String],
+) -> Option<(String, PathBuf)> {
     let current = env!("CARGO_PKG_VERSION");
     let mut best: Option<(String, PathBuf)> = None;
     for (name, version, dir) in installed_packages() {
-        if name != pkg || version.contains('-') {
+        if name != pkg
+            || version.contains('-')
+            || !constraints.iter().all(|c| satisfies(&version, c))
+        {
             continue;
         }
         let Some(m) = crate::manifest::read_manifest(&dir.join("loft.toml").to_string_lossy())
@@ -1007,6 +1022,20 @@ pub fn newest_cached_loadable(pkg: &str) -> Option<(String, PathBuf)> {
         }
     }
     best
+}
+
+/// Every release of `pkg` extracted in the cache, oldest first — what a declared scope's
+/// "nothing cached satisfies it" message names (loft#1687).
+#[must_use]
+pub fn cached_versions(pkg: &str) -> Vec<String> {
+    let mut out: Vec<String> = installed_packages()
+        .into_iter()
+        .filter(|(name, _, _)| name == pkg)
+        .map(|(_, version, _)| version)
+        .collect();
+    out.sort_by(|a, b| compare_semver(a, b));
+    out.dedup();
+    out
 }
 
 /// Build the Tier-1 lazy-load `method -> package` map from a parsed catalog.

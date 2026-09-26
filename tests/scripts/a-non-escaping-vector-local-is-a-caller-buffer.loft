@@ -5,7 +5,8 @@
 //
 // `v: vector<τ> = []` (τ a scalar) whose every mention is an operand of an in-place vector
 // operator — a push, an append, the length, a clear, a removal, an element read or written as
-// a scalar, `for x in v` — becomes a hidden work-buffer parameter: every call site supplies
+// a scalar, `for x in v` — or a by-value argument of a loft-bodied callee whose answer carries
+// no dep on that parameter, becomes a hidden work-buffer parameter: every call site supplies
 // it as the per-site work-ref a return buffer already takes, minted once per activation, and
 // the callee CLEARS it where the declaration stood.  A callee handed the null sentinel takes
 // the rebound-parameter road at that site (a store of its own, released at exit against the
@@ -16,12 +17,11 @@
 //
 // @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
 //   (2026-09-25): with the clear struck from `work_buffer::promote_one` (the else arm a
-//   `Null`), c4 — a local declared INSIDE a loop — answers 6 for 3 on both backends: the
-//   buffer keeps the previous pass's element and the lengths accumulate 1, 2, 3.
+//   `Null`), c1 across 2000 calls reads 3998000 for 4000 on both backends — the elements of
+//   every earlier call are still in the buffer, so each call's length is the running sum.
 //   CHANNEL: the VALUE channel (an assertion) on both backends.
-//   WITNESS: under the sabotage c4 reads 6 for 3, on both backends; c1 across 2000 calls
-//   reads 3998000 for 4000 (the elements of every earlier call still there), the first
-//   assertion to fail on both backends.
+//   WITNESS: 3998000 for 4000, the first assertion to fail on both backends (hand-computed:
+//   the sum over k < 2000 of the running sum of k mod 5).
 //   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
 
 // c1 — the probe: a counted push, the length and an element.  c1(salt) = salt.
@@ -52,8 +52,9 @@ fn c3(n: integer) -> float {
   s + t as float
 }
 
-// c4 — declared INSIDE a loop: the clear runs per pass, so every pass sees an empty vector.
-// c4(3) = 1 + 1 + 1 = 3 (the sabotage witness: 1 + 2 + 3 = 6 without the clear).
+// c4 — DECLINED: declared INSIDE a loop.  Such a local already keeps its store across the
+// passes with a length reset on native (`@FR-R-LoopBuffer`), and a buffer's clear costs
+// more than that reset per pass (measured: the resample rows +3 %).  c4(3) = 1 + 1 + 1 = 3.
 fn c4(n: integer) -> integer {
   total = 0;
   for k in 0..n {
@@ -89,7 +90,8 @@ fn c6(n: integer) -> vector<integer> {
   out
 }
 
-// c7 — DECLINED: handed to a loft-bodied call (the pin reads the decline).  c7(4) = 6.
+// c7 — handed BY VALUE to a loft-bodied callee whose answer is a scalar: the callee views the
+// buffer for the call and cannot keep it, so the local is a buffer all the same.  c7(4) = 6.
 fn sum_of_all(xs: vector<integer>) -> integer {
   s = 0;
   for x in xs { s += x; }
@@ -99,6 +101,35 @@ fn c7(n: integer) -> integer {
   v: vector<integer> = [];
   for i in 0..n { v += [i]; }
   sum_of_all(v)
+}
+
+// c7b — handed to a callee that ANSWERS its parameter: the language delivers that answer as
+// a COPY through the callee's return buffer (`heap_return_delivery` reads `RetBuf`, not
+// `View`), so the buffer never leaves the frame and the local is a buffer all the same.  The
+// cell proves the copy: a later push to the source and a write to the answer never meet.
+// (Returning the answer itself — `fn c7b(n) -> vector<integer> { …; view_of(v) }` — answers
+// `[]` today with the rewrite off and on the 2026.8.0 release alike, a pre-existing defect of
+// the promoted-result delivery parked in
+// doc/claude/plans/157-native-4x-drawing/to-file-view-of-promoted-result.md.)
+// c7b(3) = 3 * 100 + 0 = 300.
+fn view_of(xs: vector<integer>) -> vector<integer> { xs }
+fn c7b(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i]; }
+  w = view_of(v);
+  v += [9];
+  w[0] = 7;
+  len(w) * 100 + (v[0] ?? -1)
+}
+
+// c7c — DECLINED: handed to a `&` parameter, through which a rebind repoints the caller's
+// variable.  c7c(2) = 3 (two pushes and the callee's one).
+fn grow(xs: &vector<integer>) { xs += [99]; }
+fn c7c(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i]; }
+  grow(v);
+  len(v)
 }
 
 // c8 — DECLINED: a text element owns heap.  c8(3) = 3.
@@ -117,7 +148,8 @@ fn c9(n: integer) -> integer {
   len(v)
 }
 
-// c10 — DECLINED: an alias reaches the tail.  c10(3) = [0, 1, 2].
+// c10 — `v` is copied out into `w` (an admitted operand) and `w`, bound as a COPY, keeps its
+// store: a copy-bound local is the borrow elision's, never a buffer.  c10(3) = [0, 1, 2].
 fn c10(n: integer) -> vector<integer> {
   v: vector<integer> = [];
   for i in 0..n { v += [i]; }
@@ -181,6 +213,44 @@ fn c16(n: integer) -> integer {
   len(v) + (v[n - 1] ?? 0)
 }
 
+// c17 — the TRANSITIVE clause: a wrapper hands its callee's buffer down, so the wrapper's
+// work-ref is itself a caller buffer and climbs to the frame that loops (`c17o`), whose own
+// ref climbs to `main`.  c17leaf(n) = n + 2(n - 1) for n > 0, 0 for n = 0; c17(k) is that
+// plus 1, so c17o(500) = 125 * (1 + 2 + 5 + 8) = 2000.
+fn c17leaf(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i * 2]; }
+  len(v) + (v[n - 1] ?? 0)
+}
+fn c17(n: integer) -> integer { c17leaf(n) + 1 }
+fn c17o(m: integer) -> integer {
+  s = 0;
+  for r in 0..m { s += c17(r % 4); }
+  s
+}
+
+// c18 — a RECURSIVE wrapper: the leaf's ref is promoted (the leaf cannot reach back), the
+// self-call's ref stays a local minted per activation.  c18(3) = 7 + 4 + 1 + 0 = 12.
+fn c18(n: integer) -> integer {
+  if n <= 0 { return 0; }
+  c17leaf(n) + c18(n - 1)
+}
+
+// c19 — two promoted callees, three calls, in one wrapper.  c19(2) = 4 + 7 + 2 = 13.
+fn c19(n: integer) -> integer { c17leaf(n) + c17leaf(n + 1) + c1(n) }
+
+// c20 — DECLINED onward: the callee's buffer is live across its call back into the wrapper,
+// so the wrapper's ref must be a fresh store per activation (and promoting it would mint a
+// new ref in the callee every round, the fixpoint never ending).  c20c(n) = n + c20c(n - 1),
+// so c20w(3) = 3 + 2 + 1 + 0 = 6.
+fn c20c(n: integer) -> integer {
+  v: vector<integer> = [];
+  v += [n];
+  if n > 0 { v += [c20w(n - 1)]; }
+  v[0] + (v[1] ?? 0)
+}
+fn c20w(n: integer) -> integer { c20c(n) }
+
 fn main() {
   s1 = 0;
   for r in 0..2000 { s1 += c1(r % 5); }
@@ -195,6 +265,8 @@ fn main() {
   r6e = c6(0);
   assert(len(r6e) == 2 && r6e[0] == 0 && r6e[1] == -1, "c6 empty {r6e}");
   assert(c7(4) == 6, "c7 {c7(4)}");
+  assert(c7b(3) == 300, "c7b {c7b(3)}");
+  assert(c7c(2) == 3, "c7c {c7c(2)}");
   assert(c8(3) == 3, "c8 {c8(3)}");
   assert(c9(1) == 2 && c9(5) == 1, "c9 {c9(1)} {c9(5)}");
   r10 = c10(3);
@@ -205,5 +277,9 @@ fn main() {
   assert(c13(2) == 2 && c13(7) == 30, "c13 {c13(2)} {c13(7)}");
   assert(c15(5) == 10, "c15 {c15(5)}");
   assert(c16(3) == 9, "c16 {c16(3)}");
+  assert(c17o(500) == 2000 && c17(0) == 1 && c17(3) == 8, "c17 {c17o(500)} {c17(0)} {c17(3)}");
+  assert(c18(3) == 12, "c18 {c18(3)}");
+  assert(c19(2) == 13, "c19 {c19(2)}");
+  assert(c20w(3) == 6, "c20 {c20w(3)}");
   println("done");
 }

@@ -208,7 +208,11 @@ impl RuntimeError {
         let position = if file.is_empty() {
             None
         } else {
-            Some(Position { file, line, pos: 1 })
+            Some(Position {
+                file: file.into(),
+                line,
+                pos: 1,
+            })
         };
         let kind = RuntimeErrorKind::UserPanic { message };
         let detail = kind.describe();
@@ -384,7 +388,11 @@ impl RuntimeError {
         let position = if file.is_empty() {
             None
         } else {
-            Some(Position { file, line, pos: 1 })
+            Some(Position {
+                file: file.into(),
+                line,
+                pos: 1,
+            })
         };
         let kind = RuntimeErrorKind::AssertionFailed { message };
         let detail = kind.describe();
@@ -427,9 +435,16 @@ impl RuntimeError {
         // (`store_nr=2` interpreted, `store_nr=0` native), so putting it here would make
         // the two render different text for one event — the property `report_and_exit`
         // exists to hold.  It is a debugging fact, and `LOFT_LOG=locks` is where it lives.
-        let _ = origin;
+        // …except that the CONSTANT store's origin picks the advice (never printed): a
+        // constant cannot be unlocked, and the cure is a bind, which copies (loft#1686).
         let kind = RuntimeErrorKind::WriteToLockedStore { rec, fld };
-        let detail = kind.describe();
+        let detail = if origin == crate::store::Store::CONST_STORE_ORIGIN {
+            "write to a constant — a constant is read-only; bind it to a local first \
+             (`v = NAMES`), which copies, and write through the local"
+                .to_string()
+        } else {
+            kind.describe()
+        };
         Self {
             kind,
             position: None,
@@ -445,7 +460,11 @@ impl RuntimeError {
         let position = if file.is_empty() {
             None
         } else {
-            Some(Position { file, line, pos: 1 })
+            Some(Position {
+                file: file.into(),
+                line,
+                pos: 1,
+            })
         };
         let kind = RuntimeErrorKind::StackOverflow;
         let detail = kind.describe();
@@ -466,7 +485,7 @@ impl RuntimeError {
     pub fn to_diag_entry(&self) -> DiagEntry {
         let (file, line, col) = self.position.as_ref().map_or_else(
             || (String::new(), 0, 0),
-            |p| (p.file.clone(), p.line, p.pos),
+            |p| (p.file.to_string(), p.line, p.pos),
         );
         DiagEntry {
             level: Level::Error,
@@ -516,7 +535,7 @@ pub fn logged_in_production(
     // `[user_panic]` / `[assertion_failed]` label and the same C66 severity as every other
     // production-mode runtime event, on whichever backend produced it.
     let position = Position {
-        file: file.to_string(),
+        file: file.into(),
         line,
         pos: 1,
     };
@@ -538,7 +557,7 @@ mod tests {
         assert_eq!(err.kind.label(), "user_panic");
         assert!(err.message.contains("oops"));
         let pos = err.position.as_ref().expect("position present");
-        assert_eq!(pos.file, "test.loft");
+        assert_eq!(&*pos.file, "test.loft");
         assert_eq!(pos.line, 42);
     }
 

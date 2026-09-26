@@ -3317,7 +3317,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         // not n inserts because a hash or a sorted set dedups them, is not a `Parts::Vector`
         // and stays on the loop.  A captured or indexed target still does too, unmeasured.
         let plain_vector_field = is_field
-            && std::env::var_os("LOFT_NO_FIELD_FILL").is_none()
+            && crate::env_once!(std::env::var_os("LOFT_NO_FIELD_FILL").is_none())
             && matches!(val.unspan(), Value::Call(d, ps)
                 if (*d as usize) < self.data.definitions.len()
                     && self.data.def(*d).name() == "OpGetField"
@@ -6231,7 +6231,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 && let Some(target) = &fused_container
             {
                 self.fuse_scalar_append(&mut ls, elm, target);
-            } else if std::env::var_os("LOFT_TRACE_FUSE").is_some() {
+            } else if crate::env_once!(std::env::var_os("LOFT_TRACE_FUSE").is_some()) {
                 eprintln!(
                     "[fuse] fn={} decline=gate first_pass={} keyed={} container={}",
                     self.data.def(self.context).name(),
@@ -6256,7 +6256,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// keep the general path — the fallback is the shape as it was.
     fn fuse_scalar_append(&mut self, ls: &mut Vec<Value>, elm: u16, container: &Value) {
         let n = ls.len();
-        let trace = std::env::var_os("LOFT_TRACE_FUSE").is_some();
+        let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_FUSE").is_some());
         if n < 3 {
             if trace {
                 eprintln!(

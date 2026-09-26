@@ -14,11 +14,12 @@ use crate::data::{Context, Data, Type};
 pub use crate::database::Call;
 use crate::database::{ParallelCtx, Stores, WorkerStores};
 use crate::fill::OPERATORS;
+use crate::fxhash::FxHashMap;
 use crate::keys::{DbRef, Str};
 use crate::lexer::Position;
 use crate::log_config::LogConfig;
 use crate::variables::size as var_size;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::io::{Error, Write};
 use std::sync::Arc;
 use std::sync::OnceLock;
@@ -250,15 +251,15 @@ pub struct State {
     // Stack size of the arguments
     pub arguments: u16,
     // Local function stack positions of individual byte-code statements.
-    pub stack: HashMap<u32, u16>,
+    pub stack: FxHashMap<u32, u16>,
     // Variables from byte code, used to also gain stack position
-    pub vars: HashMap<u32, u16>,
+    pub vars: FxHashMap<u32, u16>,
     // Calls of function definitions from byte code.
-    pub calls: HashMap<u32, Vec<u32>>,
+    pub calls: FxHashMap<u32, Vec<u32>>,
     // Information for enumerate-types and database (record, vectors and fields) types.
-    pub types: HashMap<u32, u16>,
+    pub types: FxHashMap<u32, u16>,
     pub library: Arc<Vec<Call>>,
-    pub library_names: HashMap<String, u16>,
+    pub library_names: FxHashMap<String, u16>,
     /// `#native` symbols THIS program registered a panic stub for, so
     /// `extensions::wire_native_fns` knows which ones it may replace with an
     /// auto-marshalled wrapper (hand-written glue must be left alone).
@@ -664,12 +665,12 @@ impl State {
             source: u16::MAX,
             database: db,
             arguments: 0,
-            stack: HashMap::new(),
-            vars: HashMap::new(),
-            calls: HashMap::new(),
-            types: HashMap::new(),
+            stack: FxHashMap::default(),
+            vars: FxHashMap::default(),
+            calls: FxHashMap::default(),
+            types: FxHashMap::default(),
             library: Arc::new(Vec::new()),
-            library_names: HashMap::new(),
+            library_names: FxHashMap::default(),
             native_stub_symbols: std::collections::HashSet::new(),
             text_positions: BTreeSet::new(),
             line_numbers: BTreeMap::new(),
@@ -1141,7 +1142,7 @@ impl State {
                     {
                         let def = &data.definitions[f.d_nr as usize];
                         let name = def.trace_name();
-                        let file = def.position().file.clone();
+                        let file = def.position().file.to_string();
                         // Fix #92: line resolution for parallel-worker frames.
                         // The CallFrame.line is only updated by `fn_call`, which
                         // never runs for the worker's entry frame.  Fall back to
@@ -3476,7 +3477,7 @@ impl State {
             if def.def_type != crate::data::DefType::Function {
                 continue;
             }
-            if std::path::Path::new(&def.position.file).file_name() != Some(want) {
+            if std::path::Path::new(&*def.position.file).file_name() != Some(want) {
                 continue;
             }
             if let Some(off) = self.set_breakpoint_fn_line(d, line, data) {
@@ -3499,7 +3500,7 @@ impl State {
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function
-                || std::path::Path::new(&def.position.file).file_name() != Some(want)
+                || std::path::Path::new(&*def.position.file).file_name() != Some(want)
             {
                 continue;
             }
@@ -6005,7 +6006,10 @@ impl State {
     /// counts from the end" and "out of range answers nullref" are decided for the
     /// interpreter.  `Stores::vec_get_or_raise_runtime` is the native twin, and
     /// `vec_get_hoisted_or_raise_runtime` sends every non-fast-path index back to it, so the
-    /// normalisation has one definition per backend rather than one per call site.
+    /// normalisation has one definition per backend rather than one per call site.  The
+    /// WRITE side asks nothing of its own (`@FR-H-WriteOOB`): `v[i] = x` is
+    /// `OpSet*(OpGetVector(v, i), 0, x)`, so the element's address is this answer and an
+    /// absent one is the `nullref` the setter's `rec != 0` test declines (`@FR-H-WriteNull`).
     #[must_use]
     pub fn vec_get_or_raise(
         &mut self,
@@ -6103,7 +6107,7 @@ impl State {
         crate::timeout::publish_interp_fns(data.definitions.iter().map(|def| {
             (
                 def.trace_name(),
-                def.position().file.clone(),
+                def.position().file.to_string(),
                 def.position().line,
             )
         }));
@@ -7391,12 +7395,12 @@ impl State {
             arguments: 0,
             bytecode,
             library,
-            library_names: HashMap::new(),
+            library_names: FxHashMap::default(),
             native_stub_symbols: std::collections::HashSet::new(),
-            stack: HashMap::new(),
-            vars: HashMap::new(),
-            calls: HashMap::new(),
-            types: HashMap::new(),
+            stack: FxHashMap::default(),
+            vars: FxHashMap::default(),
+            calls: FxHashMap::default(),
+            types: FxHashMap::default(),
             text_positions: BTreeSet::new(),
             line_numbers: BTreeMap::new(),
             scope_spans: Vec::new(),

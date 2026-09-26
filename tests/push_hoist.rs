@@ -32,7 +32,7 @@ const EXPECTED: &[(&str, usize, usize, usize)] = &[
     ("n_c8", 0, 0, 0), // the pushed root is rebound
     ("n_fill", 1, 1, 0), // c9: a parameter's field, alone: admitted
     ("n_c10", 1, 1, 0), // the growth ladder
-    ("n_c11", 0, 0, 1), // boolean / character pushes are not fusable: that loop declines; the read-only loop over b keeps its header
+    ("n_c11", 3, 3, 1), // integer, boolean and character pushes: all three fusable kinds, one header each; the read-only loop over b keeps its plain header
     ("n_c12", 1, 1, 1), // a push beside an in-place write to another owned local
     ("n_c13", 1, 1, 0), // a callee reads the length through the runtime
     ("n_c14", 1, 1, 0), // len(v) after the push reads the header

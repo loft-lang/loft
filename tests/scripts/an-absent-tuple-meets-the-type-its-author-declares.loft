@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// `(T-Absent)`: a tuple TYPE is never nullable, and a tuple that ARRIVES absent is the present
+// `@FR-T-Absent`: a tuple TYPE is never nullable, and a tuple that ARRIVES absent is the present
 // tuple whose members are all null — `optional((τ₁, …, τₙ)) ≡ (τ₁?, …, τₙ?)`.  The compiler
 // carries that value with its `?` on the OUTSIDE (the in-flight spelling, which no author can
 // declare), and the type an author writes for it is the member-nullable tuple.  Where the two

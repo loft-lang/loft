@@ -66,6 +66,8 @@ concurrency:
 
 permissions:
   contents: read
+  # The test speed gate reads main's latest green run (its job log) as the baseline.
+  actions: read
 
 env:
   CARGO_TERM_COLOR: always
@@ -604,6 +606,13 @@ jobs:
       - name: Build (release loft binary + lib for integration tests)
         run: cargo build --release --lib --bin loft
 
+      # A rewrite that stopped firing where it used to (a condition tightened by a fix) fails
+      # here, naming the rule and the bench: the count of admissions over the benches is a
+      # pure function of the compiler (`scripts/rewrite_census.py`).  Seconds; once per run.
+      - name: Rewrite census
+        if: ${{ runner.os == 'Linux' && (matrix.shard == 'corpus' || matrix.shard == '' || matrix.shard == null) }}
+        run: python3 scripts/rewrite_census.py
+
       # @P229 G3 reliability fix: pre-build every native lib package
       # SEQUENTIALLY here, before the parallel nextest run.  Root cause: tests
       # that run `loft --native`/`--check` call `auto_build_native`, which runs
@@ -685,6 +694,34 @@ jobs:
 
       - name: Build wasm rlib (for html_wasm tests)
         run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
+
+      # The `--html` runtime rlib is a DIFFERENT artifact from the one above: the Html shape
+      # builds into its own target dir (`target/loft/html`) and is keyed on loft's build
+      # fingerprint, which moves on every commit.  Unwarmed, the first `--html` test in each
+      # shard built it inside the parallel suite, contended by every other test's rustc, and
+      # the rest queued on the global build lock: `html_gl_imports` took 257 s and then 307 s,
+      # past the duration gate's 300 s.  Built here alone it is ~1 min; this is the step
+      # `make ci` runs before its parallel section (loft#1238).  Non-fatal: a test that finds
+      # no fresh rlib still builds one itself, it only pays for it.
+      #
+      # The fixture libraries under tests/fixtures/libs are warmed the same way, through loft:
+      # a plain `cargo build` in their `native/` is not reused (loft stamps the cdylib it
+      # accepts, and rebuilt an unstamped one in 19 s, 4 CPU-min), and `--prebuild-natives`
+      # covers installed registry packages only.  Unwarmed, `html_fonts`' refusal test waited
+      # 157 s on the lock while another test built the graphics fixture.  A one-line
+      # `use <lib>;` program through `--check` builds and stamps each (then 0.1 s).
+      - name: Warm loft's --html runtime rlib and the tests' package cdylibs
+        shell: bash
+        run: |
+          ./target/release/loft cache warm --from tests \
+            || echo "warn: cache warm failed — the first --html test will build the rlib itself"
+          for lib in tests/fixtures/libs/*/; do
+            name=$(basename "$lib")
+            [ -d "$lib/native" ] || continue
+            printf 'use %s;\nfn main() {}\n' "$name" > "$RUNNER_TEMP/warm_$name.loft"
+            ./target/release/loft --lib tests/fixtures/libs --check "$RUNNER_TEMP/warm_$name.loft" \
+              || echo "warn: warming the $name fixture failed — its first test will build it"
+          done
 
       # graphics_gold tests skip on CI now that lib/graphics is extracted
       # — the gold-image comparison runs against the libloft_graphics_native.so
@@ -776,6 +813,18 @@ jobs:
         if: ${{ !cancelled() && steps.test.outcome != 'skipped' }}
         shell: bash
         run: python3 scripts/test_duration_gate.py target/nextest/ci/junit.xml
+
+      # A test HARD slower than on main (3x and 5 s more, after the run's median speed is
+      # divided out) fails the PR — but only once the test, rerun ALONE, is still that slow:
+      # on the same commit the suite's contention alone moves single tests up to 8x, and a
+      # contention spike does not repeat.  Linux PR legs only: the baseline is main's
+      # unsharded ubuntu job.  Reads the same junit as the step above, so it stays here.
+      - name: Test speed gate
+        if: ${{ !cancelled() && steps.test.outcome == 'success' && github.event_name == 'pull_request' && runner.os == 'Linux' }}
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml
 
       # Browser-render cross-check (Chrome + SwiftShader): the GPU/headless-browser
       # tests demoted off the per-PR path just above.  Runs on the DAILY schedule +

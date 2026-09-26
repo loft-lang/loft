@@ -13,7 +13,7 @@ use loft::data::{Data, DefType, IntegerSpec, Position, Type};
 
 fn pos() -> Position {
     Position {
-        file: "unit".to_string(),
+        file: "unit".into(),
         line: 1,
         pos: 1,
     }

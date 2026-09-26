@@ -1,4 +1,5 @@
-// @PLN48 S3 — spatial range slicing (no methods, no new functions): the bounding
+// @PLN48 S3 (`@FR-Slice-Box`, `@FR-Slice-Open`, `@FR-Slice-Cap`, formal/collections.md) —
+// spatial range slicing (no methods, no new functions): the bounding
 // box `xs[(x1,y1)..(x2,y2)]`, the open onward walk `xs[(x,y)..]` with a break, and
 // the count-limited `xs[(x,y)..:n]`.  Both backends, Morton order.  2D and 3D — the
 // slice ABI carries up to MAX_AXES (3) coordinate axes.

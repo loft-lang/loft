@@ -551,7 +551,7 @@ pub enum CapViolation {
 #[must_use]
 pub fn def_library(data: &Data, def_nr: u32) -> Option<String> {
     let def = data.def(def_nr);
-    let file = def.position().file.as_str();
+    let file = &*def.position().file;
     let base = std::path::Path::new(file).file_stem()?.to_str()?;
     // Strip a leading `\d+_` (stdlib module naming: `01_code` -> `code`).
     let name = match base.find('_') {

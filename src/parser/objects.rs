@@ -1972,7 +1972,7 @@ impl Parser {
             *code = v_block(
                 vec![
                     Value::Int(variant_nr as i32),
-                    Value::Text(pos.file.clone()),
+                    Value::Text(pos.file.to_string()),
                     Value::Int(pos.line as i32),
                 ],
                 ret.clone(),
@@ -3826,7 +3826,7 @@ impl Parser {
         // `LOFT_NO_NEXT_COUNTER=1` emits the null-encoded form on both backends
         // (`@FR-R-Switch`): the before-half of an A/B, and the first bisect step for a
         // wrong value out of a counted loop whose start is not a literal.
-        let next_counter = std::env::var_os("LOFT_NO_NEXT_COUNTER").is_none();
+        let next_counter = crate::env_once!(std::env::var_os("LOFT_NO_NEXT_COUNTER").is_none());
         let mut next_init: Option<Value> = None;
         if want_reverse {
             if incl && next_counter {
@@ -4692,6 +4692,32 @@ impl Parser {
                 if !self.first_pass {
                     self.change_var_type(tmp, &exp_tp);
                 }
+                // loft#1683 — what is staged here is a READ of a place, and where the read is
+                // a struct-typed PROJECTION (`b: o.b`, a `ref(Inner)["o"]` that names the
+                // parameter's own record — `(B-View)`) the temp is a VIEW: it owns nothing
+                // (`@FR-O-Derived`) and takes no scope-exit free.  Left a plain work-ref, the
+                // exit freed it against the literal's destination and released the CALLER's
+                // store on every call — in a loop the caller's pooled buffer, read back on the
+                // next pass (46 strict-store violations on both backends).  The staged
+                // expression is the fact, not the temp's deps: a staged WHOLE variable
+                // (`Inner { a: a }` stages `a` itself) is a copy that owns its store while its
+                // type carries the source's deps (measured: keying on the deps leaked
+                // `1184-…` and `880-…`), and a pass-2 tuple buffer carries deps the same way
+                // (measured: exempting every borrowing work-ref at the exit leaked one), which
+                // is why the mark lives here and not in the scope pass.
+                // The fact is the staged EXPRESSION and its type alone — a struct projection
+                // mints no store whatever its base, so the temp's deps are not consulted
+                // (`@FR-O-Proxy` is not asked here).
+                let staged_view = !self.first_pass
+                    && matches!(value.unspan(), Value::Call(d, _)
+                        if crate::use_analysis::is_projection_op(&self.data, *d))
+                    && matches!(
+                        self.vars.tp(tmp).base(),
+                        Type::Reference(_, _) | Type::Enum(_, true, _)
+                    );
+                if staged_view {
+                    self.vars.set_skip_free(tmp);
+                }
                 let prev = std::mem::replace(&mut value, Value::Var(tmp));
                 sinks.hoists.push(v_set(tmp, prev));
             }
@@ -4956,7 +4982,7 @@ impl Parser {
         // Where the literal is — what its field checks report, as the twin's do
         // (`parse_object` reads the position here too) — the lowering runs at the call.
         let pos = self.lexer.pos().clone();
-        fields.insert(1, Value::Text(pos.file.clone()));
+        fields.insert(1, Value::Text(pos.file.to_string()));
         fields.insert(2, Value::Int(pos.line as i32));
         let tp = self.literal_type(open);
         *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
@@ -5558,7 +5584,7 @@ impl Parser {
                         vec![
                             bound,
                             msg,
-                            Value::Text(pos.file.clone()),
+                            Value::Text(pos.file.to_string()),
                             Value::Int(pos.line as i32),
                         ],
                     ));

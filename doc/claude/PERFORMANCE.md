@@ -38,6 +38,7 @@ by the release checklist's `M-perf-pass`.
 - [Design: N4 — Suppress cr_call_push on `#pure` leaf functions](#design-n4--suppress-cr_call_push-on-pure-leaf-functions)
 - [Design: N5 — Inline `integer` arithmetic when operands are provably non-null](#design-n5--inline-integer-arithmetic-when-operands-are-provably-non-null)
 - [Design: N6 — Skip the rustc toolchain probe on a native cache hit](#design-n6--skip-the-rustc-toolchain-probe-on-a-native-cache-hit)
+- [Design: F1 — the front end's own hot spots, attributed and cut](#design-f1--the-front-ends-own-hot-spots-attributed-and-cut)
 - [Design: W1 — wasm string representation](#design-w1--wasm-string-representation)
 - [Improvement priority order](#improvement-priority-order)
 - [See also](#see-also)
@@ -138,7 +139,13 @@ named `n_<yours>`. To profile the front end alone — parse, IR, codegen — use
 `--engine -- --interpret --check p.loft`: **`--check` on its own is not front-end-only**,
 because the default backend is the compiler, so `check_only` still falls through the native
 pipeline and rustc builds a binary it then does not run (the rustc-share guard says so, and
-names the missing flag).
+names the missing flag).  The report has two tables: self time by SYMBOL, and the same
+samples by MODULE — every symbol folded onto the loft module it belongs to, the runtime
+below loft onto `allocator` / `mem` / `hashing` / `vec/string`.  Read a compile off the
+second: its top symbol is 5–8 % and ties with the allocator's, so the symbol table names
+a coin toss, while a module's share is the sum over all of its symbols and holds run to
+run (a compile of the front-end corpus: `data` 32–34 %, the allocator 20–21 %).  The
+oracle row for it is `frontend_large` in [PROFILE_ORACLE.md](PROFILE_ORACLE.md) § Engine.
 
 **For an interpreted program it is the wrong instrument, structurally.** A loft call
 creates no machine frame, so perf's stack walk yields the interpreter's own path —
@@ -2406,10 +2413,10 @@ N5 right after for `integer`) so the analysis lives in one place.
 > (vs the ~26 ms below), so the ~18 ms tax is gone. The implementation is *better* than
 > the original design (which moved the probe into the cache-miss branch) — it removed
 > the probe entirely, letting the compile attempt itself be the rustc-presence check.
-> **Residual (separate, not done):** the ~6.6 ms parse+codegen+emit+hash still runs on
-> every warm invocation (the cache is keyed on the *generated Rust*, not the `.loft`
-> source) — see the Ceiling note below; the source-keyed cache to reach the ~1 ms floor
-> is the open follow-up.
+> **Residual — closed by @PLN166 B3:** the parse+codegen+emit+hash that still ran
+> on every warm invocation (the binary cache is keyed on the *generated Rust*, so nothing
+> could name the binary without generating it) now runs only when the SOURCE-keyed layer in
+> front of it misses — see the Ceiling note below.
 
 **Affected workload:** Native **startup latency** of any short-lived
 program — a CLI tool, a test harness, a script invoked repeatedly.
@@ -2492,20 +2499,97 @@ falls back to the interpreter with the existing warning, and a cache
 hit with rustc absent now succeeds (it previously failed the probe and
 fell back even though it never needed rustc).
 
-### Ceiling — what this does NOT remove
+### Ceiling — what this does NOT remove, and the layer that does (@PLN166 B3)
 
-The cache is keyed on the **generated Rust source**
-(`main.rs:5022`, `source_bytes = read(emit_path)`), so parse + codegen +
-emit + hash still run on every invocation — the residual ~6.6 ms.
-Reaching the ~1 ms floor (bare cached-binary cost) needs a **second,
-larger** change: key the cache on the `.loft` source + stdlib/rlib
-identity so a hit short-circuits parse+codegen and jumps straight to
-exec.  The source-level cache machinery already exists
-(`src/startup_cache.rs`); wiring the native-run path to it is the
-follow-up.  Ship N6 first (the cheap, safe ~18 ms win), then the
-source-keyed cache as its own change.
+The binary cache is keyed on the **generated Rust source** (`source_bytes =
+read(emit_path)` in `main.rs`), so parse + codegen + emit + hash ran on every invocation —
+the residual ~6.6 ms of the original measurement, ~113 M instructions on a warm `hello`
+as measured for B3.  The floor is the bare cached-binary cost, and reaching it needed a
+second key that can name the binary WITHOUT generating it.
+
+That key now exists: the program's own drift manifest (`startup_cache::native_fast_path`).
+When the manifest validates — every parsed source's content hash and the stdlib key, the
+same oracle the interpreter trusts to skip parsing — the parse would produce the same
+`Data`, and the binary is a function of that `Data` plus a fingerprint over the remaining
+inputs (`--native-release` / `--native-debug` / `--lean` / `--names` / `--debug`, the C-ABI
+mode, `RUSTFLAGS`, the runtime rlib's mtime).  A sidecar beside the manifest
+(`program-<key>.native`: build signature, fingerprint, binary path) names the binary, and a
+run whose sidecar and manifest are both current execs it before any parse.  Measured on the
+release build, warm `hello`: **113 M → 4.8 M instructions (23×)**, wall 20–40 ms → under 5 ms;
+the check itself is 0.6–0.9 ms (the manifest's hash walk over the stdlib).
+
+**What declines the fast path, and why** — each is an input the key cannot see, and a
+decline costs only what every warm run paid before (the slow path still hits the
+generated-Rust cache):
+
+- a `LOFT_*` variable outside a short inert list (`main.rs::native_fast_path_env_ok`):
+  every `--native` rewrite has a `LOFT_NO_*` switch that changes the Rust, and every
+  instrument expects the parse to run — an allow-list, because that surface is read where
+  it acts, not in one place;
+- a manifest registering anything beyond loft sources — a `[native] crate`, `[library]
+  native`, placement or `[wasm.bridge]` entry — because those are what a warm load
+  RE-RESOLVES (a cdylib's freshness, a worker to start) and the fast path runs no code that
+  could;
+- a mode that does not simply run the binary (`--check`, `--dump`, `introspect`, `--html`,
+  `--native-wasm`, `--native-android`, `--native-emit`), a sandbox policy (read fresh from
+  `loft.toml`, never from a cache), Windows (DLL staging reads the parse), and
+  `LOFT_NATIVE_NO_CACHE` (the P254 kill switch, now one home for both layers).
+
+The falsifier is `tests/native_source_key.rs`: a codegen-changing edit, a stdlib edit, a
+`--lib` edit, a flag change, an environment switch, and a deleted, garbage, truncated or
+foreign-fingerprint sidecar each miss and answer correctly; a diagnostics-producing program
+renders on a hit exactly what it rendered cold.  Sabotage receipt: with the manifest check
+removed, the edit cell answers `sum=30` for a program that says `sum=100`.
 
 ---
+
+## Design: F1 — the front end's own hot spots, attributed and cut
+
+> **DELIVERED (@PLN166 B4, B5).**  What `--engine`'s by-module table and callgrind attributed
+> over a compile of `bench/frontend`'s large corpus (12 826 lines, `--interpret --check`,
+> `LOFT_NO_CACHE=1`), and what each cut measured.  Instruction counts are callgrind's, exact
+> and load-independent; the allocation counts are `tests/frontend_counts.rs`'s pins.
+
+| Step | What burned | Cut | Ir after (large) |
+|---|---|---:|---:|
+| baseline (release build) | — | — | 5 984 M |
+| **a** `env_once!` | 178 732 `getenv` calls: every `LOFT_*` switch read inline, per token or per node | −3.4 % | 5 783 M |
+| **b** `def_names` on `crate::fxhash` | 3.0 M definition lookups through SipHash, 13 % of the compile | −11.8 % | 5 098 M |
+| **c** `Data::set_parent` + child links | `children_of` scanned every definition per call; `enums_with_variant` did so once per enum per call (216 M Ir over 851 calls), `type_owns_droppable` likewise | −7.0 % | 4 743 M |
+| **d** `scopes` / `use_analysis` / lexer sets on Fx; `peek_token` compares in place | 1.5 M `u16`, 1.0 M `u32` and 0.9 M `String` SipHashes; a `String` built per operator comparison (684 206 per compile) | −17.9 % | 3 895 M |
+| **e** `has_private_type` scans definitions cheapest-field-first | 1 676 calls × a walk over every name | −0.6 % | 3 870 M |
+| **f** (B5) `Position.file` is an `Arc<str>` | the file name cloned per token and per operator: 1.4 M `String` copies of a name that never changes within a file | −12.2 % | 3 396 M |
+| **g** (B6) the definition index is keyed by NAME, `DefIndex` | `def_nr` probed a `(name, source)` table twice for every stdlib name a program uses — 1.67 M lookups per compile, 8.2 % of it; one hash now reads the bound sources off an inline list | −1.8 % | 3 335 M |
+| **h** (B6) the bytecode tables on Fx | `State.stack` / `vars` / `types` / `calls` and `Parser.force_tret` were `std`-hashed: 138 696 inserts and 186 356 rehash probes per compile through SipHash (the 1.5 % step f attributed to `patch_tret_callers` / `parse_type_inner` was these — those two only ASKED a `std` set) | −1.3 % | 3 290 M |
+| **i** (B6) `def_nr` remembers by ADDRESS | the passes after the parse ask `data.def_nr("OpCopyRecord")` once per node they visit — 163 distinct literals over 795 sites, 1.2 M of the 1.67 M lookups — while the index does not change again; a direct-mapped memo keyed by the literal's address answers without hashing or probing, and keeps the bytes to refuse a reused buffer.  Its slots are lock-free (`Data` is shared across threads read-only), which costs 21 M over a `Cell` — the figure is the lock-free form | −1.9 % | 3 228 M |
+| **j** (B6) `compute_intervals` reads the body in place | `scopes::check` cloned every function body (18 670 per compile) only to hold it beside a `&mut` of the same definition's variables — two fields of one struct need no copy | −0.9 % | 3 198 M |
+
+**Total: −46.6 % instructions on the large compile** (−43.3 % through step f, −35.3 % through
+step e); the front-end allocation ratchet re-pinned tiny **705 011 → 333 674** and medium
+**2 551 492 → 1 150 895** (release; the debug profile's pins beside them).
+Each step's falsifier was the same: `--interpret --dump` of every file under `tests/scripts`
+and `tests/docs` (1 860) byte-identical against the pre-change binary, the ratchet never
+growing, and the unit tests of the index (`children_index_tests`, `def_index_tests`) and the
+hasher.
+
+**Not a phase, the next lead — recorded with its numbers.**  After step j the allocator is
+the top of the profile (~17 %, 3.6 M allocations on the large compile), and the whole-body
+`Value::clone`s are where they come from: `parse_function` clones each body once for five
+lints (20 028 per compile, 2.2 % with its drop glue), `scopes::check` once as the working copy
+its rewrites edit (`orig_code`), `use_analysis::collect_defs` every `Set`'s right-hand side
+into `Defs.rhs` (86 060, 1.1 %).  None is a split borrow like step j: the parse-time lend was
+tried and withdrawn, because `warn_redundant_amp` reads a CALLEE's body through the
+definition table and a self-recursive call would read the lent-out `Null` (the interprocedural
+`callee_param_reassigns`); and `Defs.rhs` as `Vec<&Value>` needs a `&'s Data` threaded through
+`Scopes::scan_set` and its callers, which the memo in `Scopes.fn_defs` does not have.  The
+remaining `def_nr` cost is the memo's misses: `mangle_method` builds a `String` per method
+question (28 872 `format!`, 0.9 %), so those never hit.  Lessons this arc paid for: a binary
+copied OUT of `target/` has the program cache ON (`running_a_dev_build` is a path test), so a
+callgrind run without `LOFT_NO_CACHE=1` measures a cache write — +331 M Ir, 10 % of the
+compile, which read as a regression of a 19-line commit until both binaries were re-run with
+the cache off; and step f's: the ratchet demands the same count from two runs in one process,
+and a `LazyLock` that mints a shared value once fails that by exactly one — reach for a
+static-backed default (`Arc::<str>::default()`) rather than a lazily minted one.
 
 ## Design: W1 — wasm string representation
 
@@ -4533,6 +4617,25 @@ order:
    looks like.  Keyed on the binary's own path (`running_a_dev_build`), so it
    also covers `CARGO_TARGET_DIR=target-da`.
 5. otherwise → **on** — the default for installed / real invocations.
+
+### Programs whose libraries build native, or have dependencies (loft#1684)
+
+A program that `use`s a library with an auto-native build — every registry library, by
+default — is cached like any other: the bundle carries the functions' native marks, and the
+manifest records the cdylibs they dispatch to (`alib`) and the context that marked them
+(`actx`: `LOFT_NO_NATIVE_LIBS`, `LOFT_FORCE_NATIVE_BUILD_FAIL`, `--html`).  A warm load needs
+a matching context and every recorded cdylib on disk, else it is a miss before anything is
+committed and the cold path rebuilds.  The key names the search path AS GIVEN: registering a
+library's `[dependencies]` appends directories mid-parse (the registry root, a path dep's
+parent), and a key taken after the parse was one no warm load computes.  Before both, `use
+graphics;` alone re-parsed the program and its libraries on every launch — 1.19 s and 81 MB
+against 0.11 s and 25 MB warm.  A cold run also verifies and parses the registry index once
+per process instead of once per `use` lookup (six times for graphics).
+
+**`LOFT_TRACE_WARM=1`** names the verdict of every warm load — `[warm] hit: <bundle>`, or the
+gate that missed (no manifest at the computed path, a build signature or stdlib key that
+differs, a changed source, a native-library context that differs, a recorded cdylib that is
+gone) — and at a save, the search path the key used beside the one the parse ended with.
 
 ### Which loft am I measuring? (rule 4 is a trap for benchmarks)
 

@@ -41,7 +41,7 @@ pub(crate) const DBREF_BORROW: &str = "dbref_borrow";
 /// Pairs with [`Stores::schema_fingerprint`], which turns the same fact into an
 /// assertion instead of a thing to read.
 fn schema_trace(event: &str, name: &str, nr: u16) {
-    if std::env::var_os("LOFT_TRACE_SCHEMA").is_some() {
+    if crate::env_once!(std::env::var_os("LOFT_TRACE_SCHEMA").is_some()) {
         crate::loft_eprintln!("[schema] {event} {name:?} -> {nr}");
     }
 }
@@ -61,7 +61,7 @@ fn schema_trace(event: &str, name: &str, nr: u16) {
 ///
 /// Pairs with [`schema_trace`], which does the same for struct registration.
 fn mint_trace(kind: &str, name: &str, found: Option<u16>, len: usize) {
-    if std::env::var_os("LOFT_TRACE_MINT").is_none() {
+    if crate::env_once!(std::env::var_os("LOFT_TRACE_MINT").is_none()) {
         return;
     }
     let what = found.map_or_else(|| format!("MINT={len}"), |nr| format!("hit={nr}"));
@@ -767,7 +767,7 @@ impl Stores {
         t_nr: usize,
         in_progress: &mut HashSet<usize>,
     ) {
-        if std::env::var("LOFT_TRACE_FINISH").is_ok()
+        if crate::env_once!(std::env::var("LOFT_TRACE_FINISH").is_ok())
             && self.types[t_nr].name.starts_with("__tuple<")
         {
             crate::loft_eprintln!(
@@ -914,7 +914,7 @@ impl Stores {
             self.types[t_nr].size = size;
             self.types[t_nr].align = alignment;
         }
-        if std::env::var("LOFT_TRACE_FINISH").is_ok() {
+        if crate::env_once!(std::env::var("LOFT_TRACE_FINISH").is_ok()) {
             crate::loft_eprintln!(
                 "[finish_type] t_nr={t_nr} name={} size={} align={} groups={}",
                 self.types[t_nr].name,
@@ -1196,7 +1196,9 @@ impl Stores {
         // its ten lines: key ARITY has desynchronised from the lookup twice now (loft#720's
         // `spatial<T[x,y]>`, and a tuple key field), and both times the symptom was a
         // collection read from the wrong store rather than anything naming the keys.
-        if std::env::var_os("LOFT_TRACE_KEYS").is_some() && !self.types[t_nr].keys.is_empty() {
+        if crate::env_once!(std::env::var_os("LOFT_TRACE_KEYS").is_some())
+            && !self.types[t_nr].keys.is_empty()
+        {
             crate::loft_eprintln!(
                 "[keys] t_nr={t_nr} {} -> {:?}",
                 self.types[t_nr].name,
@@ -2219,7 +2221,7 @@ impl Stores {
                 i.min(usize::from(at)),
             );
             assert!(
-                std::env::var_os("LOFT_STRICT_SCHEMA_IDS").is_none(),
+                crate::env_once!(std::env::var_os("LOFT_STRICT_SCHEMA_IDS").is_none()),
                 "{msg}"
             );
             crate::loft_eprintln!("loft: {msg}");
