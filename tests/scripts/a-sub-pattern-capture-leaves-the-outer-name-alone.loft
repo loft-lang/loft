@@ -6,12 +6,12 @@
 // tuple element (`(Vn { rs }, k)`) or a struct field (`S { w: Vn { rs } }`) pointed the name
 // at its binding and nothing pointed it back, so after the `match` an outer `rs` read the
 // capture — `4` where the program holds `100` — on both backends, with no diagnostic.  A later
-// local of that name was refused naming the internal `_mv_rs_1`.  The arm's end now restores
-// every name its pattern bound.
+// local of that name was refused naming the internal `_mv_rs_1` (that half, and a tuple element
+// typed as one variant, are `a-sub-pattern-name-and-a-variant-typed-element-compile.loft`).  The
+// arm's end now restores every name its pattern bound.
 //
-// Every value is hand-computed; the enum arm is the control that was right before.  A tuple
-// element typed as one VARIANT is `a-variant-typed-tuple-element-takes-variant-patterns.loft`,
-// apart, because the control tree refuses it and a refusal would hide these asserts.
+// Every value is hand-computed; the enum arm is the control that was right before.  The cells the
+// control tree REFUSES are in their own guard, because a refusal would hide these asserts.
 //
 // @falsified-at: <derived after the fix is committed>
 // CHANNEL: the asserts — on the control tree the outer name reads the capture.
@@ -19,13 +19,6 @@
 
 enum W { Pb { p: integer }, Vn { rs: integer } }
 struct S { w: W, n: integer }
-
-// a later local of the captured name is a new binding
-fn later_local() -> text {
-  g = match [Vn { rs: 3 }] { [Vn { rs }] => rs, _ => -1 };
-  rs = "text now";
-  "{g} {rs}"
-}
 
 fn main() {
   rs = 100;
@@ -41,7 +34,6 @@ fn main() {
   wt: W = Vn { rs: 8 };
   d = match (wt, 1) { (Vn { rs }, k) => rs + k, _ => -1 };
   assert(d == 9 && rs == 100, "tuple element: {d} {rs}");
-  assert(later_local() == "3 text now", "a later local: {later_local()}");
   // control: a top-level enum arm was right before
   z = 50;
   w = Vn { rs: 11 };

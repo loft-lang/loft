@@ -1,7 +1,11 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// A VARIANT-TYPED TUPLE ELEMENT TAKES VARIANT PATTERNS (D-bind-66, `@FR-P-Point`).  `w = Vn {
+// A SUB-PATTERN NAME AND A VARIANT-TYPED ELEMENT COMPILE (D-bind-66, the refused half).  A later
+// local spelled like a sub-pattern capture is a new binding (`@FR-B-Scope`); it was refused as a
+// type change of `_mv_rs_1`, the capture's internal name, which the arm had never released.
+//
+// A variant-typed tuple element (`@FR-P-Point`).  `w = Vn {
 // rs: 10 }` infers the type of that one variant, and a value of it is a record of its enum, tag
 // and all.  As a top-level subject it matched its enum's variants; as a tuple element it was
 // refused — "'Vn' is not a variant — this tuple element is Vn, which has no variants" — because
@@ -14,6 +18,12 @@
 
 enum W { Pb { p: integer }, Vn { rs: integer } }
 
+fn later_local() -> text {
+  g = match [Vn { rs: 3 }] { [Vn { rs }] => rs, _ => -1 };
+  rs = "text now";
+  "{g} {rs}"
+}
+
 fn main() {
   wv = Vn { rs: 10 };
   e = match (wv, 2) { (Vn { rs }, k) => rs + k, _ => -1 };
@@ -22,5 +32,6 @@ fn main() {
   assert(f == -1, "another variant: {f}");
   g = match (Vn { rs: 7 }, 1) { (Vn { rs }, k) => rs + k, _ => 0 };
   assert(g == 8, "a literal element: {g}");
-  println("a variant-typed tuple element takes variant patterns: every cell holds");
+  assert(later_local() == "3 text now", "a later local: {later_local()}");
+  println("a sub-pattern name and a variant-typed element compile: every cell holds");
 }
