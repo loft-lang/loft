@@ -11,7 +11,8 @@
 // refused — "'Vn' is not a variant — this tuple element is Vn, which has no variants" — because
 // `pattern_variant_enum` asked for an `Enum` type alone.  Values are hand-computed.
 //
-// @falsified-at: <derived after the split is committed>
+// @falsified-at: a7f0fa353 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-sub-pattern-name-and-a-variant-typed-element-compile.patch — the same channels.
 // CHANNEL: the refusal — the control tree does not compile this program.
 // HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
 //   every assertion passes on both backends.

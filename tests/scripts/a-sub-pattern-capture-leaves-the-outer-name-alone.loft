@@ -13,9 +13,11 @@
 // Every value is hand-computed; the enum arm is the control that was right before.  The cells the
 // control tree REFUSES are in their own guard, because a refusal would hide these asserts.
 //
-// @falsified-at: <derived after the fix is committed>
+// @falsified-at: a7f0fa353 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-sub-pattern-capture-leaves-the-outer-name-alone.patch — the same channels.
 // CHANNEL: the asserts — on the control tree the outer name reads the capture.
 // WITNESS: `slice element: 4 4`.
+// HOLDS: the enum-arm control on both trees.
 
 enum W { Pb { p: integer }, Vn { rs: integer } }
 struct S { w: W, n: integer }
