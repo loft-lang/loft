@@ -2625,7 +2625,11 @@ answered here rather than decided in the code.
 ```
   (R-Rebind)     `x = f(x, …)` — a whole-value bind to a plain OWNED local x (O-Owner:
                  never a parameter, a view, a `&` link or a witnessed local, nor a `τ?`
-                 that may be absent) from a call that receives x BY VALUE as an
+                 that may be absent) — or to the frame's OWN return buffer promoted onto
+                 a named local (`fn build() -> Doc { d = …; d = step(d, …); d }`), the
+                 record the caller handed this frame to fill, which shares no store with
+                 a sibling parameter because every road that hands a buffer in refuses
+                 one that does — from a call that receives x BY VALUE as an
                  argument, where no OTHER argument reaches x's store (R-Place's alias
                  condition) and no view of x is live across the call (B-Disturb: the
                  CALL, not the bind, is now where x's store changes, so a view the
@@ -2731,6 +2735,18 @@ answered here rather than decided in the code.
                  exported API (R-Escape) — and nowhere else.  Declines: a `&` link to
                  the local; the local handed to a fn-ref; a nullable binding.
 ```
+
+**The own-buffer clause** (2026-09-26, `LOFT_NO_REBIND_OWN_BUFFER`; cells
+`tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft`, pin
+`tests/rebind_own_buffer.rs`).  A builder promotes the local it returns onto its hidden
+buffer, which made it an argument, and every argument was refused — so each `d = step(d, …)`
+filled a pooled buffer and the bind copied it whole into `d`.  zttext's insert loop
+(`io_d = insert_text(io_d, …)` inside `insert_op`): 5.95 → 5.01 ms per op, hash unchanged;
+two admissions over the census programs (zttext, hex_body).  Built beside it, the live-view
+half of this rule as the code had not enforced it: a view of x read after the call — a loop
+variable over one of x's fields, read after the body rebinds x — now declines (it had
+answered 3004 where the rule says 4; `tests/fixtures/rebind-view-across-call.loft`), which
+cost no library admission.
 
 **In words.**  The rules above this section build NEW bytes where they will live:
 `(R-Place)` hands a call the place its result is going, `(R-ElemFirst)` builds a vector

@@ -1458,6 +1458,14 @@ pub fn trace_byte_copy() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_BYTE_COPY"))
 }
 
+/// `LOFT_NO_REBIND_OWN_BUFFER=1` — `(R-Rebind)` keeps to plain locals: the frame's own
+/// promoted return buffer (`d = step(d, …)` inside `fn build() -> Doc`) is copied into
+/// again, as before.  The first bisect step for a wrong or stale record out of such a loop.
+pub fn rebind_own_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_REBIND_OWN_BUFFER"))
+}
+
 /// `LOFT_NO_VEC_COPY=1` — a vector copied into another one element at a time keeps its loop
 /// (`@FR-R-VecCopy` off): the first bisect step for a wrong, missing or extra element out of
 /// such a copy.
