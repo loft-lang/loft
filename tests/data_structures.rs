@@ -1088,3 +1088,31 @@ pub fn a_hash_holds_arena_entries_and_borrowed_records_at_once() {
         "a borrowed entry must decode back to the record it was given"
     );
 }
+
+/// The heap facts of the base types: `text` is the one that owns a heap record.  `character`
+/// (base type 6) is an inline codepoint, and a type answering "owns heap" for it sent every
+/// copy and free of a `vector<character>` — and of any record with a `character` field —
+/// through the per-element claims walk to find nothing, and kept such records off every
+/// native rewrite gated on a record of scalars.  No value differs either way, so no `.loft`
+/// cell can see it; this reads the fact.
+#[test]
+pub fn only_text_among_the_base_types_owns_heap() {
+    let mut stores = Stores::new();
+    let s = stores.structure("Glyph", 0);
+    stores.field(s, "ch", stores.name("character"));
+    stores.field(s, "width", stores.name("integer"));
+    let chars = stores.vector(stores.name("character"));
+    stores.finish();
+    for name in ["integer", "long", "single", "float", "boolean", "character"] {
+        assert!(!stores.owns_heap(stores.name(name)), "{name} owns no heap");
+    }
+    assert!(
+        stores.owns_heap(stores.name("text")),
+        "text owns its string"
+    );
+    assert!(
+        !stores.owns_heap(s),
+        "a record of a character and an integer owns no heap"
+    );
+    assert!(stores.owns_heap(chars), "a vector owns its element block");
+}
