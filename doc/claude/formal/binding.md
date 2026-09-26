@@ -430,6 +430,17 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-66** *(opened 2026-09-26, CLOSED 2026-09-26)* — `(B-Scope)`, the silent half of
+  D-bind-65: a variant's field bound inside a SUB-pattern — a slice element (`[Vn { rs }]`), a
+  slice tail, a tuple element, a struct field (`S { w: Vn { rs } }`) — pointed the name at its
+  binding, and the list recording what the name meant before was dropped at all five sites.  So
+  after the `match` an outer `rs` read the capture (`4` where the program holds `100`), on both
+  backends with no diagnostic, and a later local of that name was refused naming `_mv_rs_1`.
+  Only the top-level enum arm restored its names.  **Fix.**  Each site hands its list to the
+  arm's frame, which `end_pattern_arm` restores.  Alongside it, `pattern_variant_enum` maps a
+  value typed as one VARIANT to its enum, as the top-level dispatch does: `w = Vn { rs: 4 }`
+  in a tuple was refused as "Vn, which has no variants".  Guard
+  `tests/scripts/a-sub-pattern-capture-leaves-the-outer-name-alone.loft`.
 * **D-bind-65** *(opened 2026-09-26, CLOSED 2026-09-26)* — `(B-Scope)`: a pattern's names were
   bound BY NAME (`add_variable`) at every site but the struct-enum field and the `is` capture —
   slice elements (`[e, ..]`), `..rest`, repetitions, bare names, `v @ pat`, tuple elements and

@@ -1,0 +1,45 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A SUB-PATTERN CAPTURE LEAVES THE OUTER NAME ALONE (D-bind-66, `@FR-B-Scope`).  A variant's
+// field bound inside a slice element (`[Vn { rs }]`), a slice tail (`[_, .., Vn { rs }]`), a
+// tuple element (`(Vn { rs }, k)`) or a struct field (`S { w: Vn { rs } }`) pointed the name
+// at its binding and nothing pointed it back, so after the `match` an outer `rs` read the
+// capture — `4` where the program holds `100` — on both backends, with no diagnostic.  A later
+// local of that name was refused naming the internal `_mv_rs_1` (that half, and a tuple element
+// typed as one variant, are `a-sub-pattern-name-and-a-variant-typed-element-compile.loft`).  The
+// arm's end now restores every name its pattern bound.
+//
+// Every value is hand-computed; the enum arm is the control that was right before.  The cells the
+// control tree REFUSES are in their own guard, because a refusal would hide these asserts.
+//
+// @falsified-at: a7f0fa353 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-sub-pattern-capture-leaves-the-outer-name-alone.patch — the same channels.
+// CHANNEL: the asserts — on the control tree the outer name reads the capture.
+// WITNESS: `slice element: 4 4`.
+// HOLDS: the enum-arm control on both trees.
+
+enum W { Pb { p: integer }, Vn { rs: integer } }
+struct S { w: W, n: integer }
+
+fn main() {
+  rs = 100;
+  v = [Vn { rs: 4 }];
+  a = match v { [Vn { rs }] => rs, _ => -1 };
+  assert(a == 4 && rs == 100, "slice element: {a} {rs}");
+  t = [Pb { p: 1 }, Vn { rs: 5 }];
+  b = match t { [_, .., Vn { rs }] => rs, _ => -1 };
+  assert(b == 5 && rs == 100, "slice tail: {b} {rs}");
+  s = S { w: Vn { rs: 6 }, n: 1 };
+  c = match s { S { w: Vn { rs }, n } => rs + n };
+  assert(c == 7 && rs == 100, "struct field: {c} {rs}");
+  wt: W = Vn { rs: 8 };
+  d = match (wt, 1) { (Vn { rs }, k) => rs + k, _ => -1 };
+  assert(d == 9 && rs == 100, "tuple element: {d} {rs}");
+  // control: a top-level enum arm was right before
+  z = 50;
+  w = Vn { rs: 11 };
+  h = match w { Vn { rs } => rs + z, _ => -1 };
+  assert(h == 61 && z == 50, "control: {h}");
+  println("a sub-pattern capture leaves the outer name alone: every cell holds");
+}
