@@ -608,6 +608,11 @@ impl Parser {
         // statement boundary already does (parse_block, "leak into a LATER statement").
         self.expr_not_null = false;
         self.expr_not_null_name.clear();
+        // The pattern ends here: seal the names it bound into this arm's frame, which the end of
+        // the arm's body restores (`end_pattern_arm`).  A guard (`if n > 5`) is before the arrow
+        // and reads them; the body reads them; nothing after the arm does.
+        let frame = std::mem::take(&mut self.pattern_binds_pending);
+        self.pattern_bind_frames.push(frame);
         // Trace point: match arm-arrow consumption.  Captures whether
         // the parser is looking at `->` (wrong), `=>` (right), or
         // something else (recover via `recover_to`).  Recurring
@@ -5865,6 +5870,7 @@ impl Parser {
                 self.skip_rest_of_slice();
                 self.expect_match_arm_arrow();
                 self.skip_match_arm_body();
+                self.end_pattern_arm();
                 continue;
             }
             let Some(first_ident) = self.lexer.has_identifier() else {
@@ -6008,6 +6014,7 @@ impl Parser {
                 self.expect_match_arm_arrow();
                 let mut arm_code = Value::Null;
                 self.expression(&mut arm_code);
+                self.end_pattern_arm();
                 // Consume the optional trailing comma, mirroring the wildcard /
                 // struct arm paths.  Without it, the next loop iteration sees the
                 // leading `,` instead of a variant name and breaks early, leaving
@@ -6661,6 +6668,7 @@ impl Parser {
         self.vars.clear_write_state();
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
         self.vars.restore_write_state(&arm_write_state);
+        self.end_pattern_arm();
         tp
     }
 
@@ -6827,7 +6835,7 @@ impl Parser {
                                 field_conditions.push(cond);
                             }
                         } else {
-                            let v = self.create_var(&field_name, &field_type);
+                            let v = self.pattern_binding(&field_name, &field_type);
                             self.vars.defined(v);
                             let bound =
                                 self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
@@ -7054,6 +7062,53 @@ impl Parser {
         }
     }
 
+    /// `@FR-B-Scope` — the variable a PATTERN binds `name` to: a NEW binding per occurrence,
+    /// as a `for` loop's variable is (loft#915).  An arm's names belong to the arm, so a later
+    /// `match` that binds the same name — at another type, too — gets its own variable instead
+    /// of the earlier arm's.  Bound by name (`add_variable`), `match a { [e, ..] => … }` then
+    /// `match b { [e, ..] => … }` over a `vector<Pt>` and a `vector<text>` refused the second
+    /// as a type change.  The occurrence's name comes from `loop_binding` (`e`, `e#1`, …),
+    /// which both passes count alike and diagnostics print as `e`; `loop_variable` keys the
+    /// variable by it, and the spelled name is pointed at it for the arm's body.
+    fn pattern_binding(&mut self, name: &str, tp: &Type) -> u16 {
+        if self.context == u32::MAX {
+            return u16::MAX;
+        }
+        let before = self.vars.var(name);
+        // The variable's OWN name must differ from the spelling (`e#1`, never `e`): the arm's
+        // end re-points the spelling, and a lookup by the variable's own name — the return
+        // buffer a local becomes is a hidden attribute found by it — must still reach it.
+        let mut id = self.vars.loop_binding(name);
+        if id == name {
+            id = self.vars.loop_binding(name);
+        }
+        let v = self.vars.loop_variable(&id, tp, &mut self.lexer);
+        if v != u16::MAX {
+            self.vars.set_name(name, v);
+            self.pattern_binds_pending
+                .push((name.to_string(), (before != u16::MAX).then_some(before)));
+        }
+        v
+    }
+
+    /// The end of a match arm: the names its pattern bound stop naming its bindings, and name
+    /// what they named before the arm — a parameter, an outer local, or nothing.  Pairs with
+    /// the seal in `expect_match_arm_arrow`; a nested `match` in the body seals and ends its own
+    /// arms in between, so the frames nest as the arms do.
+    fn end_pattern_arm(&mut self) {
+        let Some(frame) = self.pattern_bind_frames.pop() else {
+            return;
+        };
+        for (name, before) in frame.into_iter().rev() {
+            match before {
+                Some(v) => {
+                    self.vars.set_name(&name, v);
+                }
+                None => self.vars.remove_name(&name),
+            }
+        }
+    }
+
     /// The value a pattern BINDS for field `attr` of `d_nr` read out of `subject` — one home
     /// for every site that binds a field to a local: a struct-enum arm (`V { f } =>`), an
     /// `is` capture, a plain-struct arm, the alternation and multi-pattern slots.
@@ -7094,7 +7149,7 @@ impl Parser {
         elm_tp.with_deps(&crate::data::Deps::frame1(src))
     }
 
-    /// @PLN35 Phase 2 (P-Cap-View) — mark a slice-element capture that reads a HEAP
+    /// @PLN35 Phase 2 (`@FR-P-Cap-View`) — mark a slice-element capture that reads a HEAP
     /// element as a borrowed VIEW of the subject, the same way a struct-enum field
     /// binding is (`parse_match_enum_field_bindings`, #429). A slice binding
     /// `[first, ..] => first` (or `[tok:V, ..]`) reads `OpGetVector(subject, ..)` — a
@@ -7668,8 +7723,9 @@ impl Parser {
         (buf, vec_tp, setup)
     }
 
-    /// @PLN35 — materialise a named `..rest` sub-slice `v[lo .. hi]` into a FRESH independent
-    /// `vector<T>` (`rest_var`), by reusing the proven compile-time slice-materialise path
+    /// @PLN35 (`@FR-P-Cap-Fresh`) — materialise a named `..rest` sub-slice `v[lo .. hi]` into a
+    /// FRESH independent `vector<T>` (`rest_var`), by reusing the proven compile-time
+    /// slice-materialise path
     /// (`materialize_iterator` over a minimal index-range `Iter`).  `lo`/`hi` are `Value`s: a
     /// compile-time `Int(head_len)` / `len − tail_len` for a fixed-arity slice, or a runtime
     /// cursor `Var(pos)` / `len` once a variable-width alternation determines the head width
@@ -8226,7 +8282,7 @@ impl Parser {
         // Capture: `name = v[head_len .. end]` (a fresh `vector<elm_tp>`).  Runs once the arm
         // commits, after the condition set `end`.
         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-        let cap_var = self.vars.add_variable(&cap_name, &vec_tp, &mut self.lexer);
+        let cap_var = self.pattern_binding(&cap_name, &vec_tp);
         self.vars.defined(cap_var);
         if !self.first_pass && cap_var != u16::MAX {
             self.materialize_named_rest(
@@ -8464,7 +8520,7 @@ impl Parser {
                 tail_conds.append(&mut te_conds);
                 bindings.append(&mut te_binds);
             } else if let Some(name) = self.lexer.has_identifier() {
-                let bind_var = self.vars.add_variable(&name, elm_tp, &mut self.lexer);
+                let bind_var = self.pattern_binding(&name, elm_tp);
                 if bind_var != u16::MAX {
                     self.vars.defined(bind_var);
                     let elem_read = self.read_slice_elem(v, elm_size, elm_tp, pos.clone());
@@ -8684,7 +8740,7 @@ impl Parser {
         let cap_step = if sep_disc.is_some() { 2 } else { 1 };
         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
         if let Some(name) = cap_name {
-            let cap_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
+            let cap_var = self.pattern_binding(&name, &vec_tp);
             self.vars.defined(cap_var);
             if !self.first_pass && cap_var != u16::MAX {
                 self.materialize_named_rest(
@@ -8703,7 +8759,7 @@ impl Parser {
         // @PLN35 slice 2 — each `{ field }` projects the run's field into its own vector.
         for (fname, attr_idx, ftype) in field_caps {
             let fvec_tp = Type::Vector(Box::new(ftype.clone()), Deps::none());
-            let proj_var = self.vars.add_variable(&fname, &fvec_tp, &mut self.lexer);
+            let proj_var = self.pattern_binding(&fname, &fvec_tp);
             self.vars.defined(proj_var);
             if !self.first_pass && proj_var != u16::MAX {
                 self.materialize_field_projection(
@@ -8723,7 +8779,7 @@ impl Parser {
             }
         }
         if let Some(name) = rest_name {
-            let rest_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
+            let rest_var = self.pattern_binding(&name, &vec_tp);
             self.vars.defined(rest_var);
             if !self.first_pass && rest_var != u16::MAX {
                 let hi_val = self.cursor_len(v);
@@ -9093,7 +9149,7 @@ impl Parser {
             bindings.push(v_set(pos_var, pos_acc));
 
             let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-            let rest_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
+            let rest_var = self.pattern_binding(&name, &vec_tp);
             self.vars.defined(rest_var);
             if !self.first_pass && rest_var != u16::MAX {
                 let hi_val = self.cursor_len(v);
@@ -9782,7 +9838,7 @@ impl Parser {
                 } else if self.lexer.has_token("@") {
                     // binding pattern `name @ pattern` — bind the subject to
                     // a variable and continue parsing the sub-pattern.
-                    let bind_nr = self.vars.add_variable(&id, subject_type, &mut self.lexer);
+                    let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
                     arm_bindings.push(v_set(bind_nr, Value::Var(v)));
                     // Parse the sub-pattern after `@`.
@@ -9790,7 +9846,7 @@ impl Parser {
                     pattern_val = Some(pat);
                 } else {
                     // Bare identifier without `@` — wildcard binding (binds subject to name).
-                    let bind_nr = self.vars.add_variable(&id, subject_type, &mut self.lexer);
+                    let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
                     arm_bindings.push(v_set(bind_nr, Value::Var(v)));
                     is_wildcard = true;
@@ -10141,7 +10197,7 @@ impl Parser {
             self.lexer.cont();
         }
         self.lexer.token("]");
-        let name_var = self.vars.add_variable(name, ret_tp, &mut self.lexer);
+        let name_var = self.pattern_binding(name, ret_tp);
         self.vars.defined(name_var);
         let cursor_tp = self.vars.tp(cursor_var).clone();
         let mut call = Value::Null;
@@ -10440,8 +10496,7 @@ impl Parser {
                                 if hname == "_" {
                                     continue;
                                 }
-                                let bind_nr =
-                                    self.vars.add_variable(hname, &elm_tp, &mut self.lexer);
+                                let bind_nr = self.pattern_binding(hname, &elm_tp);
                                 self.vars.defined(bind_nr);
                                 let val = self.read_slice_elem(
                                     v,
@@ -10478,7 +10533,7 @@ impl Parser {
                                 "a scalar capture `{name}:{tname}` must match the element type {elm_name}"
                             );
                         }
-                        let bind_nr = self.vars.add_variable(&name, &elm_tp, &mut self.lexer);
+                        let bind_nr = self.pattern_binding(&name, &elm_tp);
                         self.vars.defined(bind_nr);
                         let val = self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
                         bindings.push(v_set(bind_nr, val));
@@ -10495,7 +10550,7 @@ impl Parser {
                         self.lexer.token(":");
                         let position = head.len() as i32;
                         // Bind name = v[position] — the same read as the head-binding loop below.
-                        let bind_nr = self.vars.add_variable(&name, &elm_tp, &mut self.lexer);
+                        let bind_nr = self.pattern_binding(&name, &elm_tp);
                         self.vars.defined(bind_nr);
                         let bval =
                             self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
@@ -10564,8 +10619,7 @@ impl Parser {
                                 if name == "_" {
                                     continue;
                                 }
-                                let bind_nr =
-                                    self.vars.add_variable(name, &elm_tp, &mut self.lexer);
+                                let bind_nr = self.pattern_binding(name, &elm_tp);
                                 self.vars.defined(bind_nr);
                                 let val = self.read_slice_elem(
                                     v,
@@ -10826,7 +10880,7 @@ impl Parser {
                         if name == "_" {
                             continue;
                         }
-                        let bind_nr = self.vars.add_variable(name, &elm_tp, &mut self.lexer);
+                        let bind_nr = self.pattern_binding(name, &elm_tp);
                         self.vars.defined(bind_nr);
                         let val = self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(i as i32));
                         bindings.push(v_set(bind_nr, val));
@@ -10837,7 +10891,7 @@ impl Parser {
                         if name == "_" {
                             continue;
                         }
-                        let bind_nr = self.vars.add_variable(name, &elm_tp, &mut self.lexer);
+                        let bind_nr = self.pattern_binding(name, &elm_tp);
                         self.vars.defined(bind_nr);
                         let idx = Value::Int(-((tail.len() - j) as i32));
                         let val = self.read_slice_elem(v, &elm_size, &elm_tp, idx);
@@ -10858,7 +10912,7 @@ impl Parser {
                     // spelling (loft#1419), which is the one part of `t` still outstanding.
                     if let Some(name) = rest_name.clone() {
                         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-                        let rest_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
+                        let rest_var = self.pattern_binding(&name, &vec_tp);
                         self.vars.defined(rest_var);
                         if !self.first_pass && rest_var != u16::MAX {
                             let lo_val = Value::Int(head.len() as i32);
@@ -10899,7 +10953,7 @@ impl Parser {
                     is_total = true;
                 } else {
                     // bare name — wildcard binding
-                    let bind_nr = self.vars.add_variable(&id, subject_type, &mut self.lexer);
+                    let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
                     bindings.push(v_set(bind_nr, Value::Var(v)));
                     is_total = true;
@@ -11207,7 +11261,7 @@ impl Parser {
                             }
                         } else {
                             // binding variable — always matches, captures element value
-                            let bind_nr = self.vars.add_variable(&id, &elem_type, &mut self.lexer);
+                            let bind_nr = self.pattern_binding(&id, &elem_type);
                             self.vars.defined(bind_nr);
                             bindings.push(v_set(bind_nr, elem_get));
                         }

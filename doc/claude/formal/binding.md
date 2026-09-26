@@ -408,7 +408,9 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
                  also when every arm binds it.  A bind after the `}` starts a new binding in
                  the enclosing block.  A loop variable (and a destructured `for (a, b)`'s
                  binders) is bound by its `for` header into the loop's BODY, and ends with
-                 it.  Parameters are bound for the whole function.
+                 it.  A `match` arm's PATTERN binds its names into that arm — its guard and
+                 its body — and they end with it, whatever a later arm or `match` binds
+                 under the same name.  Parameters are bound for the whole function.
 ```
 
 **In words.** loft follows rustc here: a local lives in the block that binds it.
@@ -428,6 +430,20 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-65** *(opened 2026-09-26, CLOSED 2026-09-26)* — `(B-Scope)`: a pattern's names were
+  bound BY NAME (`add_variable`) at every site but the struct-enum field and the `is` capture —
+  slice elements (`[e, ..]`), `..rest`, repetitions, bare names, `v @ pat`, tuple elements and
+  plain-struct fields.  So a later `match` binding the same name reused the first arm's
+  variable, and a different type was refused as a type change (`match a { [e, ..] => … }` then
+  `match b { [e, ..] => … }` over `vector<Pt>` and `vector<text>`); a local of that name after
+  the `match` was refused the same way; and a capture spelled like a PARAMETER bound into the
+  parameter.  **Fix.**  One home, `Parser::pattern_binding`: a new binding per occurrence, as
+  a `for` loop's variable is (loft#915) — own name `e#N`, reported as `e` — with the spelling
+  pointed at it for the arm.  The arrow seals the arm's names and the end of its body
+  restores what they named before (`end_pattern_arm`), so frames nest with nested `match`es.
+  The `never-read` lint now reports a `name#N` binding under its spelling, which also covers a
+  second `for i` loop it used to skip.  Guard
+  `tests/scripts/a-patterns-names-end-with-its-arm.loft`.
 * **D-bind-64** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1690)* — `(B-Copy)`: a vector bind
   written into the arms of a `??` copies through `lower_vec_copy_bind`, which minted the element
   temp `_elm_N` on the SECOND parser pass only for a plain-variable copy (its `in_arm` leg forces

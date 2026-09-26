@@ -12,6 +12,8 @@
 // @falsified-at: 11b48994e — interpret exit 1 -> 0, native exit 1 -> 0
 // @falsified-by: tests/falsified/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.patch — the same channels.
 // CHANNEL: the refusal — the control tree does not compile this program.
+// HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
+//   every assertion passes on both backends.
 
 struct Pt { x: integer, y: integer }
 enum W { Pb { p: Pt }, Pn { p: Pt? }, Qn { k: integer, p: Pt? } }
