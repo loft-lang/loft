@@ -3570,6 +3570,7 @@ use #count instead"
                     let root = crate::parser::expressions::lhs_base_var(&expr, &self.data);
                     if !self.first_pass
                         && root != u16::MAX
+                        && !self.loop_sources_replaced.is_empty()
                         && self
                             .loop_sources_replaced
                             .contains(&(self.context, self.vars.name(root).to_string()))

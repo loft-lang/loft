@@ -1675,7 +1675,12 @@ use a separate collection or add after the loop"
     /// a warning and not advice.  Asked at the assignment path's one entry, beside the const
     /// guard, so every route that lowers a write is covered.  A write through a callee is not
     /// seen: the loop's answer is still the rule's, only the notice is missing.
-    fn check_loop_source_write(&mut self, to: &Value) {
+    fn check_loop_source_write(&mut self, to: &Value, op: &str, f_type: &Type) {
+        // An append to a collection a loop walks is refused outright (`check_iter_safety`);
+        // only a REPLACING write is this notice's.
+        if op != "=" && matches!(f_type, Type::Vector(..)) {
+            return;
+        }
         let Some(place) = self.vars.loop_source_written(to) else {
             return;
         };
@@ -1683,10 +1688,14 @@ use a separate collection or add after the loop"
         if root == u16::MAX {
             return;
         }
-        // loft#1695 — pass 1 notes that the loop's source place is replaced in its body, so
-        // pass 2 binds a COLLECTION source as a copy (`Parser::parse_for`); the notice is
-        // pass 2's alone.
+        // loft#1695 — pass 1 notes that the loop's source place is REPLACED (`=`) in its
+        // body, so pass 2 binds a COLLECTION source as a copy (`Parser::parse_for`); an
+        // append (`v += …`) replaces nothing and keeps its own refusal (`check_iter_safety`).
+        // The notice is pass 2's alone.
         if self.first_pass {
+            if op != "=" {
+                return;
+            }
             self.loop_sources_replaced
                 .insert((self.context, self.vars.name(root).to_string()));
             return;
@@ -3391,7 +3400,7 @@ use a separate collection or add after the loop"
         skip_validate: bool,
     ) -> Type {
         self.check_iter_safety(to, f_type, op);
-        self.check_loop_source_write(to);
+        self.check_loop_source_write(to, op, f_type);
         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
         // every route below.  Whether a write is allowed is a property of the BINDING, not
         // of the route that lowers it, so a guard held inside a route is only as complete
