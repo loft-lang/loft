@@ -1,0 +1,77 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1686 (`@FR-B-Copy`, `@FR-H-Copy`, `@FR-H-WriteLocked`) — A LOCAL BOUND FROM A VECTOR
+// CONSTANT COPIES IT.  A top-level vector constant is pre-built once in the write-locked
+// constant store and its use site answers a view of it (`OpConstRef`).  Bound to a local, that
+// view was kept — `v = NAMES` aliased the constant store — so the first write through the local
+// reached the lock: "Write to read-only store … locked by: Store::lock", an internal panic on
+// both backends, in every spelling of the bind (plain, a `??` or `if` arm, a typed local).  A
+// whole-value bind copies (C86, `(B-Copy)`); the constant's use site is a bare read like a
+// variable's, and the bind now takes the same copy verdict (`Parser::classify_vec_bind`).
+//
+// Read positions keep the view: `NAMES[i]`, `len(NAMES)`, `for x in NAMES` emit what they
+// always did (the last cell pins them).  The route through a PARAMETER — `grow(NAMES)` where
+// the callee appends to `v` — is not a bind and stays a runtime fault, now a defined one that
+// names the constant (`tests/exit_codes.rs`), since a parameter aliases its argument and a
+// copy there would be a silent lost write.  Every value is worked out by hand; every cell reads
+// the constant back after the write, which is what tells a copy from a surviving alias.
+//
+// @falsified-at: <derived after the fix is committed>
+// CHANNEL: the exit code and the panic — on the control tree the first cell panics inside the
+//   store and nothing after it runs.
+// WITNESS: `panicked at src/store.rs … Write to read-only store at rec=5 fld=16 (locked by:
+//   Store::lock)`, on both backends.
+// HOLDS: every cell answers on this tree; the read-only cell answers on both trees.
+
+NAMES: vector<text> = ["a", "b"];
+NUMS: vector<integer> = [1, 2];
+struct S { v: vector<integer> }
+
+fn mk() -> vector<integer>? { null }
+fn mk_text() -> vector<text>? { null }
+fn get() -> vector<integer> { NUMS }
+
+fn main() {
+  v1 = NAMES;
+  v1 += ["c"];
+  assert("{v1}" == "[\"a\",\"b\",\"c\"]" && "{NAMES}" == "[\"a\",\"b\"]", "plain bind, append: {v1} {NAMES}");
+  v2 = NUMS;
+  v2[0] = 9;
+  assert("{v2}" == "[9,2]" && "{NUMS}" == "[1,2]", "plain bind, index write: {v2} {NUMS}");
+  v3 = mk() ?? NUMS;
+  v3 += [3];
+  assert("{v3}" == "[1,2,3]" && "{NUMS}" == "[1,2]", "a `??` default: {v3} {NUMS}");
+  v4 = mk_text() ?? mk_text() ?? NAMES;
+  v4 += ["c"];
+  assert("{v4}" == "[\"a\",\"b\",\"c\"]" && "{NAMES}" == "[\"a\",\"b\"]", "a `??` chain: {v4} {NAMES}");
+  c = true;
+  v5 = if c { NUMS } else { [7] };
+  v5 += [3];
+  assert("{v5}" == "[1,2,3]" && "{NUMS}" == "[1,2]", "an `if` arm: {v5} {NUMS}");
+  v6: vector<integer> = NUMS;
+  v6 += [3];
+  assert("{v6}" == "[1,2,3]" && "{NUMS}" == "[1,2]", "a typed local: {v6} {NUMS}");
+  // the routes that copied already: a field initialiser and a return
+  s = S { v: NUMS };
+  s.v += [3];
+  v7 = get();
+  v7 += [4];
+  assert("{s.v}" == "[1,2,3]" && "{v7}" == "[1,2,4]" && "{NUMS}" == "[1,2]", "field init and return: {s.v} {v7} {NUMS}");
+  // bound twice from the same constant, written apart
+  a = NUMS;
+  b = NUMS;
+  a += [5];
+  b[1] = 6;
+  assert("{a}" == "[1,2,5]" && "{b}" == "[1,6]" && "{NUMS}" == "[1,2]", "two binds: {a} {b} {NUMS}");
+  // in a loop: a fresh copy per pass
+  total = 0;
+  for i in 0..3 { w = NUMS; w += [i]; total += len(w); }
+  assert(total == 9 && "{NUMS}" == "[1,2]", "a bind per pass: {total} {NUMS}");
+  // read positions keep the view
+  sum = 0;
+  for x in NUMS { sum += x; }
+  r = NUMS;
+  assert(len(NUMS) == 2 && NUMS[0] == 1 && sum == 3 && "{r}" == "[1,2]", "read positions: {len(NUMS)} {NUMS[0]} {sum} {r}");
+  println("a local bound from a vector constant copies it: every cell holds");
+}

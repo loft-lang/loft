@@ -427,9 +427,16 @@ impl RuntimeError {
         // (`store_nr=2` interpreted, `store_nr=0` native), so putting it here would make
         // the two render different text for one event — the property `report_and_exit`
         // exists to hold.  It is a debugging fact, and `LOFT_LOG=locks` is where it lives.
-        let _ = origin;
+        // …except that the CONSTANT store's origin picks the advice (never printed): a
+        // constant cannot be unlocked, and the cure is a bind, which copies (loft#1686).
         let kind = RuntimeErrorKind::WriteToLockedStore { rec, fld };
-        let detail = kind.describe();
+        let detail = if origin == crate::store::Store::CONST_STORE_ORIGIN {
+            "write to a constant — a constant is read-only; bind it to a local first \
+             (`v = NAMES`), which copies, and write through the local"
+                .to_string()
+        } else {
+            kind.describe()
+        };
         Self {
             kind,
             position: None,

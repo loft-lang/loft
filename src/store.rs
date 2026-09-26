@@ -2139,6 +2139,21 @@ impl Store {
         self.lock_with_origin("Store::lock");
     }
 
+    /// The lock origin of the CONSTANT store, read back by the write refusal.
+    pub const CONST_STORE_ORIGIN: &'static str = "the constant store";
+
+    /// Lock the constant store — the program-lifetime store every top-level vector constant
+    /// is pre-built into, on both backends.  `@FR-H-WriteLocked`: a write that reaches it is
+    /// the program's own fault (a constant handed to a parameter the callee writes through,
+    /// loft#1686), so it is refused as a USER lock is — a defined runtime error naming a
+    /// constant — and never as the internal "Write to read-only store" assert, which is for
+    /// a lock the compiler took and then wrote through itself.  A bind of a constant never
+    /// reaches here: it copies (`Parser::classify_vec_bind`).
+    pub fn lock_constant(&mut self) {
+        self.lock_with_origin(Self::CONST_STORE_ORIGIN);
+        self.user_locked = true;
+    }
+
     /// Lock this store + record an identifier of the lock-origin call site.
     /// The origin string surfaces in panic messages from `addr_mut` / `claim`
     /// / `delete` so a "Write to read-only store" failure points directly at the

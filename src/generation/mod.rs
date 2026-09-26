@@ -7531,7 +7531,10 @@ extern crate loft;"
                 writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
                 writeln!(w, "        }}")?;
             }
-            writeln!(w, "        db.allocations[cv.store_nr as usize].lock();")?;
+            writeln!(
+                w,
+                "        db.allocations[cv.store_nr as usize].lock_constant();"
+            )?;
             // Plan-57 Phase C: pin the const store (never freed) — see compile.rs.
             writeln!(
                 w,

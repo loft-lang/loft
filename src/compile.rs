@@ -241,7 +241,7 @@ fn build_const_vectors(
             }
             state.database.record_finish(&vec_ref, &rec, vec_tp, 0);
         }
-        state.database.allocations[db.store_nr as usize].lock();
+        state.database.allocations[db.store_nr as usize].lock_constant();
         // Plan-57 Phase C: pin the const store so `free_named` never frees it
         // (it lives for the whole program).  Replaces the `ref_count = u32::MAX/2`
         // sentinel as the ref-count is removed.
