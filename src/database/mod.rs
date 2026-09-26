@@ -1885,7 +1885,7 @@ impl Stores {
     /// [`Self::vec_set_hoisted_or_raise_runtime`]'s twin through a hoisted BASE (@PLN157
     /// § V-ak, `@FR-R-Base`): the same bounds test, then one unaligned store at
     /// `base + index * size + fld`.  The cold path — an index outside the vector — is the
-    /// same one.
+    /// same one, so `@FR-H-WriteOOB` holds here exactly as it does off the fast path.
     ///
     /// # Safety
     ///
@@ -1944,6 +1944,11 @@ impl Stores {
     /// `vec_get_or_raise_runtime` plus the template's `rec != 0` write, so the raise it
     /// reports and the null-element behaviour keep their one definition.
     ///
+    /// `@FR-H-WriteOOB` — the fast path's own test admits only `0 <= index < len`, so a
+    /// negative index (which names an element from the END, `@FR-H-Index`) and an absent one
+    /// are BOTH the cold path's to decide; the fast path never writes what the twin would
+    /// not.  The guard is `tests/scripts/a-write-to-an-absent-element-lands-nowhere.loft`.
+    ///
     /// # Panics
     ///
     /// Under `VERIFY` (`LOFT_HOIST_VERIFY=1`), when the header no longer describes
@@ -1988,8 +1993,9 @@ impl Stores {
     /// inside `[0, len)`, no overflow on the way, a non-empty range.  Answers `false` without
     /// writing anything otherwise — a negative index counts from the end, a partial range
     /// drops what falls outside, an empty range writes nothing — and the caller then runs the
-    /// per-element loop, whose cold path spells every one of those exactly.  `size` is the
-    /// element stride and must be `size_of::<T>()`.
+    /// per-element loop, whose cold path spells every one of those exactly (`@FR-H-WriteOOB`:
+    /// the fill never writes an index the loop would not have, and never skips one it would).
+    /// `size` is the element stride and must be `size_of::<T>()`.
     ///
     /// # Panics
     ///
@@ -2046,7 +2052,9 @@ impl Stores {
 
     /// The off-fast-path half of [`Self::vec_set_hoisted_or_raise_runtime`]: an out-of-range or
     /// negative index, which routes back through the runtime so a negative one still addresses
-    /// from the end and an out-of-range one still raises.
+    /// from the end and an out-of-range one still raises — and, `@FR-H-WriteNull`, writes
+    /// nothing at all when the twin answered `nullref`: the `rec != 0` test below is the one
+    /// every `OpSet*` template in `default/01_code.loft` opens with.
     ///
     /// Enforces `@FR-R-Cold` (formal/rewrites.md).
     /// `#[inline(never)]` is load-bearing rather than a hint, for the reason loft#1508 records on

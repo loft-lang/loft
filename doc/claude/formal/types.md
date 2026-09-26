@@ -686,6 +686,31 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 0.**
 
+* **D-types-3** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1682)* — `(T-Chk)` / `(I-Join)`: a
+  value-position `if` or `match` whose FIRST arm is a tuple literal with a `null` member was
+  REFUSED — *"expected (null, integer), got (integer, integer) on else"* — whatever the declared
+  destination (a `(τ?, τ)` return, a typed local, no annotation), in an `if`, an `else if`
+  chain and every `match` form, while the same program with the concrete arm first compiled
+  and answered.  **Where (measured).**  A sibling arm is parsed against the type the arms so
+  far settled on (`parse_if`'s else arm, `match_arm_expected`), and a tuple literal with a
+  `null` element synthesises `(null, integer)`, a type nothing converts a concrete member to;
+  a bare scalar `null` arm had the carve-out that leaves the sibling to decide (`Type::Null`
+  is "not settled"), and a tuple WITH a null member did not.  `(I-Join)` says the join is
+  `⨆ τᵢ`, optional iff some member is — `(null, τ) ⊔ (τ, τ) = (τ?, τ)` — and `(T-Chk)` pushes
+  the expected type into sub-expressions, so the first arm's synthesised member was never the
+  type to hand down.  **Fix.**  `Parser::tuple_has_null_member` makes such a result "not
+  settled" wherever a sibling is handed its expected type; `join_tuple_arms` joins the arms
+  ELEMENT-WISE (`null ⊔ τ = τ?`, two sibling variants to their enum, `(C-Var)`); both tails
+  are converted to the join (`convert_arm_tail`), and every match site reconverts the arms
+  it had already assembled — measured necessary: with the TYPE alone joined, the first arm
+  of `match z { 1 => (null, 3), _ => (4, 5) }` read `1` for its null member, silently.  Six
+  sites parse a match arm against the settled type (the enum loop, its `null`-arm and
+  wildcard paths, the scalar, vector and tuple pattern matches); the join is one helper
+  (`join_null_tuple_arm`) and each site owns its reconversion.  Guard:
+  `tests/scripts/1682-a-null-member-in-the-first-tuple-arm-does-not-pin-the-join.loft`.
+  Found by `matrix_axes.py cross A7 A3`: the corpus's thinnest crossing was a nested
+  container in a tuple-element position, and the probe there met the refusal on its ninth
+  cell.
 * **D-types-2** *(opened 2026-09-23, CLOSED 2026-09-23; loft#1640)* — `(N-Reserve)`: a TUPLE MEMBER of a narrow
   type is not bounded by its declared range on a plain assignment.  `t: (u8, u8) = (250, 7);
   t.0 = 300` stores `300`, and `t.0 >= 0 and t.0 <= 255` — the type's own range, written out

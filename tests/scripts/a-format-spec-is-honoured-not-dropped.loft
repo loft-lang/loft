@@ -1,7 +1,8 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
 //
-// @FR-F-Spec — every part of a `{value:spec}` spec reaches the renderer, and the same spec
+// @FR-F-Spec (and `@FR-F-Spec-Fill` for the `*>` / `*^` cells: a fill character pads instead
+// of a space and comes first) — every part of a `{value:spec}` spec reaches the renderer, and the same spec
 // written a different way means the same thing.
 //
 // `formatting.md` had ten rules, no code citation and `OPEN: 0`, so it had never been walked.

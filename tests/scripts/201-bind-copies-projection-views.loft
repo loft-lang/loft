@@ -19,6 +19,11 @@
 // the split is the decision working rather than a defect — and it was resting on nothing, with
 // no test that would notice if a future change quietly moved a cell across.
 //
+// Rules pinned: `@FR-B-Copy`, `@FR-B-View`, `@FR-B-Ref-Alias` (binding.md), and their heap
+// twins `@FR-H-Copy`, `@FR-H-View`, `@FR-H-Ref` (heap.md, whose Conformance row's programs —
+// `c = o; c.v = 9`, `fv = e.items; fv[0] = 99`, `r = &v; r[0] = 99`, `c = o.i; c.v = 9`,
+// `s = v[0]; s.v = 9`, the parameter-root vs local-root write — are the cells below).
+//
 // Every cell reads the SOURCE after writing the binding. That is load-bearing: a bind whose
 // source is dead afterwards may be ELIDED to an alias (C86's last-use elision), so a probe that
 // did not read the source back could not tell a copy from an elided one.

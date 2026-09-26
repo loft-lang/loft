@@ -511,7 +511,20 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-50` (a record returned by a fn-ref call whose target is UNRESOLVED had no
+**OPEN: 0.**  `D-own-51` (a field hoisted out of an in-place literal — `r = Outer { b: o.b }; r`,
+a work-ref typed `ref(Inner)["o"]`, a VIEW of the parameter — was freed at scope exit as a
+work-ref regardless of what it borrowed, releasing the CALLER's record on every call; in a
+loop the caller's pooled buffer was then read back, 46 strict-store violations on both
+backends and a panic in a larger program — loft#1683.  `(O-Derived)` frees a local iff it owns
+its store; the hoist that stages the field now marks a staged struct-typed PROJECTION
+(`is_projection_op`, `(B-View)`) a borrow (`skip_free`) at its mint, so the exit owes it
+nothing.  Keyed on the staged EXPRESSION, and there and not at the exit, because the temp's
+deps are not the fact: a staged WHOLE variable (`Inner { a: a }`) is a copy that owns its
+store while its type carries the source's deps (measured: keying on deps leaked
+`1184-…` and `880-…`), and a pass-2 tuple buffer carries deps the same way (measured:
+exempting every borrowing work-ref at the exit leaked one).  Guard `tests/scripts/1683-a-field-hoisted-out-of-a-literal-is-a-view-and-is-never-freed.loft`)
+opened and CLOSED 2026-09-26.
+`D-own-50` (a record returned by a fn-ref call whose target is UNRESOLVED had no
 decided owner: bound, it was adopted even when it was the caller's capture; inline, it was held
 to frame exit — loft#1659) opened and CLOSED 2026-09-24, below.
 `D-own-49` (an explicit `return` of an ELEMENT published a signature with no

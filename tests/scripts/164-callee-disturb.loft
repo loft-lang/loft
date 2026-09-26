@@ -1,6 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
-// @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`) — A DISTURBANCE ONE FRAME DOWN IS A
+// @PLN164 C3 (`@FR-B-Disturb`, `@FR-B-View`, `@FR-H-Materialise`) — A DISTURBANCE ONE FRAME DOWN IS A
 // DISTURBANCE: a container a CALLEE grows or removes from ends the place a caller's view
 // names, exactly as the same statement written inline does, so the view MATERIALISES and the
 // author is told.  `(B-Ref-Reshape)` states the reach outright — *"the disturbance may be in
