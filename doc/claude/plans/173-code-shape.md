@@ -7,7 +7,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 ## Status
 
-**Proposed (2026-09-26).**  Owner rulings that this plan builds on:
+**Next — approved 2026-09-26.**  Owner rulings that this plan builds on:
 
 - `too_many_lines` applies to **new code**.  A function that cannot reasonably be split
   stays out of it — per function, with a reason.  A whole file never does.
