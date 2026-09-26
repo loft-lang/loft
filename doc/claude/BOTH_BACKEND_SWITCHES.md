@@ -194,6 +194,18 @@ the loop as written running for a range the guard refuses (cbor `encode_bytes` 9
 or extra byte out of such a copy.  `LOFT_TRACE_BYTE_COPY=1` names each site admitted and
 each kept.
 
+**`LOFT_NO_REBIND_OWN_BUFFER=1`** (`@FR-R-Rebind`'s own-buffer clause, default-ON, scope
+pass, BOTH backends) keeps `(R-Rebind)` to plain locals: a builder's `d = step(d, …)`, where
+`d` is the frame's own promoted return buffer, copies the step's result into `d` again (zttext
+insert loop 5.01 → 5.95 ms per op) — the first bisect step for a wrong or stale record out of
+such a loop.  `LOFT_TRACE_REBIND=1` names each site.
+
+**`LOFT_NO_VEC_COPY=1`** (`@FR-R-VecCopy`, default-ON, scope pass, BOTH backends) makes
+`for e in V { t += [e] }` push element by element again — with it off, the walk is
+`t += V` where t is a local or the frame's hidden return or work buffer (zttext `insert_text`
+25.4 → 5.95 ms per op) — and is the first bisect step for a wrong, missing or extra element
+out of such a copy.  `LOFT_TRACE_VEC_COPY=1` names each site admitted and each kept.
+
 ## Lowering: adopting and minting call buffers
 
 **Adopt at first bind (@PLN164 B1, `@FR-O-Move`, default-ON, both backends, parse time):**
