@@ -28,7 +28,8 @@
 # Usage:
 #   scripts/api_lint.py [targets ...]            full report     (default: default/*.loft)
 #   scripts/api_lint.py -c [targets ...]         counts only — the thermometer
-#   scripts/api_lint.py --check [targets ...]    report only NON-baselined findings (the CI gate)
+#   scripts/api_lint.py --check [targets ...]    report only NON-baselined findings (exits non-zero on
+#                                                 any; no CI job runs it — RELEASE.md § 0a reads it)
 #   scripts/api_lint.py --baseline [targets ...] accept today's findings into .api_lint_baseline
 #   scripts/api_lint.py --prune [targets ...]    drop now-fixed entries from the baseline
 # Exit: non-zero if any non-baselined [auto] finding remains (so --check can gate).

@@ -250,6 +250,12 @@ cannot be re-indexed), a failed alternative must *replay* pulled items, so two o
                 DEFINED runtime error (never a hang) — preserving termination.
 ```
 
+**How it is built.**  `(P-Anchor)` and `(P-Revert)` describe a memoising cursor, and the ops they
+name were never built: the shipped design MATERIALISES the subject into a buffer and runs the
+vector-match machinery over it.  For a source without side effects the two agree on every
+observable — every item a revert would replay is in the buffer — and `(P-IterBound)` is enforced
+by bounding that materialise (D-match-6).
+
 A side-effecting pull (a generator that mutates external state per item) cannot be reverted;
 matching over such a source is UB-by-contract (documented in [../CAVEATS.md](../CAVEATS.md)) — the
 same assumption `Lexer` makes about its token stream.
@@ -263,27 +269,32 @@ is a view; `..rest` / repetition are fresh vectors); the pattern grammar + prece
 
 ## Deviations
 
-OPEN: **1**.  `D-match-5` closed 2026-09-14; `D-match-4` closed 2026-09-12.
+OPEN: **0** — a *rules* doc: it shrinks operational.md's D-op-1 and carries no open
+deviation of its own.  `D-match-6` opened and closed 2026-09-25; `D-match-5` closed
+2026-09-14; `D-match-4` closed 2026-09-12.
 
-- **D-match-6** *(OPEN 2026-09-25, loft#1678)* — `(P-IterBound)` says a repetition over an
-  iterator is *"bounded by `max_lookahead`; exceeding it is a DEFINED runtime error (never a
-  hang) — preserving termination."*  There is no bound.  An endless source fills memory on
-  both backends: 696 MB in 13 s on `--interpret` (hard-killed by `LOFT_TIMEOUT`) and 2.13 GB
-  in 18 s on `--native`, which stopped only against an externally imposed `ulimit -v`.
-  `LOFT_MEMORY_LIMIT` does not apply — ordinary runs are never capped — so nothing in the
-  language ends this run.
+- **D-match-6 — OPENED AND CLOSED 2026-09-25 (loft#1678).** `(P-IterBound)` promised a bound and
+  a defined error; there was neither.  A `match` over an iterator MATERIALISES its subject before
+  the patterns run (`collect_iterator_subject`; `tests/scripts/35p-iterator-match.loft` states the
+  design), and the pull had no counter, so an endless source filled memory on both backends —
+  2 GB in 18 s on `--native` — until something outside the program killed it.  Closed in the
+  pull: it counts what it appends and, past `max_lookahead`, stops with `panic`, the language's
+  defined error, naming the `match`'s line and the bound.  `max_lookahead` is one million by
+  default, `LOFT_MAX_LOOKAHEAD` overrides it (`0` = no bound), read at compile time so both
+  backends bake the same constant.  The two decisions the issue named (what the error is, what
+  the bound is) were taken on the rule's own words — "a DEFINED runtime error" — and stand to be
+  overruled.  The endless source must yield something a native generator runs LAZILY: an
+  endless loop yielding RECORDS runs eagerly on `--native` and never reaches the `match`
+  (`coroutines.md` Conformance, COROUTINE.md § CL-9), which is `(G-Next)`'s gap, not this bound.
+  Guard: `tests/exit_codes.rs` `a_match_over_an_iterator_stops_at_max_lookahead` (the stop, the
+  bound and `0`, both backends, on the process); falsified by hand against `ee5faae15` — the
+  endless cell aborts on allocation interpreted (exit 134) and is killed by the timeout on
+  `--native` (exit 143), where this tree stops with exit 1 and the message.
 
-  `(P-Anchor)` and `(P-Revert)` are the same entry: `OpMatchAnchor` and `OpMatchRevert` do not
-  exist in `src/`, and neither does `max_lookahead` outside one doc comment.  The shipped
-  design MATERIALISES an iterator subject into a vector and runs the vector machinery over it
-  (`Parser::collect_iterator_subject`), which is why a finite source of any size is correct and
-  an infinite one is unbounded.  The three rules describe a memoising cursor that was never
-  built, under a banner reading "@PLN35 · SHIPPED".
-
-  Not closed here because the cure needs two decisions: what the defined runtime error IS
-  (loft has no IR-level raise, and the nearest mechanism, `store_budget`, is a whole-run store
-  ceiling armed only for test runs), and the value of `max_lookahead`.  A generous constant
-  changes no program that terminates today, so this is not a compatibility question.
+  Not settled by that closure, and carried from the entry as it was opened: `(P-Anchor)` and
+  `(P-Revert)` name a memoising cursor — `OpMatchAnchor`, `OpMatchRevert` — that does not exist
+  in `src/`; the shipped design materialises the subject.  Whether the two rules are restated to
+  the materialising design or the cursor is built is the owner's call.
 
 - **D-match-1 — OPENED AND CLOSED 2026-09-04 (loft#1343).** `(M-Bool)` did not exist, and the
   edge it names was answered wrong: a boolean match spelling both arms was lowered with the

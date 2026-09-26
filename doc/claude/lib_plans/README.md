@@ -113,6 +113,9 @@ When a phase migrates a downstream example (e.g., the moros
 editor moves to a new server API), the migration lands in the
 SAME commit as the API change — the example becomes part of
 the phase's deliverable, not a follow-up TODO.
+*(Superseded: consumer applications are read-only to the loft stream, and a
+library change stays additive so no consumer needs migrating —
+[LIBRARY_AUTHORING.md § The library contract](../LIBRARY_AUTHORING.md).)*
 
 ## Ground rule — file pre-existing bugs surfaced during a library hunt
 
@@ -124,7 +127,8 @@ those P-issues before the phase closes, not later.  See
 Library-specific notes:
 - Bugs in the library code itself stay in PROBLEMS.md (single
   cross-cutting issue tracker).  No separate library issue
-  tracker.
+  tracker.  *(Superseded: a library bug is filed in its
+  `loft-libs-<chunk>` repo's tracker — [LIBRARY_AUTHORING.md § 5e](../LIBRARY_AUTHORING.md).)*
 - Bugs in the **core-language layer** that block a library
   phase get a P-id and the library phase pauses (or works
   around with an annotation pointing at the P-id).

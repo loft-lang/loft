@@ -1,0 +1,147 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A lambda a generator YIELDS gets stores of its own for every heap value it captures, and
+// releases them when it dies (loft#1676, the owner's ruling; `formal/coroutines.md` `(G-Own)`'s
+// fn-ref clause).  The generator keeps its locals; the consumer's lambda keeps its copies.
+//
+// The capture used to be a handle into the generator's frame.  A lambda kept past its generator
+// read a released store; two lambdas over one local corrupted the generator's own copy of it
+// (and the backends disagreed); a drained `for` over the lambdas freed a value the exhausting
+// advance never produced (`BUG (#306)` on the interpreter, the generator's own store on
+// `--native`); and `--native` refused a `yield from` of lambdas with the eager collector's
+// "LOOP body" message about a program with no loop, with rustc errors leaking behind it.
+//
+// A copy made at the yield means the lambda's writes no longer reach the generator — the
+// semantics the ruling chose (c3).  A lambda that is not yielded still SHARES what it captures
+// (c4, the control that must not move).  A capture of a generator's `&` PARAMETER keeps
+// aliasing its caller (the copy skips a `&` type, `(B-Ref-Alias)`); it has no cell here because
+// a generator with a `&` parameter does not compile on `--native` at all (loft#1680).
+//
+// @falsified-at: ee5faae15 — interpret exit 1 -> 0, interpret 4 assertion failures -> 0, interpret 101 stack-store free refusal(s) (BUG #306) -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1676-a-yielded-lambda-owns-copies-of-what-it-captures.patch — the same channels.
+//   CHANNEL: on the interpreter the assertions (c1, c2, c5 and c6 read shared or released
+//     stores) and the stack-store free refusals; on native the exit code — the `yield from`
+//     cell does not compile, so no cell runs.
+//   WITNESS: on ee5faae15 `two_over_one` answers `4,5,` and leaves the generator's `v` at 5.
+//   ARMED: no instrument — the assertions and the refusal count are read from an ordinary run;
+//     `LOFT_POISON=1 LOFT_STRICT_STORES=1` make the released-store reads loud as well.
+//   HOLDS: c4, the lambda that is not yielded, shares on both trees.
+
+struct R1676 { n: integer }
+struct H1676 { id: integer }
+fn OpDrop(self: H1676) { }
+
+fn two_over_one() -> iterator<fn(integer) -> integer> {
+  v = [1, 2, 3];
+  yield fn(a: integer) -> integer { v += [a]; len(v) };
+  yield fn(a: integer) -> integer { v += [a]; len(v) };
+  assert(len(v) == 3, "the generator's own v is untouched by its lambdas: got {len(v)}");
+}
+
+fn kept() -> iterator<fn(integer) -> integer> {
+  v = [1, 2, 3];
+  yield fn(a: integer) -> integer { v += [a]; len(v) };
+  yield fn(a: integer) -> integer { len(v) };
+}
+fn keep_one() -> fn(integer) -> integer { g = kept(); f = next(g); f }
+
+fn writes_back() -> iterator<fn(integer) -> integer> {
+  v = [1, 2];
+  yield fn(a: integer) -> integer { v += [a]; len(v) };
+  assert(len(v) == 2, "a yielded lambda's write stays in its copy: got {len(v)}");
+}
+
+fn mixed() -> iterator<fn() -> text> {
+  r = R1676 { n: 5 };
+  t = "hi";
+  k = 7;
+  yield fn() -> text { r.n += 1; "{r.n}{t}{k}" };
+  assert(r.n == 5, "the generator's record is untouched: got {r.n}");
+}
+
+fn in_a_loop() -> iterator<fn() -> integer> {
+  for i in 0..3 {
+    w = [i, i];
+    yield fn() -> integer { w += [0]; len(w) + i * 10 };
+  }
+}
+
+fn two_captures(k: integer) -> iterator<fn(integer) -> integer> {
+  v = [1, 2, k];
+  r = R1676 { n: k };
+  yield fn(a: integer) -> integer { v += [a]; len(v) * 1000 + r.n };
+  yield fn(a: integer) -> integer { r.n += a; r.n };
+}
+fn keep_two(k: integer) -> fn(integer) -> integer { g = two_captures(k); f = next(g); f }
+
+fn inner1676(k: integer) -> iterator<fn(integer) -> integer> {
+  v = [1, k];
+  yield fn(a: integer) -> integer { v += [a]; len(v) + k };
+  yield fn(a: integer) -> integer { a * k };
+}
+fn outer1676(k: integer) -> iterator<fn(integer) -> integer> {
+  w = [k, k, k];
+  yield from inner1676(k);
+  yield fn(a: integer) -> integer { len(w) + a };
+}
+
+fn test_c1_two_lambdas_over_one_local_each_have_a_copy() {
+  got = "";
+  for f in two_over_one() { got += "{f(7)},"; }
+  assert(got == "4,4,", "each lambda pushed onto its own copy of [1,2,3]: got {got}");
+}
+
+fn test_c2_a_lambda_kept_past_its_generator() {
+  f = keep_one();
+  x = [5, 5, 5, 5, 5, 5];
+  a = f(9);
+  b = f(9);
+  assert(a == 4 && b == 5 && len(x) == 6, "the kept lambda's copy survives: got {a} {b} {len(x)}");
+}
+
+fn test_c3_a_write_through_the_lambda_stays_in_its_copy() {
+  got = 0;
+  for f in writes_back() { got = f(3); }
+  assert(got == 3, "the lambda sees its own write: got {got}");
+}
+
+fn test_c4_a_lambda_that_is_not_yielded_still_shares() {
+  v = [1, 2];
+  f = fn(a: integer) -> integer { v += [a]; len(v) };
+  r = f(3);
+  assert(r == 3 && len(v) == 3, "the unyielded capture is shared: got {r} {len(v)}");
+}
+
+fn test_c5_record_text_and_scalar_captures() {
+  got = "";
+  for f in mixed() { got = "{f()} {f()}"; }
+  assert(got == "6hi7 7hi7", "the record copy persists across calls: got {got}");
+}
+
+fn test_c6_a_yield_inside_a_loop() {
+  s = "";
+  for f in in_a_loop() { s += "{f()},{f()};"; }
+  assert(s == "3,4;13,14;23,24;", "each pass captured its own w: got {s}");
+}
+
+fn test_c7_two_captures_in_one_lambda_repeated() {
+  s = 0;
+  for i in 0..100 { h = keep_two(i); s += h(2); }
+  // Each lambda: its copy of [1,2,i] gains one element (len 4) and its copy of R{n:i}.
+  assert(s == 400000 + 4950, "every record released its two copies: got {s}");
+}
+
+fn test_c8_yield_from_of_lambdas() {
+  s = 0;
+  for k in 0..50 { for f in outer1676(k) { s += f(2); } }
+  e = 0;
+  for k in 0..50 { e += (3 + k) + 2 * k + (3 + 2); }
+  assert(s == e, "delegated and own lambdas: got {s}, want {e}");
+}
+
+fn test_c10_a_consumer_that_stops_early() {
+  s = 0;
+  for k in 0..100 { for f in in_a_loop() { s += f(); if s % 3 == 0 { break; } } }
+  assert(s == 300, "the unconsumed lambdas are released with the generator: got {s}");
+}

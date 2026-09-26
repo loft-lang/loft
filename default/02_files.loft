@@ -238,10 +238,9 @@ pub fn split_text(self: text, separator: text) -> vector<text> {
 // Detected once at startup from the runtime filesystem.
 
 pub fn path_sep() -> character;
-// Plan-06 phase 5a: #impure(host_io) — reads a host-detected
-// constant.  Could be #pure once detected (it's invariant for
-// the lifetime of a process), but the runtime caches it inside
-// Stores so the access is observable.
+// #impure(host_io): reads a host-detected constant.  It is fixed for
+// the lifetime of a process, but the runtime caches it inside Stores,
+// so the access is observable and the function cannot be #pure.
 #impure(host_io)
 // Use as the entry point for all file I/O.
 // A relative path resolves against the program's own directory, so
@@ -781,9 +780,8 @@ pub fn store_lazy_clear(local: reference) -> boolean;
 // The writing end of the channel `store_lazy_error` reads. A driver written in
 // loft (`fn lazy_fetch(...)`) has the same three answers a Rust source has, and
 // two of them are an integer: `1` inserted, `0` absent. The third is not — "the
-// source is down" carries a REASON, and answering `0` for it is exactly the
-// silent wrong answer arc C exists to prevent, because a caller cannot tell it
-// from "no such person".
+// source is down" carries a REASON, and answering `0` for it would be a silent
+// wrong answer, because a caller cannot tell it from "no such person".
 //
 //   fn lazy_fetch(coll: hash<Person[id]>, source: text,
 //                 key_int: integer, key_text: text) -> integer {

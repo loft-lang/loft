@@ -5,8 +5,8 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # Plan template
 
-Copy this file to `<N>-<slug>/README.md` — **flat**, no `future/` subdir — when
-opening a new plan.  **`<N>` is the plan's
+Copy this file to `<N>-<slug>.md`, or to `<N>-<slug>/README.md` when the plan has
+companion files — **flat**, no `future/` subdir — when opening a new plan.  **`<N>` is the plan's
 [`loft-lang/plans`](https://github.com/loft-lang/plans/issues) issue number**
 (`@PLN<N>`), NOT the next local directory integer.  State lives on that issue, not the
 directory; there is **no ROADMAP row** (the overview is derived from the loft-lang

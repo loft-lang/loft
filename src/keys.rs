@@ -1429,6 +1429,46 @@ pub fn trace_compact() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_COMPACT"))
 }
 
+/// `LOFT_NO_BYTE_COPY=1` — a text copied into a byte vector one byte at a time keeps its
+/// loop (`@FR-R-ByteCopy` off): the first bisect step for a wrong, missing or extra byte out
+/// of such a copy.
+pub fn byte_copy_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_BYTE_COPY"))
+}
+
+/// `LOFT_TRACE_BYTE_COPY=1` — name each byte-wise copy made one append and each kept.
+pub fn trace_byte_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_BYTE_COPY"))
+}
+
+/// `LOFT_NO_WORK_BUFFER=1` — a vector local that never leaves its frame keeps its store
+/// (`@FR-R-WorkBuffer` off): minted at the declaration and freed at the callee's exit, as
+/// before.  The first bisect step for a wrong, stale or leaked vector inside a function that
+/// declares one, or for a frame-shape fault at an entry the runtime builds by hand.
+pub fn work_buffer_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_WORK_BUFFER"))
+}
+
+/// `LOFT_TRACE_WORK_BUFFER=1` — name each local promoted to a caller buffer and each declined
+/// with the reason.
+pub fn trace_work_buffer() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_WORK_BUFFER"))
+}
+
+/// `LOFT_WORK_BUFFER_NULL=1` — the POSITIVE CONTROL for `(R-WorkBuffer)`'s null road: every
+/// caller-side work buffer is left at the null sentinel instead of being minted, so each
+/// promoted callee takes the rebound-parameter arm (its own store, released at exit against
+/// the entry witness) on both backends.  Test-only: it costs a mint per call, which is the
+/// cost the rule exists to remove.
+pub fn work_buffer_null_control() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_WORK_BUFFER_NULL"))
+}
+
 /// `LOFT_NO_FORMAT_APPEND=1` — a format string appended to a text keeps its work buffer
 /// (`@FR-R-FormatAppend` off): the first bisect step for a wrong, missing or doubled part of
 /// a text built by `out += "…{e}…"`.

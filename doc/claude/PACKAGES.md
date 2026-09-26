@@ -40,7 +40,8 @@ use case.
 3. OpenGL/WebGL bindings ship as a package, not as built-in stdlib.
 4. Package authors write Rust once; the build system produces native
    and WASM artifacts from the same source.
-5. No C ABI.  All native code is Rust linking against `libloft.rlib`.
+5. Native code is Rust linking against `libloft.rlib`.  A C library is reached
+   through a `#c` binding (@PLN24, below), never through C code in the package.
 
 ---
 
@@ -430,8 +431,10 @@ When the compiler encounters `use math;` it searches:
 4. **`--lib` CLI flag** — explicit search directories
 5. **`LOFT_LIB` environment variable**
 
-The first match wins.  If the dependency has its own `loft.toml`, its
-version is checked against the requirement.
+The first match wins, and a project `lib/` outranks `--lib`
+(`advice[lib-flag-outranked]` says so when it happens).  If the dependency has its own
+`loft.toml`, its version is checked against the requirement; which installed version a
+lock file selects is [LIBRARY_AUTHORING.md § Troubleshooting](LIBRARY_AUTHORING.md).
 
 ⚠ **Step 3's project half needs a project.** The directory form `lib/math/` is read
 through `lib_path_manifest`, which runs over the directories a program NAMED — a
@@ -2340,6 +2343,11 @@ Registry Governance section below.
 
 Procedures for adding third-party libraries to the central Loft package registry
 and for responding when problems are discovered in listed packages.
+
+> **What shipped**: the registry is the signed `index.json` in `loft-lang/registry`, and a
+> yank sets the version's `yanked` field ([LIBRARY_AUTHORING.md § 5b](LIBRARY_AUTHORING.md)).
+> The procedures below were written for the earlier `registry.txt` design; their roles and
+> rules still hold, and where they name `registry.txt`, read `index.json`.
 
 The registry is a plain text file (`registry.txt`) maintained in a GitHub
 repository.  It starts as a personal repository (`loft-lang/registry`)

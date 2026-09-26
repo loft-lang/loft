@@ -83,12 +83,18 @@ fn wasm_bridge_state_survives_warm_program_cache() {
             loft::lib_placement::Placement::Process,
         ),
     ];
-    loft::startup_cache::save_program(&cold, &script_abs, cold.data.definitions(), &placed);
+    loft::startup_cache::save_program(
+        &cold,
+        &script_abs,
+        "default",
+        cold.data.definitions(),
+        &placed,
+    );
 
     // ── warm: a fresh parser loads the bundle and skips parsing entirely. ──
     let mut warm = Parser::new();
     let mut store: Option<(Stores, DbRef)> = None;
-    let hit = loft::startup_cache::warm_load_program(&mut warm, &script_abs, &mut store);
+    let hit = loft::startup_cache::warm_load_program(&mut warm, &script_abs, "default", &mut store);
     assert!(
         hit.is_some(),
         "warm load must hit the just-written bundle (same binary, unchanged source)"

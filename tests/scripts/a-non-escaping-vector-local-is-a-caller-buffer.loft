@@ -1,0 +1,209 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-WorkBuffer` — a vector local that never leaves its frame is the CALLER's buffer.
+//
+// `v: vector<τ> = []` (τ a scalar) whose every mention is an operand of an in-place vector
+// operator — a push, an append, the length, a clear, a removal, an element read or written as
+// a scalar, `for x in v` — becomes a hidden work-buffer parameter: every call site supplies
+// it as the per-site work-ref a return buffer already takes, minted once per activation, and
+// the callee CLEARS it where the declaration stood.  A callee handed the null sentinel takes
+// the rebound-parameter road at that site (a store of its own, released at exit against the
+// entry witness).  The value never changes: every cell answers the same with
+// `LOFT_NO_WORK_BUFFER=1` and with `LOFT_WORK_BUFFER_NULL=1` (the null road on both backends),
+// and those A/Bs are the falsifier together with the pin (`tests/work_buffer.rs`), which
+// reads each cell's admission off the IR.
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-09-25): with the clear struck from `work_buffer::promote_one` (the else arm a
+//   `Null`), c4 — a local declared INSIDE a loop — answers 6 for 3 on both backends: the
+//   buffer keeps the previous pass's element and the lengths accumulate 1, 2, 3.
+//   CHANNEL: the VALUE channel (an assertion) on both backends.
+//   WITNESS: under the sabotage c4 reads 6 for 3, on both backends; c1 across 2000 calls
+//   reads 3998000 for 4000 (the elements of every earlier call still there), the first
+//   assertion to fail on both backends.
+//   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
+
+// c1 — the probe: a counted push, the length and an element.  c1(salt) = salt.
+fn c1(salt: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..salt { v += [i * 3]; }
+  len(v) + (v[0] ?? 0)
+}
+
+// c2 — recursion: the buffer is per ACTIVATION, so the outer `v` is read after the inner call
+// filled its own.  c2(3) = 3 + 2 + 1 + 0 = 6.
+fn c2(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i]; }
+  inner = if n > 0 { c2(n - 1) } else { 0 };
+  inner + len(v)
+}
+
+// c3 — two buffers in one callee, floats and integers, each walked.  c3(4) = 3.0 + 12 = 15.0.
+fn c3(n: integer) -> float {
+  xs: vector<float> = [];
+  ks: vector<integer> = [];
+  for i in 0..n { xs += [i as float * 0.5]; ks += [i * 2]; }
+  s = 0.0;
+  for x in xs { s += x; }
+  t = 0;
+  for k in ks { t += k; }
+  s + t as float
+}
+
+// c4 — declared INSIDE a loop: the clear runs per pass, so every pass sees an empty vector.
+// c4(3) = 1 + 1 + 1 = 3 (the sabotage witness: 1 + 2 + 3 = 6 without the clear).
+fn c4(n: integer) -> integer {
+  total = 0;
+  for k in 0..n {
+    v: vector<integer> = [];
+    v += [k];
+    total += len(v);
+  }
+  total
+}
+
+// c5 — every admitted in-place use at once: a counted push, an append of another vector, an
+// element write, a walk, the length, a removal, an element read.
+// v = [0,1,2,3,4] + [1,2] → v[0] = 7 → [7,1,2,3,4,1,2], sum 20; len 7 > 3 → remove(0) →
+// [1,2,3,4,1,2]; 20 + 6 + v[1] = 28.
+fn c5(salt: integer, extra: vector<integer>) -> integer {
+  v: vector<integer> = [];
+  for i in 0..salt { v += [i]; }
+  v += extra;
+  v[0] = 7;
+  s = 0;
+  for x in v { s += x; }
+  if len(v) > 3 { v.remove(0); }
+  s + len(v) + (v[1] ?? 0)
+}
+
+// c6 — a callee with a RETURN buffer and a work buffer: the attributes stay in order and the
+// call site appends only the one it lacked.  c6(4) = [4, 9]; c6(0) = [0, -1].
+fn c6(n: integer) -> vector<integer> {
+  t: vector<integer> = [];
+  for i in 0..n { t += [i * i]; }
+  out: vector<integer> = [];
+  out += [len(t), t[n - 1] ?? -1];
+  out
+}
+
+// c7 — DECLINED: handed to a loft-bodied call (the pin reads the decline).  c7(4) = 6.
+fn sum_of_all(xs: vector<integer>) -> integer {
+  s = 0;
+  for x in xs { s += x; }
+  s
+}
+fn c7(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i]; }
+  sum_of_all(v)
+}
+
+// c8 — DECLINED: a text element owns heap.  c8(3) = 3.
+fn c8(n: integer) -> integer {
+  v: vector<text> = [];
+  for i in 0..n { v += ["x{i}"]; }
+  len(v)
+}
+
+// c9 — DECLINED: assigned a second time.  c9(1) = 2, c9(5) = 1.
+fn c9(n: integer) -> integer {
+  v: vector<integer> = [];
+  v += [1];
+  if n > 2 { v = []; }
+  v += [2];
+  len(v)
+}
+
+// c10 — DECLINED: an alias reaches the tail.  c10(3) = [0, 1, 2].
+fn c10(n: integer) -> vector<integer> {
+  v: vector<integer> = [];
+  for i in 0..n { v += [i]; }
+  w = v;
+  w
+}
+
+// c11 — a method, called both ways.  Acc { base: 10 }.bump(3) = 12.
+struct Acc { base: integer }
+fn bump(self: Acc, n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { v += [self.base + i]; }
+  v[n - 1] ?? 0
+}
+
+// c12 — a `par` WORKER is declined (its frame is built from the element alone); the caller's
+// own collector is a buffer.  (1 + 2 + 3 + 4) * 2 = 20.
+fn c12w(x: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..x { v += [i]; }
+  len(v) * 2
+}
+fn c12() -> integer {
+  items = [1, 2, 3, 4];
+  out: vector<integer> = [];
+  for a in items par(b = c12w(a), 2) { out += [b]; }
+  s = 0;
+  for o in out { s += o; }
+  s
+}
+
+// c13 — an early return inside the loop: the exit free is guarded on every path.
+// c13(2) = 2, c13(7) = 30.
+fn c13(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n {
+    if i == 3 { return len(v) * 10; }
+    v += [i];
+  }
+  len(v)
+}
+
+// c15 — a buffer-holding callee called in a loop by a buffer-holding caller.  c15(5) = 10.
+fn c15(n: integer) -> integer {
+  acc: vector<integer> = [];
+  for i in 0..n { acc += [c1(i)]; }
+  s = 0;
+  for a in acc { s += a; }
+  s
+}
+
+// c16 — the callee itself calls a record-returning function, so its table already holds a
+// `__ref_1` (that call's return buffer) when the entry witness is minted: the witness must be
+// a fresh `__ref_N`, never that one retyped (measured: an internal compiler error, "TupleGet
+// on non-tuple variable", on hex_body's rig walk).  c16(3) = 3 + (2 + 4) = 9.
+struct P { a: integer, b: integer }
+fn mkp(i: integer) -> P { P { a: i, b: i * 2 } }
+fn c16(n: integer) -> integer {
+  v: vector<integer> = [];
+  for i in 0..n { p = mkp(i); v += [p.a + p.b]; }
+  len(v) + (v[n - 1] ?? 0)
+}
+
+fn main() {
+  s1 = 0;
+  for r in 0..2000 { s1 += c1(r % 5); }
+  assert(s1 == 4000, "c1 across 2000 calls: {s1}");
+  assert(c1(0) == 0 && c1(4) == 4, "c1 edges {c1(0)} {c1(4)}");
+  assert(c2(3) == 6, "c2 {c2(3)}");
+  assert(c3(4) == 15.0, "c3 {c3(4)}");
+  assert(c4(3) == 3, "c4 {c4(3)}");
+  assert(c5(5, [1, 2]) == 28, "c5 {c5(5, [1, 2])}");
+  r6 = c6(4);
+  assert(len(r6) == 2 && r6[0] == 4 && r6[1] == 9, "c6 {r6}");
+  r6e = c6(0);
+  assert(len(r6e) == 2 && r6e[0] == 0 && r6e[1] == -1, "c6 empty {r6e}");
+  assert(c7(4) == 6, "c7 {c7(4)}");
+  assert(c8(3) == 3, "c8 {c8(3)}");
+  assert(c9(1) == 2 && c9(5) == 1, "c9 {c9(1)} {c9(5)}");
+  r10 = c10(3);
+  assert(len(r10) == 3 && r10[2] == 2, "c10 {r10}");
+  a = Acc { base: 10 };
+  assert(a.bump(3) == 12 && bump(a, 3) == 12, "c11 {a.bump(3)} {bump(a, 3)}");
+  assert(c12() == 20, "c12 {c12()}");
+  assert(c13(2) == 2 && c13(7) == 30, "c13 {c13(2)} {c13(7)}");
+  assert(c15(5) == 10, "c15 {c15(5)}");
+  assert(c16(3) == 9, "c16 {c16(3)}");
+  println("done");
+}

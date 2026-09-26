@@ -1265,6 +1265,12 @@ fn OpRemoveVector(r: vector, tp: const u16, index: integer) -> boolean;
 fn OpKeepVectorRange(r: vector, tp: const u16, lo: integer, hi: integer);
 #rust"s.database.keep_vector_range(&@r, @tp, @lo, @hi)"
 #impure(parent_write)
+// Append the bytes [lo, hi) of a text to a byte vector as ONE copy — what
+// `for i in lo..hi { v += [t.byte_at(i) as u8] }` builds (`@FR-R-ByteCopy`).
+// The caller has proven 0 <= lo <= hi <= size(t); a null vector takes nothing.
+fn OpAppendTextBytes(r: vector, t: text, lo: integer, hi: integer);
+#rust"s.database.append_text_bytes(&@r, @t, @lo, @hi)"
+#impure(parent_write)
 // Insert space into a vector, no data written
 fn OpInsertVector(r: vector, size: const u16, index: integer, db_tp: const u16) -> reference[r];
 #impure(parent_write)

@@ -2,7 +2,12 @@
 Copyright (c) 2026 Jurjen Stellingwerff
 SPDX-License-Identifier: LGPL-3.0-or-later
 -->
-# `_PLAN_TEMPLATE` — the canonical loft plan skeleton
+# `_PLAN_TEMPLATE` — the cross-repo plan shape (superseded in loft)
+
+> **In loft this is superseded by [`_TEMPLATE.md`](_TEMPLATE.md)**: a plan is its
+> `loft-lang/plans` issue, and its optional file follows that template.  This file
+> stays as the shape the other org repos were asked to match
+> ([ISSUE_TRACKING.md](../ISSUE_TRACKING.md)); do not start a loft plan from it.
 
 **Initial design (2026-06) — draft for review.**  Copy this directory shape when
 you start a plan.  **loft and libs plans are the reference implementation**:

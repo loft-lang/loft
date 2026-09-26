@@ -56,30 +56,30 @@ pub fn rewrite(data: &mut Data, d_nr: u32) {
 }
 
 /// The def numbers of every op the matcher names, looked up once.
-struct Ops {
+pub(crate) struct Ops {
     database: u32,
     get_field: u32,
     set_int4: u32,
-    pre_alloc: u32,
+    pub(crate) pre_alloc: u32,
     new_record: u32,
     copy_record: u32,
     finish_record: u32,
     get_vector_nullable: u32,
     conv_bool_from_ref: u32,
-    conv_bool_from_int: u32,
-    conv_int_from_null: u32,
+    pub(crate) conv_bool_from_int: u32,
+    pub(crate) conv_int_from_null: u32,
     append_vector: u32,
     clear_vector: u32,
     free_ref: u32,
-    add_int: u32,
-    le_int: u32,
+    pub(crate) add_int: u32,
+    pub(crate) le_int: u32,
     vector_len: u32,
     length_vector: u32,
     keep_range: u32,
 }
 
 impl Ops {
-    fn new(data: &Data) -> Self {
+    pub(crate) fn new(data: &Data) -> Self {
         Self {
             database: data.def_nr("OpDatabase"),
             get_field: data.def_nr("OpGetField"),
@@ -139,7 +139,7 @@ fn visit(v: &mut Value, cx: &mut Cx) {
 
 /// The statements of a list that carry code: a `Line` marker or a `Null` between two
 /// statements is position bookkeeping the matcher sees through (and the fallback arm keeps).
-fn significant(ls: &[Value]) -> Vec<(usize, &Value)> {
+pub(crate) fn significant(ls: &[Value]) -> Vec<(usize, &Value)> {
     ls.iter()
         .enumerate()
         .filter(|(_, v)| !matches!(v.unspan(), Value::Line(_) | Value::Null))
@@ -232,28 +232,28 @@ fn guarded(r: Rebuild, original: Vec<Value>, cx: &Cx) -> Value {
 
 // ── the matcher ─────────────────────────────────────────────────────────────────────────
 
-fn call(v: &Value, op: u32) -> Option<&[Value]> {
+pub(crate) fn call(v: &Value, op: u32) -> Option<&[Value]> {
     match v.unspan() {
         Value::Call(d, args) if *d == op => Some(args),
         _ => None,
     }
 }
 
-fn var(v: &Value) -> Option<u16> {
+pub(crate) fn var(v: &Value) -> Option<u16> {
     match v.unspan() {
         Value::Var(x) => Some(*x),
         _ => None,
     }
 }
 
-fn int(v: &Value) -> Option<i32> {
+pub(crate) fn int(v: &Value) -> Option<i32> {
     match v.unspan() {
         Value::Int(n) => Some(*n),
         _ => None,
     }
 }
 
-fn block<'a>(v: &'a Value, name: &str) -> Option<&'a Block> {
+pub(crate) fn block<'a>(v: &'a Value, name: &str) -> Option<&'a Block> {
     match v.unspan() {
         Value::Block(bl) if bl.name == name => Some(bl),
         _ => None,
@@ -309,7 +309,7 @@ fn is_bound(v: &Value, place: &Value, forbidden: &[u16], ops: &Ops) -> bool {
 }
 
 /// The parser's exclusive-range iteration, either prelude; answers `(i, lo, hi, body)`.
-fn match_loop<'a>(v: &'a Value, ops: &Ops) -> Option<(u16, Value, Value, &'a Block)> {
+pub(crate) fn match_loop<'a>(v: &'a Value, ops: &Ops) -> Option<(u16, Value, Value, &'a Block)> {
     let bl = block(v, "For block")?;
     let s = &bl.operators;
     // Literal start: `[_range_end = hi;] i#index = start - 1; loop { … }` — the end a

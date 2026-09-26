@@ -132,7 +132,7 @@ argument stands on evidence you can reproduce, not on assertion.
 | The compiler is fully inspectable | `loft introspect any.loft` — dumps the IR, bytecode, and generated Rust |
 | The tests are real and pass in **public CI** | <https://github.com/loft-lang/loft/actions/workflows/ci.yml> |
 | The hardest parts were rewritten agent-led | The closure records under `doc/claude/plans/`; the commit history + its co-author trailers |
-| A public library catalogue exists | `doc/claude/LIBRARIES.md`; the `loft-libs-*` repos at <https://github.com/loft-lang>; `loft search <keyword>` |
+| A public library catalogue exists | `make libcatalogue` builds `doc/claude/LIBRARIES.md` locally from the registry and each library's `origin/main` (git-ignored, so it cannot go stale); the `loft-libs-*` repos at <https://github.com/loft-lang>; `loft search <keyword>` |
 | Programs run live in the browser | Playground <https://loft-lang.org/loft/playground.html> · Gallery <https://loft-lang.org/loft/gallery.html> |
 | **Many public example programs, varied domains** | <https://github.com/jjstwerff> — `crawler` (a hex roguelike in loft), `dryopea` + `moros` (games), `routing` (a phone-first route planner), `ssh_home` (a pure-loft phone SSH terminal), `zero-trust-shared-files` (a federated file system) |
 | The language + stdlib are documented | <https://loft-lang.org/loft/> |
@@ -164,7 +164,7 @@ load the skills in `.claude/skills/`). None of these needs a maintainer's help.
 
 ### Write a library
 
-1. Find the closest one that already exists: browse `doc/claude/LIBRARIES.md` and the
+1. Find the closest one that already exists: build and browse `doc/claude/LIBRARIES.md` (`make libcatalogue`) and the
    `loft-libs-*` repos at <https://github.com/loft-lang>, or run `loft search <keyword>`.
 2. Scaffold a fresh one: `loft new <name>` (writes `loft.toml` + `src/`).
 3. Write the `.loft`, adapting the nearest example. Have the agent load the `loft-write`

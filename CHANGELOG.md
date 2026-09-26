@@ -14,6 +14,31 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**Running a program again after editing it is faster.**  loft keeps a compiled copy of each
+program, and when you change the program it used to read the whole standard library again as
+well.  It now reuses the standard library it already read, so a small program starts in about
+a sixth of the work it took before.  A changed standard library is still always read again.
+
+**A generator can no longer take a `&` parameter.**  `fn gen(p: &vector<integer>) ->
+iterator<…>` is now a clear compile error. It ran on the interpreter with a hidden risk (the
+generator can outlive the variable the `&` names) and did not compile with `--native`. Pass a
+struct or vector instead: the generator shares it with the caller, so it can still leave a
+position or a count behind in one of its fields.
+
+**A `match` over an endless iterator stops with an error instead of filling memory.**  The
+values a `match` pulls from an iterator are now limited to one million (`LOFT_MAX_LOOKAHEAD` to
+change it, `0` for no limit). Past the limit the program stops with a message naming the
+`match` and the limit. Before, an iterator that never ends made the program allocate memory
+until the machine killed it.
+
+**A generator can hand out lambdas that capture its variables.**  `yield fn(a: integer) ->
+integer { v += [a]; len(v) }` used to crash when the lambda was kept after the generator
+finished, gave wrong answers when two such lambdas captured the same variable, printed an
+internal `BUG` line when a loop consumed them to the end, and did not compile with `--native`
+through `yield from`.  Each yielded lambda now gets its own copy of the values it captures, so
+it keeps working after the generator is gone, and changing the copy leaves the generator's
+variable alone.  A lambda that is not yielded still shares what it captures, as before.
+
 **A tuple returned with a list in a `hash` member keeps the list's records.**
 `fn f() -> (hash<K[k]>, integer) { v = [K { … }]; return (v, 2); }` compiled, and the caller
 read an empty hash. A `sorted` member answered the wrong record for a key, and an `index` kept

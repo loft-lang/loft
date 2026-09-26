@@ -1183,6 +1183,8 @@ pub struct Output<'a> {
     /// channel, including a tuple carrying a store handle, which the eager collector
     /// refuses (loft#1132).
     pub yield_collect_kinds: Option<Vec<crate::coroutine_layout::YieldSlot>>,
+    /// loft#1676 — the eager collector's yield is a fn-ref: packed into two slots.
+    pub yield_collect_fnref: bool,
     /// When set alongside `yield_collect`, the eager collector cannot carry this yield type
     /// at all: emit the value bound to `_` plus the `compile_error!` this string holds, so
     /// the generated factory still type-checks and exactly one diagnostic survives.
@@ -2287,6 +2289,7 @@ impl<'a> Output<'a> {
             yield_collect_dbref: false,
             yield_collect_snapshot_tp: None,
             yield_collect_kinds: None,
+            yield_collect_fnref: false,
             yield_collect_refuse: None,
             yield_lazy_wrap: None,
             coroutine_persistent_fields: HashMap::new(),

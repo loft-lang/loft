@@ -1282,6 +1282,27 @@ impl Stores {
         }
     }
 
+    /// `@FR-R-ByteCopy` — the bytes `[lo, hi)` of a text appended to a byte vector as ONE
+    /// copy: what `for i in lo..hi { v += [t.byte_at(i) as u8] }` builds, reserved once and
+    /// written with a single block copy.  The caller has proven `0 <= lo <= hi <= size(t)`
+    /// and that the vector's element is one byte stored raw (`min` 0), so the text's bytes
+    /// ARE the elements.  A vector with no record takes nothing, as the per-byte push takes
+    /// nothing; a range the proof did not cover takes nothing either, since the loop it
+    /// replaces is what runs for such a range.
+    pub fn append_text_bytes(&mut self, db: &DbRef, t: impl AsRef<str>, lo: i64, hi: i64) {
+        if db.is_null() || db.rec == 0 || db.pos == 0 {
+            return;
+        }
+        let bytes = t.as_ref().as_bytes();
+        let (Ok(lo), Ok(hi)) = (usize::try_from(lo), usize::try_from(hi)) else {
+            return;
+        };
+        if lo >= hi || hi > bytes.len() {
+            return;
+        }
+        crate::vector::append_bytes(db, &bytes[lo..hi], &mut self.allocations);
+    }
+
     pub fn append_u32(&mut self, db: &DbRef, v: u32) {
         if let Some(slot) = self.append_slot(db, 4) {
             let store = self.store_mut(&slot);

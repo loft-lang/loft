@@ -436,6 +436,14 @@ fn read_data_with(stores: &Stores, root: DbRef, bodies: bool) -> Data {
         });
     }
     data.set_applied_imports(applied);
+    let tvbs = r.field_recvec(ds::DATA_TYPE_VAR_BOUNDS, ds::TVB_STRIDE);
+    for i in 0..tvbs.len(stores) {
+        let tr = tvbs.get(i, stores);
+        data.type_var_bound_keys.insert(
+            tr.field_int(stores, ds::TVB_HOLDER) as u32,
+            tr.field_str(stores, ds::TVB_BOUNDS).to_string(),
+        );
+    }
     let uses = r.field_recvec(ds::DATA_USE_NAMES, ds::USENAME_STRIDE);
     data.set_use_names((0..uses.len(stores)).map(|i| {
         let ur = uses.get(i, stores);
@@ -732,6 +740,7 @@ fn read_attribute(stores: &Stores, r: Record) -> Attribute {
         nullable: r.field_bool(stores, ds::ATTR_NULLABLE),
         primary: r.field_bool(stores, ds::ATTR_PRIMARY),
         hidden: r.field_bool(stores, ds::ATTR_HIDDEN),
+        work_buffer: r.field_bool(stores, ds::ATTR_WORK_BUFFER),
         value: read_node_child(stores, r.field_vec(ds::ATTR_VALUE)),
         check: read_node_child(stores, r.field_vec(ds::ATTR_CHECK)),
         check_message: read_node_child(stores, r.field_vec(ds::ATTR_CHECK_MESSAGE)),

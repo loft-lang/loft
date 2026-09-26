@@ -206,6 +206,11 @@ fn frame_kinds(def: &crate::data::Definition) -> Option<Vec<Kind>> {
         .map(|a| {
             if crate::native_lib::is_text_work_buffer(&a.typedef) {
                 Some(Kind::WorkBuf)
+            } else if a.work_buffer {
+                // `@FR-R-WorkBuffer` — a callee's scratch vector: neither a value the
+                // worker is sent nor a result it returns, and the wire has no kind for
+                // it, so the function runs in-process.
+                None
             } else if a.hidden && crate::host::is_compound(&a.typedef) {
                 Some(Kind::RetBuf(u16::MAX))
             } else if a.hidden {

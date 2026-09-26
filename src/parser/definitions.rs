@@ -2494,6 +2494,31 @@ impl Parser {
         } else {
             Type::Void
         };
+        // `@FR-G-NoRefParam` — a generator takes no `&` parameter (loft#1680).  `(G-Call)` binds
+        // the arguments into a frame that runs LATER, and `(F-ParamRef)` makes a `&` parameter
+        // write through to the caller's place — so the generator would hold a reference into a
+        // frame it can outlive (`fn outer() -> iterator<integer> { v = [1]; gen(v) }`).  The
+        // interpreter ran it with that dangling risk and `--native` failed with a rustc error in
+        // code the author cannot read.  Nothing is lost: a struct or vector argument is already
+        // SHARED (`(F-Param*)`), so a generator that advances a caller's cursor takes the record
+        // (`fn tokens(c: Cursor)`, writing `c.pos`) — which lives in a store and cannot dangle.
+        if !self.first_pass
+            && matches!(result.base(), Type::Iterator(_, _))
+            && let Some(a) = arguments
+                .iter()
+                .find(|a| matches!(a.typedef.base(), Type::RefVar(_)))
+        {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "a generator cannot take the `&` parameter `{}` — it runs after the call has \
+                     returned, and could outlive the variable the `&` names; pass the value \
+                     instead (a struct or vector argument is shared, so a generator can advance a \
+                     caller's record: `fn {fn_name}(c: Cursor) -> …` writing `c.pos`), or yield \
+                     what the caller needs",
+                a.name
+            );
+        }
         // @FR-G-Gen — a keyed collection over the type variable (`hash<T[key]>`) names a FIELD
         // of `T` as its key, and a type variable has no fields until it is instantiated, so no
         // monomorph can resolve it.  Refused here, where it is written: the definition used to

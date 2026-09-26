@@ -4,8 +4,9 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 -->
 # Issue tracking — investigations in files, open bugs in GitHub Issues
 
-**Status: DRAFT (2026-06).**  Pilot done (#246/#247); the rest of the migration is
-gated on approval.  Rationale + evaluation: this is the multi-project answer —
+**Status: in force.**  Open bugs are GitHub Issues; `PROBLEMS.md` is the closed archive
+(migration steps 1–6 below are done; step 7 continues per repo).  The reason: this is the
+multi-project answer —
 loft / dryopea / lavition / `loft-lang/*` all have bug-filing needs, and discrete
 bugs are a commodity that GitHub Issues serves better than N per-repo markdown
 files, while **investigations** (which work, and which GitHub can't hold) stay in

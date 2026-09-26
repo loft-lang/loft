@@ -58,6 +58,21 @@ body. It allocates a suspended frame ([heap.md](heap.md)), binds the arguments, 
 point to the entry, and returns the frame as an `iterator<T>` value. Nothing the body would do
 (a side effect, a `yield`) has happened yet; the first slice runs on the first advance.
 
+```
+  (G-NoRefParam)  a generator declares no `&` parameter: refused at its definition, on both
+                  backends.  Its body runs after the call has returned (G-Call), so a `&` —
+                  which writes through to the caller's place (calls.md F-ParamRef) — could name
+                  a place whose frame is gone.
+```
+
+**In words.** A generator cannot take a `&` parameter, because it keeps running after the call
+that lent the reference has returned. Nothing is lost by the refusal: a struct or vector
+argument is already shared with the caller (calls.md F-Param*), so a scanner that must leave its
+position behind takes a cursor record and advances its field (`fn tokens(c: Cursor)`, writing
+`c.pos`) — and that record lives in a store, where it cannot dangle.  No program in the
+corpus, the libraries or the consumers uses the pattern (loft#1680); a real case can lift the
+refusal later, which breaks nothing.
+
 ### `next` / a `for` advance runs one slice, up to the next `yield`
 
 ```
@@ -150,6 +165,13 @@ computed lazily, on demand, rather than read from a store.
                  for a type that owns a droppable that copy is refused (H-Copy-Refuse).
              Scope: a record, a struct-enum, a vector, and a tuple whose reference members
              are those (each member is handed over or copied on its own).
+               - `yield` of a LAMBDA hands over its closure record, and every HEAP value the
+                 lambda captures is COPIED into a store the record owns and releases
+                 (@FR-L-CapOwn) — at the yield, whatever the capture's source.  The lambda's
+                 writes therefore reach its copy, not the generator's local, and two yielded
+                 lambdas over one local hold two copies.  A capture whose type owns a droppable
+                 is refused (H-Copy-Refuse); a `&` capture keeps aliasing (B-Ref-Alias).  An
+                 implementation may share the store where no difference is observable.
 ```
 
 **In words.** A generator hands out values, not windows into its own state. What `next` answers
@@ -191,7 +213,21 @@ advances the one the container holds.
 
 ## Deviations
 
-**OPEN: 0.**
+**OPEN: 0.**  D-gen-lambda opened and closed 2026-09-25 (loft#1676, below).
+
+- **D-gen-lambda** *(CLOSED 2026-09-25, loft#1676)* — `(G-Own)` named no rule for a yielded
+  LAMBDA, and the code gave the closure record a handle into the generator's frame.  A lambda
+  kept past its generator read a released store; two lambdas over one local corrupted the
+  generator's copy of it, differently per backend and silently on `--native`; a drained `for`
+  over lambdas freed a value the exhausting advance never produced (`BUG (#306)`, and on
+  `--native` the generator's own store); and `--native` refused `yield from` of lambdas with
+  the loop-body collector's message.  Closed by the owner's ruling, written into `(G-Own)`
+  above: a yielded lambda's heap captures are copied into stores its record owns, and an
+  implementation may still share a store where that is safe.  The exhausted fn-ref is the
+  fn-ref NULL on both backends, the eager collector carries a fn-ref as two slots, and a
+  `yield from` advance asks `next_operands` for its channel.  Guards:
+  `tests/scripts/1676-a-yielded-lambda-owns-copies-of-what-it-captures.loft` and its refused
+  twin `1676b-…`.
 
 Every deviation this doc has carried is closed; the record is in the companion
 [coroutines-history.md](coroutines-history.md).

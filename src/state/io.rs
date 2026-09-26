@@ -864,6 +864,9 @@ impl State {
             *self.mut_var::<DbRef>(var) = db;
         }
         let r = self.alloc_record_into(&db, db_tp, size, code_pos, fresh);
+        if crate::keys::trace_db() {
+            eprintln!("[db]   -> var={var} now #{}", r.store_nr);
+        }
         let db = self.mut_var::<DbRef>(var);
         db.store_nr = r.store_nr;
         db.rec = 1;

@@ -286,7 +286,16 @@ use arguments as args;               // library alias → `args::parse_args` (qu
 
 Libraries live OUTSIDE the project (`~/.loft/registry/<name>-<version>/`,
 `~/.loft/lib/<name>/`), so the project tree alone does not show what they
-export.  Discovery surface, nearest first:
+export.  Which surface is the truth depends on what you are doing:
+
+- **Writing a program that USES a library** — the version your project locks is the
+  one that runs, so its stubs are the truth.  Use the list below.
+- **Working ON a library, inside the loft repo** — read `origin/main` through the
+  catalogue: `make libcatalogue`, then `doc/claude/LIBRARIES.md` (CLAUDE.md, @PLN112).
+  An installed copy or a clone can lag `origin/main`, and `loft api <name>` reads the
+  installed copy.
+
+Discovery surface for a program, nearest first:
 
 1. **`.loft/api/<name>.api`** in the project — generated public-API stubs
    (signatures + doc comments) for every locked dependency.  Written by

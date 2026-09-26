@@ -5,6 +5,12 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 # PKG.REG — file-based registry MVP
 
+> **What shipped differs from this draft in its names**: the index is `index.json` in
+> `loft-lang/registry` (this draft says `registry.json`), it is signed on the maintainer's
+> hardware key, and a release tag is `<name>-v<version>`.  For how to publish today, read
+> [LIBRARY_AUTHORING.md](LIBRARY_AUTHORING.md) § 4 and [REGISTRY_SUBMIT.md](REGISTRY_SUBMIT.md);
+> this doc is the design record.
+
 Draft 2026-05-24.  This is the design for the **MVP** of the loft
 package registry.  Goal: ship `loft install <name>` against a static
 file before designing a full server.  The same URL surface migrates
@@ -836,7 +842,7 @@ description; that doc is what you'd hand to a contributor.
 ### Author side
 
 1. Tag the release in the per-library repo (e.g.,
-   `git tag v0.1.0 && git push --tags`).
+   `git tag <name>-v0.1.0 && git push --tags`).
 2. Run `loft package` (new CLI command — minimal scope):
    - Reads `loft.toml` for name + version.
    - Builds the tarball from the package layout (excludes per

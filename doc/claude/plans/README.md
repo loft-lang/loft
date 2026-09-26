@@ -45,7 +45,7 @@ in `plans/` or `lib_plans/` (loose features without a plan
 home become the exception, not the rule).
 
 **Bug fixes are the explicit exception** — they land directly
-via PROBLEMS.md + a regression test + a focused commit, no
+via a GitHub Issue + a regression test + a focused commit, no
 plan required.  The plan path is reserved for major
 development that benefits from explicit phasing, multi-
 session sequencing, or design-before-implementation
@@ -492,8 +492,9 @@ slot** — small plans live entirely in the issue.
 Use [`_TEMPLATE.md`](_TEMPLATE.md) for the issue body's shape: Status / Goal /
 Effort / Sub-arcs / Phase ordering / Open questions / Cross-arc dependencies /
 See also.  A **big multi-phase design** that needs its own document space may add
-a local dir named for the issue — `plans/<n>-<slug>/README.md` — but the issue
-stays the canonical home and the dir is optional.  Length budget: 100-300 lines;
+a local file named for the issue — `plans/<n>-<slug>.md`, or `plans/<n>-<slug>/README.md`
+when it has companion files — but the issue stays the canonical home and the file is
+optional.  Length budget: 100-300 lines;
 longer content belongs in `doc/claude/*.md`.
 
 (Existing `plans/<NN>-<slug>/` dirs predate this and are kept as-is; only *new*
@@ -614,8 +615,9 @@ item that's been deferred for two releases.
 
 - A new plan opens as a [`loft-lang/plans`](https://github.com/loft-lang/plans)
   issue (`@PLN<n>`) — no local slot.  A big multi-phase design may add an
-  optional local dir named for the issue (`<n>-slug/README.md` from
-  `_TEMPLATE.md` + `00-<first-phase>.md`); small plans live in the issue alone.
+  optional local file named for the issue (`<n>-slug.md` from `_TEMPLATE.md`, or a
+  `<n>-slug/` dir with a README and `00-<first-phase>.md` when it has companions);
+  small plans live in the issue alone.
 - Existing `NN-slug/` dirs predate this (number = monotonic open-order, not
   priority) and are kept as-is.
 - Phase files begin with `Status: open | in-progress | done`.
@@ -691,13 +693,16 @@ filed in the same commit window; none were lost.  The @P217
 follow-up hunt then surfaced @P222 / @P223 (narrower self-concat
 shapes) — same rule applied.
 
-### Per-plan status lives in the plan README — not on ROADMAP
+### Per-plan status lives with the plan — not on ROADMAP
+
+A plan's lifecycle state (active, next, future, parked, finished) is its issue's `status:*`
+label; its per-phase detail is the Status block of its file, when it has one.
 
 ROADMAP's "All open plans — index by category" tables carry only
 the stable parts of each plan: name, remaining effort (E),
 dependencies, and a one-line "what is this plan about" descriptor.
 Per-phase status (what's shipped, what's in flight, what's
-blocked) lives in the plan README's Status block — that's the
+blocked) lives in the plan file's Status block — that's the
 single source of truth.
 
 Why: per-phase status changes every time a phase ships or is
@@ -775,7 +780,7 @@ already built, and the library-integration audit), [`RENDERER.md`](144-2d-stage/
 
 **Not in these plans, on purpose:** co-op lives in
 [`lib_plans/64-game-client`](../lib_plans/64-game-client/README.md); the sandbox boundary is a
-rule in [LIBRARY_AUTHORING.md](../LIBRARY_AUTHORING.md) § 2a, because it is a property of an API
+rule in [LIBRARY_AUTHORING.md](../LIBRARY_AUTHORING.md) § 2d, because it is a property of an API
 rather than a phase.
 
 ## Where to look for plans by state

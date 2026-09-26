@@ -139,7 +139,7 @@ code. Each is tested to produce identical results on the interpreter and the nat
 and is cross-built for WebAssembly unless it needs a device the browser does not have — in
 which case it says so, and CI prints the reason.
 
-<!-- BEGIN GENERATED: registry-summary -->
+<!-- BEGIN registry-summary: hand-kept until USER_DOCS.md § The README generates it -->
 
 | area | libraries |
 |---|---|
@@ -150,7 +150,7 @@ which case it says so, and CI prints the reason.
 | **text** | `regex` · `markdown` · `html` · `zttext` |
 | **data & crypto** | `crypto` · `cbor` · `arguments` · `random` · `time` |
 
-<!-- END GENERATED: registry-summary -->
+<!-- END registry-summary -->
 
 ```sh
 loft api --registry            # the whole installable catalogue, with descriptions

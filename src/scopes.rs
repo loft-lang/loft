@@ -5940,6 +5940,11 @@ fn lazy_buffer_mints(code: &mut Value, function: &mut Function, data: &Data) {
             continue;
         }
         function.mark_lazy_buffer(av);
+        // `@FR-R-WorkBuffer`'s positive control: a work buffer left at the sentinel makes
+        // the callee take its null road, on both backends.
+        if crate::keys::work_buffer_null_control() && function.is_work_buffer_ref(av) {
+            continue;
+        }
         let guard = v_if(
             Value::Call(is_null, vec![Value::Var(av)]),
             Value::Insert(vec![v_set(av, Value::Null)]),
@@ -9207,6 +9212,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-Compact` — a vector rebuilt from a contiguous run of its own elements is
         // compacted in place behind an in-range guard: decided on the same settled IR.
         crate::compact::rewrite(data, d_nr);
+        // `@FR-R-ByteCopy` — a text copied into a byte vector one byte at a time is one
+        // append behind an in-range guard: decided on the same settled IR.
+        crate::byte_copy::rewrite(data, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {
@@ -9856,9 +9864,18 @@ fn adopted_store_key(
     record: u32,
     a: usize,
 ) -> (u16, u32) {
+    // "Groups with nothing" has to be unique per FIELD, not per record: keyed by the record
+    // local alone, two captures of ONE record collided, read as one store with two adopters,
+    // and the second was demoted to a borrow its cascade then skipped — a leaked store per
+    // build.  Reached where a build names no capture the field's name resolves to: a yielded
+    // lambda's record names the COPY it took (loft#1676), and a record rebuilt in a loop.
+    let unique = (
+        u16::MAX,
+        (u32::from(record_local) << 16) | (a as u32 & 0xFFFF),
+    );
     let capture = function.var(&data.attr_name(record, a).clone());
     if capture == u16::MAX || builds.rebuilt_in_loop.contains(&capture) {
-        return (u16::MAX, u32::from(record_local));
+        return unique;
     }
     match builds
         .adopted
@@ -9867,7 +9884,7 @@ fn adopted_store_key(
     {
         Some((_, generation)) => (capture, *generation),
         // No build for it in this body: key it uniquely so it groups with nothing.
-        None => (u16::MAX, u32::from(record_local)),
+        None => unique,
     }
 }
 
@@ -11603,17 +11620,12 @@ impl Scopes<'_> {
             Value::CallRef(v_nr, args) => {
                 let (preamble, ls, _postamble) = self.scan_args(args, function, data, u32::MAX);
                 // The CALLEE slot is a READ of the variable, so it is remapped like every
-                // other var-carrying node (`Var`, `TupleGet`, `FnRefDnr`, … below).  @PLAN53
-                // cluster 2 extended that list once and stopped one member short of it: a
-                // `Set` to a name whose block has ended starts a NEW binding
-                // (`@FR-B-Scope`), which `scan_set` gives its own slot through
-                // `copy_variable`, and a call through the name then still named the ENDED
-                // binding's slot — `for f in fs { … } f = two; f(1)` called `one` where the
-                // earlier binding was live and answered `null` where the loop had left the
-                // exhausted sentinel, on `--interpret` only (loft#1679).  `--native` names
-                // its locals `var_<name>`, so both bindings are one Rust local there and the
-                // rebind shadows it — right for the wrong reason, which is why one backend
-                // ran and the other did not.
+                // other var-carrying node (`Var`, `TupleGet`, `FnRefDnr`, … below).  A `Set`
+                // to a name whose block has ended starts a NEW binding (`@FR-B-Scope`) with a
+                // slot of its own (`scan_set` → `copy_variable`), and a call through the name
+                // must reach that binding, never the ended one (loft#1679).  `--native` names
+                // its locals `var_<name>`, so both bindings share one Rust local there and a
+                // missing remap is invisible: the interpreter is where it shows.
                 let call = Value::CallRef(*self.var_mapping.get(v_nr).unwrap_or(v_nr), ls);
                 if preamble.is_empty() {
                     call
