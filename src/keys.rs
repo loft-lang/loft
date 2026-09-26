@@ -1458,6 +1458,20 @@ pub fn trace_byte_copy() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_BYTE_COPY"))
 }
 
+/// `LOFT_NO_VEC_COPY=1` — a vector copied into another one element at a time keeps its loop
+/// (`@FR-R-VecCopy` off): the first bisect step for a wrong, missing or extra element out of
+/// such a copy.
+pub fn vec_copy_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_VEC_COPY"))
+}
+
+/// `LOFT_TRACE_VEC_COPY=1` — name each element-wise vector copy made one append and each kept.
+pub fn trace_vec_copy() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| env_set("LOFT_TRACE_VEC_COPY"))
+}
+
 /// `LOFT_NO_WORK_BUFFER=1` — a vector local that never leaves its frame keeps its store
 /// (`@FR-R-WorkBuffer` off): minted at the declaration and freed at the callee's exit, as
 /// before.  The first bisect step for a wrong, stale or leaked vector inside a function that

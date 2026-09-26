@@ -351,6 +351,7 @@ pub mod scopes;
 pub mod siphash;
 pub mod use_analysis;
 mod variables;
+pub mod vec_copy;
 pub mod vector;
 
 pub mod trace;

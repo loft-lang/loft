@@ -1817,6 +1817,37 @@ copy is gone and what the row still pays is the buffer's own growth (each doubli
 zero-fills and relocates) and the per-text work around the copy
 (bench/portal/analysis/libraries-wide.md).
 
+### A vector copied element by element is one append
+
+```
+  (R-VecCopy)    `for e in V { t += [e] }` — the forward walk of a vector PLACE V (a
+                 local, or a field chain over one) whose body is the one push of the
+                 loop value into t, the element a kind whose read and push are exact
+                 inverses on the stored bytes (`integer`, `i32`, `float`, `single`,
+                 `boolean`, an enum, `character`, a raw byte at the push's own bias),
+                 V's element t's element — is `t += V`, where t is EXCLUSIVE: a local,
+                 or the frame's hidden return or work buffer, every binding of which is
+                 the field of a store minted in this frame.  A parameter destination —
+                 a `&` link, a by-value vector — is not exclusive: a caller can hand V
+                 in as t, and the walk then grows what it walks where the append takes
+                 it once.  A second statement, a transformed value, an element that owns
+                 heap or reads through a null sentinel, a source that is a call or a
+                 slice, and a destination of another element width keep the loop.
+```
+
+**In words.**  "A copy of this buffer, then more" has no one-statement spelling a library
+author reaches for first, so it is written as the walk — and the walk paid an element read,
+a length re-read and a push per element.  Nothing in the body can move V's length, because
+no push into an exclusive t reaches V, so the walk visits every element in index order
+exactly as the append copies them.  No guard is needed: the conditions are all static.
+
+**BUILT** (2026-09-26, `src/vec_copy.rs` after the byte-copy pass, `LOFT_NO_VEC_COPY`; guard
+`tests/scripts/a-vector-copied-element-by-element-is-one-append.loft`, pin
+`tests/vec_copy.rs`).  zttext `insert_text` (`nb = []; for c in d.buf { nb += [c] }`), the
+insert-only bench, `--native-release`: 25.4 → 5.95 ms per op, hash unchanged — on top of the
+heap fact that `character` owns none (55.2 → 25.4 ms), which had hidden most of this
+rewrite's gain behind a per-element claims walk (bench/portal/analysis/libraries-wide.md).
+
 ### A lookup by one integer key takes the typed entry
 
 ```
