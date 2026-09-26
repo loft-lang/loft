@@ -434,6 +434,20 @@ and `store_load_url_refuses_a_changed_layout_both_backends` (`tests/store_persis
 file and HTTP), and the browser twin in `store_load_url_verifies_the_hash_in_the_browser`.
 Record: [layout-history.md](layout-history.md).
 
+D-layout-10 OPENED AND CLOSED 2026-09-26: `(L-Null-Which)` says a local spells `S?` as the
+pointer and a tagged `__nullable<S>` reaching one is read through its tag at that point.  A
+PATTERN binding is such a local, and none of the five spellings that bind a field did it — a
+struct-enum arm (`Pn { p } =>`), a plain-struct arm, an `is` capture, an alternation and a
+multi-pattern arm each bound the slot's ADDRESS as a dense `S`, so every field read its
+predecessor (`p.x` answered the tag, `p.y` the real `x`) and an absent payload tested present, on
+both backends, with no diagnostic and no store-lifetime report.  The multi-pattern arm also
+refused a second variant's `Pt?` field as `__nullable<Pt>` against the first's `Pt?`.  Present
+since the tagged layout landed.  Closed at one home, `Parser::pattern_field_value`
+(`get_field` then `read_through_tag`), which all five sites now call; the multi-pattern
+comparison asks the bound spelling (`tagged_pointer_type`); the `is` capture's borrow dep now
+reaches a nullable payload through the shared `element_view_of`.  Guard
+`tests/scripts/a-pattern-binds-a-nullable-record-field-through-its-tag.loft`.
+
 D-layout-8 OPENED AND CLOSED 2026-09-10 (loft#1503): `(L-Tuple)` requires a tuple's two layout
 views to compute the SAME offsets and says their agreement *"is part of the rule, not an
 implementation detail"*.  They did not agree when one tuple type was written BOTH ways in a

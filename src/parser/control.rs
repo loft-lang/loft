@@ -6833,7 +6833,9 @@ impl Parser {
                         } else {
                             let v = self.create_var(&field_name, &field_type);
                             self.vars.defined(v);
-                            hoisted_bindings.push(v_set(v, field_val));
+                            let bound =
+                                self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+                            hoisted_bindings.push(v_set(v, bound));
                         }
                     } else if !self.first_pass {
                         diagnostic!(
@@ -7056,6 +7058,23 @@ impl Parser {
         }
     }
 
+    /// The value a pattern BINDS for field `attr` of `d_nr` read out of `subject` — one home
+    /// for every site that binds a field to a local: a struct-enum arm (`V { f } =>`), an
+    /// `is` capture, a plain-struct arm, the alternation and multi-pattern slots.
+    ///
+    /// `@FR-L-Null-Which` — a field declared `S?` is STORED as the tagged `__nullable<S>`,
+    /// and a local holds the pointer spelling, so the read goes through the tag here, as
+    /// every other bind of such a slot does (`read_through_tag`).  Bound to the slot's
+    /// address as if it were a dense `S`, each field read its predecessor (`p.x` answered
+    /// the tag) and an absent payload tested present, on both backends.  Any other field
+    /// reads as `get_field` has it.
+    fn pattern_field_value(&mut self, d_nr: u32, attr: usize, subject: Value) -> Value {
+        let mut read = self.get_field(d_nr, attr, subject);
+        let mut slot_tp = self.data.attr_type(d_nr, attr);
+        self.read_through_tag(&mut read, &mut slot_tp);
+        read
+    }
+
     /// `elm_tp` re-stated as a VIEW into the frame variable `src` — the borrow dep a heap
     /// element read carries — or the type unchanged when the element holds no `DbRef` (a
     /// scalar, or a `text` element, which is an owned copy and must keep its own free).
@@ -7162,6 +7181,12 @@ impl Parser {
                         }
                     } else {
                         let v_nr = self.create_unique(&format!("mv_{field_name}"), &field_type);
+                        // The binding's VALUE reads through a nullable slot's tag; the
+                        // ORIGIN recorded below stays the slot's own read, since a write
+                        // resolved back to the field (`resolved_group_write`) is spelled
+                        // against the field.
+                        let bound =
+                            self.pattern_field_value(variant_def_nr, attr_idx, subject_val.clone());
                         if v_nr != u16::MAX {
                             self.vars.defined(v_nr);
                             // loft#1160 — remember which field this binding projects, so a
@@ -7174,7 +7199,7 @@ impl Parser {
                                     Type::Reference(variant_def_nr, Deps::none()),
                                 ),
                             );
-                            arm_stmts.push(v_set(v_nr, field_read.clone()));
+                            arm_stmts.push(v_set(v_nr, bound));
                             let old = self.vars.set_name(&field_name, v_nr);
                             name_aliases.push((field_name.clone(), old));
                             // B5 remaining half (2026-04-14): a HEAP match-arm
@@ -7221,8 +7246,11 @@ impl Parser {
                             // the `["src"]` dep a `b = subj.field` bind already
                             // carries.  Scalars hold no DbRef, so they need no borrow
                             // dep (the `_mv_value` integer binding stays dep-free).
+                            // A nullable payload (`S?`, `vector<T>?`) borrows the same store
+                            // as its dense twin (`@FR-N-Shape`), so the shape is asked of the
+                            // base type, as `mark_slice_element_view` asks it.
                             if matches!(
-                                &field_type,
+                                field_type.base(),
                                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                             ) && let Some(src) = self.match_borrow_source(subject_val)
                             {
@@ -9042,7 +9070,7 @@ impl Parser {
                     })
                 {
                     let elem = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(pos as i32));
-                    let read = self.get_field(vdef, attr, elem);
+                    let read = self.pattern_field_value(vdef, attr, elem);
                     acc = v_if(branch_conds[bi].clone(), read, acc);
                 }
             }
@@ -9252,7 +9280,7 @@ impl Parser {
             let mut acc = self.null(&var_type);
             for (disc, vdef, fields) in alts.iter().rev() {
                 if let Some((_, attr_idx, _)) = fields.iter().find(|(n, _, _)| n == fname) {
-                    let read = self.get_field(*vdef, *attr_idx, elem.clone());
+                    let read = self.pattern_field_value(*vdef, *attr_idx, elem.clone());
                     let tag = self.elem_tag_int(elem.clone());
                     let test = self.cl("OpEqInt", &[tag, Value::Int(*disc)]);
                     acc = v_if(test, read, acc);
@@ -9319,7 +9347,16 @@ impl Parser {
                     }
                     match shared.get(&field_name) {
                         Some((var_nr, shared_ty)) => {
-                            let ok = match_arm_types_unify(shared_ty, &field_type);
+                            // `@FR-L-Null-Which` — a local holds a `S?` field as the pointer, so
+                            // compare the bound spellings: a declared `S?` can reach here as
+                            // its tagged slot type (`__nullable<S>`) and was refused against
+                            // the first pattern's `S?`, naming the synthetic.
+                            let bound_ty = |tp: &Type| {
+                                self.tagged_pointer_type(tp)
+                                    .map_or_else(|| tp.clone(), |(_, p)| p)
+                            };
+                            let ok =
+                                match_arm_types_unify(&bound_ty(shared_ty), &bound_ty(&field_type));
                             if !ok && !self.first_pass {
                                 diagnostic!(
                                     self.lexer,
@@ -9335,8 +9372,11 @@ impl Parser {
                             // the arm never runs (compile fails).  First pass still binds
                             // so the two-pass shapes agree.
                             if ok || self.first_pass {
-                                let field_read =
-                                    self.get_field(variant_def_nr, attr_idx, subject_val.clone());
+                                let field_read = self.pattern_field_value(
+                                    variant_def_nr,
+                                    attr_idx,
+                                    subject_val.clone(),
+                                );
                                 stmts.push(v_set(*var_nr, field_read));
                             }
                             bound.insert(field_name.clone());
@@ -11708,22 +11748,24 @@ impl Parser {
                             // divergence #429 closed for `match`, at the sibling site
                             // (loft#1398).  Scalars carry no DbRef and need no dep, exactly as
                             // there.
+                            // A nullable payload borrows as its dense twin does (`@FR-N-Shape`),
+                            // so the shape is asked of the base type, and the dep is added by
+                            // the one helper the `match` site uses.
                             if matches!(
-                                &field_type,
+                                field_type.base(),
                                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                             ) && let Some(src) = self.match_borrow_source(&stable_subject)
                             {
-                                let bound_tp = match self.vars.tp(v_nr).clone() {
-                                    Type::Reference(td, _) => {
-                                        Type::Reference(td, Deps::frame1(src))
-                                    }
-                                    Type::Vector(it, _) => Type::Vector(it, Deps::frame1(src)),
-                                    Type::Enum(td, su, _) => Type::Enum(td, su, Deps::frame1(src)),
-                                    other => other,
-                                };
+                                let bound_tp =
+                                    Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
                                 self.vars.set_type(v_nr, bound_tp);
                             }
-                            self.is_capture_bindings.push(v_set(v_nr, field_read));
+                            let bound = self.pattern_field_value(
+                                variant_def_nr,
+                                attr_idx,
+                                stable_subject.clone(),
+                            );
+                            self.is_capture_bindings.push(v_set(v_nr, bound));
                             let old = self.vars.set_name(&field_name, v_nr);
                             self.is_capture_aliases.push((field_name.clone(), old));
                         }
