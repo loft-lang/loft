@@ -428,6 +428,23 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-63** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1686)* — `(B-Copy)` / heap.md
+  `(H-Copy)`: a local bound from a top-level VECTOR constant did not copy.  The constant is
+  pre-built once in the write-locked constant store and its use site answers a view of it
+  (`OpConstRef`); the bind kept the view, so the first write through the local reached the
+  lock — an internal panic, "Write to read-only store … locked by: Store::lock", on both
+  backends and in every spelling (`v = NAMES; v += […]`, an index write, a `??` or `if` arm,
+  a typed local).  The corpus never wrote through such a bind (the `x ?? GLOBAL` crossing:
+  two files).  **Fix.**  `Parser::classify_vec_bind` gives a constant read the bare-variable
+  verdict, `CopyVar`, so the bind takes `lower_vec_copy_bind`'s copy on every route (an arm
+  reaches the same classifier); read positions — the index, the length, the iteration —
+  keep the view.  The one route that is not a bind, a callee writing through a PARAMETER
+  handed the constant, stays a fault (a parameter aliases its argument, and a copy there
+  would be a silent lost write) and is now the defined one heap.md `(H-WriteLocked)` asks
+  for: the constant store is locked as a user lock (`Store::lock_constant`, both backends)
+  and the refusal names a constant and the cure.  Guard
+  `tests/scripts/1686-a-local-bound-from-a-vector-constant-copies-it.loft`; the parameter
+  route `tests/exit_codes.rs` `a_write_through_a_parameter_to_a_constant_is_a_defined_fault`.
 * **D-bind-62** *(opened 2026-09-25, CLOSED 2026-09-25; loft#1679)* — `(B-Scope)` at the CALL
   spelling, both halves of it.  The rule says a bind after the `}` starts a NEW binding and a
   read of the ended one is refused; a fn-ref local got neither.  With a rebind,
