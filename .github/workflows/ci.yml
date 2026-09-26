@@ -695,6 +695,20 @@ jobs:
       - name: Build wasm rlib (for html_wasm tests)
         run: cargo build --release --target wasm32-unknown-unknown --lib --no-default-features --features random
 
+      # The `--html` runtime rlib is a DIFFERENT artifact from the one above: the Html shape
+      # builds into its own target dir (`target/loft/html`) and is keyed on loft's build
+      # fingerprint, which moves on every commit.  Unwarmed, the first `--html` test in each
+      # shard built it inside the parallel suite, contended by every other test's rustc, and
+      # the rest queued on the global build lock: `html_gl_imports` took 257 s and then 307 s,
+      # past the duration gate's 300 s.  Built here alone it is ~1 min; this is the step
+      # `make ci` runs before its parallel section (loft#1238).  Non-fatal: a test that finds
+      # no fresh rlib still builds one itself, it only pays for it.
+      - name: Warm loft's --html runtime rlib and the corpus's package cdylibs
+        shell: bash
+        run: |
+          ./target/release/loft cache warm --from tests \
+            || echo "warn: cache warm failed — the first --html test will build the rlib itself"
+
       # graphics_gold tests skip on CI now that lib/graphics is extracted
       # — the gold-image comparison runs against the libloft_graphics_native.so
       # the test itself can't build because the monorepo no longer has the
