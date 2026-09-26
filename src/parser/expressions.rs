@@ -6527,7 +6527,7 @@ use a separate collection or add after the loop"
                         vec![
                             bound,
                             msg,
-                            Value::Text(pos.file.clone()),
+                            Value::Text(pos.file.to_string()),
                             Value::Int(pos.line as i32),
                         ],
                     );

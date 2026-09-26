@@ -1524,7 +1524,7 @@ impl Parser {
         // These are resolved by the compiler via data.def_nr("i_...") and mapped to native
         // Rust implementations in native.rs.
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -11362,7 +11362,10 @@ impl Parser {
             bl.operators.get(2).map(Value::unspan),
         ) {
             (Some(Value::Text(f)), Some(Value::Int(l))) => (f.clone(), *l),
-            _ => (self.lexer.pos().file.clone(), self.lexer.pos().line as i32),
+            _ => (
+                self.lexer.pos().file.to_string(),
+                self.lexer.pos().line as i32,
+            ),
         };
         let mut given: Vec<(String, Value, Type)> = Vec::new();
         for op in &bl.operators[3..] {
@@ -14312,7 +14315,7 @@ impl Parser {
             vec![
                 bound,
                 msg,
-                Value::Text(pos.file.clone()),
+                Value::Text(pos.file.to_string()),
                 Value::Int(pos.line as i32),
             ],
         );
@@ -16434,7 +16437,7 @@ impl Parser {
                     };
                     if f_exists {
                         let cur = &self.lexer.pos().file;
-                        self.todo_files.push((cur.clone(), self.data.source));
+                        self.todo_files.push((cur.to_string(), self.data.source));
                         self.data.use_add(&id);
                         self.record_use_path(&id, &f);
                         // @PLN22 Phase 3 — register the library alias now that the lib's
@@ -16479,7 +16482,7 @@ impl Parser {
             if let Some(pos) = self
                 .pending_pkg_deps
                 .iter()
-                .position(|(dep_id, _, from)| *from == here && !self.data.use_exists(dep_id))
+                .position(|(dep_id, _, from)| **from == *here && !self.data.use_exists(dep_id))
             {
                 let (dep_id, parent_dir, _) = self.pending_pkg_deps.remove(pos);
                 // First try the sibling package directory (same parent as the
@@ -16491,7 +16494,7 @@ impl Parser {
                 };
                 if std::path::Path::new(&f).exists() {
                     let cur = &self.lexer.pos().file;
-                    self.todo_files.push((cur.clone(), self.data.source));
+                    self.todo_files.push((cur.to_string(), self.data.source));
                     self.data.use_add(&dep_id);
                     self.record_use_path(&dep_id, &f);
                     self.switch_to_dep(&f);
@@ -16500,7 +16503,7 @@ impl Parser {
                 // Nothing left for THIS file — drop its entries (already loaded,
                 // or unresolvable) so the fixpoint can exit.  Entries queued from
                 // other files stay: their own file drains them when it resumes.
-                self.pending_pkg_deps.retain(|(_, _, from)| *from != here);
+                self.pending_pkg_deps.retain(|(_, _, from)| **from != *here);
             }
             // Fixpoint exit: the cursor rests on a use-free file and this file has
             // no manifest dependency still queued.  `peek_token` (not `has_token`)
@@ -16508,7 +16511,7 @@ impl Parser {
             let mine_pending = self
                 .pending_pkg_deps
                 .iter()
-                .any(|(_, _, from)| *from == self.lexer.pos().file);
+                .any(|(_, _, from)| **from == *self.lexer.pos().file);
             if !self.lexer.peek_token("use") && !mine_pending {
                 break;
             }
@@ -16526,8 +16529,9 @@ impl Parser {
         // `!had_use`: explicit-mode files (any `use`, and the stdlib) are skipped
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
-        if !had_use && self.lexer.pos().file == auto_use_scan_file {
-            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&auto_use_scan_file) {
+        if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
+            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&*auto_use_scan_file)
+            {
                 c.clone()
             } else {
                 let src = self
@@ -16539,7 +16543,7 @@ impl Parser {
                     crate::libscan::scan_method_calls(&src),
                 );
                 self.auto_use_scan_cache
-                    .insert(auto_use_scan_file.clone(), pair.clone());
+                    .insert(auto_use_scan_file.to_string(), pair.clone());
                 pair
             };
             // Tier-0: `lib::x` — the library is named directly.
@@ -16608,7 +16612,7 @@ impl Parser {
                 if self.data.use_exists(&name) {
                     continue;
                 }
-                let cur = self.lexer.pos().file.clone();
+                let cur = self.lexer.pos().file.to_string();
                 self.todo_files.push((cur, self.data.source));
                 self.data.use_add(&name);
                 self.record_use_path(&name, &f);
@@ -17268,7 +17272,7 @@ impl Parser {
             }
             return;
         }
-        let cur = self.lexer.pos().file.clone();
+        let cur = self.lexer.pos().file.to_string();
         self.todo_files.push((cur, self.data.source));
         self.data.use_add(&key);
         self.record_use_path(&key, f);
@@ -19133,7 +19137,7 @@ impl Parser {
                 self.lib_dirs.push(resolved_parent.clone());
             }
             if !self.data.use_exists(dep_name) {
-                let from = self.lexer.pos().file.clone();
+                let from = self.lexer.pos().file.to_string();
                 self.pending_pkg_deps
                     .push((dep_name.clone(), resolved_parent, from));
             }
@@ -19329,9 +19333,10 @@ impl Parser {
         let d_nr = self.data.declared_by_importer(storage_name)?;
         let bare = storage_name.strip_prefix("n_").unwrap_or(storage_name);
         let pos = self.data.def(d_nr).position();
-        let file = std::path::Path::new(&pos.file)
-            .file_name()
-            .map_or_else(|| pos.file.clone(), |f| f.to_string_lossy().into_owned());
+        let file = std::path::Path::new(&*pos.file).file_name().map_or_else(
+            || pos.file.to_string(),
+            |f| f.to_string_lossy().into_owned(),
+        );
         Some(format!(
             "`{bare}` is declared in {file}:{}, which `use`s this file — a `use` \
              imports the used file's names into the file that used it, never the \

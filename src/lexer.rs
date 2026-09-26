@@ -13,6 +13,7 @@ use std::fmt::{Debug, Display, Formatter};
 use std::io::Result as IoResult;
 use std::iter::Peekable;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::vec::IntoIter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,11 +52,25 @@ pub enum LexItem {
 #[derive(Clone, PartialEq)]
 pub struct Position {
     /// The file name where this construct is found.
-    pub file: String,
+    ///
+    /// Shared, not owned: a position is cloned per token and per operator (about 1.4 M
+    /// times over a 12 826-line compile), and the name never changes within a file, so a
+    /// `String` here was the front end's largest remaining allocation source (@PLN166 B5).
+    /// [`Arc`] rather than `Rc` because a position travels with the IR into worker threads.
+    pub file: Arc<str>,
     /// The line where this result was found.
     pub line: u32,
     /// The position on the line where this result was found.
     pub pos: u32,
+}
+
+/// The file name of a position that has none: a synthetic definition, a test fixture, a
+/// runtime error raised outside any source.  `Arc<str>`'s default is backed by a static
+/// (std, since 1.80), so this allocates nothing — which the allocation ratchet
+/// (`tests/frontend_counts.rs`) checks by demanding the same count from two runs in one
+/// process: a lazily minted shared name read one more on the first run.
+pub fn no_file() -> Arc<str> {
+    Arc::default()
 }
 
 impl Position {
@@ -461,7 +476,7 @@ impl Default for Lexer {
             virtual_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
             prev_end: Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: 0,
                 pos: 0,
             },
@@ -469,13 +484,13 @@ impl Default for Lexer {
             peek: LexResult {
                 has: LexItem::None,
                 position: Position {
-                    file: String::new(),
+                    file: crate::lexer::no_file(),
                     line: 0,
                     pos: 0,
                 },
             },
             position: Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: 0,
                 pos: 0,
             },
@@ -534,7 +549,7 @@ impl Lexer {
             virtual_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
             prev_end: Position {
-                file: filename.to_string(),
+                file: filename.into(),
                 line: 0,
                 pos: 0,
             },
@@ -542,13 +557,13 @@ impl Lexer {
             peek: LexResult {
                 has: LexItem::None,
                 position: Position {
-                    file: filename.to_string(),
+                    file: filename.into(),
                     line: 0,
                     pos: 0,
                 },
             },
             position: Position {
-                file: filename.to_string(),
+                file: filename.into(),
                 line: 0,
                 pos: 0,
             },
@@ -1065,7 +1080,7 @@ impl Lexer {
         LexResult {
             has: LexItem::None,
             position: Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: 0,
                 pos: 0,
             },
@@ -2153,7 +2168,7 @@ impl Lexer {
 
     fn restart(&mut self, filename: &str) {
         self.position = Position {
-            file: filename.to_string(),
+            file: filename.into(),
             line: 0,
             pos: 0,
         };

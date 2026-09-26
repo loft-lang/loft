@@ -117,6 +117,14 @@ made it a rule (@PLN166 B4, callgrind over a compile of the 12 826-line front-en
   setup was 19 % of a compile (the definition index alone 13 %).  A table fed by anything an
   outside party controls keeps the store's own hashing.  `HashMap::new()` becomes
   `HashMap::default()`, and `HashSet::from([x])` becomes `HashSet::from_iter([x])`.
+- **A per-token value shares a name it does not change; it never owns a copy.**
+  `Position { file: String }` was cloned 1.4 M times per compile of the 12 826-line corpus
+  for a file name that is the same on every token of a file — 12 % of the compile's
+  instructions and a third of its allocations (B5).  It is `Arc<str>` now (`Arc`, not `Rc`:
+  a position travels with the IR into worker threads), and a position with no file takes
+  `crate::lexer::no_file()`, whose `Arc::<str>::default()` is backed by a static and
+  allocates nothing — a `LazyLock` would, once, and the allocation ratchet's two-runs-agree
+  check reads that one allocation as a count that varies.
 
 And one shape to recognise: a scan over `definitions` or `def_names` inside a lookup
 (`children_of` walked every definition per call, `has_private_type` every name) is a

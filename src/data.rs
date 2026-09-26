@@ -11202,7 +11202,7 @@ impl Data {
             *defined.entry(d.source).or_default() += 1;
             let f = &d.position.file;
             if !f.is_empty() {
-                file_of.entry(d.source).or_insert_with(|| f.clone());
+                file_of.entry(d.source).or_insert_with(|| f.to_string());
             }
         }
         let mut aliases = Vec::new();
@@ -12544,7 +12544,7 @@ fn span_clone_and_eq_roundtrip() {
     // debug-format it, assert round-trip equality.  Span is a transparent
     // wrapper, so the cloned tree must compare equal to the original.
     let pos = Position {
-        file: "x.loft".to_string(),
+        file: "x.loft".into(),
         line: 17,
         pos: 4,
     };
@@ -12563,7 +12563,7 @@ fn span_unspan_strips_wrapper() {
     // Plan-07 phase 1, step 1.B.0 acceptance: `unspan()` returns the
     // inner non-Span node, recursing through any number of wraps.
     let pos = Position {
-        file: "y.loft".to_string(),
+        file: "y.loft".into(),
         line: 3,
         pos: 7,
     };
@@ -12598,7 +12598,7 @@ mod caller_graph_tests {
     fn build_test_data() -> Data {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12672,7 +12672,7 @@ mod caller_graph_tests {
     #[test]
     fn callers_of_finds_a_call_under_a_wrapper() {
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12698,7 +12698,7 @@ mod caller_graph_tests {
     fn callers_of_walks_block_and_call_args_recursively() {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12727,7 +12727,7 @@ mod caller_graph_tests {
     fn synthetic_vector_wrapper_is_global_source_zero() {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12767,7 +12767,7 @@ mod caller_graph_tests {
     #[test]
     fn vector_wrapper_is_per_element_def_not_per_spelling() {
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12841,7 +12841,7 @@ mod caller_graph_tests {
     #[test]
     fn type_var_diagnostic_spelling_is_unchanged() {
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -12868,7 +12868,7 @@ mod type_name_user_facing_tests {
     fn make_data() -> Data {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -13221,7 +13221,7 @@ mod key_decoder_tests {
     fn def_named(key: &str) -> String {
         let mut d = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -13280,7 +13280,7 @@ mod children_index_tests {
     fn data_with(n: u32) -> Data {
         let mut data = Data::new();
         let pos = Position {
-            file: "t.loft".to_string(),
+            file: "t.loft".into(),
             line: 1,
             pos: 1,
         };

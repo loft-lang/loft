@@ -1343,7 +1343,7 @@ pub(crate) fn run_tests(
                 }
                 // skip library functions loaded via `use`. Only run
                 // functions defined in the test file itself.
-                if def.position.file != abs_file {
+                if *def.position.file != *abs_file {
                     continue;
                 }
                 // Zero parameters — always a test entry point.

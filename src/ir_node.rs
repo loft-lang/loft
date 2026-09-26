@@ -646,7 +646,7 @@ impl<'a> IrNode<'a> {
         match *self {
             IrNode::Native(Value::Span(b)) => b.0.clone(),
             IrNode::Store(s, n) => Position {
-                file: n.field_str(s, ds::SPAN_POS_FILE).to_string(),
+                file: n.field_str(s, ds::SPAN_POS_FILE).into(),
                 line: n.field_int(s, ds::SPAN_POS_LINE) as u32,
                 pos: n.field_int(s, ds::SPAN_POS_POS) as u32,
             },

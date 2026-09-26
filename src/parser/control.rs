@@ -10155,7 +10155,7 @@ impl Parser {
     pub(crate) fn check_reshape_under_reference(&mut self) {
         for r in crate::scopes::reshape_refusals(&self.data, &self.database) {
             let pos = crate::lexer::Position {
-                file: r.file,
+                file: r.file.into(),
                 line: r.line,
                 pos: 1,
             };

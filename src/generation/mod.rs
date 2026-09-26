@@ -6930,7 +6930,7 @@ extern crate loft;"
             if d == u32::MAX {
                 String::new()
             } else {
-                self.data.def(d).position().file.clone()
+                self.data.def(d).position().file.to_string()
             }
         };
         writeln!(w, "static LOFT_MAIN_FILE: &str = {main_file:?};")?;

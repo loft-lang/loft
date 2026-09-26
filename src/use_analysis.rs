@@ -735,7 +735,7 @@ impl Uses {
                 // Empty `file` signals "borrow the caller's source file" (report/warn fill
                 // it); a real span later in the same statement overrides this.
                 self.cur_pos = Some(Position {
-                    file: String::new(),
+                    file: crate::lexer::no_file(),
                     line: *n,
                     pos: 0,
                 });
@@ -5114,7 +5114,7 @@ fn raise_copy_refusals(
     let def_file = if def.position.file.is_empty() {
         fallback_file
     } else {
-        def.position.file.as_str()
+        &*def.position.file
     };
     let mut seen = HashSet::default();
     for (pos, line, refusal, tp) in std::mem::take(&mut cx.refusals) {
@@ -5125,7 +5125,7 @@ fn raise_copy_refusals(
             continue;
         }
         let (file, line, col) = match &pos {
-            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
+            Some(p) if !p.file.is_empty() => (&*p.file, p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
             None => (def_file, line, 0),
         };
@@ -5178,11 +5178,11 @@ fn raise_spent_reads(
     let def_file = if def.position.file.is_empty() {
         fallback_file
     } else {
-        def.position.file.as_str()
+        &*def.position.file
     };
     for read in crate::spent::take(def) {
         let (file, line, col) = match &read.pos {
-            Some(p) if !p.file.is_empty() => (p.file.as_str(), p.line, p.pos),
+            Some(p) if !p.file.is_empty() => (&*p.file, p.line, p.pos),
             Some(p) => (def_file, p.line, p.pos),
             None => (def_file, read.line, 0),
         };
@@ -5936,7 +5936,7 @@ pub fn warn_variant_overwritten(
         let file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file.as_str()
+            &*def.position.file
         };
         let mut hits: Vec<(u16, u16, u32, u32)> = Vec::new();
         find_variant_arms(data, &def.code, &mut |place, tag, arm| {
@@ -6148,7 +6148,7 @@ pub fn warn_linked_group_append(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file.as_str()
+            &*def.position.file
         };
         let mut cx = GroupAppends {
             data,
@@ -6192,7 +6192,7 @@ impl GroupAppends<'_> {
             // function's line, because a statement's position rides a `Line` marker —
             // `DoubleMove::scan` reads both for the same reason.
             self.cur = Some(Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: *n,
                 pos: 0,
             });
@@ -6255,7 +6255,7 @@ impl GroupAppends<'_> {
                 let file = if at.file.is_empty() {
                     self.file
                 } else {
-                    at.file.as_str()
+                    &*at.file
                 };
                 let holder = filled[0];
                 let others = filled[1..]
@@ -6327,7 +6327,7 @@ pub fn warn_dead_stores(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file.as_str()
+            &*def.position.file
         };
         let func = &def.variables;
         let n = func.var_count();
@@ -6484,7 +6484,7 @@ impl DoubleMove<'_> {
             // an empty `file` means "borrow the definition's own file" (filled in by the
             // caller, which is the pairing loft#781 got wrong the other way round).
             self.cur = Some(Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: *n,
                 pos: 0,
             });
@@ -6944,7 +6944,7 @@ pub fn warn_double_move(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file.as_str()
+            &*def.position.file
         };
         let mut cx = DoubleMove {
             data,
@@ -6980,7 +6980,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                at.file.as_str()
+                &*at.file
             };
             // Name the FACT, not the cure — the cure is `--explain`'s job. Both positions
             // matter to the reader: the second is where the defect is written, the first is
@@ -7034,7 +7034,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                at.file.as_str()
+                &*at.file
             };
             if cx.is_caller_owned(root) {
                 report_caller_owned_copy(diags, name, def.variables.is_argument(root), file, &at);
@@ -7080,7 +7080,7 @@ pub fn warn_double_move(
             let file = if at.file.is_empty() {
                 def_file
             } else {
-                at.file.as_str()
+                &*at.file
             };
             report_returned_parameter_member(
                 diags,
@@ -7285,7 +7285,7 @@ pub fn c_binding_call_unsupported(
         let file = if pos.file.is_empty() {
             fallback_file
         } else {
-            pos.file.as_str()
+            &*pos.file
         };
         let why = uncovered(data, d_nr).unwrap_or_default();
         diags.add_at_coded(
@@ -7413,7 +7413,7 @@ fn lifted_call_results(
         .map(|(v, mut calls)| {
             let (call, line) = calls.remove(0);
             let at = line.map(|line| Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line,
                 pos: 0,
             });
@@ -7469,7 +7469,7 @@ pub fn warn_lost_temp_writes(
         let def_file = if def.position.file.is_empty() {
             fallback_file
         } else {
-            def.position.file.as_str()
+            &*def.position.file
         };
         let mut found = Vec::new();
         let lifted = lifted_call_results(data, &def.code, &def.variables);
@@ -7484,7 +7484,7 @@ pub fn warn_lost_temp_writes(
         );
         for (callee, param, at) in found {
             let file = match &at {
-                Some(p) if !p.file.is_empty() => p.file.as_str(),
+                Some(p) if !p.file.is_empty() => &*p.file,
                 _ => def_file,
             };
             let (line, col) = at
@@ -7600,7 +7600,7 @@ pub fn superseded_fold_diagnostics(
         let file = if pos.file.is_empty() {
             fallback_file
         } else {
-            pos.file.as_str()
+            &*pos.file
         };
         let shown = def.display_name();
         // (a) the successor must resolve — as a free fn `n_<succ>`, or (if X is a
@@ -7752,14 +7752,14 @@ pub fn warn_copies(data: &Data, diags: &mut crate::diagnostics::Diagnostics, fal
             let def_file = if def.position.file.is_empty() {
                 fallback_file
             } else {
-                def.position.file.as_str()
+                &*def.position.file
             };
             // When even the line is unknown, fall back to line 0 + the fn name.
             let (file, line, col) = r.loc.as_ref().map_or((def_file, 0, 0), |p| {
                 let f = if p.file.is_empty() {
                     def_file
                 } else {
-                    p.file.as_str()
+                    &*p.file
                 };
                 (f, p.line, p.pos)
             });

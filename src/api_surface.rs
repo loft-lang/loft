@@ -118,7 +118,7 @@ pub fn surface(data: &Data, lib_file: &str) -> Vec<Member> {
     // SOURCE: it is global, and nothing a consumer can name.
     let in_lib = |d: u32| {
         d < data.definitions()
-            && data.def(d).position.file == lib_file
+            && &*data.def(d).position.file == lib_file
             && data.def(d).source != crate::data::STD_SOURCE
     };
 

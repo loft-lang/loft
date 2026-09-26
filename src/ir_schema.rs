@@ -755,7 +755,7 @@ fn block_from_parsed(p: &Parsed) -> Result<Block, TypeDecodeError> {
 /// Decode a [`Position`] (V3 — carried by `Value::Span`).
 fn position_from_parsed(p: &Parsed) -> Result<Position, TypeDecodeError> {
     Ok(Position {
-        file: as_str(field(p, "file")?)?,
+        file: as_str(field(p, "file")?)?.into(),
         line: as_u32(field(p, "line")?)?,
         pos: as_u32(field(p, "pos")?)?,
     })
@@ -1932,7 +1932,7 @@ mod tests {
             Value::FnRef(2, 1, Box::new(Type::Boolean)),
             Value::Span(Box::new((
                 Position {
-                    file: "f.loft".to_string(),
+                    file: "f.loft".into(),
                     line: 3,
                     pos: 7,
                 },
@@ -2026,7 +2026,7 @@ mod tests {
             Value::Loop(Box::new(block)),
             Value::Span(Box::new((
                 Position {
-                    file: "src/x.loft".to_string(),
+                    file: "src/x.loft".into(),
                     line: 12,
                     pos: 4,
                 },
@@ -2065,7 +2065,7 @@ mod tests {
         assert_eq!(
             value_to_json(&Value::Span(Box::new((
                 Position {
-                    file: "f.loft".to_string(),
+                    file: "f.loft".into(),
                     line: 3,
                     pos: 7
                 },
@@ -2270,7 +2270,7 @@ mod tests {
             first_child: u32::MAX,
             next_sibling: u32::MAX,
             position: Position {
-                file: "geo.loft".to_string(),
+                file: "geo.loft".into(),
                 line: 4,
                 pos: 0,
             },
@@ -2393,7 +2393,7 @@ mod tests {
             first_child: u32::MAX,
             next_sibling: u32::MAX,
             position: Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: 0,
                 pos: 0,
             },

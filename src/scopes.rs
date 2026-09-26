@@ -2949,7 +2949,7 @@ fn def_reshape_refusals(
             ),
         };
         out.push(ReshapeRefusal {
-            file: file.clone(),
+            file: file.to_string(),
             line: d.line,
             message,
         });
@@ -3041,7 +3041,7 @@ fn def_reshape_refusals(
                     ),
                 };
                 out.push(ReshapeRefusal {
-                    file: file.clone(),
+                    file: file.to_string(),
                     line,
                     message: format!(
                         "cannot pass both `{cname}` and a reference into it to `{fname}` — \
@@ -24345,7 +24345,7 @@ mod par_safety_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -24647,7 +24647,7 @@ mod par_diag_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -24821,7 +24821,7 @@ mod par_fixpoint_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -25206,7 +25206,7 @@ mod par_shallow_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -25322,7 +25322,7 @@ mod par_deep_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }

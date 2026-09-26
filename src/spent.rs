@@ -46,7 +46,7 @@ type Key = (String, u32, String);
 
 fn key(def: &crate::data::Definition) -> Key {
     (
-        def.position.file.clone(),
+        def.position.file.to_string(),
         def.position.line,
         def.name.clone(),
     )

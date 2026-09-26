@@ -376,13 +376,13 @@ fn render_signature(data: &Data, d: u32, kind: &str, name: &str) -> String {
 /// relative (e.g. `default/01_code.loft`); the stdlib root is the parent of
 /// `stdlib_dir` (`…/default`).  `None` when the source can't be read.
 fn read_def_source(buf: &str, buf_name: &str, stdlib_dir: &str, pos: &Position) -> Option<String> {
-    if pos.file == buf_name {
+    if &*pos.file == buf_name {
         return Some(buf.to_string());
     }
     let root = Path::new(stdlib_dir)
         .parent()
         .map_or_else(|| Path::new("").to_path_buf(), Path::to_path_buf);
-    std::fs::read_to_string(root.join(&pos.file)).ok()
+    std::fs::read_to_string(root.join(&*pos.file)).ok()
 }
 
 /// The contiguous comment block directly above the declaration on `decl_line`

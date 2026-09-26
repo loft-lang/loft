@@ -205,7 +205,7 @@ fn main() {
     let upper = state.code_pos;
     let found = (0..upper)
         .filter_map(|pc| state.source_loc_for(pc))
-        .any(|pos| pos.file == "spans_test");
+        .any(|pos| &*pos.file == "spans_test");
     assert!(
         found,
         "expected at least one source-span entry pointing at the user file"
