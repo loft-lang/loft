@@ -102,8 +102,8 @@ correctly on the same file.
 
 ## Hot-path conventions
 
-Two rules for code the front end runs per token or per node, each with the measurement that
-made it a rule (@PLN166 B4, callgrind over a compile of the 12 826-line front-end corpus):
+The rules for code the front end runs per token or per node, each with the measurement that
+made it a rule (@PLN166, callgrind over a compile of the 12 826-line front-end corpus):
 
 - **Read a `LOFT_*` switch through `env_once!`, never `std::env::var*` inline.**  Every
   inline read is a `getenv`, a `strncmp` walk over the whole environment; the front end made

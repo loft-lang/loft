@@ -22,7 +22,7 @@ uses are found in the local cache, taking the newest copy graphics' own manifest
 none fits, the message names the version range and the copies that are there.
 
 **Compiling does much less work.**  Reading a program in — parsing, checking names and
-scopes — now takes about 47 % fewer instructions and half the memory allocations it did
+scopes — now takes about 48 % fewer instructions and half the memory allocations it did
 before, measured on a 12 800-line program; the answers it produces are byte-for-byte the
 same.  Every program benefits, and the edit loop most.
 
