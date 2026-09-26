@@ -13372,8 +13372,26 @@ impl Parser {
                         Value::Int(i32::from(vec_tp)),
                     ],
                 );
+                // loft#1689 — the member's write REPLACES what it held, as the keyed leg below
+                // does (`keyed_member_write`): an append was right for a freshly built record,
+                // whose member is empty, and wrong for a reassignment — `k.p = (3, [9])`
+                // answered `[7,8,9]` on both backends.  `OpReplaceVector` takes the append's
+                // arguments, clears nothing on a fresh member, and is a no-op when the value is
+                // the member's own vector (`(H-CopySelf)`), which a clear-then-append is not.
+                // An EMPTY literal (`k.p = (4, [])`) reaches here as a bare `null` — no vector is
+                // built for `[]` — which neither the append nor the replace can take: the
+                // interpreter read a corrupt reference and `--native` did not compile, before
+                // and after the replace.  Its write is the clear.
+                let empty = match value.unspan() {
+                    Value::Null => true,
+                    Value::Insert(ops) => ops.iter().all(|o| matches!(o.unspan(), Value::Null)),
+                    _ => false,
+                };
+                if empty {
+                    return vec![self.cl("OpClearVector", &[field_ref])];
+                }
                 self.cl(
-                    "OpAppendVector",
+                    "OpReplaceVector",
                     &[field_ref, value, Value::Int(i32::from(elem_db_tp))],
                 )
             }

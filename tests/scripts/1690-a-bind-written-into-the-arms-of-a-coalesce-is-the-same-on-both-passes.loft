@@ -1,0 +1,38 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1690 (`@FR-B-Copy`, `@FR-O-Complete`) — A BIND WRITTEN INTO THE ARMS OF A `??` IS THE
+// SAME ON BOTH PASSES.  `v = x ?? mk(i)`
+// for a vector local is written out per arm (`sink_vec_bind_into_arms`), so each arm binds the
+// local the way a single bind of that arm would.
+//
+//   loft#1690 — the arm copy minted its element temp `_elm_N` on the second parser pass only,
+//   so every later element temp in the function shifted between the passes, and a valid
+//   program was refused naming one: "Variable '_elm_3' cannot change type …".  The copy now
+//   mints it on the first pass too.
+//
+// Every value is worked out by hand in the cell's message; the file runs on both backends
+// under the corpus runner's leak gate.
+//
+// @falsified-at: <derived after the fix is committed>
+// CHANNEL: the exit code — on the control tree the file is refused at compile time.
+// WITNESS: "Variable '_elm_3' cannot change type".
+// HOLDS: every cell answers on this tree.
+
+fn mk(k: integer) -> vector<vector<integer>> { [[k, k + 1], [k + 2]] }
+
+fn main() {
+  // loft#1690: two sunk binds in loops, with a `+= [[7]]` and a nested push between them
+  s0 = 0;
+  for i in 0..4 { x: vector<vector<integer>>? = null; v = x ?? mk(i); s0 += v[0][0] ?? 0; }
+  x4: vector<vector<integer>>? = null;
+  v4 = x4 ?? mk(3);
+  v4 += [[7]];
+  all: vector<vector<vector<integer>>> = [];
+  for i in 0..3 { x: vector<vector<integer>>? = if i == 1 { [[10]] } else { null }; w = x ?? mk(i); all += [w]; }
+  // s0 = mk(0..3)[0][0] = 0+1+2+3 = 6; lens 2, 1, 2
+  n = 0;
+  for e in all { n += len(e); }
+  assert(s0 == 6 && "{v4}" == "[[3,4],[5],[7]]" && n == 5, "element temps agree: {s0} {v4} {n}");
+  println("a bind written into the arms of a coalesce is the same on both passes: every cell holds");
+}
