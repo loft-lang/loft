@@ -662,6 +662,10 @@ pub struct Parser {
     /// always resolving the newest release.  `None` until first looked up.
     #[cfg(feature = "registry")]
     root_dep_pins: Option<std::collections::HashMap<String, String>>,
+    /// loft#1687 — per package a declared scope could not satisfy from the cache: the
+    /// constraint and the versions the cache holds, so "library not found" can say which
+    /// declaration was unmet instead of implying nothing is there.
+    cache_unmet: std::collections::HashMap<String, String>,
     /// Tier-1 text-method trigger map: `method name -> providing package`,
     /// derived once per top-level parse from the current package's (and its
     /// trigger-enabled dependencies') declared triggers.  `None` until built.
@@ -1651,6 +1655,7 @@ impl Parser {
             module_clash_reported: std::collections::HashSet::new(),
             #[cfg(feature = "registry")]
             root_dep_pins: None,
+            cache_unmet: std::collections::HashMap::new(),
             auto_use_trigger_map: None,
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
@@ -16451,11 +16456,19 @@ impl Parser {
                         self.switch_to_dep(&f);
                     } else {
                         if !refused {
-                            diagnostic!(
-                                self.lexer,
-                                Level::Error,
-                                "Library '{id}' not found — searched lib/, lib_dirs, and sibling packages"
-                            );
+                            if let Some(unmet) = self.cache_unmet.get(&id).cloned() {
+                                diagnostic!(
+                                    self.lexer,
+                                    Level::Error,
+                                    "Library '{id}' not found — {unmet}"
+                                );
+                            } else {
+                                diagnostic!(
+                                    self.lexer,
+                                    Level::Error,
+                                    "Library '{id}' not found — searched lib/, lib_dirs, and sibling packages"
+                                );
+                            }
                         }
                         self.lexer.has_token(";");
                     }
@@ -16977,7 +16990,7 @@ impl Parser {
             named_by_the_project = true;
         }
         self.probe_auto_install(id, &mut f, &cur_script, &scope);
-        self.probe_cache_newest(id, &mut f, &scope);
+        self.probe_cache_newest(id, &mut f, &cur_script, &scope);
         if !named_by_the_project && std::path::Path::new(&f).exists() {
             self.undeclared_registry_dep(id, &cur_script);
         }
@@ -18488,20 +18501,27 @@ impl Parser {
         );
     }
 
-    /// @PLN143 arc C1 — a bare script falls back to the newest version already in the
-    /// cache.
+    /// @PLN143 arc C1 — a script falls back to the newest version already in the cache
+    /// that the declaration governing it allows.
     ///
     /// The failure path this exists for: offline (or a registry that cannot be reached),
-    /// a bare script, and the package sitting right there under `~/.loft/registry/`.
-    /// That answered *"Library 'x' not found — searched lib/, lib_dirs, and sibling
-    /// packages"* in a directory holding five extracted copies of it, which is the least
-    /// true message available.
+    /// and the package sitting right there under `~/.loft/registry/`.  That answered
+    /// *"Library 'x' not found — searched lib/, lib_dirs, and sibling packages"* in a
+    /// directory holding five extracted copies of it, which is the least true message
+    /// available.
     ///
-    /// **`Bare` scope only, and that is the whole rule**: a fallback picks the newest
-    /// cached version, and only where nothing is declared is there no constraint it could
-    /// be violating. A package's manifest may say `^0.1`, and a pinned script names an
-    /// exact version — honouring the declaration is the point of having one, so a scope
-    /// that HAS one fails instead, and says what it could not satisfy.
+    /// **The fallback never answers past a declaration.**  A `Bare` scope declares nothing,
+    /// so it takes the newest loadable copy.  A declared scope — a package, a pinned script,
+    /// and every library parsed out of the cache, whose own manifest governs its `use`s —
+    /// takes the newest loadable copy that satisfies the SAME constraint the online path
+    /// resolves under (the governing lock's pin against the root project's range,
+    /// [`crate::install::constraint_for`]) AND the range the declaring package itself names
+    /// for `id` (PKG_REGISTRY.md § failure path 5: a transitive dep is resolved by the
+    /// library's own manifest constraint).  Until loft#1687 a declared scope did not fall
+    /// back at all, so `use graphics;` failed offline on `use mesh3d;` inside graphics with
+    /// `mesh3d 0.1.1` cached and graphics asking `>=0.1.1`.  Where the cache holds copies and
+    /// none satisfies, the constraint and the copies are recorded for the "not found"
+    /// message, which then names what was unmet.
     ///
     /// Runs after `probe_auto_install`, so an online run still resolves the newest
     /// RELEASE; the cache only answers when the registry could not.
@@ -18510,18 +18530,59 @@ impl Parser {
         &mut self,
         id: &str,
         f: &mut String,
+        cur_script: &str,
         scope: &crate::resolution_scope::ResolutionScope,
     ) {
         if std::path::Path::new(f).exists() {
             return;
         }
-        if *scope != crate::resolution_scope::ResolutionScope::Bare {
+        let constraints: Vec<String> = if *scope == crate::resolution_scope::ResolutionScope::Bare {
+            Vec::new()
+        } else {
+            let root = self.root_dep_constraint(id);
+            let root = root
+                .as_deref()
+                .and_then(crate::manifest::extract_version_req);
+            let mut cs: Vec<String> =
+                crate::install::constraint_for(scope.pinned_version(id).as_deref(), root)
+                    .into_iter()
+                    .collect();
+            if let Some(own) = Self::declaring_range(cur_script, id)
+                && !cs.contains(&own)
+            {
+                cs.push(own);
+            }
+            cs
+        };
+        if let Some((version, _)) =
+            crate::registry_index::newest_cached_loadable_satisfying(id, &constraints)
+        {
+            self.resolve_registry_installed(id, &version, f);
             return;
         }
-        let Some((version, _)) = crate::registry_index::newest_cached_loadable(id) else {
-            return;
-        };
-        self.resolve_registry_installed(id, &version, f);
+        let cached = crate::registry_index::cached_versions(id);
+        if !constraints.is_empty() && !cached.is_empty() {
+            self.cache_unmet.insert(
+                id.to_string(),
+                format!(
+                    "the registry could not be asked, and no cached copy satisfies `{}` \
+                     (cached: {})",
+                    constraints.join("`, `"),
+                    cached.join(", ")
+                ),
+            );
+        }
+    }
+
+    /// The version range the package declaring `cur_script` names for `id` in its own
+    /// `[dependencies]` — `None` when there is no such package, no such entry, or the entry
+    /// is a pure path dependency (resolved by path, never from the registry cache).
+    #[cfg(feature = "registry")]
+    fn declaring_range(cur_script: &str, id: &str) -> Option<String> {
+        let root = crate::resolution_scope::project_root(cur_script)?;
+        let m = crate::manifest::read_manifest(&root.join("loft.toml").to_string_lossy())?;
+        let (_, value) = m.dependencies.iter().find(|(n, _)| n == id)?;
+        crate::manifest::extract_version_req(value).map(str::to_string)
     }
 
     /// No-op when the registry feature is off — there is no registry cache to fall back
@@ -18532,6 +18593,7 @@ impl Parser {
         &mut self,
         _id: &str,
         _f: &mut String,
+        _cur_script: &str,
         _scope: &crate::resolution_scope::ResolutionScope,
     ) {
     }

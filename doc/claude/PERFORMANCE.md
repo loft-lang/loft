@@ -4618,6 +4618,25 @@ order:
    also covers `CARGO_TARGET_DIR=target-da`.
 5. otherwise → **on** — the default for installed / real invocations.
 
+### Programs whose libraries build native, or have dependencies (loft#1684)
+
+A program that `use`s a library with an auto-native build — every registry library, by
+default — is cached like any other: the bundle carries the functions' native marks, and the
+manifest records the cdylibs they dispatch to (`alib`) and the context that marked them
+(`actx`: `LOFT_NO_NATIVE_LIBS`, `LOFT_FORCE_NATIVE_BUILD_FAIL`, `--html`).  A warm load needs
+a matching context and every recorded cdylib on disk, else it is a miss before anything is
+committed and the cold path rebuilds.  The key names the search path AS GIVEN: registering a
+library's `[dependencies]` appends directories mid-parse (the registry root, a path dep's
+parent), and a key taken after the parse was one no warm load computes.  Before both, `use
+graphics;` alone re-parsed the program and its libraries on every launch — 1.19 s and 81 MB
+against 0.11 s and 25 MB warm.  A cold run also verifies and parses the registry index once
+per process instead of once per `use` lookup (six times for graphics).
+
+**`LOFT_TRACE_WARM=1`** names the verdict of every warm load — `[warm] hit: <bundle>`, or the
+gate that missed (no manifest at the computed path, a build signature or stdlib key that
+differs, a changed source, a native-library context that differs, a recorded cdylib that is
+gone) — and at a save, the search path the key used beside the one the parse ended with.
+
 ### Which loft am I measuring? (rule 4 is a trap for benchmarks)
 
 Rule 4 means **a binary you built from source pays the cold cost on every run,

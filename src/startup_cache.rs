@@ -137,6 +137,15 @@ struct ManifestState {
     /// replay the marks point at `compile.rs`'s "native function not loaded" stub, so a placed
     /// library works on its first run and panics on its second.
     placed_libs: Vec<(String, String, String)>,
+    /// loft#1684 — the auto-native cdylib each `use`d library was built into (N3), by
+    /// path.  The bundle already carries the functions' native MARKS (it is written after
+    /// `probe_and_mark_exports`), so a warm load needs only the artifacts to dlopen; each
+    /// must still exist or the load is a miss and the cold path rebuilds it.
+    auto_native_libs: Vec<String>,
+    /// loft#1684 — the context the marks were decided under ([`native_lib_context`]).  A
+    /// run whose context differs (`LOFT_NO_NATIVE_LIBS`, a forced build failure, `--html`)
+    /// would mark differently, so it misses rather than replaying another run's marks.
+    native_ctx: String,
     /// Diagnostics the COLD parse produced, replayed on a warm load so a cached run says
     /// exactly what an uncached one says.  Without this the parser does not run, so nothing
     /// warns — the same program reports differently on its second run, and a library's CI
@@ -168,6 +177,7 @@ impl ManifestState {
     /// parse-time code cannot.
     fn registers_only_loft_sources(&self) -> bool {
         self.native_lib_regs.is_empty()
+            && self.auto_native_libs.is_empty()
             && self.native_crate_regs.is_empty()
             && self.placed_libs.is_empty()
             && self.wasm_bridge_routes.is_empty()
@@ -181,7 +191,9 @@ impl ManifestState {
 /// source drifted since the bundle was written.
 #[cfg(feature = "mmap")]
 fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<ManifestState> {
-    let text = std::fs::read_to_string(manifest).ok()?;
+    let Ok(text) = std::fs::read_to_string(manifest) else {
+        return manifest_miss(&format!("no manifest at {}", manifest.display()));
+    };
     let mut lines = text.lines();
     // @PLN11 G2/M6 — the first line pins THIS build's signature.  A binary
     // upgrade (new store layout / codegen / version / features) changes it, so a
@@ -189,14 +201,14 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
     // (`Store::is_store_file`'s fixed magic can't catch a layout change).
     match lines.next().and_then(|l| l.strip_prefix("sig ")) {
         Some(sig) if sig == crate::cache::build_signature() => {}
-        _ => return None,
+        _ => return manifest_miss("the build signature differs"),
     }
     // `stdk <key>`: the stdlib this bundle was parsed against (`stdlib_key_hex`).  Required —
     // a bundle that cannot name its stdlib could be one built over a library that has since
     // changed, and serving it answers with the old library in silence.
     match lines.next().and_then(|l| l.strip_prefix("stdk ")) {
         Some(k) if k == stdlib_key => {}
-        _ => return None,
+        _ => return manifest_miss("the stdlib key differs"),
     }
     // @PLN11 — optional `prel <0|1>` header: the parse-time `program_relative`
     // flag (the `#cwd` directive's resolved effect).  Present in manifests this
@@ -248,6 +260,21 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         placed_libs.push((name, spelling, pkg_dir));
         next = lines.next();
     }
+    // `actx <context>`: required — a bundle that cannot say which native-library context
+    // marked it cannot be matched against this run's.  Then optional `alib <path>` lines, one
+    // per auto-native cdylib; a path may contain spaces, so the whole remainder is the path.
+    let Some(native_ctx) = next
+        .and_then(|l| l.strip_prefix("actx "))
+        .map(str::to_string)
+    else {
+        return manifest_miss(&format!("no actx line where expected: {next:?}"));
+    };
+    next = lines.next();
+    let mut auto_native_libs = Vec::new();
+    while let Some(rest) = next.and_then(|l| l.strip_prefix("alib ")) {
+        auto_native_libs.push(rest.to_string());
+        next = lines.next();
+    }
     // Optional `diag <encoded>` headers: the diagnostics the cold parse emitted, one per
     // line (see `DiagEntry::encode_for_cache`).  A line that will not decode fails the whole
     // manifest — a bundle that cannot reproduce what the parse SAID must not be served,
@@ -289,7 +316,7 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         let (hexhash, path) = line.split_once(' ')?;
         match crate::cache::file_hash(path) {
             Some(c) if hex32(&c) == hexhash => any = true,
-            _ => return None,
+            _ => return manifest_miss(&format!("source {path} changed")),
         }
         cur = lines.next();
     }
@@ -299,12 +326,57 @@ fn manifest_state(manifest: &std::path::Path, stdlib_key: &str) -> Option<Manife
         native_lib_regs,
         native_crate_regs,
         placed_libs,
+        auto_native_libs,
+        native_ctx,
         diagnostics,
         user_def_start,
         wasm_bridge_routes,
         wasm_bridge_packages,
         wasm_bridge_host_js,
     })
+}
+
+/// [`warm_miss`] for the manifest reader.
+#[cfg(feature = "mmap")]
+fn manifest_miss<T>(why: &str) -> Option<T> {
+    if crate::keys::env_set("LOFT_TRACE_WARM") {
+        eprintln!("[warm] manifest: {why}");
+    }
+    None
+}
+
+/// A warm-load miss, named under `LOFT_TRACE_WARM=1` — a miss is otherwise silent, and a
+/// program that never warms runs its whole front end on every launch without a word
+/// (loft#1684 was that, for every program using a library with a native build).
+#[cfg(feature = "mmap")]
+fn warm_miss(why: &str) -> Option<u32> {
+    if crate::keys::env_set("LOFT_TRACE_WARM") {
+        eprintln!("[warm] miss: {why}");
+    }
+    None
+}
+
+/// loft#1684 — what a cold run's auto-native step decided, for [`save_program`] to persist:
+/// the context the marks were decided under ([`native_lib_context`]) and the cdylibs they
+/// dispatch to.
+pub struct AutoNative<'a> {
+    pub ctx: &'a str,
+    pub libs: &'a [String],
+}
+
+/// loft#1684 — the context a cold run decides its auto-native marks under: whether `use`d
+/// libraries may build native at all (`LOFT_NO_NATIVE_LIBS`), whether their build is forced
+/// to fail (`LOFT_FORCE_NATIVE_BUILD_FAIL`), and whether this is an `--html` build (which
+/// skips a `[wasm.bridge]` library's cdylib).  Persisted in the manifest and compared on a
+/// warm load, so a bundle is only replayed under the context that marked it.
+#[must_use]
+pub fn native_lib_context(html: bool) -> String {
+    format!(
+        "nolibs={} forcefail={} html={}",
+        u8::from(std::env::var_os("LOFT_NO_NATIVE_LIBS").is_some()),
+        u8::from(std::env::var_os("LOFT_FORCE_NATIVE_BUILD_FAIL").is_some()),
+        u8::from(html)
+    )
 }
 
 /// Whole-program warm load: if a valid bundle exists for `script_abspath` and
@@ -319,10 +391,31 @@ pub fn warm_load_program(
     p: &mut Parser,
     script_abspath: &str,
     default_dir: &str,
+    native_ctx: &str,
     store_out: &mut Option<(crate::database::Stores, crate::keys::DbRef)>,
 ) -> Option<u32> {
     let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, &p.lib_dirs);
-    let state = manifest_state(&manifest, &stdlib_key_hex(default_dir)?)?;
+    let Some(state) = stdlib_key_hex(default_dir).and_then(|k| manifest_state(&manifest, &k))
+    else {
+        return warm_miss("no manifest, or its build, stdlib or a source changed");
+    };
+    // loft#1684 — the marks in the bundle were decided under the cold run's context; a
+    // different one would mark differently.  And every auto-native artifact the marks
+    // dispatch to must still be on disk (a sweep or `make rebuild-native-cdylibs` may have
+    // removed it): checked BEFORE committing to the bundle, so a missing one is a clean
+    // miss and the cold path rebuilds it.  The artifact's NAME carries the loft build and
+    // the type-layout fingerprint, and the bundle's manifest pins both the build and every
+    // library source, so an existing file is the one the cold run built for these marks.
+    if state.native_ctx != native_ctx {
+        return warm_miss("the native-library context differs from the run that marked it");
+    }
+    if let Some(so) = state
+        .auto_native_libs
+        .iter()
+        .find(|so| !std::path::Path::new(so).is_file())
+    {
+        return warm_miss(&format!("auto-native artifact {so} is gone"));
+    }
     // #310 — re-resolve the parse-time `[library] native` registrations the
     // warm load skips, BEFORE committing to the bundle: each cdylib gets the
     // same prebuilt-or-auto-build freshness check a cold parse runs (a loft
@@ -330,7 +423,11 @@ pub fn warm_load_program(
     // whole thing as a cache miss and let the cold path report it.
     let mut native_libs = Vec::new();
     for (stem, pkg_dir) in &state.native_lib_regs {
-        let path = crate::extensions::resolve_native_lib(pkg_dir, stem)?;
+        let Some(path) = crate::extensions::resolve_native_lib(pkg_dir, stem) else {
+            return warm_miss(&format!(
+                "native library {stem} in {pkg_dir} does not resolve"
+            ));
+        };
         if !native_libs.contains(&path) {
             native_libs.push(path);
         }
@@ -363,7 +460,7 @@ pub fn warm_load_program(
         }
     };
     if !loaded {
-        return None;
+        return warm_miss("the bundle did not load");
     }
     // Repopulate `native_packages` (the `[native] crate` regs) — the IR bundle
     // stores only the def table, so a warm load loses them and `--native` codegen
@@ -389,6 +486,14 @@ pub fn warm_load_program(
     // `extensions::load_all` gets an empty list on warm runs and every
     // `#native` call hits the "native function not loaded" stub.
     p.pending_native_libs = native_libs;
+    // loft#1684 — the auto-native cdylibs load through the same list: `main` hands it to
+    // `extensions::load_all` beside the cold path's own auto-native artifacts, and the
+    // shared-store bridges are wired from the marks the bundle carries.
+    for so in state.auto_native_libs {
+        if !p.pending_native_libs.contains(&so) {
+            p.pending_native_libs.push(so);
+        }
+    }
     // @PLN119 — restore the out-of-process placement registrations.  `main` starts a worker
     // for each entry here and points the marked functions at it; the marks themselves came
     // back with the bundle (`mark_exports` writes them into `Data`), so without this the
@@ -419,6 +524,9 @@ pub fn warm_load_program(
     }
     p.data.wasm_bridge_packages = state.wasm_bridge_packages;
     p.data.wasm_bridge_host_js_files = state.wasm_bridge_host_js;
+    if crate::keys::env_set("LOFT_TRACE_WARM") {
+        eprintln!("[warm] hit: {}", bundle.display());
+    }
     Some(state.user_def_start.unwrap_or_else(|| p.data.definitions()))
 }
 
@@ -430,15 +538,19 @@ pub fn warm_load_program(
 pub fn save_program(
     p: &Parser,
     script_abspath: &str,
+    key_dirs: &[String],
     default_dir: &str,
     user_def_start: u32,
     placed_libs: &[(String, String, crate::lib_placement::Placement)],
+    auto_native: &AutoNative<'_>,
 ) {
     use std::fmt::Write as _;
     let Some(stdk) = stdlib_key_hex(default_dir) else {
         return; // no readable stdlib → a bundle that could not be tied to one
     };
-    let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, &p.lib_dirs);
+    // Keyed on the search path the warm load will see — before the parse appended the
+    // registry packages it resolved (`key_dirs`, captured by the caller; loft#1684).
+    let (bundle, manifest) = crate::cache::program_cache_paths(script_abspath, key_dirs);
 
     let mut paths: Vec<&String> = p.parsed_sources.iter().collect();
     paths.sort_unstable();
@@ -472,6 +584,12 @@ pub fn save_program(
     // install, so it is consumed before the bundle is written.
     for (name, pkg_dir, placement) in placed_libs {
         let _ = writeln!(lines, "plib {name} {} {pkg_dir}", placement.spelling());
+    }
+    // loft#1684 — the native-library context, then each auto-native cdylib (see
+    // `ManifestState::auto_native_libs`).
+    let _ = writeln!(lines, "actx {}", auto_native.ctx);
+    for so in auto_native.libs {
+        let _ = writeln!(lines, "alib {so}");
     }
     // The diagnostics this parse produced, so a warm load can say what the cold run said.
     // Order is preserved: the renderer's warning-cascade dedup and the caller's
@@ -654,6 +772,7 @@ pub fn warm_load_program(
     _p: &mut Parser,
     _script_abspath: &str,
     _default_dir: &str,
+    _native_ctx: &str,
     _store_out: &mut Option<(crate::database::Stores, crate::keys::DbRef)>,
 ) -> Option<u32> {
     None
@@ -662,9 +781,11 @@ pub fn warm_load_program(
 pub fn save_program(
     _p: &Parser,
     _script_abspath: &str,
+    _key_dirs: &[String],
     _default_dir: &str,
     _user_def_start: u32,
     _placed_libs: &[(String, String, crate::lib_placement::Placement)],
+    _auto_native: &AutoNative<'_>,
 ) {
 }
 
@@ -685,7 +806,7 @@ mod ncrate_manifest_tests {
         let hash = crate::cache::file_hash(&src_str).expect("hash source");
         let manifest = dir.join("m.manifest");
         let content = format!(
-            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\n{} {}\n",
+            "sig {}\nstdk k\nnlib loft_foo /pkgs/foo\nncrate loft-foo /pkgs/foo\nactx c\nalib /pkgs/foo/native-auto/lib foo.so\n{} {}\n",
             crate::cache::build_signature(),
             hex32(&hash),
             src_str,
@@ -703,6 +824,17 @@ mod ncrate_manifest_tests {
             vec![("loft_foo".to_string(), "/pkgs/foo".to_string())],
             "the sibling nlib header still parses beside ncrate"
         );
+        assert_eq!(state.native_ctx, "c", "the actx header round-trips");
+        assert_eq!(
+            state.auto_native_libs,
+            vec!["/pkgs/foo/native-auto/lib foo.so".to_string()],
+            "an alib path keeps its spaces"
+        );
+        // loft#1684 — a manifest with no `actx` cannot say which native-library context
+        // marked its bundle, so it is a miss.
+        let bare = content.replace("actx c\n", "");
+        std::fs::write(&manifest, &bare).unwrap();
+        assert!(manifest_state(&manifest, "k").is_none(), "no actx → miss");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

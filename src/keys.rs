@@ -1582,6 +1582,19 @@ pub fn loop_buffer_reuse_enabled() -> bool {
     *ON.get_or_init(|| !env_set("LOFT_NO_LOOP_BUFFER_REUSE"))
 }
 
+/// Every LOOP-FREE loft function the native generator emits carries `#[inline]` —
+/// **DEFAULT ON** (`Output::fn_inline_attr` says why a looping one does not).
+/// The hint only raises LLVM's inlining threshold for that function, so a small helper whose
+/// checked arithmetic puts it just past the default budget (hex_field's `nb_q`, `eg_dir_from`,
+/// `eg_index` under `edgeset_count`) is folded into its caller the way rustc folds a plain-Rust
+/// twin's; a large function still stays a call.  Opt OUT with `LOFT_NO_INLINE_HINT` (read at
+/// GENERATION time): no attribute, the emission of before.  `--names` pins every loft function
+/// `#[inline(never)]` regardless, because a backtrace needs the frames.
+pub fn inline_hint_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_INLINE_HINT"))
+}
+
 /// @PLN157 § V-am (`@FR-R-PushFill`): a counted loop whose body pushes k scalars to one
 /// vector RESERVES k times its trip count before it runs, and a counted loop whose body is
 /// one push of an invariant scalar is ONE fill of the vector's tail — **DEFAULT ON**.  Opt

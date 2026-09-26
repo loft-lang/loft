@@ -334,3 +334,18 @@ return buffer (`(R-RetAdopt)` declines it — the arms that chain `head(…)` ha
 callee, and `buf` is bound from a call, not a witness) prices at −12 %, −37 % with the three
 unused witness stores also dropped (19.3 → 12.1 µs per encode of 64 texts); the rest is the
 per-item `buf += encode(item)` copy the twin's `encode_into` never makes.
+
+**`#[inline]` on loop-free loft functions (2026-09-26, `LOFT_NO_INLINE_HINT`).**  The call
+class's clearest row, hex_field `edgeset_count` (35.6×, a twin that follows the library), is
+four small helpers per slot — `edge_mat` → `eg_index` → `eg_dir_from` → `nb_q` / `nb_r` —
+that rustc inlines in the twin and kept as calls in loft's emission, their checked
+arithmetic putting each just past LLVM's default budget.  Hand-priced: the hint on the chain
+23 → 10.3 ms; on every function the same; on the LOOP-FREE ones only the same again.  The
+blanket form measured wide (87 routines) was a geomean −1.3 % with real losses —
+`newton_sqrt` +16 % (a looping callee inlined into a looping caller spills its loop-carried
+values), `enum_match` +17 % — and the loop-free rule keeps the gains and drops those
+losses: geomean −2.3 %, `edgeset_count` −56 %, `join` −19 %, `replace` −18 %, `dot_product`
+−14 %, worst +5 % (`char_roundtrip`, which is layout: equal under pinned alignment).  An A/B
+between two BUILDS carries that layout noise on every row; pin alignment
+(`-C llvm-args=-align-all-functions=6 -C llvm-args=-align-loops=64`) before reading a few
+percent either way as a cause.

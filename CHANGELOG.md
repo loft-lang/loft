@@ -14,6 +14,13 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A program using a library that has its own dependencies starts at once, and works
+offline.**  `use graphics;` alone — nothing from it called — used to cost about a second and
+80 MB on every launch, because such a program was never kept in the startup cache; it now
+starts in about a tenth of a second.  And with `LOFT_OFFLINE=1` the libraries graphics itself
+uses are found in the local cache, taking the newest copy graphics' own manifest allows; when
+none fits, the message names the version range and the copies that are there.
+
 **Compiling does much less work.**  Reading a program in — parsing, checking names and
 scopes — now takes about 47 % fewer instructions and half the memory allocations it did
 before, measured on a 12 800-line program; the answers it produces are byte-for-byte the
