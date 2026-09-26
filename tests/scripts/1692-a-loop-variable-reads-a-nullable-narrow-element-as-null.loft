@@ -15,7 +15,8 @@
 // `255` written into a `u8?` slot IS its null.  Controls: a non-null narrow vector, an `integer?`
 // vector, and the indexed read.  Every value is worked out by hand in the cell.
 //
-// @falsified-at: <derived after the fix is committed>
+// @falsified-at: 23d256c5c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1692-a-loop-variable-reads-a-nullable-narrow-element-as-null.patch — the same channels.
 // CHANNEL: the asserts — the control tree answers every nullable-narrow loop cell with the
 //   stored code.
 // WITNESS: `u8?: 259 0` (a null read as 255, no null seen).
