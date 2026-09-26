@@ -287,12 +287,14 @@ fn arc_c1_a_version_this_loft_cannot_load_is_skipped() {
     );
 }
 
-/// The boundary, and the whole rule: the fallback fires only where NOTHING is declared.
+/// The boundary, and the whole rule: the fallback never answers PAST a declaration.
 ///
 /// A package's manifest may say `^0.1` and a pinned script names an exact version;
 /// picking "the newest cached" there would answer past a declaration whose entire purpose
-/// is to be honoured. So a scope that HAS one fails instead — the same answer as before
-/// this arc.
+/// is to be honoured.  So a declared scope takes only a cached copy its declaration allows
+/// (loft#1687 — see `offline_a_cached_librarys_dependency_resolves_under_its_declared_range`),
+/// and where none does — here, `^0.1` against a cache holding only 0.2.0 — it fails, naming
+/// the range and what the cache holds.
 #[test]
 fn arc_c1_a_declared_scope_does_not_take_the_newest_cached() {
     let home = empty_home("c1_boundary");
@@ -323,6 +325,10 @@ fn arc_c1_a_declared_scope_does_not_take_the_newest_cached() {
         !all.contains("probepkg-0.2.0"),
         "a package scope declares its own constraint — the cache fallback must not \
          answer past it:\n{all}"
+    );
+    assert!(
+        all.contains("no cached copy satisfies `^0.1`") && all.contains("cached: 0.2.0"),
+        "the refusal names the unmet range and the cached copies (loft#1687):\n{all}"
     );
 }
 
@@ -778,4 +784,81 @@ fn arc_e_a_pinned_script_is_told_to_re_pin() {
             && all.contains("s.loft"),
         "a sidecar pin behind the registry must name `loft pin`:\n{all}"
     );
+}
+
+/// loft#1687 — a cached library whose OWN manifest declares a dependency, and a bare script
+/// that uses it, offline.  `probedep` is extracted at 0.1.0 and 0.2.0, each answering its
+/// own version; `probepkg` declares `probedep = "<range>"` and passes that answer through,
+/// so the printed line names the dependency version the declared scope resolved.
+fn cache_pkg_with_dep(home: &Path, range: &str) {
+    for v in ["0.1.0", "0.2.0"] {
+        let dir = home.join(".loft/registry").join(format!("probedep-{v}"));
+        write(
+            &dir.join("loft.toml"),
+            &format!(
+                "[package]\nname = \"probedep\"\nversion = \"{v}\"\nloft = \">=0.8\"\n\n\
+                 [library]\nentry = \"src/probedep.loft\"\n"
+            ),
+        );
+        write(
+            &dir.join("src/probedep.loft"),
+            &format!("pub fn dep_id() -> text {{ return \"probedep-{v}\"; }}\n"),
+        );
+    }
+    let dir = home.join(".loft/registry/probepkg-0.1.0");
+    write(
+        &dir.join("loft.toml"),
+        &format!(
+            "[package]\nname = \"probepkg\"\nversion = \"0.1.0\"\nloft = \">=0.8\"\n\n\
+             [library]\nentry = \"src/probepkg.loft\"\n\n\
+             [dependencies]\nprobedep = \"{range}\"\n"
+        ),
+    );
+    write(
+        &dir.join("src/probepkg.loft"),
+        "use probedep;\npub fn probe_id() -> text { return \"probepkg-0.1.0 via {dep_id()}\"; }\n",
+    );
+}
+
+/// loft#1687 — offline, a cached library's own dependency resolves from the cache under
+/// the range that library declares (PKG_REGISTRY.md § failure path 5), and never past it.
+///
+/// c1 `>=0.1`: both cached copies satisfy it — the newest, 0.2.0.  This is the reported
+///    case (`use graphics;` offline, `mesh3d` cached, graphics asking `>=0.1.1`), which
+///    answered "Library 'probedep' not found".
+/// c2 `^0.1`: only 0.1.0 satisfies it — 0.1.0, although 0.2.0 is the newer copy.  The
+///    bare-scope rule (newest cached) would answer 0.2.0 here, past the declaration; this
+///    cell is what keeps the widening honest.
+/// c3 `>=0.3`: nothing cached satisfies it — the run fails, and the message names the
+///    range and the copies that are there instead of implying nothing is.
+///
+/// @falsified-at: hand-measured (2026-09-26) — `probe_cache_newest` taking the declared
+///   scope's constraints as empty (the bare rule for every scope): c2 prints
+///   `probepkg-0.1.0 via probedep-0.2.0` where this file says 0.1.0; c1 still passes.
+///   CHANNEL: the value (the resolved version printed).
+#[test]
+fn offline_a_cached_librarys_dependency_resolves_under_its_declared_range() {
+    for (tag, range, want) in [
+        ("c1", ">=0.1", Some("probedep-0.2.0")),
+        ("c2", "^0.1", Some("probedep-0.1.0")),
+        ("c3", ">=0.3", None),
+    ] {
+        let home = empty_home(&format!("1687_{tag}"));
+        cache_pkg_with_dep(&home, range);
+        let dir = home.join("proj");
+        probe_script(&dir);
+        let all = run_env(&home, &dir, "s.loft", &[("LOFT_OFFLINE", "1")]);
+        let _ = std::fs::remove_dir_all(&home);
+        match want {
+            Some(v) => assert!(
+                all.contains(&format!("probepkg-0.1.0 via {v}")),
+                "{tag} ({range}): the declared range must resolve {v} from the cache:\n{all}"
+            ),
+            None => assert!(
+                all.contains("no cached copy satisfies `>=0.3`")
+                    && all.contains("cached: 0.1.0, 0.2.0"),
+                "{tag} ({range}): an unmet range must be named with the cached copies:\n{all}"
+            ),
+        }
+    }
 }

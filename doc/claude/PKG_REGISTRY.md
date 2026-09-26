@@ -673,12 +673,29 @@ Reading them as one is what made a pinned script's sidecar decide the load and
 nothing else — and it means the sidecar now gets the re-publish check too, since
 a lockfile pins the bytes as well as the version.
 
-### The cache fallback is `Bare` scope only
+### The cache fallback never answers past a declaration
 
-A fallback picks the newest cached version, and only where nothing is declared is
-there no constraint it could be violating. A package's manifest may say `^0.1`
-and a pinned script names an exact version, so a scope that HAS a declaration
-fails instead of answering past it.
+A fallback picks the newest cached version the governing declaration ALLOWS.
+Where nothing is declared (`Bare`) that is the newest loadable copy.  A declared
+scope — a package, a pinned script, and every library parsed out of the cache,
+whose own manifest governs its `use`s — takes the newest loadable copy that
+satisfies the same constraint the online path resolves under (the governing
+lock's pin against the root project's range) AND the range the declaring package
+itself names for the dependency (failure path 5).  A package's manifest may say
+`^0.1` and a pinned script names an exact version, so where no cached copy
+satisfies them the run fails — and says which range was unmet and what the cache
+holds:
+
+```
+Library 'probedep' not found — the registry could not be asked, and no cached copy
+satisfies `>=0.3` (cached: 0.1.0, 0.2.0)
+```
+
+Until loft#1687 a declared scope did not fall back at all, which failed failure
+path 5 offline: `use graphics;` stopped at graphics' own `use mesh3d;` with
+`mesh3d 0.1.1` extracted and graphics asking `>=0.1.1`.
+`manifest_less_resolution.rs` carries the three cells (a range the newest copy
+satisfies, `^0.1` that must NOT take the newer 0.2.0, and an unmet range).
 
 ### When a pin has fallen behind
 
@@ -734,9 +751,6 @@ script on different days can get different versions, and the answer to that is
   and `loft install` is the verb that normally writes it — but it *is* a run
   producing a declaration, so the invariant holds absolutely only in `Bare` and
   pinned-script scope.
-- **In a declared scope, an unsatisfiable offline resolve still reports "library
-  not found"** rather than naming the constraint it could not satisfy. The
-  answer is right; the message is thin.
 - **A transitive dependency is still resolved by the root manifest's range, not
   by the lock that names it.** A package parsed out of the registry cache is
   bound by neither lock (the only declaration above it is the cached
