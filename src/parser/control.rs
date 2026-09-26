@@ -5597,7 +5597,11 @@ impl Parser {
         let match_pos = self.lexer.pos().clone();
         // 1. Parse the subject expression.
         let mut subject = Value::Null;
-        let mut subject_type = self.expression(&mut subject);
+        // A struct literal built in place types as `Rewritten(τ)` on the first pass — a signal to
+        // the expression that parsed it (`Type::unrewritten`), which the subject dispatch below
+        // does not recognise: `match Vn { rs: 7 } { … }` dispatched nowhere on pass 1, typed the
+        // match `void`, and a local bound to it refused pass 2's real type.
+        let mut subject_type = self.expression(&mut subject).unrewritten();
         // `(T-Ref)`: a `&(…)` binding denotes the bound tuple itself, so a tuple pattern over it
         // reads every element through the reference, as `t.0` does.  The subject becomes the
         // tuple of those element reads, which the tuple match stores and projects like any

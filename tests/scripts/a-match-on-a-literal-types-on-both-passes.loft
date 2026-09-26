@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A MATCH ON A LITERAL TYPES ON BOTH PASSES (`@FR-M-Match`: the subject is any expression).  A
+// struct or variant literal built in place types as `Rewritten(τ)` on the first pass — a signal
+// to the expression that parsed it, not a type (`Type::unrewritten`) — and the subject dispatch
+// did not recognise it: the match typed `void` on pass 1, so a local bound to it was refused as
+// a type change on pass 2 ("cannot change type from void to integer").  Inside a call argument
+// the same match compiled, which is why it hid.  Every value is hand-computed.
+//
+// @falsified-at: <derived after the fix is committed>
+// CHANNEL: the refusal — the control tree does not compile this program.
+// HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
+//   every assertion passes on both backends.
+
+struct Pt { x: integer, y: integer }
+enum W { Pb { p: integer }, Vn { rs: integer }, Vt { t: text }, Vv { vs: vector<integer> } }
+
+fn main() {
+  a = match Vn { rs: 7 } { Vn { rs } => rs, _ => 0 };
+  assert(a == 7, "a variant literal: {a}");
+  b = match Vt { t: "ab" } { Vt { t } => t, _ => "" };
+  assert(b == "ab", "a text field: {b}");
+  c = match Vv { vs: [1, 2, 3] } { Vv { vs } => len(vs), _ => 0 };
+  assert(c == 3, "a vector field: {c}");
+  d = match Pt { x: 1, y: 2 } { Pt { x, y } => x * 10 + y };
+  assert(d == 12, "a struct literal: {d}");
+  e = match (Vn { rs: 7 }) { Vn { rs } => rs, _ => 0 };
+  assert(e == 7, "parenthesised: {e}");
+  f = 10 + match Vn { rs: 7 } { Vn { rs } => rs, _ => 0 };
+  assert(f == 17, "inside an expression: {f}");
+  g = match Pb { p: 3 } { Vn { rs } => rs, _ => -1 };
+  assert(g == -1, "another variant takes the wildcard: {g}");
+  println("a match on a literal types on both passes: every cell holds");
+}
