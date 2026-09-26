@@ -1,0 +1,79 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A GENERATOR DRIVES A `for` LOOP WITH OWNED HEAP VALUES (`@FR-G-For`, `@FR-G-Done`,
+// `@FR-B-Copy`).  `(G-For)` lowers `for x in g(args) { body }` to the iteration loop with
+// `next(fr)` as the cursor: each yielded value is bound as `x` and the body runs.  What the rule
+// does not say in so many words, and what a lowering can lose, is that each `x` is the value AT
+// ITS YIELD and the consumer's own: kept past the pass, written by the consumer, or read after a
+// `break`, it must not change when the generator resumes.  The cells yield every heap kind the
+// generator can build — a vector it grows between yields, a text it appends to, a record, a record
+// with a text field, a record owning a vector — and vary what the consumer does: keep them in
+// a collection, write through its copy, break early, nest two generators, and read a vector
+// parameter the generator walks.  Every expected value is worked out by hand in the cell.
+//
+// @falsified-at: none — a conformance guard; `@FR-G-For` was cited by no test.  Every cell
+//   answered right on both backends and clean under LOFT_STRICT_STORES and LOFT_POISON on the
+//   tree it landed on.
+// CHANNEL: the asserts, and the corpus's leak gate for the yielded stores.
+// ARMED: the leak gate by the script corpus runner (wrap.rs).
+// WITNESS: the cell's message names the value that moved.
+// HOLDS: every cell on both backends.
+
+struct P { n: integer }
+struct R { v: vector<integer> }
+struct Pair { n: integer, t: text }
+
+fn grown() -> iterator<vector<integer>> { acc: vector<integer> = []; for i in 0..3 { acc += [i]; yield acc; } }
+fn texts() -> iterator<text> { s = ""; for c in ["a", "b", "c"] { s += c; yield s; } }
+fn records() -> iterator<P> { for i in 0..3 { yield P { n: i }; } }
+// A tuple with a text member has no native transport (`tuples.md` `(T-Ret)`'s generator note:
+// wrap it in a struct), so the pair is a record here and runs on both backends.
+fn pairs() -> iterator<Pair> { for i in 0..3 { yield Pair { n: i, t: "x{i}" }; } }
+fn upto(k: integer) -> iterator<integer> { for i in 0..k { yield i; } }
+fn tens(k: integer) -> iterator<integer> { for j in 0..k { yield j * 10; } }
+fn doubled(v: vector<integer>) -> iterator<integer> { for x in v { yield x * 2; } }
+fn owning() -> iterator<R> { for i in 0..3 { yield R { v: [i, i] }; } }
+
+fn main() {
+  // a vector grown between yields: each kept value is the one at its yield — [0],[0,1],[0,1,2]
+  kept: vector<vector<integer>> = [];
+  for v in grown() { kept += [v]; }
+  n1 = 0;
+  for e in kept { n1 += len(e); }
+  assert(n1 == 6 && "{kept[0]}" == "[0]" && (kept[2][2] ?? -1) == 2, "a grown vector kept: {n1} {kept[0]}");
+  // "a" + "ab" + "abc"
+  r2 = "";
+  for t in texts() { r2 += t; }
+  assert(r2 == "aababc", "a text appended between yields: {r2}");
+  // the consumer writes its own copy; the next yield is untouched
+  r3 = "";
+  for e in records() { e.n += 100; r3 += "{e.n} "; }
+  assert(r3 == "100 101 102 ", "a record written by the consumer: {r3}");
+  n4 = 0;
+  t4 = "";
+  for e in pairs() { n4 += e.n; t4 += e.t; }
+  assert(n4 == 3 && t4 == "x0x1x2", "a record with a text field: {n4} {t4}");
+  // break after 1: 0 + 1; a second run of the same generator is complete: 0+1+2+3
+  a5 = 0;
+  for x in upto(4) { a5 += x; if x == 1 { break; } }
+  b5 = 0;
+  for x in upto(4) { b5 += x; }
+  assert(a5 == 1 && b5 == 6, "break early, then a full run: {a5} {b5}");
+  // (0,0) (0,10) (1,0) (1,10) as i*10 + v: 0 + 10 + 10 + 20 ... outer yields 0 and 10
+  s6 = 0;
+  for i in tens(2) { for v in tens(2) { s6 += i + v; } }
+  assert(s6 == 40, "nested generators: {s6}");
+  v7: vector<integer> = [1, 2, 3];
+  s7 = 0;
+  for x in doubled(v7) { s7 += x; }
+  assert(s7 == 12 && "{v7}" == "[1,2,3]", "a vector parameter walked: {s7} {v7}");
+  // R{v:[i,i]} kept: every element summed 2*(0+1+2), every length 2
+  all: vector<R> = [];
+  for r in owning() { all += [r]; }
+  s8 = 0;
+  n8 = 0;
+  for e in all { for x in e.v { s8 += x; } n8 += len(e.v); }
+  assert(s8 == 6 && n8 == 6, "records owning a vector kept: {s8} {n8}");
+  println("a generator drives a for loop with owned heap values: every cell holds");
+}
