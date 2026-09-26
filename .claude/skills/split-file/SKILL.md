@@ -2,10 +2,10 @@
 name: split-file
 description: >-
   Split one over-bar source file in the loft repo into files that each hold ONE
-  subject, or carve one subject out of a file you must touch so the file-size ratchet
-  (A-file-sizes) passes. Use it for the release checklist's M-file-split row (the pick
-  from `make file-sizes ARGS=--pick`), when a PR fails A-file-sizes, and when asked to
-  "split", "break up" or "carve out" a file. The result is always a PURE MOVE in its own
+  subject, or carve the small subjects out of a file that is mostly one. Use it for the
+  release checklist's M-file-split row (the pick from `make file-sizes ARGS=--pick`,
+  twice a month on the release cadence), and when asked to "split", "break up" or
+  "carve out" a file. File size is never limited per PR — this is release work. The result is always a PURE MOVE in its own
   PR: no signature, behaviour or comment changes. Not for refactoring — a long function
   found on the way is split only if the split is itself a move; otherwise it keeps or
   gains a `#[expect(clippy::too_many_lines, reason = …)]` and the finding becomes an
@@ -22,14 +22,12 @@ where the seams are.
 ## Start from the pick
 
 ```bash
-make file-sizes ARGS="--pick 2"        # this cycle's files, with the seams the script can see
+make file-sizes ARGS="--pick 2"        # this release's files, with the seams the script can see
 make file-sizes ARGS="--all"           # every file over the bar
-python3 scripts/file-sizes.py --ratchet origin/main   # what A-file-sizes will say about the tree
 ```
 
-`--pick`, `--ratchet` and the `A-file-sizes` / `M-file-split` rows arrive with @PLN173
-phases 2 and 4; until then take the file from `--all` (or the owner's choice) and check
-growth with `git diff -M --numstat origin/main`.
+`--pick` and the `M-file-split` row arrive with @PLN173 phases 2 and 4; until then take
+the file from `--all` (or the owner's choice).
 
 Take the top pick (the owner may name another).  **One file per PR.**
 
@@ -39,9 +37,9 @@ Take the top pick (the owner may name another).  **One file per PR.**
 subject, the original keeping the type definition(s), shared private helpers, and a module
 header that lists the parts and what each holds.
 
-**carve** — one subject out of a file a builder must touch anyway.  Same rules, one part.
-Carve, merge, *then* make the change in a separate PR; a move never shares a squash-merge
-with a behaviour change.
+**carve** — the file is mostly one subject with small ones beside it: move the small ones
+out and stop.  Same rules, same pure-move PR.  A move never shares a squash-merge with a
+behaviour change.
 
 ## Find the seams
 
@@ -80,7 +78,7 @@ chapter, not a defect.
 git diff -M --color-moved=dimmed-zebra --stat origin/main    # should read as moves
 git diff -M origin/main | grep -cE '^[+-][^+-]'               # non-move lines: a handful (mod lines, headers) at most
 make ci                                                       # green, both clippy legs
-python3 scripts/file-sizes.py --ratchet origin/main           # the source shrank, no part is over the bar
+make file-sizes ARGS="--all"                                  # the source shrank, no part is over the bar
 ```
 
 If the non-move count is more than the `mod` lines and part headers account for, something

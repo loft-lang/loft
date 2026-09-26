@@ -11,8 +11,11 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 
 - `too_many_lines` applies to **new code**.  A function that cannot reasonably be split
   stays out of it — per function, with a reason.  A whole file never does.
-- The worst files are split **one or two per cycle**, on the release beat, until nothing
-  is left over the bar.  The bar is a ratchet, not a big-bang cleanup.
+- The worst files are split **on the release cadence** (twice a month), into logical parts,
+  until nothing is left over the bar — not a big-bang cleanup.
+- **A PR is not where file size is limited** (owner, 2026-09-26).  A PR is held to the
+  function-length bar (C1–C3); how large a FILE has grown is the release split's question,
+  so no per-PR file gate exists and a fix never has to carve first.
 
 Tracks [@PLN173](https://github.com/loft-lang/plans/issues/173).
 
@@ -35,8 +38,8 @@ Three things let it get there.
    `too_many_lines` refactors in its own commit step — and `src/lib.rs` and `src/main.rs`
    put `clippy::too_many_lines` in the crate-wide `#![allow]`.  That also makes the 54
    per-function `#[allow(clippy::too_many_lines)]` under `src/` dead.
-3. **Nothing stops growth.**  `M-file-sizes` is a report read once per cycle.  A PR can
-   add 400 lines to a 20,000-line file and no gate notices.
+3. **Nothing brings a file back down.**  `M-file-sizes` is a report read once per cycle,
+   and nothing acts on it.
 
 Why it matters more here than in a human-maintained tree: a 20k-line file is roughly 250k
 tokens.  No agent reads it whole — it greps, edits a slice, and never sees the neighbouring
@@ -50,12 +53,12 @@ catch: code that is locally right and globally inconsistent.
 | C1 | `clippy::too_many_lines` fires on every function; no crate-wide allow | `src/lib.rs`, `src/main.rs` | `make ci` (clippy, `-D warnings`) |
 | C2 | A function that cannot reasonably be split carries `#[expect(clippy::too_many_lines, reason = "…")]` with a reason a reader can check | CODE.md § Functions | clippy (`expect` fails when the lint no longer fires, so a stale exemption is removed by the gate, not by memory) |
 | C3 | An exemption whose reason is `inherited` is a debt marker: the split campaign removes it when it touches the file; new code never gets one | CODE.md § Functions | `make clippy-review` (lists live-but-unexplained suppressions; `inherited` counts as unexplained) |
-| F1 | A code file over `CODE_BAR` (1200) may not grow, net, in a PR; a file under it may not cross it | DEVELOPMENT.md gate table | `A-file-sizes` (new; base-relative, like `docs-lint-gate`) |
-| F2 | Each cycle splits the report's top pick, one PR per file, moves only | RELEASE.md § Monthly file split | `M-file-split` (new checklist row, gate class) |
-| F3 | A split PR is a pure move: no signature, behaviour or comment change; `make ci` green; `git diff -M --color-moved` reads as moves | `.claude/skills/split-file` | the skill's own check + PR review |
-| F4 | The report lists files by split value, not by size; `impl` blocks are transparent | `scripts/file-sizes.py --pick` | `M-file-sizes` (existing report row, now also the payoff check on last cycle's pick) |
+| F1 | Each release splits the report's top pick, one PR per file, moves only | RELEASE.md § File split per release | `M-file-split` (new checklist row, gate class) |
+| F2 | A split PR is a pure move: no signature, behaviour or comment change; `make ci` green; `git diff -M --color-moved` reads as moves | `.claude/skills/split-file` | the skill's own check + PR review |
+| F3 | The report lists files by split value, not by size; `impl` blocks are transparent | `scripts/file-sizes.py --pick` | `M-file-sizes` (existing report row, now also the payoff check on last cycle's pick) |
 
-C1–C3 are the "new code" half.  F1 stops the bleeding.  F2–F4 are the burn-down.
+C1–C3 are the "new code" half, and the only part a PR is held to.  F1–F3 are the
+burn-down, on the release beat.
 
 ## Phase 1 — functions (one PR, mechanical)
 
@@ -96,23 +99,8 @@ every `inherited` exemption and the count is the campaign's function-side scoreb
    (which types each fn touches, which fns call which — a first grouping the skill
    refines).  `--pick` writes nothing; the `M-file-split` tick records the pick's commit
    in `releases/<cycle>/`, the same way every tick records its commit.
-4. **`--ratchet`** compares the working tree against a base ref: exit 1 if any code file
-   over `CODE_BAR` has more lines than at base, or any file crossed the bar.  Moved text
-   is not growth: the check runs on `git diff --numstat -M` so a split PR that adds three
-   new files and shrinks one passes.  This is `A-file-sizes`, wired next to
-   `docs-lint-gate` in ci.yml and in `make ship`.
-
-**The knob the owner may want to turn:** F1 as written allows zero net growth of an
-over-bar file.  A five-line bug fix in `scopes.rs` then needs to carve five lines out —
-the intended pressure, but blunt.  The alternative is a small allowance (say 40 lines net
-per PR) which keeps fixes cheap and still bounds drift to a few hundred lines per cycle,
-which one split PR removes many times over.  Default in this plan: **zero**, because an
-allowance is a number in prose that reads as a measurement, and because the skill's
-*carve* mode (below) makes the five-line case a two-minute job.
-
-**Falsified when:** a PR adding 10 lines to `scopes.rs` fails; the same PR that also
-moves one 200-line `impl` block to `scopes/lookup.rs` passes; a PR touching only files
-under the bar passes untouched.
+**Falsified when:** `parser/control.rs` stops reading KEEP; the pick on today's tree names
+files of many comparable functions ahead of files that are one long subject.
 
 ## Phase 3 — the doer (one skill, `.claude/skills/split-file`)
 
@@ -122,9 +110,9 @@ has two modes:
 
 - **split** — one file from `--pick`, into `dir/<subject>.rs` per cluster, the original
   keeping the type, the shared helpers and a module header listing the parts.
-- **carve** — one subject out of an over-bar file the builder must touch anyway, so F1
-  passes.  Same rules, smaller scope, same PR as the fix is *not* allowed: carve first,
-  merge, then fix, so the move never mixes with a behaviour change under squash-merge.
+- **carve** — where one cluster is the file and the rest is small: move the small
+  subjects out and stop, because a file that is one long subject is a long chapter, not a
+  defect.  Same rules, same pure-move PR.
 
 Both end in a pure-move PR whose title is `split <file> into N parts` or
 `carve <subject> out of <file>`, with the skill's own move-share check (`git diff -M
@@ -140,22 +128,21 @@ defensible seam otherwise, and a re-split later is cheap because moves are cheap
 
 ## Phase 4 — the beat (RELEASE.md, checklist)
 
-- **`M-file-split`** (gate class, cadence `mid`): this cycle's pick is split and merged;
-  ticked with the PR link and the pick's commit.  Two picks when the previous cycle's
+- **`M-file-split`** (gate class, every release): the release's pick is split and merged;
+  ticked with the PR link and the pick's commit.  Two picks when the previous release's
   landed clean, one otherwise.
 - **`M-file-sizes`** stays a report row and gains the payoff check the bug review already
   does: did last cycle's split land, and did the file it came from stay under its new
   size?  A split whose parts have regrown is a seam chosen wrong; re-open the seam, do not
   add a third part.
-- **`A-file-sizes`** (automatic, `mid pre`): the ratchet, F1.
-- RELEASE.md gets a § *Monthly file split* beside § *Monthly bug review*, same
-  "one cycle, one file, one PR" shape.
+- RELEASE.md gets a § *File split per release* beside § *Monthly bug review*, same
+  "one release, one file, one PR" shape.
 
 ## Horizon
 
-At one or two splits per cycle, the 18 files over 6000 lines are gone in about a year; the
-ratchet means the 70 over 1200 never get worse meanwhile, and every over-bar file touched
-for other reasons loses a subject on the way (carve).  The function side shrinks the
+At one or two splits per release, twice a month, the 18 files over 6000 lines are gone in
+well under a year.  Nothing holds the other files' size between releases; the pick is what
+keeps up, and `M-file-sizes`' payoff check says whether it does.  The function side shrinks the
 `inherited` count on the same beat: a split PR removes the tag from every function it moves
 that it can split on the way, and leaves a real reason on those it cannot.  `make
 clippy-review` and `make file-sizes --all` are the two scoreboards; neither number is
