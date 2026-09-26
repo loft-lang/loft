@@ -13,7 +13,9 @@
 // in-place overwrite of the element (which is NOT a disturbance, so the view follows it) — both
 // stay views.  Every value is worked out by hand in the cell.
 //
-// @falsified-at: <derived after the fix is committed>
+// @falsified-at: a519be4b7 — interpret exit 1 -> 0, interpret 1 assertion failures -> 0; native INERT
+//   (expected for a backend-divergence guard: native was right on both trees)
+// @falsified-by: tests/falsified/1693-a-disturbed-struct-enum-view-is-materialised-on-both-backends.patch — the same channels.
 // CHANNEL: the asserts — on the control tree the interpreter reads the element after the one
 //   bound; native answers on both trees.
 // WITNESS: `removal: 2`.
