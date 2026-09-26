@@ -9262,12 +9262,14 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             let d = &data.definitions[d_nr as usize];
             store_lifetime_guard(&d.code, &d.variables, free_ref_nr, gf_nr, &d.name);
         }
-        let code_ref = data.definitions[d_nr as usize].code.clone();
         let create_stack_nr = data.def_nr("OpCreateStack");
         let mut seq = 0u32;
+        // The body is read and the variables written: two fields of one definition, so
+        // neither needs a copy of the other.
+        let def = &mut data.definitions[d_nr as usize];
         compute_intervals(
-            &code_ref,
-            &mut data.definitions[d_nr as usize].variables,
+            &def.code,
+            &mut def.variables,
             free_text_nr,
             free_ref_nr,
             create_stack_nr,

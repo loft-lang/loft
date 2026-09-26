@@ -15,7 +15,7 @@ invariants, internal phase numbers)?  See
 ## 2026-09
 
 **Compiling does much less work.**  Reading a program in — parsing, checking names and
-scopes — now takes about 45 % fewer instructions and half the memory allocations it did
+scopes — now takes about 47 % fewer instructions and half the memory allocations it did
 before, measured on a 12 800-line program; the answers it produces are byte-for-byte the
 same.  Every program benefits, and the edit loop most.
 

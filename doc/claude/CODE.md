@@ -125,6 +125,15 @@ made it a rule (@PLN166 B4, callgrind over a compile of the 12 826-line front-en
   `crate::lexer::no_file()`, whose `Arc::<str>::default()` is backed by a static and
   allocates nothing — a `LazyLock` would, once, and the allocation ratchet's two-runs-agree
   check reads that one allocation as a count that varies.
+- **A lookup the passes make per node with a LITERAL name is answered by address, not by
+  hash.**  Once the parse is done the definition index does not change again, and the analysis passes ask
+  `data.def_nr("OpCopyRecord")` once per node they visit — 795 such sites, 1.2 M of the 1.7 M
+  lookups per compile of the corpus (B6).  `DefIndex::get_or_std` keeps a direct-mapped memo
+  keyed by the asked `&str`'s address and invalidated by a generation the index bumps on every
+  mutation; a slot also keeps the name's bytes and compares them, so a heap buffer reused at
+  the same address with another name misses rather than answers for the old one.  Reach for
+  the same shape — memo by address, invalidate by generation, verify the bytes — before a
+  cache keyed by the string, which pays the hash the memo exists to skip.
 
 And one shape to recognise: a scan over `definitions` or `def_names` inside a lookup
 (`children_of` walked every definition per call, `has_private_type` every name) is a

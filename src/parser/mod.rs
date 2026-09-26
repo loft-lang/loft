@@ -714,10 +714,10 @@ pub struct Parser {
     /// for `__tret` retbuf promotion (a frame-local text return with no buffer). Read
     /// by `do_tret_bind`'s gate on the THIRD pass so the promotion is forward-ref-safe:
     /// the attr is decided before the pass, so every caller re-lowers with the buffer.
-    force_tret: std::collections::HashSet<u32>,
+    force_tret: crate::fxhash::FxHashSet<u32>,
     /// `@FR-R-WorkBuffer` — every definition given a work-buffer parameter, kept across
     /// `after_pass2` runs so a caller built later (a rebuilt specialisation) is patched too.
-    pub(crate) work_buffer_promoted: std::collections::HashSet<u32>,
+    pub(crate) work_buffer_promoted: crate::fxhash::FxHashSet<u32>,
     /// @PLN167 C3 — some call handed a text field or element to a `&text` parameter, so
     /// `after_pass2` owes the store instances (`store_text.rs`).
     store_text_args: bool,
@@ -1600,8 +1600,8 @@ impl Parser {
             first_pass: true,
             limit_refused: false,
             ambiguity_reported: std::collections::HashSet::new(),
-            force_tret: std::collections::HashSet::new(),
-            work_buffer_promoted: std::collections::HashSet::new(),
+            force_tret: crate::fxhash::FxHashSet::default(),
+            work_buffer_promoted: crate::fxhash::FxHashSet::default(),
             store_text_args: false,
             par_worker_defs: std::collections::HashSet::new(),
             par_deferred: Vec::new(),
@@ -10385,7 +10385,7 @@ impl Parser {
         // That is the "Too few parameters on t_6Sqlite_dump (got 4, need 5)" ICE, and a
         // lookup-retargeted call reaches it without ever having been in `remap`. So the
         // set is every call this body makes that is short of its target's arity.
-        let mut short_calls: std::collections::HashSet<u32> = std::collections::HashSet::new();
+        let mut short_calls: crate::fxhash::FxHashSet<u32> = crate::fxhash::FxHashSet::default();
         self.data.def(d_nr).code.walk(&mut |v| {
             if let Value::Call(d, args) = v {
                 let target = remap.get(d).copied().unwrap_or(*d);

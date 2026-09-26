@@ -2559,24 +2559,37 @@ removed, the edit cell answers `sum=30` for a program that says `sum=100`.
 | **d** `scopes` / `use_analysis` / lexer sets on Fx; `peek_token` compares in place | 1.5 M `u16`, 1.0 M `u32` and 0.9 M `String` SipHashes; a `String` built per operator comparison (684 206 per compile) | −17.9 % | 3 895 M |
 | **e** `has_private_type` scans definitions cheapest-field-first | 1 676 calls × a walk over every name | −0.6 % | 3 870 M |
 | **f** (B5) `Position.file` is an `Arc<str>` | the file name cloned per token and per operator: 1.4 M `String` copies of a name that never changes within a file | −12.2 % | 3 396 M |
+| **g** (B6) the definition index is keyed by NAME, `DefIndex` | `def_nr` probed a `(name, source)` table twice for every stdlib name a program uses — 1.67 M lookups per compile, 8.2 % of it; one hash now reads the bound sources off an inline list | −1.8 % | 3 335 M |
+| **h** (B6) the bytecode tables on Fx | `State.stack` / `vars` / `types` / `calls` and `Parser.force_tret` were `std`-hashed: 138 696 inserts and 186 356 rehash probes per compile through SipHash (the 1.5 % step f attributed to `patch_tret_callers` / `parse_type_inner` was these — those two only ASKED a `std` set) | −1.3 % | 3 290 M |
+| **i** (B6) `def_nr` remembers by ADDRESS | the passes after the parse ask `data.def_nr("OpCopyRecord")` once per node they visit — 163 distinct literals over 795 sites, 1.2 M of the 1.67 M lookups — while the index does not change again; a direct-mapped memo keyed by the literal's address answers without hashing or probing, and keeps the bytes to refuse a reused buffer.  Its slots are lock-free (`Data` is shared across threads read-only), which costs 21 M over a `Cell` — the figure is the lock-free form | −1.9 % | 3 228 M |
+| **j** (B6) `compute_intervals` reads the body in place | `scopes::check` cloned every function body (18 670 per compile) only to hold it beside a `&mut` of the same definition's variables — two fields of one struct need no copy | −0.9 % | 3 198 M |
 
-**Total: −43.3 % instructions on the large compile** (−35.3 % through step e); the front-end
-allocation ratchet re-pinned tiny **705 011 → 335 537** (−52 %) and medium **2 551 492 →
-1 172 738** (−54 %).
+**Total: −46.6 % instructions on the large compile** (−43.3 % through step f, −35.3 % through
+step e); the front-end allocation ratchet re-pinned tiny **705 011 → 333 674** and medium
+**2 551 492 → 1 150 895** (release; the debug profile's pins beside them).
 Each step's falsifier was the same: `--interpret --dump` of every file under `tests/scripts`
 and `tests/docs` (1 860) byte-identical against the pre-change binary, the ratchet never
-growing, and the unit tests of the index (`children_index_tests`) and the hasher.
+growing, and the unit tests of the index (`children_index_tests`, `def_index_tests`) and the
+hasher.
 
-**Not a phase, the next lead — recorded with its numbers.**  After step f the profile's top
-symbol is `Data::def_nr` at 8.2 % (3.0 M calls; the own-source-miss → stdlib-fallback path
-probes twice), the allocator is ~17 % of what remains (3.6 M allocations on the large compile,
-`Value::clone` and its drop glue 2.2 % + 1.6 % — the whole-body clones in `parse_function` /
-`scopes::check`), and 1.5 % is SipHash on tables B4 did not reach: a `HashMap<u32, u16>` with
-`std`'s hasher filled from `patch_tret_callers` and `parse_type_inner` (138 696 inserts,
-403 743 `i32` hashes) and the `&str`-keyed ones (381 388 hashes).  Step f's own lesson: the
-ratchet demands the same count from two runs in one process, and a `LazyLock` that mints a
-shared value once fails that by exactly one — reach for a static-backed default
-(`Arc::<str>::default()`) rather than a lazily minted one.
+**Not a phase, the next lead — recorded with its numbers.**  After step j the allocator is
+the top of the profile (~17 %, 3.6 M allocations on the large compile), and the whole-body
+`Value::clone`s are where they come from: `parse_function` clones each body once for five
+lints (20 028 per compile, 2.2 % with its drop glue), `scopes::check` once as the working copy
+its rewrites edit (`orig_code`), `use_analysis::collect_defs` every `Set`'s right-hand side
+into `Defs.rhs` (86 060, 1.1 %).  None is a split borrow like step j: the parse-time lend was
+tried and withdrawn, because `warn_redundant_amp` reads a CALLEE's body through the
+definition table and a self-recursive call would read the lent-out `Null` (the interprocedural
+`callee_param_reassigns`); and `Defs.rhs` as `Vec<&Value>` needs a `&'s Data` threaded through
+`Scopes::scan_set` and its callers, which the memo in `Scopes.fn_defs` does not have.  The
+remaining `def_nr` cost is the memo's misses: `mangle_method` builds a `String` per method
+question (28 872 `format!`, 0.9 %), so those never hit.  Lessons this arc paid for: a binary
+copied OUT of `target/` has the program cache ON (`running_a_dev_build` is a path test), so a
+callgrind run without `LOFT_NO_CACHE=1` measures a cache write — +331 M Ir, 10 % of the
+compile, which read as a regression of a 19-line commit until both binaries were re-run with
+the cache off; and step f's: the ratchet demands the same count from two runs in one process,
+and a `LazyLock` that mints a shared value once fails that by exactly one — reach for a
+static-backed default (`Arc::<str>::default()`) rather than a lazily minted one.
 
 ## Design: W1 — wasm string representation
 

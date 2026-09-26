@@ -13213,7 +13213,7 @@ impl Parser {
     pub(crate) fn patch_tret_call(
         &mut self,
         node: &mut Value,
-        force: &std::collections::HashSet<u32>,
+        force: &crate::fxhash::FxHashSet<u32>,
     ) {
         match node {
             Value::Call(d, args) => {

@@ -1318,7 +1318,7 @@ fn encode_const(out: &mut Vec<u8>, a: &crate::data::Attribute, val: &str) -> Res
 pub fn reassemble_function(
     dump: &str,
     data: &Data,
-    library_names: &std::collections::HashMap<String, u16>,
+    library_names: &crate::fxhash::FxHashMap<String, u16>,
 ) -> Result<Vec<u8>, String> {
     use std::collections::BTreeMap;
     let mut out: Vec<u8> = Vec::new();
