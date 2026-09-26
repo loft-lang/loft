@@ -1943,6 +1943,18 @@ use a separate collection or add after the loop"
             }
             return;
         }
+        // loft#1690 — a copy written into a branch ARM allocates on pass 2 whatever the local
+        // holds (`vec_copy_needs_db`'s `in_arm` leg), so its `_elm_N` has to be minted on pass
+        // 1 as well, or every later element temp in the function shifts by one between the
+        // passes and one of them meets a different element type: `v = x ?? mk(i)` sunk into
+        // its arms inside a loop, then `u += [[7]]` and a nested push, was refused with
+        // "Variable '_elm_3' cannot change type …" — an internal name, on a valid program, on
+        // both backends.  Only the `in_arm` leg is mirrored: it is the one that answers the
+        // same on both passes, where the plain bind's own allocation test does not (it asks
+        // whether a `__vdb` already exists, which pass 1 is what creates).
+        if in_arm && self.first_pass {
+            self.unique_elm_var(lhs_parent_tp, &elm_tp_clone, var_nr);
+        }
         if !self.first_pass {
             // Break the alias.  The standard type-inference copied the RHS
             // var's store dep onto v (making v *borrow* rhs's storage — the
@@ -3726,6 +3738,37 @@ use a separate collection or add after the loop"
                     }
                 }
                 members.push(m);
+            }
+            *code = Value::Tuple(members);
+            s_type = Type::Tuple(types);
+        } else if op == "="
+            && !self.amp_pending
+            && matches!(to, Value::Var(_))
+            && matches!(code.unspan(), Value::Tuple(_))
+            && let Type::Tuple(elems) = s_type.clone()
+            && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
+        {
+            // loft#1689 — the same bind with a tuple-typed FIELD or ELEMENT as its source:
+            // `t = k.p` reads the field as the tuple of its member reads
+            // (`(OpGetInt(k, 8), OpGetField(k, 16, …))`), so it never matched the `Var` arm
+            // above and bound the record's own members — a vector member was a second name
+            // for the field's store and a text member a borrow of the record, on both
+            // backends: replacing the record, rewriting the field or removing the element
+            // showed through `t`, and writing a member through the record panicked.  Each
+            // member takes `@FR-T-Cons`'s copy, which is idempotent on a literal (its members
+            // were copied, or are fresh, when it was parsed).  A COPY, not the `(H-Move)`
+            // above: the record keeps its members.
+            let mut types = elems.clone();
+            let mut members = match code.unspan_mut() {
+                Value::Tuple(ms) => std::mem::take(ms),
+                _ => Vec::new(),
+            };
+            for (i, t) in elems.iter().enumerate() {
+                if let Some(m) = members.get_mut(i)
+                    && let Some(owned) = self.tuple_member_owned_copy(m, t)
+                {
+                    types[i] = owned;
+                }
             }
             *code = Value::Tuple(members);
             s_type = Type::Tuple(types);

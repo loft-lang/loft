@@ -5632,6 +5632,37 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// a linked group.  Answered for a field READ (`OpGetField(base, pos, content)`) alone;
     /// `None` for every other spelling, which is what keeps both callers on the path they
     /// already have.
+    /// Does the field access `val` (`OpGetField(base, pos, …)`) land on a FIELD of the record
+    /// the field form would address, rather than inside one?  The owner is the one
+    /// [`Self::new_record_field_op`] uses — [`Self::field_owner_and_offset`]'s, else the
+    /// parent's key owner — and a position no field of it declares (a tuple member's, which
+    /// is the field's offset plus the member's) answers `false`.  On pass 1 the layout is not
+    /// known yet and every access answers `true`, the form it always took there.
+    fn field_access_names_a_field(&self, val: &Value, parent_tp: &Type) -> bool {
+        let Value::Call(_, ps) = val.unspan() else {
+            return true;
+        };
+        let Some(Value::Int(pos)) = ps.get(1).map(Value::unspan) else {
+            return true;
+        };
+        let owner = self.field_owner_and_offset(val, parent_tp).map_or_else(
+            || {
+                self.database
+                    .key_owner(self.data.def(self.data.type_def_nr(parent_tp)).known_type())
+            },
+            |(owner, _)| owner,
+        );
+        if owner == u16::MAX || self.first_pass {
+            return true;
+        }
+        match &self.database.types[owner as usize].parts {
+            crate::parser::Parts::Struct(fields) | crate::parser::Parts::EnumValue(_, fields) => {
+                fields.iter().any(|f| i32::from(f.position) == *pos)
+            }
+            _ => true,
+        }
+    }
+
     fn field_owner_and_offset(&self, val: &Value, parent_tp: &Type) -> Option<(u16, u16)> {
         let Value::Call(_, ps) = val.unspan() else {
             return None;
@@ -5900,7 +5931,17 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         };
         // Only a struct field reached directly — not through an index, not through a
         // capture — can use the field-numbered form.
-        let field_form = is_field && vector_elem_target.is_none() && cap_target.is_none();
+        // …and only when the field access NAMES a field of its owner.  A vector that is a
+        // MEMBER of a tuple-typed field (`k.p.1`) is read as `OpGetField(k, <field + member
+        // offset>, …)`, an offset no field of `K` has, and `Stores::field_nr` answers `0` on a
+        // miss — so the field form appended into field 0 of the record: "Cannot add to
+        // none-structure 'integer'" on both backends for `k.p.1 = [9]` and `k.p.1 += [9]`
+        // (loft#1689).  Such a target takes the plain form, whose container is the field
+        // access itself — the vector.
+        let field_form = is_field
+            && vector_elem_target.is_none()
+            && cap_target.is_none()
+            && self.field_access_names_a_field(val, parent_tp);
         // @PLN157 § V-m — the vector reference a fused push addresses.  The plain form's
         // `container` IS the vector; the field form addresses the vector through its parent
         // record and field number, which `record_new` may REDIRECT (a `__nullable<S>`
@@ -6488,6 +6529,36 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     pub(crate) fn tuple_member_owned_copy(&mut self, val: &mut Value, tp: &Type) -> Option<Type> {
         if self.first_pass {
             return None;
+        }
+        // `@FR-T-Cons`'s TEXT leg.  On the interpreter a tuple's text member is a borrowed
+        // string, and its type records the place it reads out of (`text["s"]`, `text["k"]`):
+        // a text local, a struct field, a `vector<text>` element.  Left that way the member
+        // FOLLOWED its place — `t = (s, 1); s = "z"` read `z`, a record replaced or an element
+        // removed read the new text or `null` — while `--native`, which holds a `String`,
+        // answered the value at construction (loft#1689).  The copy is the one a format string
+        // already gets: the text is written into a frame-owned work text and the member
+        // borrows THAT, so it depends on nothing the program can reach.  Keyed on the TYPE's
+        // deps, not on the read's spelling, because a text place is read by five different
+        // ops.  A member backed by a work text (a format string, an earlier copy) or read off
+        // a parameter (`@FR-B-Ref-Alias`, as for every heap kind below) is left alone.
+        if let Type::Text(deps) = tp.base() {
+            let borrows_a_place = deps.iter().any(|&d| {
+                (d as usize) < self.vars.count() as usize
+                    && !self.vars.work_texts().contains(&d)
+                    && !self.vars.is_argument(d)
+            });
+            if !borrows_a_place {
+                return None;
+            }
+            let w = self.vars.work_text_p2(&mut self.lexer);
+            let src = std::mem::replace(val.unspan_mut(), Value::Null);
+            let owned = Type::Text(Deps::none()).depending(w);
+            *val.unspan_mut() = crate::data::v_block(
+                vec![v_set(w, src), Value::Var(w)],
+                owned.clone(),
+                "tuple_member_copy",
+            );
+            return Some(owned);
         }
         // `@FR-T-Cons`: a heap element is COPIED into the tuple.  The source is a heap LOCAL,
         // or a member read off a tuple local — the whole-tuple bind and the destructure lower
