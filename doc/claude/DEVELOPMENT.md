@@ -393,7 +393,13 @@ such a failure to the source that caused it instead of to the whole join.
 **The gate is not the whole verification of a join.**  `make ci` arms neither the
 `LOFT_POISON` / `LOFT_VERIFY_STACK` sweeps ([CI_BUDGET.md](CI_BUDGET.md) — a minute each on
 this box) nor the shipped libraries (`scripts/revalidate_libs_local.sh`, below).  A join of
-store-lifetime and codegen work is exactly the change class both cover.
+store-lifetime and codegen work is exactly the change class both cover.  Nor does it build the
+debug-assertions variant, where a `cfg(debug_assertions)` item that only one side's types reach
+fails to compile (`RUSTFLAGS='-C debug-assertions=on' cargo build --release --target-dir
+target/dbgassert --lib`), or run `scripts/feature_coverage.sh --check` and
+`make optional-ratchet`.  And a source's NEW commits, taken after a join that passed the gate,
+are a new join: a second batch checked by build, ratchet and bundle stamp alone carried four
+defects into PR #1688 that only the union had — six gates red through one test.
 
 ### Sprint branch naming
 
