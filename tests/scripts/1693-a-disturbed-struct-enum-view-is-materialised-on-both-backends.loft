@@ -1,0 +1,68 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1693 (`@FR-H-Materialise`, `@FR-B-View`, `@FR-B-Disturb`) — A DISTURBED STRUCT-ENUM VIEW
+// IS MATERIALISED ON BOTH BACKENDS.  An element bound as a view (`c = v[0]`) and then disturbed —
+// a removal, a growth, a reassignment of the container — takes the copy step at the bind, and
+// the author is told.  The interpreter's materialise matched a struct `Reference` only, so a
+// struct-ENUM view kept the interior pointer: after a removal it read the NEXT element, after a
+// growth `null`, while `--native` copied, and the advice told the author a copy had been made.
+// The interpreter now asks `heap_def_nr()`, native's own test.
+//
+// The controls are the other half of `(B-Disturb)`: a view read before the disturbance, and an
+// in-place overwrite of the element (which is NOT a disturbance, so the view follows it) — both
+// stay views.  Every value is worked out by hand in the cell.
+//
+// @falsified-at: <derived after the fix is committed>
+// CHANNEL: the asserts — on the control tree the interpreter reads the element after the one
+//   bound; native answers on both trees.
+// WITNESS: `removal: 2`.
+// HOLDS: every cell on --native on both trees; the controls on both backends.
+
+enum E { A { n: integer }, B { n: integer } }
+enum Sh { Circle { r: integer, tag: text }, Poly { pts: vector<integer>, tag: text }, Empty { z: integer } }
+struct K { id: integer, e: E }
+struct W { es: vector<E> }
+
+fn val(e: E) -> integer { match e { A { n } => n, B { n } => n + 100 } }
+fn area(s: Sh) -> integer { match s { Circle { r } => r * r, Poly { pts } => len(pts), Empty { z } => z } }
+
+fn main() {
+  v1: vector<E> = [A { n: 1 }, B { n: 2 }];
+  c1 = v1[0];
+  v1.remove(0);
+  assert(c1.n == 1 && val(c1) == 1, "removal: {c1.n}");
+  v2: vector<Sh> = [Circle { r: 3, tag: "c" }];
+  c2 = v2[0];
+  for i in 0..40 { v2 += [Empty { z: i }]; }
+  assert(area(c2) == 9 && len(v2) == 41, "growth: {area(c2)}");
+  v3: vector<Sh> = [Poly { pts: [1, 2, 3], tag: "p" }, Empty { z: 7 }];
+  c3 = v3[0];
+  v3.remove(0);
+  assert(area(c3) == 3, "a heap payload through a removal: {area(c3)}");
+  // the container reassigned while the view is live
+  v4: vector<E> = [B { n: 5 }];
+  c4 = v4[0];
+  v4 = [A { n: 9 }];
+  assert(val(c4) == 105, "the container reassigned: {val(c4)}");
+  // a vector field of a record, removed from
+  w = W { es: [A { n: 3 }, A { n: 4 }] };
+  c5 = w.es[0];
+  w.es.remove(0);
+  assert(c5.n == 3, "a vector field: {c5.n}");
+  // a rebind in a loop takes the copy each time the container is disturbed
+  v6: vector<E> = [A { n: 10 }, A { n: 20 }, A { n: 30 }];
+  s6 = 0;
+  for i in 0..2 { c6 = v6[0]; v6.remove(0); s6 += c6.n; }
+  assert(s6 == 30 && len(v6) == 1, "a rebind per pass: {s6}");
+  // controls: read before the disturbance, and an in-place overwrite (not a disturbance)
+  v7: vector<E> = [A { n: 1 }, B { n: 2 }];
+  c7 = v7[0];
+  r7 = val(c7);
+  v7.remove(0);
+  v8: vector<E> = [A { n: 1 }];
+  c8 = v8[0];
+  v8[0] = B { n: 6 };
+  assert(r7 == 1 && val(c8) == 106, "controls: {r7} {val(c8)}");
+  println("a disturbed struct-enum view is materialised on both backends: every cell holds");
+}

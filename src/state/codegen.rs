@@ -3098,7 +3098,8 @@ impl State {
                 // from the FINAL dep list, which its per-`Set` witness cannot follow, so such
                 // a local keeps every projection an alias on both backends.
                 if owned_ref
-                    && let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
+                    // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
+                    && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
                     && !stash_old_for_post_free
                     && crate::generation::container_element_base(stack.data, value).is_some()
                 {
@@ -3294,7 +3295,13 @@ impl State {
             // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
             // through `c2`, loft#1319).
             self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
-        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
+        } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
+            // loft#1693 — `heap_def_nr`, native's own test (`dispatch.rs`), so a struct-ENUM
+            // view materialises as a struct view does.  Matched as `Type::Reference` alone, a
+            // struct-enum element bound as a view and disturbed (`c = v[0]; v.remove(0)`)
+            // kept the interior pointer on the interpreter — it read the NEXT element after a
+            // removal and `null` after a growth — while `--native` copied, and the
+            // `(H-Materialise)` advice told the author a copy had been made.
             // @FR-O-Proxy asks copy — whether to MATERIALISE an element read into a store `v`
             // owns rather than bind the interior pointer.  The materialise is what PREVENTS
             // the container-wide free described below; it emits no free of its own.
