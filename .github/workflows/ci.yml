@@ -703,11 +703,25 @@ jobs:
       # past the duration gate's 300 s.  Built here alone it is ~1 min; this is the step
       # `make ci` runs before its parallel section (loft#1238).  Non-fatal: a test that finds
       # no fresh rlib still builds one itself, it only pays for it.
-      - name: Warm loft's --html runtime rlib and the corpus's package cdylibs
+      #
+      # The fixture libraries under tests/fixtures/libs are warmed the same way, through loft:
+      # a plain `cargo build` in their `native/` is not reused (loft stamps the cdylib it
+      # accepts, and rebuilt an unstamped one in 19 s, 4 CPU-min), and `--prebuild-natives`
+      # covers installed registry packages only.  Unwarmed, `html_fonts`' refusal test waited
+      # 157 s on the lock while another test built the graphics fixture.  A one-line
+      # `use <lib>;` program through `--check` builds and stamps each (then 0.1 s).
+      - name: Warm loft's --html runtime rlib and the tests' package cdylibs
         shell: bash
         run: |
           ./target/release/loft cache warm --from tests \
             || echo "warn: cache warm failed — the first --html test will build the rlib itself"
+          for lib in tests/fixtures/libs/*/; do
+            name=$(basename "$lib")
+            [ -d "$lib/native" ] || continue
+            printf 'use %s;\nfn main() {}\n' "$name" > "$RUNNER_TEMP/warm_$name.loft"
+            ./target/release/loft --lib tests/fixtures/libs --check "$RUNNER_TEMP/warm_$name.loft" \
+              || echo "warn: warming the $name fixture failed — its first test will build it"
+          done
 
       # graphics_gold tests skip on CI now that lib/graphics is extracted
       # — the gold-image comparison runs against the libloft_graphics_native.so
