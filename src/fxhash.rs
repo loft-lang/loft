@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I90 — Shared utilities & data structures
 
 //! A fast, non-cryptographic hasher for the compiler's own tables.
 //!

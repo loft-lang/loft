@@ -13826,7 +13826,7 @@ impl Parser {
     /// `(integer?, integer)` (`@FR-T-Chk`, `@FR-I-Join`) exactly as the reversed order
     /// always has.
     fn tuple_has_null_member(tp: &Type) -> bool {
-        matches!(tp.base(), Type::Tuple(elems) if elems.iter().any(|e| matches!(e, Type::Null)))
+        matches!(tp.base(), Type::Tuple(elems) if elems.iter().any(|e| matches!(e.base(), Type::Null)))
     }
 
     /// loft#1682 — the ELEMENT-WISE join of two tuple arm types: `null ⊔ τ = τ?`
@@ -13843,17 +13843,22 @@ impl Parser {
         }
         let mut out = Vec::with_capacity(ea.len());
         for (x, y) in ea.iter().zip(eb.iter()) {
-            let j = match (x, y) {
+            // The null tests peel (`@FR-N-Shape`); the arms below keep the members as written,
+            // so a join answers with the spelling the arm gave it.
+            let j = match (x.base(), y.base()) {
                 (Type::Null, Type::Null) => Type::Null,
-                (Type::Null, t) | (t, Type::Null) => Type::optional(t.clone()),
-                // The member test is the arms' own (`match_arm_types_unify`), not equality:
-                // a payload binding's `integer` and a literal's carry different specs and
-                // are one type to the join, which keeps the first arm's spelling as the
-                // whole-arm join does.
-                (x, y) if x == y || match_arm_types_unify(x, y) => x.clone(),
-                (x, y) => match self.variant_parent_enum(x) {
-                    Some(enum_tp) if self.joins_to_enum(&enum_tp, x, y) => enum_tp,
-                    _ => return None,
+                (Type::Null, _) => Type::optional(y.clone()),
+                (_, Type::Null) => Type::optional(x.clone()),
+                _ => match (x, y) {
+                    // The member test is the arms' own (`match_arm_types_unify`), not equality:
+                    // a payload binding's `integer` and a literal's carry different specs and
+                    // are one type to the join, which keeps the first arm's spelling as the
+                    // whole-arm join does.
+                    (x, y) if x == y || match_arm_types_unify(x, y) => x.clone(),
+                    (x, y) => match self.variant_parent_enum(x) {
+                        Some(enum_tp) if self.joins_to_enum(&enum_tp, x, y) => enum_tp,
+                        _ => return None,
+                    },
                 },
             };
             out.push(j);

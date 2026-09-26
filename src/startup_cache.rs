@@ -855,18 +855,29 @@ mod ncrate_manifest_tests {
         );
         let manifest = dir.join("m.manifest");
         let sig = crate::cache::build_signature();
+        // Each registration sits where the manifest reader expects it: the library headers
+        // before the required `actx` line, the auto-native and wasm-bridge ones after it.
         for (header, pure) in [
             ("", true),
             ("ncrate loft-foo /pkgs/foo\n", false),
             ("nlib loft_foo /pkgs/foo\n", false),
             ("plib foo worker /pkgs/foo\n", false),
+            ("alib /pkgs/foo/native-auto/libfoo.so\n", false),
             ("wbroute n_x foo bridge_x\n", false),
             ("wbpkg foo /pkgs/foo\n", false),
             ("wbhostjs /pkgs/foo/host.js\n", false),
         ] {
+            let after_actx = ["alib ", "wbroute ", "wbpkg ", "wbhostjs "]
+                .iter()
+                .any(|p| header.starts_with(p));
+            let (before, after) = if after_actx {
+                ("", header)
+            } else {
+                (header, "")
+            };
             std::fs::write(
                 &manifest,
-                format!("sig {sig}\nstdk k\n{header}{source_line}\n"),
+                format!("sig {sig}\nstdk k\n{before}actx c\n{after}{source_line}\n"),
             )
             .unwrap();
             let state = manifest_state(&manifest, "k")

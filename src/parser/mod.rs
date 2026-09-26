@@ -18501,7 +18501,7 @@ impl Parser {
         );
     }
 
-    /// @PLN143 arc C1 — a script falls back to the newest version already in the cache
+    /// A script falls back to the newest version already in the cache
     /// that the declaration governing it allows.
     ///
     /// The failure path this exists for: offline (or a registry that cannot be reached),

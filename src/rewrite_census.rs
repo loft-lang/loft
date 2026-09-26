@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @I68 — Native Rust generator
 //! Where each rewrite FIRES — the census a tightened condition cannot hide from.
 //!
 //! A rewrite's admission carries conditions, and a bug fix that adds a decline can switch it

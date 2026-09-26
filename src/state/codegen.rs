@@ -6018,7 +6018,7 @@ fn is_divergent(node: IrNode) -> bool {
 /// free names its witness second, and that one is an ordinary read.
 #[cfg(debug_assertions)]
 fn ir_reads_var(data: &crate::data::Data, value: &Value, v: u16) -> bool {
-    fn walk(value: &Value, v: u16, frees: &std::collections::HashSet<u32>) -> bool {
+    fn walk(value: &Value, v: u16, frees: &crate::fxhash::FxHashSet<u32>) -> bool {
         // The hand-rolled predecessor of this walk had no `Span` arm, so a Span-wrapped
         // self-reference escaped the assertion entirely.
         if let Value::Span(b) = value {
