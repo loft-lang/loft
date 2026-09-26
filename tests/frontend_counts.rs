@@ -143,6 +143,11 @@ fn write_pins(rows: &[(String, String, u64)]) {
 /// change that made the front end cheaper is never blocked by its own improvement; a
 /// build with no pin (another OS) reports its count and passes until someone pins it.
 ///
+/// The first compile in a process also pays the process's one-time setup, which is no
+/// compile's cost and differs by platform — it was 69 allocations on Windows and one on
+/// macOS, where it read as two runs disagreeing.  So one uncounted run goes first, and the
+/// two counted runs must agree only where a pin is read or written.
+///
 /// Falsified on its own change: one extra `name.to_string()` in `Data::def_nr` failed it with
 /// `tiny: 1077867 → 1400822 (+322955), medium: 3562376 → 4202195 (+639819)` on linux-release —
 /// and measured, by the way, how often the front end looks a name up.
@@ -154,16 +159,24 @@ fn front_end_allocations_do_not_grow() {
     let mut grew = Vec::new();
     for size in ["tiny", "medium"] {
         let src = corpus(size);
+        front_end_allocations(&src, &format!("{size}-warm"));
         let counts: Vec<u64> = (0..2)
             .map(|i| front_end_allocations(&src, &format!("{size}{i}")))
             .collect();
+        let n = counts[0];
+        let at = pins.iter().position(|(k, s, _)| *k == key && s == size);
+        if at.is_none() && !repin {
+            eprintln!(
+                "{key} {size}: {counts:?} allocations over two runs — no pin for this build; \
+                 LOFT_FRONTEND_REPIN=1 records one once the two agree"
+            );
+            continue;
+        }
         assert_eq!(
             counts[0], counts[1],
             "the {size} count differs between two runs in one process — the gate needs an \
              exact count, so find what varies before trusting it"
         );
-        let n = counts[0];
-        let at = pins.iter().position(|(k, s, _)| *k == key && s == size);
         if repin {
             match at {
                 Some(i) => pins[i].2 = n,
@@ -172,10 +185,7 @@ fn front_end_allocations_do_not_grow() {
             continue;
         }
         match at.map(|i| pins[i].2) {
-            None => eprintln!(
-                "{key} {size}: {n} allocations — no pin for this build; \
-                               LOFT_FRONTEND_REPIN=1 records one"
-            ),
+            None => {}
             Some(p) if n > p => grew.push(format!("{size}: {p} → {n} (+{})", n - p)),
             Some(p) if n < p => eprintln!(
                 "{key} {size}: {p} → {n} allocations — it fell; \
