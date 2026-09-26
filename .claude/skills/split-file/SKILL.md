@@ -43,15 +43,17 @@ behaviour change.
 
 ## Find the seams
 
+Where a file splits depends on what it is about, so there is no fixed rule — these are
+heuristics for reading this file's subject, not a procedure:
+
 1. List the fns and what each one touches: the `self` fields it reads, the types in its
    signature, the fns it calls.  `--pick` prints a first grouping; refine it.
 2. A subject is a cluster that reads the same fields and calls each other more than it
    calls out.  Name it by what it does for a caller (`lookup`, `declare`, `lifetime`),
    never by when it was written or which plan added it.
 3. Where a formal doc already names the parts (`formal/rewrites.md` for `hoist.rs`, the
-   grammar for `parser/`), use those names — the docs and the tree should agree.
-4. Seam guidance the owner has set is in this section; follow it before your own:
-   <!-- owner: one line per file, e.g. "src/parser/: by grammar production" -->
+   grammar for `parser/`), those names are usually the right seam — the docs and the tree
+   should agree.
 
 Two or more clusters of comparable size → split.  One cluster is the file and the rest is
 small → carve the small ones out and stop; a file that is one long subject is a long

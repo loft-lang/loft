@@ -119,12 +119,10 @@ Both end in a pure-move PR whose title is `split <file> into N parts` or
 --stat` plus a count of non-move hunks; more than a handful fails the skill) run before
 `make ci`.
 
-Seam guidance the owner can set in the skill in one line each (the agent picks a
-defensible seam otherwise, and a re-split later is cheap because moves are cheap):
-
-- `src/parser/` — by grammar production or by AST node kind?
-- `src/scopes.rs` — by lookup / declaration / lifetime, or by the type the scope holds?
-- `src/generation/hoist.rs` — by rewrite (its formal doc `formal/rewrites.md` already names them).
+**No fixed seam rule** (owner, 2026-09-26): where a file splits depends on what the file is
+about, so the seam is chosen per file, by the subject, at the time of the split.  The skill
+carries heuristics for finding one, not a rule; a seam that proves wrong is re-split, which
+is cheap because moves are cheap.
 
 ## Phase 4 — the beat (RELEASE.md, checklist)
 
