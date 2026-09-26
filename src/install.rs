@@ -361,12 +361,76 @@ pub fn load_index_reporting(opts: &InstallOptions) -> Result<LoadedIndex, String
     load_index_inner(opts, true)
 }
 
+/// The cached index a process has already verified and parsed, and the identity of the
+/// two files it came from (loft#1684).  A program's every `use` of a registry package
+/// asks for the index twice (`auto_install_if_in_catalog`, then `install_one`), so a
+/// program importing graphics — which brings mesh3d and glb — verified the 1.8 MB index's
+/// signature and parsed it six times per RUN, cache hit or not: about half a second of
+/// every launch.  The bytes answer the same on every call while neither file changes, so
+/// the first verified parse serves the rest.
+///
+/// The key is what the answer depends on: both paths, each file's length and nanosecond
+/// mtime (a refresh — this process's own fetch or another's — rewrites them, so it misses),
+/// and `allow_unsigned`, so an index accepted without a signature never serves a caller
+/// that requires one.  Only the CACHED-read branches consult it; a fetch goes to the
+/// network exactly as before.
+#[derive(Clone, PartialEq, Eq)]
+struct IndexMemoKey {
+    idx: PathBuf,
+    sig: PathBuf,
+    idx_stamp: (u64, u128),
+    sig_stamp: (u64, u128),
+    allow_unsigned: bool,
+}
+
+static INDEX_MEMO: std::sync::Mutex<Option<(IndexMemoKey, RegistryIndex)>> =
+    std::sync::Mutex::new(None);
+
+fn file_stamp(p: &Path) -> Option<(u64, u128)> {
+    let meta = std::fs::metadata(p).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    Some((meta.len(), mtime))
+}
+
+fn index_memo_key(idx: &Path, sig: &Path, opts: &InstallOptions) -> Option<IndexMemoKey> {
+    Some(IndexMemoKey {
+        idx: idx.to_path_buf(),
+        sig: sig.to_path_buf(),
+        idx_stamp: file_stamp(idx)?,
+        sig_stamp: file_stamp(sig)?,
+        allow_unsigned: opts.allow_unsigned,
+    })
+}
+
 fn load_index_inner(
     opts: &InstallOptions,
     fallback_on_fetch_failure: bool,
 ) -> Result<LoadedIndex, String> {
     let url = registry_index::registry_url();
     let (idx_path, sig_path, _) = registry_index::index_paths();
+    let fetch = !opts.offline && (opts.refresh || index_stale(&idx_path));
+    // Taken BEFORE the read: a file that changes between the two is stored under the old
+    // stamps, which the next call no longer computes — a miss, never a stale hit.
+    let memo_key = if fetch {
+        None
+    } else {
+        index_memo_key(&idx_path, &sig_path, opts)
+    };
+    if let Some(key) = &memo_key
+        && let Ok(memo) = INDEX_MEMO.lock()
+        && let Some((k, index)) = memo.as_ref()
+        && k == key
+    {
+        return Ok(LoadedIndex {
+            index: index.clone(),
+            stale_fallback: false,
+        });
+    }
     let (content_bytes, stale_fallback): (Vec<u8>, bool) = if opts.offline {
         // @PLN143 — verify here too.  This was the one branch of the four that read the
         // cached index and trusted it unchecked, which put the whole signature gate
@@ -380,7 +444,7 @@ fn load_index_inner(
             ))
         })?;
         (content, false)
-    } else if opts.refresh || index_stale(&idx_path) {
+    } else if fetch {
         match registry_index::fetch_index(&url) {
             Ok(fetched) => {
                 // Verify BEFORE caching.  Writing first and checking after left a
@@ -442,6 +506,11 @@ fn load_index_inner(
     // parse for it; a command that already holds the parsed index is the cheapest
     // place to keep its sidecar current.
     registry_index::refresh_trigger_sidecar(&index, content_bytes.len() as u64);
+    if let Some(key) = memo_key
+        && let Ok(mut memo) = INDEX_MEMO.lock()
+    {
+        *memo = Some((key, index.clone()));
+    }
     Ok(LoadedIndex {
         index,
         stale_fallback,

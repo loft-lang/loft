@@ -8855,7 +8855,13 @@ fn main() {
     // #358 — a warm hit returns the def-table index where user definitions
     // start; the cold path derives it from the post-stdlib def count below.
     let warm_user_start = if program_cache_on && !p.sandbox_is_active() {
-        loft::startup_cache::warm_load_program(&mut p, &abs_file, &default_str, &mut warm_store)
+        loft::startup_cache::warm_load_program(
+            &mut p,
+            &abs_file,
+            &default_str,
+            &loft::startup_cache::native_lib_context(html_out.is_some()),
+            &mut warm_store,
+        )
     } else {
         None
     };
@@ -9133,6 +9139,10 @@ fn main() {
     pending_native.retain(|d| !placed_libs.iter().any(|(_, pkg, _)| pkg == d));
     let mut auto_native_libs: Vec<String> = Vec::new();
     let mut any_dev_interpret = false;
+    // A library whose cdylib built but could not serve every export runs part-interpreted
+    // and says so; a warm load would replay the marks without the notice, so such a run is
+    // not cached.
+    let mut any_partial_native = false;
     // #460 — never auto-native-compile the package that OWNS the entry file: that
     // package is the *script* being run, not a `use`d library, and the model is
     // "libraries compile, scripts interpret".  Its export set is entry-point
@@ -9199,6 +9209,7 @@ fn main() {
                     auto_native_libs.push(so.to_string_lossy().into_owned());
                 }
                 if !probe.complete() {
+                    any_partial_native = true;
                     if native_required {
                         eprintln!(
                             "loft: LOFT_REQUIRE_NATIVE is set, but library '{pkg_dir}' built a \
@@ -9314,7 +9325,6 @@ fn main() {
             loft::lib_placement::dispatch::mark_exports(&mut p.data, pkg_dir);
         }
     }
-    let has_auto_native = !auto_native_libs.is_empty();
     // @PLN11 G2 / M0 — equivalence harness.  With `LOFT_IR_CHECK` set, assert
     // the store-materialised IR is bit-for-bit identical to the native `Data`
     // before any subsystem is rewired to read from the store.  Opt-in (default
@@ -9335,14 +9345,24 @@ fn main() {
     // @PLN11 arc E — on a cold run with the program cache enabled, write the
     // whole-program bundle + drift manifest (post-`scopes::check`, so loaded
     // functions carry `done=true` and the baked free-ops).
-    // Skip the program cache for auto-native programs: the warm-load path restores
-    // the parsed `Data` without re-running manifest detection, so it would have the
-    // `def.native` markings but no rebuilt cdylib to wire (Phase D persists this).
-    // Also skip when a library took the dev-interpret-on-edit path (Step 4): caching
-    // the interpreted image would pin it, so the "rebuild once editing settles" check
-    // would never run on a warm load.
-    if program_cache_on && !program_warm && !has_auto_native && !any_dev_interpret {
-        loft::startup_cache::save_program(&p, &abs_file, &default_str, start_def, &placed_libs);
+    // An auto-native program is cached too (loft#1684): the bundle carries the functions'
+    // native marks, and the manifest the cdylibs they dispatch to plus the context that
+    // marked them, so a warm load wires the same artifacts without re-parsing.  Before it,
+    // every run of a program that `use`d a library with a native build (graphics, and
+    // through it mesh3d and glb) cold-parsed the whole program and its libraries.
+    // Skipped when a library took the dev-interpret-on-edit path (Step 4): caching the
+    // interpreted image would pin it, so the "rebuild once editing settles" check would
+    // never run on a warm load; and when a cdylib served only part of its exports.
+    if program_cache_on && !program_warm && !any_dev_interpret && !any_partial_native {
+        loft::startup_cache::save_program(
+            &p,
+            &abs_file,
+            &default_str,
+            start_def,
+            &placed_libs,
+            &loft::startup_cache::native_lib_context(html_out.is_some()),
+            &auto_native_libs,
+        );
     }
     // @PLAN28 debug/validation hook — when `LOFT_DUMP_SNAPSHOT=<path>` is set,
     // write the parsed `Data` as the startup-cache JSON snapshot and exit.
