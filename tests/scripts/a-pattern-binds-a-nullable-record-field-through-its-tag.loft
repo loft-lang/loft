@@ -13,7 +13,8 @@
 // Controls: the dense `Pt` field and the `vector<Pt>?` field, which were right before.
 // Every value is hand-computed; `p` is 7, 8 wherever it is present.
 //
-// @falsified-at: <derived after the split is committed>
+// @falsified-at: 11b48994e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-pattern-binds-a-nullable-record-field-through-its-tag.patch — the same channels.
 // CHANNEL: the asserts — on the control tree every nullable cell reads `2 7` / present.
 // WITNESS: `match arm: 2 7`.
 // HOLDS: the dense and `vector<Pt>?` controls on both trees.
