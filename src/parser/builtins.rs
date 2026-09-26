@@ -19,7 +19,7 @@ impl Parser {
             } else if self.lexer.peek_token("") {
                 break;
             }
-            let before = self.lexer.peek().position;
+            let before = self.lexer.peek().position.clone();
             let mut dummy = Value::Null;
             self.expression(&mut dummy);
             // Recovery must always make forward progress.  Consume an argument

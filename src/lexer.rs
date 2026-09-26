@@ -727,12 +727,22 @@ impl Lexer {
                     LexResult::new(LexItem::Token(" ".to_string()), pos)
                 }
                 _ => {
-                    let single = String::from(c);
-                    if self.tokens.contains(&single) {
+                    // Both candidates are spelled in a stack buffer and only the token that
+                    // is returned is allocated: this runs per operator character, and the
+                    // two-character candidate is usually not a token (@PLN166).
+                    let mut spelled = [0u8; 8];
+                    let one = c.len_utf8();
+                    c.encode_utf8(&mut spelled);
+                    let single = std::str::from_utf8(&spelled[..one]).unwrap_or_default();
+                    if self.tokens.contains(single) {
+                        let single = single.to_string();
                         self.next_char();
                         if let Some(&d) = self.iter.peek() {
-                            let double = format!("{c}{d}");
-                            if self.tokens.contains(&double) {
+                            d.encode_utf8(&mut spelled[one..]);
+                            let double = std::str::from_utf8(&spelled[..one + d.len_utf8()])
+                                .unwrap_or_default();
+                            if self.tokens.contains(double) {
+                                let double = double.to_string();
                                 self.next_char();
                                 LexResult::new(LexItem::Token(double), pos)
                             } else if self.mode == Mode::Formatting && single == "}" {
@@ -2354,8 +2364,11 @@ impl Lexer {
     }
 
     /// Return the currently found lexer element.
-    pub fn peek(&self) -> LexResult {
-        self.peek.clone()
+    /// The next token, borrowed.  A caller that needs it after moving the lexer on clones
+    /// it (`peek().clone()`), and only then: the parser asks this far more often than it
+    /// keeps the answer (@PLN166).
+    pub fn peek(&self) -> &LexResult {
+        &self.peek
     }
 
     pub fn peek_token(&self, token: &str) -> bool {
@@ -2624,7 +2637,7 @@ impl Lexer {
 
     /// Shorthand test if the current element is a number and skip it if found.
     pub fn has_integer(&mut self) -> Option<u32> {
-        if let LexItem::Integer(n, _) = self.peek().has {
+        if let LexItem::Integer(n, _) = self.peek.has {
             self.cont();
             Some(n)
         } else {
@@ -2634,10 +2647,10 @@ impl Lexer {
 
     /// Shorthand test if the current element is a number and skip it if found.
     pub fn has_long(&mut self) -> Option<u64> {
-        if let LexItem::Long(n) = self.peek().has {
+        if let LexItem::Long(n) = self.peek.has {
             self.cont();
             Some(n)
-        } else if let LexItem::Integer(n, _zero) = self.peek().has {
+        } else if let LexItem::Integer(n, _zero) = self.peek.has {
             self.cont();
             Some(u64::from(n))
         } else {
@@ -2646,7 +2659,7 @@ impl Lexer {
     }
 
     pub fn has_char(&mut self) -> Option<u32> {
-        if let LexItem::Character(c) = self.peek().has {
+        if let LexItem::Character(c) = self.peek.has {
             self.cont();
             Some(c)
         } else {
@@ -2656,7 +2669,8 @@ impl Lexer {
 
     /// Shorthand test if the current element is a constant string and skip it if found.
     pub fn has_cstring(&mut self) -> Option<String> {
-        if let LexItem::CString(n) = self.peek().has {
+        if let LexItem::CString(n) = &self.peek.has {
+            let n = n.clone();
             self.cont();
             Some(n)
         } else {
@@ -2666,7 +2680,7 @@ impl Lexer {
 
     /// Shorthand test if the current element is a float and skip it if found.
     pub fn has_float(&mut self) -> Option<f64> {
-        if let LexItem::Float(n, _) = self.peek().has {
+        if let LexItem::Float(n, _) = self.peek.has {
             self.cont();
             Some(n)
         } else {
@@ -2676,7 +2690,7 @@ impl Lexer {
 
     /// Shorthand test if the current element is a float and skip it if found.
     pub fn has_single(&mut self) -> Option<f32> {
-        if let LexItem::Single(n) = self.peek().has {
+        if let LexItem::Single(n) = self.peek.has {
             self.cont();
             Some(n)
         } else {
@@ -2705,7 +2719,8 @@ impl Lexer {
 
     /// Shorthand test if the current element is an identifier and skip it if found.
     pub fn has_identifier(&mut self) -> Option<String> {
-        if let LexItem::Identifier(n) = self.peek().has {
+        if let LexItem::Identifier(n) = &self.peek.has {
+            let n = n.clone();
             self.cont();
             Some(n)
         } else {
@@ -2717,7 +2732,8 @@ impl Lexer {
     /// Diagnostics about the named entity (an unknown type / variable) must
     /// point here; after consumption the cursor drifts to the next token.
     pub fn has_identifier_pos(&mut self) -> Option<(String, Position)> {
-        if let LexItem::Identifier(n) = self.peek().has {
+        if let LexItem::Identifier(n) = &self.peek.has {
+            let n = n.clone();
             let pos = self.peek.position.clone();
             lex_trace(format_args!(
                 "idpos {n:?} @ {}:{} (cursor {}:{})",

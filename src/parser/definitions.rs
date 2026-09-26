@@ -1940,7 +1940,7 @@ impl Parser {
         // The message does not describe what the word does today: `assert`, `panic`, `sizeof`
         // and `debug_assert` are reserved so the language can give them more meaning later, and
         // an error that spelled out the current one would read as a promise not to.
-        if let crate::lexer::LexItem::Token(word) = self.lexer.peek().has
+        if let crate::lexer::LexItem::Token(word) = self.lexer.peek().has.clone()
             && crate::lexer::is_keyword(&word)
         {
             if matches!(
@@ -2922,10 +2922,17 @@ impl Parser {
                 let fn_name = self.data.definitions[ctx].name();
                 self.vars.debug_dead_store_dump(fn_name, body, &self.data);
             }
-            let body = self.data.definitions[self.context as usize].code().clone();
+            // The lints read the body where it lives: `self.vars`, `self.lexer` and
+            // `self.data` are disjoint fields, and the `&mut self` lints below borrow it
+            // themselves, so no copy of the body is made per function.
+            let ctx = self.context as usize;
             if !is_stub {
-                self.vars
-                    .test_used(&mut self.lexer, &self.data, &body, self.context);
+                self.vars.test_used(
+                    &mut self.lexer,
+                    &self.data,
+                    &self.data.definitions[ctx].code,
+                    self.context,
+                );
             }
             // P246 follow-up — UPPER_CASE locals without `const`
             // violate the "UPPER_CASE means immutable constant"
@@ -2933,7 +2940,8 @@ impl Parser {
             // (after const_param flags are settled).  Takes the body for the
             // same reason `test_used` does: a name the code never mentions is
             // a pass-1 placeholder, not a local of this function.
-            self.vars.warn_upper_case_locals(&mut self.lexer, &body);
+            self.vars
+                .warn_upper_case_locals(&mut self.lexer, &self.data.definitions[ctx].code);
             // Plan-07 phase 4e.2 — undefended fault-site warning.
             // Walks this function's body looking for fault-prone op
             // calls (OpDivInt / OpRemInt / OpGetVector / OpVectorRef /
@@ -2942,13 +2950,13 @@ impl Parser {
             // skip pattern applies.  Silenceable via
             // `LOFT_NO_WARN_RUNTIME=1` env var.  Second-pass only —
             // first pass doesn't have the swap-pass results yet.
-            self.warn_undefended_fault_sites(&body);
+            self.warn_undefended_fault_sites();
             // @PLN87 P3 (W4) — a `&` on a heap struct param that is never reassigned
             // has no effect (field mutation propagates regardless).
-            self.warn_redundant_amp(&body);
+            self.warn_redundant_amp();
             // @PLN46 W3 — auto-infer `#null_safe` from entry guards (after the warn
             // pass, so this fn's flag is set for LATER callers' walks).
-            self.infer_function_null_safe(&body);
+            self.infer_function_null_safe();
             self.warn_function_complexity();
             self.warn_parameter_count();
             self.warn_boolean_flag_cluster();
@@ -3056,7 +3064,7 @@ impl Parser {
                 // closing quote onto the next token, so a diagnostic at the
                 // current cursor would point at the NEXT declaration instead
                 // of the offending annotation.
-                let sym_pos = self.lexer.peek().position;
+                let sym_pos = self.lexer.peek().position.clone();
                 if let Some(sym) = self.lexer.has_cstring() {
                     // Explicit override — for the rare case where the native
                     // symbol differs from the loft fn name (e.g. a

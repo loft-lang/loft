@@ -3561,7 +3561,7 @@ use #count instead"
                 expr = Value::Var(vec_var);
             }
             // Optional parallel clause: par(result=worker(elem), threads)
-            if let LexItem::Identifier(kw) = &self.lexer.peek().has
+            if let LexItem::Identifier(kw) = &self.lexer.peek().has.clone()
                 && kw == "par"
             {
                 self.lexer.has_identifier(); // consume "par"

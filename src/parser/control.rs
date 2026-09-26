@@ -801,7 +801,7 @@ impl Parser {
         // …and the MATH family's sign proofs, on the same block discipline.
         let ms_base = self.math_sign_proven.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
-        let mut last_expr_peek = self.lexer.peek();
+        let mut last_expr_peek = self.lexer.peek().clone();
         // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
         // The fit-failure of a store lives across exactly one statement boundary: offered to
         // the statement that follows, and gone after it.  Held here rather than on the
@@ -862,7 +862,7 @@ impl Parser {
                     // (`token(kw)` below is what consumes it).  So this site names its
                     // position rather than taking `report_pos`'s consumed-source default,
                     // which would put the caret on the line above.
-                    let at = self.lexer.peek();
+                    let at = self.lexer.peek().clone();
                     self.lexer.specific(
                         &at,
                         Level::Error,
@@ -900,7 +900,7 @@ impl Parser {
                     // unreachable statement, which is what the caret should sit on.  So
                     // this site names its position rather than taking `report_pos`'s
                     // consumed-source default, which would point at the terminator above.
-                    let at = self.lexer.peek().position;
+                    let at = self.lexer.peek().position.clone();
                     self.lexer.pos_diagnostic_coded(
                         Level::Warning,
                         &at,
@@ -920,7 +920,7 @@ impl Parser {
                 terminated = None;
             }
             let mut n = Value::Null;
-            last_expr_peek = self.lexer.peek();
+            last_expr_peek = self.lexer.peek().clone();
             // @PLN22 Phase 1 — hint the block's expected enum so a bare
             // value-position variant tail (`fn f() -> Light { Red }`, or an
             // `if c { Red } else { Green }` block) resolves against it.  SAVE and
@@ -5147,7 +5147,7 @@ impl Parser {
         // read as a struct literal here.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
-        let cond_at = self.lexer.peek().position;
+        let cond_at = self.lexer.peek().position.clone();
         let tp = self.expression(&mut test);
         self.in_control_head = outer_head;
         self.warn_constant_condition(&tp, &cond_at, "if");
@@ -7337,7 +7337,7 @@ impl Parser {
     fn skip_match_arm_body(&mut self) {
         let mut depth = 0i32;
         loop {
-            match &self.lexer.peek().has {
+            match &self.lexer.peek().has.clone() {
                 LexItem::None => break,
                 LexItem::Token(t) if depth == 0 && t == "," => {
                     self.lexer.cont();
@@ -7368,7 +7368,7 @@ impl Parser {
         let Some((elm_e_nr, _)) = self.pattern_variant_enum(elm_tp) else {
             return false;
         };
-        if let LexItem::Identifier(pname) = &self.lexer.peek().has {
+        if let LexItem::Identifier(pname) = &self.lexer.peek().has.clone() {
             self.data.variant_of(elm_e_nr, pname) != u32::MAX
         } else {
             false
@@ -8015,7 +8015,7 @@ impl Parser {
             if self.lexer.peek_token("{") {
                 let mut depth = 0i32;
                 loop {
-                    match &self.lexer.peek().has {
+                    match &self.lexer.peek().has.clone() {
                         LexItem::Token(t) if t == "{" => {
                             depth += 1;
                             self.lexer.cont();
@@ -8370,7 +8370,7 @@ impl Parser {
                 // a variant's `{ f, g }` counts as one element).
                 let mut depth = 0i32;
                 loop {
-                    match &self.lexer.peek().has {
+                    match &self.lexer.peek().has.clone() {
                         LexItem::None => break,
                         LexItem::Token(t) if t == "{" || t == "[" || t == "(" => {
                             depth += 1;
@@ -9569,7 +9569,7 @@ impl Parser {
             // consumed just below.  So this site names its position rather than taking
             // `report_pos`'s consumed-source default, which is the `{` of the `match`
             // on the line above.
-            let at = self.lexer.peek();
+            let at = self.lexer.peek().clone();
             self.lexer.specific(
                 &at,
                 Level::Error,
@@ -10041,7 +10041,7 @@ impl Parser {
     /// `peek_scalar_type_capture`.  A variant name (`name : Variant`) has no `n_<...>` fn, so this
     /// stays disjoint from the sub-pattern path.  Returns `(name, fn_def_nr, return_type)`.
     fn peek_subrule_capture(&mut self) -> Option<(String, u32, Type)> {
-        let name = match &self.lexer.peek().has {
+        let name = match &self.lexer.peek().has.clone() {
             LexItem::Identifier(id) if id != "_" => id.clone(),
             _ => return None,
         };
@@ -17291,7 +17291,7 @@ impl Parser {
         if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
             // T1.7: save the position of the first token in the return expression,
             // used to report `not null` violations at the tuple literal site.
-            let expr_start = self.lexer.peek();
+            let expr_start = self.lexer.peek().clone();
             // @P365: a `return [ … ]` vector literal needs the function's return
             // type threaded in as the element-type hint — exactly as an assignment
             // threads its declared LHS type (parse_assign_op → parse_operators).

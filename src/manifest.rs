@@ -414,7 +414,7 @@ fn parse_manifest(content: &str, filename: &str) -> Manifest {
     let mut lex = Lexer::from_str_with(content, filename, cfg);
     let mut section = String::new();
     loop {
-        match lex.peek().has {
+        match lex.peek().has.clone() {
             LexItem::None => break,
             LexItem::Token(t) if t == "[" => section = read_section(&mut lex, &mut m),
             LexItem::Identifier(_) => {
@@ -461,7 +461,7 @@ fn read_section(lex: &mut Lexer, m: &mut Manifest) -> String {
 fn read_dotted(lex: &mut Lexer) -> String {
     let mut name = String::new();
     loop {
-        match lex.peek().has {
+        match lex.peek().has.clone() {
             LexItem::Identifier(s) => {
                 name.push_str(&s);
                 lex.cont();
@@ -481,7 +481,7 @@ fn read_dotted(lex: &mut Lexer) -> String {
 fn read_key(lex: &mut Lexer) -> String {
     let mut key = String::new();
     loop {
-        match lex.peek().has {
+        match lex.peek().has.clone() {
             LexItem::Identifier(s) => {
                 key.push_str(&s);
                 lex.cont();
@@ -499,12 +499,12 @@ fn read_key(lex: &mut Lexer) -> String {
 /// Read a value: a `["…", …]` array, a `"…"` string, a bareword (`true` / bare
 /// value), or a number.  Consumes exactly the value's tokens.
 fn read_value(lex: &mut Lexer) -> MValue {
-    match lex.peek().has {
+    match lex.peek().has.clone() {
         LexItem::Token(ref t) if t == "[" => {
             lex.cont(); // consume `[`
             let mut items = Vec::new();
             loop {
-                match lex.peek().has {
+                match lex.peek().has.clone() {
                     LexItem::None => break,
                     LexItem::Token(ref t) if t == "]" => {
                         lex.cont();
@@ -527,7 +527,7 @@ fn read_value(lex: &mut Lexer) -> MValue {
             lex.cont(); // consume `{`
             let mut raw = String::from("{ ");
             loop {
-                match lex.peek().has {
+                match lex.peek().has.clone() {
                     LexItem::None => break,
                     LexItem::Token(ref t) if t == "}" => {
                         lex.cont();

@@ -988,7 +988,7 @@ fn scan_identifiers(text: &str, file: &str) -> Vec<(String, Reference)> {
     // `restart()` (inside `parse_string`) already advanced to the first token,
     // so peek FIRST, then `cont()`.
     loop {
-        let r = lexer.peek();
+        let r = lexer.peek().clone();
         match r.has {
             LexItem::None => break,
             LexItem::Identifier(name) if !crate::lexer::is_keyword(&name) => {
@@ -2250,7 +2250,7 @@ pub fn semantic_tokens(text: &str, name: &str, stdlib_dir: &str) -> Vec<Semantic
     lexer.parse_string(text, name);
     let mut out = Vec::new();
     loop {
-        let r = lexer.peek();
+        let r = lexer.peek().clone();
         match r.has {
             LexItem::None => break,
             LexItem::Identifier(id) => {
@@ -2393,7 +2393,7 @@ fn enclosing_block(text: &str, line: u32) -> Option<(u32, u32)> {
     let mut block_start = 0u32;
     let mut best = None;
     loop {
-        let r = lexer.peek();
+        let r = lexer.peek().clone();
         match &r.has {
             LexItem::None => break,
             LexItem::Token(t) if t == "{" => {

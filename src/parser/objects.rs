@@ -2388,7 +2388,7 @@ impl Parser {
             self.lexer.has_token("{");
             let mut depth = 1u32;
             while depth > 0 {
-                let before = self.lexer.peek().position;
+                let before = self.lexer.peek().position.clone();
                 if self.lexer.has_token("{") {
                     depth += 1;
                 } else if self.lexer.has_token("}") {
@@ -2466,7 +2466,7 @@ impl Parser {
             self.lexer.has_token("{");
             let mut depth = 1u32;
             while depth > 0 {
-                let before = self.lexer.peek().position;
+                let before = self.lexer.peek().position.clone();
                 if self.lexer.has_token("{") {
                     depth += 1;
                 } else if self.lexer.has_token("}") {
@@ -2865,7 +2865,7 @@ impl Parser {
                     if let LexResult {
                         has: LexItem::Token(t) | LexItem::Identifier(t),
                         position: _pos,
-                    } = self.lexer.peek()
+                    } = self.lexer.peek().clone()
                     {
                         spec_string = t;
                         self.lexer.cont();
@@ -2874,7 +2874,7 @@ impl Parser {
                     if let LexResult {
                         has: LexItem::Token(t),
                         position: _pos,
-                    } = self.lexer.peek()
+                    } = self.lexer.peek().clone()
                     {
                         let st: &str = &t;
                         if !SKIP_TOKEN.contains(&st) {
@@ -2888,7 +2888,7 @@ impl Parser {
                     let LexResult {
                         has: h,
                         position: _pos,
-                    } = self.lexer.peek();
+                    } = self.lexer.peek().clone();
                     if match h {
                         LexItem::Token(st) | LexItem::Identifier(st) => {
                             let s: &str = &st;
@@ -3385,7 +3385,7 @@ impl Parser {
         let mut holes: Vec<i32> = Vec::new();
         let mut found = false;
         loop {
-            match self.lexer.peek().has {
+            match self.lexer.peek().has.clone() {
                 LexItem::None => break,
                 LexItem::CString(_) => {
                     // Past the string, then the parse's own two questions: does a NESTED
@@ -3454,14 +3454,14 @@ impl Parser {
     fn skip_format_spec_ahead(&mut self) {
         self.lexer.set_mode(Mode::Formatting);
         self.lexer.cont();
-        if let LexItem::Token(t) = self.lexer.peek().has
+        if let LexItem::Token(t) = self.lexer.peek().has.clone()
             && !SKIP_TOKEN.contains(&t.as_str())
         {
             self.lexer.cont();
         }
         let mut flags = OUTPUT_DEFAULT;
         self.string_states(&mut flags);
-        let width = match self.lexer.peek().has {
+        let width = match self.lexer.peek().has.clone() {
             LexItem::Token(s) | LexItem::Identifier(s) => {
                 !SKIP_WIDTH.contains(&s.as_str()) && crate::parser::radix_for(&s).is_none()
             }
@@ -3473,7 +3473,7 @@ impl Parser {
         }
         let mut depth: i32 = 0;
         loop {
-            match self.lexer.peek().has {
+            match self.lexer.peek().has.clone() {
                 LexItem::None => return,
                 LexItem::CString(_) if !width => return,
                 _ => {}
@@ -4058,7 +4058,7 @@ impl Parser {
         name: &str,
     ) -> Type {
         let mut reverse = false;
-        if let LexItem::Identifier(rev) = self.lexer.peek().has
+        if let LexItem::Identifier(rev) = self.lexer.peek().has.clone()
             && &rev == "rev"
         {
             self.lexer.has_identifier();

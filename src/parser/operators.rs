@@ -5344,8 +5344,15 @@ impl Parser {
     /// language-internal trusted code (they implement the very
     /// fault-handling primitives the warning is meant to nudge users
     /// toward) and warning on them is noise.
-    pub(crate) fn warn_undefended_fault_sites(&mut self, body: &Value) {
+    pub(crate) fn warn_undefended_fault_sites(&mut self) {
         if self.default {
+            return;
+        }
+        // Under the dense null model every kind the walk can find is retired in
+        // `emit_undefended_warning`, so the walk would report nothing — and it cost 1.6 % of
+        // a compile to find it (@PLN166).  A `FaultKind` that is NOT retired there must drop
+        // this return; `fault_warnings_are_all_retired` fails when the two disagree.
+        if fault_warnings_retired() {
             return;
         }
         if crate::env_once!(
@@ -5364,7 +5371,8 @@ impl Parser {
             .position
             .clone();
         ctx.last_pos = Some(fn_pos);
-        self.walk_for_warnings(body, &mut ctx);
+        let body = &self.data.definitions[self.context as usize].code;
+        Self::walk_for_warnings(&self.data, &mut self.lexer, body, &mut ctx);
     }
 
     /// @PLN87 P3 (W4) — flag a `&` on a HEAP struct parameter that the body never
@@ -5378,7 +5386,7 @@ impl Parser {
     /// by default.  Scalar `&` (always load-bearing) and never-read params (already
     /// covered by `test_used`) are not flagged.  Stdlib exempt; silenceable via
     /// `LOFT_NO_WARN_RUNTIME`.
-    pub(crate) fn warn_redundant_amp(&mut self, body: &Value) {
+    pub(crate) fn warn_redundant_amp(&mut self) {
         if self.default || self.context == u32::MAX {
             return;
         }
@@ -5431,6 +5439,7 @@ impl Parser {
             let mut reassigned = false;
             let mut cache: std::collections::HashMap<u32, Vec<bool>> =
                 std::collections::HashMap::new();
+            let body = &self.data.definitions[self.context as usize].code;
             body.walk(&mut |node| {
                 if matches!(node, Value::Set(v, _) if *v == var) {
                     reassigned = true;
@@ -5479,16 +5488,23 @@ impl Parser {
         }
     }
 
-    fn walk_for_warnings(&mut self, code: &Value, ctx: &mut WarnCtx) {
+    /// The fault-site walk reads the definitions and writes only diagnostics, so it takes
+    /// those two and not the parser: its caller borrows the body out of `data` in place.
+    fn walk_for_warnings(
+        data: &Data,
+        lexer: &mut crate::lexer::Lexer,
+        code: &Value,
+        ctx: &mut WarnCtx,
+    ) {
         match code {
             Value::Span(boxed) => {
                 let saved = ctx.last_pos.clone();
                 ctx.last_pos = Some(boxed.0.clone());
-                self.walk_for_warnings(&boxed.1, ctx);
+                Self::walk_for_warnings(data, lexer, &boxed.1, ctx);
                 ctx.last_pos = saved;
             }
             Value::Call(def_nr, args) => {
-                let name = self.data.def(*def_nr).original_name();
+                let name = data.def(*def_nr).original_name();
                 let kind: Option<FaultKind> = match name.as_str() {
                     "DivInt" | "DivFloat" | "DivSingle" => Some(FaultKind::Div),
                     "RemInt" | "RemFloat" | "RemSingle" => Some(FaultKind::Rem),
@@ -5497,24 +5513,24 @@ impl Parser {
                     _ => None,
                 };
                 if let Some(kind) = kind
-                    && !is_easy_proof(kind, args, ctx, &self.data)
+                    && !is_easy_proof(kind, args, ctx, data)
                 {
-                    self.emit_undefended_warning(kind, ctx);
+                    Self::emit_undefended_warning(lexer, kind, ctx);
                 }
                 // @PLN46 W2 — arguments to a `#null_safe` function tolerate null;
                 // a fault op that IS such an argument is suppressed.  Override the
                 // flag to THIS callee's null-safety so a nested non-null-safe call
                 // resets it (the suppression is direct-argument only).
                 let saved = ctx.arg_to_null_safe_param;
-                ctx.arg_to_null_safe_param = self.data.def(*def_nr).null_safe();
+                ctx.arg_to_null_safe_param = data.def(*def_nr).null_safe();
                 for arg in args {
-                    self.walk_for_warnings(arg, ctx);
+                    Self::walk_for_warnings(data, lexer, arg, ctx);
                 }
                 ctx.arg_to_null_safe_param = saved;
             }
             Value::CallRef(_, args) => {
                 for arg in args {
-                    self.walk_for_warnings(arg, ctx);
+                    Self::walk_for_warnings(data, lexer, arg, ctx);
                 }
             }
             Value::Iter(_, init, step, body) => {
@@ -5523,13 +5539,13 @@ impl Parser {
                 // loop var.  The user-visible loop var is set OUTSIDE
                 // the Iter via `Loop { Set(loop_var, Iter(…)); body }`
                 // — handled by the `Loop` arm's lookahead below.
-                self.walk_for_warnings(init, ctx);
-                self.walk_for_warnings(step, ctx);
-                self.walk_for_warnings(body, ctx);
+                Self::walk_for_warnings(data, lexer, init, ctx);
+                Self::walk_for_warnings(data, lexer, step, ctx);
+                Self::walk_for_warnings(data, lexer, body, ctx);
             }
             Value::Block(b) => {
                 for child in &b.operators {
-                    self.walk_for_warnings(child, ctx);
+                    Self::walk_for_warnings(data, lexer, child, ctx);
                 }
             }
             Value::Loop(b) => {
@@ -5571,47 +5587,47 @@ impl Parser {
                     }
                 }
                 for child in &b.operators {
-                    self.walk_for_warnings(child, ctx);
+                    Self::walk_for_warnings(data, lexer, child, ctx);
                 }
                 for v in loop_vars_added {
                     ctx.iter_vars.remove(&v);
                 }
             }
             Value::If(cond, then_b, else_b) => {
-                self.walk_for_warnings(cond, ctx);
+                Self::walk_for_warnings(data, lexer, cond, ctx);
                 // Skip pattern 5 — recognise `if idx < len(vec) { ... }` and
                 // `if idx < n { ... }` (where `n` is a captured `len(vec)`),
                 // and push (idx_var, vec_var) onto the guarded-pairs stack so
                 // indexing inside `then_b` is treated as safe.  Also walks
                 // AND-conjuncted conditions (`if a<len(u) and b<len(v) { ... }`)
                 // and pushes each qualifying conjunct.
-                let pushed = collect_guard_pairs(cond.unspan(), &self.data, &ctx.len_captures);
+                let pushed = collect_guard_pairs(cond.unspan(), data, &ctx.len_captures);
                 for pair in &pushed {
                     ctx.guarded_pairs.push(*pair);
                 }
-                self.walk_for_warnings(then_b, ctx);
+                Self::walk_for_warnings(data, lexer, then_b, ctx);
                 for _ in &pushed {
                     ctx.guarded_pairs.pop();
                 }
-                self.walk_for_warnings(else_b, ctx);
+                Self::walk_for_warnings(data, lexer, else_b, ctx);
             }
             Value::Set(local_var, src) => {
                 // Skip-pattern 5 capture — `n = len(vec)` registers `n` as
                 // "the length of vec" for later `if i < n { v[i] }` proofs.
-                if let Some(vec_var) = len_capture_target(src.unspan(), &self.data) {
+                if let Some(vec_var) = len_capture_target(src.unspan(), data) {
                     ctx.len_captures.insert(*local_var, vec_var);
                 }
-                self.walk_for_warnings(src, ctx);
+                Self::walk_for_warnings(data, lexer, src, ctx);
             }
             Value::Return(src)
             | Value::Drop(src)
             | Value::Yield(src)
             | Value::TuplePut(_, _, src) => {
-                self.walk_for_warnings(src, ctx);
+                Self::walk_for_warnings(data, lexer, src, ctx);
             }
             Value::Tuple(items) | Value::Insert(items) | Value::Parallel(items) => {
                 for child in items {
-                    self.walk_for_warnings(child, ctx);
+                    Self::walk_for_warnings(data, lexer, child, ctx);
                 }
             }
             // Other Value variants (Int / Long / Text / Var / FnRef /
@@ -5620,17 +5636,12 @@ impl Parser {
         }
     }
 
-    fn emit_undefended_warning(&mut self, kind: FaultKind, ctx: &WarnCtx) {
+    fn emit_undefended_warning(lexer: &mut crate::lexer::Lexer, kind: FaultKind, ctx: &WarnCtx) {
         // @PLN25 DN3: the fault ops now TYPE `τ?` — the type carries the null and `(N-Store)`
         // forces discharge, so the runtime-null warning is redundant under DN1 (and fired
         // inconsistently vs the `if b != 0` / `if i < len` narrowing). Division/mod flipped
         // first; the index ops (`v[i]`/`s[i]`) are now flipped too (F1a landed), so retire all four.
-        if crate::keys::pln25_dn1_enabled()
-            && matches!(
-                kind,
-                FaultKind::Div | FaultKind::Rem | FaultKind::VectorIndex | FaultKind::TextIndex
-            )
-        {
+        if fault_warning_retired(kind) {
             return;
         }
         let msg = match kind {
@@ -5656,9 +5667,9 @@ impl Parser {
             }
         };
         if let Some(pos) = &ctx.last_pos {
-            self.lexer.pos_diagnostic(Level::Warning, pos, msg);
+            lexer.pos_diagnostic(Level::Warning, pos, msg);
         } else {
-            self.lexer.diagnostic(Level::Warning, msg);
+            lexer.diagnostic(Level::Warning, msg);
         }
     }
 
@@ -5669,7 +5680,7 @@ impl Parser {
     /// the explicit guard.  Only SETS the flag, so a `#null_safe` annotation (W2)
     /// is preserved.  Runs on pass 2 after the body, so a forward-defined callee's
     /// flag is set before a caller's warning walk.
-    pub(crate) fn infer_function_null_safe(&mut self, body: &Value) {
+    pub(crate) fn infer_function_null_safe(&mut self) {
         if self.first_pass || self.data.def(self.context).null_safe() {
             return;
         }
@@ -5677,6 +5688,7 @@ impl Parser {
         if params.is_empty() {
             return;
         }
+        let body = &self.data.definitions[self.context as usize].code;
         let guarded = leading_null_guards(&self.data, body);
         if params.iter().all(|p| guarded.contains(p)) {
             self.data.definitions[self.context as usize].null_safe = true;
@@ -6170,5 +6182,52 @@ fn index_loop_bounded(v: &Value, ctx: &WarnCtx, data: &Data) -> bool {
             ARITH.contains(&name) && call_args.iter().all(|a| index_loop_bounded(a, ctx, data))
         }
         _ => false,
+    }
+}
+
+/// Whether the runtime-null warning for `kind` is retired: under the dense null model
+/// (@PLN25 DN3) the fault ops TYPE `τ?`, so the type carries the null and `(N-Store)` forces
+/// its discharge, and a warning beside it is redundant.
+fn fault_warning_retired(kind: FaultKind) -> bool {
+    crate::keys::pln25_dn1_enabled()
+        && matches!(
+            kind,
+            FaultKind::Div | FaultKind::Rem | FaultKind::VectorIndex | FaultKind::TextIndex
+        )
+}
+
+/// Every kind the fault-site walk can find is retired, so the walk has nothing to report.
+fn fault_warnings_retired() -> bool {
+    [
+        FaultKind::Div,
+        FaultKind::Rem,
+        FaultKind::VectorIndex,
+        FaultKind::TextIndex,
+    ]
+    .into_iter()
+    .all(fault_warning_retired)
+}
+
+#[cfg(test)]
+mod fault_warning_tests {
+    use super::{FaultKind, fault_warning_retired};
+
+    /// The walk's early return lists the kinds by hand; a kind added to `FaultKind` must be
+    /// added there too, or the walk would skip a warning that is still live.  The `match`
+    /// is exhaustive, so a new variant fails to compile here until it is decided.
+    #[test]
+    fn fault_warnings_are_all_retired() {
+        for kind in [
+            FaultKind::Div,
+            FaultKind::Rem,
+            FaultKind::VectorIndex,
+            FaultKind::TextIndex,
+        ] {
+            match kind {
+                FaultKind::Div | FaultKind::Rem | FaultKind::VectorIndex | FaultKind::TextIndex => {
+                    assert!(fault_warning_retired(kind));
+                }
+            }
+        }
     }
 }

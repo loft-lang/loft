@@ -538,14 +538,14 @@ impl<'a> JParser<'a> {
     /// Consume the current `CString` token, validating it against the old
     /// scanner's error semantics first (the lexer decodes leniently).
     fn take_string(&mut self) -> Result<String, (String, usize)> {
-        let r = self.lx.peek();
         // A `CString` token's position is the first *content* char; the opening
         // quote is one byte before it.
-        let quote = self.byte_of(&r.position).saturating_sub(1);
+        let quote = self.byte_of(&self.lx.peek().position).saturating_sub(1);
         self.value_end = json_string_validate(self.bytes, quote)?;
-        let LexItem::CString(s) = r.has else {
+        let LexItem::CString(s) = &self.lx.peek().has else {
             unreachable!("take_string called off a CString");
         };
+        let s = s.clone();
         self.lx.cont();
         Ok(s)
     }

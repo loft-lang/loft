@@ -14924,14 +14924,14 @@ impl Parser {
         if let Some(tv_name) = generic_name {
             specific!(
                 self.lexer,
-                &self.lexer.peek(),
+                &self.lexer.peek().clone(),
                 Level::Error,
                 "generic type {tv_name}: operator '{spelled}' requires a concrete type",
             );
         } else if types.len() > 1 {
             specific!(
                 self.lexer,
-                &self.lexer.peek(),
+                &self.lexer.peek().clone(),
                 Level::Error,
                 "No matching operator '{spelled}' on '{}' and '{}'",
                 types[0].source_name(&self.data),
@@ -14940,7 +14940,7 @@ impl Parser {
         } else {
             specific!(
                 self.lexer,
-                &self.lexer.peek(),
+                &self.lexer.peek().clone(),
                 Level::Error,
                 "No matching operator {spelled} on {}",
                 types[0].source_name(&self.data)
@@ -16659,7 +16659,7 @@ impl Parser {
                 }
             }
         }
-        let res = self.lexer.peek();
+        let res = self.lexer.peek().clone();
         if res.has != LexItem::None && self.lexer.diagnostics().level() != Level::Fatal {
             if self.lexer.peek_token("use") {
                 diagnostic!(
