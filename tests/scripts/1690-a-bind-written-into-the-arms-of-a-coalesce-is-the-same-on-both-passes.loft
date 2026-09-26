@@ -14,7 +14,8 @@
 // Every value is worked out by hand in the cell's message; the file runs on both backends
 // under the corpus runner's leak gate.
 //
-// @falsified-at: <derived after the fix is committed>
+// @falsified-at: f2b8ab24c — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1690-a-bind-written-into-the-arms-of-a-coalesce-is-the-same-on-both-passes.patch — the same channels.
 // CHANNEL: the exit code — on the control tree the file is refused at compile time.
 // WITNESS: "Variable '_elm_3' cannot change type".
 // HOLDS: every cell answers on this tree.

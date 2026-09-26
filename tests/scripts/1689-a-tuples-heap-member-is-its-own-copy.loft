@@ -25,7 +25,8 @@
 // a text member off a hash key that was removed, a member of another tuple, a parameter, a
 // computed member, and text and scalar member writes.
 //
-// @falsified-at: <derived after the fix is committed>
+// @falsified-at: f2b8ab24c — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/1689-a-tuples-heap-member-is-its-own-copy.patch — the same channels.
 // CHANNEL: the asserts (a disturbed source showing through the copy) and the exit code (the
 //   member-write panic).
 // WITNESS: the cell's message names the value that moved.
