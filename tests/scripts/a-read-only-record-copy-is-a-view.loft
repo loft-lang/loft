@@ -1,0 +1,130 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+
+// `@FR-R-CopyView` — a read-only copy of a record nothing can disturb is a view of it.
+//
+// `t = a` of a record, and a join `t = if c { a } else { b }`, copy (`@FR-B-Copy`).  Where t
+// is only read, its sources view records the caller owns, and nothing in t's live range can
+// write a record of that type, the copy is a view: no store minted, none freed.  Every cell
+// answers the same with `LOFT_NO_COPY_VIEW=1`; the pin (`tests/copy_view.rs`) reads each
+// cell's admission off the trace, since the values alone pass on either form.
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-09-26): with condition (3) struck from `copy_view::admit` (no live-range disturbance
+//   check), k4 reads 99 for 1 and k5 1003 for 3 on both backends — t became a view of a record
+//   written through another parameter, or by a callee handed one, after the bind.
+//   CHANNEL: the VALUE channel (an assertion) on both backends.
+//   WITNESS: `k4 99 99` for `k4 1 99`, the first assertion to fail on both backends
+//   (hand-computed: t is bound before `w[0].x = 99`, and a copy keeps 1).
+//   HOLDS: leak, panic and free-refusal are equal on both trees and clean here.
+
+struct C { x: integer, y: integer }
+
+// k1 — the plain bind, only read.  v[0] = {1,5}: 6.
+fn k1(v: const vector<C>, i: integer) -> integer {
+  a = v[i]?;
+  t = a;
+  t.x + t.y
+}
+
+// k2 — the join.  (0,1): 5 < 3 fails, b = {2,3} → 23; (0,2): 5 < 1 fails, b = {7,1} → 71.
+fn k2(v: const vector<C>, i: integer, k: integer) -> integer {
+  a = v[i]?;
+  b = v[k]?;
+  t = if a.y < b.y { a } else { b };
+  t.x * 10 + t.y
+}
+
+// k3 — COPY: t is written, and the source must not see it.  100 + v[0].x (1) = 101.
+fn k3(v: const vector<C>, i: integer) -> integer {
+  a = v[i]?;
+  t = a;
+  t.x = 100;
+  t.x + a.x
+}
+
+// k4 — COPY: the same record is written through another parameter in t's live range, and t
+// must read the value from before.  Called with one vector twice: t.x = 1, then w[0].x = 99.
+fn k4(v: const vector<C>, w: &vector<C>, i: integer) -> integer {
+  a = v[i]?;
+  t = a;
+  w[i].x = 99;
+  t.x
+}
+
+// k5 — COPY: a call in t's live range is handed a writable vector of the record's type.
+fn bump(w: &vector<C>) { w[0].x += 1000; }
+fn k5(v: const vector<C>, w: &vector<C>) -> integer {
+  a = v[0]?;
+  t = a;
+  bump(w);
+  t.x
+}
+
+// k6 — a push into a vector<integer> in t's live range cannot reach a C.  2 + 1 * 100 = 102.
+fn k6(v: const vector<C>, i: integer) -> integer {
+  a = v[i]?;
+  t = a;
+  out: vector<integer> = [];
+  out += [t.x];
+  out += [t.y];
+  len(out) + t.x * 100
+}
+
+// k7 — COPY: t is returned.  v[1].x = 2.
+fn k7(v: const vector<C>, i: integer) -> C {
+  a = v[i]?;
+  t = a;
+  t
+}
+
+// k8 — COPY: the source is a record this frame owns, written after the bind.  t.x = n.
+fn k8(n: integer) -> integer {
+  a = C { x: n, y: 1 };
+  t = a;
+  a.x = 7;
+  t.x + a.x * 0
+}
+
+// k11 — COPY kept: the source IS a parameter, which `@FR-R-ValueRecord` may carry as a tuple
+// (a view would need the store the tuple removed).  3 + 4 = 7.
+fn k11(p: C) -> integer {
+  t = p;
+  t.x + t.y
+}
+
+// k10 — the join per iteration, graphics' `polygon_crossings` shape: the lower-y vertex of
+// each edge.  Edges (0,1) → {2,3}: 2, (1,2) → {7,1}: 7, (2,0) → {7,1}: 7; 16.
+fn k10(v: const vector<C>) -> integer {
+  s = 0;
+  n = len(v);
+  for i in 0..n {
+    a = v[i]?;
+    j = if i + 1 < n { i + 1 } else { 0 };
+    b = v[j]?;
+    lo = if a.y < b.y { a } else { b };
+    s += lo.x;
+  }
+  s
+}
+
+fn main() {
+  v = [C { x: 1, y: 5 }, C { x: 2, y: 3 }, C { x: 7, y: 1 }];
+  assert(k1(v, 0) == 6 && k1(v, 1) == 5, "k1 {k1(v, 0)} {k1(v, 1)}");
+  assert(k2(v, 0, 1) == 23 && k2(v, 0, 2) == 71, "k2 {k2(v, 0, 1)} {k2(v, 0, 2)}");
+  assert(k3(v, 0) == 101 && v[0].x == 1, "k3 {k3(v, 0)} {v[0].x}");
+  w4 = [C { x: 1, y: 5 }];
+  r4 = k4(w4, w4, 0);
+  assert(r4 == 1 && w4[0].x == 99, "k4 {r4} {w4[0].x}");
+  w5 = [C { x: 3, y: 5 }];
+  r5 = k5(w5, w5);
+  assert(r5 == 3 && w5[0].x == 1003, "k5 {r5} {w5[0].x}");
+  assert(k6(v, 0) == 102, "k6 {k6(v, 0)}");
+  assert(k7(v, 1).x == 2, "k7 {k7(v, 1).x}");
+  assert(k8(4) == 4, "k8 {k8(4)}");
+  assert(k11(C { x: 3, y: 4 }) == 7, "k11 {k11(C { x: 3, y: 4 })}");
+  s10 = 0;
+  for _r in 0..500 { s10 += k10(v); }
+  assert(s10 == 8000, "k10 {s10}");
+  println("done");
+}

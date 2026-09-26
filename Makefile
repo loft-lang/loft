@@ -545,7 +545,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: speed profile profile-corpus speed-discover speed-bless sweep-scratch sweep-target
+.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — TESTING.md § Scratch hygiene.
@@ -566,6 +566,14 @@ profile-corpus:  ## Check the profilers against bench/profile_oracle.tsv, then r
 	@scripts/profile_corpus.sh $(PROFILE_FLAGS)
 speed:  ## Report how the slow tests' speed has drifted (never fails)
 	python3 scripts/test_speed.py run
+rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
+	cargo build --release --bin loft -q
+	python3 scripts/rewrite_census.py
+rewrite-census-bless:  ## Record the current rewrite counts as the baseline (a deliberate decline)
+	cargo build --release --bin loft -q
+	python3 scripts/rewrite_census.py --bless
+speed-gate:  ## Fail on a test HARD slower than on main (reads the last `make ci` run)
+	python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml
 speed-discover:  ## Find tests slow enough to deserve a @speed annotation
 	python3 scripts/test_speed.py discover
 speed-bless:  ## Write the measured numbers back into the tests
@@ -2275,9 +2283,11 @@ ci: ci-guard
 	python3 scripts/gen_target_surface.py --check >> result.txt 2>&1 && \
 	(cargo nextest --version >/dev/null 2>&1 || cargo install cargo-nextest --locked) >> result.txt 2>&1 && \
 	./target/release/loft cache warm --from tests >> result.txt 2>&1 && \
+	python3 scripts/rewrite_census.py >> result.txt 2>&1 && \
 	{ gates=$(CI_LIVE_GATES); jobs=$$(( $(CI_NPROC) / $${gates:-1} )); memjobs=$(CI_MEM_JOBS); [ -n "$$memjobs" ] && [ "$$memjobs" -lt "$$jobs" ] && jobs=$$memjobs; if [ $$jobs -lt 2 ]; then jobs=2; fi; export NEXTEST_TEST_THREADS=$$jobs; } && \
 	{ first=$$(scripts/nextest_priority.sh 2>>result.txt); echo "make ci: tests on $$jobs thread(s), $$gates gate(s) live$${first:+; the changed subjects run first}; stopping after $(CI_MAX_FAIL) failure(s)" >> result.txt; } && \
 	cargo nextest run --profile ci --max-fail $(CI_MAX_FAIL) $$first >> result.txt 2>&1 && \
+	python3 scripts/test_speed_gate.py target/nextest/ci/junit.xml >> result.txt 2>&1 && \
 	echo 'CI-RESULT: ALL GATES PASSED' >> result.txt || \
 	  { echo 'CI-RESULT: FAILED — see the last failing command above in result.txt' >> result.txt; rm -f .ci-running; exit 1; } ) 9>&-
 	@# Tidiness only — the guard above tests whether the recorded pid is ALIVE,

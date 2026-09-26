@@ -573,9 +573,11 @@ mod tests {
         // `OpFnRefClosureEmitter` (a fn-ref's closure half, for the holder identity tests).
         // `@FR-R-Push`'s byte kind adds one, `HoistedPushEmitter` for `OpPushByte`: a byte
         // push in a loop that holds a push header writes the encoded byte through it; its
-        // `i32` and character kinds add two more (`OpPushInt4`, `OpPushCharacter`).
+        // `i32` and character kinds add two more (`OpPushInt4`, `OpPushCharacter`), and its
+        // boolean and enum kinds two more (`OpPushBoolean`, `OpPushEnum`, the byte kind at
+        // bias 0).
         assert!(
-            count <= 129,
+            count <= 131,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );

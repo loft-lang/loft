@@ -48,6 +48,16 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  script corpus and the consumer suites run with the switch off and
                  on, and any output difference is a defect.  Such a rewrite lands
                  only with that A/B green (`.github/workflows/switch-ab.yml`).
+                 CENSUS CLAUSE: a rewrite counts each site it ADMITS
+                 (`rewrite_census::fired("R-…", n)`, never at a decline), and the
+                 counts over the benches are a committed baseline
+                 (`bench/portal/rewrite_census.tsv`): a later fix that tightens a
+                 condition shows as a DROP, named by rule and bench, in `make
+                 rewrite-census` and on the PR — a loss no timing resolves.  A
+                 deliberate decline lands with `make rewrite-census-bless` in its
+                 own commit.  Counted today: every plan `start_fn` builds, the loop
+                 hoist frames, the push windows, the record pointers, the work
+                 buffer and its onward clause, and R-CopyView.
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's
@@ -1031,7 +1041,17 @@ the code point as `u32`) and the BYTE (`vector<u8>` / `vector<i8>`, `OpPushByte`
 `Store::byte_raw(min, val)` — the one encoding `OpSetByte` writes, so the header's raw store,
 its growth step and the unfused path agree; `hoist::push_operands` is where every site reads a
 push's value, so none can take the unencoded one.  A byte loop's one-value slice fill is not
-admitted (it would write the value unencoded); its reserve and window are.
+admitted (it would write the value unencoded); its reserve and window are.  The BOOLEAN and
+ENUM pushes (`OpPushBoolean`, `OpPushEnum`) are the byte kind at bias 0 — their templates are
+`append_byte_min(r, 0, v)` — and `Store::byte_raw(0, v)` is `v` for every value a native `u8`
+holds, the enum null 255 included, so their element is the value itself, spelled `as u8`
+because a boolean's native value is a `bool` (`hoist::push_value_cast`); being unbiased, their
+one-value slice fill IS admitted, and a `true`, `false` or enum literal is a simple invariant
+for it.  Before they joined, every boolean or enum push in a loop re-entered the runtime per
+element and blocked the loop's reservation: hex_field's `hexset_chunk`
+(`for _ in 0..n { cells += [false]; }`) is the whole cell set of every `HexSet`, and hex_place
+`field_union` went 3.76 → 2.18 ms per op with it (−42 %, hash unchanged; hand-priced at
+2.25).  Cells: `tests/scripts/a-boolean-and-enum-push-hold-a-header.loft`.
 
 ### A minted element is a record no holder can name
 
@@ -2068,13 +2088,49 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  the callee a buffer and a null is never a wrong answer.  The mention
                  test IS the escape proof: with a scalar element every admitted operand
                  position yields a scalar or nothing, so no view, copy or link of the
-                 store can leave the frame.  Declines, keeping the mint: a mention as an
-                 argument of a loft-bodied call, in a return or a tail, in a literal, a
-                 tuple, a link or a capture, a second assignment, a copy into a local
-                 that is then not so used; an element type that is a record or a text;
-                 a body that suspends or forks; `main`; a generic, a synthetic, a
-                 lambda, a function whose address is taken; a local numbered before an
-                 existing argument.
+                 store can leave the frame.  A loft-bodied callee may take the local BY
+                 VALUE where its answer cannot hold it — the return type, through every
+                 nested type, carries no dep naming that parameter and is no function
+                 value — because a by-value heap parameter is a view for the call's
+                 duration (F-ParamHeap) that no store of the callee's retains by
+                 identity: a bind or a field store copies (B-Copy), a link cannot be
+                 stored, and a rebind (F-ParamRebind) is the callee's own store,
+                 released at its exit.  Declines, keeping the mint: a hand-off to a `&`
+                 parameter (a rebind through it repoints the caller's variable), to a
+                 callee answering a view or a function value, to a native or a parallel
+                 builtin, or through a function value; a local copied WHOLE into any
+                 other place — a record's field (`out += [Rec { pts: v }]`, which the
+                 native emitter builds inside the appended element with no store at all,
+                 R-ElemFirst; `a.items = v`, which the move elision builds straight into
+                 the field through its staging local), the return buffer, which adopts
+                 the local (R-RetAdopt), or another local — and a local bound PURELY as
+                 a copy of another vector (`v = s.v`: one copy in, no push or insert),
+                 which the copy elision's borrow tiers and the transparent link remove
+                 outright — every one of those rewrites asks for a local, and a buffer
+                 would turn a saved copy into a paid one; a local declared INSIDE a loop, whose
+                 store the native emitter already keeps across the passes with a length
+                 reset (R-LoopBuffer) cheaper than a clear, and whose invariant literal the
+                 literal hoist builds once (R-LitHoist); a local written and never read, the
+                 dead-store lint's subject; an ENTRY POINT, which no caller hands a buffer;
+                 a local numbered before an argument in a function whose RETURN TYPE
+                 carries deps — the swap that puts it after the arguments renumbers frame
+                 numbers, and those deps are attribute-space (the debug-assertions gate
+                 caught the swap rewriting `text[0]` to `text[3]`); a mention in a return or a tail,
+                 in a literal, a tuple, a link or a capture, a second assignment, a copy
+                 into a local that is then not so used; an element type that is a
+                 record or a text; a body that suspends or forks; `main`; a generic, a
+                 synthetic, a lambda, a function whose address is taken; a `par` worker.
+                 TRANSITIVELY: a caller's work-ref minted for such a buffer, whose only
+                 mentions are its entry null-init and work-buffer argument positions, is
+                 itself a local that never leaves the frame and becomes a hidden
+                 work-buffer parameter of the caller — no mint, no free there; the
+                 buffer climbs round by round to the outermost frame that is not so
+                 promoted, and a null handed down reaches the innermost callee's null
+                 road unchanged.  Declined where the callee reaches back to the caller
+                 through direct calls: a recursion wants a buffer per activation, which
+                 the ref already is, and each round would only mint the next.  A call
+                 through a function value needs no such edge — its target's address is
+                 taken, so that frame mints its own buffers and the chain stops there.
 ```
 
 **In words.**  The overview's largest language-side bucket is a value Rust keeps on the
@@ -2094,8 +2150,8 @@ attribute as THE return buffer, and a second one would have been pushed as a res
 refused.  Measured on the probe (`fn f(salt) { v: vector<integer> = []; …; len(v) }`,
 2 M calls, `--native-release`): 81 → 33–34 ns a call.  Census of the library corpus
 (2026-09-25): 371 vector locals declared `[]`, 77 with no escaping mention by the crude
-test, 194 results (another rule's), 90 handed to a call (the next widening: a by-value
-parameter of a callee whose return carries no dep on it).
+test, 194 results (another rule's), 90 handed to a call — the by-value clause above admits
+those whose callee answers no view of the parameter.
 
 **BUILT** (2026-09-25, `src/parser/work_buffer.rs`, run from `after_pass2` beside the
 targeted `__tret` promotion; `LOFT_NO_WORK_BUFFER`, `LOFT_TRACE_WORK_BUFFER`; guard
@@ -2110,8 +2166,43 @@ hidden vector attribute and free it after.  A `par(…)` worker is declined by n
 builtin's `func` operand: its scalar route builds the frame from the element alone.  The
 probe on the release tier, 2 M calls: **78–91 → 29–36 ns a call**, the hand-written
 caller-buffer form 26.  Census of the walk over six libraries (2026-09-25): 98 locals
-promoted (hex_body 15, hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29), the
-decline that counts being *handed to a call* (41).  A buffer lives as long as its caller's
+promoted (hex_body 15, hex_terrain 25, cbor 4, graphics 9, hex_field 16, drawing 29); over
+eight libraries, library code alone, 82 promoted once the by-value clause admitted the
+hand-offs whose callee answers no view (28 hand-offs still decline: a native, a `&`
+parameter, a callee answering a view) and the element-field clause kept 37 for the emitter.
+Two things the first measurement taught, both on the drawing bench (2026-09-25/26): the
+native emitter must read the promoted parameter as EXCLUSIVE where a rewrite only needs
+nothing else to reach the store — `hoist::work_buffer_arg`, the attribute's mark looked up
+by argument position, admitted beside an owned local at the push window, the mint window
+and the loop hoist's mover set — because taken for a possibly aliased view it declined the
+push window, and `render_marks` and `resize` ran 1.5× SLOWER; and a local the emitter
+already builds inside an appended element (`fronds`' `fd_wid`) must stay a local, or the
+buffer costs a copy and the loop its hoists (`fronds` 1.95× → 4.3×).  A lazy mint for a callee's buffer lands in the arm
+that makes the call, not before the whole value `if` (`scopes::place_in_if`) — cbor's
+`encode` minted its map arm's four buffers on every call.  A promotion is only a gain
+where the emitter still sees an owner and the form it replaces was a store at all.  The
+rows, re-measured clean on the converged tree (2026-09-25, the committed row without
+the rule → now): hex_body `rig_world_frame3` **9.54× → 5.20×** (its twelve scratch
+vectors), cbor `encode` **18.0× → 11.4×** and `encode_bytes` **43.1× → 24.9×** (the map
+encoder's key tables), graphics `fill_rect` 4.05× → 3.05×, `draw_line` 2.70× → 2.06×,
+`blend_pixel` 2.11× → 1.30×, `fill_triangle` 3.13× → 2.87×, drawing `composite` 1.56× →
+1.27×; `fronds`, `render_marks` and `resize` within noise of their committed rows once
+the two lessons above were applied; hex_body `bone_shape_has` 4.84× → 5.44× was the one row worse,
+and its cause is the rule's own shape: a thin wrapper called once per element that calls
+`rig_world_seg` (three buffers) mints those buffers per call one level up exactly as the
+callee did, and pays the callee's clear and witness for nothing.  The cure is the
+TRANSITIVE clause above — the wrapper's own `__ref_N` work-refs are locals that never leave
+its frame and are candidates in their turn, so the buffers climb to the outermost frame
+that loops — Phase A once, then promotion of the work-refs and Phase B alternating until a
+round promotes nothing (capped at sixteen rounds; stopping after any Phase B leaves every
+buffer minted by its caller).  Without the cycle decline the fixpoint does not end rather
+than answer wrong: each round hands the recursive callee one more parameter, so every
+depth still has a buffer of its own (the pin's falsifier: `c2` grows seventeen).
+Measured clean (2026-09-26, the row above → with the clause): `bone_shape_has` **5.44× →
+2.68×**, same hash, 11.2 → 5.5 ms against Rust's 2.07 — the three per-query mints at
+~67 ns each were half the query, not the sixth the hand-price guessed from an assumed 1 µs
+row; every other row of the five libraries within noise.  A buffer lives as
+long as its caller's
 activation, so a promoted call site in `main` keeps its buffer for the run exactly as a
 return buffer does; `LOFT_STORES=warn`'s high-water heuristic (more than 30 live stores)
 reads such a `main` as a possible leak, and it is a working set.
@@ -2571,6 +2662,30 @@ answered here rather than decided in the code.
                  copy is placed at the bind, and the program cannot tell the two forms
                  apart (R-Escape).  A top-level `const` vector already lives in that
                  store; this rule gives a literal-bodied function the same home.
+  (R-CopyView)   a record local t bound ONCE by B-Copy's copy of a record VIEW — `t = a`,
+                 or a join `t = if c { a } else { b }` whose every arm is such a view — is
+                 a VIEW of the chosen record (O-Borrow: t's deps name its sources; no
+                 store minted, none freed) where no program can tell the two apart:
+                 (1) t is only READ in its frame, in R-Const's sense (a field read, a
+                 `const` argument, a copy into another such local) — never written,
+                 rebound, returned, stored, captured or handed to a writing parameter;
+                 (2) every source's view closes over PARAMETERS only, so the record
+                 outlives the frame; and (3) nothing in t's live range — the statements
+                 from the bind to t's last mention — can change the record's bytes, move
+                 it or free it: every operation there whose heap operand's TYPE can
+                 reach the source's record type (through fields and elements) only
+                 reads, and every call to a loft-bodied function handed such an operand
+                 hands it to a `const` parameter.  An operation reaches only the records
+                 its operands' types can hold, so a push into a `vector<integer>` in
+                 range cannot disturb a `Coord`, whatever store it lives in — which is
+                 why (3) is asked of types and not of stores (`store_viewers` is an upper
+                 bound on stores, and a parameter may share the caller's return buffer's
+                 store).  Declines, keeping the copy: a nullable t or source; a `&`
+                 source (C-Ref's copy is its own question); a source that is an owned
+                 local (its free is scoped, the frame's is not); a source that IS a
+                 parameter — R-ValueRecord may carry a small record parameter as a
+                 tuple, where its copy already costs nothing and a view would need the
+                 store the tuple removed; a struct-enum.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
                  no-heap record of at most six scalar fields — carries the record's
                  fields as its TUPLE in the binding frame too, where every use of the
@@ -2765,6 +2880,22 @@ to bisect to.
   constant store, which keep their call), since the values pass on either form.  Sabotage
   receipts: every argument position read as a pure read fails c7 on the interpreter with the
   write-locked panic; the one-literal test struck answers 5 for 7 in c16 on both backends.
+- **`(R-CopyView)`** — graphics `fill_polygon` **22.6×**: `polygon_crossings` picks each
+  crossing edge's top and bottom vertex with `pc_ty = if pc_a.py < pc_b.py { pc_a } else
+  { pc_b }`, and each of the two binds minted a store, copied a `Coord` into it and freed it,
+  per crossing per scanline — not the crossings vector the overview first blamed, which the
+  return buffer already reuses.  Hand-priced (the four arm copies struck, the arms answering
+  their sources): 6.62 → 2.86 ms per op, hash `91eac327` unchanged.  **BUILT 2026-09-26**
+  (`src/copy_view.rs`, after `(R-Const)` on the settled IR; `LOFT_NO_COPY_VIEW`,
+  `LOFT_TRACE_COPY_VIEW`): measured clean **22.62× → 9.94×** (6.65 → 2.92 ms), same hash,
+  the other graphics and drawing rows within noise.  Over the benches it admits exactly
+  those two locals: the 303 record copies there are mostly a PARAMETER copied (declined —
+  `(R-ValueRecord)`'s tuple already makes that copy free, and the rewrite census caught the
+  first cut taking eight of `server`'s tuple parameters away, R-ValueLocal 15 → 7) or a
+  source the frame owns.  Cells: `tests/scripts/a-read-only-record-copy-is-a-view.loft`
+  (k1–k11, hand-computed, both backends, switch A/B, `LOFT_POISON` + `LOFT_STRICT_STORES`),
+  the admission pinned by `tests/copy_view.rs`.  Sabotage receipt: condition (3) struck, k4
+  reads 99 for 1 and k5 1003 for 3 on both backends.
 - **`(R-ValueLocal)`** — `(R-ValueRecord)` returns a small record in registers only where
   EVERY call site reads fields off it; a site that binds the whole record to a local, or
   rebinds its own argument, declined it and paid a store per call: mesh3d

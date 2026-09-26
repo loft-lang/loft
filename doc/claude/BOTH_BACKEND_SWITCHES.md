@@ -85,6 +85,19 @@ program's copy must be its own — and is the first bisect step for a wrong elem
 `LOFT_TRACE_CONST=1` names each function made a constant (and each that is not, with its
 body's shape) and each call admitted or declined; the interpreter and native share the
 rewrite, so the switch A/B and the cells' hand-computed values are the falsifier.
+**`LOFT_NO_COPY_VIEW=1`** (`@FR-R-CopyView`, default-ON since 2026-09-26, scope pass, BOTH
+backends) makes a read-only record copy copy again — with it off, `t = a` of a record, and a
+join `t = if c { a } else { b }`, where t is only READ (a field read), every source is a VIEW
+into a parameter's records (not the parameter itself, which `@FR-R-ValueRecord` may carry as
+a tuple), and no operation in t's live range can write a record of that type (asked of the
+operands' TYPES: a push into a `vector<integer>` cannot reach a record), binds t as a view —
+`t = OpGetField(a, 0)`, or the join's arms answering their sources — so no store is minted,
+copied or freed.  It is the first bisect step for a record local that reads a value its
+source took after the bind, or a store released under it.  `LOFT_TRACE_COPY_VIEW=1` names
+each local made a view and each candidate declined with the reason; both backends share the
+rewrite, so the switch A/B and the cells' hand-computed values
+(`tests/scripts/a-read-only-record-copy-is-a-view.loft`, pinned by `tests/copy_view.rs`) are
+the falsifier.
 **`LOFT_NO_COMPACT=1`** (`@FR-R-Compact`, default-ON since 2026-09-25, scope pass, BOTH
 backends) makes a vector rebuilt from a contiguous run of its own elements copy again —
 with it off, `t: vector<S> = []; for i in a..b { t += [V[i]?]; } V = t;` (a history
@@ -219,7 +232,8 @@ double free or a wrong value at a call that takes a hidden buffer.
 makes a vector local that never leaves its frame mint its store at the declaration and free
 it at the exit again — with it off, `v: vector<τ> = []` (τ a scalar) whose every mention is
 an operand of an in-place vector operator (push, append, length, clear, remove, an element
-read or written as a scalar; `for x in v` included) is a hidden WORK-BUFFER parameter the
+read or written as a scalar; `for x in v` included) or a by-value argument of a loft-bodied
+callee whose answer carries no dep on that parameter is a hidden WORK-BUFFER parameter the
 caller supplies as the per-site work-ref a return buffer already takes (minted once per
 activation, freed at the caller's exit), and the callee CLEARS it where the declaration
 stood; a callee handed the null sentinel takes the rebound-parameter road at that site (its
@@ -228,10 +242,19 @@ it nothing (the probe 81 → 33 ns a call).  It is the first bisect step for a w
 leaked vector inside a function that declares one, or for a frame-shape fault at a hand-built
 entry.  `LOFT_TRACE_WORK_BUFFER=1` names each local promoted and each candidate declined with
 the reason; `LOFT_WORK_BUFFER_NULL=1` is the positive control for the null road (every
-caller-side buffer left null, both backends).  A mention as an argument of a loft-bodied
-call, in a return, a literal, a link or a capture, a record or text element, a body that
-suspends or forks, `main`, a generic, a lambda and a function whose address is taken keep
-the mint.
+caller-side buffer left null, both backends).  A hand-off to a `&` parameter or to a callee
+answering a view, a local copied whole into any other place (a record's field, where the
+emitter builds it in place or the move elision builds it straight into the field; the
+return buffer, which adopts it; another local) or bound purely as a copy of another vector
+(one copy in and no push, the borrow elision's), a local numbered before an argument in a
+function whose return type carries deps (the swap would renumber them), a local declared
+inside a loop (`@FR-R-LoopBuffer`'s length reset is cheaper than a clear), a local written
+and never read (the dead-store lint's), a mention in a return, a literal, a link or a
+capture, a record or text element, a body that suspends or forks, an entry point, a generic,
+a lambda, a function whose address is taken and a `par` worker keep the mint.  A caller that
+only hands such a buffer down is promoted in its turn (the trace's `ref=… PROMOTED onward`),
+so the buffer is minted by the outermost frame that is not; a callee that reaches back to its
+caller declines that (`stays a local`), and the same switch turns both halves off.
 
 ## Lowering: `??` chains and nested literals
 

@@ -2682,6 +2682,30 @@ impl Output<'_> {
         self.hoist_counter = 0;
     }
 
+    /// The rewrites `start_fn` admitted for the function whose body is being emitted, into
+    /// the census (`crate::rewrite_census`): one count per site each plan will rewrite.
+    fn census_plans(&self) {
+        use crate::rewrite_census::fired;
+        fired(
+            "R-LitHoist",
+            self.invariant_lits.wrapped.len() + self.invariant_lits.flat.len(),
+        );
+        fired("R-ValueLocal", self.value_record_locals.len());
+        fired("R-ElemFirst", self.elem_first.pairs.len());
+        fired(
+            "R-CompleteWrite",
+            self.complete_writes.db_vars.len() + self.complete_writes.mint_tps.len(),
+        );
+        fired("R-MoveAppend", self.move_pairs.len());
+        fired("R-LazySplit", self.lazy_splits.len());
+        fired("R-SplitTable", self.split_tables.len());
+        fired("R-TextBorrow", self.borrowed_text_locals.len());
+        fired("R-CharWalk", self.char_walks.len());
+        fired("R-RetAdopt", usize::from(self.ret_adopt.is_some()));
+        fired("R-LoopRecord", self.loop_records.len());
+        fired("R-LoopBuffer", self.loop_buffers.len());
+    }
+
     /// loft#885 — open a loop with the headers of the vectors it only reads, and
     /// (@PLN157 P4c) the record scalars it only reads.
     ///
@@ -3499,6 +3523,7 @@ impl Output<'_> {
             p.size
         )?;
         self.push_windows.push((p.path.clone(), win.clone()));
+        crate::rewrite_census::fired("R-PushFill", 1);
         Ok(Some((win, hdr, vec)))
     }
 
@@ -3576,6 +3601,7 @@ impl Output<'_> {
             m.size
         )?;
         self.push_windows.push((m.path.clone(), win.clone()));
+        crate::rewrite_census::fired("R-PushFill/record", 1);
         Ok(Some((win, hdr, vec)))
     }
 
@@ -3719,8 +3745,12 @@ impl Output<'_> {
         self.indent(w)?;
         writeln!(
             w,
-            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val})); //@PLN157 § V-am push fill",
-            lp.scope, p.rust_type, p.size
+            "let __pf_{} = stores.push_fill::<{}, {verify}>(&mut {hdr}, &({vec}), {}_u32, {count}, ({val}){}); //@PLN157 § V-am push fill",
+            lp.scope,
+            p.rust_type,
+            p.size,
+            // The fill runs only unbiased (`push_loop` declines a biased one).
+            hoist::push_value_cast(p.rust_type, false)
         )?;
         Ok(true)
     }
@@ -4004,6 +4034,16 @@ impl Output<'_> {
                 writeln!(w, "{line}")?;
             }
             self.indent(w)?;
+        }
+        {
+            use crate::rewrite_census::fired;
+            fired("R-Header", frame.len());
+            fired("R-Base", base_frame.len());
+            fired("R-BoundedNest", bound_frame.len());
+            fired("R-Scalar", scalar_frame.len());
+            fired("R-Invariant", invariant_frame.len());
+            fired("R-Push", push_frame.len());
+            fired("R-PushRec", mint_frame.len());
         }
         self.vec_headers.push(frame);
         self.vec_bases.push(base_frame);
@@ -4538,6 +4578,7 @@ impl Output<'_> {
             );
         }
         self.rec_ptrs.push(HashMap::from([(r, name)]));
+        crate::rewrite_census::fired("R-RecPtr", 1);
         if let (Some(finish), Some(block)) = (window, block) {
             // A window's frame is closed at its finish, not with the block: the caller
             // must not count it among the frames it pops.
@@ -8049,6 +8090,7 @@ extern crate loft;"
         if !self.value_records_done {
             self.value_records_done = true;
             self.value_records = hoist::value_records(self.data, self.stores);
+            crate::rewrite_census::fired("R-ValueRecord", self.value_records.fns.len());
             // `(R-ValueLocal)` — the twin machinery reads which parameters are tuples
             // from the same table, so a twin never asks for a tuple parameter's fields.
             self.input_cache.params = self.value_records.params.clone();
@@ -8682,6 +8724,9 @@ extern crate loft;"
         if def.name().starts_with("Op") && *def.code() == Value::Null {
             return Ok(());
         }
+        // Here and not in `start_fn`, which the type registration also runs for every
+        // definition: a body emitted is the unit a rewrite's admission is counted in.
+        self.census_plans();
         // Skip functions implemented in codegen_runtime — emitting a stub
         // would shadow the real implementation.  Plan 09 phase 01
         // consolidated the hardcoded list into the registry in

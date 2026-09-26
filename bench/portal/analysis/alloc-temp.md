@@ -73,7 +73,8 @@ same walk `(R-Escape)` reads; the per-site allocation and the witness are
 `reuse_record_buffers`' own; the lazy mint is `Variable::lazy_buffer`.  What is new is only
 the promotion of a LOCAL (today the promotions are of a result) and the clear at entry.
 
-What it moves, from the overview: `fill_polygon` 25× (a crossings vector per scanline),
+What it moves, from the overview: `fill_polygon` 25× (a crossings vector per scanline — measured
+later, the cost was two record COPIES per crossing, which `(R-CopyView)` removed: 22.6× → 9.9×),
 `flow_layout_full` 15× (a `vector<Run>` per token), `mat4_mul` 32× (a 16-float vector
 inside a record per call), `rig_world_frame3` 9.5× (twelve vectors per call),
 `delete_range` 9×, `sort_floats` 4×, `terrain_surface_at` 3.2×, `draft_fit_p` 12×,
@@ -93,6 +94,23 @@ do escape — still show it.  Neither is a rewrite of anybody's loft code: the s
 the structural lever above, for a vector local with a scalar element whose every mention is
 an in-place vector operator.  The probe measured here went 78–91 → 29–36 ns a call on the
 release tier (the hand-written caller-buffer form 26), and the walk's trace over six
-libraries promoted 98 locals.  The shave was not built; the temporaries that still mint are
-the 41 *handed to a call* (the next widening, by the callee's return deps), the record and
-text elements, and the results, which are another rule's.
+libraries promoted 98 locals; the by-value clause built the same day admits a hand-off to a
+loft-bodied callee whose answer carries no dep on the parameter (82 promoted over eight
+libraries' own code, 28 hand-offs still declined, 37 locals kept for the emitter's
+element-first build).  The shave was not built; the temporaries that still
+mint are the record and text elements (252 in that census), and the results, which are
+another rule's.  One lesson cost a re-measure: the native emitter's ownership test read the
+promoted parameter as a possibly aliased view and declined the push window it had for the
+local, which made push-heavy rows 1.5× SLOWER; `hoist::work_buffer_arg` now admits the
+parameter as exclusive at the push and mint windows.
+
+Measured clean on the converged tree (2026-09-25, the committed row without the rule →
+now): `rig_world_frame3` 9.54× → 5.20×, cbor `encode` 18.0× → 11.4× and `encode_bytes`
+43.1× → 24.9×, `fill_rect` 4.05× → 3.05×, `draw_line` 2.70× → 2.06×, `blend_pixel` 2.11× →
+1.30×, `composite` 1.56× → 1.25×.  The one
+row that lost, `bone_shape_has` 4.84× → 5.44×, names the next step: a wrapper called per
+element mints its callee's buffers per call one level up and pays the clear and witness for
+nothing — the TRANSITIVE form promotes the wrapper's own work-refs onward, so a buffer
+climbs to the outermost looping frame (Phase A and B to a fixpoint over the call graph).
+Built (2026-09-26): `bone_shape_has` 5.44× → **2.68×**, same hash — below the 4.84× the
+rule started from, since the wrapper's three mints were ~200 ns of a ~375 ns query.

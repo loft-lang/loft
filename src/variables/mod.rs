@@ -3729,10 +3729,14 @@ impl Function {
     }
 
     /// @PLN87 P2.1 — every (param, witness) pair, for the entry stash and the
-    /// function-exit `OpFreeRefIfDistinct`.
+    /// function-exit `OpFreeRefIfDistinct`, in parameter order: the map's own order is a
+    /// hash's, and it made the same program emit its exit frees in a different order from
+    /// run to run (a work-buffer function holds one pair per buffer).
     #[must_use]
     pub fn rebind_params(&self) -> Vec<(u16, u16)> {
-        self.rebind_orig.iter().map(|(&p, &o)| (p, o)).collect()
+        let mut pairs: Vec<(u16, u16)> = self.rebind_orig.iter().map(|(&p, &o)| (p, o)).collect();
+        pairs.sort_unstable();
+        pairs
     }
 
     /// Record that local `v` releases its stores through the owner witness `w`
@@ -4951,6 +4955,14 @@ impl Function {
     /// `@FR-R-WorkBuffer` — `v` is a work-ref this caller mints for a callee's work buffer.
     pub fn mark_work_buffer_ref(&mut self, v: u16) {
         self.work_buffer_refs.insert(v);
+    }
+
+    /// `@FR-R-WorkBuffer`'s transitive clause — work-ref `v` became this function's own
+    /// work-buffer parameter, so it leaves the sets of refs this frame mints for its callees.
+    pub fn retire_work_buffer_ref(&mut self, v: u16) {
+        self.work_buffer_refs.remove(&v);
+        self.work_refs.remove(&v);
+        self.variables[v as usize].caller_hidden_buf = false;
     }
 
     pub fn is_work_buffer_ref(&self, v: u16) -> bool {

@@ -20,7 +20,9 @@
 //! caller patching (`patch_tret_call`) it shares, so a forward- and a backward-referenced
 //! caller are patched alike.  The mention test IS the escape proof: with a scalar element,
 //! every admitted operand position yields a scalar or nothing, so no view, copy or link of
-//! the store can leave the frame.  The fallback of every walk here is a DECLINE, which costs
+//! the store can leave the frame; a loft-bodied callee may take it by value where its answer
+//! carries no dep on that parameter (`Walk::loft_callee_admits`).  The fallback of every walk
+//! here is a DECLINE, which costs
 //! the program the mint it already pays and never a wrong answer — an operator or a node this
 //! file does not name keeps the local a local.
 //!
@@ -55,9 +57,172 @@ impl Parser {
                 self.work_buffer_promoted.insert(d);
             }
         }
-        if !self.work_buffer_promoted.is_empty() {
+        if self.work_buffer_promoted.is_empty() {
+            return;
+        }
+        self.patch_work_buffer_callers();
+        // The transitive clause: a caller's work-ref handed only to work-buffer parameters is
+        // itself a non-escaping vector local, so it is promoted onward and the buffer climbs
+        // to the outermost frame that loops.  Each round promotes the refs the last one's
+        // patching minted.  A caller on a cycle with its callee is what could keep this
+        // going — every promotion there gains the callee a parameter and the caller a fresh
+        // ref for it — so that is declined; the round cap bounds anything the cycle test
+        // misses, and stopping after any patch leaves every buffer minted by its caller.
+        const MAX_ROUNDS: usize = 16;
+        let calls = static_calls(&self.data);
+        for _ in 0..MAX_ROUNDS {
+            let mut next = HashSet::new();
+            for d in 0..n_defs {
+                if self.work_buffer_def_decline(d, &addr_taken).is_some() {
+                    continue;
+                }
+                if self.promote_work_refs_in(d, &calls) > 0 {
+                    next.insert(d);
+                }
+            }
+            if next.is_empty() {
+                return;
+            }
+            self.work_buffer_promoted.extend(next);
             self.patch_work_buffer_callers();
         }
+        if crate::keys::trace_work_buffer() {
+            eprintln!(
+                "[work-buffer] the transitive clause stopped at its cap of {MAX_ROUNDS} rounds"
+            );
+        }
+    }
+
+    /// The transitive clause for one definition: the number of its work-refs promoted.
+    ///
+    /// A ref Phase B minted (`is_work_buffer_ref`) whose only mentions are its entry
+    /// null-init and work-buffer argument positions of callees that cannot reach back to
+    /// this definition becomes a hidden work-buffer parameter itself: the null-init goes, and
+    /// as a parameter it takes neither the lazy mint nor an exit free — this frame never owns
+    /// the store, the caller that hands it does.  Handed null, it forwards null
+    /// and the innermost callee takes its null road.  Declined where the callee can reach
+    /// back to this definition: a recursion needs a buffer per activation, which a ref minted
+    /// here already is, and promoting it would only make the next round mint another.
+    fn promote_work_refs_in(&mut self, d: u32, calls: &[Vec<u32>]) -> usize {
+        let refs: Vec<u16> = {
+            let vars = &self.data.definitions[d as usize].variables;
+            (0..vars.count())
+                .filter(|&r| vars.is_work_buffer_ref(r) && !vars.is_argument(r))
+                .collect()
+        };
+        if refs.is_empty() {
+            return 0;
+        }
+        let saved_ctx = self.context;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d as usize].variables,
+        );
+        self.context = d;
+        let mut code = std::mem::replace(&mut self.data.definitions[d as usize].code, Value::Null);
+        let trace = crate::keys::trace_work_buffer();
+        let mut promoted = 0;
+        for r in refs {
+            match self.admit_work_ref(&code, r, calls) {
+                Ok(elem) => {
+                    let buf_tp = Type::Vector(Box::new(elem), Deps::none());
+                    let name = self.vars.name(r).to_string();
+                    let a = self.data.add_attribute(&mut self.lexer, d, &name, buf_tp);
+                    let attr = &mut self.data.definitions[d as usize].attributes[a];
+                    attr.hidden = true;
+                    attr.work_buffer = true;
+                    self.vars.become_argument(r);
+                    self.vars.retire_work_buffer_ref(r);
+                    if let Value::Block(bl) = code.unspan_mut() {
+                        bl.operators.retain(|op| {
+                            !matches!(op.unspan(), Value::Set(x, rhs) if *x == r && matches!(rhs.unspan(), Value::Null))
+                        });
+                    }
+                    promoted += 1;
+                    crate::rewrite_census::fired("R-WorkBuffer/onward", 1);
+                    if trace {
+                        eprintln!(
+                            "[work-buffer] fn={} ref={name} PROMOTED onward",
+                            self.data.def(d).name()
+                        );
+                    }
+                }
+                Err(why) => {
+                    if trace {
+                        eprintln!(
+                            "[work-buffer] fn={} ref={} stays a local: {why}",
+                            self.data.def(d).name(),
+                            self.vars.name(r)
+                        );
+                    }
+                }
+            }
+        }
+        self.data.definitions[d as usize].code = code;
+        std::mem::swap(
+            &mut self.vars,
+            &mut self.data.definitions[d as usize].variables,
+        );
+        self.context = saved_ctx;
+        promoted
+    }
+
+    /// The admission of work-ref `r` of the current definition; answers its element type.
+    fn admit_work_ref(
+        &self,
+        code: &Value,
+        r: u16,
+        calls: &[Vec<u32>],
+    ) -> Result<Type, &'static str> {
+        let d = self.context;
+        let tp = self.vars.tp(r);
+        if tp.peel_optional().1 {
+            return Err("a nullable buffer");
+        }
+        let Type::Vector(elem, _) = tp.base() else {
+            return Err("not a vector");
+        };
+        // Attribute order is argument-number order (`check_argument_geometry`), and a ref is
+        // minted after every argument unless a later round appended one after it.
+        if self.vars.arguments().iter().any(|&a| a > r) {
+            return Err("numbered before an argument");
+        }
+        let Value::Block(bl) = code.unspan() else {
+            return Err("no body");
+        };
+        let top_init = bl
+            .operators
+            .iter()
+            .filter(|op| matches!(op.unspan(), Value::Set(x, rhs) if *x == r && matches!(rhs.unspan(), Value::Null)))
+            .count();
+        if top_init != 1 || set_counts(code).get(&r).copied().unwrap_or(0) != 1 {
+            return Err("assigned other than by its entry null-init");
+        }
+        let mut handed = 0;
+        let mut why = None;
+        code.walk(&mut |x| {
+            let Value::Call(c, args) = x else { return };
+            for (i, a) in args.iter().enumerate() {
+                if !is_var(a, r) {
+                    continue;
+                }
+                let callee = self.data.def(*c);
+                if !callee.attributes().get(i).is_some_and(|at| at.work_buffer) {
+                    why.get_or_insert("handed to other than a work-buffer parameter");
+                } else if reaches(calls, *c, d) {
+                    why.get_or_insert("its callee is on a cycle with this function");
+                } else {
+                    handed += 1;
+                }
+            }
+        });
+        if let Some(why) = why {
+            return Err(why);
+        }
+        if handed == 0 || handed != var_mentions(code, r) {
+            return Err("mentioned outside a work-buffer argument");
+        }
+        Ok((**elem).clone())
     }
 
     /// Why definition `d` takes no work buffer at all, or `None` when its locals may.
@@ -146,6 +311,7 @@ impl Parser {
                         continue;
                     };
                     self.promote_one(&mut code, v, db, &ops);
+                    crate::rewrite_census::fired("R-WorkBuffer", 1);
                     promoted += 1;
                     if trace {
                         eprintln!(
@@ -380,6 +546,42 @@ fn address_taken_defs(data: &Data) -> HashSet<u32> {
         });
     }
     out
+}
+
+/// Per definition, the definitions its body calls directly.  A call through a function value
+/// needs no edge here: its target is address-taken, which declines every promotion in it, so
+/// such a frame mints its own buffers and a chain of handed-down buffers stops there.
+fn static_calls(data: &Data) -> Vec<Vec<u32>> {
+    (0..data.definitions.len() as u32)
+        .map(|d| {
+            let mut out = Vec::new();
+            data.def(d).code.walk(&mut |v| {
+                if let Value::Call(c, _) = v
+                    && !out.contains(c)
+                {
+                    out.push(*c);
+                }
+            });
+            out
+        })
+        .collect()
+}
+
+/// Can `from` reach `to` through direct calls (`from == to` included)?
+fn reaches(calls: &[Vec<u32>], from: u32, to: u32) -> bool {
+    let mut seen = HashSet::from([from]);
+    let mut stack = vec![from];
+    while let Some(d) = stack.pop() {
+        if d == to {
+            return true;
+        }
+        for &c in calls.get(d as usize).map_or(&[][..], Vec::as_slice) {
+            if seen.insert(c) {
+                stack.push(c);
+            }
+        }
+    }
+    false
 }
 
 /// The operator numbers the trio and the clear are spelled with.
@@ -658,7 +860,7 @@ fn is_element_place(name: &str) -> bool {
 }
 
 /// A getter or setter of a scalar at a place: the place is consumed, never kept.
-fn is_scalar_accessor(name: &str) -> bool {
+pub(crate) fn is_scalar_accessor(name: &str) -> bool {
     matches!(
         name,
         "OpGetInt"
@@ -714,10 +916,64 @@ impl Walk<'_> {
         if i == 1 && copied_from_at_1(name) {
             return true;
         }
-        i == 0
+        if i == 0
             && self
                 .one_op_wrapper(d)
                 .is_some_and(|op| in_place_at_0(self.data.def(op).name()))
+        {
+            return true;
+        }
+        self.loft_callee_admits(d, i)
+    }
+
+    /// A loft-bodied callee may take a tracked vector at parameter `i` BY VALUE when its
+    /// answer cannot hold it.  A by-value heap parameter is a view for the call's duration
+    /// (F-ParamHeap) that no store of the callee's retains by identity — a field store or a
+    /// bind copies (B-Copy), a link cannot be stored, and a rebind (F-ParamRebind) is the
+    /// callee's own store, released at its exit against the entry witness — so the store
+    /// leaves the callee only through its ANSWER: `heap_return_delivery` is the one home of
+    /// "does this function's result view an argument" (a `View` names a parameter's store),
+    /// a field of a returned record may view a parameter on its own (O-ViewField), which the
+    /// nested types' deps carry, and a function value could capture the parameter.  A `&`
+    /// parameter is declined: a rebind through it repoints the CALLER's variable, which is
+    /// the buffer.  A callee with no loft body — an operator, a native, a parallel builtin —
+    /// is judged by the operator lists alone.
+    fn loft_callee_admits(&self, d: u32, i: usize) -> bool {
+        let def = self.data.def(d);
+        if def.def_type() != DefType::Function
+            || !def.rust().is_empty()
+            || !matches!(def.code().unspan(), Value::Block(_))
+        {
+            return false;
+        }
+        let Some(a) = def.attributes().get(i) else {
+            return false;
+        };
+        if !matches!(a.typedef.base(), Type::Vector(_, _)) {
+            return false;
+        }
+        if crate::keys::trace_work_buffer() {
+            let ret = def.returned();
+            eprintln!(
+                "[work-buffer]   callee {} param {i}: returned={} depend={:?} heap_dep={:?} delivery={:?} ownership={:?}",
+                def.name(),
+                ret.name(self.data), // schema-key — a developer trace
+                ret.depend(),
+                ret.heap_dep(),
+                crate::use_analysis::heap_return_delivery(self.data, d),
+                crate::use_analysis::return_ownership(self.data, d)
+            );
+        }
+        if crate::use_analysis::heap_return_delivery(self.data, d)
+            == crate::use_analysis::HeapDelivery::View
+        {
+            return false;
+        }
+        let idx = i as u16;
+        !def.returned().any_node(&mut |t| {
+            t.heap_dep().is_some_and(|deps| deps.contains(&idx))
+                || matches!(t.base(), Type::Function(..))
+        })
     }
 
     fn node(&mut self, node: &Value, pos: Pos<'_>) -> Result<(), &'static str> {

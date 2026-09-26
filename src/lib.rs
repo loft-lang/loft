@@ -335,6 +335,7 @@ pub mod lib_placement;
 pub mod byte_copy;
 pub mod compact;
 pub mod const_fn;
+pub mod copy_view;
 pub(crate) mod net;
 pub mod ownership_cfg;
 #[cfg(paged_store)]
@@ -345,6 +346,7 @@ pub mod portable_path;
 pub mod rebind_place;
 pub mod resolution;
 pub mod resolution_scope;
+pub mod rewrite_census;
 pub mod scopes;
 pub mod siphash;
 pub mod use_analysis;
