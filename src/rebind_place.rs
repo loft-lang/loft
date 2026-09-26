@@ -204,35 +204,9 @@ fn admit(
     args: &[Value],
     facts: &Facts,
 ) -> Result<usize, &'static str> {
-    if callee_nr == d_nr {
-        return Err("a recursive call");
-    }
-    if data.def_type(callee_nr) != DefType::Function {
-        return Err("the callee is not a function");
-    }
+    let buf_idx = admit_callee(data, d_nr, callee_nr, args)?;
     let callee = data.def(callee_nr);
-    if *callee.code() == Value::Null || !callee.rust().is_empty() || !callee.native().is_empty() {
-        return Err("the callee has no loft body");
-    }
-    if callee.name().contains("__lambda") {
-        return Err("the callee is a lambda");
-    }
-    let buf_idx = callee
-        .hidden_return_buffer_attr()
-        .ok_or("the callee has no hidden return buffer")?;
-    if callee.attributes()[buf_idx].name != "__retbuf" {
-        return Err("the callee's buffer was promoted onto a local");
-    }
-    if args.len() <= buf_idx {
-        return Err("the call carries no buffer argument");
-    }
     let func: &Function = data.def(d_nr).variables();
-    let Value::Var(buf) = args[buf_idx].unspan() else {
-        return Err("the buffer argument is not the caller's work-ref");
-    };
-    if !func.is_compiler_generated(*buf) || !func.name(*buf).starts_with("__ref_") {
-        return Err("the buffer argument is not the caller's work-ref");
-    }
     // The frame's OWN return buffer, promoted onto a named local (`fn build() -> Doc { d =
     // empty(); for … { d = step(d, …) }; d }`): the record the caller handed in to be filled,
     // which this frame writes as it writes a local of its own — so it is the one argument
@@ -343,6 +317,46 @@ fn admit(
         return Err("the parameter's record type is not the local's");
     }
     callee_safe(data, facts.database, callee_nr, param_idx, td)?;
+    Ok(buf_idx)
+}
+
+/// The callee's half of `admit`: a loft function with a hidden return buffer that this call
+/// fills from the caller's own work-ref.  `Ok` carries the buffer's argument index.
+fn admit_callee(
+    data: &Data,
+    d_nr: u32,
+    callee_nr: u32,
+    args: &[Value],
+) -> Result<usize, &'static str> {
+    if callee_nr == d_nr {
+        return Err("a recursive call");
+    }
+    if data.def_type(callee_nr) != DefType::Function {
+        return Err("the callee is not a function");
+    }
+    let callee = data.def(callee_nr);
+    if *callee.code() == Value::Null || !callee.rust().is_empty() || !callee.native().is_empty() {
+        return Err("the callee has no loft body");
+    }
+    if callee.name().contains("__lambda") {
+        return Err("the callee is a lambda");
+    }
+    let buf_idx = callee
+        .hidden_return_buffer_attr()
+        .ok_or("the callee has no hidden return buffer")?;
+    if callee.attributes()[buf_idx].name != "__retbuf" {
+        return Err("the callee's buffer was promoted onto a local");
+    }
+    if args.len() <= buf_idx {
+        return Err("the call carries no buffer argument");
+    }
+    let func: &Function = data.def(d_nr).variables();
+    let Value::Var(buf) = args[buf_idx].unspan() else {
+        return Err("the buffer argument is not the caller's work-ref");
+    };
+    if !func.is_compiler_generated(*buf) || !func.name(*buf).starts_with("__ref_") {
+        return Err("the buffer argument is not the caller's work-ref");
+    }
     Ok(buf_idx)
 }
 
