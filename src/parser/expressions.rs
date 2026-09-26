@@ -222,7 +222,7 @@ fn declared_range(tp: &Type, nullable: bool) -> Option<(i64, i64, i64)> {
 /// base is found by walking `args[0]` to the leaf `Var`.  @PLN40 step 3 uses this to
 /// find which binding a component write (`p.x = …`, `p[i] = …`) mutates THROUGH, so a
 /// write through a value-const binding can be rejected at its root.
-fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
+pub(crate) fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
     match v.unspan() {
         Value::Var(nr) => *nr,
         // Exactly two `if`s reach the left of an assignment, and both name their place through
@@ -1676,14 +1676,19 @@ use a separate collection or add after the loop"
     /// guard, so every route that lowers a write is covered.  A write through a callee is not
     /// seen: the loop's answer is still the rule's, only the notice is missing.
     fn check_loop_source_write(&mut self, to: &Value) {
-        if self.first_pass {
-            return;
-        }
         let Some(place) = self.vars.loop_source_written(to) else {
             return;
         };
         let root = lhs_base_var(&place, &self.data);
         if root == u16::MAX {
+            return;
+        }
+        // loft#1695 — pass 1 notes that the loop's source place is replaced in its body, so
+        // pass 2 binds a COLLECTION source as a copy (`Parser::parse_for`); the notice is
+        // pass 2's alone.
+        if self.first_pass {
+            self.loop_sources_replaced
+                .insert((self.context, self.vars.name(root).to_string()));
             return;
         }
         let name = self.vars.written_name(root).to_string();

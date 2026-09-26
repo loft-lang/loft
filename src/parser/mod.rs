@@ -793,6 +793,11 @@ pub struct Parser {
     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+    /// loft#1695 — `(function, root variable)` of every COLLECTION loop source a body
+    /// replaced (`for p in d.rs { d = … }`), recorded on pass 1 so pass 2 walks a copy taken
+    /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
+    /// which both passes agree on; two loops over one root both copy, which is conservative.
+    loop_sources_replaced: std::collections::HashSet<(u32, String)>,
     /// @PLN167 C1 — the kind of each `&text` link bound so far on pass 2, keyed by
     /// `(function, variable)`: `true` for a text field or element (the store kind), `false` for
     /// a text variable (the stack kind).  A second bind of the other kind is refused.
@@ -1614,6 +1619,7 @@ impl Parser {
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
+            loop_sources_replaced: std::collections::HashSet::new(),
             text_link_kinds: std::collections::HashMap::new(),
             amp_vector_locals: std::collections::HashSet::new(),
             amp_vector_link_partners: std::collections::HashMap::new(),

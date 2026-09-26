@@ -4035,7 +4035,7 @@ impl Parser {
         }
     }
 
-    fn is_source_place(v: &Value, data: &crate::data::Data) -> bool {
+    pub(crate) fn is_source_place(v: &Value, data: &crate::data::Data) -> bool {
         match v.unspan() {
             Value::Var(_) => true,
             Value::Call(d, args) => {

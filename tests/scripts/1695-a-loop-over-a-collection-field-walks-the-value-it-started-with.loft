@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1695 (`@FR-I-For`, `@FR-B-Disturb`) — A LOOP OVER A COLLECTION FIELD WALKS THE VALUE IT
+// STARTED WITH.  `(I-For)` evaluates the source once, for every spelling, a field path included;
+// a body that writes a place the source read changes the place and not the loop, and is told
+// (`loop-source-written`).  A collection source was bound as the place itself, so replacing
+// the field or its owner in the body (`for p in d.rs { d = shift(d) }`) made the loop walk the
+// NEW vector from the next round, or one the replacement had released — both backends, no
+// notice.  Such a loop now walks a copy taken at loop start and the write is reported.
+//
+// The other half is the over-reach cells: a write INTO the collection, a sibling field, a
+// removal, writes through the loop variable and a call source replace nothing, so they keep
+// walking the collection in place and are not reported.  Every value is hand-computed.
+//
+// @falsified-at: <derived after the fix is committed>
+// CHANNEL: the asserts — on the control tree the replaced-source cells walk the new vector.
+// WITNESS: `owner replaced: 51` (1 + the new 50).
+// HOLDS: the over-reach cells on both trees.
+// @EXPECT_WARNING: loop-source-written
+
+struct Pt { x: integer, y: integer }
+struct Shape { rs: vector<Pt>, n: integer }
+struct Outer { s: Shape }
+struct S { xs: vector<integer> }
+
+fn shift(s: Shape) -> Shape {
+  nr: vector<Pt> = [];
+  for p in s.rs { nr += [Pt { x: p.x + 1000, y: p.y }]; }
+  Shape { rs: nr, n: s.n + 1 }
+}
+fn mk(k: integer) -> Shape { Shape { rs: [Pt { x: k, y: 0 }], n: k } }
+fn pts() -> vector<Pt> { [Pt { x: 1, y: 0 }, Pt { x: 3, y: 0 }] }
+fn start() -> Shape { Shape { rs: [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }], n: 0 } }
+fn walk_param(d: Shape) -> integer { t = 0; for p in d.rs { d = mk(50); t += p.x; } t }
+
+fn main() {
+  // the report: p walks d.rs as it was (1 + 3); rs shifted twice
+  d1 = start();
+  t1 = 0;
+  for p in d1.rs { d1 = shift(d1); t1 += p.x; }
+  assert(t1 == 4 && d1.rs[0].x == 2001 && d1.rs[1].x == 2003, "the report: {t1} {d1.rs[0].x} {d1.rs[1].x}");
+  d2 = start();
+  t2 = 0;
+  for p in d2.rs { d2 = Shape { rs: [Pt { x: 50, y: 0 }], n: 9 }; t2 += p.x; }
+  assert(t2 == 4 && d2.rs[0].x == 50 && len(d2.rs) == 1, "owner replaced: {t2}");
+  d3 = start();
+  t3 = 0;
+  for p in d3.rs { d3.rs = [Pt { x: 50, y: 0 }]; t3 += p.x; }
+  assert(t3 == 4, "field replaced: {t3}");
+  d4 = start();
+  t4 = 0;
+  for p in d4.rs { t4 += p.x; d4 = mk(50); }
+  assert(t4 == 4, "read before the replacement: {t4}");
+  s5 = S { xs: [1, 3] };
+  t5 = 0;
+  for x in s5.xs { s5 = S { xs: [50] }; t5 += x; }
+  assert(t5 == 4, "scalar elements: {t5}");
+  o6 = Outer { s: start() };
+  t6 = 0;
+  for p in o6.s.rs { o6 = Outer { s: mk(50) }; t6 += p.x; }
+  assert(t6 == 4, "a nested owner: {t6}");
+  assert(walk_param(start()) == 4, "a parameter's field: {walk_param(start())}");
+  v8: vector<Pt> = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  t8 = 0;
+  for p in v8 { v8 = [Pt { x: 50, y: 0 }]; t8 += p.x; }
+  assert(t8 == 4, "a plain local vector: {t8}");
+  // over-reach: nothing replaced, so the loop walks in place
+  a = start();
+  ta = 0;
+  for p in a.rs { a.rs[1].x = 100; ta += p.x; }
+  b = start();
+  tb = 0;
+  for p in b.rs { b.n += 1; tb += p.x; }
+  c = start();
+  tc = 0;
+  for p in c.rs { tc += p.x; if p.x == 1 { p#remove; } }
+  e = start();
+  for p in e.rs { p.x += 10; }
+  td = 0;
+  for p in pts() { td += p.x; }
+  assert(ta == 101 && tb == 4 && b.n == 2 && tc == 4 && len(c.rs) == 1 && e.rs[0].x == 11 && e.rs[1].x == 13 && td == 4,
+    "over-reach: {ta} {tb} {b.n} {tc} {len(c.rs)} {e.rs[0].x} {e.rs[1].x} {td}");
+  println("a loop over a collection field walks the value it started with: every cell holds");
+}
