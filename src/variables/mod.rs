@@ -84,7 +84,7 @@ This administrates variables and scopes for a specific function.
 - Variables might exist in multiple scopes but not with different types.
 - We allow for variables to move to a higher scope.
 */
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::{Display, Formatter};
 
 // Iterator details on each for loop inside the current function
@@ -616,7 +616,10 @@ pub struct Function {
     /// original store is never freed by the callee and a fresh rebind store is.
     /// Parse-time only: on a snapshot load `scopes::check` is skipped (the frees
     /// are already in `code`), so this map is not part of the snapshot.
-    rebind_orig: HashMap<u16, u16>,
+    /// Ordered, because `rebind_params` is iterated to EMIT the scope-exit releases of every
+    /// rebound parameter, and a `std` hash map handed them out in a different order on every
+    /// run — the same program dumped to different IR and bytecode run to run (loft#1685).
+    rebind_orig: BTreeMap<u16, u16>,
     /// A heap-record LOCAL whose assignments MIX ownership — one hands it a store of its
     /// own, another a view — maps to its OWNER WITNESS `__own_<name>`: a hidden reference
     /// that names the store the local minted for as long as the local still holds it, and
@@ -657,7 +660,10 @@ fn swap_in_hset(s: &mut HashSet<u16>, a: u16, b: u16) {
 }
 
 /// Swap `a`/`b` in BOTH the keys and the values of a var→var map.
-fn swap_map_indices(m: &mut HashMap<u16, u16>, a: u16, b: u16) {
+fn swap_map_indices<M>(m: &mut M, a: u16, b: u16)
+where
+    M: Default + IntoIterator<Item = (u16, u16)> + FromIterator<(u16, u16)>,
+{
     let swap1 = |x: u16| {
         if x == a {
             b
@@ -667,7 +673,10 @@ fn swap_map_indices(m: &mut HashMap<u16, u16>, a: u16, b: u16) {
             x
         }
     };
-    *m = m.iter().map(|(&k, &v)| (swap1(k), swap1(v))).collect();
+    *m = std::mem::take(m)
+        .into_iter()
+        .map(|(k, v)| (swap1(k), swap1(v)))
+        .collect();
 }
 
 impl Display for Function {
@@ -724,7 +733,7 @@ impl Function {
             logging: false,
             done: false,
             closure_var_map: HashMap::new(),
-            rebind_orig: HashMap::new(),
+            rebind_orig: BTreeMap::new(),
             owner_witness: HashMap::new(),
         }
     }
@@ -3720,14 +3729,11 @@ impl Function {
     }
 
     /// @PLN87 P2.1 — every (param, witness) pair, for the entry stash and the
-    /// function-exit `OpFreeRefIfDistinct`, in parameter order: the map's own order is a
-    /// hash's, and it made the same program emit its exit frees in a different order from
-    /// run to run (a work-buffer function holds one pair per buffer).
+    /// function-exit `OpFreeRefIfDistinct`, in parameter order (`rebind_orig` is ordered,
+    /// loft#1685).
     #[must_use]
     pub fn rebind_params(&self) -> Vec<(u16, u16)> {
-        let mut pairs: Vec<(u16, u16)> = self.rebind_orig.iter().map(|(&p, &o)| (p, o)).collect();
-        pairs.sort_unstable();
-        pairs
+        self.rebind_orig.iter().map(|(&p, &o)| (p, o)).collect()
     }
 
     /// Record that local `v` releases its stores through the owner witness `w`
@@ -3991,7 +3997,7 @@ impl Function {
     /// (`reads == 0 && write_targets > 0` is the future S2 dead-store signal — see
     /// `doc/claude/plans/107-dead-code-lint/`).
     pub fn debug_dead_store_dump(&self, fn_name: &str, body: &Value, data: &Data) {
-        if std::env::var_os("LOFT_DUMP_READS").is_none() {
+        if crate::env_once!(std::env::var_os("LOFT_DUMP_READS").is_none()) {
             return;
         }
         let acc = crate::use_analysis::dead_store_accesses(body, self, data);
@@ -4317,7 +4323,7 @@ impl Function {
     /// that one variable was both.
     #[track_caller]
     fn trace_work_ref(&self, v: u16, tp: &Type) {
-        if std::env::var_os("LOFT_TRACE_WORKREF").is_none() {
+        if crate::env_once!(std::env::var_os("LOFT_TRACE_WORKREF").is_none()) {
             return;
         }
         // `arg=` is the half that decides whether a reuse is harmless or a collision, and
@@ -4819,8 +4825,9 @@ impl Function {
     }
 
     pub fn set_skip_free(&mut self, v: u16) {
-        if let Ok(want) = std::env::var("LOFT_SKIPFREE_TRACE")
-            && (want == "*" || self.variables[v as usize].name == want)
+        if let Some(want) =
+            crate::env_once!(@value Option<String>, std::env::var("LOFT_SKIPFREE_TRACE").ok())
+            && (want == "*" || self.variables[v as usize].name == *want)
         {
             eprintln!(
                 "[skip_free] {} (var={v}) in {} @ {}",
@@ -4988,7 +4995,7 @@ impl Function {
             if v.pre_assigned_pos != u16::MAX
                 && v.pre_assigned_pos != pos
                 && !v.argument
-                && std::env::var("LOFT_SLOT_LOG").is_ok()
+                && crate::env_once!(std::env::var("LOFT_SLOT_LOG").is_ok())
             {
                 eprintln!(
                     "[set_stack_pos] '{}' scope={}: assign_slots placed at {} but \
@@ -5034,7 +5041,7 @@ impl Function {
         // often a shared helper (`change_var_type`'s adopt-deps branch rewrites a dep list
         // on behalf of whoever assigned), and the question is always which PARSE site is
         // behind it.
-        if std::env::var_os("LOFT_TIMELINE_BT").is_some() {
+        if crate::env_once!(std::env::var_os("LOFT_TIMELINE_BT").is_some()) {
             eprintln!("{}", std::backtrace::Backtrace::force_capture());
         }
     }
@@ -5345,5 +5352,7 @@ pub fn owns_literal_backing_store(name: &str) -> bool {
 /// one.  Read once per process.
 fn link_all_narrow() -> bool {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
-    *ON.get_or_init(|| std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))
+    *ON.get_or_init(|| {
+        crate::env_once!(std::env::var("LOFT_LINK_ALL_NARROW").is_ok_and(|v| v == "1"))
+    })
 }

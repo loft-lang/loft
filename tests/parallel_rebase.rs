@@ -119,7 +119,7 @@ use std::collections::HashSet;
 
 fn pos() -> Position {
     Position {
-        file: String::new(),
+        file: "".into(),
         line: 0,
         pos: 0,
     }

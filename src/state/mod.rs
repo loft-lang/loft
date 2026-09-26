@@ -1141,7 +1141,7 @@ impl State {
                     {
                         let def = &data.definitions[f.d_nr as usize];
                         let name = def.trace_name();
-                        let file = def.position().file.clone();
+                        let file = def.position().file.to_string();
                         // Fix #92: line resolution for parallel-worker frames.
                         // The CallFrame.line is only updated by `fn_call`, which
                         // never runs for the worker's entry frame.  Fall back to
@@ -3476,7 +3476,7 @@ impl State {
             if def.def_type != crate::data::DefType::Function {
                 continue;
             }
-            if std::path::Path::new(&def.position.file).file_name() != Some(want) {
+            if std::path::Path::new(&*def.position.file).file_name() != Some(want) {
                 continue;
             }
             if let Some(off) = self.set_breakpoint_fn_line(d, line, data) {
@@ -3499,7 +3499,7 @@ impl State {
         for d in 0..data.definitions() {
             let def = data.def(d);
             if def.def_type != crate::data::DefType::Function
-                || std::path::Path::new(&def.position.file).file_name() != Some(want)
+                || std::path::Path::new(&*def.position.file).file_name() != Some(want)
             {
                 continue;
             }
@@ -6103,7 +6103,7 @@ impl State {
         crate::timeout::publish_interp_fns(data.definitions.iter().map(|def| {
             (
                 def.trace_name(),
-                def.position().file.clone(),
+                def.position().file.to_string(),
                 def.position().line,
             )
         }));

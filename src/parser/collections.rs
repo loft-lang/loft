@@ -1375,7 +1375,7 @@ impl Parser {
             parent_tp,
             fn_attr: lhs_fn_attr,
         } = *lhs;
-        if std::env::var("LOFT_PROBE_TS").is_ok() && !self.first_pass {
+        if crate::env_once!(std::env::var("LOFT_PROBE_TS").is_ok()) && !self.first_pass {
             eprintln!(
                 "TS {}:{} op={op} f_type={f_type:?} src_tp={src_tp:?}\n   to={to:?}\n   val={val:?}",
                 self.lexer.pos().file,
@@ -1735,7 +1735,7 @@ impl Parser {
                 || (matches!(to.unspan(), Value::Var(v) if self.vars.is_amp_link(*v))
                     && self.produces_whole_record(val)))
         {
-            if std::env::var("LOFT_PROBE_TS").is_ok() {
+            if crate::env_once!(std::env::var("LOFT_PROBE_TS").is_ok()) {
                 eprintln!("TS   -> copy_ref branch TAKEN");
             }
             if let Some(ops) = self.group_elem_write(to, f_type.base(), true, |p, t, _| {

@@ -29,7 +29,10 @@
 
 use crate::data::{Block, Context, Data, DefType, Deps, Type, Value, v_if, v_set};
 use crate::variables::{Function, compute_intervals, size};
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+// The Fx tables (`crate::fxhash`): the scope pass keys its sets by variable and definition
+// number on every node, and SipHash was a measurable share of a compile (@PLN166 B4).
+use crate::fxhash::{FxHashMap as HashMap, FxHashSet as HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 struct Scopes<'s> {
     /// The store-type registry — read for the element type a vector COPY op names
@@ -926,8 +929,8 @@ fn keyed_removal_keys(
     data: &Data,
     function: &Function,
 ) -> HashMap<(u16, u32), Vec<Value>> {
-    let mut out: HashMap<(u16, u32), Vec<Value>> = HashMap::new();
-    let mut ambiguous: HashSet<(u16, u32)> = HashSet::new();
+    let mut out: HashMap<(u16, u32), Vec<Value>> = HashMap::default();
+    let mut ambiguous: HashSet<(u16, u32)> = HashSet::default();
     code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         if data.def(*d).name() != "OpHashRemove" {
@@ -977,7 +980,7 @@ fn grown_containers(
     database: Option<&crate::database::Stores>,
     cleared: &HashSet<(u16, u32)>,
 ) -> HashSet<(u16, u32)> {
-    let mut out: HashSet<(u16, u32)> = HashSet::new();
+    let mut out: HashSet<(u16, u32)> = HashSet::default();
     code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let name = data.def(*d).name();
@@ -1086,7 +1089,7 @@ fn places_named_by(
     data: &Data,
     which: &dyn Fn(&str) -> Option<usize>,
 ) -> HashSet<(u16, u32)> {
-    let mut out: HashSet<(u16, u32)> = HashSet::new();
+    let mut out: HashSet<(u16, u32)> = HashSet::default();
     code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let Some(at) = which(data.def(*d).name()) else {
@@ -1130,7 +1133,7 @@ fn named_place(arg: &Value, data: &Data) -> Option<(u16, u32)> {
 /// behaviour — the same lower-bound stance as [`collect_reshaped_containers`].
 fn reassigned_ref_params(data: &Data, d_nr: u32) -> HashSet<u16> {
     let def = data.def(d_nr);
-    let mut out: HashSet<u16> = HashSet::new();
+    let mut out: HashSet<u16> = HashSet::default();
     def.code.walk(&mut |v| {
         let Value::Set(slot, rhs) = v else { return };
         if matches!(rhs.unspan(), Value::Null) {
@@ -1174,7 +1177,7 @@ fn peel_stack_ref<'a>(arg: &'a Value, data: &Data) -> &'a Value {
 /// down reaches the caller through [`removed_params_map`], which closes it over the call graph.
 fn removed_ref_params(data: &Data, d_nr: u32) -> HashSet<u16> {
     let def = data.def(d_nr);
-    let mut out: HashSet<u16> = HashSet::new();
+    let mut out: HashSet<u16> = HashSet::default();
     if def.attributes.is_empty() {
         return out;
     }
@@ -1206,7 +1209,7 @@ fn removed_ref_params(data: &Data, d_nr: u32) -> HashSet<u16> {
 /// (probe 38 cell C1). The REFUSAL wants the wider answer, because a rejected program is not
 /// silently anything; the materialise wants the narrower one.
 fn reshaped_via_call(stmt: &Value, data: &Data, removed: &RemovedParams) -> HashMap<u16, u32> {
-    let mut out: HashMap<u16, u32> = HashMap::new();
+    let mut out: HashMap<u16, u32> = HashMap::default();
     stmt.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         let Some(params) = removed.get(d) else { return };
@@ -1239,10 +1242,10 @@ type RemovedParams = HashMap<u32, HashSet<u16>>;
 /// A callee reached only through a runtime fn-ref has no edge here and keeps today's behaviour —
 /// a lower bound in the safe direction, since the refusal simply does not fire.
 fn removed_params_map(data: &Data) -> RemovedParams {
-    let mut out = RemovedParams::new();
+    let mut out = RemovedParams::default();
     let mut work: Vec<(u32, u16)> = Vec::new();
     // (callee, its param) -> every (caller, caller's own `&` param) that feeds it.
-    let mut forwards: HashMap<(u32, u16), Vec<(u32, u16)>> = HashMap::new();
+    let mut forwards: HashMap<(u32, u16), Vec<(u32, u16)>> = HashMap::default();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
         if !def.name.starts_with("n_") {
@@ -1429,7 +1432,7 @@ pub fn places_disturbed_by(
     disturbed: Option<&DisturbedParams>,
 ) -> HashSet<ParamPlace> {
     let function = &data.def(def_nr).variables;
-    let mut out = grown_containers(code, data, function, database, &HashSet::new());
+    let mut out = grown_containers(code, data, function, database, &HashSet::default());
     out.extend(reshaped_containers(code, data, function));
     if let Some(map) = disturbed {
         code.walk(&mut |v| {
@@ -1472,14 +1475,14 @@ fn disturbed_param_places(
     database: Option<&crate::database::Stores>,
 ) -> HashMap<ParamPlace, ViewCause> {
     let def = data.def(d_nr);
-    let mut out: HashMap<ParamPlace, ViewCause> = HashMap::new();
+    let mut out: HashMap<ParamPlace, ViewCause> = HashMap::default();
     if def.attributes.is_empty() || matches!(def.code, Value::Null) {
         return out;
     }
     let function = &def.variables;
     // Accumulated over the WHOLE body, as the inline walk accumulates it, so a field cleared
     // anywhere is subtracted everywhere: a missed disturbance costs a materialise.
-    let mut cleared: HashSet<ParamPlace> = HashSet::new();
+    let mut cleared: HashSet<ParamPlace> = HashSet::default();
     def.code.walk(&mut |v| {
         let Value::Call(d, args) = v else { return };
         if data.def(*d).name() != "OpClearVector" {
@@ -1527,11 +1530,11 @@ pub fn disturbed_params_map(
     data: &Data,
     database: Option<&crate::database::Stores>,
 ) -> DisturbedParams {
-    let mut out = DisturbedParams::new();
-    let trace = std::env::var_os("LOFT_TRACE_DISTURB").is_some();
+    let mut out = DisturbedParams::default();
+    let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_DISTURB").is_some());
     let mut work: Vec<(u32, ParamPlace)> = Vec::new();
     // (callee, its param slot) -> every (caller, the caller's own place) that feeds it.
-    let mut forwards: HashMap<(u32, u16), Vec<(u32, ParamPlace)>> = HashMap::new();
+    let mut forwards: HashMap<(u32, u16), Vec<(u32, ParamPlace)>> = HashMap::default();
     for d_nr in 0..data.definitions() {
         let def = data.def(d_nr);
         if !def.name.starts_with("n_") {
@@ -1705,7 +1708,7 @@ fn collect_views_to_materialise(
     disturbed: Option<&DisturbedParams>,
 ) -> HashMap<u16, Disturbance> {
     let out = ViewWalk::run(code, function, data, None, disturbed, Some(database), 0);
-    if !out.is_empty() && std::env::var_os("LOFT_DEBUG_F8").is_some() {
+    if !out.is_empty() && crate::env_once!(std::env::var_os("LOFT_DEBUG_F8").is_some()) {
         let mut names: Vec<String> = out
             .iter()
             .map(|(v, d)| format!("{}({:?})", function.name(*v), d.cause))
@@ -1827,15 +1830,15 @@ impl ViewWalk<'_> {
             function,
             data,
             open: vec![Vec::new()],
-            bound_at: HashMap::new(),
-            view_keys: HashMap::new(),
-            whole_container: HashMap::new(),
-            shaken: HashMap::new(),
-            out: HashMap::new(),
+            bound_at: HashMap::default(),
+            view_keys: HashMap::default(),
+            whole_container: HashMap::default(),
+            shaken: HashMap::default(),
+            out: HashMap::default(),
             cross_frame,
             disturbed,
             database,
-            cleared: HashSet::new(),
+            cleared: HashSet::default(),
             line: start_line,
         };
         walk.walk_block(std::slice::from_ref(code));
@@ -1994,7 +1997,7 @@ impl ViewWalk<'_> {
         if let Some(removed) = self.cross_frame {
             for (container, callee) in reshaped_via_call(stmt, self.data, removed) {
                 self.shake(
-                    &HashSet::from([container]),
+                    &HashSet::from_iter([container]),
                     ViewCause::Reshaped,
                     Some(callee),
                 );
@@ -2047,7 +2050,7 @@ impl ViewWalk<'_> {
             }
         });
         for (place, cause, callee) in hits {
-            self.shake_plain_places(&HashSet::from([place]), cause, Some(callee));
+            self.shake_plain_places(&HashSet::from_iter([place]), cause, Some(callee));
         }
     }
 
@@ -2377,7 +2380,7 @@ impl ViewWalk<'_> {
     /// growth of one FIELD does not end the places inside its siblings.  A view and a
     /// disturbance match when [`same_place`] says they name the same storage.
     fn shake_places(&mut self, places: &HashSet<(u16, u32)>, cause: ViewCause, via: Option<u32>) {
-        self.shake_places_keyed(places, cause, via, &HashMap::new());
+        self.shake_places_keyed(places, cause, via, &HashMap::default());
     }
 
     /// Does `view` name the CONTAINER at `place` itself, so that `cause` does not end it?
@@ -2946,7 +2949,7 @@ fn def_reshape_refusals(
             ),
         };
         out.push(ReshapeRefusal {
-            file: file.clone(),
+            file: file.to_string(),
             line: d.line,
             message,
         });
@@ -2984,7 +2987,7 @@ fn def_reshape_refusals(
         places.sort_by_key(|((slot, inner), cause)| {
             (*slot, *inner, !matches!(cause, ViewCause::Reshaped))
         });
-        let mut reported: HashSet<(usize, usize)> = HashSet::new();
+        let mut reported: HashSet<(usize, usize)> = HashSet::default();
         for ((slot, inner), cause) in places {
             let k = usize::from(slot);
             let Some(place) = args
@@ -3038,7 +3041,7 @@ fn def_reshape_refusals(
                     ),
                 };
                 out.push(ReshapeRefusal {
-                    file: file.clone(),
+                    file: file.to_string(),
                     line,
                     message: format!(
                         "cannot pass both `{cname}` and a reference into it to `{fname}` — \
@@ -3064,7 +3067,7 @@ fn def_reshape_refusals(
 /// Nested blocks are included deliberately: `if flag { bx = T{…} }` establishes `bx` as far
 /// as a view bound outside the `if` is concerned.
 fn established_stores(stmt: &Value, function: &Function, data: &Data) -> HashSet<u16> {
-    let mut out: HashSet<u16> = HashSet::new();
+    let mut out: HashSet<u16> = HashSet::default();
     // @FR-L-Null — `.base()` at each of the three record tests below: a `?` is a compile-time
     // bit over the SAME storage, so `S?` establishes a store exactly as `S` does.  Asked bare,
     // a nullable local's reassignment established nothing, so a view into it was neither
@@ -3265,7 +3268,7 @@ fn var_copy_owns(function: &Function, v: u16, src: u16) -> bool {
 /// Only a bare `Var` right-hand side qualifies: anything else is a value with no source
 /// variable whose release could have moved.
 fn per_path_handoffs(code: &Value) -> HashSet<(u16, u16)> {
-    let mut out: HashSet<(u16, u16)> = HashSet::new();
+    let mut out: HashSet<(u16, u16)> = HashSet::default();
     fn arm(a: &Value, out: &mut HashSet<(u16, u16)>) {
         a.walk(&mut |m| {
             if let Value::Set(v, rhs) = m.unspan()
@@ -3295,7 +3298,7 @@ fn loop_self_stopping_copies(
     function: &Function,
     data: &Data,
 ) -> HashSet<(u16, u16)> {
-    let mut out: HashSet<(u16, u16)> = HashSet::new();
+    let mut out: HashSet<(u16, u16)> = HashSet::default();
     code.walk(&mut |n| {
         if let Value::Loop(lp) = n.unspan() {
             for op in &lp.operators {
@@ -3659,7 +3662,7 @@ fn handle_handoff(d_nr: u32, args: &[Value], function: &Function, data: &Data) -
 /// local qualifies only once that local does.
 fn caller_record_locals(code: &Value, function: &Function, data: &Data) -> BTreeSet<u16> {
     let mut copies: BTreeMap<u16, Vec<u16>> = BTreeMap::new();
-    let mut disqualified: HashSet<u16> = HashSet::new();
+    let mut disqualified: HashSet<u16> = HashSet::default();
     code.walk(&mut |n| match n.unspan() {
         Value::Set(t, rhs) => match rhs.unspan() {
             Value::Var(src) => copies.entry(*t).or_default().push(*src),
@@ -3800,7 +3803,7 @@ fn vector_literal_backings(
     function: &Function,
     data: &Data,
 ) -> HashMap<u16, Vec<u16>> {
-    let mut out: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut out: HashMap<u16, Vec<u16>> = HashMap::default();
     code.walk(&mut |n| {
         if let Value::Set(v, rhs) = n.unspan()
             && let Some(b) = literal_backing_of(rhs, function, data)
@@ -3818,7 +3821,7 @@ fn vector_literal_backings(
 /// return buffer a `Set(v, f(…, __ref_N))` hands the callee.  A rebind of `v` displaces the
 /// value the call delivered into whichever of them it held.
 fn vector_call_buffers(code: &Value, function: &Function) -> HashMap<u16, Vec<u16>> {
-    let mut out: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut out: HashMap<u16, Vec<u16>> = HashMap::default();
     code.walk(&mut |n| {
         if let Value::Set(v, rhs) = n.unspan()
             && let Some(b) = call_buffer_of(rhs, function)
@@ -3878,7 +3881,7 @@ fn literal_backing_of(rhs: &Value, function: &Function, data: &Data) -> Option<u
 /// `continue` anywhere in it answers none, since a `continue` before the `Set` skips it on that
 /// pass.
 fn loop_body_refills(lp: &Block) -> HashSet<u16> {
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     let mut continues = false;
     for op in &lp.operators {
         op.walk(&mut |n| {
@@ -4451,9 +4454,9 @@ fn collect_drop_transferred(
     data: &Data,
     pairs: &HashSet<(u16, u16)>,
 ) -> HashSet<u16> {
-    let mut out: HashSet<u16> = HashSet::new();
+    let mut out: HashSet<u16> = HashSet::default();
     // No arm lift has been built yet at construction time, so nothing here is per path.
-    let per_path = HashSet::new();
+    let per_path = HashSet::default();
     code.walk(&mut |n| drop_handoff_node(n, function, data, &mut out, &per_path, pairs));
     out
 }
@@ -4730,7 +4733,7 @@ fn tuple_member_backings_of(rhs: &Value, function: &Function) -> Option<HashMap<
     let Value::Tuple(members) = rhs.unspan() else {
         return None;
     };
-    let mut out = HashMap::new();
+    let mut out = HashMap::default();
     for (idx, m) in members.iter().enumerate() {
         if let Value::Block(b) = m.unspan()
             && matches!(b.result.base(), Type::Vector(_, _))
@@ -5169,7 +5172,7 @@ fn tuple_leaf_at<'a>(tp: &'a Type, path: &[u16]) -> Option<(&'a Type, usize)> {
 /// lifted, and the ownership oracle needs the same target to resolve that call through the
 /// callee's return summary (`@FR-O-Oracle`).
 pub(crate) fn collect_fnref_targets(code: &Value, function: &Function) -> HashMap<u16, u32> {
-    let mut out: HashMap<u16, u32> = HashMap::new();
+    let mut out: HashMap<u16, u32> = HashMap::default();
     code.walk(&mut |v| {
         let Value::Set(var, rhs) = v else { return };
         if !matches!(function.tp(*var).base(), Type::Function(..)) {
@@ -5210,7 +5213,7 @@ pub(crate) fn collect_fnref_captures(
     data: &Data,
 ) -> HashMap<u16, Vec<(i32, u16)>> {
     let set_dbref = data.def_nr("OpSetDbRef");
-    let mut out: HashMap<u16, Vec<(i32, u16)>> = HashMap::new();
+    let mut out: HashMap<u16, Vec<(i32, u16)>> = HashMap::default();
     code.walk(&mut |v| {
         let Value::Set(var, rhs) = v else { return };
         if !matches!(function.tp(*var).base(), Type::Function(..)) {
@@ -5416,7 +5419,7 @@ fn tuple_call_mints(
     let Value::Tuple(members) = rhs.unspan() else {
         return None;
     };
-    let mut out = HashMap::new();
+    let mut out = HashMap::default();
     for (idx, m) in members.iter().enumerate() {
         if let Some(claim) = member_mint(m, function, data) {
             out.insert(idx as u16, claim.claimant());
@@ -5457,7 +5460,7 @@ fn branch_tuple_call_mints(
         .map(|t| tuple_call_mints(t, function, data))
         .collect::<Option<_>>()?;
     let (first, rest) = maps.split_first()?;
-    let mut out = HashMap::new();
+    let mut out = HashMap::default();
     let mut claimants: Vec<u16> = Vec::new();
     for (&idx, &claim) in first {
         let others: Vec<Option<u16>> = rest.iter().filter_map(|m| m.get(&idx).copied()).collect();
@@ -5536,7 +5539,7 @@ fn member_mint(m: &Value, function: &Function, data: &Data) -> Option<MemberMint
 
 /// loft#1532 — every `(tuple variable, element)` a member assignment writes in `code`.
 fn written_tuple_members_in(code: &Value) -> HashSet<(u16, u16)> {
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     code.walk(&mut |v| {
         if let Value::TuplePut(t, i, _) = v {
             out.insert((*t, *i));
@@ -5614,7 +5617,7 @@ fn reuse_record_buffers(
     guarded.sort_unstable();
     guarded.dedup();
     // Every result local a buffer feeds — `witness_buffer` maps the other way round.
-    let mut fed_locals: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut fed_locals: HashMap<u16, Vec<u16>> = HashMap::default();
     for (&v, bufs) in witness_buffer {
         for &av in bufs {
             fed_locals.entry(av).or_default().push(v);
@@ -5626,7 +5629,7 @@ fn reuse_record_buffers(
     let mut eager: Vec<(u16, Value, Option<Value>)> = Vec::new();
     let mut lazy: Vec<(u16, Value, Option<Value>)> = Vec::new();
     // `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
-    let trace = std::env::var_os("LOFT_TRACE_POOL").is_some();
+    let trace = crate::env_once!(std::env::var_os("LOFT_TRACE_POOL").is_some());
     if trace {
         crate::loft_eprintln!("[pool] {} candidates {:?}", data.def(fn_nr).name(), guarded);
     }
@@ -6078,7 +6081,7 @@ fn run_scan_phase(
     let displaced_owned = if crate::keys::join_own_enabled() {
         crate::use_analysis::displaced_owned_slots(orig_code, orig_vars, data)
     } else {
-        HashSet::new()
+        HashSet::default()
     };
     // Computed BEFORE the struct takes its `&mut` on the store: the walk reads the store to
     // convert a field NUMBER into the byte OFFSET a view carries, and the two borrows cannot
@@ -6094,22 +6097,22 @@ fn run_scan_phase(
         var_scope: BTreeMap::new(),
         var_order: Vec::new(),
         binding_now: Vec::new(),
-        var_mapping: HashMap::new(),
+        var_mapping: HashMap::default(),
         confined: confined.clone(),
         loops: vec![],
         loop_refills: vec![],
         vector_backings: vector_literal_backings(orig_code, orig_vars, data),
         vector_call_buffers: vector_call_buffers(orig_code, orig_vars),
-        promoted_filled: HashSet::new(),
+        promoted_filled: HashSet::default(),
         scan_depth: 0,
         lift_counter: 0,
         lift_vars: Vec::new(),
         lift_texts: Vec::new(),
         ret_temp_counter: 0,
-        paired_witness: HashMap::new(),
-        minted_pairs: HashSet::new(),
-        literal_buffer: HashMap::new(),
-        lift_join_witness: HashMap::new(),
+        paired_witness: HashMap::default(),
+        minted_pairs: HashSet::default(),
+        literal_buffer: HashMap::default(),
+        lift_join_witness: HashMap::default(),
         pending_join_witness: std::cell::Cell::new(u16::MAX),
         multi_assigned: multi_assigned_in(orig_code),
         null_led: null_led_in(orig_code, data),
@@ -6125,42 +6128,42 @@ fn run_scan_phase(
         capture_build_backing: capture_build_backings(data, orig_vars, orig_code),
         closure_keep: closure_keep_set(data, orig_vars, orig_code),
         keep_build_target: None,
-        lift_decl_depth: HashMap::new(),
+        lift_decl_depth: HashMap::default(),
         callref_join_bases: callref_join_bases_in(orig_code, data, d_nr),
-        snapshot_witness: HashMap::new(),
-        witness_buffer: HashMap::new(),
-        owned_refs: HashMap::new(),
+        snapshot_witness: HashMap::default(),
+        witness_buffer: HashMap::default(),
+        owned_refs: HashMap::default(),
         rbuf_witness: None,
         entry_witness: None,
-        local_owns: HashMap::new(),
-        owner_witness: HashMap::new(),
+        local_owns: HashMap::default(),
+        owner_witness: HashMap::default(),
         displaced_owned,
         views_to_materialise,
-        text_views_reported: HashSet::new(),
+        text_views_reported: HashSet::default(),
         fnref_target: collect_fnref_targets(orig_code, orig_vars),
         // Empty, and filled in SCAN ORDER (`Scopes::convert` arms each statement's hand-offs
         // after that statement is scanned).  A hand-off belongs to the assignment it follows
         // (`@FR-O-Latest`): seeded for the whole body, `b = mk(1); b = mk(2); y = b` read
         // `b`'s later hand-off at the earlier reassignment and never released `mk(1)`.  A loop
         // body is the exception — see the `Value::Loop` arm of `scan_inner`.
-        drop_transferred: HashSet::new(),
-        tuple_call_mint: HashMap::new(),
-        tuple_moved: HashMap::new(),
-        tuple_depth: HashMap::new(),
-        tuple_member_now: HashMap::new(),
+        drop_transferred: HashSet::default(),
+        tuple_call_mint: HashMap::default(),
+        tuple_moved: HashMap::default(),
+        tuple_depth: HashMap::default(),
+        tuple_member_now: HashMap::default(),
         fnref_bound: Vec::new(),
         written_tuple_members: written_tuple_members_in(orig_code),
-        view_backing: HashMap::new(),
-        construction_backing: HashMap::new(),
-        bind_backing: HashMap::new(),
-        join_holders: HashMap::new(),
-        witness_aliases: HashMap::new(),
-        arm_lift_temps: HashSet::new(),
-        handed_off: HashMap::new(),
-        per_path_pairs: HashSet::new(),
-        handle_views: HashSet::new(),
-        owned_handle_members: HashSet::new(),
-        free_transferred: HashSet::new(),
+        view_backing: HashMap::default(),
+        construction_backing: HashMap::default(),
+        bind_backing: HashMap::default(),
+        join_holders: HashMap::default(),
+        witness_aliases: HashMap::default(),
+        arm_lift_temps: HashSet::default(),
+        handed_off: HashMap::default(),
+        per_path_pairs: HashSet::default(),
+        handle_views: HashSet::default(),
+        owned_handle_members: HashSet::default(),
+        free_transferred: HashSet::default(),
         fn_defs: None,
         written_out: Vec::new(),
     };
@@ -6662,8 +6665,8 @@ fn elide_borrows(data: &mut Data) {
         // `v → source_base` so it borrows the live source element instead (codegen
         // then reads the source param's valid slot). This is what lets the
         // borrowed-element accessors elide rather than fall back to copy.
-        let mut elide_v: HashMap<u16, Value> = HashMap::new();
-        let mut elide_vdb: HashSet<u16> = HashSet::new();
+        let mut elide_v: HashMap<u16, Value> = HashMap::default();
+        let mut elide_vdb: HashSet<u16> = HashSet::default();
         for p in plans {
             // The elision deletes a copy the line wrote; the copy-lease rules still judge it.
             if let Value::Var(src) = p.source.unspan() {
@@ -6836,7 +6839,7 @@ fn move_elide(data: &mut Data) {
         let mut code = data.def(d_nr).code.clone();
         // Vars to suppress the (later `variables()`-emitted) scope-exit free for — the moved-out
         // owned store now lives in the destination, so its null slot must not be freed.
-        let mut skip: HashSet<u16> = HashSet::new();
+        let mut skip: HashSet<u16> = HashSet::default();
         // Containers a rewrite must NOT retarget a source's build into — NOT a stable, pre-existing,
         // single-def owned slot. Two producers, unioned; every rewrite consults the result:
         //  - transient element slots (`_elm_N = OpNewRecord(…)`, reused across a vector literal /
@@ -6858,8 +6861,8 @@ fn move_elide(data: &mut Data) {
         if !rec_sources.is_empty() {
             // Pass 1 — capture each source's UNIQUE copy destination. A source seen copying into
             // two different places is not the clean dead-after shape the plan assumes: skip it.
-            let mut dest: HashMap<u16, Value> = HashMap::new();
-            let mut ambiguous: HashSet<u16> = HashSet::new();
+            let mut dest: HashMap<u16, Value> = HashMap::default();
+            let mut ambiguous: HashSet<u16> = HashSet::default();
             collect_move_dest(
                 &code,
                 &mo,
@@ -6873,7 +6876,7 @@ fn move_elide(data: &mut Data) {
             // A destination TOUCHED between the source's build and the copy cannot take the
             // retarget: the write would move ahead of that access.  See
             // `collect_move_disturbed`.
-            let mut disturbed: HashSet<u16> = HashSet::new();
+            let mut disturbed: HashSet<u16> = HashSet::default();
             collect_move_disturbed(&code, &mo, mo.op_copy_record, 0, &dest, &mut disturbed);
             let ready: HashSet<u16> = dest
                 .keys()
@@ -6904,7 +6907,7 @@ fn move_elide(data: &mut Data) {
                 .filter(|&s| source_escapes(&code, s, &co))
                 .collect();
             // B1.3b — reorder-free field-appends (`x.field += src`, container already exists).
-            let mut moved_into: HashMap<u16, u16> = HashMap::new();
+            let mut moved_into: HashMap<u16, u16> = HashMap::default();
             construct_move_rewrite(
                 &mut code,
                 &con_sources,
@@ -6940,12 +6943,12 @@ fn move_elide(data: &mut Data) {
             // B1.4 — the interprocedural mutation set (`find_written_vars` knows which callees
             // mutate a `&`-param in ANY arg position), so a param used as a hoisted field value is
             // allowed only if genuinely never mutated.
-            let mut written: HashSet<u16> = HashSet::new();
+            let mut written: HashSet<u16> = HashSet::default();
             crate::parser::find_written_vars(
                 &data.def(d_nr).code,
                 data,
                 &mut written,
-                &mut HashMap::new(),
+                &mut HashMap::default(),
             );
             construct_fresh_rewrite(
                 &mut code,
@@ -7095,7 +7098,7 @@ fn callref_join_bases_in(node: &Value, data: &Data, d_nr: u32) -> HashMap<u16, H
         }
         node.for_each_child(&mut |c| walk(c, data, d_nr, out));
     }
-    let mut out = HashMap::new();
+    let mut out = HashMap::default();
     walk(node, data, d_nr, &mut out);
     out
 }
@@ -7112,7 +7115,7 @@ pub(crate) fn assigned_in(node: &Value) -> HashSet<u16> {
         }
         node.for_each_child(&mut |c| collect(c, out));
     }
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     collect(node, &mut out);
     out
 }
@@ -7125,7 +7128,7 @@ pub(crate) fn multi_assigned_in(node: &Value) -> HashSet<u16> {
         }
         node.for_each_child(&mut |c| count(c, out));
     }
-    let mut counts = HashMap::new();
+    let mut counts = HashMap::default();
     count(node, &mut counts);
     counts
         .into_iter()
@@ -7157,7 +7160,7 @@ pub(crate) fn null_led_in(node: &Value, data: &Data) -> HashSet<u16> {
         }
         node.for_each_child(&mut |c| count(c, data, out));
     }
-    let mut counts = HashMap::new();
+    let mut counts = HashMap::default();
     count(node, data, &mut counts);
     counts
         .into_iter()
@@ -7248,7 +7251,7 @@ pub(crate) fn null_led_first_binds_in(node: &Value, data: &Data) -> HashSet<u16>
         data,
         regions: Vec::new(),
         next: 0,
-        out: HashMap::new(),
+        out: HashMap::default(),
     };
     w.node(node);
     w.out
@@ -7280,7 +7283,7 @@ pub(crate) fn var_mentions_in(node: &Value) -> HashMap<u16, usize> {
         }
         node.for_each_child(&mut |c| count(c, out));
     }
-    let mut counts = HashMap::new();
+    let mut counts = HashMap::default();
     count(node, &mut counts);
     counts
 }
@@ -7627,7 +7630,7 @@ fn collect_element_vars(node: &Value, mo: &MoveOps) -> HashSet<u16> {
         }
         node.for_each_child(&mut |c| walk(c, mo, out));
     }
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     walk(node, mo, &mut out);
     out
 }
@@ -7646,8 +7649,8 @@ fn collect_multi_database(node: &Value, mo: &MoveOps) -> HashSet<u16> {
         }
         node.for_each_child(&mut |c| walk(c, mo, seen, multi));
     }
-    let mut seen = HashSet::new();
-    let mut multi = HashSet::new();
+    let mut seen = HashSet::default();
+    let mut multi = HashSet::default();
     walk(node, mo, &mut seen, &mut multi);
     multi
 }
@@ -7714,7 +7717,7 @@ fn collect_def_order(node: &Value, mo: &MoveOps) -> HashMap<u16, usize> {
         node.for_each_child(&mut |c| walk(c, mo, idx, out));
     }
     let mut idx = 0;
-    let mut out = HashMap::new();
+    let mut out = HashMap::default();
     walk(node, mo, &mut idx, &mut out);
     out
 }
@@ -7862,7 +7865,7 @@ fn construct_move_rewrite(
     // in between and this is its missing twin — measured, `seen = len(b.v); b.v += tmp` reported
     // the POST-append length, and `for x in c.v { t2 += [...] } c.v += t2` retargeted the loop's
     // appends onto the vector the loop was ITERATING and grew it without bound.
-    let mut disturbed: HashSet<u16> = HashSet::new();
+    let mut disturbed: HashSet<u16> = HashSet::default();
     collect_move_disturbed(code, mo, co.op_append, 1, &dest, &mut disturbed);
 
     // Ready = found a unique append destination + a backing wrapper, AND provably reorder-free.
@@ -8180,7 +8183,7 @@ fn fresh_rewrite_block(
     escaping: &HashSet<u16>,
     skip: &mut HashSet<u16>,
 ) {
-    let mut failed: HashSet<u16> = HashSet::new();
+    let mut failed: HashSet<u16> = HashSet::default();
     loop {
         let next = con_sources
             .iter()
@@ -8417,7 +8420,7 @@ fn construct_replace_rewrite(code: &mut Value, co: &ConstructOps, skip: &mut Has
 
 /// Run the whole-vector-replacement rewrite over a SINGLE block's operators.
 fn replace_rewrite_block(b: &mut Block, co: &ConstructOps, skip: &mut HashSet<u16>) {
-    let mut failed: HashSet<usize> = HashSet::new();
+    let mut failed: HashSet<usize> = HashSet::default();
     loop {
         // Find the earliest `copy 2` (`OpAppendVector(a.field, Var(rhs))`) preceded by the clear +
         // `copy 1`, not yet tried.
@@ -8880,7 +8883,7 @@ fn vs_collect_taint(
 /// or escape during a view's lifetime. A value-struct view-bind is elidable iff neither the local
 /// nor any base variable is in this set.
 fn vs_tainted(seed: HashSet<u16>, edges: &[(u16, u16)]) -> HashSet<u16> {
-    let mut adj: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut adj: HashMap<u16, Vec<u16>> = HashMap::default();
     for &(a, b) in edges {
         adj.entry(a).or_default().push(b);
         adj.entry(b).or_default().push(a);
@@ -8905,7 +8908,7 @@ fn vs_tainted(seed: HashSet<u16>, edges: &[(u16, u16)]) -> HashSet<u16> {
 /// the loop from a copy. Only a mutation/escape WITHIN the loop (which repeats) can — S1's
 /// `b.items[0].x = 99` in the body still taints `b`.
 fn vs_scope_taint(ops: &[Value], data: &Data) -> HashSet<u16> {
-    let mut seed: HashSet<u16> = HashSet::new();
+    let mut seed: HashSet<u16> = HashSet::default();
     let mut edges: Vec<(u16, u16)> = Vec::new();
     for op in ops {
         crate::parser::find_field_written_vars(op, data, &mut seed);
@@ -8955,7 +8958,7 @@ fn vs_copy_walk(
                 // Zero-cost read-only elision: if the local and its whole projection base are only
                 // ever read (never field-written, never escaping), a plain view is observably
                 // identical to a copy — so skip the copy and keep the reference-struct-cheap view.
-                let mut affected: HashSet<u16> = HashSet::new();
+                let mut affected: HashSet<u16> = HashSet::default();
                 affected.insert(vv);
                 vs_base_vars(rhs, data, body, &mut affected);
                 let needs_copy = affected.iter().any(|x| tainted.contains(x));
@@ -9074,7 +9077,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // refuses to elide a `v` that another var borrows (its `deps` point at `v`),
     // which is the dogfood-found dangling-dep hazard. The copy mechanism stays the
     // substrate; the opt-out forces the always-correct copy (the A-B lever).
-    if std::env::var_os("LOFT_NO_BORROW_ELIDE").is_none() {
+    if crate::env_once!(std::env::var_os("LOFT_NO_BORROW_ELIDE").is_none()) {
         elide_borrows(data);
     }
     // @PLN90 phase B (B1.3) — last-use MOVE-elision: build a dead-after owned source directly
@@ -9088,20 +9091,22 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // Plan-57 store-identity gate (Phase 2.5): emit the verifying store ops only
     // when LOFT_STORE_TAG is set.  Counter is global so ids are unique across
     // functions (a cross-function wrong-store free mismatches).
-    let tag_mode = std::env::var("LOFT_STORE_TAG").is_ok();
+    let tag_mode = crate::env_once!(std::env::var("LOFT_STORE_TAG").is_ok());
     let mut tag_counter = 1u16;
     // Plan-57 Phase 5: last-use freeing (reclaim) is ON by default.  `LASTUSE_RECLAIM_OFF`
     // disables it for A/B watermark measurement.  The Goal-E enforcement assert runs in
     // debug builds always, and in release on demand via `LOFT_STORE_GUARD`.
     let reclaim_off = std::env::var("LASTUSE_RECLAIM_OFF").is_ok();
-    let reclaim_guard = cfg!(debug_assertions) || std::env::var("LOFT_STORE_GUARD").is_ok();
+    let reclaim_guard =
+        cfg!(debug_assertions) || crate::env_once!(std::env::var("LOFT_STORE_GUARD").is_ok());
     // Positive-control fault injection (test-only, never set in production): skip the
     // early-free insertion below while STILL running the Phase-4 guard, so a program
     // with reclaim-eligible stores trips the assertion.  This makes the Goal-E guard
     // *falsifiable* — proving it fires on a real reclaim regression, so its silence on
     // the corpus is evidence.  Differs from `LASTUSE_RECLAIM_OFF` (which also disables
     // the guard); correctness is preserved either way by the scope-exit `OpFreeRef`.
-    let inject_unfreed = reclaim_guard && std::env::var("LOFT_STORE_GUARD_INJECT").is_ok();
+    let inject_unfreed =
+        reclaim_guard && crate::env_once!(std::env::var("LOFT_STORE_GUARD_INJECT").is_ok());
     // @PLN164 C3 — the callee half of `(B-Disturb)`, built ONCE over the whole world rather
     // than re-derived at each call site: the question is asked once per CALL, and a callee body
     // would otherwise be re-walked once per call to it.  Built BEFORE the loop, so every
@@ -9127,9 +9132,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             d_nr,
             &orig_code,
             &orig_vars,
-            &HashMap::new(),
+            &HashMap::default(),
             disturbed,
-            &HashSet::new(),
+            &HashSet::default(),
         );
         let sunk: HashSet<u16> = written_out.iter().map(|&(_, v)| v).collect();
         // A reassignment the scan wrote out per arm was seen in its VALUE form by every analysis
@@ -9144,7 +9149,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 d_nr,
                 &orig_code,
                 &orig_vars,
-                &HashMap::new(),
+                &HashMap::default(),
                 disturbed,
                 &sunk,
             );
@@ -9160,7 +9165,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             data.def_nr("OpGetField"),
         );
         // @PLN35 — the `..rest` store-lifetime OBSERVER (reporting only; no IR change).
-        if std::env::var("LOFT_REST_ORACLE").is_ok() {
+        if crate::env_once!(std::env::var("LOFT_REST_ORACLE").is_ok()) {
             rest_store_oracle(
                 &data.definitions[d_nr as usize].code,
                 &data.definitions[d_nr as usize].variables,
@@ -9170,7 +9175,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
             );
         }
         if !confined.is_empty() {
-            let mut cmap: HashMap<u16, u16> = HashMap::new();
+            let mut cmap: HashMap<u16, u16> = HashMap::default();
             for (&vdb, &(local, b)) in &confined {
                 cmap.insert(vdb, b);
                 // Register the backed local at the block only when it is
@@ -9272,7 +9277,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
                 &drop_bearing,
             );
             let tagset: HashSet<u16> = owning.into_iter().collect();
-            let mut ids: HashMap<u16, u16> = HashMap::new();
+            let mut ids: HashMap<u16, u16> = HashMap::default();
             tag_stores(
                 &mut data.definitions[d_nr as usize].code,
                 db_nr,
@@ -9287,7 +9292,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // Compute live intervals so validate_slots can check for slot conflicts after codegen.
         let free_text_nr = data.def_nr("OpFreeText");
         // Plan-57 cluster I: store-lifetime guard (diagnostic, gated).
-        if std::env::var("LOFT_STORE_GUARD").is_ok() {
+        if crate::env_once!(std::env::var("LOFT_STORE_GUARD").is_ok()) {
             let gf_nr = data.def_nr("OpGetField");
             let d = &data.definitions[d_nr as usize];
             store_lifetime_guard(&d.code, &d.variables, free_ref_nr, gf_nr, &d.name);
@@ -9328,7 +9333,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // (read-only).  Reports each function-scoped owning store held past its
         // last use while later allocations run — the I-b / III-straight-line
         // watermark divergence.  See fix-design-last-use-freeing.md.
-        if std::env::var("LOFT_LASTUSE_GUARD").is_ok() {
+        if crate::env_once!(std::env::var("LOFT_LASTUSE_GUARD").is_ok()) {
             let db_nr = data.def_nr("OpDatabase");
             let gf_nr = data.def_nr("OpGetField");
             let d = &data.definitions[d_nr as usize];
@@ -9779,7 +9784,7 @@ fn capture_store_adopters(
     HashMap<(u16, u32), Vec<(u16, u32, usize)>>,
     Vec<(u32, usize)>,
 ) {
-    let mut adopters: HashMap<(u16, u32), Vec<(u16, u32, usize)>> = HashMap::new();
+    let mut adopters: HashMap<(u16, u32), Vec<(u16, u32, usize)>> = HashMap::default();
     let mut never_adopted = Vec::new();
     for v in 0..function.next_var() {
         // The DEFINING frame holds the record in the `___clos_N` local `emit_lambda_code`
@@ -10454,24 +10459,24 @@ pub(crate) fn capture_build_backings(
     code: &Value,
 ) -> CaptureBuilds {
     let set_dbref = data.def_nr("OpSetDbRef");
-    let mut latest: HashMap<u16, u16> = HashMap::new();
+    let mut latest: HashMap<u16, u16> = HashMap::default();
     // The literal buffers a local's LATEST assignment minted — the store a build reached
     // through that local therefore adopts.  A value branch mints one per arm and the local
     // adopts whichever ran, so all of them are carried.
-    let mut minted: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut minted: HashMap<u16, Vec<u16>> = HashMap::default();
     // How many times each local has been ASSIGNED so far in this walk.  Two records hold the
     // SAME store only if they adopted a local at the same generation: a local assigned between
     // two builds gives them different stores (@FR-O-Latest), which the capture NAME cannot say
     // and which decides whether one of them may be made to borrow (@FR-L-CapOwn, loft#1440).
-    let mut generation: HashMap<u16, u32> = HashMap::new();
+    let mut generation: HashMap<u16, u32> = HashMap::default();
     let mut out = CaptureBuilds::default();
     captures_built_in_a_loop(code, set_dbref, false, &mut out.rebuilt_in_loop);
     out.pass_confined = pass_confined_records(data, function, code);
     captures_built_conditionally(code, set_dbref, false, &mut out.built_conditionally);
-    let mut built: HashSet<u16> = HashSet::new();
+    let mut built: HashSet<u16> = HashSet::default();
     // Capture vars already resolved at their enclosing statement, waiting for the walk to
     // reach the build node itself.  See the `Value::Set` arm.
-    let mut resolved_in_rhs: HashSet<u16> = HashSet::new();
+    let mut resolved_in_rhs: HashSet<u16> = HashSet::default();
     code.walk(&mut |node: &Value| match node.unspan() {
         Value::Set(v, rhs) => {
             // A build inside this statement's OWN right-hand side captures the value the
@@ -11843,7 +11848,7 @@ impl Scopes<'_> {
             && self.scope != *s
             && !self.stack.contains(s)
         {
-            if std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug") {
+            if crate::env_once!(std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug")) {
                 eprintln!(
                     "[scope_debug] copy trigger: var={ov} name='{}' \
                      registered_scope={s} current_scope={} stack={:?} value={value:?}",
@@ -14135,7 +14140,7 @@ impl Scopes<'_> {
         if !self.closure_keep.gated || self.loops.is_empty() || bl.result != Type::Void {
             return Vec::new();
         }
-        let mut here: HashMap<u16, usize> = HashMap::new();
+        let mut here: HashMap<u16, usize> = HashMap::default();
         for op in &bl.operators {
             for (v, n) in var_mentions_in(op) {
                 *here.entry(v).or_insert(0) += n;
@@ -14159,7 +14164,7 @@ impl Scopes<'_> {
         // the block its build lies in.  (Its local is also named by the function's head
         // pre-init, so the mention count cannot say this.)
         let database = data.def_nr("OpDatabase");
-        let mut built_here: HashSet<u16> = HashSet::new();
+        let mut built_here: HashSet<u16> = HashSet::default();
         for op in &bl.operators {
             op.walk(&mut |n| {
                 if let Value::Call(d, args) = n.unspan()
@@ -15132,7 +15137,7 @@ impl Scopes<'_> {
         // Releases owed at the END of the current statement: a statement's own parts arrive
         // flat, so they wait for the statement boundary, a `Line` marker or the block's end.
         let mut at_end: Vec<Value> = Vec::new();
-        self.fnref_bound.push(HashSet::new());
+        self.fnref_bound.push(HashSet::default());
         // `@FR-L-CapKeep` — every holder the frame compares by store starts at null at the
         // function's head, so each later read of one is dominated by a bind (SLOTS.md § the
         // reserve does not initialise), and each later `Set` is a rebind.
@@ -15291,7 +15296,7 @@ impl Scopes<'_> {
                     let whole_move = b.name == "tuple_member_move";
                     // A NULLABLE member is written through a stash (`__ref_2 = a.1`) and copied
                     // under its own null test; the stash names the member it holds.
-                    let mut stash: HashMap<u16, (u16, u16)> = HashMap::new();
+                    let mut stash: HashMap<u16, (u16, u16)> = HashMap::default();
                     n.walk(&mut |c| {
                         if let Value::Set(t, rhs) = c
                             && function.is_compiler_generated(*t)
@@ -15586,7 +15591,7 @@ impl Scopes<'_> {
 
     #[must_use]
     fn variables(&self, to_scope: u16) -> Vec<u16> {
-        let mut scopes = HashSet::new();
+        let mut scopes = HashSet::default();
         let mut sc = self.scope;
         let mut scope_pos = self.stack.len();
         loop {
@@ -15819,7 +15824,7 @@ impl Scopes<'_> {
         // owes `src`'s OTHER members, the arm that does not owes the whole record.  Move the
         // HOOKS into the arms, where the arm IS the path, and leave the frees where they are.
         let arm_rewritten;
-        let mut arm_dropped: HashSet<u16> = HashSet::new();
+        let mut arm_dropped: HashSet<u16> = HashSet::default();
         let expr = if is_return {
             let mut copy = expr.clone();
             arm_dropped = move_join_hooks_into_arms(&mut copy, function, data);
@@ -16188,7 +16193,7 @@ impl Scopes<'_> {
             }
             sources.into_iter().collect()
         } else {
-            HashSet::new()
+            HashSet::default()
         };
         // Kept for the null-arm join leg below, which releases its sources after this sweep.
         let join_arm_dropped = arm_dropped.clone();
@@ -16930,7 +16935,8 @@ impl Scopes<'_> {
             }),
             _ => hook,
         };
-        let scope_debug = std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug");
+        let scope_debug =
+            crate::env_once!(std::env::var("LOFT_LOG").as_deref() == Ok("scope_debug"));
         let mut ls = Vec::new();
         // The conditional releases of loft#1464, kept apart so they can go FIRST.  Each reads a
         // closure-record local to decide whether that record's cascade already owes this store,
@@ -16941,7 +16947,8 @@ impl Scopes<'_> {
         let mut guarded: Vec<Value> = Vec::new();
         // The owners whose drop a conditional release below already carries — one hook per
         // store, on the FIRST release of it (a view and its backing free one store).
-        let mut guarded_hooks: std::collections::HashSet<u16> = std::collections::HashSet::new();
+        let mut guarded_hooks: std::collections::HashSet<u16> =
+            std::collections::HashSet::default();
         let vars = self.variables(to_scope);
         if scope_debug {
             eprintln!(
@@ -17759,7 +17766,7 @@ impl Scopes<'_> {
         // the A5.6 block-pre-registration fix.
         if scope_debug {
             let chain: HashSet<u16> = {
-                let mut s = HashSet::new();
+                let mut s = HashSet::default();
                 let mut sc = self.scope;
                 let mut pos = self.stack.len();
                 loop {
@@ -20836,7 +20843,7 @@ fn text_return_buffer_for(
     data: &Data,
     d_nr: u32,
 ) -> Option<u16> {
-    let mut read = HashSet::new();
+    let mut read = HashSet::default();
     expr.walk(&mut |v| {
         if let Value::Var(x) = v {
             read.insert(*x);
@@ -20902,8 +20909,8 @@ fn hidden_return_buffer_var(d_nr: u32, function: &Function, data: &Data) -> Opti
 /// declines the free on its own; it is the disagreement that produces the empty list.  Keeping
 /// the condition to mixed bindings is what stops this from suppressing frees that are correct.
 fn mixed_ownership_locals(code: &Value, function: &Function, data: &Data, d_nr: u32) -> Vec<u16> {
-    let mut viewed: HashSet<u16> = HashSet::new();
-    let mut owned: HashSet<u16> = HashSet::new();
+    let mut viewed: HashSet<u16> = HashSet::default();
+    let mut owned: HashSet<u16> = HashSet::default();
     fn walk(
         node: &Value,
         data: &Data,
@@ -21097,7 +21104,7 @@ fn nullable_locals_that_displace(
             .for_each_child(&mut |c| walk(c, seen, out, data));
     }
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     walk(code, &mut seen, &mut out, data);
     // @FR-O-Proxy asks free — the locals this returns are the ones whose DISPLACED store is
     // released, so the proxy's answer is what licenses that free.  A local whose earlier binds
@@ -21145,8 +21152,8 @@ fn owner_witness_locals(
     materialised_views: &HashMap<u16, Disturbance>,
 ) -> Vec<u16> {
     let mut defs: Option<crate::use_analysis::Defs> = None;
-    let mut minted: HashSet<u16> = HashSet::new();
-    let mut viewed: HashSet<u16> = HashSet::new();
+    let mut minted: HashSet<u16> = HashSet::default();
+    let mut viewed: HashSet<u16> = HashSet::default();
     fn walk(
         node: &Value,
         function: &Function,
@@ -21508,7 +21515,7 @@ impl ClosureKeep {
 }
 
 pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -> ClosureKeep {
-    if std::env::var_os("LOFT_NO_CLOSURE_KEEP").is_some() {
+    if crate::env_once!(std::env::var_os("LOFT_NO_CLOSURE_KEEP").is_some()) {
         return ClosureKeep::default();
     }
     let confined = pass_confined_records(data, function, code);
@@ -21535,7 +21542,7 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
     let database = data.def_nr("OpDatabase");
     let mut built_in_loop = false;
     let mut shared = false;
-    let mut foreign: HashSet<u16> = HashSet::new();
+    let mut foreign: HashSet<u16> = HashSet::default();
     // The three `&mut` out-params are one answer taken in one pass; bundling them into a
     // struct would name a type that exists only to satisfy the count.  Same reading as the
     // other 27 sites that carry this allow.
@@ -21626,7 +21633,7 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
         }
     });
     out.captures = captures;
-    let mut targets: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut targets: HashMap<u16, Vec<u16>> = HashMap::default();
     code.walk(&mut |n| {
         if let Value::Set(h, rhs) = n.unspan()
             && let Value::Block(b) = rhs.unspan()
@@ -21650,7 +21657,7 @@ pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -
         .copied()
         .filter(|h| !foreign.contains(h))
         .collect();
-    if std::env::var_os("LOFT_TRACE_CLOSURE_KEEP").is_some() {
+    if crate::env_once!(std::env::var_os("LOFT_TRACE_CLOSURE_KEEP").is_some()) {
         eprintln!(
             "[closure-keep] {}: records {:?} holders {:?} owning {:?}",
             function.name,
@@ -21715,9 +21722,9 @@ fn pass_confined_records(data: &Data, function: &Function, code: &Value) -> Hash
     // (fn-ref local, record local, loop id) for every closure build inside a loop.
     let mut builds: Vec<(u16, u16, usize)> = Vec::new();
     // Per local: the loop ids of every `Set` of it (usize::MAX outside any loop).
-    let mut sets: HashMap<u16, HashSet<usize>> = HashMap::new();
+    let mut sets: HashMap<u16, HashSet<usize>> = HashMap::default();
     // Locals read as a VALUE somewhere that is not a release operand.
-    let mut read_as_value: HashSet<u16> = HashSet::new();
+    let mut read_as_value: HashSet<u16> = HashSet::default();
     fn built_record(v: &Value) -> Option<u16> {
         match v.unspan() {
             Value::FnRef(_, rec, _) if *rec != u16::MAX => Some(*rec),
@@ -21781,7 +21788,7 @@ fn pass_confined_records(data: &Data, function: &Function, code: &Value) -> Hash
         &mut sets,
         &mut read_as_value,
     );
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     for (f, rec, loop_id) in builds {
         let only_this_loop = sets
             .get(&f)
@@ -22273,7 +22280,7 @@ impl Scopes<'_> {
     /// through its in-block assignment before being reported.
     fn result_borrow_roots(ops: &[Value], data: &Data) -> HashSet<u16> {
         // var -> what its assignment points into, for Sets seen in this block.
-        let mut from: HashMap<u16, u16> = HashMap::new();
+        let mut from: HashMap<u16, u16> = HashMap::default();
         for op in ops {
             if let Value::Set(v, rhs) = op.unspan()
                 && let Some(root) = Self::borrow_root(rhs, data)
@@ -22288,9 +22295,9 @@ impl Scopes<'_> {
             .rev()
             .find(|o| scope_free_op_var(o, data).is_none())
         else {
-            return HashSet::new();
+            return HashSet::default();
         };
-        let mut roots = HashSet::new();
+        let mut roots = HashSet::default();
         result.walk(&mut |n| {
             if let Some(r) = Self::borrow_root(n, data) {
                 let mut cur = r;
@@ -22991,7 +22998,7 @@ struct Delivered {
 /// Returns the locals whose hook this rewrote, for the sweep to skip. An empty answer leaves
 /// everything exactly as it was.
 fn move_join_hooks_into_arms(expr: &mut Value, function: &Function, data: &Data) -> HashSet<u16> {
-    let mut done = HashSet::new();
+    let mut done = HashSet::default();
     let copy_nr = data.def_nr("OpCopyRecord");
     let get_field_nr = data.def_nr("OpGetField");
     let Some((join, armed)) = materialised_join_mut(expr, copy_nr) else {
@@ -23498,7 +23505,7 @@ fn is_a_freed_backing(
     data: &Data,
     freed: &HashSet<u16>,
 ) -> bool {
-    let mut visiting = HashSet::new();
+    let mut visiting = HashSet::default();
     view_rooted_in_freed(ir, v, function, data, freed, &mut visiting)
 }
 
@@ -23639,10 +23646,10 @@ fn check_text_return(ir: &Value, function: &Function, fn_name: &str, ret_type: &
     if free_text_nr == u32::MAX {
         return;
     }
-    let mut freed: HashSet<u16> = HashSet::new();
+    let mut freed: HashSet<u16> = HashSet::default();
     // A `break` at function level has no loop to leave, so this set stays empty; it exists
     // so the walker can hand a break arm's frees to the loop that encloses it.
-    let mut breaks: HashSet<u16> = HashSet::new();
+    let mut breaks: HashSet<u16> = HashSet::default();
     check_text_return_path(
         ir,
         &mut freed,
@@ -23777,7 +23784,7 @@ fn check_text_return_path(
             // break set is fresh per loop, which is what keeps an inner loop's breaks from
             // reaching the outer loop's continuation.
             let mut body_freed = freed.clone();
-            let mut body_breaks = HashSet::new();
+            let mut body_breaks = HashSet::default();
             for op in &bl.operators {
                 walk(op, &mut body_freed, &mut body_breaks);
             }
@@ -23845,8 +23852,8 @@ mod text_return_path_tests {
     /// Run the walker over a function body; panics exactly as the check does.
     fn check(body: Vec<Value>) {
         let ir = v_block(body, Type::Text(Deps::none()), "body");
-        let mut freed = HashSet::new();
-        let mut breaks = HashSet::new();
+        let mut freed = HashSet::default();
+        let mut breaks = HashSet::default();
         check_text_return_path(
             &ir,
             &mut freed,
@@ -24025,14 +24032,14 @@ fn check_ref_leaks(
         .chain(sets.conditional_ref_frees.iter())
         .copied()
         .collect();
-    let mut freed: HashSet<u16> = HashSet::new();
+    let mut freed: HashSet<u16> = HashSet::default();
     collect_freed_vars(ir, &free_ops, &mut freed);
 
     // A block-tail temp adopted into a freed LHS (`q = f#read as S`, whose
     // `#reading file` surface temp `_read_N` moves its record into `q`) has no
     // OpFreeRef of its own and must not — `q`'s free covers it.  Credit it so
     // the leak assert below does not false-positive on the moved-from source.
-    let mut adopted: HashSet<u16> = HashSet::new();
+    let mut adopted: HashSet<u16> = HashSet::default();
     collect_adopted_block_results(ir, &freed, &mut adopted);
 
     // H2: `ret_type` deps are ATTRIBUTE indices — translate each to its
@@ -24041,7 +24048,7 @@ fn check_ref_leaks(
     // index colliding with an unrelated var number silently suppressed a
     // leak report).
     let fn_def_nr = data.def_nr(fn_name);
-    let mut ret_deps: HashSet<u16> = HashSet::new();
+    let mut ret_deps: HashSet<u16> = HashSet::default();
     for raw in ret_type.depend() {
         match crate::data::DepEntry::decode(raw) {
             crate::data::DepEntry::Attr(a) => {
@@ -24148,7 +24155,7 @@ fn check_ref_leaks(
             // suppresses one, so the empty dep list is read as evidence about a program the
             // scope pass has already finished lowering.  A wrong answer here costs a
             // diagnostic, never a release.
-            let warn_only = std::env::var("LOFT_REF_LEAK_WARN").is_ok();
+            let warn_only = crate::env_once!(std::env::var("LOFT_REF_LEAK_WARN").is_ok());
             if warn_only && !(!dep.is_empty() || ret_deps.contains(&v) || freed.contains(&v)) {
                 eprintln!(
                     "[check_ref_leaks] WARNING: Reference variable '{}' (var_nr={v}) in \
@@ -24231,7 +24238,7 @@ pub fn is_par_safe(data: &Data, d_nr: u32) -> bool {
     if d_nr == u32::MAX || (d_nr as usize) >= data.definitions.len() {
         return false;
     }
-    let mut visited = HashSet::new();
+    let mut visited = HashSet::default();
     walk_par_safe(data, d_nr, &mut visited)
 }
 
@@ -24319,7 +24326,7 @@ fn call_purity_safe(callee: u32, data: &Data, user_fn: &mut dyn FnMut(u32, &Data
 /// consume through a base case — and PC3 already rejects left-recursive sub-rules).  An indirect
 /// `CallRef` is conservatively impure (its target is not statically known).
 pub fn sub_rule_is_pure(data: &Data, d_nr: u32) -> bool {
-    let mut visited = HashSet::new();
+    let mut visited = HashSet::default();
     walk_sub_rule_pure(data, d_nr, &mut visited)
 }
 
@@ -24373,7 +24380,7 @@ mod par_safety_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -24545,7 +24552,7 @@ pub fn par_unsafe_reason(data: &Data, d_nr: u32) -> Option<String> {
     if d_nr == u32::MAX || (d_nr as usize) >= data.definitions.len() {
         return Some(format!("invalid def_nr {d_nr}"));
     }
-    let mut visited = HashSet::new();
+    let mut visited = HashSet::default();
     walk_par_unsafe_reason(data, d_nr, &mut visited)
 }
 
@@ -24675,7 +24682,7 @@ mod par_diag_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -24799,7 +24806,7 @@ pub fn analyse_par_safety_fixpoint(data: &Data) -> HashMap<u32, bool> {
     // Step 1: initial classification.  Every user fn starts true;
     // stdlib annotations are taken at face value.
     let user_fns: Vec<u32> = data.user_fn_d_nrs();
-    let mut classification: HashMap<u32, bool> = HashMap::new();
+    let mut classification: HashMap<u32, bool> = HashMap::default();
     for &d_nr in &user_fns {
         classification.insert(d_nr, true);
     }
@@ -24849,7 +24856,7 @@ mod par_fixpoint_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -24965,7 +24972,7 @@ pub fn worker_calls_parent_write_deep(data: &Data, worker_d_nr: u32) -> Option<S
     if worker_d_nr == u32::MAX || (worker_d_nr as usize) >= data.definitions.len() {
         return None;
     }
-    let mut visited = std::collections::HashSet::new();
+    let mut visited = std::collections::HashSet::default();
     let def = &data.definitions[worker_d_nr as usize];
     let worker_name = def.name.strip_prefix("n_").unwrap_or(&def.name).to_string();
     walk_deep_parent_write(&def.code, data, worker_d_nr, &mut visited).map(|chain| {
@@ -25234,7 +25241,7 @@ mod par_shallow_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -25350,7 +25357,7 @@ mod par_deep_tests {
 
     fn pos() -> Position {
         Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         }
@@ -25978,7 +25985,7 @@ fn store_confinement(
     // the first gate design and is pinned by
     // `tests/scripts/reassign-across-sibling-blocks.loft`, which asserts the same answers
     // with the recovery on and off.
-    let recover = std::env::var("LOFT_NO_CONF_RECOVER").is_err();
+    let recover = crate::env_once!(std::env::var("LOFT_NO_CONF_RECOVER").is_err());
     let mut out: BTreeMap<u16, (u16, u16)> = BTreeMap::new();
     for vdb in 0..vars.count() {
         if !vars.name(vdb).starts_with("__vdb") {
@@ -26316,7 +26323,7 @@ fn holder_retained(node: &Value, holders: &HashSet<u16>) -> bool {
 /// var or stops), so it always terminates.
 fn transitive_depers(vars: &Function, st: u16) -> Vec<u16> {
     let n = vars.count();
-    let mut reaches: HashSet<u16> = HashSet::new();
+    let mut reaches: HashSet<u16> = HashSet::default();
     loop {
         let mut added = false;
         for v in 0..n {
@@ -26435,10 +26442,10 @@ fn reclaim_free_intent(
         Value::Block(bl) => bl.scope,
         _ => return (Vec::new(), Vec::new()),
     };
-    let mut holds: HashMap<u16, u16> = HashMap::new();
-    let mut alloc: HashMap<u16, u32> = HashMap::new();
-    let mut dead: HashMap<u16, u32> = HashMap::new();
-    let mut last_read: HashMap<u16, u32> = HashMap::new();
+    let mut holds: HashMap<u16, u16> = HashMap::default();
+    let mut alloc: HashMap<u16, u32> = HashMap::default();
+    let mut dead: HashMap<u16, u32> = HashMap::default();
+    let mut last_read: HashMap<u16, u32> = HashMap::default();
     let mut seq = 0u32;
     store_liveness_walk(
         code,
@@ -26593,7 +26600,7 @@ fn lastuse_reclaim(
     // store, so a stale scope-exit free of `st` would target a *different live
     // owner's* store (the tag gate catches exactly this).  The early free becomes
     // the store's sole free.
-    let mut before: HashMap<u16, Vec<u16>> = HashMap::new();
+    let mut before: HashMap<u16, Vec<u16>> = HashMap::default();
     for &(st, later) in &intent {
         before.entry(later).or_default().push(st);
     }
@@ -26611,7 +26618,7 @@ fn lastuse_reclaim(
         .collect();
     // Pull the relocatable null-inits out of the body (keyed by store), and DROP the
     // existing scope-exit `OpFreeRef(Var(st))` for every store we early-free.
-    let mut saved: HashMap<u16, Value> = HashMap::new();
+    let mut saved: HashMap<u16, Value> = HashMap::default();
     let kept: Vec<Value> = std::mem::take(&mut bl.operators)
         .into_iter()
         .filter_map(|op| {
@@ -26834,10 +26841,10 @@ fn last_use_guard(
         Value::Block(bl) => bl.scope,
         _ => return 0,
     };
-    let mut holds: HashMap<u16, u16> = HashMap::new();
-    let mut alloc: HashMap<u16, u32> = HashMap::new();
-    let mut dead: HashMap<u16, u32> = HashMap::new();
-    let mut last_read: HashMap<u16, u32> = HashMap::new();
+    let mut holds: HashMap<u16, u16> = HashMap::default();
+    let mut alloc: HashMap<u16, u32> = HashMap::default();
+    let mut dead: HashMap<u16, u32> = HashMap::default();
+    let mut last_read: HashMap<u16, u32> = HashMap::default();
     let mut seq = 0u32;
     store_liveness_walk(
         code,

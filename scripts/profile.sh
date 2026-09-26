@@ -252,6 +252,41 @@ echo "════ self time — ${SAMPLES:-?} samples (where the cycles actuall
 SELF=$(printf '%s\n' "$REPORT" | grep -vE '^#|^$' | head -20)
 echo "$SELF"
 
+# ── the same samples by MODULE ────────────────────────────────────────────────
+#
+# Over a compile the top SYMBOL is 5–8 % and ties with the allocator's — `def_nr`,
+# `malloc`, `_int_free` and `memmove` trade places run to run (@PLN166 A3 measured the
+# top share move 8.15 % → 6.79 % between two identical runs), so a symbol row cannot
+# say where a compile's time goes and no oracle can pin one.  A module can: every
+# symbol is folded onto the loft module it belongs to (`loft::lexer::…` → lexer, a
+# generic or a drop glue over a loft type → that type's module), and the runtime
+# below loft onto four names — the allocator (glibc's and Rust's shim), `mem`
+# (memmove / memcmp / strlen), `hashing` (SipHash and `hash_one`) and `vec/string`
+# (growth and clone glue).  `[unknown]` stays what it is.  Unfiltered (no percent
+# limit), so a module's share is the sum over ALL its symbols, not the visible top.
+BY_MODULE=$(perf report -i "$DATA" --stdio --no-children -g none --sort sym --percent-limit 0 2>/dev/null |
+  awk '
+    /^[[:space:]]*[0-9.]+%/ {
+      pct = $1; sub("%", "", pct)
+      sym = $0; sub("^[[:space:]]*[0-9.]+%[[:space:]]+\\[[^]]*\\][[:space:]]+", "", sym)
+      m = "other"
+      if (match(sym, /loft::[a-z_0-9]+/)) { m = substr(sym, RSTART + 6, RLENGTH - 6) }
+      else if (sym ~ /(^|[^a-z])(_int_|malloc|c?free|realloc|calloc|unlink_chunk|sysmalloc|tcache|arena_|__rust_alloc|__rust_dealloc|__rust_realloc|__rdl_|no_alloc_shim)/) m = "allocator"
+      else if (sym ~ /^(__)?(mem(move|cpy|set|cmp|chr|rchr)|str(n?cmp|len|chr|n?casecmp)|bcmp)/) m = "mem"
+      else if (sym ~ /core::hash|hash_one|[Ss]ip(hash|13|24)|hashbrown|std::hash|RandomState/) m = "hashing"
+      else if (sym ~ /alloc::(string|vec|raw_vec|collections|slice|str|boxed|rc|sync)/) m = "vec/string"
+      else if (sym ~ /^\[unknown\]/) m = "unknown"
+      else if (sym ~ /^(core|std)::/) m = "std"
+      share[m] += pct
+      if (pct > top_pct[m]) { top_pct[m] = pct; top[m] = sym }
+    }
+    END {
+      for (m in share) printf "%6.1f%%  %-14s  (%s %.1f%%)\n", share[m], m, top[m], top_pct[m]
+    }' | sort -rn | head -12)
+echo
+echo "════ by module (each row is the sum over every symbol folded onto it) ════"
+echo "$BY_MODULE"
+
 # A native profile can still be a profile of the BUILD — the warm-up was skipped,
 # the binary cache was disabled, or the source changed between the two runs.  A
 # top full of rustc/LLVM/lld reads exactly like a hot program (plausible symbols,

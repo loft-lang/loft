@@ -208,7 +208,11 @@ impl RuntimeError {
         let position = if file.is_empty() {
             None
         } else {
-            Some(Position { file, line, pos: 1 })
+            Some(Position {
+                file: file.into(),
+                line,
+                pos: 1,
+            })
         };
         let kind = RuntimeErrorKind::UserPanic { message };
         let detail = kind.describe();
@@ -384,7 +388,11 @@ impl RuntimeError {
         let position = if file.is_empty() {
             None
         } else {
-            Some(Position { file, line, pos: 1 })
+            Some(Position {
+                file: file.into(),
+                line,
+                pos: 1,
+            })
         };
         let kind = RuntimeErrorKind::AssertionFailed { message };
         let detail = kind.describe();
@@ -445,7 +453,11 @@ impl RuntimeError {
         let position = if file.is_empty() {
             None
         } else {
-            Some(Position { file, line, pos: 1 })
+            Some(Position {
+                file: file.into(),
+                line,
+                pos: 1,
+            })
         };
         let kind = RuntimeErrorKind::StackOverflow;
         let detail = kind.describe();
@@ -466,7 +478,7 @@ impl RuntimeError {
     pub fn to_diag_entry(&self) -> DiagEntry {
         let (file, line, col) = self.position.as_ref().map_or_else(
             || (String::new(), 0, 0),
-            |p| (p.file.clone(), p.line, p.pos),
+            |p| (p.file.to_string(), p.line, p.pos),
         );
         DiagEntry {
             level: Level::Error,
@@ -516,7 +528,7 @@ pub fn logged_in_production(
     // `[user_panic]` / `[assertion_failed]` label and the same C66 severity as every other
     // production-mode runtime event, on whichever backend produced it.
     let position = Position {
-        file: file.to_string(),
+        file: file.into(),
         line,
         pos: 1,
     };
@@ -538,7 +550,7 @@ mod tests {
         assert_eq!(err.kind.label(), "user_panic");
         assert!(err.message.contains("oops"));
         let pos = err.position.as_ref().expect("position present");
-        assert_eq!(pos.file, "test.loft");
+        assert_eq!(&*pos.file, "test.loft");
         assert_eq!(pos.line, 42);
     }
 

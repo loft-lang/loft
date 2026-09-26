@@ -7,12 +7,13 @@
 //! when the parser has to try a certain path and might dismiss this later.
 
 use crate::diagnostics::{Diagnostics, Fix, FixKind, Level, diagnostic_format};
+use crate::fxhash::FxHashSet as HashSet;
 use std::cell::RefCell;
-use std::collections::HashSet;
 use std::fmt::{Debug, Display, Formatter};
 use std::io::Result as IoResult;
 use std::iter::Peekable;
 use std::rc::Rc;
+use std::sync::Arc;
 use std::vec::IntoIter;
 
 #[derive(Debug, Clone, PartialEq)]
@@ -51,11 +52,25 @@ pub enum LexItem {
 #[derive(Clone, PartialEq)]
 pub struct Position {
     /// The file name where this construct is found.
-    pub file: String,
+    ///
+    /// Shared, not owned: a position is cloned per token and per operator (about 1.4 M
+    /// times over a 12 826-line compile), and the name never changes within a file, so a
+    /// `String` here was the front end's largest remaining allocation source (@PLN166 B5).
+    /// [`Arc`] rather than `Rc` because a position travels with the IR into worker threads.
+    pub file: Arc<str>,
     /// The line where this result was found.
     pub line: u32,
     /// The position on the line where this result was found.
     pub pos: u32,
+}
+
+/// The file name of a position that has none: a synthetic definition, a test fixture, a
+/// runtime error raised outside any source.  `Arc<str>`'s default is backed by a static
+/// (std, since 1.80), so this allocates nothing — which the allocation ratchet
+/// (`tests/frontend_counts.rs`) checks by demanding the same count from two runs in one
+/// process: a lazily minted shared name read one more on the first run.
+pub fn no_file() -> Arc<str> {
+    Arc::default()
 }
 
 impl Position {
@@ -77,7 +92,7 @@ impl Position {
 /// Run it over both passes and diff them: the pass that records a token at the
 /// wrong line names the seek that preceded it.
 pub(crate) fn lex_trace(args: std::fmt::Arguments<'_>) {
-    if std::env::var_os("LOFT_TRACE_LEX").is_some() {
+    if crate::env_once!(std::env::var_os("LOFT_TRACE_LEX").is_some()) {
         eprintln!("[lex] {args}");
     }
 }
@@ -370,7 +385,7 @@ impl LexConfig {
         tokens.insert(comment.to_string());
         LexConfig {
             tokens,
-            keywords: HashSet::new(),
+            keywords: HashSet::default(),
             comment: comment.to_string(),
             interpolate_strings: false,
             json_strings: false,
@@ -396,7 +411,7 @@ impl LexConfig {
             .collect();
         LexConfig {
             tokens,
-            keywords: HashSet::new(),
+            keywords: HashSet::default(),
             comment: String::new(),
             interpolate_strings: false,
             json_strings: true,
@@ -461,7 +476,7 @@ impl Default for Lexer {
             virtual_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
             prev_end: Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: 0,
                 pos: 0,
             },
@@ -469,13 +484,13 @@ impl Default for Lexer {
             peek: LexResult {
                 has: LexItem::None,
                 position: Position {
-                    file: String::new(),
+                    file: crate::lexer::no_file(),
                     line: 0,
                     pos: 0,
                 },
             },
             position: Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: 0,
                 pos: 0,
             },
@@ -534,7 +549,7 @@ impl Lexer {
             virtual_files: std::collections::HashMap::new(),
             parse_snapshot: std::collections::HashMap::new(),
             prev_end: Position {
-                file: filename.to_string(),
+                file: filename.into(),
                 line: 0,
                 pos: 0,
             },
@@ -542,13 +557,13 @@ impl Lexer {
             peek: LexResult {
                 has: LexItem::None,
                 position: Position {
-                    file: filename.to_string(),
+                    file: filename.into(),
                     line: 0,
                     pos: 0,
                 },
             },
             position: Position {
-                file: filename.to_string(),
+                file: filename.into(),
                 line: 0,
                 pos: 0,
             },
@@ -1065,7 +1080,7 @@ impl Lexer {
         LexResult {
             has: LexItem::None,
             position: Position {
-                file: String::new(),
+                file: crate::lexer::no_file(),
                 line: 0,
                 pos: 0,
             },
@@ -1867,7 +1882,7 @@ impl Lexer {
         // access), the current number is a tuple/struct field index —
         // never a float.  `n.v.0.0` must lex as `n`, `.`, `v`, `.`,
         // `0`, `.`, `0` instead of `n`, `.`, `v`, `.`, `0.0`.
-        let prev_was_field_dot = self.peek.has == LexItem::Token(".".to_string());
+        let prev_was_field_dot = matches!(&self.peek.has, LexItem::Token(t) if t == ".");
         if let Some('.') = self.iter.peek() {
             self.next_char();
             if let Some('.') = self.iter.peek() {
@@ -2153,7 +2168,7 @@ impl Lexer {
 
     fn restart(&mut self, filename: &str) {
         self.position = Position {
-            file: filename.to_string(),
+            file: filename.into(),
             line: 0,
             pos: 0,
         };
@@ -2344,7 +2359,10 @@ impl Lexer {
     }
 
     pub fn peek_token(&self, token: &str) -> bool {
-        self.peek.has == LexItem::Token(token.to_string())
+        // Compared in place: an operator parse asks this six to eight times per operator,
+        // and building a `String` to compare against was 684 206 allocations on a compile
+        // of the 12 826-line front-end corpus (@PLN166 B4).
+        matches!(&self.peek.has, LexItem::Token(t) if t == token)
     }
 
     fn end(&mut self) {
@@ -2372,7 +2390,7 @@ impl Lexer {
             return;
         };
         let mut res = n;
-        while res.has == LexItem::Token(self.comment.clone()) {
+        while matches!(&res.has, LexItem::Token(t) if *t == self.comment) {
             while self.iter.peek().is_some() {
                 self.iter.next();
             }

@@ -1323,7 +1323,7 @@ mod tests {
             Value::Line(3),
             Value::Span(Box::new((
                 Position {
-                    file: "f.loft".to_string(),
+                    file: "f.loft".into(),
                     line: 12,
                     pos: 4,
                 },

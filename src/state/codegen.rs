@@ -6201,7 +6201,7 @@ mod self_reference_guard {
     fn ops() -> (Data, u32, u32) {
         let mut data = Data::new();
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };

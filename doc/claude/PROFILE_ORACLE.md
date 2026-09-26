@@ -32,19 +32,24 @@ The interpreter's hot spot is known because these programs are one hot function 
 
 | Program | Must name | Share | Why the answer is known |
 |---|---|---|---|
-| `01_fibonacci` | `fib` | ≥ 85 % | `main` calls `fib(38)` once; every op after that is inside `fib`. |
-| `02_sum_loop` | `main` | ≥ 85 % | No helper exists — a profiler that cannot name `main` names nothing. |
+| `01_fibonacci` | `fib` | ≥ 85 % | The timed loop calls `fib(30)` / `fib(31)` per op; every op after the harness is inside `fib`. |
+| `02_sum_loop` | `mix` | ≥ 85 % | The 5 000 000-step loop is the body of `mix`, and nothing else in the program is within three orders of magnitude. |
 | `03_sieve` | `is_prime` | ≥ 70 % | `main`'s loop body is one call; the trial-division loop is the work. |
 | `05_mandelbrot` | `mandelbrot` | ≥ 70 % | 40 000 calls × up to 256 iterations, against a 40 000-iteration caller. |
 | `10_sort` | `insertion_sort` | ≥ 70 % | `main` builds 3 000 elements once, then sorts them O(n²). |
 
-`02_sum_loop` is the row that matters most and looks least interesting: it is the
-**negative control**. Four of the five rows would also pass an instrument that simply
-reported the deepest frame, and `02` is the one that would not.
+`02_sum_loop` WAS the row that mattered most: the **negative control**, whose loop sat in
+`main` with no helper, so an instrument that simply reported the deepest frame passed the
+other four rows and failed this one.  The @PLN158 bench harness wrapped every kernel in a
+function (`mix`) and the control is gone with it — every row now names a helper.  Recorded
+rather than silently re-pinned: a future row whose hot work is in `main` would restore it.
 
 The **hot line** is checked on the same runs (`line` column): `01`'s is the recursive
-`if` (line 3), `02`'s is `sum += i` (line 6). A profiler that names the right function
-and the wrong line is attributing to the frame, not to the work.
+`if` (line 9), `02`'s is the loop-carried mix (line 12). A profiler that names the right
+function and the wrong line is attributing to the frame, not to the work.  **The `line`
+cells follow the sources**: the @PLN158 header comments moved every kernel down the file
+and the rows read stale for four days, because nothing runs this oracle but a hand — a
+bench edit re-pins its row in the same commit.
 
 The **path** is checked on `01_fibonacci` alone, where it is known to be
 `main → fib → fib → …`: the report must show `fib` reached from `fib`, not only from
@@ -54,10 +59,11 @@ The **path** is checked on `01_fibonacci` alone, where it is known to be
 
 | Program | Must name | Share | Why the answer is known |
 |---|---|---|---|
-| `09_matrix_mul` | `bench.loft:(5\|6)` | ≥ 30 % | Two 5 000 000-element `float` vectors, one per line, and nothing else in the program is within two orders of magnitude. |
+| `09_matrix_mul` | `bench.loft:(44\|45)` | ≥ 30 % | Two 2 000 000-element `float` vectors, one per line, and nothing else in the program is within two orders of magnitude. |
 
 **Written prediction, corrected against what ran.** This row said "38.1 MiB each"
-(5 000 000 × 8 bytes). The instrument reports **136.7 MiB each**, and it is right: the
+(then 5 000 000 × 8 bytes; the vectors are 2 000 000 long since @PLN158, 58.6 MiB each
+by the same rule). The instrument reported **136.7 MiB each**, and it is right: the
 ledger counts a store's *capacity*, which is what the process holds — the same figure
 the memory ceiling is defined against — and `ps` agrees (292 MB RSS ≈ 273 MiB + the
 interpreter). The **share** prediction, which is what the row is checked on, held at
@@ -112,6 +118,40 @@ defects surfaced in the same hour, both of which read as answers:
 * `pc == 0` is the "never stamped" sentinel, not a position, and resolving it landed on
   whichever function happens to start the bytecode — a stdlib name attached to the
   interpreter's own stores.
+
+## Engine — @PLN166 A3, a compile by module
+
+`perf` over loft's own Rust (`scripts/profile.sh --engine -- --interpret --check`) was
+the one instrument with no oracle, and the first attempt to write one showed why a
+symbol-level row cannot hold: over a compile the top symbol is 5–8 % and ties with the
+allocator's — `def_nr`, `malloc`, `_int_free` and `memmove` trade places run to run
+(measured 8.15 % → 6.79 % between two identical runs).  So `--engine` folds every symbol
+onto its MODULE — `loft::lexer::…` → lexer, a generic or a drop glue over a loft type →
+that type's module, the runtime below loft onto `allocator` / `mem` / `hashing` /
+`vec/string` — and prints that table under the symbol one.  A module's share is a sum over
+all its symbols, which is what makes it stable enough to pin.
+
+| Program | Must name | Share | Why the answer is known |
+|---|---|---|---|
+| `frontend_large` (generated: `bench/frontend/frontend.py --emit large`, 12 826 lines) | `data` | ≥ 25 % | A compile is name resolution: every identifier the parser meets asks `Data` (`def_nr`, `enums_with_variant`, `children_of`), and B2 measured ~640 k such lookups on the medium corpus.  Three runs: 34.3 / 33.3 / 32.0 %, the allocator second at 20–21 %. |
+
+**What the row pins is the INSTRUMENT** — that the grouping still folds `<loft::data::Data>::…`,
+`hash_one::<&dyn loft::data::NameKey>` and `drop_glue::<loft::data::Value>` onto one module
+and reads its share off the unfiltered report.  The share itself is arc B's target: an
+optimisation that drives `data` under the allocator is a legitimate shift, and the row is
+then re-pinned deliberately, with the new top module named in this table.  Sabotage
+receipt: with the row's `expect` set to `\blexer\b`, the runner reports `FAIL — expected
+/\blexer\b/` against the same run.
+
+**A measured negative, recorded here because it reads like a row that should exist:** a
+19 MB file of nothing but comments does NOT make the lexer the top module.  It reaches
+9.6 %, behind the allocator (28 %), `vec/string` (11 % — the lexer materialises the whole
+file as `Vec<char>` first), `hashing` (10 %) and the parser (9 %, all of it
+`file_has_pending_fn`).  Four whole-file pre-scans run before the lexer, each with its own
+tokenisation and none skipping comments — `script::split_top_level`,
+`Parser::file_has_pending_fn`, `libscan::scan_method_calls` and
+`libscan::scan_qualified_lib_refs` — and together they cost more than lexing.  That is a
+lead for arc B, not a row: no module is known in advance to dominate that input.
 
 ## What the corpus does NOT prove
 

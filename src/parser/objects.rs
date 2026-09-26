@@ -1972,7 +1972,7 @@ impl Parser {
             *code = v_block(
                 vec![
                     Value::Int(variant_nr as i32),
-                    Value::Text(pos.file.clone()),
+                    Value::Text(pos.file.to_string()),
                     Value::Int(pos.line as i32),
                 ],
                 ret.clone(),
@@ -3826,7 +3826,7 @@ impl Parser {
         // `LOFT_NO_NEXT_COUNTER=1` emits the null-encoded form on both backends
         // (`@FR-R-Switch`): the before-half of an A/B, and the first bisect step for a
         // wrong value out of a counted loop whose start is not a literal.
-        let next_counter = std::env::var_os("LOFT_NO_NEXT_COUNTER").is_none();
+        let next_counter = crate::env_once!(std::env::var_os("LOFT_NO_NEXT_COUNTER").is_none());
         let mut next_init: Option<Value> = None;
         if want_reverse {
             if incl && next_counter {
@@ -4956,7 +4956,7 @@ impl Parser {
         // Where the literal is — what its field checks report, as the twin's do
         // (`parse_object` reads the position here too) — the lowering runs at the call.
         let pos = self.lexer.pos().clone();
-        fields.insert(1, Value::Text(pos.file.clone()));
+        fields.insert(1, Value::Text(pos.file.to_string()));
         fields.insert(2, Value::Int(pos.line as i32));
         let tp = self.literal_type(open);
         *code = v_block(fields, tp.clone(), Self::TV_OBJECT);
@@ -5558,7 +5558,7 @@ impl Parser {
                         vec![
                             bound,
                             msg,
-                            Value::Text(pos.file.clone()),
+                            Value::Text(pos.file.to_string()),
                             Value::Int(pos.line as i32),
                         ],
                     ));

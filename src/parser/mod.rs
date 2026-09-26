@@ -1524,7 +1524,7 @@ impl Parser {
         // These are resolved by the compiler via data.def_nr("i_...") and mapped to native
         // Rust implementations in native.rs.
         let pos = Position {
-            file: String::new(),
+            file: crate::lexer::no_file(),
             line: 0,
             pos: 0,
         };
@@ -3361,7 +3361,9 @@ impl Parser {
         // F2 a heavily-read plain field is non-null → never accrues, so the hint would only ever
         // fire on a `?` field.)
         if crate::keys::pln25_dn1_enabled()
-            || std::env::var("LOFT_NO_HINT_NOT_NULL").is_ok_and(|v| v == "1" || v == "true")
+            || crate::env_once!(
+                std::env::var("LOFT_NO_HINT_NOT_NULL").is_ok_and(|v| v == "1" || v == "true")
+            )
         {
             self.field_read_counts.clear();
             self.defended_field_reads.clear();
@@ -5366,7 +5368,7 @@ impl Parser {
             && !self.in_explicit_cast
             && matches!(is_type, Type::Null)
         {
-            if std::env::var_os("LOFT_TRACE_UNWRAP").is_some() {
+            if crate::env_once!(std::env::var_os("LOFT_TRACE_UNWRAP").is_some()) {
                 let (what, _, _) = self.store_slot();
                 eprintln!(
                     "[null] -> {} what={} at {}",
@@ -5498,7 +5500,7 @@ impl Parser {
             // one-time census instrument stays: `LOFT_TRACE_UNWRAP=1` names every peel's
             // caller, face and slot.
             if !self.first_pass && !matches!(should, Type::Optional(_)) {
-                if std::env::var_os("LOFT_TRACE_UNWRAP").is_some() {
+                if crate::env_once!(std::env::var_os("LOFT_TRACE_UNWRAP").is_some()) {
                     let (what, _, _) = self.store_slot();
                     eprintln!(
                         "[unwrap] {} -> {} admit={} what={} at {}",
@@ -8073,7 +8075,7 @@ impl Parser {
         } else {
             self.method_shaped_instance_key(g_nr, name, &concrete, type_nr)
         };
-        if std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some() {
+        if crate::env_once!(std::env::var_os("LOFT_TRACE_INSTANCE_KEY").is_some()) {
             let spelling: Vec<String> = var_bindings
                 .iter()
                 .map(|(_, b)| self.data.identity_spelling(b))
@@ -8087,7 +8089,7 @@ impl Parser {
         // Return existing instantiation if already created.
         let existing = self.data.def_nr(&mangled);
         if existing != u32::MAX {
-            if std::env::var_os("LOFT_DBG_ACC").is_some() {
+            if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                 eprintln!(
                     "[acc-mono] existing {mangled} pass1={} buffers={}",
                     self.first_pass,
@@ -8982,7 +8984,7 @@ impl Parser {
                 // re-derived body is what the program runs.  Only where the first pass
                 // promoted nothing — a second hidden buffer would move the ABI (loft#1357).
                 if self.data.def(d_nr).text_work_buffers() == 0 {
-                    if std::env::var_os("LOFT_DBG_ACC").is_some() {
+                    if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
                         eprintln!(
                             "[acc-mono] re-derived stale monomorph {}",
                             self.data.def(d_nr).name()
@@ -10395,7 +10397,7 @@ impl Parser {
                 }
             }
         });
-        if std::env::var_os("LOFT_DBG_ACC").is_some() {
+        if crate::env_once!(std::env::var_os("LOFT_DBG_ACC").is_some()) {
             let names: Vec<String> = remap
                 .iter()
                 .map(|(a, b)| format!("{}->{}", self.data.def(*a).name(), self.data.def(*b).name()))
@@ -11360,7 +11362,10 @@ impl Parser {
             bl.operators.get(2).map(Value::unspan),
         ) {
             (Some(Value::Text(f)), Some(Value::Int(l))) => (f.clone(), *l),
-            _ => (self.lexer.pos().file.clone(), self.lexer.pos().line as i32),
+            _ => (
+                self.lexer.pos().file.to_string(),
+                self.lexer.pos().line as i32,
+            ),
         };
         let mut given: Vec<(String, Value, Type)> = Vec::new();
         for op in &bl.operators[3..] {
@@ -14310,7 +14315,7 @@ impl Parser {
             vec![
                 bound,
                 msg,
-                Value::Text(pos.file.clone()),
+                Value::Text(pos.file.to_string()),
                 Value::Int(pos.line as i32),
             ],
         );
@@ -16432,7 +16437,7 @@ impl Parser {
                     };
                     if f_exists {
                         let cur = &self.lexer.pos().file;
-                        self.todo_files.push((cur.clone(), self.data.source));
+                        self.todo_files.push((cur.to_string(), self.data.source));
                         self.data.use_add(&id);
                         self.record_use_path(&id, &f);
                         // @PLN22 Phase 3 — register the library alias now that the lib's
@@ -16477,7 +16482,7 @@ impl Parser {
             if let Some(pos) = self
                 .pending_pkg_deps
                 .iter()
-                .position(|(dep_id, _, from)| *from == here && !self.data.use_exists(dep_id))
+                .position(|(dep_id, _, from)| **from == *here && !self.data.use_exists(dep_id))
             {
                 let (dep_id, parent_dir, _) = self.pending_pkg_deps.remove(pos);
                 // First try the sibling package directory (same parent as the
@@ -16489,7 +16494,7 @@ impl Parser {
                 };
                 if std::path::Path::new(&f).exists() {
                     let cur = &self.lexer.pos().file;
-                    self.todo_files.push((cur.clone(), self.data.source));
+                    self.todo_files.push((cur.to_string(), self.data.source));
                     self.data.use_add(&dep_id);
                     self.record_use_path(&dep_id, &f);
                     self.switch_to_dep(&f);
@@ -16498,7 +16503,7 @@ impl Parser {
                 // Nothing left for THIS file — drop its entries (already loaded,
                 // or unresolvable) so the fixpoint can exit.  Entries queued from
                 // other files stay: their own file drains them when it resumes.
-                self.pending_pkg_deps.retain(|(_, _, from)| *from != here);
+                self.pending_pkg_deps.retain(|(_, _, from)| **from != *here);
             }
             // Fixpoint exit: the cursor rests on a use-free file and this file has
             // no manifest dependency still queued.  `peek_token` (not `has_token`)
@@ -16506,7 +16511,7 @@ impl Parser {
             let mine_pending = self
                 .pending_pkg_deps
                 .iter()
-                .any(|(_, _, from)| *from == self.lexer.pos().file);
+                .any(|(_, _, from)| **from == *self.lexer.pos().file);
             if !self.lexer.peek_token("use") && !mine_pending {
                 break;
             }
@@ -16524,8 +16529,9 @@ impl Parser {
         // `!had_use`: explicit-mode files (any `use`, and the stdlib) are skipped
         // entirely — the author manages their libraries by hand there.  Read +
         // scan each remaining file at most once (cache keyed by path).
-        if !had_use && self.lexer.pos().file == auto_use_scan_file {
-            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&auto_use_scan_file) {
+        if !had_use && *self.lexer.pos().file == *auto_use_scan_file {
+            let (refs, calls) = if let Some(c) = self.auto_use_scan_cache.get(&*auto_use_scan_file)
+            {
                 c.clone()
             } else {
                 let src = self
@@ -16537,7 +16543,7 @@ impl Parser {
                     crate::libscan::scan_method_calls(&src),
                 );
                 self.auto_use_scan_cache
-                    .insert(auto_use_scan_file.clone(), pair.clone());
+                    .insert(auto_use_scan_file.to_string(), pair.clone());
                 pair
             };
             // Tier-0: `lib::x` — the library is named directly.
@@ -16606,7 +16612,7 @@ impl Parser {
                 if self.data.use_exists(&name) {
                     continue;
                 }
-                let cur = self.lexer.pos().file.clone();
+                let cur = self.lexer.pos().file.to_string();
                 self.todo_files.push((cur, self.data.source));
                 self.data.use_add(&name);
                 self.record_use_path(&name, &f);
@@ -17266,7 +17272,7 @@ impl Parser {
             }
             return;
         }
-        let cur = self.lexer.pos().file.clone();
+        let cur = self.lexer.pos().file.to_string();
         self.todo_files.push((cur, self.data.source));
         self.data.use_add(&key);
         self.record_use_path(&key, f);
@@ -19131,7 +19137,7 @@ impl Parser {
                 self.lib_dirs.push(resolved_parent.clone());
             }
             if !self.data.use_exists(dep_name) {
-                let from = self.lexer.pos().file.clone();
+                let from = self.lexer.pos().file.to_string();
                 self.pending_pkg_deps
                     .push((dep_name.clone(), resolved_parent, from));
             }
@@ -19327,9 +19333,10 @@ impl Parser {
         let d_nr = self.data.declared_by_importer(storage_name)?;
         let bare = storage_name.strip_prefix("n_").unwrap_or(storage_name);
         let pos = self.data.def(d_nr).position();
-        let file = std::path::Path::new(&pos.file)
-            .file_name()
-            .map_or_else(|| pos.file.clone(), |f| f.to_string_lossy().into_owned());
+        let file = std::path::Path::new(&*pos.file).file_name().map_or_else(
+            || pos.file.to_string(),
+            |f| f.to_string_lossy().into_owned(),
+        );
         Some(format!(
             "`{bare}` is declared in {file}:{}, which `use`s this file — a `use` \
              imports the used file's names into the file that used it, never the \
@@ -19827,11 +19834,11 @@ impl Parser {
     /// written to — the `const` has no effect when the parameter is not modified.
     fn check_ref_mutations(&mut self, arguments: &[Argument]) {
         let code = self.data.def(self.context).code().clone();
-        let mut written: HashSet<u16> = HashSet::new();
+        let mut written = crate::fxhash::FxHashSet::default();
         // interprocedural param-write cache, local to this check.
         // Re-created per function-body check; small cost, avoids
         // persisting state across passes or across unrelated checks.
-        let mut callee_cache: HashMap<u32, Vec<bool>> = HashMap::new();
+        let mut callee_cache = crate::fxhash::FxHashMap::default();
         find_written_vars(&code, &self.data, &mut written, &mut callee_cache);
         // Enhancement: when a for-loop variable is FIELD-WRITTEN (OpSet*
         // through the loop var, not just loop-advance Set), also mark the
@@ -19840,7 +19847,7 @@ impl Parser {
         // Only propagate for vars that have a field-level write (OpSet*,
         // OpCopyRecord, OpNewRecord etc.) — not plain Set (which is just
         // the loop-iterator advance).
-        let mut field_written: HashSet<u16> = HashSet::new();
+        let mut field_written = crate::fxhash::FxHashSet::default();
         find_field_written_vars(&code, &self.data, &mut field_written);
         let mut propagated: HashSet<u16> = HashSet::new();
         for &w in &field_written {
@@ -20419,7 +20426,7 @@ fn field_id(key: &[(String, bool)], name: &mut String) {
 }
 
 /// Collect all `Value::Var` indices reachable anywhere in `val`.
-fn collect_vars_in(val: &Value, result: &mut HashSet<u16>) {
+fn collect_vars_in(val: &Value, result: &mut crate::fxhash::FxHashSet<u16>) {
     match val {
         Value::Var(v) => {
             result.insert(*v);
@@ -20558,8 +20565,8 @@ pub(crate) fn op_writes_first_arg(name: &str) -> bool {
 pub(crate) fn find_written_vars(
     code: &Value,
     data: &Data,
-    written: &mut HashSet<u16>,
-    callee_cache: &mut HashMap<u32, Vec<bool>>,
+    written: &mut crate::fxhash::FxHashSet<u16>,
+    callee_cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
 ) {
     match code {
         Value::Set(v, body) => {
@@ -20708,7 +20715,11 @@ fn lambda_mutated_captures(code: &Value, data: &Data, names: &mut HashSet<String
 /// analysis so cycles are broken.  Caller should iterate to fixpoint
 /// if precise transitive effects across recursion chains are needed;
 /// for linear forwarding (the common case) one pass suffices.
-fn callee_param_writes(fn_nr: u32, data: &Data, cache: &mut HashMap<u32, Vec<bool>>) -> Vec<bool> {
+fn callee_param_writes(
+    fn_nr: u32,
+    data: &Data,
+    cache: &mut crate::fxhash::FxHashMap<u32, Vec<bool>>,
+) -> Vec<bool> {
     if let Some(v) = cache.get(&fn_nr) {
         return v.clone();
     }
@@ -20720,7 +20731,7 @@ fn callee_param_writes(fn_nr: u32, data: &Data, cache: &mut HashMap<u32, Vec<boo
         return vec![false; n];
     }
     let body = def.code().clone();
-    let mut written: HashSet<u16> = HashSet::new();
+    let mut written = crate::fxhash::FxHashSet::default();
     find_written_vars(&body, data, &mut written, cache);
     let result: Vec<bool> = (0..n).map(|i| written.contains(&(i as u16))).collect();
     // Monotone merge with any prior placeholder entry.
@@ -20887,7 +20898,11 @@ fn collect_param_rebinds_owned(
 /// writes should propagate back to the iterated `&` collection, and by the
 /// @PLN101 value-struct copy-elision pass (`scopes::value_struct_copy`) to prove
 /// a read-only view's base is never mutated under it.
-pub(crate) fn find_field_written_vars(code: &Value, data: &Data, written: &mut HashSet<u16>) {
+pub(crate) fn find_field_written_vars(
+    code: &Value,
+    data: &Data,
+    written: &mut crate::fxhash::FxHashSet<u16>,
+) {
     match code {
         Value::Call(fn_nr, args) => {
             let def = data.def(*fn_nr);

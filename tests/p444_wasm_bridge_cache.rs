@@ -86,11 +86,14 @@ fn wasm_bridge_state_survives_warm_program_cache() {
     loft::startup_cache::save_program(
         &cold,
         &script_abs,
+        &cold.lib_dirs,
         "default",
         cold.data.definitions(),
         &placed,
-        &loft::startup_cache::native_lib_context(false),
-        &[],
+        &loft::startup_cache::AutoNative {
+            ctx: &loft::startup_cache::native_lib_context(false),
+            libs: &[],
+        },
     );
 
     // ── warm: a fresh parser loads the bundle and skips parsing entirely. ──

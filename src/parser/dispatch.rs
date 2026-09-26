@@ -439,7 +439,7 @@ impl Parser {
         if crate::portable_path::is_stdlib_source(&file) {
             return false;
         }
-        if !self.declared_fn_names.contains_key(&file) {
+        if !self.declared_fn_names.contains_key(&*file) {
             let text = self
                 .lexer
                 .source_text(&file)
@@ -456,11 +456,11 @@ impl Parser {
                 }
                 after_fn = word == "fn";
             }
-            self.declared_fn_names.insert(file.clone(), counts);
+            self.declared_fn_names.insert(file.to_string(), counts);
         }
         let declared = self
             .declared_fn_names
-            .get(&file)
+            .get(&*file)
             .and_then(|counts| counts.get(name))
             .copied()
             .unwrap_or(0);

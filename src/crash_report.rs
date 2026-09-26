@@ -765,7 +765,7 @@ mod tests {
         use std::collections::BTreeMap;
         use std::sync::Arc;
         let at = |line: u32| Position {
-            file: "a.loft".to_string(),
+            file: "a.loft".into(),
             line,
             pos: 1,
         };
@@ -830,18 +830,18 @@ mod tests {
         assert!(compile_pos().is_none(), "starts unset");
 
         let pos = crate::lexer::Position {
-            file: "prog.loft".to_string(),
+            file: "prog.loft".into(),
             line: 12,
             pos: 5,
         };
         note_compile_pos(&pos);
         let got = compile_pos().expect("published position is readable");
-        assert_eq!((got.file.as_str(), got.line, got.pos), ("prog.loft", 12, 5));
+        assert_eq!((&*got.file, got.line, got.pos), ("prog.loft", 12, 5));
 
         // A later position replaces the earlier one — the report wants where the
         // compiler IS, not where it started.
         let later = crate::lexer::Position {
-            file: "prog.loft".to_string(),
+            file: "prog.loft".into(),
             line: 30,
             pos: 1,
         };

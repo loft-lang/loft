@@ -76,7 +76,7 @@ struct Cx<'a> {
     data: &'a Data,
     d_nr: u32,
     /// The admitted call nodes, by address (`read_only_uses`).
-    admitted: &'a HashSet<usize>,
+    admitted: &'a crate::fxhash::FxHashSet<usize>,
     const_ref: u32,
     is_null: u32,
     /// The hidden buffer variables the substituted calls were handed.
