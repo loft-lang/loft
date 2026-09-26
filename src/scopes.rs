@@ -25098,9 +25098,13 @@ fn walk_deep_parent_write(
 /// miss adversarial aliases.  Future precision work could track
 /// per-var initialiser provenance.
 fn first_arg_is_local_var(args: &[Value], current_fn: u32, data: &Data) -> bool {
-    let Some(Value::Var(v)) = args.first() else {
+    // The write's ROOT, read through its accessor chain as `raw_write_to_captured` reads
+    // it: `Doc { ps: np }` appends into a field OF the hidden return buffer
+    // (`OpAppendVector(OpGetField(__retbuf, …), np)`), which is the worker's own output.
+    let Some(v) = args.first().and_then(|a| accessor_root_var(a, data)) else {
         return false;
     };
+    let v = &v;
     if current_fn == u32::MAX || (current_fn as usize) >= data.definitions.len() {
         return false;
     }
