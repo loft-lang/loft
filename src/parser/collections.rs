@@ -715,7 +715,18 @@ impl Parser {
                         // which looked up `def(integer).returned` and lost
                         // the forced_size → emitted `OpGetInt` (8 bytes)
                         // into a 2-byte slot, producing off-bytes reads.
-                        ref_expr = self.get_val(vtp, false, 0, ref_expr, u32::MAX);
+                        // loft#1692 — and with the element's DECLARED nullability, as the
+                        // indexed read passes it (`fields.rs`): hard-coded `false`, a
+                        // `vector<u8?>` element was read with `OpGetByte`, so the loop
+                        // variable read a null as its stored code (`255`, `-32768` for
+                        // `i16?`) and `x ?? d` / `!x` never saw it.
+                        ref_expr = self.get_val(
+                            vtp,
+                            matches!(**vtp, Type::Optional(_)),
+                            0,
+                            ref_expr,
+                            u32::MAX,
+                        );
                     }
                     let mut tp = *vtp.clone();
                     if matches!(tp, Type::Tuple(_)) {
@@ -3547,6 +3558,28 @@ use #count instead"
                 }
             }
             if matches!(in_type, Type::Vector(_, _)) {
+                // loft#1695, `@FR-I-For` — the SOURCE is evaluated once.  A place source
+                // (`v`, `d.rs`) is recorded on the loop, so a body that REPLACES it — the
+                // place or one holding it (`d = …`, `d.rs = …`) — is told the loop does not
+                // follow (`loop-source-written`), and on pass 2 such a loop walks a copy of
+                // the collection taken here: bound to the place itself, `_vector_N` named the
+                // field's slot, which the replacement rewrote, so the loop walked the NEW
+                // vector (or a released one) from the next round, on both backends.  A write
+                // INTO the collection, a sibling field and a removal replace nothing and
+                // keep walking the collection in place, as the rule has them.
+                if Self::is_source_place(&expr, &self.data) {
+                    self.record_source_places(&expr);
+                    let root = crate::parser::expressions::lhs_base_var(&expr, &self.data);
+                    if !self.first_pass
+                        && root != u16::MAX
+                        && !self.loop_sources_replaced.is_empty()
+                        && self
+                            .loop_sources_replaced
+                            .contains(&(self.context, self.vars.name(root).to_string()))
+                    {
+                        self.materialize_collection_value(&mut expr, &in_type.without_deps());
+                    }
+                }
                 let vec_var = self.create_unique("vector", &in_type);
                 // The loop iterates THIS temp — see `Function::iteration_source`.
                 self.vars.set_iteration_source(vec_var);

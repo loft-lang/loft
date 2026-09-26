@@ -227,8 +227,30 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 0.**  D-tup-17 opened and closed 2026-09-26 (below); D-tup-16 opened and closed
+**OPEN: 0.**  D-tup-18 opened and closed 2026-09-26 (below); D-tup-17 opened and closed 2026-09-26 (below); D-tup-16 opened and closed
 2026-09-25 (below); D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
+
+- **D-tup-18** *(CLOSED 2026-09-26, loft#1689)* — `(T-Cons)` / `(B-Copy)`: four faces of a tuple
+  heap member that was not its own.  (1) `t = k.p` for a tuple-typed FIELD bound the record's
+  own members — the field read is the tuple of its member reads and never reached the
+  whole-tuple bind's member copy, which matched only a tuple VARIABLE — so a vector member was a
+  second name for the field's store (both backends) and a text member a borrow of the record
+  (interpreter): replacing the record, rewriting the field or removing the element showed
+  through `t`.  (2) A TEXT member read from a place — `(s, 1)`, `(k.s, 1)`, `(v[0], 1)` — was
+  never copied on the interpreter, where a tuple's text member is a borrowed string whose type
+  records its place: a text local reassigned read the new text, a removed element `null`;
+  `--native` holds a `String`.  (3) Writing a vector member through the record, `k.p.1 = [9]`,
+  panicked on both backends: the refill used the parent-field append, and the member's byte
+  offset is no field of `K`, so `Stores::field_nr` answered field 0.  (4) A whole-tuple write to
+  the field, `k.p = (3, [9])`, APPENDED to the vector member (`[7,8,9]`), and `k.p = (4, [])`
+  crashed (the interpreter read a corrupt reference, `--native` did not compile), on every tree.
+  **Fix.**  The bind reaches `tuple_member_owned_copy` for a tuple-node source too; that home
+  has a text leg (a frame-owned work text, the copy a format string gets), keyed on the
+  member TYPE's deps; the append chooses the field form only where the access names a field of
+  its owner (`Parser::field_access_names_a_field`); the member write replaces
+  (`OpReplaceVector`, identity-safe per `heap.md (H-CopySelf)`) and an empty literal clears.
+  Guard `tests/scripts/1689-a-tuples-heap-member-is-its-own-copy.loft`.  Found at the corpus's
+  thinnest crossing in the rising `tuple` class (a tuple held in a keyed collection).
 
 - **D-tup-17** *(CLOSED 2026-09-26, found with loft#1682)* — `(T-Absent)`'s ruling that an absent
   tuple is the present tuple of null members had no `--native` spelling for a STACK tuple: the

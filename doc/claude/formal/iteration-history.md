@@ -18,7 +18,9 @@ CLOSED.  D-iter-4 opened and closed 2026-09-06: the LITERAL was the fourth kind,
 never asked whether a literal reads at all.  D-iter-5 opened and closed the same day: the two
 destinations D-iter-4's snapshot could not NAME.  D-iter-6 opened and closed 2026-09-23 (loft#1619, below): a
 place source and a range bound were re-read per round.  D-iter-7 opened and closed 2026-09-25
-(below): two native rewrites stepped an inclusive range past its end in plain Rust.
+(below): two native rewrites stepped an inclusive range past its end in plain Rust.  D-iter-8
+opened and closed 2026-09-26 (loft#1695, below): a collection field source followed a body that
+replaced it.
 
 > **D-iter-4 — OPENED AND CLOSED (2026-09-06). A vector LITERAL that reads its destination.**
 > `I-Comp` was walked three times for the comprehension (D-iter-1..3) and the literal — the same
@@ -57,6 +59,21 @@ place source and a range bound were re-read per round.  D-iter-7 opened and clos
 > end is a slot of its own, and `n`'s span now ends at the bind).  Guard:
 > `tests/scripts/1619-a-loop-reads-its-bounds-and-its-text-once.loft`, thirteen cells on both
 > backends.
+
+> **D-iter-8 — OPENED AND CLOSED (2026-09-26, loft#1695). A collection field source followed a
+> body that replaced it.**  `(I-For)` evaluates the source once, a field path included, and a
+> body that writes a place the source read changes the place and not the loop, and is told
+> (`loop-source-written`).  A text source and a range's bounds were bound to a hidden local; a
+> COLLECTION source was bound as the place itself — `_vector_N = d.rs` names the field's slot —
+> so replacing `d` or `d.rs` in the body rewrote the slot under the loop: it walked the NEW
+> vector from the next round (`50` for `4`) or one the replacement had released (strict stores:
+> reads after free), on both backends, with no notice.  **Fix.**  The collection loop records
+> its place source, so a replacing write is reported; pass 1 notes it
+> (`Parser::loop_sources_replaced`, by function and root name) and pass 2 walks a copy taken at
+> loop start (`materialize_collection_value`).  A write INTO the collection, a sibling field, a
+> removal and a write through the loop variable replace nothing, keep walking in place and are
+> not reported.  Guard
+> `tests/scripts/1695-a-loop-over-a-collection-field-walks-the-value-it-started-with.loft`.
 
 > **D-iter-7 — OPENED AND CLOSED (2026-09-25). A fast path formed `hi + 1` for an inclusive
 > range.**  `(I-RangeIncl)` promises `for x in lo..=hi` never has to represent `hi + 1`, and

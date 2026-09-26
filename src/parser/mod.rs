@@ -793,6 +793,11 @@ pub struct Parser {
     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+    /// loft#1695 — `(function, root variable)` of every COLLECTION loop source a body
+    /// replaced (`for p in d.rs { d = … }`), recorded on pass 1 so pass 2 walks a copy taken
+    /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
+    /// which both passes agree on; two loops over one root both copy, which is conservative.
+    loop_sources_replaced: std::collections::HashSet<(u32, String)>,
     /// @PLN167 C1 — the kind of each `&text` link bound so far on pass 2, keyed by
     /// `(function, variable)`: `true` for a text field or element (the store kind), `false` for
     /// a text variable (the stack kind).  A second bind of the other kind is refused.
@@ -1615,6 +1620,7 @@ impl Parser {
             infer_ret_defs: std::collections::HashSet::new(),
             adopted_ret_defs: std::collections::HashSet::new(),
             ref_linked_tuple_locals: std::collections::HashSet::new(),
+            loop_sources_replaced: std::collections::HashSet::new(),
             text_link_kinds: std::collections::HashMap::new(),
             amp_vector_locals: std::collections::HashSet::new(),
             amp_vector_link_partners: std::collections::HashMap::new(),
@@ -13391,8 +13397,26 @@ impl Parser {
                         Value::Int(i32::from(vec_tp)),
                     ],
                 );
+                // loft#1689 — the member's write REPLACES what it held, as the keyed leg below
+                // does (`keyed_member_write`): an append was right for a freshly built record,
+                // whose member is empty, and wrong for a reassignment — `k.p = (3, [9])`
+                // answered `[7,8,9]` on both backends.  `OpReplaceVector` takes the append's
+                // arguments, clears nothing on a fresh member, and is a no-op when the value is
+                // the member's own vector (`(H-CopySelf)`), which a clear-then-append is not.
+                // An EMPTY literal (`k.p = (4, [])`) reaches here as a bare `null` — no vector is
+                // built for `[]` — which neither the append nor the replace can take: the
+                // interpreter read a corrupt reference and `--native` did not compile, before
+                // and after the replace.  Its write is the clear.
+                let empty = match value.unspan() {
+                    Value::Null => true,
+                    Value::Insert(ops) => ops.iter().all(|o| matches!(o.unspan(), Value::Null)),
+                    _ => false,
+                };
+                if empty {
+                    return vec![self.cl("OpClearVector", &[field_ref])];
+                }
                 self.cl(
-                    "OpAppendVector",
+                    "OpReplaceVector",
                     &[field_ref, value, Value::Int(i32::from(elem_db_tp))],
                 )
             }

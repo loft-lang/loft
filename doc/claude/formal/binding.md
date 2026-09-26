@@ -428,6 +428,14 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-64** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1690)* — `(B-Copy)`: a vector bind
+  written into the arms of a `??` copies through `lower_vec_copy_bind`, which minted the element
+  temp `_elm_N` on the SECOND parser pass only for a plain-variable copy (its `in_arm` leg forces
+  the allocation there).  Every later element temp in the function shifted between the passes,
+  and a valid program was refused naming one: *"Variable '_elm_3' cannot change type …"*.
+  **Fix.**  The `in_arm` copy mints on pass 1 too — the one leg of the allocation test that
+  answers the same on both passes.  Guard
+  `tests/scripts/1690-a-bind-written-into-the-arms-of-a-coalesce-is-the-same-on-both-passes.loft`.
 * **D-bind-63** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1686)* — `(B-Copy)` / heap.md
   `(H-Copy)`: a local bound from a top-level VECTOR constant did not copy.  The constant is
   pre-built once in the write-locked constant store and its use site answers a view of it
