@@ -3797,6 +3797,10 @@ impl Function {
     /// caller handed the null sentinel.  No static bit tells the two apart; the snapshot
     /// does, per run, which is what native's `_rb_w_<buf>` prologue has always compared.
     /// Every free of `v` this frame emits declines when `v` still names the snapshot's store.
+    ///
+    /// It builds the witness's NAME on every call, so a per-assignment condition asks it last:
+    /// asked first in two scope-pass tests it cost the front end 5 063 allocations on the
+    /// medium corpus (`tests/frontend_counts.rs`).
     #[must_use]
     pub fn entry_witness(&self, v: u16) -> Option<u16> {
         if (v as usize) >= self.variables.len() {
