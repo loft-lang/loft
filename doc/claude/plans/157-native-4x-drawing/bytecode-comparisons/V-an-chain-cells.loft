@@ -102,8 +102,9 @@ fn n5() {
 }
 
 // n6 — a chain in a body that KEEPS its buffer: its tail returns an owned local after a
-// field write, so the body is not a value shape and its chain consumes `mk6`'s RECORD.
-// Both DECLINE; the values are the record form's.
+// field write, so the body is not a value shape.  `keep6` DECLINES; `mk6` is admitted since
+// @PLN158 (2026-09-27), because the field write on `t` is the tuple element's assignment
+// and the tail materialises the tuple into the kept buffer.  The values are the same.
 fn mk6(i: integer) -> Scan { Scan { ok: true, at: i, value: 6.0 } }
 fn keep6(i: integer) -> Scan {
   if i < 0 { return mk6(-i) }

@@ -134,4 +134,21 @@ fn c9() {
   println("c9 {r.sa} {r.sb}");
 }
 
-fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c6b(); c7(); c8(); c9(); }
+// c10 — EIGHT scalar fields ride the tuple (the bound moved from six, @PLN158); Big's nine
+// still keep the buffer (c5).
+struct Eight { e1: integer, e2: integer, e3: integer, e4: integer, e5: integer, e6: integer, e7: integer, e8: integer }
+fn mk_eight(k: integer) -> Eight { Eight { e1: k, e2: k + 1, e3: k + 2, e4: k + 3, e5: k + 4, e6: k + 5, e7: k + 6, e8: k + 7 } }
+fn c10() { e = mk_eight(5); println("c10 {e.e1 + e.e8}"); }
+
+// c11 — a DISCHARGED VIEW returned through the buffer (`return v[i]?`) is a value leaf, and
+// the caller's field write on the local is the tuple element's assignment.
+struct Cell { cv: integer, cw: integer }
+struct Grid { cells: vector<Cell> = [] }
+fn mk_grid() -> Grid { g = Grid {}; for i in 0..4 { g.cells += [Cell { cv: i * 10, cw: i }]; } g }
+fn cell_at(g: Grid, i: integer) -> Cell {
+  for c in g.cells { if c.cw == i { if i >= 0 && i < len(g.cells) { return g.cells[i]?; } } }
+  Cell {}
+}
+fn c11() { g = mk_grid(); c = cell_at(g, 2); c.cv = c.cv + 1; println("c11 {c.cv} {cell_at(g, 9).cv}"); }
+
+fn main() { c1(); c2(); c3(); c4(); c5(); c6(); c6b(); c7(); c8(); c9(); c10(); c11(); }

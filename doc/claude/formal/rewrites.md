@@ -1148,7 +1148,10 @@ its holder and nothing else.  Falsified on the alias the clause refuses: a mover
 VIEW of a held vector (`w = &big; w += [...]` beside `len(big)`) must still decline the loop,
 or the hoisted length answers the pre-push count (`tests/scripts/157-group-push.loft` g7).
 Switch `LOFT_NO_REBOUND_MOVER`; trace `LOFT_TRACE_HOIST_DECLINE=1` names the first statement
-that declines a loop.  Sites: `hoist::HoistOwned`, `hoist::rebinds_alias_free`, the
+that declines a loop.  *The own-buffer mint (2026-09-27):* the guarded mint of the frame's own
+hidden return buffer (`OpDatabase(__retbuf)`, which runs only where the caller offered no
+record and then claims a fresh store) moves nothing a header describes, so a lookup loop
+that returns `v[i]?` keeps its holders (`map_get_hex`, the `own_retbuf_mint` arm).  Sites: `hoist::HoistOwned`, `hoist::rebinds_alias_free`, the
 `buffer_alloc`/`elided_copy` arms in `hoist::blocks_header_hoist`, the rebound arm in
 `hoist::hoistable`, `Output::hoist_owned`.  *The same clause reaches `(R-Scalar)`'s write set
 (the same day):* the loop the clause admitted still hoisted no scalar, because the write-set
@@ -2459,7 +2462,7 @@ line in `Output::output_function`'s prelude.
                  list does not declare keeps its copy into the early element.  The interpreter keeps the
                  temp-store build and is the oracle.
 
-  (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most six
+  (R-ValueRecord) a function whose result is a PLAIN NO-HEAP RECORD of at most eight
                  scalar fields (an `integer` only at its 8-byte width) returns those
                  fields BY VALUE — a Rust tuple, in registers — instead of writing them
                  into a return buffer the caller then reads back.  Admission is a
@@ -2469,7 +2472,11 @@ line in `Output::output_function`'s prelude.
                  `Object` build of the function's own record (the tuple of its writes),
                  a call to an admitted function (its tuple, forwarded), a value local,
                  or a borrowed VIEW of the record (the tuple of its field reads; a view
-                 is never freed, so reading it is all the value form owes) — a heap
+                 is never freed, so reading it is all the value form owes), where a
+                 DISCHARGED view returned through the buffer (`return v[i]?`: the copy
+                 of the view-or-default into the buffer and the buffer's return) is the
+                 leaf its copy SOURCE is, the mint, the copy and that return dropped
+                 with it — a heap
                  field of the record that (O-ViewField) admits is a VIEW LEAF, the
                  reference to the place it views delivered in the tuple instead of a
                  claim of its own, and a record whose every heap field is such a leaf
@@ -2778,9 +2785,10 @@ answered here rather than decided in the code.
                  tuple, where its copy already costs nothing and a view would need the
                  store the tuple removed; a struct-enum.
   (R-ValueLocal) a plain local bound from a call R-ValueRecord admits — the result a
-                 no-heap record of at most six scalar fields — carries the record's
+                 no-heap record of at most eight scalar fields — carries the record's
                  fields as its TUPLE in the binding frame too, where every use of the
-                 local is a field read, a hand-off as a by-value or `const` argument to
+                 local is a field read, a scalar field WRITE at a constant offset (the
+                 tuple element's assignment), a hand-off as a by-value or `const` argument to
                  another admitted function (the fields cross the call as scalars), or a
                  rebind from such a call (`p = mat4_transform(m, p)`); and an exit that
                  answers a VIEW of such a record (`for c in self.cells { if … { return
@@ -3037,7 +3045,7 @@ to bisect to.
   `(R-Invariant)` covers integer chains only — is the next one to write for this class.
   **BUILT 2026-09-25** (`LOFT_NO_VALUE_LOCAL`, `LOFT_TRACE_VALUEREC`; generation time,
   `--native` only, the interpreter the values oracle), as the TUPLE PARAMETER: a by-value
-  parameter of a plain no-heap record of at most six scalars is received as the tuple of
+  parameter of a plain no-heap record of at most eight scalars is received as the tuple of
   its fields (`hoist::tuple_param_candidates`, decided in `value_records`' fixpoint beside
   the value locals, the layout per TYPE in `ValueRecords::types` — one home for a result,
   a local and a parameter of the same record).  The callee reads it as a value local (a
@@ -3088,6 +3096,25 @@ to bisect to.
   the switch A/B.  Not yet: a parameter of a record with a view leaf, a copy of a
   parameter into a fresh local (`q = p` declines as an untyped mint), and the
   loop-invariant element reads the price named.
+
+**The width, the discharged return, the field write and the terminal copy (2026-09-27,
+@PLN158; cells `tests/scripts/158-a-seven-field-record-returns-by-value.loft`).**  Six
+fields became eight — moros's `Hex` has seven, and a tuple past the register file is
+returned through the caller's stack slot, still nothing beside a store record.  Three
+admissions beside it, each the one thing that kept `map_get_hex` off the value path:
+a `return v[i]?` exit (`materialized_view_return`) is the leaf its copy source is
+(`hoist::mv_return_source`; the emitter returns that tuple and keeps the discharge
+buffer's frees); a scalar field write on a value local is the tuple element's assignment
+(`hoist::VALUE_RECORD_SETTERS`, the arm in `FusedElementWriteEmitter`); and the tuple
+PARAMETER gate leaves out a whole-record copy that is the last statement before a bare
+`return` (`hoist::without_terminal_copies`: nothing runs after it that could read the
+parameter), and where `body_writes` cannot type the body — a callee that grows a
+collection — asks the narrower question the tuple form needs, whether an EXISTING record
+of the type may be written (`hoist::may_write_existing`: growth writes fresh slots only, a
+set and a copy are asked their target's type, an unknown native answers yes).  The copy
+FROM a value local derives its destination once (seven element lookups for one record,
+`OpCopyRecordEmitter`).  Consumer `slope_path_with_undo`: hand-priced 565 → 297 µs per
+op on the emitted Rust, built 572 → **293 µs (−49 %)**, hash equal.
 
 **Landing (R-Switch).**  `(R-Rebind)`, `(R-Compact)` and `(R-Const)` are parse- or
 scope-pass rewrites the interpreter shares, so their falsifier is the switch A/B over

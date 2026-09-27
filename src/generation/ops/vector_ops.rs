@@ -393,6 +393,25 @@ pub struct FusedElementWriteEmitter;
 
 impl OpEmitter for FusedElementWriteEmitter {
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
+        // `(R-ValueLocal)` — a field write on a local that holds a VALUE-RETURNED record is
+        // the tuple element's assignment: there is no record in a store to write.
+        if let [base, fld, val] = args
+            && let Value::Var(v) = base.unspan()
+            && let Some(tp) = ctx.output.value_record_locals.get(v).copied()
+            && let Value::Int(off) = fld.unspan()
+            && let Some(idx) = ctx
+                .output
+                .value_records
+                .index
+                .get(&(tp, i64::from(*off)))
+                .copied()
+        {
+            let name =
+                super::super::sanitize(ctx.output.data.def(ctx.output.def_nr).variables().name(*v));
+            write!(ctx.w, "{{ var_{name}.{idx} = (")?;
+            ctx.emit(val)?;
+            return write!(ctx.w, "); }}");
+        }
         // `@FR-R-RecPtr` — an in-place field write of a record VIEW whose address the block
         // holds is one store through it (the setter's `rec != 0` test is the null address).
         // The field is the view's own, or one reached through INLINE sub-records

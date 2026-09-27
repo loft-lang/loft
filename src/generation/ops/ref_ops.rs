@@ -503,9 +503,17 @@ impl OpEmitter for OpCopyRecordEmitter {
                 let name = super::super::sanitize(
                     ctx.output.data.def(ctx.output.def_nr).variables().name(*v),
                 );
-                write!(ctx.w, "{{ ")?;
-                ctx.output
-                    .write_tuple_fields(ctx.w, d, dst, &format!("var_{name}"))?;
+                // The destination is derived ONCE: an element reached through an index
+                // re-resolved per field cost seven lookups for one record (`map_set_hex`).
+                write!(ctx.w, "{{ let __cd: DbRef = ")?;
+                ctx.emit(dst)?;
+                write!(ctx.w, "; ")?;
+                ctx.output.write_tuple_fields(
+                    ctx.w,
+                    d,
+                    &Value::RawExpr("__cd".to_string()),
+                    &format!("var_{name}"),
+                )?;
                 return write!(ctx.w, "}}");
             }
             // @PLN157 § V-j (`@FR-R-MoveAppend`) — the paired append's copy: when the

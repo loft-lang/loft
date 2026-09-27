@@ -26,6 +26,8 @@ const EXPECTED: &[(&str, bool)] = &[
     ("n_mk_smp_passed", false), // c6: passed on to a parameter the callee WRITES (a record)
     ("n_mk_smp_read", true), // c6b: passed on to a read-only parameter — a TUPLE PARAMETER
     // (`(R-ValueLocal)`), so the nested call is a value local and the maker is admitted
+    ("n_mk_eight", true), // c10: eight fields, the bound since @PLN158
+    ("n_cell_at", true),  // c11: a discharged view returned through the buffer is a leaf
     ("n_mk_cond", false), // c7: the arms build INTO one shared buffer local and the tail
     // RETURNS that local — an owned tail, which the value form would have to mint (declines)
     ("n_mk_inner", true), // c8: read field-wise inside an admitted caller's own build
@@ -82,9 +84,11 @@ const CHAIN_EXPECTED: &[(&str, bool)] = &[
     ("n_count_down", true), // n4: a recursive chain
     ("n_bump", true),       // n5: chained with a record LITERAL argument
     ("n_via_obj", true),    // n5: the chain whose sibling buffer holds that literal
-    ("n_mk6", false),       // n6: chained from a body that keeps its buffer
-    ("n_keep6", false),     // n6: an owned tail after a field write — not a value shape
-    ("n_mk7", true),        // n7: passed on to `sum7`, whose read-only parameter is a
+    ("n_mk6", true),        // n6: chained from a body that keeps its buffer — admitted since
+    // @PLN158: the body's field write on the local is the tuple element's assignment, and
+    // its owned tail materialises the tuple into the kept buffer
+    ("n_keep6", false), // n6: an owned tail after a field write — not a value shape
+    ("n_mk7", true),    // n7: passed on to `sum7`, whose read-only parameter is a
     // TUPLE PARAMETER since `(R-ValueLocal)` (2026-09-25) — the site is served
     ("n_fwd7", true),        // n7: its chain forwards a callee that is now admitted
     ("n_read_num8", true),   // n8: bound into the caller's PROMOTED local

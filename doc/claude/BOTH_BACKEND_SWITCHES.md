@@ -235,7 +235,7 @@ field out of a callee that rebinds or returns past a local it promoted onto its 
 element that is a call to a loft-defined builder — `v += [mk(…)]`, the builder writing a
 fresh literal into its hidden buffer on every exit and its return adopted raw — is handed
 the element `OpNewRecord` just claimed as that buffer, so the record is written where it
-lives: no temporary store, no copy, no free.  Since 2026-09-27 the record may carry text,
+lives: no temporary store, no copy, no free.  The record may carry text,
 plain-vector and inline-record fields (the element is fresh, so nothing leaks under the
 write); a keyed collection field, a struct-enum field and a synthetic-nullable field keep the
 copy.  **`LOFT_NO_APPEND_IN_PLACE=1`** restores the lift + copy — the first bisect step for

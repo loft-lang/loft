@@ -2733,6 +2733,40 @@ impl Output<'_> {
         // values, in field order.  The buffer it wrote into no longer exists.
         // Only an `Object` at a value LEAF converts (`hoist::value_leaves`): one bound to a
         // record local or dropped as a statement is still a record build.
+        // A discharged view returned through the buffer (`hoist::mv_return_source`) at a
+        // value leaf: the copy's SOURCE is the tuple, evaluated first; the block's other
+        // statements — the discharge buffer's frees — run in their order; the mint, the copy
+        // and the buffer's own `return` are the record form's and go.
+        if self
+            .value_leaves
+            .mv_returns
+            .contains(&(std::ptr::from_ref(bl) as usize))
+            && let Some(src) = super::hoist::mv_return_source(bl, self.data)
+        {
+            let copy_nr = self.data.def_nr("OpCopyRecord");
+            let db_nr = self.data.def_nr("OpDatabase");
+            self.indent(w)?;
+            write!(w, "let __mv = ")?;
+            self.output_code_inner(w, src)?;
+            writeln!(w, ";")?;
+            for op in &bl.operators {
+                let dropped = match op.unspan() {
+                    Value::Call(d, _) if *d == copy_nr || *d == db_nr => true,
+                    Value::Return(_) => true,
+                    _ => false,
+                };
+                if dropped {
+                    continue;
+                }
+                self.indent(w)?;
+                self.output_code_inner(w, op)?;
+                writeln!(w, ";")?;
+            }
+            self.indent(w)?;
+            writeln!(w, "return __mv")?;
+            self.indent(w)?;
+            return write!(w, "}} /*{}_{}: value return*/", bl.name, bl.scope);
+        }
         if bl.name == "Object"
             && self
                 .value_leaves

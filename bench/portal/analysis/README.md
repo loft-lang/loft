@@ -7,11 +7,21 @@ The files here say WHY, price what could be done about it, and record what was b
 | file | class | state |
 |---|---|---|
 | `keyed.md` | keyed (3.5×) | L1–L7 BUILT; what is left is store-format and data-structure work, priced there |
-| `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found) |
+| `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found); **2026-09-27:** an appended builder's HEAP record lands in its element (`panel_build` −20 %) and the seven-field accessor rides the value path (`slope_path_with_undo` −49 %) — both in § Built (2026-09-27); `resolve_move` (10×, the same accessor) is the next row to re-read |
 | `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); C1 priced, not built — the next work, ON ITS CORRECTED CONDITION ("no `CallRef` reachable" is not sufficient: `OpFreeRefOrHandUp`, in a capturing lambda's body, registers a store too — list every registrant as a blocker); T1 priced (−45 %) but RE-SIZED: it needs the "text variable is a `&str`" notion given one home first (six inline sites, three shipped bugs) |
 | `libraries-wide.md` | every class, from eleven libraries' own benches | **MEASURED 2026-09-24, NOT PRICED** — 32 rows, median 3.80×; text-build (the per-character append) and a constant vector literal rebuilt per call are the two class-wide gaps it found |
 | `alloc-temp.md` | alloc-temp (11.5×) and the vector-build rows that are a temporary minted per call | **MEASURED 2026-09-25, DESIGNED, NOT BUILT** — 67 ns per mint+free itemised; the lever is `(R-WorkBuffer)`, a non-escaping local allocated once by the caller like the text and return buffers already are |
 | `round-3.md` | after the five units — text walks, the call frame, a nested in-place write; two rows measured UNATTRIBUTABLE | **PRICED, NOTHING BUILT** — W1 −65 %, W2 −75 %, C1+ −39 %, P1 −30 %; the single-row harness is the instrument this round lacked |
+
+## Where to resume (2026-09-27, branch `157-native-4x`)
+
+**The two consumer rows moved today** are in `records.md` § Built (2026-09-27): `v += [mk(…)]`
+over a record WITH heap fields builds in the element (`panel_build` 6.7 → 5.4 ms), and the
+value-record family took a seven-field `Hex` through a `return v[i]?` exit, a field write on
+the local and a setter's terminal copy (`slope_path_with_undo` 572 → 293 µs).  Next in that
+line: `resolve_move` (10×) calls the same accessor — re-read its row; `panel_build`'s rest is
+the per-frame free of the previous `Panel` and the constant list copied into `lb_items`.
+The section below is the 2026-09-22 hand-off it extends.
 
 ## Where to resume (2026-09-22, branch `157-native-4x`)
 

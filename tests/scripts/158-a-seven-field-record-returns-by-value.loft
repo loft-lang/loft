@@ -1,0 +1,98 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN158 — moros's `map_get_hex` shape rides the value path (`@FR-R-ValueRecord`,
+// `@FR-R-ValueLocal`): a SEVEN-field no-heap record answered through `return c.hexes[idx]?`
+// (a discharged view copied into the return buffer) is returned as its tuple — no store
+// minted per call; the caller's local takes a FIELD WRITE as the tuple element's assignment;
+// and the setter it is handed to receives it as a TUPLE PARAMETER although its body copies a
+// record of that type — the copy is the last statement before a bare `return`, so no read of
+// the parameter can follow it.  The width is eight (was six).
+//
+// The values are the same on either road, so this is a LOCK over the shapes: each cell is
+// hand-computed, and runs under LOFT_STRICT_STORES, LOFT_POISON, LOFT_HOIST_VERIFY and the
+// leak check on both backends.
+//
+//   v1  the discharged-view return: found, an absent index, a missing chunk
+//   v2  a field write on the value local, then the hand-off to the tuple parameter
+//   v3  a setter that READS its parameter after the copy keeps the record road
+//   v4  the value local stored into a literal's field, read back
+//   v5  eight fields ride the tuple, nine keep the buffer
+//   v6  `bump(a, a)`: the aliasing write a tuple parameter must never hide
+//   v7  the local keeps its snapshot across a later write to the place it came from
+//   v8  two hundred get/write/set steps
+//   v9  a literal REBUILT into the local in place (`r = x; if c { r = Hex { … } }; r`) keeps
+//       the record road: its bare mint is no use a tuple serves (the corpus caught the first
+//       build emitting a mint into a tuple, `85-struct-copy-return-owned`)
+//
+// @falsified-at: none — no cell can change value on an earlier build; both roads answer the
+// same numbers, and that IS the claim.  The evidence that the road moved is the A/B on one
+// binary (`LOFT_NO_VALUE_RECORD=1`: consumer `slope_path_with_undo` 572 → 293 µs per op on
+// native, hash equal) and `tests/value_record.rs`, which pins the emitted shape.
+struct Hex { h: integer, m: integer, i: integer, r: integer, wn: integer, wne: integer, wse: integer }
+struct Chunk { cx: integer, hexes: vector<Hex> }
+struct Map { chunks: vector<Chunk> = [] }
+struct Eight { a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, g: integer, hh: integer }
+struct Nine { a: integer, b: integer, c: integer, d: integer, e: integer, f: integer, g: integer, hh: integer, i: integer }
+fn mk_map() -> Map { m = Map {}; for cx in 0..3 { hs: vector<Hex> = []; for i in 0..4 { hs += [Hex { h: cx * 100 + i, m: i, i: 1, r: 2, wn: 3, wne: 4, wse: 5 }]; } m.chunks += [Chunk { cx: cx, hexes: hs }]; } m }
+fn get_hex(m: Map, cx: integer, idx: integer) -> Hex {
+  for c in m.chunks { if c.cx == cx { if idx >= 0 && idx < len(c.hexes) { return c.hexes[idx]?; } } }
+  Hex {}
+}
+fn set_hex(m: &Map, cx: integer, idx: integer, h: Hex) {
+  for c in m.chunks { if c.cx == cx { c.hexes[idx] = h; return; } }
+}
+// a callee that reads its parameter AFTER the copy: must keep the record road, same values
+fn get_hex2(m: Map, cx: integer, idx: integer) -> Hex {
+  for c in m.chunks { if c.cx == cx { if idx >= 0 && idx < len(c.hexes) { return c.hexes[idx]?; } } }
+  Hex {}
+}
+fn set_hex_then_read(m: &Map, cx: integer, idx: integer, h: Hex) -> integer {
+  for c in m.chunks { if c.cx == cx { c.hexes[idx] = h; return h.h + c.hexes[idx]?.m; } }
+  -1
+}
+fn eight(k: integer) -> Eight { Eight { a: k, b: k + 1, c: k + 2, d: k + 3, e: k + 4, f: k + 5, g: k + 6, hh: k + 7 } }
+fn nine(k: integer) -> Nine { Nine { a: k, b: k + 1, c: k + 2, d: k + 3, e: k + 4, f: k + 5, g: k + 6, hh: k + 7, i: k + 8 } }
+fn bump(p: Hex, w: &Hex) -> integer { w.h = 500; p.h }
+
+// v1 the discharged-view return, found and not found, missing chunk
+fn v1() -> integer { m = mk_map(); a = get_hex(m, 1, 2); b = get_hex(m, 2, 9); c = get_hex(m, 7, 0); a.h * 10 + a.m + a.wse * 1000 + b.h + b.wse + c.h + c.wne }
+// v2 a field write on the value local, then the hand-off to a tuple parameter (the terminal copy)
+fn v2() -> integer { m = mk_map(); cur = get_hex(m, 1, 2); cur.h = 77; cur.wse = 9; set_hex(m, 1, 2, cur); back = get_hex(m, 1, 2); back.h * 100 + back.wse * 10 + back.m }
+// v3 the callee reading the parameter after the copy keeps the record road
+fn v3() -> integer { m = mk_map(); cur = get_hex2(m, 0, 3); cur.h = 8; r = set_hex_then_read(m, 0, 3, cur); back = get_hex2(m, 0, 3); r * 100 + back.h }
+// v4 the value local stored into a literal's field, and the literal read back
+struct Entry { q: integer, prev: Hex }
+fn v4() -> integer { m = mk_map(); v: vector<Entry> = []; for q in 0..3 { prev = get_hex(m, q, q); v += [Entry { q: q, prev: prev }]; } s = 0; for e in v { s += e.q + e.prev.h * 10 + e.prev.wse; } s }
+// v5 eight fields ride the tuple, nine keep the buffer — same numbers either way
+fn v5() -> integer { e = eight(10); n = nine(20); e.a + e.hh * 10 + n.a + n.i * 100 }
+// v6 the aliasing write the tuple parameter must never hide: `bump(a, a)` sees the write
+fn v6() -> integer { a = Hex { h: 1, m: 0, i: 0, r: 0, wn: 0, wne: 0, wse: 0 }; bump(a, a) }
+// v7 a write to the element through the map after the value local was taken: the local keeps its snapshot
+fn v7() -> integer { m = mk_map(); cur = get_hex(m, 2, 1); nw = Hex { h: 999, m: 0, i: 0, r: 0, wn: 0, wne: 0, wse: 0 }; set_hex(m, 2, 1, nw); cur.h * 10 + get_hex(m, 2, 1).h }
+// v8 many steps in a loop: no store grows, and every write lands
+fn v8() -> integer { m = mk_map(); for k in 0..200 { cx = k % 3; idx = k % 4; cur = get_hex(m, cx, idx); cur.h = cur.h + 1; set_hex(m, cx, idx, cur); } s = 0; for c in m.chunks { for x in c.hexes { s += x.h; } } s }
+
+fn choose(c: boolean, x: Hex) -> Hex { r = x; if c { r = Hex { h: 99, m: 1, i: 2, r: 3, wn: 4, wne: 5, wse: 6 }; } r }
+fn v9() -> integer { x = Hex { h: 10, m: 0, i: 0, r: 0, wn: 0, wne: 0, wse: 7 }; a = choose(true, x); b = choose(false, x); a.h * 100 + a.wse * 10 + b.h + b.wse * 1000 }
+
+pub fn test() {
+  // v1: a = (1,2): h 102, m 2, wse 5 → 1020+2+5000 = 6022; b: absent idx → Hex{} → 0; c: no chunk → 0 → 6022
+  assert(v1() == 6022, "v1 discharged-view return: {v1()}");
+  // v2: 77*100 + 9*10 + 2 = 7792
+  assert(v2() == 7792, "v2 field write and hand-off: {v2()}");
+  // v3: element (0,3): after copy h=8, m=3 → r = 8 + 3 = 11 → 1100 + 8 = 1108
+  assert(v3() == 1108, "v3 read after the copy: {v3()}");
+  // v4: q=0: hex(0,0) h=0 → 0 + 0 + 5 = 5; q=1: h=101 → 1 + 1010 + 5 = 1016; q=2: h=202 → 2 + 2020 + 5 = 2027 → 3048
+  assert(v4() == 3048, "v4 the value local in a literal field: {v4()}");
+  // v5: 10 + 17*10 + 20 + 28*100 = 10+170+20+2800 = 3000
+  assert(v5() == 3000, "v5 eight and nine fields: {v5()}");
+  assert(v6() == 500, "v6 the aliasing write is seen: {v6()}");
+  // v7: cur.h = 201 → 2010 + 999 = 3009
+  assert(v7() == 3009, "v7 the snapshot and the later write: {v7()}");
+  // v8: base Σh = Σ_cx Σ_i (cx*100+i) = 3*(0+1+2+3) + 100*4*(0+1+2) = 18 + 1200 = 1218; 200 increments → 1418
+  assert(v8() == 1418, "v8 two hundred steps: {v8()}");
+  // v9: a = (99, wse 6) → 9900 + 60; b = x → 10 + 7000 → 16970
+  assert(v9() == 16970, "v9 a literal rebuilt in place keeps the record road: {v9()}");
+}
+fn main() { test(); }

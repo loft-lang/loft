@@ -5676,8 +5676,17 @@ fn blocks_header_hoist(
             // element-first witness (never minted: the temp binds the element's slot).
             // Neither moves a record another store's header or base describes, and the
             // local bound from it is REBOUND in the body, so nothing hoists off it.
+            // …and the mint of the frame's OWN hidden return buffer: guarded, it runs only
+            // where the caller offered no record (`Parser::build_into_return_buffer`), and
+            // then claims a fresh store — no record a header or base describes moves.
+            let own_retbuf_mint = known
+                && matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
+                && matches!(args.first().map(Value::unspan), Some(Value::Var(b))
+                    if vars.is_some_and(|vs| vs.is_argument(*b)
+                        && (vs.name(*b) == "__retbuf" || vs.name(*b).starts_with("__ref_"))));
             let buffer_alloc = known
-                && (null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some()
+                && (own_retbuf_mint
+                    || null_buffer_alloc(data.def(*d).name(), args, vars, data).is_some()
                     || lazy_buffer_mint(data.def(*d).name(), args, vars)
                     || (tiers.rebound_movers
                         && matches!(data.def(*d).name(), "OpDatabase" | "OpDatabaseNP")
@@ -8946,6 +8955,201 @@ fn type_layout(
     })
 }
 
+/// `(R-ValueLocal)`'s parameter gate, asked the narrower question the tuple form needs
+/// where [`body_writes`] cannot type the body: may `node` — or any loft callee it reaches —
+/// write a record of type `tp` that EXISTS before the call?  Growth writes fresh slots only
+/// (a mint, a push, an append, a reservation); a scalar set and a whole copy are asked
+/// their target's type, a fresh mint variable's target answering no; a free, a store test
+/// and a read write nothing; a native this walk does not know, a fn-ref, a `par` and a
+/// recursion answer yes.  `fresh` carries the mint variables across the statements of one
+/// list, as [`body_writes`] keeps them.
+#[allow(clippy::too_many_arguments)]
+fn may_write_existing(
+    node: &Value,
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+    vars: &crate::variables::Function,
+    fresh: &mut HashSet<u16>,
+    memo: &mut HashMap<u32, bool>,
+    active: &mut HashSet<u32>,
+) -> bool {
+    let mut hit = false;
+    node.any_node(&mut |n| match n {
+        Value::Set(v, inner) => {
+            if matches!(inner.unspan(), Value::Call(d, args)
+                if (*d as usize) < data.definitions.len()
+                    && data.def(*d).name() == "OpNewRecord"
+                    && mint_path(data, stores, "OpNewRecord", args, vars).is_some())
+            {
+                fresh.insert(*v);
+            } else {
+                fresh.remove(v);
+            }
+            false
+        }
+        Value::Call(d, args) => {
+            if (*d as usize) >= data.definitions.len() {
+                hit = true;
+                return true;
+            }
+            let def = data.def(*d);
+            let name = def.name();
+            if !matches!(def.code(), Value::Null) {
+                let callee = if let Some(&k) = memo.get(d) {
+                    k
+                } else if !active.insert(*d) {
+                    true
+                } else {
+                    let mut inner_fresh: HashSet<u16> = HashSet::new();
+                    let k = may_write_existing(
+                        def.code(),
+                        tp,
+                        data,
+                        stores,
+                        def.variables(),
+                        &mut inner_fresh,
+                        memo,
+                        active,
+                    );
+                    active.remove(d);
+                    memo.insert(*d, k);
+                    k
+                };
+                if callee {
+                    hit = true;
+                    return true;
+                }
+                return false;
+            }
+            if name == "OpFinishRecord"
+                && let Some(Value::Var(e)) = args.get(1).map(Value::unspan)
+            {
+                fresh.remove(e);
+            }
+            if native_writes_existing(def, args, tp, data, stores, vars, fresh) {
+                hit = true;
+                return true;
+            }
+            false
+        }
+        Value::CallRef(_, _) | Value::Parallel(_) | Value::Yield(_) => {
+            hit = true;
+            true
+        }
+        _ => false,
+    });
+    hit
+}
+
+/// [`may_write_existing`]'s verdict for one NATIVE call: a scalar set and a whole copy are
+/// asked their target's type (a fresh mint variable's target answers no), growth and a
+/// mint write fresh slots only, a free, a store test and a read write nothing, a method
+/// whose every collection parameter is `const` reads only — and anything else answers yes.
+fn native_writes_existing(
+    def: &crate::data::Definition,
+    args: &[Value],
+    tp: u16,
+    data: &Data,
+    stores: &Stores,
+    vars: &crate::variables::Function,
+    fresh: &HashSet<u16>,
+) -> bool {
+    let name = def.name();
+    if IN_PLACE_SET_OPS.contains(&name) {
+        return !args.first().is_some_and(|t| fresh_rooted(t, data, fresh))
+            && match args
+                .first()
+                .map_or(Target::Unknown, |t| setter_target(t, data, stores, vars))
+            {
+                Target::Record(t) => t == tp,
+                Target::NoRecord => false,
+                Target::Unknown => true,
+            };
+    }
+    if name == "OpCopyRecord" {
+        return args.len() != 3
+            || (!fresh_rooted(&args[1], data, fresh)
+                && !matches!(args[2].unspan(), Value::Int(k)
+                    if u16::try_from(*k & i32::from(crate::keys::COPY_TP_MASK)).is_ok_and(|t| t != tp)));
+    }
+    if matches!(
+        name,
+        "OpNewRecord"
+            | "OpFinishRecord"
+            | "OpPreAllocVector"
+            | "OpAppendVector"
+            | "OpDatabase"
+            | "OpDatabaseNP"
+            | "OpPlaceRecord"
+            | "OpMoveRecord"
+            | "OpFreeRef"
+            | "OpFreeRefIfDistinct"
+            | "OpFreeRecordIn"
+            | "OpDistinctStore"
+            | "OpRefAlias"
+            | "OpRefIsNull"
+            | "OpConvBoolFromRef"
+    ) || FUSABLE_PUSHES.iter().any(|(p, _, _)| *p == name)
+        || name.starts_with("OpGet")
+        || native_op_is_store_free(def)
+    {
+        return false;
+    }
+    let value = |t: &Type| is_scalar(t) || matches!(t.base(), Type::Text(_));
+    !def.attributes()
+        .iter()
+        .all(|a| a.value_const || value(&a.typedef))
+}
+
+/// `ops` with every TERMINAL whole-record copy — an `OpCopyRecord` statement whose next
+/// statement (past line markers) is a bare `return` — replaced by `Null`, recursively
+/// through every statement list.  After such a copy nothing in the frame runs, so no
+/// by-value parameter can read a record it wrote; the tuple-parameter gate leaves it out
+/// of the write set.  Everything else is the statement it was.
+fn without_terminal_copies(ops: &[Value], data: &Data) -> Vec<Value> {
+    let copy_nr = data.def_nr("OpCopyRecord");
+    fn bare_return(v: &Value) -> bool {
+        matches!(v.unspan(), Value::Return(x) if matches!(x.unspan(), Value::Null))
+    }
+    fn walk(v: &Value, data: &Data) -> Value {
+        match v {
+            Value::Span(b) => Value::Span(Box::new((b.0.clone(), walk(&b.1, data)))),
+            Value::Block(bl) => {
+                let mut nb = (**bl).clone();
+                nb.operators = without_terminal_copies(&bl.operators, data);
+                Value::Block(Box::new(nb))
+            }
+            Value::Loop(bl) => {
+                let mut nb = (**bl).clone();
+                nb.operators = without_terminal_copies(&bl.operators, data);
+                Value::Loop(Box::new(nb))
+            }
+            Value::Insert(ls) => Value::Insert(without_terminal_copies(ls, data)),
+            Value::If(c, a, b) => Value::If(
+                Box::new(walk(c, data)),
+                Box::new(walk(a, data)),
+                Box::new(walk(b, data)),
+            ),
+            other => other.clone(),
+        }
+    }
+    let mut out: Vec<Value> = Vec::with_capacity(ops.len());
+    for (i, op) in ops.iter().enumerate() {
+        let terminal = matches!(op.unspan(), Value::Call(d, _) if *d == copy_nr)
+            && ops[i + 1..]
+                .iter()
+                .find(|n| !matches!(n.unspan(), Value::Line(_)))
+                .is_some_and(bare_return);
+        out.push(if terminal {
+            Value::Null
+        } else {
+            walk(op, data)
+        });
+    }
+    out
+}
+
 /// `(R-ValueLocal)` (`@FR-R-ValueLocal`) — the by-value parameters that MAY be received as
 /// tuples, by the facts that do not depend on what else is admitted: the parameter is a
 /// plain no-heap record of scalars (no view leaf — a parameter's vector field would be a
@@ -8976,6 +9180,7 @@ fn tuple_param_candidates(
     index: &mut HashMap<(u16, i64), usize>,
 ) -> TupleParams {
     let mut out = TupleParams::new();
+    let mut existing_memo: HashMap<u32, bool> = HashMap::new();
     if value_local_disabled() {
         return out;
     }
@@ -9060,7 +9265,12 @@ fn tuple_param_candidates(
                     .filter(|v| *v != u16::MAX)
                     .into_iter()
                     .collect();
-                for op in &body.operators {
+                // A whole-record copy that is the LAST thing a path does before a bare
+                // `return` — `v[i] = h; return;` — is a write no parameter can observe from
+                // this frame: nothing runs after it.  It is left out of the set, so a
+                // setter whose only write of its own type is that copy takes the tuple.
+                let pruned = without_terminal_copies(&body.operators, data);
+                for op in &pruned {
                     let w = body_writes(
                         op,
                         data,
@@ -9076,13 +9286,41 @@ fn tuple_param_candidates(
                 }
                 Some(set)
             });
-            let sound = written.as_ref().is_some_and(|w| !w.reaches_record(tp));
+            // A body [`body_writes`] cannot type (a callee that grows a collection, say) is
+            // asked the narrower question the tuple form needs: may it write a record of
+            // the parameter's type that EXISTS before the call?
+            let sound = if let Some(w) = written.as_ref() {
+                !w.reaches_record(tp)
+            } else {
+                let pruned = without_terminal_copies(&body.operators, data);
+                let mut fresh: HashSet<u16> = HashSet::new();
+                !pruned.iter().any(|op| {
+                    may_write_existing(
+                        op,
+                        tp,
+                        data,
+                        stores,
+                        vars,
+                        &mut fresh,
+                        &mut existing_memo,
+                        &mut HashSet::new(),
+                    )
+                })
+            };
             if !sound {
                 if trace {
+                    let w = written.as_ref();
                     crate::loft_eprintln!(
-                        "[valuerec] {}: parameter `{}` — the body may write a record of its type",
+                        "[valuerec] {}: parameter `{}` — the body may write a record of its type (whole {:?}, offsets {:?})",
                         def.name(),
-                        a.name
+                        a.name,
+                        w.map(|w| w.whole.iter().filter(|t| **t == tp).count()),
+                        w.map(|w| w
+                            .offsets
+                            .iter()
+                            .filter(|(t, _)| *t == tp)
+                            .map(|(_, o)| *o)
+                            .collect::<Vec<_>>())
                     );
                 }
                 continue;
@@ -9289,7 +9527,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
                     why = Some("a view leaf would cross a library API (R-Escape)");
                 } else {
                     let locals = value_locals_in(data, *d_nr, &admitted, &params, &view_offs);
-                    let leaves = collect_leaves(data.def(*d_nr).code(), &locals, true);
+                    let leaves = collect_leaves(data.def(*d_nr).code(), &locals, true, data);
                     match view_leaf_plan(
                         data,
                         stores,
@@ -9340,7 +9578,7 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
             };
             site_walk(cdef.code(), top, &c, &mut declined);
             if let Some(ps) = params.get(&caller) {
-                let served = served_reads(cdef.code(), &locals, own.is_some());
+                let served = served_reads(cdef.code(), &locals, own.is_some(), data);
                 let cvars = cdef.variables();
                 for (idx, tp) in ps {
                     let v = cdef
@@ -9426,9 +9664,10 @@ pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     out
 }
 
-/// The widest record the value path carries.  A register tuple past this is spilled by
-/// the ABI anyway, and the win is in the small ones (`Pt`, `Smp`).
-pub const VALUE_RECORD_MAX_FIELDS: usize = 6;
+/// The widest record the value path carries.  Eight: a tuple past the register file is
+/// returned through the caller's stack slot, which is still nothing beside a store record
+/// (moros's seven-field `Hex` was the row that moved six to eight).
+pub const VALUE_RECORD_MAX_FIELDS: usize = 8;
 
 /// Is `tp` the record `OpDatabase` mints to back a vector local — exactly one field, a
 /// vector whose elements own no heap?  The fallback is `false`, which costs a loop buffer's
@@ -11304,6 +11543,36 @@ pub fn object_own_return(bl: &Block) -> Option<u16> {
     }
 }
 
+/// A `materialized_view_return` block — the parser's `return v[i]?`-shaped exit, which mints
+/// the return buffer, copies a discharged view into it and returns the buffer — read as the
+/// SOURCE of that copy: the discharge (`ncc`) block whose value is the view or its default
+/// literal.  The value form returns that source's tuple and drops the mint, the copy and
+/// the buffer's return; the block's other statements (the discharge buffer's frees) stay.
+/// `None` for any other block.
+pub fn mv_return_source<'a>(bl: &'a Block, data: &Data) -> Option<&'a Value> {
+    if bl.name != "materialized_view_return" && bl.name != "materialized_view_return_armed" {
+        return None;
+    }
+    let copy_nr = data.def_nr("OpCopyRecord");
+    let last = bl.operators.last()?.unspan();
+    let Value::Return(ret) = last else {
+        return None;
+    };
+    let Value::Var(rb) = ret.unspan() else {
+        return None;
+    };
+    bl.operators.iter().find_map(|op| match op.unspan() {
+        Value::Call(d, args)
+            if *d == copy_nr
+                && args.len() == 3
+                && matches!(args[1].unspan(), Value::Var(dst) if dst == rb) =>
+        {
+            Some(&args[0])
+        }
+        _ => None,
+    })
+}
+
 /// The record type an admitted body's own leaves must carry.
 fn own_record(c: &ShapeCtx) -> Option<u16> {
     plain_record_type(c.data, c.data.def(c.own?).returned())
@@ -11329,6 +11598,13 @@ fn value_shape(node: &Value, ctx: &ShapeCtx) -> Option<u16> {
             ctx.own?;
             let rec = own_record(ctx)?;
             (plain_record_type(ctx.data, &bl.result) == Some(rec)).then_some(rec)
+        }
+        // A discharged view returned through the buffer: the leaf is the copy's source.
+        Value::Block(bl) if mv_return_source(bl, ctx.data).is_some() => {
+            ctx.own?;
+            let src = mv_return_source(bl, ctx.data)?;
+            let rec = own_record(ctx)?;
+            (value_shape(src, ctx) == Some(rec)).then_some(rec)
         }
         Value::Block(bl) => {
             if matches!(bl.result.base(), Type::Void) {
@@ -11391,11 +11667,14 @@ pub struct ValueLeaves {
     /// whole-value reads a tuple serves, which is what [`local_uses_ok`] accounts a value
     /// local's read at the tail of a branch arm against.
     pub reads: HashSet<usize>,
+    /// `materialized_view_return` blocks at a value position, by the `Block`'s address: the
+    /// emitter returns the copy source's tuple and drops the mint, the copy and the buffer.
+    pub mv_returns: HashSet<usize>,
 }
 
-fn collect_leaves(body: &Value, locals: &HashMap<u16, u16>, own: bool) -> ValueLeaves {
+fn collect_leaves(body: &Value, locals: &HashMap<u16, u16>, own: bool, data: &Data) -> ValueLeaves {
     let mut out = ValueLeaves::default();
-    fn leaves(v: &Value, locals: &HashMap<u16, u16>, out: &mut ValueLeaves) {
+    fn leaves(v: &Value, locals: &HashMap<u16, u16>, out: &mut ValueLeaves, data: &Data) {
         match v.unspan() {
             Value::Var(w) => {
                 out.reads.insert(std::ptr::from_ref(v) as usize);
@@ -11408,21 +11687,27 @@ fn collect_leaves(body: &Value, locals: &HashMap<u16, u16>, own: bool) -> ValueL
             Value::Block(bl) if bl.name == "Object" => {
                 out.objects.insert(std::ptr::from_ref(&**bl) as usize);
             }
+            Value::Block(bl) if mv_return_source(bl, data).is_some() => {
+                out.mv_returns.insert(std::ptr::from_ref(&**bl) as usize);
+                if let Some(src) = mv_return_source(bl, data) {
+                    leaves(src, locals, out, data);
+                }
+            }
             Value::Block(bl) => {
                 if let Some(l) = bl.operators.last() {
-                    leaves(l, locals, out);
+                    leaves(l, locals, out, data);
                 }
             }
             Value::If(_, a, b) => {
-                leaves(a, locals, out);
-                leaves(b, locals, out);
+                leaves(a, locals, out, data);
+                leaves(b, locals, out, data);
             }
             Value::Insert(ops) => {
                 if let Some(l) = ops.last() {
-                    leaves(l, locals, out);
+                    leaves(l, locals, out, data);
                 }
             }
-            Value::Return(x) => leaves(x, locals, out),
+            Value::Return(x) => leaves(x, locals, out, data),
             _ => {}
         }
     }
@@ -11438,16 +11723,22 @@ fn collect_leaves(body: &Value, locals: &HashMap<u16, u16>, own: bool) -> ValueL
                     own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
                 }
             }
-            Value::Return(x) if own && !own_returns.contains(&(std::ptr::from_ref(n) as usize)) => {
-                leaves(x, locals, &mut out);
+            Value::Block(bl) if own && mv_return_source(bl, data).is_some() => {
+                leaves(n, locals, &mut out, data);
+                if let Some(last) = bl.operators.last() {
+                    own_returns.insert(std::ptr::from_ref(last.unspan()) as usize);
+                }
             }
-            Value::Set(w, rhs) if locals.contains_key(w) => leaves(rhs, locals, &mut out),
+            Value::Return(x) if own && !own_returns.contains(&(std::ptr::from_ref(n) as usize)) => {
+                leaves(x, locals, &mut out, data);
+            }
+            Value::Set(w, rhs) if locals.contains_key(w) => leaves(rhs, locals, &mut out, data),
             _ => {}
         }
         false
     });
     if own {
-        leaves(body, locals, &mut out);
+        leaves(body, locals, &mut out, data);
     }
     out
 }
@@ -11485,7 +11776,7 @@ fn value_body(
     let mut own_returns: HashSet<usize> = HashSet::new();
     body.any_node(&mut |n| {
         if let Value::Block(bl) = n
-            && object_own_return(bl).is_some()
+            && (object_own_return(bl).is_some() || mv_return_source(bl, data).is_some())
         {
             if value_shape(n, &c).is_none() {
                 ok = false;
@@ -11520,7 +11811,7 @@ fn value_body(
     if locals.contains_key(&rb) {
         return None;
     }
-    let leaves = collect_leaves(body, &locals, true);
+    let leaves = collect_leaves(body, &locals, true, data);
     (!retbuf_uses_ok(body, rb, &c, &leaves.objects)).then_some("the return buffer is used")
 }
 
@@ -11533,6 +11824,22 @@ fn retbuf_uses_ok(v: &Value, rb: u16, c: &ShapeCtx, objects: &HashSet<usize>) ->
         Value::Var(w) => *w != rb,
         Value::Set(w, _) if *w == rb => false,
         Value::Block(bl) if objects.contains(&(std::ptr::from_ref(&**bl) as usize)) => true,
+        // A discharged-view return: its mint, copy and `return` of the buffer go with the
+        // block; only the copy's SOURCE and the statements kept beside it are asked.
+        Value::Block(bl) if mv_return_source(bl, c.data).is_some() => {
+            let copy_nr = c.data.def_nr("OpCopyRecord");
+            let db_nr = c.data.def_nr("OpDatabase");
+            bl.operators.iter().all(|op| match op.unspan() {
+                Value::Call(d, args) if *d == copy_nr => retbuf_uses_ok(&args[0], rb, c, objects),
+                Value::Call(d, args)
+                    if *d == db_nr && matches!(args.first().map(Value::unspan), Some(Value::Var(w)) if *w == rb) =>
+                {
+                    true
+                }
+                Value::Return(x) if matches!(x.unspan(), Value::Var(w) if *w == rb) => true,
+                other => retbuf_uses_ok(other, rb, c, objects),
+            })
+        }
         Value::Call(d, args) => {
             let callee = c.data.def(*d);
             let is_free = matches!(callee.name(), "OpFreeRef" | "OpFreeRefIfDistinct");
@@ -11677,7 +11984,7 @@ pub fn value_locals_in(
         loop {
             let with = joined(&locals, &cands);
             let shapes = shapes_given(&with);
-            let leaves = collect_leaves(body, &with, own.is_some());
+            let leaves = collect_leaves(body, &with, own.is_some(), data);
             let mut served = leaves.reads;
             served.extend(dropped.iter().copied());
             let kept: HashMap<u16, u16> = cands
@@ -11687,6 +11994,13 @@ pub fn value_locals_in(
                     let empty = HashSet::new();
                     let offs = view_offs.get(&d).unwrap_or(&empty);
                     let phantom = (Some(*v) == rb).then_some(&leaves.objects);
+                    if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+                        crate::loft_eprintln!(
+                            "[valuerec]   {} candidate local `{}`:",
+                            def.name(),
+                            vars.name(*v)
+                        );
+                    }
                     local_uses_ok(body, *v, data, &served, admitted, params, offs, phantom)
                         .then_some((*v, d))
                 })
@@ -11706,8 +12020,13 @@ pub fn value_locals_in(
 
 /// The `Var` reads of `body` a tuple serves by itself: every read at a value position
 /// ([`collect_leaves`]) and every read whose value is dropped ([`dropped_reads`]).
-fn served_reads(body: &Value, locals: &HashMap<u16, u16>, own: bool) -> HashSet<usize> {
-    let mut served = collect_leaves(body, locals, own).reads;
+fn served_reads(
+    body: &Value,
+    locals: &HashMap<u16, u16>,
+    own: bool,
+    data: &Data,
+) -> HashSet<usize> {
+    let mut served = collect_leaves(body, locals, own, data).reads;
     served.extend(dropped_reads(body));
     served
 }
@@ -11845,6 +12164,17 @@ fn local_uses_ok(
                 {
                     accounted += 1;
                 }
+                // A SCALAR FIELD WRITE at a constant offset is the tuple element's
+                // assignment (`cur.h = x` on a local the tuple carries) — never at a
+                // view-leaf offset, whose element is a place and not a value.  Only the
+                // setters `FusedElementWriteEmitter` owns are admitted, so every accounted
+                // write has the emitter arm that spells it.
+                if arg_is_v(0)
+                    && VALUE_RECORD_SETTERS.contains(&name)
+                    && matches!(args.get(1).map(Value::unspan), Some(Value::Int(off)) if !view_offs.contains(&i64::from(*off)))
+                {
+                    accounted += 1;
+                }
                 // @PLN164 C5 — a VIEW-LEAF field read that stands in a read-only context
                 // ([`view_field_reads`]): the tuple hands over the same reference the
                 // record's field slot would, so the read is served.
@@ -11857,8 +12187,18 @@ fn local_uses_ok(
                 // path does not emit.  So a view-leaf record declines a copy site
                 // (@PLN164 C5); the record form stands there.
                 let copies = name == "OpCopyRecord" && !view_offs.is_empty();
+                // The copy inside a discharged-view return is dropped with the block and
+                // its source stands as a LEAF read, accounted above as served — so that
+                // one mention is not counted here a second time (a bare mint beside it
+                // would then have passed unaccounted).
+                let src_served = name == "OpCopyRecord"
+                    && args.first().is_some_and(|a| {
+                        served.contains(&(std::ptr::from_ref(a) as usize))
+                            || served.contains(&(std::ptr::from_ref(a.unspan()) as usize))
+                    });
                 if arg_is_v(0)
                     && !copies
+                    && !src_served
                     && matches!(
                         name,
                         "OpFreeRef" | "OpFreeRefIfDistinct" | "OpCopyRecord" | "OpDistinctStore"
@@ -11879,6 +12219,9 @@ fn local_uses_ok(
         }
         false
     });
+    if std::env::var("LOFT_TRACE_VALUEREC").is_ok() {
+        crate::loft_eprintln!("[valuerec]     {mentions} mentions, {accounted} accounted");
+    }
     mentions == accounted
 }
 
@@ -12307,7 +12650,7 @@ pub fn value_leaves(data: &Data, def_nr: u32, vr: &ValueRecords) -> ValueLeaves 
         return ValueLeaves::default();
     }
     let locals = value_locals_in(data, def_nr, &vr.fns, &vr.params, &vr.view_offs);
-    collect_leaves(data.def(def_nr).code(), &locals, true)
+    collect_leaves(data.def(def_nr).code(), &locals, true, data)
 }
 
 /// @PLN164 C5 — per record type carried as a tuple, the byte offsets of its VIEW-LEAF
@@ -12398,6 +12741,10 @@ fn view_field_reads(body: &Value, v: u16, data: &Data, offs: &HashSet<i64>) -> H
     });
     out
 }
+
+/// The scalar setters a value local's field write may lower to (`(R-ValueLocal)`): the
+/// ones `FusedElementWriteEmitter` is registered for, which carries the tuple arm.
+pub const VALUE_RECORD_SETTERS: [&str; 3] = ["OpSetInt", "OpSetFloat", "OpSetSingle"];
 
 pub const VALUE_RECORD_GETTERS: [&str; 6] = [
     "OpGetFloat",

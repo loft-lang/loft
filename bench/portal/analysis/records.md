@@ -293,3 +293,24 @@ copy of a constant vector into the list.  A keyed or struct-enum field keeps the
 (`m.m_chunks += [build_chunk(…)]`) runs only when a chunk is absent, and the row is the
 two `map_get_hex` result stores per step, which is `(R-ValueRecord)`'s width and the `?`
 discharge exit (priced next).
+
+## Built (2026-09-27) — the seven-field accessor rides the value path
+
+`slope_path_with_undo` (19.8×) was two `map_get_hex` result stores per step — a mint, a
+seven-field copy and a free, twice — plus the lookup loop's declined hoist.  Hand-priced on
+the emitted Rust (the accessor answering `[i64; 7]`, its two hot callers taking it): 565 →
+297 µs per op, hash `3f61de`.  Built as four admissions of the value-record family, none of
+them a new rule: the width six → eight; a `return v[i]?` exit as a value leaf; a field write
+on a value local; and the tuple-parameter gate's terminal-copy exemption with the narrower
+"existing record" question for a body `body_writes` cannot type — plus the hoist gate
+admitting the frame's own return-buffer mint.  On one build: 572 → **293 µs (−49 %)**, hash
+equal; `LOFT_NO_VALUE_RECORD=1` is the A/B.  What the row still pays, from its profile: the
+two linear chunk scans per step (`map_get_hex` and `map_set_hex` walk `m.m_chunks` comparing
+three fields per chunk — the library's algorithm, now hoisted), and `undo_push`'s
+`s.us_redo = []` clear plus the `UndoEntry` append.  Beside it, `resolve_move` (10×) calls the
+same accessor and is the next row to re-read.  One lesson the corpus paid for: the
+discharge-return's copy source is a served leaf read, and the copy clause of the local-use
+accounting counted that mention a second time, so a local with a bare in-place mint beside
+a field write passed as a value local and its mint was emitted into a tuple
+(`85-struct-copy-return-owned` failed to compile natively).  The accounting counts a
+mention once; cell v9 holds the shape.
