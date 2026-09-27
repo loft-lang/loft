@@ -3802,7 +3802,6 @@ impl Output<'_> {
         self.range_tail(w, p.index_var, p.next_var, p.hi, p.inclusive)
     }
 
-    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `@FR-R-Base` — the held header whose length a read of range end `var` stands for: the
     /// innermost enclosing loop that holds BOTH the vector's header and its element base.
     /// The base is bound only in a loop that grows no store, so the vector's length is the
@@ -3815,6 +3814,7 @@ impl Output<'_> {
             .and_then(|i| self.vec_headers[i].get(path).cloned())
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn begin_vector_hoist(
         &mut self,
         w: &mut dyn Write,
