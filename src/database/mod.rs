@@ -1442,6 +1442,10 @@ mod store_rebase_tests {
 pub static NATIVE_FAIL_FAST: std::sync::atomic::AtomicBool =
     std::sync::atomic::AtomicBool::new(false);
 
+/// The type number of `text`: the sixth base type [`Stores::new`] registers, fixed for
+/// every program.
+pub const TEXT_TP: u16 = 5;
+
 impl Stores {
     #[must_use]
     pub fn new() -> Stores {
@@ -1514,6 +1518,7 @@ impl Stores {
         result.base_type("boolean", 1); // 4
         result.base_type("text", 4); // 5
         result.base_type("character", 4); // 6
+        debug_assert_eq!(result.names.get("text").copied(), Some(TEXT_TP));
         result
     }
 
