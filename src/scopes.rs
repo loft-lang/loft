@@ -12164,7 +12164,6 @@ impl Scopes<'_> {
         // next (loft#1703).  It was also unguarded, so a caller-handed store died with it.
         if transition_free.is_none()
             && was_in_scope
-            && function.entry_witness(v).is_none()
             && matches!(function.tp(v), Type::Reference(_, _) | Type::Enum(_, true, _))
             // @FR-O-Proxy asks free — the ownership-TRANSITION free, releasing the store `v`
             // is about to stop naming.  The proxy is unsound alone, so it is asked with its
@@ -12172,6 +12171,7 @@ impl Scopes<'_> {
             && function.proxy_says_owned(v)
             && self.owned_refs.get(&v) == Some(&self.loops.len())
             && displaces_owned_through_fresh_callee(value, v, ov, data)
+            && function.entry_witness(v).is_none()
         {
             transition_free = Some(call("OpFreeRef", v, data));
         }
@@ -12210,7 +12210,6 @@ impl Scopes<'_> {
         // witness for the reason the free above does.
         if transition_free.is_none()
             && was_in_scope
-            && function.entry_witness(v).is_none()
             && let Some((buf, flag)) = self.rbuf_witness
             && buf == v
             && matches!(
@@ -12221,6 +12220,7 @@ impl Scopes<'_> {
             // runtime witness where the static fact is sound but incomplete.
             && function.proxy_says_owned(v)
             && displaces_owned_through_fresh_callee(value, v, ov, data)
+            && function.entry_witness(v).is_none()
         {
             transition_free = Some(v_if(
                 Value::Var(flag),
@@ -18384,6 +18384,19 @@ impl Scopes<'_> {
                 // the dep is empty (owned).
                 let tmp = self.new_lift_var(function, &tp);
                 self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
+                preamble.push(v_set(tmp, scanned));
+                ls.push(Value::Var(tmp));
+            } else if let Value::Call(g_nr, _) = scanned.unspan()
+                && let gen_tp @ Type::Iterator(_, _) = &data.def(*g_nr).returned
+                && data.def(*g_nr).is_loft_defined()
+                && crate::use_analysis::handle_param_only_advanced(data, outer_call, arg_idx)
+            {
+                // `@FR-G-Hold` — an inline generator handle whose callee only advances it is
+                // held by nothing else, so a `__lift_N` temp holds it and the scope's sweep
+                // releases its frame, as the bound `g = gen(); first(g)` does.  Unlifted,
+                // an abandoned frame and every heap local it allocated stayed to program
+                // exit, one per call (loft#1705).
+                let tmp = self.new_lift_var(function, gen_tp);
                 preamble.push(v_set(tmp, scanned));
                 ls.push(Value::Var(tmp));
             } else if matches!(scanned.unspan(), Value::Tuple(_)) {
