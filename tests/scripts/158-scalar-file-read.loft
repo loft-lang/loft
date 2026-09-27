@@ -1,0 +1,147 @@
+// `@FR-R-InPlace`'s read clause — `f#read(n) as <scalar>` writes the scalar local and the
+// File record's own cursor fields in place, so a push loop whose body reads a file (directly
+// or through a helper) keeps its vector header.  The crawler's `read_i16_vec` —
+// `while i < n { out += [read_one_i16(bf)]; … }` — took the general append path on every
+// element because the read was an unclassified store writer.  The interpreter applies no
+// rewrite and is the oracle; every cell prints its values and asserts them.
+// `LOFT_NO_WRITE_HOIST=1` and `LOFT_HOIST_VERIFY=1` must answer identically.
+//
+// Predictions: r1, r2 and r6 hold the pushed vector's header across the read; r3 reads
+// `f#next` inside the loop — the scalar tier reads the read as a write it cannot type, so
+// the cursor is re-read on every pass; r4 (a text read) and r5 (a vector read) build a
+// value in a store and stay writers.
+//
+// @falsified-by: tests/falsified/158-scalar-file-read.patch — native exit 1 -> 0, native 1 assertion failures -> 0; interpret INERT (expected for a backend-divergence guard — only one side can move)
+//   CHANNEL: the VALUE channel, native only — the patch types the read (and the address of
+//   its scalar local) as writing NOTHING in `(R-Scalar)`'s write set, so r3's loop hoists
+//   `f#next` out of the loop the read advances; the first assertion to see it is r3's.
+//   WITNESS: under the patch native prints `r3 -50 [2,2,2,2] …` where this file says
+//   `r3 -50 [2,4,6,8] …`, and `LOFT_HOIST_VERIFY=1` panics "hoisted record scalar is stale
+//   (hoisted 2, now 4)".
+//   HOLDS: the interpreter is exact on both trees; r1, r2, r4–r6 are exact on both; leak,
+//   panic and free-refusal are clean on both — only native's r3 moves.
+
+const N = 64;
+
+fn path(tag: text) -> text { "{temp_dir() ?? "/tmp"}/loft_158_scalar_read_{tag}.bin" }
+
+/// `N` values `3 * i - 50` as little-endian i16: sum 2848, [10] = -20, [63] = 139.
+fn write_i16(p: text) {
+  w = file(p);
+  w.set_file_size(0);
+  w#format = LittleEndian;
+  for i in 0..N { w += ((3 * i - 50) as i16?) ?? (0 as i16); }
+}
+
+fn total(v: vector<integer>) -> integer {
+  s = 0;
+  for x in v { s += x; }
+  s
+}
+
+fn read_one(bf: File) -> integer { bf#read(2) as i16 as integer }
+
+fn read_all(bf: File, n: integer) -> vector<integer> {
+  out: vector<integer> = [];
+  i = 0;
+  while i < n { out += [read_one(bf)]; i = i + 1; }
+  out
+}
+
+// r1 — the crawler's shape: the read sits in a helper the push loop calls.
+fn r1() {
+  p = path("r1");
+  write_i16(p);
+  f = file(p);
+  f#format = LittleEndian;
+  v = read_all(f, N);
+  println("r1 {len(v)} {total(v)} {v[10]?} {v[63]?}");
+  assert(len(v) == 64 && total(v) == 2848 && v[10]? == -20 && v[63]? == 139, "r1");
+}
+
+// r2 — the read directly in a counted loop's push.
+fn r2() {
+  p = path("r2");
+  write_i16(p);
+  f = file(p);
+  f#format = LittleEndian;
+  out: vector<integer> = [];
+  for _i in 0..N { out += [f#read(2) as i16 as integer]; }
+  println("r2 {len(out)} {total(out)} {out[0]?} {out[63]?}");
+  assert(len(out) == 64 && total(out) == 2848 && out[0]? == -50 && out[63]? == 139, "r2");
+}
+
+// r3 — the cursor the read advances, read inside the same loop: 2 4 6 8.  The first read
+// opens the file (`#next` is null before it).
+fn r3() {
+  p = path("r3");
+  write_i16(p);
+  f = file(p);
+  f#format = LittleEndian;
+  first = f#read(2) as i16 as integer;
+  at: vector<integer> = [];
+  vals: vector<integer> = [];
+  for _i in 0..4 {
+    at += [f#next];
+    vals += [f#read(2) as i16 as integer];
+  }
+  println("r3 {first} {at} {vals}");
+  assert(first == -50 && "{at}" == "[2,4,6,8]" && "{vals}" == "[-47,-44,-41,-38]", "r3");
+}
+
+// r4 — a text read builds a text: it stays a writer, the answer is the same.
+fn r4() {
+  p = path("r4");
+  w = file(p);
+  w.set_file_size(0);
+  w += "abcdefghi";
+  f = file(p);
+  parts: vector<text> = [];
+  for _i in 0..3 { parts += [f#read(3) as text]; }
+  println("r4 {len(parts)} {parts[0]?}{parts[1]?}{parts[2]?}");
+  assert(len(parts) == 3 && parts[0]? == "abc" && parts[2]? == "ghi", "r4");
+}
+
+// r5 — a vector read fills a vector in a store: it stays a writer.
+fn r5() {
+  p = path("r5");
+  write_i16(p);
+  f = file(p);
+  f#format = LittleEndian;
+  lens: vector<integer> = [];
+  firsts: vector<integer> = [];
+  for _i in 0..3 {
+    chunk = f#read(4) as vector<u8>;
+    lens += [len(chunk)];
+    firsts += [chunk[0]?];
+  }
+  // bytes of -50 (0xFFCE), -47, -44, -41, -38, -35: the low byte of every other value
+  println("r5 {lens} {firsts}");
+  assert("{lens}" == "[4,4,4]" && "{firsts}" == "[206,212,218]", "r5");
+}
+
+struct Reader { f: File, vals: vector<integer>, n: integer }
+
+// r6 — the File and the vector the loop pushes to live in ONE record (`g` views the field).
+fn r6() {
+  p = path("r6");
+  write_i16(p);
+  rd = Reader { f: file(p), vals: [], n: 0 };
+  g = rd.f;
+  g#format = LittleEndian;
+  for _i in 0..N {
+    rd.vals += [g#read(2) as i16 as integer];
+    rd.n += 1;
+  }
+  println("r6 {rd.n} {len(rd.vals)} {total(rd.vals)} {rd.vals[10]?}");
+  assert(rd.n == 64 && len(rd.vals) == 64 && total(rd.vals) == 2848 && rd.vals[10]? == -20, "r6");
+}
+
+fn main() {
+  r1();
+  r2();
+  r3();
+  r4();
+  r5();
+  r6();
+}

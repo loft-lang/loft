@@ -9261,7 +9261,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         crate::rebind_place::rewrite(data, database, d_nr);
         // `@FR-R-Const` — a call of a literal-bodied function whose result is only read
         // answers a view of the pre-built constant: decided on the same settled IR.
-        crate::const_fn::rewrite(data, d_nr);
+        crate::const_fn::rewrite(data, database, d_nr);
         // `@FR-R-CopyView` — a read-only copy of a record nothing can disturb is a view of
         // it: decided on the same settled IR, after R-Const has turned its calls into views.
         crate::copy_view::rewrite(data, d_nr);

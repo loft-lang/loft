@@ -1,0 +1,96 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Base` × `@FR-I-Range` — `for i in 0..len(v)` takes its end ONCE, into a hidden local
+// in the loop's prelude.  Inside a loop that holds `v`'s element base — a loop that grows no
+// store — native reads that end as the held header's length: the same value (the header is
+// the length at loop entry, and nothing in such a loop can change it), and the bound the
+// element accesses are checked against, which LLVM can then drop.  Without it the stdlib
+// `record_update` row ran 19.7 µs where it had run 12.1 before the end moved into its local.
+// A loop that grows a store holds no base and keeps the local; so does an end that is not a
+// plain length.  Values hand-computed in each cell's comment; every cell answers the same
+// with `LOFT_NO_RANGE_END_HEADER=1` and on `--interpret`, and the substitution is pinned in
+// `tests/range_end_header.rs`.
+//
+// @falsified-at: none — the rewrite has no earlier build to catch, so the receipt is a SABOTAGE
+//   (2026-09-27): an end taken as a length whenever its expression merely CONTAINS one makes
+//   b7's `0..len(v) - 1` read the header's full length on native — 4 + 5 + 6 = 15 for 9 — and
+//   the pin fails on `n_all_but_last`.  The element-base requirement is conservative rather
+//   than load-bearing: a vector a loop grows is a mover and holds no header at all.
+//   CHANNEL: the VALUE channel (an assertion) on native, and the pin.
+//   HOLDS: the interpreter (the rewrite is native-only), leak and strict-store clean.
+
+struct P { x: float, y: float }
+
+struct H { vals: vector<integer>, n: integer }
+
+// b1: in place, x = y + i: y are 10, 20, 30 → x 10, 21, 32, sum 63
+fn update(v: vector<P>) -> float {
+  for i in 0..len(v) { v[i].x = v[i]?.y + i as float; }
+  s = 0.0;
+  for i in 0..len(v) { s += v[i]?.x; }
+  s
+}
+
+// b2: through a field path: vals 1, 2, 3, 4 doubled → 20
+fn doubled(h: H) -> integer {
+  for i in 0..len(h.vals) { h.vals[i] = h.vals[i] * 2; }
+  t = 0;
+  for i in 0..len(h.vals) { t += h.vals[i]; }
+  t
+}
+
+// b3: nested, both bounded by len(v): sum over i, j of v[i] * v[j] = (1+2+3)^2 = 36
+fn square_sum(v: vector<integer>) -> integer {
+  t = 0;
+  for i in 0..len(v) {
+    for j in 0..len(v) { t += v[i] * v[j]; }
+  }
+  t
+}
+
+// b4: pushes onto v: three rounds (the end taken once), v ends 6 long, the new ones 7 8 9
+fn grows(v: vector<integer>) -> integer {
+  for i in 0..len(v) { v += [i + 7]; }
+  len(v) * 100 + v[3] * 10 + v[5]
+}
+
+// b5: grows ANOTHER vector: w gets v's elements tripled, 3 + 6 + 9 = 18
+fn into_other(v: vector<integer>) -> integer {
+  w: vector<integer> = [];
+  for i in 0..len(v) { w += [v[i] * 3]; }
+  t = 0;
+  for x in w { t += x; }
+  t
+}
+
+// b6: an empty vector runs no round
+fn empty_sum(v: vector<integer>) -> integer {
+  t = 5;
+  for i in 0..len(v) { t += v[i]; }
+  t
+}
+
+// b7: an end that is not a plain length: 0..len(v)-1 over 4, 5, 6 → 4 + 5 = 9
+fn all_but_last(v: vector<integer>) -> integer {
+  t = 0;
+  for i in 0..len(v) - 1 { t += v[i]; }
+  t
+}
+
+fn main() {
+  s = update([P { x: 0.0, y: 10.0 }, P { x: 0.0, y: 20.0 }, P { x: 0.0, y: 30.0 }]);
+  assert(s == 63.0, "b1 got {s}");
+  d = doubled(H { vals: [1, 2, 3, 4], n: 0 });
+  assert(d == 20, "b2 got {d}");
+  q = square_sum([1, 2, 3]);
+  assert(q == 36, "b3 got {q}");
+  g = grows([1, 2, 3]);
+  assert(g == 679, "b4 got {g}");
+  o = into_other([1, 2, 3]);
+  assert(o == 18, "b5 got {o}");
+  e: vector<integer> = [];
+  assert(empty_sum(e) == 5, "b6 got {empty_sum(e)}");
+  a = all_but_last([4, 5, 6]);
+  assert(a == 9, "b7 got {a}");
+}

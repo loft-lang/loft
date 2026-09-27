@@ -3196,9 +3196,11 @@ impl Stores {
         }
     }
 
+    /// A compare, not a name lookup: every file read and write asks it, and hashing the
+    /// name per call was 15 % of a binary read loop.
     #[must_use]
     pub fn is_text_type(&self, tp: u16) -> bool {
-        self.names.get("text").copied() == Some(tp)
+        tp == super::TEXT_TP
     }
 
     pub(super) fn show_fields(&self, pretty: bool, res: &mut String, v: &[Field]) {
