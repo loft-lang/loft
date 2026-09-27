@@ -893,6 +893,15 @@ pub struct Output<'a> {
     /// `LOFT_NO_LAZY_SPLIT=1` — every such loop builds and walks its `vector<text>` again;
     /// the bisect step for a wrong or missing piece out of a loop over a `split`.
     pub lazy_split_disabled: bool,
+    /// `@FR-R-Base` × `@FR-I-Range` — the range ends of the function being emitted that its
+    /// prelude binds ONCE from a vector's length, keyed by the end's hidden local
+    /// ([`hoist::range_end_lengths`]); rebuilt per function.  Inside a loop that holds the
+    /// vector's element base the end reads the held header's length, because such a loop
+    /// grows no store: the length the prelude took is the length every round sees.
+    pub range_end_lengths: BTreeMap<u16, hoist::PathKey>,
+    /// `LOFT_NO_RANGE_END_HEADER=1` — a range end always reads its prelude local; the bisect
+    /// step for a wrong trip count out of a `for i in 0..len(v)` loop.
+    pub range_end_header_disabled: bool,
     /// `@FR-R-SplitTable` — the `parts = text.split(c)` binds of the function being
     /// emitted whose vector is never built, keyed by the local ([`hoist::split_tables`]);
     /// rebuilt per function.  The table is `__st_<var>: Vec<&str>` at the bind.
@@ -2221,6 +2230,9 @@ impl<'a> Output<'a> {
             move_append_disabled: std::env::var("LOFT_NO_MOVE_APPEND").is_ok_and(|v| v != "0"),
             lazy_splits: BTreeMap::new(),
             lazy_split_disabled: std::env::var("LOFT_NO_LAZY_SPLIT").is_ok_and(|v| v != "0"),
+            range_end_lengths: BTreeMap::new(),
+            range_end_header_disabled: std::env::var("LOFT_NO_RANGE_END_HEADER")
+                .is_ok_and(|v| v != "0"),
             split_tables: BTreeMap::new(),
             split_table_aliases: BTreeMap::new(),
             split_table_disabled: std::env::var("LOFT_NO_SPLIT_TABLE").is_ok_and(|v| v != "0"),
@@ -2590,6 +2602,11 @@ impl Output<'_> {
             .values()
             .map(|p| (p.loop_var, p.clone()))
             .collect();
+        self.range_end_lengths = if self.range_end_header_disabled {
+            BTreeMap::new()
+        } else {
+            hoist::range_end_lengths(self.data, def_nr)
+        };
         self.lazy_splits = if self.lazy_split_disabled {
             BTreeMap::new()
         } else {
@@ -3786,6 +3803,18 @@ impl Output<'_> {
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// `@FR-R-Base` — the held header whose length a read of range end `var` stands for: the
+    /// innermost enclosing loop that holds BOTH the vector's header and its element base.
+    /// The base is bound only in a loop that grows no store, so the vector's length is the
+    /// one the end's prelude took, on every round.  `None` everywhere else.
+    pub(super) fn range_end_header(&self, var: u16) -> Option<String> {
+        let path = self.range_end_lengths.get(&var)?;
+        (0..self.vec_bases.len().min(self.vec_headers.len()))
+            .rev()
+            .find(|&i| self.vec_bases[i].contains_key(path))
+            .and_then(|i| self.vec_headers[i].get(path).cloned())
+    }
+
     fn begin_vector_hoist(
         &mut self,
         w: &mut dyn Write,

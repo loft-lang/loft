@@ -227,6 +227,15 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  join.  The fallback is never a constant: a negative index addresses
                  from the end there, and an absent element answers its default
                  RECORD's field, which a declared field default makes non-zero.
+                 THE BOUND CLAUSE: a range end its prelude binds ONCE from the plain
+                 length of a vector path P (`for i in 0..len(P)`, `@FR-I-Range`)
+                 reads, inside a loop that holds P's element base, as the held
+                 header's length.  The header is the length at loop entry, and a
+                 loop holding a header admits no op that could shrink P and, holding
+                 the base, none that grows it — so it is the length the prelude took,
+                 on every round, and the bound the element accesses are tested
+                 against, which the compiler may then drop.  An end that is anything
+                 but the plain length keeps its local (`LOFT_NO_RANGE_END_HEADER`).
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an

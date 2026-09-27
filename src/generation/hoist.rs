@@ -451,6 +451,37 @@ pub fn nested_counted_loops<'a>(
     out
 }
 
+/// `@FR-I-Range` — the range ends of `def_nr` its loops' preludes bind ONCE from the length of
+/// a pure vector path (`for i in 0..len(v)`: `_range_end = len(v)`), with that path.  An end
+/// set anywhere else in the function, or from anything but a length, is left out.
+#[must_use]
+pub fn range_end_lengths(data: &Data, def_nr: u32) -> BTreeMap<u16, PathKey> {
+    let def = data.def(def_nr);
+    let vars = def.variables();
+    let mut sets: BTreeMap<u16, (usize, Option<PathKey>)> = BTreeMap::new();
+    def.code().walk(&mut |n| {
+        if let Value::Set(v, rhs) = n
+            && vars.name(*v).starts_with("_range_end")
+        {
+            let path = match rhs.unspan() {
+                Value::Call(d, a)
+                    if a.len() == 1
+                        && matches!(data.def(*d).name(), "OpLengthVector" | "t_6vector_len") =>
+                {
+                    vector_path(data, &a[0])
+                }
+                _ => None,
+            };
+            let e = sets.entry(*v).or_insert((0, None));
+            e.0 += 1;
+            e.1 = path;
+        }
+    });
+    sets.into_iter()
+        .filter_map(|(v, (count, path))| (count == 1).then_some((v, path?)))
+        .collect()
+}
+
 /// The variables `body` rebinds anywhere — a `Set`, a `TuplePut`, an `Iter` binding.
 #[must_use]
 pub fn written_vars(body: &Block, data: &Data, vars: &crate::variables::Function) -> HashSet<u16> {
