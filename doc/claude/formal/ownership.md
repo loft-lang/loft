@@ -511,7 +511,19 @@ implication that reading `deps` is *sufficient*.
 
 ## Deviations
 
-**OPEN: 0.**  `D-own-51` (a field hoisted out of an in-place literal — `r = Outer { b: o.b }; r`,
+**OPEN: 0.**  `D-own-52` (a record function whose abandoned return candidate is promoted onto
+its buffer and which answers ANOTHER function's result through it — `none = F {…}; if k < 0
+{ return none }; if k > 0 { return other(k) }` — freed the promoted local BEFORE the call that
+is handed it as the buffer: the loft#1126 transition free, unguarded, where `(O-Buffer)`'s
+callee clause says every free of the promoted local declines on its entry witness.  The
+interpreter does not reset the freed local, so a callee that fills a live buffer filled the
+freed store, and the caller read whatever took that slot next — another record's text, with
+no diagnostic, loft#1703.  The scope pass's two transition frees now stand down where the
+buffer has an entry witness; the rebind's own free after the call, guarded by that witness
+on both backends, is the one home for the displaced store.  Guard
+`tests/scripts/1703-a-forward-past-an-abandoned-candidate-fills-a-live-buffer.loft`) opened and
+CLOSED 2026-09-27.
+`D-own-51` (a field hoisted out of an in-place literal — `r = Outer { b: o.b }; r`,
 a work-ref typed `ref(Inner)["o"]`, a VIEW of the parameter — was freed at scope exit as a
 work-ref regardless of what it borrowed, releasing the CALLER's record on every call; in a
 loop the caller's pooled buffer was then read back, 46 strict-store violations on both

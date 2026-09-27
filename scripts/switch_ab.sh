@@ -23,12 +23,36 @@
 # (time, randomness, a temp path) and is reported as NOISE, never as a defect.  Exit 1 when
 # any defect is found, 0 otherwise.
 #
+# The comparison is of SEMANTICS (formal/rewrites.md (R-Escape)): how many copies a value
+# takes and where the code that allocates it sits are the compiler's to change.  So two
+# things are removed from both outputs before they are compared — an `advice[avoidable-copy]`
+# block (it reports whether a copy could be moved, which is exactly what a rewrite decides)
+# with the `note: N diagnostics above` count it feeds, and a store dump's `bc:N` (the
+# bytecode offset of the allocating site, which moves with any change to the emitted code).
+# Every other diagnostic is compared: a refusal, a warning, or a copy notice that says a
+# view was materialised is a meaning.
+#
+# A consumer package runs once per mode in a FRESH COPY of its directory, beside links to
+# its siblings so a `path = "../dep"` still resolves.  A suite writes files — dryopea's saves
+# into tests/actual/, and its cold-start test asserts there is no save yet — so a second run
+# in the same directory read the first run's file and failed under EVERY switch.  The copy
+# also means the harness never writes into the consumer's own checkout.
+#
 # A program whose output MEASURES what a switch changes — a hash table's byte size under
 # LOFT_NO_HALF_LOAD (a writer's sizing policy no reader assumes), a store's occupancy — moves
 # with that switch without any meaning moving.  It says so in its header with
 # `// @observes: LOFT_NO_<REWRITE>`, and the difference is reported as OBSERVED, not as a
 # defect.  The annotation names ONE switch: under every other switch the same program is
 # compared as usual.
+#
+# Some listed switches belong to a CURE, not a rewrite: their off form is the defect the cure
+# removed, kept as the first bisect step for it (LOFT_NO_OWNER_WITNESS emits the pre-witness
+# form).  No such switch can be A/B-clean, and its falsifier is the opposite question — do
+# the programs written to catch that defect still catch it?  Such a program says so with
+# `// @catches: LOFT_NO_<CURE>`: its output MUST move with that switch, and is reported as
+# CAUGHT.  One that no longer moves is VACUOUS — the guard has stopped seeing the defect its
+# switch restores — and counts as a defect.  Every program without the header is compared as
+# usual under the cure's switch too.
 set -uo pipefail
 if [ $# -lt 1 ] || [[ "$1" != LOFT_NO_* ]]; then
   echo "usage: $0 LOFT_NO_<REWRITE> [--consumer DIR]..." >&2
@@ -69,6 +93,29 @@ run_one() {
   echo "exit=$?" >>"$WORK/$mode/$base.out"
 }
 export -f run_one
+
+# The output with what (R-Escape) leaves to the compiler removed — see the header.
+semantic() {
+  awk '/^advice\[avoidable-copy\]/ { skip = 1; next }
+       skip && /^$/ { skip = 0; next }
+       skip { next }
+       /^note: [0-9]+ diagnostics? above suggests? / { next }
+       { gsub(/ bc:[0-9]+/, " bc:_"); print }' "$1"
+}
+
+# A fresh copy of consumer DIR for one mode; prints the copy's path.  Its siblings are
+# linked, not copied, so relative dependencies resolve and nothing of theirs is written.
+consumer_copy() {
+  local dir="$1" mode="$2" parent name dest s
+  dir="$(cd "$dir" && pwd)"; parent="$(dirname "$dir")"; name="$(basename "$dir")"
+  dest="$WORK/consumer-$mode/$(printf '%s' "$dir" | cksum | cut -d' ' -f1)"
+  mkdir -p "$dest" || return 1
+  for s in "$parent"/* "$parent"/.[!.]*; do
+    [ -e "$s" ] && [ "$(basename "$s")" != "$name" ] && ln -s "$s" "$dest/"
+  done
+  cp -a "$dir" "$dest/$name" || return 1
+  printf '%s\n' "$dest/$name"
+}
 LOFT_ARGS="${LOFT_ARGS:-}"
 # A program cut off by the watchdog stops at a point that depends on the load, so it is
 # never compared: it is reported as TIMEOUT.  The corpus's slowest program runs ~80 s.
@@ -82,7 +129,7 @@ for mode in on off; do
   printf '%s\n' "${files[@]}" | xargs -P "$JOBS" -I{} bash -c "run_one $mode {}"
 done
 
-defects=0; noise=0; timeouts=0; observed=0
+defects=0; noise=0; timeouts=0; observed=0; caught=0
 for f in "${files[@]}"; do
   base="$(basename "$f" .loft)"
   if grep -q '^\[timeout\] deadline reached' "$WORK/on/$base.out" "$WORK/off/$base.out"; then
@@ -90,27 +137,35 @@ for f in "${files[@]}"; do
     echo "TIMEOUT $f (cut off after ${AB_TIMEOUT}s — not compared)"
     continue
   fi
-  if ! cmp -s "$WORK/on/$base.out" "$WORK/off/$base.out"; then
+  if ! cmp -s <(semantic "$WORK/on/$base.out") <(semantic "$WORK/off/$base.out"); then
     run_one on2 "$f"
-    if ! cmp -s "$WORK/on/$base.out" "$WORK/on2/$base.out"; then
+    if ! cmp -s <(semantic "$WORK/on/$base.out") <(semantic "$WORK/on2/$base.out"); then
       noise=$((noise + 1))
       echo "NOISE   $f (differs between two runs with the rewrite on)"
+    elif grep -qE "^// @catches:.*\b$SWITCH\b" "$f"; then
+      caught=$((caught + 1))
+      echo "CAUGHT  $f (the defect $SWITCH restores, which this program declares it catches)"
     elif grep -qE "^// @observes:.*\b$SWITCH\b" "$f"; then
       observed=$((observed + 1))
       echo "OBSERVED $f (its output measures what $SWITCH changes, as its header declares)"
     else
       defects=$((defects + 1))
       echo "DEFECT  $f — output moves with $SWITCH:"
-      diff "$WORK/on/$base.out" "$WORK/off/$base.out" | head -12 | sed 's/^/    /'
+      diff <(semantic "$WORK/on/$base.out") <(semantic "$WORK/off/$base.out") | head -12 | sed 's/^/    /'
     fi
+  elif grep -qE "^// @catches:.*\b$SWITCH\b" "$f"; then
+    defects=$((defects + 1))
+    echo "VACUOUS $f — declares it catches what $SWITCH restores, and its output does not move"
   fi
 done
 
 # A consumer package: its suite on the interpreter, the per-test PASS/FAIL lines compared.
 for dir in "${CONSUMERS[@]}"; do
   [ -f "$dir/loft.toml" ] || { echo "SKIP    $dir (no loft.toml)"; continue; }
-  on="$(cd "$dir" && env -u "$SWITCH" LOFT_TIMEOUT=600 "$LOFT" test --interpret 2>&1 | grep -E 'FAIL|test result' | sort)"
-  off="$(cd "$dir" && env "$SWITCH=1" LOFT_TIMEOUT=600 "$LOFT" test --interpret 2>&1 | grep -E 'FAIL|test result' | sort)"
+  on_dir="$(consumer_copy "$dir" on)" && off_dir="$(consumer_copy "$dir" off)" \
+    || { echo "cannot copy $dir into $WORK" >&2; exit 2; }
+  on="$(cd "$on_dir" && env -u "$SWITCH" LOFT_TIMEOUT=600 "$LOFT" test --interpret 2>&1 | grep -E 'FAIL|test result' | sort)"
+  off="$(cd "$off_dir" && env "$SWITCH=1" LOFT_TIMEOUT=600 "$LOFT" test --interpret 2>&1 | grep -E 'FAIL|test result' | sort)"
   if [ "$on" != "$off" ]; then
     defects=$((defects + 1))
     echo "DEFECT  consumer $dir — its suite moves with $SWITCH:"
@@ -118,5 +173,5 @@ for dir in "${CONSUMERS[@]}"; do
   fi
 done
 
-echo "$SWITCH: ${#files[@]} programs, $defects defect(s), $observed observed, $noise noisy, $timeouts timed out"
+echo "$SWITCH: ${#files[@]} programs, $defects defect(s), $observed observed, $caught caught, $noise noisy, $timeouts timed out"
 [ "$defects" -eq 0 ]

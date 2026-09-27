@@ -25,11 +25,19 @@ fn make(k: integer) -> vector<Heavy> {
   mk_out
 }
 
+// The volume is the ceiling's channel, not a memory tool's: under valgrind or AddressSanitizer
+// the release path is checked access by access, and 1600 calls there outran the sweep's
+// 300 s per run.  An UNSET variable answers null, so each test carries its `?? ""`.
+fn under_memory_tool() -> boolean {
+  (env_variable("ASAN_OPTIONS") ?? "") != "" || (env_variable("LD_PRELOAD") ?? "").contains("vgpreload")
+}
+
 fn test_reused_buffer_releases_heavy_elements() {
+  calls = if under_memory_tool() { 40 } else { 1600 };
   sink = 0;
-  for _r in 0..1600 {
+  for _r in 0..calls {
     hv = make(50);
     sink += len(hv);
   }
-  assert(sink == 80000, "every call's elements arrive");
+  assert(sink == calls * 50, "every call's elements arrive");
 }

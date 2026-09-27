@@ -1,0 +1,63 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1700 (`@FR-B-Scope`) — A BIND AFTER ITS BLOCK ENDED IS A NEW BINDING, AT ANY TYPE.
+// `(B-Scope)` ends a local bound inside a block at the block's `}`, and a bind after it starts a
+// new binding in the enclosing block.  The parser kept one variable per name, so the new binding
+// inherited the ended one's type and `if c { w = 1 } w = "x"` was refused as a type change.  A
+// bind after the block ended, at a type the ended binding refuses, now gets a variable of its
+// own, as a `for` loop's and a pattern's do; the spelling names it until the enclosing block
+// ends.  Only where the old compiler refused (loft#1145's rule), so a program that compiled is
+// unchanged — a same-type rebind keeps its single binding and its lints.
+//
+// The closure capturing a spelling several bindings share is
+// `1700b-a-closure-captures-the-binding-its-name-spells-now.loft`.
+//
+// @falsified-at: 5ba2b5ef5 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1700-a-bind-after-its-block-ended-is-a-new-binding-at-any-type.patch — interpret exit 1 -> 0, native exit 1 -> 0
+// CHANNEL: the exit — the control tree refuses this file ("cannot change type").
+// ARMED: every run.
+// WITNESS: `Variable 'w' cannot change type from integer to text`.
+// HOLDS: the same-type rebind and the read-after-end refusal (the corpus's B-Scope guards).
+
+enum E { A, B }
+
+fn main() {
+  c = true;
+  if c { w = 1; assert(w == 1, "the first binding"); }
+  w = "x";
+  assert(w == "x", "a new binding at another type: {w}");
+  t = 0;
+  for e in [1, 2] { t += e; }
+  e = "e";
+  assert(e == "e" && t == 3, "after a loop variable: {e} {t}");
+  {
+    if c { d = 1; assert(d == 1, "nested first"); }
+    d = "d";
+    assert(d == "d", "inside a nested block: {d}");
+  }
+  if c { i1 = 1; assert(i1 == 1, "i1"); }
+  if c { i1 = "i"; assert(i1 == "i", "rebound inside another block: {i1}"); }
+  ev = E.A;
+  match ev { A => { m = 1; assert(m == 1, "arm body"); }, B => {} }
+  m = "m";
+  assert(m == "m", "after a match arm's local: {m}");
+  if c { h = 1; assert(h == 1, "h"); }
+  h: text = "h";
+  assert(h == "h", "a declared new binding: {h}");
+  if c { j = [1, 2]; assert(len(j) == 2, "a heap binding"); }
+  j = "j";
+  assert(j == "j", "a heap binding ended, a text one started: {j}");
+  n = 0;
+  for i in 0..3 { if c { l = i; n += l; } l = [i, i]; n += len(l); }
+  assert(n == 9, "a scalar then a vector per iteration: {n}");
+  if c { k = 1; assert(k == 1, "k"); }
+  k = "k";
+  f = fn(s: text) -> text { "{k}{s}" };
+  assert(f("y") == "ky", "a closure capturing the new binding: {f("y")}");
+  // unchanged: the same type keeps one binding
+  if c { s = 1; assert(s == 1, "s"); }
+  s = 2;
+  assert(s == 2, "the same type: {s}");
+  println("a bind after its block ended is a new binding at any type: every cell holds");
+}

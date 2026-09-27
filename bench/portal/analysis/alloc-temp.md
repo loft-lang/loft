@@ -114,3 +114,56 @@ nothing — the TRANSITIVE form promotes the wrapper's own work-refs onward, so 
 climbs to the outermost looping frame (Phase A and B to a fixpoint over the call graph).
 Built (2026-09-26): `bone_shape_has` 5.44× → **2.68×**, same hash — below the 4.84× the
 rule started from, since the wrapper's three mints were ~200 ns of a ~375 ns query.
+
+## `flow_layout_full` priced (2026-09-27)
+
+After `(R-WorkBuffer)`, the character heap fact and `(R-VecCopy)`, the zttext row reads
+27.6 ms against the twin's 1.9 ms (14.6×; the lane's other rows are now 3.5–8.6×, `invert`
+102× → 8.6×).  A flat profile of the row alone puts ~40 % in store bookkeeping; what it is made
+of, priced on the emitted Rust (`bench/portal/hand_price.sh`, hash `eb888d85` throughout):
+
+* **The result buffers** — `token_width` and `place_line` mint a store per call for
+  `slice_runs`' `vector<Run>` result and free it at exit.  Kept alive across calls (a
+  persistent per-site slot, the frees dropped): 27.6 → 25.5 ms, **−8 %**.  Worth it only
+  as the transitive `(R-WorkBuffer)` step for RESULT buffers — a call-site buffer whose result
+  never leaves the frame handed down from the looping caller — not as a row of its own.
+* **The fn-ref record result** — `resolve(r.style)` is called with `DbRef::NULL` as its return
+  buffer, so every call (about three per token) mints a `Style` store.  Offering the site's
+  own temp as the buffer breaks the fn-ref adoption protocol: `cr_fnref_minted` /
+  `cr_fnref_adopt` read a store they did not see minted as BORROWED and take the copy
+  branch, and bypassing them leaked a store per call in the price.  Making an unresolved call
+  take a buffer is fn-ref ABI work (`@FR-O-Unknown`), a design, not a patch — not priced.
+* **The per-run text** — every `Run { str: s }` writes its text into the store: a claim
+  through the best-fit tree (`claim_best_fit`, `fl_insert`, `set_free_header`,
+  `finish_claim`, ~20 % of the row) and a free when the buffer is cleared, against one
+  `malloc` in the twin.  This is the allocator "shave" above, now with a row that needs it.
+
+Not the lever: the per-character walks the operator counts point at (`buf_slice_text` 22 %
+of executed operators, `seg` 19 %) are 4.5 % and less of wall time — already lean loops.
+
+## `check_request` priced (2026-09-27)
+
+pluginabi's front door, 51× (8.9 µs a call against 164 ns).  An LBR call-graph profile of
+the lane binary (`perf record --call-graph lbr` works on this box where dwarf unwinding
+gives nothing) splits the call: each of the two decodes ~27 %, `pa_decode`'s deep copy of
+`d.value` into its return buffer ~15 %, `pa_get` + `pa_text` (a copy of `e.value`, then a
+format) ~13 %.  Counted per call by wrapping every store op in the emitted Rust with a
+per-source-line counter: **32 store mints, 18.5 deep record copies, 10.5 deep vector
+appends**.  Nothing in that list is one lever:
+
+* `tb` / `bs` (the text and byte payload locals of `read_value`, 11.4 mints a call) —
+  `(R-WorkBuffer)` declines `bs` as "copied whole into another place" (a struct-literal
+  field initialiser, which only READS it) and `tb` as "handed to a call" (the native
+  `text_from_bytes`, which answers a text and cannot keep it).  Priced by caching both
+  stores across calls: 8.86 → 8.45 µs, **−4.6 %**.
+* `pa_decode` handing its decoded store to the caller instead of copying `d.value` into
+  the buffer: 8.64 → 8.09 µs, **−5 %**.  The library copies to dodge loft#425 and #651,
+  both closed.
+* The copies of `kd.value` / `vd.value` into each `CborEntry` are the rest of the tree:
+  every sub-value is decoded into its own store and deep-copied into its parent's, which a
+  Rust value moves.  Removing that is placement of a callee's result INSIDE the caller's
+  store, a design, not a rewrite.
+
+And the twin runs a cheaper algorithm than the library: its `Cbor` BORROWS text and byte
+slices from the frame, where the library's `CborValue` owns copies.  Bench rule 1 says the
+twin should own them too (a `Vec` / `String` per payload); the 51× overstates loft's share.

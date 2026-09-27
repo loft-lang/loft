@@ -310,7 +310,7 @@ pub fn stdlib_cache_key(stdlib_sources: &[(String, String)]) -> [u8; 32] {
     put(binary_signature_tag().as_bytes());
     put(target_triple().as_bytes());
     put(feature_signature().as_bytes());
-    put(semantic_gate_signature().as_bytes());
+    put(semantic_env_signature().as_bytes());
     // Number of stdlib files, then each (name, content).
     h.update((stdlib_sources.len() as u64).to_le_bytes());
     for (name, content) in stdlib_sources {
@@ -324,32 +324,56 @@ pub fn stdlib_cache_key(stdlib_sources: &[(String, String)]) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// The values of every env gate that changes EMITTED CODE (not just logging):
-/// two runs differing in any of these must never share cached bytecode.  A
-/// gate-ON sweep otherwise poisons a later gate-OFF run of the same file with
-/// stale-gate bytecode (observed: the @PLN85 54-cell over-free map read 0/54
-/// gate-OFF right after a gate-ON run — the real gate-OFF count was 6/54).
-/// Keep this list in sync when adding a semantic gate; a LOGGING-only var
-/// (LOFT_LOG, dump tuning) must NOT be here or warm starts vanish.
+/// The `LOFT_*` variables verified to change neither the parsed `Data` nor the emitted code:
+/// watchdog and memory bounds, timing, the cache's own knobs, the diagnostic renderer, the
+/// scratch dir and the source anchor a native binary reads at run time.  An ALLOW-list,
+/// because the `LOFT_*` surface is large and scattered — every lowering and every `--native`
+/// rewrite has a `LOFT_NO_*` switch, read where it acts — so a list of the variables that DO
+/// matter drifts the moment someone adds one (`LOFT_NO_WORK_BUFFER` was missing from the one
+/// kept here, and a bundle written under it was warm-loaded by the next default run, which
+/// then emitted the unpromoted program; loft#1697).  Anything not named here counts, which
+/// costs a warm start and never a wrong answer.
+pub const INERT_ENV: &[&str] = &[
+    "LOFT_TIMING",
+    "LOFT_TIMING_LEDGER",
+    "LOFT_TIMEOUT",
+    "LOFT_TIMEOUT_GRACE",
+    "LOFT_MEMORY_LIMIT",
+    "LOFT_PROGRAM_CACHE",
+    "LOFT_STDLIB_CACHE",
+    "LOFT_CACHE_MAX_MB",
+    "LOFT_CACHE_TTL_HOURS",
+    "LOFT_ERRORS",
+    "LOFT_TMPDIR",
+    "LOFT_TMPFS_MIN_FREE_MB",
+    "LOFT_SOURCE_DIR",
+];
+
+/// Whether `name` is an environment variable that may change what a run parses or emits:
+/// any `LOFT_*` outside [`INERT_ENV`].
 #[must_use]
-fn semantic_gate_signature() -> String {
-    const SEMANTIC_GATES: &[&str] = &[
-        "LOFT_NO_JOIN_OWN",
-        "LOFT_PLN25_OFF",
-        "LOFT_NO_BORROW_ELIDE",
-        "LOFT_POISON",
-        "LOFT_UAF",
-        "LOFT_UAF_GEN",
-        "LOFT_UAF_REUSE",
-        "LOFT_CODEGEN_STORE",
-    ];
+pub fn env_counts(name: &str) -> bool {
+    name.starts_with("LOFT_") && !INERT_ENV.contains(&name)
+}
+
+/// Every counting `LOFT_*` variable with its value, sorted by name: two runs that differ in
+/// any of them must never share a cached parse.  A switch-ON sweep otherwise poisons a later
+/// switch-OFF run of the same file (observed: the @PLN85 54-cell over-free map read 0/54
+/// switch-OFF right after a switch-ON run — the real count was 6/54).
+#[must_use]
+fn semantic_env_signature() -> String {
+    let mut vars: Vec<(String, String)> = std::env::vars_os()
+        .filter_map(|(k, v)| {
+            let k = k.to_string_lossy().into_owned();
+            env_counts(&k).then(|| (k, v.to_string_lossy().into_owned()))
+        })
+        .collect();
+    vars.sort_unstable();
     let mut sig = String::new();
-    for g in SEMANTIC_GATES {
-        sig.push_str(g);
+    for (k, v) in vars {
+        sig.push_str(&k);
         sig.push('=');
-        if let Some(v) = std::env::var_os(g) {
-            sig.push_str(&v.to_string_lossy());
-        }
+        sig.push_str(&v);
         sig.push(';');
     }
     sig
@@ -836,7 +860,8 @@ pub fn write_run_source_hash(profile_dir: &std::path::Path, hash: u64) {
 /// It looked responsive — an in-place edit of the bound library did rebuild — while
 /// ignoring the flag that selects WHICH library is edited, which is what made it hard
 /// to notice.  A consumer's A/B harness compared an arm against itself and read the
-/// byte-identical output as the strongest possible pass.
+/// byte-identical output as the strongest possible pass.  The environment is part of it
+/// for the same reason: a lowering switch parses another program (`env_counts`, loft#1697).
 #[must_use]
 pub fn program_cache_paths(
     script_abspath: &str,
@@ -851,6 +876,12 @@ pub fn program_cache_paths(
         h.update(u32::try_from(dir.len()).unwrap_or(u32::MAX).to_le_bytes());
         h.update(dir.as_bytes());
     }
+    // A slot per environment: a run under a lowering switch parses a different program, and
+    // sharing one slot would make every run after a switch run cold (the stdlib key, which
+    // the manifest pins, folds in the same signature — so a shared slot would miss, not lie).
+    let env = semantic_env_signature();
+    h.update(u32::try_from(env.len()).unwrap_or(u32::MAX).to_le_bytes());
+    h.update(env.as_bytes());
     let key: [u8; 32] = h.finalize().into();
     let base = cache_base_dir();
     let stem = format!("program-{}", hex32(&key));

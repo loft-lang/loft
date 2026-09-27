@@ -10,6 +10,11 @@
 //! Each cell runs `target/debug/loft --native` with the program cache forced on
 //! (`LOFT_PROGRAM_CACHE=1`, a dev build has it off) in a private cache root.
 
+// The fast path is off on Windows by design (`main.rs`: DLL staging reads the parse), so its
+// hit/miss cells run everywhere else, and one cell measures the decline there.  The helpers
+// only those cells use are dead on Windows.
+#![cfg_attr(windows, allow(dead_code))]
+
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
@@ -157,6 +162,7 @@ const PROG_100: &str = "fn main() {\n  v = [5, 10, 85];\n  println(\"sum={v[0]+v
 /// edit misses the key but still skips rustc; a sidecar whose binary is gone, whose text is
 /// garbage, or whose fingerprint was altered is a miss and never a crash — and each of those
 /// heals into a hit on the run after.
+#[cfg(not(windows))]
 #[test]
 fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_misses() {
     let root = fresh_root("unchanged");
@@ -268,6 +274,7 @@ fn an_unchanged_program_is_served_from_its_source_key_and_every_damaged_sidecar_
 }
 
 /// Cell 2 — THE cell: an edit that changes the program is never answered by the old binary.
+#[cfg(not(windows))]
 #[test]
 fn an_edit_that_changes_the_program_is_never_served_stale() {
     let root = fresh_root("edit");
@@ -302,6 +309,7 @@ fn an_edit_that_changes_the_program_is_never_served_stale() {
 
 /// Cell 12 — a source-key hit says what the cold run said: the parse did not run, so its
 /// diagnostics are replayed from the manifest, through the same renderer.
+#[cfg(not(windows))]
 #[test]
 fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
     let root = fresh_root("diag");
@@ -342,6 +350,7 @@ fn a_source_key_hit_renders_the_cold_runs_diagnostics() {
 /// Cell 5 — a flag that changes the binary is a different key: `--native-release` after
 /// `--native` misses (and, since the binary cache keeps one entry per program, so does the
 /// `--native` run after it), and each answers correctly.
+#[cfg(not(windows))]
 #[test]
 fn a_flag_that_changes_the_binary_is_a_different_key() {
     let root = fresh_root("flag");
@@ -387,6 +396,7 @@ fn a_flag_that_changes_the_binary_is_a_different_key() {
 
 /// Cells 7, 8 — a `LOFT_*` switch outside the inert list declines the path (a codegen
 /// switch changes the Rust), and the P254 kill switch turns every native cache off.
+#[cfg(not(windows))]
 #[test]
 fn a_switch_in_the_environment_declines_the_fast_path() {
     let root = fresh_root("env");
@@ -409,6 +419,18 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
         r.source_key(),
         "off",
         "a codegen switch declines the path: {}",
+        r.stderr
+    );
+    // …and leaves the default program's key alone: the switch run's binary is recorded
+    // under its own environment, so the default run after it must not execute it (it did:
+    // the two shared one sidecar, and an A/B of a switch compared the switch arm with
+    // itself; loft#1697).  A miss here is the binary cache's single slot, which the switch
+    // run's build took.
+    let r = run(&root, &script);
+    assert_eq!(
+        r.source_key(),
+        "miss",
+        "a default run is never served the switch run's binary: {}",
         r.stderr
     );
     let r = run_with(
@@ -435,7 +457,9 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
         "…and the binary cache: {}",
         r.stderr
     );
-    // An inert variable does not.
+    // An inert variable does not decline it.
+    let r = run(&root, &script);
+    assert!(r.ok, "{}{}", r.stdout, r.stderr);
     let r = run_with(
         &root,
         &script,
@@ -454,6 +478,7 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
 /// Cell 4 — an edited stdlib is never served from the source key.  A scratch copy of
 /// `default/` (via `--path`) carries one probe function; the key is warmed, the probe
 /// changed, and the next run must answer with the new value.
+#[cfg(not(windows))]
 #[test]
 fn an_edited_stdlib_is_never_served_from_the_source_key() {
     let root = fresh_root("stdlib");
@@ -494,6 +519,7 @@ fn an_edited_stdlib_is_never_served_from_the_source_key() {
 }
 
 /// Cell 6 — an edited `--lib` dependency is never served from the source key.
+#[cfg(not(windows))]
 #[test]
 fn an_edited_library_is_never_served_from_the_source_key() {
     let root = fresh_root("lib");
@@ -528,5 +554,26 @@ fn an_edited_library_is_never_served_from_the_source_key() {
         r.stderr
     );
     assert_eq!(r.source_key(), "miss", "{}", r.stderr);
+    let _ = std::fs::remove_dir_all(&root);
+}
+
+/// On Windows the fast path declines — it answers `off`, never `hit` — and the program still
+/// answers through the slow path, twice in a row.
+#[cfg(windows)]
+#[test]
+fn the_fast_path_declines_on_windows() {
+    let root = fresh_root("windows");
+    let script = root.join("prog.loft");
+    std::fs::write(&script, PROG_30).expect("script");
+    for pass in ["cold", "warm"] {
+        let r = run(&root, &script);
+        assert!(
+            r.ok && r.stdout.contains("sum=30"),
+            "{pass}: {}{}",
+            r.stdout,
+            r.stderr
+        );
+        assert_eq!(r.source_key(), "off", "{pass}: {}", r.stderr);
+    }
     let _ = std::fs::remove_dir_all(&root);
 }

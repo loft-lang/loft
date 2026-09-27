@@ -1235,6 +1235,11 @@ impl Stores {
         store.set_u32_raw(slot.rec, 4, len + 1);
     }
 
+    // The fused append fast paths are called once per element from GENERATED code, which is
+    // another crate: without `#[inline]`, whether they are inlined there — and whether
+    // `store_mut` is inlined into them — is rustc's call, and that call moves when this crate
+    // grows elsewhere.  The hint makes the per-element cost a property of this code.
+    #[inline]
     pub fn append_i64(&mut self, db: &DbRef, v: i64) {
         if let Some(slot) = self.append_slot(db, 8) {
             let store = self.store_mut(&slot);
@@ -1243,6 +1248,7 @@ impl Stores {
         }
     }
 
+    #[inline]
     pub fn append_i32(&mut self, db: &DbRef, v: i32) {
         if let Some(slot) = self.append_slot(db, 4) {
             let store = self.store_mut(&slot);
@@ -1251,6 +1257,7 @@ impl Stores {
         }
     }
 
+    #[inline]
     pub fn append_f64(&mut self, db: &DbRef, v: f64) {
         if let Some(slot) = self.append_slot(db, 8) {
             let store = self.store_mut(&slot);
@@ -1259,6 +1266,7 @@ impl Stores {
         }
     }
 
+    #[inline]
     pub fn append_f32(&mut self, db: &DbRef, v: f32) {
         if let Some(slot) = self.append_slot(db, 4) {
             let store = self.store_mut(&slot);
@@ -1269,12 +1277,14 @@ impl Stores {
 
     /// A boolean or a plain enum: one byte, no sentinel (`OpSetBoolean` / `OpSetEnum`'s
     /// `set_byte(…, 0, v)`).
+    #[inline]
     pub fn append_byte(&mut self, db: &DbRef, v: i32) {
         self.append_byte_min(db, 0, v);
     }
 
     /// One element of a `vector<u8>` / `vector<i8>` (a byte biased by `min`), written as
     /// `OpSetByte` writes it — `OpPushByte`, the fused `v += [x]`.
+    #[inline]
     pub fn append_byte_min(&mut self, db: &DbRef, min: i32, v: i32) {
         if let Some(slot) = self.append_slot(db, 1) {
             let store = self.store_mut(&slot);
@@ -1304,6 +1314,7 @@ impl Stores {
         crate::vector::append_bytes(db, &bytes[lo..hi], &mut self.allocations);
     }
 
+    #[inline]
     pub fn append_u32(&mut self, db: &DbRef, v: u32) {
         if let Some(slot) = self.append_slot(db, 4) {
             let store = self.store_mut(&slot);

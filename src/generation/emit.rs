@@ -354,6 +354,12 @@ impl Output<'_> {
                 {
                     return self.output_view_tuple(w, var);
                 }
+                // `@FR-R-Base` — a range end taken once from `len(v)` reads the held header's
+                // length inside a loop that grows no store: the same value, and the bound
+                // LLVM can see the element reads are checked against.
+                if let Some(h) = self.range_end_header(var) {
+                    return write!(w, "(i64::from({h}.len))");
+                }
                 let variables = self.data.def(self.def_nr).variables();
                 let var_name = sanitize(variables.name(var));
                 // loft#1354 — this read HANDS the local to an `if` that binds it, and a

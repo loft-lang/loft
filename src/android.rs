@@ -191,6 +191,7 @@ impl AndroidTarget {
 
         let linker = self.linker();
         let mut cmd = std::process::Command::new("cargo");
+        crate::platform::dies_with_driver(&mut cmd, false);
         cmd.args(["build", "--release", "--target", &self.triple])
             .current_dir(&crate_dir)
             .env("ANDROID_NDK_ROOT", &self.ndk)

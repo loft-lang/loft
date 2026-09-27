@@ -479,6 +479,12 @@ impl Parser {
     /// parser's preamble would have given it.
     fn patch_work_buffer_callers(&mut self) {
         let promoted = self.work_buffer_promoted.clone();
+        // The pool persists across rounds: a later round's new call sites in a frame take the
+        // buffers its earlier rounds minted (or forwarded, once promoted onward).
+        let mut pool = std::mem::take(&mut self.work_buffer_pool_kept);
+        if !crate::keys::work_buffer_pool_enabled() {
+            pool.clear();
+        }
         for c in 0..self.data.definitions.len() as u32 {
             let calls_promoted = self.data.def(c).code.any_node(&mut |v| {
                 matches!(v, Value::Call(d, args) if promoted.contains(d) && args.len() < self.data.attributes(*d))
@@ -498,7 +504,13 @@ impl Parser {
             self.vars.sync_work_counters();
             let mut code =
                 std::mem::replace(&mut self.data.definitions[c as usize].code, Value::Null);
+            if crate::keys::work_buffer_pool_enabled() {
+                self.work_buffer_pool = Some(std::mem::take(&mut pool));
+            }
             self.patch_tret_call(&mut code, &promoted);
+            if let Some(p) = self.work_buffer_pool.take() {
+                pool = p;
+            }
             if let Value::Block(bl) = code.unspan_mut() {
                 for vr in self.vars.work_ref_vars() {
                     if !before.contains(&vr) {
@@ -514,6 +526,7 @@ impl Parser {
             );
             self.context = saved_ctx;
         }
+        self.work_buffer_pool_kept = pool;
     }
 }
 

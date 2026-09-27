@@ -770,3 +770,86 @@ fn a_removed_stdlib_file_is_never_served_from_a_cache() {
     );
     let _ = std::fs::remove_dir_all(&root);
 }
+
+/// Every `LOFT_*` variable outside `cache::INERT_ENV` is part of the cache key, so a bundle
+/// parsed under a lowering switch is never served to a run without it (loft#1697: a bundle
+/// written under `LOFT_NO_WORK_BUFFER=1` was warm-loaded by the next default run, whose
+/// generated Rust then lacked every work-buffer promotion — and so missed the native binary
+/// cache the default program had filled).  The inert cell is the control that the key did not
+/// widen past the list: a timeout differing between two runs still reuses the parse.
+#[test]
+fn a_lowering_switch_is_part_of_the_program_cache_key() {
+    let pid = std::process::id();
+    let root = std::env::temp_dir().join(format!("loft_envkey_{pid}"));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(&root).expect("create scratch");
+    let script = root.join("prog.loft");
+    std::fs::write(
+        &script,
+        "fn envkey_sum(n: integer) -> integer {\n  v: vector<integer> = [];\n  \
+         for i in 0..n { v += [i * i]; }\n  t = 0;\n  for x in v { t += x; }\n  t\n}\n\
+         fn main() { println(\"{envkey_sum(10)}\"); }\n",
+    )
+    .expect("write script");
+    // `(emitted Rust, whether the parse came from the cache)`.
+    let emit = |cache: &std::path::Path, tag: &str, env: &[(&str, &str)]| -> (String, bool) {
+        let out_rs = root.join(format!("{tag}.rs"));
+        let mut cmd = Command::new(loft_bin());
+        cmd.arg("--native-emit")
+            .arg(&out_rs)
+            .arg(&script)
+            .current_dir(workspace_root())
+            .env_remove("LOFT_STDLIB_CACHE")
+            .env_remove("LOFT_NO_WORK_BUFFER")
+            .env("LOFT_PROGRAM_CACHE", "1")
+            .env("LOFT_TRACE_WARM", "1")
+            .env("XDG_CACHE_HOME", cache);
+        for (k, v) in env {
+            cmd.env(k, v);
+        }
+        let out = cmd.output().expect("failed to invoke loft binary");
+        assert!(out.status.success(), "{tag}: {out:?}");
+        let rs = std::fs::read_to_string(&out_rs).expect("emitted Rust");
+        (
+            rs,
+            String::from_utf8_lossy(&out.stderr).contains("[warm] hit"),
+        )
+    };
+    // The promoted local is a parameter of the callee: its signature carries `var_v`.
+    let promoted = |rs: &str| {
+        rs.lines()
+            .any(|l| l.starts_with("fn n_envkey_sum(") && l.contains("mut var_v: DbRef"))
+    };
+    let clean = root.join("clean");
+    let (reference, _) = emit(&clean, "reference", &[]);
+    assert!(
+        promoted(&reference),
+        "the control: a default cold run promotes `v`"
+    );
+
+    let cache = root.join("cache");
+    let (off, _) = emit(&cache, "off", &[("LOFT_NO_WORK_BUFFER", "1")]);
+    assert!(!promoted(&off), "the switch keeps `v` a local");
+    let (after, after_hit) = emit(&cache, "after", &[]);
+    assert!(
+        !after_hit,
+        "a run without the switch must not reuse its parse"
+    );
+    assert_eq!(
+        after, reference,
+        "a default run after a switch run emits the default program"
+    );
+    let (inert, inert_hit) = emit(&cache, "inert", &[("LOFT_TIMEOUT", "31")]);
+    assert!(inert_hit, "an inert variable keeps the warm start");
+    assert_eq!(inert, reference);
+    // Each environment keeps its own slot, so alternating does not make every run cold.
+    let (off_again, off_hit) = emit(&cache, "off_again", &[("LOFT_NO_WORK_BUFFER", "1")]);
+    assert!(off_hit, "the switch run reuses its own parse");
+    assert_eq!(off_again, off);
+    let (_, back_hit) = emit(&cache, "back", &[]);
+    assert!(
+        back_hit,
+        "…and the default run still reuses the default one"
+    );
+    let _ = std::fs::remove_dir_all(&root);
+}

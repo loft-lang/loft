@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @catches: LOFT_NO_OWNER_WITNESS — the switch emits the pre-witness form, whose release of a local that both owns and views is what this program checks.
 //
 // `heap.md (H-Drop)` releases a resource once, by its owner, and a copy off a PARAMETER moves
 // nothing: the caller owns what the parameter names.  A local that owns on one assignment and views

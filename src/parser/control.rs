@@ -727,24 +727,34 @@ impl Parser {
         // `@FR-B-Scope` — this block is open while its statements parse.
         self.block_ord = self.block_ord.wrapping_add(1);
         self.block_path.push(self.block_ord);
+        self.block_rebinds.push(Vec::new());
         // A loop's variable belongs to the loop's BODY (`@FR-B-Scope`, as in Rust): the `for`
         // header binds it, so this block is where it is bound.
         if matches!(context, "for" | "parallel for") {
-            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body.
+            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body; recorded
+            // on both too, under the pass's own key (loft#1700).
             let binders = std::mem::take(&mut self.pending_loop_binders);
             let lv = self.vars.current_loop_variable();
             for v in std::iter::once(lv).chain(binders) {
-                if self.first_pass {
-                    break;
-                }
                 if v != u16::MAX {
-                    self.bound_in_block
-                        .insert((self.context, v), self.block_path.clone());
+                    self.record_binding(v);
                 }
             }
         }
         let cc_ret = self.parse_block_inner(context, val, result);
         self.block_path.pop();
+        // A binding started after an earlier one ended (loft#1700) ends with this block: the
+        // spelling names what it named before, so pass 2 opens every function on the same
+        // variables pass 1 did.
+        for (name, before) in self
+            .block_rebinds
+            .pop()
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+        {
+            self.vars.set_name(&name, before);
+        }
         self.fit_armed = outer_fit;
         if cc.is_some() {
             self.cc_nest -= 1;
@@ -11755,6 +11765,19 @@ impl Parser {
                 }
                 Value::Var(tmp)
             };
+            // The variant test reads the SAME value the captures read.  Built on the original
+            // expression, a subject that is not a place — a call, a literal — was evaluated
+            // twice: once into `_is_subj` for the captures and again for the test, so
+            // `if mk() is Vn { rs }` ran `mk()` twice on both backends.  A place (`w.st`) is
+            // free to repeat and keeps its own test, which is how the `variant-overwritten-
+            // binding` lint recognises the subject a later write gives another variant.
+            let stable_check = if Self::is_repeatable_place(&self.data, code) {
+                disc_check.clone()
+            } else {
+                let get_enum = self.cl("OpGetEnum", &[stable_subject.clone(), Value::Int(0)]);
+                let disc_expr = self.cl("OpConvIntFromEnum", &[get_enum]);
+                self.cl("OpEqInt", &[disc_expr, Value::Int(disc)])
+            };
             self.lexer.token("{");
             let mut seen_fields: HashSet<String> = HashSet::new();
             while let Some(field_name) = self.lexer.has_identifier() {
@@ -11891,9 +11914,9 @@ impl Parser {
                 );
             }
             if condition.is_empty() {
-                *code = disc_check;
+                *code = stable_check;
             } else {
-                condition.push(disc_check);
+                condition.push(stable_check);
                 *code = Value::Insert(condition);
             }
         } else {

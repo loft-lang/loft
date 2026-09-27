@@ -710,16 +710,29 @@ jobs:
       # covers installed registry packages only.  Unwarmed, `html_fonts`' refusal test waited
       # 157 s on the lock while another test built the graphics fixture.  A one-line
       # `use <lib>;` program through `--check` builds and stamps each (then 0.1 s).
+      #
+      # The warming binary must be the one the SUITE runs.  The --html runtime rlib is keyed on the
+      # hash of the `libloft.rlib` beside the running loft (`cache::loft_build_fingerprint`),
+      # and `cargo nextest run` without `--release` runs `target/debug/loft` — so a warm by
+      # `target/release/loft` filled a key no test ever asked for, and reported "current".
+      # Measured: `w1_1_html_export_produces_file` took 238 s on ubuntu and 353 s on macOS
+      # (past the duration gate) building the rlib inside the suite; warmed by the suite's own
+      # binary it takes under a second.  `cargo build --tests` is that binary with the test
+      # build's feature set, and nextest reuses it rather than building again.  The release
+      # binary is warmed too: `html_asyncify` drives `target/release/loft`.
       - name: Warm loft's --html runtime rlib and the tests' package cdylibs
         shell: bash
         run: |
-          ./target/release/loft cache warm --from tests \
-            || echo "warn: cache warm failed — the first --html test will build the rlib itself"
+          cargo build --tests
+          for loft in ./target/release/loft ./target/debug/loft; do
+            "$loft" cache warm --from tests \
+              || echo "warn: cache warm with $loft failed — the first --html test will build the rlib itself"
+          done
           for lib in tests/fixtures/libs/*/; do
             name=$(basename "$lib")
             [ -d "$lib/native" ] || continue
             printf 'use %s;\nfn main() {}\n' "$name" > "$RUNNER_TEMP/warm_$name.loft"
-            ./target/release/loft --lib tests/fixtures/libs --check "$RUNNER_TEMP/warm_$name.loft" \
+            ./target/debug/loft --lib tests/fixtures/libs --check "$RUNNER_TEMP/warm_$name.loft" \
               || echo "warn: warming the $name fixture failed — its first test will build it"
           done
 

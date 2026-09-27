@@ -2522,10 +2522,15 @@ the check itself is 0.6–0.9 ms (the manifest's hash walk over the stdlib).
 decline costs only what every warm run paid before (the slow path still hits the
 generated-Rust cache):
 
-- a `LOFT_*` variable outside a short inert list (`main.rs::native_fast_path_env_ok`):
-  every `--native` rewrite has a `LOFT_NO_*` switch that changes the Rust, and every
-  instrument expects the parse to run — an allow-list, because that surface is read where
-  it acts, not in one place;
+- a `LOFT_*` variable outside a short inert list (`cache::INERT_ENV`, asked through
+  `cache::env_counts`): every `--native` rewrite has a `LOFT_NO_*` switch that changes the
+  Rust, and every instrument expects the parse to run — an allow-list, because that surface
+  is read where it acts, not in one place.  The same list keys the program bundle, its
+  manifest and this sidecar (`cache::program_cache_paths`) and the stdlib bundle: a counting
+  variable's value is part of the key, so a switch run parses into, and records its binary
+  under, a slot of its own.  With one shared slot, a default run after a switch run was
+  served the switch run's parse or binary — an A/B of a switch compared one arm with itself
+  (loft#1697);
 - a manifest registering anything beyond loft sources — a `[native] crate`, `[library]
   native`, placement or `[wasm.bridge]` entry — because those are what a warm load
   RE-RESOLVES (a cdylib's freshness, a worker to start) and the fast path runs no code that
@@ -2536,7 +2541,8 @@ generated-Rust cache):
   `LOFT_NATIVE_NO_CACHE` (the P254 kill switch, now one home for both layers).
 
 The falsifier is `tests/native_source_key.rs`: a codegen-changing edit, a stdlib edit, a
-`--lib` edit, a flag change, an environment switch, and a deleted, garbage, truncated or
+`--lib` edit, a flag change, an environment switch (and the default run after one), and a
+deleted, garbage, truncated or
 foreign-fingerprint sidecar each miss and answer correctly; a diagnostics-producing program
 renders on a hit exactly what it rendered cold.  Sabotage receipt: with the manifest check
 removed, the edit cell answers `sum=30` for a program that says `sum=100`.

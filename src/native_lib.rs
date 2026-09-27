@@ -763,7 +763,7 @@ fn shared_bridge_wrapper(
                 // (`null_named` + `OpDatabase(<type_id>)`): a no-body `#native`
                 // decl caller forwards no slot (`{slot} >= n`), and a null
                 // incoming ref means no usable record arrived.
-                let tname = hidden_dest_type_name(data, &a.typedef).unwrap_or_else(|| {
+                let tname = hidden_dest_type_name(data, stores, &a.typedef).unwrap_or_else(|| {
                     panic!(
                         "shared bridge for {}: hidden dest '{}' has no shared-store type name",
                         def.name(),
@@ -920,20 +920,33 @@ fn shared_bridge_wrapper(
     )
 }
 
-/// The schema type id for a hidden `ref_return` destination of loft type `t`,
-/// for the `OpDatabase(cell, ref, <id>)` allocation.  Vectors resolve via the
-/// `main_vector<elm>` schema name (the same key `--native`'s `output_alloc_heap`
-/// uses).  Other aggregates (struct `reference`, data-`enum`) need their own
-/// type id and are not yet handled (the gate excludes them).
-/// The SHARED-STORE type NAME for a hidden destination attr — resolved at
-/// BRIDGE RUNTIME via `Stores::name` in the caller's store, because the
-/// library's compile-time type IDS live in a different id space than the
-/// caller's (@PLAN59: a lib-side constant id produced `claim(size=0)` /
-/// "Incomplete record" aborts once struct dests became universal).
-pub(crate) fn hidden_dest_type_name(data: &Data, t: &Type) -> Option<String> {
+/// The SHARED-STORE type NAME for a hidden destination attr of loft type `t` — resolved at
+/// BRIDGE RUNTIME via `Stores::name` in the caller's store, because the library's
+/// compile-time type IDS live in a different id space than the caller's (@PLAN59: a
+/// lib-side constant id produced `claim(size=0)` / "Incomplete record" aborts once struct
+/// dests became universal).  Vectors resolve via the `main_vector<elm>` schema name (the
+/// same key `--native`'s `output_alloc_heap` uses).
+///
+/// A record or data-enum answers the name its row was REGISTERED under in `stores`, not its
+/// definition's name.  The two differ when two definitions share a name: the first to
+/// register keeps it and the second is qualified (`input::InputState` beside a program's own
+/// `InputState`, `typedef::fill_database`).  Asked by the bare name, the caller's store
+/// answered the OTHER type, and the bridge minted a record of that type's size for this
+/// one's fields — a 6-boolean record for a 56-byte `InputState`, whose writes then ran into
+/// the recycled store's leftover bytes (loft#1706).  The cdylib is keyed on the caller's
+/// type-table layout (#461), so the row registered here is the row the caller has.
+pub(crate) fn hidden_dest_type_name(data: &Data, stores: &Stores, t: &Type) -> Option<String> {
     match t.base() {
         Type::Vector(elm, _) => Some(format!("main_vector<{}>", elm.name(data))),
-        Type::Reference(td, _) | Type::Enum(td, true, _) => Some(data.def(*td).name().to_string()),
+        Type::Reference(td, _) | Type::Enum(td, true, _) => {
+            let def = data.def(*td);
+            Some(
+                stores
+                    .types
+                    .get(usize::from(def.known_type))
+                    .map_or_else(|| def.name().to_string(), |row| row.name.clone()),
+            )
+        }
         _ => None,
     }
 }
@@ -1575,6 +1588,7 @@ pub fn build_shared_cdylib(
         .join("\n");
     std::fs::write(&argfile, contents).map_err(|e| format!("write {}: {e}", argfile.display()))?;
     let mut rustc = std::process::Command::new("rustc");
+    crate::platform::dies_with_driver(&mut rustc, false);
     rustc.arg(format!("@{}", argfile.display()));
     // @PLN54 S9 — the ASan cdylib (above) needs nightly rustc for `-Zsanitizer`.
     if std::env::var_os("LOFT_NATIVE_ASAN").is_some()
@@ -1582,9 +1596,11 @@ pub fn build_shared_cdylib(
     {
         rustc.env("RUSTUP_TOOLCHAIN", "nightly");
     }
-    let output = rustc
-        .output()
-        .map_err(|e| format!("launch rustc: {e} (is the Rust toolchain installed?)"))?;
+    crate::timeout::blocked_on("rustc compiling a library");
+    let output = rustc.output();
+    crate::timeout::unblocked();
+    let output =
+        output.map_err(|e| format!("launch rustc: {e} (is the Rust toolchain installed?)"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let hint = toolchain_failure_hint(&stderr)

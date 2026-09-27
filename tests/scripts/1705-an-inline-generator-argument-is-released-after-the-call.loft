@@ -1,0 +1,70 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(G-Hold)`: a generator handle OWNS its frame and every heap local the body allocated, and
+// whatever holds it releases the frame once.  A handle passed INLINE to a call
+// (`first(gen())`) had no holder at all: nothing bound it, so an abandoned frame, and here
+// the vector each generator built, stayed allocated to program exit, one per call, on both
+// backends (loft#1705).  The bound spelling `g = gen(); first(g)` was clean.  Where the
+// callee only ADVANCES the handle (`next`, a `for`, a pass to a parameter that is itself
+// only advanced) the call's temp is its holder and the scope releases it after the call.
+// Where the callee KEEPS it (a field, a generator frame), the keeper releases it, and the
+// cells below prove the caller does not.
+//
+// The leak is the channel: `main` runs every cell and the interpreter prints the stores
+// left at exit.
+//
+// @falsified-by: tests/falsified/1705-an-inline-generator-argument-is-released-after-the-call.patch — interpret leaked
+// kt=95 main_vector<GaP>×10 -> clean, native leaked kt=95 main_vector<GaP>×10 -> clean
+struct GaP { id: integer }
+struct GaHolder { g: iterator<integer> }
+
+fn ga_gen(n: integer) -> iterator<integer> {
+  xs: vector<GaP> = [];
+  for i in 0..n { xs += [GaP { id: i * 10 + 1 }]; }
+  for x in xs { yield x.id; }
+}
+fn ga_first(g: iterator<integer>) -> integer { next(g) ?? -1 }
+fn ga_total(g: iterator<integer>) -> integer { t = 0; for v in g { t += v; } t }
+fn ga_wrap(g: iterator<integer>) -> GaHolder { GaHolder { g: g } }
+fn ga_holder_inline() -> GaHolder { ga_wrap(ga_gen(3)) }
+fn ga_two(a: iterator<integer>, b: iterator<integer>) -> integer { (next(a) ?? -1) * 100 + (next(b) ?? -1) }
+fn ga_adv_then_wrap(g: iterator<integer>) -> GaHolder { _x = next(g); ga_wrap(g) }
+fn ga_skip(g: iterator<integer>, n: integer) -> integer { if n == 0 { return next(g) ?? -1; } _x = next(g); ga_skip(g, n - 1) }
+
+// Advanced only: released after the call.
+fn test_one_advance() { a = ga_first(ga_gen(5)); assert(a == 1, "one advance {a}"); }
+fn test_in_a_loop() { s = 0; for k in 0..3 { s += ga_first(ga_gen(k + 1)); } assert(s == 3, "loop {s}"); }
+fn test_drained() { t = ga_total(ga_gen(3)); assert(t == 33, "drained {t}"); }
+fn test_two_arguments() { r = ga_two(ga_gen(2), ga_gen(3)); assert(r == 101, "two {r}"); }
+fn test_in_an_expression() { r = ga_first(ga_gen(2)) + ga_first(ga_gen(4)); assert(r == 2, "expr {r}"); }
+fn test_next_itself() { a = next(ga_gen(3)) ?? -1; assert(a == 1, "next {a}"); }
+fn test_a_recursive_advance() { a = ga_skip(ga_gen(5), 2); assert(a == 21, "skip {a}"); }
+
+// Kept by the callee: the keeper releases it, and it still reads after later allocations.
+fn test_kept_in_a_field() {
+  h = ga_wrap(ga_gen(3));
+  junk = [GaP { id: 5 }];
+  a = next(h.g) ?? -1; b = next(h.g) ?? -1;
+  assert(a == 1 && b == 11 && len(junk) == 1, "field {a} {b}");
+}
+fn test_kept_and_returned() {
+  h = ga_holder_inline();
+  junk = [GaP { id: 5 }];
+  a = next(h.g) ?? -1; b = next(h.g) ?? -1;
+  assert(a == 1 && b == 11 && len(junk) == 1, "returned {a} {b}");
+}
+fn test_kept_then_drained() { h = ga_wrap(ga_gen(3)); t = 0; for v in h.g { t += v; } assert(t == 33, "kept drained {t}"); }
+fn test_advanced_then_kept() {
+  h = ga_adv_then_wrap(ga_gen(3));
+  junk = [GaP { id: 5 }];
+  b = next(h.g) ?? -1;
+  assert(b == 11 && len(junk) == 1, "adv then kept {b}");
+}
+
+fn main() {
+  test_one_advance(); test_in_a_loop(); test_drained(); test_two_arguments(); test_in_an_expression();
+  test_next_itself(); test_a_recursive_advance();
+  test_kept_in_a_field(); test_kept_and_returned(); test_kept_then_drained(); test_advanced_then_kept();
+  println("ok");
+}

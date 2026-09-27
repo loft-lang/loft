@@ -368,3 +368,25 @@ where the twin's `np.push(*p)` is a 24-byte move) and the copies of `nb` and `np
 returned `Doc` and again into `io_d` — `io_d` is `insert_op`'s own NRVO return buffer, which
 `(R-Rebind)` declines as "a parameter", and admitting it priced SLOWER (+25 %) while the
 character walk was still in place; re-price it on the current runtime before building.
+
+**The regression sweep after the 2026-09-27 portal.**  Rows whose native time rose against the
+previous portal while their twin held, each settled by building the commit the old row was
+measured at and running the SAME emitted Rust against both runtimes (and both emissions against
+today's runtime), with pinned alignment (`-C llvm-args=-align-all-functions=6
+-align-loops=64`) wherever the gap was a few percent:
+
+* mesh3d `mesh_to_floats` 6.8 → 10.6 ms, `mat4_mul` 42.3 → 51.8 ms — the RUNTIME, not the
+  emission: rustc stopped inlining `Stores::store_mut` into the fused `append_f64` / `append_f32`
+  as the crate grew elsewhere.  Fixed by `#[inline]` on the `append_*` fast paths (`877335ea3`):
+  6.7 / 42.7 ms.
+* stdlib `record_update` 12.1 → 19.7 µs — the EMISSION: `@FR-I-Range` moved the end of
+  `0..len(v)` into a prelude local, and the loop tested against it instead of the held header,
+  so the element accesses kept their bounds tests.  Fixed by `(R-Base)`'s bound clause
+  (`776b4fcfd`): 12.0 µs.
+* `fibonacci` 6.7 → 8.1 ms and tween `ease` 1.22 → 1.73 ms — NOT regressions: the old rows'
+  own commit (14d99b7c6) runs 7.8–8.3 ms and 2.19 ms today; the old portal numbers came from
+  different box conditions (and `ease` is faster now than at 14d99b7c6).
+* consumer `mesh_aabb` 17.7 → 20.9 µs (+18 %, pinned alignment) — runtime-side and NOT
+  attributed: the loop's emitted Rust is identical, every call in it is generic or `#[inline]`
+  and instantiated in the program, and the element block's alignment is the same (32 mod 64)
+  on both runtimes.  The next instrument is a per-call counter around the loop, not a guess.

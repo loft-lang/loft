@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @catches: LOFT_NO_CALLEE_DISTURB — the switch stops a callee's growth from disturbing the caller's view, which is what this program checks.
 //
 // `@FR-B-Ref-Reshape` for a `&` link to a SCALAR or TEXT place (@PLN167 C2).  Such a link holds
 // the place's `DbRef` exactly as a record `&` link does, so `(B-Disturb)`'s four events end its

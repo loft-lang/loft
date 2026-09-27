@@ -1,0 +1,7 @@
+[package]
+name = "sharedname"
+version = "0.0.0"
+loft = ">=0.8"
+
+[library]
+entry = "src/sharedname.loft"

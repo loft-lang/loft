@@ -14,11 +14,13 @@
 # The rule this enforces is `(R-Switch)`'s both-backend clause (doc/claude/formal/rewrites.md):
 # such a rewrite lands only with this A/B green.  Each leg runs `scripts/switch_ab.sh` —
 # the tests/scripts corpus with the switch off and on, plus the public consumers' suites —
-# and reports DEFECT / NOISE / TIMEOUT per program.  The same script runs locally.
+# and reports DEFECT / NOISE / TIMEOUT / CAUGHT / VACUOUS per program.  The same script runs locally.
 #
 # The list is the rewrites whose switch CLAUDE.md documents as applying on BOTH backends;
 # a native-only rewrite has the interpreter as its oracle and is not listed.  A new
-# both-backend rewrite adds its switch here in the commit that lands it.
+# both-backend rewrite adds its switch here in the commit that lands it.  Three listed
+# switches belong to CURES (owner witness, callee disturb, append staging): their off form is
+# the defect, and their guards declare `// @catches:` and must move — (R-Switch)'s cure clause.
 name: switch-ab
 
 on:
@@ -47,6 +49,8 @@ jobs:
         switch:
           # the ownership / buffer family — no in-process checking form at all
           - LOFT_NO_LAZY_BUFFER
+          - LOFT_NO_WORK_BUFFER
+          - LOFT_NO_WORK_BUFFER_POOL
           - LOFT_NO_ADOPT_FIRST_BIND
           - LOFT_NO_ADOPT_BUFFER_REUSE
           - LOFT_NO_PLACE_RESULT
@@ -136,7 +140,7 @@ jobs:
             echo "### ${{ matrix.switch }} — off vs on, loft@${{ github.sha }}"
             echo
             echo '```'
-            grep -E '^(DEFECT|NOISE|TIMEOUT)|programs,' ab.log | head -60
+            grep -E '^(DEFECT|NOISE|TIMEOUT|VACUOUS)|programs,' ab.log | head -60
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
           exit $rc

@@ -1540,7 +1540,11 @@ pub fn disturbed_params_map(
         if !def.name.starts_with("n_") {
             continue;
         }
-        for (place, cause) in disturbed_param_places(data, d_nr, database) {
+        // By reference: consuming the map runs `RawIntoIter::drop`, whose test of an
+        // allocation-less table's `Option<(ptr, Layout, _)>` memcheck reports as a
+        // conditional jump on uninitialised bytes, on every run.
+        let places = disturbed_param_places(data, d_nr, database);
+        for (&place, &cause) in &places {
             if trace {
                 let (slot, off) = place;
                 let field = if off == ANY_FIELD {
@@ -6371,7 +6375,12 @@ fn run_scan_phase(
             function.set_skip_free(v);
         }
     }
+    // loft#1697 — the scan reads `orig_code` and writes the body back only below, so the
+    // ownership oracle's whole-function walk holds for the whole scan: done once, not once per
+    // call site `inline_struct_return` asks about.
+    let defs_memo = crate::use_analysis::defs_memo_scope(data, d_nr);
     let mut code = scopes.scan(orig_code, &mut function, data);
+    drop(defs_memo);
     // The witness starts FALSE: on entry the buffer holds the CALLER's store, which this
     // function must never release.  A transition site is reachable with no prior assignment at
     // all (`fn g() -> Res { mk(2) }`), and `needs_pre_init` does not cover `boolean`, so an
@@ -9252,7 +9261,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         crate::rebind_place::rewrite(data, database, d_nr);
         // `@FR-R-Const` — a call of a literal-bodied function whose result is only read
         // answers a view of the pre-built constant: decided on the same settled IR.
-        crate::const_fn::rewrite(data, d_nr);
+        crate::const_fn::rewrite(data, database, d_nr);
         // `@FR-R-CopyView` — a read-only copy of a record nothing can disturb is a view of
         // it: decided on the same settled IR, after R-Const has turned its calls into views.
         crate::copy_view::rewrite(data, d_nr);
@@ -11451,14 +11460,16 @@ impl Scopes<'_> {
                 let mut hoisted_ref: Option<u16> = None;
                 if let Some(Value::Var(orig_ret)) = bl.operators.last() {
                     let ret_v = *self.var_mapping.get(orig_ret).unwrap_or(orig_ret);
-                    // @PLN164 B1 — a bind that ADOPTS the callee's minted record has its deps
-                    // stripped by `scan_set` inside the block, after this decision; the
-                    // parser's dep on the call's buffer is not a borrow (loft's inline
-                    // container `f().pts[i]` over such a callee leaked one record per call).
+                    // @PLN164 B1 — a bind of the callee's minted record has its deps stripped
+                    // by `scan_set` inside the block, after this decision, whether it ADOPTS
+                    // or (under `LOFT_NO_ADOPT_FIRST_BIND`) copies; the parser's dep on the
+                    // call's buffer is not a borrow (loft's inline container `f().pts[i]` over
+                    // such a callee leaked one record per call — and again with the switch
+                    // off while this asked the switched predicate, loft#1704).
                     let adopts = bl.operators.iter().any(|op| {
                         matches!(op.unspan(), Value::Set(w, value)
                         if w == orig_ret
-                            && crate::use_analysis::adopts_minted_at_bind(
+                            && crate::use_analysis::binds_the_callees_minted_store(
                                 data, function, ret_v, value,
                             ))
                     });
@@ -12143,6 +12154,14 @@ impl Scopes<'_> {
         // interpreter on the deviating side.  Its own guarded free is a no-op after
         // this one: the `OpFreeRef` emitter resets a freed Var to the null
         // sentinel, so the store it captures is already NULL.
+        //
+        // `@FR-O-Buffer` — NOT where the buffer has an ENTRY WITNESS.  Then the rebind's own
+        // free (`generate_set`, native's `_rb_w_` twin) releases the displaced store AFTER the
+        // call, declining on the entry store and on a store the callee filled in place, and
+        // it is the one home for it.  A free here runs BEFORE the call that is handed `v` as
+        // its buffer: a callee that fills a live buffer then filled the freed store on the
+        // interpreter, which does not reset `v`, and the caller read whatever took that slot
+        // next (loft#1703).  It was also unguarded, so a caller-handed store died with it.
         if transition_free.is_none()
             && was_in_scope
             && matches!(function.tp(v), Type::Reference(_, _) | Type::Enum(_, true, _))
@@ -12152,6 +12171,7 @@ impl Scopes<'_> {
             && function.proxy_says_owned(v)
             && self.owned_refs.get(&v) == Some(&self.loops.len())
             && displaces_owned_through_fresh_callee(value, v, ov, data)
+            && function.entry_witness(v).is_none()
         {
             transition_free = Some(call("OpFreeRef", v, data));
         }
@@ -12186,7 +12206,8 @@ impl Scopes<'_> {
         // naming it, one per call.  The runtime witness carries the same @FR-O-Latest fact
         // per RUN, so the free is emitted GUARDED instead of not at all.  `--native` has
         // reached this answer all along through its entry-buffer witness `_rb_w_<name>`,
-        // which is why only the interpreter reported the leak.
+        // which is why only the interpreter reported the leak.  Stands down under an entry
+        // witness for the reason the free above does.
         if transition_free.is_none()
             && was_in_scope
             && let Some((buf, flag)) = self.rbuf_witness
@@ -12199,6 +12220,7 @@ impl Scopes<'_> {
             // runtime witness where the static fact is sound but incomplete.
             && function.proxy_says_owned(v)
             && displaces_owned_through_fresh_callee(value, v, ov, data)
+            && function.entry_witness(v).is_none()
         {
             transition_free = Some(v_if(
                 Value::Var(flag),
@@ -18362,6 +18384,21 @@ impl Scopes<'_> {
                 // the dep is empty (owned).
                 let tmp = self.new_lift_var(function, &tp);
                 self.mark_lift_handoff(tmp, arg_idx, transfer_copy, moved_arg);
+                preamble.push(v_set(tmp, scanned));
+                ls.push(Value::Var(tmp));
+            } else if let Value::Call(g_nr, _) = scanned.unspan()
+                // `@FR-N-Shape`: the shape is read through `?`; the lift keeps the whole type.
+                && matches!(data.def(*g_nr).returned.base(), Type::Iterator(_, _))
+                && data.def(*g_nr).is_loft_defined()
+                && crate::use_analysis::handle_param_only_advanced(data, outer_call, arg_idx)
+            {
+                // `@FR-G-Hold` — an inline generator handle whose callee only advances it is
+                // held by nothing else, so a `__lift_N` temp holds it and the scope's sweep
+                // releases its frame, as the bound `g = gen(); first(g)` does.  Unlifted,
+                // an abandoned frame and every heap local it allocated stayed to program
+                // exit, one per call (loft#1705).
+                let gen_tp = data.def(*g_nr).returned.clone();
+                let tmp = self.new_lift_var(function, &gen_tp);
                 preamble.push(v_set(tmp, scanned));
                 ls.push(Value::Var(tmp));
             } else if matches!(scanned.unspan(), Value::Tuple(_)) {
