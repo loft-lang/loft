@@ -2736,6 +2736,24 @@ answered here rather than decided in the code.
                  the local; the local handed to a fn-ref; a nullable binding.
 ```
 
+**The body clause** (2026-09-26, loft#1697; cells
+`tests/scripts/a-literal-table-is-built-from-its-constant.loft`, switch `LOFT_NO_CONST_VIEW`).
+A call `(R-Const)` must decline — the result stored into a field, returned, written — still
+ran the function, and the function built its vector one push per literal: a 115 000-element
+terrain table was a 115 000-line function.  The function's own body now builds its fresh
+vector as ONE copy of its constant twin (`OpAppendVector(v, OpConstRef(k), elem)`, what
+`v += K` lowers to, deep-copying a text element), because the twin is built from that very
+literal.  Admitted where the body's vector block is exactly the parser's literal — its
+declaration, an optional reservation, and statements that build its elements from constant
+arguments (no variable, no call but a built-in operator: what the twin's extractor folds);
+an element kind the constant store does not pre-build (an enum, a narrow integer) has no twin
+and keeps its pushes.  Beside it, native emits every constant table whose elements share one
+field layout as one static array per field and one loop (`write_const_columns`), the
+per-element form kept for a table of mixed shapes.  Measured on the crawler's
+`rivers_test` (a 115 200-, an 86 400- and two 14 878-element table): the emitted Rust 61.7 MB
+→ 4.9 MB, `init` 1.06 M lines → 17 k, and a cold `--native` run from more than 20 minutes
+(unfinished) to 16.4 s.
+
 **The own-buffer clause** (2026-09-26, `LOFT_NO_REBIND_OWN_BUFFER`; cells
 `tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft`, pin
 `tests/rebind_own_buffer.rs`).  A builder promotes the local it returns onto its hidden

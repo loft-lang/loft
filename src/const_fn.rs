@@ -35,11 +35,14 @@ use crate::data::{Data, DefType, Value};
 
 /// Rewrite every admitted call of a literal-bodied function in `d_nr`; a no-op under the
 /// switch, and a cheap one for a body that calls no such function.
-pub fn rewrite(data: &mut Data, d_nr: u32) {
+pub fn rewrite(data: &mut Data, database: &mut crate::database::Stores, d_nr: u32) {
     if !crate::keys::const_view_enabled() || data.def_type(d_nr) != DefType::Function {
         return;
     }
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
+    if data.def(d_nr).literal_const != u32::MAX {
+        copy_from_twin(&mut code, data, database, d_nr);
+    }
     let calls_one = code.any_node(
         &mut |n| matches!(n, Value::Call(f, _) if data.def(*f).literal_const != u32::MAX),
     );
@@ -186,4 +189,119 @@ fn drop_guards(v: &mut Value, b: u16, is_null: u32) {
         }
         other => other.for_each_child_mut(&mut |c| drop_guards(c, b, is_null)),
     }
+}
+
+/// A literal-bodied function's OWN body — the call sites above could not answer with a view
+/// (the result is written, stored, returned) — builds its fresh vector as ONE copy of its
+/// pre-built constant twin instead of one push per literal: `OpAppendVector(v, OpConstRef(k),
+/// elem)`, the op `v += K` lowers to, deep-copying a text element as it always does.  The
+/// twin is built from this very literal (`compile::build_const_vectors`, native
+/// `emit_const_vectors`), so the elements are the same; what changes is the cost — a block
+/// copy against N pushes — and the size of the emitted Rust, where a 115 000-element terrain
+/// table was a 115 000-line function (loft#1697).  The literal block must be exactly the
+/// parser's: the vector's declaration, an optional reservation, and statements that only build
+/// its elements; anything else keeps the pushes.
+fn copy_from_twin(
+    code: &mut Value,
+    data: &Data,
+    database: &mut crate::database::Stores,
+    d_nr: u32,
+) {
+    let crate::data::Type::Vector(content, _) = data.def(d_nr).returned().base() else {
+        return;
+    };
+    let Some(elem) = data.vector_element_type(content, database) else {
+        return;
+    };
+    let names =
+        |d: &u32, n: &str| (*d as usize) < data.definitions.len() && data.def(*d).name() == n;
+    let append = data.def_nr("OpAppendVector");
+    let const_ref = data.def_nr("OpConstRef");
+    let twin = data.def(d_nr).literal_const;
+    let mut done = false;
+    let mut visit = |v: &mut Value| {
+        let Value::Block(bl) = v.unspan_mut() else {
+            return;
+        };
+        if done || bl.name != "Vector" || bl.operators.len() < 4 {
+            return;
+        }
+        let ops = &bl.operators;
+        let Value::Set(vec, _) = ops[1].unspan() else {
+            return;
+        };
+        let vec = *vec;
+        if !matches!(ops[0].unspan(), Value::Call(d, _) if names(d, "OpDatabase"))
+            || !matches!(ops[2].unspan(), Value::Call(d, _) if names(d, "OpSetInt4"))
+            || !matches!(ops.last().map(Value::unspan), Some(Value::Var(x)) if *x == vec)
+        {
+            return;
+        }
+        // Every statement between builds an element of `vec`: a reservation, a fused push of a
+        // literal, or a record mint group (mint, literal field sets, finish) into it.
+        let body = &ops[3..ops.len() - 1];
+        // A constant argument: no variable and no call but a built-in operator — what the
+        // twin's extractor folds (`-5` is `OpMinSingleInt(5)`, `BASE + 1` an `OpAddInt`).
+        let literal = |a: &Value| {
+            !a.any_node(&mut |n| match n {
+                Value::Var(_) => true,
+                Value::Call(d, _) => !data.def(*d).name().starts_with("Op"),
+                _ => false,
+            })
+        };
+        let mut elems: HashSet<u16> = HashSet::new();
+        let only_elements = body.iter().all(|st| match st.unspan() {
+            Value::Call(d, a)
+                if names(d, "OpPreAllocVector") || data.def(*d).name().starts_with("OpPush") =>
+            {
+                matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == vec)
+                    && a[1..].iter().all(literal)
+            }
+            Value::Set(e, rhs) => {
+                let ok = matches!(rhs.unspan(), Value::Call(d, a) if names(d, "OpNewRecord")
+                    && matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == vec));
+                if ok {
+                    elems.insert(*e);
+                }
+                ok
+            }
+            Value::Call(d, a) if names(d, "OpFinishRecord") => {
+                matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if *x == vec)
+            }
+            Value::Call(d, a) if data.def(*d).name().starts_with("OpSet") => {
+                matches!(a.first().map(Value::unspan), Some(Value::Var(x)) if elems.contains(x))
+                    && a[1..].iter().all(literal)
+            }
+            Value::Line(_) | Value::Null => true,
+            _ => false,
+        });
+        if !only_elements || body.is_empty() {
+            return;
+        }
+        if crate::keys::trace_const() {
+            eprintln!(
+                "[const] fn={} BODY: its literal is one copy of the constant",
+                data.def(d_nr).name()
+            );
+        }
+        let copy = Value::Call(
+            append,
+            vec![
+                Value::Var(vec),
+                Value::Call(const_ref, vec![Value::Int(twin as i32)]),
+                Value::Int(i32::from(elem)),
+            ],
+        );
+        let last = bl.operators.pop().expect("the tail checked above");
+        bl.operators.truncate(3);
+        bl.operators.push(copy);
+        bl.operators.push(last);
+        done = true;
+    };
+    walk_mut(code, &mut visit);
+}
+
+fn walk_mut(v: &mut Value, f: &mut impl FnMut(&mut Value)) {
+    f(v);
+    v.for_each_child_mut(&mut |c| walk_mut(c, f));
 }

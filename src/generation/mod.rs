@@ -7538,65 +7538,77 @@ extern crate loft;"
                 w,
                 "        let cvr = loft::keys::DbRef {{ store_nr: cv.store_nr, rec: 1, pos: 8 }};"
             )?;
-            for element in &values {
-                writeln!(w, "        {{ let rec = db.record_new(&cvr, {vec_tp}, 0);")?;
-                // Each field at ITS OWN offset within the element (loft#702) — the same
-                // grouping `build_const_vectors` writes, from the same extractor.
-                for (offset, val) in element {
-                    let at = format!("rec.pos + {offset}");
-                    // One arm per field kind, exhaustively — the interpreter's
-                    // `build_const_vectors` writes the same bytes from the same list.
-                    match val {
-                        crate::compile::ConstField::Int(v) => {
-                            writeln!(
-                                w,
-                                "            db.store_mut(&rec).set_int(rec.rec, {at}, {v}_i64);"
-                            )?;
-                        }
-                        crate::compile::ConstField::Long(v) => {
-                            writeln!(
-                                w,
-                                "            db.store_mut(&rec).set_long(rec.rec, {at}, {v}_i64);"
-                            )?;
-                        }
-                        crate::compile::ConstField::Float(v) => {
-                            writeln!(
-                                w,
-                                "            db.store_mut(&rec).set_float(rec.rec, {at}, {v}_f64);"
-                            )?;
-                        }
-                        crate::compile::ConstField::Single(v) => {
-                            writeln!(
-                                w,
-                                "            db.store_mut(&rec).set_single(rec.rec, {at}, {v}_f32);"
-                            )?;
-                        }
-                        crate::compile::ConstField::Bool(v) => {
-                            let byte = i32::from(*v);
-                            writeln!(
-                                w,
-                                "            db.store_mut(&rec).set_byte(rec.rec, {at}, 0, {byte}_i32);"
-                            )?;
-                        }
-                        crate::compile::ConstField::Char(v) => {
-                            writeln!(
-                                w,
-                                "            db.store_mut(&rec).set_u32_raw(rec.rec, {at}, {v}_u32);"
-                            )?;
-                        }
-                        crate::compile::ConstField::Text(v) => {
-                            let esc = v.replace('\\', "\\\\").replace('"', "\\\"");
-                            writeln!(
-                                w,
-                                "            {{ let store = db.store_mut(&rec); \
+            if let Some(columns) = const_columns(&values) {
+                // One static array per field and ONE loop over them: the same record_new /
+                // set / record_finish per element, in the same order, writing the same bytes
+                // — but a table of N elements is a few lines of Rust instead of ~4 N, which
+                // rustc compiles in a fraction of the time (loft#1697: a 1.06 M-line `init`
+                // for a terrain table).  A table whose elements differ in shape keeps the
+                // per-element form below.
+                write_const_columns(w, d_nr, vec_tp, values.len(), &columns)?;
+            } else {
+                for element in &values {
+                    writeln!(w, "        {{ let rec = db.record_new(&cvr, {vec_tp}, 0);")?;
+                    // Each field at ITS OWN offset within the element (loft#702) — the same
+                    // grouping `build_const_vectors` writes, from the same extractor.
+                    for (offset, val) in element {
+                        let at = format!("rec.pos + {offset}");
+                        // One arm per field kind, exhaustively — the interpreter's
+                        // `build_const_vectors` writes the same bytes from the same list.
+                        match val {
+                            crate::compile::ConstField::Int(v) => {
+                                writeln!(
+                                    w,
+                                    "            db.store_mut(&rec).set_int(rec.rec, {at}, {v}_i64);"
+                                )?;
+                            }
+                            crate::compile::ConstField::Long(v) => {
+                                writeln!(
+                                    w,
+                                    "            db.store_mut(&rec).set_long(rec.rec, {at}, {v}_i64);"
+                                )?;
+                            }
+                            crate::compile::ConstField::Float(v) => {
+                                writeln!(
+                                    w,
+                                    "            db.store_mut(&rec).set_float(rec.rec, {at}, {});",
+                                    rust_f64(*v)
+                                )?;
+                            }
+                            crate::compile::ConstField::Single(v) => {
+                                writeln!(
+                                    w,
+                                    "            db.store_mut(&rec).set_single(rec.rec, {at}, {});",
+                                    rust_f32(*v)
+                                )?;
+                            }
+                            crate::compile::ConstField::Bool(v) => {
+                                let byte = i32::from(*v);
+                                writeln!(
+                                    w,
+                                    "            db.store_mut(&rec).set_byte(rec.rec, {at}, 0, {byte}_i32);"
+                                )?;
+                            }
+                            crate::compile::ConstField::Char(v) => {
+                                writeln!(
+                                    w,
+                                    "            db.store_mut(&rec).set_u32_raw(rec.rec, {at}, {v}_u32);"
+                                )?;
+                            }
+                            crate::compile::ConstField::Text(v) => {
+                                let esc = v.replace('\\', "\\\\").replace('"', "\\\"");
+                                writeln!(
+                                    w,
+                                    "            {{ let store = db.store_mut(&rec); \
                                  let s_pos = store.set_str(\"{esc}\"); \
                                  store.set_u32_raw(rec.rec, {at}, s_pos); }}"
-                            )?;
+                                )?;
+                            }
                         }
                     }
+                    writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
+                    writeln!(w, "        }}")?;
                 }
-                writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
-                writeln!(w, "        }}")?;
             }
             writeln!(
                 w,
@@ -10746,4 +10758,145 @@ fn collect_assigned_anywhere(code: &Value, out: &mut Vec<u16>) {
             out.push(*v);
         }
     });
+}
+
+/// A float constant as Rust source: a finite value by its decimal, a NaN or an infinity by
+/// its bits — `NaN_f64` is not Rust, and a folded `0.0 / 0.0` is a constant like any other.
+fn rust_f64(v: f64) -> String {
+    if v.is_finite() {
+        format!("{v}_f64")
+    } else {
+        format!("f64::from_bits({:#x})", v.to_bits())
+    }
+}
+
+/// [`rust_f64`] for a `single`.
+fn rust_f32(v: f32) -> String {
+    if v.is_finite() {
+        format!("{v}_f32")
+    } else {
+        format!("f32::from_bits({:#x})", v.to_bits())
+    }
+}
+
+/// The per-field columns of a constant table whose every element writes the same fields at the
+/// same offsets with the same kinds — `(offset, the column's values)` — or `None` when the
+/// elements differ in shape (or there are none).
+fn const_columns(
+    values: &[crate::compile::ConstElement],
+) -> Option<Vec<(u32, Vec<&crate::compile::ConstField>)>> {
+    let first = values.first()?;
+    let kind = |f: &crate::compile::ConstField| std::mem::discriminant(f);
+    let mut columns: Vec<(u32, Vec<&crate::compile::ConstField>)> = first
+        .iter()
+        .map(|(off, _)| (*off, Vec::with_capacity(values.len())))
+        .collect();
+    for element in values {
+        if element.len() != first.len() {
+            return None;
+        }
+        for (k, (off, val)) in element.iter().enumerate() {
+            if *off != first[k].0 || kind(val) != kind(&first[k].1) {
+                return None;
+            }
+            columns[k].1.push(val);
+        }
+    }
+    Some(columns)
+}
+
+/// Emit a uniform constant table as one static array per field and one loop that writes each
+/// element exactly as the per-element form in `emit_const_vectors` does.
+fn write_const_columns(
+    w: &mut dyn Write,
+    d_nr: u32,
+    vec_tp: u16,
+    count: usize,
+    columns: &[(u32, Vec<&crate::compile::ConstField>)],
+) -> std::io::Result<()> {
+    use crate::compile::ConstField;
+    for (k, (_, col)) in columns.iter().enumerate() {
+        let ty = match col.first() {
+            Some(ConstField::Int(_) | ConstField::Long(_)) => "i64",
+            Some(ConstField::Float(_)) => "f64",
+            Some(ConstField::Single(_)) => "f32",
+            Some(ConstField::Bool(_)) => "i32",
+            Some(ConstField::Char(_)) => "u32",
+            Some(ConstField::Text(_)) => "&str",
+            None => return Ok(()),
+        };
+        write!(w, "        static C{d_nr}_{k}: [{ty}; {count}] = [")?;
+        for (i, val) in col.iter().enumerate() {
+            if i % 16 == 0 {
+                write!(w, "\n           ")?;
+            }
+            match val {
+                ConstField::Int(v) | ConstField::Long(v) => write!(w, " {v}_i64,")?,
+                ConstField::Float(v) => write!(w, " {},", rust_f64(*v))?,
+                ConstField::Single(v) => write!(w, " {},", rust_f32(*v))?,
+                ConstField::Bool(v) => write!(w, " {}_i32,", i32::from(*v))?,
+                ConstField::Char(v) => write!(w, " {v}_u32,")?,
+                ConstField::Text(v) => {
+                    let esc = v.replace('\\', "\\\\").replace('"', "\\\"");
+                    write!(w, " \"{esc}\",")?;
+                }
+            }
+        }
+        writeln!(w, "];")?;
+    }
+    writeln!(w, "        for i in 0..{count} {{")?;
+    writeln!(w, "            let rec = db.record_new(&cvr, {vec_tp}, 0);")?;
+    for (k, (off, col)) in columns.iter().enumerate() {
+        let at = format!("rec.pos + {off}");
+        let v = format!("C{d_nr}_{k}[i]");
+        match col.first() {
+            Some(ConstField::Int(_)) => {
+                writeln!(
+                    w,
+                    "            db.store_mut(&rec).set_int(rec.rec, {at}, {v});"
+                )?;
+            }
+            Some(ConstField::Long(_)) => {
+                writeln!(
+                    w,
+                    "            db.store_mut(&rec).set_long(rec.rec, {at}, {v});"
+                )?;
+            }
+            Some(ConstField::Float(_)) => {
+                writeln!(
+                    w,
+                    "            db.store_mut(&rec).set_float(rec.rec, {at}, {v});"
+                )?;
+            }
+            Some(ConstField::Single(_)) => {
+                writeln!(
+                    w,
+                    "            db.store_mut(&rec).set_single(rec.rec, {at}, {v});"
+                )?;
+            }
+            Some(ConstField::Bool(_)) => {
+                writeln!(
+                    w,
+                    "            db.store_mut(&rec).set_byte(rec.rec, {at}, 0, {v});"
+                )?;
+            }
+            Some(ConstField::Char(_)) => {
+                writeln!(
+                    w,
+                    "            db.store_mut(&rec).set_u32_raw(rec.rec, {at}, {v});"
+                )?;
+            }
+            Some(ConstField::Text(_)) => {
+                writeln!(
+                    w,
+                    "            {{ let store = db.store_mut(&rec); \
+                     let s_pos = store.set_str({v}); \
+                     store.set_u32_raw(rec.rec, {at}, s_pos); }}"
+                )?;
+            }
+            None => {}
+        }
+    }
+    writeln!(w, "            db.record_finish(&cvr, &rec, {vec_tp}, 0);")?;
+    writeln!(w, "        }}")
 }

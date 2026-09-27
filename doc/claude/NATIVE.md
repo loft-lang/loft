@@ -142,6 +142,19 @@ Two switches, both read at GENERATION time:
   halves of an A/B. It is also the first bisect step for a `--native`-only wrong answer in
   a loop that indexes a vector.
 
+### Constant tables are data, not statements (loft#1697)
+
+rustc's time on a function grows faster than its length, so a table must not reach it as one
+statement per element.  Two places emitted exactly that: `emit_const_vectors` wrote four lines
+per element of every pre-built constant into `init`, and a literal-bodied table function
+pushed its literal one element per line.  A uniform constant table is now one `static` array
+per field and one loop (`write_const_columns`, the same `record_new` / set / `record_finish`
+per element), and a literal-bodied function copies its constant twin in one append
+(`@FR-R-Const`'s body clause, formal/rewrites.md).  On the crawler's `rivers_test` the
+emitted Rust fell from 61.7 MB to 4.9 MB and the cold build from over 20 minutes to 16 s.
+A new constant shape should keep this property: look at the emitted size of a 10 000-element
+case before shipping it.
+
 ### Native→interpreter fallback, and `LOFT_REQUIRE_NATIVE` (efficiency-work aid)
 
 A default `loft <file>` run prefers native but **degrades to the interpreter** rather
