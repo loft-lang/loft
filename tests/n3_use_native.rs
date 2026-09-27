@@ -520,6 +520,76 @@ fn cdylib_type_indices_stay_valid_across_consumer_contexts() {
     let _ = std::fs::remove_dir_all(native_auto);
 }
 
+/// loft#1706 — a shared bridge mints its result record by the type's REGISTERED name.
+///
+/// Two definitions can share a name: the first to register keeps it, the second is qualified
+/// (`sharedname::Holder` beside a program's own `Holder`).  The generated bridge looked the
+/// result type up by the bare DEFINITION name, so the caller's store answered the program's
+/// `Holder`, and the library filled a record of that type's size with its own fields — in
+/// dryopea a 6-boolean record for a 56-byte `input::InputState`, whose writes ran into the
+/// recycled store's leftover bytes and crashed only when the layout put a stale handle
+/// there.  The damage is layout-dependent, so this checks the cause directly — the name the
+/// generated bridge asks for — beside the answer the program must give on both backends.
+#[test]
+fn a_shared_bridge_mints_the_type_its_library_registered() {
+    if Command::new("rustc").arg("--version").output().is_err() {
+        eprintln!("skip: rustc unavailable");
+        return;
+    }
+    let pid = std::process::id();
+    let tmp = std::env::temp_dir().join(format!("loft_1706_bridge_{pid}"));
+    let _ = std::fs::remove_dir_all(&tmp);
+    std::fs::create_dir_all(&tmp).unwrap();
+    let lib = private_lib(&tmp, &["sharedname"]);
+    // The program's own `Holder`, in a module `use`d first so it registers first and keeps
+    // the bare name.
+    std::fs::write(
+        lib.join("mine.loft"),
+        "pub struct Holder { flag: boolean }\npub fn mine_new() -> Holder { Holder { flag: true } }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        tmp.join("clash.loft"),
+        "use mine;\nuse sharedname;\nfn main() {\n  m = mine_new();\n  \
+         h = holder_new(3, holder_pair(4));\n  \
+         println(\"{m.flag} {h.tag} {h.pair.p} {h.pair.v} {h.items}\");\n}\n",
+    )
+    .unwrap();
+    for mode in ["--interpret", "--native"] {
+        let out = Command::new(env!("CARGO_BIN_EXE_loft"))
+            .arg(mode)
+            .arg("--lib")
+            .arg(&lib)
+            .arg(tmp.join("clash.loft"))
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "300")
+            .output()
+            .expect("run the loft binary");
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success() && stdout.trim() == "true 3 4 [4,5] [0,10,20]",
+            "{mode}: {stdout}\nstderr:\n{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+    // The interpreted run built the library's shared cdylib; its bridge must ask for the
+    // library's row.
+    let generated: Vec<String> = std::fs::read_dir(lib.join("sharedname/native-auto"))
+        .expect("the interpreted run built the library's cdylib")
+        .flatten()
+        .filter(|e| e.path().extension().is_some_and(|x| x == "rs"))
+        .map(|e| std::fs::read_to_string(e.path()).unwrap_or_default())
+        .collect();
+    assert!(!generated.is_empty(), "no generated bridge source");
+    for src in &generated {
+        assert!(
+            src.contains(".name(\"sharedname::Holder\")") && !src.contains(".name(\"Holder\")"),
+            "the bridge must mint the library's `sharedname::Holder`, not the program's `Holder`"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&tmp);
+}
+
 /// loft#717 — an auto-built cdylib must be VERIFIED against the type layout it
 /// was generated for, not merely trusted because its filename matches.
 ///
