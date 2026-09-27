@@ -19,7 +19,7 @@ impl Parser {
             } else if self.lexer.peek_token("") {
                 break;
             }
-            let before = self.lexer.peek().position;
+            let before = self.lexer.peek().position.clone();
             let mut dummy = Value::Null;
             self.expression(&mut dummy);
             // Recovery must always make forward progress.  Consume an argument
@@ -186,6 +186,7 @@ impl Parser {
     /// Parse `worker(a, extra1, extra2)` in a parallel clause.
     /// Returns `(fn_d_nr, return_type, extra_arg_values, extra_arg_types)`.
     /// The first argument (the element variable) is skipped; extra args are returned.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_parallel_worker_fn(
         &mut self,
         first_id: &str,
@@ -645,7 +646,6 @@ impl Parser {
         }
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(crate) fn parse_parallel_for(
         &mut self,
         val: &mut Value,

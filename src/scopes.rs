@@ -2763,6 +2763,7 @@ fn is_place_link(function: &Function, v: u16) -> bool {
     !function.is_argument(v) && matches!(function.tp(v).base(), Type::RefVar(_))
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn def_reshape_refusals(
     data: &Data,
     d_nr: u32,
@@ -3981,6 +3982,7 @@ fn branch_tail_vars(node: &Value) -> Vec<u16> {
 /// reused — minting another loses what the parse decided about it, which for an owned call
 /// result is the release of its store.  A chain with an operand the parse left without a temp
 /// and that this cannot give one keeps its form.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data: &Data) {
     let present = data.def_nr("OpConvBoolFromRef");
     if present == u32::MAX {
@@ -4208,6 +4210,7 @@ fn reassociate_coalesce_chains(code: &mut Value, function: &mut Function, data: 
     walk(code, &mut |n| rewrite(n, function, &mut counter));
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn write_out_joined_copies(code: &mut Value, function: &Function, data: &Data) {
     let copy_d = data.def_nr("OpCopyRecord");
     if copy_d == u32::MAX {
@@ -5592,6 +5595,7 @@ fn tail_calls(v: &Value) -> Vec<&Value> {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn reuse_record_buffers(
     code: &mut Value,
     function: &mut Function,
@@ -6065,6 +6069,7 @@ fn rewrite_written_out(
 }
 
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn run_scan_phase(
     data: &mut Data,
     database: &mut crate::database::Stores,
@@ -6801,6 +6806,7 @@ struct MoveOps {
 /// the reorder-free field-append case; fresh construction (`a = Bag { items: base }`, container
 /// built after the source) still needs a build-order reorder and stays a copy. Design:
 /// `doc/claude/plans/90-copy-diagnostics/phase-b-design.md`.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn move_elide(data: &mut Data) {
     if !crate::keys::move_elide_enabled() {
         return;
@@ -9055,6 +9061,7 @@ fn vs_copy_walk(
 /// Under the `LASTUSE_RECLAIM` gate only (a Plan-57 testing build), panics if the
 /// reclaim pass left a store the model says is dead un-freed past a later
 /// allocation (the Phase-4 Goal-E watermark guard).  Never panics in normal builds.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
     // `(H-Spent)` — the reads of a moved name, found while every body is still the parser's:
     // the scan below adds reads of its own (releases, hooks, snapshots) that are not the author's.
@@ -9255,6 +9262,9 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // `@FR-R-ByteCopy` — a text copied into a byte vector one byte at a time is one
         // append behind an in-range guard: decided on the same settled IR.
         crate::byte_copy::rewrite(data, d_nr);
+        // `@FR-R-VecCopy` — a vector copied into an exclusive one element at a time is one
+        // append: decided on the same settled IR.
+        crate::vec_copy::rewrite(data, database, d_nr);
         // Plan-57 store-identity gate (Phase 2.5): rewrite store ops to verifying
         // variants (gated; no-op in normal builds).
         if tag_mode {
@@ -11237,7 +11247,6 @@ impl Scopes<'_> {
         result
     }
 
-    #[allow(clippy::too_many_lines)]
     /// The binding spelling of a group write resolved to its origin field, where that binding
     /// is materialised (loft#1664): `OpNewRecord(owner, T, f)` bound to an element of the
     /// binding becomes `OpNewRecord(binding, V, u16::MAX)`, and `OpFinishRecord(owner, elm, T,
@@ -11283,6 +11292,7 @@ impl Scopes<'_> {
         Some(Value::Call(*d, out))
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan_inner(&mut self, val: &Value, function: &mut Function, data: &Data) -> Value {
         match val {
             // @FR-B-View — a `text` payload view MATERIALISES where its subject is disturbed
@@ -11838,6 +11848,7 @@ impl Scopes<'_> {
         self.var_scope.insert(v, scope);
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan_set(&mut self, ov: u16, value: &Value, function: &mut Function, data: &Data) -> Value {
         assert_ne!(
             ov,
@@ -14760,6 +14771,7 @@ impl Scopes<'_> {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan_if(
         &mut self,
         test: &Value,
@@ -14773,6 +14785,19 @@ impl Scopes<'_> {
         let mut pre_inits: Vec<u16> = Vec::new();
         self.find_first_ref_vars(t_val, function, &mut pre_inits);
         self.find_first_ref_vars(f_val, function, &mut pre_inits);
+        // `(B-Scope)`: a name whose earlier binding's scope has ENDED is a new binding here,
+        // and an arm that opens no scope of its own (a lowering's `Insert` or bare `Set`, the
+        // `??` bind written into its arms) makes it at THIS `if`'s scope — so it is split
+        // here and pre-inited like a fresh name (loft#1691).  Split inside the arm instead,
+        // both arms named one copy that `--native` declared in the first arm.
+        let mut splits: Vec<u16> = Vec::new();
+        self.find_split_first_vars(t_val, function, &mut splits);
+        self.find_split_first_vars(f_val, function, &mut splits);
+        for ov in splits {
+            let nv = function.copy_variable(ov);
+            self.var_mapping.insert(ov, nv);
+            pre_inits.push(nv);
+        }
         // The arm-scoped ones are kept aside: each is its arm's own local, so its one bind
         // there is a FIRST bind on every path — the adoption below offers it the same.
         let mut arm_scoped: Vec<u16> = Vec::new();
@@ -15128,6 +15153,7 @@ impl Scopes<'_> {
     /// Convert the content of loops and blocks.
     /// `is_return` should be true for the function body block of a non-void
     /// function — frees must happen before the tail expression returns.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn convert(
         &mut self,
         bl: &Block,
@@ -15732,6 +15758,7 @@ impl Scopes<'_> {
             && !matches!(evidence, crate::use_analysis::OwnEvidence::Fallback)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn free_vars(
         &mut self,
         is_return: bool,
@@ -16910,7 +16937,7 @@ impl Scopes<'_> {
     /// ⚠ Ownership is read here from a carried fact, but "empty deps" is only a PROXY for
     /// it (loft#723) — see [`crate::variables::Function::is_skip_free`], the second fact
     /// that vetoes the proxy for a borrow whose dep list was never populated.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn get_free_vars(
         &mut self,
         function: &mut Function,
@@ -17972,6 +17999,44 @@ impl Scopes<'_> {
         }
     }
 
+    /// The names an `if` arm assigns at the `if`'s OWN scope — through `Insert` and nested
+    /// `If` arms, never into a `Block` (which scopes its own binding) or a `Loop` — whose
+    /// binding [`Self::scan_set`] would split, because the scope it was registered at has
+    /// ended.  The same test `scan_set` makes, so the split made here is the one it reuses.
+    fn find_split_first_vars(&self, val: &Value, function: &Function, result: &mut Vec<u16>) {
+        match val.unspan() {
+            Value::Set(ov, _) => {
+                let dead = |v: &u16| {
+                    self.var_scope
+                        .get(v)
+                        .is_some_and(|s| *s != self.scope && !self.stack.contains(s))
+                };
+                if dead(ov)
+                    && self.var_mapping.get(ov).is_none_or(dead)
+                    && needs_pre_init(function.tp(*ov))
+                    && function
+                        .tp(*ov)
+                        .depend()
+                        .iter()
+                        .all(|d| self.var_scope.contains_key(d))
+                    && !result.contains(ov)
+                {
+                    result.push(*ov);
+                }
+            }
+            Value::If(_, t, f) => {
+                self.find_split_first_vars(t, function, result);
+                self.find_split_first_vars(f, function, result);
+            }
+            Value::Insert(ops) => {
+                for op in ops {
+                    self.find_split_first_vars(op, function, result);
+                }
+            }
+            _ => {}
+        }
+    }
+
     /// loft#1512 — give every call-minted member of a tuple-literal ARGUMENT an owner, at
     /// any nesting depth: each member `inline_struct_return` can type is moved into a
     /// `__lift_N` (declared in `preamble`, so it lives at the statement's scope and its
@@ -18036,6 +18101,7 @@ impl Scopes<'_> {
     /// Returns `(preamble, scanned_args)`.  The caller wraps the result as
     /// `Insert([preamble..., Call/CallRef(...)])` when the preamble is non-empty;
     /// `convert` flattens this so the preamble executes before any args are pushed.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan_args(
         &mut self,
         args: &[Value],
@@ -18844,6 +18910,7 @@ impl Scopes<'_> {
     /// declines that shape — the analyses before it read the value form, so the written-out
     /// projection would lack the view facts its own assignment gets — and the rewrite ahead of a
     /// rescan accepts it (`rewrite_written_out`), because there those analyses run afterwards.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn sink_set_into_arms(
         v: u16,
         ov: u16,
@@ -19315,6 +19382,7 @@ impl Scopes<'_> {
     /// every VARIABLE arm that was copied into a temp, `viewed` every `??` hoist temp an arm
     /// hands back as it is.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn lift_arm_tails_into(
         &mut self,
         node: &mut Value,
@@ -20332,6 +20400,7 @@ impl Scopes<'_> {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn inline_struct_return(
         &self,
         val: &Value,
@@ -21516,6 +21585,7 @@ impl ClosureKeep {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn closure_keep_set(data: &Data, function: &Function, code: &Value) -> ClosureKeep {
     if crate::env_once!(std::env::var_os("LOFT_NO_CLOSURE_KEEP").is_some()) {
         return ClosureKeep::default();
@@ -22369,6 +22439,7 @@ fn scope_free_op_var(op: &Value, data: &Data) -> Option<u16> {
 }
 
 impl Scopes<'_> {
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn insert_free(
         &mut self,
         block: &Block,
@@ -24005,6 +24076,7 @@ mod text_return_path_tests {
 /// Only compiled in debug builds; the check panics rather than emitting a
 /// diagnostic so that the failure is visible immediately during development.
 #[cfg(debug_assertions)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn check_ref_leaks(
     ir: &Value,
     function: &Function,
@@ -25095,9 +25167,13 @@ fn walk_deep_parent_write(
 /// miss adversarial aliases.  Future precision work could track
 /// per-var initialiser provenance.
 fn first_arg_is_local_var(args: &[Value], current_fn: u32, data: &Data) -> bool {
-    let Some(Value::Var(v)) = args.first() else {
+    // The write's ROOT, read through its accessor chain as `raw_write_to_captured` reads
+    // it: `Doc { ps: np }` appends into a field OF the hidden return buffer
+    // (`OpAppendVector(OpGetField(__retbuf, …), np)`), which is the worker's own output.
+    let Some(v) = args.first().and_then(|a| accessor_root_var(a, data)) else {
         return false;
     };
+    let v = &v;
     if current_fn == u32::MAX || (current_fn as usize) >= data.definitions.len() {
         return false;
     }
@@ -25794,6 +25870,7 @@ fn store_dead_after_block(code: &Value, local: u16) -> bool {
 /// REPORTING mode and prints the verdict — CONFINED to a block, or REJECTED with the
 /// exact gate — so a leak can be attributed to a precise decision (e.g. the ambiguous
 /// dep-backer gate that blocks the escaping-field `..rest` shape). Diagnostic only.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn rest_store_oracle(code: &Value, vars: &Function, free_ref_nr: u32, db_nr: u32, fn_name: &str) {
     let mut any = false;
     for vdb in 0..vars.count() {
@@ -26693,6 +26770,7 @@ fn store_site_id(v: u16, ids: &mut HashMap<u16, u16>, counter: &mut u16) -> u16 
 /// `OpDatabase(vdb, …)`, and replace `OpFreeRef(vdb)` with `OpFreeRefTag(vdb, id)`.
 /// Normal builds (no env) never run this, so the bytecode stays byte-identical.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn tag_stores(
     code: &mut Value,
     db_nr: u32,

@@ -22,7 +22,6 @@
     clippy::option_if_let_else,
     clippy::manual_let_else,
     clippy::redundant_closure_for_method_calls,
-    clippy::too_many_lines,
     clippy::type_complexity,
     clippy::map_unwrap_or,
     clippy::format_push_string,
@@ -121,6 +120,10 @@ fn print_target_surface(want: Option<&str>) {
     }
 }
 
+#[expect(
+    clippy::too_many_lines,
+    reason = "the help text, one `println!` per line; a split would cut the text, not a subject"
+)]
 fn print_help() {
     println!("usage: loft [options] <file>     run a loft program");
     println!("       loft                       start the interactive REPL");
@@ -471,7 +474,7 @@ fn handle_generate_log_config(path_opt: Option<&str>) {
     }
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 /// PKG.2: Install a local package to ~/.loft/lib/<name>/.
 ///
 /// Reads loft.toml from `pkg_path`, copies src/*.loft and loft.toml to
@@ -1609,6 +1612,7 @@ struct StagedInstall<'a> {
 /// apart: a downloaded bundle and a hand-supplied one differ in what is known about
 /// their ORIGIN, and in nothing else.
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn install_staged_bundle(a: &StagedInstall) -> i32 {
     use loft::verify_self::{Check, bundle_root, local_checks};
     let (staged, dir) = (a.staged, a.staged.display().to_string());
@@ -2120,6 +2124,7 @@ struct UpdateOpts {
 ///   be resolved (`--check`) OR install failure.
 /// - 2  → nothing to update: no lockfile AND no declared dependencies.
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn update_packages(opts: &UpdateOpts) -> i32 {
     use loft::install::{InstallOptions, install_one};
     use loft::lockfile;
@@ -2389,6 +2394,7 @@ fn update_packages(opts: &UpdateOpts) -> i32 {
 /// - `--packages X,Y,Z` → just those (transitive deps not yet
 ///   auto-resolved; transitive harvest is a follow-up if useful).
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
     use loft::install::InstallOptions;
     use loft::registry_index;
@@ -2520,6 +2526,7 @@ fn bundle_export(outdir: &str, packages: Option<&[String]>, all: bool) -> i32 {
 ///    - Extract to `~/.loft/registry/<pkg>-<ver>/`.
 /// 4. Print summary.
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn bundle_import(indir: &str) -> i32 {
     use loft::registry_index;
     use std::path::Path;
@@ -2910,6 +2917,7 @@ fn escape_json_string(s: &str) -> String {
 /// library.
 ///
 /// Refuses if `<name>/` already exists.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn scaffold_library(name: &str, native: bool, chunk: bool) -> i32 {
     use std::io::Write as _;
 
@@ -3237,6 +3245,7 @@ fn warn_trigger_collisions(pkg_name: &str, triggers: &[String]) {
 }
 
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn publish_package(pkg_path: &std::path::Path, dry_run: bool) -> i32 {
     use loft::package;
 
@@ -3466,6 +3475,7 @@ fn github_release_has_asset(org: &str, repo: &str, tag: &str, asset: &str) -> bo
 /// Pure deep scan — no installs, no writes.  The natural
 /// companion to `loft list-installed`.
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn audit_installed() -> i32 {
     use loft::registry_advisories::{self, LoadOptions, Severity};
 
@@ -3639,6 +3649,7 @@ fn dir_size_bytes(dir: &std::path::Path) -> Option<u64> {
 /// ignored — only registry libraries need pinning; everything
 /// else either lives in the workspace or is part of loft itself.
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn pin_script(script: &str) {
     use loft::install::{InstallOptions, install_one};
     use loft::registry_index;
@@ -3898,6 +3909,7 @@ fn extract_toml_version(content: &str) -> String {
 /// Reads the package's `.loft` entry file, finds all `#native "symbol"`
 /// declarations, and emits a Rust source file with the correct C-ABI
 /// signatures plus `todo!()` bodies.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn generate_native_stubs(pkg_path: &std::path::Path) {
     use loft::data::{DefType, Type};
 
@@ -5581,6 +5593,7 @@ fn run_ship_command(args: &[String]) -> i32 {
 ///
 /// Exit: 0 = ran (verdict on stdout) · 2 = could not run (no manifest, no such release,
 /// unreadable source).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn run_compat_command(args: &[String]) -> i32 {
     let json = args.iter().any(|a| a == "--json");
     let positional: Vec<&String> = args.iter().filter(|a| !a.starts_with("--")).collect();
@@ -5761,6 +5774,7 @@ fn run_compat_command(args: &[String]) -> i32 {
 /// a surface, and the `arguments::parse` cell in step 3 is a release that kept its signature
 /// and inverted its result — `API: drop-in` on this axis, a break on that one.
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn compat_floor(name: &str, own_version: Option<&str>, with_tests: bool) -> i32 {
     let mut versions: Vec<String> = loft::registry_index::installed_packages()
         .into_iter()
@@ -6042,6 +6056,7 @@ fn compat_check_full(name: &str, versions: &[String], floor: Option<&str>) -> i3
 const RELEASE_WINDOW_BUDGET_SECS: u64 = 600;
 
 #[cfg(feature = "registry")]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn compat_check(name: &str, own_version: Option<&str>, floor: Option<&str>, full: bool) -> i32 {
     // Candidates come from the install cache, because that is what `compat api` / `compat
     // test` can actually read. Anything not installed is REPORTED as skipped, never silently
@@ -7134,7 +7149,7 @@ fn run_tag_command(args: &[String]) -> i32 {
     0
 }
 
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn main() {
     // @PLN119 arc A — this process is the worker holding one process-placed
     // library. Internal: spawned by `lib_placement::Worker::spawn`, never typed

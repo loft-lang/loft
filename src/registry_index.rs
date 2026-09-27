@@ -294,6 +294,7 @@ fn parse_package(name: &str, val: &Parsed) -> Result<Package, String> {
     Ok(pkg)
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn parse_version(pkg_name: &str, semver: &str, val: &Parsed) -> Result<Version, String> {
     let Parsed::Object(fields) = val else {
         return Err(format!(

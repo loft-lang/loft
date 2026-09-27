@@ -168,7 +168,7 @@ fn vector_iteration_index_inside_vec_slot() {
   for cycle in 0..3 {
     v +=[for i in 0..50 { i }];
     cnt = 0;
-    for x in v { cnt += 1; }
+    for _ in v { cnt += 1; }
     assert(cnt == 50, \"cycle {cycle} cnt {cnt}\");
     for x in v { x#remove; }
   }

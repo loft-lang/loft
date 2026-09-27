@@ -686,6 +686,17 @@ capture typing is a new *source* of the types loft already has; `match` also sta
 
 **OPEN: 0.**
 
+* **D-types-4** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1692)* — `(N-Reserve)` /
+  `layout.md (L-Narrow-Enc)`: the loop variable of `for x in v`, over a vector of a NULLABLE
+  narrow integer, read a null element as its stored code — `255` for `u8?`, `-32768` for
+  `i16?`, `2` for `u16?` — so `x ?? d` never discharged and `!x` never fired, on both backends,
+  while `v[i]`, a copy and a struct field decoded the same element as null.  **Where.**  The
+  loop's element read (`collections.rs`) called `get_val` with nullability hard-coded `false`;
+  the indexed read (`fields.rs`) passes the element's declared nullability.  One question —
+  does this slot decode a null — and two decoders.  **Fix.**  The loop passes it too.  Guard
+  `tests/scripts/1692-a-loop-variable-reads-a-nullable-narrow-element-as-null.loft`, which also
+  pins `(N-Reserve)`'s edge: a `255` written into a `u8?` slot IS its null.  Found at the
+  narrow × `??` crossing (16 corpus files).
 * **D-types-3** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1682)* — `(T-Chk)` / `(I-Join)`: a
   value-position `if` or `match` whose FIRST arm is a tuple literal with a `null` member was
   REFUSED — *"expected (null, integer), got (integer, integer) on else"* — whatever the declared

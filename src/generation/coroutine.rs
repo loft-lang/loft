@@ -1121,6 +1121,7 @@ impl Output<'_> {
     /// Emit the `next_*` method body for a coroutine state machine.
     /// `yield_tp` selects which trait method to override: `next_i64` for
     /// 8-byte-or-less yields, `next_text` for text yields.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_next_i64(
         &mut self,
         w: &mut dyn Write,
@@ -1925,6 +1926,7 @@ impl Output<'_> {
     }
 
     /// Emit a loft generator function as a Rust state-machine struct.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn output_coroutine(
         &mut self,
         w: &mut dyn Write,
@@ -2175,6 +2177,7 @@ impl Output<'_> {
     /// Emit the factory function for a generator that contains for-loop bodies
     /// with yields.  Runs the body eagerly, pushing all yielded values to a Vec.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_for_body_factory(
         &mut self,
         w: &mut dyn Write,

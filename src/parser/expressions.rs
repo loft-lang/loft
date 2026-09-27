@@ -222,7 +222,7 @@ fn declared_range(tp: &Type, nullable: bool) -> Option<(i64, i64, i64)> {
 /// base is found by walking `args[0]` to the leaf `Var`.  @PLN40 step 3 uses this to
 /// find which binding a component write (`p.x = …`, `p[i] = …`) mutates THROUGH, so a
 /// write through a value-const binding can be rejected at its root.
-fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
+pub(crate) fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
     match v.unspan() {
         Value::Var(nr) => *nr,
         // Exactly two `if`s reach the left of an assignment, and both name their place through
@@ -1108,7 +1108,6 @@ impl Parser {
     }
 
     // <expression> ::= <for> | 'continue' | 'break' | 'return' | 'yield' | '{' <block> | <operators>
-    #[allow(clippy::too_many_lines)]
     /// @PLN86 step 0.1 — depth-guarded entry to expression parsing.  For trusted
     /// code (`!in_sandbox`) this is a single bool check then a tail call — zero
     /// cost.  Inside a sandboxed def it bounds the nesting depth so hostile
@@ -1146,6 +1145,7 @@ impl Parser {
         result
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn expression_inner(&mut self, val: &mut Value) -> Type {
         // Start of the expression — an "Unknown variable" caret on a bare-Var
         // expression (e.g. a single call argument) must point here, not at the
@@ -1675,8 +1675,10 @@ use a separate collection or add after the loop"
     /// a warning and not advice.  Asked at the assignment path's one entry, beside the const
     /// guard, so every route that lowers a write is covered.  A write through a callee is not
     /// seen: the loop's answer is still the rule's, only the notice is missing.
-    fn check_loop_source_write(&mut self, to: &Value) {
-        if self.first_pass {
+    fn check_loop_source_write(&mut self, to: &Value, op: &str, f_type: &Type) {
+        // An append to a collection a loop walks is refused outright (`check_iter_safety`);
+        // only a REPLACING write is this notice's.
+        if op != "=" && matches!(f_type.peel_link(), Type::Vector(..)) {
             return;
         }
         let Some(place) = self.vars.loop_source_written(to) else {
@@ -1684,6 +1686,18 @@ use a separate collection or add after the loop"
         };
         let root = lhs_base_var(&place, &self.data);
         if root == u16::MAX {
+            return;
+        }
+        // loft#1695 — pass 1 notes that the loop's source place is REPLACED (`=`) in its
+        // body, so pass 2 binds a COLLECTION source as a copy (`Parser::parse_for`); an
+        // append (`v += …`) replaces nothing and keeps its own refusal (`check_iter_safety`).
+        // The notice is pass 2's alone.
+        if self.first_pass {
+            if op != "=" {
+                return;
+            }
+            self.loop_sources_replaced
+                .insert((self.context, self.vars.name(root).to_string()));
             return;
         }
         let name = self.vars.written_name(root).to_string();
@@ -1768,7 +1782,7 @@ use a separate collection or add after the loop"
     /// branch — the rule rationale lives on the `VecBind` variants, and the branch applies
     /// mechanics only.  Runs on BOTH passes: `change_var` re-types per pass, and emission
     /// is pass-2, so a pass-1 answer that differs is a re-type, not a disagreement.
-    #[allow(clippy::too_many_arguments, clippy::too_many_lines)]
+    #[allow(clippy::too_many_arguments)]
     fn classify_vec_bind(
         &self,
         code: &Value,
@@ -1942,6 +1956,18 @@ use a separate collection or add after the loop"
                 self.unique_elm_var(lhs_parent_tp, &elm_tp_clone, var_nr);
             }
             return;
+        }
+        // loft#1690 — a copy written into a branch ARM allocates on pass 2 whatever the local
+        // holds (`vec_copy_needs_db`'s `in_arm` leg), so its `_elm_N` has to be minted on pass
+        // 1 as well, or every later element temp in the function shifts by one between the
+        // passes and one of them meets a different element type: `v = x ?? mk(i)` sunk into
+        // its arms inside a loop, then `u += [[7]]` and a nested push, was refused with
+        // "Variable '_elm_3' cannot change type …" — an internal name, on a valid program, on
+        // both backends.  Only the `in_arm` leg is mirrored: it is the one that answers the
+        // same on both passes, where the plain bind's own allocation test does not (it asks
+        // whether a `__vdb` already exists, which pass 1 is what creates).
+        if in_arm && self.first_pass {
+            self.unique_elm_var(lhs_parent_tp, &elm_tp_clone, var_nr);
         }
         if !self.first_pass {
             // Break the alias.  The standard type-inference copied the RHS
@@ -3363,6 +3389,7 @@ use a separate collection or add after the loop"
     }
 
     #[allow(clippy::too_many_arguments)] // the wrapper's list, unchanged from before the split
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_assign_op_inner(
         &mut self,
         code: &mut Value,
@@ -3374,7 +3401,7 @@ use a separate collection or add after the loop"
         skip_validate: bool,
     ) -> Type {
         self.check_iter_safety(to, f_type, op);
-        self.check_loop_source_write(to);
+        self.check_loop_source_write(to, op, f_type);
         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
         // every route below.  Whether a write is allowed is a property of the BINDING, not
         // of the route that lowers it, so a guard held inside a route is only as complete
@@ -3729,6 +3756,42 @@ use a separate collection or add after the loop"
             }
             *code = Value::Tuple(members);
             s_type = Type::Tuple(types);
+        } else if op == "="
+            && !self.amp_pending
+            && matches!(to, Value::Var(_))
+            && matches!(code.unspan(), Value::Tuple(_))
+            && let Type::Tuple(elems) = s_type.base().clone()
+            && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
+        {
+            // loft#1689 — the same bind with a tuple-typed FIELD or ELEMENT as its source:
+            // `t = k.p` reads the field as the tuple of its member reads
+            // (`(OpGetInt(k, 8), OpGetField(k, 16, …))`), so it never matched the `Var` arm
+            // above and bound the record's own members — a vector member was a second name
+            // for the field's store and a text member a borrow of the record, on both
+            // backends: replacing the record, rewriting the field or removing the element
+            // showed through `t`, and writing a member through the record panicked.  Each
+            // member takes `@FR-T-Cons`'s copy, which is idempotent on a literal (its members
+            // were copied, or are fresh, when it was parsed).  A COPY, not the `(H-Move)`
+            // above: the record keeps its members.
+            let mut types = elems.clone();
+            let mut members = match code.unspan_mut() {
+                Value::Tuple(ms) => std::mem::take(ms),
+                _ => Vec::new(),
+            };
+            for (i, t) in elems.iter().enumerate() {
+                if let Some(m) = members.get_mut(i)
+                    && let Some(owned) = self.tuple_member_owned_copy(m, t)
+                {
+                    types[i] = owned;
+                }
+            }
+            *code = Value::Tuple(members);
+            // `@FR-N-Shape`: the shape was read through `?`, so a `?` it carried is kept.
+            s_type = if s_type.peel_optional().1 {
+                Type::optional(Type::Tuple(types))
+            } else {
+                Type::Tuple(types)
+            };
         }
         // tuples.md T-Ref — a tuple LITERAL bound to a local that is the SOURCE OF A `&` LINK
         // (recorded in pass 1 at the link or the call) and carries a heap element is built as
@@ -6742,7 +6805,6 @@ use a separate collection or add after the loop"
     }
 
     // <assign> ::= <operators> [ '=' | '+=' | '-=' | '*=' | '%=' | '/=' <operators> ]
-    #[allow(clippy::too_many_lines)]
     /// @PLN102 F2 — does this IR contain a call to a non-builtin (a user fn `n_*`
     /// or method `t_*`) — i.e. a potentially side-effecting / non-idempotent
     /// sub-expression?  Builtin `Op*` accessors/arithmetic are pure given stable
@@ -6948,6 +7010,7 @@ use a separate collection or add after the loop"
         tp
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_assign_inner(&mut self, code: &mut Value) -> Type {
         let mut parent_tp = Type::Null;
         // @PLN87 D-bind-7 — does THIS statement begin with a prefix `&`?  No valid
@@ -9244,6 +9307,7 @@ use a separate collection or add after the loop"
     /// ⚠ Construction does NOT come through here (@FR-Const-ConstructExempt): a literal
     /// lowers via `Value::Insert`, so a const field is SET at construction rather than
     /// CHECKED there, and `T{ v: 1 }` is always admitted however `v` is qualified.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn validate_write(&mut self, to: &Value, parent_tp: &Type, op: &str) {
         // @PLN40 step 3 — value-const base-resolution.  `validate_write` fires only for
         // a COMPONENT write (`p.x = …`, `p[i] = …`, `p.a.b = …`; the whole-var case has

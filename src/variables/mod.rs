@@ -2737,6 +2737,7 @@ impl Function {
         self.nullable_text_buffers.contains(&var_nr)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn change_var_type(
         &mut self,
         var_nr: u16,
@@ -3864,7 +3865,11 @@ impl Function {
 
     pub fn test_used(&self, lexer: &mut Lexer, data: &Data, body: &Value, d_nr: u32) {
         for (nr, var) in self.variables.iter().enumerate() {
-            if var.name.starts_with('_') || var.name.contains('#') {
+            // A `#` marks a name the compiler made (`i#index`), except the per-occurrence
+            // binding `name#N` — a second `for i`, a pattern's `e` — which is the user's `i`
+            // or `e` and is reported under that spelling.
+            let spelled = self.written_name(u16::try_from(nr).unwrap_or(u16::MAX));
+            if var.name.starts_with('_') || spelled.contains('#') {
                 continue;
             }
             // A parameter that another parameter's DEFAULT reads is read — the body is
@@ -3927,7 +3932,7 @@ impl Function {
             {
                 continue;
             }
-            if var.uses == 0 && !var.captured && data.def_nr(&var.name) == u32::MAX {
+            if var.uses == 0 && !var.captured && data.def_nr(spelled) == u32::MAX {
                 lexer.to(var.source);
                 diagnostic!(
                     lexer,
@@ -3939,7 +3944,7 @@ impl Function {
                     } else {
                         "Variable"
                     },
-                    var.name,
+                    spelled,
                 );
                 // A parameter and a local are the same lint but not the same fix: deleting
                 // a parameter changes the signature every caller wrote, so that one is the
@@ -3947,12 +3952,9 @@ impl Function {
                 lexer.fix_last(crate::diagnostics::Fix {
                     kind: crate::diagnostics::FixKind::Conditional,
                     title: if var.argument {
-                        format!(
-                            "drop the parameter `{}` — and its callers' argument",
-                            var.name
-                        )
+                        format!("drop the parameter `{spelled}` — and its callers' argument")
                     } else {
-                        format!("delete `{}`", var.name)
+                        format!("delete `{spelled}`")
                     },
                     condition: Some(if var.argument {
                         "the parameter is not part of a signature you must keep".to_string()

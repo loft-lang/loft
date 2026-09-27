@@ -77,7 +77,7 @@ impl Output<'_> {
     /// (@PLN11 G2/M4).  Dispatches on `node.kind()` and reads payloads through
     /// the `IrNode` handle; arms not yet converted fall to the `match
     /// node.as_native()` below (native-backed bridge, lifted as they convert).
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn output_code_node(
         &mut self,
         w: &mut dyn Write,
@@ -1241,6 +1241,7 @@ impl Output<'_> {
     /// The variable `v_nr` holds a `u32` definition number at runtime.
     /// We enumerate all reachable definitions with a matching signature and
     /// generate a `match` dispatch.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_call_ref(
         &mut self,
         w: &mut dyn Write,
@@ -2016,6 +2017,7 @@ impl Output<'_> {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_if_inner(
         &mut self,
         w: &mut dyn Write,
@@ -2630,7 +2632,7 @@ impl Output<'_> {
         ri < bl.operators.len().saturating_sub(1) || self.block_contains_ncc_skip_free(bl)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     /// `is_fn_body` marks the one block whose Rust type is the function's
     /// return signature (`Context::Result`).  Only there may the tail expression
     /// carry a narrow-integer cast — see [`block_tail_cast`].

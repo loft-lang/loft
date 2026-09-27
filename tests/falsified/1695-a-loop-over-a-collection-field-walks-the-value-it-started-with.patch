@@ -1,0 +1,124 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index d5a553b15..9b755db29 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3556,28 +3556,6 @@ use #count instead"
+                 }
+             }
+             if matches!(in_type, Type::Vector(_, _)) {
+-                // loft#1695, `@FR-I-For` — the SOURCE is evaluated once.  A place source
+-                // (`v`, `d.rs`) is recorded on the loop, so a body that REPLACES it — the
+-                // place or one holding it (`d = …`, `d.rs = …`) — is told the loop does not
+-                // follow (`loop-source-written`), and on pass 2 such a loop walks a copy of
+-                // the collection taken here: bound to the place itself, `_vector_N` named the
+-                // field's slot, which the replacement rewrote, so the loop walked the NEW
+-                // vector (or a released one) from the next round, on both backends.  A write
+-                // INTO the collection, a sibling field and a removal replace nothing and
+-                // keep walking the collection in place, as the rule has them.
+-                if Self::is_source_place(&expr, &self.data) {
+-                    self.record_source_places(&expr);
+-                    let root = crate::parser::expressions::lhs_base_var(&expr, &self.data);
+-                    if !self.first_pass
+-                        && root != u16::MAX
+-                        && !self.loop_sources_replaced.is_empty()
+-                        && self
+-                            .loop_sources_replaced
+-                            .contains(&(self.context, self.vars.name(root).to_string()))
+-                    {
+-                        self.materialize_collection_value(&mut expr, &in_type.without_deps());
+-                    }
+-                }
+                 let vec_var = self.create_unique("vector", &in_type);
+                 // The loop iterates THIS temp — see `Function::iteration_source`.
+                 self.vars.set_iteration_source(vec_var);
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 75850445b..5780f3d1b 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -222,7 +222,7 @@ fn declared_range(tp: &Type, nullable: bool) -> Option<(i64, i64, i64)> {
+ /// base is found by walking `args[0]` to the leaf `Var`.  @PLN40 step 3 uses this to
+ /// find which binding a component write (`p.x = …`, `p[i] = …`) mutates THROUGH, so a
+ /// write through a value-const binding can be rejected at its root.
+-pub(crate) fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
++fn lhs_base_var(v: &Value, data: &crate::parser::Data) -> u16 {
+     match v.unspan() {
+         Value::Var(nr) => *nr,
+         // Exactly two `if`s reach the left of an assignment, and both name their place through
+@@ -1675,10 +1675,8 @@ use a separate collection or add after the loop"
+     /// a warning and not advice.  Asked at the assignment path's one entry, beside the const
+     /// guard, so every route that lowers a write is covered.  A write through a callee is not
+     /// seen: the loop's answer is still the rule's, only the notice is missing.
+-    fn check_loop_source_write(&mut self, to: &Value, op: &str, f_type: &Type) {
+-        // An append to a collection a loop walks is refused outright (`check_iter_safety`);
+-        // only a REPLACING write is this notice's.
+-        if op != "=" && matches!(f_type.peel_link(), Type::Vector(..)) {
++    fn check_loop_source_write(&mut self, to: &Value) {
++        if self.first_pass {
+             return;
+         }
+         let Some(place) = self.vars.loop_source_written(to) else {
+@@ -1688,18 +1686,6 @@ use a separate collection or add after the loop"
+         if root == u16::MAX {
+             return;
+         }
+-        // loft#1695 — pass 1 notes that the loop's source place is REPLACED (`=`) in its
+-        // body, so pass 2 binds a COLLECTION source as a copy (`Parser::parse_for`); an
+-        // append (`v += …`) replaces nothing and keeps its own refusal (`check_iter_safety`).
+-        // The notice is pass 2's alone.
+-        if self.first_pass {
+-            if op != "=" {
+-                return;
+-            }
+-            self.loop_sources_replaced
+-                .insert((self.context, self.vars.name(root).to_string()));
+-            return;
+-        }
+         let name = self.vars.written_name(root).to_string();
+         // A store-kind text link is spelled as the field it names, but the author wrote `t`.
+         let what = if matches!(place.unspan(), Value::Var(_)) || self.vars.is_store_text_link(root)
+@@ -3400,7 +3386,7 @@ use a separate collection or add after the loop"
+         skip_validate: bool,
+     ) -> Type {
+         self.check_iter_safety(to, f_type, op);
+-        self.check_loop_source_write(to, op, f_type);
++        self.check_loop_source_write(to);
+         // @FR-Const-Value / @FR-Const-Bind — ask the const question ONCE, here, ahead of
+         // every route below.  Whether a write is allowed is a property of the BINDING, not
+         // of the route that lowers it, so a guard held inside a route is only as complete
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 74f7c3186..4441b72b1 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -793,11 +793,6 @@ pub struct Parser {
+     /// T-Ref); every other tuple local keeps its stack form.  Recorded in pass 1 at the link
+     /// and consulted at the bind in pass 2, the same shape as `adopted_ret_defs`.
+     ref_linked_tuple_locals: std::collections::HashSet<(u32, String)>,
+-    /// loft#1695 — `(function, root variable)` of every COLLECTION loop source a body
+-    /// replaced (`for p in d.rs { d = … }`), recorded on pass 1 so pass 2 walks a copy taken
+-    /// at loop start (`@FR-I-For`: the source is evaluated once).  Keyed by the root's NAME,
+-    /// which both passes agree on; two loops over one root both copy, which is conservative.
+-    loop_sources_replaced: std::collections::HashSet<(u32, String)>,
+     /// @PLN167 C1 — the kind of each `&text` link bound so far on pass 2, keyed by
+     /// `(function, variable)`: `true` for a text field or element (the store kind), `false` for
+     /// a text variable (the stack kind).  A second bind of the other kind is refused.
+@@ -1619,7 +1614,6 @@ impl Parser {
+             infer_ret_defs: std::collections::HashSet::new(),
+             adopted_ret_defs: std::collections::HashSet::new(),
+             ref_linked_tuple_locals: std::collections::HashSet::new(),
+-            loop_sources_replaced: std::collections::HashSet::new(),
+             text_link_kinds: std::collections::HashMap::new(),
+             amp_vector_locals: std::collections::HashSet::new(),
+             amp_vector_link_partners: std::collections::HashMap::new(),
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index cf3da09c4..2503361ae 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -4035,7 +4035,7 @@ impl Parser {
+         }
+     }
+ 
+-    pub(crate) fn is_source_place(v: &Value, data: &crate::data::Data) -> bool {
++    fn is_source_place(v: &Value, data: &crate::data::Data) -> bool {
+         match v.unspan() {
+             Value::Var(_) => true,
+             Value::Call(d, args) => {

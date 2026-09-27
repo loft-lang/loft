@@ -90,6 +90,7 @@ fn name_list(stores: &mut Stores, slot: &Record, off: u32, names: &[String]) {
 }
 
 /// Write `ty` into the already-allocated `TypeT` record `slot` (zeroed).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn write_type(stores: &mut Stores, slot: &Record, ty: &Type) {
     match ty {
         // @PLN25 — the `τ?` nullability marker persists as its own variant (a
@@ -812,6 +813,7 @@ pub fn save_bundle(data: &Data, schema: &[SchemaType], path: &str) -> std::io::R
 }
 
 /// Write `v` into the already-allocated `slot` (its bytes are zeroed).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn write_into(stores: &mut Stores, slot: &Node, v: &Value) {
     match v {
         // ── leaves ──────────────────────────────────────────────────────────

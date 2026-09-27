@@ -656,6 +656,7 @@ fn run_interactive<W: Write>(
 /// the line into the accumulating statement and evaluate it when complete.
 /// Returns `Ok(true)` when the user asked to quit (`:quit`).  Shared by both
 /// input drivers so interactive and piped sessions behave identically.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn process_line<W: Write>(
     trimmed: &str,
     session: &mut ReplSession,
@@ -846,6 +847,7 @@ fn panic_message(payload: &Box<dyn std::any::Any + Send>) -> String {
 /// expression is **evaluated against the frame** (`n * 2`, `pt.x`); `:vars` re-shows
 /// the frame; `:quit`/`:q` leaves the REPL.  Returns `Ok(true)` only to quit.  Verbs
 /// work with or without the leading colon, so a paused user can type `step` or `:step`.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn handle_paused<W: Write>(
     trimmed: &str,
     session: &mut ReplSession,
@@ -1168,6 +1170,7 @@ fn escape_loft_text(raw: &str) -> String {
 /// arc B materializes a [`Captured::Heap`] ref, arc C boxes a
 /// [`Captured::Scalar`].  Raw, never the rendered literal: the store-resident
 /// value must be exact (a float round-tripped through its decimal form is not).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn render_capture(
     state: &mut State,
     ret_ty: &Type,
@@ -2130,6 +2133,7 @@ impl ReplSession {
     /// [`run_file_tests`](Self::run_file_tests) with extra `use`-import dirs appended after
     /// the session's own — how [`run_suite`](Self::run_suite) injects the package's `src/`
     /// (+ sibling-deps parent) for each test file without mutating the session.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn run_file_tests_with(
         &mut self,
         path: &str,

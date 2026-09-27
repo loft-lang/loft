@@ -513,6 +513,7 @@ fn position_mismatches(data: &Data, sig: &CSignature, params: &[Type]) -> Vec<St
 /// Resolve one C type name. Unknown spellings are refused rather than guessed:
 /// a `#c` declaration nobody can check at runtime must not contain a type
 /// nobody checked at compile time either.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn parse_type(src: &str, target: CTarget) -> Result<CType, String> {
     let src = src.trim();
     if let Some(base) = src.strip_suffix('*') {

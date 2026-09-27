@@ -105,6 +105,7 @@ pub fn slot_kind(tp: &Type) -> SlotKind {
 ///
 /// Does not mutate `function`.  The caller applies
 /// `AllocatorResult` via `apply_v2_result`.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn assign_slots_v2(function: &Function, local_start: u16) -> AllocatorResult {
     // @PLAN53 cluster 2 — see the fn doc for the algorithm.  This replaced an
     // earlier TOS-reset IR-walk that reused slots across sibling scopes WITHOUT

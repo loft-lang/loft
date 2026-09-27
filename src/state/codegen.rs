@@ -215,6 +215,7 @@ impl State {
     # Panics
     when code cannot be output.
     */
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn def_code(
         &mut self,
         def_nr: u32,
@@ -564,7 +565,7 @@ impl State {
     /// once the backing flips from native to store-read (M5).  The remaining
     /// `as_native()` calls (Block/Loop/TupleGet/TuplePut children and the
     /// `&Value`-taking `gen_*` helpers) are the native-backed bridges M5 lifts.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn generate_inner(&mut self, node: IrNode, stack: &mut Stack, top: bool) -> Type {
         match node.kind() {
             ValueType::Int => {
@@ -2183,7 +2184,7 @@ impl State {
     /// Adjust the slot position for a first-assignment variable.
     /// Case 1: pre-assigned above TOS → move down. Case 2: large type below TOS →
     /// override only if no child-scope overlap (A13 guard).
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn generate_set(&mut self, stack: &mut Stack, v: u16, value: IrNode) {
         // @PLN11 G2/M3.15 — materialise-at-boundary.  generate_set's body is an
         // intricate store-ownership tracker (its comments flag use-after-free /
@@ -3098,7 +3099,8 @@ impl State {
                 // from the FINAL dep list, which its per-`Set` witness cannot follow, so such
                 // a local keeps every projection an alias on both backends.
                 if owned_ref
-                    && let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
+                    // loft#1693 — `heap_def_nr`, as the first-bind arm below and native ask it.
+                    && let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
                     && !stash_old_for_post_free
                     && crate::generation::container_element_base(stack.data, value).is_some()
                 {
@@ -3235,6 +3237,7 @@ impl State {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn gen_set_first_at_tos(&mut self, stack: &mut Stack, v: u16, value: &Value) {
         // @PLN25: a `text?` local's first-Set routes to the heap-aware text path (same sentinel
         // storage as plain `text`) — peel the marker. Else an `Optional(Text)` var fell through
@@ -3294,7 +3297,13 @@ impl State {
             // says a whole-value bind is INDEPENDENT (`c2 = ns; ns.v = 99` then read 99
             // through `c2`, loft#1319).
             self.gen_set_first_ref_var_copy(stack, v, *src, d_nr);
-        } else if let Type::Reference(d_nr, _) = stack.function.tp(v).base().clone()
+        } else if let Some(d_nr) = stack.function.tp(v).base().heap_def_nr()
+            // loft#1693 — `heap_def_nr`, native's own test (`dispatch.rs`), so a struct-ENUM
+            // view materialises as a struct view does.  Matched as `Type::Reference` alone, a
+            // struct-enum element bound as a view and disturbed (`c = v[0]; v.remove(0)`)
+            // kept the interior pointer on the interpreter — it read the NEXT element after a
+            // removal and `null` after a growth — while `--native` copied, and the
+            // `(H-Materialise)` advice told the author a copy had been made.
             // @FR-O-Proxy asks copy — whether to MATERIALISE an element read into a store `v`
             // owns rather than bind the interior pointer.  The materialise is what PREVENTS
             // the container-wide free described below; it emits no free of its own.
@@ -4202,7 +4211,7 @@ impl State {
         true
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn generate_call(
         &mut self,
         stack: &mut Stack,
@@ -4904,7 +4913,7 @@ impl State {
         ret_type
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn generate_var(&mut self, stack: &mut Stack, variable: u16) -> Type {
         // loft#1673, @FR-B-Ref-Uniform with `(T-Ref-Rep)` — a whole-value read of a STACK-backed
         // `&(…)` is the tuple of its element reads through the link, the reads a `p.i` already
@@ -5391,6 +5400,7 @@ impl State {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn set_var(&mut self, stack: &mut Stack, var: u16, value: &Value) {
         // `@FR-O-LazyBuffer` — a lazy buffer's later `Set(v, Null)` is its MINT (the scopes
         // pass places it behind `OpRefIsNull(v)`); its entry null-init wrote the sentinel.
@@ -6051,7 +6061,7 @@ fn ir_reads_var(data: &crate::data::Data, value: &Value, v: u16) -> bool {
 /// clean.  Produces a lot of output for large functions, so the filter is
 /// important.
 #[cfg(debug_assertions)]
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn print_ir(value: &Value, data: &crate::data::Data, vars: &Function, depth: usize) {
     let pad = "  ".repeat(depth);
     match value {

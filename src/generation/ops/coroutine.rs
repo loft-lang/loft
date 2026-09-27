@@ -31,6 +31,7 @@ use std::io;
 pub struct OpCoroutineNextEmitter;
 
 impl OpEmitter for OpCoroutineNextEmitter {
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if let Some(gen_val) = args.first() {
             let gen_code = ctx.output.generate_expr_buf(gen_val)?;

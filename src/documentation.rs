@@ -312,6 +312,7 @@ fn skip_header(trimmed: &str) -> bool {
         || trimmed.is_empty()
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn write_index(
     topics: &[Topic],
     stdlib_sections: &[StdlibSection],
@@ -1826,7 +1827,7 @@ pub fn render_pkg_api_text(pkg_dir: &std::path::Path) -> std::io::Result<String>
 ///
 /// # Errors
 /// Returns `Err` when files cannot be read or written.
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn generate_pkg_docs(
     pkg_dir: &std::path::Path,
     out_override: Option<&std::path::Path>,

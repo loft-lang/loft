@@ -1,0 +1,55 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN102 C93 — a par worker may only READ captured state, and a write into its OWN
+// output is not captured state.  A helper that answers `Doc { ps: np }` appends `np` into
+// a field of its hidden return buffer (`OpAppendVector(OpGetField(__retbuf, …), np)`); the
+// deep check exempted the buffer only when the write named it bare, so every worker that
+// called such a builder was refused as "writing shared parent state".  The write's root is
+// now read through its accessor chain, as the raw-write half of the check already did;
+// a write through a field of a PARAMETER stays refused (`pln102-c93-par-write.loft`,
+// `appendfield`).  Values: a doc of k elements per worker, k = 1, 2, 3 → (1+2+3) * 10 = 60;
+// the field-assigned form (b2) and a plain local count (b3) answer the same.
+//
+// @falsified-at: none — the receipt is this tree with the accessor-root read struck (the
+//   build that ran just before it, 2026-09-26): the workers reaching `build` and `build2` are
+//   refused at compile time ("par() worker w1 → build → OpAppendVector — a par worker's
+//   captured state is READ-ONLY").  CHANNEL: the compile (a refusal).  HOLDS: `w3`, which
+//   builds no record, runs on both trees.
+
+struct Doc { ps: vector<integer> }
+
+fn build(k: integer) -> Doc {
+  np: vector<integer> = [];
+  for i in 0..k { np += [i]; }
+  Doc { ps: np }
+}
+
+fn build2(k: integer) -> Doc {
+  np: vector<integer> = [];
+  for i in 0..k { np += [i]; }
+  d = Doc { ps: [] };
+  d.ps = np;
+  d
+}
+
+fn count(k: integer) -> integer {
+  np: vector<integer> = [];
+  for i in 0..k { np += [i]; }
+  len(np)
+}
+
+fn w1(x: integer) -> integer { len(build(x).ps) * 10 }
+fn w2(x: integer) -> integer { len(build2(x).ps) * 10 }
+fn w3(x: integer) -> integer { count(x) * 10 }
+
+fn main() {
+  ns: vector<integer> = [1, 2, 3];
+  t1 = 0;
+  for e in ns par(r = w1(e), 2) { t1 += r; _ = e; }
+  t2 = 0;
+  for e in ns par(r = w2(e), 2) { t2 += r; _ = e; }
+  t3 = 0;
+  for e in ns par(r = w3(e), 2) { t3 += r; _ = e; }
+  assert(t1 == 60 && t2 == 60 && t3 == 60, "b1..b3 got {t1} {t2} {t3}");
+}

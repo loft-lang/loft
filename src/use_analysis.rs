@@ -721,6 +721,7 @@ impl Uses {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn visit(&mut self, node: &Value, ctx: Ctx) {
         let pos = self.pos;
         self.pos += 1;
@@ -1190,6 +1191,7 @@ fn analyze_fn(
 /// flag set. It must NOT be forced globally — the flag-off path keeps the phase-1
 /// classification verbatim, and turning it on for everyone reclassified rows the
 /// `use_analysis` tests pin (4 failures, measured).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn analyze_fn_survival(
     code: &Value,
     function: &Function,
@@ -2319,6 +2321,7 @@ impl<'a> Ownership<'a> {
 
     /// Classify a value expression within `func` (using `defs` to resolve local
     /// vars to their defining RHS). The recursive core of the analysis.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn classify(&mut self, node: &Value, func: &Function, defs: &Defs) -> Own {
         match node.unspan() {
             Value::Var(v) if !self.visiting_vars.insert(*v) => {
@@ -3694,6 +3697,7 @@ pub(crate) struct ReadOnly {
 ///
 /// The fallback is the plain form's: any position not named here reaches the value, and
 /// a marked call it does not admit stays the call the program already pays for.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn read_only_uses(
     body: &Value,
     n_vars: usize,
@@ -5336,6 +5340,7 @@ impl Census<'_> {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn scan(&mut self, node: &Value) {
         use crate::lease::{Lease, Placement, Refusal};
         if let Some(p) = node.span_pos() {
@@ -6921,6 +6926,7 @@ fn kill_assigned(node: &Value, st: &mut Handoffs) {
 /// only one branch, which LEAKS rather than double-releasing. Both need the control-flow
 /// graph loft does not build, and both are false NEGATIVES — the safe direction for a tier
 /// that gates. Runs POST-`scopes::check`, from `main`, beside [`warn_dead_stores`].
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn warn_double_move(
     data: &Data,
     diags: &mut crate::diagnostics::Diagnostics,
@@ -7579,6 +7585,7 @@ fn scan_lost_temp_writes(
     });
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn superseded_fold_diagnostics(
     data: &Data,
     diags: &mut crate::diagnostics::Diagnostics,

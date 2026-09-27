@@ -1,0 +1,80 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A PATTERN'S NAMES END WITH ITS ARM (`@FR-B-Scope`).  A name a pattern binds is a new binding
+// that belongs to the arm, as a `for` loop's variable belongs to its loop: a later `match` may
+// bind the same name at another type, a local of that name after the match is a new binding,
+// and a parameter or an outer local of that name is untouched by the arm and readable after
+// it.  Slice captures (`[e, ..]`, `..rest`), bare names, `v @ pat` and plain-struct fields were
+// bound BY NAME, so a later `match` reused the first arm's variable — refused as a type change
+// — and a capture spelled like a parameter bound INTO the parameter.  Every value is
+// hand-computed.
+//
+// @falsified-at: bc84ee2a4 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-patterns-names-end-with-its-arm.patch — the same channels.
+// CHANNEL: the refusal — the control tree refuses the second binding of a reused name.
+// HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
+//   every assertion passes on both backends.
+// @EXPECT_WARNING: never-read
+
+struct Pt { x: integer, y: integer }
+
+// a capture spelled like the parameter: the subject reads the PARAMETER on both passes
+fn kind_and_count(k: integer, n: integer) -> text {
+  match (k, n) {
+    (1, 0) => "one-zero",
+    (1, n) if n > 5 => "one-many {n}",
+    _ => "none",
+  }
+}
+
+// an empty subject takes the other arm, which must share the return buffer `rest` names
+fn tail(v: vector<integer>) -> vector<integer> { match v { [_, ..rest] => rest, _ => [] } }
+
+fn main() {
+  a = [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }];
+  b = ["s", "t"];
+  r = "";
+  match a { [e, ..] => { r += "{e.x}"; }, _ => {} }
+  match b { [e, ..] => { r += e; }, _ => {} }
+  assert(r == "1s", "an element capture at two types: {r}");
+  ints = [5, 6];
+  n = 0;
+  match a { [_, ..rest] => { n += rest[0].x; }, _ => {} }
+  match ints { [_, ..rest] => { n += rest[0]; }, _ => {} }
+  assert(n == 9, "a rest at two types: {n}");
+  q = "";
+  d = 5;
+  match d { 1 => {}, e => { q += "{e}"; } }
+  t = "w";
+  match t { "q" => {}, e => { q += e; } }
+  match d { v @ 1..9 => { q += "{v}"; }, _ => {} }
+  match t { "q" => {}, v => { q += v; } }
+  assert(q == "5w5w", "bare names and `@` at two types: {q}");
+  p = Pt { x: 7, y: 8 };
+  xs = ["x"];
+  f = "";
+  match p { Pt { x, y } => { f += "{x}{y}"; } }
+  match xs { [x] => { f += x; }, _ => {} }
+  assert(f == "78x", "a struct field and an element: {f}");
+  // after the match: a new binding, and an outer local left as it was
+  s1 = 0;
+  match a { [e, ..] => { s1 += e.x; }, _ => {} }
+  e = 5;
+  s1 += e;
+  assert(s1 == 6, "a local after the match: {s1}");
+  w = 100;
+  s2 = 0;
+  match a { [w, ..] => { s2 += w.x; }, _ => {} }
+  s2 += w;
+  assert(s2 == 101, "an outer local is untouched: {s2}");
+  s3 = 0;
+  match a { [e, ..rest] => { match rest { [e] => { s3 += e.x * 10; }, _ => {} } s3 += e.x; }, _ => {} }
+  assert(s3 == 31, "a nested match: {s3}");
+  assert(kind_and_count(1, 9) == "one-many 9" && kind_and_count(1, 0) == "one-zero" && kind_and_count(1, 3) == "none", "a capture spelled like a parameter");
+  assert(len(tail([])) == 0 && len(tail([4, 5, 6])) == 2, "an empty subject's other arm");
+  // an unused capture is still reported, under its own spelling
+  unused = match a { [z, ..] => 1, _ => 0 };
+  assert(unused == 1, "unused");
+  println("a pattern's names end with its arm: every cell holds");
+}

@@ -393,7 +393,13 @@ such a failure to the source that caused it instead of to the whole join.
 **The gate is not the whole verification of a join.**  `make ci` arms neither the
 `LOFT_POISON` / `LOFT_VERIFY_STACK` sweeps ([CI_BUDGET.md](CI_BUDGET.md) — a minute each on
 this box) nor the shipped libraries (`scripts/revalidate_libs_local.sh`, below).  A join of
-store-lifetime and codegen work is exactly the change class both cover.
+store-lifetime and codegen work is exactly the change class both cover.  Nor does it build the
+debug-assertions variant, where a `cfg(debug_assertions)` item that only one side's types reach
+fails to compile (`RUSTFLAGS='-C debug-assertions=on' cargo build --release --target-dir
+target/dbgassert --lib`), or run `scripts/feature_coverage.sh --check` and
+`make optional-ratchet`.  And a source's NEW commits, taken after a join that passed the gate,
+are a new join: a second batch checked by build, ratchet and bundle stamp alone carried four
+defects into PR #1688 that only the union had — six gates red through one test.
 
 ### Sprint branch naming
 
@@ -587,16 +593,15 @@ Before committing, check new code against every rule in [CODE.md](CODE.md):
 
 | Check | Command | Exception |
 |---|---|---|
-| No clippy warnings | `cargo clippy --tests -- -D warnings` | Skip pre-existing `too_many_lines` and `cognitive_complexity` violations in functions you did not write — fixing them would disrupt unrelated code and obscure the feature diff |
+| No clippy warnings | `cargo clippy --tests -- -D warnings` | Skip pre-existing `cognitive_complexity` violations in functions you did not write — fixing them would disrupt unrelated code and obscure the feature diff |
 | Formatted | `cargo fmt -- --check` | None |
 | Naming conventions | Manual review | `n_<name>` for global natives; `t_<LEN><Type>_<method>` for methods |
-| Function length | `cargo clippy` | If **new** code you wrote triggers `too_many_lines`, move the refactor to Step 4 of the commit sequence rather than mixing it with the functional change |
+| Function length | `cargo clippy` | Pre-existing long functions carry `#[expect(clippy::too_many_lines, reason = "inherited")]`.  A function you change loses its `inherited` tag: split it (as its own commit step, Step 4) or write the real reason — [CODE.md § Functions](CODE.md#functions).  New code that trips the lint is split, or exempted with a real reason |
 | Null sentinels | Manual review | Any new numeric function returning null must use `i32::MIN` / `i64::MIN` / `f64::NAN`, never `0` |
 
-The line-count and complexity exceptions exist because fixing these in files
-touched incidentally by a feature would inflate the diff and make the real change
-hard to review.  Such refactors belong in a dedicated commit (Step 4) if they are
-necessary, or left for a separate cleanup task if they are pre-existing.
+The complexity exception, and the split-as-its-own-step rule for length, exist because
+refactoring a function touched incidentally by a feature would inflate the diff and make
+the real change hard to review.  Such refactors belong in a dedicated commit (Step 4).
 
 ---
 

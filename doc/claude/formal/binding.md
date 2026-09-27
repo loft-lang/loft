@@ -408,7 +408,9 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
                  also when every arm binds it.  A bind after the `}` starts a new binding in
                  the enclosing block.  A loop variable (and a destructured `for (a, b)`'s
                  binders) is bound by its `for` header into the loop's BODY, and ends with
-                 it.  Parameters are bound for the whole function.
+                 it.  A `match` arm's PATTERN binds its names into that arm — its guard and
+                 its body — and they end with it, whatever a later arm or `match` binds
+                 under the same name.  Parameters are bound for the whole function.
 ```
 
 **In words.** loft follows rustc here: a local lives in the block that binds it.
@@ -428,6 +430,39 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-66** *(opened 2026-09-26, CLOSED 2026-09-26)* — `(B-Scope)`, the silent half of
+  D-bind-65: a variant's field bound inside a SUB-pattern — a slice element (`[Vn { rs }]`), a
+  slice tail, a tuple element, a struct field (`S { w: Vn { rs } }`) — pointed the name at its
+  binding, and the list recording what the name meant before was dropped at all five sites.  So
+  after the `match` an outer `rs` read the capture (`4` where the program holds `100`), on both
+  backends with no diagnostic, and a later local of that name was refused naming `_mv_rs_1`.
+  Only the top-level enum arm restored its names.  **Fix.**  Each site hands its list to the
+  arm's frame, which `end_pattern_arm` restores.  Alongside it, `pattern_variant_enum` maps a
+  value typed as one VARIANT to its enum, as the top-level dispatch does: `w = Vn { rs: 4 }`
+  in a tuple was refused as "Vn, which has no variants".  Guard
+  `tests/scripts/a-sub-pattern-capture-leaves-the-outer-name-alone.loft`.
+* **D-bind-65** *(opened 2026-09-26, CLOSED 2026-09-26)* — `(B-Scope)`: a pattern's names were
+  bound BY NAME (`add_variable`) at every site but the struct-enum field and the `is` capture —
+  slice elements (`[e, ..]`), `..rest`, repetitions, bare names, `v @ pat`, tuple elements and
+  plain-struct fields.  So a later `match` binding the same name reused the first arm's
+  variable, and a different type was refused as a type change (`match a { [e, ..] => … }` then
+  `match b { [e, ..] => … }` over `vector<Pt>` and `vector<text>`); a local of that name after
+  the `match` was refused the same way; and a capture spelled like a PARAMETER bound into the
+  parameter.  **Fix.**  One home, `Parser::pattern_binding`: a new binding per occurrence, as
+  a `for` loop's variable is (loft#915) — own name `e#N`, reported as `e` — with the spelling
+  pointed at it for the arm.  The arrow seals the arm's names and the end of its body
+  restores what they named before (`end_pattern_arm`), so frames nest with nested `match`es.
+  The `never-read` lint now reports a `name#N` binding under its spelling, which also covers a
+  second `for i` loop it used to skip.  Guard
+  `tests/scripts/a-patterns-names-end-with-its-arm.loft`.
+* **D-bind-64** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1690)* — `(B-Copy)`: a vector bind
+  written into the arms of a `??` copies through `lower_vec_copy_bind`, which minted the element
+  temp `_elm_N` on the SECOND parser pass only for a plain-variable copy (its `in_arm` leg forces
+  the allocation there).  Every later element temp in the function shifted between the passes,
+  and a valid program was refused naming one: *"Variable '_elm_3' cannot change type …"*.
+  **Fix.**  The `in_arm` copy mints on pass 1 too — the one leg of the allocation test that
+  answers the same on both passes.  Guard
+  `tests/scripts/1690-a-bind-written-into-the-arms-of-a-coalesce-is-the-same-on-both-passes.loft`.
 * **D-bind-63** *(opened 2026-09-26, CLOSED 2026-09-26; loft#1686)* — `(B-Copy)` / heap.md
   `(H-Copy)`: a local bound from a top-level VECTOR constant did not copy.  The constant is
   pre-built once in the write-locked constant store and its use site answers a view of it

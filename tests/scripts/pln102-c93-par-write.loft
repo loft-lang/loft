@@ -20,6 +20,7 @@
 // @EXPECT_ERROR: worker writevec writes captured `v`
 // @EXPECT_ERROR: worker outer → bump writes captured `s`
 // @EXPECT_ERROR: worker ret_outer → bump_ret writes captured `s`
+// @EXPECT_ERROR: worker appendfield → OpPushInt
 
 struct S {
   n: integer,
@@ -43,6 +44,15 @@ fn ret_outer(e: S) -> integer {
   return bump_ret(e);
 } // transitive element write reachable only THROUGH a `return`
 
+// an append into a FIELD of the element: the write's root is the parameter, read through
+// the accessor chain (a field of the worker's own return buffer is the one root exempt)
+struct T {
+  v: vector<integer>,
+}
+fn appendfield(e: T) -> integer {
+  e.v += [1]; len(e.v)
+}
+
 fn use_direct() {
   rows: vector<S> = [S { n: 1 }, S { n: 2 }]; for e in rows par(r = writeit(e), 2) {}
 }
@@ -54,6 +64,10 @@ fn use_indirect() {
 }
 fn use_return() {
   rows: vector<S> = [S { n: 1 }, S { n: 2 }]; for e in rows par(r = ret_outer(e), 2) {}
+}
+
+fn use_append() {
+  rows: vector<T> = [T { v: [] }, T { v: [] }]; for e in rows par(r = appendfield(e), 2) {}
 }
 
 fn main() {}

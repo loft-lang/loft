@@ -811,6 +811,7 @@ impl Parser {
     /// the discriminant tests that reach it — or, with no dynamic position (the open profile's
     /// static stub), the one leaf as the whole body.  Registered as `dyn_name`.  `fallback` is
     /// the static selection, the leaf a null at a nullable dynamic position reaches.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn build_specialisation(
         &mut self,
         source: u16,

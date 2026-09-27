@@ -577,6 +577,7 @@ fn emit_slots(w: &mut dyn Write, data: &Data, end_def: u32, opts: &Options) -> s
 /// The check: bind a var from `Call(f, [.., Var(buf)])` where `f` takes an
 /// `__retbuf` parameter and `buf` was allocated at a shallower loop depth, then flag
 /// any `OpFreeRef` of that var deeper than `buf`'s allocation.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn per_iteration_frees(data: &Data, def: &crate::data::Definition) -> Vec<(String, String)> {
     let sets = data.op_sets();
     let free_nrs = &sets.unconditional_ref_frees;
@@ -775,6 +776,7 @@ fn emit_why<W: Write>(w: &mut W, data: &Data, name: &str) -> std::io::Result<()>
     Ok(())
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn emit_ownership(
     w: &mut dyn Write,
     data: &Data,

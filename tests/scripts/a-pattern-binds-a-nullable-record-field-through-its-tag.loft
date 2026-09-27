@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A PATTERN BINDS A NULLABLE RECORD FIELD THROUGH ITS TAG (D-layout-10).  A field declared
+// `Pt?` is stored inline as the tagged `__nullable<Pt>` (`@FR-L-Null-Tag`), and a local holds
+// `Pt?` as the pointer, so a tagged value reaching a local is read through its tag at that
+// point (`@FR-L-Null-Which`).  Every spelling that binds a field to a local does: a struct-enum
+// arm, a plain-struct arm, an `is` capture, an alternation and a multi-pattern arm (its own guard,
+// `a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.loft`, because it was refused).  They bound
+// the slot's address as if it were a dense `Pt`, so `p.x` read the tag, `p.y` read `x`, and an
+// absent payload tested present — both backends, no diagnostic.
+//
+// Controls: the dense `Pt` field and the `vector<Pt>?` field, which were right before.
+// Every value is hand-computed; `p` is 7, 8 wherever it is present.
+//
+// @falsified-at: 11b48994e — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// @falsified-by: tests/falsified/a-pattern-binds-a-nullable-record-field-through-its-tag.patch — the same channels.
+// CHANNEL: the asserts — on the control tree every nullable cell reads `2 7` / present.
+// WITNESS: `match arm: 2 7`.
+// HOLDS: the dense and `vector<Pt>?` controls on both trees.
+
+struct Pt { x: integer, y: integer }
+enum W { Pb { p: Pt }, Pn { p: Pt? }, Qn { k: integer, p: Pt? }, Tn { name: text, p: Pt? }, Vn { rs: vector<Pt>? } }
+struct S { p: Pt?, n: integer }
+
+fn some() -> W { Pn { p: Pt { x: 7, y: 8 } } }
+fn none() -> W { Pn { p: null } }
+fn state(p: Pt?) -> text { if p == null { "absent" } else { "{p.x} {p.y}" } }
+fn get(w: W) -> Pt? { match w { Pn { p } => p, _ => Pt { x: 0, y: 0 } } }
+fn get_is(w: W) -> Pt? { if w is Pn { p } { return p; } Pt { x: 0, y: 0 } }
+
+fn main() {
+  a = some();
+  z = none();
+  arm = match a { Pn { p } => state(p), _ => "other" };
+  assert(arm == "7 8", "match arm: {arm}");
+  arm_z = match z { Pn { p } => state(p), _ => "other" };
+  assert(arm_z == "absent", "match arm, absent: {arm_z}");
+  q = Qn { k: 3, p: Pt { x: 7, y: 8 } };
+  second = match q { Qn { k, p } => "{k} {state(p)}", _ => "other" };
+  assert(second == "3 7 8", "a later field: {second}");
+  t = Tn { name: "nm", p: Pt { x: 7, y: 8 } };
+  after_text = match t { Tn { name, p } => "{name} {state(p)}", _ => "other" };
+  assert(after_text == "nm 7 8", "after a text field: {after_text}");
+  s = S { p: Pt { x: 7, y: 8 }, n: 1 };
+  sz = S { p: null, n: 2 };
+  plain = match s { S { p, n } => "{state(p)} {n}" };
+  plain_z = match sz { S { p, n } => "{state(p)} {n}" };
+  assert(plain == "7 8 1" && plain_z == "absent 2", "plain struct arm: {plain} / {plain_z}");
+  is_a = "";
+  if a is Pn { p } { is_a = state(p); }
+  is_z = "";
+  if z is Pn { p } { is_z = state(p); }
+  assert(is_a == "7 8" && is_z == "absent", "is capture: {is_a} / {is_z}");
+  alt = match [Qn { k: 1, p: Pt { x: 7, y: 8 } }] { [(Pn { p } | Qn { p })] => state(p), _ => "other" };
+  alt_z = match [Qn { k: 1, p: null }] { [(Pn { p } | Qn { p })] => state(p), _ => "other" };
+  assert(alt == "7 8" && alt_z == "absent", "alternation: {alt} / {alt_z}");
+  // returned out of the function that bound it: the subject is intact afterwards
+  r = get(a);
+  ri = get_is(a);
+  assert(state(r) == "7 8" && state(ri) == "7 8" && state(get(z)) == "absent", "returned: {state(r)} {state(ri)}");
+  assert(match a { Pn { p } => p.x, _ => -1 } == 7, "the subject after the returns");
+  // a write through the binding reaches the payload
+  match a { Pn { p } => { p.x = 100; }, _ => {} }
+  assert(match a { Pn { p } => p.x * 10 + p.y, _ => -1 } == 1008, "write through: {match a { Pn { p } => p.x, _ => -1 }}");
+  // elements of a vector, bound inside a loop
+  v = [some(), none(), Pn { p: Pt { x: 9, y: 1 } }];
+  walk = "";
+  for e in v { walk += match e { Pn { p } => "{state(p)};", _ => "?" }; }
+  assert(walk == "7 8;absent;9 1;", "a loop over elements: {walk}");
+  // controls: the dense field and the nullable vector field
+  pb = Pb { p: Pt { x: 7, y: 8 } };
+  dense = match pb { Pb { p } => "{p.x} {p.y}", _ => "other" };
+  wv = Vn { rs: [Pt { x: 7, y: 8 }] };
+  vn = match wv { Vn { rs } => "{rs[0].x} {len(rs ?? [])}", _ => "other" };
+  assert(dense == "7 8" && vn == "7 1", "controls: {dense} / {vn}");
+  println("a pattern binds a nullable record field through its tag: every cell holds");
+}

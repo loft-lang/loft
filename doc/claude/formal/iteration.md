@@ -179,8 +179,9 @@ case past it (QUALITY.md B8i).
 ## Deviations
 
 **OPEN: 0.**  Every deviation is closed; the record is in the companion
-[iteration-history.md](iteration-history.md) — the latest, D-iter-7 (a native fast path
-stepped an inclusive range past its end in plain Rust), closed 2026-09-25.
+[iteration-history.md](iteration-history.md) — the latest, D-iter-8 (a loop over a collection
+FIELD walked the new vector, or a released one, when its body replaced the field or its
+owner — loft#1695), closed 2026-09-26.
 
 ## Conformance
 

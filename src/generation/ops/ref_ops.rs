@@ -138,6 +138,7 @@ fn free_label_lvalue(ctx: &EmitCtx<'_, '_>, v: u16) -> (String, String) {
 }
 
 impl OpEmitter for OpFreeRefEmitter {
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         // @PLN157 § V-aa (`@FR-R-ValueRecord`) — a local holding a value-returned record
         // owns no store record, so there is nothing to release; nor does the PHANTOM

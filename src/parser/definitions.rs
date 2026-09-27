@@ -327,6 +327,7 @@ impl Parser {
     }
 
     // @F20 — variant-based dynamic dispatch (synthesised enum dispatcher)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn create_enum_dispatch_fn(&mut self, e_nr: u32, nrs: &[usize]) {
         let from_nr = nrs[0] as u32;
         let name = self.data.def(from_nr).original_name().clone();
@@ -652,6 +653,7 @@ impl Parser {
 
     /// Parse the `{ Value { fields }, Value, ... }` body of an enum definition.
     /// Returns false if a fatal parse error occurred and parsing should stop.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_enum_values(&mut self, d_nr: u32) -> bool {
         let mut nr: u8 = 0;
         loop {
@@ -1648,6 +1650,7 @@ impl Parser {
     // Accepts either `NAME = expr;` or `NAME: type = expr;`. The optional
     // type annotation is parsed (so the parser doesn't reject the form)
     // but the inferred type from the initialiser is the source of truth.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_constant(&mut self) -> bool {
         // P246 — accept the optional `const` keyword at file scope as
         // a synonym for the bare-name form (`const PI = 3.14;` ===
@@ -1940,7 +1943,7 @@ impl Parser {
         // The message does not describe what the word does today: `assert`, `panic`, `sizeof`
         // and `debug_assert` are reserved so the language can give them more meaning later, and
         // an error that spelled out the current one would read as a promise not to.
-        if let crate::lexer::LexItem::Token(word) = self.lexer.peek().has
+        if let crate::lexer::LexItem::Token(word) = self.lexer.peek().has.clone()
             && crate::lexer::is_keyword(&word)
         {
             if matches!(
@@ -2205,7 +2208,7 @@ impl Parser {
         Self::type_var_bounds_key(&names)
     }
 
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F16 — functions & declarations (pub, parameters, return)
     pub(crate) fn parse_function(&mut self) -> bool {
         if !self.lexer.has_token("fn") {
@@ -2922,10 +2925,17 @@ impl Parser {
                 let fn_name = self.data.definitions[ctx].name();
                 self.vars.debug_dead_store_dump(fn_name, body, &self.data);
             }
-            let body = self.data.definitions[self.context as usize].code().clone();
+            // The lints read the body where it lives: `self.vars`, `self.lexer` and
+            // `self.data` are disjoint fields, and the `&mut self` lints below borrow it
+            // themselves, so no copy of the body is made per function.
+            let ctx = self.context as usize;
             if !is_stub {
-                self.vars
-                    .test_used(&mut self.lexer, &self.data, &body, self.context);
+                self.vars.test_used(
+                    &mut self.lexer,
+                    &self.data,
+                    &self.data.definitions[ctx].code,
+                    self.context,
+                );
             }
             // P246 follow-up — UPPER_CASE locals without `const`
             // violate the "UPPER_CASE means immutable constant"
@@ -2933,7 +2943,8 @@ impl Parser {
             // (after const_param flags are settled).  Takes the body for the
             // same reason `test_used` does: a name the code never mentions is
             // a pass-1 placeholder, not a local of this function.
-            self.vars.warn_upper_case_locals(&mut self.lexer, &body);
+            self.vars
+                .warn_upper_case_locals(&mut self.lexer, &self.data.definitions[ctx].code);
             // Plan-07 phase 4e.2 — undefended fault-site warning.
             // Walks this function's body looking for fault-prone op
             // calls (OpDivInt / OpRemInt / OpGetVector / OpVectorRef /
@@ -2942,13 +2953,13 @@ impl Parser {
             // skip pattern applies.  Silenceable via
             // `LOFT_NO_WARN_RUNTIME=1` env var.  Second-pass only —
             // first pass doesn't have the swap-pass results yet.
-            self.warn_undefended_fault_sites(&body);
+            self.warn_undefended_fault_sites();
             // @PLN87 P3 (W4) — a `&` on a heap struct param that is never reassigned
             // has no effect (field mutation propagates regardless).
-            self.warn_redundant_amp(&body);
+            self.warn_redundant_amp();
             // @PLN46 W3 — auto-infer `#null_safe` from entry guards (after the warn
             // pass, so this fn's flag is set for LATER callers' walks).
-            self.infer_function_null_safe(&body);
+            self.infer_function_null_safe();
             self.warn_function_complexity();
             self.warn_parameter_count();
             self.warn_boolean_flag_cluster();
@@ -3041,6 +3052,7 @@ impl Parser {
 
     // <rust> ::= { '#rust' <string> | '#iterator' <string> <string> }
     // <native> ::= '#native' <string>   (any file)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_rust(&mut self) {
         loop {
             if !self.lexer.peek_token("#") {
@@ -3056,7 +3068,7 @@ impl Parser {
                 // closing quote onto the next token, so a diagnostic at the
                 // current cursor would point at the NEXT declaration instead
                 // of the offending annotation.
-                let sym_pos = self.lexer.peek().position;
+                let sym_pos = self.lexer.peek().position.clone();
                 if let Some(sym) = self.lexer.has_cstring() {
                     // Explicit override — for the rare case where the native
                     // symbol differs from the loft fn name (e.g. a
@@ -3274,6 +3286,7 @@ impl Parser {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_arguments(&mut self, fn_name: &str, arguments: &mut Vec<Argument>) -> bool {
         // @PLN86 §7.2 (F7) — collect this list's `…#default` parameter locks fresh; the
         // caller (`parse_function`) records them once the function's def_nr exists.
@@ -3749,6 +3762,7 @@ impl Parser {
     // `pub(crate)` so the `as`-cast (operators.rs) can parse the target type
     // WITHOUT the postfix-`?` consumer — the cast detects the `?` itself to tell
     // `as τ` (fit-checked) from `as τ?` (checked cast); see DN4.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_type_inner(
         &mut self,
         on_d: u32,
@@ -4132,6 +4146,7 @@ impl Parser {
         Some(tp)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn sub_type_inner(&mut self, on_d: u32, type_name: &str, link: Link) -> Option<Type> {
         // Plan-06 phase 4d.A — accept tuple as the inner type of
         // `vector<(T1, T2, ...)>` (and reserve the same shape for
@@ -4906,6 +4921,7 @@ impl Parser {
     }
 
     // @F12 — struct records (fields, `= default`, `computed`, `limit`/`not null`/`assert`)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_struct(&mut self) -> bool {
         // `D-Scope` — the previous function's header does not reach this declaration.
         self.cur_type_vars.clear();
@@ -5622,7 +5638,7 @@ impl Parser {
     /// resolved against the current scope.  Whether a type SATISFIES the interface is a
     /// separate question asked at the use site, never here — see
     /// `Parser::check_satisfaction` (@FR-G-Sat).
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     // @F26 — interfaces & bounded generics (<T: A + B>, operator interfaces)
     pub(crate) fn parse_interface(&mut self) -> bool {
         // `D-Scope` — the previous function's header does not reach this declaration.
@@ -5990,7 +6006,7 @@ impl Parser {
     }
 
     // <field> ::= { <field_limit> | 'not' 'null' | <field_default> | 'check' '(' <expr> ')' | <type-id> [ '[' ['-'] <field> { ',' ['-'] <field> } ']' ] } }
-    #[allow(clippy::too_many_lines)] // pre-existing length; T1.11a added one branch
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_field(&mut self, d_nr: u32, a_name: &String) {
         let mut a_type: Type = Type::Unknown(0);
         let mut defined = false;

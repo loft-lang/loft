@@ -931,6 +931,7 @@ mod tests {
     /// keep any failure reproducible.
     #[test]
     #[allow(clippy::many_single_char_names, clippy::cast_possible_truncation)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn bidirectional_replay_fuzz() {
         // xorshift64* — tiny, deterministic, no dependency.
         struct Rng(u64);

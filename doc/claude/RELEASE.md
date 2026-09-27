@@ -112,6 +112,32 @@ class — per [STABILITY_ROADMAP.md](STABILITY_ROADMAP.md)'s standing rule the
 deliverable is the collapsed structure, and the cases that matter most have no ticket
 to file.
 
+### File split per release (by hand) — one release, one file, one PR
+
+Also each release: split the top file of the pick, with the `split-file` skill.
+
+```bash
+make file-sizes ARGS="--pick 2"    # this release's files, most movable lines first
+```
+
+This one is a GATE row (`M-file-split`), not a report.  `M-file-sizes` was a report
+read once per cycle, nothing acted on it, and `src/` reached 18 files over 6 000 lines.
+A file too long to read whole is edited in slices, and code that is locally right and
+globally inconsistent is what that produces.
+
+- **The pick ranks by split value**: the lines a split can move, which is the file
+  minus its largest item.  An `impl` block counts as its items, not as one subject.
+  A file that is one long item scores near zero, however long it is; its length is that
+  function's own `too_many_lines` question ([CODE.md § Functions](CODE.md#functions)).
+- **One file per PR, a pure move**: no signature, behaviour or comment change, so the
+  diff reads as moves and the review is a check that it does.  Take two picks when the
+  previous release's split landed clean, one otherwise.
+- **No per-PR file-size limit.**  How large a file has grown is this row's question; a
+  fix never has to carve a file first.
+- **Payoff check**, read in `M-file-sizes`: did last release's split land, and did the
+  file it came from stay down?  A split whose parts have regrown had its seam chosen
+  wrong.  Re-open that seam; do not add a third part.
+
 ### The operator census (by hand) — which operators anything still emits
 
 Also each cycle, before tagging, read the **operator census**:
@@ -1032,7 +1058,7 @@ hand-ticked items), the dependency audit (`A-audit`), the consumers at the tag
 (`A-consumers`), step 9's
 artefacts, step 10's
 binaries and registry entry, and the monthly reviews the cadence makes
-per-release work (`M-monthly-docs`, `M-monthly-bugs`, `M-close-plans`, and
+per-release work (`M-monthly-docs`, `M-monthly-bugs`, `M-close-plans`, `M-file-split`, and
 `M-perf-pass` — the performance read over loft AND its libraries; @PLN158 grows it
 into per-routine benches with industry reference twins).  `A-deviations` blocks a release on
 any open formal deviation a release can resolve: each has a tracking issue, and the only ones

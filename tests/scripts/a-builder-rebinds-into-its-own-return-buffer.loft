@@ -1,0 +1,152 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `@FR-R-Rebind`, the OWN-BUFFER clause — `d = step(d, …)` inside a function whose result is
+// `d` hands step the frame's own return buffer, the record the caller gave this frame to fill.
+//
+// A builder — `fn build() -> Doc { d = empty(); for … { d = step(d, k) }; d }` — promotes `d`
+// onto its hidden return buffer, which made `d` an ARGUMENT, and `(R-Rebind)` refused every
+// argument: each step built its result in a pooled buffer and the bind copied it whole into
+// `d`.  The own buffer is the one argument the frame owns for writing, and it shares no store
+// with a sibling parameter (every road that hands a buffer in refuses one that does), so it
+// may stand as `x`; every other admission condition is unchanged.  Cells: the builder loop with
+// an early `return d` exit (c1), the builder rebound one level up so buffers chain (c3), its
+// result appended into a vector — a buffer that is an element slot (c4), a copy of a field
+// taken before the call (c5), the buffer handed in twice (c6, declines), a builder whose
+// parameter is an element of the vector its result joins (c7), a call through a fn-ref (c8), a
+// self-viewed field beside a rebuilt one (c9) and a record element read before the call (c10).
+// Every value is hand-computed in its comment; the file answers the same with
+// `LOFT_NO_REBIND_OWN_BUFFER=1` and runs clean under LOFT_STRICT_STORES, LOFT_POISON,
+// LOFT_POISON_CLAIM and the native leak check.  The admissions are pinned in
+// `tests/rebind_own_buffer.rs`, because a wrong one changes no value here.
+//
+// @falsified-at: none — no cell here can see a wrong admission (each answers the same with
+//   the clause off, which is the point: the clause changes where a record is built, not
+//   what it holds), so the receipt is the PIN: with the live-view decline struck
+//   (`rebind_place.rs`, 2026-09-26) `a_view_of_the_local_read_across_the_call_declines`
+//   fails, the trace reading ADMITTED for `n_plain`.  The shape that decline guards answers
+//   wrongly on its own today (#1695), so it cannot yet be a value cell.
+//   CHANNEL: the pin (the rebind trace).  HOLDS: every cell here, both switch positions.
+struct Doc { buf: vector<character>, ps: vector<integer>, n: integer }
+
+fn empty() -> Doc { Doc { buf: [], ps: [], n: 0 } }
+
+// rebuilds buf from d's, appends one char and one piece; k == 2 answers d unchanged
+fn step(d: Doc, k: integer) -> Doc {
+  if k == 2 { return d; }
+  nb: vector<character> = [];
+  for c in d.buf { nb += [c]; }
+  nb += ['a'];
+  np: vector<integer> = [];
+  for p in d.ps { np += [p]; }
+  np += [k * 10];
+  Doc { buf: nb, ps: np, n: d.n + 1 }
+}
+
+// keeps buf by self-view, rebuilds ps
+fn bump(d: Doc, k: integer) -> Doc {
+  np: vector<integer> = [];
+  for p in d.ps { np += [p + k]; }
+  Doc { buf: d.buf, ps: np, n: d.n + 100 }
+}
+
+fn merge(a: Doc, b: Doc) -> Doc {
+  nb: vector<character> = [];
+  for c in a.buf { nb += [c]; }
+  for c in b.buf { nb += [c]; }
+  Doc { buf: nb, ps: [], n: a.n + b.n }
+}
+
+// 1+2: k = 0..5, k == 2 skipped: buf "aaaa" (4), ps [0,10,30,40], n 4
+fn build() -> Doc {
+  d = empty();
+  for k in 0..5 { d = step(d, k); }
+  d
+}
+
+// 3: grows a given doc twice more through its own buffer
+fn grow_all(g: Doc) -> Doc {
+  d = g;
+  d = step(d, 7);
+  d = bump(d, 1);
+  d
+}
+
+// 5: a view of the buffer live across the call
+fn viewed() -> integer {
+  d = empty();
+  d = step(d, 1);
+  b = d.buf;
+  d = step(d, 3);
+  len(b) * 10 + len(d.buf)
+}
+
+// 6: handed in twice
+fn twice() -> Doc {
+  d = empty();
+  d = step(d, 1);
+  d = merge(d, d);
+  d
+}
+
+// 7: built from a doc read after the buffer is written
+fn from(src: Doc) -> Doc {
+  d = empty();
+  d = step(d, 5);
+  d = bump(d, src.n);
+  d.n += len(src.buf);
+  d
+}
+
+
+
+struct Pt { x: integer, y: integer }
+struct Shape { rs: vector<Pt>, n: integer }
+
+// rebuilds rs with every x + 1000
+fn shift(s: Shape) -> Shape {
+  nr: vector<Pt> = [];
+  for p in s.rs { nr += [Pt { x: p.x + 1000, y: p.y }]; }
+  Shape { rs: nr, n: s.n + 1 }
+}
+
+// 10: r reads the element BEFORE the shift: 7; the shifted first x 1007 → 7 * 10000 + 1007
+fn held() -> Shape {
+  d = Shape { rs: [Pt { x: 7, y: 8 }], n: 0 };
+  r = d.rs[0];
+  d = shift(d);
+  d.n = r.x * 10000 + d.rs[0].x;
+  d
+}
+
+fn psum(v: vector<integer>) -> integer { s = 0; for x in v { s += x; } s }
+
+fn main() {
+  a = build();
+  assert(len(a.buf) == 4 && psum(a.ps) == 80 && a.n == 4, "c1 {len(a.buf)} {a.ps} {a.n}");
+  // 3: step(7) → buf 5, ps +70 → [0,10,30,40,70], n 5; bump(1) → ps +1 each (sum 150+5=155), n 105
+  a = grow_all(a);
+  assert(len(a.buf) == 5 && psum(a.ps) == 155 && a.n == 105, "c3 {len(a.buf)} {a.ps} {a.n}");
+  // 4: an appended builder result, three times
+  docs: vector<Doc> = [];
+  for _i in 0..3 { docs += [build()]; }
+  assert(len(docs) == 3 && psum(docs[2].ps) == 80 && len(docs[1].buf) == 4, "c4 {len(docs)}");
+  // 5: b is 1 char (a view of the old buf copied at the bind), d.buf 2 → 12
+  assert(viewed() == 12, "c5 {viewed()}");
+  // 6: "a" + "a" → 2 chars, n 2
+  t = twice();
+  assert(len(t.buf) == 2 && t.n == 2, "c6 {len(t.buf)} {t.n}");
+  // 7: from(docs[0]): step(5) → ps [50], n 1; bump(4) → ps [54], n 101; n += 4 → 105
+  docs += [from(docs[0])];
+  assert(len(docs) == 4 && docs[3].n == 105 && docs[3].ps[0] == 54 && len(docs[0].buf) == 4, "c7 {docs[3].n} {docs[3].ps}");
+  // 8: through a fn-ref, and in par
+  f = build;
+  r = f();
+  assert(psum(r.ps) == 80 && len(r.buf) == 4, "c8 fnref {r.ps}");
+  // 9: bump alone on a built doc: ps [0,10,30,40] + 2 → sum 88, buf kept 4
+  b9 = bump(build(), 2);
+  assert(psum(b9.ps) == 88 && len(b9.buf) == 4 && b9.n == 104, "c9 {b9.ps}");
+  h = held();
+  assert(h.n == 71007, "c10 {h.n}");
+  println("done");
+}

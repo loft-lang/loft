@@ -165,6 +165,7 @@ impl State {
         data
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn write_file(&mut self) {
         let val = self.get_stack::<DbRef>();
         let file = self.get_stack::<DbRef>();
@@ -1151,7 +1152,7 @@ impl State {
     # Panics
     When called on a not implemented data-structure
     */
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn iterate(&mut self) {
         let on = self.code::<u8>();
         let arg = self.code::<u16>();
@@ -1633,6 +1634,7 @@ impl State {
     /// the already-allocated destination `to`.  `raw_tp`'s high bit (`0x8000`)
     /// frees the source store after the copy (#120).  Factored so the nullable
     /// struct-return ABI-B path (`copy_ref_or_null`) reuses the non-null branch.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn do_copy_record(&mut self, data: DbRef, to: DbRef, raw_tp: u16) {
         // Issue #120: high bit of tp signals "free source store after copy"; the next bit
         // says the destination is fresh (`keys::COPY_FRESH_DEST`).

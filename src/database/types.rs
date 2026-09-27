@@ -761,6 +761,7 @@ impl Stores {
     ///
     /// Returns early for a type that is not a record shape, or whose size is already
     /// assigned, or that is mid-recursion — so the result does not depend on visit order.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn finish_type(
         &mut self,
         linked: &HashSet<u16>,
@@ -1440,6 +1441,7 @@ impl Stores {
     /// `visited` prevents infinite recursion through cyclic
     /// references (e.g. struct containing a vector of itself).
     #[allow(dead_code, clippy::many_single_char_names)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn validate_layout_by_nr(
         &self,
         tp: u16,

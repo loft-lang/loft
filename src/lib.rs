@@ -17,7 +17,6 @@
     clippy::let_underscore_untyped,
     clippy::must_use_candidate,
     clippy::manual_let_else,
-    clippy::too_many_lines,
     clippy::type_complexity,
     // Re-emerges in src/fill.rs every time regen_fill_rs runs; the
     // template format is easier to keep stable than a generator fix.
@@ -351,6 +350,7 @@ pub mod scopes;
 pub mod siphash;
 pub mod use_analysis;
 mod variables;
+pub mod vec_copy;
 pub mod vector;
 
 pub mod trace;

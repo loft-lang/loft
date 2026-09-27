@@ -1,0 +1,92 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A PATTERN CAPTURE IS A VIEW, AND A REST IS FRESH.  `@FR-P-Cap-View`: a single capture that
+// names an interior place of the subject — a struct element, a variant's record or vector
+// field — aliases it, so a write through the capture reaches the subject, a later write to
+// the subject shows through it, and a subject REPLACED while it is live leaves it the value it
+// had (`@FR-B-Disturb`).  `@FR-P-Cap-Fresh`: a `..rest` tail and a repetition's collected
+// vector are new vectors, independent of the subject in both directions.  A scalar and a text
+// capture are copies, and a capture that leaves its arm is bound like any other value.
+//
+// The view and fresh cells held on both backends before the guard was written; the file as a
+// whole also reuses capture names across `match`es, which `(B-Scope)` admits and which the
+// tree before D-bind-65 refused.  Every value is hand-computed.
+//
+// @falsified-at: bc84ee2a4 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-pattern-capture-is-a-view-and-a-rest-is-fresh.patch — the same channels.
+// CHANNEL: the refusal — the control tree refuses the reused capture names.
+// HOLDS: every view and fresh cell, measured one per program on both trees before this guard.
+
+struct Pt { x: integer, y: integer }
+enum Tok { Num { n: integer }, Op { o: integer }, Bx { rs: vector<Pt> } }
+
+fn mk() -> vector<Pt> { [Pt { x: 1, y: 2 }, Pt { x: 3, y: 4 }] }
+
+fn main() {
+  // P-Cap-View: an element capture writes through, and sees the subject's later writes
+  v = mk();
+  match v { [first, ..] => { first.x = 100; }, _ => {} }
+  assert(v[0].x == 100 && v[1].x == 3 && len(v) == 2, "first writes through: {v[0].x}");
+  v2 = mk();
+  seen = 0;
+  match v2 { [first, ..] => { v2[0].x = 55; seen = first.x; }, _ => {} }
+  assert(seen == 55, "the subject's write shows through first: {seen}");
+  v3 = mk();
+  kept = 0;
+  match v3 { [first, ..] => { v3 = [Pt { x: 50, y: 0 }]; kept = first.x; }, _ => {} }
+  assert(kept == 1 && v3[0].x == 50, "a replaced subject leaves first as it was: {kept}");
+  t = [Bx { rs: mk() }, Op { o: 7 }];
+  match t { [Bx { rs }, ..] => { rs[0].x = 100; }, _ => {} }
+  assert(match t[0] { Bx { rs } => rs[0].x, _ => -1 } == 100 && len(t) == 2, "a variant's vector field writes through");
+  t2 = [Bx { rs: mk() }];
+  kept2 = 0;
+  match t2 { [Bx { rs }] => { t2 = [Bx { rs: [Pt { x: 50, y: 0 }] }]; kept2 = rs[0].x; }, _ => {} }
+  assert(kept2 == 1, "a replaced subject leaves a field view as it was: {kept2}");
+  // P-Cap-Fresh: a rest and a repetition are new vectors
+  f = mk();
+  r0 = 0;
+  n0 = 0;
+  match f { [_, ..rest] => { rest[0].x = 300; rest += [Pt { x: 9, y: 9 }]; r0 = rest[0].x; n0 = len(rest); }, _ => {} }
+  assert(f[0].x == 1 && f[1].x == 3 && len(f) == 2 && r0 == 300 && n0 == 2, "a rest is fresh: {f[1].x} {len(f)}");
+  g = mk();
+  r1 = 0;
+  match g { [_, ..rest] => { g[1].x = 77; r1 = rest[0].x; }, _ => {} }
+  assert(r1 == 3 && g[1].x == 77, "a subject write does not reach the rest: {r1}");
+  e = mk();
+  a0 = -1;
+  b0 = -1;
+  match e { [_, _, ..rest] => { a0 = len(rest); rest += [Pt { x: 9, y: 9 }]; b0 = len(rest); }, _ => {} }
+  assert(a0 == 0 && b0 == 1 && len(e) == 2, "an empty rest: {a0} {b0} {len(e)}");
+  w = [10, 20, 30];
+  r2 = 0;
+  match w { [_, ..rest] => { rest[0] = 100; r2 = rest[0]; }, _ => {} }
+  assert(w[1] == 20 && r2 == 100, "an integer rest: {w[1]}");
+  ws = [1, 2, 3, 9];
+  r3 = 0;
+  match ws { [xs: integer*] => { xs[0] = 100; r3 = xs[0]; }, _ => {} }
+  assert(ws[0] == 1 && r3 == 100 && len(ws) == 4, "a scalar repetition: {ws[0]}");
+  tk = [Num { n: 5 }, Num { n: 6 }, Op { o: 7 }];
+  a1 = 0;
+  c1 = 0;
+  match tk { [(x: Num)*, ..] => { a1 = len(x); x += [Num { n: 8 }]; c1 = len(x); }, _ => {} }
+  assert(a1 == 2 && c1 == 3 && len(tk) == 3, "a variant repetition: {a1} {c1} {len(tk)}");
+  // copies: a scalar field, a text element; and a capture leaving its arm
+  sc = [Num { n: 5 }, Op { o: 7 }];
+  k = 0;
+  match sc { [Num { n }, ..] => { n = 42; k = n; }, _ => {} }
+  assert(match sc[0] { Num { n } => n, _ => -1 } == 5 && k == 42, "a scalar field copies");
+  tx = ["ab", "cd"];
+  tr = "";
+  match tx { [first, ..] => { first += "x"; tr = first; }, _ => {} }
+  assert(tx[0] == "ab" && tr == "abx", "a text element copies: {tx[0]}");
+  m = mk();
+  out = match m { [_, ..rest] => rest, _ => [] };
+  m[1].x = 77;
+  assert(out[0].x == 3 && len(out) == 1, "a rest out of its arm stays fresh: {out[0].x}");
+  n1 = mk();
+  one = match n1 { [first, ..] => first, _ => Pt { x: 0, y: 0 } };
+  n1[0].x = 9;
+  assert(one.x == 1, "a bound capture out of its arm is a copy: {one.x}");
+  println("a pattern capture is a view and a rest is fresh: every cell holds");
+}

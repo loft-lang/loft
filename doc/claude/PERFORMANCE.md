@@ -2543,9 +2543,44 @@ removed, the edit cell answers `sum=30` for a program that says `sum=100`.
 
 ---
 
+## Front-end speed — how it is measured and guarded
+
+loft's own compile (parse, scope pass, lints) is measured by phase, attributed by module,
+and guarded by a COUNT, never by a time (@PLN166).
+
+- **By phase.**  `LOFT_TIMING=1` prints `parse_default`, `parse_user`, `scopes`, `lints` and
+  `front_end`; the four phases sum to `front_end` (pinned by
+  `tests/compile_scaling.rs::loft_timing_phases_sum_to_the_front_end`).
+- **The bench.**  `python3 bench/frontend/frontend.py` measures the cold, warm and edit-loop
+  modes over a generated corpus frozen by `CORPUS_VERSION` (tiny / medium / large), the modes
+  INTERLEAVED run by run so load drift hits all of them alike; `--counts` adds instruction
+  counts, `--self-test` proves the harness sees a slowdown it is handed
+  (`LOFT_TIMING_INJECT_MS`), and an edit run whose input hash repeats is refused.  A report,
+  never a gate.
+- **By module.**  `scripts/profile.sh --engine` folds the samples onto loft's modules; its
+  oracle row is in PROFILE_ORACLE.md § Engine.  For an exact before/after, callgrind on the
+  large corpus with `LOFT_NO_CACHE=1` — a binary copied out of `target/` has the program
+  cache ON and otherwise measures a cache write.
+- **The gate counts, it does not time.**  Wall clock varied ±30 % under load on one box,
+  so a time gate teaches people to ignore it; an allocation count is exact.
+  `tests/frontend_counts.rs` counts the front end's heap allocations in-process over the
+  bench's corpus against `bench/frontend/allocations.tsv`, keyed by OS and cargo profile.
+  A count that GROWS fails; one that falls passes and names the re-pin
+  (`LOFT_FRONTEND_REPIN=1 cargo test [--release] --test frontend_counts`).  One uncounted
+  run goes first — the first compile in a process pays one-time setup that differs by
+  platform — and the two counted runs must agree wherever a pin is read or written; a
+  build with no pin reports and passes.
+- **The edit loop reuses the stdlib.**  A program-cache miss takes the stdlib from its own
+  cache, and the program manifest pins the stdlib it was built against with a `stdk` line,
+  so an edited, added or removed stdlib file is never served stale
+  (`tests/arc_e_program_cache.rs`).  A warm `--native` run goes further and execs its binary
+  off the source key before any parse — § N6.
+
+What each cut measured, and the leads left, are § F1 below.
+
 ## Design: F1 — the front end's own hot spots, attributed and cut
 
-> **DELIVERED (@PLN166 B4, B5).**  What `--engine`'s by-module table and callgrind attributed
+> **DELIVERED (@PLN166 B4–B7).**  What `--engine`'s by-module table and callgrind attributed
 > over a compile of `bench/frontend`'s large corpus (12 826 lines, `--interpret --check`,
 > `LOFT_NO_CACHE=1`), and what each cut measured.  Instruction counts are callgrind's, exact
 > and load-independent; the allocation counts are `tests/frontend_counts.rs`'s pins.
@@ -2563,33 +2598,37 @@ removed, the edit cell answers `sum=30` for a program that says `sum=100`.
 | **h** (B6) the bytecode tables on Fx | `State.stack` / `vars` / `types` / `calls` and `Parser.force_tret` were `std`-hashed: 138 696 inserts and 186 356 rehash probes per compile through SipHash (the 1.5 % step f attributed to `patch_tret_callers` / `parse_type_inner` was these — those two only ASKED a `std` set) | −1.3 % | 3 290 M |
 | **i** (B6) `def_nr` remembers by ADDRESS | the passes after the parse ask `data.def_nr("OpCopyRecord")` once per node they visit — 163 distinct literals over 795 sites, 1.2 M of the 1.67 M lookups — while the index does not change again; a direct-mapped memo keyed by the literal's address answers without hashing or probing, and keeps the bytes to refuse a reused buffer.  Its slots are lock-free (`Data` is shared across threads read-only), which costs 21 M over a `Cell` — the figure is the lock-free form | −1.9 % | 3 228 M |
 | **j** (B6) `compute_intervals` reads the body in place | `scopes::check` cloned every function body (18 670 per compile) only to hold it beside a `&mut` of the same definition's variables — two fields of one struct need no copy | −0.9 % | 3 198 M |
+| rebased (the 157-native-4x, loft2, loft3 joins) | the joined tree's own baseline: the work-buffer, copy-view and push rewrites add front-end passes | +0.3 % | 3 208 M |
+| **k** (B7) `Lexer::peek` borrows | `peek()` returned a CLONE of the token, `String` and all — 180 K per compile, most of them `has_identifier` asking whether the next token is an identifier and answering no | −0.8 % | 3 183 M |
+| **l** (B7) the parse-time lints read the body in place | `parse_function` cloned every body (20 028 per compile) for five lints.  Not a lend — one lint reads a callee's body through the table — but a split borrow: the lints need `&self.data` and `&mut self.lexer`, disjoint fields, and the fault-site walk became a function of those two instead of `&mut self` | −0.8 % | 3 158 M |
+| **m** (B7) operator tokens spelled on the stack | every operator character allocated its one-character spelling and `format!`ed a two-character candidate that is usually no token; both are now tested from a stack buffer and only the returned token allocates | −0.9 % | 3 129 M |
+| **n** (B7) the retired fault-site walk is skipped | under the dense null model every `FaultKind` the walk can report is retired in the emitter, so the walk found nothing to say; `fault_warnings_are_all_retired` fails to compile when a new kind is added undecided | −0.5 % | 3 112 M |
 
-**Total: −46.6 % instructions on the large compile** (−43.3 % through step f, −35.3 % through
-step e); the front-end allocation ratchet re-pinned tiny **705 011 → 333 674** and medium
-**2 551 492 → 1 150 895** (release; the debug profile's pins beside them).
+**Total: −48.0 % instructions on the large compile** (−46.6 % through step j, −43.3 %
+through step f); the front-end allocation ratchet re-pinned tiny **705 011 → 303 222** and
+medium **2 551 492 → 1 047 203** (release; the debug profile's pins beside them).
 Each step's falsifier was the same: `--interpret --dump` of every file under `tests/scripts`
-and `tests/docs` (1 860) byte-identical against the pre-change binary, the ratchet never
-growing, and the unit tests of the index (`children_index_tests`, `def_index_tests`) and the
-hasher.
+and `tests/docs` (1 860, 1 867 after the joins) byte-identical against the pre-change binary,
+the ratchet never growing, and the unit tests of the index (`children_index_tests`,
+`def_index_tests`), the hasher and `fault_warning_tests`.
 
-**Not a phase, the next lead — recorded with its numbers.**  After step j the allocator is
-the top of the profile (~17 %, 3.6 M allocations on the large compile), and the whole-body
-`Value::clone`s are where they come from: `parse_function` clones each body once for five
-lints (20 028 per compile, 2.2 % with its drop glue), `scopes::check` once as the working copy
-its rewrites edit (`orig_code`), `use_analysis::collect_defs` every `Set`'s right-hand side
-into `Defs.rhs` (86 060, 1.1 %).  None is a split borrow like step j: the parse-time lend was
-tried and withdrawn, because `warn_redundant_amp` reads a CALLEE's body through the
-definition table and a self-recursive call would read the lent-out `Null` (the interprocedural
-`callee_param_reassigns`); and `Defs.rhs` as `Vec<&Value>` needs a `&'s Data` threaded through
-`Scopes::scan_set` and its callers, which the memo in `Scopes.fn_defs` does not have.  The
-remaining `def_nr` cost is the memo's misses: `mangle_method` builds a `String` per method
-question (28 872 `format!`, 0.9 %), so those never hit.  Lessons this arc paid for: a binary
-copied OUT of `target/` has the program cache ON (`running_a_dev_build` is a path test), so a
-callgrind run without `LOFT_NO_CACHE=1` measures a cache write — +331 M Ir, 10 % of the
-compile, which read as a regression of a 19-line commit until both binaries were re-run with
-the cache off; and step f's: the ratchet demands the same count from two runs in one process,
-and a `LazyLock` that mints a shared value once fails that by exactly one — reach for a
-static-backed default (`Arc::<str>::default()`) rather than a lazily minted one.
+**Not a phase, the next leads — recorded with their numbers.**  After step n the allocator
+is still the top of the profile (~15 %).  What feeds it: `scopes::check`'s working copy of
+each body (`orig_code`, 12 682 clones) and of its variable table (`Function::copy`, twice
+per function) — both load-bearing, because the scan re-runs from the pristine pair and reads
+the live definition meanwhile; `use_analysis::collect_defs` cloning every `Set`'s right-hand
+side into `Defs.rhs` (86 060, 1.1 %), which borrows only with a `&'s Data` threaded through
+`Scopes::scan_set`; `mangle_method`'s `format!` per method question (28 872, 0.9 %), which
+the `def_nr` memo cannot hit; and the lexer's per-line `Vec<char>` and per-character
+identifier growth.  Tried and withdrawn in B7: comparing the memo's bytes in place instead
+of building a padded copy was SLOWER (+67 M Ir) — the bounds-checked word loop cost more than
+the `memcpy` it saved.  Lessons this arc paid for: a binary copied OUT of `target/` has the
+program cache ON (`running_a_dev_build` is a path test), so a callgrind run without
+`LOFT_NO_CACHE=1` measures a cache write — +331 M Ir, 10 % of the compile, which read as a
+regression of a 19-line commit until both binaries were re-run with the cache off; and step
+f's: the ratchet demands the same count from two runs in one process, and a `LazyLock` that
+mints a shared value once fails that by exactly one — reach for a static-backed default
+(`Arc::<str>::default()`) rather than a lazily minted one.
 
 ## Design: W1 — wasm string representation
 

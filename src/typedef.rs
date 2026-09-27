@@ -495,6 +495,7 @@ fn type_blocked(data: &Data, tp: &Type, seen: &mut Vec<u32>) -> bool {
 /// `Stores::finish` recurses into the cycle and its `u16` offset accumulator wraps.  That
 /// panic reaches the user as an internal compiler error and takes the buffered diagnostics
 /// with it — including the one naming the cure — so a cyclic program reported nothing at all.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn fill_all(data: &mut Data, database: &mut Stores, lexer: &mut Lexer, start_def: u32) -> bool {
     // Re-resolve the forward references of everything still waiting for a layout.
     //
@@ -1091,6 +1092,7 @@ fn variant_parent_qualified_name(data: &Data, database: &Stores, d_nr: u32) -> O
     (!database.has_type(&name)).then_some(name)
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn fill_database(data: &mut Data, database: &mut Stores, d_nr: u32) {
     // A generator handle is stored as the 12-byte `DbRef` it is (loft#1585): the stdlib's
     // `type iterator` has that row, whichever layout asks for it first.

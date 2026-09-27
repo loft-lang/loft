@@ -758,6 +758,7 @@ pub struct LoopHoist {
 // one call site without removing anything.
 #[allow(clippy::too_many_arguments)]
 /// Enforces `@FR-R-Scalar` (the candidates and the write set) beside `@FR-R-Header`.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn hoistable(
     body: &Block,
     data: &Data,
@@ -1238,6 +1239,7 @@ fn trace_write_decline(n: &Value) {
 /// keep unconstructible.
 /// Enforces `@FR-R-Scalar`: the write set of a body that passed the gate.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn body_writes(
     node: &Value,
     data: &Data,
@@ -1542,6 +1544,7 @@ pub fn callee_inputs(
     answer
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn callee_inputs_inner(
     d_nr: u32,
     data: &Data,
@@ -3033,6 +3036,7 @@ pub struct CharWalk {
 /// fast arm needs no condition; the null test moves out of the loop only where no
 /// statement of the loop writes T ([`text_written`]).
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn char_walks(data: &Data, def_nr: u32) -> BTreeMap<u16, CharWalk> {
     let def = data.def(def_nr);
     let vars = def.variables();
@@ -3380,6 +3384,7 @@ pub struct StoreTextBorrows {
 /// be a scalar set in place, which moves no block.  A parameter the body rebinds, a user
 /// callee that writes, a fn-ref call, a parallel arm and a generator decline.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn borrowed_store_texts(
     data: &Data,
     def_nr: u32,
@@ -4328,6 +4333,7 @@ fn projection_root(data: &Data, v: &Value) -> Option<u16> {
     }
 }
 
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn fill_loop<'a>(lp: &'a Block, data: &Data) -> Option<FillLoop<'a>> {
     let trace = std::env::var("LOFT_TRACE_FILL").is_ok();
     let decline = |why: &str| -> Option<FillLoop<'a>> {
@@ -4478,6 +4484,7 @@ pub struct PushLoop<'a> {
 /// write reaching the path, a range end that is not a simple invariant.  The fallback is
 /// `None` — the loop runs as it did, which costs the reserve and never a value.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn push_loop<'a>(lp: &'a Block, data: &Data) -> Option<PushLoop<'a>> {
     let trace = std::env::var("LOFT_TRACE_PUSH_FILL").is_ok();
     let decline = |why: &str| -> Option<PushLoop<'a>> {
@@ -4775,6 +4782,7 @@ pub struct MintLoop {
 ///
 /// # Errors
 /// The reason the loop is not one — what `LOFT_TRACE_PUSH_FILL=1` prints.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn mint_loop<'a>(
     lp: &'a Block,
     data: &Data,
@@ -6590,6 +6598,7 @@ pub fn move_appends(data: &Data, def_nr: u32) -> BTreeMap<u16, MoveAppend> {
 }
 
 /// The § V-j pairing of ONE `For` block, or `None` — see [`move_appends`] for the gates.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn pair_for_block(
     bl: &Block,
     data: &Data,
@@ -6945,6 +6954,7 @@ pub struct RetAdopt {
 /// - no `Parallel` or `Yield` in the body (a resumable frame's buffer discipline is its
 ///   own question).
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn ret_adopt(data: &Data, def_nr: u32) -> Option<RetAdopt> {
     let def = data.def(def_nr);
     if !def.is_loft_defined() {
@@ -7393,6 +7403,7 @@ pub fn flat_lit_member(
 /// in an unbound-guard, so the build runs once and every later iteration (and re-entry)
 /// reuses the store.  Two admitted locals sharing a sanitized name would share the one
 /// function-top binding, so a collision declines both (the c11 cell).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn invariant_literals(data: &Data, def_nr: u32) -> LitHoist {
     let def = data.def(def_nr);
     let vars = def.variables();
@@ -8013,6 +8024,7 @@ fn destination_views(
 ///
 /// An admitted function's EXIT copies of a temp are not uses (`views`): the value form drops
 /// them — the view leaf names the element's field instead (`@FR-O-ViewField`).
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn element_first(
     data: &Data,
     stores: &Stores,
@@ -8894,6 +8906,7 @@ fn type_layout(
 ///
 /// Which candidates ARE received as tuples is decided in [`value_records`]'s fixpoint: a
 /// parameter handed to another function is served only by a tuple parameter there.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn tuple_param_candidates(
     data: &Data,
     stores: &Stores,
@@ -9027,6 +9040,7 @@ fn tuple_param_candidates(
 /// local it binds — never storing it, passing it on, returning it or binding it into a
 /// collection.  A single non-reading site declines the whole function, so no site has to
 /// materialise a record out of a tuple and no site can be made slower.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn value_records(data: &Data, stores: &Stores) -> ValueRecords {
     let mut out = ValueRecords::default();
     if value_record_disabled() {
@@ -9528,6 +9542,7 @@ pub struct LoopRecord {
 /// declaration outside any loop, and — as for the loop buffers — a body with `yield` or `par`.
 /// The fallback is "not a loop record", which costs the reuse and never a value.
 #[must_use]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn loop_records(data: &Data, def_nr: u32) -> HashMap<u16, LoopRecord> {
     let def = data.def(def_nr);
     let vars = def.variables();
@@ -10095,6 +10110,7 @@ struct FreshQuery<'a> {
 /// The answer: one element temp on every path → [`LeafSource::Elem`]; several (one per arm)
 /// → [`LeafSource::Last`]; a path where the fact does not hold → `None`, which declines the
 /// function and costs the rewrite, never a value.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn fresh_leaf(q: &FreshQuery, exit_bl: &Block) -> Option<LeafSource> {
     let data = q.data;
     let def = data.def(q.def_nr);
@@ -11022,6 +11038,7 @@ fn view_leaf_plan(
 /// walk was not told about — answers `false`.  That is the rule's direction: a naming whose
 /// reach cannot be resolved is treated as reaching the watched place, because a missed
 /// disturbance here is a read through an element that moved.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn namings_avoid_place(
     data: &Data,
     stores: &Stores,
@@ -11821,6 +11838,7 @@ fn local_uses_ok(
 /// then say what it must keep undisturbed.  A null-view leaf (an exit that writes the field
 /// not at all) contributes no place and asks nothing of the site.
 #[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 fn view_sites_declined(
     data: &Data,
     stores: &Stores,

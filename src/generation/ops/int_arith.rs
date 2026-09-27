@@ -166,6 +166,7 @@ fn write_plain(ctx: &mut EmitCtx<'_, '_>, form: &str, args: &[Value]) -> io::Res
 }
 
 impl OpEmitter for IntArithEmitter {
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit(&self, ctx: &mut EmitCtx<'_, '_>, args: &[Value]) -> io::Result<()> {
         if ctx.output.plain_nest > 0
             && !ctx.output.release_pass_probe

@@ -312,6 +312,7 @@ impl Output<'_> {
     /// per-parameter coercions (boolean→`u8`, narrow-int, text deref,
     /// typed-null, fn-ref / routine wrapping, `&`-param forwarding) live
     /// here so both paths apply them identically.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn emit_call_arg(
         &mut self,
         w: &mut dyn Write,
@@ -626,7 +627,7 @@ impl Output<'_> {
     /// Behaviour exactly matches the pre-phase-09 `output_call_template`.
     /// The byte-identical golden corpus at `/tmp/p09-baseline/*.rs` is
     /// the regression oracle.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn substitute_template_body(
         &mut self,
         w: &mut dyn Write,

@@ -2268,7 +2268,9 @@ fn c61_nested_same_name_loop_rejected() {
          rename the inner loop variable (e.g. inner_i); loft does \
          not support nested same-name loops at c61_nested_same_name_loop_rejected:3:22",
     )
-    .warning("Variable i is never read at c61_nested_same_name_loop_rejected:2:18");
+    .warning("Variable i is never read at c61_nested_same_name_loop_rejected:2:18")
+    // The inner loop's `i` is its own binding (`i#1`) and is unread as well.
+    .warning("Variable i is never read at c61_nested_same_name_loop_rejected:3:22");
 }
 
 #[test]

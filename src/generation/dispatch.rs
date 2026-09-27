@@ -18,6 +18,7 @@ impl Output<'_> {
     /// init + ≥1 ncc-borrow reassign; see [`Output::witness_vars`]) is routed
     /// through the owned-store-tracker path so neither free-site whole-store-frees
     /// a borrowed view.  Every other var goes straight to [`Self::output_set_body`].
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(super) fn output_set(
         &mut self,
         w: &mut dyn Write,
@@ -332,7 +333,6 @@ impl Output<'_> {
             && crate::generation::container_element_base(self.data, to.unspan()).is_some()
     }
 
-    #[allow(clippy::too_many_lines)]
     pub(super) fn output_set_body(
         &mut self,
         w: &mut dyn Write,
@@ -458,6 +458,7 @@ impl Output<'_> {
         )
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn output_set_inner(&mut self, w: &mut dyn Write, var: u16, to: &Value) -> std::io::Result<()> {
         let variables = self.data.def(self.def_nr).variables();
         // P224: writes to coroutine-persistent locals target the struct
@@ -2169,6 +2170,7 @@ impl Output<'_> {
     /// `lvalue` is the Rust place being initialised — `var_x` for an ordinary local, or
     /// `self.var_x` for a coroutine-persistent field.  `name` stays the loft variable's name,
     /// because it is only the debug label `null_named` records.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn emit_null_dbref(
         &mut self,
         w: &mut dyn Write,
@@ -2340,7 +2342,6 @@ impl Output<'_> {
     /// Use this to dispatch a `Value::Call` to either the user-function or template emitter.
     /// Certain built-in text operations are intercepted here because their generated Rust
     /// differs structurally from both a regular call and a template substitution.
-    #[allow(clippy::too_many_lines)] // large opcode dispatch — splitting would lose context
     pub(super) fn output_call(
         &mut self,
         w: &mut dyn Write,
@@ -2390,7 +2391,6 @@ impl Output<'_> {
             && contains_op_database(IrNode::Native(arg), self.data)
     }
 
-    #[allow(clippy::too_many_lines)]
     fn output_call_inner(
         &mut self,
         w: &mut dyn Write,

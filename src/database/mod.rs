@@ -2539,6 +2539,7 @@ impl Stores {
     /// the reset too: its elements are moved out (zeroed) or record-level freed.
     /// The gate is the ELEMENT TYPE, read from the layout (`owns_heap`), so there is no
     /// predicate to drift: scalar and no-heap elements pay exactly the old reset.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn clear_vector_release(&mut self, db: &crate::keys::DbRef) {
         // `LOFT_NO_CLEAR_RELEASE=1` restores the pre-fix pure length reset — the bisect
         // step for a double free or a wrong value at a cleared vector on either backend.

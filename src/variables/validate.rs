@@ -536,6 +536,7 @@ fn check_i6_loop_iteration(vars: &[Variable], function: &Function) -> Option<(u1
 /// zone-1 frame): V2 is a scope-blind single-pool allocator, so the V1
 /// two-zone "slot within its scope's zone" invariant does not apply.  All
 /// other invariants (I1 overlap, I2, I5, I6, I8) hold for both allocators.
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn validate_slots(function: &Function, data: &Data, def_nr: u32, scope_blind: bool) {
     let vars = &function.variables;
     let local_start = compute_local_start(function);

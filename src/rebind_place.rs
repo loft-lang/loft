@@ -51,19 +51,82 @@ pub fn rewrite(data: &mut Data, database: &Stores, d_nr: u32) {
     // which locals a binding makes a view of a place.
     let defs = crate::use_analysis::function_defs(data, d_nr);
     let projected = projected_locals(data, d_nr);
+    // Numbered only where a call rebinds a local it is handed — the one question it answers;
+    // a body of loop counters (`i = OpAddInt(i, 1)`) is not worth an allocation per function.
+    let mut order = Order::default();
+    if has_candidate(data, data.def(d_nr).code()) {
+        number(data.def(d_nr).code(), &mut 0, &mut order);
+    }
     let facts = Facts {
+        database,
         defs: &defs,
         projected: &projected,
+        order: &order,
     };
     let mut code = std::mem::replace(&mut data.definitions[d_nr as usize].code, Value::Null);
-    visit(&mut code, data, database, d_nr, &facts);
+    visit(&mut code, data, d_nr, &facts, &mut 0);
     data.definitions[d_nr as usize].code = code;
 }
 
 /// What the rewrite reads off the whole body before it walks it.
 struct Facts<'a> {
+    database: &'a Stores,
     defs: &'a crate::use_analysis::Defs,
     projected: &'a HashSet<u16>,
+    order: &'a Order,
+}
+
+/// The body numbered in pre-order — the order [`visit`] walks it — with every variable read
+/// and the span of every loop, so "is this view read after the call?" is a lookup.
+#[derive(Default)]
+struct Order {
+    reads: Vec<(usize, u16)>,
+    loops: Vec<(usize, usize)>,
+}
+
+/// Does `code` hold an `x = f(…, x, …)` with `f` a loft-bodied function?
+fn has_candidate(data: &Data, code: &Value) -> bool {
+    code.any_node(&mut |n| {
+        let Value::Set(x, val) = n else {
+            return false;
+        };
+        let Value::Call(f, args) = val.unspan() else {
+            return false;
+        };
+        (*f as usize) < data.definitions.len()
+            && data.def(*f).rust().is_empty()
+            && *data.def(*f).code() != Value::Null
+            && args
+                .iter()
+                .any(|a| matches!(a.unspan(), Value::Var(v) if v == x))
+    })
+}
+
+fn number(v: &Value, pos: &mut usize, order: &mut Order) {
+    let here = *pos;
+    *pos += 1;
+    if let Value::Var(x) = v {
+        order.reads.push((here, *x));
+    }
+    v.for_each_child(&mut |c| number(c, pos, order));
+    if matches!(v, Value::Loop(_)) {
+        order.loops.push((here, *pos));
+    }
+}
+
+impl Order {
+    /// Is one of `views` read after the node at `site`, or anywhere in a loop around it — where
+    /// the next iteration reads what this one's call left behind?
+    fn read_across(&self, site: usize, views: &HashSet<u16>) -> bool {
+        self.reads.iter().any(|&(p, w)| {
+            views.contains(&w)
+                && (p > site
+                    || self
+                        .loops
+                        .iter()
+                        .any(|&(s, e)| s < site && site < e && s < p && p < e))
+        })
+    }
 }
 
 /// The locals one of whose bindings is a PROJECTION — `v[i]`, `o.f`, `t.0` — and so a
@@ -93,7 +156,9 @@ fn projected_locals(data: &Data, d_nr: u32) -> HashSet<u16> {
     out
 }
 
-fn visit(v: &mut Value, data: &Data, database: &Stores, d_nr: u32, facts: &Facts) {
+fn visit(v: &mut Value, data: &Data, d_nr: u32, facts: &Facts, pos: &mut usize) {
+    let here = *pos;
+    *pos += 1;
     if let Value::Set(x, val) = v {
         let x = *x;
         if let Value::Call(f, args) = val.unspan_mut() {
@@ -101,7 +166,7 @@ fn visit(v: &mut Value, data: &Data, database: &Stores, d_nr: u32, facts: &Facts
             let candidate = args
                 .iter()
                 .any(|a| matches!(a.unspan(), Value::Var(v) if *v == x));
-            match admit(data, database, d_nr, x, f, args, facts) {
+            match admit(data, d_nr, here, x, f, args, facts) {
                 Ok(b) => {
                     if crate::keys::trace_rebind() {
                         eprintln!(
@@ -126,49 +191,33 @@ fn visit(v: &mut Value, data: &Data, database: &Stores, d_nr: u32, facts: &Facts
             }
         }
     }
-    v.for_each_child_mut(&mut |c| visit(c, data, database, d_nr, facts));
+    v.for_each_child_mut(&mut |c| visit(c, data, d_nr, facts, pos));
 }
 
 /// The caller's half of the admission; `Ok` carries the hidden buffer's argument index.
 fn admit(
     data: &Data,
-    database: &Stores,
     d_nr: u32,
+    site: usize,
     local: u16,
     callee_nr: u32,
     args: &[Value],
     facts: &Facts,
 ) -> Result<usize, &'static str> {
-    if callee_nr == d_nr {
-        return Err("a recursive call");
-    }
-    if data.def_type(callee_nr) != DefType::Function {
-        return Err("the callee is not a function");
-    }
+    let buf_idx = admit_callee(data, d_nr, callee_nr, args)?;
     let callee = data.def(callee_nr);
-    if *callee.code() == Value::Null || !callee.rust().is_empty() || !callee.native().is_empty() {
-        return Err("the callee has no loft body");
-    }
-    if callee.name().contains("__lambda") {
-        return Err("the callee is a lambda");
-    }
-    let buf_idx = callee
-        .hidden_return_buffer_attr()
-        .ok_or("the callee has no hidden return buffer")?;
-    if callee.attributes()[buf_idx].name != "__retbuf" {
-        return Err("the callee's buffer was promoted onto a local");
-    }
-    if args.len() <= buf_idx {
-        return Err("the call carries no buffer argument");
-    }
     let func: &Function = data.def(d_nr).variables();
-    let Value::Var(buf) = args[buf_idx].unspan() else {
-        return Err("the buffer argument is not the caller's work-ref");
-    };
-    if !func.is_compiler_generated(*buf) || !func.name(*buf).starts_with("__ref_") {
-        return Err("the buffer argument is not the caller's work-ref");
-    }
-    if func.is_argument(local) || func.is_compiler_generated(local) {
+    // The frame's OWN return buffer, promoted onto a named local (`fn build() -> Doc { d =
+    // empty(); for … { d = step(d, …) }; d }`): the record the caller handed in to be filled,
+    // which this frame writes as it writes a local of its own — so it is the one argument
+    // that may stand as x.  Every other parameter is somebody else's.
+    let own_buffer = func.is_argument(local)
+        && crate::keys::rebind_own_buffer_enabled()
+        && data
+            .def(d_nr)
+            .hidden_return_buffer_attr()
+            .is_some_and(|i| func.var(&data.def(d_nr).attributes()[i].name) == local);
+    if (func.is_argument(local) && !own_buffer) || func.is_compiler_generated(local) {
         return Err("the local is a parameter or a compiler temp");
     }
     // A NULLABILITY question, spelled (`@FR-N-Shape`): a nullable local holds no record
@@ -199,10 +248,14 @@ fn admit(
             func.name(local)
         );
     }
-    if !matches!(
-        evidence,
-        crate::use_analysis::OwnEvidence::Derived | crate::use_analysis::OwnEvidence::Minted
-    ) {
+    // The oracle answers its parameter default for the buffer; what the frame owns there is
+    // settled above, and its bindings are read below like any local's.
+    if !own_buffer
+        && !matches!(
+            evidence,
+            crate::use_analysis::OwnEvidence::Derived | crate::use_analysis::OwnEvidence::Minted
+        )
+    {
         return Err("the local has no derived binding");
     }
     if facts.projected.contains(&local) {
@@ -223,7 +276,15 @@ fn admit(
     if callee.attributes()[buf_idx].typedef.base().heap_def_nr() != Some(td) {
         return Err("the buffer's record type is not the local's");
     }
-    let viewers = func.store_viewers(local);
+    // The own buffer shares no store with a sibling parameter — every road that hands a
+    // buffer in refuses one that does (a fresh `__ref_N`; `(R-Rebind)`'s and `(R-Place)`'s
+    // argument conditions) — so its viewers are the locals that view IT, never the
+    // parameters `store_viewers` must assume of an argument in general.
+    let viewers = if own_buffer {
+        own_buffer_viewers(func, local)
+    } else {
+        func.store_viewers(local)
+    };
     let mut param_idx: Option<usize> = None;
     for (i, arg) in args.iter().enumerate() {
         if i == buf_idx {
@@ -241,6 +302,13 @@ fn admit(
         }
     }
     let param_idx = param_idx.ok_or("the local is not an argument of the call")?;
+    // `(B-Disturb)` — "no view of x is live across the call": the CALL is now where x's
+    // store changes, so a view of it read after the call — a loop variable over one of its
+    // fields, read after the body rebinds x — would read the record the callee rewrote in
+    // place.  The call's own arguments are asked above; this asks every other reader.
+    if facts.order.read_across(site, &viewers) {
+        return Err("a view of the local is read across the call");
+    }
     let attr = &callee.attributes()[param_idx];
     if attr.hidden || matches!(attr.typedef.base(), Type::RefVar(_)) {
         return Err("the parameter receiving the local is not by value");
@@ -248,8 +316,70 @@ fn admit(
     if attr.typedef.base().heap_def_nr() != Some(td) {
         return Err("the parameter's record type is not the local's");
     }
-    callee_safe(data, database, callee_nr, param_idx, td)?;
+    callee_safe(data, facts.database, callee_nr, param_idx, td)?;
     Ok(buf_idx)
+}
+
+/// The callee's half of `admit`: a loft function with a hidden return buffer that this call
+/// fills from the caller's own work-ref.  `Ok` carries the buffer's argument index.
+fn admit_callee(
+    data: &Data,
+    d_nr: u32,
+    callee_nr: u32,
+    args: &[Value],
+) -> Result<usize, &'static str> {
+    if callee_nr == d_nr {
+        return Err("a recursive call");
+    }
+    if data.def_type(callee_nr) != DefType::Function {
+        return Err("the callee is not a function");
+    }
+    let callee = data.def(callee_nr);
+    if *callee.code() == Value::Null || !callee.rust().is_empty() || !callee.native().is_empty() {
+        return Err("the callee has no loft body");
+    }
+    if callee.name().contains("__lambda") {
+        return Err("the callee is a lambda");
+    }
+    let buf_idx = callee
+        .hidden_return_buffer_attr()
+        .ok_or("the callee has no hidden return buffer")?;
+    if callee.attributes()[buf_idx].name != "__retbuf" {
+        return Err("the callee's buffer was promoted onto a local");
+    }
+    if args.len() <= buf_idx {
+        return Err("the call carries no buffer argument");
+    }
+    let func: &Function = data.def(d_nr).variables();
+    let Value::Var(buf) = args[buf_idx].unspan() else {
+        return Err("the buffer argument is not the caller's work-ref");
+    };
+    if !func.is_compiler_generated(*buf) || !func.name(*buf).starts_with("__ref_") {
+        return Err("the buffer argument is not the caller's work-ref");
+    }
+    Ok(buf_idx)
+}
+
+/// The locals whose deps close over `buffer`, through any number of views.
+fn own_buffer_viewers(func: &Function, buffer: u16) -> HashSet<u16> {
+    (0..func.count())
+        .filter(|&w| w != buffer)
+        .filter(|&w| {
+            let mut seen: HashSet<u16> = HashSet::new();
+            let mut stack = vec![w];
+            while let Some(v) = stack.pop() {
+                for d in func.tp(v).depend() {
+                    if d == buffer {
+                        return true;
+                    }
+                    if d < func.count() && seen.insert(d) {
+                        stack.push(d);
+                    }
+                }
+            }
+            false
+        })
+        .collect()
 }
 
 /// The callee's half: every exit answers parameter `k` or a literal built into `__retbuf`

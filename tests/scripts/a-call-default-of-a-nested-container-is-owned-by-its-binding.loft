@@ -1,0 +1,69 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A CALL DEFAULT OF A NESTED CONTAINER IS OWNED BY ITS BINDING (`@FR-E-Coalesce`, `@FR-B-Copy`).
+// `x ?? mk()` where `mk` returns a `vector<vector<integer>>` was the one pairing the axes report
+// found no file crossing (`matrix_axes.py cross A6 A7`: call × nested-container, 0 files).  The
+// default's store is minted per evaluation and the binding owns whichever arm ran, so the cells
+// vary what the axes never met together: the subject (a local null and present, a call, a
+// struct field, a parameter), the evaluation count (once, alternating in a loop, kept across
+// passes), and what happens after (a write and an append through the binding, a second call).
+// Every expected value is worked out by hand in the cell's message; the file runs under the
+// corpus's leak gate, which is the channel a wrong owner would fire on.
+//
+// @falsified-at: none — a conformance guard at a crossing no file reached; every cell answered
+//   right on both backends and clean under LOFT_STRICT_STORES on the tree it landed on.
+// CHANNEL: the asserts, and the corpus's leak gate for the per-pass default store.
+// ARMED: the leak gate by the script corpus runner (wrap.rs).
+// WITNESS: the cell's message names the value that moved.
+// HOLDS: every cell on both backends.
+
+struct H { g: vector<vector<integer>>? }
+
+fn mk(k: integer) -> vector<vector<integer>> { [[k, k + 1], [k + 2]] }
+fn opt(z: boolean) -> vector<vector<integer>>? { if z { null } else { [[8]] } }
+fn pick(x: vector<vector<integer>>?) -> integer {
+  v = x ?? mk(5);
+  if len(v) > 1 { v[1][0] ?? 0 } else { v[0][0] ?? 0 }
+}
+
+fn main() {
+  x1: vector<vector<integer>>? = null;
+  v1 = x1 ?? mk(3);
+  assert("{v1}" == "[[3,4],[5]]" && len(v1) == 2, "null subject takes mk(3): {v1}");
+  x2: vector<vector<integer>>? = [[9]];
+  v2 = x2 ?? mk(3);
+  assert("{v2}" == "[[9]]", "present subject: {v2}");
+  // i=0 mk(0) -> 0; i=1 [[10]] -> 10; i=2 mk(2) -> 2; i=3 [[30]] -> 30
+  s = 0;
+  for i in 0..4 {
+    x: vector<vector<integer>>? = if i % 2 == 1 { [[i * 10]] } else { null };
+    v = x ?? mk(i);
+    s += v[0][0] ?? 0;
+  }
+  assert(s == 42, "alternating in a loop: {s}");
+  x4: vector<vector<integer>>? = null;
+  v4 = x4 ?? mk(3);
+  v4 += [[7]];
+  v4[0][0] = 99;
+  assert("{v4}" == "[[99,4],[5],[7]]" && "{mk(3)}" == "[[3,4],[5]]", "written after: {v4}");
+  a = opt(true) ?? mk(1);
+  b = opt(false) ?? mk(1);
+  assert("{a}" == "[[1,2],[3]]" && "{b}" == "[[8]]", "a call subject: {a} {b}");
+  // lengths 2, 1, 2
+  all: vector<vector<vector<integer>>> = [];
+  for i in 0..3 {
+    x: vector<vector<integer>>? = if i == 1 { [[10]] } else { null };
+    kept = x ?? mk(i);
+    all += [kept];
+  }
+  n = 0;
+  for e in all { n += len(e); }
+  assert(n == 5 && (all[2][0][0] ?? 0) == 2 && len(all) == 3, "kept across passes: {n}");
+  h = H { g: null };
+  v7 = h.g ?? mk(4);
+  h.g = [[1]];
+  assert("{v7}" == "[[4,5],[6]]" && "{h.g ?? [[0]]}" == "[[1]]", "a struct field subject: {v7}");
+  assert(pick(null) == 7 && pick([[2]]) == 2, "a parameter subject: {pick(null)} {pick([[2]])}");
+  println("a call default of a nested container is owned by its binding: every cell holds");
+}

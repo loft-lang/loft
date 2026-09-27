@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A MULTI-PATTERN ARM BINDS A NULLABLE FIELD OF EACH VARIANT (D-layout-10).  `Pn { p }, Qn { p }`
+// binds `p` from whichever variant matched, and both declare it `Pt?`.  A later variant's `Pt?`
+// field reached the arm's type check as its tagged slot type, so the arm was refused — "capture
+// 'p' is __nullable<Pt> in this pattern but Pt? in the first" — naming the synthetic.  The
+// check compares the spellings a local holds (`@FR-L-Null-Which`), and the value is read through
+// the tag like every other pattern binding (see
+// `a-pattern-binds-a-nullable-record-field-through-its-tag.loft`).  Values are hand-computed.
+//
+// @falsified-at: 11b48994e — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/a-multi-pattern-arm-binds-a-nullable-field-of-each-variant.patch — the same channels.
+// CHANNEL: the refusal — the control tree does not compile this program.
+// HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
+//   every assertion passes on both backends.
+
+struct Pt { x: integer, y: integer }
+enum W { Pb { p: Pt }, Pn { p: Pt? }, Qn { k: integer, p: Pt? } }
+
+fn state(p: Pt?) -> text { if p == null { "absent" } else { "{p.x} {p.y}" } }
+fn multi(w: W) -> text { match w { Pn { p }, Qn { p } => state(p), _ => "other" } }
+
+fn main() {
+  assert(multi(Pn { p: Pt { x: 7, y: 8 } }) == "7 8", "first variant: {multi(Pn { p: Pt { x: 7, y: 8 } })}");
+  assert(multi(Qn { k: 5, p: Pt { x: 9, y: 1 } }) == "9 1", "second variant: {multi(Qn { k: 5, p: Pt { x: 9, y: 1 } })}");
+  assert(multi(Qn { k: 5, p: null }) == "absent" && multi(Pn { p: null }) == "absent", "absent in either");
+  assert(multi(Pb { p: Pt { x: 1, y: 1 } }) == "other", "the dense variant takes the other arm");
+  println("a multi-pattern arm binds a nullable field of each variant: every cell holds");
+}

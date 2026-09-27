@@ -1817,6 +1817,37 @@ copy is gone and what the row still pays is the buffer's own growth (each doubli
 zero-fills and relocates) and the per-text work around the copy
 (bench/portal/analysis/libraries-wide.md).
 
+### A vector copied element by element is one append
+
+```
+  (R-VecCopy)    `for e in V { t += [e] }` — the forward walk of a vector PLACE V (a
+                 local, or a field chain over one) whose body is the one push of the
+                 loop value into t, the element a kind whose read and push are exact
+                 inverses on the stored bytes (`integer`, `i32`, `float`, `single`,
+                 `boolean`, an enum, `character`, a raw byte at the push's own bias),
+                 V's element t's element — is `t += V`, where t is EXCLUSIVE: a local,
+                 or the frame's hidden return or work buffer, every binding of which is
+                 the field of a store minted in this frame.  A parameter destination —
+                 a `&` link, a by-value vector — is not exclusive: a caller can hand V
+                 in as t, and the walk then grows what it walks where the append takes
+                 it once.  A second statement, a transformed value, an element that owns
+                 heap or reads through a null sentinel, a source that is a call or a
+                 slice, and a destination of another element width keep the loop.
+```
+
+**In words.**  "A copy of this buffer, then more" has no one-statement spelling a library
+author reaches for first, so it is written as the walk — and the walk paid an element read,
+a length re-read and a push per element.  Nothing in the body can move V's length, because
+no push into an exclusive t reaches V, so the walk visits every element in index order
+exactly as the append copies them.  No guard is needed: the conditions are all static.
+
+**BUILT** (2026-09-26, `src/vec_copy.rs` after the byte-copy pass, `LOFT_NO_VEC_COPY`; guard
+`tests/scripts/a-vector-copied-element-by-element-is-one-append.loft`, pin
+`tests/vec_copy.rs`).  zttext `insert_text` (`nb = []; for c in d.buf { nb += [c] }`), the
+insert-only bench, `--native-release`: 25.4 → 5.95 ms per op, hash unchanged — on top of the
+heap fact that `character` owns none (55.2 → 25.4 ms), which had hidden most of this
+rewrite's gain behind a per-element claims walk (bench/portal/analysis/libraries-wide.md).
+
 ### A lookup by one integer key takes the typed entry
 
 ```
@@ -2594,7 +2625,11 @@ answered here rather than decided in the code.
 ```
   (R-Rebind)     `x = f(x, …)` — a whole-value bind to a plain OWNED local x (O-Owner:
                  never a parameter, a view, a `&` link or a witnessed local, nor a `τ?`
-                 that may be absent) from a call that receives x BY VALUE as an
+                 that may be absent) — or to the frame's OWN return buffer promoted onto
+                 a named local (`fn build() -> Doc { d = …; d = step(d, …); d }`), the
+                 record the caller handed this frame to fill, which shares no store with
+                 a sibling parameter because every road that hands a buffer in refuses
+                 one that does — from a call that receives x BY VALUE as an
                  argument, where no OTHER argument reaches x's store (R-Place's alias
                  condition) and no view of x is live across the call (B-Disturb: the
                  CALL, not the bind, is now where x's store changes, so a view the
@@ -2700,6 +2735,18 @@ answered here rather than decided in the code.
                  exported API (R-Escape) — and nowhere else.  Declines: a `&` link to
                  the local; the local handed to a fn-ref; a nullable binding.
 ```
+
+**The own-buffer clause** (2026-09-26, `LOFT_NO_REBIND_OWN_BUFFER`; cells
+`tests/scripts/a-builder-rebinds-into-its-own-return-buffer.loft`, pin
+`tests/rebind_own_buffer.rs`).  A builder promotes the local it returns onto its hidden
+buffer, which made it an argument, and every argument was refused — so each `d = step(d, …)`
+filled a pooled buffer and the bind copied it whole into `d`.  zttext's insert loop
+(`io_d = insert_text(io_d, …)` inside `insert_op`): 5.95 → 5.01 ms per op, hash unchanged;
+two admissions over the census programs (zttext, hex_body).  Built beside it, the live-view
+half of this rule as the code had not enforced it: a view of x read after the call — a loop
+variable over one of x's fields, read after the body rebinds x — now declines (it had
+answered 3004 where the rule says 4; `tests/fixtures/rebind-view-across-call.loft`), which
+cost no library admission.
 
 **In words.**  The rules above this section build NEW bytes where they will live:
 `(R-Place)` hands a call the place its result is going, `(R-ElemFirst)` builds a vector

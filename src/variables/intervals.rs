@@ -63,7 +63,7 @@ fn walk_create_stack(v: &Value, function: &mut Function, create_stack_nr: u32, s
 /// `free_text_nr` / `free_ref_nr` / `create_stack_nr` are the definition numbers of
 /// `OpFreeText` / `OpFreeRef` / `OpCreateStack` (pass `u32::MAX` if the definition is
 /// not yet registered).
-#[allow(clippy::too_many_lines)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub fn compute_intervals(
     val: &Value,
     function: &mut Function,

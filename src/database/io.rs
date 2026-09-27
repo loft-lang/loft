@@ -60,7 +60,7 @@ fn fill_file(path: &std::path::Path, store: &mut Store, file: &DbRef) -> bool {
 impl Stores {
     /// # Panics
     /// If `tp` refers to a type that is not implemented for file reading.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn read_data(&self, r: &DbRef, tp: u16, little_endian: bool, data: &mut Vec<u8>) {
         let store = &self.allocations[r.store_nr as usize];
         match tp {
@@ -292,7 +292,7 @@ impl Stores {
 
     /// # Panics
     /// If `data` does not contain enough bytes for the given type.
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn write_data(&mut self, r: &DbRef, tp: u16, little_endian: bool, data: &[u8]) {
         let store = &mut self.allocations[r.store_nr as usize];
         match tp {

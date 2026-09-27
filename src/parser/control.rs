@@ -608,6 +608,11 @@ impl Parser {
         // statement boundary already does (parse_block, "leak into a LATER statement").
         self.expr_not_null = false;
         self.expr_not_null_name.clear();
+        // The pattern ends here: seal the names it bound into this arm's frame, which the end of
+        // the arm's body restores (`end_pattern_arm`).  A guard (`if n > 5`) is before the arrow
+        // and reads them; the body reads them; nothing after the arm does.
+        let frame = std::mem::take(&mut self.pattern_binds_pending);
+        self.pattern_bind_frames.push(frame);
         // Trace point: match arm-arrow consumption.  Captures whether
         // the parser is looking at `->` (wrong), `=>` (right), or
         // something else (recover via `recover_to`).  Recurring
@@ -651,7 +656,6 @@ impl Parser {
     }
 
     // <block> ::= '}' | <expression> {';' <expression} '}'
-    #[allow(clippy::too_many_lines)]
     /// Does the definition being parsed take its return type FROM ITS BODY?
     ///
     /// True for a lambda, and only for a lambda. A lambda declares no return type, so its
@@ -748,6 +752,7 @@ impl Parser {
         cc_ret
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_block_inner(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
         if let Value::Var(v) = val
             && let Type::Reference(r, _) = self.vars.tp(*v).clone()
@@ -801,7 +806,7 @@ impl Parser {
         // …and the MATH family's sign proofs, on the same block discipline.
         let ms_base = self.math_sign_proven.len();
         // T1.7: track the start-position of the last expression for not-null diagnostics.
-        let mut last_expr_peek = self.lexer.peek();
+        let mut last_expr_peek = self.lexer.peek().clone();
         // @PLN152 step 5 — the narrow store this block pushed LAST, and where it sits in `l`.
         // The fit-failure of a store lives across exactly one statement boundary: offered to
         // the statement that follows, and gone after it.  Held here rather than on the
@@ -862,7 +867,7 @@ impl Parser {
                     // (`token(kw)` below is what consumes it).  So this site names its
                     // position rather than taking `report_pos`'s consumed-source default,
                     // which would put the caret on the line above.
-                    let at = self.lexer.peek();
+                    let at = self.lexer.peek().clone();
                     self.lexer.specific(
                         &at,
                         Level::Error,
@@ -900,7 +905,7 @@ impl Parser {
                     // unreachable statement, which is what the caret should sit on.  So
                     // this site names its position rather than taking `report_pos`'s
                     // consumed-source default, which would point at the terminator above.
-                    let at = self.lexer.peek().position;
+                    let at = self.lexer.peek().position.clone();
                     self.lexer.pos_diagnostic_coded(
                         Level::Warning,
                         &at,
@@ -920,7 +925,7 @@ impl Parser {
                 terminated = None;
             }
             let mut n = Value::Null;
-            last_expr_peek = self.lexer.peek();
+            last_expr_peek = self.lexer.peek().clone();
             // @PLN22 Phase 1 — hint the block's expected enum so a bare
             // value-position variant tail (`fn f() -> Light { Red }`, or an
             // `if c { Red } else { Green }` block) resolves against it.  SAVE and
@@ -1941,6 +1946,7 @@ impl Parser {
         arm_params(tail, &self.vars, &mut params) && params.len() > 1
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn block_result(
         &mut self,
         context: &str,
@@ -4003,6 +4009,7 @@ impl Parser {
     /// Set/Var pair is left in place — the codegen treats a same-store
     /// `OpCopyRecord` as a no-op, so the IR shape stays uniform with the
     /// direct-return path.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn nrvo_collapse_tail_set(&mut self, l: &mut [Value], ls: &[u16]) {
         if self.first_pass || l.is_empty() || ls.is_empty() {
             return;
@@ -4416,6 +4423,7 @@ impl Parser {
         self.rewrite_tail_tuple_with_work_ref(synthetic_d_nr, known_type, w, tail);
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn rewrite_tail_tuple_with_work_ref(
         &mut self,
         synthetic_d_nr: u32,
@@ -5141,13 +5149,14 @@ impl Parser {
     /// `Unknown` for an `if` that names its own type — every one an author opens — and the
     /// enclosing then arm's type for an `else if` CHAIN, whose arms are else arms and convert
     /// at their tails exactly as a plain `else` block does (@FR-N-Decl, loft#1380).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_if_expecting(&mut self, code: &mut Value, expected: &Type) -> Type {
         let mut test = Value::Null;
         // loft#986 — the `{` after this condition opens a BLOCK; an empty `{ }` must not
         // read as a struct literal here.
         let outer_head = self.in_control_head;
         self.in_control_head = true;
-        let cond_at = self.lexer.peek().position;
+        let cond_at = self.lexer.peek().position.clone();
         let tp = self.expression(&mut test);
         self.in_control_head = outer_head;
         self.warn_constant_condition(&tp, &cond_at, "if");
@@ -5549,7 +5558,6 @@ impl Parser {
 
     // <match> ::= 'match' <expression> '{' { <pattern> '=>' <expression> } '}'
     // <pattern> ::= '_' | <variant> [ '{' <field> { ',' <field> } '}' ]
-    #[allow(clippy::too_many_lines)]
     // @F29 — pattern matching (enum/scalar/tuple, guards, or-patterns, exhaustiveness)
     pub(crate) fn parse_match(&mut self, code: &mut Value) -> Type {
         // loft#1382 / loft#1386 — statement position comes from the caller (`parse_block`'s
@@ -5582,6 +5590,7 @@ impl Parser {
         r
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_match_inner(&mut self, code: &mut Value) -> Type {
         // One charge for the whole construct — arm count is not complexity (a 12-arm flat
         // dispatch reads straight down); its arms deepen via `parse_block("match_arm")`.
@@ -5592,7 +5601,11 @@ impl Parser {
         let match_pos = self.lexer.pos().clone();
         // 1. Parse the subject expression.
         let mut subject = Value::Null;
-        let mut subject_type = self.expression(&mut subject);
+        // A struct literal built in place types as `Rewritten(τ)` on the first pass — a signal to
+        // the expression that parsed it (`Type::unrewritten`), which the subject dispatch below
+        // does not recognise: `match Vn { rs: 7 } { … }` dispatched nowhere on pass 1, typed the
+        // match `void`, and a local bound to it refused pass 2's real type.
+        let mut subject_type = self.expression(&mut subject).unrewritten();
         // `(T-Ref)`: a `&(…)` binding denotes the bound tuple itself, so a tuple pattern over it
         // reads every element through the reference, as `t.0` does.  The subject becomes the
         // tuple of those element reads, which the tuple match stores and projects like any
@@ -5865,6 +5878,7 @@ impl Parser {
                 self.skip_rest_of_slice();
                 self.expect_match_arm_arrow();
                 self.skip_match_arm_body();
+                self.end_pattern_arm();
                 continue;
             }
             let Some(first_ident) = self.lexer.has_identifier() else {
@@ -6008,6 +6022,7 @@ impl Parser {
                 self.expect_match_arm_arrow();
                 let mut arm_code = Value::Null;
                 self.expression(&mut arm_code);
+                self.end_pattern_arm();
                 // Consume the optional trailing comma, mirroring the wildcard /
                 // struct arm paths.  Without it, the next loop iteration sees the
                 // leading `,` instead of a variant name and breaks early, leaving
@@ -6661,6 +6676,7 @@ impl Parser {
         self.vars.clear_write_state();
         let tp = self.parse_match_arm_body_inner(expected, arm_code);
         self.vars.restore_write_state(&arm_write_state);
+        self.end_pattern_arm();
         tp
     }
 
@@ -6826,10 +6842,15 @@ impl Parser {
                             ) {
                                 field_conditions.push(cond);
                             }
+                            // The names a sub-pattern bound belong to this arm; its end
+                            // restores them.
+                            self.pattern_binds_pending.append(&mut name_aliases);
                         } else {
-                            let v = self.create_var(&field_name, &field_type);
+                            let v = self.pattern_binding(&field_name, &field_type);
                             self.vars.defined(v);
-                            hoisted_bindings.push(v_set(v, field_val));
+                            let bound =
+                                self.pattern_field_value(e_nr, attr_idx, subject_val.clone());
+                            hoisted_bindings.push(v_set(v, bound));
                         }
                     } else if !self.first_pass {
                         diagnostic!(
@@ -7052,6 +7073,70 @@ impl Parser {
         }
     }
 
+    /// `@FR-B-Scope` — the variable a PATTERN binds `name` to: a NEW binding per occurrence,
+    /// as a `for` loop's variable is (loft#915).  An arm's names belong to the arm, so a later
+    /// `match` that binds the same name — at another type, too — gets its own variable instead
+    /// of the earlier arm's.  Bound by name (`add_variable`), `match a { [e, ..] => … }` then
+    /// `match b { [e, ..] => … }` over a `vector<Pt>` and a `vector<text>` refused the second
+    /// as a type change.  The occurrence's name comes from `loop_binding` (`e`, `e#1`, …),
+    /// which both passes count alike and diagnostics print as `e`; `loop_variable` keys the
+    /// variable by it, and the spelled name is pointed at it for the arm's body.
+    fn pattern_binding(&mut self, name: &str, tp: &Type) -> u16 {
+        if self.context == u32::MAX {
+            return u16::MAX;
+        }
+        let before = self.vars.var(name);
+        // The variable's OWN name must differ from the spelling (`e#1`, never `e`): the arm's
+        // end re-points the spelling, and a lookup by the variable's own name — the return
+        // buffer a local becomes is a hidden attribute found by it — must still reach it.
+        let mut id = self.vars.loop_binding(name);
+        if id == name {
+            id = self.vars.loop_binding(name);
+        }
+        let v = self.vars.loop_variable(&id, tp, &mut self.lexer);
+        if v != u16::MAX {
+            self.vars.set_name(name, v);
+            self.pattern_binds_pending
+                .push((name.to_string(), (before != u16::MAX).then_some(before)));
+        }
+        v
+    }
+
+    /// The end of a match arm: the names its pattern bound stop naming its bindings, and name
+    /// what they named before the arm — a parameter, an outer local, or nothing.  Pairs with
+    /// the seal in `expect_match_arm_arrow`; a nested `match` in the body seals and ends its own
+    /// arms in between, so the frames nest as the arms do.
+    fn end_pattern_arm(&mut self) {
+        let Some(frame) = self.pattern_bind_frames.pop() else {
+            return;
+        };
+        for (name, before) in frame.into_iter().rev() {
+            match before {
+                Some(v) => {
+                    self.vars.set_name(&name, v);
+                }
+                None => self.vars.remove_name(&name),
+            }
+        }
+    }
+
+    /// The value a pattern BINDS for field `attr` of `d_nr` read out of `subject` — one home
+    /// for every site that binds a field to a local: a struct-enum arm (`V { f } =>`), an
+    /// `is` capture, a plain-struct arm, the alternation and multi-pattern slots.
+    ///
+    /// `@FR-L-Null-Which` — a field declared `S?` is STORED as the tagged `__nullable<S>`,
+    /// and a local holds the pointer spelling, so the read goes through the tag here, as
+    /// every other bind of such a slot does (`read_through_tag`).  Bound to the slot's
+    /// address as if it were a dense `S`, each field read its predecessor (`p.x` answered
+    /// the tag) and an absent payload tested present, on both backends.  Any other field
+    /// reads as `get_field` has it.
+    fn pattern_field_value(&mut self, d_nr: u32, attr: usize, subject: Value) -> Value {
+        let mut read = self.get_field(d_nr, attr, subject);
+        let mut slot_tp = self.data.attr_type(d_nr, attr);
+        self.read_through_tag(&mut read, &mut slot_tp);
+        read
+    }
+
     /// `elm_tp` re-stated as a VIEW into the frame variable `src` — the borrow dep a heap
     /// element read carries — or the type unchanged when the element holds no `DbRef` (a
     /// scalar, or a `text` element, which is an owned copy and must keep its own free).
@@ -7075,7 +7160,7 @@ impl Parser {
         elm_tp.with_deps(&crate::data::Deps::frame1(src))
     }
 
-    /// @PLN35 Phase 2 (P-Cap-View) — mark a slice-element capture that reads a HEAP
+    /// @PLN35 Phase 2 (`@FR-P-Cap-View`) — mark a slice-element capture that reads a HEAP
     /// element as a borrowed VIEW of the subject, the same way a struct-enum field
     /// binding is (`parse_match_enum_field_bindings`, #429). A slice binding
     /// `[first, ..] => first` (or `[tok:V, ..]`) reads `OpGetVector(subject, ..)` — a
@@ -7158,6 +7243,12 @@ impl Parser {
                         }
                     } else {
                         let v_nr = self.create_unique(&format!("mv_{field_name}"), &field_type);
+                        // The binding's VALUE reads through a nullable slot's tag; the
+                        // ORIGIN recorded below stays the slot's own read, since a write
+                        // resolved back to the field (`resolved_group_write`) is spelled
+                        // against the field.
+                        let bound =
+                            self.pattern_field_value(variant_def_nr, attr_idx, subject_val.clone());
                         if v_nr != u16::MAX {
                             self.vars.defined(v_nr);
                             // loft#1160 — remember which field this binding projects, so a
@@ -7170,7 +7261,7 @@ impl Parser {
                                     Type::Reference(variant_def_nr, Deps::none()),
                                 ),
                             );
-                            arm_stmts.push(v_set(v_nr, field_read.clone()));
+                            arm_stmts.push(v_set(v_nr, bound));
                             let old = self.vars.set_name(&field_name, v_nr);
                             name_aliases.push((field_name.clone(), old));
                             // B5 remaining half (2026-04-14): a HEAP match-arm
@@ -7217,8 +7308,11 @@ impl Parser {
                             // the `["src"]` dep a `b = subj.field` bind already
                             // carries.  Scalars hold no DbRef, so they need no borrow
                             // dep (the `_mv_value` integer binding stays dep-free).
+                            // A nullable payload (`S?`, `vector<T>?`) borrows the same store
+                            // as its dense twin (`@FR-N-Shape`), so the shape is asked of the
+                            // base type, as `mark_slice_element_view` asks it.
                             if matches!(
-                                &field_type,
+                                field_type.base(),
                                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                             ) && let Some(src) = self.match_borrow_source(subject_val)
                             {
@@ -7308,6 +7402,15 @@ impl Parser {
     fn pattern_variant_enum(&self, tp: &Type) -> Option<(u32, bool)> {
         // Through a `&` too: a tuple element taken from a `&T` binding is that `T`'s value,
         // and a variant pattern asks its enum exactly as a direct subject does (loft#1526).
+        // A value typed as one VARIANT (`w = Vn { rs: 7 }` infers `Vn`) is still a record of
+        // its enum, tag and all, so its patterns name the enum's variants — the mapping the
+        // top-level subject dispatch in `parse_match_inner` makes.  Asked of `Enum` alone, a
+        // tuple element of variant type refused `(Vn { rs }, k)` as "Vn, which has no variants".
+        if let Type::Reference(d_nr, _) = tp.peel_link()
+            && self.data.def_type(*d_nr) == DefType::EnumValue
+        {
+            return Some((self.data.def(*d_nr).parent(), true));
+        }
         let Type::Enum(e_nr, is_struct, _) = tp.peel_link() else {
             return None;
         };
@@ -7337,7 +7440,7 @@ impl Parser {
     fn skip_match_arm_body(&mut self) {
         let mut depth = 0i32;
         loop {
-            match &self.lexer.peek().has {
+            match &self.lexer.peek().has.clone() {
                 LexItem::None => break,
                 LexItem::Token(t) if depth == 0 && t == "," => {
                     self.lexer.cont();
@@ -7368,7 +7471,7 @@ impl Parser {
         let Some((elm_e_nr, _)) = self.pattern_variant_enum(elm_tp) else {
             return false;
         };
-        if let LexItem::Identifier(pname) = &self.lexer.peek().has {
+        if let LexItem::Identifier(pname) = &self.lexer.peek().has.clone() {
             self.data.variant_of(elm_e_nr, pname) != u32::MAX
         } else {
             false
@@ -7640,8 +7743,9 @@ impl Parser {
         (buf, vec_tp, setup)
     }
 
-    /// @PLN35 — materialise a named `..rest` sub-slice `v[lo .. hi]` into a FRESH independent
-    /// `vector<T>` (`rest_var`), by reusing the proven compile-time slice-materialise path
+    /// @PLN35 (`@FR-P-Cap-Fresh`) — materialise a named `..rest` sub-slice `v[lo .. hi]` into a
+    /// FRESH independent `vector<T>` (`rest_var`), by reusing the proven compile-time
+    /// slice-materialise path
     /// (`materialize_iterator` over a minimal index-range `Iter`).  `lo`/`hi` are `Value`s: a
     /// compile-time `Int(head_len)` / `len − tail_len` for a fixed-arity slice, or a runtime
     /// cursor `Var(pos)` / `len` once a variable-width alternation determines the head width
@@ -8015,7 +8119,7 @@ impl Parser {
             if self.lexer.peek_token("{") {
                 let mut depth = 0i32;
                 loop {
-                    match &self.lexer.peek().has {
+                    match &self.lexer.peek().has.clone() {
                         LexItem::Token(t) if t == "{" => {
                             depth += 1;
                             self.lexer.cont();
@@ -8083,6 +8187,7 @@ impl Parser {
     /// `*` = zero-or-more (`head_len <= end`); `+` requires a non-empty run (`head_len < end`).
     /// Assumes the lexer is at `name`; consumes through `]`.  A `..rest` or non-literal tail after
     /// the run, and a `Type` that is not the element type, are rejected.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_scalar_slice_repetition(
         &mut self,
         v: u16,
@@ -8198,7 +8303,7 @@ impl Parser {
         // Capture: `name = v[head_len .. end]` (a fresh `vector<elm_tp>`).  Runs once the arm
         // commits, after the condition set `end`.
         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-        let cap_var = self.vars.add_variable(&cap_name, &vec_tp, &mut self.lexer);
+        let cap_var = self.pattern_binding(&cap_name, &vec_tp);
         self.vars.defined(cap_var);
         if !self.first_pass && cap_var != u16::MAX {
             self.materialize_named_rest(
@@ -8228,6 +8333,7 @@ impl Parser {
     /// consumes through `]`.  Per-iteration field capture inside the body, and non-literal tail
     /// elements, are deferred (rejected here).
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_slice_repetition(
         &mut self,
         e_nr: u32,
@@ -8370,7 +8476,7 @@ impl Parser {
                 // a variant's `{ f, g }` counts as one element).
                 let mut depth = 0i32;
                 loop {
-                    match &self.lexer.peek().has {
+                    match &self.lexer.peek().has.clone() {
                         LexItem::None => break,
                         LexItem::Token(t) if t == "{" || t == "[" || t == "(" => {
                             depth += 1;
@@ -8434,9 +8540,11 @@ impl Parser {
                     tail_conds.push(tag);
                 }
                 tail_conds.append(&mut te_conds);
+                // The names a sub-pattern bound belong to this arm; its end restores them.
+                self.pattern_binds_pending.append(&mut aliases);
                 bindings.append(&mut te_binds);
             } else if let Some(name) = self.lexer.has_identifier() {
-                let bind_var = self.vars.add_variable(&name, elm_tp, &mut self.lexer);
+                let bind_var = self.pattern_binding(&name, elm_tp);
                 if bind_var != u16::MAX {
                     self.vars.defined(bind_var);
                     let elem_read = self.read_slice_elem(v, elm_size, elm_tp, pos.clone());
@@ -8656,7 +8764,7 @@ impl Parser {
         let cap_step = if sep_disc.is_some() { 2 } else { 1 };
         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
         if let Some(name) = cap_name {
-            let cap_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
+            let cap_var = self.pattern_binding(&name, &vec_tp);
             self.vars.defined(cap_var);
             if !self.first_pass && cap_var != u16::MAX {
                 self.materialize_named_rest(
@@ -8675,7 +8783,7 @@ impl Parser {
         // @PLN35 slice 2 — each `{ field }` projects the run's field into its own vector.
         for (fname, attr_idx, ftype) in field_caps {
             let fvec_tp = Type::Vector(Box::new(ftype.clone()), Deps::none());
-            let proj_var = self.vars.add_variable(&fname, &fvec_tp, &mut self.lexer);
+            let proj_var = self.pattern_binding(&fname, &fvec_tp);
             self.vars.defined(proj_var);
             if !self.first_pass && proj_var != u16::MAX {
                 self.materialize_field_projection(
@@ -8695,7 +8803,7 @@ impl Parser {
             }
         }
         if let Some(name) = rest_name {
-            let rest_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
+            let rest_var = self.pattern_binding(&name, &vec_tp);
             self.vars.defined(rest_var);
             if !self.first_pass && rest_var != u16::MAX {
                 let hi_val = self.cursor_len(v);
@@ -8846,6 +8954,7 @@ impl Parser {
     /// `cond` + `bindings` and consumes through `]`.  `..rest` from the runtime cursor is
     /// Phase 4.3 step 5 (deferred here with a diagnostic).
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_multi_element_alternation(
         &mut self,
         e_nr: u32,
@@ -9035,7 +9144,7 @@ impl Parser {
                     })
                 {
                     let elem = self.read_slice_elem(v, elm_size, elm_tp, Value::Int(pos as i32));
-                    let read = self.get_field(vdef, attr, elem);
+                    let read = self.pattern_field_value(vdef, attr, elem);
                     acc = v_if(branch_conds[bi].clone(), read, acc);
                 }
             }
@@ -9065,7 +9174,7 @@ impl Parser {
             bindings.push(v_set(pos_var, pos_acc));
 
             let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-            let rest_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
+            let rest_var = self.pattern_binding(&name, &vec_tp);
             self.vars.defined(rest_var);
             if !self.first_pass && rest_var != u16::MAX {
                 let hi_val = self.cursor_len(v);
@@ -9097,6 +9206,7 @@ impl Parser {
     /// (partial overlap → `option<T>` is Phase 4.2; a varying-width MULTI-element
     /// alternative needs the slice cursor, Phase 4.3).  `elem` is the element value
     /// at this position; it is cloned for each tag test and field read.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_slice_alternation_element(
         &mut self,
         e_nr: u32,
@@ -9244,7 +9354,7 @@ impl Parser {
             let mut acc = self.null(&var_type);
             for (disc, vdef, fields) in alts.iter().rev() {
                 if let Some((_, attr_idx, _)) = fields.iter().find(|(n, _, _)| n == fname) {
-                    let read = self.get_field(*vdef, *attr_idx, elem.clone());
+                    let read = self.pattern_field_value(*vdef, *attr_idx, elem.clone());
                     let tag = self.elem_tag_int(elem.clone());
                     let test = self.cl("OpEqInt", &[tag, Value::Int(*disc)]);
                     acc = v_if(test, read, acc);
@@ -9311,7 +9421,16 @@ impl Parser {
                     }
                     match shared.get(&field_name) {
                         Some((var_nr, shared_ty)) => {
-                            let ok = match_arm_types_unify(shared_ty, &field_type);
+                            // `@FR-L-Null-Which` — a local holds a `S?` field as the pointer, so
+                            // compare the bound spellings: a declared `S?` can reach here as
+                            // its tagged slot type (`__nullable<S>`) and was refused against
+                            // the first pattern's `S?`, naming the synthetic.
+                            let bound_ty = |tp: &Type| {
+                                self.tagged_pointer_type(tp)
+                                    .map_or_else(|| tp.clone(), |(_, p)| p)
+                            };
+                            let ok =
+                                match_arm_types_unify(&bound_ty(shared_ty), &bound_ty(&field_type));
                             if !ok && !self.first_pass {
                                 diagnostic!(
                                     self.lexer,
@@ -9327,8 +9446,11 @@ impl Parser {
                             // the arm never runs (compile fails).  First pass still binds
                             // so the two-pass shapes agree.
                             if ok || self.first_pass {
-                                let field_read =
-                                    self.get_field(variant_def_nr, attr_idx, subject_val.clone());
+                                let field_read = self.pattern_field_value(
+                                    variant_def_nr,
+                                    attr_idx,
+                                    subject_val.clone(),
+                                );
                                 stmts.push(v_set(*var_nr, field_read));
                             }
                             bound.insert(field_name.clone());
@@ -9390,6 +9512,7 @@ impl Parser {
     /// `arm_stmts` / `field_conditions` / `name_aliases` (the recursive pattern path).
     /// Handles: enum variant names (plain AND struct-enum, nested), scalar literals, ranges,
     /// `_` (wildcard).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_field_sub_pattern(
         &mut self,
         field_val: Value,
@@ -9558,6 +9681,7 @@ impl Parser {
 
     /// Parse a match pattern literal (integer, float, text, boolean) and optionally
     /// a range suffix `..` or `..=`. Returns the pattern Value and its type.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_match_pattern(&mut self, subject_type: &Type, subject_var: u16) -> (Value, Type) {
         // INC#31: reject open-start ranges (`..hi =>`) in match arms with a
         // useful diagnostic.  The range-pattern codegen further down assumes
@@ -9569,7 +9693,7 @@ impl Parser {
             // consumed just below.  So this site names its position rather than taking
             // `report_pos`'s consumed-source default, which is the `{` of the `match`
             // on the line above.
-            let at = self.lexer.peek();
+            let at = self.lexer.peek().clone();
             self.lexer.specific(
                 &at,
                 Level::Error,
@@ -9696,7 +9820,7 @@ impl Parser {
 
     /// Parse a match expression over a scalar (integer, text, boolean, etc.).
     /// Builds an if/else chain: `if subject == lit1 { arm1 } else if subject == lit2 { arm2 } else { wildcard }`
-    #[allow(clippy::too_many_lines)] // match-arm dispatch with pattern/guard/binding logic
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_scalar_match(
         &mut self,
         subject: Value,
@@ -9742,7 +9866,7 @@ impl Parser {
                 } else if self.lexer.has_token("@") {
                     // binding pattern `name @ pattern` — bind the subject to
                     // a variable and continue parsing the sub-pattern.
-                    let bind_nr = self.vars.add_variable(&id, subject_type, &mut self.lexer);
+                    let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
                     arm_bindings.push(v_set(bind_nr, Value::Var(v)));
                     // Parse the sub-pattern after `@`.
@@ -9750,7 +9874,7 @@ impl Parser {
                     pattern_val = Some(pat);
                 } else {
                     // Bare identifier without `@` — wildcard binding (binds subject to name).
-                    let bind_nr = self.vars.add_variable(&id, subject_type, &mut self.lexer);
+                    let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
                     arm_bindings.push(v_set(bind_nr, Value::Var(v)));
                     is_wildcard = true;
@@ -9912,7 +10036,6 @@ impl Parser {
     /// Parse a match expression over a vector subject.
     /// Slice patterns: `[a, b] =>`, `[first, ..] =>`, `[.., last] =>`, `_ =>`.
     /// Each arm generates a length check and element bindings.
-    #[allow(clippy::too_many_lines)] // slice pattern parsing with head/tail/rest dispatch
     /// @PLN35 PC1 — is `subject_type` a CURSOR-shaped struct: a `vector<T>` source field + an
     /// integer field named `pos`?  Returns `(struct_def, source_field_idx, pos_field_idx, T)`.
     /// Matching such a subject prefix-consumes; any other struct falls through to the struct handler.
@@ -10041,7 +10164,7 @@ impl Parser {
     /// `peek_scalar_type_capture`.  A variant name (`name : Variant`) has no `n_<...>` fn, so this
     /// stays disjoint from the sub-pattern path.  Returns `(name, fn_def_nr, return_type)`.
     fn peek_subrule_capture(&mut self) -> Option<(String, u32, Type)> {
-        let name = match &self.lexer.peek().has {
+        let name = match &self.lexer.peek().has.clone() {
             LexItem::Identifier(id) if id != "_" => id.clone(),
             _ => return None,
         };
@@ -10101,7 +10224,7 @@ impl Parser {
             self.lexer.cont();
         }
         self.lexer.token("]");
-        let name_var = self.vars.add_variable(name, ret_tp, &mut self.lexer);
+        let name_var = self.pattern_binding(name, ret_tp);
         self.vars.defined(name_var);
         let cursor_tp = self.vars.tp(cursor_var).clone();
         let mut call = Value::Null;
@@ -10280,6 +10403,7 @@ impl Parser {
         color.insert(node, 2); // black = fully explored
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_vector_match(
         &mut self,
         subject: Value,
@@ -10400,8 +10524,7 @@ impl Parser {
                                 if hname == "_" {
                                     continue;
                                 }
-                                let bind_nr =
-                                    self.vars.add_variable(hname, &elm_tp, &mut self.lexer);
+                                let bind_nr = self.pattern_binding(hname, &elm_tp);
                                 self.vars.defined(bind_nr);
                                 let val = self.read_slice_elem(
                                     v,
@@ -10438,7 +10561,7 @@ impl Parser {
                                 "a scalar capture `{name}:{tname}` must match the element type {elm_name}"
                             );
                         }
-                        let bind_nr = self.vars.add_variable(&name, &elm_tp, &mut self.lexer);
+                        let bind_nr = self.pattern_binding(&name, &elm_tp);
                         self.vars.defined(bind_nr);
                         let val = self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
                         bindings.push(v_set(bind_nr, val));
@@ -10455,7 +10578,7 @@ impl Parser {
                         self.lexer.token(":");
                         let position = head.len() as i32;
                         // Bind name = v[position] — the same read as the head-binding loop below.
-                        let bind_nr = self.vars.add_variable(&name, &elm_tp, &mut self.lexer);
+                        let bind_nr = self.pattern_binding(&name, &elm_tp);
                         self.vars.defined(bind_nr);
                         let bval =
                             self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(position));
@@ -10478,6 +10601,8 @@ impl Parser {
                             elem_conds.push(c);
                         }
                         elem_conds.append(&mut sub_conds);
+                        // The names a sub-pattern bound belong to this arm; its end restores them.
+                        self.pattern_binds_pending.append(&mut aliases);
                         head.push("_".to_string());
                     } else if self.peek_is_variant_subpattern(&elm_tp) {
                         // Read v[pos] and tag-test + bind via parse_field_sub_pattern; a "_"
@@ -10503,6 +10628,8 @@ impl Parser {
                             elem_conds.push(c);
                         }
                         elem_conds.append(&mut sub_conds);
+                        // The names a sub-pattern bound belong to this arm; its end restores them.
+                        self.pattern_binds_pending.append(&mut aliases);
                         if has_rest {
                             tail.push("_".to_string());
                         } else {
@@ -10524,8 +10651,7 @@ impl Parser {
                                 if name == "_" {
                                     continue;
                                 }
-                                let bind_nr =
-                                    self.vars.add_variable(name, &elm_tp, &mut self.lexer);
+                                let bind_nr = self.pattern_binding(name, &elm_tp);
                                 self.vars.defined(bind_nr);
                                 let val = self.read_slice_elem(
                                     v,
@@ -10786,7 +10912,7 @@ impl Parser {
                         if name == "_" {
                             continue;
                         }
-                        let bind_nr = self.vars.add_variable(name, &elm_tp, &mut self.lexer);
+                        let bind_nr = self.pattern_binding(name, &elm_tp);
                         self.vars.defined(bind_nr);
                         let val = self.read_slice_elem(v, &elm_size, &elm_tp, Value::Int(i as i32));
                         bindings.push(v_set(bind_nr, val));
@@ -10797,7 +10923,7 @@ impl Parser {
                         if name == "_" {
                             continue;
                         }
-                        let bind_nr = self.vars.add_variable(name, &elm_tp, &mut self.lexer);
+                        let bind_nr = self.pattern_binding(name, &elm_tp);
                         self.vars.defined(bind_nr);
                         let idx = Value::Int(-((tail.len() - j) as i32));
                         let val = self.read_slice_elem(v, &elm_size, &elm_tp, idx);
@@ -10818,7 +10944,7 @@ impl Parser {
                     // spelling (loft#1419), which is the one part of `t` still outstanding.
                     if let Some(name) = rest_name.clone() {
                         let vec_tp = Type::Vector(Box::new(elm_tp.clone()), Deps::none());
-                        let rest_var = self.vars.add_variable(&name, &vec_tp, &mut self.lexer);
+                        let rest_var = self.pattern_binding(&name, &vec_tp);
                         self.vars.defined(rest_var);
                         if !self.first_pass && rest_var != u16::MAX {
                             let lo_val = Value::Int(head.len() as i32);
@@ -10859,7 +10985,7 @@ impl Parser {
                     is_total = true;
                 } else {
                     // bare name — wildcard binding
-                    let bind_nr = self.vars.add_variable(&id, subject_type, &mut self.lexer);
+                    let bind_nr = self.pattern_binding(&id, subject_type);
                     self.vars.defined(bind_nr);
                     bindings.push(v_set(bind_nr, Value::Var(v)));
                     is_total = true;
@@ -11015,7 +11141,7 @@ impl Parser {
     /// Arm syntax: `_ => expr` (wildcard) or `(pat0, pat1, ...) => expr` (element patterns).
     /// Element patterns: `_` (wildcard), `identifier` (binding), or a literal value.
     /// Arms are separated by `,` or `;` (optional after the last arm).
-    #[allow(clippy::too_many_lines)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn parse_tuple_match(&mut self, subject: Value, subject_type: &Type, code: &mut Value) -> Type {
         let Type::Tuple(elem_types) = subject_type else {
             unreachable!("parse_tuple_match called with non-tuple subject")
@@ -11126,6 +11252,8 @@ impl Parser {
                             elem_conds.push(c);
                         }
                         elem_conds.append(&mut sub_conds);
+                        // The names a sub-pattern bound belong to this arm; its end restores them.
+                        self.pattern_binds_pending.append(&mut aliases);
                     } else if let Some(id) = self.lexer.has_identifier() {
                         if id == "_" {
                             // element wildcard — no condition, no binding
@@ -11167,7 +11295,7 @@ impl Parser {
                             }
                         } else {
                             // binding variable — always matches, captures element value
-                            let bind_nr = self.vars.add_variable(&id, &elem_type, &mut self.lexer);
+                            let bind_nr = self.pattern_binding(&id, &elem_type);
                             self.vars.defined(bind_nr);
                             bindings.push(v_set(bind_nr, elem_get));
                         }
@@ -11504,6 +11632,7 @@ impl Parser {
     /// For plain enums: `OpConvIntFromEnum(expr) == disc`.
     /// For struct-enums: `OpConvIntFromEnum(OpGetEnum(expr, 0)) == disc`.
     // @F30 — is variant check (+ field capture)
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_is_variant(
         &mut self,
         code: &mut Value,
@@ -11697,22 +11826,24 @@ impl Parser {
                             // divergence #429 closed for `match`, at the sibling site
                             // (loft#1398).  Scalars carry no DbRef and need no dep, exactly as
                             // there.
+                            // A nullable payload borrows as its dense twin does (`@FR-N-Shape`),
+                            // so the shape is asked of the base type, and the dep is added by
+                            // the one helper the `match` site uses.
                             if matches!(
-                                &field_type,
+                                field_type.base(),
                                 Type::Reference(_, _) | Type::Vector(_, _) | Type::Enum(_, true, _)
                             ) && let Some(src) = self.match_borrow_source(&stable_subject)
                             {
-                                let bound_tp = match self.vars.tp(v_nr).clone() {
-                                    Type::Reference(td, _) => {
-                                        Type::Reference(td, Deps::frame1(src))
-                                    }
-                                    Type::Vector(it, _) => Type::Vector(it, Deps::frame1(src)),
-                                    Type::Enum(td, su, _) => Type::Enum(td, su, Deps::frame1(src)),
-                                    other => other,
-                                };
+                                let bound_tp =
+                                    Self::element_view_of(&self.vars.tp(v_nr).clone(), src);
                                 self.vars.set_type(v_nr, bound_tp);
                             }
-                            self.is_capture_bindings.push(v_set(v_nr, field_read));
+                            let bound = self.pattern_field_value(
+                                variant_def_nr,
+                                attr_idx,
+                                stable_subject.clone(),
+                            );
+                            self.is_capture_bindings.push(v_set(v_nr, bound));
                             let old = self.vars.set_name(&field_name, v_nr);
                             self.is_capture_aliases.push((field_name.clone(), old));
                         }
@@ -12687,6 +12818,7 @@ impl Parser {
     /// A body with no leaf answers no, and so does any leaf this cannot read — the gate is a
     /// POSITIVE proof and an under-approximation, because answering yes wrongly makes a caller
     /// copy where the value was owned and orphan the store it was handed.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn every_return_leaf_views_var(
         data: &crate::data::Data,
         ops: &[Value],
@@ -15633,6 +15765,7 @@ impl Parser {
         }
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn materialize_vector_arms_collect(
         &mut self,
         elm: &Type,
@@ -16365,6 +16498,7 @@ impl Parser {
         verdict
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn classify_ret_promotion_inner(
         &self,
         v: u16,
@@ -16763,6 +16897,7 @@ impl Parser {
         (params.len() == ls.len() && !params.is_empty()).then_some(params)
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn ref_return(&mut self, ls: &[u16], body: &mut [Value], site: RetSite) {
         // loft#938 — an ENTRY line, not just a verdict line.  `LOFT_TRACE_RETPROMO`
         // documented "no line for a function means a gate UPSTREAM of the classifier",
@@ -17284,6 +17419,7 @@ impl Parser {
     }
 
     // <return> ::= [ <expression> ]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_return(&mut self, val: &mut Value) {
         // validate if there is a defined return value
         let mut v = Value::Null;
@@ -17291,7 +17427,7 @@ impl Parser {
         if !self.lexer.peek_token(";") && !self.lexer.peek_token("}") {
             // T1.7: save the position of the first token in the return expression,
             // used to report `not null` violations at the tuple literal site.
-            let expr_start = self.lexer.peek();
+            let expr_start = self.lexer.peek().clone();
             // @P365: a `return [ … ]` vector literal needs the function's return
             // type threaded in as the element-type hint — exactly as an assignment
             // threads its declared LHS type (parse_assign_op → parse_operators).
@@ -17974,7 +18110,7 @@ impl Parser {
         }
     }
 
-    #[allow(clippy::too_many_lines)] // pre-existing length; A5.6b.2 added ~9 lines
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_call(
         &mut self,
         val: &mut Value,
@@ -18314,6 +18450,7 @@ impl Parser {
     /// Dispatch a parsed call to the appropriate handler: diagnostics, special
     /// forms (`map/filter/reduce/sort/parallel_for`), fn-ref calls, or normal calls.
     #[allow(clippy::too_many_arguments)]
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn dispatch_call(
         &mut self,
         val: &mut Value,
@@ -18689,6 +18826,7 @@ impl Parser {
 
     /// Try to dispatch as a call through a function-reference variable.
     /// Returns `Some(return_type)` if `name` is a fn-ref variable, `None` otherwise.
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     fn try_fn_ref_call(
         &mut self,
         val: &mut Value,
@@ -19011,6 +19149,7 @@ impl Parser {
         )
     }
 
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_reduce(&mut self, val: &mut Value, list: &[Value], types: &[Type]) -> Type {
         if self.first_pass {
             // On first pass, return the accumulator type (second arg) if available.
@@ -19620,6 +19759,7 @@ impl Parser {
     /// attribute slot's routine — an expected collection or interpolation type, a named
     /// argument's parameter.  `select` names the definition the call REACHES, asked once the
     /// argument types exist ([`Self::select_method_def`]).
+    #[expect(clippy::too_many_lines, reason = "inherited")]
     pub(crate) fn parse_method_selecting(
         &mut self,
         val: &mut Value,

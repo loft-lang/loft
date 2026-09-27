@@ -313,7 +313,8 @@ fn enter_source_dir(source_dir: &str, program_relative: bool) -> CwdGuard {
 /// Run all zero-parameter functions in `.loft` files under `root_dir` as tests.
 /// Supports `@ARGS`, `@EXPECT_ERROR`, and `@EXPECT_FAIL` file annotations.
 /// Returns 0 if all pass, 1 if any fail.
-#[allow(clippy::too_many_lines, clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments)]
+#[expect(clippy::too_many_lines, reason = "inherited")]
 pub(crate) fn run_tests(
     default_dir: &str,
     root_dir: &str,

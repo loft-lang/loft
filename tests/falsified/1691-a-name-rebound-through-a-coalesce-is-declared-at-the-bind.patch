@@ -1,0 +1,69 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 250a232ab..2e7181304 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -14693,19 +14693,6 @@ impl Scopes<'_> {
+         let mut pre_inits: Vec<u16> = Vec::new();
+         self.find_first_ref_vars(t_val, function, &mut pre_inits);
+         self.find_first_ref_vars(f_val, function, &mut pre_inits);
+-        // `(B-Scope)`: a name whose earlier binding's scope has ENDED is a new binding here,
+-        // and an arm that opens no scope of its own (a lowering's `Insert` or bare `Set`, the
+-        // `??` bind written into its arms) makes it at THIS `if`'s scope — so it is split
+-        // here and pre-inited like a fresh name (loft#1691).  Split inside the arm instead,
+-        // both arms named one copy that `--native` declared in the first arm.
+-        let mut splits: Vec<u16> = Vec::new();
+-        self.find_split_first_vars(t_val, function, &mut splits);
+-        self.find_split_first_vars(f_val, function, &mut splits);
+-        for ov in splits {
+-            let nv = function.copy_variable(ov);
+-            self.var_mapping.insert(ov, nv);
+-            pre_inits.push(nv);
+-        }
+         // The arm-scoped ones are kept aside: each is its arm's own local, so its one bind
+         // there is a FIRST bind on every path — the adoption below offers it the same.
+         let mut arm_scoped: Vec<u16> = Vec::new();
+@@ -17903,44 +17890,6 @@ impl Scopes<'_> {
+         }
+     }
+ 
+-    /// The names an `if` arm assigns at the `if`'s OWN scope — through `Insert` and nested
+-    /// `If` arms, never into a `Block` (which scopes its own binding) or a `Loop` — whose
+-    /// binding [`Self::scan_set`] would split, because the scope it was registered at has
+-    /// ended.  The same test `scan_set` makes, so the split made here is the one it reuses.
+-    fn find_split_first_vars(&self, val: &Value, function: &Function, result: &mut Vec<u16>) {
+-        match val.unspan() {
+-            Value::Set(ov, _) => {
+-                let dead = |v: &u16| {
+-                    self.var_scope
+-                        .get(v)
+-                        .is_some_and(|s| *s != self.scope && !self.stack.contains(s))
+-                };
+-                if dead(ov)
+-                    && self.var_mapping.get(ov).is_none_or(dead)
+-                    && needs_pre_init(function.tp(*ov))
+-                    && function
+-                        .tp(*ov)
+-                        .depend()
+-                        .iter()
+-                        .all(|d| self.var_scope.contains_key(d))
+-                    && !result.contains(ov)
+-                {
+-                    result.push(*ov);
+-                }
+-            }
+-            Value::If(_, t, f) => {
+-                self.find_split_first_vars(t, function, result);
+-                self.find_split_first_vars(f, function, result);
+-            }
+-            Value::Insert(ops) => {
+-                for op in ops {
+-                    self.find_split_first_vars(op, function, result);
+-                }
+-            }
+-            _ => {}
+-        }
+-    }
+-
+     /// loft#1512 — give every call-minted member of a tuple-literal ARGUMENT an owner, at
+     /// any nesting depth: each member `inline_struct_return` can type is moved into a
+     /// `__lift_N` (declared in `preamble`, so it lives at the statement's scope and its
