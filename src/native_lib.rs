@@ -1575,6 +1575,7 @@ pub fn build_shared_cdylib(
         .join("\n");
     std::fs::write(&argfile, contents).map_err(|e| format!("write {}: {e}", argfile.display()))?;
     let mut rustc = std::process::Command::new("rustc");
+    crate::platform::dies_with_driver(&mut rustc, false);
     rustc.arg(format!("@{}", argfile.display()));
     // @PLN54 S9 — the ASan cdylib (above) needs nightly rustc for `-Zsanitizer`.
     if std::env::var_os("LOFT_NATIVE_ASAN").is_some()
@@ -1582,9 +1583,11 @@ pub fn build_shared_cdylib(
     {
         rustc.env("RUSTUP_TOOLCHAIN", "nightly");
     }
-    let output = rustc
-        .output()
-        .map_err(|e| format!("launch rustc: {e} (is the Rust toolchain installed?)"))?;
+    crate::timeout::blocked_on("rustc compiling a library");
+    let output = rustc.output();
+    crate::timeout::unblocked();
+    let output =
+        output.map_err(|e| format!("launch rustc: {e} (is the Rust toolchain installed?)"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let hint = toolchain_failure_hint(&stderr)
