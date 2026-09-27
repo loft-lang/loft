@@ -78,7 +78,7 @@ check_one() {
   log="$OUT/$kind-$stem.log"; t0=$(date +%s.%N)
   case "$kind" in
     interp) case "$f" in tests/scripts/*) mode="--interpret --tests";; *) mode="--interpret";; esac
-            LOFT_TIMEOUT=300 $VG --log-file="$log" target/release/loft $mode "$u" >/dev/null 2>&1; rc=$? ;;
+            LOFT_TIMEOUT=300 LOFT_TIMEOUT_CLEAN_EXIT=1 $VG --log-file="$log" target/release/loft $mode "$u" >/dev/null 2>&1; rc=$? ;;
     native) LOFT_TIMEOUT=300 target/release/loft --native "$f" >/dev/null 2>&1 || { echo "native	$f	build-failed	-	-"; return; }
             dir=$(dirname "$f"); bin=$(ls -t "$dir"/.loft/cache/"$stem"-* 2>/dev/null | head -1)
             [ -n "$bin" ] || { echo "native	$f	no-binary	-	-"; return; }
@@ -132,15 +132,19 @@ runs=$(wc -l < "$OUT/results.tsv")
 invalid=$(awk -F'\t' '$4 != "-" && $4 > 0' "$OUT/results.tsv" | wc -l)
 lost=$(awk -F'\t' '$5 != "-" && $5 > 0' "$OUT/results.tsv" | wc -l)
 unbuilt=$(awk -F'\t' '$3 == "build-failed" || $3 == "no-binary"' "$OUT/results.tsv" | wc -l)
-# `LOFT_TIMEOUT` ends a run with 124 (the GNU `timeout` convention).  The program's own
-# stderr goes to /dev/null, so the exit code is the only place that says so.
-timed=$(awk -F'\t' '$3 == 124' "$OUT/results.tsv" | wc -l)
+# `LOFT_TIMEOUT` ends a run with 124 (the GNU `timeout` convention) only under
+# `LOFT_TIMEOUT_CLEAN_EXIT`, which `check_one` sets; without it the hard-kill ABORTS (134).
+# A run a signal ended (exit 128+) stopped where it stopped as surely as one the timeout
+# ended.  The program's own stderr goes to /dev/null, so the exit code is the only place
+# that says so.
+ENDED='$3 == 124 || ($3 ~ /^[0-9]+$/ && $3 >= 128)'
+timed=$(awk -F'\t' "$ENDED" "$OUT/results.tsv" | wc -l)
 echo "valgrind sweep: $runs runs over $(wc -l < "$OUT/list.txt") files, $(grep -c '::' "$OUT/units.txt") of them one test function of a split file ($(grep -c '^interp' "$OUT/results.tsv") interpreter, $(grep -c '^native' "$OUT/results.tsv") native)"
-echo "  invalid accesses: $invalid file(s) · definitely lost: $lost file(s) · native not built: $unbuilt · timed out: $timed"
+echo "  invalid accesses: $invalid file(s) · definitely lost: $lost file(s) · native not built: $unbuilt · timed out or killed: $timed"
 # A run the timeout ended was checked only up to where it stopped, so it is not a pass.
 if [ "$invalid" -gt 0 ] || [ "$lost" -gt 0 ] || [ "$timed" -gt 0 ]; then
   echo "  RED — the offending runs (kind, unit, exit, invalid-access count, bytes definitely lost, seconds):"
-  awk -F'\t' '($4 != "-" && $4 > 0) || ($5 != "-" && $5 > 0) || $3 == 124' "$OUT/results.tsv" | head -40
+  awk -F'\t' "(\$4 != \"-\" && \$4 > 0) || (\$5 != \"-\" && \$5 > 0) || $ENDED" "$OUT/results.tsv" | head -40
   echo "  logs: $OUT/<kind>-<stem>.log"
   exit 1
 fi

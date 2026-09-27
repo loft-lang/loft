@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A record function whose abandoned return candidate is promoted onto its hidden return
+// buffer, and which answers ANOTHER function's result through that buffer (`return
+// other(k)`), hands the buffer to the callee.  `(O-Buffer)` says whose store the buffer is
+// and that every free of the promoted local declines on its ENTRY WITNESS; the rebind's own
+// free after the call is that free, on both backends.  The scope pass also freed the local
+// BEFORE the call (the loft#1126 transition free), unguarded, and the interpreter did not
+// reset the local, so a callee that fills a live buffer filled the freed store and the
+// caller read whatever took that slot next: cell c7 answered another record's text with no
+// diagnostic (loft#1703, `D-own-52`).  `--native` reset the local and minted afresh.
+//
+// Varied, one axis per cell: the forward target (a tail literal, a promoted local, a callee
+// that forwards again), a caller loop that reuses its buffer, a read after later
+// allocations, the forward inside a loop of the callee, and a candidate bound from a call.
+// Controls: the recursive forward and a function with no candidate.
+//
+// @falsified-by: tests/falsified/1703-a-forward-past-an-abandoned-candidate-fills-a-live-buffer.patch — interpret exit 1 -> 0,
+// interpret 1 assertion failures -> 0; native INERT (expected for a backend-divergence guard —
+// only one side can move)
+
+struct FwRec { name: text, id: integer }
+
+// callees
+fn fw_other(k: integer) -> FwRec { FwRec { name: "o{k}", id: k + 1 } }
+fn fw_other_local(k: integer) -> FwRec { o = FwRec { name: "L{k}", id: k }; o.id += 10; o }
+fn fw_other_fwd(k: integer) -> FwRec {
+  n2 = FwRec { name: "", id: 0 };
+  if k < 0 { return n2; }
+  return fw_other(k * 2);
+}
+
+// c1 the filed shape
+fn fw_rec_other(k: integer) -> FwRec {
+  none = FwRec { name: "", id: 0 };
+  if k < 0 { return none; }
+  if k > 0 { return fw_other(k); }
+  FwRec { name: "x", id: 1 }
+}
+// c3 forward to a callee that returns its promoted local
+fn fw_rec_local(k: integer) -> FwRec {
+  none = FwRec { name: "", id: 0 };
+  if k < 0 { return none; }
+  if k > 0 { return fw_other_local(k); }
+  FwRec { name: "x", id: 1 }
+}
+// c4 forward to a callee that itself forwards
+fn fw_rec_fwd(k: integer) -> FwRec {
+  none = FwRec { name: "", id: 0 };
+  if k < 0 { return none; }
+  if k > 0 { return fw_other_fwd(k); }
+  FwRec { name: "x", id: 1 }
+}
+// c5 control: recursive
+fn fw_rec_self(k: integer) -> FwRec {
+  none = FwRec { name: "", id: 0 };
+  if k < 0 { return none; }
+  if k > 0 { return fw_rec_self(k - 1); }
+  FwRec { name: "s", id: 7 }
+}
+// c6 control: no candidate
+fn fw_nocand(k: integer) -> FwRec {
+  if k > 0 { return fw_other(k); }
+  FwRec { name: "x", id: 1 }
+}
+// c8 forward inside a loop of the callee
+fn fw_rec_loop(k: integer) -> FwRec {
+  none = FwRec { name: "", id: 0 };
+  if k < 0 { return none; }
+  for i in 0..k { if i == 2 { return fw_other(i); } }
+  FwRec { name: "x", id: 1 }
+}
+// c9 candidate from a call
+fn fw_rec_callcand(k: integer) -> FwRec {
+  none = fw_other(0);
+  if k < 0 { return none; }
+  if k > 0 { return fw_other(k); }
+  FwRec { name: "x", id: 1 }
+}
+
+fn test_c1_forward_other() {
+  a = fw_rec_other(1);
+  assert(a.name == "o1" && a.id == 2, "c1 fwd {a.name}/{a.id}");
+  b = fw_rec_other(-1);
+  assert(b.name == "" && b.id == 0, "c1 cand {b.name}/{b.id}");
+  c = fw_rec_other(0);
+  assert(c.name == "x" && c.id == 1, "c1 lit {c.name}/{c.id}");
+}
+fn test_c2_loop_reuse() {
+  s = 0; t = "";
+  for i in 0..5 { r = fw_rec_other(i + 1); s += r.id; t += r.name; }
+  // ids 2..6 = 20; names o1..o5
+  assert(s == 20 && t == "o1o2o3o4o5", "c2 {s} {t}");
+  s2 = 0;
+  for i in 0..6 { r = fw_rec_other(i - 2); s2 += r.id; }
+  // k=-2,-1 → 0,0; k=0 → 1; k=1,2,3 → 2,3,4 = 10
+  assert(s2 == 10, "c2b {s2}");
+}
+fn test_c3_forward_local() {
+  a = fw_rec_local(3);
+  assert(a.name == "L3" && a.id == 13, "c3 {a.name}/{a.id}");
+  s = 0;
+  for i in 0..4 { s += fw_rec_local(i).id; }
+  // i=0 → 1; 1,2,3 → 11,12,13 = 37
+  assert(s == 37, "c3 loop {s}");
+}
+fn test_c4_forward_forward() {
+  a = fw_rec_fwd(2);
+  assert(a.name == "o4" && a.id == 5, "c4 {a.name}/{a.id}");
+  s = 0;
+  for i in 0..3 { s += fw_rec_fwd(i).id; }
+  // i=0 → 1; i=1 → fw_other(2)=3; i=2 → fw_other(4)=5 = 9
+  assert(s == 9, "c4 loop {s}");
+}
+fn test_c5_recursive_control() {
+  a = fw_rec_self(3);
+  assert(a.name == "s" && a.id == 7, "c5 {a.name}/{a.id}");
+}
+fn test_c6_nocand_control() {
+  a = fw_nocand(4);
+  assert(a.name == "o4" && a.id == 5, "c6 {a.name}/{a.id}");
+}
+fn test_c7_read_after_allocations() {
+  r = fw_rec_other(3);
+  junk = FwRec { name: "zzzzzzzzzzzzzzzz", id: 99 };
+  more = [FwRec { name: "q", id: 1 }, FwRec { name: "w", id: 2 }];
+  assert(r.name == "o3" && r.id == 4 && junk.id == 99 && len(more) == 2, "c7 {r.name}/{r.id}");
+}
+fn test_c8_forward_in_loop() {
+  a = fw_rec_loop(5);
+  assert(a.name == "o2" && a.id == 3, "c8 {a.name}/{a.id}");
+  b = fw_rec_loop(1);
+  assert(b.name == "x" && b.id == 1, "c8 short {b.name}/{b.id}");
+}
+fn test_c9_candidate_from_call() {
+  a = fw_rec_callcand(5);
+  assert(a.name == "o5" && a.id == 6, "c9 {a.name}/{a.id}");
+  b = fw_rec_callcand(-1);
+  assert(b.name == "o0" && b.id == 1, "c9 cand {b.name}/{b.id}");
+  s = 0;
+  for i in 0..3 { s += fw_rec_callcand(i).id; }
+  // 1 + 2 + 3 = 6
+  assert(s == 6, "c9 loop {s}");
+}

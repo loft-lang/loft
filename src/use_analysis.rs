@@ -3892,6 +3892,75 @@ pub(crate) fn read_only_uses(
     }
 }
 
+/// `@FR-G-Hold` — does `fn_nr` only ADVANCE the generator handle it receives at argument
+/// `idx`, keeping nothing of it once it returns?
+///
+/// A handle is a value its holder releases, and an inline one passed straight to a call
+/// (`first(gen())`) has no holder but the call's argument.  Where the callee only advances
+/// it, the caller's temp is that holder and the frame is the caller's to release after the
+/// call; where the callee KEEPS it — in a field, an element, a literal, a closure, its own
+/// generator frame — the one that keeps it releases it, and a release by the caller would
+/// free a frame still held.  So the answer is positive and under-approximating: `next`,
+/// the exhausted test a `for` makes, and a pass to a parameter that is itself only advanced
+/// are advancing; every other use of the parameter, and a callee that is itself a generator,
+/// answers `false`, which leaves the handle unreleased as it was (loft#1705).
+#[must_use]
+pub fn handle_param_only_advanced(data: &Data, fn_nr: u32, idx: usize) -> bool {
+    let mut visiting = HashSet::default();
+    param_only_advanced(data, fn_nr, idx, &mut visiting)
+}
+
+fn param_only_advanced(
+    data: &Data,
+    fn_nr: u32,
+    idx: usize,
+    visiting: &mut HashSet<(u32, usize)>,
+) -> bool {
+    if (fn_nr as usize) >= data.definitions.len() {
+        return false;
+    }
+    let def = data.def(fn_nr);
+    let name = def.name();
+    if name == "OpCoroutineNext" || name == "OpCoroutineExhausted" {
+        return idx == 0;
+    }
+    if !def.is_loft_defined()
+        || def.code == Value::Null
+        || matches!(def.returned.base(), Type::Iterator(_, _))
+    {
+        return false;
+    }
+    // A recursive pass answers for itself: the question is asked of the whole cycle.
+    if !visiting.insert((fn_nr, idx)) {
+        return true;
+    }
+    let Some(&p) = def.variables.arguments().get(idx) else {
+        return false;
+    };
+    only_advanced_in(&def.code, p, data, visiting)
+}
+
+fn only_advanced_in(v: &Value, p: u16, data: &Data, visiting: &mut HashSet<(u32, usize)>) -> bool {
+    match v.unspan() {
+        Value::Var(x) => *x != p,
+        Value::Set(x, _) if *x == p => false,
+        Value::Call(d, args) => args.iter().enumerate().all(|(j, a)| {
+            if matches!(a.unspan(), Value::Var(x) if *x == p) {
+                param_only_advanced(data, *d, j, visiting)
+            } else {
+                only_advanced_in(a, p, data, visiting)
+            }
+        }),
+        other => {
+            let mut ok = true;
+            other.for_each_child(&mut |c| {
+                ok = ok && only_advanced_in(c, p, data, visiting);
+            });
+            ok
+        }
+    }
+}
+
 /// @PLN164 B1 — does the bind `v = value` ADOPT the record the callee minted?  True when
 /// `value` is a direct call to a loft-defined callee whose return names EXACTLY its own
 /// hidden return buffer (`fn mk() -> P { o = P { … }; …; o }` reports `["o"]`, the buffer
@@ -3914,6 +3983,9 @@ pub(crate) fn read_only_uses(
 /// ONE home for the three readers (the loft#810 discipline): `scopes::scan_set` pairs the
 /// local with the call's buffer so its free is guarded by store identity, and the two backends'
 /// bind arms deliver the call's result directly instead of minting a store and copying.
+///
+/// The ADOPT is the rewrite, and `LOFT_NO_ADOPT_FIRST_BIND` turns it off.  Whether the local
+/// OWNS what the call answers is not: see [`binds_the_callees_minted_store`].
 #[must_use]
 pub fn adopts_minted_at_bind(
     data: &Data,
@@ -3921,9 +3993,25 @@ pub fn adopts_minted_at_bind(
     v: u16,
     value: &Value,
 ) -> bool {
-    if !crate::keys::adopt_first_bind_enabled() {
-        return false;
-    }
+    crate::keys::adopt_first_bind_enabled()
+        && binds_the_callees_minted_store(data, function, v, value)
+}
+
+/// The SHAPE half of [`adopts_minted_at_bind`], without its switch: the callee returns the
+/// local it promoted onto its buffer, and `v` is a plain local that is not that buffer.
+///
+/// `v`'s dep on the call's buffer is then not a borrow whichever way the bind is lowered: the
+/// adopt takes the callee's store, and the `(R-Switch)` off form copies it into a store `v`
+/// owns.  So a reader asking "is `v` an owner to be freed" asks this, never the switched
+/// predicate; asked through the switch, the off form left an inline container's temp with no
+/// scope to be freed from (loft#1704).
+#[must_use]
+pub fn binds_the_callees_minted_store(
+    data: &Data,
+    function: &crate::variables::Function,
+    v: u16,
+    value: &Value,
+) -> bool {
     let Value::Call(fn_nr, args) = value.unspan() else {
         return false;
     };
