@@ -9668,14 +9668,13 @@ mod plan22_phase02d_iii_d_alloc_prepend_tests {
 /// the element itself?  Answers the callee, the buffer's argument index and the call's
 /// arguments; `None` keeps today's copy.
 ///
-/// The set is deliberately the one Route R proved: a loft-defined callee with a hidden
-/// buffer whose record is non-nullable and ALL-SCALAR (no collection, text or reference
-/// field — a reused record is not zeroed, and only a literal that writes every field is
-/// sound over one; the synthetic-nullable exclusion is
-/// `record_is_fully_written_by_a_literal`'s), and the argument in the buffer's position
-/// is the buffer the caller minted for this call (`caller_hidden_buf`), so substituting
-/// it changes only where the answer is built.  A projection of a call, a nullable
-/// return, a call through a fn-ref, and a record with a vector field all answer `None`.
+/// The set is Route R's: a loft-defined callee with a hidden buffer whose record is
+/// non-nullable and written whole by a literal (the synthetic-nullable exclusion is
+/// `record_is_fully_written_by_a_literal`'s), whose fields are scalars, texts, plain
+/// vectors or inline records (a keyed collection or a struct-enum field keeps the copy),
+/// and the argument in the buffer's position is the buffer the caller minted for this
+/// call (`caller_hidden_buf`), so substituting it changes only where the answer is built.
+/// A projection of a call, a nullable return and a call through a fn-ref answer `None`.
 impl Parser {
     pub(crate) fn element_call_takes_record_buffer(
         &self,
@@ -9710,11 +9709,21 @@ impl Parser {
         {
             return None;
         }
-        let all_scalar = self.data.def(*td).attributes().iter().all(|a| {
+        // The element is FRESH — `OpNewRecord` claimed it a statement earlier with every
+        // handle zeroed — so a literal's write of a heap field lands as it would in a store
+        // of its own: a text claims in the element's store, a plain vector zeroes its handle
+        // and appends, an inline record is written field by field.  A keyed or linked
+        // collection field and a struct-enum field keep the copy: their writes run group
+        // maintenance and variant tagging the fresh-element argument does not cover.
+        let placeable = self.data.def(*td).attributes().iter().all(|a| {
             a.constant
                 || matches!(a.typedef, Type::Routine(_))
                 || crate::data::is_scalar(&a.typedef)
+                || matches!(
+                    a.typedef.base(),
+                    Type::Text(_) | Type::Vector(_, _) | Type::Reference(_, _)
+                )
         });
-        all_scalar.then(|| (*fn_nr, buf_idx, args.clone()))
+        placeable.then(|| (*fn_nr, buf_idx, args.clone()))
     }
 }

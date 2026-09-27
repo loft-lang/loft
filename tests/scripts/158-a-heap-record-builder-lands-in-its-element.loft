@@ -1,0 +1,101 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PLN158 — a buffer-returning callee whose record carries HEAP fields (a text, a plain
+// vector, an inline record) is built IN the appended element, as @PLN157 § V-d already did
+// for an all-scalar record: `v += [btn(i, "lab{i}", on)]` hands `btn` the record
+// `OpNewRecord` just claimed in `v`'s store, so the text claims where it lives — no
+// temporary store, no `OpCopyRecord` with its claim copies, no free.  The element is FRESH
+// (every handle zeroed), which is what makes a heap write sound where a REUSED buffer would
+// leak what it held.  A keyed collection field and a struct-enum field keep today's copy.
+//
+// The values are the same either way, so this is a LOCK over the shapes: each cell is
+// hand-computed, asserts the value AND the length, and runs under LOFT_STRICT_STORES,
+// LOFT_POISON and the leak check on both backends.
+//
+//   h1  text fields in a loop, read back                 h7  the destination handed by value
+//   h2  a vector field (the chunk builder)               h8  300 appends: the element block moves
+//   h3  an inline record from a nested call, plus text   h9  a keyed field — kept on the copy, a control
+//   h4  a nested call in the literal beside a text       h10 a three-element literal
+//   h5  a two-exit callee, both exits literals           h11 a struct-enum field — excluded
+//   h6  a `&` parameter's field as the destination, with an early return
+//
+// h9 and h11 are CONTROLS, not falsified exclusions: a build that admits every field kind
+// passes both under the same falsifiers, so the keyed and struct-enum declines are caution
+// (group maintenance and variant tagging this file does not exercise), not a measured need.
+//
+// @falsified-at: none — no cell can change value on an earlier build; both deliveries
+// answer the same numbers, and that IS the claim.  The evidence that the delivery moved is
+// the A/B on one binary (`LOFT_NO_APPEND_IN_PLACE=1`, consumer `panel_build` 6.7 → 5.4 ms
+// per op on native, hash equal) and `tests/append_in_place.rs`, which pins the emitted shape.
+struct Btn { id: integer, label: text, key: text, on: boolean }
+struct Rect { x: integer, y: integer, w: integer, h: integer }
+struct Wide { id: integer, r: Rect, label: text, on: boolean }
+struct Hex { h: integer, m: integer }
+struct Chunk { cx: integer, hexes: vector<Hex> }
+struct Entry { q: integer, prev: Hex, note: text }
+struct Map { chunks: vector<Chunk> = [] }
+struct Keyed { k: integer, name: text }
+struct Idx { id: integer, items: hash<Keyed[k]> = [] }
+fn btn(id: integer, label: text, on: boolean) -> Btn { Btn { id: id, label: label, key: "k{id}", on: on } }
+fn rect(i: integer) -> Rect { Rect { x: i, y: i * 2, w: 10, h: 20 } }
+fn wide(id: integer, label: text) -> Wide { Wide { id: id, r: rect(id), label: label, on: id % 2 == 0 } }
+fn build_chunk(cx: integer, n: integer) -> Chunk { hs: vector<Hex> = []; for i in 0..n { hs += [Hex { h: cx * 100 + i, m: i }]; } Chunk { cx: cx, hexes: hs } }
+fn get_hex(q: integer) -> Hex { Hex { h: q * 3, m: q } }
+fn entry(q: integer) -> Entry { Entry { q: q, prev: get_hex(q), note: "n{q}" } }
+fn two_exit(c: integer) -> Btn { if c % 2 == 0 { return Btn { id: c, label: "even", key: "e", on: true }; } Btn { id: c, label: "odd", key: "o", on: false } }
+fn from_len(v: vector<Btn>) -> Btn { Btn { id: len(v), label: "L{len(v)}", key: "", on: false } }
+fn idx(id: integer) -> Idx { Idx { id: id, items: [Keyed { k: id, name: "i{id}" }] } }
+enum Hit { HNone, HBtn { b: integer } }
+struct Ev { id: integer, hit: Hit, tag: text }
+fn ev(i: integer) -> Ev { Ev { id: i, hit: HBtn { b: i * 7 }, tag: "tg" } }
+// h11 a struct-enum field — excluded, today's copy (a control)
+fn h11() -> integer { v: vector<Ev> = []; for i in 0..3 { v += [ev(i)]; } s = 0; for e in v { s += e.id + len(e.tag) * 10 + match e.hit { HBtn { b } => b * 100, HNone => 0 }; } s }
+fn ensure(m: &Map, cx: integer) { for c in m.chunks { if c.cx == cx { return; } } m.chunks += [build_chunk(cx, 3)]; }
+
+// h1 text fields in a loop: sum of id*10 + len(label) + len(key), over 5
+fn h1() -> integer { v: vector<Btn> = []; for i in 0..5 { v += [btn(i, "lab{i}", i > 2)]; } s = 0; for b in v { s += b.id * 10 + len(b.label) + len(b.key); if b.on { s += 1000; } } s + len(v) * 100000 }
+// h2 a vector field: chunks of 3 hexes
+fn h2() -> integer { v: vector<Chunk> = []; for cx in 1..4 { v += [build_chunk(cx, 3)]; } s = 0; for c in v { for x in c.hexes { s += x.h + x.m; } s += len(c.hexes) * 1000; } s }
+// h3 a nested record + text, the nested record from a call
+fn h3() -> integer { v: vector<Entry> = []; for q in 0..4 { v += [entry(q)]; } s = 0; for e in v { s += e.q + e.prev.h * 10 + e.prev.m * 100 + len(e.note) * 1000; } s }
+// h4 a nested CALL inside the literal (rect) beside a text
+fn h4() -> integer { v: vector<Wide> = []; for i in 0..4 { v += [wide(i, "w{i}{i}")]; } s = 0; for w in v { s += w.id + w.r.x * 10 + w.r.y * 100 + w.r.w + w.r.h + len(w.label) * 1000; if w.on { s += 10000; } } s }
+// h5 a two-exit callee, both exits literals with texts
+fn h5() -> integer { v: vector<Btn> = []; for c in 0..5 { v += [two_exit(c)]; } s = 0; for b in v { s += len(b.label) * 10 + len(b.key) + b.id * 100; if b.on { s += 1000; } } s }
+// h6 the destination reached through a `&` parameter's field, with an early return
+fn h6() -> integer { m = Map {}; ensure(m, 7); ensure(m, 7); ensure(m, 9); s = 0; for c in m.chunks { s += c.cx * 10000; for x in c.hexes { s += x.h; } } s + len(m.chunks) * 1000000 }
+// h7 the destination handed to the callee by value (loft#1657's shape)
+fn h7() -> integer { v: vector<Btn> = []; for i in 0..4 { v += [from_len(v)]; } s = 0; for b in v { s += b.id * 10 + len(b.label); } s + len(v) * 1000 }
+// h8 growth: 300 appends so the element block reallocates, then every text read back
+fn h8() -> integer { v: vector<Btn> = []; for i in 0..300 { v += [btn(i, "t{i}", false)]; } s = 0; for b in v { s += len(b.label) + len(b.key); } s + v[299]?.id }
+// h9 a keyed collection field — excluded, today's copy (a control)
+fn h9() -> integer { v: vector<Idx> = []; for i in 0..3 { v += [idx(i + 5)]; } s = 0; for x in v { s += x.id * 10 + len(x.items); for k in x.items { s += len(k.name) * 100; } } s }
+// h10 a three-element literal of heap records
+fn h10() -> integer { v: vector<Btn> = []; for i in 0..2 { v += [btn(i, "a", true), btn(i + 10, "bb", false), btn(i + 20, "ccc", true)]; } s = 0; for b in v { s += b.id + len(b.label) * 100; } s + len(v) * 100000 }
+
+pub fn test() {
+  // h1: ids 0..4 → 10*(0+1+2+3+4)=100; label "labN" 4 each → 20; key "kN" 2 each → 10; on for 3,4 → 2000; len 5 → 500000
+  assert(h1() == 502130, "h1 text fields: {h1()}");
+  // h2: cx 1..3, hexes h=cx*100+i (i 0..2), m=i: per chunk Σh = 3*cx*100 + 3, Σm = 3 → chunk cx: 300cx+6; Σ over cx 1..3 = 300*6 + 18 = 1818; + 3 chunks * 3000 = 9000 → 10818
+  assert(h2() == 10818, "h2 a vector field: {h2()}");
+  // h3: q 0..3: q + 3q*10 + q*100 + 2*1000 = 131q + 2000 → Σ = 131*6 + 8000 = 8786
+  assert(h3() == 8786, "h3 a nested record from a call: {h3()}");
+  // h4: i 0..3: i + i*10 + 2i*100 + 30 + 3*1000 (label "wii" 3 chars) + (10000 if even) = 211i + 3030 + 10000*[even] → Σ = 211*6 + 4*3030 + 20000 = 1266 + 12120 + 20000 = 33386
+  assert(h4() == 33386, "h4 a nested call in the literal: {h4()}");
+  // h5: c even (0,2,4): 40+1+100c+1000 = 1041+100c → 1041*3 + 600 = 3723; odd (1,3): 30+1+100c = 31+100c → 62 + 400 = 462 → 4185
+  assert(h5() == 4185, "h5 a two-exit callee: {h5()}");
+  // h6: chunks 7 and 9 once each: Σh chunk7 = 700*3+3 = 2103, chunk9 = 2703; + 70000 + 90000; + 2*1000000 → 2164806
+  assert(h6() == 2164806, "h6 a &-parameter field destination: {h6()}");
+  // h7: element i has id = i (the length before the append), label "Li" 2 chars → 10i + 2 → Σ = 60 + 8 = 68; + 4000 → 4068
+  assert(h7() == 4068, "h7 the destination handed by value: {h7()}");
+  // h8: labels "tN": 2 chars for 0..9 (10), 3 for 10..99 (90), 4 for 100..299 (200) → 20+270+800 = 1090; keys "kN" the same 1090; + 299 → 2479
+  assert(h8() == 2479, "h8 growth then read back: {h8()}");
+  // h9: ids 5,6,7 → 180; each 1 item → 3; names "i5","i6","i7" 2 chars → 200 each → 600 → 783
+  assert(h9() == 783, "h9 a keyed field is excluded: {h9()}");
+  // h10: per i: (i + 100) + (i+10 + 200) + (i+20 + 300) = 3i + 630 → i 0,1: 630 + 633 = 1263; + 6*100000 → 601263
+  assert(h10() == 601263, "h10 a three-element literal: {h10()}");
+  // h11: i 0..2: i + 20 + 700i = 701i + 20 → 701*3 + 60 = 2163
+  assert(h11() == 2163, "h11 a struct-enum field is excluded: {h11()}");
+}
+fn main() { test(); }

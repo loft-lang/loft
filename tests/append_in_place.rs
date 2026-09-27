@@ -71,3 +71,42 @@ fn a_route_r_callee_builds_the_element_in_place_and_an_nrvo_callee_keeps_the_cop
         "an NRVO callee (its return names its buffer) must keep today's lift + copy:\n{kept}"
     );
 }
+
+/// @PLN158 — the heap-field widening: a text-carrying record takes the element too, a
+/// struct-enum field keeps the copy.
+const HEAP_PROBE: &str = "\
+struct Tag { id: integer, label: text }
+enum Hit { HNone, HBtn { b: integer } }
+struct Ev { id: integer, hit: Hit }
+fn tag(i: integer) -> Tag { Tag { id: i, label: \"t{i}\" } }
+fn ev(i: integer) -> Ev { Ev { id: i, hit: HBtn { b: i } } }
+fn tags(n: integer) -> vector<Tag> { v: vector<Tag> = []; for i in 0..n { v += [tag(i)]; } v }
+fn evs(n: integer) -> vector<Ev> { v: vector<Ev> = []; for i in 0..n { v += [ev(i)]; } v }
+fn main() { println(\"{len(tags(3))} {len(evs(3))}\"); }
+";
+
+#[test]
+fn a_heap_record_builder_takes_the_element_and_a_struct_enum_field_keeps_the_copy() {
+    let src = std::env::temp_dir().join("loft_append_in_place_heap_probe.loft");
+    std::fs::write(&src, HEAP_PROBE).expect("write probe");
+    let dump = introspect(&src);
+    let _ = std::fs::remove_file(&src);
+
+    let built = ir_of(&dump, "n_tags");
+    assert!(
+        built.contains("n_tag(")
+            && built.contains(", _elm_1(")
+            && built.contains("OpDistinctStore("),
+        "a text-carrying record must be built in the element:\n{built}"
+    );
+    assert!(
+        !built.contains("__lift_"),
+        "no lift temp for the heap record:\n{built}"
+    );
+
+    let kept = ir_of(&dump, "n_evs");
+    assert!(
+        kept.contains("__lift_") && !kept.contains("OpDistinctStore("),
+        "a struct-enum field must keep the lift + copy:\n{kept}"
+    );
+}

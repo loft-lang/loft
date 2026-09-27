@@ -231,6 +231,17 @@ null again and mints no snapshot — the first bisect step for a use-after-free 
 field out of a callee that rebinds or returns past a local it promoted onto its buffer.
 `LOFT_TRACE_POOL=1` names the gate that keeps each witnessed buffer out of the pool.
 
+**Append in place (@PLN157 § V-d, default-ON, both backends, parse time):** a vector-literal
+element that is a call to a loft-defined builder — `v += [mk(…)]`, the builder writing a
+fresh literal into its hidden buffer on every exit and its return adopted raw — is handed
+the element `OpNewRecord` just claimed as that buffer, so the record is written where it
+lives: no temporary store, no copy, no free.  Since 2026-09-27 the record may carry text,
+plain-vector and inline-record fields (the element is fresh, so nothing leaks under the
+write); a keyed collection field, a struct-enum field and a synthetic-nullable field keep the
+copy.  **`LOFT_NO_APPEND_IN_PLACE=1`** restores the lift + copy — the first bisect step for
+a wrong field, a leak or a double free out of an appended call result; `LOFT_STRICT_STORES=1`,
+`LOFT_POISON=1` and `LOFT_NATIVE_LEAK_CHECK=1` are the falsifiers.
+
 **Mint at first use (@PLN164 A0, `@FR-O-LazyBuffer`, default-ON, both backends, scopes
 pass):** a hidden return buffer (`__ref_N`) is minted in front of the statement that hands it
 to a callee, behind `OpRefIsNull`, instead of at function entry — a scanner tried on every

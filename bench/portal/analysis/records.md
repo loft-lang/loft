@@ -274,3 +274,22 @@ admission.  Matrix axes to hold: nesting depth (1, 2), a nested field written af
 literal, a sub-record handed to another tuple parameter, a nested record with a narrow or
 boolean member, an enum member (declines), a site that copies the whole sub-record
 (`q = v.pos`).
+
+## Built (2026-09-27) — an appended builder's heap record lands in its element
+
+The record-build rows' commonest site is `out += [mk(…)]` over a record WITH A NAME — a
+text field — and @PLN157 § V-d built the in-place delivery for all-scalar records only.  The
+gate's stated reason was the synthetic-nullable field, which
+`record_is_fully_written_by_a_literal` already excludes on its own; the element is fresh, so
+a text, a plain vector or an inline record is written into it exactly as into a store of
+its own.  Hand-priced first on `panel_build`'s emitted Rust (six `make_button(…, _elm)` calls
+in place of lift + copy + free): 6.55 → 5.30 ms per op, hash `11c234`; built (the gate widened,
+`LOFT_NO_APPEND_IN_PLACE` the A/B on one build): **6.7–7.0 → 5.4 ms (−20 %)**, hash equal.
+What the row still pays, from its profile after the change: the per-frame free of the
+previous `Panel` (`remove_claims_mode` 10 %, `owned_walk` 4 %), the store claims of its
+texts (`claim_block`, `fl_insert`, `set_free_header` ~12 %), and `palette_items_for_tool`'s
+copy of a constant vector into the list.  A keyed or struct-enum field keeps the copy
+(h9, h11 of the cell file); `slope_path_with_undo` is unmoved — its builder site
+(`m.m_chunks += [build_chunk(…)]`) runs only when a chunk is absent, and the row is the
+two `map_get_hex` result stores per step, which is `(R-ValueRecord)`'s width and the `?`
+discharge exit (priced next).
