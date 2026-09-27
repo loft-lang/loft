@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN `is` CAPTURE ON A LITERAL SUBJECT PARSES.  A struct or variant literal types as
+// `Rewritten(τ)` on the first pass — a construction signal, not a shape — and `Type::peel_link`,
+// the shape question every dispatch asks, did not peel it.  `parse_is_variant` then fell to the
+// arm that answers `boolean` WITHOUT reading the capture list, and `(Vn { rs: 7 }) is Vn { rs }`
+// failed as "Expect token ;" at the captured name.  `peel_link` now peels the marker, the same
+// fix that makes a `match` on such a literal type (`a-match-on-a-literal-types-on-both-passes`).
+// Values are hand-computed.
+//
+// @falsified-at: d70ec9196 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/an-is-capture-on-a-literal-subject-parses.patch — the same channels.
+// CHANNEL: the refusal — the control tree does not compile this program.
+// HOLDS: no assertion runs on the control tree, which refuses at compile time; on the cure tree
+//   every assertion passes on both backends.
+
+enum W { Pb { p: integer }, Vn { rs: integer } }
+
+fn main() {
+  a = 0;
+  if (Vn { rs: 7 }) is Vn { rs } { a = rs; }
+  assert(a == 7, "the literal's own variant: {a}");
+  b = -1;
+  if (Vn { rs: 7 }) is Pb { p } { b = p; }
+  assert(b == -1, "another variant: {b}");
+  println("an is capture on a literal subject parses: every cell holds");
+}

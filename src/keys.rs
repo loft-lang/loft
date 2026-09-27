@@ -1480,6 +1480,15 @@ pub fn trace_vec_copy() -> bool {
     *ON.get_or_init(|| env_set("LOFT_TRACE_VEC_COPY"))
 }
 
+/// `LOFT_NO_WORK_BUFFER_POOL=1` — each call site supplies a work buffer of its own, as before
+/// loft#1697, instead of taking its frame's pooled one (`Parser::work_buffer_pool`).  The bisect
+/// step between `@FR-R-WorkBuffer` itself and the pool: a wrong value that goes away here and
+/// not under `LOFT_NO_WORK_BUFFER` is two buffers of one frame sharing a store they must not.
+pub fn work_buffer_pool_enabled() -> bool {
+    static ON: OnceLock<bool> = OnceLock::new();
+    *ON.get_or_init(|| !env_set("LOFT_NO_WORK_BUFFER_POOL"))
+}
+
 /// `LOFT_NO_WORK_BUFFER=1` — a vector local that never leaves its frame keeps its store
 /// (`@FR-R-WorkBuffer` off): minted at the declaration and freed at the callee's exit, as
 /// before.  The first bisect step for a wrong, stale or leaked vector inside a function that

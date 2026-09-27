@@ -722,6 +722,16 @@ pub struct Parser {
     /// `@FR-R-WorkBuffer` — every definition given a work-buffer parameter, kept across
     /// `after_pass2` runs so a caller built later (a rebuilt specialisation) is patched too.
     pub(crate) work_buffer_promoted: crate::fxhash::FxHashSet<u32>,
+    /// `@FR-R-WorkBuffer`'s per-frame pool (loft#1697): while callers are patched, the
+    /// work-buffer argument a call needs is `(caller, element type, k)` — the k-th of that
+    /// element type within ONE call — and every call site of the frame shares it.  Calls in a
+    /// frame never overlap and a callee clears its buffer on entry, so one store per slot of
+    /// the widest call serves them all.  Minted per SITE, the buffers climbed up the call
+    /// tree one per site: a function of 150 calls took 150 hidden parameters, and its caller
+    /// 150 more per call.  `None` outside the patching.
+    pub(crate) work_buffer_pool: Option<std::collections::HashMap<(u32, String, usize), u16>>,
+    /// The pool between patching rounds, while `work_buffer_pool` is closed.
+    pub(crate) work_buffer_pool_kept: std::collections::HashMap<(u32, String, usize), u16>,
     /// @PLN167 C3 — some call handed a text field or element to a `&text` parameter, so
     /// `after_pass2` owes the store instances (`store_text.rs`).
     store_text_args: bool,
@@ -1618,6 +1628,8 @@ impl Parser {
             ambiguity_reported: std::collections::HashSet::new(),
             force_tret: crate::fxhash::FxHashSet::default(),
             work_buffer_promoted: crate::fxhash::FxHashSet::default(),
+            work_buffer_pool: None,
+            work_buffer_pool_kept: std::collections::HashMap::new(),
             store_text_args: false,
             par_worker_defs: std::collections::HashSet::new(),
             par_deferred: Vec::new(),
@@ -16006,6 +16018,32 @@ impl Parser {
         Vec::from_iter(dp)
     }
 
+    /// The pooled buffer for work-buffer attribute `a_nr` of callee `d_nr` in the current
+    /// caller (`Parser::work_buffer_pool`): minted on its first use, the same variable after.
+    /// `None` when no pool is open or the attribute is not a work buffer — a return buffer's
+    /// contents outlive the call, so it keeps a store per site.
+    fn pooled_work_buffer(&mut self, d_nr: u32, a_nr: usize, content: &Type) -> Option<u16> {
+        self.work_buffer_pool.as_ref()?;
+        let attrs = self.data.def(d_nr).attributes();
+        if !attrs[a_nr].work_buffer {
+            return None;
+        }
+        let same = |a: &crate::data::Attribute| {
+            a.work_buffer && matches!(a.typedef.base(), Type::Vector(c, _) if **c == *content)
+        };
+        let k = attrs[..a_nr].iter().filter(|a| same(a)).count();
+        let key = (self.context, format!("{content:?}"), k);
+        if let Some(&vr) = self.work_buffer_pool.as_ref()?.get(&key)
+            && vr < self.vars.count()
+        {
+            return Some(vr);
+        }
+        let buf_tp = Type::Vector(Box::new(content.clone()), Deps::none());
+        let vr = self.vars.work_refs(&buf_tp, &mut self.lexer);
+        self.work_buffer_pool.as_mut()?.insert(key, vr);
+        Some(vr)
+    }
+
     #[expect(clippy::too_many_lines, reason = "inherited")]
     fn add_defaults(&mut self, d_nr: u32, actual: &mut Vec<Value>, all_types: &mut Vec<Type>) {
         // @PLAN59 phase 2: the `__rref_N` recursive-self counter dance is
@@ -16089,7 +16127,10 @@ impl Parser {
                     // indices); inherited verbatim it reads as CALLER var
                     // numbers and mislabels the fresh buffer a borrow.
                     let buf_tp = Type::Vector(content.clone(), Deps::none());
-                    let vr = self.vars.work_refs(&buf_tp, &mut self.lexer);
+                    let vr = match self.pooled_work_buffer(d_nr, a_nr, content) {
+                        Some(vr) => vr,
+                        None => self.vars.work_refs(&buf_tp, &mut self.lexer),
+                    };
                     // @PLAN51 Cluster IV: tag this work-ref so parse_code's
                     // preamble emits Set(vr, Null) regardless of vr's
                     // typedef dep list.  Without it, if-tail / recursion

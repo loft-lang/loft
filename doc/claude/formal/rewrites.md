@@ -2118,10 +2118,14 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  a removal, an element read or written through a scalar getter or
                  setter) is STORAGE OF THE CALLER: a hidden `vector<τ>` parameter,
                  named as the local and marked a work buffer, that every call site
-                 supplies as the per-site work-ref a hidden return buffer already takes
-                 (O-LazyBuffer: minted once per activation, on a path that makes the
-                 call, freed at the caller's exit), and that the callee CLEARS where the
-                 declaration stood.  A callee handed the null sentinel — an entry the
+                 supplies from its frame's POOL — the k-th work buffer of element type τ
+                 in ONE call is the frame's buffer (τ, k), shared by every site, because
+                 calls in a frame never overlap and the callee clears it on entry; the
+                 pool is disjoint from the frame's own promoted locals, the only buffers
+                 that hold data across a call — as the work-ref a hidden return buffer
+                 takes (O-LazyBuffer: minted once per activation, on a path that makes
+                 the call, freed at the caller's exit), and that the callee CLEARS where
+                 the declaration stood.  A callee handed the null sentinel — an entry the
                  runtime enters, a host's call — takes the rebound-parameter road at
                  that same site: a store of its own, minted there and released at exit
                  against the entry witness (O-Buffer's callee half), so no route owes
@@ -2164,8 +2168,9 @@ declines — which is how the condition is falsified rather than asserted.  Swit
                  mentions are its entry null-init and work-buffer argument positions, is
                  itself a local that never leaves the frame and becomes a hidden
                  work-buffer parameter of the caller — no mint, no free there; the
-                 buffer climbs round by round to the outermost frame that is not so
-                 promoted, and a null handed down reaches the innermost callee's null
+                 POOL climbs round by round to the outermost frame that is not so
+                 promoted, bounded by the widest single call rather than by the number
+                 of sites, and a null handed down reaches the innermost callee's null
                  road unchanged.  Declined where the callee reaches back to the caller
                  through direct calls: a recursion wants a buffer per activation, which
                  the ref already is, and each round would only mint the next.  A call
@@ -2192,6 +2197,18 @@ refused.  Measured on the probe (`fn f(salt) { v: vector<integer> = []; …; len
 (2026-09-25): 371 vector locals declared `[]`, 77 with no escaping mention by the crude
 test, 194 results (another rule's), 90 handed to a call — the by-value clause above admits
 those whose callee answers no view of the parameter.
+
+**The pool** (2026-09-27, loft#1697; `Parser::pooled_work_buffer`, opened by
+`patch_work_buffer_callers`; `LOFT_NO_WORK_BUFFER_POOL`; guard
+`tests/scripts/a-frame-pools-its-work-buffers-across-call-sites.loft`).  Per site, the
+transitive clause multiplied buffers up the call tree: a library of 100 functions of 150 calls
+each gave every function 150 hidden parameters and `main` 15 002 locals, and the promotion
+fixpoint re-ran the scope pass on each function up to twelve times — 96 s where the build
+before the rule took 1.85 s in all.  Pooled, the same file takes 0.78 s and each function one
+forwarded buffer.  A self-call now takes the forwarded buffer from the pool where it minted one
+per activation (`tests/work_buffer.rs` `n_c18`): a forwarded buffer is only ever an argument,
+so it holds nothing across the call; a frame's OWN promoted local, which does, is never in the
+pool, and a self-call that must supply one still mints a buffer of its own.
 
 **BUILT** (2026-09-25, `src/parser/work_buffer.rs`, run from `after_pass2` beside the
 targeted `__tret` promotion; `LOFT_NO_WORK_BUFFER`, `LOFT_TRACE_WORK_BUFFER`; guard

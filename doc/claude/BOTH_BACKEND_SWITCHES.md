@@ -268,6 +268,17 @@ only hands such a buffer down is promoted in its turn (the trace's `ref=… PROM
 so the buffer is minted by the outermost frame that is not; a callee that reaches back to its
 caller declines that (`stays a local`), and the same switch turns both halves off.
 
+**`LOFT_NO_WORK_BUFFER_POOL=1`** (loft#1697, default-ON, with `@FR-R-WorkBuffer`) gives every
+call site a work buffer of its own again.  By default a frame POOLS them: the k-th work buffer
+of element type τ in one call takes the frame's buffer `(τ, k)`, shared by every call site,
+because calls in a frame never overlap and a callee clears its buffer on entry.  Per site,
+the buffers climbed one per call: a function of 150 calls took 150 hidden parameters and its
+caller 150 more per call — a 15 500-line library spent 96 s in the scope pass where it now
+spends 0.17 s.  The pool is disjoint from the frame's OWN promoted locals, the only buffers
+that hold data across a call.  The bisect step between the rewrite and the pool: a wrong
+value that goes away here and not under `LOFT_NO_WORK_BUFFER` is two buffers of one frame
+sharing a store they must not.
+
 ## Lowering: `??` chains and nested literals
 
 **A `??` chain is RIGHT-associated (loft#1612, `@FR-G-Assoc`, `@FR-B-Copy`, default-ON, both

@@ -11755,6 +11755,19 @@ impl Parser {
                 }
                 Value::Var(tmp)
             };
+            // The variant test reads the SAME value the captures read.  Built on the original
+            // expression, a subject that is not a place — a call, a literal — was evaluated
+            // twice: once into `_is_subj` for the captures and again for the test, so
+            // `if mk() is Vn { rs }` ran `mk()` twice on both backends.  A place (`w.st`) is
+            // free to repeat and keeps its own test, which is how the `variant-overwritten-
+            // binding` lint recognises the subject a later write gives another variant.
+            let stable_check = if Self::is_repeatable_place(&self.data, code) {
+                disc_check.clone()
+            } else {
+                let get_enum = self.cl("OpGetEnum", &[stable_subject.clone(), Value::Int(0)]);
+                let disc_expr = self.cl("OpConvIntFromEnum", &[get_enum]);
+                self.cl("OpEqInt", &[disc_expr, Value::Int(disc)])
+            };
             self.lexer.token("{");
             let mut seen_fields: HashSet<String> = HashSet::new();
             while let Some(field_name) = self.lexer.has_identifier() {
@@ -11891,9 +11904,9 @@ impl Parser {
                 );
             }
             if condition.is_empty() {
-                *code = disc_check;
+                *code = stable_check;
             } else {
-                condition.push(disc_check);
+                condition.push(stable_check);
                 *code = Value::Insert(condition);
             }
         } else {

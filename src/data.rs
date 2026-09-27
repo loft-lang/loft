@@ -2404,10 +2404,17 @@ impl Type {
     ///
     /// The loop is a loop rather than one peel because the wrappers nest: a `&τ?` and a
     /// `&&τ` both reach the shape only by peeling until neither wrapper is on top.
+    ///
+    /// The `Rewritten` marker is peeled too: it says a literal was built in place (#319), a
+    /// signal to the expression that parsed it and never part of the shape
+    /// (`Type::unrewritten`).  A struct or variant literal carries it on the FIRST pass, so a
+    /// shape test that did not peel it dispatched nowhere there — `(Vn { rs: 7 }) is Vn { rs }`
+    /// left its capture list unparsed ("Expect token ;"), and a `match` on such a literal typed
+    /// `void`.
     #[must_use]
     pub fn peel_link(&self) -> &Type {
         let mut tp = self.base();
-        while let Type::RefVar(inner) = tp {
+        while let Type::RefVar(inner) | Type::Rewritten(inner) = tp {
             tp = inner.base();
         }
         tp

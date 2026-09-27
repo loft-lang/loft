@@ -1,0 +1,78 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A FRAME POOLS ITS WORK BUFFERS ACROSS CALL SITES (`@FR-R-WorkBuffer`, loft#1697).  A callee's
+// vector local that never leaves its frame is a hidden buffer its caller supplies; the caller now
+// takes it from a per-frame pool — the k-th work buffer of element type τ in ONE call is the
+// frame's buffer (τ, k) — instead of a buffer per site, because calls in a frame never overlap
+// and a callee clears its buffer on entry.  These cells pin what the pool must NOT change: a
+// frame's own promoted local keeps its contents across a call that is handed a pooled buffer;
+// two buffers of one call are two stores; a nested, a looped, a recursive and a transitive use
+// answer as before; an integer and a float pool do not mix.  Every value is hand-computed.
+//
+// @falsified-at: none — the pool changes how many stores a frame holds and nothing a value
+//   shows, so every cell answers the same with `LOFT_NO_WORK_BUFFER_POOL=1`.  The structural
+//   half is pinned and falsifies: `tests/work_buffer.rs` counts the buffers promoted onward
+//   (`n_c19` 3 per site, 1 pooled), and the probe matrix behind these cells ran green under
+//   strict stores and poison, under `LOFT_WORK_BUFFER_NULL=1`, and with each switch off.
+
+// h(x) = x + 2x
+fn h(x: integer) -> integer {
+  v: vector<integer> = [];
+  v += [x];
+  v += [x * 2];
+  s = 0;
+  for e in v { s += e; }
+  s
+}
+
+// two buffers of one element type in ONE call
+fn two(x: integer) -> integer {
+  a: vector<integer> = [];
+  b: vector<integer> = [];
+  a += [x];
+  b += [x * 10];
+  b += [1];
+  len(a) * 100 + len(b) * 10 + a[0] + b[0]
+}
+
+fn hf(x: float) -> float {
+  w: vector<float> = [];
+  w += [x];
+  w += [x];
+  w[0] + w[1]
+}
+
+// its own buffer holds [7, 8] across two calls that take pooled ones
+fn g(x: integer) -> integer {
+  own: vector<integer> = [];
+  own += [7];
+  own += [8];
+  r = h(x) + h(x + 1);
+  r * 1000 + len(own) * 10 + own[1]
+}
+
+// its own buffer holds [n] across the self-call
+fn rec(n: integer) -> integer {
+  v: vector<integer> = [];
+  v += [n];
+  if n <= 0 { return v[0]; }
+  rec(n - 1) + v[0]
+}
+
+fn main() {
+  assert(g(1) == 9028, "own buffer survives: {g(1)}");
+  assert(two(3) == 153, "two buffers of one call: {two(3)}");
+  assert(h(h(2)) == 18, "nested: {h(h(2))}");
+  s = 0;
+  for i in 0..6 { s += h(i); }
+  assert(s == 45, "a loop: {s}");
+  assert(rec(3) == 6, "recursion: {rec(3)}");
+  assert(g(1) + g(2) == 24056, "transitive: {g(1) + g(2)}");
+  assert(h(1) + h(1) == 6 && hf(1.25) + hf(1.25) == 5.0, "two element types");
+  a = h(1);
+  b = h(2);
+  c = h(3);
+  assert(a == 3 && b == 6 && c == 9, "a sequence: {a} {b} {c}");
+  println("a frame pools its work buffers across call sites: every cell holds");
+}

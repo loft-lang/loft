@@ -42,8 +42,13 @@ const EXPECTED_REFS: &[(&str, usize, usize)] = &[
     ("n_c15", 1, 0),  // c1's buffer, handed down from main
     ("n_c17", 1, 0),  // the wrapper
     ("n_c17o", 1, 0), // the wrapper's caller: the buffer climbs to main
-    ("n_c18", 1, 1),  // the leaf's buffer onward, the self-call's kept
-    ("n_c19", 3, 0),  // three calls, two callees
+    // The leaf's buffer onward, and the self-call takes that same forwarded buffer from the
+    // frame's pool (loft#1697): a forwarded buffer holds nothing across a call, so the inner
+    // activation may use it.  Per site, the self-call minted a buffer of its own every call.
+    ("n_c18", 1, 0),
+    // Three calls, two callees, each taking one `vector<integer>`: calls in a frame never
+    // overlap, so the pool gives them ONE buffer (loft#1697) — per site it was three.
+    ("n_c19", 1, 0),
     ("n_c20w", 0, 1), // its callee calls back into it with the buffer live
 ];
 
