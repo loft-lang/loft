@@ -1,0 +1,93 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A RECURSIVE CHAIN FREES THE BUFFER ITS FRAME MINTED.  `rec` keeps an abandoned return
+// candidate, `none`, which the compiler promotes onto the hidden return buffer, and answers
+// its own recursive call through that buffer: `none = rec(k - 1, none)`.  A caller that hands
+// the null sentinel makes the frame mint `none`'s store itself; the call then answers ANOTHER
+// store (the bottom frame builds its tail literal in a store of its own), and the rebind
+// displaces the minted one.  `@FR-O-Buffer`: the store is this frame's exactly when it is not
+// the one the caller handed, which the entry witness says per run.  The interpreter excluded
+// the hidden buffer argument from every displaced-store free, so it leaked one record per
+// top-level call; native frees it under `_rb_w_<name>`, so the two backends disagreed
+// (`@FR-O-NoDiverge`).  Inside a loop the adopt rewrite hands a real buffer after the first
+// pass and hid the leak, which is why `688-abandoned-return-candidate-leak`'s loop stayed
+// green.  A `main` program, so the run's exit leak check reads it; values are hand-computed.
+//
+// @falsified-at: d70ec9196 — interpret leaked kt=91 F×7 -> clean; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-recursive-chain-frees-the-buffer-its-frame-minted.patch — the same channels.
+// CHANNEL: the leak — the exit check's `stores not freed` line on the interpreter.
+// WITNESS: `1 stores not freed at program exit: kt=91 F×7` on the control.
+// ARMED: nothing — the interpreter's default exit leak check prints it.
+// HOLDS: exit, assertions and panics are equal on both trees and both backends; native is clean on both.
+
+struct F { name: text, id: integer }
+
+fn rec(k: integer) -> F {
+  none = F { name: "", id: 0 };
+  if k < 0 { return none; }
+  if k > 0 { return rec(k - 1); }
+  F { name: "x", id: 1 }
+}
+
+fn other(k: integer) -> F { F { name: "o", id: k * 0 + 1 } }
+
+fn fwd(k: integer) -> F {
+  none = F { name: "", id: 0 };
+  if k < 0 { return none; }
+  if k > 0 { t = other(k); return t; }
+  F { name: "x", id: 1 }
+}
+
+fn plain(k: integer) -> F {
+  if k > 0 { return plain(k - 1); }
+  F { name: "p", id: 2 }
+}
+
+fn test_one_call_frees_what_the_frame_minted() {
+  r = rec(2);
+  assert(r.id == 1 && r.name == "x", "rec(2): {r.id} {r.name}");
+}
+
+fn test_a_deeper_chain_frees_it_too() {
+  r = rec(5);
+  assert(r.id == 1, "rec(5): {r.id}");
+}
+
+fn test_the_result_read_in_place() {
+  assert(rec(3).id == 1, "rec(3).id: {rec(3).id}");
+}
+
+fn test_the_rebind_in_a_loop_frees_each_pass() {
+  s = 0;
+  held = F { name: "h", id: 9 };
+  for i in 0..4 { held = rec(i); s += held.id; }
+  assert(s == 4 && held.name == "x", "loop: {s} {held.name}");
+}
+
+fn test_the_candidate_answered_directly() {
+  r = rec(-1);
+  assert(r.id == 0 && r.name == "", "rec(-1): {r.id} '{r.name}'");
+}
+
+fn test_control_a_forward_through_a_local() {
+  r = fwd(1);
+  assert(r.id == 1 && r.name == "o", "fwd(1): {r.id} {r.name}");
+}
+
+fn test_control_a_chain_with_no_candidate() {
+  r = plain(3);
+  assert(r.id == 2 && r.name == "p", "plain(3): {r.id} {r.name}");
+}
+
+fn main() {
+  test_one_call_frees_what_the_frame_minted();
+  test_a_deeper_chain_frees_it_too();
+  test_the_result_read_in_place();
+  test_the_rebind_in_a_loop_frees_each_pass();
+  test_the_candidate_answered_directly();
+  test_control_a_forward_through_a_local();
+  test_control_a_chain_with_no_candidate();
+  println("a recursive chain frees the buffer its frame minted: every cell holds");
+}

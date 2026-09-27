@@ -2417,12 +2417,18 @@ impl State {
             // GUARDED free — `nullable_local` below routes it there — and `free_displaced`
             // declines a free-protected store, so the caller's argument is never released here;
             // measured: `LOFT_POISON=1` answers identically to `LOFT_POISON=0`.
-            let owned_ref =
-                stack.function.owns_displaced_store(v, value, stack.data) && !is_hidden_buf_arg;
             // `@FR-O-Buffer` — a promoted return buffer may hold the store the CALLER handed,
             // which no free below may release: every one of them is guarded by the entry
             // witness the scope pass minted (native compares `_rb_w_<name>` at its rebind).
             let entry_w = stack.function.entry_witness(v);
+            // The hidden buffer argument is excluded only where no entry witness can tell the
+            // caller's store from one this frame minted.  With one, the buffer is freed like any
+            // owned local, guarded, as native's `owned_ref_reassign` does with `_rb_w_<name>`
+            // (@FR-O-NoDiverge).  Excluding it outright left the store a frame minted for a
+            // null-handed buffer to nobody when a call that took the buffer answered another
+            // store: `none = rec(k - 1, none)` leaked one record per top-level call.
+            let owned_ref = stack.function.owns_displaced_store(v, value, stack.data)
+                && (!is_hidden_buf_arg || entry_w.is_some());
             // An `OpNewRecord` RHS returns an INTERIOR ref into an existing
             // container's backing store (a vector element / nested field), so
             // the new value can land in the SAME store as v's old value —
