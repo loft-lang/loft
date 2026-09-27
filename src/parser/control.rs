@@ -727,24 +727,34 @@ impl Parser {
         // `@FR-B-Scope` — this block is open while its statements parse.
         self.block_ord = self.block_ord.wrapping_add(1);
         self.block_path.push(self.block_ord);
+        self.block_rebinds.push(Vec::new());
         // A loop's variable belongs to the loop's BODY (`@FR-B-Scope`, as in Rust): the `for`
         // header binds it, so this block is where it is bound.
         if matches!(context, "for" | "parallel for") {
-            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body.
+            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body; recorded
+            // on both too, under the pass's own key (loft#1700).
             let binders = std::mem::take(&mut self.pending_loop_binders);
             let lv = self.vars.current_loop_variable();
             for v in std::iter::once(lv).chain(binders) {
-                if self.first_pass {
-                    break;
-                }
                 if v != u16::MAX {
-                    self.bound_in_block
-                        .insert((self.context, v), self.block_path.clone());
+                    self.record_binding(v);
                 }
             }
         }
         let cc_ret = self.parse_block_inner(context, val, result);
         self.block_path.pop();
+        // A binding started after an earlier one ended (loft#1700) ends with this block: the
+        // spelling names what it named before, so pass 2 opens every function on the same
+        // variables pass 1 did.
+        for (name, before) in self
+            .block_rebinds
+            .pop()
+            .unwrap_or_default()
+            .into_iter()
+            .rev()
+        {
+            self.vars.set_name(&name, before);
+        }
         self.fit_armed = outer_fit;
         if cc.is_some() {
             self.cc_nest -= 1;

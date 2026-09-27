@@ -274,18 +274,18 @@ impl Parser {
         if self.vars.is_argument(var) || own.starts_with("__") {
             return;
         }
-        let key = (self.context, var);
+        let key = (self.first_pass, self.context, var);
         let visible = self
             .bound_in_block
             .get(&key)
-            .is_none_or(|p| self.block_path.starts_with(p));
+            .is_none_or(|(b, _)| self.block_open(*b));
         if self.at_binding_name() {
             if !visible || !self.bound_in_block.contains_key(&key) {
-                self.bound_in_block.insert(key, self.block_path.clone());
+                self.record_binding(var);
             }
             return;
         }
-        if !visible {
+        if !visible && !self.first_pass {
             diagnostic_at!(
                 self.lexer,
                 name_pos,
@@ -320,6 +320,72 @@ impl Parser {
                 concept_ref: "@F27",
             });
         }
+    }
+
+    /// `@FR-B-Scope` — has the binding `var` last received ended?  True when the statement
+    /// that bound it sits in a block this point is no longer inside.  Parameters and the
+    /// compiler's own locals are bound for the whole function.
+    fn binding_ended(&self, var: u16) -> bool {
+        if self.vars.is_argument(var) || self.vars.name(var).starts_with("__") {
+            return false;
+        }
+        self.bound_in_block
+            .get(&(self.first_pass, self.context, var))
+            .is_some_and(|(b, _)| !self.block_open(*b))
+    }
+
+    /// Is the block with ordinal `b` (`None` = the function's own scope) still open here?
+    fn block_open(&self, b: Option<u32>) -> bool {
+        b.is_none_or(|b| self.block_path.contains(&b))
+    }
+
+    /// `@FR-B-Scope` — `var` is bound HERE: the open blocks and the loop, on this pass.
+    pub(crate) fn record_binding(&mut self, var: u16) {
+        let at = (
+            self.block_path.last().copied(),
+            self.vars.current_loop_ord(),
+        );
+        self.bound_in_block
+            .insert((self.first_pass, self.context, var), at);
+    }
+
+    /// The loop ordinal `var`'s binding was last recorded in, on this pass.
+    pub(crate) fn binding_loop(&self, var: u16) -> Option<u16> {
+        self.bound_in_block
+            .get(&(self.first_pass, self.context, var))
+            .and_then(|(_, l)| *l)
+    }
+
+    /// `@FR-B-Scope`, loft#1700 — a bind after the block that bound `old`'s name has ended
+    /// starts a NEW binding, and where it has another type it gets a variable of its own, as
+    /// a `for` loop's and a pattern's do; the spelling names it until the enclosing block
+    /// ends.  Bound onto the ended variable, the one-type-per-variable check refused
+    /// `if c { w = 1 } w = "x"` as a type change.
+    ///
+    /// Only where that refusal would fire (the caller asks `retype_would_be_refused`), as
+    /// loft#1145's per-loop rebind does, so no program that compiles changes.  Named by the
+    /// statement's POSITION (`w#3_12`, reported as `w`), not by a counter: pass 1 may not know
+    /// the new type yet and skip the split pass 2 makes, and a position names the same
+    /// statement on both passes whichever of them splits.
+    pub(crate) fn rebind_after_block(&mut self, old: u16, tp: &Type) -> u16 {
+        let bound = self.vars.name(old).to_string();
+        let name = bound.split('#').next().unwrap_or(&bound).to_string();
+        let pos = self.lexer.pos();
+        let own = format!("{name}#{}_{}", pos.line, pos.pos);
+        // `Rewritten` is the literal's built-in-place signal, not a type a variable holds.
+        let v = self
+            .vars
+            .add_variable(&own, &tp.unrewritten(), &mut self.lexer);
+        if v != u16::MAX {
+            // Assigned by the statement that split it; the caller's own mark went to `old`.
+            self.vars.defined(v);
+            self.vars.set_name(&name, v);
+            if let Some(frame) = self.block_rebinds.last_mut() {
+                frame.push((name, old));
+            }
+            self.record_binding(v);
+        }
+        v
     }
 
     #[expect(clippy::too_many_lines, reason = "inherited")]
@@ -636,9 +702,12 @@ impl Parser {
             t = Type::Unknown(0);
         } else if self.vars.name_exists(name) {
             let index_var = self.vars.var(name);
-            if !self.first_pass {
-                self.check_block_scope(index_var, name, name_pos);
-            }
+            // Noted before `check_block_scope` moves the binding here: the assignment decides,
+            // once it knows the new value's type, whether this bind needs a variable of its own
+            // (loft#1700).
+            self.bind_after_end = (self.at_binding_name() && self.binding_ended(index_var))
+                .then(|| (index_var, self.binding_loop(index_var)));
+            self.check_block_scope(index_var, name, name_pos);
             // on pass 2, if a variable has Unknown type, it may be a pass-1
             // placeholder for a forward-declared function. Try fn-ref resolution.
             //
@@ -1305,7 +1374,14 @@ impl Parser {
                         // source needs to know one happened — see
                         // `Parser::unresolved_names`.
                         self.unresolved_names = self.unresolved_names.saturating_add(1);
-                        *code = Value::Var(self.create_var(name, &Type::Unknown(0)));
+                        let v = self.create_var(name, &Type::Unknown(0));
+                        // The binding's block, recorded where pass 1 creates it: pass 2 finds
+                        // the name and records it in `check_block_scope`, and the two passes
+                        // must agree on where every binding lives (loft#1700).
+                        if v != u16::MAX && self.at_binding_name() {
+                            self.record_binding(v);
+                        }
+                        *code = Value::Var(v);
                         t = Type::Unknown(0);
                     }
                 }

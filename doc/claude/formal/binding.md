@@ -409,7 +409,8 @@ avoiding an interior-sub-slice lifetime that neither backend models cleanly.
                  body, a `match` arm body, a bare `{ }` — exists from that statement to the
                  block's `}`.  A read of it after the `}` is refused (`local-out-of-scope`),
                  also when every arm binds it.  A bind after the `}` starts a new binding in
-                 the enclosing block.  A loop variable (and a destructured `for (a, b)`'s
+                 the enclosing block, which may have ANOTHER TYPE than the ended one and
+                 ends with that block (owner ruling, loft#1700).  A loop variable (and a destructured `for (a, b)`'s
                  binders) is bound by its `for` header into the loop's BODY, and ends with
                  it.  A `match` arm's PATTERN binds its names into that arm — its guard and
                  its body — and they end with it, whatever a later arm or `match` binds
@@ -433,6 +434,21 @@ answered a value no statement had assigned (loft#1600, owner ruling).
 
 **OPEN: 0.**
 
+* **D-bind-67** *(opened 2026-09-27, CLOSED 2026-09-27; loft#1700)* — `(B-Scope)`: a bind after
+  the block that bound its name had ended was refused when it had another type (`if c { w = 1 }
+  w = "x"` — *"cannot change type from integer to text"*), because the parser keeps one
+  variable per name and the new binding inherited the ended one's type.  The rule already
+  called it a new binding; whether it may retype was left open until the owner ruled it may.
+  **Fix.**  Where the ended binding would refuse the new type (loft#1145's
+  `retype_would_be_refused`, so a program that compiled is unchanged), the bind gets a
+  variable of its own — named by the statement's position, which both passes agree on — and
+  the spelling names it until the enclosing block ends.  Deciding "ended" on pass 1 as well
+  needed the binding's block recorded on both passes (the innermost block ordinal, which
+  allocates nothing); a body local rebound in ANOTHER loop stays loft#1145's split, asked by
+  loop ordinal because loop numbers differ between the passes; a `&` link bind keeps its own
+  refusals.  `retype_would_be_refused` now also answers a vector against a scalar, a text or a
+  record, which every arm of `change_var_type` refuses.  Guard
+  `tests/scripts/1700-a-bind-after-its-block-ended-is-a-new-binding-at-any-type.loft`.
 * **D-bind-66** *(opened 2026-09-26, CLOSED 2026-09-26)* — `(B-Scope)`, the silent half of
   D-bind-65: a variant's field bound inside a SUB-pattern — a slice element (`[Vn { rs }]`), a
   slice tail, a tuple element, a struct field (`S { w: Vn { rs } }`) — pointed the name at its

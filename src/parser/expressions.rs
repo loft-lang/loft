@@ -3713,7 +3713,34 @@ use a separate collection or add after the loop"
         // both: `=` repoints the target at a fresh store, `+=` appends into what it already
         // holds, and the two need different deliveries (`I-Comp`).  Saved and restored
         // because the RHS may contain assignments of its own.
-        let prev_target = std::mem::replace(&mut self.assign_target, var_nr);
+        // Taken before the right side parses: a bind inside it would overwrite the note.  A
+        // bind after the name's block ended may become a binding of its own once the value's
+        // type is known (loft#1700), so the value is not built INTO the ended one meanwhile.
+        // loft#1145's per-loop split owns a body local bound again in ANOTHER loop; that
+        // program compiles today and keeps its binding (and its loop-record admission).
+        // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
+        let ended_bind = self
+            .bind_after_end
+            .take()
+            .filter(|(_, ended_in)| {
+                let now = self.vars.current_loop_ord();
+                !(now.is_some() && ended_in.is_some() && now != *ended_in)
+            })
+            .map(|(v, _)| v);
+        // A literal builds INTO the value it starts from, and retypes it on the way: into
+        // an ended SCALAR binding that retype is the refusal this split exists to lift, so
+        // it starts from nothing.  A heap or text binding keeps building in place, which is
+        // what a same-type rebind compiles to today.
+        let build_into =
+            if ended_bind == Some(var_nr) && crate::data::is_scalar(self.vars.tp(var_nr).base()) {
+                if matches!(code.unspan(), Value::Var(v) if *v == var_nr) {
+                    *code = Value::Null;
+                }
+                u16::MAX
+            } else {
+                var_nr
+            };
+        let prev_target = std::mem::replace(&mut self.assign_target, build_into);
         let prev_replaces = std::mem::replace(&mut self.assign_replaces, op == "=");
         let prev_snapshot_len = std::mem::take(&mut self.build_snapshot_len);
         // A whole write through a `&(…)` link (`p = (…)`, loft#1673) expects the TUPLE the link
@@ -3737,6 +3764,27 @@ use a separate collection or add after the loop"
         if op == "=" && !self.amp_pending && matches!(to.unspan(), Value::Var(_)) {
             self.read_through_tag(code, &mut s_type);
         }
+        // `@FR-B-Scope`, loft#1700 — a bind after the name's block ended, at a type its old
+        // binding refuses, is a new binding with a variable of its own.  Split HERE, as soon
+        // as the value's type is known and before any route chooses by the target's type: a
+        // collection on either side of the split takes a route of its own further down.
+        let (new_binding, new_binding_type);
+        let (to, f_type) = if op == "="
+            && !self.amp_pending
+            && !s_type.is_unknown()
+            && var_nr != u16::MAX
+            && ended_bind == Some(var_nr)
+            && self
+                .vars
+                .retype_would_be_refused(var_nr, &s_type, &self.data)
+        {
+            var_nr = self.rebind_after_block(var_nr, &s_type);
+            new_binding = Value::Var(var_nr);
+            new_binding_type = self.vars.tp(var_nr).clone();
+            (&new_binding, &new_binding_type)
+        } else {
+            (to, f_type)
+        };
         // `@FR-B-Copy` (with `@FR-T-Cons`) — a whole-tuple bind `u = t` COPIES every heap
         // member.  It is lowered onto the literal's own per-member copy: the source
         // becomes the tuple of its member reads and `tuple_member_owned_copy` gives each heap
@@ -5128,6 +5176,10 @@ use a separate collection or add after the loop"
             self.vars.created_in_loop(var_nr)
         };
         let rebound_to;
+        let to_before = match to.unspan() {
+            Value::Var(v) => Some(*v),
+            _ => None,
+        };
         let to = if op == "="
             && !s_type.is_unknown()
             && cur_loop != u16::MAX
@@ -5151,6 +5203,15 @@ use a separate collection or add after the loop"
             &rebound_to
         } else {
             to
+        };
+        // A split re-targets the store: from here on the target IS the new binding, so its
+        // type is the one the value is checked against (loft#1700, loft#1145).
+        let retargeted_type;
+        let f_type = if matches!(to, Value::Var(v) if Some(*v) != to_before) {
+            retargeted_type = self.vars.tp(var_nr).clone();
+            &retargeted_type
+        } else {
+            f_type
         };
         // loft#1237 — `keyed_local += <vector VALUE>`, the third place kind of loft#1159's
         // question.  That issue gave a keyed FIELD the route that inserts every record a
@@ -7100,7 +7161,7 @@ use a separate collection or add after the loop"
                         .is_some()
             }),
         };
-        if let Some(v_nr) = annotated_var
+        if let Some(mut v_nr) = annotated_var
             && !self.in_format_expr
             && self.lexer.peek_token(":")
         {
@@ -7146,6 +7207,16 @@ use a separate collection or add after the loop"
                 } else {
                     tp
                 };
+                // loft#1700 — a DECLARED bind after the name's block ended, at a type the
+                // ended binding refuses, is a new binding like the undeclared one.
+                if !is_ref
+                    && self.bind_after_end.is_some_and(|(v, _)| v == v_nr)
+                    && self.vars.retype_would_be_refused(v_nr, &tp, &self.data)
+                {
+                    self.bind_after_end = None;
+                    v_nr = self.rebind_after_block(v_nr, &tp);
+                    *code = Value::Var(v_nr);
+                }
                 self.change_var_type(v_nr, &tp);
                 // (I-Join) — an EXPLICIT `: Type` annotation pins the variable's type, so
                 // it stays constrained (a wider write is a narrowing error).  An inferred

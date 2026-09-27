@@ -863,14 +863,28 @@ pub struct Parser {
     /// `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser
     /// ordinal; and, per `(function, local)`, the open-block path where a STATEMENT last bound
     /// that local.  A local bound inside a block ends at that block's `}` (rustc's rule), so a
-    /// read from outside the path is refused.  Pass 2 only: both are written and read in
-    /// source order within the pass.
+    /// read from outside the path is refused.  Written and read in source order within a
+    /// pass, on BOTH passes and keyed by the pass: a bind after the block ends starts a new
+    /// binding (loft#1700), and that decision mints a variable, so pass 1 must make it too.
     pub(crate) block_path: Vec<u32>,
     /// A destructuring `for (a, b) in …`'s binders, bound by the header like the loop variable
     /// and scoped to the body the next `for` block opens.
     pub(crate) pending_loop_binders: Vec<u16>,
     pub(crate) block_ord: u32,
-    pub(crate) bound_in_block: std::collections::HashMap<(u32, u16), Vec<u32>>,
+    /// The binding's block is kept as its INNERMOST ordinal (`None` = the function's own
+    /// scope): ordinals are unique and a block's ancestors never change, so "the recorded
+    /// path is a prefix of the open one" is "its innermost block is still open" — and
+    /// recording a binding allocates nothing (the front end's allocations are pinned).
+    pub(crate) bound_in_block:
+        std::collections::HashMap<(bool, u32, u16), (Option<u32>, Option<u16>)>,
+    /// Per open block, the spellings a bind after an ended binding re-pointed there, with the
+    /// variable each named before — restored at the block's `}` (loft#1700).
+    pub(crate) block_rebinds: Vec<Vec<(String, u16)>>,
+    /// The variable a binding name just resolved to when its binding had ENDED — read by the
+    /// assignment, which splits it off once the new value's type is known (loft#1700).
+    /// With the loop ordinal the ended binding was made in, which decides whether loft#1145's
+    /// per-loop split owns the bind instead.
+    pub(crate) bind_after_end: Option<(u16, Option<u16>)>,
     /// @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an
     /// integer `pos`): `(cursor_var, cursor_def, pos_field_idx, pos_var)`.  `pos_var` holds the
     /// current position (reads are offset by it); the match PREFIX-consumes (gate `pos + fixed <=
@@ -1643,6 +1657,8 @@ impl Parser {
             pending_loop_binders: Vec::new(),
             block_ord: 0,
             bound_in_block: std::collections::HashMap::new(),
+            block_rebinds: Vec::new(),
+            bind_after_end: None,
             match_cursor: None,
             match_cursor_farthest: None,
             subrule_edges: Vec::new(),
