@@ -217,7 +217,6 @@ jobs:
         working-directory: consumer
         run: |
           set -u
-          set -x  # PROBE: which command ends the step with no output
           fail=0
           summary=""
           for pat in ${{ matrix.packages }}; do
@@ -249,7 +248,15 @@ jobs:
                     # `FAILED at line` output of tests that check a failure is reported, and
                     # the 40-line window filled with those before the real one arrived.
                     echo "::error title=$name ($mode): tests fail on loft main::$(grep -E '^ *FAIL +tests/' "/tmp/$name$mode.log" | head -3 | tr '\n' ' ')"
-                    grep -E '^ *FAIL +tests/|^error|test result' "/tmp/$name$mode.log" | head -40
+                    # A run that ends without a runner verdict — the LOFT_TIMEOUT hard-kill, a
+                    # crash, a missing binary — has no `FAIL` line to show, and the step used to
+                    # fail with an empty group.  The log's tail is the only evidence then.
+                    if grep -qE '^ *FAIL +tests/|test result' "/tmp/$name$mode.log"; then
+                      grep -E '^ *FAIL +tests/|^error|test result' "/tmp/$name$mode.log" | head -40
+                    else
+                      echo "no test verdict in the log — its last lines:"
+                      tail -25 "/tmp/$name$mode.log"
+                    fi
                   fi
                 done
                 summary="$summary| \`$name\` |$legs\n"
