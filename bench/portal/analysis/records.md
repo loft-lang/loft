@@ -314,3 +314,16 @@ accounting counted that mention a second time, so a local with a bare in-place m
 a field write passed as a value local and its mint was emitted into a tuple
 (`85-struct-copy-return-owned` failed to compile natively).  The accounting counts a
 mention once; cell v9 holds the shape.
+
+**The lane against the pre-arc commit** (2e4199b7 built into its own target dir, the two
+binaries interleaved twice on the idle arm64 box, `--n 10`, every hash equal):
+
+| row | pre-arc | now | |
+|---|---:|---:|---:|
+| `resolve_move` | 6.24 ms | 3.78 ms | −40 % |
+| `panel_build` | 6.74 ms | 5.66 ms | −16 % |
+| `slope_path_with_undo` | 579 µs | 301 µs | −48 % |
+| `emit_to_material` | 1.53 ms | 1.14 ms | −25 % |
+
+`resolve_move` and `emit_to_material` were not worked on: they call `map_get_hex` and the
+`vec3` / `vertex` builders, which the width and the discharge-return leaf reached.
