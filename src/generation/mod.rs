@@ -5501,6 +5501,26 @@ impl Output<'_> {
     /// inside a nested block is out of scope for a `return` outside it.  The interpreter
     /// cannot have that — a local is a frame slot wherever it is written — so the answer is
     /// used to bind those locals up front and make the two backends agree about scope.
+    /// The locals an `if` TEST assigns before its predicate — the leading statements of an
+    /// `Insert` test (`output_if_inner` emits them inside the `{ … if … }` block it wraps the
+    /// statement in, so a `let` there ends with that block).
+    fn collect_if_test_sets(node: &Value, out: &mut Vec<u16>) {
+        if let Value::If(test, _, _) = node.unspan()
+            && let Value::Insert(ops) = test.unspan()
+            && ops.len() >= 2
+        {
+            for op in &ops[..ops.len() - 1] {
+                if let Value::Set(v, _) = op.unspan()
+                    && !out.contains(v)
+                {
+                    out.push(*v);
+                }
+            }
+        }
+        node.unspan()
+            .for_each_child(&mut |child| Self::collect_if_test_sets(child, out));
+    }
+
     fn collect_returned_vars(node: &Value, out: &mut Vec<u16>) {
         if let Value::Return(inner) = node.unspan()
             && let Value::Var(v) = inner.unspan()
@@ -8980,6 +9000,31 @@ extern crate loft;"
             // hoisted by the `__vdb` rule above.
             let mut returned_vars: Vec<u16> = Vec::new();
             Self::collect_returned_vars(def.code(), &mut returned_vars);
+            // A `DbRef` local an `if` TEST assigns — the capture subject `_is_subj` of
+            // `if mk() is Vn { rs }` — is emitted inside the block `output_if_inner` wraps a
+            // statement-carrying test in, while the scope pass frees it at the FUNCTION's end:
+            // `E0425: cannot find value` on native only.  Bound here as the NULL sentinel and
+            // marked DECLARED — never `predeclared`, which would make the test's assignment a
+            // second, shadowing `let` and orphan the store it receives — so that assignment
+            // lands in this binding.  Not the #354 hazard below: nothing is allocated here.
+            let mut if_test_sets: Vec<u16> = Vec::new();
+            Self::collect_if_test_sets(def.code(), &mut if_test_sets);
+            for &v in &if_test_sets {
+                if !vars.is_argument(v)
+                    && !self.declared.contains(&v)
+                    && !vars.name(v).starts_with("__vdb")
+                    && !self.value_record_locals.contains_key(&v)
+                    && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
+                {
+                    use std::fmt::Write as _;
+                    let _ = write!(
+                        vdb_prologue,
+                        "\n  let mut var_{}: DbRef = DbRef::NULL;",
+                        sanitize(vars.name(v))
+                    );
+                    self.declared.insert(v);
+                }
+            }
             for v in 0..vars.count() {
                 // loft#731 — the iteration scratch belongs here for exactly the
                 // reason above, and was missed because it arrives by a different

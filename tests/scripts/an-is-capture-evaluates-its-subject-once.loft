@@ -1,0 +1,60 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// AN `is` CAPTURE EVALUATES ITS SUBJECT ONCE.  `if mk() is Vn { rs } { … }` binds `rs` from the
+// value the variant test tested.  A subject that is not a variable is held in a temporary
+// (`_is_subj`) for the captures, but the variant test was built from the original expression,
+// so a call or a method call ran TWICE: a counter the callee bumps read 2 on the interpreter,
+// silently.  On `--native` the temporary was declared inside the block the `if` is wrapped in
+// and freed at the function's end, so the program did not compile.  The test now reads the
+// temporary, and the native prologue binds a local an `if` test assigns.  A variable and a field
+// subject need no temporary and were right before (the controls).  Values are hand-computed.
+//
+// @falsified-at: <derived after the fix is committed>
+// CHANNEL: the interpreter's asserts (the counter reads 2) and native's refusal (E0425).
+// WITNESS: `a call subject runs once: 7 2`.
+
+enum W { Pb { p: integer }, Vn { rs: integer } }
+struct H { w: W }
+struct C { n: integer }
+
+fn mk(c: &C, k: integer) -> W {
+  c.n += 1;
+  if k > 0 { Vn { rs: k } } else { Pb { p: -k } }
+}
+fn get(self: W) -> W { match self { Pb { p } => Vn { rs: 39 + p }, _ => Vn { rs: 0 } } }
+
+fn main() {
+  c = C { n: 0 };
+  a = 0;
+  if mk(c, 7) is Vn { rs } { a = rs; }
+  assert(a == 7 && c.n == 1, "a call subject runs once: {a} {c.n}");
+  b = -1;
+  if mk(c, -3) is Vn { rs } { b = rs; }
+  assert(b == -1 && c.n == 2, "the other variant, once: {b} {c.n}");
+  d = 0;
+  if mk(c, 7) is Vn { d = 1; }
+  assert(d == 1 && c.n == 3, "no capture, once: {d} {c.n}");
+  s = 0;
+  for k in [3, -1, 9] { if mk(c, k) is Vn { rs } { s += rs; } }
+  assert(s == 12 && c.n == 6, "in a loop, once per round: {s} {c.n}");
+  e = 0;
+  if mk(c, -5) is Vn { rs } { e = rs; } else if true { e = 5; }
+  assert(e == 5 && c.n == 7, "an else branch: {e} {c.n}");
+  w = Pb { p: 1 };
+  m = 0;
+  if w.get() is Vn { rs } { m = rs; }
+  assert(m == 40, "a method call: {m}");
+  v = [Pb { p: 1 }, Vn { rs: 9 }];
+  g = 0;
+  if v[1] is Vn { rs } { g = rs; }
+  assert(g == 9, "an element: {g}");
+  // controls: no temporary
+  wv = Vn { rs: 7 };
+  h = H { w: Vn { rs: 8 } };
+  cv = 0;
+  if wv is Vn { rs } { cv = rs; }
+  if h.w is Vn { rs } { cv += rs; }
+  assert(cv == 15, "a variable and a field: {cv}");
+  println("an is capture evaluates its subject once: every cell holds");
+}
