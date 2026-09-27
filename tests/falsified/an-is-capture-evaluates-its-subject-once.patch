@@ -1,0 +1,238 @@
+diff --git b/src/data.rs a/src/data.rs
+index 5bf25a759..c63af2e97 100644
+--- b/src/data.rs
++++ a/src/data.rs
+@@ -2404,17 +2404,10 @@ impl Type {
+     ///
+     /// The loop is a loop rather than one peel because the wrappers nest: a `&τ?` and a
+     /// `&&τ` both reach the shape only by peeling until neither wrapper is on top.
+-    ///
+-    /// The `Rewritten` marker is peeled too: it says a literal was built in place (#319), a
+-    /// signal to the expression that parsed it and never part of the shape
+-    /// (`Type::unrewritten`).  A struct or variant literal carries it on the FIRST pass, so a
+-    /// shape test that did not peel it dispatched nowhere there — `(Vn { rs: 7 }) is Vn { rs }`
+-    /// left its capture list unparsed ("Expect token ;"), and a `match` on such a literal typed
+-    /// `void`.
+     #[must_use]
+     pub fn peel_link(&self) -> &Type {
+         let mut tp = self.base();
+-        while let Type::RefVar(inner) | Type::Rewritten(inner) = tp {
++        while let Type::RefVar(inner) = tp {
+             tp = inner.base();
+         }
+         tp
+diff --git b/src/generation/mod.rs a/src/generation/mod.rs
+index 4cbb1d450..5b307bebb 100644
+--- b/src/generation/mod.rs
++++ a/src/generation/mod.rs
+@@ -5501,26 +5501,6 @@ impl Output<'_> {
+     /// inside a nested block is out of scope for a `return` outside it.  The interpreter
+     /// cannot have that — a local is a frame slot wherever it is written — so the answer is
+     /// used to bind those locals up front and make the two backends agree about scope.
+-    /// The locals an `if` TEST assigns before its predicate — the leading statements of an
+-    /// `Insert` test (`output_if_inner` emits them inside the `{ … if … }` block it wraps the
+-    /// statement in, so a `let` there ends with that block).
+-    fn collect_if_test_sets(node: &Value, out: &mut Vec<u16>) {
+-        if let Value::If(test, _, _) = node.unspan()
+-            && let Value::Insert(ops) = test.unspan()
+-            && ops.len() >= 2
+-        {
+-            for op in &ops[..ops.len() - 1] {
+-                if let Value::Set(v, _) = op.unspan()
+-                    && !out.contains(v)
+-                {
+-                    out.push(*v);
+-                }
+-            }
+-        }
+-        node.unspan()
+-            .for_each_child(&mut |child| Self::collect_if_test_sets(child, out));
+-    }
+-
+     fn collect_returned_vars(node: &Value, out: &mut Vec<u16>) {
+         if let Value::Return(inner) = node.unspan()
+             && let Value::Var(v) = inner.unspan()
+@@ -8771,9 +8751,6 @@ extern crate loft;"
+         program_store: Option<&(Stores, crate::keys::DbRef)>,
+     ) -> std::io::Result<()> {
+         self.start_fn(def_nr);
+-        // loft#1697 — the body cannot change while it is emitted, so the ownership oracle's
+-        // whole-function walk is done once here instead of once per question.
+-        let _defs_memo = crate::use_analysis::defs_memo_scope(self.data, def_nr);
+         let def = self.data.def(def_nr);
+         // Skip Op functions with no callable body.
+         if def.name().starts_with("Op") && *def.code() == Value::Null {
+@@ -9003,31 +8980,6 @@ extern crate loft;"
+             // hoisted by the `__vdb` rule above.
+             let mut returned_vars: Vec<u16> = Vec::new();
+             Self::collect_returned_vars(def.code(), &mut returned_vars);
+-            // A `DbRef` local an `if` TEST assigns — the capture subject `_is_subj` of
+-            // `if mk() is Vn { rs }` — is emitted inside the block `output_if_inner` wraps a
+-            // statement-carrying test in, while the scope pass frees it at the FUNCTION's end:
+-            // `E0425: cannot find value` on native only.  Bound here as the NULL sentinel and
+-            // marked DECLARED — never `predeclared`, which would make the test's assignment a
+-            // second, shadowing `let` and orphan the store it receives — so that assignment
+-            // lands in this binding.  Not the #354 hazard below: nothing is allocated here.
+-            let mut if_test_sets: Vec<u16> = Vec::new();
+-            Self::collect_if_test_sets(def.code(), &mut if_test_sets);
+-            for &v in &if_test_sets {
+-                if !vars.is_argument(v)
+-                    && !self.declared.contains(&v)
+-                    && !vars.name(v).starts_with("__vdb")
+-                    && !self.value_record_locals.contains_key(&v)
+-                    && rust_type(vars.tp(v), &Context::Variable) == "DbRef"
+-                {
+-                    use std::fmt::Write as _;
+-                    let _ = write!(
+-                        vdb_prologue,
+-                        "\n  let mut var_{}: DbRef = DbRef::NULL;",
+-                        sanitize(vars.name(v))
+-                    );
+-                    self.declared.insert(v);
+-                }
+-            }
+             for v in 0..vars.count() {
+                 // loft#731 — the iteration scratch belongs here for exactly the
+                 // reason above, and was missed because it arrives by a different
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 2c9c8944d..05ec157da 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -11755,19 +11755,6 @@ impl Parser {
+                 }
+                 Value::Var(tmp)
+             };
+-            // The variant test reads the SAME value the captures read.  Built on the original
+-            // expression, a subject that is not a place — a call, a literal — was evaluated
+-            // twice: once into `_is_subj` for the captures and again for the test, so
+-            // `if mk() is Vn { rs }` ran `mk()` twice on both backends.  A place (`w.st`) is
+-            // free to repeat and keeps its own test, which is how the `variant-overwritten-
+-            // binding` lint recognises the subject a later write gives another variant.
+-            let stable_check = if Self::is_repeatable_place(&self.data, code) {
+-                disc_check.clone()
+-            } else {
+-                let get_enum = self.cl("OpGetEnum", &[stable_subject.clone(), Value::Int(0)]);
+-                let disc_expr = self.cl("OpConvIntFromEnum", &[get_enum]);
+-                self.cl("OpEqInt", &[disc_expr, Value::Int(disc)])
+-            };
+             self.lexer.token("{");
+             let mut seen_fields: HashSet<String> = HashSet::new();
+             while let Some(field_name) = self.lexer.has_identifier() {
+@@ -11904,9 +11891,9 @@ impl Parser {
+                 );
+             }
+             if condition.is_empty() {
+-                *code = stable_check;
++                *code = disc_check;
+             } else {
+-                condition.push(stable_check);
++                condition.push(disc_check);
+                 *code = Value::Insert(condition);
+             }
+         } else {
+diff --git b/src/scopes.rs a/src/scopes.rs
+index cbe0338bb..a0764c014 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -6371,12 +6371,7 @@ fn run_scan_phase(
+             function.set_skip_free(v);
+         }
+     }
+-    // loft#1697 — the scan reads `orig_code` and writes the body back only below, so the
+-    // ownership oracle's whole-function walk holds for the whole scan: done once, not once per
+-    // call site `inline_struct_return` asks about.
+-    let defs_memo = crate::use_analysis::defs_memo_scope(data, d_nr);
+     let mut code = scopes.scan(orig_code, &mut function, data);
+-    drop(defs_memo);
+     // The witness starts FALSE: on entry the buffer holds the CALLER's store, which this
+     // function must never release.  A transition site is reachable with no prior assignment at
+     // all (`fn g() -> Res { mk(2) }`), and `needs_pre_init` does not cover `boolean`, so an
+diff --git b/src/state/codegen.rs a/src/state/codegen.rs
+index 60c9e03e6..2b0259b99 100644
+--- b/src/state/codegen.rs
++++ a/src/state/codegen.rs
+@@ -222,9 +222,6 @@ impl State {
+         data: &mut Data,
+         program_store: Option<&(Stores, crate::keys::DbRef)>,
+     ) {
+-        // loft#1697 — generating the body changes no body, so the ownership oracle's
+-        // whole-function walk is done once for it, not once per question the generator asks.
+-        let _defs_memo = crate::use_analysis::defs_memo_scope(data, def_nr);
+         let logging = !crate::portable_path::is_stdlib_source(&data.def(def_nr).position().file);
+         let console = false; //logging;
+         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
+diff --git b/src/use_analysis.rs a/src/use_analysis.rs
+index c23dbcec6..0326ebcfd 100644
+--- b/src/use_analysis.rs
++++ a/src/use_analysis.rs
+@@ -4547,70 +4547,9 @@ pub fn free_sites(data: &Data, d_nr: u32) -> Vec<FreeSite> {
+ /// summary).  ⚠ It does NOT read `deps`: the dep list is a separate, cheaper stand-in for
+ /// the same question (@FR-O-Proxy) that is unsound alone.  A chokepoint should read here.
+ pub fn ownership_of(data: &Data, d_nr: u32, value: &Value) -> Own {
+-    if let Some(defs) = memoised_defs(data, d_nr) {
+-        return ownership_of_with(data, d_nr, value, &defs);
+-    }
+     ownership_of_with(data, d_nr, value, &function_defs(data, d_nr))
+ }
+ 
+-/// The one function whose [`function_defs`] may be reused, and the value once asked.
+-type DefsMemoSlot = Option<(usize, u32, Option<std::rc::Rc<Defs>>)>;
+-
+-std::thread_local! {
+-    static DEFS_MEMO: std::cell::RefCell<DefsMemoSlot> = const { std::cell::RefCell::new(None) };
+-}
+-
+-/// A span in which ONE function's body cannot change, so its [`function_defs`] is computed on
+-/// the first [`ownership_of`] about it and reused for every later one (loft#1697).
+-///
+-/// `ownership_of` re-derives the whole function's definitions per question, and the native
+-/// emitter asks per assignment and per rewrite candidate — so emitting a function cost the
+-/// square of its size: a 1 500-function program spent 2 s in codegen where the build of
+-/// 2026-09-10 spent 33 ms.  The memo is not on `Data` because the scope pass REWRITES bodies
+-/// (the reason given on `function_defs`); this span is entered where nothing rewrites one —
+-/// the emission of a single function — keyed by this `Data` and this function, and it restores
+-/// whatever it replaced when dropped, so a nested span leaves the outer one intact.
+-#[must_use]
+-pub(crate) struct DefsMemoScope {
+-    prev: DefsMemoSlot,
+-}
+-
+-pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
+-    let key = std::ptr::from_ref(data) as usize;
+-    let prev = DEFS_MEMO.with(|m| m.replace(Some((key, d_nr, None))));
+-    DefsMemoScope { prev }
+-}
+-
+-impl Drop for DefsMemoScope {
+-    fn drop(&mut self) {
+-        let prev = self.prev.take();
+-        DEFS_MEMO.with(|m| *m.borrow_mut() = prev);
+-    }
+-}
+-
+-/// The memoised definitions of `d_nr`, computed on first use, when a [`DefsMemoScope`] for this
+-/// `Data` and this function is open; `None` otherwise.
+-fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::rc::Rc<Defs>> {
+-    let key = std::ptr::from_ref(data) as usize;
+-    let open = DEFS_MEMO.with(|m| match &*m.borrow() {
+-        Some((k, n, got)) if *k == key && *n == d_nr => Some(got.clone()),
+-        _ => None,
+-    })?;
+-    if let Some(defs) = open {
+-        return Some(defs);
+-    }
+-    let defs = std::rc::Rc::new(function_defs(data, d_nr));
+-    DEFS_MEMO.with(|m| {
+-        if let Some((k, n, got)) = &mut *m.borrow_mut()
+-            && *k == key
+-            && *n == d_nr
+-        {
+-            *got = Some(defs.clone());
+-        }
+-    });
+-    Some(defs)
+-}
+-
+ /// WHY the oracle answers what it answers about a BINDING — @PLN155 phase 0.
+ ///
+ /// [`ownership_of`] returns a verdict and hides how much evidence is under it, and the two
