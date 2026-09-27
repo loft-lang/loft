@@ -219,18 +219,23 @@ fn an_inline_container_over_an_adopting_callee_is_released() {
         via.contains("OpFreeRefIfDistinct(__ref_p2_1(2), __ref_1(1))"),
         "via_chain: and released unless it is the pooled buffer"
     );
-    for mode in ["--interpret", "--native"] {
-        let mut cmd = loft();
-        cmd.arg(mode)
-            .arg(cells())
-            .arg("r23")
-            .arg("r27")
-            .env("LOFT_NATIVE_LEAK_CHECK", "1")
-            .env("LOFT_STRICT_STORES", "1");
-        let out = cmd.output().expect("spawn loft");
-        let err = String::from_utf8_lossy(&out.stderr);
-        assert!(out.status.success(), "{mode}: {err}");
-        assert!(!err.contains("not freed"), "{mode}: {err}");
+    // And with the adopt switched off (`(R-Switch)`'s off form copies): the temp still OWNS
+    // what the call answered, so it is still hoisted and released (loft#1704).
+    for env in [&[][..], &[("LOFT_NO_ADOPT_FIRST_BIND", "1")][..]] {
+        for mode in ["--interpret", "--native"] {
+            let mut cmd = loft();
+            cmd.arg(mode)
+                .arg(cells())
+                .arg("r23")
+                .arg("r27")
+                .env("LOFT_NATIVE_LEAK_CHECK", "1")
+                .env("LOFT_STRICT_STORES", "1");
+            with_env(&mut cmd, env);
+            let out = cmd.output().expect("spawn loft");
+            let err = String::from_utf8_lossy(&out.stderr);
+            assert!(out.status.success(), "{mode} {env:?}: {err}");
+            assert!(!err.contains("not freed"), "{mode} {env:?}: {err}");
+        }
     }
 }
 

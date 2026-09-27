@@ -3914,6 +3914,9 @@ pub(crate) fn read_only_uses(
 /// ONE home for the three readers (the loft#810 discipline): `scopes::scan_set` pairs the
 /// local with the call's buffer so its free is guarded by store identity, and the two backends'
 /// bind arms deliver the call's result directly instead of minting a store and copying.
+///
+/// The ADOPT is the rewrite, and `LOFT_NO_ADOPT_FIRST_BIND` turns it off.  Whether the local
+/// OWNS what the call answers is not: see [`binds_the_callees_minted_store`].
 #[must_use]
 pub fn adopts_minted_at_bind(
     data: &Data,
@@ -3921,9 +3924,24 @@ pub fn adopts_minted_at_bind(
     v: u16,
     value: &Value,
 ) -> bool {
-    if !crate::keys::adopt_first_bind_enabled() {
-        return false;
-    }
+    crate::keys::adopt_first_bind_enabled() && binds_the_callees_minted_store(data, function, v, value)
+}
+
+/// The SHAPE half of [`adopts_minted_at_bind`], without its switch: the callee returns the
+/// local it promoted onto its buffer, and `v` is a plain local that is not that buffer.
+///
+/// `v`'s dep on the call's buffer is then not a borrow whichever way the bind is lowered: the
+/// adopt takes the callee's store, and the `(R-Switch)` off form copies it into a store `v`
+/// owns.  So a reader asking "is `v` an owner to be freed" asks this, never the switched
+/// predicate; asked through the switch, the off form left an inline container's temp with no
+/// scope to be freed from (loft#1704).
+#[must_use]
+pub fn binds_the_callees_minted_store(
+    data: &Data,
+    function: &crate::variables::Function,
+    v: u16,
+    value: &Value,
+) -> bool {
     let Value::Call(fn_nr, args) = value.unspan() else {
         return false;
     };

@@ -11460,14 +11460,16 @@ impl Scopes<'_> {
                 let mut hoisted_ref: Option<u16> = None;
                 if let Some(Value::Var(orig_ret)) = bl.operators.last() {
                     let ret_v = *self.var_mapping.get(orig_ret).unwrap_or(orig_ret);
-                    // @PLN164 B1 — a bind that ADOPTS the callee's minted record has its deps
-                    // stripped by `scan_set` inside the block, after this decision; the
-                    // parser's dep on the call's buffer is not a borrow (loft's inline
-                    // container `f().pts[i]` over such a callee leaked one record per call).
+                    // @PLN164 B1 — a bind of the callee's minted record has its deps stripped
+                    // by `scan_set` inside the block, after this decision, whether it ADOPTS
+                    // or (under `LOFT_NO_ADOPT_FIRST_BIND`) copies; the parser's dep on the
+                    // call's buffer is not a borrow (loft's inline container `f().pts[i]` over
+                    // such a callee leaked one record per call — and again with the switch
+                    // off while this asked the switched predicate, loft#1704).
                     let adopts = bl.operators.iter().any(|op| {
                         matches!(op.unspan(), Value::Set(w, value)
                         if w == orig_ret
-                            && crate::use_analysis::adopts_minted_at_bind(
+                            && crate::use_analysis::binds_the_callees_minted_store(
                                 data, function, ret_v, value,
                             ))
                     });
