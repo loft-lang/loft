@@ -47,7 +47,16 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  R-InPlaceLiteral, R-ValueRecord) its falsifier is the SWITCH A/B: the
                  script corpus and the consumer suites run with the switch off and
                  on, and any output difference is a defect.  Such a rewrite lands
-                 only with that A/B green (`.github/workflows/switch-ab.yml`).
+                 only with that A/B green (`.github/workflows/switch-ab.yml`).  The A/B
+                 compares SEMANTICS, per (R-Escape): an `advice[avoidable-copy]` and a
+                 store dump's `bc:` offset report a representation and are not compared.
+                 CURE CLAUSE: a switch whose off form is a DEFECT a cure removed (kept as
+                 the first bisect step for it — LOFT_NO_OWNER_WITNESS, LOFT_NO_CALLEE_DISTURB,
+                 LOFT_NO_APPEND_STAGING) cannot be A/B-clean.  Its falsifier is the
+                 reverse: each guard written to catch that defect declares it
+                 (`// @catches: LOFT_NO_<CURE>`) and MUST move with the switch, and a
+                 declared guard that stops moving is a defect of its own.  Every other
+                 program is compared under the cure's switch as under a rewrite's.
                  CENSUS CLAUSE: a rewrite counts each site it ADMITS
                  (`rewrite_census::fired("R-…", n)`, never at a decline), and the
                  counts over the benches are a committed baseline
