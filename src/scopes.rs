@@ -6371,7 +6371,12 @@ fn run_scan_phase(
             function.set_skip_free(v);
         }
     }
+    // loft#1697 — the scan reads `orig_code` and writes the body back only below, so the
+    // ownership oracle's whole-function walk holds for the whole scan: done once, not once per
+    // call site `inline_struct_return` asks about.
+    let defs_memo = crate::use_analysis::defs_memo_scope(data, d_nr);
     let mut code = scopes.scan(orig_code, &mut function, data);
+    drop(defs_memo);
     // The witness starts FALSE: on entry the buffer holds the CALLER's store, which this
     // function must never release.  A transition site is reachable with no prior assignment at
     // all (`fn g() -> Res { mk(2) }`), and `needs_pre_init` does not cover `boolean`, so an

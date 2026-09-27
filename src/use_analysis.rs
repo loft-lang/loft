@@ -4547,7 +4547,68 @@ pub fn free_sites(data: &Data, d_nr: u32) -> Vec<FreeSite> {
 /// summary).  ⚠ It does NOT read `deps`: the dep list is a separate, cheaper stand-in for
 /// the same question (@FR-O-Proxy) that is unsound alone.  A chokepoint should read here.
 pub fn ownership_of(data: &Data, d_nr: u32, value: &Value) -> Own {
+    if let Some(defs) = memoised_defs(data, d_nr) {
+        return ownership_of_with(data, d_nr, value, &defs);
+    }
     ownership_of_with(data, d_nr, value, &function_defs(data, d_nr))
+}
+
+/// The one function whose [`function_defs`] may be reused, and the value once asked.
+type DefsMemoSlot = Option<(usize, u32, Option<std::rc::Rc<Defs>>)>;
+
+std::thread_local! {
+    static DEFS_MEMO: std::cell::RefCell<DefsMemoSlot> = const { std::cell::RefCell::new(None) };
+}
+
+/// A span in which ONE function's body cannot change, so its [`function_defs`] is computed on
+/// the first [`ownership_of`] about it and reused for every later one (loft#1697).
+///
+/// `ownership_of` re-derives the whole function's definitions per question, and the native
+/// emitter asks per assignment and per rewrite candidate — so emitting a function cost the
+/// square of its size: a 1 500-function program spent 2 s in codegen where the build of
+/// 2026-09-10 spent 33 ms.  The memo is not on `Data` because the scope pass REWRITES bodies
+/// (the reason given on `function_defs`); this span is entered where nothing rewrites one —
+/// the emission of a single function — keyed by this `Data` and this function, and it restores
+/// whatever it replaced when dropped, so a nested span leaves the outer one intact.
+#[must_use]
+pub(crate) struct DefsMemoScope {
+    prev: DefsMemoSlot,
+}
+
+pub(crate) fn defs_memo_scope(data: &Data, d_nr: u32) -> DefsMemoScope {
+    let key = std::ptr::from_ref(data) as usize;
+    let prev = DEFS_MEMO.with(|m| m.replace(Some((key, d_nr, None))));
+    DefsMemoScope { prev }
+}
+
+impl Drop for DefsMemoScope {
+    fn drop(&mut self) {
+        let prev = self.prev.take();
+        DEFS_MEMO.with(|m| *m.borrow_mut() = prev);
+    }
+}
+
+/// The memoised definitions of `d_nr`, computed on first use, when a [`DefsMemoScope`] for this
+/// `Data` and this function is open; `None` otherwise.
+fn memoised_defs(data: &Data, d_nr: u32) -> Option<std::rc::Rc<Defs>> {
+    let key = std::ptr::from_ref(data) as usize;
+    let open = DEFS_MEMO.with(|m| match &*m.borrow() {
+        Some((k, n, got)) if *k == key && *n == d_nr => Some(got.clone()),
+        _ => None,
+    })?;
+    if let Some(defs) = open {
+        return Some(defs);
+    }
+    let defs = std::rc::Rc::new(function_defs(data, d_nr));
+    DEFS_MEMO.with(|m| {
+        if let Some((k, n, got)) = &mut *m.borrow_mut()
+            && *k == key
+            && *n == d_nr
+        {
+            *got = Some(defs.clone());
+        }
+    });
+    Some(defs)
 }
 
 /// WHY the oracle answers what it answers about a BINDING — @PLN155 phase 0.

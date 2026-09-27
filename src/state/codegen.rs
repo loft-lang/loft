@@ -222,6 +222,9 @@ impl State {
         data: &mut Data,
         program_store: Option<&(Stores, crate::keys::DbRef)>,
     ) {
+        // loft#1697 — generating the body changes no body, so the ownership oracle's
+        // whole-function walk is done once for it, not once per question the generator asks.
+        let _defs_memo = crate::use_analysis::defs_memo_scope(data, def_nr);
         let logging = !crate::portable_path::is_stdlib_source(&data.def(def_nr).position().file);
         let console = false; //logging;
         let mut stack = Stack::new(data.def(def_nr).variables().clone(), data, def_nr, logging);
