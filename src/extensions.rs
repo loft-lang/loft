@@ -2396,6 +2396,7 @@ pub fn auto_build_native(pkg_dir: &str, stem: &str) -> Option<String> {
     // retry without it (below) — the two invocations differ only in that flag.
     let make_cmd = |locked: bool| {
         let mut cmd = std::process::Command::new("cargo");
+        crate::platform::dies_with_driver(&mut cmd, false);
         cmd.args(["build", "--release", "--manifest-path"])
             .arg(&cargo_toml)
             .stdout(std::process::Stdio::inherit())
@@ -2586,6 +2587,7 @@ pub fn auto_build_native_target(pkg_dir: &str, stem: &str, target: &str) -> bool
         return true;
     }
     let mut cmd = std::process::Command::new("cargo");
+    crate::platform::dies_with_driver(&mut cmd, false);
     cmd.args(["build", "--release", "--target", target, "--manifest-path"])
         .arg(&cargo_toml)
         // Build with CLEAN flags: the host `RUSTFLAGS`/`CARGO_ENCODED_RUSTFLAGS` loft was

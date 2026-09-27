@@ -1,0 +1,32 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Found with loft#1700 (`@FR-B-Scope`, `@FR-L-CapRef`'s capture context).  A name more than one
+// binding spells — a second `for e` loop (`e#1`, loft#915), a bind after the first one's block
+// ended (loft#1700), a pattern's name — is several variables, and the spelling names one of
+// them at a time.  The capture context offered every variable under its OWN name, so a closure
+// capturing `e` took the FIRST binding's type while the value came from the live one: the
+// record read an integer slot as text, an interpreter panic (`index out of bounds` in the store)
+// and a native type error, on every tree.  A capture now offers each spelling at the binding it
+// currently names (`Function::all_names_and_types`).
+//
+// @falsified-at: 5ba2b5ef5 — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+// @falsified-by: tests/falsified/1700b-a-closure-captures-the-binding-its-name-spells-now.patch — interpret exit 101 -> 0, interpret panicked -> clean, native exit 1 -> 0
+// CHANNEL: the panic (interpreter) / the compile (native) on the control tree.
+// ARMED: every run.
+// WITNESS: `index out of bounds` in `allocation.rs`.
+// HOLDS: a closure over a name bound once (the closure corpus).
+
+fn main() {
+  n = 0;
+  for e in [1, 2] { n += e; }
+  out = "";
+  for e in ["a", "b"] {
+    f = fn(s: text) -> text { "{e}{s}" };
+    out += f("y");
+  }
+  assert(out == "ayby" && n == 3, "a closure over a second loop's variable: {out} {n}");
+  for p in [10, 20] { g = fn(k: integer) -> integer { p + k }; n += g(1); }
+  assert(n == 35, "the first loop's variable, captured: {n}");
+  println("a closure captures the binding its name spells now: every cell holds");
+}

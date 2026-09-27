@@ -1,0 +1,420 @@
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index c36038813..05ec157da 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -727,34 +727,24 @@ impl Parser {
+         // `@FR-B-Scope` — this block is open while its statements parse.
+         self.block_ord = self.block_ord.wrapping_add(1);
+         self.block_path.push(self.block_ord);
+-        self.block_rebinds.push(Vec::new());
+         // A loop's variable belongs to the loop's BODY (`@FR-B-Scope`, as in Rust): the `for`
+         // header binds it, so this block is where it is bound.
+         if matches!(context, "for" | "parallel for") {
+-            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body; recorded
+-            // on both too, under the pass's own key (loft#1700).
++            // Drained on BOTH passes, so a pass-1 binder never reaches a pass-2 body.
+             let binders = std::mem::take(&mut self.pending_loop_binders);
+             let lv = self.vars.current_loop_variable();
+             for v in std::iter::once(lv).chain(binders) {
++                if self.first_pass {
++                    break;
++                }
+                 if v != u16::MAX {
+-                    self.record_binding(v);
++                    self.bound_in_block
++                        .insert((self.context, v), self.block_path.clone());
+                 }
+             }
+         }
+         let cc_ret = self.parse_block_inner(context, val, result);
+         self.block_path.pop();
+-        // A binding started after an earlier one ended (loft#1700) ends with this block: the
+-        // spelling names what it named before, so pass 2 opens every function on the same
+-        // variables pass 1 did.
+-        for (name, before) in self
+-            .block_rebinds
+-            .pop()
+-            .unwrap_or_default()
+-            .into_iter()
+-            .rev()
+-        {
+-            self.vars.set_name(&name, before);
+-        }
+         self.fit_armed = outer_fit;
+         if cc.is_some() {
+             self.cc_nest -= 1;
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index ce6b1181f..c8b92b0da 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -3713,34 +3713,7 @@ use a separate collection or add after the loop"
+         // both: `=` repoints the target at a fresh store, `+=` appends into what it already
+         // holds, and the two need different deliveries (`I-Comp`).  Saved and restored
+         // because the RHS may contain assignments of its own.
+-        // Taken before the right side parses: a bind inside it would overwrite the note.  A
+-        // bind after the name's block ended may become a binding of its own once the value's
+-        // type is known (loft#1700), so the value is not built INTO the ended one meanwhile.
+-        // loft#1145's per-loop split owns a body local bound again in ANOTHER loop; that
+-        // program compiles today and keeps its binding (and its loop-record admission).
+-        // Asked by loop ORDINAL, which both passes agree on — loop numbers are not.
+-        let ended_bind = self
+-            .bind_after_end
+-            .take()
+-            .filter(|(_, ended_in)| {
+-                let now = self.vars.current_loop_ord();
+-                !(now.is_some() && ended_in.is_some() && now != *ended_in)
+-            })
+-            .map(|(v, _)| v);
+-        // A literal builds INTO the value it starts from, and retypes it on the way: into
+-        // an ended SCALAR binding that retype is the refusal this split exists to lift, so
+-        // it starts from nothing.  A heap or text binding keeps building in place, which is
+-        // what a same-type rebind compiles to today.
+-        let build_into =
+-            if ended_bind == Some(var_nr) && crate::data::is_scalar(self.vars.tp(var_nr).base()) {
+-                if matches!(code.unspan(), Value::Var(v) if *v == var_nr) {
+-                    *code = Value::Null;
+-                }
+-                u16::MAX
+-            } else {
+-                var_nr
+-            };
+-        let prev_target = std::mem::replace(&mut self.assign_target, build_into);
++        let prev_target = std::mem::replace(&mut self.assign_target, var_nr);
+         let prev_replaces = std::mem::replace(&mut self.assign_replaces, op == "=");
+         let prev_snapshot_len = std::mem::take(&mut self.build_snapshot_len);
+         // A whole write through a `&(…)` link (`p = (…)`, loft#1673) expects the TUPLE the link
+@@ -3764,27 +3737,6 @@ use a separate collection or add after the loop"
+         if op == "=" && !self.amp_pending && matches!(to.unspan(), Value::Var(_)) {
+             self.read_through_tag(code, &mut s_type);
+         }
+-        // `@FR-B-Scope`, loft#1700 — a bind after the name's block ended, at a type its old
+-        // binding refuses, is a new binding with a variable of its own.  Split HERE, as soon
+-        // as the value's type is known and before any route chooses by the target's type: a
+-        // collection on either side of the split takes a route of its own further down.
+-        let (split_to, split_tp);
+-        let (to, f_type) = if op == "="
+-            && !self.amp_pending
+-            && !s_type.is_unknown()
+-            && var_nr != u16::MAX
+-            && ended_bind == Some(var_nr)
+-            && self
+-                .vars
+-                .retype_would_be_refused(var_nr, &s_type, &self.data)
+-        {
+-            var_nr = self.rebind_after_block(var_nr, &s_type);
+-            split_to = Value::Var(var_nr);
+-            split_tp = self.vars.tp(var_nr).clone();
+-            (&split_to, &split_tp)
+-        } else {
+-            (to, f_type)
+-        };
+         // `@FR-B-Copy` (with `@FR-T-Cons`) — a whole-tuple bind `u = t` COPIES every heap
+         // member.  It is lowered onto the literal's own per-member copy: the source
+         // becomes the tuple of its member reads and `tuple_member_owned_copy` gives each heap
+@@ -5176,10 +5128,6 @@ use a separate collection or add after the loop"
+             self.vars.created_in_loop(var_nr)
+         };
+         let rebound_to;
+-        let to_before = match to.unspan() {
+-            Value::Var(v) => Some(*v),
+-            _ => None,
+-        };
+         let to = if op == "="
+             && !s_type.is_unknown()
+             && cur_loop != u16::MAX
+@@ -5204,15 +5152,6 @@ use a separate collection or add after the loop"
+         } else {
+             to
+         };
+-        // A split re-targets the store: from here on the target IS the new binding, so its
+-        // type is the one the value is checked against (loft#1700, loft#1145).
+-        let split_tp;
+-        let f_type = if matches!(to, Value::Var(v) if Some(*v) != to_before) {
+-            split_tp = self.vars.tp(var_nr).clone();
+-            &split_tp
+-        } else {
+-            f_type
+-        };
+         // loft#1237 — `keyed_local += <vector VALUE>`, the third place kind of loft#1159's
+         // question.  That issue gave a keyed FIELD the route that inserts every record a
+         // vector holds, each placed by its own key, and gated it on `var_nr == u16::MAX`.  A
+@@ -7161,7 +7100,7 @@ use a separate collection or add after the loop"
+                         .is_some()
+             }),
+         };
+-        if let Some(mut v_nr) = annotated_var
++        if let Some(v_nr) = annotated_var
+             && !self.in_format_expr
+             && self.lexer.peek_token(":")
+         {
+@@ -7207,16 +7146,6 @@ use a separate collection or add after the loop"
+                 } else {
+                     tp
+                 };
+-                // loft#1700 — a DECLARED bind after the name's block ended, at a type the
+-                // ended binding refuses, is a new binding like the undeclared one.
+-                if !is_ref
+-                    && self.bind_after_end.is_some_and(|(v, _)| v == v_nr)
+-                    && self.vars.retype_would_be_refused(v_nr, &tp, &self.data)
+-                {
+-                    self.bind_after_end = None;
+-                    v_nr = self.rebind_after_block(v_nr, &tp);
+-                    *code = Value::Var(v_nr);
+-                }
+                 self.change_var_type(v_nr, &tp);
+                 // (I-Join) — an EXPLICIT `: Type` annotation pins the variable's type, so
+                 // it stays constrained (a wider write is a narrowing error).  An inferred
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index 57038f64b..5ad3b34de 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -863,28 +863,14 @@ pub struct Parser {
+     /// `@FR-B-Scope` — the blocks now open, innermost last, each named by a per-parser
+     /// ordinal; and, per `(function, local)`, the open-block path where a STATEMENT last bound
+     /// that local.  A local bound inside a block ends at that block's `}` (rustc's rule), so a
+-    /// read from outside the path is refused.  Written and read in source order within a
+-    /// pass, on BOTH passes and keyed by the pass: a bind after the block ends starts a new
+-    /// binding (loft#1700), and that decision mints a variable, so pass 1 must make it too.
++    /// read from outside the path is refused.  Pass 2 only: both are written and read in
++    /// source order within the pass.
+     pub(crate) block_path: Vec<u32>,
+     /// A destructuring `for (a, b) in …`'s binders, bound by the header like the loop variable
+     /// and scoped to the body the next `for` block opens.
+     pub(crate) pending_loop_binders: Vec<u16>,
+     pub(crate) block_ord: u32,
+-    /// The binding's block is kept as its INNERMOST ordinal (`None` = the function's own
+-    /// scope): ordinals are unique and a block's ancestors never change, so "the recorded
+-    /// path is a prefix of the open one" is "its innermost block is still open" — and
+-    /// recording a binding allocates nothing (the front end's allocations are pinned).
+-    pub(crate) bound_in_block:
+-        std::collections::HashMap<(bool, u32, u16), (Option<u32>, Option<u16>)>,
+-    /// Per open block, the spellings a bind after an ended binding re-pointed there, with the
+-    /// variable each named before — restored at the block's `}` (loft#1700).
+-    pub(crate) block_rebinds: Vec<Vec<(String, u16)>>,
+-    /// The variable a binding name just resolved to when its binding had ENDED — read by the
+-    /// assignment, which splits it off once the new value's type is known (loft#1700).
+-    /// With the loop ordinal the ended binding was made in, which decides whether loft#1145's
+-    /// per-loop split owns the bind instead.
+-    pub(crate) bind_after_end: Option<(u16, Option<u16>)>,
++    pub(crate) bound_in_block: std::collections::HashMap<(u32, u16), Vec<u32>>,
+     /// @PLN35 PC1 — set while matching over a CURSOR (a struct with a `vector<T>` source + an
+     /// integer `pos`): `(cursor_var, cursor_def, pos_field_idx, pos_var)`.  `pos_var` holds the
+     /// current position (reads are offset by it); the match PREFIX-consumes (gate `pos + fixed <=
+@@ -1657,8 +1643,6 @@ impl Parser {
+             pending_loop_binders: Vec::new(),
+             block_ord: 0,
+             bound_in_block: std::collections::HashMap::new(),
+-            block_rebinds: Vec::new(),
+-            bind_after_end: None,
+             match_cursor: None,
+             match_cursor_farthest: None,
+             subrule_edges: Vec::new(),
+diff --git b/src/parser/objects.rs a/src/parser/objects.rs
+index 6a79ad29f..62f437719 100644
+--- b/src/parser/objects.rs
++++ a/src/parser/objects.rs
+@@ -274,18 +274,18 @@ impl Parser {
+         if self.vars.is_argument(var) || own.starts_with("__") {
+             return;
+         }
+-        let key = (self.first_pass, self.context, var);
++        let key = (self.context, var);
+         let visible = self
+             .bound_in_block
+             .get(&key)
+-            .is_none_or(|(b, _)| self.block_open(*b));
++            .is_none_or(|p| self.block_path.starts_with(p));
+         if self.at_binding_name() {
+             if !visible || !self.bound_in_block.contains_key(&key) {
+-                self.record_binding(var);
++                self.bound_in_block.insert(key, self.block_path.clone());
+             }
+             return;
+         }
+-        if !visible && !self.first_pass {
++        if !visible {
+             diagnostic_at!(
+                 self.lexer,
+                 name_pos,
+@@ -322,72 +322,6 @@ impl Parser {
+         }
+     }
+ 
+-    /// `@FR-B-Scope` — has the binding `var` last received ended?  True when the statement
+-    /// that bound it sits in a block this point is no longer inside.  Parameters and the
+-    /// compiler's own locals are bound for the whole function.
+-    fn binding_ended(&self, var: u16) -> bool {
+-        if self.vars.is_argument(var) || self.vars.name(var).starts_with("__") {
+-            return false;
+-        }
+-        self.bound_in_block
+-            .get(&(self.first_pass, self.context, var))
+-            .is_some_and(|(b, _)| !self.block_open(*b))
+-    }
+-
+-    /// Is the block with ordinal `b` (`None` = the function's own scope) still open here?
+-    fn block_open(&self, b: Option<u32>) -> bool {
+-        b.is_none_or(|b| self.block_path.contains(&b))
+-    }
+-
+-    /// `@FR-B-Scope` — `var` is bound HERE: the open blocks and the loop, on this pass.
+-    pub(crate) fn record_binding(&mut self, var: u16) {
+-        let at = (
+-            self.block_path.last().copied(),
+-            self.vars.current_loop_ord(),
+-        );
+-        self.bound_in_block
+-            .insert((self.first_pass, self.context, var), at);
+-    }
+-
+-    /// The loop ordinal `var`'s binding was last recorded in, on this pass.
+-    pub(crate) fn binding_loop(&self, var: u16) -> Option<u16> {
+-        self.bound_in_block
+-            .get(&(self.first_pass, self.context, var))
+-            .and_then(|(_, l)| *l)
+-    }
+-
+-    /// `@FR-B-Scope`, loft#1700 — a bind after the block that bound `old`'s name has ended
+-    /// starts a NEW binding, and where it has another type it gets a variable of its own, as
+-    /// a `for` loop's and a pattern's do; the spelling names it until the enclosing block
+-    /// ends.  Bound onto the ended variable, the one-type-per-variable check refused
+-    /// `if c { w = 1 } w = "x"` as a type change.
+-    ///
+-    /// Only where that refusal would fire (the caller asks `retype_would_be_refused`), as
+-    /// loft#1145's per-loop rebind does, so no program that compiles changes.  Named by the
+-    /// statement's POSITION (`w#3_12`, reported as `w`), not by a counter: pass 1 may not know
+-    /// the new type yet and skip the split pass 2 makes, and a position names the same
+-    /// statement on both passes whichever of them splits.
+-    pub(crate) fn rebind_after_block(&mut self, old: u16, tp: &Type) -> u16 {
+-        let bound = self.vars.name(old).to_string();
+-        let name = bound.split('#').next().unwrap_or(&bound).to_string();
+-        let pos = self.lexer.pos();
+-        let own = format!("{name}#{}_{}", pos.line, pos.pos);
+-        // `Rewritten` is the literal's built-in-place signal, not a type a variable holds.
+-        let v = self
+-            .vars
+-            .add_variable(&own, &tp.unrewritten(), &mut self.lexer);
+-        if v != u16::MAX {
+-            // Assigned by the statement that split it; the caller's own mark went to `old`.
+-            self.vars.defined(v);
+-            self.vars.set_name(&name, v);
+-            if let Some(frame) = self.block_rebinds.last_mut() {
+-                frame.push((name, old));
+-            }
+-            self.record_binding(v);
+-        }
+-        v
+-    }
+-
+     #[expect(clippy::too_many_lines, reason = "inherited")]
+     pub(crate) fn parse_var(
+         &mut self,
+@@ -702,12 +636,9 @@ impl Parser {
+             t = Type::Unknown(0);
+         } else if self.vars.name_exists(name) {
+             let index_var = self.vars.var(name);
+-            // Noted before `check_block_scope` moves the binding here: the assignment decides,
+-            // once it knows the new value's type, whether this bind needs a variable of its own
+-            // (loft#1700).
+-            self.bind_after_end = (self.at_binding_name() && self.binding_ended(index_var))
+-                .then(|| (index_var, self.binding_loop(index_var)));
+-            self.check_block_scope(index_var, name, name_pos);
++            if !self.first_pass {
++                self.check_block_scope(index_var, name, name_pos);
++            }
+             // on pass 2, if a variable has Unknown type, it may be a pass-1
+             // placeholder for a forward-declared function. Try fn-ref resolution.
+             //
+@@ -1374,14 +1305,7 @@ impl Parser {
+                         // source needs to know one happened — see
+                         // `Parser::unresolved_names`.
+                         self.unresolved_names = self.unresolved_names.saturating_add(1);
+-                        let v = self.create_var(name, &Type::Unknown(0));
+-                        // The binding's block, recorded where pass 1 creates it: pass 2 finds
+-                        // the name and records it in `check_block_scope`, and the two passes
+-                        // must agree on where every binding lives (loft#1700).
+-                        if v != u16::MAX && self.at_binding_name() {
+-                            self.record_binding(v);
+-                        }
+-                        *code = Value::Var(v);
++                        *code = Value::Var(self.create_var(name, &Type::Unknown(0)));
+                         t = Type::Unknown(0);
+                     }
+                 }
+diff --git b/src/variables/mod.rs a/src/variables/mod.rs
+index ac5a7fd50..89a3d1061 100644
+--- b/src/variables/mod.rs
++++ a/src/variables/mod.rs
+@@ -2220,31 +2220,10 @@ impl Function {
+     }
+ 
+     /// Return all variable names and their types for capture analysis.
+-    /// `@FR-L-CapScalar` / `@FR-L-CapHeap` — every variable a lambda may capture, under the
+-    /// SPELLING that reaches it.
+-    ///
+-    /// A name bound more than once — a second `for e` loop (`e#1`), a bind after its block
+-    /// ended (loft#1700), a pattern's name — is several variables, and the spelling names
+-    /// one of them at a time.  Offered under their own names, the first variable won the
+-    /// spelling: a capture of `e` took the ENDED binding's type while the value came from
+-    /// the live one, and the closure record read an integer slot as text (a panic on the
+-    /// interpreter, a type error natively).  So a `#`-suffixed variable is offered as its
+-    /// spelling when the spelling names it, and a plain one only when no other binding
+-    /// has taken its spelling.  In variable order, so the answer is the same on every run.
+     pub fn all_names_and_types(&self) -> Vec<(String, Type)> {
+         self.variables
+             .iter()
+-            .enumerate()
+-            .filter_map(|(i, v)| {
+-                let spelling = v.name.split('#').next().unwrap_or(&v.name);
+-                let current = self.names.get(spelling).map(|&n| n as usize);
+-                let offered = if spelling.len() == v.name.len() {
+-                    current.is_none_or(|n| n == i)
+-                } else {
+-                    current == Some(i)
+-                };
+-                offered.then(|| (spelling.to_string(), v.type_def.clone()))
+-            })
++            .map(|v| (v.name.clone(), v.type_def.clone()))
+             .collect()
+     }
+ 
+@@ -2355,13 +2334,6 @@ impl Function {
+         v
+     }
+ 
+-    /// The per-PASS ordinal of the loop now being parsed (loft#1145), `None` outside any —
+-    /// the loop's identity that both passes agree on, where the loop NUMBER is not.
+-    #[must_use]
+-    pub fn current_loop_ord(&self) -> Option<u16> {
+-        self.loop_ord_of.get(&self.current_loop).copied()
+-    }
+-
+     /// The loop now being parsed, or `u16::MAX` outside any.
+     #[must_use]
+     pub fn current_loop(&self) -> u16 {
+@@ -2410,17 +2382,14 @@ impl Function {
+         {
+             return false;
+         }
+-        // Shapes other arms accept: element-wise tuples, the iterator→vector materialise, a
+-        // list literal clearing a keyed collection, and the two spellings of one nullable
+-        // struct.  Each pairs a collection-shaped type with ANOTHER collection-shaped one, so
+-        // a vector against a scalar, a text or a record is refused by every arm (loft#1700).
+-        let shaped = |t: &Type| {
+-            matches!(
+-                t,
+-                Type::Tuple(_) | Type::Vector(_, _) | Type::Iterator(_, _)
+-            ) || crate::parser::vectors::is_collection(t)
+-        };
+-        if (shaped(cur) && shaped(type_def)) || data.same_nullable_struct(cur, type_def).is_some() {
++        // Shapes other arms accept: element-wise tuples, the iterator→vector materialise,
++        // and the two spellings of one nullable struct.
++        if matches!(cur, Type::Tuple(_))
++            || matches!(type_def, Type::Tuple(_))
++            || matches!(cur, Type::Vector(_, _) | Type::Iterator(_, _))
++            || matches!(type_def, Type::Vector(_, _) | Type::Iterator(_, _))
++            || data.same_nullable_struct(cur, type_def).is_some()
++        {
+             return false;
+         }
+         !cur.is_equal(type_def)

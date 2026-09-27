@@ -1,0 +1,145 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1701 (`@FR-O-Derived`, `@FR-B-View`) — A CARRIED RECORD PASSED THROUGH AN INLINE REBUILD
+// SURVIVES THE NEXT ALLOCATION.  `d0 = if carry.valid { carry.d } else { … }` is a view of the
+// caller's record, and `use(rebuild(d0))` hands it to a function whose literal stages
+// `margins: d0.margins` in a work-ref.  That work-ref is a projection of the argument, so it
+// owns nothing (`(O-Derived)`); the scope exit freed it all the same, which released the
+// CALLER's carried record, and the next allocation (`d1 = derive(…)`) reused the memory — so
+// `d0` read `d1`'s values from then on.  The cure is loft#1683's (the staged projection is
+// marked a view at its mint); this file carries the axes that report had no cell for: the
+// argument a view of a record FIELD held across iterations and picked through an `if`, the
+// rebuilt record never bound, and the damage visible only after a later allocation.  Binding
+// the rebuild to a local is no workaround: on the control tree that cell broke on the
+// interpreter at step 0, where `d0` is a fresh record rather than the carry.
+//
+// Every value is hand-computed: step `st` derives from `k = 3·st + 1` on the first step and
+// carries the previous step's `d1` (`k = 3·(st−1) + 2`) after it, so `d0.proto[0]` reads
+// 1, 2, 5, 8 and `m` sums `proto[0] + xs[0]` = 101 + 202 + 505 + 808 = 1616.
+//
+// @falsified-at: 3fca5a81d — interpret exit 1 -> 0, interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+// CHANNEL: the asserts — on the control tree `--native` reads step 2's `d1` through step 2's
+//   `d0` (`[8,9,10,11]`, expected `[5,6,7,8]`), and the interpreter, past that cell by luck,
+//   reads `d1` through the bound cell's fresh `d0` at step 0 (`[2,3,4,5]`, expected `[1,2,3,4]`).
+// ARMED: the asserts on every run.
+// WITNESS: `assertion failed: the carried record after the next allocation` (native),
+//   `assertion failed: rebuild bound to a local` (interpreter).
+// HOLDS: the direct control on both trees.
+
+struct Tiles { count: integer, proto: vector<integer>, ocean: vector<integer>, gain: single }
+struct Marg { n: integer, xs: vector<integer> }
+struct Der { step: integer, tiles: Tiles, margins: Marg, src: vector<integer> }
+struct Carry { valid: boolean = false, d: Der = Der { } }
+
+fn derive(k: integer, st: integer) -> Der {
+  Der { step: st,
+        tiles: Tiles { count: 4, proto: [k, k + 1, k + 2, k + 3],
+                       ocean: [k * 10, k * 10 + 1, k * 10 + 2, k * 10 + 3], gain: 0.0f },
+        margins: Marg { n: 2, xs: [k * 100, k * 100 + 1] }, src: [k * 7, k * 7 + 1] }
+}
+fn check(d: Der, c: integer) { assert(d.tiles.count == c, "incomplete: {d.tiles.count}"); }
+fn rebuild(d0: Der, rel: single) -> Der {
+  d = Der { step: d0.step,
+    tiles: Tiles { count: d0.tiles.count, proto: d0.tiles.proto, ocean: d0.tiles.ocean, gain: rel },
+    margins: d0.margins, src: d0.src };
+  check(d, d0.tiles.count);
+  d
+}
+fn at(d: Der, st: integer) -> Der { assert(d.step == st, "stale: {d.step} at {st}"); d }
+fn use_it(d: Der, m: integer, st: integer) -> integer {
+  dd = at(d, st);
+  m + (dd.tiles.proto[0] ?? 0) + (dd.margins.xs[0] ?? 0)
+}
+fn first(d: Der) -> integer { d.tiles.proto[0] ?? -1 }
+fn want(st: integer) -> integer { if st == 0 { 1 } else { 3 * (st - 1) + 2 } }
+
+// The reporter's shape: the carry picked through an `if`, the rebuild passed inline.
+fn step_if(m: integer, st: integer, carry: Carry = Carry { }) -> (integer, Der) {
+  d0 = if carry.valid { carry.d } else { derive(st * 3 + 1, st) };
+  m1 = use_it(rebuild(d0, 0.25f), m, st);
+  d1 = derive(st * 3 + 2, st + 1);
+  assert(first(d0) == want(st) && (d0.margins.xs[0] ?? 0) == want(st) * 100
+         && (d0.tiles.ocean[3] ?? 0) == want(st) * 10 + 3 && (d0.src[1] ?? 0) == want(st) * 7 + 1,
+         "the carried record after the next allocation: step {st} proto {d0.tiles.proto} "
+         + "xs {d0.margins.xs} ocean {d0.tiles.ocean} src {d0.src}");
+  assert(first(d1) == 3 * st + 2, "the new record: {d1.tiles.proto}");
+  (m1, d1)
+}
+// The carry read straight, no `if`.
+fn step_plain(m: integer, st: integer, carry: Carry) -> (integer, Der) {
+  d0 = carry.d;
+  m1 = use_it(rebuild(d0, 0.5f), m, st);
+  d1 = derive(st * 3 + 2, st + 1);
+  assert(first(d0) == want(st) && (d0.margins.xs[1] ?? 0) == want(st) * 100 + 1,
+         "a plain carry after the next allocation: step {st} {d0.tiles.proto} {d0.margins.xs}");
+  (m1, d1)
+}
+// The carried field itself passed inline, no local.
+fn step_field(m: integer, st: integer, carry: Carry) -> (integer, Der) {
+  m1 = use_it(rebuild(carry.d, 0.5f), m, st);
+  d1 = derive(st * 3 + 2, st + 1);
+  assert(first(carry.d) == want(st) && (carry.d.margins.xs[0] ?? 0) == want(st) * 100,
+         "the carried field after the next allocation: step {st} {carry.d.tiles.proto}");
+  (m1, d1)
+}
+// The rebuild bound to a local that lives to the end of the function.
+fn step_bound(m: integer, st: integer, carry: Carry = Carry { }) -> (integer, Der) {
+  d0 = if carry.valid { carry.d } else { derive(st * 3 + 1, st) };
+  b = rebuild(d0, 0.25f);
+  m1 = use_it(b, m, st);
+  d1 = derive(st * 3 + 2, st + 1);
+  assert(first(d0) == want(st), "rebuild bound to a local: step {st} {d0.tiles.proto}");
+  (m1, d1)
+}
+// Control: no rebuild at all.
+fn step_direct(m: integer, st: integer, carry: Carry = Carry { }) -> (integer, Der) {
+  d0 = if carry.valid { carry.d } else { derive(st * 3 + 1, st) };
+  m1 = use_it(d0, m, st);
+  d1 = derive(st * 3 + 2, st + 1);
+  assert(first(d0) == want(st), "control, direct: step {st} {d0.tiles.proto}");
+  (m1, d1)
+}
+fn next(d1: Der) -> Carry { Carry { valid: true, d: d1 } }
+
+fn main() {
+  carry = Carry { };
+  m = 0;
+  for s in 0..4 {
+    (m, d) = step_if(m, s, carry);
+    carry = next(d);
+  }
+  assert(m == 1616 && first(carry.d) == 11, "the reporter's shape: m {m} {carry.d.tiles.proto}");
+
+  c2 = next(derive(1, 0));
+  m2 = 0;
+  for s in 0..4 {
+    (m2, d) = step_plain(m2, s, c2);
+    c2 = next(d);
+  }
+  assert(m2 == 1616, "a plain carry: {m2}");
+
+  c3 = next(derive(1, 0));
+  m3 = 0;
+  for s in 0..4 {
+    (m3, d) = step_field(m3, s, c3);
+    c3 = next(d);
+  }
+  assert(m3 == 1616, "the field inline: {m3}");
+
+  c4 = Carry { };
+  m4 = 0;
+  for s in 0..4 {
+    (m4, d) = step_bound(m4, s, c4);
+    c4 = next(d);
+  }
+  c5 = Carry { };
+  m5 = 0;
+  for s in 0..4 {
+    (m5, d) = step_direct(m5, s, c5);
+    c5 = next(d);
+  }
+  assert(m4 == 1616, "bound: {m4}");
+  assert(m5 == 1616, "control, direct: {m5}");
+  println("a carried record passed through an inline rebuild survives the next allocation: every cell holds");
+}

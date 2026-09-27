@@ -1,0 +1,26 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// Found while fixing loft#1698 (D-tup-19).  A vector CONSTANT is pre-built from its
+// initialiser's literal field writes, and a member of a TUPLE element that is a record or a
+// collection is written by a copy those writes never mention — so it read back EMPTY: a
+// struct member's fields as 0 and a vector member as `[]`, on both backends with no
+// diagnostic.  A struct element with a nested record was already refused for exactly that
+// reason; the tuple spelling asked nothing.  It is refused the same way now, pointing at the
+// zero-argument function that builds it at run time: a constant holds what its literal writes
+// describe.
+//
+// @falsified-at: 7fb81e270 — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+// @falsified-by: tests/falsified/1698c-a-constant-of-tuples-with-a-record-member-is-refused.patch — the same channels.
+// CHANNEL: the MESSAGE — the control tree compiled this and printed `0 0 202`.
+// ARMED: every run.
+// WITNESS: the refusal below.
+// HOLDS: a flat tuple constant (`vector<(integer, text)>`) still builds; guarded by the
+//   constant corpus.
+
+// @EXPECT_ERROR: has a nested record in tuple member 0, which a constant cannot hold
+struct Pair { id: integer, tag: integer }
+TABLE: vector<(Pair, integer)> = [(Pair { id: 10, tag: 1 }, 101), (Pair { id: 20, tag: 2 }, 202)];
+fn main() {
+  println("{TABLE[0].0.id} {TABLE[1].0.tag} {TABLE[1].1}");
+}

@@ -227,8 +227,32 @@ it, not a standing fact.
 
 ## Deviations
 
-**OPEN: 0.**  D-tup-18 opened and closed 2026-09-26 (below); D-tup-17 opened and closed 2026-09-26 (below); D-tup-16 opened and closed
+**OPEN: 0.**  D-tup-19 opened and closed 2026-09-27 (below); D-tup-18 opened and closed 2026-09-26 (below); D-tup-17 opened and closed 2026-09-26 (below); D-tup-16 opened and closed
 2026-09-25 (below); D-tup-15 opened and closed 2026-09-22 ([history](tuples-history.md)).
+
+- **D-tup-19** *(CLOSED 2026-09-27, loft#1698)* — `(T-Proj)` / `(B-Copy)`: D-tup-18's faces
+  at a tuple held DIRECTLY as a vector element.  `v[i]` unboxes the element's `__tuple<…>`
+  record into a stack tuple, and `v[i].k` read the member off that copy, so it was no place:
+  `v[i].1 = [66]` appended, `+=` concatenated the result with itself (also nested, in a
+  field-held vector, through a `&` parameter), a text `+=` panicked on the interpreter and did
+  not compile natively, a text `=` was refused as a constant, a scalar member write was "not
+  implemented", and an index with a side effect ran twice.  A whole-element bind and a
+  destructure left a heap member a second name for the element's store while the scalar
+  members were copies — a mix no rule describes.  **Fix.**  `v[i].k` off an element read FROM
+  A PLACE is the member read off the element's record (`Parser::stored_tuple_member_place`),
+  the shape a struct element's `r[i].b` has, so the place machinery that was already right for
+  it applies; a nested tuple keeps the address in its temp when the index cannot be repeated.
+  The whole-element bind takes D-tup-18's member copy inside the unbox, and a destructure off
+  an owned local's element copies as that bind does.  The whole read is a VALUE, so
+  `(B-View-Depth)` does not reach it (binding.md).  Found on the way, and silent on every
+  tree: a vector CONSTANT whose tuple element holds a record or a collection pre-built that
+  member EMPTY (a struct member's fields read 0, a vector member `[]`), because the member is
+  written by a copy the constant builder's literal field writes never mention.  A struct
+  element holding a nested record was already refused for that reason; the tuple spelling is
+  refused the same way now, and a literal-bodied function returning one keeps its call.
+  Guards `tests/scripts/1698-a-tuple-held-as-a-vector-element-is-a-place.loft` (the silent
+  cells), `1698b-…` (the member writes that were refused or crashed), `1698c-…` (the
+  constant).
 
 - **D-tup-18** *(CLOSED 2026-09-26, loft#1689)* — `(T-Cons)` / `(B-Copy)`: four faces of a tuple
   heap member that was not its own.  (1) `t = k.p` for a tuple-typed FIELD bound the record's

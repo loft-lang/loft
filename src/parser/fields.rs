@@ -2475,6 +2475,80 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
         }
     }
 
+    /// `@FR-T-Proj`, loft#1698 — `v[i].k` on a `vector<(…)>` as the member's PLACE: the member read off the
+    /// element's own `__tuple<…>` record, the shape `r[i].b` has for a struct element.
+    ///
+    /// `v[i]` unboxes the element into a stack tuple (a READ, `(T-Cons)`), and `.k` of that
+    /// was a member of the COPY — so a write through it wrote nowhere the program keeps:
+    /// `v[i].1 = [66]` refilled a view of the member and appended, `+=` concatenated twice,
+    /// a text member panicked or was refused as a value, a scalar member write was not
+    /// implemented.  A tuple held in a struct FIELD never had this, because its read is a
+    /// literal tuple of member reads and `.k` takes the member read itself (P197); this is
+    /// the same answer for the element spelling.  Only where the element is READ FROM A
+    /// PLACE (a borrowing cursor): an element of a call's result has no place to write
+    /// and its temp owns the store it frees, so it keeps the copy.
+    pub(crate) fn stored_tuple_member_place(&self, code: &Value, idx: usize) -> Option<Value> {
+        let Value::Block(b) = code.unspan() else {
+            return None;
+        };
+        if b.name != "tuple_unbox" || b.operators.len() != 2 {
+            return None;
+        }
+        let (Value::Set(tmp, dbref), Value::Tuple(members)) =
+            (b.operators[0].unspan(), b.operators[1].unspan())
+        else {
+            return None;
+        };
+        let member = members.get(idx)?;
+        self.vector_element_cursor_deps(dbref)?;
+        // A member that reads its record more than once — a nested tuple, a tagged `S?` —
+        // evaluates the address once per read once it is inlined, so the address must be
+        // one that can be repeated: element and field lookups over locals and constants.  An
+        // index computed by a call (`v[f()].1`) keeps the copy, which evaluates it once.
+        let mut uses = 0;
+        member.walk(&mut |n| {
+            if matches!(n, Value::Var(v) if v == tmp) {
+                uses += 1;
+            }
+        });
+        if uses == 0 {
+            return None;
+        }
+        if uses > 1 && !self.address_repeatable(dbref) {
+            // A nested tuple read off an address that must be evaluated once: keep the
+            // address in its temp and hand back the nested member as an unbox of its own, so
+            // the next `.k` peels it again and reaches one member read.
+            let Type::Tuple(elems) = b.result.base() else {
+                return None;
+            };
+            if !matches!(member.unspan(), Value::Tuple(_)) {
+                return None;
+            }
+            return Some(v_block(
+                vec![b.operators[0].clone(), member.clone()],
+                elems.get(idx)?.clone(),
+                "tuple_unbox",
+            ));
+        }
+        let mut place = member.clone();
+        crate::parser::expressions::substitute_value(&mut place, &Value::Var(*tmp), dbref);
+        Some(place)
+    }
+
+    /// Can `v` be evaluated twice with one answer and no effect?  Built-in operators over
+    /// locals and constants only: no user function, no fn-ref call, no assignment.
+    fn address_repeatable(&self, v: &Value) -> bool {
+        let mut ok = true;
+        v.walk(&mut |n| match n {
+            Value::Call(d, _) => ok &= self.data.def(*d).name().starts_with("Op"),
+            Value::CallRef(_, _) | Value::Set(_, _) | Value::Block(_) | Value::Loop(_) => {
+                ok = false;
+            }
+            _ => {}
+        });
+        ok
+    }
+
     /// loft#1072 — the PLACE a `fn_ref_field_read` block reads from: the host reference,
     /// the byte offset the 4-byte d_nr sits at, and whether the field carries a
     /// `__closure_rec` half at `pos + 4`.
