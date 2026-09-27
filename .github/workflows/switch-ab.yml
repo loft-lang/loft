@@ -47,6 +47,8 @@ jobs:
         switch:
           # the ownership / buffer family — no in-process checking form at all
           - LOFT_NO_LAZY_BUFFER
+          - LOFT_NO_WORK_BUFFER
+          - LOFT_NO_WORK_BUFFER_POOL
           - LOFT_NO_ADOPT_FIRST_BIND
           - LOFT_NO_ADOPT_BUFFER_REUSE
           - LOFT_NO_PLACE_RESULT
