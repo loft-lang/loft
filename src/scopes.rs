@@ -18387,7 +18387,8 @@ impl Scopes<'_> {
                 preamble.push(v_set(tmp, scanned));
                 ls.push(Value::Var(tmp));
             } else if let Value::Call(g_nr, _) = scanned.unspan()
-                && let gen_tp @ Type::Iterator(_, _) = &data.def(*g_nr).returned
+                // `@FR-N-Shape`: the shape is read through `?`; the lift keeps the whole type.
+                && matches!(data.def(*g_nr).returned.base(), Type::Iterator(_, _))
                 && data.def(*g_nr).is_loft_defined()
                 && crate::use_analysis::handle_param_only_advanced(data, outer_call, arg_idx)
             {
@@ -18396,7 +18397,8 @@ impl Scopes<'_> {
                 // releases its frame, as the bound `g = gen(); first(g)` does.  Unlifted,
                 // an abandoned frame and every heap local it allocated stayed to program
                 // exit, one per call (loft#1705).
-                let tmp = self.new_lift_var(function, gen_tp);
+                let gen_tp = data.def(*g_nr).returned.clone();
+                let tmp = self.new_lift_var(function, &gen_tp);
                 preamble.push(v_set(tmp, scanned));
                 ls.push(Value::Var(tmp));
             } else if matches!(scanned.unspan(), Value::Tuple(_)) {
