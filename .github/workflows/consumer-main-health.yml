@@ -217,6 +217,7 @@ jobs:
         working-directory: consumer
         run: |
           set -u
+          set -x  # PROBE: which command ends the step with no output
           fail=0
           summary=""
           for pat in ${{ matrix.packages }}; do
