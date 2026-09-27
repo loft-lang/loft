@@ -1,3 +1,4 @@
+// @catches: LOFT_NO_APPEND_STAGING — the switch lets an appended literal's fields run between the element's mint and its finish, which is what this program checks.
 // An appended literal's part that WRITES the destination: `v += [f(v)]` with `f` appending
 // to `v` keeps both elements.
 //

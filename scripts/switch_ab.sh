@@ -44,6 +44,15 @@
 # `// @observes: LOFT_NO_<REWRITE>`, and the difference is reported as OBSERVED, not as a
 # defect.  The annotation names ONE switch: under every other switch the same program is
 # compared as usual.
+#
+# Some listed switches belong to a CURE, not a rewrite: their off form is the defect the cure
+# removed, kept as the first bisect step for it (LOFT_NO_OWNER_WITNESS emits the pre-witness
+# form).  No such switch can be A/B-clean, and its falsifier is the opposite question — do
+# the programs written to catch that defect still catch it?  Such a program says so with
+# `// @catches: LOFT_NO_<CURE>`: its output MUST move with that switch, and is reported as
+# CAUGHT.  One that no longer moves is VACUOUS — the guard has stopped seeing the defect its
+# switch restores — and counts as a defect.  Every program without the header is compared as
+# usual under the cure's switch too.
 set -uo pipefail
 if [ $# -lt 1 ] || [[ "$1" != LOFT_NO_* ]]; then
   echo "usage: $0 LOFT_NO_<REWRITE> [--consumer DIR]..." >&2
@@ -120,7 +129,7 @@ for mode in on off; do
   printf '%s\n' "${files[@]}" | xargs -P "$JOBS" -I{} bash -c "run_one $mode {}"
 done
 
-defects=0; noise=0; timeouts=0; observed=0
+defects=0; noise=0; timeouts=0; observed=0; caught=0
 for f in "${files[@]}"; do
   base="$(basename "$f" .loft)"
   if grep -q '^\[timeout\] deadline reached' "$WORK/on/$base.out" "$WORK/off/$base.out"; then
@@ -133,6 +142,9 @@ for f in "${files[@]}"; do
     if ! cmp -s <(semantic "$WORK/on/$base.out") <(semantic "$WORK/on2/$base.out"); then
       noise=$((noise + 1))
       echo "NOISE   $f (differs between two runs with the rewrite on)"
+    elif grep -qE "^// @catches:.*\b$SWITCH\b" "$f"; then
+      caught=$((caught + 1))
+      echo "CAUGHT  $f (the defect $SWITCH restores, which this program declares it catches)"
     elif grep -qE "^// @observes:.*\b$SWITCH\b" "$f"; then
       observed=$((observed + 1))
       echo "OBSERVED $f (its output measures what $SWITCH changes, as its header declares)"
@@ -141,6 +153,9 @@ for f in "${files[@]}"; do
       echo "DEFECT  $f — output moves with $SWITCH:"
       diff <(semantic "$WORK/on/$base.out") <(semantic "$WORK/off/$base.out") | head -12 | sed 's/^/    /'
     fi
+  elif grep -qE "^// @catches:.*\b$SWITCH\b" "$f"; then
+    defects=$((defects + 1))
+    echo "VACUOUS $f — declares it catches what $SWITCH restores, and its output does not move"
   fi
 done
 
@@ -158,5 +173,5 @@ for dir in "${CONSUMERS[@]}"; do
   fi
 done
 
-echo "$SWITCH: ${#files[@]} programs, $defects defect(s), $observed observed, $noise noisy, $timeouts timed out"
+echo "$SWITCH: ${#files[@]} programs, $defects defect(s), $observed observed, $caught caught, $noise noisy, $timeouts timed out"
 [ "$defects" -eq 0 ]

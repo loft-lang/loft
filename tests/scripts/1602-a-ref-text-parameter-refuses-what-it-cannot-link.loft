@@ -1,5 +1,6 @@
 // Copyright (c) 2026 Jurjen Stellingwerff
 // SPDX-License-Identifier: LGPL-3.0-or-later
+// @catches: LOFT_NO_CALLEE_DISTURB — the switch stops a callee's growth from disturbing the caller's view, which is what this program checks.
 //
 // What a `&text` parameter still refuses once it links a text field or element
 // (`1602-a-ref-text-parameter-links-a-text-field-or-element.loft`, @PLN167 C3): a text element
