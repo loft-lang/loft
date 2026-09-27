@@ -1,0 +1,72 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A FORWARDED RESULT BUFFER IS THE CALLER'S UNTIL THE FRAME MINTS ONE.  `run_it` answers
+// `run_on(run_new(), …)`, so it hands the result buffer ITS caller supplied straight on to
+// `run_on`.  `run_on` answers its own parameter, not that buffer, so the call's view is copied
+// into a record of `run_it`'s own and the buffer is released afterwards as a spent work-ref —
+// but the buffer is `run_it`'s hidden result PARAMETER, holding the caller's store.  Released
+// unconditionally, every call freed the caller's buffer; the caller's next pass minted into
+// the freed store and the run read its record back through a stale handle (dryopea's
+// `script_run(…) -> ScriptRun`, a use-after-free on the interpreter only; native releases it
+// against its entry witness).  `@FR-O-Buffer`: a promoted buffer is freed only when it is not
+// the store the caller handed in.  Values are hand-computed.
+//
+// @falsified-at: 6f30c6a75 — interpret exit 1 -> 0; native INERT (expected for a
+//   backend-divergence guard — only one side can move)
+// @falsified-by: tests/falsified/a-forwarded-result-buffer-is-the-callers-until-the-frame-mints-one.patch — the same channels.
+// ARMED: LOFT_STRICT_STORES=1 — the stale read returns the right bytes until the store is
+//   reused, so only the strict store tables see it.
+// CHANNEL: the exit — strict stores stops the control at its first stale read.
+// WITNESS: `[strict-store] USE AFTER FREE (read) store #2 type=Run` on the control.
+// HOLDS: every assertion passes on this tree on both backends; native is clean on both trees.
+
+struct Run { ok: boolean, line: integer, message: text, commands: integer, log: vector<integer> }
+
+fn run_new() -> Run { Run { ok: true, line: 0, message: "", commands: 0, log: [] } }
+
+fn run_on(run: Run, bad: boolean) -> Run {
+  if bad {
+    run.ok = false;
+    run.line = 7;
+    run.message = "bad";
+    return run;
+  }
+  run.commands += 1;
+  run.log += [5];
+  run
+}
+
+fn run_it(bad: boolean) -> Run { run_on(run_new(), bad) }
+
+fn main() {
+  // Every pass through the forwarding wrapper, taking the early return on odd passes:
+  // 3 × (0 + 1) for the tail passes and 3 × (7 + 0) for the refused ones.
+  s = 0;
+  for i in 0..6 {
+    r = run_it(i % 2 == 1);
+    s += r.line + r.commands;
+  }
+  assert(s == 24, "mixed passes: {s}");
+
+  // Only the tail path, reading the vector the callee grew: 4 × (1 + 1).
+  t = 0;
+  for _ in 0..4 {
+    r = run_it(false);
+    t += r.commands + len(r.log);
+  }
+  assert(t == 8, "tail passes: {t}");
+
+  // A single call keeps its values — the control that was always right.
+  one = run_it(true);
+  assert(!one.ok && one.line == 7 && one.message == "bad", "single call: {one.ok} {one.line} {one.message}");
+
+  // The same call without the wrapper — the other control.
+  d = 0;
+  for i in 0..3 {
+    r = run_on(run_new(), i == 1);
+    d += r.line + r.commands;
+  }
+  assert(d == 9, "direct: {d}");
+  println("a forwarded result buffer is the caller's until the frame mints one: every cell holds");
+}
