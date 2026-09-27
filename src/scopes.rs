@@ -1540,7 +1540,11 @@ pub fn disturbed_params_map(
         if !def.name.starts_with("n_") {
             continue;
         }
-        for (place, cause) in disturbed_param_places(data, d_nr, database) {
+        // By reference: consuming the map runs `RawIntoIter::drop`, whose test of an
+        // allocation-less table's `Option<(ptr, Layout, _)>` memcheck reports as a
+        // conditional jump on uninitialised bytes, on every run.
+        let places = disturbed_param_places(data, d_nr, database);
+        for (&place, &cause) in &places {
             if trace {
                 let (slot, off) = place;
                 let field = if off == ANY_FIELD {
