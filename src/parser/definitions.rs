@@ -1590,6 +1590,17 @@ impl Parser {
         if crate::parser::vectors::is_collection(elem.base()) {
             return Some("a collection as its element".to_string());
         }
+        // A TUPLE element holds its members in the element record, and a member that is a
+        // collection or a record is written by a copy the field writes never mention — so
+        // it read back empty (a struct member's fields as 0, a vector member as `[]`), on
+        // both backends with no diagnostic.  Asked member by member, as a struct's fields are.
+        if let Type::Tuple(members) = elem.base() {
+            let nested = members.iter().position(|m| {
+                crate::parser::vectors::is_collection(m.base())
+                    || matches!(m.base(), Type::Reference(_, _) | Type::Enum(_, _, _))
+            });
+            return nested.map(|i| format!("a nested record in tuple member {i}"));
+        }
         let (Type::Reference(s_nr, _) | Type::Enum(s_nr, _, _)) = elem.base() else {
             return None;
         };

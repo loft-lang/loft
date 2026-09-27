@@ -207,6 +207,9 @@ rule `C-Ref` in [types.md](types.md): a `&τ` is accepted wherever a `τ` is.)
                   is the only realloc it measures).  The realloc of the container the view
                   DOES name ends the place instead, and is B-Disturb's fourth event.
                   Also guarded by `294-vector-element-view-semantics.loft`.
+                  A TUPLE element is not reached: a tuple is a value (tuples.md `(T-Cons)`),
+                  its whole read is the tuple of its member reads, and `t = v[i]` copies as
+                  `t = k.p` does (D-tup-18, D-tup-19) — while `v[i].k` is a place.
   (B-Disturb)     four events END the place a reference names, and they are the same
                   four for every rule below: REMOVING from the container (`v.remove(i)`
                   renumbers every later position — collections.md Col-Remove),

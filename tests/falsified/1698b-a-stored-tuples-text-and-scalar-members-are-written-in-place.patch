@@ -1,0 +1,207 @@
+diff --git b/src/parser/definitions.rs a/src/parser/definitions.rs
+index 63a2a9295..0e9f69b25 100644
+--- b/src/parser/definitions.rs
++++ a/src/parser/definitions.rs
+@@ -1590,17 +1590,6 @@ impl Parser {
+         if crate::parser::vectors::is_collection(elem.base()) {
+             return Some("a collection as its element".to_string());
+         }
+-        // A TUPLE element holds its members in the element record, and a member that is a
+-        // collection or a record is written by a copy the field writes never mention — so
+-        // it read back empty (a struct member's fields as 0, a vector member as `[]`), on
+-        // both backends with no diagnostic.  Asked member by member, as a struct's fields are.
+-        if let Type::Tuple(members) = elem.base() {
+-            let nested = members.iter().position(|m| {
+-                crate::parser::vectors::is_collection(m.base())
+-                    || matches!(m.base(), Type::Reference(_, _) | Type::Enum(_, _, _))
+-            });
+-            return nested.map(|i| format!("a nested record in tuple member {i}"));
+-        }
+         let (Type::Reference(s_nr, _) | Type::Enum(s_nr, _, _)) = elem.base() else {
+             return None;
+         };
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index c8b92b0da..09d8702f4 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -459,21 +459,6 @@ fn ir_mentions_var(val: &Value, target: u16) -> bool {
+     }
+ }
+ 
+-/// The member list of a tuple VALUE: a literal tuple of member reads, or the tuple an unboxed
+-/// `vector<(…)>` element ends in (`Parser::unbox_tuple_from_dbref`).
+-fn unboxed_members(code: &mut Value) -> Option<&mut Vec<Value>> {
+-    match code.unspan_mut() {
+-        Value::Tuple(ms) => Some(ms),
+-        Value::Block(b) if b.name == "tuple_unbox" && b.operators.len() == 2 => {
+-            match b.operators[1].unspan_mut() {
+-                Value::Tuple(ms) => Some(ms),
+-                _ => None,
+-            }
+-        }
+-        _ => None,
+-    }
+-}
+-
+ pub(crate) fn substitute_value(into: &mut Value, from: &Value, to: &Value) {
+     if into == from {
+         *into = to.clone();
+@@ -3774,7 +3759,7 @@ use a separate collection or add after the loop"
+         } else if op == "="
+             && !self.amp_pending
+             && matches!(to, Value::Var(_))
+-            && unboxed_members(code).is_some()
++            && matches!(code.unspan(), Value::Tuple(_))
+             && let Type::Tuple(elems) = s_type.base().clone()
+             && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
+         {
+@@ -3787,13 +3772,12 @@ use a separate collection or add after the loop"
+             // showed through `t`, and writing a member through the record panicked.  Each
+             // member takes `@FR-T-Cons`'s copy, which is idempotent on a literal (its members
+             // were copied, or are fresh, when it was parsed).  A COPY, not the `(H-Move)`
+-            // above: the record keeps its members.  An element of a `vector<(…)>` arrives
+-            // unboxed (`{ __ref = v[i]; (member reads off __ref) }`), and its members are the
+-            // element record's own, so they take the same copy inside the unbox (loft#1698).
++            // above: the record keeps its members.
+             let mut types = elems.clone();
+-            let mut members = unboxed_members(code)
+-                .map(std::mem::take)
+-                .unwrap_or_default();
++            let mut members = match code.unspan_mut() {
++                Value::Tuple(ms) => std::mem::take(ms),
++                _ => Vec::new(),
++            };
+             for (i, t) in elems.iter().enumerate() {
+                 if let Some(m) = members.get_mut(i)
+                     && let Some(owned) = self.tuple_member_owned_copy(m, t)
+@@ -3801,9 +3785,7 @@ use a separate collection or add after the loop"
+                     types[i] = owned;
+                 }
+             }
+-            if let Some(slot) = unboxed_members(code) {
+-                *slot = members;
+-            }
++            *code = Value::Tuple(members);
+             // `@FR-N-Shape`: the shape was read through `?`, so a `?` it carried is kept.
+             s_type = if s_type.peel_optional().1 {
+                 Type::optional(Type::Tuple(types))
+@@ -7272,17 +7254,8 @@ use a separate collection or add after the loop"
+                 // struct member VIEWS (`@FR-B-View`), and off a BORROWED base — a parameter, a
+                 // linked local — every member views.  Decided on the source before the temp
+                 // takes its place: the temp is never an argument. (loft#1361)
+-                // An element of a `vector<(…)>` read off an owned local is the same owned
+-                // base one level down: `(a, b) = x[0]` copies as `t = x[0]; b = t.1` does
+-                // (loft#1698); off a parameter's vector it views, as every member off a
+-                // borrowed base does.
+                 let owned_base = matches!(rhs.unspan(), Value::Var(s)
+-                    if !self.vars.is_argument(*s) && matches!(self.vars.tp(*s), Type::Tuple(_)))
+-                    || Self::stored_tuple_dest(&rhs).is_some_and(|d| {
+-                        d.is_place_read(&self.data)
+-                            && d.base_var()
+-                                .is_some_and(|r| r < self.vars.count() && !self.vars.is_argument(r))
+-                    });
++                    if !self.vars.is_argument(*s) && matches!(self.vars.tp(*s), Type::Tuple(_)));
+                 // T1.4: create a temp variable for the RHS tuple, then read elements.
+                 let tmp_tp = rhs_type.clone();
+                 let tmp = self.vars.work_refs(&tmp_tp, &mut self.lexer);
+diff --git b/src/parser/fields.rs a/src/parser/fields.rs
+index 026afb284..67adb04ad 100644
+--- b/src/parser/fields.rs
++++ a/src/parser/fields.rs
+@@ -2475,80 +2475,6 @@ Reach it per-variant: `if {subject} is {first} {{ {field} }} {{ … }}`, or `mat
+         }
+     }
+ 
+-    /// `@FR-T-Proj`, loft#1698 — `v[i].k` on a `vector<(…)>` as the member's PLACE: the member read off the
+-    /// element's own `__tuple<…>` record, the shape `r[i].b` has for a struct element.
+-    ///
+-    /// `v[i]` unboxes the element into a stack tuple (a READ, `(T-Cons)`), and `.k` of that
+-    /// was a member of the COPY — so a write through it wrote nowhere the program keeps:
+-    /// `v[i].1 = [66]` refilled a view of the member and appended, `+=` concatenated twice,
+-    /// a text member panicked or was refused as a value, a scalar member write was not
+-    /// implemented.  A tuple held in a struct FIELD never had this, because its read is a
+-    /// literal tuple of member reads and `.k` takes the member read itself (P197); this is
+-    /// the same answer for the element spelling.  Only where the element is READ FROM A
+-    /// PLACE (a borrowing cursor): an element of a call's result has no place to write
+-    /// and its temp owns the store it frees, so it keeps the copy.
+-    pub(crate) fn stored_tuple_member_place(&self, code: &Value, idx: usize) -> Option<Value> {
+-        let Value::Block(b) = code.unspan() else {
+-            return None;
+-        };
+-        if b.name != "tuple_unbox" || b.operators.len() != 2 {
+-            return None;
+-        }
+-        let (Value::Set(tmp, dbref), Value::Tuple(members)) =
+-            (b.operators[0].unspan(), b.operators[1].unspan())
+-        else {
+-            return None;
+-        };
+-        let member = members.get(idx)?;
+-        self.vector_element_cursor_deps(dbref)?;
+-        // A member that reads its record more than once — a nested tuple, a tagged `S?` —
+-        // evaluates the address once per read once it is inlined, so the address must be
+-        // one that can be repeated: element and field lookups over locals and constants.  An
+-        // index computed by a call (`v[f()].1`) keeps the copy, which evaluates it once.
+-        let mut uses = 0;
+-        member.walk(&mut |n| {
+-            if matches!(n, Value::Var(v) if v == tmp) {
+-                uses += 1;
+-            }
+-        });
+-        if uses == 0 {
+-            return None;
+-        }
+-        if uses > 1 && !self.address_repeatable(dbref) {
+-            // A nested tuple read off an address that must be evaluated once: keep the
+-            // address in its temp and hand back the nested member as an unbox of its own, so
+-            // the next `.k` peels it again and reaches one member read.
+-            let Type::Tuple(elems) = b.result.base() else {
+-                return None;
+-            };
+-            if !matches!(member.unspan(), Value::Tuple(_)) {
+-                return None;
+-            }
+-            return Some(v_block(
+-                vec![b.operators[0].clone(), member.clone()],
+-                elems.get(idx)?.clone(),
+-                "tuple_unbox",
+-            ));
+-        }
+-        let mut place = member.clone();
+-        crate::parser::expressions::substitute_value(&mut place, &Value::Var(*tmp), dbref);
+-        Some(place)
+-    }
+-
+-    /// Can `v` be evaluated twice with one answer and no effect?  Built-in operators over
+-    /// locals and constants only: no user function, no fn-ref call, no assignment.
+-    fn address_repeatable(&self, v: &Value) -> bool {
+-        let mut ok = true;
+-        v.walk(&mut |n| match n {
+-            Value::Call(d, _) => ok &= self.data.def(*d).name().starts_with("Op"),
+-            Value::CallRef(_, _) | Value::Set(_, _) | Value::Block(_) | Value::Loop(_) => {
+-                ok = false;
+-            }
+-            _ => {}
+-        });
+-        ok
+-    }
+-
+     /// loft#1072 — the PLACE a `fn_ref_field_read` block reads from: the host reference,
+     /// the byte offset the 4-byte d_nr sits at, and whether the field carries a
+     /// `__closure_rec` half at `pos + 4`.
+diff --git b/src/parser/operators.rs a/src/parser/operators.rs
+index 86c074b46..3afbd6915 100644
+--- b/src/parser/operators.rs
++++ a/src/parser/operators.rs
+@@ -1827,11 +1827,6 @@ impl Parser {
+                                 } else {
+                                     *code = Value::Null;
+                                 }
+-                            } else if let Some(place) =
+-                                self.stored_tuple_member_place(&unspanned, idx)
+-                            {
+-                                // loft#1698 — a stored tuple's member is its record's field.
+-                                *code = place;
+                             } else {
+                                 // Temporary tuple — store in work var first.
+                                 let tmp_tp = Type::Tuple(elems.clone());

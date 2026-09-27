@@ -1,0 +1,35 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// loft#1698 (`@FR-T-Proj`, D-tup-19) — the faces of a stored tuple's member write that were
+// REFUSED or CRASHED rather than silently wrong, kept apart from the silent cells in
+// `1698-a-tuple-held-as-a-vector-element-is-a-place.loft` so that file's control run reaches
+// its asserts.  `v[i].1 += "cd"` on a `vector<(integer, text)>` panicked on the interpreter
+// (`Store::addr_mut: field 15 is not aligned for String`) and did not compile natively
+// (`cannot find value var__field_1`); `v[i].1 = "zz"` was refused as a file-scope constant;
+// `v[i].0 = 5` was "Not implemented operation = for type integer".  Each is the member of the
+// element's record now, written as a struct element's field is.
+//
+// @falsified-at: 7fb81e270 — interpret exit 1 -> 0, native exit 1 -> 0
+// @falsified-by: tests/falsified/1698b-a-stored-tuples-text-and-scalar-members-are-written-in-place.patch — the same channels.
+// CHANNEL: the exit — every cell is a refusal or a crash on the control tree.
+// ARMED: every run.
+// WITNESS: the control's refusal / panic text.
+// HOLDS: the values below on this tree, both backends.
+
+fn main() {
+  y: vector<(integer, text)> = [(1, "ab"), (2, "x")];
+  y[0].1 += "cd";
+  assert(y[0].1 == "abcd" && y[1].1 == "x", "+= on a text member: {y[0].1}");
+  y[1].1 = "zz";
+  assert(y[1].1 == "zz" && y[0].1 == "abcd", "= on a text member: {y[1].1}");
+  yt = y[0];
+  y[0].1 += "!";
+  assert(yt.1 == "abcd" && y[0].1 == "abcd!", "a text member's bind copies: {yt.1}");
+  m: vector<(integer, vector<integer>)> = [(1, [10, 11])];
+  m[0].0 = 5;
+  assert(m[0].0 == 5 && "{m[0].1}" == "[10,11]", "a scalar member: {m[0].0} {m[0].1}");
+  for i in 0..len(y) { y[i].0 += 10; }
+  assert(y[0].0 == 11 && y[1].0 == 12, "a scalar member by a variable index: {y[0].0} {y[1].0}");
+  println("a stored tuple's text and scalar members are written in place: every cell holds");
+}

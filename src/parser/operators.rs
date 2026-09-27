@@ -1827,6 +1827,11 @@ impl Parser {
                                 } else {
                                     *code = Value::Null;
                                 }
+                            } else if let Some(place) =
+                                self.stored_tuple_member_place(&unspanned, idx)
+                            {
+                                // loft#1698 — a stored tuple's member is its record's field.
+                                *code = place;
                             } else {
                                 // Temporary tuple — store in work var first.
                                 let tmp_tp = Type::Tuple(elems.clone());

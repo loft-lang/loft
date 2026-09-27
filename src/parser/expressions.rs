@@ -459,6 +459,21 @@ fn ir_mentions_var(val: &Value, target: u16) -> bool {
     }
 }
 
+/// The member list of a tuple VALUE: a literal tuple of member reads, or the tuple an unboxed
+/// `vector<(…)>` element ends in (`Parser::unbox_tuple_from_dbref`).
+fn unboxed_members(code: &mut Value) -> Option<&mut Vec<Value>> {
+    match code.unspan_mut() {
+        Value::Tuple(ms) => Some(ms),
+        Value::Block(b) if b.name == "tuple_unbox" && b.operators.len() == 2 => {
+            match b.operators[1].unspan_mut() {
+                Value::Tuple(ms) => Some(ms),
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
 pub(crate) fn substitute_value(into: &mut Value, from: &Value, to: &Value) {
     if into == from {
         *into = to.clone();
@@ -3759,7 +3774,7 @@ use a separate collection or add after the loop"
         } else if op == "="
             && !self.amp_pending
             && matches!(to, Value::Var(_))
-            && matches!(code.unspan(), Value::Tuple(_))
+            && unboxed_members(code).is_some()
             && let Type::Tuple(elems) = s_type.base().clone()
             && elems.iter().any(|e| !crate::data::is_scalar(e.base()))
         {
@@ -3772,12 +3787,13 @@ use a separate collection or add after the loop"
             // showed through `t`, and writing a member through the record panicked.  Each
             // member takes `@FR-T-Cons`'s copy, which is idempotent on a literal (its members
             // were copied, or are fresh, when it was parsed).  A COPY, not the `(H-Move)`
-            // above: the record keeps its members.
+            // above: the record keeps its members.  An element of a `vector<(…)>` arrives
+            // unboxed (`{ __ref = v[i]; (member reads off __ref) }`), and its members are the
+            // element record's own, so they take the same copy inside the unbox (loft#1698).
             let mut types = elems.clone();
-            let mut members = match code.unspan_mut() {
-                Value::Tuple(ms) => std::mem::take(ms),
-                _ => Vec::new(),
-            };
+            let mut members = unboxed_members(code)
+                .map(std::mem::take)
+                .unwrap_or_default();
             for (i, t) in elems.iter().enumerate() {
                 if let Some(m) = members.get_mut(i)
                     && let Some(owned) = self.tuple_member_owned_copy(m, t)
@@ -3785,7 +3801,9 @@ use a separate collection or add after the loop"
                     types[i] = owned;
                 }
             }
-            *code = Value::Tuple(members);
+            if let Some(slot) = unboxed_members(code) {
+                *slot = members;
+            }
             // `@FR-N-Shape`: the shape was read through `?`, so a `?` it carried is kept.
             s_type = if s_type.peel_optional().1 {
                 Type::optional(Type::Tuple(types))
@@ -7254,8 +7272,17 @@ use a separate collection or add after the loop"
                 // struct member VIEWS (`@FR-B-View`), and off a BORROWED base — a parameter, a
                 // linked local — every member views.  Decided on the source before the temp
                 // takes its place: the temp is never an argument. (loft#1361)
+                // An element of a `vector<(…)>` read off an owned local is the same owned
+                // base one level down: `(a, b) = x[0]` copies as `t = x[0]; b = t.1` does
+                // (loft#1698); off a parameter's vector it views, as every member off a
+                // borrowed base does.
                 let owned_base = matches!(rhs.unspan(), Value::Var(s)
-                    if !self.vars.is_argument(*s) && matches!(self.vars.tp(*s), Type::Tuple(_)));
+                    if !self.vars.is_argument(*s) && matches!(self.vars.tp(*s), Type::Tuple(_)))
+                    || Self::stored_tuple_dest(&rhs).is_some_and(|d| {
+                        d.is_place_read(&self.data)
+                            && d.base_var()
+                                .is_some_and(|r| r < self.vars.count() && !self.vars.is_argument(r))
+                    });
                 // T1.4: create a temp variable for the RHS tuple, then read elements.
                 let tmp_tp = rhs_type.clone();
                 let tmp = self.vars.work_refs(&tmp_tp, &mut self.lexer);
