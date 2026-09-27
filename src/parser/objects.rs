@@ -364,14 +364,20 @@ impl Parser {
     ///
     /// Only where that refusal would fire (the caller asks `retype_would_be_refused`), as
     /// loft#1145's per-loop rebind does, so no program that compiles changes.  Named by the
-    /// statement's POSITION (`w#3_12`, reported as `w`), not by a counter: pass 1 may not know
+    /// statement's POSITION (reported as `w`), not by a counter: pass 1 may not know
     /// the new type yet and skip the split pass 2 makes, and a position names the same
-    /// statement on both passes whichever of them splits.
+    /// statement on both passes whichever of them splits (`w#300010`, line 3 column 10).
     pub(crate) fn rebind_after_block(&mut self, old: u16, tp: &Type) -> u16 {
         let bound = self.vars.name(old).to_string();
         let name = bound.split('#').next().unwrap_or(&bound).to_string();
+        // Digits only, like a loop's `name#N`, so every reader that strips `#<digits>` to
+        // recover the spelling (diagnostics, the never-read lint) treats it the same; the
+        // position is far above any loop counter a name reaches.
         let pos = self.lexer.pos();
-        let own = format!("{name}#{}_{}", pos.line, pos.pos);
+        let own = format!(
+            "{name}#{}",
+            u64::from(pos.line) * 100_000 + u64::from(pos.pos.min(99_999))
+        );
         // `Rewritten` is the literal's built-in-place signal, not a type a variable holds.
         let v = self
             .vars
