@@ -1,0 +1,85 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// `(G-Hold)`: a generator frame may have SEVERAL holders — a local, a field, an element, a
+// tuple member, a generator frame given the handle — and each releases its own hold once; the
+// frame is released with the last of them (loft#1708).  A handle that lands in a second holder
+// while its source keeps its own hold takes a hold of its own.  Before, the frame had one
+// release and the first holder to end took it: a function that stored the handle it was given
+// (`g = gen(); wrap(g)`, returned) answered null from then on, as did a local bound from a
+// parameter (`h = g`), a tuple member, a copied member, an element stored through a `&`
+// parameter, and a generator that kept a handle parameter past its caller's local — on both
+// backends, with no diagnostic.  A generator handed a handle and dropped leaked it.
+//
+// The adapter spelling that worked keeps working: a prefix taken through a generator over
+// `g`, then `g` continued (`c14`).  `main` runs every cell and the interpreter prints the
+// stores left at exit, so a hold taken and never given back is read as a leak.
+//
+// @falsified-by: tests/falsified/1708-every-holder-of-a-generator-releases-its-own-hold.patch — interpret exit 1 -> 0,
+// interpret 1 assertion failures -> 0, native exit 1 -> 0, native 1 assertion failures -> 0
+struct HgP { id: integer }
+struct HgHolder { g: iterator<integer> }
+struct HgBag { gs: vector<iterator<integer>> }
+
+fn hg_gen(n: integer) -> iterator<integer> {
+  xs: vector<HgP> = [];
+  for i in 0..n { xs += [HgP { id: i * 10 + 1 }]; }
+  for x in xs { yield x.id; }
+}
+fn hg_wrap(g: iterator<integer>) -> HgHolder { HgHolder { g: g } }
+fn hg_wrap_via(g: iterator<integer>) -> HgHolder { hg_wrap(g) }
+fn hg_fwd(g: iterator<integer>) -> iterator<integer> { for v in g { yield v + 1; } }
+fn hg_keep_in(b: &HgBag, g: iterator<integer>) { b.gs += [g]; }
+fn hg_maybe_wrap(g: iterator<integer>, c: boolean) -> HgHolder { if c { return HgHolder { g: g }; } HgHolder { g: hg_gen(1) } }
+fn hg_peek(g: iterator<integer>) -> integer { h = g; next(h) ?? -1 }
+fn hg_as_tuple(g: iterator<integer>) -> (iterator<integer>, integer) { (g, 1) }
+fn hg_alias_stored(g: iterator<integer>) -> HgHolder { h = g; HgHolder { g: h } }
+fn hg_from_member(t: HgHolder) -> HgHolder { HgHolder { g: t.g } }
+fn hg_via_closure(g: iterator<integer>) -> integer { f = fn() -> integer { next(g) ?? -1 }; f() }
+fn hg_chain(g: iterator<integer>, n: integer) -> iterator<integer> { if n == 0 { for v in g { yield v; } } else { for v in hg_chain(g, n - 1) { yield v + 100; } } }
+fn hg_first(g: iterator<integer>) -> integer { next(g) ?? -1 }
+
+fn hg_mk_bound() -> HgHolder { g = hg_gen(3); hg_wrap(g) }
+fn hg_mk_via() -> HgHolder { g = hg_gen(3); hg_wrap_via(g) }
+fn hg_mk_fwd_holder() -> HgHolder { g = hg_gen(3); HgHolder { g: hg_fwd(g) } }
+fn hg_mk_maybe(c: boolean) -> HgHolder { g = hg_gen(3); hg_maybe_wrap(g, c) }
+fn hg_mk_tuple() -> (iterator<integer>, integer) { g = hg_gen(3); hg_as_tuple(g) }
+fn hg_mk_alias() -> HgHolder { g = hg_gen(3); hg_alias_stored(g) }
+fn hg_mk_from_member() -> HgHolder { t = HgHolder { g: hg_gen(3) }; hg_from_member(t) }
+fn hg_mk_bag() -> HgBag { b = HgBag { gs: [hg_gen(2), hg_gen(3)] }; b }
+
+fn test_c1_a_stored_parameter_outlives_the_callers_local() { h = hg_mk_bound(); junk = [HgP { id: 5 }]; a = next(h.g) ?? -1; b = next(h.g) ?? -1; assert(a == 1 && b == 11 && len(junk) == 1, "c1 {a} {b}"); }
+fn test_c2_holder_and_local_in_one_scope() { g = hg_gen(3); h = hg_wrap(g); a = next(h.g) ?? -1; assert(a == 1, "c2 {a}"); }
+fn test_c3_an_element_stored_through_a_ref_parameter() { b = HgBag { gs: [] }; { g = hg_gen(3); hg_keep_in(b, g); } junk = [HgP { id: 5 }]; a = next(b.gs[0]) ?? -1; assert(a == 1 && len(junk) == 1, "c3 {a}"); }
+fn test_c4_through_a_callers_own_parameter() { h = hg_mk_via(); a = next(h.g) ?? -1; assert(a == 1, "c4 {a}"); }
+fn test_c5_the_local_read_after_the_store() { g = hg_gen(3); h = hg_wrap(g); a = next(g) ?? -1; b = next(h.g) ?? -1; assert(a == 1 && b == 11, "c5 {a} {b}"); }
+fn test_c6_a_generator_keeps_its_parameter() { h = hg_mk_fwd_holder(); junk = [HgP { id: 5 }]; a = next(h.g) ?? -1; b = next(h.g) ?? -1; assert(a == 2 && b == 12 && len(junk) == 1, "c6 {a} {b}"); }
+fn test_c7_one_local_per_loop_pass() { hs: vector<HgHolder> = []; for i in 0..3 { g = hg_gen(i + 1); hs += [hg_wrap(g)]; } s = 0; for h in hs { s += next(h.g) ?? -1; } assert(s == 3, "c7 {s}"); }
+fn test_c8_a_store_on_one_path() { h = hg_mk_maybe(true); a = next(h.g) ?? -1; k = hg_mk_maybe(false); b = next(k.g) ?? -1; assert(a == 1 && b == 1, "c8 {a} {b}"); }
+fn test_c9_a_local_bound_from_a_parameter() { g = hg_gen(3); a = hg_peek(g); b = next(g) ?? -1; assert(a == 1 && b == 11, "c9 {a} {b}"); }
+fn test_c10_a_tuple_member() { t = hg_mk_tuple(); junk = [HgP { id: 5 }]; a = next(t.0) ?? -1; assert(a == 1 && len(junk) == 1, "c10 {a}"); }
+fn test_c11_a_local_alias_stored() { h = hg_mk_alias(); a = next(h.g) ?? -1; assert(a == 1, "c11 {a}"); }
+fn test_c12_a_member_copied() { t = HgHolder { g: hg_gen(3) }; u = hg_from_member(t); a = next(u.g) ?? -1; b = next(t.g) ?? -1; assert(a == 1 && b == 11, "c12 {a} {b}"); }
+fn test_c13_a_member_copy_outlives_its_record() { u = hg_mk_from_member(); junk = [HgP { id: 5 }]; a = next(u.g) ?? -1; assert(a == 1 && len(junk) == 1, "c13 {a}"); }
+fn test_c14_a_prefix_through_an_adapter_then_the_rest() { g = hg_gen(4); s = 0; for v in hg_fwd(g) { s += v; if v >= 12 { break; } } rest = next(g) ?? -1; assert(s == 14 && rest == 21, "c14 {s} {rest}"); }
+fn test_c15_a_generator_given_a_view() { t = HgHolder { g: hg_gen(3) }; a = 0; for v in hg_fwd(t.g) { a = v; break; } b = next(t.g) ?? -1; assert(a == 2 && b == 11, "c15 {a} {b}"); }
+fn test_c16_a_generator_never_advanced() { g = hg_gen(3); x = hg_fwd(g); b = next(g) ?? -1; assert(b == 1, "c16 {b}"); }
+fn test_c17_an_element_into_a_field() { b = hg_mk_bag(); h = HgHolder { g: b.gs[1] }; a = next(h.g) ?? -1; c = next(b.gs[1]) ?? -1; assert(a == 1 && c == 11, "c17 {a} {c}"); }
+fn test_c18_a_recursive_generator() { g = hg_gen(2); s = 0; for v in hg_chain(g, 2) { s += v; } assert(s == 412, "c18 {s}"); }
+fn test_c19_a_thousand_holders() { g = hg_gen(2); hs: vector<HgHolder> = []; for i in 0..1000 { hs += [hg_wrap(g)]; } a = next(hs[999].g) ?? -1; assert(a == 1 && len(hs) == 1000, "c19 {a}"); }
+fn test_c20_a_field_given_a_new_handle() { g = hg_gen(3); h = hg_wrap(g); h.g = hg_gen(2); a = next(g) ?? -1; b = next(h.g) ?? -1; assert(a == 1 && b == 1, "c20 {a} {b}"); }
+fn test_c21_a_closure_over_a_parameter() { g = hg_gen(3); a = hg_via_closure(g); b = next(g) ?? -1; assert(a == 1 && b == 11, "c21 {a} {b}"); }
+fn test_c22_a_generator_inline_and_abandoned() { a = hg_first(hg_fwd(hg_gen(3))); assert(a == 2, "c22 {a}"); }
+
+fn main() {
+  test_c1_a_stored_parameter_outlives_the_callers_local(); test_c2_holder_and_local_in_one_scope();
+  test_c3_an_element_stored_through_a_ref_parameter(); test_c4_through_a_callers_own_parameter();
+  test_c5_the_local_read_after_the_store(); test_c6_a_generator_keeps_its_parameter();
+  test_c7_one_local_per_loop_pass(); test_c8_a_store_on_one_path(); test_c9_a_local_bound_from_a_parameter();
+  test_c10_a_tuple_member(); test_c11_a_local_alias_stored(); test_c12_a_member_copied();
+  test_c13_a_member_copy_outlives_its_record(); test_c14_a_prefix_through_an_adapter_then_the_rest();
+  test_c15_a_generator_given_a_view(); test_c16_a_generator_never_advanced(); test_c17_an_element_into_a_field();
+  test_c18_a_recursive_generator(); test_c19_a_thousand_holders(); test_c20_a_field_given_a_new_handle();
+  test_c21_a_closure_over_a_parameter(); test_c22_a_generator_inline_and_abandoned();
+  println("ok");
+}

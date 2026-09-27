@@ -217,6 +217,11 @@ pub struct CoroutineFrame {
     /// compares it before touching the slot — otherwise the scope-exit free of an exhausted
     /// handle would release whichever generator inherited its index (loft#835).
     pub generation: u32,
+    /// `(G-Hold)` — how many holders the frame has (loft#1708).  One at creation; a handle
+    /// that lands in a second holder while its source keeps its own takes another
+    /// (`OpCoroutineRetain`), and each release gives one back.  The frame is freed with the
+    /// last.
+    pub holds: u32,
 }
 
 /// Internal State of the interpreter to run bytecode.
@@ -1591,11 +1596,25 @@ impl State {
     /// this, an early `break` from a generator loop leaks every text local that was
     /// live at the last yield point.
     pub fn free_coroutine(&mut self, gen_ref: &DbRef) {
+        // `(G-Hold)`: a release by one of several holders gives its hold back and nothing more.
+        if self.coroutine_slot_matches(gen_ref)
+            && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()
+            && frame.holds > 1
+        {
+            frame.holds -= 1;
+            return;
+        }
         if self.coroutine_slot_matches(gen_ref) {
             let idx = gen_ref.rec as usize;
             let mut owned_stores: Vec<DbRef> = Vec::new();
+            // A CREATED frame (never advanced) holds its arguments too: a generator handed a
+            // handle took a hold on it at the call (`(G-Hold)`, loft#1708).  Its locals were
+            // never assigned — its bytes end at the arguments — so only those are read.
             if let Some(frame) = self.coroutines[idx].as_mut()
-                && frame.status == CoroutineStatus::Suspended
+                && matches!(
+                    frame.status,
+                    CoroutineStatus::Suspended | CoroutineStatus::Created
+                )
             {
                 let d_nr = frame.d_nr;
                 let data_ptr = self.data_ptr; // raw ptr — no borrow conflict with frame
@@ -1658,10 +1677,13 @@ impl State {
         };
         let vars = &def.variables();
         for v in 0..vars.count() {
-            if vars.is_argument(v) {
+            let tp = vars.tp(v);
+            // A generator HOLDS every handle it was handed (`(G-Hold)`, loft#1708): the caller
+            // took a hold for the frame, and an abandoned frame gives it back.  Any other
+            // argument is the caller's.
+            if vars.is_argument(v) && !matches!(tp.base(), Type::Iterator(_, _)) {
                 continue;
             }
-            let tp = vars.tp(v);
             // `Iterator` joins the heap types here: a generator local holding another
             // generator's handle is freed through the same path, which `free_ref_db`
             // routes back to this function for that frame.
@@ -1939,6 +1961,7 @@ impl State {
             saved_text_positions: std::collections::BTreeSet::new(),
             saved_store_generations: Vec::new(),
             generation: 0, // stamped by allocate_coroutine
+            holds: 1,
         };
         let (idx, generation) = self.allocate_coroutine(frame);
 
@@ -2160,6 +2183,18 @@ impl State {
     /// while the variable holding the handle lives to the end of its scope, where its
     /// `OpFreeRef` fires.  Comparing the generation stamp in `pos` is what stops that free
     /// — and any late advance — from reaching the generator that inherited the slot.
+    /// `OpCoroutineRetain` — one more holder for the frame `gen_ref` names (`(G-Hold)`,
+    /// loft#1708).  A handle naming no live frame — null, or exhausted and its slot freed —
+    /// takes nothing, and its holders' releases are no-ops for the same reason.
+    pub fn coroutine_retain(&mut self, gen_ref: DbRef) -> DbRef {
+        if self.coroutine_slot_matches(&gen_ref)
+            && let Some(frame) = self.coroutines[gen_ref.rec as usize].as_mut()
+        {
+            frame.holds += 1;
+        }
+        gen_ref
+    }
+
     pub(crate) fn coroutine_slot_matches(&self, gen_ref: &DbRef) -> bool {
         if gen_ref.store_nr != COROUTINE_STORE || gen_ref.rec == 0 {
             return false;

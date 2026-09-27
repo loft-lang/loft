@@ -204,6 +204,10 @@ fn build_registry() -> std::collections::HashMap<&'static str, Box<dyn OpEmitter
         "OpCoroutineExhausted",
         Box::new(coroutine::OpCoroutineExhaustedEmitter),
     );
+    r.insert(
+        "OpCoroutineRetain",
+        Box::new(coroutine::OpCoroutineRetainEmitter),
+    );
 
     // Phase 04 — key-keyed Op emitters.  Replaces ~70 lines of two
     // arms in dispatch.rs (`"OpGetRecord" =>` + `"OpIterate" =>`).

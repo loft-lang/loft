@@ -2341,7 +2341,7 @@ impl ShowDb<'_> {
 /// backends number the coroutine table differently — the interpreter's handle carries the null
 /// store number with a slot in `rec`, a native one its own reserved number — so a field or an
 /// element holding one renders as its kind rather than as either backend's numbers.
-fn is_generator_handle(store_nr: u16) -> bool {
+pub(crate) fn is_generator_handle(store_nr: u16) -> bool {
     store_nr == crate::state::COROUTINE_STORE
         || store_nr == crate::codegen_runtime::NATIVE_COROUTINE_STORE
 }

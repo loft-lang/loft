@@ -1158,6 +1158,12 @@ fn OpCallRefStore(fn_var: const u16, arg_size: const u16, mask: const integer);
 // earlier operator.  Interpreter-only — the native backend does the same inline in
 // `generation::dispatch`.
 fn OpBindFnRefResult(src: reference, pos: const u16, tp: const u16);
+// A generator handle landing in a SECOND holder — a field, an element, a tuple member, a local
+// or a generator frame given it while its source keeps its own hold — takes a hold on the frame
+// (`(G-Hold)`, loft#1708): the frame is released when its last holder releases it.  Answers
+// the handle.  Declared last, so it renumbers no earlier operator.
+fn OpCoroutineRetain(gen: reference) -> reference;
+#rust"s.coroutine_retain(@gen)"
 
 // ── Path helpers (moved from 03_text.loft so they're available
 //    before file-I/O code that wants to compose them) ─────────

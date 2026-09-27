@@ -3892,73 +3892,28 @@ pub(crate) fn read_only_uses(
     }
 }
 
-/// `@FR-G-Hold` — does `fn_nr` only ADVANCE the generator handle it receives at argument
-/// `idx`, keeping nothing of it once it returns?
+/// `@FR-G-Hold` — does an inline generator handle passed to `fn_nr` need a holder of its own?
 ///
-/// A handle is a value its holder releases, and an inline one passed straight to a call
-/// (`first(gen())`) has no holder but the call's argument.  Where the callee only advances
-/// it, the caller's temp is that holder and the frame is the caller's to release after the
-/// call; where the callee KEEPS it — in a field, an element, a literal, a closure, its own
-/// generator frame — the one that keeps it releases it, and a release by the caller would
-/// free a frame still held.  So the answer is positive and under-approximating: `next`,
-/// the exhausted test a `for` makes, and a pass to a parameter that is itself only advanced
-/// are advancing; every other use of the parameter, and a callee that is itself a generator,
-/// answers `false`, which leaves the handle unreleased as it was (loft#1705).
+/// A handle passed straight to a call (`first(gen())`) is held by nothing but the argument.
+/// Every holder releases its hold once and the frame dies with the last (loft#1708), so the
+/// caller's temp is that holder and releases it after the call; a callee that KEEPS the
+/// handle — in a field, an element, a local — takes a hold of its own.  A GENERATOR callee is
+/// the exception: its frame is the holder and takes the fresh handle's one hold as it is, to
+/// its end or its abandonment.  Without a holder an abandoned frame and every heap local it
+/// allocated stayed to program exit, one per call (loft#1705).
 #[must_use]
-pub fn handle_param_only_advanced(data: &Data, fn_nr: u32, idx: usize) -> bool {
-    let mut visiting = HashSet::default();
-    param_only_advanced(data, fn_nr, idx, &mut visiting)
-}
-
-fn param_only_advanced(
-    data: &Data,
-    fn_nr: u32,
-    idx: usize,
-    visiting: &mut HashSet<(u32, usize)>,
-) -> bool {
+pub fn inline_handle_needs_holder(data: &Data, fn_nr: u32) -> bool {
     if (fn_nr as usize) >= data.definitions.len() {
         return false;
     }
     let def = data.def(fn_nr);
     let name = def.name();
     if name == "OpCoroutineNext" || name == "OpCoroutineExhausted" {
-        return idx == 0;
-    }
-    if !def.is_loft_defined()
-        || def.code == Value::Null
-        || matches!(def.returned.base(), Type::Iterator(_, _))
-    {
-        return false;
-    }
-    // A recursive pass answers for itself: the question is asked of the whole cycle.
-    if !visiting.insert((fn_nr, idx)) {
         return true;
     }
-    let Some(&p) = def.variables.arguments().get(idx) else {
-        return false;
-    };
-    only_advanced_in(&def.code, p, data, visiting)
-}
-
-fn only_advanced_in(v: &Value, p: u16, data: &Data, visiting: &mut HashSet<(u32, usize)>) -> bool {
-    match v.unspan() {
-        Value::Var(x) => *x != p,
-        Value::Set(x, _) if *x == p => false,
-        Value::Call(d, args) => args.iter().enumerate().all(|(j, a)| {
-            if matches!(a.unspan(), Value::Var(x) if *x == p) {
-                param_only_advanced(data, *d, j, visiting)
-            } else {
-                only_advanced_in(a, p, data, visiting)
-            }
-        }),
-        other => {
-            let mut ok = true;
-            other.for_each_child(&mut |c| {
-                ok = ok && only_advanced_in(c, p, data, visiting);
-            });
-            ok
-        }
-    }
+    def.is_loft_defined()
+        && def.code != Value::Null
+        && !matches!(def.returned.base(), Type::Iterator(_, _))
 }
 
 /// @PLN164 B1 — does the bind `v = value` ADOPT the record the callee minted?  True when

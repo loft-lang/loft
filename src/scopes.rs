@@ -6074,6 +6074,163 @@ fn rewrite_written_out(
 
 #[allow(clippy::too_many_arguments)]
 #[expect(clippy::too_many_lines, reason = "inherited")]
+/// `(G-Hold)`, loft#1708 — a generator handle that lands in a SECOND holder while its source
+/// keeps its own hold takes a hold on the frame (`OpCoroutineRetain`), so each holder releases
+/// once and the frame dies with the last of them.
+///
+/// The holders that release are a field or an element (their cascade), a tuple member and a
+/// local (the scope sweep), and a generator frame (its end, or its abandonment).  A source
+/// KEEPS its hold when it is a parameter (the caller's, or a generator frame's), a view
+/// (`skip_free`), or a member read.  A fresh call hands its one hold over, and an owned local
+/// placed in a field MOVES there (`(H-Move)`, `handle_handoff`): neither is retained.  Before
+/// this, the source released the frame while the new holder still named it, and the holder
+/// answered null — `g = gen(); wrap(g)` returned from a function, `h = g` of a parameter.
+fn retain_shared_handles(
+    d_nr: u32,
+    code: &mut Value,
+    vars: &Function,
+    data: &Data,
+    database: &crate::database::Stores,
+) {
+    let retain = data.def_nr("OpCoroutineRetain");
+    if retain == u32::MAX {
+        return;
+    }
+    let cx = RetainCx {
+        retain,
+        set_dbref: data.def_nr("OpSetDbRef"),
+        get_dbref: data.def_nr("OpGetDbRef"),
+        vars,
+        data,
+        database,
+    };
+    cx.rewrite(code);
+    if matches!(data.def(d_nr).returned.base(), Type::Tuple(_)) {
+        cx.rewrite_tuple_members(code);
+    }
+}
+
+struct RetainCx<'a> {
+    retain: u32,
+    set_dbref: u32,
+    get_dbref: u32,
+    vars: &'a Function,
+    data: &'a Data,
+    database: &'a crate::database::Stores,
+}
+
+impl RetainCx<'_> {
+    fn is_handle_var(&self, x: u16) -> bool {
+        matches!(self.vars.tp(x).base(), Type::Iterator(_, _))
+    }
+
+    /// Is `val` a handle whose source keeps its own hold?
+    fn kept(&self, val: &Value) -> bool {
+        match val.unspan() {
+            Value::Var(x) => {
+                self.is_handle_var(*x) && (self.vars.is_argument(*x) || self.vars.is_skip_free(*x))
+            }
+            Value::TupleGet(x, i) => matches!(
+                self.vars.tp(*x).base(),
+                Type::Tuple(m) if m.get(*i as usize).is_some_and(|t| matches!(t.base(), Type::Iterator(_, _)))
+            ),
+            Value::Call(d, args) if *d == self.get_dbref => self.handle_field(args),
+            _ => false,
+        }
+    }
+
+    /// Does `OpGetDbRef(rec, off)` read a generator-handle field?
+    fn handle_field(&self, args: &[Value]) -> bool {
+        let (Some(Value::Var(r)), Some(Value::Int(off))) = (
+            args.first().map(Value::unspan),
+            args.get(1).map(Value::unspan),
+        ) else {
+            return false;
+        };
+        let Some(d_nr) = self.vars.tp(*r).base().heap_def_nr() else {
+            return false;
+        };
+        let kt = self.data.def(d_nr).known_type();
+        self.data.def(d_nr).attributes().iter().any(|a| {
+            matches!(a.typedef.base(), Type::Iterator(_, _))
+                && i64::from(self.database.position(kt, &a.name)) == i64::from(*off)
+        })
+    }
+
+    fn wrap(&self, v: &mut Value) {
+        let inner = std::mem::replace(v, Value::Null);
+        *v = Value::Call(self.retain, vec![inner]);
+    }
+
+    fn is_generator(&self, d: u32) -> bool {
+        let def = self.data.def(d);
+        def.is_loft_defined()
+            && def.code != Value::Null
+            && matches!(def.returned.base(), Type::Iterator(_, _))
+    }
+
+    fn rewrite_tuple_members(&self, v: &mut Value) {
+        match v {
+            Value::Span(b) => self.rewrite_tuple_members(&mut b.1),
+            // A block's value is its last operator — a function body's tail is its return.
+            Value::Block(bl) => {
+                if let Some(last) = bl.operators.last_mut() {
+                    self.rewrite_tuple_members(last);
+                }
+            }
+            Value::Tuple(members) => {
+                for m in members.iter_mut() {
+                    if self.kept(m) {
+                        self.wrap(m);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn rewrite(&self, v: &mut Value) {
+        v.for_each_child_mut(&mut |c| self.rewrite(c));
+        match v {
+            Value::Call(d, args) if *d == self.set_dbref && args.len() == 3 => {
+                if self.kept(&args[2]) {
+                    self.wrap(&mut args[2]);
+                }
+            }
+            // A generator HOLDS every handle it is handed, to its end or its abandonment.
+            Value::Call(d, args) if self.is_generator(*d) => {
+                for a in args.iter_mut() {
+                    let handle = match a.unspan() {
+                        Value::Var(x) => self.is_handle_var(*x),
+                        _ => self.kept(a),
+                    };
+                    if handle {
+                        self.wrap(a);
+                    }
+                }
+            }
+            // A LOCAL that will release (not a view, `skip_free`) and is bound from a parameter or
+            // a view VARIABLE.  A member read into such a local is the parser's move out of the
+            // member — a destructuring binder of a temp — and the local's own flag already says
+            // it owns; retaining there leaked the frame.
+            Value::Set(x, val) => {
+                if self.is_handle_var(*x)
+                    && !self.vars.is_argument(*x)
+                    && !self.vars.is_skip_free(*x)
+                    && matches!(val.unspan(), Value::Var(_))
+                    && self.kept(val)
+                {
+                    self.wrap(val);
+                } else if matches!(self.vars.tp(*x).base(), Type::Tuple(_)) {
+                    self.rewrite_tuple_members(val);
+                }
+            }
+            Value::Return(val) => self.rewrite_tuple_members(val),
+            _ => {}
+        }
+    }
+}
+
 fn run_scan_phase(
     data: &mut Data,
     database: &mut crate::database::Stores,
@@ -9141,6 +9298,7 @@ pub fn check(data: &mut Data, database: &mut crate::database::Stores) {
         // so each arm's copy hands its own source over (`formal/heap.md` D-heap-15).
         write_out_joined_copies(&mut orig_code, &orig_vars, data);
         reassociate_coalesce_chains(&mut orig_code, &mut orig_vars, data);
+        retain_shared_handles(d_nr, &mut orig_code, &orig_vars, data, database);
         // Phase 1: the normal scan → apply → set-scope pass.
         let written_out = run_scan_phase(
             data,
@@ -17876,6 +18034,18 @@ impl Scopes<'_> {
                     vec![Value::Var(param), Value::Var(orig)],
                 ));
             }
+            // `(G-Hold)`, loft#1708 — a generator HOLDS every handle it was handed (its caller
+            // took a hold for the frame, `retain_shared_handles`), and gives it back at its end.
+            // An abandoned frame gives it back through `free_coroutine` instead.
+            if matches!(data.def(self.d_nr).returned.base(), Type::Iterator(_, _)) {
+                for param in 0..function.count() {
+                    if function.is_argument(param)
+                        && matches!(function.tp(param).base(), Type::Iterator(_, _))
+                    {
+                        ls.push(call("OpFreeRef", param, data));
+                    }
+                }
+            }
         }
         if !guarded.is_empty() {
             guarded.append(&mut ls);
@@ -18390,13 +18560,13 @@ impl Scopes<'_> {
                 // `@FR-N-Shape`: the shape is read through `?`; the lift keeps the whole type.
                 && matches!(data.def(*g_nr).returned.base(), Type::Iterator(_, _))
                 && data.def(*g_nr).is_loft_defined()
-                && crate::use_analysis::handle_param_only_advanced(data, outer_call, arg_idx)
+                && crate::use_analysis::inline_handle_needs_holder(data, outer_call)
             {
-                // `@FR-G-Hold` — an inline generator handle whose callee only advances it is
-                // held by nothing else, so a `__lift_N` temp holds it and the scope's sweep
-                // releases its frame, as the bound `g = gen(); first(g)` does.  Unlifted,
-                // an abandoned frame and every heap local it allocated stayed to program
-                // exit, one per call (loft#1705).
+                // `@FR-G-Hold` — an inline generator handle is held by nothing but the
+                // argument, so a `__lift_N` temp holds it and the scope's sweep releases its
+                // hold, as the bound `g = gen(); first(g)` does; a callee that keeps it takes a
+                // hold of its own (loft#1708).  Unlifted, an abandoned frame and every heap
+                // local it allocated stayed to program exit, one per call (loft#1705).
                 let gen_tp = data.def(*g_nr).returned.clone();
                 let tmp = self.new_lift_var(function, &gen_tp);
                 preamble.push(v_set(tmp, scanned));

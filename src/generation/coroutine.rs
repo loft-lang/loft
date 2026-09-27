@@ -817,6 +817,13 @@ fn write_param_shadows(
         let aname = sanitize(&attr.name);
         if is_text_slot(&attr.typedef) {
             writeln!(w, "{indent}let var_{aname}: &str = &self.var_{aname};")?;
+        } else if matches!(attr.typedef.base(), Type::Iterator(_, _)) {
+            // Mutable: the generator's end gives its hold on a handle parameter back
+            // (`(G-Hold)`, loft#1708), and the free nulls the shadow it read.
+            writeln!(
+                w,
+                "{indent}#[allow(unused_mut)] let mut var_{aname} = self.var_{aname};"
+            )?;
         } else {
             writeln!(w, "{indent}let var_{aname} = self.var_{aname};")?;
         }
@@ -862,6 +869,7 @@ fn emit_drop_stores(
     def_nr: u32,
     owns_snapshots: bool,
     owns_fnrefs: bool,
+    held_params: &[String],
 ) -> std::io::Result<()> {
     let vars = data.def(def_nr).variables();
     let owned: Vec<String> = persistent
@@ -882,6 +890,7 @@ fn emit_drop_stores(
                 )
         })
         .map(|(v, _)| fields[v].clone())
+        .chain(held_params.iter().cloned())
         .collect();
     if owned.is_empty() && !owns_snapshots && !owns_fnrefs {
         return Ok(());
@@ -2128,6 +2137,17 @@ impl Output<'_> {
         self.emit_next_i64(w, &attrs, &segments, &tail, has_yf, &yield_tp)?;
         let owns_snapshots = crate::data::is_dbref(&yield_tp) && is_eager(&segments);
         let owns_fnrefs = matches!(yield_tp.base(), Type::Function(..)) && is_eager(&segments);
+        // `(G-Hold)`, loft#1708 — a lazy generator abandoned before its end still holds the
+        // handles it was handed.  An eager one ran its end, which gave them back, in its factory.
+        let held_params: Vec<String> = if is_eager(&segments) {
+            Vec::new()
+        } else {
+            attrs
+                .iter()
+                .filter(|a| matches!(a.typedef.base(), Type::Iterator(_, _)))
+                .map(|a| sanitize(&a.name))
+                .collect()
+        };
         emit_drop_stores(
             w,
             &persistent,
@@ -2136,6 +2156,7 @@ impl Output<'_> {
             def_nr,
             owns_snapshots,
             owns_fnrefs,
+            &held_params,
         )?;
         writeln!(w, "}}\n")?;
         self.in_coroutine_body = prev_in_coroutine;
@@ -2264,6 +2285,13 @@ impl Output<'_> {
             let aname = sanitize(&attr.name);
             if is_text_slot(&attr.typedef) {
                 writeln!(w, "    let var_{aname}: &str = var_{aname};")?;
+            } else if matches!(attr.typedef.base(), Type::Iterator(_, _)) {
+                // Mutable: the body's end gives its hold on a handle parameter back
+                // (`(G-Hold)`, loft#1708), and the free nulls the copy it read.
+                writeln!(
+                    w,
+                    "    #[allow(unused_mut)] let mut var_{aname} = var_{aname};"
+                )?;
             } else {
                 writeln!(w, "    let var_{aname} = var_{aname};")?;
             }

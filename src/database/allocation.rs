@@ -1290,6 +1290,11 @@ impl Stores {
         // sentinel pattern (store_nr=0, rec=0) which is the default
         // value written by `set_default_value` for unset DbRef fields.
         for target in cascade_targets {
+            // A captured GENERATOR handle is no store: the closure's drop hook gives its hold
+            // back (`(G-Hold)`), and here it named `--native`'s coroutine table as a store.
+            if crate::database::format::is_generator_handle(target.store_nr) {
+                continue;
+            }
             if target.store_nr != 0 || target.rec != 0 {
                 self.free_named(&target, "<cascade>");
             }
