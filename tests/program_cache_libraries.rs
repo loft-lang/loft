@@ -125,7 +125,7 @@ fn recorded_artifacts(home: &Path) -> Vec<String> {
 /// c1 — the second run of an unchanged program that uses a registry package is a warm HIT,
 /// and answers the same; the manifest records the library's auto-native cdylib.
 /// c2 — that cdylib removed: a named miss, the same answer, and the run after warms again.
-/// c3 — `LOFT_NO_NATIVE_LIBS=1` over a bundle marked native: a named miss by context and the
+/// c3 — `LOFT_NO_NATIVE_LIBS=1` over a bundle marked native: a miss and the
 /// same answer, never a replay of the native marks.
 #[test]
 fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
@@ -165,8 +165,10 @@ fn a_program_whose_library_has_dependencies_or_builds_native_warms() {
 
     let nolibs = run(&home, &[("LOFT_NO_NATIVE_LIBS", "1")]);
     assert!(nolibs.contains(ANSWER), "c3 answer:\n{nolibs}");
+    // Either miss is the promise: the environment keys a slot of its own (loft#1697), and
+    // `native_lib_context` still guards a context that reaches the slot some other way.
     assert!(
-        nolibs.contains("[warm] miss: the native-library context differs"),
+        nolibs.contains("[warm] miss") && !nolibs.contains("[warm] hit"),
         "c3: a bundle marked native must not serve a LOFT_NO_NATIVE_LIBS run:\n{nolibs}"
     );
 

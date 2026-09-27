@@ -4272,33 +4272,12 @@ fn native_source_key_fingerprint(
 }
 
 /// @PLN166 B3 — whether the environment lets a source-keyed native hit stand in for a
-/// parse.  An ALLOW-list, because the `LOFT_*` surface is large and scattered (every
-/// `--native` rewrite has a `LOFT_NO_*` switch, every tracer a `LOFT_TRACE_*`, and each is
-/// read where it acts): a switch that reaches codegen changes the Rust, and an instrument
-/// that reaches the parser expects a parse to run — neither can be served a binary built
-/// without it.  The names here are the ones verified to touch neither: watchdog and memory
-/// bounds, timing, the cache's own knobs, the diagnostic renderer, the scratch dir and the
-/// source anchor the binary reads at run time.  Anything else declines the path, which costs
+/// parse: a switch that reaches codegen changes the Rust, and an instrument that reaches the
+/// parser expects a parse to run — neither can be served a binary built without it.  Any
+/// counting `LOFT_*` variable ([`loft::cache::env_counts`]) declines the path, which costs
 /// only the parse the generated-Rust cache then skips rustc for.
 fn native_fast_path_env_ok() -> bool {
-    const INERT: &[&str] = &[
-        "LOFT_TIMING",
-        "LOFT_TIMING_LEDGER",
-        "LOFT_TIMEOUT",
-        "LOFT_TIMEOUT_GRACE",
-        "LOFT_MEMORY_LIMIT",
-        "LOFT_PROGRAM_CACHE",
-        "LOFT_CACHE_MAX_MB",
-        "LOFT_CACHE_TTL_HOURS",
-        "LOFT_ERRORS",
-        "LOFT_TMPDIR",
-        "LOFT_TMPFS_MIN_FREE_MB",
-        "LOFT_SOURCE_DIR",
-    ];
-    std::env::vars_os().all(|(k, _)| {
-        let k = k.to_string_lossy();
-        !k.starts_with("LOFT_") || INERT.contains(&k.as_ref())
-    })
+    std::env::vars_os().all(|(k, _)| !loft::cache::env_counts(&k.to_string_lossy()))
 }
 
 /// Report what the front end said — warnings to stderr unless `--no-warnings`, errors

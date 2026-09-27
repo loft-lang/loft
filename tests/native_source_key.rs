@@ -421,6 +421,18 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
         "a codegen switch declines the path: {}",
         r.stderr
     );
+    // …and leaves the default program's key alone: the switch run's binary is recorded
+    // under its own environment, so the default run after it must not execute it (it did:
+    // the two shared one sidecar, and an A/B of a switch compared the switch arm with
+    // itself; loft#1697).  A miss here is the binary cache's single slot, which the switch
+    // run's build took.
+    let r = run(&root, &script);
+    assert_eq!(
+        r.source_key(),
+        "miss",
+        "a default run is never served the switch run's binary: {}",
+        r.stderr
+    );
     let r = run_with(
         &root,
         &script,
@@ -445,7 +457,9 @@ fn a_switch_in_the_environment_declines_the_fast_path() {
         "…and the binary cache: {}",
         r.stderr
     );
-    // An inert variable does not.
+    // An inert variable does not decline it.
+    let r = run(&root, &script);
+    assert!(r.ok, "{}{}", r.stdout, r.stderr);
     let r = run_with(
         &root,
         &script,
