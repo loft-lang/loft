@@ -114,3 +114,29 @@ nothing — the TRANSITIVE form promotes the wrapper's own work-refs onward, so 
 climbs to the outermost looping frame (Phase A and B to a fixpoint over the call graph).
 Built (2026-09-26): `bone_shape_has` 5.44× → **2.68×**, same hash — below the 4.84× the
 rule started from, since the wrapper's three mints were ~200 ns of a ~375 ns query.
+
+## `flow_layout_full` priced (2026-09-27)
+
+After `(R-WorkBuffer)`, the character heap fact and `(R-VecCopy)`, the zttext row reads
+27.6 ms against the twin's 1.9 ms (14.6×; the lane's other rows are now 3.5–8.6×, `invert`
+102× → 8.6×).  A flat profile of the row alone puts ~40 % in store bookkeeping; what it is made
+of, priced on the emitted Rust (`bench/portal/hand_price.sh`, hash `eb888d85` throughout):
+
+* **The result buffers** — `token_width` and `place_line` mint a store per call for
+  `slice_runs`' `vector<Run>` result and free it at exit.  Kept alive across calls (a
+  persistent per-site slot, the frees dropped): 27.6 → 25.5 ms, **−8 %**.  Worth it only
+  as the transitive `(R-WorkBuffer)` step for RESULT buffers — a call-site buffer whose result
+  never leaves the frame handed down from the looping caller — not as a row of its own.
+* **The fn-ref record result** — `resolve(r.style)` is called with `DbRef::NULL` as its return
+  buffer, so every call (about three per token) mints a `Style` store.  Offering the site's
+  own temp as the buffer breaks the fn-ref adoption protocol: `cr_fnref_minted` /
+  `cr_fnref_adopt` read a store they did not see minted as BORROWED and take the copy
+  branch, and bypassing them leaked a store per call in the price.  Making an unresolved call
+  take a buffer is fn-ref ABI work (`@FR-O-Unknown`), a design, not a patch — not priced.
+* **The per-run text** — every `Run { str: s }` writes its text into the store: a claim
+  through the best-fit tree (`claim_best_fit`, `fl_insert`, `set_free_header`,
+  `finish_claim`, ~20 % of the row) and a free when the buffer is cleared, against one
+  `malloc` in the twin.  This is the allocator "shave" above, now with a row that needs it.
+
+Not the lever: the per-character walks the operator counts point at (`buf_slice_text` 22 %
+of executed operators, `seg` 19 %) are 4.5 % and less of wall time — already lean loops.
