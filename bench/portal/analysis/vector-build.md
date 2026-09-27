@@ -424,3 +424,29 @@ or under it.
 applied by script to that function alone; `bench/portal/hand_price.sh`, which is `rustc`
 with loft's own release line (captured once with a logging `rustc` shim on `PATH`); the lane's own binary run with `--n`, the hash
 column compared.  A figure is quoted only where the hash is unchanged and two runs agree.
+
+## `binary_read` taken apart (2026-09-27)
+
+The crawler's `read_i16_vec` — `while i < n { out += [read_one_i16(bf)]; … }` with
+`read_one_i16` a one-line `bf#read(2) as i16` — read at 41 ns an element against the twin's
+1.3.  A flat profile of the shape alone (session scratch `br/br.loft`, 150 000 reads) put
+three costs in front, none of them the language's:
+
+* **`is_text_type`** hashed the NAME `"text"` through the type table's `HashMap` on every
+  read — 15 % of the loop.  `text` is the sixth base type `Stores::new` registers, the
+  number `copy_claims` already hard-codes: now `database::TEXT_TP` and a compare.
+* **A heap buffer per read** (`vec![0u8; n]`, a `calloc` and a `free` for two bytes) — 10 %.
+  Reads of up to 16 bytes now use a stack buffer.  The interpreter's twin keeps its `Vec`:
+  it moves the buffer into the text a text read answers.
+* **The push loop held no header**, because `OpReadFile` was an unclassified store writer
+  and so was the address of the local it reads into (`OpCreateStack`).  A scalar read
+  writes only that local and the File record's cursor fields, in place:
+  `(R-InPlace)`'s read clause (`formal/rewrites.md`).  Hand-priced first on the emitted
+  Rust with a push window (−30 %); built, the loop gets the header-held push.
+
+Probe 6.22 → 3.75 (the two runtime costs) → 2.91 ms; the row **6.20 → 2.87 ms**, 32.8× → ~14×,
+hash `fa34c62d78` throughout.  What is left is spread over the generic read — the format
+byte, `#next` read and written back, the handle lookup, the buffered `read_exact`, the
+decode — about 19 ns an element with no single owner.  The full push window
+(`@FR-R-PushFill`) is not offered to a `while` loop; the same loop written as `for _ in 0..n`
+would take it (−30 % more on the price).

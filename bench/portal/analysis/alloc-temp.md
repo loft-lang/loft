@@ -140,3 +140,30 @@ of, priced on the emitted Rust (`bench/portal/hand_price.sh`, hash `eb888d85` th
 
 Not the lever: the per-character walks the operator counts point at (`buf_slice_text` 22 %
 of executed operators, `seg` 19 %) are 4.5 % and less of wall time — already lean loops.
+
+## `check_request` priced (2026-09-27)
+
+pluginabi's front door, 51× (8.9 µs a call against 164 ns).  An LBR call-graph profile of
+the lane binary (`perf record --call-graph lbr` works on this box where dwarf unwinding
+gives nothing) splits the call: each of the two decodes ~27 %, `pa_decode`'s deep copy of
+`d.value` into its return buffer ~15 %, `pa_get` + `pa_text` (a copy of `e.value`, then a
+format) ~13 %.  Counted per call by wrapping every store op in the emitted Rust with a
+per-source-line counter: **32 store mints, 18.5 deep record copies, 10.5 deep vector
+appends**.  Nothing in that list is one lever:
+
+* `tb` / `bs` (the text and byte payload locals of `read_value`, 11.4 mints a call) —
+  `(R-WorkBuffer)` declines `bs` as "copied whole into another place" (a struct-literal
+  field initialiser, which only READS it) and `tb` as "handed to a call" (the native
+  `text_from_bytes`, which answers a text and cannot keep it).  Priced by caching both
+  stores across calls: 8.86 → 8.45 µs, **−4.6 %**.
+* `pa_decode` handing its decoded store to the caller instead of copying `d.value` into
+  the buffer: 8.64 → 8.09 µs, **−5 %**.  The library copies to dodge loft#425 and #651,
+  both closed.
+* The copies of `kd.value` / `vd.value` into each `CborEntry` are the rest of the tree:
+  every sub-value is decoded into its own store and deep-copied into its parent's, which a
+  Rust value moves.  Removing that is placement of a callee's result INSIDE the caller's
+  store, a design, not a rewrite.
+
+And the twin runs a cheaper algorithm than the library: its `Cbor` BORROWS text and byte
+slices from the frame, where the library's `CborValue` owns copies.  Bench rule 1 says the
+twin should own them too (a `Vec` / `String` per payload); the 51× overstates loft's share.

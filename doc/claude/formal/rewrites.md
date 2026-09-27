@@ -588,7 +588,11 @@ pins `tests/loop_record.rs`.
                  the list; (R-Scalar) reads it as a write of tp WHOLE, and
                  (R-RecPtr) reads a copy FROM a view as a read of it.  A copy of a
                  heap-owning type walks claims, and a flagged one frees its source
-                 or marks a fresh destination: both stay store writers.
+                 or marks a fresh destination: both stay store writers.  THE READ
+                 CLAUSE: f#read(n) as a SCALAR writes that local and the File
+                 record's cursor fields in place, and is on the list with the
+                 address of its local; the scalar tier still reads it as a write
+                 it cannot type.  A text, vector or record read stays a writer.
 ```
 
 **In words.** @PLN157 P4a.  Aliasing is free for headers under this rule — an
@@ -668,6 +672,23 @@ while `c3b`, where the copy is the loop's ONLY whole-type write, answers `195 1 
 now 40)"*.  Switch `LOFT_NO_COPY_IN_PLACE`.  Cells `tests/scripts/158-copy-in-place.loft`,
 pins `tests/copy_in_place.rs`.  Sites: `hoist::in_place_copy`, `hoist::blocks_header_hoist`,
 `hoist::body_writes`, `hoist::view_extent_verdict`.
+
+**The read clause** (2026-09-27, @PLN158).  `OpReadFile(f, OpCreateStack(t), n, tp)` with a
+scalar `t` sets `t` and the File record's `#next` and `#pos` (and its handle number on the
+first read), each in place; nothing is claimed, grown or freed, so no header, base or record
+address can go stale across it.  `OpCreateStack(t)` of a scalar local is on the list with it:
+taking the address writes nothing, and whatever writes through it is judged on its own.  The
+scalar tier gets no exemption — `body_writes` still answers "untyped" for the read, because
+it advances `f#next`, which is a field a loop may hoist: typing it as writing nothing reads
+`[2,2,2,2]` for `[2,4,6,8]` in cell r3 (the patch receipt).  A text read builds a text and a
+vector or record read fills a value in a store; each stays a writer.  Measured on the
+crawler's `read_i16_vec` shape — `while i < n { out += [read_one_i16(bf)]; … }`, the read in a
+helper — together with two runtime costs of the read itself (a `SipHash` of the name `text`
+in `is_text_type` and a heap buffer per read, both gone): `binary_read` **6.20 → 2.87 ms**,
+32.8× → ~14×, hash `fa34c62d78`.  Switch `LOFT_NO_WRITE_HOIST` (the tier); cells
+`tests/scripts/158-scalar-file-read.loft`; pin `tests/scalar_file_read.rs`.  Sites:
+`hoist::scalar_file_read`, `hoist::scalar_stack_ref`, `hoist::blocks_header_hoist`,
+`hoist::in_place_only_writer`.
 
 ### A callee is admitted by what its body writes, one call deep
 

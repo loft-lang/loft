@@ -170,6 +170,31 @@ pub fn in_place_copy(stores: Option<&Stores>, op: &str, args: &[Value]) -> Optio
     (stores.is_struct(tp) && !stores.owns_heap(tp)).then_some(tp)
 }
 
+/// `@FR-R-InPlace`'s read clause — `OpReadFile(f, OpCreateStack(t), n, tp)` into a SCALAR
+/// local writes that local and the File record's own cursor fields (`#next`, `#pos`, the
+/// handle number on first use), each in place: nothing is claimed, grown or freed.  A read
+/// into a text, a vector or a record builds or fills a value in a store and stays a writer.
+/// The scalar tier still reads the op as a write it cannot type (`body_writes`).
+fn scalar_file_read(
+    data: &Data,
+    op: &str,
+    args: &[Value],
+    vars: Option<&crate::variables::Function>,
+) -> bool {
+    op == "OpReadFile"
+        && matches!(args.get(1).map(Value::unspan), Some(Value::Call(c, a))
+            if (*c as usize) < data.definitions.len()
+                && scalar_stack_ref(data.def(*c).name(), a, vars))
+}
+
+/// The address of a SCALAR local — `OpCreateStack(t)`, the operand the parser wraps a
+/// by-reference hand-off in — writes nothing; whatever writes through it is judged on its own.
+fn scalar_stack_ref(op: &str, args: &[Value], vars: Option<&crate::variables::Function>) -> bool {
+    op == "OpCreateStack"
+        && matches!(args.first().map(Value::unspan), Some(Value::Var(t))
+            if vars.is_some_and(|v| is_scalar(v.tp(*t))))
+}
+
 /// `LOFT_NO_COPY_IN_PLACE=1` — a no-heap record copy is a store writer again
 /// (`@FR-R-Switch`).  Read at generation time.
 fn in_place_copy_enabled() -> bool {
@@ -5636,8 +5661,11 @@ fn blocks_header_hoist(
         }
         Value::Call(d, args) => {
             let known = (*d as usize) < data.definitions.len();
-            let in_place_setter =
-                known && tiers.in_place && IN_PLACE_SET_OPS.contains(&data.def(*d).name());
+            let in_place_setter = known
+                && tiers.in_place
+                && (IN_PLACE_SET_OPS.contains(&data.def(*d).name())
+                    || scalar_file_read(data, data.def(*d).name(), args, vars)
+                    || scalar_stack_ref(data.def(*d).name(), args, vars));
             let record_free = known
                 && crate::keys::retbuf_hoist_enabled()
                 && frees_a_record(data.def(*d).name(), args, vars);
@@ -5795,13 +5823,16 @@ fn in_place_only_writer(
         return false;
     }
     let only_in_place = !def.code().any_node(&mut |n| match n {
-        Value::Call(op, _) => {
+        Value::Call(op, args) => {
             if (*op as usize) >= data.definitions.len() {
                 return true;
             }
             let callee = data.def(*op);
             if matches!(callee.code(), Value::Null) {
-                !(native_op_is_store_free(callee) || IN_PLACE_SET_OPS.contains(&callee.name()))
+                !(native_op_is_store_free(callee)
+                    || IN_PLACE_SET_OPS.contains(&callee.name())
+                    || scalar_file_read(data, callee.name(), args, Some(def.variables()))
+                    || scalar_stack_ref(callee.name(), args, Some(def.variables())))
             } else {
                 call_writes_store(*op, data, cache, active)
                     && !in_place_only_writer(*op, data, cache, active)
