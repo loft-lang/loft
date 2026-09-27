@@ -3924,7 +3924,8 @@ pub fn adopts_minted_at_bind(
     v: u16,
     value: &Value,
 ) -> bool {
-    crate::keys::adopt_first_bind_enabled() && binds_the_callees_minted_store(data, function, v, value)
+    crate::keys::adopt_first_bind_enabled()
+        && binds_the_callees_minted_store(data, function, v, value)
 }
 
 /// The SHAPE half of [`adopts_minted_at_bind`], without its switch: the callee returns the
