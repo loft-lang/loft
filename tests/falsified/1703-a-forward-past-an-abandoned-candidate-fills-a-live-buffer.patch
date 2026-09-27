@@ -1,0 +1,35 @@
+diff --git b/src/scopes.rs a/src/scopes.rs
+index 271e515a7..ab290c825 100644
+--- b/src/scopes.rs
++++ a/src/scopes.rs
+@@ -12152,17 +12152,8 @@ impl Scopes<'_> {
+         // interpreter on the deviating side.  Its own guarded free is a no-op after
+         // this one: the `OpFreeRef` emitter resets a freed Var to the null
+         // sentinel, so the store it captures is already NULL.
+-        //
+-        // `@FR-O-Buffer` — NOT where the buffer has an ENTRY WITNESS.  Then the rebind's own
+-        // free (`generate_set`, native's `_rb_w_` twin) releases the displaced store AFTER the
+-        // call, declining on the entry store and on a store the callee filled in place, and
+-        // it is the one home for it.  A free here runs BEFORE the call that is handed `v` as
+-        // its buffer: a callee that fills a live buffer then filled the freed store on the
+-        // interpreter, which does not reset `v`, and the caller read whatever took that slot
+-        // next (loft#1703).  It was also unguarded, so a caller-handed store died with it.
+         if transition_free.is_none()
+             && was_in_scope
+-            && function.entry_witness(v).is_none()
+             && matches!(function.tp(v), Type::Reference(_, _) | Type::Enum(_, true, _))
+             // @FR-O-Proxy asks free — the ownership-TRANSITION free, releasing the store `v`
+             // is about to stop naming.  The proxy is unsound alone, so it is asked with its
+@@ -12204,11 +12195,9 @@ impl Scopes<'_> {
+         // naming it, one per call.  The runtime witness carries the same @FR-O-Latest fact
+         // per RUN, so the free is emitted GUARDED instead of not at all.  `--native` has
+         // reached this answer all along through its entry-buffer witness `_rb_w_<name>`,
+-        // which is why only the interpreter reported the leak.  Stands down under an entry
+-        // witness for the reason the free above does.
++        // which is why only the interpreter reported the leak.
+         if transition_free.is_none()
+             && was_in_scope
+-            && function.entry_witness(v).is_none()
+             && let Some((buf, flag)) = self.rbuf_witness
+             && buf == v
+             && matches!(
