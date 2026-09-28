@@ -50,7 +50,7 @@ irreversible moves not to make.
   `--interpret` explicitly — strides/types are IR operands the interpreter surfaces in
   seconds, whereas `--native` pays a rustc compile per probe (that cost belongs at the
   final verify, not the loop).
-- **`LOFT_LOG=`** presets (full table: `CLAUDE.md` § `LOFT_LOG` quick reference / `doc/claude/TESTING.md`
+- **`LOFT_LOG=`** presets (full table: `CLAUDE.md` § `LOFT_LOG` quick reference / `doc/claude/RUNNING_TESTS.md`
   § LogConfig): `minimal` (exec trace — cleanest for runtime bugs), `static` (IR +
   bytecode, fastest for codegen), `crash_tail:N` (last N lines, flushed on panic),
   `ref_debug` (stack snapshots after Ref/CreateStack), `variables` (the per-fn var

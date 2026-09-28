@@ -338,7 +338,7 @@ LOFT_IR=distance LOFT_LOG=full loft myprog.loft 2>trace.txt
 | `LOFT_LOG` | `crash_tail:50` | Last 50 execution steps before a crash |
 | `LOFT_DUMP_DEPTH` | `3` | Struct nesting depth in dumps (default 2) |
 | `LOFT_DUMP_ELEMENTS` | `4` | Max vector elements in dumps (default 8) |
-| `LOFT_TRACE_ASSERTS` | `/tmp/ran.txt` | Appends `file:line` for every `assert` that EXECUTES — both backends, every process.  Diff against the `assert(` sites in the source to find the ones a suite contains and never runs, and read a whole file tracing at a constant offset as a wrong injected LINE ([TESTING.md](TESTING.md#the-set-a-suite-runs-is-not-the-set-it-contains-loft_trace_asserts)) |
+| `LOFT_TRACE_ASSERTS` | `/tmp/ran.txt` | Appends `file:line` for every `assert` that EXECUTES — both backends, every process.  Diff against the `assert(` sites in the source to find the ones a suite contains and never runs, and read a whole file tracing at a constant offset as a wrong injected LINE ([GUARDS.md](GUARDS.md#the-set-a-suite-runs-is-not-the-set-it-contains-loft_trace_asserts)) |
 
 ---
 
@@ -1087,7 +1087,7 @@ LOFT_NO_CACHE=1 loft --native p.loft
 whole-program bundle in `$XDG_CACHE_HOME/loft` (`cache::program_cache_paths`,
 default-ON — `LOFT_NO_CACHE` disables; and already OFF for a binary under
 `target/{debug,release}/`, so on a from-source loft the bundle is not one of
-your variables — PERFORMANCE.md § Which loft am I measuring), the stdlib bundle
+your variables — STARTUP_CACHE.md § Which loft am I measuring), the stdlib bundle
 (`LOFT_STDLIB_CACHE`), `target/` build artefacts, and an installed
 `$(which loft)` on `PATH`.
 
@@ -1143,7 +1143,7 @@ unbounded allocation on the next; `LOFT_TIMEOUT` bounds time, not memory. Wrap a
 repeat-run harness in `( ulimit -v 6000000; exec loft … )` — the kernel's OOM killer is
 free to kill a bystander instead of the runaway (it took out two unrelated sessions
 during this hunt). Test runs additionally carry loft's own store ceiling, which names
-the type that filled the heap (TESTING.md § Store-memory ceiling).
+the type that filled the heap (RUN_BOUNDS.md § Store-memory ceiling).
 
 ## When it fails in CI but passes locally
 
@@ -1564,7 +1564,7 @@ The cure is to split the walk: one function recognises only the construct and ha
 second, which is the only one that rewrites, so the arm's node kind is reachable only THROUGH the
 construct. ⚠ **A green `make ci` and a clean `find_problems --changed` both passed over it; the
 `LOFT_POISON=1` sweep found it in 90 seconds** — that sweep is not optional after touching shared
-parser or codegen machinery (TESTING.md § the nightly sweeps). And bisect such a regression by
+parser or codegen machinery ([CI_BUDGET.md § What runs when — today](CI_BUDGET.md#what-runs-when--today): `make ci` does not run it). And bisect such a regression by
 disabling each candidate fix in place (`if false && …`, an incremental rebuild, one failing file)
 rather than by building historical commits: three ~15s cycles named it.
 
@@ -1928,7 +1928,7 @@ Mechanics (`src/timeout.rs`): `arm(secs, grace)` spawns a `loft-watchdog` thread
 that sleeps to `secs + grace`, prints a breadcrumb, and **process-aborts** — so it
 bounds the WHOLE process: the `--native` compile, the interpreter loop, everything.
 The breadcrumb names the loft `fn`, its `file:line`, and the `entry` it was reached
-from (under `--tests`, the test) — see [TESTING.md](TESTING.md) for the format.
+from (under `--tests`, the test) — see [LOFT_TEST.md § Output format](LOFT_TEST.md#output-format) for the format.
 `arm` is idempotent (first deadline wins) and `secs == 0` leaves it disarmed (the
 default for ad-hoc runs — hence the hang risk). `LOFT_TIMEOUT` is read before argv,
 so it is the floor; an explicit `--timeout` only re-arms if nothing armed yet.
@@ -2224,7 +2224,7 @@ steady-state runtime.
 
 ## See also
 - [../DEVELOPERS.md](../DEVELOPERS.md) — Developer guide: pipeline overview, quality requirements, feature proposals
-- [TESTING.md](TESTING.md) — Test framework, `code!` / `expr!` macros, LogConfig debug presets
+- [TESTING.md](TESTING.md) — Test framework, `code!` / `expr!` macros; [RUNNING_TESTS.md](RUNNING_TESTS.md) — LogConfig debug presets
 - [PROBLEMS.md](PROBLEMS.md) — Known bugs with severity, workarounds, and fix paths
 - [SLOTS.md](SLOTS.md) — Slot assignment design (for the slots-dump enhancement)
 - [LIFETIME.md](LIFETIME.md) — Dep tracking and scope-based freeing (for the dep-graph enhancement)

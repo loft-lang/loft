@@ -293,9 +293,17 @@ def lintable(path: str) -> bool:
     return path.endswith((".md", ".rs", ".loft")) and not path.startswith(("target/", "index/"))
 
 
+# Plan docs belong to their plan's own agent, who keeps them under the contract while the plan
+# is worked (owner, DOC_QUALITY § Maintainer docs rule 14).  So the whole-tree report, its
+# baseline and its worklist leave them out; the edit hook and the PR gate still see a plan
+# doc, because there the one reading the finding IS the plan's agent.
+OWNED_BY_THEIR_PLAN = ("doc/claude/plans/", "doc/claude/lib_plans/")
+
+
 def tracked(pattern_paths=None):
     r = subprocess.run(["git", "ls-files"], cwd=ROOT, capture_output=True, text=True, check=True)
     return [p for p in r.stdout.split("\n") if p and lintable(p)
+            and not p.startswith(OWNED_BY_THEIR_PLAN)
             and (is_code(p) or p.endswith(".md") or is_user_prose(p))]
 
 

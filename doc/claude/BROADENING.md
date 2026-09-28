@@ -296,7 +296,7 @@ or native (shipped).
 ### The performance implication — supersedes E2 / full zero-copy as the perf endgame
 
 The `bench_read_data_breakdown` profiling (2026-06-04, documented in
-PERFORMANCE.md § Open work E2 row) measured that warm-load cost in the startup
+PERFORMANCE-history.md § Open work E2 row) measured that warm-load cost in the startup
 cache is allocation-bound: the dominant work is materialising library bodies +
 variable tables into native `String` / `Box<Type>`.  In the native-library model
 you never materialise those — libraries are native artifacts, loaded via `dlopen`;
@@ -336,7 +336,7 @@ Two enforcement points:
    these make `make rebuild-native-cdylibs` obsolete.
 
 Known gap to close: `@P341` native-package rlib path still folds **mtime** (per
-PERFORMANCE.md § BUILD2 notes) — that is the specific hole behind hitting the
+PERFORMANCE-history.md § BUILD2 notes) — that is the specific hole behind hitting the
 error too often.
 
 ### Three-layer model

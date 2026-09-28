@@ -10,7 +10,7 @@
 // — every store load is guarded (`if rec != 0 && valid(..)`) and LLVM will not
 // speculate a conditional load out of a loop. So the native emitter lifts them
 // itself when it can prove the loop writes nothing, which is worth ~2x on an
-// indexed-read kernel (loft#885, PERFORMANCE.md § Design: P2).
+// indexed-read kernel (loft#885, PERFORMANCE-history.md § Design: P2).
 //
 // The proof obligation is one-sided: a loop that DOES write must keep re-deriving,
 // because a write can move the record (`resize` relocates the record it grows) or

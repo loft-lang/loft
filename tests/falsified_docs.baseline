@@ -3,7 +3,7 @@
 # A guard that cannot be re-validated quickly is defective on its own terms: it claims to
 # catch something and records no way to check that claim a second time.  The four fields a
 # receipt owes, and the failure each was earned from, are in
-# `scripts/falsify-review.py` and doc/claude/TESTING.md.
+# `scripts/falsify-review.py` and doc/claude/GUARDS.md.
 #
 # This is a RATCHET keyed by file name.  It only ever shrinks: a new guard must meet the
 # standard, and a line here must be deleted once its guard does.  Do not add to it.

@@ -23,7 +23,7 @@ a loop the emitter proves writes NO store derives each vector's `(store_nr, reco
 once before the loop, so an element read is a bounds test plus address arithmetic (~2×).
 The gate (`src/generation/hoist.rs`) is an ALLOW-list on purpose — an op missing from it
 costs the optimisation, never correctness, which is the opposite of the five drifted
-mutation deny-lists in PERFORMANCE.md § Design: P8. **`LOFT_HOIST_VERIFY=1`** emits the
+mutation deny-lists in PERFORMANCE-history.md § Design: P8. **`LOFT_HOIST_VERIFY=1`** emits the
 checking form of every hoisted read (re-derives the header, panics on a stale one) — run the
 suite under it after touching the gate; **`LOFT_NO_VECTOR_HOIST=1`** emits the pre-885 form,
 which is the before-half of an A/B on one binary and the first bisect step for a
@@ -526,7 +526,7 @@ The family's rules and their citations: `doc/claude/formal/rewrites.md` (`@FR-R-
 **`scripts/emission_audit.py <emitted.rs>`** validates a `--native-emit` output against
 them (one holder per path per frame, no mover on a held path, a twin handed only live
 holders) — run it on any emission that looks wrong before running the program.
-PERFORMANCE.md § Design: P2, NATIVE.md.
+PERFORMANCE-history.md § Design: P2, NATIVE.md.
 
 ## Null-discharge buffers and filling loops
 

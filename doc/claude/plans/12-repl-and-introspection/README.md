@@ -158,7 +158,7 @@ playground, IDE integration).
   phase 02 splits up.
 - `src/state/mod.rs::execute_argv` — runtime entry, the function
   phase 03 makes resumable.
-- `doc/claude/TESTING.md` § LogConfig — user-facing reference for
+- `doc/claude/RUNNING_TESTS.md` § LogConfig — user-facing reference for
   the LOFT_LOG presets that introspection's CLI sub-flags mirror.
 - `doc/claude/DEBUG.md` — debug-output framework that the
   introspection tool re-uses.

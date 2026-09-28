@@ -4231,7 +4231,7 @@ impl Parser {
     /// arrives through the TYPED accessors (`bx.tag` is `OpGetText(bx, 28)`), whose second
     /// argument is a field offset for some and a SIZE for others (`OpGetVector(v, size,
     /// index)`) — telling them apart needs a list of ops that reads offsets, and a list like
-    /// that drifts silently against a new op, which is the failure mode PERFORMANCE.md § Design
+    /// that drifts silently against a new op, which is the failure mode PERFORMANCE-history.md § Design
     /// P8 records for the five mutation deny-lists.  So a sibling read spelled with a typed
     /// accessor stages a temp it does not need.  That is the cheap mistake, it is bounded by
     /// the literal's own field count, and closing it wants the field's declared SPAN rather

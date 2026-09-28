@@ -15,7 +15,7 @@
 #   * an INVALID ACCESS of any kind (read, write, uninitialised use, bad free, a syscall
 #     handed uninitialised bytes) fails the sweep — that is the class the gate exists for,
 #     the one Linux's allocator hides in slack and Windows' heap checker reports as
-#     STATUS_HEAP_CORRUPTION (TESTING.md § Occasional valgrind pass);
+#     STATUS_HEAP_CORRUPTION (TEST_ENVIRONMENTS.md § Occasional valgrind pass);
 #   * a DEFINITELY LOST block fails it — memory nothing can reach any more;
 #   * a "possibly lost" record does NOT.  Rust's hashbrown tables and boxed strings keep
 #     interior pointers, so every process-lifetime table — the parser's `Data`, the native
@@ -31,7 +31,7 @@
 #     half of the memory gate is `M-leaks` under `LOFT_STRICT_STORES=1`, not this one.
 #
 # The interpreter half runs `loft --interpret` on every file — `--tests` for tests/scripts,
-# whose files have no `main` and run nothing without it (TESTING.md § The harness).  The
+# whose files have no `main` and run nothing without it (GUARDS.md § How a guard reads green while the defect stands).  The
 # native half compiles each tests/docs document with `loft --native` (unchecked, so rustc is
 # not traced) and then hands the cached binary in `<dir>/.loft/cache/` to memcheck directly:
 # `--trace-children` would follow rustc, and the driver's own exec of the program is what

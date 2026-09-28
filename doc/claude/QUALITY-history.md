@@ -876,7 +876,7 @@ is an artifact.** Learned on `scopes::walk_check`, the top of the list: instrume
 catch-all and running the corpus reported **0** Span arrivals — and also 0 hits on the
 catch-all at all, which is impossible for a walker that meets leaf nodes. The site is gated,
 and `[profile.dev.package.loft] debug-assertions = false` strips it from `cargo build` and
-`cargo test` alike (TESTING.md § Hang guard). Before believing a zero, count the *unfiltered*
+`cargo test` alike (RUN_BOUNDS.md § Hang guard). Before believing a zero, count the *unfiltered*
 hits on the same arm; if those are zero too, the probe never ran.
 
 **Exactly 1 of the then-10 was gated** (`walk_check`) — so the method holds for the rest, and

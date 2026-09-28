@@ -734,7 +734,7 @@ type already says what an out-of-range value becomes, which is why this register
 ⚠ **The refinement's own guard was green throughout.**
 `tests/scripts/25-nullable-narrow-implicit-checked.loft` has seven cells over four functions,
 two source types and in-range/out-of-range arms — and every cell is a RETURN, so all seven enter
-through `convert`.  TESTING.md § How a guard reads green carries the general shape ("every cell
+through `convert`.  GUARDS.md § How a guard reads green carries the general shape ("every cell
 reaches the same SEAM").  The replacement guard,
 `tests/scripts/1246-a-nullable-narrow-slot-answers-null.loft`, is written as seams first and
 values second: local, field, struct literal, vector element, argument, return and compound, each

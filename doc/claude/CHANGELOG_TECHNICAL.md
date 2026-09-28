@@ -1867,7 +1867,7 @@ name that says which question it is asking.
 Peeling the routing predicates without peeling `dest` hands `append_source` a `RefVar`, which
 matches no arm, and the `&vector<Row>` twin that had always worked began answering *"cannot
 append `vector<Row>` to `&vector<Row>`"*.  The regression lands in the CONTROL rather than in
-the cell under test; TESTING.md § How a guard reads green gains that.
+the cell under test; GUARDS.md § How a guard reads green gains that.
 
 **How the sites were found.**  Inspection could not bound "which of the 76 read the widened
 answer".  A temporary env-gated form of `is_keyed` that computes BOTH answers, returns the
@@ -3169,7 +3169,7 @@ Now: `platform::native_compile_space_ok` sweeps dead-process artefacts on EVERY 
 runner's per-file cache survives; `scripts/sweep_scratch.sh` carries one rule per family and
 `make ci` runs it on its own scratch (was a seven-day `find`); `make sweep-scratch` /
 `make sweep-target` are the by-hand sweeps; `scripts/falsify.sh` keeps `LOFT_FALSIFY_KEEP`
-(4) controls.  TESTING.md § Scratch hygiene is the table.  Guard:
+(4) controls.  RUN_BOUNDS.md § Scratch hygiene is the table.  Guard:
 `tests/native_scratch_hygiene.rs`.
 
 ### A vector local bound from a value branch copies at the parser's selector, and a vector parameter rebinds locally (2026-09-05, loft#1370, D-own-35 / D-call-14)

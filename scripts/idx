@@ -18,6 +18,13 @@
 #                                   this?" is a lookup.  Boundary-exact, so
 #                                   @FR-B-View does not return @FR-B-View-Base.
 #                                   See doc/claude/formal/README.md § Rule tags.
+#   idx tag:@C<n>                 — a DESIGN-DECISION citation (@PLN175): every code,
+#                                   doc and test site that keeps decision C<n> of
+#                                   DESIGN_DECISIONS.md, headed by the entry itself.
+#                                   Boundary-exact, like @FR-.
+#   idx decisions                 — every decision in DESIGN_DECISIONS.md with its
+#                                   code / doc / guard (tests/) citation counts;
+#                                   `guards: 0` is a decision nothing verifies.
 #   idx tag:legacy:P259           — bare-name (legacy) lookup
 #   idx prefix:@PLAN22            — all tags starting with prefix
 #   idx file:doc/.../PROBLEMS.md  — all tags referenced in a file
@@ -206,7 +213,32 @@ case "$QUERY" in
     if [[ "$t" =~ ^@PLN([0-9]+)$ ]]; then
       echo "→ https://github.com/loft-lang/plans/issues/${BASH_REMATCH[1]}  (plan ${BASH_REMATCH[1]})"
     fi
+    # @C<n> → the register entry the citation resolves to (a local file, so the
+    # heading line is read rather than a URL printed).
+    if [[ "$t" =~ ^@C([0-9]+(\.[A-Z])?)$ ]]; then
+      entry=$(grep -n -m1 "^## C${BASH_REMATCH[1]} " "$ROOT/doc/claude/DESIGN_DECISIONS.md" || true)
+      if [[ -n "$entry" ]]; then
+        echo "→ doc/claude/DESIGN_DECISIONS.md:${entry/:## /  }"
+      else
+        echo "→ no entry C${BASH_REMATCH[1]} in doc/claude/DESIGN_DECISIONS.md" >&2
+      fi
+    fi
     jq --arg t "$t" '.[$t] // []' "$IDX" | filter_kind | add_excerpts
+    ;;
+  decisions)
+    # One row per register entry, in register order: where it is cited, split
+    # by kind.  A guard is a citation under tests/; a doc one a .md file; code
+    # everything else.  Read from the index, so `make index` first.
+    grep -E '^## C[0-9]+(\.[A-Z])? ' "$ROOT/doc/claude/DESIGN_DECISIONS.md" \
+      | sed -E 's/^## (C[0-9]+(\.[A-Z])?) — (.*)$/\1\t\3/' \
+      | jq -R -s --slurpfile idx "$IDX" '
+          split("\n") | map(select(length > 0) | split("\t")) | map(
+            . as [$id, $title]
+            | ($idx[0]["@" + $id] // []) as $refs
+            | { id: $id, title: $title,
+                code:   ([$refs[] | select((.file | startswith("tests/") | not) and (.file | endswith(".md") | not))] | length),
+                docs:   ([$refs[] | select(.file | endswith(".md"))] | length),
+                guards: ([$refs[] | select(.file | startswith("tests/"))] | length) })'
     ;;
   gh:*)
     # idx gh:247 → the issue/PR URL + every @GH247 reference (offline).

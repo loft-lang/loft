@@ -38,6 +38,53 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 - **Baseline:** only the touched files' rows were re-pinned, so other branches' timeline growth
   in `formal/` stays visible as new.
 
+**Phase 4 — TESTING.md split by question (2026-09-28).**
+- **4602 lines became six working docs, each under the ceiling, plus the record:**
+  - TESTING.md (705): where a test goes and how to write it — the harness, the suites, the gates;
+  - RUNNING_TESTS.md (662): running the suite and reading a failure, LogConfig included;
+  - GUARDS.md (586): does a guard catch its defect — `make falsify`, receipts, and the
+    ways a guard reads green, as rules grouped by kind (the 73 incidents are in the record);
+  - RUN_BOUNDS.md (260), TEST_ENVIRONMENTS.md (417), LOFT_TEST.md (252);
+  - the diagnostic tiers moved to DIAGNOSTICS.md, their subject's home;
+  - TESTING-history.md holds every moved incident verbatim.
+- **Stale facts corrected against the tree**, among them: six `tests/*.rs` entry points and the
+  `generated/` workspace that no longer exist; `wrap.rs` tolerating unclaimed warnings (it fails
+  them); a `pkill -f` recipe the shell rules forbid; `make test` and `make loft-test` doing
+  other than stated; the LOFT_LOG preset table missing six presets; two failure-kind causes
+  ("Undefined type" is not definition order; a range query is one interval, @FR-Slice-KeyedIter).
+- **Pointers:** every citation of a moved section names its new doc — 112 `tests/scripts`
+  headers, CLAUDE.md, skills, scripts and comments.
+
+**Phase 4 — DESIGN_DECISIONS.md, register and record (2026-09-28).**
+- **4381 → 966 lines.**  Every entry keeps its heading, so every anchor and every
+  "DESIGN_DECISIONS.md C86" citation still resolves.  Each entry now states the decision, its
+  reason and what would reopen it; the question, evaluation and amendments moved verbatim to
+  DESIGN_DECISIONS-history.md under the same heading.
+- **Folded in:** amendments that changed a decision (C68 reversed, C77 superseded by C86, C110
+  by C126), so the register states what holds now.
+- **Defects fixed:** two entries shared C67; the processor-arithmetic one is now C129 and its five
+  citations moved.  C91 carried a placeholder link to C101 from before C101 existed.
+- **Open, found here:** C98 is not what ships — a bare `use lib;` wildcard-imports; the entry
+  records the owner call as open.  C124's warning → error step has no tracker.
+
+**Plan docs are out of the burn-down (owner, 2026-09-28).**  A plan's docs are kept under the
+contract by that plan's own agent, so `make docs-lint`'s report, baseline and worklist and
+`make file-sizes` leave `plans/` and `lib_plans/` out; the edit hook and the PR gate still
+apply.  DOC_QUALITY § Maintainer docs rule 14 and DOC_CONTRACT rule 39 carry it.  This also
+settles the open `orphan` question for `plans/`.
+
+**Phase 4 — PERFORMANCE.md split by the same rule (2026-09-28).**
+- **5078 lines became three docs:**
+  - PERFORMANCE.md (769 lines, working): how to measure, where the numbers are, open work;
+  - STARTUP_CACHE.md (250 lines): its own question;
+  - PERFORMANCE-history.md (the record, size-exempt): the benchmark tables and comparisons,
+    every design, the analyses, and the drawing-pass baseline.
+- **The two status tables disagreed with each other and with the tree.**  N4 was listed open
+  but shipped; BUILD1 and P7's `reserve` were listed open but delivered.  The working doc's
+  single table was re-derived from the code, with the evidence per row.
+- **References follow their section.**  The ones that mean open work name the working doc;
+  a stale "P1 blocked" in ROADMAP.md was corrected.
+
 **Phase 4 — QUALITY.md split into working doc and record (2026-09-28, owner-steered).**
 - **The owner's rule, now DOC_QUALITY § Maintainer docs rule 4:** everything normal work needs
   lives in compact files, and history is split off one way — the `<doc>-history.md` companion.
@@ -338,8 +385,8 @@ bypass.
 
 - ~~The `size` ceiling~~ — **decided 2026-09-25: 1000 lines, hard**, with structure judged
   by the reviewer below it.
-- Whether `doc/claude/formal/` and `plans/` are exempt from `orphan` (proposed: `formal/`
-  exempt via its README, `plans/` reachable via `plans/README.md`, so no exemption needed).
+- Whether `doc/claude/formal/` is exempt from `orphan` (proposed: reachable via its README, so
+  no exemption needed).  `plans/` is settled: out of the report entirely (rule 14).
 - ~~Whether the PR gate lags the report~~ — it did not need to: the gate compares a change with
   its base, so no baseline is involved and inherited findings cannot block (Phase 2).
 

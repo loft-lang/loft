@@ -1380,7 +1380,7 @@ pub(crate) fn run_tests(
             // program at all.
             //
             // Deliberately NOT the wrap harness's rule ("if `main` exists, only `main`
-            // runs") — see TESTING.md § the two runners.  That one answers a different
+            // runs") — see TESTING.md § `tests/wrap.rs` — shared runner for docs and scripts tests.  That one answers a different
             // question: the harness drives whole SCRIPTS, where `main` is the program.
             if test_fns.iter().any(|(_, n)| n.starts_with("test_")) {
                 test_fns.retain(|(_, n)| n.starts_with("test_"));

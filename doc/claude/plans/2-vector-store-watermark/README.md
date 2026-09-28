@@ -217,7 +217,7 @@ this plan's thesis
    `--native` shells to `rustc` per file; complements the curated-deep `cross_mode!`
    matrices.  Hard part = output normalization (ordering / RNG / addresses) → start
    small + curated, expand as the normalizer matures.  Design rationale in
-   [TESTING.md § Backend divergence](../../TESTING.md#testing-race-prone-and-backend-divergent-mechanics).
+   [GUARDS.md § Backend divergence](../../GUARDS.md#testing-race-prone-and-backend-divergent-mechanics).
 
 ## Relationship to the store-lifetime/aliasing class
 

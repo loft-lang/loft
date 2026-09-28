@@ -59,6 +59,10 @@ SKIP_DIRS = {
     "tests/generated",
     ".loft",
     "native-auto",
+    # Owned by their plan's agent, not by the release's split pass (DOC_QUALITY
+    # § Maintainer docs rule 14).
+    "doc/claude/plans",
+    "doc/claude/lib_plans",
 }
 
 # What starts a new SUBJECT in each kind of file.

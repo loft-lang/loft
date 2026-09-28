@@ -17,7 +17,7 @@
 //
 // Axes it HOLDS FIXED:   everything.  This file is ONE cell on purpose: the refusal is a
 //                        compile-time error, so any test function beside it never runs — the
-//                        phase masking recorded in TESTING.md § How a guard reads green.  The
+//                        phase masking recorded in GUARDS.md § How a guard reads green.  The
 //                        renderable parts of a tuple are the sibling file
 //                        `a-tuple-renders-through-its-members.loft`, and they are the half that
 //                        stops a cure satisfying this by dropping tuples from the formatter

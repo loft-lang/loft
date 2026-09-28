@@ -77,11 +77,11 @@ write, local × field-reached vectors) that must stay green on both backends.
 
 ## Cross-arc dependencies
 
-- **PERFORMANCE.md § Design: P8** (store-effect classifier) — a sibling, not
+- **PERFORMANCE-history.md § Design: P8** (store-effect classifier) — a sibling, not
   a blocker: P4 extends hoist.rs's own allow-list classification (the doctrine
   P8 endorses) rather than importing the parser's deny-list; P8's "one home
   for the leaf set" remains the longer-term convergence point.
-- **PERFORMANCE.md § Design: N1/N2/N3/N4/N5** — this plan implements the
+- **PERFORMANCE-history.md § Design: N1/N2/N3/N4/N5** — this plan implements the
   N-class from a measured consumer workload; those design entries get
   status updates as phases land.  **N4 SHIPPED 2026-09-07** (structural
   leaf inference; `hash` −36 %, ~2.3× Rust; `LOFT_NO_LEAF_PRELUDE`

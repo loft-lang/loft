@@ -4978,7 +4978,7 @@ impl Parser {
         // An ALLOW-list of concrete types, not a deny-list of the ones to skip.  The gate is
         // deliberately this way round: a type missing from it costs the LINT, never a false
         // report — the same trade `src/generation/hoist.rs` makes, and the opposite of the
-        // drifted mutation deny-lists PERFORMANCE.md § P8 records.  Measured why: a deny-list
+        // drifted mutation deny-lists PERFORMANCE-history.md § P8 records.  Measured why: a deny-list
         // fired on `if got != want` inside the stdlib's own generics, where a comparison on a
         // BOUND type variable types as `AssertValue` rather than `boolean` at parse time — 32
         // false reports on an empty program, and a user generic is the same shape.  A type

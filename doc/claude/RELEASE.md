@@ -319,7 +319,7 @@ An open crash issue blocks the release whatever its severity label says
 
 | ID | H/M | Summary | Reference |
 |---|---|---|---|
-| **Valgrind-clean gate** | H | `scripts/valgrind-sweep.sh`: every script in `tests/scripts/` and every doc in `tests/docs/` under memcheck, on the interpreter and as the compiled native program, must show no invalid access and `definitely lost: 0 bytes in 0 blocks`.  Runs nightly (`miri.yml` `valgrind` job) and inside the release gate; `M-valgrind` is satisfied by that job on the candidate's commit, or by the sweep run here. | TESTING.md § Occasional valgrind pass |
+| **Valgrind-clean gate** | H | `scripts/valgrind-sweep.sh`: every script in `tests/scripts/` and every doc in `tests/docs/` under memcheck, on the interpreter and as the compiled native program, must show no invalid access and `definitely lost: 0 bytes in 0 blocks`.  Runs nightly (`miri.yml` `valgrind` job) and inside the release gate; `M-valgrind` is satisfied by that job on the candidate's commit, or by the sweep run here. | TEST_ENVIRONMENTS.md § Occasional valgrind pass |
 
 ### Memory leaks — no release may leak on valid programs
 

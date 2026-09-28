@@ -2,7 +2,7 @@
 # Copyright (c) 2026 Jurjen Stellingwerff
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
-# One-pass-find-all-problems workflow (see doc/claude/TESTING.md).
+# One-pass-find-all-problems workflow (see doc/claude/RUNNING_TESTS.md).
 #
 # Default mode: runs the CURATED set — everything except a short, named list of
 # slow-and-few binaries (scripts/test_subjects.sh).  3733 of 3833 tests in ~70s

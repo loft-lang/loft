@@ -81,7 +81,7 @@ side.
 - [shadow-control.sh](shadow-control.sh) — build a control tree WITH the shadow on it, which is
   what phase 4 needs and what `make falsify` cannot do.
 - [SLOTS.md](../../SLOTS.md) — the frame layout the shadow mirrors.
-- [TESTING.md](../../TESTING.md) § *A guard that never failed is not a guard* — `make falsify`
+- [GUARDS.md](../../GUARDS.md) § *A guard that never failed is not a guard* — `make falsify`
   and the `@falsified-at:` corpus phase 4 measures against.
 - [@PLN154](https://github.com/loft-lang/plans/issues/154) — the tracker issue, which carries
   the evidence per state and the out-of-scope list (a static bytecode verifier; owner-vs-view

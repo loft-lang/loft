@@ -74,7 +74,7 @@ panic hook's frame block is a pinned contract).
 
 **The tier that does not exist yet (owner, 2026-09-15).**  Every tier above keeps the
 null-sentinel and overflow checks that make an integer fault a reported null rather than
-a wrapped number (DESIGN_DECISIONS.md C67, C120): the checks are the semantics, and they
+a wrapped number (DESIGN_DECISIONS.md C129, C120): the checks are the semantics, and they
 stay the default because a starting programmer must never be handed a random-looking
 number they cannot debug.  What may come, and is deliberately not built: an OPT-IN
 "proven program" tier for a game that has already run fine with the checks on — licensed
@@ -125,7 +125,7 @@ A loop the emitter can prove writes **no store** derives each vector's
 `(store_nr, record, length)` once, immediately before the loop, and reads its elements
 against that triple instead of re-deriving all three per element. Worth ~2× on an
 indexed-read kernel; the measurement, the design and the reason `rustc` cannot do it for us
-are in [PERFORMANCE.md § Design: P2](PERFORMANCE.md) → *Shipped: the NATIVE half*.
+are in [PERFORMANCE-history.md § Design: P2](PERFORMANCE-history.md) → *Shipped: the NATIVE half*.
 
 Where it lives: `src/generation/hoist.rs` (the gate), `src/generation/ops/vector_ops.rs`
 (the two emitters, both falling through to the `#rust` template when the gate declined),
@@ -203,7 +203,7 @@ The shared cell is what lets a callee reach the store table while its caller sti
 reference into it, which ordinary `&mut` aliasing rules forbid and which the runtime needs:
 a call can free, claim and move records.  The cost is that `rustc` marks nothing `noalias`,
 so no store value survives a call in a register — see
-[PERFORMANCE.md § Native vs Rust 3d](PERFORMANCE.md) for what LLVM could be told instead
+[PERFORMANCE-history.md § Native vs Rust 3d](PERFORMANCE-history.md) for what LLVM could be told instead
 and which stores can carry which claim.
 
 #### The type-id correspondence (and how it is checked)
