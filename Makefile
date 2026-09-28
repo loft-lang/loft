@@ -1147,7 +1147,7 @@ view: view-refresh
 	# Default to --native-release (rustc -O).  Bare --native runs
 	# unoptimised generated Rust — for an HTTP server that handles
 	# repeated requests, the per-request cost difference is large
-	# (10× on hot loops; see PERFORMANCE.md § Open work).  Cold
+	# (10× on hot loops; see PERFORMANCE.md § Measuring native code).  Cold
 	# compile is ~6s; cached binary survives across restarts via
 	# tools/viewer/src/.loft/cache/.
 	# @P274 closed 2026-05-14 (use-after-free in

@@ -2257,7 +2257,7 @@ at the end prevents cleanup, compounding the issue.
 
 ### O1  Superinstruction merging
 **Status: no longer blocked — the prerequisite it waited on exists**
-**Sources:** PERFORMANCE.md § P1
+**Sources:** PERFORMANCE-history.md § P1
 **Description:** Peephole pass in `src/compile.rs` merges common 4-opcode sequences (var/var/op/put) into single opcodes.  This was deferred on "no slots remain without a redesign of the opcode space (e.g. a two-byte opcode escape)" — **that escape exists**: byte 255 escapes to `OPERATORS[255 + ext]`, so the space is 511 opcodes and a superinstruction lands in the escape range as a two-byte opcode (INTERMEDIATE.md § Opcode budget; `make ops-census` for the current occupancy).  The extra byte-fetch is negligible against replacing ~4 one-byte ops.
 **Expected gain:** 2–4× on tight integer loops.
 **Effort:** Medium — the peephole pass itself; the opcode-space work it was waiting for is done.
@@ -2266,7 +2266,7 @@ at the end prevents cleanup, compounding the issue.
 ---
 
 ### O2  Stack raw pointer cache
-**Sources:** PERFORMANCE.md § P2
+**Sources:** PERFORMANCE-history.md § P2
 **Description:** Every `get_stack`/`put_stack` call resolves `database.store(&stack_cur)` then computes a raw pointer from `rec + pos`. Adding `stack_base: *mut u8` to `State` that is refreshed once per function call/return eliminates this lookup on every arithmetic push/pop, reducing the hot path to a single pointer add.
 **Expected gain:** 20–50% across all interpreter benchmarks.
 
@@ -2313,7 +2313,7 @@ In `fill.rs`, ops that allocate new records (`OpDatabase`, `OpNewRecord`, `OpIns
 ---
 
 ### O4  Native: direct-emit local collections
-**Sources:** PERFORMANCE.md § N1
+**Sources:** PERFORMANCE-history.md § N1
 **Description:** All vector/hash access in generated Rust currently goes through `codegen_runtime` helpers that take `stores: &mut Stores` and decode `DbRef` pointers. For a local `vector<integer>` used only within one function, the correct Rust type is `Vec<i32>` — no stores, no DbRef, no bounds-check overhead.
 **Expected gain:** 5–15× on data-structure benchmarks (word frequency 16×, dot product 12×, insertion sort 7×).
 
@@ -2347,7 +2347,7 @@ All 10 native benchmarks pass; `native_dir` and `native_scripts` test suites pas
 ---
 
 ### O5  Native: omit `stores` param from pure functions
-**Sources:** PERFORMANCE.md § N2
+**Sources:** PERFORMANCE-history.md § N2
 **Description:** Every generated function currently receives `stores: &mut Stores` even when it never touches a store. For recursive functions like Fibonacci, `rustc -O` cannot eliminate this parameter across recursive calls, adding a register save/restore pair per call (measured: 1.84× slower than hand-written Rust). Purity analysis emits a `_pure` variant without `stores`; the wrapper delegates to it.
 **Expected gain:** 10–30% on recursive compute benchmarks.
 **Depends:** O4

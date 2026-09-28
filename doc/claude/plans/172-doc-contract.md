@@ -38,6 +38,18 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 - **Baseline:** only the touched files' rows were re-pinned, so other branches' timeline growth
   in `formal/` stays visible as new.
 
+**Phase 4 — PERFORMANCE.md split by the same rule (2026-09-28).**
+- **5078 lines became three docs:**
+  - PERFORMANCE.md (769 lines, working): how to measure, where the numbers are, open work;
+  - STARTUP_CACHE.md (250 lines): its own question;
+  - PERFORMANCE-history.md (the record, size-exempt): the benchmark tables and comparisons,
+    every design, the analyses, and the drawing-pass baseline.
+- **The two status tables disagreed with each other and with the tree.**  N4 was listed open
+  but shipped; BUILD1 and P7's `reserve` were listed open but delivered.  The working doc's
+  single table was re-derived from the code, with the evidence per row.
+- **References follow their section.**  The ones that mean open work name the working doc;
+  a stale "P1 blocked" in ROADMAP.md was corrected.
+
 **Phase 4 — QUALITY.md split into working doc and record (2026-09-28, owner-steered).**
 - **The owner's rule, now DOC_QUALITY § Maintainer docs rule 4:** everything normal work needs
   lives in compact files, and history is split off one way — the `<doc>-history.md` companion.

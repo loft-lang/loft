@@ -676,7 +676,7 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
 /// caller then resolves the store a second time for the element read, because nothing
 /// tells it this function already did. The whole indexed-read chain is marked inlinable
 /// for that reason — this, [`length_vector`], `keys::store` and `Stores::store` — and it
-/// is worth ~1.7x on an indexed-read kernel (loft#885, and PERFORMANCE.md § Native vs
+/// is worth ~1.7x on an indexed-read kernel (loft#885, and PERFORMANCE-history.md § Native vs
 /// Rust root cause 3b for the measurement).
 ///
 /// The `length_vector` call below is not the cost it appears to be: rustc inlines it

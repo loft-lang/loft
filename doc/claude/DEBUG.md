@@ -1087,7 +1087,7 @@ LOFT_NO_CACHE=1 loft --native p.loft
 whole-program bundle in `$XDG_CACHE_HOME/loft` (`cache::program_cache_paths`,
 default-ON — `LOFT_NO_CACHE` disables; and already OFF for a binary under
 `target/{debug,release}/`, so on a from-source loft the bundle is not one of
-your variables — PERFORMANCE.md § Which loft am I measuring), the stdlib bundle
+your variables — STARTUP_CACHE.md § Which loft am I measuring), the stdlib bundle
 (`LOFT_STDLIB_CACHE`), `target/` build artefacts, and an installed
 `$(which loft)` on `PATH`.
 

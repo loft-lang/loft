@@ -94,9 +94,7 @@ doc/claude/PACKAGES.md	history	1
 doc/claude/PACKAGES.md	size	1
 doc/claude/PACKAGES.md	timeline	18
 doc/claude/PACKAGES.md	two-h1	3
-doc/claude/PERFORMANCE.md	history	5
-doc/claude/PERFORMANCE.md	size	1
-doc/claude/PERFORMANCE.md	timeline	92
+doc/claude/PERFORMANCE.md	timeline	13
 doc/claude/PERF_PORTAL.md	timeline	192
 doc/claude/PKG_REGISTRY.md	size	1
 doc/claude/PKG_REGISTRY.md	timeline	38
@@ -121,6 +119,7 @@ doc/claude/STABILITY_PASS2.md	history	1
 doc/claude/STABILITY_PASS2.md	timeline	14
 doc/claude/STABILITY_REDFLAG_REMEDIATION.md	timeline	14
 doc/claude/STACKTRACE.md	timeline	1
+doc/claude/STARTUP_CACHE.md	timeline	10
 doc/claude/STDLIB.md	history	1
 doc/claude/STDLIB.md	size	1
 doc/claude/STDLIB.md	timeline	31

@@ -104,7 +104,7 @@ build in which its API keeps the promised representation for callers it cannot s
 bisect step for a native-only wrong answer; the falsifier is what makes "the values
 agree" a proof rather than a coincidence — a header-served read and a runtime read
 of an unmoved vector answer the same number, so agreement alone cannot tell a sound
-rewrite from a lucky one.  `PERFORMANCE.md § Design: P2` and `NATIVE.md` list the
+rewrite from a lucky one.  `PERFORMANCE-history.md § Design: P2` and `NATIVE.md` list the
 switches; `hoist_verify` in `Output` is the one flag every checking form reads.
 
 **The both-backend clause in words.**  `LOFT_STRICT_STORES` and `LOFT_POISON` catch a leak or

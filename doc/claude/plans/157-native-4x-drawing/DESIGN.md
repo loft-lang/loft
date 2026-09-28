@@ -397,7 +397,7 @@ machinery are the next probe targets before any P4 emitter work.
 
 **N4 SHIPPED off the ledger (same day):** `Output::is_elidable_leaf` — the
 structural gate (no user calls / fn-refs / `parallel` / `yield` in the
-body; see PERFORMANCE.md § Design: N4 for the deviation from the
+body; see PERFORMANCE-history.md § Design: N4 for the deviation from the
 annotation-driven design and why the cap and diagnostics stay sound) —
 elides the whole frame push on leaves in both tiers, live-flip check kept.
 The emitter reproduced the probe: `hash` 1.26M → 0.81M named (−36 %,
@@ -880,7 +880,7 @@ is the pixel loops' accessor count showing.  P2 had declined two `#[inline]`
 candidates for a +1.5 % `lock` regression (duplicated cold raise paths); this
 one was A/B'd the same way and `lock` did not move on the P0 instrument
 (13.7–14.3M vs 14.0–15.2M ns/op) while it gained 8 % in the consumer lane.
-The lesson is the one PERFORMANCE.md § Design already carries for the guard
+The lesson is the one PERFORMANCE-history.md § Design already carries for the guard
 helpers: a guard's cost is the work it keeps alive in its callers, not its own
 body, so an accessor guard is measured inlined and out, never assumed.
 
@@ -1219,7 +1219,7 @@ row: a checks-only loop with no helper beside the checks has yet to show up as h
 store resolution that the hoist already removes from loops — the sites left are outside
 them), and `__rust_dealloc` at 129 sites in 22 functions — `String` temporaries in the
 text-handling functions, none on a judged row.  **The rule for the runtime** (also in
-PERFORMANCE.md § Native vs Rust): a helper the emitted code calls per op is `#[inline]`,
+PERFORMANCE-history.md § Native vs Rust): a helper the emitted code calls per op is `#[inline]`,
 and if its fast path is a test the body is a `#[cold]` sibling; the census is the check
 that a new helper obeyed it.
 
@@ -2312,7 +2312,7 @@ effect above, which is the consumer's to change (`--n` per row).
 **SHIPPED, default-on, BOTH backends (a runtime fact; switch `LOFT_NO_STORE_RESET_CLEAR`,
 `@FR-R-Switch`; the rule is `@FR-H-ClearRelease` unchanged — this is its release arm done
 in one step instead of N).**  The first unit built under
-[PERFORMANCE.md § Native vs Rust 3e](../../PERFORMANCE.md): loft knows what the store is
+[PERFORMANCE-history.md § Native vs Rust 3e](../../PERFORMANCE-history.md): loft knows what the store is
 FOR, and spends that knowledge itself.
 
 **The profile, re-measured on the current tip** (`fr_only.loft --n 20000`, the recipe of
@@ -2828,7 +2828,7 @@ ESCAPE test (`scopes::source_escapes` counted a push at arg 0 as a READ of the s
 ONE home, `parser::FUSED_PUSH_KINDS` / `FUSED_PUSH_OPS`, which `is_mutating_op`, the
 constant builder and `ConstructOps::op_push` read; the lists that test a prefix
 (`starts_with("OpPush")`) need no table.  Found by tests, not by reading — the drifted-list
-class PERFORMANCE.md § P8 names, and the reason the gate ran BEFORE the commit.
+class PERFORMANCE-history.md § P8 names, and the reason the gate ran BEFORE the commit.
 
 **Measured** (shipped tier, hashes exact on both backends, the fifteen cells clean under
 warn/leak on both and with the switch off):
@@ -4256,7 +4256,7 @@ emission.
 
 **SHIPPED, default-on, BOTH backends (a runtime fact; switch `LOFT_NO_RESET_CAPACITY`,
 `@FR-R-Switch`; stands on `@FR-H-RootExtent` and `@FR-R-Reuse`, neither changed).**  The
-second unit under [PERFORMANCE.md § Native vs Rust 3e](../../PERFORMANCE.md), and the one
+second unit under [PERFORMANCE-history.md § Native vs Rust 3e](../../PERFORMANCE-history.md), and the one
 § V-ag's closing line asked for — the free tree made cheaper for a store that still needed
 one — answered by the store not needing it.
 

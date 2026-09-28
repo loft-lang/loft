@@ -954,7 +954,7 @@ user's active script — has a decisive set of advantages in loft's specific con
 
 **Performance implication — supersedes E2 / full zero-copy as the startup-perf
 endgame (measured 2026-06-04).** The `bench_read_data_breakdown` profiling
-(PERFORMANCE.md § Open work, E2 row) found warm-load cost is allocation-bound:
+(PERFORMANCE-history.md § Open work, E2 row) found warm-load cost is allocation-bound:
 it is the materialisation of library bodies + variable tables into native
 `String` / `Box<Type>`.  In the native-library model you NEVER materialise those
 (libraries are native); you load only the small library interface (type schema +
@@ -999,7 +999,7 @@ Two enforcement points ("do both"):
 
 Together these make `make rebuild-native-cdylibs` obsolete.  Known offender to
 migrate: the `@P341` native-PACKAGE rlib path still folds **mtime** (per
-PERFORMANCE.md § BUILD2 notes) — that is the hole behind hitting the
+PERFORMANCE-history.md § BUILD2 notes) — that is the hole behind hitting the
 "generated rust-code error" too often.
 
 **Three-layer model.**

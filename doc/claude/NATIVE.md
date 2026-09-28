@@ -125,7 +125,7 @@ A loop the emitter can prove writes **no store** derives each vector's
 `(store_nr, record, length)` once, immediately before the loop, and reads its elements
 against that triple instead of re-deriving all three per element. Worth ~2× on an
 indexed-read kernel; the measurement, the design and the reason `rustc` cannot do it for us
-are in [PERFORMANCE.md § Design: P2](PERFORMANCE.md) → *Shipped: the NATIVE half*.
+are in [PERFORMANCE-history.md § Design: P2](PERFORMANCE-history.md) → *Shipped: the NATIVE half*.
 
 Where it lives: `src/generation/hoist.rs` (the gate), `src/generation/ops/vector_ops.rs`
 (the two emitters, both falling through to the `#rust` template when the gate declined),
@@ -203,7 +203,7 @@ The shared cell is what lets a callee reach the store table while its caller sti
 reference into it, which ordinary `&mut` aliasing rules forbid and which the runtime needs:
 a call can free, claim and move records.  The cost is that `rustc` marks nothing `noalias`,
 so no store value survives a call in a register — see
-[PERFORMANCE.md § Native vs Rust 3d](PERFORMANCE.md) for what LLVM could be told instead
+[PERFORMANCE-history.md § Native vs Rust 3d](PERFORMANCE-history.md) for what LLVM could be told instead
 and which stores can carry which claim.
 
 #### The type-id correspondence (and how it is checked)

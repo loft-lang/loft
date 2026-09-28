@@ -8,7 +8,7 @@
 //!
 //! Reading `v[i]` resolves the store, loads the container slot and loads the length, and
 //! every one of those loads is guarded — so LLVM will not lift them out of the loop even
-//! with the whole chain inlined (PERFORMANCE.md § Native vs Rust root cause 3c). The
+//! with the whole chain inlined (PERFORMANCE-history.md § Native vs Rust root cause 3c). The
 //! emitter can lift them itself, because it is the one that knows where the loop is; what
 //! it needs from here is the promise that makes lifting sound: **nothing the loop body
 //! runs can write a store.**
@@ -22,7 +22,7 @@
 //!
 //! [`writes_store`] answers that from an ALLOW-list of ops that provably do not write, so
 //! an op missing from it costs the optimisation and never correctness — the inverse of the
-//! deny-lists in PERFORMANCE.md § Design: P8, where an omission is a silent wrong read.
+//! deny-lists in PERFORMANCE-history.md § Design: P8, where an omission is a silent wrong read.
 //! `LOFT_HOIST_VERIFY=1` is the second half: it emits the checking form of every hoisted
 //! read, which re-derives the header and panics on a mismatch, so a hole in the allow-list
 //! shows up as a failure under one suite run.
