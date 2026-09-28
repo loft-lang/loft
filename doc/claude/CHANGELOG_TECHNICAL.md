@@ -25,6 +25,31 @@ loop, `LOFT_TRACE_ITERVEC=1` names an iterator left unmaterialised.  Cells
 `tests/scripts/174-slice-copy.loft`, `174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft`;
 pins `tests/slice_copy.rs`.  LOFT.md § slices and `formal/collections.md` `(Slice-Value)` say it.
 
+### `--native`: a `virtual(…)` field registered as a stored one (loft#1718, 2026-09-28)
+
+Both field-emission loops of the generated `init()` (`emit_def_create_recurse_fields`,
+`output_struct_fields_filtered` in `src/generation/mod.rs`) walked every attribute, where the
+interpreter's `fill_database` skips the computed marker (`attributes[a].constant`).  The native
+type table so carried one field more than the emitted offsets were compiled against: an append
+to a vector field beside a `virtual` field landed in the wrong slot (`len` read 0, silently) and
+one declared after it panicked on a non-structure.  Both loops now skip the computed field
+(`@FR-L-Struct`, one packing for both backends).  Guard:
+`tests/scripts/1718-a-virtual-field-has-no-slot-on-native.loft`, falsified on 9a76922.
+
+### Reference docs kept honest by programs — the skill, CAVEATS and every section (@PLN176 phases 2–3, 2026-09-28)
+
+The loft-write skill's 32 samples and CAVEATS C60 are verbatim windows of `tests/reference/`
+programs (ten new: `skill-*.loft`, `hash-order.loft`, `naming.loft`, `shebang.loft`); the walk
+corrected the skill's tuple-match claim (a tuple of LOCALS copies, `(T-Cons)`; a tuple of
+PARAMETERS aliases the caller, `(B-Ref-Alias)`), its binary-file sample (`file()` appends to an
+existing file; `f.size` is the size at open) and found loft#1718.  `rule_tags.py sections`
+(DOC_CONTRACT rule 28) reads every `##`/`###` of LOFT.md and STDLIB.md for what KEEPS it — a
+sourced sample, an `@FR-`/`(Rule)` or `@F` citation, a signature the stdlib source declares, a
+guard path or a `loft#N` — and names a signature row no `default/*.loft` declares; its first
+run found four Binary Files rows for routines that never existed (STDLIB-history.md).  Both
+`fences --gate` and `sections --gate` run in `make ci`; the 23 sections that were prose alone
+now cite their rule, feature or guard.
+
 ### Foreign stores: a file mapped read-only is a `vector<u8>` with no copy (@PLN174 F1–F3, 2026-09-28)
 
 `Store` serves bytes the runtime does not own under ONE synthetic record id (`FOREIGN_REC`):

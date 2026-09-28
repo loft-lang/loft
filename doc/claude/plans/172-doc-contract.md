@@ -70,7 +70,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 **Plan docs are out of the burn-down (owner, 2026-09-28).**  A plan's docs are kept under the
 contract by that plan's own agent, so `make docs-lint`'s report, baseline and worklist and
 `make file-sizes` leave `plans/` and `lib_plans/` out; the edit hook and the PR gate still
-apply.  DOC_QUALITY § Maintainer docs rule 14 and DOC_CONTRACT rule 39 carry it.  This also
+apply.  DOC_QUALITY § Maintainer docs rule 14 and DOC_CONTRACT rule 40 carry it.  This also
 settles the open `orphan` question for `plans/`.
 
 **Phase 4 — PERFORMANCE.md split by the same rule (2026-09-28).**

@@ -8,7 +8,7 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 Limitations [STDLIB.md](STDLIB.md) once stated and the library no longer has, oldest
 first.  The page describes the library as it is now; this file keeps the record, each
 entry naming the issue that closed and the guard that asserts the current behaviour.  A
-record doc: its dates are the point (DOC_CONTRACT rule 31).  `rule_tags.py claims --issues`
+record doc: its dates are the point (DOC_CONTRACT rule 32).  `rule_tags.py claims --issues`
 (the `stale-claims` nightly, @PLN176) names a limitation still on the page whose issue has
 closed, and the entry it turns into belongs here.
 
@@ -61,3 +61,12 @@ parameter, so `[]` and a typed init are the same fold.  Guard:
 `xs[(x,y)..:n]` answered only records at or past the query in Z-order, so it under-delivered
 near the end of the curve.  It answers `n` from any origin.  Guard:
 `tests/scripts/48b-spatial-slice.loft`.
+
+## 2026-09-28 — four Binary Files rows named routines that do not exist
+
+`little_endian(self: File)`, `big_endian(self: File)`, `write_bin(self: File, v)` and
+`read(self: File, v)` sat in the signature table with no declaration in any `default/*.loft`;
+the real forms are `f#format = LittleEndian` / `BigEndian`, `f += value` and `f#read as T`.
+Found by `rule_tags.py sections`, which resolves every signature row against the stdlib
+source, on the day it was written.  Guard: `tests/reference/skill-files.loft`.
+

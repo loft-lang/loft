@@ -1,0 +1,25 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: loft-write skill § Higher-order functions — the free-function and method forms, and a
+// lambda stored in a local.
+
+fn double(x: integer) -> integer { x * 2 }
+
+fn test_the_higher_order_forms() {
+  nums = [1, -2, 3];
+  total = 0;
+  doubled  = map(nums, double);             // named function ref — bare name, no `fn` prefix
+  positive = filter(nums, |x| { x > 0 });  // inferred lambda
+  total    = reduce(nums, 0, |a, b| { a + b });
+
+  // Method form on vectors
+  doubled  = nums.map(|x| { x * 2 });
+  evens    = nums.filter(|x| { x % 2 == 0 });
+
+  // Typed lambda stored in a local: use the explicit fn(...) form.
+  emit = fn(x: integer, y: integer) { total += x + y; };
+  emit(1, 2);
+  assert("{doubled}" == "[2,-4,6]" and "{positive}" == "[1,3]" and "{evens}" == "[-2]", "map, filter, both forms");
+  assert(total == 5, "reduce gave 2, and the stored lambda added 3 to it");
+}

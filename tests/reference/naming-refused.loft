@@ -1,0 +1,10 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Naming Conventions — a file-scope constant must be `UPPER_CASE`; a
+// lowercase name at file scope is refused.
+// @EXPECT_ERROR: onstant
+
+max_size = 256;
+
+fn main() { println("{max_size}"); }

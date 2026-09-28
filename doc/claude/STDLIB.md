@@ -36,7 +36,7 @@ See [INTERNALS.md](INTERNALS.md) for the full list of native functions, their Ru
 
 ## Types
 
-The primitive types built into loft.
+The primitive types built into loft — their widths are [formal/layout.md](formal/layout.md) `(L-Scalar)`, and a ranged integer's `(L-Narrow)`.
 
 | Type        | Size   | Description |
 |-------------|--------|-------------|
@@ -677,14 +677,10 @@ and read it a field at a time (see [Binary Files](#binary-files)).  A non-UTF-8
 
 ### Binary Files
 
-Binary mode must be activated before reading or writing raw data. Use `f.format = Format.LittleEndian` or `f.format = Format.BigEndian` to enable binary mode.
+Binary mode must be activated before reading or writing raw data. Use `f#format = LittleEndian` or `f#format = BigEndian` to enable binary mode (`tests/reference/skill-files.loft`).
 
 | Function | Description |
 |----------|-------------|
-| `little_endian(self: File)` | Switches the file to little-endian binary mode. |
-| `big_endian(self: File)` | Switches the file to big-endian binary mode. |
-| `write_bin(self: File, v: reference)` | Writes a struct value as raw binary data. File must be in binary mode first. |
-| `read(self: File, v: reference)` | Reads binary data into a struct value. File must be in binary mode first. |
 | `seek(self: File, pos: integer) -> boolean` | Moves the read/write position to `pos` bytes from the start — random access into a binary file. `false` (a no-op) for a directory, an absent file, a negative `pos`, or a file this process has not read from or written to yet (the OS handle opens on first I/O). Seeking PAST the end is allowed: a following write extends the file. Operator form: `f#next = pos`. |
 | `position(self: File) -> integer` | The byte offset the next read or write will land at — the read side of `seek`. Operator form: `f#next`. Distinct from `f#index`, which is where the LAST read *started*: after one `f#read as i32` on a fresh file, `position` is 4 and `f#index` is 0. **Null** for a file this process has not opened yet (0 is a real position, so it is not used to mean "no position"). |
 
@@ -697,7 +693,7 @@ Binary mode must be activated before reading or writing raw data. Use `f.format 
 | `s.field = f#read` | **LHS-inferred** — width comes from `s.field`'s declared type; symmetric with `f += s.field`. No `as T` needed. |
 | `f#read(n) as T` | Legacy explicit form — reads exactly `n` bytes and interprets as `T`. `n` MUST match `T`'s storage width or the runtime panics. |
 | `f#read(n) as text` | Reads exactly `n` bytes (or fewer at EOF) as a UTF-8 string. The `(n)` is REQUIRED for text — variable-width types have no inferable count. |
-| `f#size` | Returns the current file size in bytes as `integer`. |
+| `f#size` | The file size in bytes as `integer`, as it was when the handle was opened — a handle's own `+=` writes are not counted until the file is reopened (both backends; `tests/reference/skill-files.loft`). |
 | `f#index` | Returns the byte offset where the last read started (the `current` field). |
 | `f#next` | Returns the current byte position (after last read). |
 | `f#next = pos` | Seeks the file to `pos` (integer). Only works after the file has been opened by a prior read or write. |
@@ -707,7 +703,7 @@ Binary mode must be activated before reading or writing raw data. Use `f.format 
 
 **Notes:**
 - `f += "text"` writes raw UTF-8 bytes; supported for TextFile, LittleEndian, and BigEndian modes.
-- For new files (format=NotExists), `f += value` defaults to TextFile mode and creates the file.
+- For new files (format=NotExists), `f += value` defaults to TextFile mode and creates the file.  An EXISTING file is opened without truncation, so `f += value` appends after its last byte; `delete(path)` or `f.set_file_size(0)` first to start over.
 - `f#next = pos` (and the `seek` method above) is a no-op if called before the first read or write — the OS file handle does not exist until first I/O. Always perform a read or write before seeking. `seek` returns `false` in that case; the operator form reports nothing, which is why the method is the better choice when the position matters.
 
 #### Struct and vector binary round-trip (@PLN47 — shipped 2026-07-09)
@@ -1536,7 +1532,7 @@ Functions for interacting with the host operating system.
 |----------|-------------|
 | `store_memory() -> text` | Returns a multi-line snapshot of all LIVE heap stores' internal utilisation — total capacity vs actual claimed data vs free space, record + free-block counts, **mergeable adjacent-free pairs** (free neighbours that should have coalesced), **`tail%` / `inner%`** (see below), and the largest stores by capacity with their type name and creation site (`bc:<pos>` — a bytecode position on the interpreter, mapping to source via `LOFT_LOG=static`; `0` on `--native`). Use to watch memory growth / fragmentation in a running program. See also `LOFT_STORES=log\|warn` (alloc/free trace). |
 | `store_reclaim(collection) -> integer` | Give back the free space at the END of a store-rooted collection's store, and answer with the BYTES handed back (`0` when there was nothing). For a collection bound with `store_persist_bind` that is the **file** shrinking; otherwise it is memory returned to the allocator. Records never move, so every reference stays valid. It keeps an eighth of the live content as slack — the store stays in use, and one trimmed to the byte would pay a 2.33× re-grow on its next claim — so a store already at that size answers `0`, and asking twice is free. Returns `0` and changes nothing for a store that is read-only, shares another store's memory, or carries a `store_durable_seal` sidecar. |
-| `store_release(collection) -> integer` | Say "everything I have written so far is finished": start writing it out to the bound file and stop holding it in memory, answering the BYTES dropped from the resident set (`0` when there was nothing to drop, when the collection is not bound to a file, or when the TARGET cannot honour the hint — the drop is `madvise(MADV_DONTNEED)`, so a build without `mmap` and any non-unix target answer `0` by construction; the call is a residency hint, and a program running where it cannot be honoured is not a program that is wrong). For a GENERATOR streaming a large collection into a store bound with `store_persist_bind` — measured on a 20 000-record build, one call per record: peak memory **44.3 MB → 2.2 MB (20×) at no cost in wall clock**. Content is untouched and every reference stays valid; reading a released record re-reads it from the file at the cost of one page fault, so this is a hint that can cost speed and never an answer. **It pays when records are written in KEY ORDER and not returned to** — a build that keeps many records open at once scatters the arena with free blocks (3 691 against 10) and the allocator then keeps re-reading them, giving 1.0× instead of 20×. Not `store_reclaim`, which changes the file's LENGTH; this never does. Not a durability barrier — it asks for writeback to *start*, and `store_durable_seal` is what promises it landed. |
+| `store_release(collection) -> integer` | Say "everything I have written so far is finished": start writing it out to the bound file and stop holding it in memory, answering the BYTES dropped from the resident set (`0` when there was nothing to drop, when the collection is not bound to a file, or when the TARGET cannot honour the hint — the drop is `madvise` (MADV_DONTNEED), so a build without `mmap` and any non-unix target answer `0` by construction; the call is a residency hint, and a program running where it cannot be honoured is not a program that is wrong). For a GENERATOR streaming a large collection into a store bound with `store_persist_bind` — measured on a 20 000-record build, one call per record: peak memory **44.3 MB → 2.2 MB (20×) at no cost in wall clock**. Content is untouched and every reference stays valid; reading a released record re-reads it from the file at the cost of one page fault, so this is a hint that can cost speed and never an answer. **It pays when records are written in KEY ORDER and not returned to** — a build that keeps many records open at once scatters the arena with free blocks (3 691 against 10) and the allocator then keeps re-reading them, giving 1.0× instead of 20×. Not `store_reclaim`, which changes the file's LENGTH; this never does. Not a durability barrier — it asks for writeback to *start*, and `store_durable_seal` is what promises it landed. |
 
 **`tail%` and `inner%` say WHERE a store's free space sits**, which is the
 difference between free space you get back and free space you do not.

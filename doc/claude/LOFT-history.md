@@ -10,7 +10,7 @@ longer has, oldest first.  The pages describe loft as it is now, because a reade
 the language is not helped by knowing what it could not do last month; this file keeps the
 record so a reader who meets an old program, an old workaround, or an old claim can place
 it.  Each entry names the issue that closed and the guard that asserts the current
-behaviour.  A record doc: its dates are the point (DOC_CONTRACT rule 31).
+behaviour.  A record doc: its dates are the point (DOC_CONTRACT rule 32).
 
 A limitation still stated on a page cites an open issue, or the rule that makes it a
 decision; `rule_tags.py claims --issues` (the `stale-claims` nightly, @PLN176) names any

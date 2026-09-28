@@ -47,24 +47,25 @@ PR gate that refuses a NEW stamp, history or two-h1 finding or a doc crossing 10
 25. A comparison claim is a program in `tests/comparisons/`; its rationale is a link, never a restatement. — [SUBJECTS](SUBJECTS.md) · gate: `wrap::comparisons`
 26. A library ships a guide, `docs/01-getting-started.loft`, whose numbers are measured. — [LIBRARY_AUTHORING](LIBRARY_AUTHORING.md) § 2c
 27. CHANGELOG.md is plain language under `## YYYY-MM`; CHANGELOG_TECHNICAL.md records every change. — DEVELOPMENT § Documentation updates
+28. Every section of LOFT.md / STDLIB.md carries something in the repo that would MOVE when the language does — a sourced sample (rule 22), the `@FR-`/`(Rule)` or `@F` it restates, a signature table the stdlib source resolves, a guard path or a `loft#N`; a section with none is prose nothing would contradict when it goes stale, and a signature row must name a routine `default/*.loft` declares. — `tests/reference/README.md` · gate: `rule_tags.py sections --gate` in `make ci` (@PLN176 phase 3)
 
 ## Maintainer docs (`doc/claude/`, CLAUDE.md, skills)
 
-28. A doc answers one question. — DOC_QUALITY § Maintainer docs rule 1
-29. 1000 lines is a hard ceiling (a `-history.md` record companion is exempt); under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
-30. Every doc is reachable from CLAUDE.md in two hops, and an index entry names the start-here doc. — rule 3
-31. What normal work needs is in a compact doc; its history goes to the `<doc>-history.md` companion beside it, and nowhere else. — rule 4, RELEASE § 5b
-32. Commit the goal and the command that reports the position, never the position. — rule 5
-33. Prose beside a gated number carries the reason, not the value. — rule 6
-34. Search a doc before adding to it; read the code before stating what it does. — rules 7–8
-35. Name the tree a fact is about; a cure ships with its signpost and is read back against its cause. — rules 9–11
-36. Docs ship in the branch of the code they describe, in their own commit; a small edit gets no PR of its own. — rule 13, DEVELOPMENT § Documentation commit
-37. A formal register's `OPEN: n` is a claim to re-measure, and each open entry names its issue. — formal/README · gate: `register_entries_name_their_tracking_issue`
-38. A diagnostic code is frozen once shipped and lands with its DIAGNOSTICS.md row. — [DIAGNOSTICS](DIAGNOSTICS.md) · gate: `every_pinned_code_is_documented`
-39. A plan is its GitHub issue; its file follows `plans/_TEMPLATE.md`, and its docs are its own agent's to keep under this contract — the report and `make file-sizes` leave `plans/` out. — [plans/README](plans/README.md), DOC_QUALITY § Maintainer docs rule 14
-40. A new guard records `@falsified-at:` and how to score it again. — [GUARDS](GUARDS.md) · gate: `every_new_guard_records_its_control`
-41. A skill points at its canonical doc and names the command that measures, never the measurement. — [SKILLS_REVIEW](SKILLS_REVIEW.md)
-42. A design decision names the sites that keep it with `@C<n>`, a guard under `tests/` among them; one nothing can keep is reopened. — [DESIGN_DECISIONS](DESIGN_DECISIONS.md) § Using the register · gate: `index_hygiene_clean` (every `@C` resolves; a guard from C130 on) · report: `./scripts/idx decisions`
+29. A doc answers one question. — DOC_QUALITY § Maintainer docs rule 1
+30. 1000 lines is a hard ceiling (a `-history.md` record companion is exempt); under it, the structure must let a reader navigate. — rule 2 · report: `make file-sizes`
+31. Every doc is reachable from CLAUDE.md in two hops, and an index entry names the start-here doc. — rule 3
+32. What normal work needs is in a compact doc; its history goes to the `<doc>-history.md` companion beside it, and nowhere else. — rule 4, RELEASE § 5b
+33. Commit the goal and the command that reports the position, never the position. — rule 5
+34. Prose beside a gated number carries the reason, not the value. — rule 6
+35. Search a doc before adding to it; read the code before stating what it does. — rules 7–8
+36. Name the tree a fact is about; a cure ships with its signpost and is read back against its cause. — rules 9–11
+37. Docs ship in the branch of the code they describe, in their own commit; a small edit gets no PR of its own. — rule 13, DEVELOPMENT § Documentation commit
+38. A formal register's `OPEN: n` is a claim to re-measure, and each open entry names its issue. — formal/README · gate: `register_entries_name_their_tracking_issue`
+39. A diagnostic code is frozen once shipped and lands with its DIAGNOSTICS.md row. — [DIAGNOSTICS](DIAGNOSTICS.md) · gate: `every_pinned_code_is_documented`
+40. A plan is its GitHub issue; its file follows `plans/_TEMPLATE.md`, and its docs are its own agent's to keep under this contract — the report and `make file-sizes` leave `plans/` out. — [plans/README](plans/README.md), DOC_QUALITY § Maintainer docs rule 14
+41. A new guard records `@falsified-at:` and how to score it again. — [GUARDS](GUARDS.md) · gate: `every_new_guard_records_its_control`
+42. A skill points at its canonical doc and names the command that measures, never the measurement. — [SKILLS_REVIEW](SKILLS_REVIEW.md)
+43. A design decision names the sites that keep it with `@C<n>`, a guard under `tests/` among them; one nothing can keep is reopened. — [DESIGN_DECISIONS](DESIGN_DECISIONS.md) § Using the register · gate: `index_hygiene_clean` (every `@C` resolves; a guard from C130 on) · report: `./scripts/idx decisions`
 
 ## Reviewer pass
 

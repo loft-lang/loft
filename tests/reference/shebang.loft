@@ -1,0 +1,11 @@
+#!/usr/bin/env loft
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SCRIPT — run top to bottom, not through --tests
+// @PAGE: LOFT.md § Shebang — a Unix shebang on the first line is skipped by the lexer, so the
+// file runs both as `loft shebang.loft` and, once executable, as `./shebang.loft`.
+
+greeting = "hi from a script with a shebang";
+assert(greeting.starts_with("hi"), "the line after the shebang ran")
+println(greeting)

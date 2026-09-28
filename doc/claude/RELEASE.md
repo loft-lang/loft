@@ -448,7 +448,7 @@ Helpful command: `grep -rn 'src/' doc/claude/` and cross-check against `ls src/`
 
 ### 3 — Verify doc/claude/ discoverability
 
-- Every file in `doc/claude/` is reachable from the CLAUDE.md index in at most two hops ([DOC_CONTRACT.md](DOC_CONTRACT.md) rule 30).  Agent memory is per-agent and never counts as a route.
+- Every file in `doc/claude/` is reachable from the CLAUDE.md index in at most two hops ([DOC_CONTRACT.md](DOC_CONTRACT.md) rule 31).  Agent memory is per-agent and never counts as a route.
 - Orphaned files (nothing links to them) are added to the doc that owns their topic, or removed.
 
 ### 4 — Compact verbose sections
