@@ -756,7 +756,7 @@ def check_this_release_in_registry(version: str, network: bool):
         return FAIL, (
             f"loft {version} is NOT in the signed index (it carries: {have}) — the "
             "registry splice has not landed; `self-update` resolves nothing for it "
-            "and no installation of it can ever anchor (RELEASE.md step 4)"
+            "and no installation of it can ever anchor (RELEASE_PUBLISH.md step 4)"
         )
     try:
         triples = published_triples()
@@ -788,7 +788,7 @@ def local_loft_binary() -> str:
 
 
 def check_selfupdate_resolves(version: str, network: bool):
-    """The command RELEASE.md step 4's postscript gives, run and read instead of
+    """The command RELEASE_PUBLISH.md step 4 gives, run and read instead of
     advised (@PLN156 phase 1): `loft self-update --dry-run --refresh` must RESOLVE.
 
     The one output this must never let through quietly is `no releases published to
@@ -1700,7 +1700,7 @@ def build_items(version: str, network: bool) -> list[tuple[str, list[Item]]]:
             "Windows: `loft self-update` from the PREVIOUS release to this one",
             "on a Windows box, install the previous release, then run loft self-update",
             "replacing a RUNNING executable is the one genuinely platform-divergent "
-            "step in the chain, and no test can reach it (RELEASE.md § 10)",
+            "step in the chain, and no test can reach it (RELEASE_PUBLISH.md § The bundles and the registry entry)",
         ),
         # M-install-live retired 2026-09-23: `scripts/acquisition-chain.sh` step 6 installs a
         # library with the binary it just acquired, into a fresh LOFT_HOME, against the live

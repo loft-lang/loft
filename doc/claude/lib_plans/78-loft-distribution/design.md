@@ -18,7 +18,7 @@ world is gone: building the *package* registry built almost every mechanism the
 
 | Phase | Plan's assumption | Today |
 |---|---|---|
-| 30.1 reproducible builds | to be built | **open, off the critical path** — `make-release.sh` emits `SHA256SUMS`, which is integrity, not byte-identical rebuild; homed at [RELEASE.md § 10 Open work](../../RELEASE.md) |
+| 30.1 reproducible builds | to be built | **open, off the critical path** — `make-release.sh` emits `SHA256SUMS`, which is integrity, not byte-identical rebuild; homed at [RELEASE_PUBLISH.md § Reproducible builds](../../RELEASE_PUBLISH.md#reproducible-builds) |
 | 30.2 signing + registry entries for binaries | to be built | **mechanism exists** — `registry_index::BinaryEntry { url, sha256, loft_ffi_fp }`, keyed per target triple, already downloaded and sha256-verified by `install.rs` for package cdylibs.  What is missing is an *entry*, not a mechanism |
 | 30.3 `install.sh` | to be built | **open** — genuinely new (see § the two asymmetries) |
 | 30.4 `loft self-update` | to be built | **half exists** — the verify half is `install.rs`'s existing path; the replace half is new |
@@ -322,7 +322,7 @@ target aside and copies in, because a running executable cannot be overwritten
 but can be renamed — and the unit tests exercise that on the daily Windows leg.
 What no test can cover is replacing the actually-running `loft.exe`, which needs
 a published release and a Windows box.  It is therefore a per-release check, not
-plan work: [RELEASE.md § 10](../../RELEASE.md).
+plan work: [RELEASE_PUBLISH.md § The bundles and the registry entry](../../RELEASE_PUBLISH.md#the-bundles-and-the-registry-entry).
 
 **Step 5 — advisory integration.**  DONE 2026-07-31.
 

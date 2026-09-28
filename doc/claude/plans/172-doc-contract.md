@@ -38,6 +38,35 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 - **Baseline:** only the touched files' rows were re-pinned, so other branches' timeline growth
   in `formal/` stays visible as new.
 
+**Phase 4, the 2026-10 cycle's second pick — RELEASE.md (2026-09-28, on the owner's repeated
+ask to implement the plan):**
+- **Size:** 1211 → 702 lines; lint findings 38 → 8 (the rest are `timeline` false positives:
+  dates inside an anchor, "no longer" describing present staleness, literal state words).
+- **Split by question:** [RELEASE_PUBLISH.md](../RELEASE_PUBLISH.md) takes how a release is
+  tagged, built, published and made installable:
+  - the draft-first mechanics and the registry splice;
+  - the bundles (old step 10);
+  - what the tag pipeline proves;
+  - the reference-PDF checks;
+  - the two install layouts;
+  - reproducible builds, as the current state.
+- **History out:** [RELEASE-history.md](../RELEASE-history.md) takes the dated measurements:
+  - the never-completed splice;
+  - the clippy census;
+  - the reproducible-build investigations;
+  - the waiver story;
+  - the past cycle themes.
+- **Stale facts corrected:**
+  - `checklist.json` is committed, not git-ignored;
+  - the release gate calls six workflows, not "five";
+  - the PDF ships inside each bundle and is not a separate release asset;
+  - the safety gate's `0.8.4 / 1.0.0` framing is gone;
+  - the out-of-scope list now names the current applications, not retired demo IDs.
+- **Pointers:** every pointer into a moved section follows it, including `release.yml`'s
+  comments and `release-checklist.py`'s printed pointers.
+- **Side finding:** `every_markdown_link_resolves` does not check `#fragment` anchors; five
+  links from PLANNING.md and a finished plan into ROADMAP.md name anchors that no longer exist.
+
 **Phase 3, as built (2026-09-25):** two rows in `scripts/release-checklist.py`.
 - **`A-docs-lint`** (automatic, `mid pre`) fails on growth since the baseline, and also on a
   burn-down left un-pinned, because headroom would hide the next regrowth.  It was falsified

@@ -184,7 +184,7 @@ jobs:
   # `422 Cannot upload assets to an immutable release`.  Building the draft here
   # guarantees the assets exist before the owner's publish click.  Fail-closed: if
   # any build leg fails, `needs: build` skips this job and no draft appears, so the
-  # owner never ships a partial release.  See RELEASE.md § Tag & publish.
+  # owner never ships a partial release.  See RELEASE_PUBLISH.md § Tag & publish.
   draft-release:
     name: Assemble draft release
     needs: build
@@ -333,7 +333,7 @@ jobs:
   # same file, called; it takes the tag's commit).  It does not gate the draft: a red here
   # is either loft moving under a consumer or the consumer's own tip, and which it is
   # decides whether the release ships — the owner's call, read from `make
-  # release-checklist`'s `A-consumers` row (RELEASE.md § What the tag pipeline proves).
+  # release-checklist`'s `A-consumers` row (RELEASE_PUBLISH.md § What the tag pipeline proves).
   consumers:
     name: consumer-main-health.yml
     uses: ./.github/workflows/consumer-main-health.yml

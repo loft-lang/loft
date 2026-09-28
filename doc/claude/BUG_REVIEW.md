@@ -395,4 +395,4 @@ result, is [QUALITY.md § B6u](QUALITY.md).
   and the *fix, don't file* standing rule.
 - [LIBRARY_DOC_REVIEW.md](LIBRARY_DOC_REVIEW.md) — the sibling monthly pass; same
   cadence, same report-never-gate status.
-- [RELEASE.md § Monthly reviews](RELEASE.md) — where this sits in the cycle.
+- [RELEASE.md § Monthly bug review](RELEASE.md#monthly-bug-review-by-hand--one-month-one-generalization) — where this sits in the cycle.

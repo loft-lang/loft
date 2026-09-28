@@ -3,64 +3,34 @@
 
 ## What this file is — and isn't
 
-This file answers one question: **what must be true before we tag
-and publish a release of the loft language?**  Every line below
-is a gate.  If an item here is still open on release day, the
-release slips.  If an item you think matters is not here, it does
-not block a release (and probably belongs in
-[PLANNING.md](PLANNING.md) or [ROADMAP.md](ROADMAP.md) instead).
+This file answers one question: **what must be true before we tag and publish a release of
+the loft language, and how is that proven?**  How a release is then tagged, built, published
+and made installable is [RELEASE_PUBLISH.md](RELEASE_PUBLISH.md).  The measurements behind
+the rules here are [RELEASE-history.md](RELEASE-history.md).
 
-RELEASE.md is the **ship checklist**.  The full project backlog,
-priorities, and ambitions live elsewhere:
+RELEASE.md defines no work.  A release blocker is an open issue or a red gate, and an open
+issue is never ignored for a release ([CLAUDE.md § Bug-filing policy](../../CLAUDE.md)).
 
-| File | Scope | Question it answers |
-|---|---|---|
-| **RELEASE.md** (this file) | Ship checklist — the process | "What must be true before we can publish?" |
-| **[releases/](releases/README.md)** | One directory per cycle | "What did THIS release need, find, and decide?" |
-| **[ROADMAP.md](ROADMAP.md)** | Things we want to do, grouped by milestone | "What's the arc of work for the project, in what order?" |
-| **[PLANNING.md](PLANNING.md)** | Priority-ordered backlog, all features | "What's the next best thing to pick up?" |
-| **GitHub Issues** (`make work`) | Open bugs; [PROBLEMS.md](PROBLEMS.md) is the closed archive | "What's broken today?" |
-| **[QUALITY.md](QUALITY.md)** | Open programmer-biting issues and active sprints | "Which open issues bite users, and what are we actively working on?" |
-
-RELEASE.md only cites items from those four files — it doesn't
-define new work, it promotes existing work to a "must close before
-publish" status.  When a ROADMAP.md item becomes a release blocker,
-it gets a RELEASE.md row.  When it ships, the RELEASE.md row is
-crossed out (the underlying item stays in its home file with its
-fix date).
-
-Demo applications (Brick Buster, Moros editor, the Web IDE shell,
-the server / game-client libraries, and the scene scripting layer)
-follow their own lifecycle and are deliberately out of scope here
-— they can ship on their own cadence without gating the language
-releases they depend on.  Their individual backlogs live in
-[PLANNING.md](PLANNING.md) and [ROADMAP.md](ROADMAP.md).
+| File | Question it answers |
+|---|---|
+| **RELEASE.md** (this file) | "What must be true before we can publish, and how is it proven?" |
+| **[RELEASE_PUBLISH.md](RELEASE_PUBLISH.md)** | "How is a release tagged, built, published and made installable?" |
+| **[releases/](releases/README.md)** | "What did THIS release need, find and decide?" — one directory per cycle |
+| **[ROADMAP.md](ROADMAP.md)** / **[PLANNING.md](PLANNING.md)** | "What is the arc of work, and what is next?" |
+| **GitHub Issues** (`make work`) | "What is broken today?" — [PROBLEMS.md](PROBLEMS.md) is the closed archive |
 
 ## Release cadence
 
-Releases follow a **monthly rhythm**.  Each cycle has one long-lived
-branch named for its **release month**, in `YYYY-MM` form (e.g.
-`2026-07`).  All cross-theme work for the cycle lands on that branch,
-and it ships at the **start of that month** — but only once the
-language is **stable with a low bug count**.
+Releases follow a **monthly rhythm**.  Each cycle has one long-lived branch named for its
+**release month**, in `YYYY-MM` form.  All cross-theme work for the cycle lands on that
+branch, and it ships at the **start of that month** — but only once the language is **stable
+with a low bug count**.
 
-A release is gated on **stability, not a fixed feature set**: if the
-bug count is still high at the month boundary, the release slips and
-the branch keeps stabilising.  When a cycle ships, the next month's
-branch starts fresh from the new `main` tip (`2026-07` → `2026-08`).
-
-What work is in scope during a cycle (the warm feature freeze that
-began with the `2026-07` cycle) is described in
+A release is gated on **stability, not a fixed feature set**: if the bug count is still high
+at the month boundary, the release slips and the branch keeps stabilising.  When a cycle
+ships, the next month's branch starts fresh from the new `main` tip.  A cycle's theme is
+written in its `releases/<cycle>/README.md`; what work is in scope during a cycle is
 [ROADMAP.md § Feature freeze](ROADMAP.md#feature-freeze--heading-into-the-2026-07-cycle-added-2026-06-07).
-
-**Cycle themes:**
-
-- **`2026-07`** — stability, the package registry, and library hardening
-  (extraction finished, registry maintenance + discovery, reproducible packaging).
-- **`2026-08` — "become a better PHP"**: the server-side-web + database stack —
-  the `#c` direct-C-ABI tier (@PLN24), the MariaDB/PostgreSQL clients (@PLN23),
-  and the real HTTP server (@PLN4). Explicitly **not** `2026-07` work. Full
-  rationale + critical path: [BROADENING.md § Better PHP](BROADENING.md#better-php--the-2026-08-cycle-theme).
 
 ### Monthly documentation review (by hand) — libraries + feature catalogue
 
@@ -120,10 +90,9 @@ Also each release: split the top file of the pick, with the `split-file` skill.
 make file-sizes ARGS="--pick 2"    # this release's files, most movable lines first
 ```
 
-This one is a GATE row (`M-file-split`), not a report.  `M-file-sizes` was a report
-read once per cycle, nothing acted on it, and `src/` reached 18 files over 6 000 lines.
-A file too long to read whole is edited in slices, and code that is locally right and
-globally inconsistent is what that produces.
+This one is a GATE row (`M-file-split`), not a report: a report read once per cycle is one
+nothing acts on.  A file too long to read whole is edited in slices, and code that is locally
+right and globally inconsistent is what that produces.
 
 - **The pick ranks by split value**: the lines a split can move, which is the file
   minus its largest item.  An `impl` block counts as its items, not as one subject.
@@ -211,12 +180,10 @@ plan.  Closing is explicit and cross-repo:
   ([`miri.yml`](../../.github/workflows/miri.yml) → `stale-plans-audit`
   job) run `scripts/audit-stale-plans.sh` every day.  It *warns* when a
   `status:active` plan's close directive is already on `main` — so a missed
-  close surfaces within a day, not at the next audit-by-hand (the drift this
-  caught manually in `2026-06`: @PLN1/5/10/16/21) — and it **fails the nightly**
+  close surfaces within a day, not at the next audit by hand — and it **fails the nightly**
   when a CLOSED plan still carries a live status label, which is a contradiction
-  rather than a judgement and takes one command to fix.  A closed plan wearing
-  `status:next` stays in everyone's next-up queue; @PLN48 and @PLN102 did for a
-  month.
+  rather than a judgement and takes one command to fix: a closed plan wearing
+  `status:next` stays in everyone's next-up queue.
 - **Manual fallback:** run `scripts/close-shipped-plans.sh --range
   <prev-release>..main` once after the merge if the on-merge workflow didn't fire.
 
@@ -232,9 +199,9 @@ true before ANY release, and how to prove it.
 
 ## Versioning and the stability contract
 
-Releases are calendar-versioned, `YYYY.M.P` (`2026.9.0`), one per monthly cycle since
-`2026-06` ([releases/2026-06](releases/2026-06/README.md) records the switch); a point
-release off the beat is for a binary fix that cannot wait.  What a release may change is
+Releases are calendar-versioned, `YYYY.M.P` (`2026.9.0`), one per monthly cycle
+([releases/2026-06](releases/2026-06/README.md) records the switch); a point release off the
+beat is for a binary fix that cannot wait.  What a release may change is
 [COMPATIBILITY.md](COMPATIBILITY.md), not a semver clause: its § *The road to contract 1*
 holds the floors the freeze needs and `make rule-coverage` measures the position against
 them.  Safety (no crash, no corruption, no leak) is not a contract addition; it is the
@@ -245,17 +212,11 @@ below.
 
 ## Safety gate — blocks EVERY release
 
-**We do not ship broken builds.  Ever.**  The items below block
-every tag from the next patch release onward, not just 1.0.  A
-release that crashes, corrupts memory, or leaks per iteration is
-not a release — it's a bug report on a schedule.  If a safety
-blocker is open on release day, the release slips.  There is no
-"we'll fix it next version" for crashes and leaks.
-
-This bar applies to patch releases, minor releases, and major
-releases alike.  It applies whether the target is 0.8.4 or 1.0.0.
-A "quick fix" tag that closes one bug but leaves another open is
-still a broken build and still gets blocked.
+**We do not ship broken builds.**  The items below block every release, a point release
+included.  A release that crashes, corrupts memory, or leaks per iteration is not a release —
+it is a bug report on a schedule.  If a safety blocker is open on release day, the release
+slips; there is no "we'll fix it next version" for crashes and leaks, and a "quick fix" tag
+that closes one bug while another stays open is still blocked.
 
 ### The nightlies: prove them green, don't read last night's badge
 
@@ -271,8 +232,7 @@ directions, so neither substitutes for the other:
 - **A green nightly run does NOT discharge the bar either.**  It proves the
   tests that RAN passed on the tree they ran against, which is neither this
   tag's tree nor necessarily the whole suite.  And the schedule is not a clock:
-  the 03:00 UTC daily has started anywhere between 03:34 and 14:45 (measured
-  2026-08-16..09-04), on whatever `main` was at that moment.
+  the 03:00 UTC daily starts hours late, on whatever `main` is at that moment.
 
 So the release evidence is a **current, deliberate run on the candidate's
 commit**, not a historical result — and it is one command:
@@ -282,7 +242,7 @@ make release-gate          # every nightly, THIS commit, one CI run, one verdict
 make release-checklist     # `A-release-gate` reads the newest run for HEAD's sha
 ```
 
-`release-gate.yml` calls six nightlies as reusable workflows — the full
+`release-gate.yml` calls the nightlies as reusable workflows — the full
 `ci.yml` matrix incl. Windows with the stdlib round-trip and the differential
 oracle, every `miri.yml` sanitizer and invariant gate, `revalidate-libs` (both
 backends: a native failure gates unless the library's manifest declares
@@ -326,18 +286,13 @@ A nightly run reports one bit; the release needs the state behind it.
 the cycle's `checklist.json`; `A-release-gate` then reads the run's jobs and answers
 *green, leg waived: <why>* when every red leg is waived, and names the unwaived ones
 otherwise.  A waiver names ONE run, so the next run starts with none and a leg that stays
-red is re-justified each time — which is the point.  It is the table above made
-mechanical.  Before it existed the gate had no way to end in evidence: three of three runs
-ended red, every time on legs of the first kind (the Windows `Test` leg, red or cancelled
-on 11 of the 14 nightlies to 2026-09-23, loft#1652; the macOS and Windows repro legs, whose C
-toolchain the verifier cannot compare; a registry package's own defect), so 2026.9.0
-proceeded on hand-run substitutes with a 90-minute run proving nothing.
+red is re-justified each time.  It is the table above made mechanical: without it, a gate
+whose legs go red for environment reasons can never end in evidence.
 
 **`registry-validation` is not a leg.**  It validates every published package against the
-registry's own rules, so a library's defect turned the toolchain's gate red (`hex_fit` on
-2026-09-08, `imaging` on 09-23) — and § What forces a release says the registry is never
-release-coupled.  `revalidate-libs` stays: *does this loft break a shipped library* is the
-coupling that matters.
+registry's own rules, so a library's defect would turn the toolchain's gate red — and
+§ What forces a release says the registry is never release-coupled.  `revalidate-libs` stays:
+*does this loft break a shipped library* is the coupling that matters.
 
 ### WASM endpoint — our primary deliverable must work
 
@@ -349,8 +304,8 @@ WASM path is broken is a release that doesn't work for most users.
 | ID | H/M | Summary | Reference |
 |---|---|---|---|
 | **WASM-build gate** | H | `cargo build --release --lib --target wasm32-unknown-unknown --no-default-features --features wasm` must succeed with the current stable `rustc`.  The `doc/pkg/` bundle must be rebuilt from this output before tagging. | `Cargo.toml` features, `.github/workflows/ci.yml` |
-| **WASM-runtime gate** | H | `tests/html_wasm.rs` must pass: the 5 P137/Q9 tests compile a trivial `.loft` to `--html`, extract the embedded WASM, and run it under Node with stub host imports.  Any `unreachable` trap or instantiation failure blocks. | `tests/html_wasm.rs`, `tools/wasm_repro.mjs` |
-| **Gallery smoke** | M | `make gallery` must complete and `doc/gallery.html` must load all 24 examples in a browser without console errors.  Verified by CI (`make test-gl-headless`) where Xvfb is available. | `doc/gallery.html`, `.github/workflows/ci.yml` |
+| **WASM-runtime gate** | H | `tests/html_wasm.rs` must pass: its tests compile a trivial `.loft` to `--html`, extract the embedded WASM, and run it under Node with stub host imports.  Any `unreachable` trap or instantiation failure blocks. | `tests/html_wasm.rs`, `tools/wasm_repro.mjs` |
+| **Gallery smoke** | M | `make gallery` must complete and `doc/gallery.html` must load every example in a browser without console errors.  Verified by CI (`make test-gl-headless`) where Xvfb is available. | `doc/gallery.html`, `.github/workflows/ci.yml` |
 
 ### Crashes — no release may crash on valid input
 
@@ -373,7 +328,7 @@ leaks, so the floor is a store count of zero at every program's exit.
 
 | ID | H/M | Summary | Reference |
 |---|---|---|---|
-| **Zero-leak gate** | H | The wrap suite hard-fails any `tests/scripts` file that leaves a store unfreed at exit (`State::check_store_leaks`; `SCRIPTS_LEAK_ALLOW` is empty by design), on every `make ci` and inside the release gate; the two `par` scripts (`22-threading`, `80-parallel-block`) are in that corpus.  There is no separate hand sweep: a manual re-run of a suite assertion was the `M-leaks` row, retired 2026-09-23. | `tests/wrap.rs` `loft_suite`, `src/state/mod.rs` `check_store_leaks` |
+| **Zero-leak gate** | H | The wrap suite hard-fails any `tests/scripts` file that leaves a store unfreed at exit (`State::check_store_leaks`; `SCRIPTS_LEAK_ALLOW` is empty by design), on every `make ci` and inside the release gate; the `par` scripts (`22-threading`, `80-parallel-block`) are in that corpus.  There is no separate hand sweep. | `tests/wrap.rs` `loft_suite`, `src/state/mod.rs` `check_store_leaks` |
 
 ### Test suite integrity — no release may silently skip tests
 
@@ -391,21 +346,11 @@ that names the run it rides**, and the owner signs off on the set each release.
 
 ## Explicitly out of scope here
 
-The following have their own lifecycles and are **not** tracked as
-release blockers in this file.  They may ship before, during, or
-after any of the language milestones above — independently:
-
-- **Brick Buster** demo (G3/G5/G6 audio-graphics, BK.*, G7.P itch.io).
-- **Moros hex RPG editor** demo (MO.*).
-- **Web IDE** shell and multi-file support (W1.1 HTML export kept
-  here because it is a language-side feature; W2–W6 are IDE work
-  and deferred).
-- **Server library** (SRV.*), **game-client library** (GC.*), and
-  **scene scripting** layer (SC.*) — these are applications/libraries
-  built on top of the language, not part of the language surface.
-
-See [PLANNING.md](PLANNING.md) / [ROADMAP.md](ROADMAP.md) for the
-backlogs of those projects.
+The applications built with loft (the games, the crawler, the web IDE shell), the published
+libraries and the registry follow their own lifecycles and are **not** release blockers here
+(§ What forces a release).  The consumers are PROVEN against a release at its tag
+([RELEASE_PUBLISH.md § What the tag pipeline proves](RELEASE_PUBLISH.md#what-the-tag-pipeline-proves-about-the-artifacts)),
+and the owner decides on the record whether a red consumer holds it.
 
 ---
 
@@ -418,116 +363,9 @@ and a deliberate decision to tag and publish.
 
 Do not push release tags, trigger release workflows, draft GitHub Releases, or
 run `cargo publish` programmatically.  Always wait for the owner to do this
-manually after completing the validation checklist below.
-
-### Tag & publish — the mechanics (draft-first, under immutable releases)
-
-The org enforces **immutable releases**: a release's assets freeze the moment it
-is published and cannot be added afterwards.  So the four platform bundles MUST be
-attached while the release is still a **draft**.  The pipeline is built around this
-ordering — the owner never publishes an empty release and then waits for binaries:
-
-1. **Push the annotated tag** — `git tag -a vX.Y.Z -m "…" && git push origin vX.Y.Z`.
-   The tag push (not a published release) is what triggers `release.yml`.
-2. **Let CI build the draft.**  `release.yml` builds all four targets (linux-musl,
-   macos-x64, macos-arm64, windows-msvc) and creates the GitHub release as a
-   **draft** with every bundle + `.sha256` attached and notes generated.  If any
-   build leg fails, no draft appears — investigate, don't ship a partial release.
-   The draft job also attaches two derived assets: `loft-<v>-src.zip` (the source
-   archive the registry entry names for the version itself) and
-   `loft-<v>-registry-entry.json`.
-3. **Review, then publish.**  Open the draft: confirm the four bundles are present
-   (smoke-test each per step 10), edit the title/body if wanted, then click
-   **Publish**.  Only this click freezes the release — by which point the binaries
-   are already attached.  Publishing an existing-tag draft does not re-trigger the
-   build.
-4. **Submit the registry entry.**  Take `loft-<v>-registry-entry.json` from the
-   published release, splice it into `loft-lang/registry`'s `index.json` under
-   `packages.loft`, and re-sign (`scripts/registry-sign.sh`).  This is what makes
-   the release reachable by `loft self-update`, and it is the *only* step that puts
-   the binaries under a signature: the `.zip.sha256` sidecars travel over the same
-   transport as the zips, so they catch a corrupted download, not a substituted one.
-   The signed index is the root; everything below hangs off its hashes:
-
-   ```
-   index.json                        ← the ONE signature (Ed25519, 4 trust roots)
-    ├ binaries[triple].sha256          → loft-<v>-<triple>.zip   checked once, at download
-    │  └ manifest_sha256              → SHA256SUMS             checked any time, on what is INSTALLED
-    │     └ bin/loft, default/*.loft, and every other file the bundle shipped
-    └ version.sha256                   → loft-<v>-src.zip        the source the release was built from
-   ```
-
-   Do not hand-edit the hashes.  The entry is generated from the artifacts of the
-   run that built them, so it cannot drift; retyping it reintroduces exactly the
-   failure a signature cannot catch — an index that is correctly signed and names
-   the wrong bytes.
-
-> **Measured 2026-08-31 — step 4 has never been completed, for any release.**  The
-> signed index carries 42 library packages and no `loft` package at all, so
-> `loft self-update` has never had a release to resolve and `loft verify-self` has
-> never been able to answer its third question (the signed-index anchor) on any
-> installation, anywhere.  The cause is not neglect: the 2026.8.0 submission was
-> attempted and **rejected by the registry's own validator**, which had no toolchain
-> case — gate 3 re-packages a source tree with `loft package`, and loft's repo root
-> has no `loft.toml`, so it failed with `` `loft package` failed: exit status 1 ``.
-> Both are closed as of 2026-08-31: [registry#22](https://github.com/loft-lang/registry/pull/22)
-> (gate 2b + a narrow gate-3 exemption) merged, and [registry#31](https://github.com/loft-lang/registry/pull/31)
-> (`loft 2026.8.0`, the first toolchain entry there has ever been) merged and signed.
-> `loft self-update --dry-run --refresh` now answers `2026.8.0 is the newest release`,
-> and the published bundle's `verify-self` reports `matches the release published in the
-> signed registry index`.  **Pass `--refresh` when you check**: the index is cached under
-> a TTL, and a cache predating the merge says `no releases published to compare against`
-> — the same words as an empty index.
->
-> The whole chain was verified end-to-end on 2026-08-31 in a throwaway clone, rather
-> than assumed: splicing 2026.8.0's entry and running #22's validator passes all four
-> gates (gate 2b downloads each of the four platform zips and re-checks its sha256);
-> running the *current* validator on the same index reproduces the original
-> `loft package` failure exactly.  So #22 is both necessary and sufficient, and the
-> entry regenerated by `gen-toolchain-entry.py --splice-into` is byte-identical to the
-> `loft-2026.8.0-registry-entry.json` the release itself attached.
->
-> Order matters for the next release: `check-release-published.py` gates the PR that
-> bumps `Cargo.toml`, and it fires as soon as the tree's version differs from the
-> latest published release.  **2026.8.0's entry has to land before the version bump
-> PR can merge.**
-
-**Forgetting step 4 is caught on THIS release now, not only the next one (@PLN156).**
-The postscript's commands stopped being advice: `make release-checklist` measures the
-whole of step 4's effect as four automatic items — `A-validator-dryrun`
-(`scripts/validator-dryrun.py`: the registry's OWN validator run against this
-release's generated entry, spliced into a clone of the live index, BEFORE the
-submission — the rehearsal that would have caught 2026.8.0's rejection months early;
-`--replay`/`--corrupt` are how the instrument itself is falsified), `A-registry-this`
-(the entry, every published triple, and each `manifest_sha256` present in the signed
-index — asked of the index directly, because `self-update`'s `Current` verdict prints
-the RUNNING version whether the index carries this release or merely an older one, so
-the CLI output alone cannot witness a forgotten splice), `A-selfupdate-resolves` (the
-postscript's own command, run and read: the empty-index message is a FAIL, never a
-quiet line), and `A-acquisition` (`scripts/acquisition-chain.sh`: install.sh over the
-real transport → `--version` → resolution → the literal `origin: matches the signed
-registry index` line → a program executed; the 2026-08-31 throwaway-clone verification
-as a per-release gate, with `.github/workflows/post-publish-verify.yml` as its
-standing copy on every publish — dispatchable mid-cycle against the PREVIOUS release,
-since the live chain staying acquirable is a stability property, not a release-day
-one).  `M-verify-anchored` retired into `A-acquisition`, which asserts the anchor line
-on an installation it just made.
-
-**And it is still caught on the NEXT release as the backstop.**  Only
-step 2 fails loudly; a missing registry entry just leaves `loft self-update`
-reporting "no releases published to compare against" forever, which nobody is paged
-by.  So the `previous release reached the registry` CI job goes red on the PR that
-bumps `Cargo.toml`, unless the last release's entry is in the signed index with a
-binary per published triple and a `manifest_sha256` on each
-(`scripts/check-release-published.py`).  It gates that PR only — red on every PR
-during the publish→merge window would just teach everyone to merge past it.  A
-release with no `loft-<v>-src.zip` is exempt as predating the mechanism, derived
-from the assets rather than a version constant someone has to maintain.
-
-**Never** create-and-publish a release in one step (the pre-2026.7 flow):
-publishing creates the tag and freezes the release before the binaries are built,
-so immutable releases then reject the upload — v2026.7.0 shipped binary-less
-exactly this way.
+manually after completing the validation checklist below.  The mechanics the owner follows —
+draft-first tagging, the registry splice, and what the tag pipeline proves — are
+[RELEASE_PUBLISH.md](RELEASE_PUBLISH.md).
 
 ---
 
@@ -579,61 +417,20 @@ so coverage stays total without re-reading unchanged, still-valid prose.
 is `0 active`.  It is a burn-down goal, not a release precondition: loft's own findings never
 block loft's release.
 
-### Deferred for pre-external-developer releases (2026-05-15)
+### Steps deferred until external developers take part
 
-Step 0's tooled checks (0a, 0b, 0f, and the auto parts of 0c/0d once built) run every
-release as **advisory** signals — they surface silent-wrong content (e.g. "no way to
-read raw bytes" while `byte_at` exists) regardless of external users, but like gendoc
-they *inform* the release, they do not *block* it.  Only the subjective judgment in
-0e and step 7 (topic flow) waits for external signal.
+Steps **5, 6 and 7** validate the user-facing surface (examples against the changelog, the
+comparison pages, the topic order).  Without external users hitting that surface, the
+validation is closed-loop — the author of an example reads it, sees nothing wrong, and ships —
+so they wait for the signal that makes them meaningful: external developers filing issues,
+opening PRs or asking documentation questions.  Update this section when that happens.  Step
+0's tooled checks (0a, 0b, 0f, and the automatic parts of 0c/0d) still run every release; only
+the judgement in 0e waits with them.
 
-Until the project has regular external-developer interactions
-that exercise the user-facing examples, **steps 5, 6 and 7** are
-explicitly deferred.
-
-Rationale: those steps validate the user-facing surface
-(`.loft` examples, comparison pages, walkthrough topic flow,
-fresh-install smoke).  Without external users hitting them,
-the validation is closed-loop — the same author who wrote
-the example reads it, sees nothing wrong, ships.  The
-validation PAYS OFF once external users surface friction (a
-stale example, a confusing topic order, a Windows symlink
-issue); running it before that point is busywork that
-delays the release without strengthening it.
-
-**The author will do these manually** when they have the
-feedback signal that makes them meaningful.  Until then:
-
-  - Step 5 (user docs vs this cycle's changelog) — defer.
-  - Step 6 (DEVELOPERS.md + comparison pages) — defer.
-  - Step 7 (topic-flow ordering) — defer.
-
-The cross-platform hands-on walkthrough is NOT deferred — it is **done by the
-tag pipeline**: each `release.yml` build leg unpacks its own zip, asserts
-`--version`, `verify-self` and every shipped example with empty stderr
-(§ What the tag pipeline proves), and the owner ruled on 2026-09-05 that this
-bundle smoke IS the walkthrough.  `A-smoke` reads it; a leg that skipped becomes
-the by-hand `M-rosetta` row.  The three hand-run rows it replaced
-(`M-hands-linux` / `-macos` / `-windows`) were retired 2026-09-23; what they
-added and no runner observes — Gatekeeper on an unsigned download, the VS Code
-grammar symlink on Windows — no release had recorded either.
-
-Steps 1-4 + 8 + 9 (internal-doc hygiene, broken-link
-audit, clippy-suppression review, gendoc + PDF) are NOT
-deferred — they run every release, because they protect the
-shipped artefact whether or not external users exist.  Like
-the rest of this review they are advisory: only the safety
-gate blocks a release.
-
-The safety gate above (crashes / memory / leaks / test-suite
-integrity) is also NOT deferred — it blocks every release,
-external users or not.
-
-**Lift this deferral** when external developers start filing
-issues / opening PRs / asking documentation questions.  At
-that point the validation steps gain real signal and become
-worth running pre-tag.  Update this section when that
-happens.
+Not deferred: steps 1–4, 8 and 9, which protect the shipped artefact whether or not external
+users exist, and the cross-platform walkthrough, which IS the tag pipeline's per-bundle smoke
+([RELEASE_PUBLISH.md § What the tag pipeline proves](RELEASE_PUBLISH.md#what-the-tag-pipeline-proves-about-the-artifacts)).
+Like the rest of this review they are advisory; only the safety gate blocks a release.
 
 ### 1 — Audit doc/claude/ for stale problem documentation
 
@@ -660,8 +457,8 @@ Read through any doc/claude/ file that has grown since the previous release and 
 
 ### 5 — Validate user documentation against this release
 
-> The corpus-wide checks here are now the **step 0** gate (0a–0e).  This step
-> remains the *changelog-driven* cross-check: that each shipped change is reflected.
+> The corpus-wide checks are step 0 (0a–0e); this step is the *changelog-driven*
+> cross-check that each shipped change is reflected.
 
 For each feature and bug-fix entry in CHANGELOG.md under this cycle's `## YYYY-MM` section:
 - Find the corresponding section in the HTML reference (a file in `tests/docs/*.loft` or `doc/`).
@@ -739,34 +536,8 @@ For each suppression the report says which of three things it is:
 The goal is to keep suppressions intentional and minimal, not to accumulate them as a
 release-over-release debt.
 
-> **Measured 2026-09-04 (`e4366d4d`) — a census, not a cleanup.**  257 attributes name
-> a clippy lint (244 on items, 13 file-scope, 3 via `cfg_attr`), 329 lint mentions over
-> 54 lints.  A grep counts 22 more: `#![allow]` text inside string literals that a
-> generator emits into another file (`src/create.rs`, `src/generation/mod.rs`,
-> `src/android.rs`), which the tool excludes.
-> **Justification:** 150 of the 244 item-level attributes have a comment on the line
-> or on the line above; 94 do not (159 if the item's own `///` doc line does not count).
-> **Dead:** 51 attributes outright and 7 in part (one of several lints named) — 66 of
-> the 329 mentions: `too_many_lines` 16 (the function is now under 100 lines),
-> `too_many_arguments` 15 (7 parameters or fewer now), `unused_self` 5,
-> `cast_precision_loss` 3, the rest 1–2 each.  34 of the 54 dead item-level attributes
-> carry a justification comment, so the comment describes a constraint that no longer
-> exists; 3 were dead when written (2026-09-02, seven-parameter functions).
-> **Redundant with a crate root:** 80 (`too_many_lines` 57, the three `cast_*` lints
-> 29, `type_complexity` 2).  The crate-root lists themselves: `src/main.rs`'s
-> `match_same_arms`, `redundant_closure`, `implicit_hasher`, `unnecessary_wraps` and
-> `must_use_candidate` fire nowhere in the bin; every entry of `src/lib.rs`'s list is
-> live.
-> **What CI never lints:** with debug assertions ON (`[profile.dev.package.loft]`
-> strips them) 10 pedantic warnings hide — `ptr_as_ptr` ×4, `ref_as_ptr` ×2,
-> `borrow_as_ptr` ×2, `useless_borrows_in_formatting`, `missing_panics_doc`; in the
-> browser wasm rlib 7 — `needless_return` ×2, `format_push_string` ×2,
-> `drop_non_drop` ×2, `unnested_or_patterns`.  Either configuration fails `-D warnings`
-> today if it is ever gated.
-> **Outside the census:** 167 `#[allow]` naming only rustc lints (`dead_code` …), 111 of
-> them dead in every compiled leg.
-> The per-suppression table is the tool's output; `make clippy-review ARGS="--legs all"`
-> regenerates it in about two minutes on a warm target.
+A dated census of the suppressions, with what CI never lints, is in
+[RELEASE-history.md](RELEASE-history.md); the current one is `make clippy-review`'s output.
 
 ### 9 — Generate HTML and PDF
 
@@ -778,141 +549,13 @@ cargo run --bin gendoc
 typst compile doc/loft-reference.typ
 ```
 
-Verify that `gendoc` completes without warnings and that the generated HTML files look correct in a browser.  Attach `loft-reference.pdf` to the GitHub release.
+Verify that `gendoc` completes without warnings and that the generated HTML files look
+correct in a browser.  The PDF ships inside every bundle; the checks that it is current, says
+this version and holds every chapter are
+[RELEASE_PUBLISH.md § The reference PDF](RELEASE_PUBLISH.md#the-reference-pdf).
 
-### 10 — Per-OS binaries + stdlib checksums → registry
-
-The registry ([PKG_REGISTRY.md](PKG_REGISTRY.md)) is the trusted distribution
-point, so the toolchain itself ships through it — signed, with checksums users
-can verify offline.
-
-- **Build a release bundle per supported target.**  `release.yml` does this
-  automatically on a tag push (see § "Tag & publish" above) via
-  `scripts/make-release.sh`, building the four shipped triples:
-  - `x86_64-unknown-linux-musl`
-  - `x86_64-apple-darwin`, `aarch64-apple-darwin`
-  - `x86_64-pc-windows-msvc`
-  - (no `aarch64-unknown-linux-*` yet — add a matrix row when it is needed.)
-- **Each bundle is a self-contained zip** — `bin/loft` + `default/` stdlib +
-  examples + `loft-reference.pdf` + `SHA256SUMS` — attached to the **draft**
-  release as `loft-<version>-<triple>.zip` (+ its `.zip.sha256`).
-- **One manifest per bundle.**  `SHA256SUMS` covers every file it ships,
-  `bin/loft` and each `default/*.loft` included, and is the authoritative list of
-  what a bundle owns (`self_update::owned_files` reads the same file).  There is
-  deliberately no second stdlib-only manifest: it described a subset of this one,
-  which made two ways to validate a single installation.
-- **Publish to the registry:** splice the generated entry into the signed
-  `index.json` (`loft-lang/registry`) and re-sign per
-  [REGISTRY_BOOTSTRAP.md](REGISTRY_BOOTSTRAP.md) / [REGISTRY_SUBMIT.md](REGISTRY_SUBMIT.md).
-  Per target it carries the bundle URL + sha256 **and `manifest_sha256`** — the
-  digest of that bundle's `SHA256SUMS`.  The zip's own hash is checkable exactly
-  once, at download; the manifest digest is what lets `loft verify-self` re-check
-  an INSTALLED tree against the signature at any time.
-- **Verify:** on a clean host, `loft self-update` resolves a bundle, checks its
-  hash against the signed index, and installs it; `loft verify-self` then reports
-  "matches the release published in the signed registry index".
-- **Verify on Windows specifically — the one case no test can cover.**  Run a real
-  `loft self-update` on Windows, from the previous release to this one.  Replacing
-  a *running* executable is the only genuinely platform-divergent step in the
-  chain: `apply_bundle` renames the target aside and copies in, because a running
-  binary cannot be overwritten there but can be renamed.  The unit tests exercise
-  rename-then-copy on the daily Windows leg, but never against the `loft.exe` that
-  is executing them, so this needs a published release and a Windows box.  Do it
-  once per release, before announcing.
-
-### Open work — reproducible builds (@PLN78 step 7)
-
-`make-release.sh` emits `SHA256SUMS`, which is integrity, not a byte-identical
-rebuild.  Everything above works without it; what it would upgrade is the
-*meaning* of the published hash — from "this is the artifact the maintainer
-uploaded" to "this is the artifact the source produces", which is the stronger
-claim.  Deliberately off the critical path: it was sequenced last so it could
-never block a user-visible installer, and closing @PLN78 does not make it urgent.
-The registry already re-checks reproducibility for *libraries* (gate 3 clones the
-tag and re-runs `loft package`); the toolchain is exempt because it is not a
-`loft package`, so this is the gap that exemption leaves.
-
-**Measured 2026-07-31 — what actually blocks it, so this is not re-derived.**
-
-1. *The compiler already matches.*  The published v2026.7.2 binary embeds
-   `/rustc/8bab26f4f68e0e26f0bb7960be334d5b520ea452`, which is byte-for-byte the
-   local stable 1.97.1.  The usual hardest variable is already pinned by
-   `dtolnay/rust-toolchain@stable` plus `Cargo.lock`.
-2. *Absolute build paths are the blocker.*  The release binary carries
-   `/home/runner/.cargo/registry/...`; a local build carries `/home/jurjens/...`
-   — **192 occurrences**.  v2026.7.2 is therefore unreproducible by anyone,
-   including us: the runner's paths cannot be recreated.
-3. *`trim-paths` is NOT the answer.*  The `[profile.release] trim-paths` option is
-   still unstable in Cargo 1.97.1 and refuses to parse the manifest.
-4. *`--remap-path-prefix` works — 192 → 2.*  Stable rustc, no nightly.
-5. *…and the last 2 are self-inflicted, in a way that has no cheap fix.*
-   `build.rs` exports `LOFT_BUILD_RUSTFLAGS` **verbatim**, so the remap flags —
-   whose text contains the very paths being removed — are baked in as a string
-   literal.  **Hashing it away does not work:** `cache.rs` only needs a
-   fingerprint, but `extensions.rs` passes the *string* to child cargo builds so
-   a shared transitive dep gets an SVH matching loft's own (#274); replace it
-   with a `u64` and `--native` breaks at link with a colliding `StableCrateId`.
-   (This was proposed here on 2026-07-31 after reading only the `cache.rs`
-   consumer, and disproved the same day by reading the other one.)
-
-   So the string must stay, which means the string must be **machine-independent**
-   — the remap prefixes have to be paths that are identical everywhere.  That is
-   a canonical **build environment**, not a compiler flag: a fixed source
-   directory, a fixed `CARGO_HOME`, and a fixed `RUSTUP_HOME` (the toolchain path
-   accounts for 31 of the 192).  In practice that means building the release in a
-   container, which is what reproducible-build systems do and what the plan's
-   "M, 3-5 days" was probably right to reserve.
-
-   Do NOT add `--remap-path-prefix` to `make-release.sh` on its own: it strips
-   190 of 192 paths but leaves the build machine-specific anyway, while
-   perturbing the RUSTFLAGS string that #274's SVH matching depends on — motion
-   with the risk and none of the payoff.
-6. *Comparing to a GitHub artifact needs the musl target.*  Releases ship
-   `x86_64-unknown-linux-musl`; a local `cargo build --release` is `-gnu`.  Those
-   are different binaries by construction — `rustup target add
-   x86_64-unknown-linux-musl` plus `musl-tools` before any comparison means
-   anything.
-
-So the remaining work is: a canonical (containerised) build environment, the
-remap flags derived from *its* fixed paths, and a CI leg that builds twice from
-different original locations and diffs.  The first of those is the real cost, and
-it is the piece a flag-level fix cannot substitute for.
-
-**Measured 2026-09-15 — paths are no longer the blocker; the platform C toolchain is.**
-
-The path half above was closed without a container: `scripts/repro-flags.sh` remaps
-the three roots on BOTH sides (release and verifier source it), and `build.rs` drops
-every `--remap-path-prefix` entry before baking `LOFT_BUILD_RUSTFLAGS`, which is what
-the #274 objection in point 5 needed.  Bundles carry `reproducible-paths = yes`, and
-the weekly `repro-build.yml` rebuilds v2026.9.0 for `x86_64-unknown-linux-musl`
-byte-identically.
-
-The two targets that still failed (`x86_64-pc-windows-msvc`, `aarch64-apple-darwin`,
-red on 09-07 and 09-14) did not differ in paths — the published binaries embed only
-`/rustc/<hash>/...` — but in **code**: the MSVC rebuild had `.text` 384 bytes smaller
-and four fewer `.pdata` entries.  loft compiles C: `ring` (via rustls → ureq) builds
-through the `cc` crate with the host's compiler — `cl.exe` from the runner image's
-Visual Studio toolset, Apple clang on macOS.  On ONE Windows runner, with one source,
-one rustc (1.98.1) and one build root, the default toolset (14.51) linked
-`.text 0xbd1586` and `-vcvars_ver=14.44` linked `.text 0xbd1656`; the published binary,
-cut on an image two weeks older, has `0xbd1706`.  A hosted runner's toolset moves with
-its image, so the weekly job compared against a binary made by a compiler it no longer
-had, and reported the difference as the source's.
-
-So a bundle now records its `c-toolchain` in BUILD-INFO (`scripts/repro-toolchain.sh`,
-sourced by `make-release.sh` and `repro-verify.sh`), and the verifier calls a
-difference the source's only when its own C toolchain matches that record; otherwise it
-exits 3, naming both.  Identical bytes need no record — they are the proof, which is why
-musl keeps verifying against a bundle that predates the field.  Pinned by
-`tests/doc_hygiene.rs::the_release_records_the_c_toolchain_the_verifier_compares`.
-
-And a Windows link was not deterministic even with everything else equal: two builds of
-one source from one root differed in 12 bytes — the COFF TimeDateStamp, the debug
-directory's copy of it, and the CodeView PDB GUID, i.e. `rust-lld`'s wall clock.
-`/Brepro` alone made the stamp a hash of a PDB that is itself not deterministic (20 bytes
-still differed), and `-C strip=debuginfo` did not stop the PDB under `rust-lld`; adding
-`/DEBUG:NONE` made two builds byte-identical.  `scripts/repro-flags.sh` passes both on a
-Windows host.  No PDB was ever shipped — a Windows bundle's `bin/` holds only `loft.exe`.
+The per-OS bundles, their checksums and the registry entry are
+[RELEASE_PUBLISH.md § The bundles and the registry entry](RELEASE_PUBLISH.md#the-bundles-and-the-registry-entry).
 
 ---
 
@@ -938,7 +581,7 @@ adds an item that needs a new tool, add the tool here.
 | `chromium` / `google-chrome` | WASM HTML build verification (already used by `make wasm-html-test`) | OS package manager |
 | `cargo audit` | `A-audit`: RUSTSEC advisories over `Cargo.lock` (the nightly `audit` job asks the same on the schedule) | `cargo install cargo-audit --locked` |
 
-### The per-release checklist — `make release-checklist`
+## The per-release checklist — `make release-checklist`
 
 **Work the generated list, not this document.**  Everything a release needs a
 human to do is one command:
@@ -949,10 +592,9 @@ make release-checklist ARGS="--fetch"      # refresh origin/main + tags first
 make release-checklist ARGS="--done M-install-sh --note 'ran on the NUC'"
 ```
 
-It exists because the alternative was three overlapping partial lists in this
-file, and the steps that lived in **none** of them — the Windows `self-update`,
-the registry splice, `scripts/install.sh` — are precisely the ones that got
-skipped.  Not because anyone decided to skip them: because no list said them.
+It is the one list: the steps a partial list leaves out — the Windows `self-update`, the
+registry splice, `scripts/install.sh` — are the ones that get skipped, not by decision but
+because no list said them.
 
 Three things make it worth working through rather than reading:
 
@@ -961,15 +603,14 @@ Three things make it worth working through rather than reading:
   verdict line, and a verdict older than the newest source file reports STALE
   rather than pass.  A gate you can tick is a gate that gets ticked.
 - **Manual items carry the exact command and what counts as a pass**, and are
-  the only ones `--done` accepts.  Progress lives in `releases/<cycle>/checklist.json`, committed
-  (local, gitignored) with a timestamp and your note as the evidence.
+  the only ones `--done` accepts.  Progress lives in `releases/<cycle>/checklist.json`,
+  committed, with a timestamp and your note as the evidence.
 - **Items for work this release did not touch stay hidden.**  The VS Code
   extension pass and the native-debug gate are rituals for code most releases
   never change; the script asks git whether they moved since the last tag.  A
   list that includes work nobody needs to do is one people learn to skim.
 
-Two properties added by @PLN156, because 2026.8.0's real cost was discovering by hand
-that several "done" things had never been true:
+Two more properties:
 
 - **Every item carries its CADENCE, and the early views are commands.**  The test a
   marker applies is whether the item can be FINISHED in that phase — whether its
@@ -989,10 +630,8 @@ that several "done" things had never been true:
   nowhere.
 
   ⚠ **A row that cannot be finished in a phase does not belong in that phase's
-  tally.**  Carrying the sweeps under `[mid]` made the halfway view report `7/12`
-  against a denominator no halfway run could ever reach — a gate whose threshold had
-  drifted from its subject, which reads as permanent unfinished work and teaches the
-  reader to skim the list.  The early warning was worth keeping; counting it was not.
+  tally.**  A denominator no halfway run can reach reads as permanent unfinished work and
+  teaches the reader to skim the list; `[cand]` rows are run early and counted nowhere.
 - **A check that could not run never reads as a check that passed.**  The summary names
   every automatic item that stayed UNKNOWN ("not green: … never ran"), the exit code
   keeps red (1) apart from not-yet-evidence (3) and green (0), and the header stamps
@@ -1003,58 +642,17 @@ that several "done" things had never been true:
 release-liveness` (the `M-liveness` item makes it per-release; it is a REPORT, never a
 gate) walks the three drifts that accumulate BETWEEN releases: suppressions whose
 justifying issue has since CLOSED, gate workflows that quietly stopped firing or whose
-last verdict was red, and checklist items never recorded as run in any committed cycle
-— the 2026.8.0 class, rescued by hand exactly once and now asked continuously.
-
-Two corrections it carries that this document used to get wrong:
-
-- The hands-on smoke is run **from the release ZIP, not a fresh git clone**.
-  The clone is a different path from the one users take, and it was the only
-  one anybody ever exercised — so the thing we smoke-tested was not the thing
-  we shipped.  (The tag pipeline now runs each bundle too; see below.)
-- `scripts/install.sh` — the documented `curl | sh` path — is run end to end by
-  `tests/self_update_swap.rs` against a bundle built the way `make-release.sh`
-  builds one, served over `file://` (Linux x86_64, the host the script's `uname`
-  mapping names in CI); `tests/doc_hygiene.rs` checks statically that the mapping
-  matches `PUBLISHED_TRIPLES`.  What only the by-hand run covers is the real
-  transport — the GitHub CDN and the sidecar it serves — and the SHIPPED binary's
-  own `verify-self`.  The script used to copy `bin/` and `default/` only and then
-  hand `verify-self` the manifest of the whole bundle, so every installation it
-  made ended in *the installation does not verify*; 2026.8.0 shipped that way and
-  the by-hand item did not catch it.
-
-**There are TWO install LAYOUTS, and `self-update` can only maintain one of them
-(loft#1497, 2026-09-10).**  A release bundle is `<prefix>/bin/loft` beside
-`<prefix>/default/`; a source install (`make install`) is `<prefix>/bin/loft` with
-`<prefix>/share/loft/{default,libloft.rlib,deps}`.  The runtime's resolver
-(`native_utils::project_root_for`) prefers `<prefix>/share/loft/` **whenever that
-directory exists**, so running `self-update` over a prefix that was once source-installed
-wrote a `default/` nothing loads and left the OLDER tree winning — a 2026.9.0 binary
-reading a 2026.8.0 standard library, reported from two machines, with `verify-self`
-passing throughout and `println("hello")` dying with SIGSEGV in `OpFreeText`.  A third
-machine built from source, binary and stdlib installed together, ran the same program
-fine: the control that says the split is by install METHOD, not by release.
-
-`self-update` now REFUSES that before writing anything, naming both trees and the two
-layouts to choose between (`--force` installs anyway and says what state it leaves).  It
-refuses rather than relocating the write because **a release bundle carries no
-`libloft.rlib`** — `make-release.sh` stages `bin/`, `default/`, `examples/` and the docs —
-and `--native` links that rlib from `share/loft/`, so writing the stdlib into the source
-tree would swap one mismatch for a subtler one.  The resolution is asked of
-`stdlib_default_dir()`, the same one home `loft run`, `loft fmt`, the LSP and now
-`verify-self` use, so the writer and the loader cannot drift; `verify-self` had its own
-spelling of that rule until this landed, which is the shape loft#1499 was about.
+last verdict was red, and checklist items never recorded as run in any committed cycle.
 
 The per-item landing procedures in the release's plans are separate and still
 apply (e.g. NDB.0 in [`plans/34-native-debug/`](plans/34-native-debug)).
 
-**What it covers, audited against this document (2026-08-31).**  Every gate this
+**What it covers, audited against this document.**  Every gate this
 file calls a release blocker is an item: the safety gate's valgrind, zero-ignore and
 skip-list rows (`M-valgrind`, `M-ignores`, with `A-ignores` checking the rationales
 mechanically; the zero-leak gate is the suite's own assertion, carried by `A-ci` and the
 gate), the WASM endpoint gate (`M-wasm`), the nightlies (`A-release-gate`: one deliberate
-run of all five against HEAD's commit, measured — it replaced six hand-dispatched,
-hand-ticked items), the dependency audit (`A-audit`), the consumers at the tag
+run of every nightly against HEAD's commit, measured), the dependency audit (`A-audit`), the consumers at the tag
 (`A-consumers`), step 9's
 artefacts, step 10's
 binaries and registry entry, and the monthly reviews the cadence makes
@@ -1065,81 +663,21 @@ any open formal deviation a release can resolve: each has a tracking issue, and 
 allowed to ship are marked `not resolvable in a release` with their reason
 (`formal/README.md` § Deviation entry format).
 
-**Three classes of row, since 2026-09-23.**  A GATE row must be true (`A-ci`,
-`M-valgrind`); a `[report]` row must be READ — `M-monthly-bugs`, `M-file-sizes`,
-`A-reference-review`, the passes this document calls *a report, never a blocker* — and
-the tally counts the two apart, because "21/27 done" with them mixed said nothing about
-what was blocking; a DERIVED row is a manual row a green gate job on the candidate's
-commit satisfies without a hand-run (`M-valgrind`, `M-libs`, `M-wasm`, each naming the
-job that covers it), the hand-run staying as the fallback when the gate cannot run.  A
-tick records the COMMIT it was made on, and a `[cand]` tick whose commit differs from
-HEAD in what ships (`src/`, `default/`, `tests/`, the manifests) reads `[~] STALE` rather
-than done — 2026-09's candidate ticks named `e77ef442` while the tag was `b1016d00`, and
-only a by-hand diff said that nothing shipped had moved.  Retired the same day:
-`M-leaks` (the suite's own assertion), `M-hands-linux/-macos/-windows` (the tag
-pipeline's bundle smoke IS the walkthrough; `A-smoke` reads it, and `M-rosetta` appears
-only when it reports a skip) and `M-install-live` (`scripts/acquisition-chain.sh` now
-installs a library with the acquired binary).  A new blocking row must be able to name
-the past defect it would have caught — install.sh, the registry splice and #1357 all
-can; a row that cannot is a report.
+**Three classes of row.**  A GATE row must be true (`A-ci`, `M-valgrind`); a `[report]`
+row must be READ — `M-monthly-bugs`, `M-file-sizes`, `A-reference-review`, the passes this
+document calls *a report, never a blocker* — and the tally counts the two apart; a DERIVED
+row is a manual row a green gate job on the candidate's commit satisfies without a hand-run
+(`M-valgrind`, `M-libs`, `M-wasm`, each naming the job that covers it), the hand-run staying
+as the fallback when the gate cannot run.  A tick records the COMMIT it was made on, and a
+`[cand]` tick whose commit differs from HEAD in what ships (`src/`, `default/`, `tests/`, the
+manifests) reads `[~] STALE` rather than done.  A new blocking row must be able to name the
+past defect it would have caught; a row that cannot is a report.
 
-One of those is worth calling out because it is invisible and it ships:
-**`make-release.sh` copies `doc/loft-reference.pdf` into all four bundles and
-never builds it.**  The HTML docs are committed and served from `main:/docs`,
-rebuilt on every push, so they cannot go stale at a tag (the tag's `docs` job
-rebuilds them again for a `gh-pages` branch nothing serves, and has failed at
-`make game` on every release since 2026.7.2 — deleting that job is the owner's
-call); the PDF is a committed file that only `gendoc` + `make
-pdf` update by hand, so a release can ship four bundles carrying a reference
-that does not describe it, in silence.
-
-Three checks cover it, and only the first is about regeneration:
-
-- **`A-pdf`** — current against what actually decides its content.  Not against
-  `doc/loft-reference.typ`: that file is *itself* generated by `gendoc`, so
-  comparing the two answers a question nobody asked — when the real inputs move
-  and nobody re-runs `gendoc`, both derived files sit still and the comparison
-  reads green.  The inputs are `tests/docs/`, `default/`, `src/gendoc.rs`,
-  `src/documentation.rs` and `Cargo.toml`.
-- **`A-pdf-version`** — the PDF *says* it is this release, read out of its own
-  bytes.  `gendoc` stamps the title page and the document keywords from
-  `CARGO_PKG_VERSION`, so bumping `Cargo.toml` without re-running it leaves a
-  reference headed "Version «previous»" — freshly dated, correct-looking, and
-  wrong on the one page every reader sees first.  A timestamp cannot catch that.
-- **`A-pdf-content`** — what is INSIDE it, chapter by chapter.  A PDF can be
-  freshly built, correctly versioned, and still be missing a chapter, because
-  **every way a chapter enters this document can drop it in silence**:
-  `documentation::get_topic_sources` builds the 35 topics with `.ok()` and
-  `filter_map`, so a topic file it cannot read is skipped; and *Getting
-  Started*, *vs Rust*, *vs Python* and *Roadmap* are each read from a
-  `doc/*.html` file with `if let Ok(…)`, so a missing file takes the chapter
-  with it.  Either way the build succeeds, the page count is still three
-  figures, and the page is missing only to the reader.
-
-  So the check walks every level-1 part: each topic's `@NAME` (the heading
-  `gendoc` emits — not `@TITLE`) and each of those four chapters must appear in
-  the PDF's text.  *Standard Library* needs asking about twice, because its
-  heading is pushed **unconditionally** — the heading proves only that `gendoc`
-  ran, and an empty chapter carries it just as well as a full one, so the check
-  also requires that the chapter names at least one stdlib function.  It matches
-  on word boundaries: a plain substring test counts `map` as present because the
-  chapter list contains "Road**map**", which is enough to stop that guard ever
-  reaching zero.  Finally, no placeholder marker (`TODO`, `FIXME`, `TBD`, "not
-  yet implemented") may ship in a document read offline.
-
-  The stdlib count rides along as evidence rather than a gate: the reference
-  documents a good share of functions as methods on their receiver, so "every
-  `pub fn` appears" would be a false failure and a percentage would be an
-  invented threshold.  A presence check can still pass on a chapter that was
-  dropped but whose name occurs in prose — that residual is the right way round,
-  a possible false pass on a name collision rather than a false alarm.
-
-None of the three reads a sentence, so all three stay green on a chapter that
-describes behaviour the language dropped two releases ago.  That half is
-[REFERENCE_REVIEW.md](REFERENCE_REVIEW.md) — a per-chapter pass over what the
-reference *promises*, tracked by a watermark so it can be done **early and
-continuously** rather than as a day of reading under tag-day pressure.  Read a
-chapter the week its source moves and the list is short by construction:
+The artefact items — the bundle smoke, the registry entry, the acquisition chain and the
+three reference-PDF checks — are described with the pipeline they read,
+[RELEASE_PUBLISH.md](RELEASE_PUBLISH.md).  Whether the reference still describes the language
+is [REFERENCE_REVIEW.md](REFERENCE_REVIEW.md), a per-chapter watermark pass done early and
+continuously rather than on tag day:
 
 ```
 make reference-review                                   # what owes a read
@@ -1154,58 +692,11 @@ reference does — [SKILLS_REVIEW.md](SKILLS_REVIEW.md) defines the three axes o
 read (content / usability / conciseness), `make skills-review` is the worklist, and
 `A-skills-review` reports the count.
 
-### What the tag pipeline proves about the artifacts
-
-`release.yml` used to build four bundles and upload them without executing one,
-so every artifact-level property — does the binary run, is it the version the
-tag claims, does the manifest still describe the files, do the shipped examples
-work — was checked by nobody.  Those properties do not exist before the zip
-does, which makes the tag run the only place they can be checked at all.
-
-Each build leg now unpacks **its own zip** (not the staging directory: the
-round-trip is part of what is under test) and asserts `--version` against the
-tag, `loft verify-self`, and every `examples/*.loft` under `--interpret`.  The
-example check asserts **empty stderr**, not just exit 0 — a loft program that
-cannot write its output file prints `… — write skipped` and exits 0, so an
-exit-code-only smoke passes on a bundle whose examples do nothing.
-
-**And the consumers, at the tag's commit.**  `release.yml` calls
-`consumer-main-health.yml` — the nightly that runs every package of the programs built
-with loft (moros, dryopea, crawler, the private economy model) on BOTH backends — so a
-release is proven against the code that dogfoods the language and not only against
-loft's suite and its shipped examples.  The same file answers "main, tonight" on the
-schedule and "this release" under the tag, so the two cannot drift.  It does not gate
-the draft: a red consumer is either loft moving under it or the consumer's own tip, and
-which it is decides whether the release ships — `A-consumers` reads the run per consumer
-and the owner decides on the record.  Pre-tag, the same proof is the gate leg loft#1653
-still asks for.
-
-One leg cannot always run its own artifact: `x86_64-apple-darwin` is
-cross-built on an arm64 runner and needs Rosetta 2.  It reports a loud skip
-rather than failing the release, and `make release-checklist` reads the run's
-annotations so a skipped bundle becomes a manual item instead of a silence.
-
----
-
-## Release artifacts
-
-| Artifact | How |
-|---|---|
-| Annotated tag `vYYYY.M.P` | `git tag -a vYYYY.M.P -m "…" && git push origin vYYYY.M.P` — the push triggers `release.yml` |
-| Four bundles `loft-<v>-<triple>.zip` + `.sha256` (linux-musl, macos-x64, macos-arm64, windows-msvc), each with `bin/`, `default/`, `examples/`, `loft-reference.pdf`, `BUILD-INFO`, `SHA256SUMS` | `release.yml` → `scripts/make-release.sh`, attached to the DRAFT, each smoke-run from its own zip |
-| `loft-<v>-src.zip` + `loft-<v>-registry-entry.json` | the draft job, derived from the bundles it just built |
-| crates.io `loft` | `release.yml` `crates-io` job, when `CARGO_REGISTRY_TOKEN` is set |
-| HTML docs | committed under `doc/`, served from `main:/docs` and rebuilt on every push — no release step |
-| The signed registry entry | step 4 of § Tag & publish, by hand (`M-registry-splice`), read back by `A-registry-this` |
-
-The Rust library API (`lib.rs`) is not a public stable API; what IS stable is
-[COMPATIBILITY.md](COMPATIBILITY.md)'s business, and § Versioning and the stability
-contract above says where the versions come from.
-
----
-
 ## See also
-- [PLANNING.md](PLANNING.md) — Priority-ordered enhancement backlog; source for gate-item IDs
-- [ROADMAP.md](ROADMAP.md) — Items grouped by milestone with effort estimates
-- [DEVELOPMENT.md](DEVELOPMENT.md) — Branch naming, commit sequence, and CI workflow
-- [INCONSISTENCIES.md](INCONSISTENCIES.md) — All known inconsistencies must be resolved or accepted before 1.0.0
+- [RELEASE_PUBLISH.md](RELEASE_PUBLISH.md) — tagging, the bundles, the registry entry, what the tag pipeline proves
+- [RELEASE-history.md](RELEASE-history.md) — the measurements behind these rules
+- [releases/](releases/README.md) — one directory per cycle
+- [PLANNING.md](PLANNING.md) / [ROADMAP.md](ROADMAP.md) — the backlog and the milestones
+- [DEVELOPMENT.md](DEVELOPMENT.md) — branches, commits and CI
+- [INCONSISTENCIES.md](INCONSISTENCIES.md) — every known inconsistency is resolved or accepted before contract 1
+

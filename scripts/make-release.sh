@@ -3,7 +3,7 @@
 # SPDX-License-Identifier: LGPL-3.0-or-later
 #
 # make-release — assemble a self-contained loft binary release zip per target.
-# Implements the artifact half of RELEASE.md § 10. The zip holds everything a
+# Implements the artifact half of RELEASE_PUBLISH.md § The bundles and the registry entry. The zip holds everything a
 # programmer needs to run loft offline:
 #   bin/loft(.exe)        the binary
 #   default/*.loft        the standard library (resolved at <exe-dir>/../default)
