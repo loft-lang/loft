@@ -3400,7 +3400,7 @@ impl Store {
         let Some(v) = f.views.get(k as usize) else {
             self.raise_out_of_bounds(rec, fld, width);
         };
-        if (rec - VIEW_BASE) % 2 == 0 {
+        if (rec - VIEW_BASE).is_multiple_of(2) {
             if fld != 8 || width != 4 {
                 self.raise_out_of_bounds(rec, fld, width);
             }
@@ -3522,12 +3522,14 @@ impl Store {
                 if rec == FOREIGN_REC {
                     unsafe { std::slice::from_raw_parts(f.base, f.bytes() as usize) }
                 } else {
-                    f.views.get(((rec - VIEW_BASE) / 2) as usize).map_or(&[], |v| unsafe {
-                        std::slice::from_raw_parts(
-                            f.base.add(v.offset as usize),
-                            v.len as usize * f.elem_size as usize,
-                        )
-                    })
+                    f.views
+                        .get(((rec - VIEW_BASE) / 2) as usize)
+                        .map_or(&[], |v| unsafe {
+                            std::slice::from_raw_parts(
+                                f.base.add(v.offset as usize),
+                                v.len as usize * f.elem_size as usize,
+                            )
+                        })
                 }
             });
         }
@@ -3728,7 +3730,9 @@ impl Store {
                 } else {
                     f.views
                         .get(((rec - VIEW_BASE) / 2) as usize)
-                        .map_or(std::ptr::null(), |v| unsafe { f.base.add(v.offset as usize) })
+                        .map_or(std::ptr::null(), |v| unsafe {
+                            f.base.add(v.offset as usize)
+                        })
                 }
             });
         }
@@ -3917,12 +3921,15 @@ impl Store {
             return self.foreign.as_ref().is_some_and(|f| {
                 if rec == FOREIGN_REC {
                     fld >= 4 && u64::from(fld) < 8 + f.bytes()
-                } else if (rec - VIEW_BASE) % 2 == 0 {
+                } else if (rec - VIEW_BASE).is_multiple_of(2) {
                     fld == 8 && f.views.len() > ((rec - VIEW_BASE) / 2) as usize
                 } else {
-                    f.views.get(((rec - VIEW_BASE) / 2) as usize).is_some_and(|v| {
-                        fld >= 4 && u64::from(fld) < 8 + u64::from(v.len) * u64::from(f.elem_size)
-                    })
+                    f.views
+                        .get(((rec - VIEW_BASE) / 2) as usize)
+                        .is_some_and(|v| {
+                            fld >= 4
+                                && u64::from(fld) < 8 + u64::from(v.len) * u64::from(f.elem_size)
+                        })
                 }
             });
         }
