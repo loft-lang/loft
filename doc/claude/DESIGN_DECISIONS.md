@@ -152,6 +152,10 @@ every programmer and hides crashes from the supervisor.
 more boilerplate than a catch would — the typed-error mechanism may then evolve; try/catch for
 internal-bug recovery stays closed.  Decided 2026-05-13 —
 [record](DESIGN_DECISIONS-history.md#c67--fail-at-startup-not-at-runtime-no-programmer-side-trycatch-for-internal-bugs).
+**Holds at:** `try`/`catch` refused by name (`src/parser/control.rs`,
+`tests/scripts/c67-a-try-block-is-refused-by-name.loft`); a reachable unimplemented native is a
+compile error, not a runtime panic (`src/generation/mod.rs`, P269), and the interpreter refuses
+the same program at startup (`tests/exit_codes.rs::a_called_native_with_no_implementation_stops_the_program_at_startup`).
 **Catalogue:** @F44 (logging — panic/assert).
 
 ## C68 — Keyed collections dedup on insert (`+=` AND `coll[key]=value`)

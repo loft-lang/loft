@@ -1738,3 +1738,65 @@ fn a_missing_rustc_falls_back_quietly_except_where_asked() {
     refused("checkout REQUIRE", &run(&checkout, false, true));
     let _ = std::fs::remove_dir_all(&tmp);
 }
+
+/// @C67 — a `#native` function the program CALLS and nothing implements stops the program at
+/// startup, not partway through.  `--native` has refused it at build time since P269; the
+/// interpreter printed a load warning and then panicked (exit 101) when the call was reached,
+/// after the program had already run up to it.  A merely IMPORTED unimplemented native keeps
+/// the warning and runs.  The warning names the library that declared the function — a
+/// package with no native part at all used to be reported as `'<unknown library>'`.
+#[test]
+fn a_called_native_with_no_implementation_stops_the_program_at_startup() {
+    let tmp = std::env::temp_dir().join(format!("loft_c67_{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&tmp);
+    let lib = tmp.join("noimpl");
+    std::fs::create_dir_all(lib.join("src")).expect("fixture dir");
+    std::fs::write(
+        lib.join("loft.toml"),
+        "[package]\nname = \"noimpl\"\nversion = \"0.1.0\"\n\n\
+         [library]\nentry = \"src/noimpl.loft\"\nnative = \"loft_noimpl\"\n",
+    )
+    .expect("manifest");
+    std::fs::write(
+        lib.join("src/noimpl.loft"),
+        "pub fn hash_b64(data: text) -> text;\n#native\n",
+    )
+    .expect("library source");
+    let run = |name: &str, body: &str| {
+        let src = tmp.join(format!("{name}.loft"));
+        std::fs::write(&src, format!("use noimpl::*;\nfn main() {{\n{body}\n}}\n"))
+            .expect("program");
+        let out = Command::new(loft_bin())
+            .arg("--interpret")
+            .arg(&src)
+            .arg("--lib")
+            .arg(&lib)
+            .env("LOFT_NO_CACHE", "1")
+            .env("LOFT_TIMEOUT", "120")
+            .output()
+            .expect("run loft");
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).into_owned(),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        )
+    };
+    let (code, out, err) = run(
+        "called",
+        "  println(\"started\");\n  println(hash_b64(\"ab\"));",
+    );
+    assert_eq!(code, Some(1), "refused, not a panic (101):\n{err}");
+    assert!(out.is_empty(), "the program must not start: {out:?}");
+    assert!(
+        err.contains("this program calls `hash_b64` with no implementation"),
+        "names the function:\n{err}"
+    );
+    assert!(
+        err.contains("native library 'noimpl'"),
+        "names the library:\n{err}"
+    );
+    let (code, out, err) = run("uncalled", "  println(\"fine\");");
+    assert_eq!(code, Some(0), "an imported, uncalled native runs:\n{err}");
+    assert_eq!(out, "fine\n");
+    let _ = std::fs::remove_dir_all(&tmp);
+}

@@ -675,6 +675,41 @@ impl Parser {
                 .starts_with("n___lambda_")
     }
 
+    /// Is the parser at `try {` — the one spelling of a `try` block (@C67)?
+    fn at_try_block(&mut self) -> bool {
+        if !matches!(self.lexer.peek().has, crate::lexer::LexItem::Identifier(ref t) if t == "try")
+        {
+            return false;
+        }
+        let link = self.lexer.link();
+        self.lexer.cont();
+        let brace = self.lexer.peek_token("{");
+        self.lexer.revert(link);
+        brace
+    }
+
+    /// Skip one `{ … }` block, nested braces included, when the parser is at its `{`.
+    fn skip_braced_block(&mut self) {
+        if !self.lexer.peek_token("{") {
+            return;
+        }
+        let mut depth = 0;
+        loop {
+            if self.lexer.has_token("{") {
+                depth += 1;
+            } else if self.lexer.has_token("}") {
+                depth -= 1;
+                if depth == 0 {
+                    break;
+                }
+            } else if self.lexer.peek().has == crate::lexer::LexItem::None {
+                break;
+            } else {
+                self.lexer.cont();
+            }
+        }
+    }
+
     pub(crate) fn parse_block(&mut self, context: &str, val: &mut Value, result: &Type) -> Type {
         // loft#1540 — an arm handed its SIBLING's function type converts with that type's
         // `const` parameters set aside: the join is the parameters BOTH arms declare `const`
@@ -843,6 +878,35 @@ impl Parser {
             }
             if self.lexer.peek_token("}") {
                 break;
+            }
+            // @C67 — loft has no `try { … } catch { … }`, and was refusing it as a bare
+            // "Expect token ;" that named neither the decision nor the spelling to use.  Said
+            // by name, then both blocks are skipped so nothing cascades.  Only `try` directly
+            // followed by `{`: a variable called `try` stays an ordinary name.
+            if self.at_try_block() {
+                if !self.first_pass {
+                    // At the `try` the parser is holding, not the token before it.
+                    let at = self.lexer.peek().clone();
+                    self.lexer.specific(
+                        &at,
+                        Level::Error,
+                        "loft has no `try`/`catch` — an operation that can fail answers a value \
+                         you test: `r = f(); if r == null { … }`, or `f() ?? <default>`.  An \
+                         internal fault is not caught; it stops the program so its supervisor \
+                         sees it",
+                    );
+                }
+                self.lexer.cont();
+                self.skip_braced_block();
+                if matches!(self.lexer.peek().has, crate::lexer::LexItem::Identifier(ref t) if t == "catch")
+                {
+                    self.lexer.cont();
+                    if matches!(self.lexer.peek().has, crate::lexer::LexItem::Identifier(_)) {
+                        self.lexer.cont();
+                    }
+                    self.skip_braced_block();
+                }
+                continue;
             }
             // detect file-scope-only declarations inside a block and
             // emit a single clean diagnostic instead of cascading parse

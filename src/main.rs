@@ -12017,6 +12017,25 @@ loftInstantiate(wasmBytes,imports).then(async ({{instance,memory}})=>{{
     if state.database.program_relative && !state.database.source_dir.is_empty() {
         let _ = std::env::set_current_dir(&state.database.source_dir);
     }
+    // @C67 — a `#native` the program calls and nothing implements is refused HERE, at
+    // startup, as `--native` refuses it at build time (P269): run, it panicked when the call
+    // was reached, after the load warning had already said so.
+    if main_nr != u32::MAX && !dump_only {
+        let missing = extensions::reachable_unimplemented_natives(&state, &p.data, main_nr);
+        if !missing.is_empty() {
+            eprintln!(
+                "loft: this program calls {} with no implementation — its library's native code \
+                 did not load (see the note above).  Rebuild the library's native part, or stop \
+                 calling it; refusing to start rather than stop partway through.",
+                missing
+                    .iter()
+                    .map(|s| format!("`{}`", s.strip_prefix("n_").unwrap_or(s)))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            std::process::exit(1);
+        }
+    }
     if main_nr == u32::MAX && !dump_only {
         // No main() — execute each zero-parameter user `test_*()` function
         // INDIVIDUALLY with a fresh `state.database` per call.  This
