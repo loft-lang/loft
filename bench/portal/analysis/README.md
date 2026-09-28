@@ -21,7 +21,12 @@ the twin winning by something loft cannot say, that is the unit to price — `(P
 **The rules are audited** (`rules.md`) and its § Change is done: the census counts 49 of
 the 51 rewrites (`make rewrite-census` names a drop in any of them), the switch docs are
 complete, and the `(R-Const)` panic is loft#1729 / D-rw-6 (open — fix it, the copy road the
-rule names, before the PR).  Next is its § Order 2: `(R-RecPtr)` and `(R-Base)` under growth.  The branch was A/B'd against
+rule names, before the PR).  Its § Order 2 is built: a growth is judged per STORE
+(`(R-Base)`'s growth clause, `hoist::StoreFacts`, `LOFT_NO_DISTINCT_GROWTH`), six bench
+functions gained bases.  The four functions the audit named need two further clauses, both
+in `rules.md`'s decline table: the heap-record rebind mint (`make_map`: `OpDatabase(ck, …)`
+on a fresh local blocks the hoist) and the "bound null" window (`panel_build`: a buffer
+pre-initialised null, minted later, takes no address).  Those are next.  The branch was A/B'd against
 `origin/main` on this box on the way (`rules.md` § Measured on the way): 71 of 79 routines
 within noise, the three movers explained, none a regression.
 

@@ -26,8 +26,10 @@ const EXPECTED: &[(&str, usize, usize)] = &[
     ("n_j4", 1, 0),
     // Three joins in one short-circuit condition, over a FIELD path.
     ("n_j6_count", 3, 0),
-    // The loop pushes, so it holds no element base: the join is kept.
-    ("n_j7", 0, 1),
+    // The loop pushes to ANOTHER store (`@FR-R-Base`'s growth clause): the base is held and
+    // the join is served through it, its fallback arm running for the two indexes past
+    // the end.
+    ("n_j7", 1, 0),
     // No loop, no header.
     ("n_j8", 0, 4),
     ("n_j9", 1, 0),

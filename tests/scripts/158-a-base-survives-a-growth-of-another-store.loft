@@ -1,0 +1,270 @@
+// @PLN158 (rules.md § Optimise, row 1) — a loop that GROWS a store keeps the element base of
+// every vector, and the address of every record view, whose store is proven APART from each
+// store it grows (`@FR-R-Base`'s growth clause, `@FR-R-RecPtr`'s remainder clause).  A store's
+// buffer is reallocated only by a growth of a vector living in it, so `out += [w[i]?]` moves
+// nothing of `w`: two locals own two stores.  Before, ANY push or mint in the body declined
+// every base and every address in it — the most frequent decline on the consumer benches
+// (`make_names`, `reload_and_record`, `panel_build`, `make_map`).
+// The interpreter applies no rewrite and is the oracle; every cell prints its values and
+// asserts them.  `LOFT_NO_DISTINCT_GROWTH=1`, `LOFT_NO_VECTOR_BASE=1`, `LOFT_NO_RECORD_PTR=1`
+// and `LOFT_HOIST_VERIFY=1` must all answer identically.  Every growing loop runs long enough
+// to reallocate the grown store at least once (a base kept wrongly is then a stale pointer).
+//
+// Predictions, MEASURED on the emission (tests/vector_base.rs, iteration_base.rs, join_read.rs,
+// record_ptr.rs and twin_base.rs pin the same clause on their own cells): c1, c8, c11, c12,
+// c13, c14 and c16 bind a base for the vector they read while another store grows; c4's two
+// loops and c10's walk hold the walked vector's base and take the loop variable's address
+// from it, and c4's `x = bg.items[i]?` keeps its address beside the growth of `acc`; c2 (the
+// grown vector itself), c3 (a sibling field of one record), c5 (two parameters — a caller
+// CAN hand one store twice, and does), c6 and mk (the callee's buffer is the return buffer,
+// never proven apart from a parameter) and c17 (the read and the growth share a root) bind
+// neither.  c9 keeps no base for a reason outside this clause — a TEXT push is not a fusable
+// push, so the loop never reaches the growth question — and c7's comprehension builds inside
+// a mint group.  c6b and c6c hold their values only: on this build the placement `(R-Place)`
+// declines (`mk` exits through a bound local, not a literal) and `fill` is not adopted, so the
+// never-fresh exclusions for a placed buffer and an adopted witness are not reached by a cell
+// — they stand as the rule's text, checked by nothing yet.
+//
+// @falsified-at: hand-measured (sabotage, 2026-09-28) — `StoreFacts::distinct` made to
+// answer true for every pair: c3 (a sibling field of one record) still prints 311 on plain
+// --native (the reallocated buffer's old bytes were not yet reused), and LOFT_HOIST_VERIFY=1
+// panics "hoisted vector base is stale — a store grew or moved under the loop" at its first
+// read; c5, c6 and c17 stay green under the sabotage because an OLDER gate declines each
+// (a push through a parameter is not exclusive, a return buffer is never apart from a
+// parameter, a mover's own path takes no base) — the oracle is load-bearing for the
+// sibling-field and the two-owned-locals cells, the older gates for the rest.  Restored
+// byte-identically: interpret / native / every switch / every falsifier green.
+
+struct Ent { id: integer, q: integer }
+struct Bag { items: vector<Ent>, log: vector<integer>, tag: integer }
+struct Pair { a: vector<integer>, b: vector<integer> }
+struct Chunk { cx: integer, hexes: vector<integer> }
+struct Map { chunks: vector<Chunk>, seed: integer }
+struct Row { vals: vector<integer>, n: integer }
+struct Cell { row: Row, k: integer }
+struct Table { cells: vector<Cell>, seed: vector<integer>, tags: vector<integer> }
+struct Named { nm: text, xs: vector<integer> }
+
+// c1 — an owned local read while another owned local grows (the `make_names` shape).
+fn c1() -> vector<integer> {
+  w = [10, 20, 30, 40];
+  out: vector<integer> = [];
+  for i in 0..300 { out += [w[i % 4]? * 2 + i]; }
+  out
+}
+
+// c2 — the grown vector is the one read: same store, no base.
+fn c2() -> integer {
+  w = [1, 2, 3];
+  for i in 0..200 { w += [w[i]? + 1]; }
+  w[202]? + len(w)
+}
+
+// c3 — two fields of ONE record share its store: no base for `p.a`.
+fn c3() -> integer {
+  p = Pair { a: [5, 6, 7], b: [] };
+  for i in 0..150 { p.b += [p.a[i % 3]? + i]; }
+  p.b[149]? + p.b[0]? + len(p.b)
+}
+
+// c4 — a parameter's field walked while an owned local record grows (`reload_and_record`).
+fn c4(bg: Bag) -> integer {
+  acc = Bag { items: [], log: [], tag: 0 };
+  for e in bg.items { acc.log += [e.q * 10 + e.id]; acc.tag = acc.tag + e.q; }
+  for i in 0..len(bg.items) { x = bg.items[i]?; acc.items += [Ent { id: x.id + 100, q: x.q }]; }
+  len(acc.log) + acc.tag + acc.items[2]?.id
+}
+
+// c5 — two parameters: the caller hands the SAME store twice (`src` is a field of `dst`).
+fn c5(src: vector<integer>, dst: Bag) -> integer {
+  for i in 0..len(src) { dst.log += [src[i]? + 1]; }
+  len(dst.log)
+}
+
+// c6 — the callee's buffer is placed in the parameter's own store (`(R-Place)`): `r.vals`
+// and `src` share it, so the base for `src` must decline inside `mk`.
+fn mk(src: vector<integer>) -> Row {
+  r = Row { vals: [], n: 0 };
+  for i in 0..len(src) { r.vals += [src[i]? + 1]; r.n = r.n + 1; }
+  r
+}
+fn c6(t: Table) -> integer {
+  v = mk(t.seed);
+  t.cells += [Cell { row: v, k: 1 }];
+  t.cells[0]?.row.vals[99]? + t.cells[0]?.row.n
+}
+
+// c6b — the PLACED buffer (`(R-Place)`: `v` lives in `t`'s store) grows while `t.seed` is
+// read: the two are one store, and only the placement fact says so.
+fn c6b(t: Table) -> integer {
+  v = mk(t.seed);
+  for i in 0..len(t.seed) { v.vals += [t.seed[i]? + 1000]; }
+  t.cells += [Cell { row: v, k: 2 }];
+  t.cells[0]?.row.vals[199]? + t.cells[0]?.row.n
+}
+
+// c6c — the ADOPTED return buffer (`(R-RetAdopt)`: `res` IS the buffer the caller offered,
+// claimed in `t`'s store for a field destination) grows while `src` is read.
+fn fill(src: vector<integer>) -> vector<integer> {
+  res: vector<integer> = [];
+  for i in 0..len(src) { res += [src[i]? * 3]; }
+  res
+}
+fn c6c(t: Table) -> integer {
+  t.tags = fill(t.seed);
+  t.tags[99]? + len(t.tags)
+}
+
+// c7 — a comprehension over `w` builds the FIELD of a record minted into another store.
+fn c7() -> integer {
+  w = [3, 5, 7];
+  out: vector<Named> = [];
+  for k in 0..60 { out += [Named { nm: "n{k}", xs: [for i in 0..3 { w[i]? * k }] }]; }
+  out[59]?.xs[2]? + len(out) + len(out[7]?.xs)
+}
+
+// c8 — nested: the outer loop grows `out`, the inner reads `w`.
+fn c8() -> integer {
+  w = [2, 4, 6, 8];
+  out: vector<integer> = [];
+  for k in 0..50 {
+    s = 0;
+    for i in 0..4 { s = s + w[i]? * k; }
+    out += [s];
+  }
+  out[49]? + len(out)
+}
+
+// c9 — text elements (`@FR-R-Base`'s text clause) under a growth of the text vector built.
+fn c9() -> text {
+  words = ["Potion", "Cure", "Light", "Wand"];
+  out: vector<text> = [];
+  for i in 0..120 { out += ["{words[i % 4]?} of {words[(i * 3 + 1) % 4]?} #{i}"]; }
+  "{out[119]?}|{len(out)}"
+}
+
+// c10 — `for e in v` over an owned local while another grows: the address from the base.
+fn c10() -> integer {
+  ents: vector<Ent> = [];
+  for i in 0..90 { ents += [Ent { id: i, q: i % 5 }]; }
+  out: vector<integer> = [];
+  for e in ents { out += [e.q * 100 + e.id]; }
+  out[89]? + len(out)
+}
+
+// c11 — the join `v[i]?.f` served through the base under a growth of another store.
+fn c11() -> integer {
+  ents: vector<Ent> = [];
+  for i in 0..70 { ents += [Ent { id: i * 2, q: i }]; }
+  out: vector<integer> = [];
+  for i in 0..140 { out += [ents[i % 70]?.id + ents[i % 70]?.q]; }
+  out[139]? + out[0]? + len(out)
+}
+
+// c12 — the bound clause: `len(w)` as the range end, `w` held, `out` grown.
+fn c12() -> integer {
+  w = [9, 8, 7, 6, 5];
+  out: vector<integer> = [];
+  for k in 0..40 { for i in 0..len(w) { out += [w[i]? - k]; } }
+  out[199]? + len(out)
+}
+
+// c13 — an in-place element WRITE through the base while another store grows.
+fn c13() -> integer {
+  w = [0, 0, 0, 0];
+  out: vector<integer> = [];
+  for i in 0..200 { w[i % 4] = w[i % 4]? + i; out += [i]; }
+  w[0]? + w[3]? + len(out)
+}
+
+// c14 — a view `d = &w` (`@FR-R-View`) read while another store grows.
+fn c14() -> integer {
+  w = [11, 22, 33];
+  d = &w;
+  out: vector<integer> = [];
+  for i in 0..150 { out += [d[i % 3]?]; }
+  out[149]? + len(out)
+}
+
+// c16 — the `make_map` shape: a rebound record local grown per pass, the map grown per pass,
+// `w` read throughout.
+fn c16() -> integer {
+  w = [10, 20, 30, 40];
+  m = Map { chunks: [], seed: 1 };
+  for cx in 0..4 {
+    ck = Chunk { cx: cx, hexes: [] };
+    for i in 0..64 { ck.hexes += [w[i % 4]? + cx]; }
+    m.chunks += [ck];
+  }
+  m.chunks[3]?.hexes[63]? + len(m.chunks[0]?.hexes) + len(m.chunks)
+}
+
+// c17 — the read and the growth share a root: `m.chunks` read and grown.
+fn c17() -> integer {
+  m = Map { chunks: [Chunk { cx: 5, hexes: [] }], seed: 0 };
+  for i in 0..100 { m.chunks += [Chunk { cx: m.chunks[0]?.cx + i, hexes: [] }]; }
+  m.chunks[100]?.cx + len(m.chunks)
+}
+
+fn main() {
+  r1 = c1();
+  println("c1 {r1[0]?} {r1[1]?} {r1[4]?} {r1[299]?} {len(r1)}");
+  assert(r1[0]? == 20 && r1[1]? == 41 && r1[4]? == 24 && r1[299]? == 379 && len(r1) == 300, "c1");
+  r2 = c2();
+  println("c2 {r2}");
+  assert(r2 == 272, "c2");
+  r3 = c3();
+  println("c3 {r3}");
+  assert(r3 == 311, "c3");
+  bg = Bag { items: [], log: [], tag: 0 };
+  for i in 0..120 { bg.items += [Ent { id: i, q: i % 7 }]; }
+  r4 = c4(bg);
+  println("c4 {r4}");
+  assert(r4 == 579, "c4");
+  b5 = Bag { items: [], log: [1, 2, 3], tag: 0 };
+  r5 = c5(b5.log, b5);
+  println("c5 {r5} {b5.log}");
+  assert(r5 == 6 && b5.log[5]? == 4 && b5.log[3]? == 2, "c5");
+  t = Table { cells: [], seed: [for i in 0..100 { i * 2 }], tags: [] };
+  r6 = c6(t);
+  println("c6 {r6}");
+  assert(r6 == 299, "c6");
+  t6b = Table { cells: [], seed: [for i in 0..100 { i * 2 }], tags: [] };
+  r6b = c6b(t6b);
+  println("c6b {r6b}");
+  assert(r6b == 1298, "c6b");
+  t6c = Table { cells: [], seed: [for i in 0..100 { i * 2 }], tags: [] };
+  r6c = c6c(t6c);
+  println("c6c {r6c}");
+  assert(r6c == 694, "c6c");
+  r7 = c7();
+  println("c7 {r7}");
+  assert(r7 == 476, "c7");
+  r8 = c8();
+  println("c8 {r8}");
+  assert(r8 == 1030, "c8");
+  r9 = c9();
+  println("c9 {r9}");
+  assert(r9 == "Wand of Light #119|120", "c9");
+  r10 = c10();
+  println("c10 {r10}");
+  assert(r10 == 579, "c10");
+  r11 = c11();
+  println("c11 {r11}");
+  assert(r11 == 347, "c11");
+  r12 = c12();
+  println("c12 {r12}");
+  assert(r12 == 166, "c12");
+  r13 = c13();
+  println("c13 {r13}");
+  assert(r13 == 10150, "c13");
+  r14 = c14();
+  println("c14 {r14}");
+  assert(r14 == 183, "c14");
+  r16 = c16();
+  println("c16 {r16}");
+  assert(r16 == 111, "c16");
+  r17 = c17();
+  println("c17 {r17}");
+  assert(r17 == 205, "c17");
+}

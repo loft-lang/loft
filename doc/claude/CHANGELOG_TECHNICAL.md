@@ -9,6 +9,23 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A growth is judged per store: a loop that appends elsewhere keeps its bases (2026-09-28)
+
+`(R-Base)`'s growth clause, `(R-RecPtr)`'s remainder clause and `(R-Alias)`: a loop that
+grows a store keeps the element base of every held vector, the address of every record view
+and the header of every `for` walk whose store is proven APART from each store it grows — a
+store's buffer is reallocated only by a growth of a vector living in it.  `hoist::StoreFacts`
+is the oracle: a variable's store is the end of its dep chain (a view borrows from its source,
+a local vector from its `__vdb_N` witness, a parameter from nothing), and two ends are apart
+when they differ and one is fresh (a witness, or a user-named local record owning its store;
+never an adopted witness, a placed buffer or an emitter-owned one).  Two parameters, or a
+parameter beside the return buffer, are never proven apart.  `LOFT_NO_DISTINCT_GROWTH=1` is
+the switch, `LOFT_HOIST_VERIFY=1` the falsifier (under a sabotaged oracle it panics on the
+sibling-field cell the plain run answers right by luck).  Cells
+`tests/scripts/158-a-base-survives-a-growth-of-another-store.loft`; the pins that read "any
+growth, no base" (`vector_base`, `iteration_base`, `join_read`, `record_ptr`, `twin_base`)
+now pin the per-store truth with a same-store cell beside each.
+
 ### A package's loft floor holds on every path that adopts its manifest (2026-09-28)
 
 `use a; use b` refused `b`'s `loft = ">=…"` floor while `use b; use a` accepted it: `b` was

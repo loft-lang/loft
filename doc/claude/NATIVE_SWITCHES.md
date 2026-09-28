@@ -165,6 +165,18 @@ loop; `LOFT_HOIST_VERIFY=1` re-derives every base at every use and panics when a
 grew under one, and `LOFT_TRACE_BASE=1` prints each loop's growth-free verdict.
 `LOFT_NO_NN_FAST=1` (P3c) also restores the nullable-aware counter step and the guarded
 literal division that § V-aj (`@FR-R-Counter`, `@FR-R-LitDiv`) replaced.
+**`LOFT_NO_DISTINCT_GROWTH=1`** (`@FR-R-Base`'s growth clause, `@FR-R-RecPtr`'s remainder
+clause and `@FR-R-Alias`, default-ON, generation time) makes a loop that grows ANY store
+bind no element base, and a remainder that grows one bind no record address, as before —
+with it off, a growth is judged per STORE: `out += [w[i]?]` keeps `w`'s base, `for e in
+pr.items { acc.log += [e.q] }` keeps `e`'s address and the walk's header, because a store's
+buffer is reallocated only by a growth of a vector living in it and two locals own two
+stores (`hoist::StoreFacts`: the end of each dep chain, one of them fresh).  The first bisect
+step for a wrong element or field read in a loop that appends elsewhere; `LOFT_HOIST_VERIFY=1`
+is the falsifier (every base and address re-derived — under a sabotaged oracle it panics
+"hoisted vector base is stale" on a sibling-field cell the plain run answers right by luck),
+and `LOFT_TRACE_BASE=1` names each loop that keeps bases under a growth and of what;
+`LOFT_TRACE_RECPTR=1` each view kept beside one.
 **`LOFT_NO_RANGE_END_HEADER=1`** (`@FR-R-Base`'s bound clause, default-ON, generation time)
 makes a `for i in 0..len(v)` loop test its index against the prelude's end local again —
 with it off, inside a loop holding `v`'s element base, the test reads the held header's

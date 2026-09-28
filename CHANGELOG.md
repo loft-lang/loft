@@ -14,6 +14,14 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A loop that builds one vector while reading another runs its reads at full speed on
+`--native`.**  `out += [w[i]? * 2]`, `for e in ents { out += [e.q] }`, `out += [v[i]?.id]`:
+the reads of `w`, `ents` and `v` used to resolve their store per element because the loop
+grows a store, any store.  Now a growth counts only against the store it grows — two locals
+own two stores — so the reads keep their one-time address, as in a loop that grows nothing.
+Nothing changes in what a program computes; `LOFT_NO_DISTINCT_GROWTH=1` restores the old
+emission if you ever need to compare.
+
 **A library can hand you its bytes without copying them.**  A native library that
 decodes a payload used to copy it into a loft vector; with loft-ffi 0.1.2 its bridge can
 answer the buffer it already built (`foreign_vector_from_owned`), and your `v =

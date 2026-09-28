@@ -64,7 +64,7 @@ each is a case the rule's text names as its next clause or its known limit.
 
 | decline, as traced | count | rule | the case |
 |---|---:|---|---|
-| "the remainder may grow a store" — `panel_build`, `make_map`, `reload_and_record`, `make_names` | 56 | `(R-RecPtr)`, `(R-Base)` | a loop that APPENDS while reading records holds no base and no record address; `out += [v[i]?.id]` is the shape |
+| "the remainder may grow a store" — `panel_build`, `make_map`, `reload_and_record`, `make_names` | 56 | `(R-RecPtr)`, `(R-Base)` | **BUILT 2026-09-28** (`(R-Base)`'s growth clause, `LOFT_NO_DISTINCT_GROWTH`): a growth is judged per STORE, so `out += [v[i]?.id]` keeps `v`'s base and address.  Six bench functions gained bases (`c_flow`, `emit_mesh`, `truncate_to`, `drop_oldest`, `c_talus`, `row_crossings`); the four named here did NOT, each for a reason the trace names — `reload_and_record` walks HASHES (no vector header at all), `make_names` pushes TEXTS (not a fusable push, the loop never reaches the growth question), `make_map` re-mints a heap-owning record local per pass (`OpDatabase(ck, …)` blocks the hoist: the rebound-mover clause's next case), `panel_build` is the "bound null" row below |
 | "bound null" — `panel_build`, `emit_hex_surface`, `enum_match` | 55 | `(R-RecPtr)` | a record minted into a pre-initialised buffer (`__ref_p2_N = null`, then the mint) never gets its address; only the mint clause's own window does |
 | "no push at the top level of the body", "the body can leave early" — `fov_rays` | 61 | `(R-PushFill)` | a push under a branch, after an early exit, or beside an inner loop keeps the header push |
 | "iterator block is `iter next`/`for text next`, not a range" (suite-wide) | 299 | `(R-Fill)`, `(R-BoundedNest)`, `(R-PushFill)`, `(R-GuardedChain)`, `(R-Counter)` | none of the counted-loop rules see a `while` or a `for e in v` walk; `binary_read`'s loop is a `while` |
@@ -148,7 +148,9 @@ address" — not a regression to chase.
 
 1. ~~Census rows for every rewrite; the trace switches documented; the `(R-Const)` panic
    filed and its deviation opened.~~  Done 2026-09-28 (§ Change 1–3).
-2. `(R-RecPtr)` and `(R-Base)` under growth — the most frequent decline in real code.
+2. ~~`(R-RecPtr)` and `(R-Base)` under growth~~ — built 2026-09-28 (per-store growth); what
+   the four named functions still need is the heap-record rebind mint (`make_map`) and the
+   "bound null" window (`panel_build`), both rows of the table above.
 3. `(R-PushRec)`'s appended tuple; `(R-TypedKeyed)`'s append half; `(R-WorkBuffer)` for
    record elements and results — each priced in its class file.
 4. The two new rules: the record tree reused across a rebind, and the `while` loop as a
