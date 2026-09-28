@@ -10860,6 +10860,52 @@ fn join_capture_witness(
     })
 }
 
+/// [`join_capture_witness`] for the capture it excludes: one REASSIGNED after its build.  The
+/// local no longer names the store the record adopted, so the witness is the record's own
+/// capture SLOT — `(record local, slot position)` — which holds exactly that store for as long
+/// as the record lives.  loft#1725.
+///
+/// Only where ONE closure record in the frame captures `c` (two records may hold two
+/// different stores of one name, loft#1440) and the record adopts it, so the frame does not
+/// free the record under the read; the caller guards the build having run at all.
+fn reassigned_join_capture_slot(
+    data: &Data,
+    database: &crate::database::Stores,
+    function: &Function,
+    built_with: &CaptureBuilds,
+    v: u16,
+) -> Option<(u16, u16)> {
+    let c = (0..function.next_var()).find(|&c| {
+        c != v
+            && function.is_captured(c)
+            && built_with.reassigned_after_build.contains(&c)
+            && !built_with.rebuilt_in_loop.contains(&c)
+            && capture_join_candidates(function, c).contains(&v)
+            && capture_is_adopted(data, function, built_with, c)
+    })?;
+    let name = function.name(c);
+    let mut slot = None;
+    for w in 0..function.next_var() {
+        if function.is_argument(w) {
+            continue;
+        }
+        let Type::Reference(record, _) = function.tp(w) else {
+            continue;
+        };
+        if !data.def(*record).name.starts_with("__closure_") {
+            continue;
+        }
+        if (0..data.attributes(*record)).any(|a| data.attr_name(*record, a) == name) {
+            if slot.is_some() {
+                return None;
+            }
+            let pos = database.position(data.def(*record).known_type(), name);
+            slot = Some((w, pos));
+        }
+    }
+    slot
+}
+
 /// The stores capture `c` may hold when its value is a JOIN — every dep and the backing chain
 /// behind it, and at each step a `??` temp's default-arm owners (`Function::join_owners`) —
 /// or empty when it is not a join (one dep chain and no `??` temp on it), which
@@ -17896,6 +17942,34 @@ impl Scopes<'_> {
                             data.def_nr("OpFreeRefIfDistinct"),
                             vec![Value::Var(v), Value::Var(c)],
                         ));
+                    } else if let Some((w, pos)) = reassigned_join_capture_slot(
+                        data,
+                        self.database,
+                        function,
+                        &self.capture_build_backing,
+                        v,
+                    ) {
+                        // loft#1725 — the same release for a capture REASSIGNED after its
+                        // build, witnessed by the record's slot rather than the local.  A
+                        // record never built (the build sat on a path that did not run) holds
+                        // nothing, and the arm is the frame's outright.
+                        if let Some(hook) = unless_moved(v, self.scope_end_hook(function, v, data, arm_dropped)) {
+                            ls.push(hook);
+                        }
+                        let held = Value::Call(
+                            data.def_nr("OpGetDbRef"),
+                            vec![Value::Var(w), Value::Int(i32::from(pos))],
+                        );
+                        let unless_held = Value::Call(
+                            data.def_nr("OpFreeRefIfDistinct"),
+                            vec![Value::Var(v), held],
+                        );
+                        let built = v_if(
+                            Value::Call(data.def_nr("OpRefIsNull"), vec![Value::Var(w)]),
+                            Value::Boolean(false),
+                            Value::Call(data.def_nr("OpConvBoolFromRef"), vec![Value::Var(w)]),
+                        );
+                        ls.push(v_if(built, unless_held, call("OpFreeRef", v, data)));
                     } else {
                         // The type's scope-end hook, immediately BEFORE the free that ends
                         // the value's life — unless `v` is a buffer whose witness already
