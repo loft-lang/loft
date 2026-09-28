@@ -22,7 +22,6 @@ const KNOWN_DEPENDENT: &[&str] = &[
     "40-par-ref-return",
     "75-native-stub",
     "945-stdlib-worked-examples",
-    "987-par-empty-body-discard",
     "a-keyed-view-joins-a-nullable-element-vector",
     "json-walker-absent-field",
 ];
