@@ -164,7 +164,10 @@ re-ask them.**
 speed — 3.5–16× behind CPython, 50–500× behind native (PERFORMANCE.md § Benchmark
 results) — waits until compiled speed is at the bar, and then it is looked at.  It will not
 measure up to compiled code and is not asked to; what it IS asked is to use **the same
-efficient data access as the compiled version**.  Today every access rewrite
+efficient data access as the compiled version** — because a game is DEVELOPED interpreted
+(the edit loop) and shipped native, so an interpreter that trails by two orders of
+magnitude makes developing the game feel horrible while the shipped product is fine.
+The interpreter's speed is the game developer's daily experience, not only the oracle's.  Today every access rewrite
 ([NATIVE_SWITCHES.md](NATIVE_SWITCHES.md): the hoisted vector header, element bases and
 record addresses, loop-local buffers, counted pushes, guarded reads) is generation-time,
 so the runtime helpers they call (`get_elem_hoisted` and its kin in `src/vector.rs`) are
