@@ -5,9 +5,9 @@
 // three `use` lines reversed and
 // nothing else changed. The broken resolution was first-import-wins, so exactly
 // one order could look right by luck (loft#788's `dupname_ab`/`_ba` doctrine).
-use dupmethod_c;
-use dupmethod_b;
-use dupmethod_a;
+use dupmethod_c::*;
+use dupmethod_b::*;
+use dupmethod_a::*;
 
 fn main() {
   a = make_a(1);

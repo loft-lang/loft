@@ -1,4 +1,4 @@
-use r675_app;
+use r675_app::*;
 
 fn main() {
   p = app675(7);

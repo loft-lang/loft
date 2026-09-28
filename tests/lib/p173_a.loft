@@ -3,7 +3,7 @@
 // `consumes_a` references TypeA.  Each file needs the other's pub
 // definitions.  Before P173 this failed with "Undefined type TypeB"
 // (or TypeA).
-use p173_b;
+use p173_b::*;
 
 pub struct TypeA { x: integer }
 

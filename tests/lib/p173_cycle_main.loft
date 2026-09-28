@@ -1,7 +1,7 @@
 // P173 regression top-level driver — imports both files and uses both
 // their types.  Exercises the full cycle resolution.
-use p173_a;
-use p173_b;
+use p173_a::*;
+use p173_b::*;
 
 fn test_cycle_resolves() {
   a = TypeA { x: 1 };

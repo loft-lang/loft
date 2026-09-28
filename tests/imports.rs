@@ -640,14 +640,14 @@ fn issue1080_two_different_files_of_one_name_are_still_distinct() {
 ///
 /// The issue reported the check as unreliable: it fires in a minimal package and not in a
 /// real one "with the same ingredients". The ingredients differ in exactly one axis, and
-/// it is the IMPORT FORM. A bare `use dep;` puts every public name into this source's
-/// namespace, so declaring one of them again is a genuine redefinition and is refused; a
-/// SELECTIVE `use dep::(a, b);` imports only what it names, so the name is not in this
-/// source at all and a local declaration of it is an ordinary, unambiguous definition —
-/// which is the coexistence @PLN102 C97 blessed. Both behaviours are right; the reporting
-/// package used the selective form, which the issue transcribed as the bare one.
+/// it is the IMPORT FORM. A wildcard `use dep::*;` puts every public name into this
+/// source's namespace, so declaring one of them again is a genuine redefinition and is
+/// refused; a SELECTIVE `use dep::(a, b);` imports only what it names, and a bare
+/// `use dep;` imports no name at all — only the `dep::` qualifier (@C98) — so a local
+/// declaration of any other name is an ordinary, unambiguous definition, which is the
+/// coexistence @PLN102 C97 blessed.
 ///
-/// The first two cells pin that axis so neither regime can drift into the other. The
+/// The first three cells pin that axis so no regime can drift into another. The
 /// third is the defect the investigation did turn up: when two live types share a name,
 /// `expected Frame, got Frame` named them identically and left the reader nothing to go
 /// on. Naming both DECLARATION sites is the one case where the position of a type, rather
@@ -688,14 +688,26 @@ fn issue1094_import_form_decides_a_name_clash_and_a_clash_names_both_sites() {
         )
     };
 
-    // A — the bare import puts `Frame` in this source, so declaring it again is refused.
+    // A — the wildcard puts `Frame` in this source, so declaring it again is refused.
     let wildcard = run(
         "wildcard.loft",
-        "use depa;\nstruct Frame { fm_x: float }\nfn main() { print(\"{depa_helper()}\") }\n",
+        "use depa::*;\nstruct Frame { fm_x: float }\nfn main() { print(\"{depa_helper()}\") }\n",
     );
     assert!(
         wildcard.contains("conflicts with"),
-        "a bare `use depa;` imports `Frame`, so a local one is a redefinition: {wildcard}"
+        "`use depa::*;` imports `Frame`, so a local one is a redefinition: {wildcard}"
+    );
+
+    // A2 — the bare import brings in only the `depa::` qualifier (@C98), so the local
+    // `Frame` is ordinary and the library is reached through its qualifier.
+    let bare = run(
+        "bare.loft",
+        "use depa;\nstruct Frame { fm_x: float }\n\
+         fn main() { f = Frame { fm_x: 6.0 }; print(\"local={f.fm_x} dep={depa::depa_helper()}\") }\n",
+    );
+    assert!(
+        bare.contains("local=6 dep=1"),
+        "a bare `use depa;` leaves every name free, so the LOCAL `Frame` is used: {bare}"
     );
 
     // B — the selective import does not, so the local `Frame` is ordinary and is USED.
@@ -717,9 +729,9 @@ fn issue1094_import_form_decides_a_name_clash_and_a_clash_names_both_sites() {
     // C — two live `Frame`s meeting at a call must be told apart by their declarations.
     let clash = run(
         "clash.loft",
-        // `Frame` here is depa's (bare import); `takes_frame` is imported by NAME only,
-        // so depb's `Frame` never enters this source — the two types meet at the call.
-        "use depa;\nuse depb::(takes_frame);\n\
+        // `Frame` here is depa's (wildcard import); `takes_frame` is imported by NAME
+        // only, so depb's `Frame` never enters this source — the two types meet at the call.
+        "use depa::*;\nuse depb::(takes_frame);\n\
          fn main() { print(\"{takes_frame(Frame { fa_x: 1.0 })}\") }\n",
     );
     assert!(
@@ -758,7 +770,7 @@ fn a_library_s_bounded_generic_does_not_swallow_a_same_named_struct() {
     let main = dir.join("main.loft");
     std::fs::write(
         &main,
-        "use tvboundlib;\nstruct T { z: integer }\nfn main() { println(\"[{T{z:9}}] {render(4)}\"); }\n",
+        "use tvboundlib::*;\nstruct T { z: integer }\nfn main() { println(\"[{T{z:9}}] {render(4)}\"); }\n",
     )
     .expect("write main");
     let out = std::process::Command::new(std::path::PathBuf::from(env!("CARGO_BIN_EXE_loft")))
@@ -815,8 +827,8 @@ fn two_libraries_bounded_generics_leave_a_consumer_s_own_type_alone() {
     let main = dir.join("main.loft");
     std::fs::write(
         &main,
-        "use holdera;\n\
-         use holderb;\n\
+        "use holdera::*;\n\
+         use holderb::*;\n\
          struct T { z: integer }\n\
          fn OpEq(self: T, other: T) -> boolean { self.z == other.z }\n\
          fn to_text(self: T) -> text { \"T<{self.z}>\" }\n\

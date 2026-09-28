@@ -312,7 +312,7 @@ fn i337_manifest_path_dep_resolves_non_sibling() {
     .unwrap();
     std::fs::write(
         b_root.join("src").join("b.loft"),
-        "use a;\n\nfn main() {\n  log_info(\"{a_hello()}\");\n}\n",
+        "use a::*;\n\nfn main() {\n  log_info(\"{a_hello()}\");\n}\n",
     )
     .unwrap();
     let mut p = Parser::new();
@@ -373,7 +373,7 @@ fn i826_pkg(tag: &str, entry_body: &str, siblings: &[(&str, &str)]) -> std::path
     .unwrap();
     let uses: String = siblings
         .iter()
-        .map(|(n, _)| format!("use {n};\n"))
+        .map(|(n, _)| format!("use {n}::*;\n"))
         .collect();
     std::fs::write(
         root.join("src").join("pkg.loft"),
@@ -483,11 +483,11 @@ fn shared_sibling_carries_types_and_functions() {
             ),
             (
                 "helper",
-                "use shared;\npub fn bump(x: Thing) -> integer { x.t_n + 1 }\n",
+                "pub use shared::*;\npub fn bump(x: Thing) -> integer { x.t_n + 1 }\n",
             ),
             (
                 "second",
-                "use shared;\npub fn twice(x: Thing) -> integer { x.t_n * 2 }\n",
+                "pub use shared::*;\npub fn twice(x: Thing) -> integer { x.t_n * 2 }\n",
             ),
         ],
     );

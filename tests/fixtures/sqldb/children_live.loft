@@ -48,9 +48,9 @@
 // — which is the shape OBJECT_MAPPING.md § S6 gives, and the one that takes
 // locks in a single order rather than in data-dependent order.
 
-use registry;
-use schema;
-use sql;
+use registry::*;
+use schema::*;
+use sql::*;
 
 struct Tag { const name: text, weight: integer, note: text? }
 /// The `hash` element (@PLN23 S6c): addressed by its own declared key.

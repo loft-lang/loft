@@ -1,0 +1,30 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+// @falsified-by: tests/falsified/c98-import-rules.patch — interpret exit 1 -> 0, native exit 1 -> 0
+//
+// @C98 — what an import brings in, and what it passes on (the rustc rule):
+//   - `pub use lib::*;` in a library passes lib's names on: `c98_facade` offers `C98Vec`
+//     and `c98_len` from `c98_math` beside its own function;
+//   - a bare `use lib;` binds only the `lib::` qualifier, so this file may declare its own
+//     `c98_private_sum` beside the library's (the old wildcard refused it as a
+//     redefinition), and the library's is still reached qualified.
+// The refusals beside this file pin the other half: a bare import brings no name in, and a
+// plain `use` inside a library passes nothing on.
+use c98_facade::(C98Vec, c98_len, c98_facade_sum);
+use c98_private;
+
+fn c98_private_sum(a: integer) -> integer { a + 1 }
+
+fn test_pub_use_passes_names_on() {
+  v = C98Vec { cx: 2, cy: 3, cz: 4 };
+  assert(c98_len(v) == 9, "re-exported fn: {c98_len(v)}");
+  assert(c98_facade_sum(v) == 90, "facade's own fn: {c98_facade_sum(v)}");
+}
+
+fn test_a_bare_use_leaves_the_name_free() {
+  v = C98Vec { cx: 5, cy: 6, cz: 7 };
+  assert(c98_private::c98_private_sum(v) == 1800, "qualified: {c98_private::c98_private_sum(v)}");
+  assert(c98_private_sum(4) == 5, "local: {c98_private_sum(4)}");
+}

@@ -730,6 +730,7 @@ pub fn register_ir_schema(db: &mut Stores) -> IrSchemaIds {
     db.field(t81, "into_source", 0);
     db.field(t81, "name", t5);
     db.field(t81, "bind", t5);
+    db.field(t81, "public", t4);
     db.field(t82, "name", t5);
     db.field(t82, "source", 0);
     db.field(t83, "holder", 0);

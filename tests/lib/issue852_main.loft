@@ -10,7 +10,7 @@
 // local binds and keeps its own value, an unqualified call still reaches the
 // library function from a scope that has no such local, and a call reaches it
 // from the scope that DOES.
-use issue852lib;
+use issue852lib::*;
 
 // No local named `turn` here — the unqualified call is the ordinary one.
 fn other852() -> integer {

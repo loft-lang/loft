@@ -11,9 +11,9 @@
 // verified against one order has not been verified at all. This is the same
 // doctrine loft#788 established for bare names (`dupname_ab` / `dupname_ba`):
 // a source line's meaning must not depend on the order of the block above it.
-use dupmethod_c;
-use dupmethod_b;
-use dupmethod_a;
+use dupmethod_c::*;
+use dupmethod_b::*;
+use dupmethod_a::*;
 
 fn main() {
   a = make_a(1);

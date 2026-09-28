@@ -2,7 +2,7 @@
 // its declared return is still an `Unknown` stub, so @PLAN59's signature-time
 // `__retbuf` reservation cannot fire; the buffer is reserved between the passes
 // instead, before any pass-2 caller lowers a call against the short arity.
-use r675_geo;
+pub use r675_geo::*;
 
 pub fn pick675(v: integer) -> P675 {
   if v < 0 { mk675(0) } else { mk675(v) }

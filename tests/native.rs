@@ -1333,7 +1333,7 @@ fn c_binding_matrix_against_a_declared_library() -> std::io::Result<()> {
     let prog = std::env::temp_dir().join("loft_pln24_matrix.loft");
     std::fs::write(
         &prog,
-        "use lcabi;\n\
+        "use lcabi::*;\n\
          fn main() {\n\
          \x20 println(\"i64 {lc_i64(lc_i64(1234567890123))}\");\n\
          \x20 println(\"neg {lc_neg_i32(1)}\");\n\
@@ -1587,7 +1587,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
         let prog = dir.join(format!("call{n}.loft"));
         std::fs::write(
             &prog,
-            format!("use arity;\nfn main() {{ println(\"R {{ar{n}({call})}}\") }}\n"),
+            format!("use arity::*;\nfn main() {{ println(\"R {{ar{n}({call})}}\") }}\n"),
         )?;
         let mut refused = Vec::new();
         for backend in ["--interpret", "--native"] {
@@ -1654,7 +1654,7 @@ fn the_c_arity_ceiling_is_the_same_on_both_backends() -> std::io::Result<()> {
     let prog = dir.join("dep_ok.loft");
     std::fs::write(
         &prog,
-        format!("use arity;\nfn main() {{ println(\"R {{ar{max}({call})}}\") }}\n"),
+        format!("use arity::*;\nfn main() {{ println(\"R {{ar{max}({call})}}\") }}\n"),
     )?;
     for backend in ["--interpret", "--native"] {
         let (stdout, stderr) = run(backend, &prog)?;
@@ -1708,7 +1708,7 @@ fn numeric_array_shapes_cross_identically_on_both_backends() -> std::io::Result<
     let prog = std::env::temp_dir().join("loft_pln128_numeric.loft");
     std::fs::write(
         &prog,
-        "use lcabi;\n\
+        "use lcabi::*;\n\
          fn main() {\n\
          \x20 a: vector<float> = [1.5, 2.25, 4.0];\n\
          \x20 println(\"dsum {lc_dsum_scaled(a)}\");\n\
@@ -1982,7 +1982,7 @@ fn an_available_library_must_export_what_was_declared() -> std::io::Result<()> {
     let script = dir.join("probe.loft");
     std::fs::write(
         &script,
-        "use skewlib;\nfn go() {\n  println(\"ok={skew_ok()}\");\n  println(\"call={sk_present(41)}\");\n}\ngo();\n",
+        "pub use skewlib::*;\nfn go() {\n  println(\"ok={skew_ok()}\");\n  println(\"call={sk_present(41)}\");\n}\ngo();\n",
     )?;
 
     for backend in ["--interpret", "--native"] {
@@ -3367,7 +3367,7 @@ fn a_c_library_handle_survives_the_round_trip_and_carries_its_error() -> std::io
     let prog = dir.join("s2.loft");
     std::fs::write(
         &prog,
-        "use mariadb;\n\
+        "use mariadb::*;\n\
          fn main() {\n\
          \x20 h = db_init(0);\n\
          \x20 println(\"handle {h != 0}\");\n\
@@ -3458,7 +3458,7 @@ fn a_c_binding_reaches_a_versioned_system_library_on_both_backends() -> std::io:
     let prog = dir.join("s1.loft");
     std::fs::write(
         &prog,
-        "use mariadb;\nfn main() { println(\"{client_info()} {client_version()}\") }\n",
+        "use mariadb::*;\nfn main() { println(\"{client_info()} {client_version()}\") }\n",
     )?;
 
     let run = |backend: &str| -> std::io::Result<String> {
@@ -3627,7 +3627,7 @@ fn loft_builds_the_ansi_c_shim_a_package_ships() -> std::io::Result<()> {
     let prog = std::env::temp_dir().join("loft_pln24_shim.loft");
     std::fs::write(
         &prog,
-        "use lcshim;\n\
+        "use lcshim::*;\n\
          fn main() {\n\
          \x20 println(\"scale {shim_scale(4612811918334230528, 4616189618054758400)}\");\n\
          \x20 println(\"mod {shim_mod(17, 5)}\");\n\
@@ -3884,7 +3884,7 @@ fn a_retaining_c_api_binds_over_a_c_owned_buffer() -> std::io::Result<()> {
     let prog = std::env::temp_dir().join("loft_pln128_retain.loft");
     std::fs::write(
         &prog,
-        "use lcabi;\n\
+        "use lcabi::*;\n\
          fn main() {\n\
          \x20 n = 3;\n\
          \x20 bytes = n * 8;\n\
@@ -4242,7 +4242,7 @@ fn a_test_local_name_shadowing_a_library_fn_compiles_natively_878() -> std::io::
     )?;
     std::fs::write(
         pkg.join("tests/probe.loft"),
-        "use shadowlib;\n\
+        "use shadowlib::*;\n\
          fn defaulted(h: integer) -> W {\n\
          \x20 w = make(h);\n\
          \x20 assert(bump(w, 0) == h, \"the fixture was built wrong: {w.w_n}\");\n\

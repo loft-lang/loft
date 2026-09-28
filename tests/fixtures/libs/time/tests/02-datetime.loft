@@ -4,7 +4,7 @@
 // DateTime / Duration value-type tests (0.2.0).  Goldens hand-computed
 // against the proleptic Gregorian calendar; every case must agree on the
 // interpreter and --native (and wasm).
-use time;
+use time::*;
 
 fn test_construct_and_epoch() {
     // absolute anchors — catch a systematic offset the round-trips would hide

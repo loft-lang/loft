@@ -529,7 +529,7 @@ fn a_dependency_dead_store_is_reported_against_the_dependency_file() {
     let entry = root.join("main781ds.loft");
     std::fs::write(
         &entry,
-        "use dstore781;\n// 2\n// 3\n// 4\nconst UNRELATED781 = 1;\n// 6\n\
+        "use dstore781::*;\n// 2\n// 3\n// 4\nconst UNRELATED781 = 1;\n// 6\n\
          fn main() {\n  s = Data781 { items: [1, 2, 3] };\n  println(\"{lose_it(s)}\");\n}\n",
     )
     .expect("write entry");
@@ -599,7 +599,7 @@ fn a_dependency_dead_store_does_not_reach_a_consumer() {
     let entry = root.join("main1260ds.loft");
     std::fs::write(
         &entry,
-        "use dstore1260;\n// 2\n// 3\n// 4\nconst UNRELATED1260 = 1;\n// 6\n\
+        "use dstore1260::*;\n// 2\n// 3\n// 4\nconst UNRELATED1260 = 1;\n// 6\n\
          fn main() {\n  s = Data1260 { items: [1, 2, 3] };\n  println(\"{lose_it(s)}\");\n}\n",
     )
     .expect("write entry");
@@ -699,7 +699,7 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     let amb = root.join("amb883.loft");
     std::fs::write(
         &amb,
-        "use slot883;\nuse other883;\nfn main() {\n  \
+        "use slot883::*;\nuse other883::*;\nfn main() {\n  \
            s = Slot883 { idx: 0, taken: false };\n  \
            println(\"{s.idx} {mutate_through_a_loop_variable()}\");\n}\n",
     )
@@ -721,7 +721,7 @@ fn a_compile_error_does_not_emit_a_false_lost_write() {
     let ok = root.join("ok883.loft");
     std::fs::write(
         &ok,
-        "use slot883;\nfn main() {\n  println(\"{mutate_through_a_loop_variable()}\");\n}\n",
+        "use slot883::*;\nfn main() {\n  println(\"{mutate_through_a_loop_variable()}\");\n}\n",
     )
     .expect("write ok entry");
     let clean = run(&ok);

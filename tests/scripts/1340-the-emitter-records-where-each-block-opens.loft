@@ -50,7 +50,7 @@
 //   Falsify prints only the channels that MOVE and requires HERE to be clean, so each of
 //   those is clean on both. The native side was not scored in this sweep.
 
-use code;
+use code::*;
 
 // The emitter writes to `code` only when `cur_arg` is the 255 sentinel; a fresh `Code`
 // leaves it 0, which would send every value into a parameter default instead.

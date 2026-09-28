@@ -19,8 +19,8 @@
 // Both halves are asserted: that the program compiles at all, and that each
 // call lands in ITS OWN package. The variants' field sets differ, so a call
 // reaching the wrong package would read the wrong offset.
-use dupenum_a;
-use dupenum_b;
+use dupenum_a::*;
+use dupenum_b::*;
 
 fn main() {
   a = make_a(1);

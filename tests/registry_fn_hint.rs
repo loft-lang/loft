@@ -115,7 +115,7 @@ fn unresolved_bare_call_names_the_package_that_provides_it() {
         "the message should point at the qualified call; got:\n{d}"
     );
     assert!(
-        d.contains("use random;"),
+        d.contains("use random::(rand);"),
         "the message should offer the `use` form too; got:\n{d}"
     );
 }
@@ -207,7 +207,7 @@ fn diagnostics_with_local_random(tag: &str, src: &str) -> String {
 }
 
 /// loft#789 — when the suggested package is one this build already RESOLVED,
-/// the advice must not be "add `use random;`".
+/// the advice must not be "add `use random::(rand);`".
 ///
 /// The file's first line is `use random;`. Following the old advice changed
 /// nothing, because the resolved `random` came from `--lib` and has no `rand` —
@@ -221,7 +221,7 @@ fn advice_does_not_send_you_to_import_what_is_already_imported() {
         "use random;\n\nfn main() {\n    v = rand(1, 100);\n}\n",
     );
     assert!(
-        !d.contains("add `use random;`"),
+        !d.contains("add `use random::(rand);`"),
         "the file already imports it; got:\n{d}"
     );
     assert!(
@@ -240,7 +240,7 @@ fn advice_does_not_send_you_to_import_what_is_already_imported() {
 fn the_plain_import_advice_survives_when_nothing_collides() {
     let d = diagnostics_for("plain", "fn main() {\n    v = rand(1, 100);\n}\n", true);
     assert!(
-        d.contains("add `use random;`"),
+        d.contains("add `use random::(rand);`"),
         "an unimported package is still the answer; got:\n{d}"
     );
 }

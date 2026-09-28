@@ -24,7 +24,7 @@
 //
 // Cross-backend; `main` runs every cell so the leak gate reads the file.
 
-use overloadlib;
+use overloadlib::*;
 
 struct Rock { n: integer }
 

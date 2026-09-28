@@ -2,5 +2,5 @@
 // `[dependencies]` edge.  Its leading `use mfdep_leafmod;` is the line that
 // tripped "use statements must appear before all definitions" before the
 // use-region fixpoint in parse_file (manifest deps now get pre-scanned too).
-use mfdep_leafmod;
+use mfdep_leafmod::*;
 pub fn leaf_val() -> integer { mod_val() }

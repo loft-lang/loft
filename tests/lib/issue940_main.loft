@@ -4,7 +4,7 @@
 // loft#940 — the consumer half.  Every line below is a RESULT, not the absence of a
 // diagnostic: the warning says a call goes somewhere the author did not write, so the
 // test has to read where it actually went.
-use issue940lib;
+use issue940lib::*;
 
 fn main() {
   // The library's `clamp` is an if/else-if (Unity's `Mathf.Clamp`), the stdlib's is

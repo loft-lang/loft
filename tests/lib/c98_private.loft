@@ -1,0 +1,6 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A library that imports for its own use only: a plain `use` passes nothing on (@C98).
+use c98_math::*;
+pub fn c98_private_sum(v: C98Vec) -> integer { c98_len(v) * 100 }

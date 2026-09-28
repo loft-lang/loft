@@ -22,9 +22,9 @@
 // sqlite, because it needs no server: a machine with no database still proves
 // the catalogue read, so this cannot skip into a green that asserted nothing.
 
-use schema;
-use sql;
-use sqlite;
+use schema::*;
+use sql::*;
+use sqlite::*;
 
 struct Person {
   id: integer,

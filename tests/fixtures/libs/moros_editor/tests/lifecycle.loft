@@ -1,5 +1,5 @@
 // Tests for stencil save/load, stencil JSON round-trip, and editor lifecycle.
-use moros_editor;
+use moros_editor::*;
 
 // ── Stencil capture ──────────────────────────────────────────────
 

@@ -449,7 +449,7 @@ fn a_profile_says_when_a_used_library_is_invisible_to_it() {
     .unwrap();
     std::fs::write(
         root.join("app/prog.loft"),
-        "use hotlib;\n\nfn app_bit(n: integer) -> integer {\n  t = 0;\n  \
+        "use hotlib::*;\n\nfn app_bit(n: integer) -> integer {\n  t = 0;\n  \
          for i in 0..n { t = t + i % 3; }\n  t\n}\n\n\
          fn main() {\n  a = lib_grind(3000000);\n  b = app_bit(20000);\n  \
          println(\"{a} {b}\");\n}\n",

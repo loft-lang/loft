@@ -41,7 +41,7 @@ fn tree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
         &over.join("who.loft"),
         "pub fn who() -> text { \"override\" }\nthis line is not loft\n",
     );
-    let main = "use who;\nfn main() { println(\"{who()}\"); }\n";
+    let main = "use who::*;\nfn main() { println(\"{who()}\"); }\n";
     write(&proj.join("main.loft"), main);
     write(&bare.join("main.loft"), main);
     (proj, bare, over)

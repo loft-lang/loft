@@ -23,9 +23,9 @@
 //
 // Driven by `tests/native.rs`, on both loft backends.
 
-use registry;
-use schema;
-use sql;
+use registry::*;
+use schema::*;
+use sql::*;
 
 // The whole point of the registry, in one signature: a consumer that never names
 // a backend, handed the value one connection string produced.

@@ -1,5 +1,5 @@
 // Tests for the moros_map spawn + NPC routine + waypoint CRUD.
-use moros_map;
+use moros_map::*;
 
 // ── Spawn points ─────────────────────────────────────────────────
 

@@ -58,7 +58,7 @@ fn registry_fn_hint(name: &str, resolved: &[String]) -> Option<String> {
         format!("the {} packages provide it", names.join(" / "))
     };
     Some(format!(
-        "Unknown function {name} — {provider}; call `{first}::{name}(…)`, or add `use {first};` and call it bare"
+        "Unknown function {name} — {provider}; call `{first}::{name}(…)`, or add `use {first}::({name});` and call it bare"
     ))
 }
 
@@ -127,6 +127,8 @@ struct PendingImport {
     for_source: u16,
     lib_source: u16,
     spec: ImportSpec,
+    /// `pub use`: the names pass on to whoever imports `for_source` (@C98).
+    public: bool,
 }
 
 /// Pure-resolution result from [`Parser::lib_path_manifest_resolve`].
@@ -917,6 +919,11 @@ pub struct Parser {
     line: u32,
     /// Wildcard and selective imports waiting to be applied once the target source is fully parsed.
     pending_imports: Vec<PendingImport>,
+    /// The `use` statement being parsed was written `pub use` (@C98).
+    use_public: bool,
+    /// The use region consumed a `pub` that opens a definition rather than a `pub use`;
+    /// the definitions loop takes it.  Cleared when the lexer switches files.
+    pub_taken: bool,
     /// every (for_source, lib_source, ImportSpec) pair that
     /// `apply_pending_imports` applied during this parse pass.  Retained so
     /// that `resolve_deferred_unknowns` can re-apply them with overwrite
@@ -1702,6 +1709,8 @@ impl Parser {
             auto_use_trigger_map: None,
             auto_use_catalog_map: None,
             pending_imports: Vec::new(),
+            use_public: false,
+            pub_taken: false,
             applied_imports: Vec::new(),
             deferred_unknown: Vec::new(),
             record_resolutions: false,
@@ -3317,8 +3326,14 @@ impl Parser {
         if let Some(key) =
             Data::split_key(name).filter(|k| k.kind == crate::data::KeyKind::Instance)
         {
+            // The template may live only under its library's source: a qualified call
+            // (`lib::f(…)`) instantiates it without the caller importing the name (@C98).
             let g = self.data.def_nr(key.rest);
-            return g != u32::MAX && matches!(self.data.def_type(g), DefType::Generic);
+            return (g != u32::MAX && matches!(self.data.def_type(g), DefType::Generic))
+                || (0..self.data.definitions()).any(|d| {
+                    matches!(self.data.def_type(d), DefType::Generic)
+                        && self.data.def(d).name() == key.rest
+                });
         }
         let Some((_, fn_name)) = Self::h5_split_mangled(name) else {
             return false;
@@ -3487,12 +3502,18 @@ impl Parser {
         for pi in &applied {
             match &pi.spec {
                 ImportSpec::Wildcard => {
-                    self.data.import_all_overwrite(pi.lib_source, pi.for_source);
+                    self.data
+                        .import_all_overwrite(pi.lib_source, pi.for_source, pi.public);
                 }
                 ImportSpec::Names(names) => {
                     for (name, bind) in names {
-                        self.data
-                            .import_name_overwrite(pi.lib_source, pi.for_source, name, bind);
+                        self.data.import_name_overwrite(
+                            pi.lib_source,
+                            pi.for_source,
+                            name,
+                            bind,
+                            pi.public,
+                        );
                     }
                 }
             }
@@ -3563,6 +3584,8 @@ impl Parser {
             self.data.source = saved_source;
             let msg = if let Some(note) = boundary {
                 note
+            } else if let Some(msg) = self.data.import_cure("Undefined type", &stub_name, source) {
+                msg
             } else if let Some(s) = self.data.suggest_type_name(&stub_name) {
                 format!("Undefined type {stub_name} — did you mean '{s}'?")
             } else {
@@ -6774,7 +6797,7 @@ impl Parser {
         if d_nr == u32::MAX {
             if self.first_pass {
                 let predicted = if method_template == u32::MAX {
-                    self.predict_generic_return_type(name, types)
+                    self.predict_generic_return_type(source, name, types)
                 } else {
                     self.predict_template_return(method_template, name, types)
                 };
@@ -6784,7 +6807,7 @@ impl Parser {
                 }
             } else {
                 d_nr = if method_template == u32::MAX {
-                    self.try_generic_instantiation(name, types)
+                    self.try_generic_instantiation(source, name, types)
                 } else {
                     self.instantiate_template(method_template, name, types)
                 };
@@ -6793,7 +6816,7 @@ impl Parser {
                 // author at the call instead.  Answer the declared return, so the rest of the
                 // expression types as written.
                 let g_nr = if method_template == u32::MAX {
-                    self.data.def_nr(&format!("n_{name}"))
+                    self.data.source_nr(source, &format!("n_{name}"))
                 } else {
                     method_template
                 };
@@ -7179,6 +7202,11 @@ impl Parser {
                         );
                     } else if let Some(note) = self.importer_boundary_note(&format!("n_{name}")) {
                         diagnostic_at!(self.lexer, name_pos, Level::Error, "{note}");
+                    } else if let Some(msg) =
+                        self.data
+                            .import_cure("Unknown function", name, self.data.source)
+                    {
+                        diagnostic_at!(self.lexer, name_pos, Level::Error, "{msg}");
                     } else if let Some(hint) =
                         registry_fn_hint(name, &self.data.resolved_libraries())
                     {
@@ -7719,9 +7747,12 @@ impl Parser {
     /// receiving variable would "change type" between passes — #395).  Registers
     /// the synthetic struct on first encounter (idempotent via `tuple_def`);
     /// otherwise side-effect-free and safe to call repeatedly.
-    fn predict_generic_return_type(&mut self, name: &str, types: &[Type]) -> Type {
+    /// `source` is the library a qualified call names (`lib::f`), or `u16::MAX` for a
+    /// bare one: a qualified call reaches the library's generic whether or not the caller
+    /// imported its name (@C98).
+    fn predict_generic_return_type(&mut self, source: u16, name: &str, types: &[Type]) -> Type {
         let generic_name = format!("n_{name}");
-        let g_nr = self.data.def_nr(&generic_name);
+        let g_nr = self.data.source_nr(source, &generic_name);
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return Type::Unknown(0);
         }
@@ -7933,9 +7964,10 @@ impl Parser {
     /// Also the gate for @FR-G-Gen's bound half: the `bindings` computed here are handed to
     /// [`Self::check_satisfaction`], so a type that does not satisfy the declared bounds is
     /// rejected at the instantiation rather than inside the specialised body.
-    fn try_generic_instantiation(&mut self, name: &str, types: &[Type]) -> u32 {
+    /// `source` as in [`Self::predict_generic_return_type`].
+    fn try_generic_instantiation(&mut self, source: u16, name: &str, types: &[Type]) -> u32 {
         let generic_name = format!("n_{name}");
-        let g_nr = self.data.def_nr(&generic_name);
+        let g_nr = self.data.source_nr(source, &generic_name);
         if g_nr == u32::MAX || self.data.def(g_nr).def_type() != DefType::Generic {
             return u32::MAX;
         }
@@ -8915,7 +8947,8 @@ impl Parser {
                     .strip_prefix("n_")
                     .unwrap_or_default()
                     .to_string();
-                let inst = self.try_generic_instantiation(&name, std::slice::from_ref(&elem_tp));
+                let inst =
+                    self.try_generic_instantiation(u16::MAX, &name, std::slice::from_ref(&elem_tp));
                 if inst == u32::MAX { plan.worker } else { inst }
             } else {
                 plan.worker
@@ -12633,6 +12666,9 @@ impl Parser {
     /// them and an edited library keeps executing from the stale
     /// cached program.
     fn switch_to_dep(&mut self, f: &str) {
+        // A `pub` the use region consumed belongs to the file being left; that file is
+        // re-parsed from its start when it resumes.
+        self.pub_taken = false;
         if std::env::var("LOFT_LIB_ORDER").is_ok() {
             eprintln!(
                 "[liborder] switch {} -> {}",
@@ -16412,6 +16448,7 @@ impl Parser {
         // libraries by hand, so a `lib::` to an un-`use`d library is a forgotten
         // `use`, not a request to auto-load.  Skip the pre-scan for those files.
         let mut had_use = self.default;
+        self.pub_taken = false;
         // Use-region fixpoint.  Pre-scan explicit `use`s, then load manifest
         // `[dependencies]`.  Loading a manifest dep `switch_to_dep`s the lexer
         // ONTO it; a MULTI-FILE dependency lands on an entry file that still has
@@ -16421,7 +16458,7 @@ impl Parser {
         // parses has had its uses processed (otherwise a dependency's legitimate
         // top `use` is misread as "use after definitions" — and never imported).
         loop {
-            while self.lexer.has_token("use") {
+            while self.use_keyword() {
                 if let Some(id) = self.lexer.has_identifier() {
                     had_use = true;
                     // loft#949 — `use self::<module>` binds THIS package's own module,
@@ -16444,6 +16481,12 @@ impl Parser {
                     // the flat top-level comma list (`use lib::a, b`) is dropped (it
                     // read poorly — `b` didn't visually bind to `lib::`).
                     let spec = self.parse_import_spec(&id);
+                    if spec.is_none() && lib_alias.is_none() {
+                        self.data.record_bare_use(self.data.source, &id);
+                    }
+                    if spec.is_none() {
+                        self.refuse_bare_pub_use(&id);
+                    }
                     // loft#976 — a package's OWN module wins its own `use`.
                     //
                     // A module's file name is one global name across the whole
@@ -16495,20 +16538,17 @@ impl Parser {
                         if let Some(alias) = &lib_alias {
                             self.data.use_alias(alias, lib_source);
                         }
-                        // Plain `use foo` (no spec) wildcard-imports all pub defs.
-                        // `use foo as m;` (alias, no spec) does NOT — it only provides
-                        // the `m::` qualifier (the disambiguation escape hatch).  An
-                        // explicit `::` spec is honoured in either case.
-                        let import_spec = match spec {
-                            Some(s) => Some(s),
-                            None if lib_alias.is_some() => None,
-                            None => Some(ImportSpec::Wildcard),
-                        };
+                        // A bare `use foo;` binds only the `foo::` qualifier, and so does
+                        // `use foo as m;` (`m::`): names come in unqualified only through
+                        // an explicit `::*` or `::(…)` spec, so a library growing a name
+                        // can never collide with the program's own (@C98).
+                        let import_spec = spec;
                         if let Some(import_spec) = import_spec {
                             self.pending_imports.push(PendingImport {
                                 for_source: self.data.source,
                                 lib_source,
                                 spec: import_spec,
+                                public: self.use_public,
                             });
                         }
                         if !self.lexer.has_token(";") {
@@ -16742,7 +16782,7 @@ impl Parser {
         self.file += 1;
         self.line = 0;
         loop {
-            let is_pub = self.lexer.has_token("pub");
+            let is_pub = std::mem::take(&mut self.pub_taken) || self.lexer.has_token("pub");
             let before = self.data.definitions();
             if self.lexer.diagnostics().level() == Level::Fatal
                 || (!self.parse_capability()
@@ -16857,6 +16897,12 @@ impl Parser {
             }
         }
         self.pending_imports = remaining;
+        if !to_apply.is_empty() {
+            // The file these imports serve: a definition written in it is never one of its
+            // private imports (see `Data::note_source_file`).
+            let here_file = std::sync::Arc::clone(&self.lexer.pos().file);
+            self.data.note_source_file(cur, &here_file);
+        }
         for pi in to_apply {
             // retain a copy so `resolve_deferred_unknowns` can re-apply
             // with overwrite semantics after a cyclic `use` has finished
@@ -16864,11 +16910,14 @@ impl Parser {
             self.applied_imports.push(pi.clone());
             match pi.spec {
                 ImportSpec::Wildcard => {
-                    self.data.import_all(pi.lib_source, cur);
+                    self.data.import_all(pi.lib_source, cur, pi.public);
                 }
                 ImportSpec::Names(names) => {
                     for (name, bind) in &names {
-                        if !self.data.import_name(pi.lib_source, cur, name, bind) {
+                        if !self
+                            .data
+                            .import_name(pi.lib_source, cur, name, bind, pi.public)
+                        {
                             diagnostic!(
                                 self.lexer,
                                 Level::Error,
@@ -17251,6 +17300,37 @@ impl Parser {
     /// first encounter loads the file and switches the lexer onto it, and the import is
     /// recorded on the second, when this file is re-parsed off `todo_files` and the key
     /// already exists.
+    /// Consume the keyword of the next `use` statement, `use` or `pub use`, recording
+    /// which in `use_public`.  A `pub` that turns out to open a definition is put back.
+    /// A `pub` that does not open a `pub use` opens the file's first definition; it is
+    /// left in `pub_taken` for the definitions loop rather than put back, because putting
+    /// a token back costs a lexer link on every file (the stdlib's included).
+    fn use_keyword(&mut self) -> bool {
+        self.use_public = self.lexer.has_token("pub");
+        if self.lexer.has_token("use") {
+            return true;
+        }
+        if self.use_public {
+            self.pub_taken = true;
+            self.use_public = false;
+        }
+        false
+    }
+
+    /// `pub use lib;` would pass nothing on: a bare `use` binds only the `lib::`
+    /// qualifier, and a qualifier is not a name an importer can receive (@C98).
+    fn refuse_bare_pub_use(&mut self, target: &str) {
+        if self.use_public {
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`pub use {target};` passes nothing on — a bare `use` binds only the \
+                 `{target}::` qualifier.  Write `pub use {target}::*;` to pass on all its \
+                 names, or `pub use {target}::(…);` for some"
+            );
+        }
+    }
+
     fn parse_use_self(&mut self) {
         if !self.lexer.has_token("::") {
             diagnostic!(
@@ -17276,6 +17356,21 @@ impl Parser {
             None
         };
         let spec = self.parse_import_spec(&format!("self::{module}"));
+        if spec.is_none() && self.use_public {
+            self.refuse_bare_pub_use(&format!("self::{module}"));
+        } else if spec.is_none() && alias.is_none() {
+            // A bare `use` binds only a qualifier (@C98), and a package's own module has
+            // none (loft#976: the short qualifier is one slot shared by every package), so
+            // this form would bind nothing at all.
+            diagnostic!(
+                self.lexer,
+                Level::Error,
+                "`use self::{module};` binds nothing — a bare `use` brings in only a qualifier, \
+                 and a package's own module has none.  Write `use self::{module}::*;` for its \
+                 names, `use self::{module}::(…);` for some, or `use self::{module} as <alias>;` \
+                 for a qualifier"
+            );
+        }
         let Some(pkg) = self.own_package_name() else {
             diagnostic!(
                 self.lexer,
@@ -17363,20 +17458,16 @@ impl Parser {
             } else if bare_qualifier {
                 self.data.use_alias(module, lib_source);
             }
-            // Same rule as a bare `use`: a plain one wildcard-imports, an explicit
-            // `::` spec is honoured, and an alias with neither gives ONLY the
-            // qualifier — the disambiguation escape hatch, which would be pointless
-            // if it also poured the names in bare.
-            let import_spec = match spec {
-                Some(s) => Some(s),
-                None if alias.is_some() => None,
-                None => Some(ImportSpec::Wildcard),
-            };
+            // Same rule as a bare `use`: only an explicit `::` spec brings names in
+            // unqualified; without one the module is reached through its qualifier
+            // (@C98).
+            let import_spec = spec;
             if let Some(import_spec) = import_spec {
                 self.pending_imports.push(PendingImport {
                     for_source: self.data.source,
                     lib_source,
                     spec: import_spec,
+                    public: self.use_public,
                 });
             }
             if !self.lexer.has_token(";") {

@@ -40,12 +40,12 @@
 // backend this build cannot reach reads as UNREACHABLE, never as an empty
 // answer that looks like an empty table.
 
-use sql;
-use schema;
-use sqlite;
-use postgres;
-use maria;
-use duckdb;
+pub use sql::*;
+pub use schema::*;
+pub use sqlite::*;
+pub use postgres::*;
+pub use maria::*;
+pub use duckdb::*;
 
 // --- the connection --------------------------------------------------------
 

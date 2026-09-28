@@ -17714,7 +17714,11 @@ fn issue_675_cross_library_heap_return_reserves_its_buffer() {
         "#675 fixture must parse clean: {errors:?}"
     );
 
-    let d_nr = p.data.def_nr("n_pick675");
+    // `pick675` lives in `r675_use`; the program imports `r675_app`, which uses it for
+    // itself and does not pass it on (@C98), so look it up wherever it is declared.
+    let d_nr = (0..p.data.definitions())
+        .find(|&d| p.data.def(d).name() == "n_pick675")
+        .unwrap_or(u32::MAX);
     assert_ne!(d_nr, u32::MAX, "#675: pick675 must be defined");
     // A heap-returning function carries exactly one hidden heap buffer, and it was there
     // before pass 2 started — otherwise `ref_return` had to GROW the signature, and any

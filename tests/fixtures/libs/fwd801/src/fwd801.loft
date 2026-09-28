@@ -4,7 +4,7 @@
 // loft#801 — the entry pulls in the module that names these types before it
 // declares them, so every mention in `fwd801_inner` is a forward reference to a
 // type belonging to a file that is suspended further up the `use` chain.
-use fwd801_inner;
+pub use fwd801_inner::*;
 
 pub struct F801Roofs { r_n: integer }
 pub type F801Feet = integer;

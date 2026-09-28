@@ -4,8 +4,8 @@
 // @PLN9: CLI exporter — its <out.glb> path arg is cwd-relative; #cwd opts out
 // of the program-relative default (same class as moros_glb / isolated_stair).
 #cwd
-use moros_map;
-use moros_render;
+use moros_map::*;
+use moros_render::*;
 
 fn main() {
   dv_args = arguments();

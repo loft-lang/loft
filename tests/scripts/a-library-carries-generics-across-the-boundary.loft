@@ -14,7 +14,7 @@
 //   HOLDS: nothing else.
 // @ARGS: --lib tests/lib
 
-use genericlib;
+use genericlib::*;
 
 fn several_variables_from_a_library() {
   assert("{pair_up(1, "a")}|{pair_up("b", 2)}" == "1:a|b:2", "{pair_up(1, "a")}");

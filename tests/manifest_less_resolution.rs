@@ -123,7 +123,7 @@ fn arc_a_auto_install_refuses_an_unsigned_index() {
     let dir = home.join("proj");
     write(
         &dir.join("s.loft"),
-        "use probepkg;\nfn main() { println(\"resolved\"); }\n",
+        "use probepkg::*;\nfn main() { println(\"resolved\"); }\n",
     );
     let all = run_in(&home, &dir, "s.loft");
     let _ = std::fs::remove_dir_all(&home);
@@ -152,7 +152,7 @@ fn arc_a_a_signed_index_gets_past_the_signature_gate() {
     let dir = home.join("proj");
     write(
         &dir.join("s.loft"),
-        "use probepkg;\nfn main() { println(\"resolved\"); }\n",
+        "use probepkg::*;\nfn main() { println(\"resolved\"); }\n",
     );
     let all = run_in(&home, &dir, "s.loft");
     let _ = std::fs::remove_dir_all(&home);
@@ -210,7 +210,7 @@ fn pin_lock(version: &str) -> String {
 fn probe_script(dir: &Path) {
     write(
         &dir.join("s.loft"),
-        "use probepkg;\nfn main() { println(probe_id()); }\n",
+        "use probepkg::*;\nfn main() { println(probe_id()); }\n",
     );
 }
 
@@ -816,7 +816,7 @@ fn cache_pkg_with_dep(home: &Path, range: &str) {
     );
     write(
         &dir.join("src/probepkg.loft"),
-        "use probedep;\npub fn probe_id() -> text { return \"probepkg-0.1.0 via {dep_id()}\"; }\n",
+        "pub use probedep::*;\npub fn probe_id() -> text { return \"probepkg-0.1.0 via {dep_id()}\"; }\n",
     );
 }
 

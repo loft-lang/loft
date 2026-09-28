@@ -69,7 +69,7 @@ fn parse_two_packages(tag: &str, extra: &[(&str, &str)], top_body: &str) -> (Lev
     .unwrap();
     std::fs::write(
         dep.join("src/pkg_dep.loft"),
-        "use catalogue;\npub fn dep_entry() -> integer { part_list() }\n",
+        "pub use catalogue::*;\npub fn dep_entry() -> integer { part_list() }\n",
     )
     .unwrap();
 
@@ -129,7 +129,7 @@ fn a_packages_own_name_means_the_package_not_a_same_named_file() {
     // The file that used to win: named after the package, and NOT the entry.
     std::fs::write(
         pkg.join("tests/selfpkg.loft"),
-        "use selfpkg;\nfn main() { assert(selfpkg::from_the_entry() == 42, \"entry surface\"); }\n",
+        "use selfpkg::*;\nfn main() { assert(selfpkg::from_the_entry() == 42, \"entry surface\"); }\n",
     )
     .unwrap();
 
@@ -157,7 +157,7 @@ fn a_packages_own_module_wins_its_own_use() {
     let (level, diag) = parse_two_packages(
         "clash",
         &[("catalogue.loft", "pub fn top_only() -> integer { 3 }\n")],
-        "use pkg_dep;\nuse catalogue;\n\
+        "pub use pkg_dep::*;\npub use catalogue::*;\n\
          pub fn top_entry() -> integer { pkg_dep::part_list() }\n\
          pub fn top_two() -> integer { top_only() }\n",
     );
@@ -185,14 +185,14 @@ fn the_use_order_no_longer_decides_who_loses() {
     let (level_a, diag_a) = parse_two_packages(
         "order_a",
         &[("catalogue.loft", "pub fn top_only() -> integer { 3 }\n")],
-        "use pkg_dep;\nuse catalogue;\n\
+        "pub use pkg_dep::*;\npub use catalogue::*;\n\
          pub fn top_entry() -> integer { pkg_dep::part_list() }\n\
          pub fn top_two() -> integer { top_only() }\n",
     );
     let (level_b, diag_b) = parse_two_packages(
         "order_b",
         &[("catalogue.loft", "pub fn top_only() -> integer { 3 }\n")],
-        "use catalogue;\nuse pkg_dep;\n\
+        "pub use catalogue::*;\npub use pkg_dep::*;\n\
          pub fn top_entry() -> integer { pkg_dep::part_list() }\n\
          pub fn top_two() -> integer { top_only() }\n",
     );
@@ -219,7 +219,7 @@ fn a_distinct_basename_still_loads() {
     let (level, diag) = parse_two_packages(
         "renamed",
         &[("choices.loft", "pub fn top_only() -> integer { 3 }\n")],
-        "use pkg_dep;\nuse choices;\n\
+        "pub use pkg_dep::*;\npub use choices::*;\n\
          pub fn top_entry() -> integer { pkg_dep::part_list() }\n\
          pub fn top_two() -> integer { top_only() }\n",
     );
@@ -246,10 +246,10 @@ fn one_module_used_from_two_files_of_one_package_is_not_a_clash() {
             ("choices.loft", "pub fn top_only() -> integer { 3 }\n"),
             (
                 "extra.loft",
-                "use choices;\npub fn extra_fn() -> integer { top_only() + 1 }\n",
+                "pub use choices::*;\npub fn extra_fn() -> integer { top_only() + 1 }\n",
             ),
         ],
-        "use choices;\nuse extra;\nuse pkg_dep;\n\
+        "pub use choices::*;\npub use extra::*;\npub use pkg_dep::*;\n\
          pub fn top_entry() -> integer { pkg_dep::part_list() }\n\
          pub fn top_two() -> integer { top_only() + extra_fn() }\n",
     );
@@ -274,7 +274,7 @@ fn a_file_named_like_a_declared_dependency_is_not_a_clash() {
     let (level, diag) = parse_two_packages(
         "shadow",
         &[("pkg_dep.loft", "pub fn shadow_fn() -> integer { 99 }\n")],
-        "use pkg_dep;\npub fn top_entry() -> integer { pkg_dep::part_list() }\n",
+        "pub use pkg_dep::*;\npub fn top_entry() -> integer { pkg_dep::part_list() }\n",
     );
     assert!(
         !diag.join("\n").contains("declared by two files"),
@@ -413,7 +413,7 @@ fn a_same_package_basename_collision_is_not_advised() {
     // Named after its own package — the shape that used to draw a rename it must not draw.
     std::fs::write(
         pkg.join("tests/pkg_solo.loft"),
-        "use pkg_solo;\nfn main() { assert(solo_answer() == 42, \"solo\"); }\n",
+        "use pkg_solo::*;\nfn main() { assert(solo_answer() == 42, \"solo\"); }\n",
     )
     .unwrap();
 
@@ -526,7 +526,7 @@ fn use_self_binds_the_packages_own_module_not_a_consumers() {
 
     let scoped = use_self_tree(
         "self",
-        "use self::catalogue;\npub fn dep_answer() -> integer { part_list() + 1 }\n",
+        "pub use self::catalogue::*;\npub fn dep_answer() -> integer { part_list() + 1 }\n",
     );
     assert!(
         scoped.contains("answer=42"),
@@ -576,7 +576,7 @@ fn two_packages_same_named_self_modules_both_stay_reachable() {
     .unwrap();
     std::fs::write(
         dep.join("src/pkg_dep.loft"),
-        "use self::catalogue;\n\
+        "pub use self::catalogue::*;\n\
          pub fn dep_answer() -> integer { make_row().n + 1 }\n\
          pub fn dep_tag() -> text { make_row().tag }\n",
     )
@@ -597,7 +597,7 @@ fn two_packages_same_named_self_modules_both_stay_reachable() {
     .unwrap();
     std::fs::write(
         top.join("src/pkg_top.loft"),
-        "use pkg_dep::*;\nuse self::catalogue as m;\n\
+        "pub use pkg_dep::*;\nuse self::catalogue as m;\n\
          pub fn top_answer() -> integer { dep_answer() }\n\
          pub fn top_label() -> text { m::make_row().label }\n",
     )
@@ -647,7 +647,7 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
     let root = std::env::temp_dir().join(format!("loft_949_spec_{}", std::process::id()));
     let pkg = root.join("pkg");
     for (tag, body, want) in [
-        ("plain", "use self::tools;", "1|2"),
+        ("pub", "pub use self::tools::*;", "1|2"),
         ("one", "use self::tools::one;", "1|"),
         ("group", "use self::tools::(one, two);", "1|2"),
         ("rename", "use self::tools::(one as first);", "1|"),
@@ -711,6 +711,37 @@ fn use_self_takes_the_same_import_spec_as_a_library() {
         all.contains("use self::tools::(a, b, …)"),
         "the grouping error must quote the spelling the author wrote:\n{all}"
     );
+
+    // A bare `use self::tools;` would bind nothing: a bare `use` brings in only a
+    // qualifier (@C98), and a package's own module has none (loft#976).  It is refused,
+    // naming the three spellings that do bind something.
+    std::fs::create_dir_all(pkg.join("src")).expect("mkdir");
+    std::fs::write(
+        pkg.join("loft.toml"),
+        "[package]\nname = \"pkg\"\nversion = \"0.1.0\"\nentry = \"src/pkg.loft\"\n",
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("src/tools.loft"),
+        "pub fn one() -> integer { 1 }\n",
+    )
+    .unwrap();
+    std::fs::write(
+        pkg.join("src/pkg.loft"),
+        "use self::tools;\nfn main() { println(\"{tools::one()}\") }\n",
+    )
+    .unwrap();
+    let mut p = Parser::new();
+    p.parse_dir("default", true, true).unwrap();
+    p.parse(&pkg.join("src/pkg.loft").to_string_lossy(), false);
+    let all = p.diagnostics.lines().join("\n");
+    let _ = std::fs::remove_dir_all(&root);
+    assert!(
+        all.contains("`use self::tools;` binds nothing")
+            && all.contains("use self::tools::*;")
+            && all.contains("use self::tools as <alias>;"),
+        "a bare `use self::` is refused with its cures:\n{all}"
+    );
 }
 
 /// `use self::<module>` must NOT fall through to the wider `lib_path` search when the
@@ -733,7 +764,7 @@ fn use_self_refuses_to_search_outside_its_own_package() {
     .unwrap();
     std::fs::write(
         pkg.join("src/pkg_solo.loft"),
-        "use self::nope;\npub fn solo() -> integer { 1 }\n",
+        "pub use self::nope::*;\npub fn solo() -> integer { 1 }\n",
     )
     .unwrap();
 
@@ -769,7 +800,7 @@ fn use_self_outside_a_package_says_what_to_do_instead() {
     .unwrap();
     std::fs::write(
         root.join("bare.loft"),
-        "use self::helper;\nfn main() { println(\"{helper()}\") }\n",
+        "use self::helper::*;\nfn main() { println(\"{helper()}\") }\n",
     )
     .unwrap();
 
@@ -820,7 +851,7 @@ fn the_clash_advice_outside_a_package_does_not_prescribe_self() {
     .unwrap();
     std::fs::write(
         b.join("bare.loft"),
-        "use catalogue;\nfn main() { println(\"{b_only()}\") }\n",
+        "use catalogue::*;\nfn main() { println(\"{b_only()}\") }\n",
     )
     .unwrap();
 
@@ -878,7 +909,7 @@ fn a_dependency_answers_the_same_in_every_consumer() {
     let all = captured_module_run(
         "value",
         "pub fn con_list() -> integer { 99 }\n",
-        "use catalogue;\nuse dep;\n\
+        "use catalogue::*;\nuse dep::*;\n\
          fn main() { println(\"dep={dep_answer()} con={con_list()}\"); }\n",
     );
     assert!(
@@ -906,7 +937,7 @@ fn a_bare_call_matching_two_modules_is_refused_not_guessed() {
     let all = captured_module_run(
         "ambig",
         "pub fn part_list() -> integer { 99 }\n",
-        "use catalogue;\nuse dep;\n\
+        "use catalogue::*;\nuse dep::*;\n\
          fn main() { println(\"{part_list()}\"); }\n",
     );
     assert!(
@@ -929,7 +960,7 @@ fn a_bare_call_matching_two_modules_is_refused_not_guessed() {
     let again = captured_module_run(
         "ambig2",
         "pub fn part_list() -> integer { 99 }\n",
-        "use catalogue;\nuse dep;\n\
+        "use catalogue::*;\nuse dep::*;\n\
          fn main() { println(\"{part_list()}\"); }\n",
     );
     assert_eq!(
@@ -951,8 +982,8 @@ fn a_bare_call_matching_two_modules_is_refused_not_guessed() {
 #[test]
 fn two_sibling_packages_keep_their_own_same_named_modules() {
     for (tag, uses) in [
-        ("ab", "use pkg_a;\nuse pkg_b;\n"),
-        ("ba", "use pkg_b;\nuse pkg_a;\n"),
+        ("ab", "pub use pkg_a::*;\npub use pkg_b::*;\n"),
+        ("ba", "pub use pkg_b::*;\npub use pkg_a::*;\n"),
     ] {
         let root = std::env::temp_dir().join(format!("loft_976_{tag}_{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
@@ -961,13 +992,13 @@ fn two_sibling_packages_keep_their_own_same_named_modules() {
                 "pkg_a",
                 "skin.loft",
                 "pub fn skin_a_only(v: float) -> float { v * 2.0 }\n",
-                "use skin;\npub fn a_entry(v: float) -> float { skin_a_only(v) }\n",
+                "pub use skin::*;\npub fn a_entry(v: float) -> float { skin_a_only(v) }\n",
             ),
             (
                 "pkg_b",
                 "skin.loft",
                 "pub fn skin_b_only(v: float) -> float { v + 10.0 }\n",
-                "use skin;\npub fn b_entry(v: float) -> float { skin_b_only(v) }\n",
+                "pub use skin::*;\npub fn b_entry(v: float) -> float { skin_b_only(v) }\n",
             ),
         ] {
             let dir = root.join(pkg);
@@ -1044,7 +1075,7 @@ fn captured_module_run(tag: &str, con_catalogue: &str, con_main: &str) -> String
     // 41 + 1 = 42 when the dependency reads its OWN catalogue.
     std::fs::write(
         dep.join("src/dep.loft"),
-        "use catalogue;\npub fn dep_answer() -> integer { part_list() + 1 }\n",
+        "pub use catalogue::*;\npub fn dep_answer() -> integer { part_list() + 1 }\n",
     )
     .unwrap();
     std::fs::write(
@@ -1109,7 +1140,7 @@ fn qualifying_a_self_bound_module_explains_itself() {
     .unwrap();
     std::fs::write(
         pkg.join("src/qpkg.loft"),
-        "use self::surfaces;\npub fn n() -> integer { surfaces::count() }\n",
+        "pub use self::surfaces::*;\npub fn n() -> integer { surfaces::count() }\n",
     )
     .unwrap();
 

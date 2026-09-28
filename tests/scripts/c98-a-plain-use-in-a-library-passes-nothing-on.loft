@@ -1,0 +1,17 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @ARGS: --lib tests/lib
+// @falsified-by: tests/falsified/c98-import-rules.patch — interpret exit 1 -> 0, interpret expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches), native exit 1 -> 0, native expectations FAIL/1 -> 0/1 (the suite's verdict, not a count of matches)
+//
+// @C98 — `c98_private` imports `c98_math` with a plain `use c98_math::*;`, which serves
+// its own file only: a program importing `c98_private::*` receives c98_private's names and
+// not c98_math's.  The error names the library in between and the `pub use` that would
+// pass the name on.
+use c98_private::*;
+
+// @EXPECT_ERROR: `c98_private` uses it from `c98_math` but does not pass it on
+fn test_an_imported_name_is_not_passed_on() {
+  v = C98Vec { cx: 1, cy: 2, cz: 3 };
+  assert(c98_private_sum(v) == 600, "unreached");
+}
