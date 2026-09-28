@@ -32,11 +32,11 @@ const HEADERS: &[(&str, usize, usize)] = &[
     //                  a hoist's root is invariant only while what it LINKS to is.  The pair
     //                  is re-measured here rather than carried from either side.
     ("n_d4", 3, 0),  // t and v in the loop, v again in the summing loop
-    ("n_d5", 2, 1),  // v and t read, out pushed; t, a call result owning its store, stays since `@FR-R-Base`'s growth clause proved it apart from `out`
-    ("n_d6", 2, 0),  // derived by the outer loop once
-    ("n_d7", 2, 0),  // two sites, still t and v
-    ("n_d8", 1, 0),  // t serves the view and the scalar read
-    ("n_d9", 1, 0),  // t
+    ("n_d5", 2, 1), // v and t read, out pushed; t, a call result owning its store, stays since `@FR-R-Base`'s growth clause proved it apart from `out`
+    ("n_d6", 2, 0), // derived by the outer loop once
+    ("n_d7", 2, 0), // two sites, still t and v
+    ("n_d8", 1, 0), // t serves the view and the scalar read
+    ("n_d9", 1, 0), // t
     ("n_d10", 2, 0), // t and v
     // d11–d13: the LOOP stays blocked (no vector header); the one push header each is the
     // seeding literal's own group header (`@FR-R-GroupPush`, 2026-09-18 — a heap-owning
