@@ -6,3 +6,8 @@ loft    = ">=0.8"
 [library]
 entry  = "src/native_pkg.loft"
 native = "loft_native_test"
+
+# @PLN174 F5 — a `[native] crate` so `--native` links the crate too
+# (`add_native_extern_flags`): the foreign-vector bridge is asserted on BOTH backends.
+[native]
+crate = "loft-native-test"

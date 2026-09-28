@@ -418,9 +418,12 @@ to forget for one that is already detached, which is exactly when it costs the m
 sweep to its own worktree (`git worktree add --detach <dir> HEAD`, build there, run there) so the
 main checkout stays free to iterate.
 
-**And ask `df -h /` before a gate.**  A full disk fails the NATIVE corpus with `FAIL
-unknown-mode` after `low space` lines, which reads as a code fault; `make sweep-scratch`
-reclaims loft's own scratch (RUN_BOUNDS.md § Scratch hygiene).
+**A gate makes its own room.**  A full disk fails the NATIVE corpus with `FAIL
+unknown-mode` after `low space` lines and the linker with `cannot find lib<dep>.rlib`, both of
+which read as code faults; every gate therefore runs `scripts/disk_headroom.sh` first, which
+reclaims loft's own scratch, the incremental caches and — with no gate alive — this checkout's
+gate scratch until 20 GB is free, and refuses below 2 GB (RUN_BOUNDS.md § Scratch hygiene).  By
+hand: `make disk-headroom`.
 
 **Run a 19-second triple FIRST when the change touches parser diagnostics, guards or docs.**
 `make ci` stops at its first failure, so each cycle surfaces exactly ONE new problem and costs

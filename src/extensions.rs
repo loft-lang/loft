@@ -483,6 +483,68 @@ struct LoftStore {
     claim_fn: Option<unsafe extern "C" fn(LoftStoreCtx, u32) -> u32>,
     reload_fn: Option<unsafe extern "C" fn(LoftStoreCtx, *mut *mut u8, *mut u32)>,
     resize_fn: Option<unsafe extern "C" fn(LoftStoreCtx, u32, u32) -> u32>,
+    foreign_fn: Option<
+        unsafe extern "C" fn(
+            LoftStoreCtx,
+            *mut u8,
+            usize,
+            usize,
+            u32,
+            unsafe extern "C" fn(*mut u8, usize, usize),
+        ) -> loft_ffi::LoftRef,
+    >,
+}
+
+/// @PLN174 F5 — set in a `LoftStoreCtx` word above the store number when the store was
+/// MINTED for the bridge's vector return and holds nothing yet: the foreign callback
+/// then adopts the bytes into that store instead of minting another (which would leave
+/// the minted one orphaned).  The cdylib reads only the low 16 bits (`LoftStore::store_nr`)
+/// and passes the word back untouched, so the bit is the host's to use.
+pub const CTX_RETURN_STORE: usize = 1 << 16;
+
+/// The foreign-vector callback's body, shared by the interpreter's dispatcher
+/// (`CURRENT_STORES`) and the generated `--native` call (`native_call`, the same cell):
+/// adopt `len` bytes at `ptr` — `(ptr, len, cap, release)` a cdylib's `Vec<u8>` — as a
+/// read-only `vector<u8>`, into the return store when `ctx` says it was minted for this
+/// answer, into a fresh store otherwise.  Answers the bare `FOREIGN_REC` for the
+/// consumer to turn into the store's handle (`bridge_push_ref`), or the null ref when the
+/// block is declined (a length past `u32`), which leaves it the cdylib's to free.
+pub(crate) fn adopt_foreign_block(
+    stores: &mut crate::database::Stores,
+    ctx: usize,
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+    elem_size: u32,
+    release: unsafe extern "C" fn(*mut u8, usize, usize),
+) -> loft_ffi::LoftRef {
+    let null = loft_ffi::LoftRef {
+        store_nr: 0,
+        rec: 0,
+        pos: 0,
+    };
+    let Ok(count) = u32::try_from(len / elem_size.max(1) as usize) else {
+        return null;
+    };
+    if elem_size > 1 && !(ptr as usize).is_multiple_of(elem_size as usize) {
+        return null;
+    }
+    let owner = crate::store::ForeignOwner::Extern {
+        ptr,
+        len,
+        cap,
+        release,
+    };
+    let db = if ctx & CTX_RETURN_STORE != 0 {
+        stores.foreign_vector_in(ctx as u16, ptr, count, elem_size, owner)
+    } else {
+        stores.foreign_vector(ptr, count, elem_size, owner)
+    };
+    loft_ffi::LoftRef {
+        store_nr: db.store_nr,
+        rec: crate::store::FOREIGN_REC,
+        pos: 8,
+    }
 }
 
 /// Compact native signature: parameter types + return type.
@@ -1601,33 +1663,56 @@ fn dispatch_via_bridge(
     use crate::keys::Str;
     use loft_ffi::{LoftRef as FfiRef, LoftStr as FfiStr, LoftTag, LoftValue};
 
-    // Build args at full width (pop in reverse — LIFO — then restore order).
-    let mut args: Vec<LoftValue> = Vec::with_capacity(sig.params.len());
+    // Pop the raw arguments (in reverse — LIFO — then restore order), then set the
+    // heap-typed ones up as ONE bridge call (`Stores::bridge_args`, @PLN174 F5): the store
+    // the bridge is handed is the first argument's, a foreign vector is copied into it,
+    // and a vector or record answer with nothing to pin takes a store minted for it.
+    enum Raw {
+        Int(i64),
+        Float(f64),
+        Bool(bool),
+        Text(Str),
+        Heap(crate::keys::DbRef),
+    }
+    let mut raw: Vec<Raw> = Vec::with_capacity(sig.params.len());
     for &t in sig.params.iter().rev() {
-        let v = match t {
+        raw.push(match t {
+            ArgT::I32 | ArgT::I64 => Raw::Int(stores.get::<i64>(stack)),
+            ArgT::F32 | ArgT::F64 => Raw::Float(stores.get::<f64>(stack)),
+            ArgT::Bool => Raw::Bool(stores.get::<bool>(stack)),
+            ArgT::Text => Raw::Text(stores.get::<Str>(stack)),
+            ArgT::Ref | ArgT::Vec => Raw::Heap(stores.get::<crate::keys::DbRef>(stack)),
+        });
+    }
+    raw.reverse();
+    let returns_ref = matches!(sig.ret, Some(ArgT::Ref | ArgT::Vec));
+    let heap: Vec<(crate::keys::DbRef, bool)> = sig
+        .params
+        .iter()
+        .zip(&raw)
+        .filter_map(|(t, r)| match r {
+            Raw::Heap(db) => Some((*db, *t == ArgT::Vec)),
+            _ => None,
+        })
+        .collect();
+    let call = stores.bridge_args(&heap, returns_ref);
+    let (store_nr, minted) = (call.store_nr, call.minted);
+    let mut handed = call.handed.iter();
+    let mut args: Vec<LoftValue> = Vec::with_capacity(sig.params.len());
+    for (t, r) in sig.params.iter().zip(&raw) {
+        args.push(match (t, r) {
             // No pre-narrowing: pass the whole i64 cell; the bridge casts to
             // the impl's real width (i32/u16/…) per its Rust signature.
-            ArgT::I32 | ArgT::I64 => LoftValue::int(stores.get::<i64>(stack)),
-            ArgT::F32 | ArgT::F64 => LoftValue::float(stores.get::<f64>(stack)),
-            ArgT::Bool => LoftValue::boolean(stores.get::<bool>(stack)),
-            ArgT::Text => {
-                let s = stores.get::<Str>(stack);
-                LoftValue::text(FfiStr {
-                    ptr: s.str().as_ptr(),
-                    len: s.str().len(),
-                })
-            }
-            ArgT::Ref => {
-                let r = stores.get::<crate::keys::DbRef>(stack);
-                LoftValue::reference(FfiRef {
-                    store_nr: r.store_nr,
-                    rec: r.rec,
-                    pos: r.pos,
-                })
-            }
-            ArgT::Vec => {
+            (_, Raw::Int(i)) => LoftValue::int(*i),
+            (_, Raw::Float(f)) => LoftValue::float(*f),
+            (_, Raw::Bool(b)) => LoftValue::boolean(*b),
+            (_, Raw::Text(s)) => LoftValue::text(FfiStr {
+                ptr: s.str().as_ptr(),
+                len: s.str().len(),
+            }),
+            (ArgT::Vec, Raw::Heap(_)) => {
                 // Same indirect-vector deref as the legacy marshal.
-                let r = stores.get::<crate::keys::DbRef>(stack);
+                let r = handed.next().copied().unwrap_or(crate::keys::DbRef::NULL);
                 let rec = if r.rec == 0 || r.pos == 0 {
                     0
                 } else {
@@ -1639,28 +1724,17 @@ fn dispatch_via_bridge(
                     pos: 0,
                 })
             }
-        };
-        args.push(v);
+            (_, Raw::Heap(_)) => {
+                let r = handed.next().copied().unwrap_or(crate::keys::DbRef::NULL);
+                LoftValue::reference(FfiRef {
+                    store_nr: r.store_nr,
+                    rec: r.rec,
+                    pos: r.pos,
+                })
+            }
+        });
     }
-    args.reverse();
-
-    // The store the bridge allocates in: the first ref arg's store (so ref/
-    // vector params and an allocating return resolve there), else — for a
-    // ref/vector RETURN with no ref arg to derive from — a fresh heap store via
-    // `stores.null()`, exactly as `dispatch_call`'s ref-return arms do.  The
-    // old `unwrap_or(0)` fallback put an owned return vector in store 0 (the
-    // stack store), so freeing it on scope exit tripped the #306 guard (a
-    // stack-record ref treated as an owned heap store) — e.g. `rand_indices`
-    // and imaging's PNG loaders, which return a vector with no ref argument.
-    let ref_arg_store = args
-        .iter()
-        .find_map(|v| (v.tag == LoftTag::Ref).then(|| v.as_ref().store_nr));
-    let store_nr = match ref_arg_store {
-        Some(s) => s,
-        None if matches!(sig.ret, Some(ArgT::Ref | ArgT::Vec)) => stores.null().store_nr,
-        None => 0,
-    };
-    let ls = make_loft_store(stores, store_nr);
+    let ls = make_loft_store(stores, store_nr, minted);
 
     // CURRENT_STORES must be live for the bridge's ffi_claim/resize callbacks.
     struct StoresGuard;
@@ -1680,6 +1754,9 @@ fn dispatch_via_bridge(
     let bridge: unsafe extern "C" fn(LoftStore, *const LoftValue, usize, *mut LoftValue) =
         unsafe { std::mem::transmute(bridge_ptr) };
     unsafe { bridge(ls, args.as_ptr(), args.len(), std::ptr::from_mut(&mut ret)) };
+
+    // The copies the foreign vector arguments took, and a store minted for a scalar answer.
+    stores.bridge_args_done(&call, returns_ref);
 
     // Write the tagged return to the stack (mirrors dispatch_call's returns).
     match ret.tag {
@@ -1762,6 +1839,21 @@ fn bridge_push_ref(
         rec: 0,
         pos: 0,
     };
+    // @PLN174 F5 — a foreign answer already has its handle (the slot `foreign_vector`
+    // claimed), and its store is locked, so no header is claimed here.
+    if crate::store::Store::is_foreign_rec(r.rec)
+        && let Some((rec, pos)) = stores.store(&base).foreign_handle()
+    {
+        stores.put(
+            stack,
+            crate::keys::DbRef {
+                store_nr: r.store_nr,
+                rec,
+                pos,
+            },
+        );
+        return;
+    }
     let header = stores.claim(&base, 1);
     stores.store_mut(&base).set_u32_raw(header.rec, 4, r.rec);
     let dbref = crate::keys::DbRef {
@@ -1887,24 +1979,61 @@ pub fn current_shared_bridge() -> Option<String> {
     None
 }
 
+/// C-ABI callback: adopt a cdylib's byte block as a read-only `vector<u8>` (@PLN174 F5,
+/// [`adopt_foreign_block`]).  The null ref if the adoption panics: the block stays the
+/// cdylib's, which then copies it.
+#[cfg(feature = "native-extensions")]
+unsafe extern "C" fn ffi_foreign(
+    ctx: LoftStoreCtx,
+    ptr: *mut u8,
+    len: usize,
+    cap: usize,
+    elem_size: u32,
+    release: unsafe extern "C" fn(*mut u8, usize, usize),
+) -> loft_ffi::LoftRef {
+    std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        CURRENT_STORES.with(|c| {
+            let stores = unsafe { &mut *c.get() };
+            adopt_foreign_block(
+                stores,
+                ctx._opaque as usize,
+                ptr,
+                len,
+                cap,
+                elem_size,
+                release,
+            )
+        })
+    }))
+    .unwrap_or(loft_ffi::LoftRef {
+        store_nr: 0,
+        rec: 0,
+        pos: 0,
+    })
+}
+
 /// Build a LoftStore handle from the store that a LoftRef points to.
 /// Includes allocation callbacks so native code can create records and vectors.
+/// `minted`: the store was made for the bridge's vector return and is empty
+/// ([`CTX_RETURN_STORE`]).
 #[cfg(feature = "native-extensions")]
-fn make_loft_store(stores: &crate::database::Stores, store_nr: u16) -> LoftStore {
+fn make_loft_store(stores: &crate::database::Stores, store_nr: u16, minted: bool) -> LoftStore {
     let store = stores.store(&crate::keys::DbRef {
         store_nr,
         rec: 0,
         pos: 0,
     });
+    let ctx = store_nr as usize | if minted { CTX_RETURN_STORE } else { 0 };
     LoftStore {
         ptr: store.base_ptr(),
         size: store.capacity_words(),
         ctx: LoftStoreCtx {
-            _opaque: store_nr as usize as *mut (),
+            _opaque: ctx as *mut (),
         },
         claim_fn: Some(ffi_claim),
         reload_fn: Some(ffi_reload),
         resize_fn: Some(ffi_resize),
+        foreign_fn: Some(ffi_foreign),
     }
 }
 
@@ -2727,12 +2856,121 @@ pub mod native_call {
         }));
     }
 
+    /// The foreign-vector callback for generated code (@PLN174 F5): the same body as
+    /// the interpreter's `ffi_foreign`, over the `CURRENT_STORES` cell `enter` set.
+    unsafe extern "C" fn ffi_foreign_pub(
+        ctx: loft_ffi::LoftStoreCtx,
+        ptr: *mut u8,
+        len: usize,
+        cap: usize,
+        elem_size: u32,
+        release: unsafe extern "C" fn(*mut u8, usize, usize),
+    ) -> loft_ffi::LoftRef {
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            super::CURRENT_STORES.with(|c| {
+                let stores = unsafe { &mut *c.get() };
+                super::adopt_foreign_block(
+                    stores,
+                    ctx._opaque as usize,
+                    ptr,
+                    len,
+                    cap,
+                    elem_size,
+                    release,
+                )
+            })
+        }))
+        .unwrap_or(loft_ffi::LoftRef {
+            store_nr: 0,
+            rec: 0,
+            pos: 0,
+        })
+    }
+
     /// Construct a `loft_ffi::LoftStore` handle pointing at the
     /// store identified by `store_nr`.  Callbacks read from the
     /// `CURRENT_STORES` thread-local — call `enter()` before this
     /// to set it up.
     #[must_use]
     pub fn build_store(stores: &Stores, store_nr: u16) -> loft_ffi::LoftStore {
+        build_store_ctx(stores, store_nr, store_nr as usize)
+    }
+
+    /// [`build_store`] for the store the generated call MINTED for the bridge's vector
+    /// return (@PLN174 F5): the context word carries [`super::CTX_RETURN_STORE`], so a
+    /// foreign answer is adopted into that store rather than into a second one.
+    #[must_use]
+    pub fn build_store_for_return(stores: &Stores, store_nr: u16) -> loft_ffi::LoftStore {
+        build_store_ctx(
+            stores,
+            store_nr,
+            store_nr as usize | super::CTX_RETURN_STORE,
+        )
+    }
+
+    /// @PLN174 F5 — ONE generated cdylib call's heap-typed arguments (`Stores::bridge_args`,
+    /// the same set-up the interpreter's dispatcher does): begun before the call with the
+    /// arguments in declaration order, asked for what to hand the bridge and for the store
+    /// handle, and ended by its drop — after the answer is computed, since a local drops
+    /// after the tail expression — which frees the copies and refuses a write through one.
+    pub struct BridgeGuard<'a> {
+        cell: &'a std::cell::UnsafeCell<Stores>,
+        args: Option<crate::database::BridgeArgs>,
+        returns_ref: bool,
+    }
+
+    impl<'a> BridgeGuard<'a> {
+        #[must_use]
+        pub fn begin(
+            cell: &'a std::cell::UnsafeCell<Stores>,
+            stores: &mut Stores,
+            args: &[(crate::keys::DbRef, bool)],
+            returns_ref: bool,
+        ) -> Self {
+            Self {
+                cell,
+                args: Some(stores.bridge_args(args, returns_ref)),
+                returns_ref,
+            }
+        }
+
+        /// What the bridge is handed for the `i`th heap-typed argument.
+        #[must_use]
+        pub fn handed(&self, i: usize) -> crate::keys::DbRef {
+            self.args
+                .as_ref()
+                .and_then(|a| a.handed.get(i).copied())
+                .unwrap_or(crate::keys::DbRef::NULL)
+        }
+
+        /// The store handle for the call: the pinned store, or the one minted for it,
+        /// announced as the return store ([`super::CTX_RETURN_STORE`]).
+        #[must_use]
+        pub fn store(&self, stores: &Stores) -> loft_ffi::LoftStore {
+            let (nr, minted) = self
+                .args
+                .as_ref()
+                .map_or((0, false), |a| (a.store_nr, a.minted));
+            if minted {
+                build_store_for_return(stores, nr)
+            } else {
+                build_store(stores, nr)
+            }
+        }
+    }
+
+    impl Drop for BridgeGuard<'_> {
+        fn drop(&mut self) {
+            if let Some(args) = self.args.take() {
+                // SAFETY: generated code holds no other live borrow of the stores across a
+                // local's drop (the same cell discipline `FnRefBufGuard` relies on).
+                let stores = unsafe { &mut *self.cell.get() };
+                stores.bridge_args_done(&args, self.returns_ref);
+            }
+        }
+    }
+
+    fn build_store_ctx(stores: &Stores, store_nr: u16, ctx: usize) -> loft_ffi::LoftStore {
         let store = stores.store(&crate::keys::DbRef {
             store_nr,
             rec: 0,
@@ -2742,11 +2980,12 @@ pub mod native_call {
             ptr: store.base_ptr(),
             size: store.capacity_words(),
             ctx: loft_ffi::LoftStoreCtx {
-                _opaque: store_nr as usize as *mut (),
+                _opaque: ctx as *mut (),
             },
             claim_fn: Some(ffi_claim_pub),
             reload_fn: Some(ffi_reload_pub),
             resize_fn: Some(ffi_resize_pub),
+            foreign_fn: Some(ffi_foreign_pub),
         }
     }
 

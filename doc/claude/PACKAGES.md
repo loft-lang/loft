@@ -1491,6 +1491,7 @@ pub struct LoftStore {
     pub claim_fn: ...,                   // allocate words → rec
     pub reload_fn: ...,                  // refresh ptr/size after alloc
     pub resize_fn: ...,                  // resize record → new rec
+    pub foreign_fn: ...,                 // adopt the cdylib's own bytes, no copy (@PLN174 F5)
 }
 ```
 
@@ -1577,6 +1578,23 @@ The `vector_push_*` methods update `v.rec` in place if the vector record
 moves during resize. The minimum allocation is 11 elements (matching the
 interpreter's convention). The `store_nr` is derived automatically from
 the `LoftStore` handle.
+
+### A read-only answer with no copy (@PLN174 F5)
+
+```rust
+// Hand loft the cdylib's own Vec<u8> as a `vector<u8>`: no copy, released with the last
+// loft handle over it (in this crate's allocator).  Reads answer exactly what
+// `alloc_vector_from_bytes` answers; a WRITE into it halts the program with the advice
+// to copy first (`w = v`).  Copies on a host without `foreign_fn`.
+let decoded: Vec<u8> = decode(input);
+unsafe { store.foreign_vector_from_owned(decoded) }
+```
+
+Use it where the library's contract already says "read the result" — a decoded payload,
+a file's bytes — never for a buffer the caller is meant to grow.  A library that calls it
+declares the loft floor that carries loft-ffi 0.1.2 in `loft.toml` (`loft = ">=…"`): on an
+older host the field is past the handle it was given.  DATABASE.md § Foreign stores has
+the runtime side.
 
 ### Callback architecture
 

@@ -435,8 +435,9 @@ impl RuntimeError {
         } else if origin == crate::store::Store::FOREIGN_ORIGIN {
             // @PLN174 — bytes the runtime does not own (a mapped file, a library's buffer):
             // read-only by contract, and the cure is a copy, never an unlock.
-            "write to bytes the program does not own (a mapped file, a library's buffer) — \
-             they are read-only; copy them first (`w = v[0..len(v)]`) and write the copy"
+            "write to bytes the program does not own (a mapped file, a library's buffer, or \
+             a slice of either) — they are read-only; copy them first (`w = v`, a bind \
+             copies) and write the copy"
                 .to_string()
         } else {
             kind.describe()

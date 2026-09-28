@@ -82,11 +82,19 @@ unsafe impl Sync for LoftRef {}
 ///   parse time).
 /// Opaque context pointer passed to callback functions.
 /// The cdylib must not dereference or inspect this — just pass it through.
+/// Its low 16 bits are the store number ([`LoftStore::store_nr`] reads them);
+/// the bits above belong to the host.
 #[repr(C)]
 #[derive(Clone, Copy)]
 pub struct LoftStoreCtx {
     pub _opaque: *mut (),
 }
+
+/// Frees a block a cdylib handed to the host through
+/// [`LoftStore::foreign_vector_from_owned`]: `(ptr, len, cap)` are the `Vec<u8>`'s
+/// parts.  Called ONCE, by the host, when the last loft handle over the bytes is
+/// freed — in the cdylib's own allocator, since the host's may differ.
+pub type LoftForeignRelease = unsafe extern "C" fn(*mut u8, usize, usize);
 
 #[repr(C)]
 #[derive(Clone, Copy)]
@@ -105,6 +113,28 @@ pub struct LoftStore {
     /// Resize record `rec` to `words` 8-byte words. Returns the (possibly new) record number.
     /// **After calling this, `ptr` may be stale — call `reload()` immediately.**
     pub resize_fn: Option<unsafe extern "C" fn(LoftStoreCtx, u32, u32) -> u32>,
+    /// Adopt a block of bytes the cdylib owns as a READ-ONLY `vector<u8>` with no
+    /// copy: `(ctx, ptr, len, cap, elem_size, release)`.  The host keeps the block
+    /// until the last loft handle over it is freed, then calls `release(ptr, len,
+    /// cap)`.  Answers the null ref when the host did not take the block (the
+    /// caller still owns it).  Reached through
+    /// [`foreign_vector_from_owned`](LoftStore::foreign_vector_from_owned).
+    ///
+    /// The LAST field, on purpose: an older cdylib reads the fields before it and
+    /// nothing after, and every host-to-cdylib crossing is the one fixed
+    /// [`LoftBridgeFn`] shape, so a longer struct shifts no other argument.  A
+    /// cdylib that CALLS it must run on a host that fills it — declare the loft
+    /// floor that carries loft-ffi 0.1.2 in `loft.toml`.
+    pub foreign_fn: Option<
+        unsafe extern "C" fn(
+            LoftStoreCtx,
+            *mut u8,
+            usize,
+            usize,
+            u32,
+            LoftForeignRelease,
+        ) -> LoftRef,
+    >,
 }
 
 // SAFETY: The store is only accessed from the interpreter's thread
@@ -446,6 +476,41 @@ impl LoftStore {
         vec
     }
 
+    /// Hand `data` to loft as a `vector<u8>` WITHOUT copying it: the host serves the
+    /// block through a read-only foreign store and frees it — through
+    /// [`release_vec`], in this cdylib's allocator — when the last loft handle over
+    /// it is freed.  The result is what [`alloc_vector_from_bytes`] answers for the
+    /// same bytes, and loft reads it exactly the same way: length, index, iteration,
+    /// slice, `text_from_bytes`.  What differs: a WRITE into it (`v[0] = 1`,
+    /// `v += […]`) halts the program with the advice to copy first (`w = v`).  So a
+    /// library answers this way only where its contract already says "read the
+    /// result" — the fast path for a decoded payload, not for a buffer the caller
+    /// is meant to grow.
+    ///
+    /// Falls back to the copy on a host that has no [`foreign_fn`] or declined the
+    /// block, so the bytes always arrive.
+    ///
+    /// [`alloc_vector_from_bytes`]: LoftStore::alloc_vector_from_bytes
+    /// [`foreign_fn`]: LoftStore::foreign_fn
+    ///
+    /// # Safety
+    /// The store handle must be the one the bridge was called with, on the same
+    /// thread.
+    pub unsafe fn foreign_vector_from_owned(&mut self, data: Vec<u8>) -> LoftRef {
+        let mut data = std::mem::ManuallyDrop::new(data);
+        if let Some(f) = self.foreign_fn {
+            let (ptr, len, cap) = (data.as_mut_ptr(), data.len(), data.capacity());
+            let r = unsafe { f(self.ctx, ptr, len, cap, 1, release_vec) };
+            if !r.is_null() {
+                return r;
+            }
+        }
+        // The host did not take the block: it is still ours, so copy and free it.
+        let data = std::mem::ManuallyDrop::into_inner(data);
+        let len = data.len();
+        unsafe { self.alloc_vector_from_bytes(1, len as u32, data.as_ptr(), len) }
+    }
+
     /// Allocate a text string in the store and set a struct field to point to it.
     ///
     /// The text record layout is: `[header(4)] [length(4)] [utf8-bytes...]`.
@@ -465,6 +530,16 @@ impl LoftStore {
         // Set the field to point to the text record.
         unsafe { self.set_int(rec, pos, offset, str_rec as i32) };
     }
+}
+
+/// The [`LoftForeignRelease`] for a `Vec<u8>` this crate handed over: rebuilds the
+/// vector from its parts and drops it, in this cdylib's allocator.
+///
+/// # Safety
+/// `(ptr, len, cap)` must be the parts of a `Vec<u8>` handed to the host by
+/// [`LoftStore::foreign_vector_from_owned`], released exactly once.
+pub unsafe extern "C" fn release_vec(ptr: *mut u8, len: usize, cap: usize) {
+    drop(unsafe { Vec::from_raw_parts(ptr, len, cap) });
 }
 
 // ── LoftStr: safe text return ──────────────────────────────────────────
@@ -1170,6 +1245,7 @@ mod tests {
             claim_fn: None,
             reload_fn: None,
             resize_fn: None,
+            foreign_fn: None,
         }
     }
 

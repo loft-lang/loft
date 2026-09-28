@@ -3766,8 +3766,9 @@ impl Parser {
         }
         let rec_tp = self.append_elem_tp(&elm_ty);
         let clear = self.cl("OpClearVector", &[Value::Var(buf_var)]);
+        // @PLN174 F5 — the caller's buffer VIEWS a foreign answer, copies an owned one.
         let append = self.cl(
-            "OpAppendVector",
+            "OpAdoptVector",
             &[Value::Var(buf_var), Value::Var(fwd), Value::Int(rec_tp)],
         );
         let Some(last) = l.last_mut() else {

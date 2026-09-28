@@ -14,6 +14,14 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**A library can hand you its bytes without copying them.**  A native library that
+decodes a payload used to copy it into a loft vector; with loft-ffi 0.1.2 its bridge can
+answer the buffer it already built (`foreign_vector_from_owned`), and your `v =
+lib::decode(x)` reads those bytes in place — length, index, iteration, a slice, `text_from_bytes`
+— exactly as before.  Such a result is read-only, like a mapped file: writing into it stops the
+program with the advice to copy first (`w = v`).  A mapped file or such a result handed to a
+native library function now works too (it used to crash).
+
 **A slice is a vector wherever a vector is expected.**  `v[lo..hi]` used to be accepted
 only in a `for` loop or on the right of a bind; handing it to a function
 (`f(v[2..5])`), returning it, putting it in a struct field or in a vector literal was
@@ -31,6 +39,15 @@ with the cure: write `==` to compare, or move the store to its own line.
 built for a different loft (two checkouts, an old install beside a new build), the run used to
 end in a corrupt-reference crash far from the cause.  It now stops before anything runs and
 says which operator sits where the binary expects another, and how to rebuild.
+
+**A slice of a mapped file copies nothing.**  `sub = m[lo..hi]` on the bytes `file_map`
+answers is a view: `sub` reads the file's bytes in place, for as long as it is bound and
+whatever happens to `m` meanwhile, and `text_from_bytes(m[lo..hi])` decodes straight off
+the mapping.  Like the mapping, a view is read-only — writing it is refused with the same
+message, and the cure is the same: bind it (`w = sub`), which copies, and write `w`.  Fixed
+on the way: a bind of a mapped vector (`w = m`) and a `par` loop over one crashed, and a
+`vector<u8>` parameter rebound from its own slice (`p = p[1..3]`) copied eight bytes per
+element.
 
 **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
 answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and

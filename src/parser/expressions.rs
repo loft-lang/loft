@@ -4487,9 +4487,13 @@ use a separate collection or add after the loop"
             // (1) materialise the slice iterator into the fresh temp (reads the
             //     source — still intact — and appends to tmp; tmp != source).
             self.materialize_iterator(code, &iter_tp, &Value::Var(tmp), &lhs_parent_tp, tmp, "=");
-            // (2) clear the destination and append the temp's contents.
-            let dn = self.data.type_def_nr(&elm_tp);
-            let rec_tp = Value::Int(i32::from(self.data.def(dn).known_type()));
+            // (2) clear the destination and append the temp's contents.  The append's
+            // element row is the one every append takes (`append_elem_tp`): a scalar
+            // element's own definition answers 0 here, which `vector_add` sizes at eight
+            // bytes — a `vector<u8>` parameter rebound from its own slice copied an 8-byte
+            // stride per element, over-reading the temp (silent on a copy, refused on a
+            // foreign view; @PLN174 F4b found it).
+            let rec_tp = Value::Int(self.append_elem_tp(&elm_tp));
             let clear = self.cl("OpClearVector", &[Value::Var(var_nr)]);
             let append = self.cl(
                 "OpAppendVector",
@@ -4569,8 +4573,9 @@ use a separate collection or add after the loop"
             // (destructive) `vector_db`.
             let mut ls = vec![set_fwd];
             ls.extend(self.vector_db(&elm_tp, var_nr));
+            // @PLN174 F5 — a foreign answer is VIEWED, an owned one copied as before.
             ls.push(self.cl(
-                "OpAppendVector",
+                "OpAdoptVector",
                 &[Value::Var(var_nr), Value::Var(fwd), Value::Int(rec_tp)],
             ));
             *code = Value::Insert(ls);
@@ -9742,8 +9747,17 @@ use a separate collection or add after the loop"
             stmts.push(self.cl("OpClearVector", &[Value::Var(var_nr)]));
         }
         stmts.push(init);
+        // @PLN174 F4b — a bind whose backing is the local's OWN store may take a VIEW of a
+        // foreign source (`OpSliceView`, which locks that store); an append, an argument
+        // or a field keeps the copy, since their store holds more than this vector.
+        let owns_backing = needs_db || self.owns_vdb_backing(var_nr);
+        let slice_op = if op == "=" && owns_backing {
+            "OpSliceView"
+        } else {
+            "OpSliceVector"
+        };
         stmts.push(self.cl(
-            "OpSliceVector",
+            slice_op,
             &[
                 Value::Var(var_nr),
                 subject,
@@ -9757,6 +9771,17 @@ use a separate collection or add after the loop"
             self.vars.depend(var_nr, db);
         }
         Value::Insert(stmts)
+    }
+
+    /// Is `var`'s backing store its own `__vdb_N` — a store that holds nothing but this
+    /// vector, so a view may lock it (@PLN174 F4b)?  An argument's backing is the caller's
+    /// and may be a field's store; a keyed or linked local's holds more than one vector.
+    fn owns_vdb_backing(&self, var: u16) -> bool {
+        if self.vars.is_argument(var) {
+            return false;
+        }
+        let deps = self.vars.tp(var).depend();
+        deps.len() == 1 && self.vars.name(deps[0]).starts_with("__vdb_")
     }
 
     pub(crate) fn materialize_iterator(

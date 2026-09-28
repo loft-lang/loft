@@ -10193,6 +10193,55 @@ extern crate loft;"
             "  let stores: &mut Stores = unsafe {{ &mut *cell.get() }};"
         )?;
 
+        // The heap-typed arguments in declaration order — what pins the store the bridge
+        // is handed (the interpreter's `ref_arg_store` picks the first `LoftTag::Ref` arg,
+        // and a marshalled vector carries that tag too).  `heap_dep()` is the canonical
+        // heap set; the outer DbRef's `.store_nr` is the store for both Reference and
+        // Vector args.  D-html-vec: for the browser, a `vector` arg does NOT pin a
+        // LoftStore — it is passed as a raw `(ptr, count)` pair — so it is left out of the
+        // store-pin decision in the wasm path only; the native cdylib path keeps #423's
+        // LoftRef convention.
+        let heap_args: Vec<&crate::data::Attribute> = def
+            .attributes
+            .iter()
+            .filter(|a| {
+                !a.name.starts_with("__")
+                    && a.typedef.base().heap_dep().is_some()
+                    && !(self.wasm_browser && matches!(a.typedef.base(), Type::Vector(_, _)))
+            })
+            .collect();
+        let first_ref_arg = heap_args.first().copied();
+        // `returns_loft_ref` drives the RETURN conversion (`from_loft_ref`);
+        // `needs_loft_store` drives the store-handle + guard + `_ls` first arg.
+        // They diverge for a Reference-arg fn with a scalar return (imaging's
+        // `load_png` returns `boolean`): store handle yes, return conversion no.
+        let returns_loft_ref = matches!(
+            def.returned().base(),
+            Type::Vector(_, _) | Type::Reference(_, _)
+        );
+        let needs_loft_store = returns_loft_ref || first_ref_arg.is_some();
+        // @PLN174 F5 — ONE set-up for the call's heap-typed arguments, shared with the
+        // interpreter's dispatcher (`Stores::bridge_args`): the store the bridge is handed,
+        // and per argument what to hand it — a FOREIGN vector's bytes copied into that
+        // store, since a cdylib reads a vector by pointer arithmetic on the one store it
+        // is given.  The guard's drop, after the answer, frees the copies.  The browser
+        // path reads through `Store` and needs none of it.
+        if needs_loft_store && !self.wasm_browser {
+            let list = heap_args
+                .iter()
+                .map(|a| {
+                    let var = sanitize(&a.name);
+                    let is_vec = matches!(a.typedef.base(), Type::Vector(_, _));
+                    format!("(var_{var}, {is_vec})")
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            writeln!(
+                w,
+                "  let _bc = loft::native_call::BridgeGuard::begin(cell, stores, &[{list}], {returns_loft_ref});"
+            )?;
+        }
+
         // Pre-declare each `vector` arg's inner-record number before the call
         // expression.  A loft `vector` var is an OUTER record whose word at
         // `(rec, pos)` holds the inner vector record; `_vr_{var}` is that inner
@@ -10204,9 +10253,20 @@ extern crate loft;"
             }
             if let Type::Vector(elem_tp, _) = attr.typedef.base() {
                 let var = sanitize(&attr.name);
+                // `_va_{var}` is what the cdylib is handed: the argument, or the copy its
+                // foreign bytes took (@PLN174 F5).
+                if self.wasm_browser {
+                    writeln!(w, "  let _va_{var} = var_{var};")?;
+                } else {
+                    let i = heap_args
+                        .iter()
+                        .position(|a| a.name == attr.name)
+                        .unwrap_or(0);
+                    writeln!(w, "  let _va_{var} = _bc.handed({i});")?;
+                }
                 writeln!(
                     w,
-                    "  let _vr_{var} = loft::keys::store(&var_{var}, &stores.allocations).get_u32_raw(var_{var}.rec, var_{var}.pos);"
+                    "  let _vr_{var} = loft::keys::store(&_va_{var}, &stores.allocations).get_u32_raw(_va_{var}.rec, _va_{var}.pos);"
                 )?;
                 // D-html-vec: the browser host import takes the raw `(ptr, count)` of the
                 // vector's element data — the JS glue reads it as `new Float32Array(mem,
@@ -10230,13 +10290,10 @@ extern crate loft;"
         // @PLAN12 phase 3.5a (2026-05-24) — LoftStore forwarding for
         // store-allocating cdylib returns (Type::Vector / Type::Reference).
         // The cdylib needs a LoftStore handle to alloc the returned vector
-        // / struct.  Construct one via the new `loft::native_call::build_store`
-        // API and set up CURRENT_STORES for the cdylib's callbacks via the
-        // RAII `enter` guard.  When no Reference/Vector arg is present
-        // (random's n_rand_indices case), allocate against the null store
-        // (stores.null()).  Type::Reference args + their DbRef→LoftRef
-        // conversion (`to_loft_ref`) is a future extension for
-        // imaging/graphics drains — not required for random.
+        // / struct.  Construct one via `loft::native_call` and set up
+        // CURRENT_STORES for the cdylib's callbacks via the RAII `enter` guard.
+        // When no Reference/Vector arg is present (random's n_rand_indices
+        // case), allocate against a store minted for the answer.
         //
         // Bind the LoftStore via `transmute_copy` so rustc accepts it
         // at the cdylib call site even when there are TWO copies of
@@ -10252,50 +10309,10 @@ extern crate loft;"
         // name/width/height + an allocated pixel vector into `image`).  The
         // store handle must point at the store the struct lives in — NOT the
         // null store — so the vector the cdylib allocates lands in the same
-        // store as its owner (mirrors the interpreter's
-        // `make_loft_store(stores, first_ref_store(args))` at
-        // `src/extensions.rs:981`).
-        // Any heap-typed arg (Reference / Vector / data-enum / sorted / hash /
-        // index / spatial) pins the store and rides as a `LoftRef`, exactly as
-        // the interpreter's `ref_arg_store` picks the first `LoftTag::Ref` arg
-        // (a marshalled vector carries that tag too).  `heap_dep()` is the
-        // canonical heap set; the outer DbRef's `.store_nr` is the store for
-        // both Reference and Vector args.
-        // D-html-vec: for the browser, a `vector` arg does NOT pin a LoftStore — it is
-        // passed as a raw `(ptr, count)` pair (below), so it must not force the cdylib
-        // `_ls` store-handle machinery.  Exclude it from the store-pin decision in the
-        // wasm path only; the native cdylib path keeps #423's LoftRef convention.
-        let first_ref_arg = def.attributes.iter().find(|a| {
-            !a.name.starts_with("__")
-                && a.typedef.base().heap_dep().is_some()
-                && !(self.wasm_browser && matches!(a.typedef.base(), Type::Vector(_, _)))
-        });
-        // `returns_loft_ref` drives the RETURN conversion (`from_loft_ref`);
-        // `needs_loft_store` drives the store-handle + guard + `_ls` first arg.
-        // They diverge for a Reference-arg fn with a scalar return (imaging's
-        // `load_png` returns `boolean`): store handle yes, return conversion no.
-        let returns_loft_ref = matches!(
-            def.returned().base(),
-            Type::Vector(_, _) | Type::Reference(_, _)
-        );
-        let needs_loft_store = returns_loft_ref || first_ref_arg.is_some();
+        // store as its owner (mirrors the interpreter's `make_loft_store`).
         if needs_loft_store {
-            // Order matters: extract `store_nr` as a SEPARATE statement so it
-            // doesn't dual-borrow `stores` alongside the build_store call
-            // (rustc E0502).  A heap-typed arg pins the store to that arg's
-            // store_nr; otherwise (vector-return only, e.g. random) the null
-            // store hosts the freshly allocated return vector.
-            if let Some(a) = first_ref_arg {
-                let var = sanitize(&a.name);
-                writeln!(w, "  let _store_nr = var_{var}.store_nr;")?;
-            } else {
-                writeln!(w, "  let _store_nr = stores.null().store_nr;")?;
-            }
             writeln!(w, "  let _guard = loft::native_call::enter(stores);")?;
-            writeln!(
-                w,
-                "  let _ls_src = loft::native_call::build_store(stores, _store_nr);"
-            )?;
+            writeln!(w, "  let _ls_src = _bc.store(stores);")?;
             // Reinterpret as the cdylib's LoftStore (same layout,
             // different crate identity).  Type of `_ls` inferred
             // from the call site below.
@@ -10383,7 +10400,7 @@ extern crate loft;"
                     first = false;
                     write!(
                         w,
-                        "unsafe {{ std::mem::transmute_copy(&loft::codegen_runtime::to_loft_ref(loft::keys::DbRef {{ store_nr: var_{var}.store_nr, rec: _vr_{var}, pos: 0 }})) }}"
+                        "unsafe {{ std::mem::transmute_copy(&loft::codegen_runtime::to_loft_ref(loft::keys::DbRef {{ store_nr: _va_{var}.store_nr, rec: _vr_{var}, pos: 0 }})) }}"
                     )?;
                 }
                 // Reference / data-enum / sorted / hash / index / spatial: a

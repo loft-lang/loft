@@ -94,5 +94,6 @@ fn main() {
   assert(len(fms) == 3 && fms[0] == 202 && fms[2] == 204, "c10 {len(fms)} {fms[0]} {fms[2]}");
   fmt = fm[-1..];
   assert(len(fmt) == 1 && fmt[0] == 209, "c10 tail {fmt[0]}");
+  assert(delete("loft_174_slice.tmp"), "cleanup");
   println("slice copy ok");
 }

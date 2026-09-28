@@ -139,6 +139,9 @@ make work                                # the open issues that are PICK-UP work
                                          #   there).  START HERE to find the next task, and use
                                          #   `ARGS=--count` for the scalar.  A failed query is
                                          #   exit 2, never an empty list — ISSUE_TRACKING.md
+make disk-headroom                       # ROOM FOR A GATE: every gate runs this first; by hand
+                                         #   when a build says `No space left on device`.  This
+                                         #   checkout's scratch only, never a sibling's live run
 make sweep-scratch                       # reclaim loft's temp scratch (dead-process native
                                          #   artefacts, aged test caches, old agent sessions);
                                          #   `df -h /` before a gate — a full disk fails the
