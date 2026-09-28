@@ -767,7 +767,10 @@ the companion [tuples-history.md](tuples-history.md).
   one member of a family is a claim about that member (see the history file's note on the
   keyed half), so the front/back/middle split is the point of the list rather than its length.
 - **Construct + project (`T-Cons` / `T-Proj`)** — `t = (3, 7); t.0` is `3`, `t.1` is `7`.
-- **Destructure (`T-Destr`)** — `(a, b) = (5, 9)` binds `a=5, b=9`.  With a HEAP member and on
+- **Destructure (`T-Destr`)** — `(a, b) = (5, 9)` binds `a=5, b=9`.  A member binds as its type
+  binds: a STRUCT member is a VIEW (`B-View`; measured 2026-09-28 from a local, a call return, a
+  vector element, a struct field and a loop variable), and
+  with a COLLECTION or `text` member on
   both backends (2026-09-10), each binding is a COPY as `B-Copy` requires, checked by mutating
   each side and reading the other: from a LOCAL tuple (`t = ("alpha", v)`, then `v += […]` and
   `b += […]` leave `t.1` at its own length), from a CALL return, from a vector ELEMENT by a

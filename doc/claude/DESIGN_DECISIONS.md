@@ -98,25 +98,27 @@ implementing nested `fn` would.  Decided 2026-05-04 —
 
 ## C64 — Tuple struct-ref elements use MOVE semantics (not copy + null)
 
-**Decision.** A struct-reference tuple element MOVES on destructure: each destination variable
-owns its element and frees it at its own scope exit; the source tuple frees nothing per element.
-**Why.** That is what the runtime already does, correctly on both backends; copy-then-null adds
-an opcode and a runtime write per destructure with no observable difference.
+**Decision.** Superseded by the binding rules.  A destructured tuple member binds as its TYPE
+binds: a plain struct member is a VIEW of the tuple's member (formal/binding.md `(B-View)` — a
+struct-typed projection names an interior place), a collection or `text` member is a COPY
+(`(B-Copy)`), and a `value struct` member a value.  The tuple stays whole; nothing moves.
+**Why.** The move this entry described is not what either backend does: after `(a, _) = t`, `t` is
+still read and a write through `a` reaches `t.0`, as `(B-View)` says it must.
 
-**Revisit when.** A shape appears where move is observably wrong and copy + null right.  Decided
-2026-05-11 — [record](DESIGN_DECISIONS-history.md#c64--tuple-struct-ref-elements-use-move-semantics-not-copy--null).
-**Holds at:** `tests/tuple_matrix.rs` (the `e5_*` struct-ref cells).
+**Revisit when.** `(B-View)` changes.  Decided 2026-05-11, superseded 2026-09-28 — [record](DESIGN_DECISIONS-history.md#c64--tuple-struct-ref-elements-use-move-semantics-not-copy--null).
+**Holds at:** `@C64` — `tests/scripts/a-tuple-member-destructures-as-its-type-binds.loft`; `tests/tuple_matrix.rs` (the `e5_*` struct-ref cells).
 **Catalogue:** @F11 (tuples).
 
 ## C65 — Tuple "structure value" element type folded into reference (E5 = E6)
 
-**Decision.** A tuple element of struct type is a reference (E5); there is no separate by-value
-struct element (E6).  **Why.** loft has no inline by-value struct type — a struct value is a
-`DbRef` to a store record — so an E6 row would duplicate E5 or need a new type variant with no
-consumer.
+**Decision.** Superseded by `value struct`.  A tuple element of a plain struct type is a reference
+to a record (E5), and of a `value struct` type a value (E6): destructuring, projecting or copying
+the tuple gives an independent value, on both backends.  **Why.** The entry's premise — loft has
+no inline by-value struct — ended with `value struct` (@PLN101), which was its own revisit trigger.
 
-**Revisit when.** A feature introduces inline value structs.  Decided 2026-05-11 —
-[record](DESIGN_DECISIONS-history.md#c65--tuple-structure-value-element-type-folded-into-reference-e5--e6).
+**Revisit when.** Never for the fold; it no longer applies.  Decided 2026-05-11, superseded
+2026-09-28 — [record](DESIGN_DECISIONS-history.md#c65--tuple-structure-value-element-type-folded-into-reference-e5--e6).
+**Holds at:** `@C65` — `tests/scripts/a-tuple-member-destructures-as-its-type-binds.loft`.
 **Catalogue:** @F11 (tuples).
 
 ## C66 — Production loft programs never abort on user-attributable edge cases (development may halt)

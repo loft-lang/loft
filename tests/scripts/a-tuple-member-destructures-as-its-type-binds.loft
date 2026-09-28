@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @C64 @C65 — a destructured tuple member binds as its TYPE binds: a plain struct member is a
+// VIEW of the tuple's member (formal/binding.md (B-View): a struct-typed projection names an
+// interior place), a collection member is a COPY ((B-Copy)), and a `value struct` member is a
+// value.  Each cell writes through one name and reads the other.
+//
+// @falsified-at: none — a LOCK.  It records the boundary the formal rules draw and both
+//   backends answer; it replaced register entries that described a MOVE (C64) and said a
+//   by-value struct element could not exist (C65).
+
+struct TmS { x: integer }
+value struct TmV { x: integer, y: integer }
+
+fn main() {
+  t = (TmS { x: 1 }, 2);
+  (a, _) = t;
+  a.x = 9;
+  assert(t.0.x == 9, "a struct member is a view of the tuple's member: {t.0.x}");
+  t.0.x = 5;
+  assert(a.x == 5, "and it reads the tuple's writes: {a.x}");
+  tv = ([1, 2], 3);
+  (va, _) = tv;
+  va += [9];
+  assert(len(va) == 3 && len(tv.0) == 2, "a collection member is a copy: {len(va)} {len(tv.0)}");
+  u = (TmV { x: 1, y: 2 }, 3);
+  (b, _) = u;
+  b.x = 8;
+  assert(b.x == 8 && u.0.x == 1, "a value-struct member is a value: {b.x} {u.0.x}");
+}

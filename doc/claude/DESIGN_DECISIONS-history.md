@@ -301,6 +301,13 @@ in the move/copy axis.
 
 ---
 
+
+**Superseded 2026-09-28 (@PLN175).**  Measured on both backends: after `(a, _) = t` with a struct
+member, `t` is still read and a write through `a` reaches `t.0` — the member is a VIEW, from a
+local, a call return, a vector element, a struct field and a loop variable alike, while a vector
+member is a copy.  That is `(B-View)` / `(B-Copy)` (formal/binding.md), not the move this entry
+described; the entry now points at those rules.
+
 ## C65 — Tuple "structure value" element type folded into reference (E5 = E6)
 
 **Catalogue:** @F11 (tuples).
@@ -327,6 +334,11 @@ matrix in `00-matrix.md` marks every E6 cell as
 value structs (none on the roadmap) would re-open the row.
 
 ---
+
+
+**Superseded 2026-09-28 (@PLN175).**  This entry's revisit trigger — "a feature introduces inline
+value structs" — fired with `value struct` (@PLN101).  Measured on both backends: a `value struct`
+tuple member destructures, projects and copies as a value.
 
 ## C66 — Production loft programs never abort on user-attributable edge cases (development may halt)
 
