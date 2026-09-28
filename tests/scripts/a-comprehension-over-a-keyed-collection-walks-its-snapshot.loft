@@ -1,0 +1,86 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// A COMPREHENSION OVER A KEYED COLLECTION WALKS ITS SNAPSHOT (`@FR-Col-Order`: a sequential walk
+// of a keyed kind is in key order, read from the ordered snapshot the walk builds).  A `for`
+// statement built that snapshot for a `hash`, `spatial` or `trie`; a comprehension over the same
+// source did not, and walked the COLLECTION as though it were the snapshot: a non-empty hash
+// panicked on a record number read out of its table header, a two-key trie answered `[null]`,
+// and a four-point spatial answered one element — the last two silently, on both backends.
+// `Parser::keyed_snapshot` is now the one home both walks call, and the comprehension releases
+// its snapshot when its loop ends (`OpFreeScratch`), as the `for` epilogue does.
+//
+// Every collection is filled in REVERSE key order, so an answer in key order is the snapshot's
+// and not the insertion order's.  Expected values are hand-computed beside each cell.
+//
+// @falsified-at: PENDING
+// CHANNEL: assertions (hash cells: a store panic on the control).
+// HOLDS: every assertion passes on both backends on the cure tree.
+
+struct H { k: integer, v: text }
+struct T { k: text }
+struct P { x: integer, y: integer }
+struct Holder { h: hash<H[k]> }
+
+fn four() -> hash<H[k]> {
+  h: hash<H[k]> = [];
+  for i in 0..4 { h += [H { k: 3 - i, v: "h{3 - i}" }]; }
+  h
+}
+
+fn diagonal() -> spatial<P[x, y]> {
+  xs: spatial<P[x, y]> = [];
+  for i in 0..4 { xs += [P { x: 3 - i, y: 3 - i }]; }
+  xs
+}
+
+fn test_hash() {
+  h = four();
+  ks = [for e in h { e.k }];
+  assert("{ks}" == "[0,1,2,3]", "hash keys in key order: {ks}");
+  vs = [for e in h { e.v }];
+  assert("{vs}" == "[\"h0\",\"h1\",\"h2\",\"h3\"]", "hash texts: {vs}");
+  big = [for e in h if e.k > 1 { e.k * 10 }];
+  assert("{big}" == "[20,30]", "hash with a filter: {big}");
+  empty: hash<H[k]> = [];
+  none = [for e in empty { e.k }];
+  assert(len(none) == 0, "empty hash: {len(none)}");
+}
+
+fn test_hash_nested_and_repeated() {
+  h = four();
+  // Each outer element counts the inner walk: 4 each.
+  inner = [for e in h { len([for f in h { f.k }]) + e.k * 0 }];
+  assert("{inner}" == "[4,4,4,4]", "nested: {inner}");
+  // Fifty evaluations: 50 * (0+1+2+3) = 300.  Each builds a snapshot and releases it.
+  n = 0;
+  for _r in 0..50 { n += sum([for e in h { e.k }]); }
+  assert(n == 300, "repeated: {n}");
+}
+
+fn test_hash_field_source() {
+  w = Holder { h: four() };
+  ks = [for e in w.h { e.k }];
+  assert("{ks}" == "[0,1,2,3]", "a field source: {ks}");
+}
+
+fn test_trie() {
+  t: trie<T[k]> = [];
+  t += [T { k: "b" }]; t += [T { k: "ab" }]; t += [T { k: "aa" }];
+  ks = [for e in t { e.k }];
+  assert("{ks}" == "[\"aa\",\"ab\",\"b\"]", "trie: {ks}");
+  pre = [for e in t["a"..] { e.k }];
+  assert("{pre}" == "[\"aa\",\"ab\"]", "trie prefix: {pre}");
+}
+
+fn test_spatial() {
+  xs = diagonal();
+  all = [for p in xs { p.x }];
+  // The diagonal's Morton order is its x order.
+  assert("{all}" == "[0,1,2,3]", "spatial: {all}");
+  box = [for p in xs[(0, 0)..(2, 2)] { p.x }];
+  assert("{box}" == "[0,1,2]", "box: {box}");
+  // Outward from (3,3), capped at 2: (3,3) itself, then (2,2).
+  near = [for p in xs[(3, 3)..:2] { p.x }];
+  assert("{near}" == "[3,2]", "capped: {near}");
+}

@@ -3079,6 +3079,9 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
             in_type = in_type.depending(vec_var);
             fill = v_set(vec_var, expr);
             expr = Value::Var(vec_var);
+        } else if let Some((_, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, false) {
+            // A keyed source is walked through its ordered snapshot, as a `for` walks it.
+            fill = snapshot;
         }
         let var_tp = self.for_type(&in_type);
         let (iter_var, pre_var) = if super::collections::walks_text(&in_type) {
@@ -3710,6 +3713,13 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         if !self.first_pass && crate::keys::fused_append_enabled() && !self.keyed_local_kind(vec) {
             self.fuse_scalar_append(&mut lp, elm, vec_expr);
         }
+        // A keyed source's snapshot (`keyed_snapshot`) is released as soon as the walk ends,
+        // as a `for` statement's epilogue releases it: a comprehension evaluated once per
+        // round of an enclosing loop builds one per round.
+        let snapshot = match fill.unspan() {
+            Value::Set(s, _) if self.vars.name(*s).contains("hash_scratch") => Some(*s),
+            _ => None,
+        };
         let mut for_steps: Vec<Value> = Vec::new();
         if fill != Value::Null {
             for_steps.push(fill);
@@ -3719,6 +3729,10 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         }
         for_steps.extend(super::collections::iter_init_steps(create_iter));
         for_steps.push(v_loop(lp, "For comprehension"));
+        if let Some(s) = snapshot {
+            for_steps.push(self.cl("OpFreeScratch", &[Value::Var(s)]));
+            for_steps.push(v_set(s, Value::Null));
+        }
         let mut ls: Vec<Value> = Vec::new();
         if block {
             ls.extend(self.vector_db(in_t, vec));

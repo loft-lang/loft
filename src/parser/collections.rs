@@ -3351,6 +3351,89 @@ use #count instead"
 
     // @F28 — for-in loops (ranges, loop attributes, filtered, rev())
     #[expect(clippy::too_many_lines, reason = "inherited")]
+    /// The snapshot a walk over a keyed kind reads: a `hash`, `spatial` or `trie` source is
+    /// walked through an ordered scratch of its records, built here as `fill` into a fresh
+    /// `hash_scratch` variable that `expr` is rewritten to name.  `None` for every other kind.
+    ///
+    /// The one home for both walks that iterate a collection — a `for` statement and a
+    /// comprehension.  Only the `for` had it, so `[for e in h { … }]` over a non-empty hash
+    /// walked the HASH itself as if it were a scratch and read a record number out of its
+    /// table header (a store panic on both backends).  The caller releases the scratch
+    /// after its loop (`OpFreeScratch`).
+    pub(crate) fn keyed_snapshot(
+        &mut self,
+        expr: &mut Value,
+        in_type: &Type,
+        is_par: bool,
+    ) -> Option<(u16, Value)> {
+        let mut fill = Value::Null;
+        if let Type::Hash(content, _, dep)
+        | Type::Radix(content, _, dep)
+        | Type::Trie(content, _, dep) = in_type.clone()
+        {
+            // @FR-Col-Order — this snapshot is WHY a sequential `for x in h` is in KEY
+            // order: the hash builder sorts, and the walk reads the sorted copy.  Only
+            // the `par` walk skips the sort (@FR-C-Order), which is the one place the
+            // two orders differ.
+            //
+            // A trie is a radix TREE too, so its in-order walk is already key
+            // order: it takes the tree builder, not the hash one (whose bucket
+            // walk would read a trie's records as a hash table).
+            let is_radix = matches!(in_type, Type::Radix(_, _, _) | Type::Trie(_, _, _));
+            let scratch_tp = Type::Reference(content, dep.clone());
+            let scratch_var = self.create_unique("hash_scratch", &scratch_tp);
+            let hash_tp_id = self.get_type(in_type);
+            let tp_arg = if hash_tp_id == u16::MAX {
+                0
+            } else {
+                i32::from(hash_tp_id)
+            };
+            // Enforces @FR-C-Order's keyed exception.  A sequential `for x in h` is
+            // KEY-ordered; a `par` one is the hash's UNSORTED bucket walk, because the
+            // parallel queue has no use for key order — so it skips the O(n log n) key
+            // sort.  The two orders differing is stated by the rule, not a divergence.
+            //
+            // A radix has a natural order and its walk is already ordered (no sort), so
+            // it uses the same builder in every case (@PLN48).
+            let scratch_fn_name = if is_radix {
+                "n_radix_sorted"
+            } else if is_par {
+                "n_hash_unsorted"
+            } else {
+                "n_hash_sorted"
+            };
+            // @PLN48 S3 — a spatial range slice (`xs[(x,y)..]`, `xs[(x,y)..:n]`,
+            // `xs[(x1,y1)..(x2,y2)]`) and a trie prefix slice have ALREADY been
+            // rewritten to a call that BUILDS the ordered scratch.  Use it directly
+            // — do not wrap it in n_radix_sorted, which would walk the scratch as
+            // if it were a tree.  (There is no `.within` / `.near` / `.nearest`
+            // method: proximity is ordinary range slicing.)
+            let already_scratch = matches!(
+                expr.unspan(),
+                Value::Call(d, _) if matches!(self.data.def(*d).name(), "n_spatial_range" | "n_trie_prefix")
+            );
+            if already_scratch {
+                fill = v_set(scratch_var, expr.clone());
+                *expr = Value::Var(scratch_var);
+                if !self.first_pass {
+                    self.vars.set_type(scratch_var, scratch_tp);
+                }
+            } else {
+                let hash_sorted_fn = self.data.def_nr(scratch_fn_name);
+                if hash_sorted_fn != u32::MAX {
+                    let call = Value::Call(hash_sorted_fn, vec![expr.clone(), Value::Int(tp_arg)]);
+                    fill = v_set(scratch_var, call);
+                    *expr = Value::Var(scratch_var);
+                    if !self.first_pass {
+                        self.vars.set_type(scratch_var, scratch_tp);
+                    }
+                }
+            }
+            return Some((scratch_var, fill));
+        }
+        None
+    }
+
     pub(crate) fn parse_for(&mut self, code: &mut Value) {
         // P235: tuple destructure — `for (a, b, ...) in items { ... }`.
         // Parse the parenthesised name list now; later (after the iter
@@ -3489,73 +3572,12 @@ use #count instead"
             // Set to the `hash_scratch` var for on=4 (Hash/Radix) iteration, so the
             // loop epilogue can free a read-only source's DEDICATED scratch store
             // (`OpFreeScratch`, a no-op when co-located).  u16::MAX = not on=4.
+            let is_par = matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
             let mut hash_scratch_var: u16 = u16::MAX;
-            if let Type::Hash(content, _, dep)
-            | Type::Radix(content, _, dep)
-            | Type::Trie(content, _, dep) = in_type.clone()
+            if let Some((scratch_var, snapshot)) = self.keyed_snapshot(&mut expr, &in_type, is_par)
             {
-                // @FR-Col-Order — this snapshot is WHY a sequential `for x in h` is in KEY
-                // order: the hash builder sorts, and the walk reads the sorted copy.  Only
-                // the `par` walk skips the sort (@FR-C-Order), which is the one place the
-                // two orders differ.
-                //
-                // A trie is a radix TREE too, so its in-order walk is already key
-                // order: it takes the tree builder, not the hash one (whose bucket
-                // walk would read a trie's records as a hash table).
-                let is_radix = matches!(in_type, Type::Radix(_, _, _) | Type::Trie(_, _, _));
-                let scratch_tp = Type::Reference(content, dep.clone());
-                let scratch_var = self.create_unique("hash_scratch", &scratch_tp);
                 hash_scratch_var = scratch_var;
-                let hash_tp_id = self.get_type(&in_type);
-                let tp_arg = if hash_tp_id == u16::MAX {
-                    0
-                } else {
-                    i32::from(hash_tp_id)
-                };
-                // Enforces @FR-C-Order's keyed exception.  A sequential `for x in h` is
-                // KEY-ordered; a `par` one is the hash's UNSORTED bucket walk, because the
-                // parallel queue has no use for key order — so it skips the O(n log n) key
-                // sort.  The two orders differing is stated by the rule, not a divergence.
-                //
-                // A radix has a natural order and its walk is already ordered (no sort), so
-                // it uses the same builder in every case (@PLN48).
-                let is_par =
-                    matches!(&self.lexer.peek().has, LexItem::Identifier(kw) if kw == "par");
-                let scratch_fn_name = if is_radix {
-                    "n_radix_sorted"
-                } else if is_par {
-                    "n_hash_unsorted"
-                } else {
-                    "n_hash_sorted"
-                };
-                // @PLN48 S3 — a spatial range slice (`xs[(x,y)..]`, `xs[(x,y)..:n]`,
-                // `xs[(x1,y1)..(x2,y2)]`) and a trie prefix slice have ALREADY been
-                // rewritten to a call that BUILDS the ordered scratch.  Use it directly
-                // — do not wrap it in n_radix_sorted, which would walk the scratch as
-                // if it were a tree.  (There is no `.within` / `.near` / `.nearest`
-                // method: proximity is ordinary range slicing.)
-                let already_scratch = matches!(
-                    expr.unspan(),
-                    Value::Call(d, _) if matches!(self.data.def(*d).name(), "n_spatial_range" | "n_trie_prefix")
-                );
-                if already_scratch {
-                    fill = v_set(scratch_var, expr.clone());
-                    expr = Value::Var(scratch_var);
-                    if !self.first_pass {
-                        self.vars.set_type(scratch_var, scratch_tp);
-                    }
-                } else {
-                    let hash_sorted_fn = self.data.def_nr(scratch_fn_name);
-                    if hash_sorted_fn != u32::MAX {
-                        let call =
-                            Value::Call(hash_sorted_fn, vec![expr.clone(), Value::Int(tp_arg)]);
-                        fill = v_set(scratch_var, call);
-                        expr = Value::Var(scratch_var);
-                        if !self.first_pass {
-                            self.vars.set_type(scratch_var, scratch_tp);
-                        }
-                    }
-                }
+                fill = snapshot;
             }
             if matches!(in_type, Type::Vector(_, _)) {
                 // loft#1695, `@FR-I-For` — the SOURCE is evaluated once.  A place source
