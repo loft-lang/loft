@@ -48,6 +48,36 @@ fn package_layout_version_mismatch_is_fatal() {
     );
 }
 
+/// The floor is asked on EVERY path that adopts a manifest, so the `use` ORDER cannot
+/// decide it: here `testpkg_future` (floor 99999.0) is reached first as a SIBLING through
+/// `testpkg_uses_future`'s own `use`, and the direct `use` after it deduplicates.  Before
+/// @PLN174 F6 the sibling path adopted the manifest without the check, and this program
+/// compiled (`use testpkg_future; use testpkg_uses_future;` — the other order — did not).
+#[test]
+fn package_floor_holds_when_the_package_is_adopted_as_a_sibling_first() {
+    let s = sep_str();
+    let mut p = Parser::new();
+    p.parse_dir("default", true, true).unwrap();
+    p.lib_dirs = vec![format!("tests{s}lib")];
+    p.parse(
+        &format!("tests{s}lib{s}package_version_order_test_main.loft"),
+        false,
+    );
+    assert!(
+        p.diagnostics.level() >= Level::Error,
+        "the sibling-adopted package's floor must refuse: {:?}",
+        p.diagnostics.lines()
+    );
+    assert!(
+        p.diagnostics
+            .lines()
+            .iter()
+            .any(|l| l.contains("requires loft")),
+        "the refusal must name the floor: {:?}",
+        p.diagnostics.lines()
+    );
+}
+
 /// A manifest REFUSAL speaks alone: the package was found and rejected, so the search
 /// that follows must not also report it missing.
 ///

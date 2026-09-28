@@ -18847,6 +18847,42 @@ impl Parser {
     /// Called when a .loft file was found directly via lib_dirs (not through
     /// lib_path_manifest), so the manifest's native crate registration would
     /// otherwise be skipped.
+    /// Does this loft satisfy the package's `loft = ">=…"` floor?  ONE home for the
+    /// question, asked on EVERY path that adopts a manifest — a `--lib` resolution, a
+    /// sibling package a library's own `use` reaches, the ancestor walk — because a floor
+    /// checked on one path and not another is a guard the `use` ORDER decides: `use a; use b`
+    /// refused `b`'s floor while `use b; use a` accepted it, `b` having been adopted as `a`'s
+    /// sibling first and the direct `use` then deduplicated (@PLN174 F6).  A refusal is
+    /// fatal: the floor names the first release whose runtime the package's code needs, and
+    /// an older host reading past what it was given is the failure the floor exists to stop.
+    fn loft_floor_holds(&mut self, id: &str, m: &manifest::Manifest) -> bool {
+        let Some(ref req) = m.loft_version else {
+            return true;
+        };
+        let current = env!("CARGO_PKG_VERSION");
+        match manifest::check_version(req, current) {
+            manifest::VersionCheck::Satisfied => true,
+            manifest::VersionCheck::Unsatisfied => {
+                diagnostic!(
+                    self.lexer,
+                    Level::Fatal,
+                    "Package '{id}' requires loft {req} but interpreter is {current}"
+                );
+                false
+            }
+            // @PLN102 arc B: a constraint the loader cannot honour is
+            // rejected loudly, not silently treated as "any version".
+            manifest::VersionCheck::Malformed(why) => {
+                diagnostic!(
+                    self.lexer,
+                    Level::Fatal,
+                    "Package '{id}' has an invalid loft version requirement '{req}': {why}"
+                );
+                false
+            }
+        }
+    }
+
     fn register_native_manifest(
         &mut self,
         manifest_path: &std::path::Path,
@@ -18855,6 +18891,15 @@ impl Parser {
         let Some(m) = manifest::read_manifest(manifest_path.to_str().unwrap_or("")) else {
             return;
         };
+        let id = m.name.clone().unwrap_or_else(|| {
+            pkg_dir
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_default()
+        });
+        if !self.loft_floor_holds(&id, &m) {
+            return;
+        }
         let pkg_dir = pkg_dir.to_string_lossy().to_string();
         // Register the dlopen-side native lib path (interpreter mode).  The
         // `[library] native = "..."` form registers the cdylib for dlopen;
@@ -19049,29 +19094,8 @@ impl Parser {
         let (entry, manifest) = if manifest_pb.exists() {
             let manifest_path = manifest_pb.to_string_lossy().into_owned();
             let m = manifest::read_manifest(&manifest_path)?;
-            if let Some(ref req) = m.loft_version {
-                let current = env!("CARGO_PKG_VERSION");
-                match manifest::check_version(req, current) {
-                    manifest::VersionCheck::Satisfied => {}
-                    manifest::VersionCheck::Unsatisfied => {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Fatal,
-                            "Package '{id}' requires loft {req} but interpreter is {current}"
-                        );
-                        return None;
-                    }
-                    // @PLN102 arc B: a constraint the loader cannot honour is
-                    // rejected loudly, not silently treated as "any version".
-                    manifest::VersionCheck::Malformed(why) => {
-                        diagnostic!(
-                            self.lexer,
-                            Level::Fatal,
-                            "Package '{id}' has an invalid loft version requirement '{req}': {why}"
-                        );
-                        return None;
-                    }
-                }
+            if !self.loft_floor_holds(id, &m) {
+                return None;
             }
             // @PLN102 arc B-semantic — the compatibility `contract` axis (a
             // monotone integer; increments on a silent breaking change, distinct
