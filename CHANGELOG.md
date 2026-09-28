@@ -14,6 +14,14 @@ invariants, internal phase numbers)?  See
 
 ## 2026-09
 
+**An append to an empty-by-`null` list lands however the list is reached.**  A
+`vector<T>?` or `hash<…>?` local holding `null` is filled by `c += [x]` — and now also when
+it is handed to a `&` parameter (`fn add(c: &vector<T>?)`), linked with `c = &a`, or set back
+to `null` after it held something (`r = null; r += [x]`).  Before, those appends were lost
+without a word (a `hash` stopped with an internal error), and a list rebuilt inside a loop
+could leave one store unreleased.  `c?` inside such a `&` parameter now gives the list's
+default like it does anywhere else, instead of being refused.
+
 **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
 answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and
 `text_from_bytes` all work as on any vector, and nothing was copied into memory of the

@@ -1235,6 +1235,10 @@ pub struct Parser {
     /// context — parsing it standalone leaks).  `build_null_coalesce_default` swaps the
     /// lexer to this source at its own parse site, so `x?` matches `x ?? []` exactly.
     pub(crate) pending_default_src: Option<String>,
+    /// @C118 — the slot a NULL collection local is given before a `c = &a` bind shares its
+    /// handle (`Parser::null_local_slot`).  Built where the bind's right side is parsed and
+    /// placed before its statement by `parse_assign_op`; empty between binds.
+    pub(crate) pending_link_slot: Vec<Value>,
     /// loft#1003 — where the `??` default ENDED, for the `redundant-coalesce` deletion
     /// span.  Set as the default is parsed and consumed by `handle_null_coalesce`, because
     /// the notice fires before the default exists and the caller's cursor has moved past
@@ -1767,6 +1771,7 @@ impl Parser {
             admit_unwrap: 0,
             pending_default_rhs: None,
             pending_default_src: None,
+            pending_link_slot: Vec::new(),
             ncc_default_end: None,
             last_place_discharge: false,
             pass2_bodies: std::collections::HashSet::new(),
@@ -5930,7 +5935,16 @@ impl Parser {
                     // @PLN167 decision 1 — handed to a `&` parameter, a narrow local holds its
                     // field encoding from here on (`Variable::linked_narrow`).
                     self.vars.set_linked_narrow(v);
-                    *code = self.cl("OpCreateStack", &[orig]);
+                    // @C118 — a null collection local is given its slot before the callee
+                    // links to it, or an append in the callee has no place to land.
+                    let mut ls = self.null_local_slot(v);
+                    let create = self.cl("OpCreateStack", &[orig]);
+                    *code = if ls.is_empty() {
+                        create
+                    } else {
+                        ls.push(create);
+                        Value::Insert(ls)
+                    };
                 } else if crate::data::is_scalar(ref_tp)
                     && Self::is_amp_place(&orig, &self.data)
                     && let Some(place) = self.scalar_place_ref(&orig)

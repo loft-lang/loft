@@ -2101,7 +2101,7 @@ or build a local and use that."
                     if v_nr != u16::MAX {
                         // loft#1218 — give a NULL collection capture its slot BEFORE the fill
                         // below copies the handle, or there is nothing for the lambda to share.
-                        let backing = self.null_capture_backing(v_nr);
+                        let backing = self.null_local_slot(v_nr);
                         alloc_steps.extend(backing);
                     }
                     // loft#1483, `@FR-L-CapOwn` — release the store this capture slot DISPLACES.
@@ -2239,8 +2239,8 @@ or build a local and use that."
         )
     }
 
-    /// The backing a NULL collection capture needs before the closure record can share it —
-    /// empty for every other capture.
+    /// The slot a NULL collection local needs before anything can SHARE it — a closure
+    /// capture, a `&` argument, a `c = &a` binding — empty for every other local.
     ///
     /// A captured collection is shared as a DbRef, and `vector::is_absent_collection`'s header
     /// states what that DbRef is: *"a collection field or local is addressed by a DbRef aimed
@@ -2263,20 +2263,24 @@ or build a local and use that."
     /// capture and neither is in its mutating-op set, so it reported the element TEMP as the
     /// mutated name and the capture as untouched.  A read-only capture pays one store for a
     /// representation it shares with every other collection capture.
-    fn null_capture_backing(&mut self, v_nr: u16) -> Vec<Value> {
+    ///
+    /// @C118 — a LINK is the same sharing: `(Col-Insert-Absent)` says a parameter
+    /// instantiates like a local, and a `&τ?` parameter or `c = &a` handed a slot-less null
+    /// lost the append for a vector and faulted for a keyed kind, exactly as the capture did.
+    pub(crate) fn null_local_slot(&mut self, v_nr: u16) -> Vec<Value> {
         if self.first_pass || v_nr == u16::MAX || self.vars.is_argument(v_nr) {
             return Vec::new();
         }
-        let tp = self.vars.tp(v_nr).clone();
-        let (base, nullable) = tp.peel_optional();
-        if !nullable || !Self::is_collection_type(base) {
-            return Vec::new();
-        }
+        // Asked on the borrowed type first: this runs at every `&` argument and link, and
+        // almost none of them is a null collection local.
+        let (base, nullable) = self.vars.tp(v_nr).peel_optional();
         // A dep means the local already owns a backing — a `= []` capture, or one an earlier
         // statement built.  Its slot is already there to share.
-        if !tp.depend().is_empty() {
+        if !nullable || !Self::is_collection_type(base) || !self.vars.tp(v_nr).depend().is_empty() {
             return Vec::new();
         }
+        let tp = self.vars.tp(v_nr).clone();
+        let (base, _) = tp.peel_optional();
         #[allow(clippy::cast_possible_wrap)]
         let absent = crate::keys::DbRef::ABSENT_REC as i32;
         if let Type::Vector(elm, _) = base {
@@ -4387,8 +4391,8 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
     /// collection on every pass and throw away what the previous ones put in it.  Guarded,
     /// the mint is idempotent and a keyed local filled inside a loop keeps its records.
     ///
-    /// An ARGUMENT is excluded: its store is the caller's, and a null one is the caller's
-    /// answer to give.
+    /// An ARGUMENT is excluded: its store is the caller's, and the caller gives a null one
+    /// its slot before the call (`null_local_slot`, @C118).
     pub(crate) fn keyed_local_materialise(&mut self, vec: u16) -> Option<Value> {
         if self.first_pass
             || !self.keyed_local(vec)
@@ -7247,6 +7251,33 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
                 // `OpDatabase` below that repoints `vec`.
                 if let Some(orig) = self.vars.rebind_orig(vec) {
                     ls.push(self.cl("OpFreeRefIfDistinct", &[Value::Var(vec), Value::Var(orig)]));
+                }
+            }
+            // A GUARDED backing the local is leaving goes back to owning its store.  It was
+            // `skip_free`'d because the local releases what it names (loft#1486), and from here
+            // the local names this new backing: left marked, nobody released the old store —
+            // `e: vector<T>? = null; e += [x]; e = [y]` leaked one store per function (`r = null`
+            // takes this route too, @C118).  A backing minted unconditionally already owns its
+            // store and is freed at scope exit, so a view of the old contents stays valid.
+            if !rebind {
+                let guarded = |vars: &crate::variables::Function, d: u16| {
+                    vars.is_skip_free(d)
+                        && vars.is_inline_ref(d)
+                        && vars.name(d).starts_with("__vdb")
+                };
+                // Borrowed first: `vector_db_init` runs at every vector write.
+                let any = self
+                    .vars
+                    .tp(vec)
+                    .base()
+                    .deps_ref()
+                    .is_some_and(|ds| ds.iter().any(|&d| guarded(&self.vars, d)));
+                if any {
+                    for d in self.vars.tp(vec).depend() {
+                        if guarded(&self.vars, d) {
+                            self.vars.clear_skip_free(d);
+                        }
+                    }
                 }
             }
             self.vars.depend(vec, db);
