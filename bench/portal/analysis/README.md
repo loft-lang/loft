@@ -2,7 +2,9 @@
 
 The portal (`doc/claude/PERF_PORTAL.md`, `make perf-portal`) says WHICH classes are slow.
 The files here say WHY, price what could be done about it, and record what was built.
-@PLN158; the rewrites' rules are `doc/claude/formal/rewrites.md`.
+@PLN158; the rewrites' rules are `doc/claude/formal/rewrites.md`.  Where an analysis finds
+the twin winning by something loft cannot say, that is the unit to price — `(Perf-Gap)` in
+`doc/claude/formal/performance.md` — and the twin stays as written.
 
 | file | class | state |
 |---|---|---|

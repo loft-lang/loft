@@ -104,6 +104,35 @@ loft#1426 is the rule applied: the profiler showed the loft hot loop matching th
 reference's, so the deviation is filed against the ENGINE (N1 class), and the drawing
 library's source does not change.
 
+### An advantage the twin's language holds is a missing abstraction, not a caveat
+
+```
+  (Perf-Gap)     an advantage a reference twin holds by a CONSTRUCTION loft
+                 cannot express — a lazy walk where loft collects, a borrowed
+                 slice where loft copies, a struct in registers where loft
+                 claims a store, a container shape the stdlib lacks — is
+                 neither an unfair twin to be rewritten down to loft's form nor
+                 a row to be excused: it names a MISSING ABSTRACTION in loft,
+                 and the finding is routed to the language (a rewrite rule, a
+                 stdlib form, a type), never to the twin.
+```
+
+**In words** (owner, 2026-09-28).  loft is not a fundamentally different language from the
+reference.  Its STANDARD implementation optimises one way of working — records in stores,
+checked arithmetic, values that carry their null — and that choice excludes none of the
+others; so whatever the twin reaches for and loft cannot is exactly an abstraction loft
+owes its users, and *"the reference does X, which loft has no way to say"* is a FINDING,
+not a caveat on the row.  It goes into the class analysis as a priced unit, and the twin
+stays as written: rewriting the twin down to loft's limitation would make the row pass by
+measuring less, which `(Perf-Like)`'s hash cannot see because both lanes would still
+agree.  The distinction from `(Perf-Cure)`: Cure says a failed bar is closed in the engine
+rather than in the library; Gap says WHICH engine work a twin's win points at — the
+abstraction the twin used.  Measured, three times over: `parse`'s twin split its text
+lazily where loft built a `vector<text>`, and the row closed with `(R-LazySplit)` rather
+than a collecting twin; a struct the twin returned in registers became `(R-ValueRecord)`;
+a `&str` parameter became `(R-TextBorrow)`.  A twin that wins by computing LESS is a
+different matter and `(Perf-Like)`'s.
+
 ## Deviations
 
 OPEN: **1**

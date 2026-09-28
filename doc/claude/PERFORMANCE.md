@@ -13,7 +13,10 @@ to nothing outside the project; `(Perf-Twin)` where no natural counterpart exist
 WRITTEN the moment a hit is expected, never waived; `(Perf-Cure)` the twin MEASURES and
 never ships — a failed bar is closed in the engine (or the loft algorithm), because the
 libraries stay readable loft (the teaching corpus), and a native rewrite is a recorded
-per-routine edge case, not a habit.  The model harness is the drawing
+per-routine edge case, not a habit; `(Perf-Gap)` an advantage the twin holds by a
+construction loft cannot express is a MISSING ABSTRACTION in loft — routed to the language,
+never a twin rewritten down or a row excused, because loft's standard implementation
+optimises one way of working without excluding the others.  The model harness is the drawing
 library's `bench/` (loft#1426); @PLN158 generalizes it into the per-library standard read
 by the release checklist's `M-perf-pass`.
 

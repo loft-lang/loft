@@ -141,6 +141,11 @@ Four rules keep a row LIKE-FOR-LIKE, and a bench that breaks one measures someth
 4. **A kernel an optimiser can collapse is not a benchmark.**  A plain `sum += i` has a
    closed form; the integer loop here carries a dependency from step to step instead.
 
+A twin that wins by a construction loft cannot express — a lazy iterator, a borrowed
+slice, a struct in registers — breaks none of these and is NOT rewritten down to loft's
+form: it names an abstraction loft is missing, and the finding goes to the language
+(`formal/performance.md` `(Perf-Gap)`).
+
 ## Targets
 
 - **python** — CPython interpreter
