@@ -23,6 +23,15 @@ have made, on both backends; a keyed range slice (`sorted`, `index`, `trie`) sta
 `for`-only iterator.  And a slice of a scalar vector is copied in one block instead of
 one element at a time (forty 200 000-element slices: 0.13 → 0.03 s).
 
+**A slice of a mapped file copies nothing.**  `sub = m[lo..hi]` on the bytes `file_map`
+answers is a view: `sub` reads the file's bytes in place, for as long as it is bound and
+whatever happens to `m` meanwhile, and `text_from_bytes(m[lo..hi])` decodes straight off
+the mapping.  Like the mapping, a view is read-only — writing it is refused with the same
+message, and the cure is the same: bind it (`w = sub`), which copies, and write `w`.  Fixed
+on the way: a bind of a mapped vector (`w = m`) and a `par` loop over one crashed, and a
+`vector<u8>` parameter rebound from its own slice (`p = p[1..3]`) copied eight bytes per
+element.
+
 **A file can be read without copying it.**  `file_map(path)` maps a file read-only and
 answers its bytes as an ordinary `vector<u8>`: the length, an index, a loop, a slice and
 `text_from_bytes` all work as on any vector, and nothing was copied into memory of the

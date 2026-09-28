@@ -741,12 +741,31 @@ store is read-only, its bytes are described by the header contract every vector 
   drops the owner (`Store::release_foreign`) before the slot is recycled, so the mapping
   is released with the handle and the slot reinitialises as any other.  The bytes are the
   owner's, not the store-heap ceiling's (`store_budget` counts the tiny owned block only).
-* **Not (yet):** a slice of it is still a COPY (plan F4 makes it a view on a read-only
-  store), a worker's `clone_locked` snapshot carries no foreign bytes, and a record VIEW
-  (`rec_ptr`) is not served — a foreign store holds scalar vectors until F5.
+* **A slice of it is a VIEW (F4b).**  `s = m[lo..hi]` bound to a local that owns its
+  backing store (a `__vdb_N`) makes THAT store foreign over the span: `OpSliceView` →
+  `Stores::vector_slice_view`, where `Store::foreign_span` clamps the bounds and answers a
+  `ForeignSpan` whose owner is SHARED (`Arc<ForeignOwner>`) and `Store::make_foreign`
+  serves it.  The local reads the mapping's bytes in place under the same contract, and
+  the bytes live until the last store serving them is released — the handle or a view,
+  in any order, with no count kept.  A view is read-only (its write meets the same
+  refusal); the clear before a rebind or a literal (`clear_vector_release`,
+  `clear_vector`) drops the view first, so the store is ordinary, writable and empty
+  again; `make_foreign` returns a record the slot held to the free tree; a view of a view
+  adds its offset.  An append, an argument, a field or a return copies (`vector_slice`):
+  their store holds more than the one vector, and locking it would lock the rest.
+  `LOFT_NO_FOREIGN_VIEW=1` copies everywhere.
+* **A copy OUT reads where the bytes are.**  `copy_block_between`, `Stores::copy_block` and
+  the `par` workers' row readers take the source address from `Store::block_src`, which
+  answers the foreign bytes for `FOREIGN_REC` (a bind `w = m` and a `par` over `m` both read
+  sixteen gigabytes past the store before F4b), and `write_bytes` reads the payload through
+  `bytes_of`.  A worker's borrow (`borrow_locked_for_light_worker`), a locked clone and a
+  checkpoint copy carry the span, since the owner is shared.
+* **Not (yet):** a record VIEW (`rec_ptr`) is not served — a foreign store holds scalar
+  vectors until F5.
 
 The unit test `store::tests::a_foreign_store_answers_a_vector_read_through_the_same_accessors`
-reads a foreign store and a copied one through the same accessors byte for byte;
+reads a foreign store and a copied one through the same accessors byte for byte, and
+`a_view_of_a_foreign_store_reads_beside_the_copied_slice` does the same for a view;
 `tests/foreign_store.rs` does the same at the program level on both backends and asserts the
 write refusal; the cells are `tests/scripts/174-foreign-file.loft`.
 

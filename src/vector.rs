@@ -656,6 +656,11 @@ pub fn clear_vector(db: &DbRef, stores: &mut [Store]) {
         return;
     }
     let store = keys::mut_store(db, stores);
+    // @PLN174 F4b — a view of foreign bytes is dropped by its clear, never written.
+    if store.is_foreign() {
+        store.release_foreign();
+        return;
+    }
     let v_rec = store.collection_rec(db.rec, db.pos);
     if v_rec != 0 {
         // Only set size of the vector to 0

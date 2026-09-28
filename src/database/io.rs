@@ -838,12 +838,14 @@ impl Stores {
         let data: Vec<u8> = if bytes.rec == 0 || bytes.pos == 0 || length == 0 {
             Vec::new()
         } else {
-            let store = self.store_mut(&bytes);
+            let store = self.store(&bytes);
             let vec_rec = store.get_u32_raw(bytes.rec, bytes.pos);
             if vec_rec == 0 {
                 Vec::new()
             } else {
-                store.buffer(vec_rec)[..length as usize].to_vec()
+                // A READ of the payload: `bytes_of` serves a mapped file's bytes too, where
+                // the mutable `buffer` has none to give (@PLN174).
+                store.bytes_of(vec_rec)[..length as usize].to_vec()
             }
         };
         // Truncating, so this is `write_binary` and not the cursor-relative

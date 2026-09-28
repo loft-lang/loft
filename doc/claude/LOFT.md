@@ -2162,6 +2162,14 @@ field's value, an element of a literal — it is the fresh vector that local
 would hold, independent of `v`.  Only a KEYED range slice (`sorted`, `index`,
 `trie`) stays a `for`-only iterator.
 
+**A slice of read-only bytes is a view, and read-only itself.**  A `vector<u8>` that
+came from `file_map` (or from a library's buffer) is read-only, and `sub = v[lo..hi]`
+on it copies nothing: `sub` reads the same bytes in place, for as long as it is bound,
+however `v` is rebound or dropped meanwhile.  Reading it is what reading any vector is.
+Writing it (`sub[0] = 1`, `sub += [2]`) is refused with the message a write into the
+mapping gets, and the cure is the same: bind it (`w = sub`), which copies, and write `w`.
+An empty slice is an ordinary empty vector.
+
 **Negative slice bounds count from the end (@P384).**  `v[2..-1]` is
 "element 2 up to (not including) the last": on `[10, 20, 30, 40, 50]`
 it yields `30, 40`.  `v[-2..]` yields the last two elements.  A

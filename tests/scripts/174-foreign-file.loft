@@ -1,7 +1,8 @@
 // @PLN174 F2 — a FOREIGN store: `file_map(path)` serves a file's bytes through the store
 // contract with no copy into a store (a read-only mapping the store owns until the handle
-// is freed), and every read op — the length, an index, an iteration, a slice, a hoisted
-// loop, `text_from_bytes` — answers exactly what the copying `read_bytes` path answers.
+// is freed), and every read op — the length, an index, an iteration, a slice (a VIEW of
+// the mapping since F4b, `174-foreign-view.loft` has its own cells), a hoisted loop,
+// `text_from_bytes` — answers exactly what the copying `read_bytes` path answers.
 // Each cell reads BOTH paths and compares, and the file's bytes are chosen so every value
 // is hand-computed too.  The interpreter and native read through the same `Store`, so the
 // oracle here is the copying path, not the other backend; `LOFT_HOIST_VERIFY=1`,
@@ -52,7 +53,7 @@ fn main() {
   // c3: an iteration — the sum: 15 ascii bytes = 1387, the pattern's 49 = 3785 → 5172
   assert(ff_sum(m) == ff_sum(r) && ff_sum(m) == 5172, "c3 {ff_sum(m)} {ff_sum(r)}");
 
-  // c4: a slice (a copy at this phase), both paths and by hand
+  // c4: a slice (a view of the mapping), both paths and by hand
   s1 = m[7..14];
   t1 = r[7..14];
   assert(len(s1) == 7 && s1[0] == 102 && s1[6] == 110 && ff_same(s1, t1), "c4 {len(s1)} {s1[0]} {s1[6]}");
@@ -86,9 +87,22 @@ fn main() {
   m = file_map(ff_path()) ?? [];
   assert(m[63] == 113 && len(m) == 64, "c9");
 
-  // c10: a copy of the mapped bytes is an ordinary vector: writable, and independent
-  w = m[0..len(m)];
+  // c10: a BIND copies (B-Copy): the copy is an ordinary vector, writable and independent
+  w = m;
   w[0] = 72;
   assert(w[0] == 72 && m[0] == 104 && len(w) == 64, "c10 {w[0]} {m[0]}");
+  w2 = s1;
+  w2[0] = 1;
+  assert(w2[0] == 1 && s1[0] == 102 && len(w2) == 7, "c10 view copy {w2[0]} {s1[0]}");
+
+  // c11: the mapped bytes and a view of them written back out read the same bytes
+  assert(write_bytes("loft_174_copy.tmp", m), "c11 write mapping");
+  rm = read_bytes("loft_174_copy.tmp") ?? [];
+  assert(len(rm) == 64 && ff_same(rm, r), "c11 mapping {len(rm)}");
+  assert(write_bytes("loft_174_copy.tmp", s1), "c11 write view");
+  rv = read_bytes("loft_174_copy.tmp") ?? [];
+  assert(len(rv) == 7 && text_from_bytes(rv) == "foreign", "c11 view '{text_from_bytes(rv)}'");
+
+  assert(delete("loft_174_copy.tmp") && delete("loft_174_empty.tmp") && delete(ff_path()), "cleanup");
   println("foreign file ok");
 }

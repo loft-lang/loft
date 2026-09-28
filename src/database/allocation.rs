@@ -1652,9 +1652,32 @@ impl Stores {
         elem_size: u32,
         owner: crate::store::ForeignOwner,
     ) -> DbRef {
-        let db = self.database(4);
-        self.store_mut(&db)
-            .make_foreign(db.rec, db.pos, base, len, elem_size, owner);
+        let db = self.vector_buffer(4);
+        self.store_mut(&db).make_foreign(
+            db.rec,
+            db.pos,
+            crate::store::ForeignSpan {
+                base,
+                len,
+                elem_size,
+                owner: std::sync::Arc::new(owner),
+            },
+        );
+        db
+    }
+
+    /// A fresh store whose root's collection slot names the EMPTY vector — the shape a
+    /// vector local's hidden store has after the parser's `OpSetInt4(__vdb, 0, 0)`, for the
+    /// Rust-side mints that hand a vector buffer to loft code (a worker's hidden
+    /// destination, a foreign handle).  The slot is a claimed word nobody wrote otherwise,
+    /// and the first thing loft does with a buffer is READ it (a callee's entry clear,
+    /// `make_foreign`'s displaced record): under `LOFT_POISON_CLAIM=1` that read answered
+    /// `0xDEADBEEF` as a record id, which the census `the_zero_on_claim_census_only_shrinks`
+    /// exists to catch — the memset is never the fix, the producer is.
+    #[must_use]
+    pub fn vector_buffer(&mut self, size: u32) -> DbRef {
+        let db = self.database(size);
+        self.store_mut(&db).set_u32_raw(db.rec, db.pos, 0);
         db
     }
 

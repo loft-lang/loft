@@ -1457,6 +1457,48 @@ impl Stores {
         store.buffer(dest_rec)[at..at + span.len()].copy_from_slice(&span);
     }
 
+    /// @PLN174 F4b — `r = src[lo..hi]` bound to a local that owns its backing store (a
+    /// `__vdb_N`): when `src` is a FOREIGN store (a mapped file, a library's buffer) the
+    /// local's store becomes a VIEW of the span — the same bytes under the same header
+    /// contract, no copy, read-only like its source, alive for as long as the local is bound
+    /// because the span shares the owner — and otherwise the span is copied exactly as
+    /// [`Stores::vector_slice`] copies it.  `(Slice-Value)`'s view clause.  The parser emits
+    /// this only for a bind whose backing is the local's OWN store, because the view LOCKS
+    /// that store; an append, an argument or a field keeps the copy.  A store already
+    /// serving a view is released first (a rebind), and one locked for any other reason
+    /// takes the copy, whose write then meets the lock's own refusal.
+    /// `LOFT_NO_FOREIGN_VIEW=1` copies everywhere — the A/B.
+    pub fn vector_slice_view(&mut self, db: &DbRef, o_db: &DbRef, lo: i64, hi: i64, known: u16) {
+        let view = crate::env_once!(std::env::var_os("LOFT_NO_FOREIGN_VIEW").is_none());
+        if view
+            && !db.is_null()
+            && db.rec != 0
+            && db.pos != 0
+            && !o_db.is_null()
+            && o_db.rec != 0
+            && o_db.pos != 0
+            && db.store_nr != o_db.store_nr
+        {
+            let o_length = i64::from(vector::length_vector(o_db, &self.allocations));
+            let lo = lo.clamp(0, o_length);
+            let hi = hi.clamp(lo, o_length);
+            if hi > lo
+                && let Some(span) =
+                    keys::store(o_db, &self.allocations).foreign_span(lo as u32, hi as u32)
+            {
+                let store = keys::mut_store(db, &mut self.allocations);
+                if store.is_foreign() {
+                    store.release_foreign();
+                }
+                if !store.read_only {
+                    store.make_foreign(db.rec, db.pos, span);
+                    return;
+                }
+            }
+        }
+        self.vector_slice(db, o_db, lo, hi, known);
+    }
+
     /// Append every element of the vector at `o_db` to the vector at `db`, deep-copying
     /// the heap each element owns.
     ///
@@ -2723,8 +2765,7 @@ impl Stores {
         unsafe {
             std::ptr::copy(
                 self.store(from)
-                    .ptr
-                    .offset(from.rec as isize * 8 + from.pos as isize),
+                    .block_src(from.rec, from.pos as isize, len as isize),
                 self.store_mut(to)
                     .ptr
                     .offset(to.rec as isize * 8 + to.pos as isize),

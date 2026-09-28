@@ -323,6 +323,17 @@ carried either site, which is why it stayed correct and is the oracle a guard pa
                  (`Parser::iterator_as_vector`, one home).  A scalar-element slice is
                  copied in ONE block (`OpSliceVector`, `Stores::vector_slice`); any other
                  element kind is copied element by element; both are the same fresh value.
+                 On a READ-ONLY source — a FOREIGN store (a mapped file, a library's
+                 buffer) or a view of one — the fresh value bound to a local that OWNS its
+                 backing store is a VIEW: that store serves the span of the source's bytes
+                 under the same header contract (`OpSliceView`, `Stores::vector_slice_view`,
+                 `Store::foreign_span` → `Store::make_foreign`), no copy, read-only like its
+                 source, alive for as long as the local is bound (the span shares the
+                 owner).  Every read answers what the copy answers; the ONE observable
+                 difference is that the copy takes a write and the view refuses it with the
+                 foreign refusal, whose cure is the bind `w = view` (B-Copy).  An append, an
+                 argument, a field value and a return keep the copy: their store holds more
+                 than the one vector.  `LOFT_NO_FOREIGN_VIEW=1` copies everywhere.
 ```
 *Anchors:* LOFT.md:1203-1206, :790-813; clamp behavior plans/25-nullable-sequences/README.md:234;
 negative bounds LOFT.md § Vectors (@P384) + STDLIB.md § text slice.
@@ -585,7 +596,8 @@ tests/scripts/901-linked-group-fill.loft.
 - **INV-LookupNull** — a keyed point lookup is `τ?` (absent ⟹ null); enforced by `(N-Store)` like any
   other nullable, both backends.
 - **INV-SliceFresh** — a `vector`/`text` value slice is a FRESH, independent value (H-Alloc); mutating
-  it never touches the source.
+  it never touches the source.  A VIEW of a read-only source is fresh in that sense too: neither
+  side can be written, so no write anywhere reaches the other.
 
 ## 3. Deviations / decided edges
 

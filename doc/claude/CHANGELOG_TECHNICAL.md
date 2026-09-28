@@ -9,6 +9,37 @@ All notable changes to the loft language and interpreter.
 
 ## [Unreleased]
 
+### A slice of a foreign store is a view (@PLN174 F4b, 2026-09-28)
+
+`OpSliceView` (`Stores::vector_slice_view`) is emitted for `s = v[lo..hi]` when `s` owns its
+`__vdb_N` backing (`Parser::owns_vdb_backing`; an append, an argument, a field and a return
+keep `OpSliceVector`).  When the source store is foreign, `Store::foreign_span` answers the
+clamped span with its owner SHARED (`ForeignSpan`, `Arc<ForeignOwner>`) and
+`Store::make_foreign` turns the local's store into a foreign one over it — no view table, no
+live-view count: the last store serving the bytes drops the owner.  `release_foreign` (the
+handle's free, or the clear before a rebind — `clear_vector_release` / `clear_vector` drop a
+view first) unlocks the store and restores the empty slot; `make_foreign` returns a record
+the slot held to the free tree; `clone_locked`, `borrow_locked_for_light_worker` and
+`snapshot_copy` carry the span.  The F4b view-id table (two synthetic ids per view inside the
+handle's store) is gone: a local whose `DbRef` left its own store could not be cleared or
+rebound without the parser restoring it, and the table never shrank.  Found and fixed on the
+way: `copy_block_between` / `Stores::copy_block` and the `par` workers' row readers took a
+foreign source's address inside the store's block (`w = m` and `par` over `m` crashed;
+`Store::block_src` is the one source address now), `fs_write_bytes` borrowed the payload
+mutably (`bytes_of` now), and the `@P390` self-slice rebind appended with element row 0
+(`append_elem_tp` now; a `vector<u8>` parameter copied an 8-byte stride).
+A Rust-side vector buffer now mints through `Stores::vector_buffer`, which writes the empty
+vector into the root's slot as the parser's `OpSetInt4(__vdb, 0, 0)` does — the foreign handle
+and a `par` worker's hidden destinations read that slot first (`make_foreign`'s displaced
+record, a callee's entry clear), and under `LOFT_POISON_CLAIM=1` read `0xDEADBEEF`; the
+census `the_zero_on_claim_census_only_shrinks` caught the handle and lost `40-par-ref-return`
+and `987-par-empty-body-discard` as dependents.
+`LOFT_NO_FOREIGN_VIEW=1` copies everywhere.  Cells `tests/scripts/174-foreign-view.loft` and
+`174-foreign-file.loft` (c10/c11); `tests/foreign_store.rs` runs both under the switch
+matrix, the A/B, the view write refusal and the emission pin; the unit test
+`store::tests::a_view_of_a_foreign_store_reads_beside_the_copied_slice` reads a view beside
+the copied slice.
+
 ### `(Slice-Value)` at every vector-typed position, and a block copy for a scalar slice (@PLN174 F4a, 2026-09-28)
 
 `Parser::iterator_as_vector` is the ONE home: an iterator meeting a vector-typed position — the

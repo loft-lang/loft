@@ -1288,6 +1288,10 @@ fn OpAppendVector(r: vector, other: vector, tp: const u16);
 // kind keeps the per-element loop (the parser never emits this for one).
 fn OpSliceVector(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
 #rust"s.database.vector_slice(&@r, &@src, @lo, @hi, @tp);"
+// @PLN174 F4b — `r = src[lo..hi]` into a local that owns its backing store: a VIEW of the
+// span when `src` is a foreign store (read-only bytes, no copy), the block copy otherwise.
+fn OpSliceView(r: vector, src: vector, lo: integer, hi: integer, tp: const u16);
+#rust"s.database.vector_slice_view(&@r, &@src, @lo, @hi, @tp);"
 // @PLN157 § V-m — ONE fused scalar append (`OpPush<Kind>` — `OpAppendCharacter` is the text op): `v += [x]` on a plain vector of this kind
 // was OpPreAllocVector · OpNewRecord · OpSet<Kind> · OpFinishRecord, five runtime calls
 // per element each resolving the store and re-reading the headers the previous one

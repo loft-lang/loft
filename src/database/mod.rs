@@ -2560,6 +2560,17 @@ impl Stores {
     /// predicate to drift: scalar and no-heap elements pay exactly the old reset.
     #[expect(clippy::too_many_lines, reason = "inherited")]
     pub fn clear_vector_release(&mut self, db: &crate::keys::DbRef) {
+        // @PLN174 F4b — a local bound to a VIEW of foreign bytes: the clear drops the view
+        // and the store is an ordinary, writable, empty one again, so the rebind or the
+        // literal that follows `s = m[a..b]` never meets the foreign refusal.  Nothing else
+        // to release: a view holds no record.
+        if !db.is_null()
+            && (db.store_nr as usize) < self.allocations.len()
+            && self.allocations[db.store_nr as usize].is_foreign()
+        {
+            self.allocations[db.store_nr as usize].release_foreign();
+            return;
+        }
         // `LOFT_NO_CLEAR_RELEASE=1` restores the pre-fix pure length reset — the bisect
         // step for a double free or a wrong value at a cleared vector on either backend.
         fn release_enabled() -> bool {

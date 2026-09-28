@@ -973,7 +973,7 @@ pub fn run_parallel_queue_ref(
             // is enough seed; the standard claim path grows it
             // as the worker appends.
             let hidden_dests: Vec<DbRef> = (0..n_hidden_dests)
-                .map(|_| state.database.database(100))
+                .map(|_| state.database.vector_buffer(100))
                 .collect();
             // Every element reaches the worker the way its first parameter reads it.
             // This route used to answer `DbRef` for a text or wide element as well,
@@ -1426,7 +1426,7 @@ pub fn run_parallel_discard(
                 // claims records in it.  Nothing adopts them back — the worker's whole
                 // `Stores` clone dies with the batch, which is what discard means.
                 let dests: Vec<DbRef> = (0..n_hidden_dests)
-                    .map(|_| state.database.database(100))
+                    .map(|_| state.database.vector_buffer(100))
                     .collect();
                 let _ = state.execute_at_ref(fn_pos, arg, &dests, &extras);
             } else {
@@ -1629,12 +1629,12 @@ pub fn run_parallel_queue_fn(
 #[allow(dead_code)] // not threading: only the sequential branch uses it
 fn read_text_at(stores: &crate::database::Stores, row_ref: &DbRef) -> crate::keys::Str {
     let store = &stores.allocations[row_ref.store_nr as usize];
-    let base = store.base_ptr();
     // 4-byte u32 text-pointer at row.pos.  Unaligned read because `p`
     // comes from a `*mut u8` (row stride is 8 bytes but the pos offset
-    // can land on any byte boundary inside a row).
+    // can land on any byte boundary inside a row).  The row's address is the
+    // store's to answer (`block_src`): a foreign store's rows lie outside its block.
     let text_rec = unsafe {
-        let p = base.offset(row_ref.rec as isize * 8 + row_ref.pos as isize);
+        let p = store.block_src(row_ref.rec, row_ref.pos as isize, 4);
         p.cast::<u32>().read_unaligned()
     };
     let s = store.get_str(text_rec);
@@ -1647,9 +1647,11 @@ fn read_text_at(stores: &crate::database::Stores, row_ref: &DbRef) -> crate::key
 #[allow(dead_code)] // not threading: only the sequential branch uses it
 fn read_primitive_at(stores: &crate::database::Stores, row_ref: &DbRef, size: u32) -> u64 {
     let store = &stores.allocations[row_ref.store_nr as usize];
-    let base = store.base_ptr();
     unsafe {
-        let p = base.offset(row_ref.rec as isize * 8 + row_ref.pos as isize);
+        // The row's address is the store's to answer (`block_src`): a mapped file's
+        // rows lie outside the store's block, and a `par` over one read them from
+        // sixteen gigabytes past it (@PLN174).
+        let p = store.block_src(row_ref.rec, row_ref.pos as isize, size as isize);
         // Unaligned reads — same rationale as `read_text_at`: row stride
         // is 8 bytes but `pos` can land on any byte boundary inside a row.
         match size {
@@ -1680,9 +1682,8 @@ pub(crate) fn read_primitive_at_wide(
     );
     let mut buf = [0u8; 64];
     let store = &stores.allocations[row_ref.store_nr as usize];
-    let base = store.base_ptr();
     unsafe {
-        let p = base.offset(row_ref.rec as isize * 8 + row_ref.pos as isize);
+        let p = store.block_src(row_ref.rec, row_ref.pos as isize, size as isize);
         std::ptr::copy_nonoverlapping(p, buf.as_mut_ptr(), size as usize);
     }
     buf
@@ -1716,13 +1717,21 @@ pub(crate) fn read_tuple_at_wide(
 ) -> [u8; 64] {
     let mut buf = [0u8; 64];
     let store = &stores.allocations[row_ref.store_nr as usize];
-    let base = store.base_ptr();
     // @PLN114 — the row is STORAGE, so its offsets and widths are the storage view.
     // This read used the STACK view, which was indistinguishable while the two
     // coincided (every integer 8 bytes); once narrow elements got their declared
     // width (`u8` = 1) the reader walked the row at the wrong stride and returned
     // garbage — a `par` over `vector<(u8,u16)>` summed to 1012184093813119760.
     let in_vec_offsets = crate::data::element_storage_offsets(elem_types);
+    // The row's address is the store's to answer (`block_src`, bounded by the row's
+    // storage width): a foreign store's rows lie outside its block.
+    let row_width = elem_types
+        .iter()
+        .enumerate()
+        .map(|(i, t)| in_vec_offsets[i] + crate::data::element_storage_size(t))
+        .max()
+        .unwrap_or(0);
+    let row = store.block_src(row_ref.rec, row_ref.pos as isize, row_width as isize);
     let mut arg_offset: usize = 0;
     for (i, t) in elem_types.iter().enumerate() {
         let in_off = in_vec_offsets[i];
@@ -1733,8 +1742,7 @@ pub(crate) fn read_tuple_at_wide(
             "read_tuple_at_wide: tuple slot exceeds 64-byte cap"
         );
         unsafe {
-            let src =
-                base.offset(row_ref.rec as isize * 8 + (row_ref.pos as usize + in_off) as isize);
+            let src = row.add(in_off);
             if matches!(t, crate::data::Type::Text(_)) {
                 // Inflate the 4-byte heap text-pointer into a 16-byte
                 // Str for the worker's argument slot.
