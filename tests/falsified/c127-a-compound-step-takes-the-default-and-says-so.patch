@@ -1,0 +1,13 @@
+diff --git a/src/keys.rs b/src/keys.rs
+index a7c0a89cb..80e3d4127 100644
+--- a/src/keys.rs
++++ b/src/keys.rs
+@@ -745,7 +745,7 @@ pub fn omitted_field_lint_enabled() -> bool {
+ #[must_use]
+ pub fn narrow_fallback_lint_enabled() -> bool {
+     static ON: OnceLock<bool> = OnceLock::new();
+-    *ON.get_or_init(|| !env_set("LOFT_NO_NARROW_FALLBACK"))
++    *ON.get_or_init(|| false && !env_set("LOFT_NO_NARROW_FALLBACK"))
+ }
+ 
+ /// loft#926 — one struct literal filling TWO members of a linked collection group.

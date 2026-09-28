@@ -1962,6 +1962,15 @@ disagreeing) — remain defects and keep their guards: what changes is the value
 must agree ON, from null to the type's default.  Uniformity across local, field, element,
 parameter and return is the part that was right.
 
+
+**Corrected 2026-09-28 (@PLN175): the report is advice, as the two-tier rule decides.**  The entry
+said a warning reports the default; the code gives the advice `narrow-fallback`, on purpose
+(`src/keys.rs`): a diagnostic gates only when ignoring it can produce a wrong answer, and the
+default is the answer this decision promises.  Measured over the routes into a `u8` slot: a local,
+a parameter, a field, an element and an explicit `as` are all refused; a compound step on a local,
+a field or an element takes the default and carries the advice.  No route was found that reaches
+the default without one of the two.  Guards: `tests/scripts/c127-*.loft`.
+
 ## C85 — Overflow arithmetic types NON-null; the game keeps running (don't force `integer?` on every `*`/`+`/`-`)
 
 **Catalogue:** @F38 (arithmetic safety), @F1 (null model). Refines [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) and the @PLN25 `(N-Div)`/`(N-Arith)` rules (formal/types.md § DN3).

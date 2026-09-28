@@ -5413,6 +5413,7 @@ impl Parser {
         } else {
             Self::is_narrowing_int_store(is_type, should)
         } && !self.is_null_source(code);
+        // A value that may not fit a narrow slot is refused where the author can choose (@C127).
         if !discharged && !self.first_pass && narrows && !self.int_value_fits(code, should) {
             let src = self.int_type_name(is_type);
             let dst = self.int_type_name(should);

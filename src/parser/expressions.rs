@@ -8366,6 +8366,7 @@ use a separate collection or add after the loop"
                 // sentinel of a nullable narrow FIELD — explain that, not "too big".
                 diagnostic!(self.lexer, Level::Error, "{hint}");
             } else if !self.int_value_fits(code, store_tp) {
+                // Refused where the author can choose what an unfitting value becomes (@C127).
                 let src = self.int_type_name(s_type);
                 let cures = Self::narrowing_cures(code, &dst);
                 diagnostic!(

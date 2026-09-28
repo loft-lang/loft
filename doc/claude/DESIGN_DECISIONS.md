@@ -950,15 +950,17 @@ set of hole kinds.  Decided 2026-09-21 —
 **Decision.** A declared narrow range without `?` (`limit(lo, hi)` and the aliases
 `u8`/`i8`/`u16`/`i16`/`u32`) has no null: an unfitting value takes the type's DEFAULT — zero where
 the range holds it, else the bound nearest zero — for a local, field, element, parameter and return
-alike.  Where the author can be made to choose, the narrowing is refused (`?` or `?? d` cures it);
-elsewhere a warning says the default was used.  Plain `integer` and `i32` keep C85's sentinel — a
+alike.  Where the author can be made to choose, the narrowing is refused (`?`, `?? d` or `as T?`
+cures it) — a local, a parameter, a field, an element, a cast; the one shape it cannot ask about,
+a compound step (`x += 10`), carries the advice `narrow-fallback` — advice, because the default IS
+the promised answer (the two-tier rule).  Plain `integer` and `i32` keep C85's sentinel — a
 PRAGMATIC exemption, not a line to extend.  **Why.** Null-on-overflow depended on whether the range
 left a spare code, so two non-nullable declarations behaved oppositely.
 
 **Revisit when.** The `i32` exemption's cost changes (a program needs the full 32-bit range); that
 clause is one predicate.  Decided 2026-09-23 — [record](DESIGN_DECISIONS-history.md#c127--a-narrow-type-without--has-no-null-an-unfitting-value-takes-the-types-default-and-says-so).
 **Catalogue:** @F4 (width integers), @F1 (null model). Refines [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) at the narrow end and settles `formal/types.md` `(N-Reserve)` against `(E-Uncomp-NN)`.
-**Holds at:** `IntegerSpec::non_null_reads_null`;
+**Holds at:** `@C127` — `./scripts/idx tag:@C127`; `IntegerSpec::non_null_reads_null`;
 `tests/scripts/1615-every-narrow-slot-answers-the-types-default-for-an-unfitting-value.loft`.
 
 ## C128 — a yielded lambda owns copies of what it captures
