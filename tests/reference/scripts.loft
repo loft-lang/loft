@@ -1,0 +1,15 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @SCRIPT — run top to bottom, not through --tests
+// @PAGE: LOFT.md § Scripts (a file with no `fn main`) — this file IS one: statements at the
+// top level run in order, definitions are hoisted, and no `;` is needed at a line's end.
+
+name = "world"
+print("Hello, {name}!\n")
+
+fn twice(x: integer) -> integer { x * 2 }   // defs stay top-level, and are HOISTED
+print("{twice(21)}\n")                      // → 42, even though `twice` is declared above-or-below
+
+assert(twice(21) == 42, "a hoisted definition is callable above its line")
+assert(name == "world", "a script's top-level binding is a variable like any other")

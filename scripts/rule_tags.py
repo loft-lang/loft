@@ -40,6 +40,15 @@
 #                  nightly runs it (`stale-claims`); `make ci` prints the offline half.  A
 #                  lifted limitation LEAVES the page (a new reader is not helped by what loft
 #                  could not do last month) and its record goes to `<doc>-history.md`
+#   fences         every `loft` code fence in the hand-written reference docs, and the executed
+#                  program it is cut from: the line above a fence reads `<!-- from <path> -->`
+#                  and the fence must be a VERBATIM window of that file (indent-normalised), so
+#                  a sample on the page is code that runs in `make ci`.  The two comparison
+#                  pages are read the same way, each loft block against
+#                  `tests/comparisons/<section id>.loft`.  A fence that is a shape, a grammar or
+#                  a signature listing rather than a program is a ```grammar fence and is not
+#                  asked.  `--gate` fails a fence with no source or one that has drifted
+#                  (@PLN176 phase 2; the walk that gives every fence a home is the plan's)
 #   coverage       what share of the rules carry a code ANNOTATION and what share carry an
 #                  active GUARD, against the contract-1 FLOORS — the command a doc links to
 #                  INSTEAD of writing a position down.  A measured position is stale the
@@ -559,6 +568,136 @@ def claim_sites(docs=None):
     return out
 
 
+# ---- fences: every code sample in a hand-written reference doc is a slice of a program that
+# runs (@PLN176 phase 2) ----
+#
+# A sample that nothing runs is the other way a page goes stale: the language moves, the
+# fence keeps the old spelling, and the reader learns it.  LOFT.md carried 65 `loft` fences
+# and STDLIB.md 29 with no program behind any of them (measured 2026-09-28: one had a
+# `fn main`, 25 of the 94 ran as written, the rest were excerpts assuming context).  So a
+# fence NAMES its program and must match a window of it verbatim; the program asserts.
+FENCE_DOCS = (os.environ["FENCE_DOCS"].split(":") if os.environ.get("FENCE_DOCS")
+              else ["doc/claude/LOFT.md", "doc/claude/STDLIB.md", "doc/claude/CAVEATS.md",
+                    ".claude/skills/loft-write/SKILL.md"])
+FENCE_PAGES = (os.environ["FENCE_PAGES"].split(":") if os.environ.get("FENCE_PAGES")
+               else ["doc/00-vs-rust.html", "doc/00-vs-python.html"])
+FENCE_FROM = re.compile(r"<!--\s*from\s+(\S+)\s*-->")
+
+
+def _dedent(lines):
+    """Trailing whitespace off, blank edges off, the common leading indent off."""
+    out = [l.rstrip() for l in lines]
+    while out and not out[0]:
+        out.pop(0)
+    while out and not out[-1]:
+        out.pop()
+    ind = min((len(l) - len(l.lstrip()) for l in out if l.strip()), default=0)
+    return [l[ind:] for l in out]
+
+
+def fence_matches(fence_lines, source_lines):
+    """The 1-based line in `source_lines` where the fence starts, else 0.
+
+    A window of the source is compared after ITS common indent is removed, so a fence cut
+    from inside a `fn main` body matches although the file indents it — and blank lines
+    inside the fence must be blank in the source too, so a fence cannot be assembled from
+    two places."""
+    f = _dedent(fence_lines)
+    if not f:
+        return 0
+    src = [l.rstrip() for l in source_lines]
+    n = len(f)
+    for i in range(len(src) - n + 1):
+        if _dedent(src[i:i + n]) == f:
+            return i + 1
+    return 0
+
+
+def markdown_fences(text):
+    """[(line of the ``` opener, info string, [body lines], source path or None)]."""
+    lines = text.split("\n")
+    out, i = [], 0
+    while i < len(lines):
+        m = re.match(r"^\s*```([A-Za-z-]*)\s*$", lines[i])
+        if m and m.group(1):
+            j = i + 1
+            while j < len(lines) and not re.match(r"^\s*```\s*$", lines[j]):
+                j += 1
+            src = None
+            k = i - 1
+            while k >= 0 and not lines[k].strip():
+                k -= 1
+            if k >= 0:
+                fm = FENCE_FROM.search(lines[k])
+                if fm:
+                    src = fm.group(1)
+            out.append((i + 1, m.group(1), lines[i + 1:j], src))
+            i = j
+        i += 1
+    return out
+
+
+def html_loft_blocks(text):
+    """[(line, section id, [code lines])] for the loft side of a comparison page: the
+    `<pre><code>` blocks with no class (the other language's carry one), text unescaped."""
+    import html as _html
+    out = []
+    section = ""
+    pos = 0
+    for m in re.finditer(r'<h2 id="([^"]+)"|<pre(?P<attrs>[^>]*)><code>(?P<body>.*?)</code></pre>',
+                         text, re.S):
+        if m.group(1):
+            section = m.group(1)
+            continue
+        if "class=" in (m.group("attrs") or ""):
+            continue
+        body = re.sub(r"<[^>]+>", "", m.group("body"))
+        body = _html.unescape(body)
+        line = text.count("\n", 0, m.start()) + 1
+        out.append((line, section, body.split("\n")))
+    return out
+
+
+def fence_report(docs=None, pages=None):
+    """[(file, line, status, source, detail)] — status is ok / drift / unsourced / missing."""
+    rows = []
+    for rel in (docs or FENCE_DOCS):
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            continue
+        for line, info, body, src in markdown_fences(open(path, encoding="utf-8").read()):
+            if info != "loft":
+                continue
+            if not src:
+                rows.append((rel, line, "unsourced", "", body[0].strip()[:60] if body else ""))
+                continue
+            if src.startswith("library:"):
+                # kept by that library's own testbed (its CI); listed, never gated here
+                rows.append((rel, line, "library", src, "kept by the library's testbed"))
+                continue
+            sp = os.path.join(ROOT, src)
+            if not os.path.exists(sp):
+                rows.append((rel, line, "missing", src, "names a file that does not exist"))
+                continue
+            at = fence_matches(body, open(sp, encoding="utf-8").read().split("\n"))
+            rows.append((rel, line, "ok" if at else "drift", src,
+                         f"line {at}" if at else "not a verbatim window of the file"))
+    for rel in (pages or FENCE_PAGES):
+        path = os.path.join(ROOT, rel)
+        if not os.path.exists(path):
+            continue
+        for line, section, body in html_loft_blocks(open(path, encoding="utf-8").read()):
+            src = f"tests/comparisons/{section}.loft"
+            sp = os.path.join(ROOT, src)
+            if not os.path.exists(sp):
+                rows.append((rel, line, "missing", src, f"#{section}: no comparison program"))
+                continue
+            at = fence_matches(body, open(sp, encoding="utf-8").read().split("\n"))
+            rows.append((rel, line, "ok" if at else "drift", src,
+                         f"line {at}" if at else f"#{section}: not a verbatim window"))
+    return rows
+
+
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else "check"
     rules = defined_rules()
@@ -723,6 +862,24 @@ def main():
                 bad.append(f"  s5 guard_for finds the issue-numbered guard\n    got {g}")
             if guard_for("999999", tests_dir=td) is not None:
                 bad.append("  s6 guard_for answers None when nothing speaks for the issue")
+        # The `fences` matcher (@PLN176 phase 2).  f1 against a matcher that ignores indent
+        # (a fence cut from a `fn main` body would never match), f2 against one that matches
+        # line by line without adjacency (a fence assembled from two places would pass), f3
+        # against one that drops blank lines (same), f4 against an HTML reader that keeps the
+        # other language's block or the markup.
+        src = ["fn main() {", "  a = 1;", "  b = a + 1;", "", "  c = b;", "}", "  a = 1;", "  c = b;"]
+        if fence_matches(["a = 1;", "b = a + 1;"], src) != 2:
+            bad.append("  f1 fence_matches finds an indented window of the file")
+        if fence_matches(["a = 1;", "c = b;"], src) != 7:
+            bad.append("  f2 fence_matches needs the lines ADJACENT (lines 2 and 5 are not)")
+        if fence_matches(["b = a + 1;", "c = b;"], src) != 0:
+            bad.append("  f3 fence_matches keeps a blank line as a line of the window")
+        page = ('<h2 id="null">2. Null</h2><pre><code>p = <span class="en">P</span> { x: '
+                '<span class="nm">1</span> };\n<span class="kw">if</span> a &lt; b {}</code></pre>'
+                '<pre class="rust-pre"><code>let p = P;</code></pre>')
+        got = html_loft_blocks(page)
+        if got != [(1, "null", ["p = P { x: 1 };", "if a < b {}"])]:
+            bad.append(f"  f4 html_loft_blocks reads the loft side, unescaped, untagged\n    got {got}")
         # And one cell for the WIRING, because a helper can be right while the caller still
         # asks the old question: the same c1 head, read the way a chapter is read.
         wired = _register_entries(
@@ -809,6 +966,30 @@ def main():
                   "was, the issue, the guard) to the doc's `-history.md` companion.  One that "
                   "still holds cites the rule that makes it a decision (rule 23).")
         return 1 if (gate and (stale or unreachable)) else 0
+
+    if cmd == "fences":
+        gate = "--gate" in sys.argv
+        rows = fence_report()
+        by = collections.Counter(st for _, _, st, _, _ in rows)
+        files = sorted({f for f, _, _, _, _ in rows})
+        print(f"{len(files)} docs · {len(rows)} loft samples · {by['ok']} verbatim from a "
+              f"program that runs · {by['library']} kept by a library's testbed · "
+              f"{by['drift']} drifted · {by['missing']} naming a missing file · "
+              f"{by['unsourced']} with no source")
+        for f in files:
+            mine = [r for r in rows if r[0] == f]
+            c = collections.Counter(st for _, _, st, _, _ in mine)
+            print(f"  {f}: {len(mine)} samples — {c['ok']} ok, {c['library']} library, "
+                  f"{c['drift']} drift, {c['missing']} missing, {c['unsourced']} unsourced")
+        bad = [r for r in rows if r[2] not in ("ok", "library")]
+        if bad:
+            print("\nnot kept by a program:")
+            for f, line, st, src, detail in bad:
+                print(f"  {f}:{line} {st.upper()}{' ' + src if src else ''} — {detail}")
+            print("\nA sample is a verbatim window of the program named on the line above it "
+                  "(`<!-- from tests/reference/<file>.loft -->`); a shape or signature that is "
+                  "not a program is a ```grammar fence.  DOC_CONTRACT rule 22.")
+        return 1 if (gate and bad) else 0
 
     if cmd == "dups":
         multi = {t: v for t, v in cites.items() if len({f for f, _ in v}) >= 2}

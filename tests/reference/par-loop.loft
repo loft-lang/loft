@@ -1,0 +1,31 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: STDLIB.md § `par(...)` Parallel For-Loop — the worker call runs on `n` threads and its
+// result is bound for the body, in the original order.
+
+struct Score { value: integer }
+struct Scores { items: vector<Score> }
+
+fn double_score(r: const Score) -> integer { r.value * 2 }
+fn get_value(self: const Score) -> integer { self.value }
+
+fn make_scores() -> Scores { Scores { items: [Score { value: 1 }, Score { value: 2 }, Score { value: 3 }] } }
+
+fn test_both_worker_forms_deliver_in_order() {
+    q = make_scores();   // vector of Score
+
+    // Form 1: global function
+    sum = 0;
+    for a in q.items par(b=double_score(a), 4) {
+        sum += b;
+    }
+
+    // Form 2: method
+    total = 0;
+    for a in q.items par(b=a.get_value(), 1) {
+        total += b;
+    }
+    assert(sum == 12, "2 + 4 + 6");
+    assert(total == 6, "1 + 2 + 3");
+}

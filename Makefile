@@ -545,7 +545,7 @@ CI_LIVE_GATES = $$( n=0; seen=""; for f in .ci-running ../*/.ci-running; do [ -f
 # mostly contention), best of two runs, and prints what drifted.  `speed-discover`
 # is the wide parallel pass that finds which tests deserve an annotation.
 # Nothing here fails: correctness fails a build, speed is what you read.
-.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims
+.PHONY: speed profile profile-corpus speed-gate rewrite-census rewrite-census-bless speed-discover speed-bless sweep-scratch sweep-target native-ratio native-ratio-gate claims fences
 
 sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged test caches, old sessions
 	@# What loft writes to a temp dir and what removes it — TESTING.md § Scratch hygiene.
@@ -568,6 +568,8 @@ speed:  ## Report how the slow tests' speed has drifted (never fails)
 	python3 scripts/test_speed.py run
 claims:  ## The reference docs' limitation sentences whose cited issue has CLOSED (@PLN176; asks the tracker)
 	python3 scripts/rule_tags.py claims --issues
+fences:  ## Every code sample on LOFT.md / STDLIB.md / the comparison pages, and the program it is cut from (@PLN176)
+	python3 scripts/rule_tags.py fences
 rewrite-census:  ## Fail when a rewrite fires at fewer sites than its baseline
 	cargo build --release --bin loft -q
 	python3 scripts/rewrite_census.py
@@ -2293,6 +2295,7 @@ ci: ci-guard
 	cargo clippy --all-targets --all-features -- -D warnings >> result.txt 2>&1 && \
 	scripts/check_doc_drift.sh >> result.txt 2>&1 && \
 	python3 scripts/rule_tags.py claims >> result.txt 2>&1 && \
+	python3 scripts/rule_tags.py fences >> result.txt 2>&1 && \
 	$(MAKE) --no-print-directory label-guard-test >> result.txt 2>&1 && \
 	python3 scripts/contract_labels.py --self-test >> result.txt 2>&1 && \
 	scripts/gate_lock.sh selftest >> result.txt 2>&1 && \
@@ -2566,7 +2569,8 @@ pdf-doc:
 test-native:
 	@cargo build --release -q
 	@failed=0; \
-	for f in tests/docs/*.loft; do \
+	for f in tests/docs/*.loft tests/reference/*.loft; do \
+		case "$$f" in tests/reference/*) grep -q '@EXPECT_ERROR' "$$f" && continue;; esac; \
 		printf "  %-45s" "$$f"; \
 		out=$$(./target/release/loft --native "$$f" 2>&1); \
 		code=$$?; \

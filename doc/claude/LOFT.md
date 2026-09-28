@@ -110,6 +110,7 @@ running**.  It does NOT trap or halt.  A bad calculation degrades that one value
 consumer of the null gets null too — but it *runs*).  This holds identically in
 development, test, and production: a calculation fault never stops the run.
 
+<!-- from tests/reference/types-null-arithmetic.loft -->
 ```loft
 a = 9223372036854775807;     // i64::MAX
 b = a + 1;                   // b = null  (overflow → null, NOT a wrapped value)
@@ -121,6 +122,7 @@ print("done");               // ALWAYS reached
 `expr ?? default` yields `expr` when it is non-null, else `default`.  Use it to
 turn a null result into a usable value at the spots that need one:
 
+<!-- from tests/reference/types-null-arithmetic.loft -->
 ```loft
 x = (a * b) ?? 0;            // overflow → null → x = 0
 y = total / count ?? 0;      // count == 0 → null → y = 0
@@ -159,12 +161,13 @@ boolean logic) — so `!b` alone can't tell them apart; use `b == null` for that
 ported from a boolean guard to an integer guard (or vice versa) silently changes
 meaning:
 
+<!-- from tests/reference/types-null-arithmetic.loft -->
 ```loft
 flag: boolean = false;
-if !flag { /* runs */ }     // catches both null and false
+if !flag { ran += 1; }       // catches both null and false
 
 count: integer = 0;
-if !count { /* skipped */ } // catches only null; zero passes through
+if !count { skipped += 1; }  // catches only null; zero passes through
 ```
 
 The idiomatic "zero or null" check on an integer is `count == 0 or !count`,
@@ -223,10 +226,11 @@ indistinguishable from a computed one — `x: u8 = 250; x += 10` answers `0`, an
 `x: u8 = 250; x -= 250`.  An author who cares about that edge writes the test on the
 line after the store:
 
+<!-- from tests/reference/types-null-arithmetic.loft -->
 ```loft
 health: u8 = 250;
 health += 10;
-if !health { println("the boost did not fit — health is {health}"); }
+if !health { seen = "the boost did not fit — health is {health}"; }
 ```
 
 The value is unchanged — the slot still takes `0`, exactly as it does with no test
@@ -277,9 +281,15 @@ hash<Count[c, t]>           // compound hash key
 exactly as its elements spelled out would: element 0 orders, element 1 breaks its ties, and
 so on, nested tuples included. Look it up by writing the tuple.
 
+<!-- from tests/reference/tuple-keys.loft -->
 ```loft
 struct Cell { pos: (integer, integer), name: text }
+```
 
+With the key a tuple, the lookup takes a tuple and the ordering compares the whole of it:
+
+<!-- from tests/reference/tuple-keys.loft -->
+```loft
 h: hash<Cell[pos]> = [Cell { pos: (1, 2), name: "a" }];
 c = h[(1, 2)];              // a literal, a local, or a vector<(…)> element all work
 
@@ -465,6 +475,7 @@ A `.loft` file whose top level contains **loose statements** runs as a **script*
 statements are collected into one synthesized `fn main` and run **once**, in source order,
 sharing state. Nothing to opt into — `loft hello.loft` just runs it (@PLN13).
 
+<!-- from tests/reference/scripts.loft -->
 ```loft
 name = "world"
 print("Hello, {name}!\n")
@@ -843,6 +854,7 @@ falls back to the imported-library and standard-library *prelude*:
 
 Variants belong to their enum, so **two enums may share a variant name**:
 
+<!-- from tests/reference/enum-variants.loft -->
 ```loft
 enum Color { Red, Green }
 enum Light { Red, Amber }
@@ -854,8 +866,15 @@ function argument, a return position, or a struct-field type/default. With no
 context, qualify it: `Color.Red` (or `Color::Red`). Defining a *new untyped
 variable* directly from a bare variant is a deliberate error:
 
+<!-- from tests/reference/enum-variants-refused.loft -->
 ```loft
-x = Red;            // error: bare variant 'Red' has no type here — qualify it as 'Color.Red'
+x = Red;            // error: ambiguous variant 'Red' (a variant of Color, Light) — qualify it, e.g. 'Color.Red'
+```
+
+A qualified name, or a declared type, supplies the context:
+
+<!-- from tests/reference/enum-variants.loft -->
+```loft
 x = Color.Red;      // ok
 c: Color = Red;     // ok — the declared type supplies the context
 ```
@@ -942,10 +961,11 @@ circular indexing), use `floor_mod`: `(-1).floor_mod(3) == 2`. Division or `%` b
 
 `lhs ?? rhs` evaluates to `lhs` if it is not null, otherwise evaluates to `rhs`:
 
+<!-- from tests/reference/null-operators.loft -->
 ```loft
-name = record.optional_field ?? "unknown"
-count = map_lookup ?? 0
-first = a ?? b ?? c    // chains: first non-null of a, b, c
+name = record.optional_field ?? "unknown";
+count = map_lookup ?? 0;
+first = a ?? b ?? c;    // chains: first non-null of a, b, c
 ```
 
 The operator is right-associative and chains: `a ?? b ?? c` is `a ?? (b ?? c)` — the same value
@@ -975,11 +995,12 @@ default, `?` = the type's). It relieves the `?? 0` / `?? ""` / `?? 0.0` boilerpl
 own null-flow manufactures (DN3 makes float ops yield `float?`; index/map/field reads are
 nullable by the C80 model).
 
+<!-- from tests/reference/null-operators.loft -->
 ```loft
-x = (a / b)?                 // integer? → 0 on divide-by-zero
-name = row.label?            // text?    → "" when the field is null
-first = points[i]?          // Point?   → Point{} (every field defaulted) on out-of-bounds
-colour = pixel.tint?         // Colour?  → the first-defined enum variant
+x = (a / b)?;                // integer? → 0 on divide-by-zero
+name = row.label?;           // text?    → "" when the field is null
+first = points[i]?;          // Point?   → Point{} (every field defaulted) on out-of-bounds
+colour = pixel.tint?;        // Colour?  → the first-defined enum variant
 ```
 
 Precedence: `?` binds **tightest** (like `.`/`[]`), tighter than `as` and every binary operator,
@@ -1012,11 +1033,12 @@ assignment on a scalar or `text` PROPAGATES. For a **collection** the two spelli
 appending to a null collection builds the empty one first, so `b.d? += [r]` and `b.d += [r]`
 mean the same thing. A plain `place? = e` has no read to discharge and means `place = e`.
 
+<!-- from tests/reference/null-operators.loft -->
 ```loft
 hits: integer? = null;
-hits? += 1                  // 1     — the `?` read the zero, the write landed in `hits`
+hits? += 1;                 // 1     — the `?` read the zero, the write landed in `hits`
 misses: integer? = null;
-misses += 1                 // null  — no `?`, so the null propagates through `+`
+misses += 1;                // null  — no `?`, so the null propagates through `+`
 ```
 
 `(a ?? d) += e` is refused rather than guessed: it names two values and no place, so it takes
@@ -1167,16 +1189,24 @@ A **function reference** — a function's bare name used as a value (`f = double
 
 **Calling a fn-ref variable:** a variable or parameter of type `fn(T) -> R` can be called directly:
 
+<!-- from tests/reference/fn-refs.loft -->
 ```loft
-f = double_score              // type: fn(const Score) -> integer
-x = f(some_score)             // calls double_score via f
+f = double_score;             // type: fn(const Score) -> integer
+x = f(some_score);            // calls double_score via f
 ```
 
 **`fn(T) -> R` as a parameter type:**
 
+<!-- from tests/reference/fn-refs.loft -->
 ```loft
 fn apply(f: fn(integer) -> integer, x: integer) -> integer { f(x) }
-result = apply(double_it, 5)   // `fn double_it` is refused: use the bare name
+```
+
+and the bare name is what a parameter of `fn` type takes (`fn double_it` is refused):
+
+<!-- from tests/reference/fn-refs.loft -->
+```loft
+result = apply(double_it, 5);  // `fn double_it` is refused: use the bare name
 ```
 
 A parameter of a function type may be `const` — `fn(const Score) -> integer` — which says the
@@ -1187,7 +1217,7 @@ is `const` fits a plain `fn(T)` slot as well.
 **Lambda expressions** produce an inline anonymous function at the expression level.
 Two syntactic forms are available:
 
-```loft
+```grammar
 // Long form — all types explicit; always valid
 fn(x: integer) -> integer { x * 2 }
 fn(x: integer, y: integer) -> integer { x + y }
@@ -1222,22 +1252,30 @@ If inference is impossible — nothing in the context names a signature — the 
 errors: *"Cannot infer type for lambda parameter 'x'; pass the lambda where the expected
 type is known, or use fn(name: &lt;type&gt;) { ... }"*.
 
-Its primary use is with the higher-order functions `map`, `filter`, and `reduce`, as well as the `par(...)` for-loop clause:
+Its primary use is with the higher-order functions `map`, `filter`, and `reduce`, as well as the `par(...)` for-loop clause.  A function is passed by its bare name; the older `fn double` spelling is refused with the cure named:
 
+<!-- from tests/reference/fn-refs.loft -->
 ```loft
 // Named fn-ref
 fn double(x: integer) -> integer { x * 2 }
 fn is_pos(x: integer) -> boolean { x > 0 }
 fn add(a: integer, b: integer) -> integer { a + b }
+```
 
-doubled  = map(nums, fn double);        // [2, 4, 6, ...]
-positive = filter(nums, fn is_pos);     // only positive elements
-total    = reduce(nums, 0, fn add);     // sum
+A bare name and a lambda are interchangeable wherever a function is expected, `par` included:
+
+<!-- from tests/reference/fn-refs.loft -->
+```loft
+doubled  = map(nums, double);           // [2, -4, 6]
+positive = filter(nums, is_pos);        // only positive elements
+total    = reduce(nums, 0, add);        // sum
+assert("{doubled}" == "[2,-4,6]" and "{positive}" == "[1,3]" and total == 2, "by name");
 
 // Equivalent using lambdas (short form, types inferred)
 doubled  = map(nums, |x| { x * 2 });
 positive = filter(nums, |x| { x > 0 });
 total    = reduce(nums, 0, |a, b| { a + b });
+assert("{doubled}" == "[2,-4,6]" and "{positive}" == "[1,3]" and total == 2, "by lambda");
 
 for a in items par(b=double(a), 4) { results += [b] }
 ```
@@ -1254,22 +1292,30 @@ A lambda that references variables from the enclosing scope is a **closure**.
 The captured values are **copied into the closure record at definition time**
 (value semantics, like Rust `move` closures).
 
+<!-- from tests/reference/closures.loft -->
 ```loft
-greeting = "Hello"
-greet = fn(name: text) -> text { "{greeting}, {name}!" }
-greeting = "Bye"       // does NOT affect the closure
-greet("world")         // "Hello, world!" — captured at definition time
+greeting = "Hello";
+greet = fn(name: text) -> text { "{greeting}, {name}!" };
+greeting = "Bye";       // does NOT affect the closure
+assert(greet("world") == "Hello, world!", "captured at definition time");
 ```
 
 **Cross-scope closures** — a function can return a closure to its caller.
 The captured values travel with the lambda:
 
+<!-- from tests/reference/closures.loft -->
 ```loft
 fn make_adder(n: integer) -> fn(integer) -> integer {
     fn(x: integer) -> integer { n + x }
 }
-add5 = make_adder(5)
-add5(10)               // 15
+```
+
+The returned closure keeps `n` after `make_adder` has returned:
+
+<!-- from tests/reference/closures.loft -->
+```loft
+add5 = make_adder(5);
+assert(add5(10) == 15, "the captured `n` survives the return");
 ```
 
 **Capture rules:**
@@ -1466,6 +1512,7 @@ bytes the author wrote and which came from a value.
 A type opts in by defining `lit` plus one `hole_…` method per value kind it
 accepts:
 
+<!-- from tests/reference/interpolation-values.loft -->
 ```loft
 struct Query {
   const parts: vector<text>,      // the literal chunks
@@ -1479,6 +1526,7 @@ fn hole_int(self: Query, v: integer) { self.values += ["{v}"] }
 
 Then a format string with that target type calls them, in source order:
 
+<!-- from tests/reference/interpolation-values.loft -->
 ```loft
 name = "ada";
 q: Query = "SELECT * FROM t WHERE name = {name}";
@@ -1489,6 +1537,7 @@ The target comes from the type you assign to, a struct field you initialise, a
 function parameter, or a return type — there is no new syntax, and `text` behaves
 exactly as before. So a builder function needs no local to route through:
 
+<!-- from tests/reference/interpolation-values.loft -->
 ```loft
 fn where_name(name: text) -> Query { "SELECT * FROM t WHERE name = {name}" }
 ```
@@ -1520,6 +1569,7 @@ all the others. A SQL table name cannot be a bound parameter — no placeholder
 stands for it — so a query builder has to put it in the statement itself, and
 making it a type is what keeps that safe:
 
+<!-- from tests/reference/interpolation-values.loft -->
 ```loft
 tbl = ident("orders");                              // null if it is not a name
 q: SqlText = "SELECT id FROM {tbl} WHERE name = {n}";
@@ -2037,14 +2087,16 @@ variants only — it does not accept slice patterns.
 
 The `is` operator tests whether an enum value is a specific variant:
 
+<!-- from tests/reference/is-check.loft -->
 ```loft
-d = North;
-if d is North { ... }       // true
+d: Dir = North;
+if d is North { hit = true; }       // true
 assert(!(d is South));       // negation
 ```
 
 For struct-enums, `is` can also capture variant fields into local variables:
 
+<!-- from tests/reference/is-check.loft -->
 ```loft
 s = Circle { radius: 3.14 };
 if s is Circle { radius } {
@@ -2054,6 +2106,7 @@ if s is Circle { radius } {
 ```
 
 Multiple fields:
+<!-- from tests/reference/is-check.loft -->
 ```loft
 if shape is Rect { width, height } {
   area = width * height;
@@ -2061,6 +2114,7 @@ if shape is Rect { width, height } {
 ```
 
 With else:
+<!-- from tests/reference/is-check.loft -->
 ```loft
 if shape is Circle { radius } {
   area = PI * radius * radius;
@@ -2070,6 +2124,7 @@ if shape is Circle { radius } {
 ```
 
 In loops:
+<!-- from tests/reference/is-check.loft -->
 ```loft
 for item in shapes {
   if item is Circle { radius } {
@@ -2184,6 +2239,7 @@ a dep-tracked LINK to slot `j`'s record (writes through `tmp` mutate
 `v[j]`); but `v[j] = v[k]` COPIES `k`'s record bytes into slot `j`'s
 storage.  The classic swap therefore silently corrupts:
 
+<!-- from tests/reference/vector-views.loft -->
 ```loft
 tmp = v[j];     // a view of slot j
 v[j] = v[k];    // copies k's record INTO slot j — tmp now reads k's record
@@ -2217,8 +2273,15 @@ The copy happens only when you still USE the view after the change — *"while `
 is in use"* is meant literally.  Finish with the view first and it keeps writing
 through, so moving the last use above the removal is a second way out:
 
+<!-- from tests/reference/vector-views.loft -->
 ```loft
 c = v[0];  c.n = 99;  v.remove(2);   // no copy — `c` is done before `v` changes
+```
+
+whereas a view still in use after the change is copied first, and the late write lands in the copy:
+
+<!-- from tests/reference/vector-views.loft -->
+```loft
 c = v[0];  v.remove(2);  c.n = 99;   // copied — `c` is used after `v` changed
 ```
 
@@ -2245,6 +2308,7 @@ whether or not the parameter is spelled `&` — a struct parameter names the cal
 element either way, so the write would be lost either way.  Pass the INDEX instead
 and read the element again after the removal:
 
+<!-- from tests/reference/vector-views.loft -->
 ```loft
 fn shift(idx: integer, all: &vector<Box>) { all.remove(0); all[idx - 1].n = 99; }
 ```
@@ -2253,9 +2317,16 @@ For a keyed collection the remedy is to re-insert rather than to reorder, becaus
 key write IS the thing that cannot be honoured — changing a key would leave the element
 reachable by no key at all:
 
+<!-- from tests/reference/vector-views-refused.loft -->
 ```loft
 c = &s[30];  c.key = 5;      // refused
-s[5] = s[30];  s[30] = null; // say it directly instead
+```
+
+A keyed record moves as a NEW record under the new key, the old one removed — the subscript of an assignment does not rename a record, its own key field does, and a subscript that disagrees with that field is not reported, loft#1716):
+
+<!-- from tests/reference/vector-views.loft -->
+```loft
+s += [Keyed { key: 5, n: s[30].n }];  s[30] = null; // a new record under the new key, the old one removed
 ```
 
 **Why an error rather than some defined behaviour.**  loft may always drop an error
@@ -2278,24 +2349,27 @@ To remove elements while iterating, use `v#remove` inside a filtered loop (see [
 
 All three keyed collection types support single-element removal by assigning `null` to a subscript:
 
+<!-- from tests/reference/keyed-collections.loft -->
 ```loft
-h[key] = null          // hash: remove element whose key field equals key
-idx[nr, name] = null   // index: remove element by compound key
-s[key] = null          // sorted: remove element by key field
+h[key] = null;          // hash: remove element whose key field equals key
+idx[nr, name] = null;   // index: remove element by compound key
+s[key] = null;          // sorted: remove element by key field
 ```
 
 Removing a key that is not present is a **no-op** (safe, no error).
 
 `sorted` and `index` collections support forward and reverse iteration:
+<!-- from tests/reference/keyed-collections.loft -->
 ```loft
-for v in sorted_col { }         // forward — visits elements in key order
-for v in rev(sorted_col) { }    // reverse — visits elements in reverse key order
+for v in sorted_col { fwd += v.n; }         // forward — visits elements in key order
+for v in rev(sorted_col) { bwd += v.n; }    // reverse — visits elements in reverse key order
 ```
 
 Lookup also returns `null` when an element is absent:
+<!-- from tests/reference/keyed-collections.loft -->
 ```loft
-if h[key] { /* found */ }
-elem = idx[42, "foo"]    // null if not present
+if h[key] { found = true; }
+elem = idx[42, "foo"];    // null if not present
 ```
 
 **All keyed-collection subscripting is by KEY, never by position (C99).** On a
@@ -2369,10 +2443,16 @@ bytes, so several keys have no order to share (use `sorted<T[a, b]>` for that).
 Declare two collections over the same element struct in one struct and you get **two routes to
 a single set of records**, not two collections. Filling either fills both:
 
+<!-- from tests/reference/two-collections.loft -->
 ```loft
 struct Tile { k: integer, n: text }
 struct Level { tiles: vector<Tile>, by_key: hash<Tile[k]> }
+```
 
+An append through one member is visible through the other:
+
+<!-- from tests/reference/two-collections.loft -->
+```loft
 lvl = Level { };
 lvl.tiles += [Tile { k: 7, n: "gate" }];
 // len(lvl.by_key) is 1 — the hash is a VIEW of the same record
@@ -2398,12 +2478,12 @@ keyed member.
 
 The second struct is the escape, and it costs a field copy to move between them:
 
+<!-- from tests/reference/two-collections.loft -->
 ```loft
-struct Tile   { k: integer, n: text }
 struct Chosen { k: integer, n: text }
 fn to_chosen(t: Tile) -> Chosen { Chosen { k: t.k, n: t.n } }
 
-struct Level { by_key: hash<Tile[k]>, picked: vector<Chosen> }
+struct Picks { by_key: hash<Tile[k]>, picked: vector<Chosen> }
 ```
 
 ⚠ **Nothing at the declaration tells you which you got** — a group that did not form looks
@@ -2450,26 +2530,39 @@ Field names are type-scoped, not globally unique.  Different structs and enum
 variants can share a field name — the compiler resolves the correct field by
 the type of the receiver:
 
+<!-- from tests/reference/shared-fields.loft -->
 ```loft
 struct Point { x: float, y: float }
 struct Rect { x: float, y: float, w: float, h: float }
+```
 
+Each type's `x` is its own field, at its own offset:
+
+<!-- from tests/reference/shared-fields.loft -->
+```loft
 p = Point { x: 1.0, y: 2.0 };
 r = Rect { x: 10.0, y: 20.0, w: 30.0, h: 40.0 };
-p.x;   // 1.0 — Point's x
-r.x;   // 10.0 — Rect's x (different offset, same name)
+assert(p.x == 1.0, "Point's x");
+assert(r.x == 10.0, "Rect's x (different offset, same name)");
 ```
 
 This also works between struct-enum variants:
+<!-- from tests/reference/shared-fields.loft -->
 ```loft
 enum Shape {
   Circle { radius: float, label: text },
   Square { side: float, label: text }
 }
+```
+
+and a shared name reads on either variant:
+
+<!-- from tests/reference/shared-fields.loft -->
+```loft
 c = Circle { radius: 5.0, label: "big" };
 s = Square { side: 3.0, label: "small" };
-c.label;  // "big"
-s.label;  // "small"
+assert(c.label == "big", "the Circle's label");
+assert(s.label == "small", "the Square's label");
 ```
 
 Verified: works in vectors (`pts[0].x`), function parameters, and across
@@ -2482,11 +2575,17 @@ A `value struct` is a struct with **value (copy) semantics** and **zero heap ove
 field of another record or as a vector element (@PLN101).  Reading one out of a field or element
 yields an independent copy — mutating the copy never writes back through the source:
 
+<!-- from tests/reference/value-structs.loft -->
 ```loft
 value struct Point { x: integer, y: integer }
 
 struct Path { points: vector<Point> }
+```
 
+An element bound from the vector is a copy:
+
+<!-- from tests/reference/value-structs.loft -->
+```loft
 p = Path { points: [Point { x: 1, y: 2 }, Point { x: 3, y: 4 }] };
 q = p.points[0];   // q is a COPY of element 0
 q.x = 99;          // p.points[0].x is still 1 — no aliasing
@@ -2608,6 +2707,7 @@ the vector and every call form it supports works on it — `len(v)`, `v.len()`,
 `size(v)`.  The same holds for `&text`, the keyed collections, a `&Struct` and a
 `&integer`.  There is nothing to unwrap first (loft#824):
 
+<!-- from tests/reference/ref-params.loft -->
 ```loft
 fn total(v: &vector<integer>) -> integer {
   v += [9];        // the append reaches the caller's vector
@@ -2623,14 +2723,20 @@ modified; remove the &"* — drop the `&` and the by-value signature reads the s
 
 A `self` function is callable as a method and as a free function:
 
+<!-- from tests/reference/methods.loft -->
 ```loft
-pub fn exists(self: File) -> boolean {
-  self.format != Format.NotExists
+pub fn exists(self: Doc) -> boolean {
+  self.format != "missing"
 }
+```
 
+Both spellings call it:
+
+<!-- from tests/reference/methods.loft -->
+```loft
 // Can be called as:
-f.exists()      // method syntax
-exists(f)       // free function syntax
+a = f.exists();      // method syntax
+b = exists(f);       // free function syntax
 ```
 
 Both spellings exist on purpose: `v.sin()` for a programmer whose fingers learned
@@ -2724,7 +2830,7 @@ references, the size is computed at runtime from the actual variant.
 
 Three functions for pseudo-random integer generation. All use a thread-local PCG64 generator.
 
-```loft
+```grammar
 rand_seed(seed: integer)                   // seed the generator
 rand(lo: integer, hi: integer) -> integer  // uniform in [lo, hi]; null if lo > hi
 rand_indices(n: integer) -> vector<integer>// shuffled [0..n-1]
@@ -2732,6 +2838,7 @@ rand_indices(n: integer) -> vector<integer>// shuffled [0..n-1]
 
 `rand_seed` makes sequences reproducible:
 
+<!-- from library:random -->
 ```loft
 rand_seed(42);
 a = rand(1, 100);  // same value every run with seed 42
@@ -2739,6 +2846,7 @@ a = rand(1, 100);  // same value every run with seed 42
 
 `rand_indices` is the idiomatic way to randomly visit all elements of a collection:
 
+<!-- from library:random -->
 ```loft
 rand_seed(7);
 items = ["a", "b", "c"];
@@ -2773,8 +2881,8 @@ fn area(self: Rect) -> float { }   // explicit skip — no warning emitted
 ```
 
 A stub with an empty body `{ }` and a `self` parameter is treated as an intentional
-no-op: it emits no warnings, is callable at runtime (returns null for its return type),
-and suppresses the unused-`self` warning.
+no-op: it emits no warnings, is callable at runtime (it answers its return type's default —
+`""` for `text`, `0` for `integer`), and suppresses the unused-`self` warning.
 
 Note: ordinary (non-enum) function overloading by argument type is **not** supported —
 two functions with the same name and different non-variant parameter types are a compile error.
@@ -2984,15 +3092,22 @@ All string literals in loft are format strings — any `{...}` is interpreted as
 format expression. When comparing formatted output against a string that contains
 literal braces, escape both sides with `{{` and `}}`:
 
+<!-- from tests/reference/format-braces-refused.loft -->
 ```loft
-// WRONG — {r:128,g:0,b:64} tries to look up variable r with format spec 128,...
+// WRONG — {r:128,g:0,b:64} opens an interpolation: `r` with a format spec, not text
 assert("{p}" == "{r:128,g:0,b:64}", "...");
+```
 
+A doubled brace is a literal brace:
+
+<!-- from tests/reference/format-braces.loft -->
+```loft
 // CORRECT — double braces produce literal { and }
 assert("{p}" == "{{r:128,g:0,b:64}}", "...");
 ```
 
 Similarly for JSON format output:
+<!-- from tests/reference/format-braces.loft -->
 ```loft
 assert("{o:j}" == "{{\"key\":1}}", "json format");
 ```
@@ -3010,6 +3125,7 @@ causing errors. Verified by `tests/scripts/23-field-overlap-structs.loft` and
 `v += items` inside a `&vector<T>` function parameter propagates back to the
 caller. Both bracket-form literals and vector expressions work:
 
+<!-- from tests/reference/ref-params.loft -->
 ```loft
 fn fill(v: &vector<Item>, extra: vector<Item>) {
     v += extra;          // appended elements are visible to the caller
@@ -3022,6 +3138,7 @@ fn add_one(v: &vector<Item>, x: Item) {
 
 Field-level mutations via a ref-param also work as expected:
 
+<!-- from tests/reference/ref-params.loft -->
 ```loft
 fn ok_mutate(v: &vector<Item>, idx: integer, val: integer) {
     v[idx].value = val;  // field mutation via ref-param is visible
@@ -3044,6 +3161,7 @@ the function REPLACES, not when it appends (guard
 Text-returning methods on struct-enum variants that use format strings work
 correctly:
 
+<!-- from tests/reference/methods.loft -->
 ```loft
 enum Shape {
     Circle { radius: float },
@@ -3056,8 +3174,9 @@ fn describe(self: Rect)   -> text { "{self.width}x{self.height}" }
 If a variant does not implement a method, declare an empty stub with `self` as the
 first parameter to suppress the warning and return null:
 
+<!-- from tests/reference/methods.loft -->
 ```loft
-fn describe(self: Circle) -> text { }   // stub: returns null, no warning
+fn name(self: Dot) -> text { }   // stub: answers the type's default (""), no warning
 ```
 
 ---
@@ -3068,6 +3187,7 @@ Interfaces declare a set of required methods.  A type satisfies an interface
 by defining the required methods — no `impl` declaration is needed (structural
 satisfaction, like Go interfaces):
 
+<!-- from tests/reference/interfaces.loft -->
 ```loft
 interface Comparable {
   fn less_than(self: Self, other: Self) -> boolean
@@ -3082,6 +3202,7 @@ fn less_than(self: Priority, other: Priority) -> boolean {
 
 Bounded generics use `<T: InterfaceName>` to constrain the type variable:
 
+<!-- from tests/reference/interfaces.loft -->
 ```loft
 fn find_min<T: Comparable>(v: vector<T>) -> T {
   result = v[0];
@@ -3094,12 +3215,19 @@ fn find_min<T: Comparable>(v: vector<T>) -> T {
 
 Operator interfaces use `op` syntax:
 
+<!-- from tests/reference/interfaces.loft -->
 ```loft
 interface Summable {
   op + (self: Self, other: Self) -> Self
 }
 fn total<T: Summable>(a: T, b: T) -> T { a + b }
-total(10, 20);  // integer satisfies Summable automatically
+```
+
+and `integer` satisfies it automatically:
+
+<!-- from tests/reference/interfaces.loft -->
+```loft
+assert(total(10, 20) == 30, "integer satisfies Summable automatically");
 ```
 
 Multiple bounds: `<T: Ordered + Printable>`.
@@ -3116,8 +3244,15 @@ BOUNDS may be relied on — that is already true of a method call, a subscript a
 an operator, and formatting is not an exception, because `"{v}"` picks its op
 from the value's type and a template has no concrete one to pick from:
 
+<!-- from tests/reference/interfaces-refused.loft -->
 ```loft
 fn show<T>(v: T) -> text { "{v}" }             // refused, and says why
+```
+
+With the bound, the same body renders every kind:
+
+<!-- from tests/reference/interfaces.loft -->
+```loft
 fn show<T: Printable>(v: T) -> text { "{v}" }  // renders every kind
 ```
 
@@ -3137,21 +3272,21 @@ Loft uses two mechanisms instead of exceptions:
 
 **Null returns** for simple fallible operations — handled with `??`, `!`, or `if`:
 
+<!-- from tests/reference/error-handling.loft -->
 ```loft
 name = config.get("user") ?? "anonymous";  // fallback
-f = file("data.txt");
-if !f.exists() { println("not found"); return; }   // guard
-clip = audio_load("hit.wav");
-if clip { audio_play(clip, 0.5); }         // graceful skip
+f = file("tests/reference/no-such-file.txt");
+if !f.exists() { seen = "not found"; }             // guard
 ```
 
 **`FileResult` enum** for filesystem operations that need specific error reasons:
 
+<!-- from tests/reference/error-handling.loft -->
 ```loft
-result = delete("temp.dat");
-if result == FileResult.NotFound { println("already gone"); }
-if result == FileResult.PermissionDenied { println("access denied"); }
-if !result.ok() { println("delete failed"); }
+result = delete("tests/reference/never-created.dat");
+if result == FileResult.NotFound { seen = "already gone"; }
+if result == FileResult.PermissionDenied { seen = "access denied"; }
+if !result.ok() { seen += " — delete failed"; }
 ```
 
 `FileResult` variants: `Ok`, `NotFound`, `PermissionDenied`, `IsDirectory`,
@@ -3171,7 +3306,7 @@ directory** (the directory of the running `.loft` file), NOT the directory you
 launched loft from.  So `file("map.png")` reads the `map.png` that sits next to
 the program, wherever you run it from:
 
-```loft
+```grammar
 // program at  /home/me/game/level.loft
 // run as      loft /home/me/game/level.loft   (from anywhere)
 img = file("map.png").png();   // → /home/me/game/map.png
@@ -3192,20 +3327,23 @@ which anchors *both* built-in and native I/O at the process working directory
 instead — useful for a CLI tool that should read files relative to where the
 user invoked it.
 
-### Closure capture: copy-at-definition, mutable within copy
+### Closure capture: the value at definition, the write shared
 
-Captured variables are copied into the closure at definition time (value semantics,
-like Rust `move`).  Mutations after capture are not visible inside the lambda, and
-mutations inside the lambda are not visible outside.  However, the closure's own
-copy persists across invocations:
+A captured scalar is taken by value when the closure is formed: a later write to the
+outer variable is not seen inside (`(L-CapScalar)`, `formal/closures.md`).  A write the
+CLOSURE makes to that scalar, though, lands in the outer variable, and the next call sees
+what the previous one wrote (`(L-CapWrite)`); a captured struct or vector is shared in
+both directions (`(L-CapHeap)`).  So a counter closed over is a counter the caller can
+read:
 
+<!-- from tests/reference/closures.loft -->
 ```loft
 counter = 0;
 inc = fn() -> integer { counter += 1; counter };
-inc();   // 1
-inc();   // 2
-inc();   // 3
-counter; // still 0 — outer variable unchanged
+assert(inc() == 1, "1");
+assert(inc() == 2, "2");
+assert(inc() == 3, "3 — each call sees what the previous one wrote");
+assert(counter == 3, "3 — the closure's write landed in the outer variable (L-CapWrite)");
 ```
 
 ### Variable scoping: shared name table per file
@@ -3221,11 +3359,18 @@ as in Rust).  An `if` / `else` arm, a loop body, a `match` arm body and a bare `
 blocks; a local a statement binds there is gone after the `}`, and reading it is an error —
 also when every arm binds it:
 
+<!-- from tests/reference/scoping-refused-block.loft -->
 ```loft
 fn f(c: boolean) -> integer {
   if c { w = 5; } else { w = 6; }
   w                        // error[local-out-of-scope]: `w` was bound inside a block that has ended
 }
+```
+
+Either make the block's value the binding, or bind before the block:
+
+<!-- from tests/reference/scoping.loft -->
+```loft
 fn g(c: boolean) -> integer {
   w = if c { 5 } else { 6 };   // the block's value is the binding
   w
@@ -3244,6 +3389,7 @@ loop's body, and is gone after the loop — `for i in 0..3 { } i` is `local-out-
 is `i#index` after the loop.  A destructured `for (a, b) in …` binds both names the same way.
 Carry a value out through a local bound before the loop:
 
+<!-- from tests/reference/scoping.loft -->
 ```loft
 fn last_of(v: vector<integer>) -> integer {
   last = 0;
@@ -3255,6 +3401,7 @@ fn last_of(v: vector<integer>) -> integer {
 Naming a loop variable the same as an existing local of the function is still a
 *compile-time error*, not a silent shadow:
 
+<!-- from tests/reference/scoping-refused-shadow.loft -->
 ```loft
 fn f() {
   x = 0;
@@ -3268,10 +3415,13 @@ local.
 Two *loops* may share a name freely, at any element types — each `for` binds its
 own variable, so nothing is carried from one to the next:
 
+<!-- from tests/reference/scoping.loft -->
 ```loft
-fn g() {
-  for i in ["a", "b"] { println(i); }
-  for i in 0..3 { println("{i}"); }   // fine — a different variable
+fn g2() -> text {
+  out = "";
+  for i in ["a", "b"] { out += i; }
+  for i in 0..3 { out += "{i}"; }   // fine — a different variable
+  out
 }
 ```
 
@@ -3282,15 +3432,19 @@ A local declared **inside** a loop body splits the same way, and for the same
 reason — two adjacent loops doing different work want the same short name for the
 same role:
 
+<!-- from tests/reference/scoping.loft -->
 ```loft
-fn h() {
-  for x in as1 { e = x; print("a={e.v}\n"); }
-  for y in bs  { e = y; print("b={e.w}\n"); }   // fine — a different variable
+fn h2(as1: vector<A>, bs: vector<B>) -> text {
+  out = "";
+  for x in as1 { e = x; out += "a={e.v} "; }
+  for y in bs  { e = y; out += "b={e.w} "; }   // fine — a different variable
+  out
 }
 ```
 
 A local that must outlive its loop — an accumulator — is bound before it:
 
+<!-- from tests/reference/scoping.loft -->
 ```loft
 total = 0;
 for x in as1 { total = total + x.v; }
@@ -3304,23 +3458,29 @@ literal is ambiguous — it could be a vector or a keyed collection.  Give the k
 either way and lookup, mutation, removal, and **iteration** all work, on both the
 interpreter and `--native`:
 
+<!-- from tests/reference/keyed-collections.loft -->
 ```loft
 struct Entry { name: text, value: integer }
-
-fn main() {
-  // As a local variable — the type annotation supplies the key:
-  h: hash<Entry[name]> = [];
-  h += [Entry { name: "x", value: 1 }];
-  e = h["x"];                 // lookup — works
-  h["x"] = null;              // remove — works
-  for kv in h { }             // iteration — works
-
-  // Equivalently, as a struct field (the field declaration supplies the key):
-  t = Table { data: [] };
-  t.data += [Entry { name: "y", value: 2 }];
-}
-
+```
+<!-- from tests/reference/keyed-collections.loft -->
+```loft
 struct Table { data: hash<Entry[name]> }
+```
+
+Either declaration supplies the key, and every keyed operation follows it:
+
+<!-- from tests/reference/keyed-collections.loft -->
+```loft
+// As a local variable — the type annotation supplies the key:
+h: hash<Entry[name]> = [];
+h += [Entry { name: "x", value: 1 }];
+e = h["x"];                 // lookup — works
+h["x"] = null;              // remove — works
+for kv in h { }             // iteration — works
+
+// Equivalently, as a struct field (the field declaration supplies the key):
+t = Table { data: [] };
+t.data += [Entry { name: "y", value: 2 }];
 ```
 
 A `[…]` literal builds a keyed collection wherever the KEYED TYPE is known — a typed
@@ -3337,11 +3497,12 @@ Use the annotation (`h: hash<Entry[name]> = []`) or a field declaration instead.
 `h[k] = null` removes ONE element.  Assigning to the **field** replaces the whole
 collection, on every kind (`vector`, `hash`, `sorted`, `index`, `spatial`, `trie`):
 
+<!-- from tests/reference/keyed-collections.loft -->
 ```loft
 t.data = [Entry { name: "y", value: 2 }];  // REPLACES — the old contents are freed
+replaced = len(t.data) == 1 and t.data["x"] == null and (t.data["y"].value ?? -1) == 2;
 t.data = [];                               // empties it
-t.data = null;                             // empties it too (see below)
-t.data += [Entry { name: "z", value: 3 }]; // `+=` is the one that APPENDS
+emptied = len(t.data) == 0;
 ```
 
 `= null` empties the collection rather than making it absent: a collection field holds

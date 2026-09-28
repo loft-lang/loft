@@ -48,10 +48,13 @@ Rules, all of them the corpus's:
    interpreter; `make test-native` covers `tests/docs/` and this directory is added to it for
    the same reason.
 
-## What this does NOT do yet
+## The page's code is the file's code
 
-It does not check that the code on the HTML page is the code in the file. That gate is worth
-having — it is the drift `check_doc_drift.sh` exists for elsewhere — and it is not built. Until
-it is, a file here proves the CLAIM is true; it does not prove the PAGE says it accurately.
+`scripts/rule_tags.py fences` reads each loft block on the two pages (the `<pre><code>` with
+no class, under its `<h2 id>`) as a verbatim window of `tests/comparisons/<id>.loft`,
+indentation normalised, and reports a block that has drifted or has no program (@PLN176
+phase 2).  So a file here proves the CLAIM is true, and the checker proves the PAGE shows
+the code that proved it.  The same convention keeps LOFT.md and STDLIB.md, from
+`tests/reference/` (its README has the contract).
 
 Subject index and the links to every rationale: [`doc/claude/SUBJECTS.md`](../../doc/claude/SUBJECTS.md).

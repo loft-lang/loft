@@ -1,0 +1,16 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § String comparisons containing `{` or `}` — a literal brace in a format
+// string is written doubled.  The wrong spelling is in format-braces-refused.loft.
+
+struct Rgb { r: integer, g: integer, b: integer }
+fn to_text(self: Rgb) -> text { "{{r:{self.r},g:{self.g},b:{self.b}}}" }
+
+fn test_a_doubled_brace_is_a_literal_brace() {
+  p = Rgb { r: 128, g: 0, b: 64 };
+  // CORRECT — double braces produce literal { and }
+  assert("{p}" == "{{r:128,g:0,b:64}}", "...");
+  o = json_parse(`{{"key":1}}`);
+  assert("{o:j}" == "{{\"key\":1}}", "json format");
+}

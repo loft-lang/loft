@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Composite types — a tuple as a collection's key.
+
+struct Cell { pos: (integer, integer), name: text }
+
+fn test_a_tuple_key_is_looked_up_by_a_tuple_and_ordered_as_a_whole() {
+  h: hash<Cell[pos]> = [Cell { pos: (1, 2), name: "a" }];
+  c = h[(1, 2)];              // a literal, a local, or a vector<(…)> element all work
+
+  s: sorted<Cell[pos]> = [];  // (1,2) before (1,9) before (2,0)
+  d: sorted<Cell[-pos]> = []; // `-` reverses the WHOLE tuple
+  assert((c.name ?? "") == "a", "the tuple literal finds the record");
+  k = (1, 2);
+  assert((h[k].name ?? "") == "a", "so does a tuple local");
+  assert(h[(2, 1)] == null, "and a different tuple is a miss");
+  for p in [(2, 0), (1, 9), (1, 2)] {
+    s += [Cell { pos: p, name: "s" }];
+    d += [Cell { pos: p, name: "d" }];
+  }
+  order = "";
+  for e in s { order += "({e.pos.0},{e.pos.1})"; }
+  assert(order == "(1,2)(1,9)(2,0)", "ascending by the whole tuple");
+  rev = "";
+  for e in d { rev += "({e.pos.0},{e.pos.1})"; }
+  assert(rev == "(2,0)(1,9)(1,2)", "`-pos` reverses the whole tuple");
+}

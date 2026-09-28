@@ -1,0 +1,22 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § String comparisons containing `{` or `}` — an undoubled brace opens an
+// interpolation, so `{r:128,g:0,b:64}` is read as an expression with a format spec and does
+// not parse as the text the author meant.
+// The harness re-parses the file with the refused cell blanked (loft#1242), and each
+// round's diagnostics are part of the refusal:
+// @EXPECT_ERROR: No matching operator '==' on 'text' and 'void'
+// @EXPECT_ERROR: Expect token )
+// @EXPECT_ERROR: Formatter error
+// @EXPECT_ERROR: Expect token ;
+// @EXPECT_ERROR: Expect token }
+// @EXPECT_ERROR: Syntax error: unexpected ')'
+
+struct Rgb { r: integer, g: integer, b: integer }
+
+fn refused() {
+  p = Rgb { r: 128, g: 0, b: 64 };
+  // WRONG — {r:128,g:0,b:64} opens an interpolation: `r` with a format spec, not text
+  assert("{p}" == "{r:128,g:0,b:64}", "...");
+}

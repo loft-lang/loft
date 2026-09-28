@@ -1,0 +1,28 @@
+// Copyright (c) 2026 Jurjen Stellingwerff
+// SPDX-License-Identifier: LGPL-3.0-or-later
+//
+// @PAGE: LOFT.md § Two collections over one element type — in one struct they are VIEWS of
+// the same records; a second type is what separates them.
+
+struct Tile { k: integer, n: text }
+struct Level { tiles: vector<Tile>, by_key: hash<Tile[k]> }
+
+fn test_two_members_of_one_type_share_the_records() {
+  lvl = Level { };
+  lvl.tiles += [Tile { k: 7, n: "gate" }];
+  // len(lvl.by_key) is 1 — the hash is a VIEW of the same record
+  assert(len(lvl.by_key) == 1, "the hash sees the record appended through the vector");
+  assert((lvl.by_key[7].n ?? "") == "gate", "and finds it by key");
+}
+
+struct Chosen { k: integer, n: text }
+fn to_chosen(t: Tile) -> Chosen { Chosen { k: t.k, n: t.n } }
+
+struct Picks { by_key: hash<Tile[k]>, picked: vector<Chosen> }
+
+fn test_a_second_type_keeps_a_selection_apart() {
+  p = Picks { };
+  p.by_key += [Tile { k: 1, n: "a" }, Tile { k: 2, n: "b" }];
+  p.picked += [to_chosen(p.by_key[2])];
+  assert(len(p.by_key) == 2 and len(p.picked) == 1, "the pick is its own record, not a view");
+}
