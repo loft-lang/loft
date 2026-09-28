@@ -251,7 +251,7 @@ living in lambda bodies, may not be constructible; do not chase it.
 ### The cbor library as the consumer for "processor-level" arithmetic (2026-09-22)
 
 Asked whether a file could opt into the processor's arithmetic for crypto-style code (closed
-by C67; C120 keeps only an evidence-licensed release tier), the owner pointed at the `cbor`
+by C129; C120 keeps only an evidence-licensed release tier), the owner pointed at the `cbor`
 library as the real consumer.  Read (`~/workspace/loft-bench-libs/loft-libs-core/cbor`, 308
 lines) and emitted from a scratch program that `use`s it by path:
 

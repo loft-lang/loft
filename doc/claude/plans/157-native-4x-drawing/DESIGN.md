@@ -1148,7 +1148,7 @@ that floor already; every row at 8–19× is there for a reason in the closable 
 
 ## The out-of-line calls — the census and the split (2026-09-08)
 
-**The steer.**  After C67 declined machine-dependent arithmetic, the owner's next
+**The steer.**  After C129 declined machine-dependent arithmetic, the owner's next
 sentence: *"that doesn't mean we cannot do some trickery here (the llvm code will
 probably use flags on the registers to indicate overflow)"* — keep the semantics, make
 the checks near-free.  Checked in the disassembly of the shipped `n_seed_hash` before

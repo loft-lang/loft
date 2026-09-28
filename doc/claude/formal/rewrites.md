@@ -1328,7 +1328,7 @@ group reaches a cell the loop declined (c8, c11, c15).  Sites: `hoist::mint_grou
                  always right.
 ```
 
-**The type clause, in words.** 2026-09-22, the C67/C120 discussion with the `cbor` library as
+**The type clause, in words.** 2026-09-22, the C129/C120 discussion with the `cbor` library as
 the consumer (`bench/portal/analysis/vector-build.md` § The cbor library).  The proof ranged by
 SHAPE and never by TYPE, so the cbor decoder's `(bytes[p] ?? 0) * 256 + (bytes[p + 1] ?? 0)`
 was emitted checked although the compiler itself typed both joins `integer(0, 255)`, and a

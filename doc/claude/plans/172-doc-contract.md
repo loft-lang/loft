@@ -55,6 +55,18 @@ SPDX-License-Identifier: LGPL-3.0-or-later
 - **Pointers:** every citation of a moved section names its new doc — 112 `tests/scripts`
   headers, CLAUDE.md, skills, scripts and comments.
 
+**Phase 4 — DESIGN_DECISIONS.md, register and record (2026-09-28).**
+- **4381 → 966 lines.**  Every entry keeps its heading, so every anchor and every
+  "DESIGN_DECISIONS.md C86" citation still resolves.  Each entry now states the decision, its
+  reason and what would reopen it; the question, evaluation and amendments moved verbatim to
+  DESIGN_DECISIONS-history.md under the same heading.
+- **Folded in:** amendments that changed a decision (C68 reversed, C77 superseded by C86, C110
+  by C126), so the register states what holds now.
+- **Defects fixed:** two entries shared C67; the processor-arithmetic one is now C129 and its five
+  citations moved.  C91 carried a placeholder link to C101 from before C101 existed.
+- **Open, found here:** C98 is not what ships — a bare `use lib;` wildcard-imports; the entry
+  records the owner call as open.  C124's warning → error step has no tracker.
+
 **Plan docs are out of the burn-down (owner, 2026-09-28).**  A plan's docs are kept under the
 contract by that plan's own agent, so `make docs-lint`'s report, baseline and worklist and
 `make file-sizes` leave `plans/` and `lib_plans/` out; the edit hook and the PR gate still

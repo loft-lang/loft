@@ -74,7 +74,7 @@ panic hook's frame block is a pinned contract).
 
 **The tier that does not exist yet (owner, 2026-09-15).**  Every tier above keeps the
 null-sentinel and overflow checks that make an integer fault a reported null rather than
-a wrapped number (DESIGN_DECISIONS.md C67, C120): the checks are the semantics, and they
+a wrapped number (DESIGN_DECISIONS.md C129, C120): the checks are the semantics, and they
 stay the default because a starting programmer must never be handed a random-looking
 number they cannot debug.  What may come, and is deliberately not built: an OPT-IN
 "proven program" tier for a game that has already run fine with the checks on — licensed
