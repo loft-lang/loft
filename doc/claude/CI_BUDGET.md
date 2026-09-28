@@ -238,6 +238,12 @@ This document is about the CI runner. A developer's complaint is different — *
 `make ci` costs ten minutes and blocks iteration* — and it has a different answer, so it is
 recorded separately rather than folded in.
 
+**A red gate is not re-run to verify its fix (owner, 2026-09-28).** Once a gate has named the
+tests it failed, what is left to check is those tests: rerun them alone
+(`cargo test --release --test <binary> <name>`, or `find_problems.sh --changed`) and push.  A
+test whose own retry passed in the gate (`TRY 2 PASS`) is rerun alone too, never by
+restarting the gate.
+
 **Measured on 24 cores.** Full run: **572 s**, of which `cargo nextest` is ~478–572 s and the
 three builds ~130 s. So the test step is the whole question.
 
