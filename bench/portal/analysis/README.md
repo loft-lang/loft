@@ -12,8 +12,17 @@ the twin winning by something loft cannot say, that is the unit to price — `(P
 | `records.md` | record-field, record-build | analysed and **R1–R7 BUILT** (§ Built has the table and what the building found); **2026-09-27:** an appended builder's HEAP record lands in its element (`panel_build` −20 %) and the seven-field accessor rides the value path (`slope_path_with_undo` −49 %) — both in § Built (2026-09-27); `resolve_move` (10×, the same accessor) is the next row to re-read; **2026-09-28:** R8 BUILT — a NESTED record rides the tuple (`sphere`-shaped probe −37 %; § Built 2026-09-28), the rows it stands behind wait for the x86-64 re-measure |
 | `vector-build.md` | vector-build (7.5×, the worst class) + four levers beside it | **V1–V3 BUILT** (§ Built: push 0.47×, comprehension 1.70×, grid 2.81×, f32_build 1.49×) and **F1 BUILT** (record_update 4.62× → 1.60×; NOT chunk_lookup, whose loop hoists nothing); C1 priced, not built — the next work, ON ITS CORRECTED CONDITION ("no `CallRef` reachable" is not sufficient: `OpFreeRefOrHandUp`, in a capturing lambda's body, registers a store too — list every registrant as a blocker); T1 priced (−45 %) but RE-SIZED: it needs the "text variable is a `&str`" notion given one home first (six inline sites, three shipped bugs) |
 | `libraries-wide.md` | every class, from eleven libraries' own benches | **MEASURED 2026-09-24, NOT PRICED** — 32 rows, median 3.80×; text-build (the per-character append) and a constant vector literal rebuilt per call are the two class-wide gaps it found |
-| `alloc-temp.md` | alloc-temp (11.5×) and the vector-build rows that are a temporary minted per call | **MEASURED 2026-09-25, DESIGNED, NOT BUILT** — 67 ns per mint+free itemised; the lever is `(R-WorkBuffer)`, a non-escaping local allocated once by the caller like the text and return buffers already are |
-| `round-3.md` | after the five units — text walks, the call frame, a nested in-place write; two rows measured UNATTRIBUTABLE | **PRICED, NOTHING BUILT** — W1 −65 %, W2 −75 %, C1+ −39 %, P1 −30 %; the single-row harness is the instrument this round lacked |
+| `alloc-temp.md` | alloc-temp (11.5×) and the vector-build rows that are a temporary minted per call | **MEASURED 2026-09-25, `(R-WorkBuffer)` BUILT** (§ Built: scalar-element vector locals, pooled per frame, promotion transitive); left: record and text elements, result buffers, the 28 hand-offs, the allocator shave and the fn-ref result buffer, priced there |
+| `round-3.md` | after the five units — text walks, the call frame, a nested in-place write; two rows measured UNATTRIBUTABLE | **W1, W2, C1 (`(R-GuardFree)`) and P1 BUILT** (§ Built, § Order); the single-row harness attributed `mesh_aabb` and `enum_match`; `smooth`, `sort`, `grid`, `copy`, `catalog_churn` remain unpriced |
+| `rules.md` | every rule, from the RULES' side: the declines traced on the benches, the shapes with no rule, the instruments' gaps | **AUDITED 2026-09-28** — change: census rows for 27 uncounted rewrites, 39 undocumented trace switches, one defect outside the deviation list; optimise: the growth-blocked record pointer first, then the clauses each class file prices |
+
+## Where to resume (2026-09-28 evening, branch `157-native-4x`)
+
+**The rules are audited** (`rules.md`).  Start with its § Change — the census covers 24 of
+the 51 rewrites, the documented trace list is 17 of 56 switches, and one `(R-Const)` defect
+stands outside the deviation list — then its § Order.  The branch was A/B'd against
+`origin/main` on this box on the way (`rules.md` § Measured on the way): 71 of 79 routines
+within noise, the three movers explained, none a regression.
 
 ## Where to resume (2026-09-28, branch `157-native-4x`)
 
