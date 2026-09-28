@@ -4379,3 +4379,118 @@ windows into its own state.
 A yielded lambda's writes to a captured heap value reach its copy, not the generator — a
 program that relied on the generator seeing them reads the generator's own value instead.  No
 corpus program did.
+
+---
+
+## C130 — A store carries its own failure arm: else after the assignment
+
+**Catalogue:** @F1 (null model), @F38 (arithmetic safety) · [@PLN178](https://github.com/loft-lang/plans/issues/178) ·
+refines [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) · `formal/heap.md`
+`(H-WriteOOB)` / `(H-WriteNull)`, `formal/operational.md` `(E-Uncomp-Seen)` / `(E-Report)`.
+(C129 is claimed on a sibling branch — *no opt-in to the processor's arithmetic* — and lands
+with it.)
+
+### Question
+
+`(H-WriteOOB)` makes a write to an absent element a no-op the program continues past: `v[5748] = 2`
+on a shorter vector changes nothing, and the owner keeps it so (2026-09-28).  C80 says every
+fault answers a value the programmer MAY inspect on that expression — but a dropped write is
+the one fault whose expression has no value to inspect.  Production code that needs to know
+whether a store took has no way to ask.  What is the syntax?
+
+Four spellings were weighed:
+
+- **Re-spell the place on the next line** — `v[5748] = 2; if !v[5748] { … }`, the form
+  `(E-Uncomp-Seen)` already ships for a narrow slot that did not fit.  Declined by the owner:
+  the place must be copied, and a long index or field chain (`grid[y * w + x].cells[i].hp`) is
+  exactly where the copy goes wrong, with nothing but a careful re-read of both lines to
+  catch it.  It is also a RE-READ, not a status: measured 2026-09-28, `v: vector<integer?>;
+  v[1] = null; if !v[1]` reports a write that landed as missed, and on a keyed collection it
+  is a second lookup.
+- **The store as a condition** — `if v[5748] = 2 { … }` or `if !v[5748]=2 { … }`.  It is the
+  C `=`-for-`==` typo compiled as intended, and it reads badly.  (Today it is not even refused:
+  the interpreter panics on a corrupt reference and `--native` fails in rustc — a defect,
+  fixed under @PLN178 phase 0.)
+- **`v[5748] = 2 || …`**, bash-style.  A third meaning for "or": `??` already names a fallback
+  VALUE for the right-hand side, so `v[i] = 2 ?? x` reads as "2, or x when 2 is null", and an
+  action-on-failure operator beside it is one more thing to learn.
+- **A result wrapper** (`Result`/`Option`) — declined at the root by
+  [C89](#c89--no-tuple-style-enum-variants-a-matcher-reads-like-grammar-and-is-never-forced).
+
+### Decision (owner ruling, 2026-09-28)
+
+**An assignment statement may end in `else { … }`, and the block runs exactly when the store
+did not take.**
+
+```loft
+grid[y * w + x].cells[i].hp = 2 else { log("hp write dropped at {i}"); }
+v[5748] = 2 else { return; }
+health += 10 else { seen = "the boost did not fit"; }
+```
+
+1. **"Did not take" is every way a store lands nowhere or holds something other than the
+   value written:** an index at or past the length or below `-len` (`H-WriteOOB`), an integer
+   null as the index, a write through `nullref` — an absent key, a null view, or ANY step of a
+   chain that resolved to one (`H-WriteNull`) — a non-nullable narrow slot the value did not
+   fit (`E-Uncomp-NN`), and a runtime lock fault (`H-WriteLocked`).  Plain and compound stores
+   alike.  A negative index in `[-len, -1]` is a landed write (`H-Index`).
+2. **The place is spelled once.**  The `else` belongs to the whole statement, whatever the
+   chain and whatever the right-hand side: `x = if c { 1 } else { 2 } else { … }` gives the
+   inner `else` to the `if` and the outer one to the store.
+3. **The store stays a statement.**  It has no value, so a store in condition position
+   (`if place = v`) is a compile-time refusal, not a boolean.  There is no success arm: the
+   code after the line is the success path, and `else { dropped = true; }` carries the status
+   where someone needs it later.
+4. **The value written is the author's; nothing is unwrapped.**  C89's objection to
+   `let-else` — mitigation for a wrapper that must be opened to read a value — does not apply:
+   this block is the failure arm of a store that has no value at all.
+5. **One idiom for both fault kinds.**  `else` supersedes `if !place` as the taught form of
+   `(E-Uncomp-Seen)`; the fused `if !place` stays accepted, because it shipped
+   ([COMPATIBILITY.md](COMPATIBILITY.md)), and the manual stops teaching it.
+6. **A dropped write nobody guarded logs ONE Warn line, in every build kind** — the place, the
+   index or key, and the length — refining C80 point 1 the way `(E-Report)` already does for
+   an unguarded divide-by-zero.  A store with an `else` is guarded and silent.  An
+   out-of-range READ stays silent, because `v[i] ?? d` is idiomatic and the null is its
+   signal; a dropped WRITE is almost never intended, so the line is signal, not spam.  It is
+   mode-independent (C80 point 5): a write dropped in a player's game is logged there, which is
+   the only trace the developer will get from that machine.
+7. **This is the auto resolution, and it needs no declaration.**  The owner asked whether a
+   programmer may state "just log every case I did not handle": that is what writing nothing
+   means.  The logger configuration (`level = error`, a per-file level — [LOGGER.md](LOGGER.md))
+   is the project-wide switch; no pragma, no per-file opt-in.
+8. **Never a compile-time diagnostic for a missing `else`** (owner: *"we have to be sure that
+   we never warn for this construction on places that do not need it"*).  A store is never
+   nagged for lacking one, and this decision introduces no diagnostic at all; an `else` on a
+   store that cannot fail (a plain local) is dead code like any other.  Should a redundant
+   `else` ever need naming, it is `advice`, never `warning`.
+
+**The cost is accepted with eyes open.**  There are now more places where a programmer who
+needs certainty writes something.  The owner's reading: this looks like the language design
+being troubled, and it is not — it will only aid programmers in the long run, because the
+alternative is a runtime that stops the game, or a status the programmer had to reconstruct
+by reading two lines.
+
+### Why
+
+- **Zero cost when unwritten.**  The status lives in the same `__fit_N` temp `src/parser/fit.rs`
+  mints for `(E-Uncomp-Seen)`: no status bit beside any element, no re-read, and byte-identical
+  emission for every store without an `else`.
+- **The grammar slot is free.**  `else` is read at exactly one parser site, after an `if`'s
+  true block (`src/parser/control.rs`), so a trailing `else` on an assignment is unclaimed.
+- **It is the spreadsheet model completed.**  C80 keeps the run going; this is the cell's
+  own "did that take" that a robust program checks at its boundaries, in the words a game
+  developer already has, and with the log line as the default when nobody asked.
+
+### Consequence
+
+`formal/heap.md` gains `(H-Write-Else)` beside `(H-WriteOOB)`; `(E-Report)` gains the
+dropped-write clause; `(E-Uncomp-Seen)` is restated with `else` as its form and `if !place` as
+the fused twin.  LOFT.md's narrow-slot section moves to `else`.  A store in condition position
+becomes a refusal.  The phases, the composition matrix and the verification are
+[@PLN178](https://github.com/loft-lang/plans/issues/178).
+
+### Revisit when
+
+A consumer shows the Warn line is noise in a real program — a write dropped by design inside
+a hot loop.  Even then the answer is a cheaper guard (`else {}`), never a mode split and never a
+compile-time nag.
