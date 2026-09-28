@@ -5,7 +5,8 @@
 //! author's `#lock`, a constant, or bytes the program does not own (`file_map`) — never
 //! changes the store.  A development run halts with the report; a production run logs the
 //! write, DISCARDS it and continues on the old bytes (DESIGN_DECISIONS.md C80: nothing
-//! stops a production program).
+//! stops a production program).  Keeps @C80 and the lock-fault clause of @C130: a lock
+//! fault is not a dropped write, so unguarded it halts development rather than logging.
 //!
 //! @falsified-at: 1f91d81f0 — the same cells on that build: every production cell halted
 //!   (exit 1, the development report), `d.name = …` and `d.name += …` crashed with a Rust
