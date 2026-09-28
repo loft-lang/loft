@@ -214,7 +214,8 @@ jobs:
         run: rustup update stable && rustc --version
 
       - name: Cache cargo registry + loft build
-        uses: actions/cache@v4
+        id: cargo-cache
+        uses: actions/cache/restore@v4
         with:
           path: |
             ~/.cargo/registry
@@ -235,3 +236,12 @@ jobs:
 
       - name: Validate ${{ matrix.package }}
         run: scripts/registry_validate.sh ${{ matrix.package }}
+      - name: Save cargo cache (main only)
+        if: github.ref == 'refs/heads/main' && steps.cargo-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ steps.cargo-cache.outputs.cache-primary-key }}
