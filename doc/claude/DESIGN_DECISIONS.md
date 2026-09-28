@@ -459,17 +459,26 @@ collision sites are guarded.
 **Catalogue:** @F1 (null / Optional), @F3 (scalar types), @F4 (width integers). Closes the @PLN102 pre-freeze [null-model keystone](plans/102-stability-contract/keystone-null-model.md) (option B); the sibling of [C85](#c85--overflow-arithmetic-types-non-null-the-game-keeps-running-dont-force-integer-on-every--) (overflow yields the sentinel) and [C80](#c80--the-spreadsheet-fault-model-nothing-stops-a-running-calculation) (the spreadsheet model).
 **Holds at:** `tests/scripts/pln102-null-residual-golden.loft`.
 
-## C91 — `==` is value-by-value / reference-by-identity (bounded, never a reference-chase); `===` reserved for opt-in deep equality
+## C91 — `==` compares content for every type, cycles included; `&a == &b` asks identity
 
-**Decision.** `==`/`!=` compare value types (scalars, `text`, `value struct`, unit enums) by
-content over their own storage, and reference types (`struct`, `vector`, `hash`, `index`, …) by
-identity in O(1); neither ever follows a reference into another store.  `===`/`!==` are
-reserved for an explicit deep equality, which when built must be deep all the way down and
-cycle-safe.  A shallow hybrid `==` is rejected.  **Why.** `==` must be cheap and describable in
-one sentence; a shallow structural `==` is inconsistent in a way that depends on layout.
+**Decision.** `==`/`!=` compare CONTENT for every type — scalars, `text`, `struct`, `value struct`,
+vectors, tuples, keyed collections — recursively through what the value owns and through
+`reference<T>`, and terminate on cyclic values (a pair met again while it is being compared counts
+as equal).  Identity is asked in the source: `&a == &b` / `&a != &b` compare whether both name the
+same record; `&` on only one side is refused, and a scalar or `text` has no record to name.  That
+two operands are one record is only the fast path of content equality, never its meaning, and a
+`value struct` is a layout choice with the same `==`.  Key comparison and hashing in keyed
+collections agree with `==`.  No `===`.  **Why.** Every variable is its own value (C86), so an
+identity `==` reported where a value is stored: `b = a; a == b` answered false, and
+`value struct` versus `struct` — a speed choice — flipped the answer.  What `==` means is
+decided by what is written; how fast it is, by the compiler.  **Not built yet:** `==` on a plain
+struct still compares identity and `&a == &b` is still refused; the change follows its census
+(@PLN175).
 
-**Revisit when.** No trigger recorded; `===` ships when a consumer needs it.  Decided 2026-07-13 — [record](DESIGN_DECISIONS-history.md#c91---is-value-by-value--reference-by-identity-bounded-never-a-reference-chase--reserved-for-opt-in-deep-equality).
-**Catalogue:** @F1 (null / equality), @F2 (operators). Closes the @PLN102 pre-freeze **F7** ("`ref ==` is identity, not structural — a decision"). Sibling of [C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) (whole-value copy) and [C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen) (the in-band sentinels).
+**Revisit when.** A consumer's content comparison costs more than it can carry and it truly asks
+identity — the cure is `&a == &b`, not a cheaper `==`.  Decided 2026-07-13, content everywhere
+and `&a == &b` 2026-09-28 (owner) — [record](DESIGN_DECISIONS-history.md#c91---is-value-by-value--reference-by-identity-bounded-never-a-reference-chase--reserved-for-opt-in-deep-equality).
+**Catalogue:** @F1 (null / equality), @F2 (operators). Sibling of [C86](#c86--whole-value-heap-binds-copy-aliasing-is-a-last-use-elision-the-rustc-rule) (whole-value copy) and [C90](#c90--each-nullable-scalar-reserves-one-bit-pattern-for-null-the-in-band-sentinel-residual-accepted-frozen) (the in-band sentinels).
 
 ## C92 — Compound assignment evaluates its place expression exactly once
 

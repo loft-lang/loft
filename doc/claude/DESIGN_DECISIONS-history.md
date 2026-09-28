@@ -2328,6 +2328,20 @@ The deciding constraints (owner, 2026-07-13): **`==` must be quick — never an 
 - **`===` / `!==`** — RESERVED for opt-in **deep structural** equality (recurse through references, all the way down). Not shipped by this decision — the contract (that deep equality is a distinct, explicit, more-expensive operator, never the `==` default) is fixed now; `===` itself ships when a consumer needs it. When built it MUST be **consistently deep** (recurse into everything — a shallow `===` reintroduces the inconsistency this decision rejects) and **cycle-safe** (reference structs can form cycles; a naive deep walk loops forever).
 - **Rejected:** a shallow/hybrid `==` (structural for a record's own fields, identity for nested references) — internally inconsistent and therefore dangerous, regardless of its speed.
 
+
+**Amended 2026-09-28 (owner): content everywhere, and identity is spelled `&a == &b`.**  Walking
+C91 under @PLN175 found `===` was never reserved (`a === b` lexed as `==` then `=` and failed
+naming `OpEqInt`) and measured what the identity `==` did under C86's copy semantics, on both
+backends: `b = a; a == b` answered **false**, two equal plain structs answered false, two equal
+`value struct`s answered true, and vectors had no `==` at all.  So `==` reported how a value is
+stored, and a layout keyword changed a program's meaning.  The owner's rulings, in order: `===`
+is a patch other languages put over a `==` that means the wrong thing, so none; semantics and
+speed are kept apart, so `==` compares content for every type — `reference<T>` included, with
+identity only as the fast path and cyclic values compared coinductively; and because loft
+answers a construction with syntax, identity is asked as `&a == &b`, which reuses `&`'s one
+meaning (the link, not the value) and was refused before, so giving it a meaning only loosens.
+The census of `==` whose answer this changes is recorded with the change that builds it.
+
 ## C92 — Compound assignment evaluates its place expression exactly once
 
 **Catalogue:** @F2 (operators). Closes the @PLN102 pre-freeze **F2** ("compound-assign double-evaluates its place"). Same class as the F4 assignment eval-order item — an evaluation count/order that would otherwise freeze as impl-defined.
