@@ -99,6 +99,23 @@ tables.
 
 ---
 
+## Recursion depth is capped, and the cap halts the run
+
+A call chain deeper than `State::MAX_CALL_DEPTH` (10 000 frames) halts the program with a
+`call stack overflow` report on `--interpret` and `--native`, in every build; on wasm the
+host engine's stack traps earlier (WASM.md § How deep a program can recurse).  It is the
+one runtime halt left that is not `panic` or `assert`, and it breaks the rule that nothing
+stops a running program (DESIGN_DECISIONS.md C80).
+
+**What replaces it — [@PLN177](plans/177-growable-stack.md):** the stack grows in blocks, so
+stack size never limits a program.  A production build has no depth limit; a development or
+test build keeps a call-depth limit that halts with a full report of the recursion.
+
+**Until then:** a recursion that can go deeper than 10 000 frames is written as a loop
+over an explicit work list (a `vector` used as a stack).
+
+---
+
 ## Native build — same-symbol cross-package `#native` collision (fix deferred → @PLN26)
 
 Two native packages (`[native] crate`) that export the **same `#native` symbol**
