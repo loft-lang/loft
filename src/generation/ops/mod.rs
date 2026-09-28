@@ -580,9 +580,10 @@ mod tests {
         // push in a loop that holds a push header writes the encoded byte through it; its
         // `i32` and character kinds add two more (`OpPushInt4`, `OpPushCharacter`), and its
         // boolean and enum kinds two more (`OpPushBoolean`, `OpPushEnum`, the byte kind at
-        // bias 0).
+        // bias 0).  `(G-Hold)` adds one, `OpCoroutineRetainEmitter`: a second holder of a
+        // generator handle takes a hold on its frame.
         assert!(
-            count <= 131,
+            count <= 132,
             "registry has {count} custom emitters — bump the cap if \
              this is intentional and document here"
         );
