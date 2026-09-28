@@ -3773,6 +3773,19 @@ impl Parser {
     /// # Errors
     /// With filesystem problems.
     pub fn parse_dir(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
+        self.parse_dir_inner(dir, default, debug)?;
+        // The stdlib is checked ONCE, here at the top-level call and never inside the
+        // recursion below, where the list is still being filled: its operator declarations
+        // must be, slot for slot, the ones this binary's dispatch table was generated from,
+        // or the refusal is the ONLY thing standing between the run and a corrupt
+        // reference (`stdlib_ops`).
+        if default && let Err(msg) = crate::stdlib_ops::verify(&self.data, dir) {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidData, msg));
+        }
+        Ok(())
+    }
+
+    fn parse_dir_inner(&mut self, dir: &str, default: bool, debug: bool) -> std::io::Result<()> {
         let paths = read_dir(dir)?;
         let mut files: BTreeSet<String> = BTreeSet::new();
         for path in paths {
@@ -3792,7 +3805,7 @@ impl Parser {
             let from = self.data.definitions();
             let data = metadata(&f)?;
             if data.is_dir() {
-                self.parse_dir(&f, default, debug)?;
+                self.parse_dir_inner(&f, default, debug)?;
             } else {
                 self.parse(&f, default);
                 // Errors stop the load; warnings and advice do not.  `parse`
@@ -5247,6 +5260,39 @@ impl Parser {
     /// next argument off its slot and ended a run in a SIGSEGV.  The type list is the one
     /// [`coalesce_not_null`](Parser::coalesce_not_null) uses, for the same reason.
     pub(crate) fn convert_condition(&mut self, code: &mut Value, tp: &Type) -> bool {
+        self.convert_condition_at(code, tp, None)
+    }
+
+    /// [`convert_condition`](Parser::convert_condition) anchored at the condition's own
+    /// start, so the refusal below names the expression and not the `{` after it.
+    ///
+    /// **A store stays a statement (@C130).**  `if v[9] = 2 { … }` is the C `=`-for-`==`
+    /// typo, and it is refused here rather than read as a flag: the expression answers
+    /// NOTHING, so there is no value to test.  Nothing is wrong with the pair of types —
+    /// the refusal is about the POSITION, as the heap-handle admission above it is.  Without
+    /// it the interpreter read a stack byte as the flag, `if x = 5 { … }` then left `x`
+    /// holding that byte's neighbours, and `--native` failed in rustc (`expected bool, found
+    /// ()`): one program, two drivers disagreeing whether it is a program (measured
+    /// 2026-09-28, both `if` and `while`).  A `Never` condition (a `return` in it) is not
+    /// this case and keeps its own path.
+    pub(crate) fn convert_condition_at(
+        &mut self,
+        code: &mut Value,
+        tp: &Type,
+        at: Option<&Position>,
+    ) -> bool {
+        if matches!(tp, Type::Void) {
+            if !self.first_pass {
+                let msg = "A condition needs a value, and this expression answers nothing \
+                           — write `==` to compare, or move the store to its own line";
+                if let Some(at) = at {
+                    diagnostic_at!(self.lexer, at, Level::Error, "{msg}");
+                } else {
+                    diagnostic!(self.lexer, Level::Error, "{msg}");
+                }
+            }
+            return false;
+        }
         if Self::is_heap_handle(tp) {
             if !self.first_pass {
                 let not_null = self.coalesce_not_null(&code.clone(), tp.base());

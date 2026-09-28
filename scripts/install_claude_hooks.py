@@ -13,6 +13,11 @@ The hooks it installs:
     PostToolUse  Edit|Write|MultiEdit   scripts/doc_lint.py --hook
                  the documentation lint on the file just written: silent when the edit
                  added nothing, the new findings as context when it did (DOC_CONTRACT.md)
+    SessionStart (every source)         .claude/hooks/session-start.sh
+                 a Claude Code on the web session only (the script exits at once
+                 elsewhere): no incremental cache, the previous session's build
+                 leftovers swept, the disk headroom printed — the session's fixed disk
+                 allowance is what ends a gate there (CI_BUDGET.md § A cloud session)
 """
 import json
 import os
@@ -26,6 +31,11 @@ HOOKS = [
      {"type": "command",
       "command": 'python3 "$CLAUDE_PROJECT_DIR/scripts/doc_lint.py" --hook 2>/dev/null || true',
       "timeout": 10}),
+    # No matcher: a SessionStart group without one fires for every source (startup,
+    # resume, clear, compact), and the script itself decides whether it has anything to do.
+    ("SessionStart", None,
+     {"type": "command",
+      "command": "$CLAUDE_PROJECT_DIR/.claude/hooks/session-start.sh"}),
 ]
 
 
@@ -44,7 +54,7 @@ def main() -> int:
         groups = settings.setdefault("hooks", {}).setdefault(event, [])
         group = next((g for g in groups if g.get("matcher") == matcher), None)
         if group is None:
-            group = {"matcher": matcher, "hooks": []}
+            group = {"hooks": []} if matcher is None else {"matcher": matcher, "hooks": []}
             groups.append(group)
         if not any(h.get("command") == hook["command"] for h in group.setdefault("hooks", [])):
             group["hooks"].append(hook)

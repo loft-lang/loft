@@ -42,12 +42,20 @@ logs one Warn line, in every build kind; a store in condition position is refuse
   (`vec_set_at`, `vec_set_hoisted_or_raise_runtime`), the slice fill (`fill_hoisted`), the
   record-view address (`rec_set`) and the guarded index chain.  Each is a cell below.
 - **`else` is read at one parser site** (`src/parser/control.rs`, after an `if`'s true block).
-- **Two crashes found while probing, both on the release binary of 2026-09-28:** `if v[9] = 2
-  { … }` panics the interpreter with *Store access out of bounds … the reference is corrupt*
-  and fails rustc under `--native` (`expected bool, found ()`); two write-and-test pairs on a
-  `vector<integer?>` in one function (`v[1] = null; if !v[1] {…} else {…}; v[9] = null; if
-  !v[9] {…} else {…}`) panic the interpreter the same way, while each pair alone passes.
-  Both are phase 0.
+- **A store in condition position was accepted, and the backends disagreed on it** — the
+  interpreter read a stack byte as the flag (`if x = 5 { … }` then printed a pointer-sized
+  number for `x`), `--native` failed in rustc.  Refused at `Parser::convert_condition_at`
+  on 2026-09-28 (phase 0, shipped with C130); the guard is
+  `tests/scripts/a-store-in-condition-position-is-refused.loft`.
+- **Two interpreter panics seen on the way were NOT the language's** — *Store access out of
+  bounds … the reference is corrupt* on `if v[9] = 2` and on two write-and-test pairs over a
+  `vector<integer?>`.  Both reproduced exactly when a binary built from one branch ran with
+  the OTHER branch's `default/01_code.loft` checked out (one extra `fn Op…` declaration
+  shifts every later entry of the positional `fill::OPERATORS` table), and never with a
+  matching stdlib (0 of 60 runs, `LOFT_POISON=1` and `LOFT_STRICT_STORES=1` clean).  A
+  stdlib that does not match its binary is accepted silently today; refusing it at load is
+  a finding for the build-id family (`build.rs` already names the cross-checkout class),
+  not this plan's.
 
 ## Composition matrix — Stage A
 
@@ -70,7 +78,7 @@ both backends.  `python3 scripts/matrix_axes.py file <guard>` reports the axes r
 
 | # | Phase | Verify | E |
 |---|---|---|---|
-| 0 | **Refuse a store in condition position, and fix the two crashes** — `if place = v` is a compile-time refusal naming the cure (`==`, or `else`); the nullable-vector double pair no longer panics | an `@EXPECT_ERROR` script for the refusal; the C130 repro as a `tests/scripts` guard, both backends, falsified against the current tree | S |
+| 0 | **Refuse a store in condition position** — `if place = v` is a compile-time refusal naming the cure (`==`, or the store on its own line) | `tests/scripts/a-store-in-condition-position-is-refused.loft` (eight `@EXPECT_ERROR` cells: `if` / `else if` / `while` / `assert`, element in and out of range, local, field, compound), falsified against ef4fd49 | **Shipped 2026-09-28** |
 | 1 | **Rules first** — `(H-Write-Else)` in `formal/heap.md` beside `(H-WriteOOB)`, the dropped-write clause on `(E-Report)`, `(E-Uncomp-Seen)` restated with `else` as its form; each cited by the site that will enforce it | `scripts/rule_tags.py check` and `registers`; the chapters' `OPEN:` counts re-measured | XS |
 | 2 | **Interpreter: `else` after a store** — the parser reads a trailing `else` on an assignment statement, the setter answers whether it resolved a cell, the block is conditioned on that through the `__fit_N` temp; the fit fusion re-targets to the same path for `place op= e else` | the Stage A matrix green on `--interpret`; `loft introspect` byte-identical for every store WITHOUT an `else` (the codegen skill's refactor gate) | M |
 | 3 | **Native: every setter path answers the status** — the `OpSet*` twins and each rewrite that writes without a `DbRef` (hoisted header and base, slice fill, record-view address, guarded chain) | the same script on `--native`; `LOFT_TRACE_BASE` / `LOFT_TRACE_RECPTR` / `LOFT_TRACE_CHAIN` and a `--native-emit` grep confirm each rewrite fired on its cell — a green cell a rewrite declined measures nothing | M |

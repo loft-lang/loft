@@ -1,0 +1,127 @@
+diff --git b/src/parser/collections.rs a/src/parser/collections.rs
+index b86da88..64f7704 100644
+--- b/src/parser/collections.rs
++++ a/src/parser/collections.rs
+@@ -3338,15 +3338,7 @@ use #count instead"
+         }
+         let if_step = if self.lexer.has_token("if") {
+             let mut if_expr = Value::Null;
+-            let at = self.lexer.peek().position.clone();
+-            let tp = self.expression(&mut if_expr);
+-            // The filter is a CONDITION, and it took the expression raw: a store there
+-            // (`for x in r if n = x`) read a corrupt stack reference and panicked the
+-            // interpreter, and a comprehension's filter answered wrong on the same
+-            // spelling.  Routed through the one condition coercion so it is refused
+-            // where `if` and `while` refuse it (@C130), and a heap handle is read as
+-            // present-or-absent here as it is there.
+-            self.convert_condition_at(&mut if_expr, &tp, Some(&at));
++            self.expression(&mut if_expr);
+             if_expr
+         } else {
+             Value::Null
+diff --git b/src/parser/control.rs a/src/parser/control.rs
+index 6de6f77..5deca09 100644
+--- b/src/parser/control.rs
++++ a/src/parser/control.rs
+@@ -5173,7 +5173,7 @@ impl Parser {
+         // @PLN152 step 5 — the condition is complete, so the fused-fit window closes here:
+         // the arms below, and an `else if` chain's own conditions, are past the pair.
+         self.fit_in_condition = false;
+-        self.convert_condition_at(&mut test, &tp, Some(&cond_at));
++        self.convert_condition(&mut test, &tp);
+         // @PLN25 DN3: a non-null proof from the condition narrows the proven var inside the
+         // matching branch (then for `!= null`/truthy, else for `== null`).
+         let narrow = self.narrowing_from_condition(&test);
+@@ -18062,7 +18062,7 @@ impl Parser {
+             // a heap handle raw here: the interpreter accepted `assert(v)` while `--native`
+             // refused to compile it (`(DbRef) as u8`), which is one program and two drivers
+             // disagreeing about whether it is a program at all.
+-            self.convert_condition_at(&mut test, &types[0], Some(call_pos));
++            self.convert_condition(&mut test, &types[0]);
+             let message = if list.len() > 1 {
+                 list[1].clone()
+             } else {
+diff --git b/src/parser/expressions.rs a/src/parser/expressions.rs
+index 25b5342..4870b8e 100644
+--- b/src/parser/expressions.rs
++++ a/src/parser/expressions.rs
+@@ -1489,13 +1489,12 @@ impl Parser {
+         // loft#986 — see `in_control_head`: the `{` after the condition opens the body.
+         let outer_head = self.in_control_head;
+         self.in_control_head = true;
+-        let cond_at = self.lexer.peek().position.clone();
+         let cond_tp = self.expression(&mut cond);
+         self.in_control_head = outer_head;
+         // The same coercion `if` performs — a `while` over a collection handle is the
+         // identical position, and reading a pointer's first byte as the flag is how the
+         // loop ran the wrong number of times.
+-        self.convert_condition_at(&mut cond, &cond_tp, Some(&cond_at));
++        self.convert_condition(&mut cond, &cond_tp);
+         if !self.first_pass && matches!(cond, Value::Null) {
+             diagnostic!(self.lexer, Level::Error, "Expected condition after 'while'");
+             return;
+diff --git b/src/parser/mod.rs a/src/parser/mod.rs
+index f3fa765..f79f62d 100644
+--- b/src/parser/mod.rs
++++ a/src/parser/mod.rs
+@@ -5218,39 +5218,6 @@ impl Parser {
+     /// next argument off its slot and ended a run in a SIGSEGV.  The type list is the one
+     /// [`coalesce_not_null`](Parser::coalesce_not_null) uses, for the same reason.
+     pub(crate) fn convert_condition(&mut self, code: &mut Value, tp: &Type) -> bool {
+-        self.convert_condition_at(code, tp, None)
+-    }
+-
+-    /// [`convert_condition`](Parser::convert_condition) anchored at the condition's own
+-    /// start, so the refusal below names the expression and not the `{` after it.
+-    ///
+-    /// **A store stays a statement (@C130).**  `if v[9] = 2 { … }` is the C `=`-for-`==`
+-    /// typo, and it is refused here rather than read as a flag: the expression answers
+-    /// NOTHING, so there is no value to test.  Nothing is wrong with the pair of types —
+-    /// the refusal is about the POSITION, as the heap-handle admission above it is.  Without
+-    /// it the interpreter read a stack byte as the flag, `if x = 5 { … }` then left `x`
+-    /// holding that byte's neighbours, and `--native` failed in rustc (`expected bool, found
+-    /// ()`): one program, two drivers disagreeing whether it is a program (measured
+-    /// 2026-09-28, both `if` and `while`).  A `Never` condition (a `return` in it) is not
+-    /// this case and keeps its own path.
+-    pub(crate) fn convert_condition_at(
+-        &mut self,
+-        code: &mut Value,
+-        tp: &Type,
+-        at: Option<&Position>,
+-    ) -> bool {
+-        if matches!(tp, Type::Void) {
+-            if !self.first_pass {
+-                let msg = "A condition needs a value, and this expression answers nothing \
+-                           — write `==` to compare, or move the store to its own line";
+-                if let Some(at) = at {
+-                    diagnostic_at!(self.lexer, at, Level::Error, "{msg}");
+-                } else {
+-                    diagnostic!(self.lexer, Level::Error, "{msg}");
+-                }
+-            }
+-            return false;
+-        }
+         if Self::is_heap_handle(tp) {
+             if !self.first_pass {
+                 let not_null = self.coalesce_not_null(&code.clone(), tp.base());
+diff --git b/src/parser/vectors.rs a/src/parser/vectors.rs
+index 412c70b..dd60378 100644
+--- b/src/parser/vectors.rs
++++ a/src/parser/vectors.rs
+@@ -3103,15 +3103,7 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
+         self.vars.defined(for_var);
+         let if_step = if self.lexer.has_token("if") {
+             let mut if_expr = Value::Null;
+-            let at = self.lexer.peek().position.clone();
+-            let tp = self.expression(&mut if_expr);
+-            // The filter is a CONDITION, and it took the expression raw: a store there
+-            // (`for x in r if n = x`) read a corrupt stack reference and panicked the
+-            // interpreter, and a comprehension's filter answered wrong on the same
+-            // spelling.  Routed through the one condition coercion so it is refused
+-            // where `if` and `while` refuse it (@C130), and a heap handle is read as
+-            // present-or-absent here as it is there.
+-            self.convert_condition_at(&mut if_expr, &tp, Some(&at));
++            self.expression(&mut if_expr);
+             if_expr
+         } else {
+             Value::Null

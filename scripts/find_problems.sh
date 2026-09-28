@@ -571,6 +571,37 @@ set -- "${_args[@]+"${_args[@]}"}"
 # have used is noise about a decision they are not making.
 announce_selection() { echo "selection: $SELECT_LABEL"; }
 
+# A run of the curated or full set links every test binary — 382 of them, 16 GB under
+# `target/debug` (2026-09-28) — and a disk that cannot hold that ends the run in the
+# LINKER (`ld terminated with signal 7 [Bus error]`, `No space left on device`) with a
+# log that carries no verdict, which is worse than no run because it looks like one.  So
+# the headroom is read before anything is built, against a floor the set's own footprint
+# sets, and a run that would not fit says what fits instead.  A subject run links tens of
+# binaries, not hundreds, and passes under the floor.  `LOFT_GATE_MIN_FREE_GB` moves the
+# floor; `0` switches the guard off.  CI_BUDGET.md § A cloud session.
+disk_guard() {
+  local floor="${LOFT_GATE_MIN_FREE_GB:-20}"
+  [[ "$floor" == "0" ]] && return 0
+  case "$SELECT_LABEL" in subject:*|changed:*) return 0 ;; esac
+  local where="${CARGO_TARGET_DIR:-target}"
+  [[ -d "$where" ]] || where="."
+  local free_gb
+  free_gb="$(df -Pk "$where" 2>/dev/null | awk 'NR==2 {printf "%d", $4 / 1048576}')"
+  [[ -n "$free_gb" && "$free_gb" -lt "$floor" ]] || return 0
+  cat >&2 <<MSG
+find_problems.sh: ${free_gb} GB free where the ${SELECT_LABEL} set needs about ${floor} GB
+  (every test binary is linked; short of that the run dies in the linker with no verdict).
+  Run one area instead:  ./scripts/find_problems.sh --subject <name>   (--list-subjects)
+  Reclaim space:         make sweep-target · make sweep-scratch · rm -rf target/debug/incremental
+  Or run the same gate on GitHub against the pushed commit
+  (CI_BUDGET.md § When the local gate is unreliable):
+                         gh workflow run ci.yml --ref <branch> -f os=ubuntu-latest
+  LOFT_GATE_MIN_FREE_GB=<n> moves this floor; 0 switches it off.
+MSG
+  exit 2
+}
+case "${1:-}" in --peek|--wait|--stop) ;; *) disk_guard ;; esac
+
 if [[ "${1:-}" == "--peek" ]]; then
   LOG="${2:-$LOG_DEFAULT}"
   if [[ ! -f "$LOG" ]]; then

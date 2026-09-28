@@ -540,6 +540,42 @@ Against 572 s that is noise, and it re-opens the starvation flake the group exis
 ⚠ 2 and 3 are not equivalent: 2 reduces what is checked, 3 does not. Prefer 3 if the
 serialiser turns out to be the cost, and measure it before choosing.
 
+### A cloud session: the disk is the limit, not the CPU (2026-09-28)
+
+A Claude Code on the web session runs on a fresh container with four cores, 15 GB of memory
+and a FIXED writable allowance, and every gate that died there died of the disk.  Measured
+in one session: the machine idle (load 0.02), a release build of `loft` in 2–3 minutes —
+and three runs killed mid-link, each leaving a log that ended without a verdict because the
+`echo exit` that would have written one failed too.  The symptoms to recognise, all of them
+disk: `ld terminated with signal 7 [Bus error]`, `No space left on device`, loft's own *low
+space in /var/tmp/loft-test-scratch* warning, a `--native` cell failing with a code-shaped
+message (CLAUDE.md § `make sweep-scratch`).  What filled it:
+
+| consumer | measured |
+|---|---|
+| `target/debug/deps` — every test binary of every dependency hash, 382 of them | 16 GB (`issues`: 225 MB, 96 MB of it debug sections) |
+| `target/debug/incremental` — rebuilt by every `cargo check`/`clippy` pass | 5 GB per pass |
+| `make falsify`'s control build, one full release target per ref | ~2 GB each, kept under `~/.cache/loft-falsify` |
+| `/tmp/loft_native_*`, the test scratch, `.loft/` caches beside probe files | hundreds of MB |
+
+Three things make it reliable, and the first two need nothing from the person:
+
+1. **The session-start hook** (`.claude/hooks/session-start.sh`, web sessions only): sets
+   `CARGO_INCREMENTAL=0` (each target is built once per session, so the cache is pure
+   cost), removes the previous session's incremental cache and falsify control builds,
+   runs `make sweep-scratch`, and prints the headroom.
+2. **`find_problems.sh` refuses a run that would not fit.**  A curated or full run needs
+   about 20 GB free (`LOFT_GATE_MIN_FREE_GB`, `0` switches it off); short of that it exits 2
+   before building anything and names what fits: a `--subject` run, the space to reclaim,
+   or the GitHub gate.  Note the trap that reaches this guard: `--changed` widens to the
+   whole curated set whenever the diff touches `src/main.rs` or `src/lib.rs`, which every
+   test binary depends on — a two-line edit there is a 16 GB run.
+3. **The full gate runs on GitHub, not here.**  The section below has the dispatch; a
+   session without `gh` uses the GitHub MCP tool (`actions_run_trigger`, `run_workflow`
+   on `ci.yml` with `os=ubuntu-latest`, then `actions_get` on the run).  Locally, keep to
+   `--subject <name>` and single `cargo test --test <name>` runs, and read `df -h /`
+   before each — the allowance never grows back except by deleting.
+
 ### When the local gate is unreliable, run the same gate on GitHub (2026-09-08)
 
 A local `make ci` is one process tree on a shared laptop.  On 2026-09-08 the waiter for

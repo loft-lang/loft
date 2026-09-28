@@ -25,6 +25,32 @@ loop, `LOFT_TRACE_ITERVEC=1` names an iterator left unmaterialised.  Cells
 `tests/scripts/174-slice-copy.loft`, `174-a-slice-is-a-vector-wherever-a-vector-is-expected.loft`;
 pins `tests/slice_copy.rs`.  LOFT.md § slices and `formal/collections.md` `(Slice-Value)` say it.
 
+### A `default/` that does not match the binary is refused at load (2026-09-28)
+
+The dispatch table is positional — `Data::op_code` numbers every operator declaration in parse
+order and `fill::OPERATORS[i]` is the body for the i-th, with no name beside it — so a binary
+from one tree run against another tree's stdlib did not fail: one declaration more or fewer
+moved every later body under the wrong opcode, and the run ended in *Store access out of
+bounds … the reference is corrupt* inside `reserve_vector` for a program that never appended
+(measured when two checkouts shared one `target/`).  The generator now writes
+`fill::OPERATOR_NAMES` beside the table, and the top-level `Parser::parse_dir` of the stdlib
+compares the parsed declarations against it slot for slot (`src/stdlib_ops.rs`): a differing
+slot, a declaration past the table (an operator added without `make fill`) and a table entry
+the library no longer declares are each refused with the cure, before anything runs.  A
+pure-loft edit to `default/` passes, so the edit-and-rerun loop still needs no rebuild.
+Guard: `tests/stdlib_skew.rs` drives the real binary through `--path` at a copy of the stdlib.
+
+### A store in condition position is refused (C130 point 3, 2026-09-28)
+
+`if v[9] = 2 { … }`, `while x = 5 { … }`, `assert(p.x = 3, …)` and a store in a `for` or
+comprehension filter compiled: the interpreter read a stack byte as the flag (`if x = 5` then
+left `x` holding garbage; the `for … if` filter panicked on a corrupt stack reference), while
+`--native` failed in rustc.  The one condition coercion, `Parser::convert_condition_at`, now
+refuses a `Void` condition with the cure (`==`, or the store on its own line), anchored at the
+condition's start; both filter forms route through it, where they took the expression raw.
+Guard: `tests/scripts/a-store-in-condition-position-is-refused.loft` (ten cells), falsified
+on ef4fd49.
+
 ### `--native`: a `virtual(…)` field registered as a stored one (loft#1718, 2026-09-28)
 
 Both field-emission loops of the generated `init()` (`emit_def_create_recurse_fields`,

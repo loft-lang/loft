@@ -3175,7 +3175,15 @@ local copy and write it back after the closure runs: `local = {name}; …; {name
         self.vars.defined(for_var);
         let if_step = if self.lexer.has_token("if") {
             let mut if_expr = Value::Null;
-            self.expression(&mut if_expr);
+            let at = self.lexer.peek().position.clone();
+            let tp = self.expression(&mut if_expr);
+            // The filter is a CONDITION, and it took the expression raw: a store there
+            // (`for x in r if n = x`) read a corrupt stack reference and panicked the
+            // interpreter, and a comprehension's filter answered wrong on the same
+            // spelling.  Routed through the one condition coercion so it is refused
+            // where `if` and `while` refuse it (@C130), and a heap handle is read as
+            // present-or-absent here as it is there.
+            self.convert_condition_at(&mut if_expr, &tp, Some(&at));
             if_expr
         } else {
             Value::Null
