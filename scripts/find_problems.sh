@@ -210,9 +210,19 @@ test_runner_cmd() {
 # Sweep the disk-backed fixture scratch before a full run: tests write
 # fixtures (and their .loft/cache native binaries) under target/test-tmp —
 # per-run artifacts that otherwise accumulate run over run.  Owned by THIS
-# repo's tests only, so the sweep can be unconditional.
+# repo's tests only, so the sweep can be unconditional.  Then make sure the
+# disk has room for the run (scripts/disk_headroom.sh): a run that starts on
+# a full disk reports truncated objects and missing rlibs as test failures —
+# 71 of them in one run, 2026-09-28 — and the reclaim escalates only as far as
+# the shortfall needs, this checkout's own scratch included when no gate is
+# alive.  Below its floor it refuses, and so does the run: `set -e` is off in
+# the callers' subshells, so the refusal is made explicit here.
 sweep_test_tmp() {
   rm -rf "$(dirname "$0")/../target/test-tmp" 2>/dev/null || true
+  "$(dirname "$0")/disk_headroom.sh" --scratch "$LOFT_TEST_SCRATCH" >&2 || {
+    echo "refusing to run on a full disk" >&2
+    exit 1
+  }
 }
 
 # Run all rebuilds in parallel.  Each cargo invocation has fixed

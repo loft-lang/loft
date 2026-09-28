@@ -1004,12 +1004,20 @@ that removes it.  Measured 2026-09-05 before the rules existed: 434 GB under one
 | `~/.cache/loft-falsify/<ref>{,-target}` (`LOFT_FALSIFY_CACHE`) | `make falsify` control builds | the script itself, LRU to `LOFT_FALSIFY_KEEP` after a successful build; `sweep_scratch.sh` a control unused for `--falsify-days` (7), a failed build's included |
 | `~/.cache/tmp/claude-<uid>/<project>/<session>` | the agent harness's per-session scratch (170 GB, 284 sessions) | `make sweep-scratch` (nothing in it changed for two weeks — two days on a RAM tmpfs) |
 | `target/debug/deps` | cargo: every test binary of every dependency hash ever built (76–110 GB per checkout) | `make sweep-target` (`cargo sweep --time 14`) |
+| `target/*/incremental` | cargo: the incremental compilation cache (9 GB measured) | `scripts/disk_headroom.sh`, when the disk is short — it costs a rebuild's time, nothing else |
+| `/var/tmp/loft-test-scratch-<checkout>` as a whole | ONE gate run's fixtures and native test cache (23 GB measured in a single run — today's entries, which the day-old rule keeps) | `scripts/disk_headroom.sh`, when the disk is still short after the steps above and NO gate of this checkout is alive (its pid file and `.ci-running`, liveness-tested): a finished run's fixtures are garbage, the next run writes fresh ones, and the native cache is rebuilt |
 
-`make ci` runs `scripts/sweep_scratch.sh` on its own scratch at the start of every gate (it
-used to keep seven days); `make sweep-scratch` runs it on the checkout's scratch and on
-`TMPDIR` with the session prune, and prints `df` after.  Both touch only loft's own names,
-only dead pids or aged entries, and never a sibling checkout's gate scratch.  A run of `df -h /`
-before a gate is cheaper than reading a `FAIL unknown-mode` as a code fault.
+**Every gate makes room before it starts.**  `make ci`, `make test`, `make quick` and
+`find_problems.sh` (both entry points) run `scripts/disk_headroom.sh` (`make disk-headroom` by
+hand), which reclaims in the order of what it costs to lose — the standing sweep, the
+incremental caches, this checkout's whole gate scratch, `cargo sweep` — until 20 GB is free,
+prints one line when it acted and nothing when it did not, and REFUSES below 2 GB so the gate
+stops there instead of reporting truncated object files and missing rlibs as test failures
+(measured 2026-09-28: 71 of 5312 red with 2 MB free).  Beside it, `scripts/sweep_scratch.sh`
+alone runs on the checkout's scratch at the start of every gate (it used to keep seven days),
+and `make sweep-scratch` runs it on the checkout's scratch and on `TMPDIR` with the session
+prune, printing `df` after.  All of them touch only loft's own names, only dead pids or aged
+entries, and never a sibling checkout's gate scratch.
 
 ### A cancelled run measures its FIRST failure and nothing else
 

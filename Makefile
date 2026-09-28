@@ -554,6 +554,12 @@ sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged t
 	@scripts/sweep_scratch.sh --sessions $(TEST_SCRATCH) "$${TMPDIR:-$$HOME/.cache/tmp}" /tmp
 	@df -h / | tail -1
 
+disk-headroom:  ## Make room for a gate: sweep scratch, incremental caches, this checkout's gate scratch (no gate alive), stale cargo artefacts — until 20 GB is free
+	@# What `make ci` and find_problems.sh run before every gate; by hand when a build
+	@# says `No space left on device`.  Escalates only as far as the shortfall needs.
+	@scripts/disk_headroom.sh
+	@df -h / | tail -1
+
 sweep-target:  ## Drop cargo artefacts no build in two weeks has used (stale-hash test binaries)
 	@# `target/debug/deps` keeps every test binary of every dependency hash it ever built
 	@# (76-110 GB per checkout measured); cargo-sweep removes the ones no recent build
@@ -583,6 +589,7 @@ test: clippy rebuild-native-cdylibs
 	-rm -f tests/generated/*
 	-rm -f tests/dumps/*.txt
 	mkdir -p $(TEST_SCRATCH)
+	@scripts/disk_headroom.sh --scratch $(TEST_SCRATCH)
 	# --release: the loft bytecode interpreter is ~1800x slower in debug
 	# mode (debug Rust running an interpreter loop). Release mode keeps
 	# the full test suite under a minute instead of 30+ minutes.
@@ -590,6 +597,7 @@ test: clippy rebuild-native-cdylibs
 
 quick: rebuild-native-cdylibs
 	mkdir -p $(TEST_SCRATCH)
+	@scripts/disk_headroom.sh --scratch $(TEST_SCRATCH)
 	$(TEST_ENV) RUST_BACKTRACE=1 cargo test --release -- --nocapture --test-threads=1 > result.txt 2>&1
 
 # make iter TEST=<filter> [TFILE=<test_binary>] [PROFILE=release]
@@ -2017,7 +2025,14 @@ check-rlib:  ## One-second pre-flight: is target/release/libloft.rlib present an
 	echo "libloft.rlib: present and current (native + wasm)"
 
 .PHONY: ci-guard
+# What a full gate needs free BEFORE it starts: three profiles rebuilt plus a run's scratch
+# (measured 2026-09-28: a gate that began with 33 GB free died three minutes in on
+# `No space left on device`).  `scripts/disk_headroom.sh` reclaims up to it and refuses
+# below its floor, so the gate stops here instead of reporting truncated files as red.
+CI_MIN_FREE_GB ?= 45
+
 ci-guard:
+	@scripts/disk_headroom.sh --min-gb $(CI_MIN_FREE_GB) --scratch $(TEST_SCRATCH)
 	@# REFUSE to start while another gate is running in this tree, BEFORE the
 	@# truncation below — because two concurrent runs do not merely interleave,
 	@# they FAKE FAILURES in each other and both reports become fiction:
