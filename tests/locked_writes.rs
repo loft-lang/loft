@@ -127,7 +127,25 @@ const DEV_CELLS: [(&str, &str, &str); 4] = [
     ("constant", "NUMS += [3];", "write to a constant"),
 ];
 
+/// Bytes the program does not own: a development run halts on the write too.
+const DEV_FOREIGN: &str = r#"fn main() {
+  src: vector<u8> = [1, 2, 3];
+  assert(write_bytes("locked_fm.tmp", src), "write");
+  m = file_map("locked_fm.tmp") ?? [];
+  m += [4 as u8];
+  println("reached {m}");
+}
+"#;
+
 fn development_halts_with_the_report(backend: &str) {
+    let (stdout, stderr, code, _) = run("foreign", DEV_FOREIGN, backend, false);
+    assert_ne!(code, 0, "{backend} foreign: a development run halts; stdout {stdout:?}");
+    assert!(!stdout.contains("reached"), "{backend} foreign: ran past the write");
+    assert!(
+        stderr.contains("write to bytes the program does not own"),
+        "{backend} foreign: the report; stderr:\n{stderr}"
+    );
+    assert!(!stderr.contains("panicked"), "{backend} foreign: a crash:\n{stderr}");
     for (name, write, report) in DEV_CELLS {
         let source = format!(
             "struct D {{ n: integer, name: text, xs: vector<integer> }}\n\

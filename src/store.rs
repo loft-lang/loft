@@ -5430,16 +5430,11 @@ mod tests {
             foreign.read::<u8>(FOREIGN_REC, 8 + len)
         }));
         assert!(past.is_err(), "a read past the foreign bytes must refuse");
-        // A write is the read-only refusal — nothing can grow or move the block.
-        let grow = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| foreign.claim(1)));
-        assert!(grow.is_err(), "a claim on a foreign store must refuse");
-        let mutate = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            foreign.buffer(FOREIGN_REC).len()
-        }));
-        assert!(
-            mutate.is_err(),
-            "a mutable buffer of the foreign bytes must refuse"
-        );
+        // A write is the program's lock refusal (`@FR-H-WriteLocked`): nothing can grow or
+        // move the block.  Development halts the process and production discards, so neither
+        // is catchable here — both are pinned per mode and backend in tests/locked_writes.rs;
+        // this asserts the fact they rest on.
+        assert!(foreign.read_only && foreign.is_foreign());
         // A VIEW (F4b): elements 5..12 as a vector handle of its own, read through the
         // same accessors — the header, every byte, the base — against the copied form.
         let slot = foreign.add_view(5, 12).expect("a view");
