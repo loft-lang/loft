@@ -3365,9 +3365,11 @@ use #count instead"
         is_par: bool,
     ) -> Option<(u16, Value)> {
         let mut fill = Value::Null;
+        // `base()`: a nullable collection is refused before any walk, so the peel changes
+        // no answer — it states that this reads the collection's shape, not its absence.
         if let Type::Hash(content, _, dep)
         | Type::Radix(content, _, dep)
-        | Type::Trie(content, _, dep) = in_type.clone()
+        | Type::Trie(content, _, dep) = in_type.base().clone()
         {
             // @FR-Col-Order — this snapshot is WHY a sequential `for x in h` is in KEY
             // order: the hash builder sorts, and the walk reads the sorted copy.  Only
@@ -3377,7 +3379,7 @@ use #count instead"
             // A trie is a radix TREE too, so its in-order walk is already key
             // order: it takes the tree builder, not the hash one (whose bucket
             // walk would read a trie's records as a hash table).
-            let is_radix = matches!(in_type, Type::Radix(_, _, _) | Type::Trie(_, _, _));
+            let is_radix = matches!(in_type.base(), Type::Radix(_, _, _) | Type::Trie(_, _, _));
             let scratch_tp = Type::Reference(content, dep.clone());
             let scratch_var = self.create_unique("hash_scratch", &scratch_tp);
             let hash_tp_id = self.get_type(in_type);
@@ -3546,14 +3548,28 @@ use #count instead"
             // For vector loops, the iterator runs on a unique temp copy so that the loop
             // variable does not alias the user-visible collection.  Record the original
             // variable number so that mutation of the original can be detected later.
-            let orig_coll_var = if let Value::Var(v) = &expr {
+            // A spatial or trie SLICE arrives as the call that builds its snapshot; the
+            // collection it walks is that call's first argument.
+            let walked = match expr.unspan() {
+                Value::Call(d, args)
+                    if !args.is_empty()
+                        && matches!(
+                            self.data.def(*d).name(),
+                            "n_spatial_range" | "n_trie_prefix"
+                        ) =>
+                {
+                    args[0].clone()
+                }
+                _ => expr.clone(),
+            };
+            let orig_coll_var = if let Value::Var(v) = walked.unspan() {
                 *v
             } else {
                 u16::MAX
             };
             // Save the original collection expression before the vector temp-copy substitution
             // so that is_iterated_value() can match field-access patterns like `db.items`.
-            let orig_coll_expr = expr.clone();
+            let orig_coll_expr = walked;
             // C60 piece 3 edit B (re-attempt with typed scratch): when
             // iterating a hash, substitute the collection expression
             // with a call to `hash_sorted(h, tp_id)` that builds a
@@ -3722,8 +3738,16 @@ use #count instead"
             }
             let var_tp = self.for_type(&in_type);
             // For vector loops: set_loop stores the temp-copy var; override with the
-            // original so that `orig += elem` is correctly identified as a mutation.
-            if matches!(in_type, Type::Vector(_, _)) {
+            // original so that `orig += elem` is correctly identified as a mutation.  A keyed
+            // loop walks its SNAPSHOT variable, and `(I-For)`'s append refusal is about the
+            // collection the snapshot was taken of.
+            if matches!(
+                in_type,
+                Type::Vector(_, _)
+                    | Type::Hash(_, _, _)
+                    | Type::Radix(_, _, _)
+                    | Type::Trie(_, _, _)
+            ) {
                 if orig_coll_var != u16::MAX {
                     self.vars.set_coll_var(orig_coll_var);
                 }

@@ -21,14 +21,17 @@
 // still reaches is worse than leaking it. So each cell rebuilds the table several times
 // and then demands the entries still answer — by key, by iteration, by miss, through a
 // remove, and with heap-carrying fields whose records must NOT be freed with the table.
-// The iterate-then-insert cell is deliberate: `check_iter_safety`
-// does not list `Type::Hash`, so `for x in h { h += … }` is reachable user code, and it
-// rebuilds the table underneath a loop that is already running. Both backends, because
-// `hash.rs` is shared and a shared fix still has two callers.
+// The iterate-then-insert cell is deliberate: `(I-For)` refuses `for x in h { h += … }`
+// written in the loop body, but the refusal is syntactic and an append made by a CALLEE
+// passes it, so the table can still be rebuilt underneath a loop that is already running.
+// Both backends, because `hash.rs` is shared and a shared fix still has two callers.
 
 struct Entry { key: integer, val: integer }
 struct Named { key: integer, tag: text, val: integer }
 struct Word { w: text, n: integer }
+
+// An append the loop body cannot see (cell 8).
+fn grow(h: hash<Entry[key]>, key: integer) { h += Entry { key: key, val: 7 }; }
 
 /// The fills are written out at each site rather than shared through a helper: `+=` into
 /// a `&hash<…>` parameter is not accepted today, so a helper would have to take the hash
@@ -112,7 +115,7 @@ fn main() {
   seen = 0;
   for live in it {
     seen = seen + 1;
-    if live.key < 200 { it += Entry { key: live.key + 100000, val: 7 }; }
+    if live.key < 200 { grow(it, live.key + 100000); }
   }
   assert(seen == 400, "iteration saw {seen} of the 400 entries it started with");
   for i in 0..400 { assert(it[i] != null, "entry {i} lost to an insert during iteration"); }

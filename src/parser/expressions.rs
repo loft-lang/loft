@@ -1655,6 +1655,7 @@ impl Parser {
             || !matches!(
                 f_type,
                 Type::Vector(_, _)
+                    | Type::Hash(_, _, _)
                     | Type::Sorted(_, _, _)
                     | Type::Index(_, _, _)
                     | Type::Radix(_, _, _)

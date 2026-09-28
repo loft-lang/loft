@@ -37,6 +37,9 @@ fn grid() -> spatial<P[x, y]> {
 
 fn drop_key(h: hash<H[k]>, k: integer) { h[k] = null; }
 
+// An append the loop body cannot see: `(I-For)` refuses one written in the body.
+fn add_key(h: hash<H[k]>, k: integer) { h += [H { k: k, v: "h{k}" }]; }
+
 fn first_then_leave(h: hash<H[k]>) -> text {
   for e in h { return e.v; }
   ""
@@ -74,13 +77,13 @@ fn test_hash_remove_all_ahead() {
 }
 
 fn test_hash_remove_then_append() {
-  // The append may re-claim the freed record; neither the removed nor the appended one is
-  // visited (an append is not visited by a snapshot walk).
+  // The append (made by a callee, which the append refusal cannot see) may re-claim the
+  // freed record; neither the removed nor the appended one is visited.
   h = six();
   s = "";
   for e in h {
     s += e.v;
-    if e.k == 1 { h[4] = null; h += [H { k: 9, v: "h9" }]; }
+    if e.k == 1 { h[4] = null; add_key(h, 9); }
   }
   assert(s == "h0h1h2h3h5", "remove then append: {s}");
   assert(h.len() == 6, "remove then append len: {h.len()}");

@@ -585,6 +585,16 @@ tests/scripts/901-linked-group-fill.loft.
 
 **OPEN: 0.**
 
+- **`D-col-11`** — opened and CLOSED 2026-09-28: **a comprehension over a keyed collection walked
+  the collection, not its snapshot**, against `(Col-Order)`.  A `for` statement walks a `hash`,
+  `spatial` or `trie` through the ordered snapshot `parse_for` built; a comprehension over the same
+  source built none and stepped the COLLECTION in the snapshot's mode — a non-empty hash panicked
+  on a record number read out of its table header, a two-key trie answered `[null]`, a four-point
+  spatial one element, the last two silently, on both backends.  **Closed**: `keyed_snapshot` is
+  the one home both walks call, and the comprehension releases its snapshot when its loop ends.
+  Guard `tests/scripts/a-comprehension-over-a-keyed-collection-walks-its-snapshot.loft`,
+  falsified at `49350ce2b`.
+
 - **`D-col-10`** — opened and CLOSED 2026-09-28: **a range slice's cap below zero answered every
   record**, against `(Slice-Cap)`'s "capped at n".  The lowering spelled "no `:n` written" as the
   limit `-1` and the runtime read every negative limit as that flag, so `xs[(x,y)..:k]` and
