@@ -64,9 +64,12 @@ assumption.  A site enforcing a rule cites its `@FR-R-…` tag
                  condition shows as a DROP, named by rule and bench, in `make
                  rewrite-census` and on the PR — a loss no timing resolves.  A
                  deliberate decline lands with `make rewrite-census-bless` in its
-                 own commit.  Counted today: every plan `start_fn` builds, the loop
-                 hoist frames, the push windows, the record pointers, the work
-                 buffer and its onward clause, and R-CopyView.
+                 own commit.  Counted: every rewrite but two — (R-Prefill) admits per
+                 TYPE at its first mint and (R-Cold) is the runtime's own shape,
+                 neither an emission-time fact.  A parser or scope-pass rewrite
+                 counts at its admission (the standard library's own admissions
+                 included, one constant per program); a generator rewrite counts
+                 where it emits.
   (R-Escape)     the contract is SEMANTICS — what a program computes and can observe —
                  never a representation: how many stores or copies a value takes, or
                  where it lives, is the compiler's to change wherever the rule's
@@ -183,7 +186,10 @@ push.  Sites: `Stores::push_hoisted` (bump, write-back, re-derive), `hoist::Writ
                  alias an owned local but can alias a return buffer the caller offered
                  (§ V-d); a `&` link or a view can alias anything.  A single moving
                  rewrite beside no other holder has nothing to alias with and is
-                 admitted whatever its root.
+                 admitted whatever its root.  A held path whose store is proven
+                 apart from every mover's (R-Base's growth clause — a `for` walk's
+                 hidden vector over an owned local, a `&` view of one) cannot name a
+                 pushed vector either, and is kept.
 ```
 
 **In words.** The ownership facts are the ONE spelling (`@FR-O-Proxy`, the `__vdb`
@@ -191,7 +197,7 @@ witness, `is_argument`, `is_captured`, the hidden return-buffer attribute); this
 them and no rewrite re-derives them.  A rewrite that fails it declines the WHOLE loop — a
 mover left to its template would move a record a kept holder still describes.  Today only a
 push moves; the rule is written for the next mover too.  Sites: `hoist::owned_local`,
-`hoist::retbuf_var`, the admission block in `hoist::hoistable`.
+`hoist::retbuf_var`, `hoist::StoreFacts`, the admission block in `hoist::hoistable`.
 
 ### A vector reached by a pure path has one header for a loop that cannot move it
 
@@ -245,6 +251,22 @@ push moves; the rule is written for the next mover too.  Sites: `hoist::owned_lo
                  on every round, and the bound the element accesses are tested
                  against, which the compiler may then drop.  An end that is anything
                  but the plain length keeps its local (`LOFT_NO_RANGE_END_HEADER`).
+                 THE GROWTH CLAUSE: a loop that grows a store keeps the base of every
+                 held path whose store is proven APART from each store it grows — a
+                 store's buffer is reallocated only by a growth of a vector living in
+                 it.  A variable's store is the END of its dep chain (a view borrows
+                 from its source, a local vector from its `__vdb_N` witness, a
+                 parameter from nothing), and two ends are apart when they differ and
+                 one is FRESH: a `__vdb_N` witness, or a user-named local record
+                 owning its store — minted by this activation, shared with nothing
+                 but its borrowers.  Never fresh: the witness a return-buffer adoption
+                 left unallocated (the local IS the caller's buffer), a buffer
+                 (R-Place) claimed in another record's store, an emitter-owned buffer
+                 or witness.  Two parameters, or a parameter beside the return buffer,
+                 are never proven apart — a caller can hand two fields of one record
+                 — and a chain that forks or leaves the table answers nothing.
+                 `LOFT_NO_DISTINCT_GROWTH` keeps every base off under any growth; the
+                 verify form re-derives the base at every use as before.
 
   (R-Counter)    a counted range's counters — its `#index`, the `next` counter of a
                  computed start, and the loop variable — are never the sentinel: an
@@ -771,7 +793,9 @@ is cheaper through the runtime).  Switch `LOFT_NO_VIEW_HOIST`; falsifier
                  and the scalar inputs of a twin (R-Inputs) r is handed to, read
                  through it at the call — when the remainder grows no store
                  (R-Base's condition; a null-discharge buffer's mint is not a
-                 growth), frees no record before a later use of r, never
+                 growth) or grows only stores proven apart from r's (R-Base's
+                 growth clause: r's store is the end of its dep chain, `pr` for
+                 `e = pr.items[i]?`), frees no record before a later use of r, never
                  rebinds r — a `Set`, and a NATIVE op taking r as its first
                  operand that is not a read (`OpGet…`) or an in-place scalar set
                  (R-InPlace; a kind the address does not serve keeps its store
@@ -3024,11 +3048,11 @@ to bisect to.
   constant store is write-locked and a program's copy must be its own; a wrong decline is
   the build the program already paid.  The second half of the rule as written — the bind
   of the view is B-Copy's copy the moment the local is written — lands as that decline:
-  the copy is the call's own store, so no copy road was added.  ⚠ Found on the way, NOT
-  fixed here: a plain local bound from a TOP-LEVEL constant and then written (`c = NAMES;
-  c[0] = 5`, `c += [7]`, `f(NAMES)` with `f` writing its parameter) has no copy road at all
-  and PANICS on both backends with "Write to read-only store" — the use site emits the view
-  and nothing places the copy this rule says the bind owes (an issue to file: this box could not authenticate to GitHub for writes — its text waits in `plans/157-native-4x-drawing/to-file-const-bind-panic.md`).  Measured on the
+  the copy is the call's own store, so no copy road was added.  Found on the way: a TOP-LEVEL
+  constant bound to a local and written (`c = NAMES; c[0] = 5`, `c += [7]`) or handed to a
+  parameter the callee writes (`f(NAMES)`) had no copy road and halted on the lock — the bind
+  was given its copy by loft#1686 and the argument by loft#1729 (deviation D-rw-6, closed).
+  Measured on the
   portal's text2d lane, same box: `write_text` **165.3 → 4.23 ms per op, 125× → 3.23×** of
   Rust (the hand-price said ~3.3×; the rest of the row is `set_pixel`, the call class), the
   other four rows unmoved.  Cells: `tests/scripts/a-literal-bodied-function-is-a-constant.loft`

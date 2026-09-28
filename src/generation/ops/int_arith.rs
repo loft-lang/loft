@@ -262,6 +262,7 @@ impl OpEmitter for IntArithEmitter {
             && let Some(form) = crate::generation::range::plain_form(ctx.def_fn.name(), args.len())
             && ctx.output.op_range(ctx.def_fn.name(), args).is_some()
         {
+            crate::rewrite_census::fired("R-Range", 1);
             if ctx.output.hoist_verify {
                 write!(ctx.w, "ops::range_verify(")?;
                 write_range_plain(ctx, form, args)?;
@@ -279,6 +280,7 @@ impl OpEmitter for IntArithEmitter {
         if !ctx.output.nn_fast_disabled
             && let Some(sym) = literal_divisor_form(ctx.def_fn.name(), args)
         {
+            crate::rewrite_census::fired("R-LitDiv", 1);
             write!(ctx.w, "{{ let _d = (")?;
             ctx.emit(&args[0])?;
             write!(

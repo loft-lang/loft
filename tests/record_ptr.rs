@@ -100,13 +100,14 @@ fn the_cells_hold_on_both_backends_in_every_switch_state_under_the_falsifiers() 
 fn a_view_binds_its_address_and_reads_and_writes_go_through_it() {
     let rust = emit("on", &[]);
     let main = body(&rust, "n_main");
-    // r1, r2, r3 (two views), r5, r6's SECOND binding, r8 (nullable), r9, r10, r12's `e` (its
-    // copy `e2 = e` reads the fields), r13 and r16's three loop variables — fourteen addresses.
+    // r1, r2, r3 (two views), r5, r6's SECOND binding, r7 (its push grows ANOTHER store), r7b's
+    // mint window (`_elm_2`, the mint clause), r8 (nullable), r9, r10, r12's `e` (its copy
+    // `e2 = e` reads the fields), r13 and r16's three loop variables — sixteen addresses.
     assert_eq!(
         main.matches("//@FR-R-RecPtr record view address for")
             .count(),
-        14,
-        "main should bind exactly its fourteen admitted views:\n{main}"
+        16,
+        "main should bind exactly its sixteen admitted views:\n{main}"
     );
     assert!(
         main.contains("vector::rec_get::<i64>(__pa_"),
@@ -175,7 +176,8 @@ fn the_declines_are_the_designed_ones() {
         .lines()
         .filter(|l| l.starts_with("recptr: n_main declines `e"))
         .collect();
-    // r6's first binding (rebound), r7 (a push), r9's `e9` and r12's copy pair.
+    // r6's first binding (rebound), r7b (a push into the viewed vector itself), r9's `e9`
+    // and r12's copy pair.
     assert!(
         lines
             .iter()
@@ -186,7 +188,7 @@ fn the_declines_are_the_designed_ones() {
         lines
             .iter()
             .any(|l| l.ends_with("the remainder may grow a store")),
-        "r7's push must decline the view:\n{trace}"
+        "r7b's push into the viewed vector must decline the view:\n{trace}"
     );
     assert!(
         lines

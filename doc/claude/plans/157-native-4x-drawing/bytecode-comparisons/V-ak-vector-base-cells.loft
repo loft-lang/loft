@@ -25,7 +25,8 @@ fn b1() {
   println("b1 {s}");
 }
 
-// b2 — a loop that PUSHES while it reads: the push can grow a store, so no base.
+// b2 — a loop that PUSHES to another store while it reads: `acc` owns its store and so
+// does `a`, so `a` keeps its base (`@FR-R-Base`'s growth clause).
 fn b2() {
   a: vector<integer> = [3, 5, 7];
   acc: vector<integer> = [];
@@ -33,6 +34,15 @@ fn b2() {
   s = total(acc);
   assert(s == 30 && len(acc) == 3, "b2 {s} {len(acc)}");
   println("b2 {s} {len(acc)}");
+}
+
+// b2b — a loop that pushes into the vector it READS: that store grows, so no base.
+fn b2b() {
+  a: vector<integer> = [3, 5, 7];
+  for i in 0..3 { a += [a[i]? * 2]; }
+  s = total(a);
+  assert(s == 45 && len(a) == 6, "b2b {s} {len(a)}");
+  println("b2b {s} {len(a)}");
 }
 
 // b3 — a pushing OUTER loop whose inner loop is growth-free: the outer holds `a`'s header
@@ -113,5 +123,5 @@ fn b8() {
 }
 
 fn main() {
-  b1(); b2(); b3(); b4(); b5(); b6(); b7(); b8();
+  b1(); b2(); b2b(); b3(); b4(); b5(); b6(); b7(); b8();
 }

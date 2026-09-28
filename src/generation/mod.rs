@@ -751,6 +751,14 @@ pub struct Output<'a> {
     pub chain_guard_disabled: bool,
     /// `LOFT_TRACE_CHAIN=1` — name every loop whose chains are guarded, and why one is not.
     pub chain_trace: bool,
+    /// `LOFT_NO_DISTINCT_GROWTH=1` — a loop that grows ANY store binds no element base and a
+    /// remainder that grows one binds no record address, as before `@FR-R-Base`'s growth
+    /// clause; the bisect step for a wrong element or field read in a loop that appends
+    /// elsewhere.  `LOFT_HOIST_VERIFY=1` is the falsifier (each base and address re-derived).
+    pub distinct_growth_disabled: bool,
+    /// The locals `(R-Place)` built in another record's store ([`hoist::placed_locals`]),
+    /// rebuilt per function: never a fresh store for [`hoist::StoreFacts`].
+    pub placed_locals: HashSet<u16>,
     /// `LOFT_TRACE_NEST=1` — name every nest admitted and every loop declined, with why.
     pub nest_trace: bool,
     /// `@FR-R-BoundedNest` step 2 — set while the plain arm of a nest whose guard also proved
@@ -2186,6 +2194,9 @@ impl<'a> Output<'a> {
             chains_suspended: 0,
             chain_guard_disabled: std::env::var("LOFT_NO_GUARDED_CHAIN").is_ok_and(|v| v != "0"),
             chain_trace: std::env::var("LOFT_TRACE_CHAIN").is_ok_and(|v| v != "0"),
+            distinct_growth_disabled: std::env::var("LOFT_NO_DISTINCT_GROWTH")
+                .is_ok_and(|v| v != "0"),
+            placed_locals: HashSet::new(),
             nest_trace: std::env::var("LOFT_TRACE_NEST").is_ok_and(|v| v != "0"),
             nest_raw_arm: false,
             nest_raw_disabled: std::env::var("LOFT_NO_NEST_RAW_READS").is_ok_and(|v| v != "0"),
@@ -2537,6 +2548,7 @@ impl Output<'_> {
     pub fn start_fn(&mut self, def_nr: u32) {
         self.def_nr = def_nr;
         self.indent = 0;
+        self.placed_locals = hoist::placed_locals(self.data.def(def_nr).code(), self.data);
         // @PLN157 § V-j — the function's paired move-appends, before anything emits.
         self.invariant_lits = if self.literal_hoist_disabled {
             hoist::LitHoist::default()
@@ -3296,6 +3308,8 @@ impl Output<'_> {
         let g = parts.concat();
         self.indent(w)?;
         writeln!(w, "{g}")?;
+        crate::rewrite_census::fired("R-GuardedChain", 1);
+        crate::rewrite_census::fired("R-GuardedChain/operators", admitted.len());
         if self.chain_trace {
             eprintln!(
                 "chain: {fn_name} loop {} admitted — {} operator(s) in {} chain(s), {} invariant(s), {} hoisted scalar(s), {} nested loop(s)",
@@ -3382,6 +3396,7 @@ impl Output<'_> {
         let Some(hdr) = self.active_vec_header(&f.path).map(str::to_owned) else {
             return Ok(false);
         };
+        crate::rewrite_census::fired("R-Fill", 1);
         let variables = self.data.def(self.def_nr).variables();
         let idx = format!("var_{}", sanitize(variables.name(f.index_var)));
         let lo = match f.next_var {
@@ -3858,6 +3873,14 @@ impl Output<'_> {
                 },
                 (!self.callee_inputs_disabled).then_some(&mut self.input_cache),
                 Some(&self.hoist_owned),
+                (!self.distinct_growth_disabled)
+                    .then_some(hoist::StoreFacts {
+                        vars: self.data.def(self.def_nr).variables(),
+                        placed: &self.placed_locals,
+                        adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                        owned: Some(&self.hoist_owned),
+                    })
+                    .as_ref(),
             )
         };
         let hoist::LoopHoist {
@@ -3866,8 +3889,40 @@ impl Output<'_> {
             pushes,
             mint_pushes,
             growth_free,
+            movers,
         } = hoisted;
-        let bind_bases = growth_free && crate::keys::vector_base_enabled();
+        // `@FR-R-Base` — every candidate's base in a growth-free loop; under growth, the
+        // base of each candidate whose store is proven apart from every store the loop grows.
+        let base_paths: HashSet<hoist::PathKey> = if !crate::keys::vector_base_enabled() {
+            HashSet::new()
+        } else if growth_free {
+            candidates.iter().map(|(p, _)| p.clone()).collect()
+        } else if !self.distinct_growth_disabled && !movers.is_empty() {
+            let facts = hoist::StoreFacts {
+                vars: self.data.def(self.def_nr).variables(),
+                placed: &self.placed_locals,
+                adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                owned: Some(&self.hoist_owned),
+            };
+            let apart: HashSet<hoist::PathKey> = candidates
+                .iter()
+                .filter(|(p, _)| movers.iter().all(|m| facts.distinct(p.0, *m)))
+                .map(|(p, _)| p.clone())
+                .collect();
+            if !apart.is_empty() && std::env::var("LOFT_TRACE_BASE").is_ok() {
+                let vars = self.data.def(self.def_nr).variables();
+                eprintln!(
+                    "base: {} loop {} keeps {} base(s) under a growth of {:?}",
+                    self.data.def(self.def_nr).name(),
+                    lp.scope,
+                    apart.len(),
+                    movers.iter().map(|m| vars.name(*m)).collect::<Vec<_>>()
+                );
+            }
+            apart
+        } else {
+            HashSet::new()
+        };
         let mut base_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut push_frame: HashMap<hoist::PathKey, String> = HashMap::new();
         let mut mint_frame: HashMap<hoist::PathKey, String> = HashMap::new();
@@ -3921,7 +3976,7 @@ impl Output<'_> {
                 // grows nothing, so for ITS extent the vector cannot move and a base may be
                 // derived from the held header — the enclosing loop's push, if any, happens
                 // outside this extent.
-                if bind_bases
+                if base_paths.contains(&path)
                     && self.active_vec_base(&path).is_none()
                     && !self.coroutine_persistent_fields.contains_key(&path.0)
                     && let Some(held) = self.active_vec_header(&path).map(str::to_owned)
@@ -3971,7 +4026,7 @@ impl Output<'_> {
             ));
             // @PLN157 § V-ak (`@FR-R-Base`) — in a growth-free loop the header's vector
             // cannot move, so its element base is derived once beside it.
-            if bind_bases {
+            if base_paths.contains(&path) {
                 let base = format!("__vb_{}", self.hoist_counter);
                 lines.push(format!(
                     "let {base}: *const u8 = vector::vec_base(&{name}, &stores.allocations); //@PLN157 § V-ak element base"
@@ -4212,6 +4267,7 @@ impl Output<'_> {
         }
         self.vec_headers.push(HashMap::from([(path, name)]));
         self.vec_bases.push(bases);
+        crate::rewrite_census::fired("R-View", 1);
         Ok(true)
     }
 
@@ -4262,6 +4318,7 @@ impl Output<'_> {
                 hoist::WrapperOperand::Const(c) => args.push(c.clone()),
             }
         }
+        crate::rewrite_census::fired("R-Wrapper", 1);
         Some((*op, args))
     }
 
@@ -4547,6 +4604,14 @@ impl Output<'_> {
             &mut self.hoist_cache,
             !self.write_hoist_disabled,
             &twin_params,
+            (!self.distinct_growth_disabled)
+                .then_some(hoist::StoreFacts {
+                    vars: self.data.def(self.def_nr).variables(),
+                    placed: &self.placed_locals,
+                    adopted: self.ret_adopt.as_ref().map(|a| (a.v, a.vdb)),
+                    owned: Some(&self.hoist_owned),
+                })
+                .as_ref(),
         );
         // `@FR-R-RecPtr`'s mint clause — a minted element the remainder declines (the next
         // append grows a store) may still hold its address for its own WINDOW, up to its
@@ -4747,6 +4812,7 @@ impl Output<'_> {
         frame.insert(path, name);
         self.mint_push_headers.push(frame);
         self.group_ends.push((block, end));
+        crate::rewrite_census::fired("R-GroupPush", 1);
         Ok(())
     }
 
@@ -9490,11 +9556,15 @@ extern crate loft;"
                 // `@FR-R-LeafChain` widens that in the lean tier to a function whose whole
                 // call tree is frameless: there the frame carries no name, so the depth
                 // count is all it holds, and such a function cannot be re-entered.
-                let leaf = !self.leaf_elide_disabled
-                    && (self.is_elidable_leaf(def_nr)
-                        || (self.lean
-                            && !self.leaf_chain_disabled
-                            && self.is_frameless_chain(def_nr)));
+                let plain_leaf = !self.leaf_elide_disabled && self.is_elidable_leaf(def_nr);
+                let chain_leaf = !plain_leaf
+                    && !self.leaf_elide_disabled
+                    && self.lean
+                    && !self.leaf_chain_disabled
+                    && self.is_frameless_chain(def_nr);
+                let leaf = plain_leaf || chain_leaf;
+                crate::rewrite_census::fired("R-Leaf", usize::from(plain_leaf));
+                crate::rewrite_census::fired("R-LeafChain", usize::from(chain_leaf));
                 // @PLN157 — a leaf carries no fn-ref buffer guard either: it calls no
                 // user function and no fn-ref, so it can neither push a buffer nor sit
                 // between the frame that pushed one and the frame that releases it —
@@ -9508,6 +9578,7 @@ extern crate loft;"
                 // nothing above its mark, every time.  The depth count stays: it is the
                 // recursion cap both backends share.
                 let guard_free = leaf || (!self.guard_free_disabled && self.is_guard_free(def_nr));
+                crate::rewrite_census::fired("R-GuardFree", usize::from(guard_free && !leaf));
                 let fnref_guard = if guard_free {
                     String::new()
                 } else {

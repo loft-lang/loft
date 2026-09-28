@@ -147,13 +147,14 @@ fn a_caller_passes_its_held_base_or_derives_one_from_the_header_at_the_call() {
         "no call passes a held base:\n{}",
         calls.join("\n")
     );
-    // t4's loop appends what it read: it holds no base, so the call derives one from the
-    // header it does hold.
+    // t4b's loop appends to the canvas it reads: it holds no base, so the call derives one
+    // from the header it does hold (t4, which appends to ANOTHER store, holds one since
+    // `@FR-R-Base`'s growth clause).
     assert!(
-        calls
-            .iter()
-            .any(|l| l.contains("vector::vec_base(&__vh_") && l.contains("&stores.allocations))")),
-        "no call derives a base from its header:\n{}",
+        calls.iter().any(|l| l.contains("var_c4b")
+            && l.contains("vector::vec_base(&__ph_")
+            && l.contains("&stores.allocations))")),
+        "t4b's call must derive a base from the push header its loop holds:\n{}",
         calls.join("\n")
     );
 }

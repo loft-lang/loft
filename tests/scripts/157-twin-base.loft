@@ -81,14 +81,24 @@ fn main() {
   for v in c3.data { t3 += v; }
   assert(t3 == 672 && c3.data[5] == 51, "t3: {t3} {c3.data[5]}");
 
-  // t4 — the caller's loop GROWS another store (it appends what it read), so it holds no
-  //      base: the call derives one from the held header.  Same values, 12 of them.
+  // t4 — the caller's loop GROWS another store (it appends what it read to `acc4`, which
+  //      owns its store): since `(R-Base)`'s growth clause it holds `c4`'s base and passes
+  //      it.  Same values, 12 of them.
   c4 = tb_fresh();
   acc4: vector<integer> = [];
   for y in 0..3 { for x in 0..4 { acc4 += [tb_get(c4, x, y)]; } }
   t4 = 0;
   for v in acc4 { t4 += v; }
   assert(len(acc4) == 12 && t4 == 660 && acc4[7] == 70, "t4: {len(acc4)} {t4}");
+
+  // t4b — the caller's loop grows the READ store itself (it appends to the canvas's own
+  //       data), so it holds no base: the call derives one from the header it holds.
+  //       660 + (660 + 12) = 1332 over 24 elements.
+  c4b = tb_fresh();
+  for y in 0..3 { for x in 0..4 { c4b.data += [tb_get(c4b, x, y) + 1]; } }
+  t4b = 0;
+  for v in c4b.data { t4b += v; }
+  assert(len(c4b.data) == 24 && t4b == 1332, "t4b: {len(c4b.data)} {t4b}");
 
   // t5 — outside any loop, and outside the canvas: (1,1) is 50; (9,9) and (-1,0) are 0.
   c5 = tb_fresh();

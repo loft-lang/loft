@@ -1,0 +1,6 @@
+# A package whose OWN `use` reaches `testpkg_future` as a sibling: the floor of a package
+# adopted that way must be checked exactly as a direct `use` checks it (package_layout.rs).
+[package]
+name    = "testpkg_uses_future"
+version = "0.1.0"
+loft    = ">=0.1"

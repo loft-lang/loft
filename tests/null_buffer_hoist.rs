@@ -32,7 +32,7 @@ const HEADERS: &[(&str, usize, usize)] = &[
     //                  a hoist's root is invariant only while what it LINKS to is.  The pair
     //                  is re-measured here rather than carried from either side.
     ("n_d4", 3, 0),  // t and v in the loop, v again in the summing loop
-    ("n_d5", 1, 1),  // v read, out pushed; t is a call result and leaves the read list
+    ("n_d5", 2, 1),  // v and t read, out pushed; t, a call result owning its store, stays since `@FR-R-Base`'s growth clause proved it apart from `out`
     ("n_d6", 2, 0),  // derived by the outer loop once
     ("n_d7", 2, 0),  // two sites, still t and v
     ("n_d8", 1, 0),  // t serves the view and the scalar read

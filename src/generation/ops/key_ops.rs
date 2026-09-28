@@ -89,6 +89,7 @@ impl OpEmitter for OpGetRecordEmitter {
             && key_vals.len() == 1
             && matches!(key_types.as_slice(), [k] if matches!(k.unsigned_abs(), 1 | 2 | 8 | 12));
         if typed {
+            crate::rewrite_census::fired("R-TypedKeyed", 1);
             write!(ctx.w, "OpGetHashLong(cell,")?;
             ctx.emit(&args[0])?;
             write!(ctx.w, ", {db_tp}_i32, ")?;

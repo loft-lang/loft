@@ -258,6 +258,7 @@ fn seed_range_counters(data: &Data, v: &Value, vars: &mut HashMap<u16, bool>) {
             || matches!(rc.hi.unspan(), Value::Int(k) if *k < i32::MAX)
             || matches!(rc.hi.unspan(), Value::Long(k) if *k < i64::MAX);
         if bounded {
+            crate::rewrite_census::fired("R-Counter", 1);
             vars.insert(rc.index, true);
             vars.insert(rc.loop_var, true);
             if let Some(n) = rc.next {

@@ -100,13 +100,22 @@ fn main() {
   for i in 0..12 { e = v6[i]?; x = e.a; e = v6[(i + 1) % 12]?; r6 += x + e.a; }
   assert(r6 == 1320, "r6: {r6}");
 
-  // r7 — a PUSH in the remainder (declines): 12 elements, 660.
+  // r7 — a PUSH in the remainder into ANOTHER store (admitted since `(R-Base)`'s growth
+  // clause: `acc7` owns its store, `v7` its own): 12 elements, 660.
   v7 = rp_mk();
   acc7: vector<integer> = [];
   for i in 0..12 { e = v7[i]?; acc7 += [e.a]; }
   r7 = 0;
   for el7 in acc7 { r7 += el7; }
   assert(len(acc7) == 12 && r7 == 660, "r7: {len(acc7)} {r7}");
+
+  // r7b — a PUSH into the VIEWED vector itself (declines: the view's own store grows):
+  // 24 elements, the appended `a`s 1, 11, …, 111 = 672.
+  v7b = rp_mk();
+  for i in 0..12 { e = v7b[i]?; v7b += [RpE { a: e.a + 1, b: e.b, s: e.s, f: e.f }]; }
+  r7b = 0;
+  for i in 12..24 { r7b += v7b[i]?.a; }
+  assert(len(v7b) == 24 && r7b == 672, "r7b: {len(v7b)} {r7b}");
 
   // r8 — a NULLABLE view (no `?`): admitted as its record, the reads unchanged, 660.
   v8 = rp_mk();

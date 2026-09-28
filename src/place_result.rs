@@ -167,6 +167,9 @@ fn admitted(data: &Data, d_nr: u32, code: &Value, ops: &Ops, mode: Mode) -> Vec<
         }
         match admit(data, d_nr, top, idx, *v, *fn_nr, args, ops, mode) {
             Ok(plan) => {
+                if mode != Mode::Preview {
+                    crate::rewrite_census::fired("R-Place", 1);
+                }
                 if crate::keys::trace_place() {
                     eprintln!(
                         "[place{}] fn={} v={}: ADMITTED host={} tp={} moves={} frees={}",
@@ -865,6 +868,7 @@ fn apply(node: &mut Value, path: &mut Path, plan: &Plan, ops: &Ops) {
         }
         Value::Call(d, args) => {
             if *d == ops.copy && plan.moves.contains(path) {
+                crate::rewrite_census::fired("R-MoveLast", 1);
                 *d = ops.move_rec;
                 args[2] = Value::Int(i32::from(plan.tp));
                 return;

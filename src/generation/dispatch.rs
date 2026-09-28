@@ -1189,6 +1189,7 @@ impl Output<'_> {
                 // @PLN157 § V-p — the TWIN form here too (`@FR-R-Inputs`): this site spells
                 // the call itself, so it asks the same question `user_fn_call_body` does.
                 let twin_args = self.twin_call_inputs(fn_nr, args);
+                crate::rewrite_census::fired("R-Inputs", usize::from(twin_args.is_some()));
                 write!(
                     w,
                     "{}{}(cell",

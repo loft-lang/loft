@@ -19,7 +19,7 @@ temp directory.  Running the suite: [RUNNING_TESTS.md](RUNNING_TESTS.md).
 ## Scratch hygiene — what loft writes to a temp directory, and what removes it
 
 Every native compile, html export and test probe lands in the temp directory (`TMPDIR`; under
-`make ci` the per-checkout `/var/tmp/loft-test-scratch-<id>`), and each family has one rule
+`make ci` the per-checkout `/var/tmp/loft-test-scratch-<checkout>.<cksum>`, the one tag the Makefile, `find_problems.sh` and `disk_headroom.sh` all derive), and each family has one rule
 that removes it — scratch nobody removes grows into hundreds of GB.
 
 | what | who writes it | what removes it |
@@ -32,7 +32,7 @@ that removes it — scratch nobody removes grows into hundreds of GB.
 | `~/.cache/tmp/claude-<uid>/<project>/<session>` | the agent harness's per-session scratch | `make sweep-scratch` (nothing in it changed for two weeks — two days on a RAM tmpfs) |
 | `target/debug/deps` | cargo: every test binary of every dependency hash ever built (tens of GB per checkout) | `make sweep-target` (`cargo sweep --time 14`) |
 | `target/*/incremental` | cargo: the incremental compilation cache (9 GB measured) | `scripts/disk_headroom.sh`, when the disk is short — it costs a rebuild's time, nothing else |
-| `/var/tmp/loft-test-scratch-<checkout>` as a whole | ONE gate run's fixtures and native test cache (23 GB measured in a single run — today's entries, which the day-old rule keeps) | `scripts/disk_headroom.sh`, when the disk is still short after the steps above and NO gate of this checkout is alive (its pid file and `.ci-running`, liveness-tested): a finished run's fixtures are garbage, the next run writes fresh ones, and the native cache is rebuilt |
+| `/var/tmp/loft-test-scratch-<checkout>.<cksum>` as a whole | ONE gate run's fixtures and native test cache (23 GB measured in a single run — today's entries, which the day-old rule keeps) | `scripts/disk_headroom.sh`, when the disk is still short after the steps above and NO gate of this checkout is alive (its pid file and `.ci-running`, liveness-tested): a finished run's fixtures are garbage, the next run writes fresh ones, and the native cache is rebuilt |
 
 **Every gate makes room before it starts.**  `make ci`, `make test`, `make quick` and
 `find_problems.sh` (both entry points) run `scripts/disk_headroom.sh` (`make disk-headroom` by

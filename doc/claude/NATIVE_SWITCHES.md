@@ -30,7 +30,8 @@ which is the before-half of an A/B on one binary and the first bisect step for a
 native-only wrong answer in a vector loop; **`LOFT_NO_ELEM_FUSE=1`** keeps the hoisted header
 but leaves the scalar element read UNFUSED, one bisect step finer, and is the middle rung that
 showed stage 2 is worth ~3.2× on top of stage 1 (projected ~1.4×) — more than the hoist itself,
-because the second store resolution it removes costs more than the arithmetic it saves.
+because the second store resolution it removes costs more than the arithmetic it saves;
+`LOFT_TRACE_FUSE=1` names each fuse the parser's gate declined.
 **`LOFT_NO_SCALAR_HOIST=1`** (@PLN157 P4c) reads every record scalar field per iteration
 again — a loop that cannot write `lay.x0` otherwise reads it ONCE into a local, keyed by
 (record type, offset) over the body's typed write set — and is the bisect step for a wrong
@@ -113,6 +114,12 @@ never minted (the drawing bench's `parse` row −9 %: its outer loop is
 extra piece out of a loop over a `split` on native.  A variable separator, a `rev`, a
 split bound to a name first and a generator keep the vector.  `LOFT_TRACE_LAZY_SPLIT=1`
 names each loop admitted and each declined with its reason.
+**`LOFT_NO_SPLIT_TABLE=1`** (`@FR-R-SplitTable`, default-ON, generation time, `--native`
+only) makes `parts = t.split(c)` build its `vector<text>` again — with it off, a split bound
+to a plain local that is only read (`len(parts)`, `parts[i]`, `for p in parts`) inside its
+binding block is a TABLE of slices over the text, never a vector — and is the first bisect
+step for a wrong length, piece or walk out of a split bound to a name.
+`LOFT_TRACE_SPLIT_TABLE=1` names each bind admitted and each declined with its reason.
 **`LOFT_NO_TEXT_BORROW=1`** (`@FR-R-TextBorrow`, default-ON, generation time, `--native`
 only) makes the loop variable of `for p in vector<text>` — and of a lazily split text —
 copy its element into a `String` again — with it off, `p` is bound as the `&str` the
@@ -158,6 +165,18 @@ loop; `LOFT_HOIST_VERIFY=1` re-derives every base at every use and panics when a
 grew under one, and `LOFT_TRACE_BASE=1` prints each loop's growth-free verdict.
 `LOFT_NO_NN_FAST=1` (P3c) also restores the nullable-aware counter step and the guarded
 literal division that § V-aj (`@FR-R-Counter`, `@FR-R-LitDiv`) replaced.
+**`LOFT_NO_DISTINCT_GROWTH=1`** (`@FR-R-Base`'s growth clause, `@FR-R-RecPtr`'s remainder
+clause and `@FR-R-Alias`, default-ON, generation time) makes a loop that grows ANY store
+bind no element base, and a remainder that grows one bind no record address, as before —
+with it off, a growth is judged per STORE: `out += [w[i]?]` keeps `w`'s base, `for e in
+pr.items { acc.log += [e.q] }` keeps `e`'s address and the walk's header, because a store's
+buffer is reallocated only by a growth of a vector living in it and two locals own two
+stores (`hoist::StoreFacts`: the end of each dep chain, one of them fresh).  The first bisect
+step for a wrong element or field read in a loop that appends elsewhere; `LOFT_HOIST_VERIFY=1`
+is the falsifier (every base and address re-derived — under a sabotaged oracle it panics
+"hoisted vector base is stale" on a sibling-field cell the plain run answers right by luck),
+and `LOFT_TRACE_BASE=1` names each loop that keeps bases under a growth and of what;
+`LOFT_TRACE_RECPTR=1` each view kept beside one.
 **`LOFT_NO_RANGE_END_HEADER=1`** (`@FR-R-Base`'s bound clause, default-ON, generation time)
 makes a `for i in 0..len(v)` loop test its index against the prelude's end local again —
 with it off, inside a loop holding `v`'s element base, the test reads the held header's
@@ -516,7 +535,8 @@ on native.
 literal rebuild per iteration again — with it off, `v: vector<float> = [1.0, 2.0]`
 (or an if-of-literals on a const-param field) under a loop builds ONCE per activation,
 guarded on the local being unbound — and is the bisect step for a wrong constant
-vector inside a loop on native.
+vector inside a loop on native.  `LOFT_TRACE_LITHOIST=1` names each literal admitted and
+each declined with its reason.
 **`LOFT_NO_RETBUF_ADOPT=1`** (@PLN157 § V-u) makes a vector-returning function keep its
 delivery copies — with it on, a shape-A result local ADOPTS the hidden return buffer
 (built where it must end up; the exits deliver nothing; the buffer's backing reused across
@@ -557,6 +577,16 @@ callee is loft-bodied, off any cycle and free of fn-refs drops its depth entry a
 guard in `--native-release`, since there the frame is only a depth count (parse row −12–14 %).
 **`LOFT_NO_LEAF_CHAIN=1`** keeps those frames (one step finer than `LOFT_NO_LEAF_PRELUDE`);
 the named tiers never elide a non-leaf.
+
+**A function that can reach no fn-ref return buffer carries no buffer guard
+(`@FR-R-GuardFree`, every tier, generation time):** when nothing that registers such a
+buffer — a fn-ref call, `parallel`, `yield`, `OpFreeRefOrHandUp`, a user's native callee —
+is reachable over the closure of its call graph, cycles included (`fib`), the frame
+constructs no `FnRefBufGuard`; the depth count stays, since it is the recursion cap both
+backends share.  **`LOFT_NO_GUARD_FREE=1`** constructs the guard on every non-leaf frame
+again — the bisect step for a leaked or doubly-freed fn-ref return buffer in a program with
+recursion — and `LOFT_TRACE_GUARD_FREE=1` names, per function that keeps its guard, the
+reachable callee that registers.
 
 ## Inlining hints
 

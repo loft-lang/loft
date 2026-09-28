@@ -1260,6 +1260,7 @@ impl Parser {
             // answer is still there — this is the replacement pass 2 owes.
             self.data.definitions[linked as usize].returned = tp;
             self.data.definitions[linked as usize].code = literal;
+            crate::rewrite_census::fired("R-Const/fn", 1);
             if crate::keys::trace_const() {
                 eprintln!(
                     "[const] fn={} is a constant: its body is one vector literal",
