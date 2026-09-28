@@ -669,7 +669,7 @@ fetching slice would make `xs[0..10]`, `for x in xs` and `len(xs)` disagree.
 **Revisit when.** A consumer shows the explicit call is a real burden AND the honesty question has
 an answer (e.g. a streaming collection whose `len` and iteration mean something else by
 declaration).  Decided 2026-08-06 — [record](DESIGN_DECISIONS-history.md#c104--a-slice-on-a-lazily-bound-collection-never-fetches-a-range-is-an-explicit-call).
-**Holds at:** `tests/lazy_sql_source.rs`.
+**Holds at:** `tests/lazy_sql_source.rs::a_slice_reads_what_is_resident_and_fetches_nothing`.
 **Catalogue:** @F108 (lazy store binding)
 
 ## C105 — a hash lookup keeps its TWO random reads (no hash-in-slot, no entries in the bucket table)
