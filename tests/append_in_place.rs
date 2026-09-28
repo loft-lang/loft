@@ -82,7 +82,13 @@ fn tag(i: integer) -> Tag { Tag { id: i, label: \"t{i}\" } }
 fn ev(i: integer) -> Ev { Ev { id: i, hit: HBtn { b: i } } }
 fn tags(n: integer) -> vector<Tag> { v: vector<Tag> = []; for i in 0..n { v += [tag(i)]; } v }
 fn evs(n: integer) -> vector<Ev> { v: vector<Ev> = []; for i in 0..n { v += [ev(i)]; } v }
-fn main() { println(\"{len(tags(3))} {len(evs(3))}\"); }
+struct Bag { id: integer, xs: vector<integer> }
+struct Crate { id: integer, bag: Bag }
+fn bag(i: integer) -> Bag { Bag { id: i, xs: [i, i + 1] } }
+fn crate_of(i: integer) -> Crate { Crate { id: i, bag: Bag { id: i, xs: [i] } } }
+fn bags(n: integer) -> vector<Bag> { v: vector<Bag> = []; for i in 0..n { v += [bag(i)]; } v }
+fn crates(n: integer) -> vector<Crate> { v: vector<Crate> = []; for i in 0..n { v += [crate_of(i)]; } v }
+fn main() { println(\"{len(tags(3))} {len(evs(3))} {len(bags(3))} {len(crates(3))}\"); }
 ";
 
 #[test]
@@ -109,4 +115,14 @@ fn a_heap_record_builder_takes_the_element_and_a_struct_enum_field_keeps_the_cop
         kept.contains("__lift_") && !kept.contains("OpDistinctStore("),
         "a struct-enum field must keep the lift + copy:\n{kept}"
     );
+    // A VECTOR field keeps the copy, at any inline depth: the copy claims the vector at
+    // its length where an in-place build leaves the quantised push block, and a persisted
+    // file's density rests on that (`tests/scripts/store_rebuild_b1.loft`, @PLN123 B1/B3).
+    for f in ["n_bags", "n_crates"] {
+        let kept = ir_of(&dump, f);
+        assert!(
+            kept.contains("__lift_") && !kept.contains("OpDistinctStore("),
+            "a record with a vector field must keep the lift + copy ({f}):\n{kept}"
+        );
+    }
 }

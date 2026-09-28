@@ -9725,19 +9725,38 @@ impl Parser {
         }
         // The element is FRESH — `OpNewRecord` claimed it a statement earlier with every
         // handle zeroed — so a literal's write of a heap field lands as it would in a store
-        // of its own: a text claims in the element's store, a plain vector zeroes its handle
-        // and appends, an inline record is written field by field.  A keyed or linked
-        // collection field and a struct-enum field keep the copy: their writes run group
-        // maintenance and variant tagging the fresh-element argument does not cover.
-        let placeable = self.data.def(*td).attributes().iter().all(|a| {
+        // of its own: a text claims in the element's store, an inline record is written
+        // field by field.  A VECTOR field keeps the copy, at any inline depth: built in the
+        // element it is pushed into a quantised block, where the copy claims it at its
+        // LENGTH, and a persisted file is dense only because everything in it arrived by
+        // copy (measured: the from-scratch file of `tests/scripts/store_rebuild_b1.loft`
+        // grew 37 256 → 46 744 bytes with vectors placed; @PLN123 B1/B3 are the guards).
+        // A keyed or linked collection field and a struct-enum field keep the copy too:
+        // their writes run group maintenance and variant tagging the fresh-element
+        // argument does not cover.
+        let placeable = self.record_fields_placeable(*td, 0);
+        placeable.then(|| (*fn_nr, buf_idx, args.clone()))
+    }
+
+    /// Every field of record definition `td` is one a literal may write straight into a
+    /// fresh element: a scalar, a text, or an inline record whose fields are (recursively)
+    /// the same.  `depth` bounds the walk; a shape past it keeps the copy.
+    fn record_fields_placeable(&self, td: u32, depth: u32) -> bool {
+        if depth > 8 {
+            return false;
+        }
+        self.data.def(td).attributes().iter().all(|a| {
             a.constant
                 || matches!(a.typedef, Type::Routine(_))
                 || crate::data::is_scalar(&a.typedef)
-                || matches!(
-                    a.typedef.base(),
-                    Type::Text(_) | Type::Vector(_, _) | Type::Reference(_, _)
-                )
-        });
-        placeable.then(|| (*fn_nr, buf_idx, args.clone()))
+                || matches!(a.typedef.base(), Type::Text(_))
+                || match a.typedef.base() {
+                    Type::Reference(sub, _) => {
+                        self.data.def_type(*sub) == crate::data::DefType::Struct
+                            && self.record_fields_placeable(*sub, depth + 1)
+                    }
+                    _ => false,
+                }
+        })
     }
 }

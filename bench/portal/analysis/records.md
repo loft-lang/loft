@@ -289,7 +289,10 @@ What the row still pays, from its profile after the change: the per-frame free o
 previous `Panel` (`remove_claims_mode` 10 %, `owned_walk` 4 %), the store claims of its
 texts (`claim_block`, `fl_insert`, `set_free_header` ~12 %), and `palette_items_for_tool`'s
 copy of a constant vector into the list.  A keyed or struct-enum field keeps the copy
-(h9, h11 of the cell file); `slope_path_with_undo` is unmoved — its builder site
+(h9, h11 of the cell file), and so does a VECTOR field at any inline depth (2026-09-28): built
+in the element it keeps its quantised push block where the copy claims it at length, and the
+persisted file grew 25 % (`store_rebuild_b1`; the @PLN123 guards caught it on the branch's
+gate); `slope_path_with_undo` is unmoved — its builder site
 (`m.m_chunks += [build_chunk(…)]`) runs only when a chunk is absent, and the row is the
 two `map_get_hex` result stores per step, which is `(R-ValueRecord)`'s width and the `?`
 discharge exit (priced next).
