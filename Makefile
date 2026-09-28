@@ -497,7 +497,11 @@ rebuild-native-cdylibs:
 # `target/`-relative TMPDIR breaks the package/registry tests (they build
 # fixtures in temp_dir then package/extract — anything under `target/` is
 # excluded, so loft.toml goes missing).  /var/tmp is disk-backed.
-TEST_SCRATCH := /var/tmp/loft-test-scratch-$(shell printf '%s' "$(CURDIR)" | cksum | cut -d' ' -f1)
+# ONE name per checkout, the same `<slug>.<cksum>` tag scripts/find_problems.sh and
+# scripts/disk_headroom.sh derive: a second spelling here left `make disk-headroom`
+# sweeping an empty directory and reporting the 23 GB one emptied.
+REPO_TAG := $(shell printf '%s' "$(notdir $(CURDIR))" | tr -c 'A-Za-z0-9._-' '_').$(shell printf '%s' "$(CURDIR)" | cksum | cut -d' ' -f1)
+TEST_SCRATCH := /var/tmp/loft-test-scratch-$(REPO_TAG)
 TEST_ENV := TMPDIR=$(TEST_SCRATCH) LOFT_TMPDIR=$(TEST_SCRATCH)
 
 # How many loft gates are live on this box right now, counting this checkout's own
@@ -557,7 +561,7 @@ sweep-scratch:  ## Reclaim loft's scratch: dead-process native artefacts, aged t
 disk-headroom:  ## Make room for a gate: sweep scratch, incremental caches, this checkout's gate scratch (no gate alive), stale cargo artefacts — until 20 GB is free
 	@# What `make ci` and find_problems.sh run before every gate; by hand when a build
 	@# says `No space left on device`.  Escalates only as far as the shortfall needs.
-	@scripts/disk_headroom.sh
+	@scripts/disk_headroom.sh --scratch $(TEST_SCRATCH)
 	@df -h / | tail -1
 
 sweep-target:  ## Drop cargo artefacts no build in two weeks has used (stale-hash test binaries)
