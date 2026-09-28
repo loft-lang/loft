@@ -101,6 +101,7 @@ canonical; these pages are its generated shadow. Regenerate with
 | [@F120](F120.md) | Lexer library (lib/lexer) |
 | [@F121](F121.md) | Parser library (lib/parser) |
 | [@F122](F122.md) | Multiple dispatch — one name, a definition per combination of parameter types |
+| [@F123](F123.md) | Foreign stores — a mapped file or a library's buffer read in place, a slice of it a view |
 
 ## Infrastructure (`@I`)
 
